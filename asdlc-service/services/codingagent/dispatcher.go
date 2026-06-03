@@ -53,10 +53,13 @@ type Inputs struct {
 	ThunderClientSR *SecretRef
 
 	// ClusterSecretStoreName is the ESO CSS that backs reads. On
-	// cloud-dp-oc-dp this MUST be `application-secrets-read` (AppRole
-	// `approle-creds-application-read-permission` — the only one
-	// scoped to `user-app-secrets/*` on the DP). `secretstore-read`
-	// will silently no-op. Local k3d reuses `default`.
+	// cloud-dp-oc-dp this MUST be `secretstore-read` (AppRole
+	// `approle-creds-read-permission`), whose Vault policy grants read on
+	// `user-app-secrets/*` — the per-org paths the worker's anthropic/github
+	// ExternalSecrets resolve. This is the same store every per-org reader on
+	// the DP uses. Do NOT use `application-secrets-read`: its AppRole policy is
+	// scoped to `cloud-dp-secrets/data/application` only, so `user-app-secrets`
+	// reads 403. Local k3d reuses `default`.
 	ClusterSecretStoreName string
 }
 
