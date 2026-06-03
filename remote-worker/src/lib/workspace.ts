@@ -27,6 +27,7 @@ import { exec } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
 import http from "node:http";
+import https from "node:https";
 import { config } from "../config.js";
 import { credHelperScript, ghWrapperScript } from "./credhelper.js";
 
@@ -106,8 +107,14 @@ async function resolvePATForClone(
     headers["X-Correlation-ID"] = req.correlationId;
   }
 
+  // Pick the transport by URL scheme: in cloud the BFF/git endpoint is https
+  // (gateway), locally it's http. Node's http.request rejects https URLs with
+  // "Protocol \"https:\" not supported", so this must branch on the scheme
+  // (mirrors skills_pull.ts).
+  const lib = url.protocol === "https:" ? https : http;
+
   return new Promise((resolve, reject) => {
-    const hReq = http.request(
+    const hReq = lib.request(
       url,
       { method: "POST", headers, timeout: 10000 },
       (res) => {
