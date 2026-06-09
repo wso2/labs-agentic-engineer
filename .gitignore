@@ -59,3 +59,7 @@ deployments-v2/.env
 deployments-v2/keys/
 deployments-v2/.webhook-relay.log
 deployments-v2/.webhook-relay.pid
+
+# Local scratch / secrets — never commit
+deployments-v2/
+SESSION.md

@@ -57,7 +57,19 @@ isolation is per-org, not per-project.
 ### `app-factory Project` (Postgres)
 The platform's own project entity (`ComponentTask.ProjectID`, etc.).
 One-to-one with an OC Project; the link is the OC Project name (a project
-handle).
+handle). **`project_id` is a per-org slug — unique only within an org**, reused
+across orgs. Every webhook PR/issue→task lookup must scope by `(org_id,
+project_id)`; the globally-unique anchor is the `git_repositories` row.
+
+### `ComponentType` vs `ClusterComponentType`
+OC render templates for a component (e.g. `deployment/service`,
+`deployment/web-application`). Same NAME, two kinds: the cluster-scoped
+`ClusterComponentType` (OC built-in) has **no** `registry-pull-secret`, while
+the per-org **namespaced** `ComponentType` (provisioned by platform-api
+`ProvisionOrgUnit` in cloud) carries `imagePullSecrets` so workloads can pull
+their per-org ECR image. App-factory references `kind: ComponentType`
+unconditionally; local `setup-asdlc.sh` provisions the namespaced types in the
+org ns to match. See [[adr-namespaced-componenttype-local-provisioning]].
 
 ---
 
@@ -67,11 +79,16 @@ handle).
 An OpenChoreo CR (`openchoreo.dev/v1alpha1`) authored in the **org NS** (CP)
 that points at a KV path in the central secret backend. ESO materializes it
 into a K8s `Secret` in the consuming-plane NS. Only the reference (KV path)
-crosses plane boundaries; the value never does. See [[adr-tenant-secret-flow]].
+crosses plane boundaries; the value never does.
 
 ### `GitSecret`
-An OpenChoreo CR for build credentials, bound to `ClusterWorkflowPlane/default`
-in AM's pattern. App-factory's path for GitHub PAT delivery to the build pod.
+An OpenChoreo CR for build credentials. The BFF lands the build GitHub-App
+token via OC `CreateGitSecret` (OpenBao + a per-org `SecretReference` named
+`app-factory-component-build-git-secret`); `dockerfile-builder` synthesises the
+per-run `<runName>-git-secret` ExternalSecret. OC owns the cross-plane (CP→WP)
+write — never a direct in-cluster Secret apply. The per-org SecretReference is
+refreshed (delete+create) every build because the App token is short-lived.
+See [[adr-build-git-secret-via-openchoreo]].
 
 ### `SM API` — Secret Manager API
 The platform secret backend service. **WriteOnly** — `GetSecretWithValue`
@@ -86,14 +103,32 @@ addition.
   (the Go HTTP client that the BFF calls).
 
 App-factory runs SM API in **both** local and cloud (deliberate divergence
-from agent-platform, which only runs SM API in cloud — see
-[[adr-local-sm-api-stub]]):
+from agent-platform, which only runs SM API in cloud):
 - **Cloud:** `secret-manager-api.openchoreo.dp.${cloud_base_domain}` on
-  `cloud-dp-oc-cp`.
-- **Local:** a SM-API-compatible stub in the local docker-compose stack,
-  backed by local OpenBao for KV storage and the local OC API for SR
-  creation. The local stub preserves the WriteOnly + ManagesSecretReferences
-  contract.
+  `cloud-dp-oc-cp` — the real service.
+- **Local:** an **in-repo Go stub** at `deployments/local-secret-manager-api/`
+  (NOT the cloud binary — that needs a private `wso2cloud` checkout). Reproduces
+  the `POST/GET/DELETE /secrets` contract: writes local OpenBao KV-v2 and
+  creates the `SecretReference` CR via the local OC API; preserves WriteOnly +
+  ManagesSecretReferences. See [[adr-local-sm-api-in-repo-stub]] (supersedes the
+  earlier "run the real cloud binary locally" decision).
+
+### `AGENT_CLUSTER_SECRET_STORE` / `secretstore-read`
+The ESO `ClusterSecretStore` the per-run coding-agent ExternalSecrets read
+from, selected at deploy via `AGENT_CLUSTER_SECRET_STORE` (default `default`
+locally; `secretstore-read` in cloud). Per-org coding-agent secrets live under
+`user-app-secrets/<org>/cred-*`; only `secretstore-read` (AppRole
+`approle-creds-read-permission`) grants that path. `application-secrets-read`
+only grants `cloud-dp-secrets/data/application` → 403 + worker stuck in
+`CreateContainerConfigError`.
+
+### `repair-secrets` (local only)
+`deployments/scripts/repair-secrets.sh`, run by `start.sh`: after a k3d/OpenBao
+teardown the BFF's SM-API metadata still points at vault paths that no longer
+exist, so dispatch produces ExternalSecrets ESO can't sync. The script reseeds
+OpenBao from the BFF cred-store (TestMode-gated endpoint → `vault kv put`),
+gated on the `k3d-openchoreo` context. Shell→vault, not SM-API, because SM-API
+has no no-user (service-identity) write path.
 
 ### `OpenBao`
 HashiCorp Vault fork. Used as the **local** secret backend (ReadWrite) in
@@ -105,7 +140,7 @@ The internal git-service HTTP endpoint that returns the org's Anthropic key
 as plaintext JSON. Read by `agents-service` for interactive spec agents
 (can't be replaced by ESO-mounted secrets while agents-service runs outside
 OC). Stays in place for the **local read path** even after SM API is in use
-because SM API is WriteOnly. See [[adr-effective-key-survives-sm-api]].
+because SM API is WriteOnly.
 
 ---
 
@@ -142,16 +177,15 @@ A wso2cloud-team-owned HTTP→DP-cluster reverse proxy
 at `cluster-gateway-proxy.openchoreo.dp.${cloud_base_domain}`). Forwards
 namespace-scoped K8s API calls to a DP cluster via OC's cluster-gateway +
 cluster-agent WebSocket tunnel. Allowlist-gated by
-`CLUSTER_GATEWAY_PROXY_ALLOWED_CRS`. **Enforces no authentication today**
-— middleware chain is logger-only; the `JWKS_URL` env var on the deployment
-is dead config. Network-level isolation (in-cluster service URL +
-HTTPRoute) is the actual protection.
+`CLUSTER_GATEWAY_PROXY_ALLOWED_CRS`. **The cloud proxy validates platform-idp
+JWTs** (`JWKS_URL` is live) — so the BFF attaches its platform-idp M2M token
+(the `APP_FACTORY_BFF_TO_PLATFORM_API` provider) as `Authorization: Bearer` on
+every call, including `StreamPodLog`. The **local** proxy stub is unauthenticated
+(nil auth provider → no header).
 
-The wso2cloud `ou` service is the existing caller — it dispatches per-org
-bootstrap to DP **without any `Authorization` header**, only
-`X-Correlation-ID` (`wso2cloud/backend/core/internal/ou/repository/cpapi.go`).
-App-factory's BFF (also on `cloud-dp-oc-cp`) follows the same pattern to
-dispatch coding-agent Jobs — see
+App-factory's BFF (on `cloud-dp-oc-cp`) dispatches coding-agent Jobs through
+this proxy — the same call pattern the wso2cloud `ou` service uses for per-org
+DP bootstrap, but authenticated. See
 [[adr-coding-agent-via-cluster-gateway-proxy]].
 
 ### `APP_FACTORY_BFF_TO_REMOTE_WORKER` — **legacy, unused**
@@ -159,9 +193,9 @@ Pre-provisioned Thunder OAuth2 M2M client (client_credentials grant) in
 cloud's platform-idp, secret in Vault as
 `app-factory-bff-to-remote-worker-client-secret`. **Provisioned for the
 now-removed long-lived `remote-worker` service component**; not used by
-the new Job-based dispatch (the proxy is un-authed; see
-`cluster-gateway-proxy` term). Kept in the deployment configs as
-historical bookkeeping; consider for cleanup later.
+the new Job-based dispatch (which authenticates to the proxy with the
+`APP_FACTORY_BFF_TO_PLATFORM_API` M2M token, not this one). Kept in the
+deployment configs as historical bookkeeping; consider for cleanup later.
 
 ---
 
@@ -179,10 +213,30 @@ service auth (e.g. `APP_FACTORY_BFF_TO_PLATFORM_API`,
 sourced from Vault on cloud; a literal env var locally.
 
 ### `Task JWT`
-The short-lived bearer the BFF mints per coding-agent dispatch (`ASDLC_BEARER`
-in the WorkflowRun param today). M1 plan replaces this with **AMP's eval-job
-pattern**: per-org OAuth client-secret + per-run ExternalSecret +
-`client_credentials` exchange at runner startup. See [[adr-runner-auth-amp-pattern]].
+A short-lived RS256 bearer the BFF mints per coding-agent dispatch
+(`ASDLC_BEARER`). **Local-only fallback now** — the cloud gateway's `jwtAuth`
+rejects it (it isn't a platform-idp token).
+
+### `publisher client-credentials` (runner → BFF auth)
+The cloud runner→BFF auth path (implemented, replacing the Task-JWT plan). The
+BFF provisions a per-org **publisher** Thunder OAuth app **at dispatch** for
+*every* component (decoupled from API security), mirrors its cc secret to
+SM-API, and emits a per-run ExternalSecret materialising
+`PUBLISHER_CLIENT_ID/SECRET`; the runner mints a `client_credentials` token at
+startup. The app **must be registered under the org's own OU** — a cc token's
+`ouHandle` follows the app's OU, and the BFF verifier requires
+`ouHandle == orgHandle`. Cross-org defense: same check.
+
+### `service identity` / `X-Impersonate-Org`
+How the BFF authenticates OC calls. **User-initiated** calls forward the inbound
+user JWT (platform-api routes/bills by its `ouId`). **Async/service** calls
+(webhooks, watchers, dispatch, build) carry the BFF M2M token and set
+`X-Impersonate-Org` to the target org — resolved from the URL `namespaces/{ns}`
+segment, keyed by org **handle**, preferring the Thunder `ouId`. A distinct ctx
+marker (`WithServiceIdentity`) signals service vs user; an M2M token must never
+sit in the user-token ctx key, and a resolver miss **aborts** the call (never
+silently mis-routes/mis-bills to the Admin OU). See
+[[adr-dual-mode-oc-auth-impersonation]].
 
 ---
 
