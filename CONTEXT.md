@@ -110,8 +110,8 @@ from agent-platform, which only runs SM API in cloud):
   (NOT the cloud binary — that needs a private `wso2cloud` checkout). Reproduces
   the `POST/GET/DELETE /secrets` contract: writes local OpenBao KV-v2 and
   creates the `SecretReference` CR via the local OC API; preserves WriteOnly +
-  ManagesSecretReferences. See [[adr-local-sm-api-in-repo-stub]] (supersedes the
-  earlier "run the real cloud binary locally" decision).
+  ManagesSecretReferences. The BFF uses the SM-API provider in both envs (never
+  an openbao provider). See [[adr-local-sm-api-in-repo-stub]].
 
 ### `AGENT_CLUSTER_SECRET_STORE` / `secretstore-read`
 The ESO `ClusterSecretStore` the per-run coding-agent ExternalSecrets read
