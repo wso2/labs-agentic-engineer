@@ -1,3 +1,19 @@
+// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package services
 
 import (
@@ -88,10 +104,10 @@ type PlatformIDPConfig struct {
 }
 
 type idpService struct {
-	db        *gorm.DB
-	thunder   thundersvc.Client
-	platform  PlatformIDPConfig
-	smAPI     *SMAPIWriter
+	db       *gorm.DB
+	thunder  thundersvc.Client
+	platform PlatformIDPConfig
+	smAPI    *SMAPIWriter
 }
 
 // NewIDPService builds the service. `thunder` may be nil in unit tests
@@ -146,6 +162,26 @@ func (s *idpService) GetOrCreateProfile(ctx context.Context, orgID string) (*mod
 		return nil, err
 	}
 	if existing != nil {
+		// Self-heal the cluster-level platform fields. Issuer/JWKSURL are
+		// cluster config, not per-org data, but they were cached onto the
+		// row at creation. If the config changed since (e.g. the cluster
+		// moved from an in-cluster Thunder URL to the gateway URL), refresh
+		// the row so the derived per-org publisher token URL stays correct.
+		if s.platform.JWKSURL != "" &&
+			(existing.JWKSURL != s.platform.JWKSURL || existing.Issuer != s.platform.Issuer) {
+			if err := s.db.WithContext(ctx).Model(existing).Where("org_id = ?", orgID).
+				Updates(map[string]interface{}{
+					"jwks_url":   s.platform.JWKSURL,
+					"issuer":     s.platform.Issuer,
+					"updated_at": time.Now().UTC(),
+				}).Error; err != nil {
+				slog.WarnContext(ctx, "idp_service: platform field self-heal failed (continuing)",
+					"orgID", orgID, "error", err)
+			} else {
+				existing.JWKSURL = s.platform.JWKSURL
+				existing.Issuer = s.platform.Issuer
+			}
+		}
 		return existing, nil
 	}
 
@@ -168,6 +204,21 @@ func (s *idpService) GetOrCreateProfile(ctx context.Context, orgID string) (*mod
 	return &profile, nil
 }
 
+// lookupOrgOUID returns the org's Thunder OU id (the JWT `ouId`, stored as
+// Organization.ThunderOrgUUID) so the publisher app can be registered under
+// the org's OU. Returns "" when the org row or its Thunder UUID is missing —
+// the Thunder client then falls back to the default OU.
+func (s *idpService) lookupOrgOUID(ctx context.Context, orgHandle string) string {
+	var org models.Organization
+	if err := s.db.WithContext(ctx).Where("name = ?", orgHandle).First(&org).Error; err != nil {
+		return ""
+	}
+	if org.ThunderOrgUUID == nil {
+		return ""
+	}
+	return org.ThunderOrgUUID.String()
+}
+
 func (s *idpService) EnsureOrgPublisher(ctx context.Context, orgID, actor string) (string, string, bool, error) {
 	if orgID == "" {
 		return "", "", false, fmt.Errorf("orgID required")
@@ -183,7 +234,18 @@ func (s *idpService) EnsureOrgPublisher(ctx context.Context, orgID, actor string
 
 	beforeJSON, _ := json.Marshal(profileSummary(profile))
 
-	clientID, clientSecret, created, terr := s.thunder.EnsurePublisherApp(ctx, orgID)
+	// Resolve the org's Thunder OU id (JWT ouId) so the publisher app is
+	// registered under the org's OU — its cc token then carries
+	// ouHandle == orgHandle, which the publisher-token verifier requires.
+	// Empty (org UUID not yet backfilled) falls back to the default OU.
+	orgOUID := s.lookupOrgOUID(ctx, orgID)
+	if orgOUID == "" {
+		slog.WarnContext(ctx, "idp_service: org Thunder OU id unknown — publisher app will use the default OU; runner token ouHandle may not match the org. Ensure the org row has thunder_org_uuid (user must have logged in with an ouId claim).",
+			"orgID", orgID)
+	} else {
+		slog.DebugContext(ctx, "idp_service: provisioning publisher under org OU", "orgID", orgID, "orgOU", orgOUID)
+	}
+	clientID, clientSecret, created, terr := s.thunder.EnsurePublisherApp(ctx, orgID, orgOUID)
 	if terr != nil {
 		s.audit(ctx, orgID, models.IDPAuditEnsurePublisher, actor, beforeJSON, nil, terr)
 		return "", "", false, fmt.Errorf("idp_service.EnsureOrgPublisher: %w", terr)
@@ -413,10 +475,10 @@ func (s *idpService) UpdateProfile(ctx context.Context, orgID, actor string, req
 // happened on Thunder / in the DB).
 func (s *idpService) audit(ctx context.Context, orgID, action, actor string, before, after []byte, opErr error) {
 	row := models.IDPAuditEvent{
-		OrgID:      orgID,
-		Action:     action,
-		Actor:      coalesceActor(actor),
-		OccurredAt: time.Now().UTC(),
+		OrgID:       orgID,
+		Action:      action,
+		Actor:       coalesceActor(actor),
+		OccurredAt:  time.Now().UTC(),
 		BeforeState: before,
 		AfterState:  after,
 	}

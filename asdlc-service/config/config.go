@@ -1,3 +1,19 @@
+// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package config
 
 import "time"
@@ -13,6 +29,16 @@ type Config struct {
 
 	// Test mode — enables test-only endpoints like _test/reset.
 	TestMode bool
+
+	// LocalOpenBaoRepairEnabled gates the _test/sm-api-resync endpoint —
+	// distinct from TestMode because the resync surface emits decrypted
+	// per-org plaintext (Anthropic API keys, GitHub PATs) and TestMode is
+	// set on the wso2cloud dev release binding for the existing destructive
+	// _test/reset route. Splitting the two means the resync route only
+	// mounts where deployments/docker-compose.yml explicitly opts in;
+	// cloud release bindings never set this var so the route never
+	// registers in deployed environments.
+	LocalOpenBaoRepairEnabled bool
 
 	// DeploymentTier guards dev-only destructive migrations and seed paths.
 	// Phase 0 used this for the platform-PAT startup gate (now retired in PR

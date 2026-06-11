@@ -44,6 +44,11 @@ services:
       DATABASE_URL: "postgres://asdlc:asdlc@postgres:5432/asdlc?sslmode=disable"
       DEPLOYMENT_TIER: "${DEPLOYMENT_TIER:-dev}"
       TEST_MODE: "true"
+      # Gates the /_test/sm-api-resync endpoint, which emits decrypted
+      # per-org plaintext to repair OpenBao after a local cluster reseed.
+      # Local-only by design — cloud release bindings never set this.
+      # See deployments/scripts/repair-secrets.sh.
+      LOCAL_OPENBAO_REPAIR: "true"
 
       # ── OpenChoreo platform API (reached via k3d loadbalancer + Host header)
       PLATFORM_API_SERVICE_BASE_URL: "${PLATFORM_API_SERVICE_BASE_URL}"
@@ -211,37 +216,39 @@ services:
       - "thunder.openchoreo.localhost:host-gateway"
 
   # ---------------------------------------------------------------------------
-  # secret-manager-api (Phase 1 — WS1.1) — actual cloud SM-API binary,
-  # built from sibling wso2cloud checkout. Requires
-  # `../../wso2cloud/backend/secret-manager-api/` to exist. Per
-  # ADR-0002 the same provider implementation is consumed by both
-  # local + cloud (asdlc-api → sm-api → ESO ClusterSecretStore → OpenBao).
+  # secret-manager-api (Phase 1 — WS1.1) — in-repo local STUB of the cloud
+  # sm-api, built from `./local-secret-manager-api` (no wso2cloud checkout
+  # needed). Reproduces the sm-api HTTP contract the asdlc-service client
+  # calls (POST /secrets, GET /secrets?labelSelector=, DELETE /secrets/{id}):
+  # writes user secrets to OpenBao KV-v2 under `secret/data/user-app-secrets/
+  # <ns>/<ref>` AND creates the OpenChoreo `SecretReference` CR — full parity
+  # with the real service. See deployments/local-secret-manager-api/main.go
+  # for the mirrored-contract notes and docs/superpowers/plans/
+  # 2026-06-09-sm-api-local-stub.md.
+  #
+  # Unlike the real binary (ESO vault provider + k8s-SA auth), the stub
+  # writes OpenBao over plain HTTP with the root token — same KV result, so
+  # the in-cluster per-run ExternalSecrets (created by the dispatcher in
+  # `wc-…-remote-worker`, referencing the `default` CSS) read the same data.
   # ---------------------------------------------------------------------------
   secret-manager-api:
     build:
-      context: ../../wso2cloud/backend/secret-manager-api
+      context: ./local-secret-manager-api
     container_name: asdlc-secret-manager-api
     ports:
       - "8082:8082"
     environment:
       LISTEN_ADDR: ":8082"
       LOG_LEVEL: "debug"
-      # SM-API runs in compose, not in-cluster, so it cannot reach
-      # `http://openbao.openbao.svc:8200` (in-cluster DNS only). The
-      # `default-from-compose` ClusterSecretStore is a sibling of `default`
-      # provisioned by setup-prerequisites.sh that uses the host-reachable
-      # `http://host.docker.internal:8200` URL instead. SM-API resolves CSS
-      # by name via the mounted kubeconfig, then ESO's vault provider
-      # (linked into the SM-API binary) authenticates against OpenBao
-      # directly using the k8s SA token flow — auth still works because
-      # OpenBao is in-cluster and can TokenReview against the apiserver.
-      # In-cluster per-run ExternalSecrets (the ones the dispatcher creates
-      # in `wc-…-remote-worker`) keep referencing the original `default`
-      # CSS — both stores write to the same `secret/data/user-app-secrets/`
-      # KV paths so the data lines up.
-      CLUSTER_SECRET_STORE: "default-from-compose"
+      # OpenBao is reached host-side (k3d exposes the NodePort on host 8200);
+      # the stub authenticates with the root token rather than the k8s-SA
+      # flow the real ESO provider uses.
+      OPENBAO_ADDR: "${OPENBAO_ADDR:-http://host.docker.internal:8200}"
+      OPENBAO_TOKEN: "${OPENBAO_TOKEN:-root}"
       VAULT_PATH_PREFIX: "user-app-secrets"
-      JWKS_URL: "http://thunder.openchoreo.localhost:8080/oauth2/jwks"
+      SECRET_REF_PREFIX: "cred-"
+      SECRET_REF_REFRESH_INTERVAL: "15s"
+      # SecretReference CRs are created via the mounted kubeconfig.
       KUBECONFIG: "/app/.kube/config"
     volumes:
       - ./.kube/config:/app/.kube/config:ro
@@ -249,6 +256,7 @@ services:
       - asdlc
       - k3d-openchoreo
     extra_hosts:
+      - "host.docker.internal:host-gateway"
       - "thunder.openchoreo.localhost:host-gateway"
 
   # ---------------------------------------------------------------------------

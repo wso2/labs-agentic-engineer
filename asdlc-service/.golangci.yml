@@ -1,0 +1,18 @@
+version: "2"
+run:
+  concurrency: 4
+linters:
+  default: none
+  enable:
+    - goheader
+  settings:
+    goheader:
+      template-path: ../.github/copyright_header.tmpl
+      values:
+        regexp:
+          YEAR: "\\d{4}"
+  exclusions:
+    generated: lax
+    paths:
+      - clients/openchoreo/gen
+      - clients/openchoreo/mocks

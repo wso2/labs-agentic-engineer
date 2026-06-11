@@ -1,3 +1,19 @@
+// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package services
 
 import (
@@ -56,8 +72,8 @@ type componentService struct {
 	// repoSvc + buildCredSvc are used by TriggerBuild to pre-stage the
 	// per-WorkflowRun build Secret. Optional — nil means "no staging"
 	// (tests / unit-only flows).
-	repoSvc       RepoService
-	buildCredSvc  *BuildCredentialsService
+	repoSvc      RepoService
+	buildCredSvc *BuildCredentialsService
 }
 
 // NewComponentService builds the component service. repoSvc + buildCredSvc
@@ -167,22 +183,27 @@ func (s *componentService) TriggerBuild(ctx context.Context, orgName, projectNam
 	// Manual triggers from the console go through this path; the
 	// webhook-driven dispatch path uses workflowRunService.dispatchBuild.
 	runName := openchoreo.NewBuildRunName(projectName, componentName)
+	buildSecretRef := ""
 	if s.repoSvc != nil && s.buildCredSvc != nil {
 		repo, err := s.repoSvc.GetRepo(ctx, projectName)
 		switch {
 		case err != nil:
-			slog.WarnContext(ctx, "trigger-build: GetRepo failed; proceeding without staged Secret (build will fail at clone)",
+			slog.WarnContext(ctx, "trigger-build: GetRepo failed; proceeding without git secret (build will fail at clone)",
 				"orgName", orgName, "projectName", projectName, "error", err)
 		case repo == nil || repo.RepoSlug == "":
-			slog.WarnContext(ctx, "trigger-build: no repo / repoSlug; proceeding without staged Secret",
+			slog.WarnContext(ctx, "trigger-build: no repo / repoSlug; proceeding without git secret",
 				"orgName", orgName, "projectName", projectName)
 		default:
-			if _, sErr := s.buildCredSvc.StageBuildSecret(ctx, orgName, repo.RepoSlug, runName); sErr != nil {
+			res, sErr := s.buildCredSvc.StageBuildSecret(ctx, orgName, repo.RepoSlug, runName)
+			if sErr != nil {
 				return nil, fmt.Errorf("trigger-build: stage-build-secret: %w", sErr)
+			}
+			if res != nil {
+				buildSecretRef = res.SecretRef
 			}
 		}
 	}
-	run, err := s.client.TriggerBuild(ctx, orgName, projectName, componentName, runName)
+	run, err := s.client.TriggerBuild(ctx, orgName, projectName, componentName, buildSecretRef, runName)
 	if err != nil {
 		return nil, translateComponentHTTPError(err)
 	}

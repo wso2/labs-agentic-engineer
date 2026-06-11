@@ -1,3 +1,19 @@
+// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package config
 
 import (
@@ -32,9 +48,10 @@ func Load() (Config, error) {
 			BaseURL:    r.readRequiredString("PLATFORM_API_SERVICE_BASE_URL"),
 			HostHeader: r.readOptionalString("PLATFORM_API_SERVICE_HOST", ""),
 		},
-		DatabaseURL:            r.databaseURL(),
-		TestMode:               r.readOptionalBool("TEST_MODE", false),
-		DeploymentTier:         r.readOptionalString("DEPLOYMENT_TIER", "dev"),
+		DatabaseURL:               r.databaseURL(),
+		TestMode:                  r.readOptionalBool("TEST_MODE", false),
+		LocalOpenBaoRepairEnabled: r.readOptionalBool("LOCAL_OPENBAO_REPAIR", false),
+		DeploymentTier:            r.readOptionalString("DEPLOYMENT_TIER", "dev"),
 		GitHubWebhookSecret:    r.readOptionalString("GITHUB_WEBHOOK_SECRET", ""),
 		OAuthStateSigningKey:   r.readOptionalString("OAUTH_STATE_SIGNING_KEY", ""),
 		GithubAppSlug:          r.readOptionalString("GITHUB_APP_SLUG", "asdlc-platform"),
@@ -88,7 +105,7 @@ func Load() (Config, error) {
 		// env-var names the standalone git-service used so existing local
 		// .env files / release-bindings keep working.
 		RepoBasePath:                r.readOptionalString("REPO_BASE_PATH", "/tmp/asdlc-repos"),
-		GitHubRepoVisibility:        r.readOptionalString("GITHUB_REPO_VISIBILITY", "private"),
+		GitHubRepoVisibility:        r.readOptionalString("GITHUB_REPO_VISIBILITY", "public"),
 		GitHubCommitterName:         r.readOptionalString("GIT_COMMITTER_NAME", "ASDLC Bot"),
 		GitHubCommitterEmail:        r.readOptionalString("GIT_COMMITTER_EMAIL", "bot@asdlc.dev"),
 		WebhookDeliveryURL:          r.readOptionalString("GITHUB_WEBHOOK_DELIVERY_URL", ""),

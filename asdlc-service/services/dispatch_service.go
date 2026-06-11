@@ -1,3 +1,19 @@
+// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package services
 
 import (
@@ -108,6 +124,14 @@ type dispatchService struct {
 	// populated before any React module runs — no rebuild needed when
 	// per-env values change. Wired via SetRuntimeConfig.
 	runtimeConfig *RuntimeConfigService
+
+	// idp, when non-nil, provisions the per-org Thunder publisher
+	// client_credentials on demand so the coding-agent runner can
+	// authenticate to the BFF through the IdP-authed gateway (WS2.4).
+	// Decoupled from API security: trait_sync only provisions it on the
+	// first protected deploy, but the runner needs it for every component,
+	// so the dispatch pre-flight ensures it too. Wired via SetIDPService.
+	idp IDPService
 }
 
 // WithCodingAgentDispatcher wires the WS2.3 proxy-based dispatch path.
@@ -128,6 +152,14 @@ func (s *dispatchService) WithCodingAgentDispatcher(d *codingagent.Dispatcher, d
 type DispatchServiceWithTraitSync interface {
 	DispatchService
 	SetTraitSync(traitSync *TraitSyncService)
+}
+
+// SetIDPService wires the per-org Thunder publisher provisioning hook used
+// by the proxy dispatch pre-flight (WS2.4 runner-auth). Optional — when
+// unset (e.g. local k3d without Thunder), the dispatch path falls back to
+// the per-task RS256 JWT.
+func (s *dispatchService) SetIDPService(idp IDPService) {
+	s.idp = idp
 }
 
 // SetRuntimeConfig installs the env-config.js emitter that writes
@@ -481,17 +513,24 @@ func (s *dispatchService) tryDispatchViaProxy(
 		return false, "", nil
 	}
 
-	// WS2.4 — optional publisher cc creds. When the IDP profile carries
-	// the SM-API triplet, the dispatcher emits a third per-run
-	// ExternalSecret materialising PUBLISHER_CLIENT_ID +
-	// PUBLISHER_CLIENT_SECRET into the runner pod (TS runner then prefers
-	// cc → /credentials/refresh and falls back to ASDLC_BEARER when
-	// PUBLISHER_TOKEN_URL is absent). Missing row is fine — the runner
-	// keeps using ASDLC_BEARER.
+	// WS2.4 — publisher cc creds. The runner authenticates to the BFF through
+	// the IdP-authed gateway with a Thunder publisher client_credentials token
+	// (a real platform-idp JWT). trait_sync only provisions that publisher on
+	// the first *protected* deploy, but the coding-agent runs for every
+	// component, so ensure it here too (idempotent get-or-create + SM-API
+	// mirror). When the IDP profile carries the SM-API triplet, the dispatcher
+	// emits a third per-run ExternalSecret materialising PUBLISHER_CLIENT_ID +
+	// PUBLISHER_CLIENT_SECRET into the runner pod.
 	var (
 		publisherSR       *codingagent.SecretRef
 		publisherTokenURL string
 	)
+	if s.idp != nil {
+		if _, _, _, perr := s.idp.EnsureOrgPublisher(ctx, task.OrgID, "dispatch"); perr != nil {
+			slog.WarnContext(ctx, "proxy dispatch: EnsureOrgPublisher failed; publisher cc may be unavailable",
+				"task", task.ID, "org", task.OrgID, "error", perr)
+		}
+	}
 	var idpRow models.OrganizationIDPProfile
 	if err := s.db.WithContext(ctx).Where("org_id = ?", task.OrgID).First(&idpRow).Error; err == nil {
 		if idpRow.SMAPIKVPath != nil && idpRow.SMAPISecretRefName != nil {
@@ -507,6 +546,19 @@ func (s *dispatchService) tryDispatchViaProxy(
 				publisherSR = nil
 			}
 		}
+	}
+
+	// In cloud the runner reaches the BFF through the IdP-authed gateway, so a
+	// per-task RS256 JWT is rejected there (401) — the publisher cc is
+	// mandatory. Fail the dispatch loudly rather than launch a runner that
+	// cannot authenticate (which would surface as an opaque
+	// "git-service returned 401" deep in the runner). Local k3d (http platform
+	// URL, no gateway) keeps using the per-task bearer fallback.
+	if publisherSR != nil {
+		slog.InfoContext(ctx, "proxy dispatch: publisher cc path active",
+			"task", task.ID, "org", task.OrgID)
+	} else if isGatewayPlatformURL(s.platformURL) {
+		return false, "", fmt.Errorf("publisher cc not provisioned for org %q: the coding-agent runner cannot authenticate to the BFF through the gateway (a per-task JWT is rejected). Ensure Thunder + SM-API are healthy so the publisher can be provisioned and mirrored", task.OrgID)
 	}
 
 	// OrgUUID lookup. The BFF Organization row carries the UUID the
@@ -604,6 +656,14 @@ func derefStr(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+// isGatewayPlatformURL reports whether the runner reaches the BFF through the
+// IdP-authed cloud gateway (https) rather than an internal http URL (local
+// k3d). On the gateway path a per-task JWT is rejected, so the publisher cc is
+// required; off it (http) the bearer fallback still works.
+func isGatewayPlatformURL(u string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(u)), "https://")
 }
 
 // deriveTokenURLFromJWKS swaps the trailing `/oauth2/jwks` path on the

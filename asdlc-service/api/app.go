@@ -1,6 +1,23 @@
+// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package api
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -147,6 +164,20 @@ func NewHandler(params AppParams) http.Handler {
 	// Test-only reset endpoint — truncates local DB tables.
 	if params.Config.TestMode {
 		apiMux.HandleFunc("POST /api/v1/_test/reset", testResetHandler(params))
+	}
+
+	// Local-dev secret repair — outside the User JWT path so
+	// deployments/scripts/repair-secrets.sh can call it without an admin
+	// token. Gated on the DISTINCT LocalOpenBaoRepairEnabled flag (read
+	// from LOCAL_OPENBAO_REPAIR), NOT on TestMode alone, because TestMode
+	// is already set on the wso2cloud dev release binding for the existing
+	// _test/reset route. Splitting them means cloud release bindings have
+	// to explicitly opt in to expose this surface (and they don't), so the
+	// route never registers on deployed environments. The handler emits
+	// decrypted plaintext per-org credentials — second gating is essential.
+	// The shell script's kubectl-context check is the third safety net.
+	if params.Config.TestMode && params.Config.LocalOpenBaoRepairEnabled {
+		mux.HandleFunc("POST /api/v1/_test/sm-api-resync", testSMAPIResyncHandler(params))
 	}
 
 	// GitHub webhook receiver — outside JWT, HMAC-authed inside the handler.
@@ -308,3 +339,100 @@ func testResetHandler(params AppParams) http.HandlerFunc {
 		w.Write([]byte(`{"status":"reset"}`)) //nolint:errcheck
 	}
 }
+
+// testSMAPIResyncHandler walks per-org credential rows and returns the
+// {kvPath, property, value} tuples the repair script needs to reseed
+// OpenBao. Plaintext crosses the localhost boundary once per write — the
+// repair script then runs `vault kv put` via `kubectl exec` against the
+// in-cluster OpenBao to materialise the secret at the path the dispatcher
+// will read on the next ExternalSecret sync.
+//
+// We don't call SM-API directly here because SM-API's auth requires a
+// Thunder JWT with an `ouId` claim — only mintable from a user session.
+// For a no-user repair flow the BFF would need a per-org impersonation
+// token. The shell→vault path bypasses that entirely and matches how
+// setup-asdlc.sh seeds other local secrets.
+//
+// Two safety gates: TestMode (registration) + the shell script's
+// kubectl-context check (refuses to run unless pointed at the local k3d
+// cluster). Plaintext is never logged.
+func testSMAPIResyncHandler(params AppParams) http.HandlerFunc {
+	type orgResult struct {
+		OcOrgID        string                    `json:"ocOrgId"`
+		Writes         []services.SMAPISeedBundle `json:"writes"`
+		AnthropicError string                    `json:"anthropicError,omitempty"`
+		GitHubPATError string                    `json:"githubPatError,omitempty"`
+	}
+	type response struct {
+		Orgs []orgResult `json:"orgs"`
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		if params.DB == nil || params.CredService == nil || params.AnthropicCredService == nil {
+			http.Error(w, `{"error":"resync surface not wired"}`, http.StatusServiceUnavailable)
+			return
+		}
+
+		orgIDs, err := collectResyncOrgs(ctx, params.DB, r.URL.Query().Get("org"))
+		if err != nil {
+			slog.ErrorContext(ctx, "sm-api resync: org list failed", "error", err)
+			http.Error(w, `{"error":"org list failed"}`, http.StatusInternalServerError)
+			return
+		}
+
+		out := response{Orgs: make([]orgResult, 0, len(orgIDs))}
+		for _, ocOrgID := range orgIDs {
+			res := orgResult{OcOrgID: ocOrgID}
+			if bundle, err := params.AnthropicCredService.PrepareSMAPISeed(ctx, ocOrgID); err != nil {
+				res.AnthropicError = err.Error()
+			} else if bundle != nil {
+				res.Writes = append(res.Writes, *bundle)
+			}
+			if bundle, err := params.CredService.PrepareSMAPISeed(ctx, ocOrgID); err != nil {
+				res.GitHubPATError = err.Error()
+			} else if bundle != nil {
+				res.Writes = append(res.Writes, *bundle)
+			}
+			out.Orgs = append(out.Orgs, res)
+			slog.InfoContext(ctx, "sm-api resync: org",
+				"ocOrgId", ocOrgID,
+				"writeCount", len(res.Writes))
+		}
+		writeJSON(w, http.StatusOK, out)
+	}
+}
+
+// collectResyncOrgs returns the unique set of ocOrgIDs that have either an
+// org_credentials or org_anthropic_credentials row with the SM-API triplet
+// populated. When `only` is non-empty the set is filtered to that single id.
+func collectResyncOrgs(ctx context.Context, db *gorm.DB, only string) ([]string, error) {
+	seen := map[string]struct{}{}
+	add := func(rows []string) {
+		for _, id := range rows {
+			if only != "" && id != only {
+				continue
+			}
+			seen[id] = struct{}{}
+		}
+	}
+	var patOrgs []string
+	if err := db.WithContext(ctx).Raw(
+		`SELECT oc_org_id FROM org_credentials WHERE sm_api_secret_ref_name IS NOT NULL`,
+	).Scan(&patOrgs).Error; err != nil {
+		return nil, err
+	}
+	add(patOrgs)
+	var anthropicOrgs []string
+	if err := db.WithContext(ctx).Raw(
+		`SELECT oc_org_id FROM org_anthropic_credentials WHERE sm_api_secret_ref_name IS NOT NULL`,
+	).Scan(&anthropicOrgs).Error; err != nil {
+		return nil, err
+	}
+	add(anthropicOrgs)
+	out := make([]string, 0, len(seen))
+	for id := range seen {
+		out = append(out, id)
+	}
+	return out, nil
+}
+

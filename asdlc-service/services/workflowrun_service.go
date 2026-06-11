@@ -1,3 +1,19 @@
+// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package services
 
 import (
@@ -171,11 +187,17 @@ func (s *workflowRunService) dispatchBuild(
 	// per-build K8s Secret before the WorkflowRun spawns the Argo pod.
 	runName := openchoreo.NewBuildRunName(projectID, task.ComponentName)
 
-	// Stage the per-WorkflowRun build Secret in workflows-<orgID> with the
-	// org's GitHub credential. Errors classify identically to the previous
-	// mint-build surface (404 → skip, 409 → skip, 5xx → log + retry).
+	// Provision the org's build git secret on the workflow plane (OC
+	// GitSecret) and capture the secretRef to pass to the build. Failing to
+	// provision the secret is non-fatal — StageBuildSecret degrades to an empty
+	// secretRef so the build still dispatches and clones unauthenticated (correct
+	// for the public repos app-factory creates by default; private-repo support
+	// is tracked by wso2-enterprise/wso2cloud#319). Only an ownership/credential
+	// refusal (repo not in org, org disconnected) blocks the build here.
+	var buildSecretRef string
 	if s.repoSvc != nil && s.buildCredSvc != nil && repoSlug != "" {
-		if _, err := s.buildCredSvc.StageBuildSecret(ctx, orgID, repoSlug, runName); err != nil {
+		res, err := s.buildCredSvc.StageBuildSecret(ctx, orgID, repoSlug, runName)
+		if err != nil {
 			switch {
 			case errors.Is(err, ErrRepoNotInOrg):
 				slog.WarnContext(ctx, "stage-build-secret refused: repo/org mismatch",
@@ -191,9 +213,12 @@ func (s *workflowRunService) dispatchBuild(
 				return "", err
 			}
 		}
+		if res != nil {
+			buildSecretRef = res.SecretRef
+		}
 	}
 
-	run, err := s.ocClient.TriggerBuildAtCommit(ctx, orgID, projectID, task.ComponentName, sha, runName)
+	run, err := s.ocClient.TriggerBuildAtCommit(ctx, orgID, projectID, task.ComponentName, sha, buildSecretRef, runName)
 	if err != nil {
 		slog.ErrorContext(ctx, "trigger build failed",
 			"component", task.ComponentName, "sha", sha, "error", err)
@@ -286,7 +311,8 @@ func (s *workflowRunService) RetryAuthFailedBuild(ctx context.Context, task *mod
 		return "", fmt.Errorf("retry-auth-failed: project %s has no repo slug", task.ProjectID)
 	}
 	runName := openchoreo.NewBuildRunName(task.ProjectID, task.ComponentName)
-	if _, err := s.buildCredSvc.StageBuildSecret(ctx, task.OrgID, repo.RepoSlug, runName); err != nil {
+	res, err := s.buildCredSvc.StageBuildSecret(ctx, task.OrgID, repo.RepoSlug, runName)
+	if err != nil {
 		switch {
 		case errors.Is(err, ErrRepoNotInOrg), errors.Is(err, ErrOrgDisconnected):
 			return "", err
@@ -294,7 +320,11 @@ func (s *workflowRunService) RetryAuthFailedBuild(ctx context.Context, task *mod
 			return "", fmt.Errorf("retry-auth-failed: stage-build-secret: %w", err)
 		}
 	}
-	run, err := s.ocClient.TriggerBuildAtCommit(ctx, task.OrgID, task.ProjectID, task.ComponentName, task.LastBuildSHA, runName)
+	buildSecretRef := ""
+	if res != nil {
+		buildSecretRef = res.SecretRef
+	}
+	run, err := s.ocClient.TriggerBuildAtCommit(ctx, task.OrgID, task.ProjectID, task.ComponentName, task.LastBuildSHA, buildSecretRef, runName)
 	if err != nil {
 		return "", fmt.Errorf("retry-auth-failed: trigger build: %w", err)
 	}

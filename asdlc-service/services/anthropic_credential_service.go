@@ -1,3 +1,19 @@
+// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 // Package services — Anthropic credential service.
 //
 // AnthropicCredentialService owns the per-org Anthropic API key surface:
@@ -429,6 +445,40 @@ func (s *AnthropicCredentialService) DeleteAnthropicSecret(ctx context.Context, 
 // ----------------------------------------------------------------------------
 // helpers
 // ----------------------------------------------------------------------------
+
+// PrepareSMAPISeed returns the OpenBao reseed bundle for the org's
+// Anthropic key. Returns (nil, nil) when the org has no active row, the
+// SM-API triplet isn't populated, or the cred-store value is missing —
+// all idempotent no-op cases.
+//
+// Drives the local-dev repair path. See CredentialService.PrepareSMAPISeed
+// and deployments/scripts/repair-secrets.sh for the full flow.
+func (s *AnthropicCredentialService) PrepareSMAPISeed(ctx context.Context, ocOrgID string) (*SMAPISeedBundle, error) {
+	row, err := s.fetchRow(ctx, ocOrgID)
+	if err != nil {
+		var nf *NotFoundError
+		if errors.As(err, &nf) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("anthropic seed: load row: %w", err)
+	}
+	if row.Status != "active" {
+		return nil, nil
+	}
+	if row.SMAPIKVPath == nil || row.SMAPIProperty == nil ||
+		*row.SMAPIKVPath == "" || *row.SMAPIProperty == "" {
+		return nil, nil
+	}
+	key, err := s.store.Get(ctx, ocOrgID, "anthropic/key")
+	if err != nil || len(key) == 0 {
+		return nil, nil
+	}
+	return &SMAPISeedBundle{
+		KVPath:   *row.SMAPIKVPath,
+		Property: *row.SMAPIProperty,
+		Value:    string(key),
+	}, nil
+}
 
 func (s *AnthropicCredentialService) fetchRow(ctx context.Context, ocOrgID string) (*models.OrgAnthropicCredential, error) {
 	var row models.OrgAnthropicCredential

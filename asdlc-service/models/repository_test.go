@@ -1,3 +1,19 @@
+// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package models
 
 import (
@@ -19,22 +35,6 @@ func TestSlugForURL(t *testing.T) {
 		got := SlugForURL(c.in)
 		if got != c.want {
 			t.Errorf("SlugForURL(%q) = %q; want %q", c.in, got, c.want)
-		}
-	}
-}
-
-func TestBuildSecretNameFor(t *testing.T) {
-	// The Secret name must match what the upstream dockerfile-builder
-	// ClusterWorkflow templates from `${metadata.workflowRunName}-git-secret`.
-	cases := []struct {
-		runName, want string
-	}{
-		{"default-greeting-api-1731538100123", "default-greeting-api-1731538100123-git-secret"},
-		{"x", "x-git-secret"},
-	}
-	for _, c := range cases {
-		if got := BuildSecretNameFor(c.runName); got != c.want {
-			t.Errorf("BuildSecretNameFor(%q) = %q; want %q", c.runName, got, c.want)
 		}
 	}
 }

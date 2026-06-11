@@ -1,4 +1,20 @@
 #!/bin/bash
+# Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+#
+# WSO2 LLC. licenses this file to you under the Apache License,
+# Version 2.0 (the "License"); you may not use this file except
+# in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -527,6 +543,33 @@ spec:
 OCEOF
 echo "✅ ClusterComponentType 'deployment/web-application' created"
 
+# ── Per-org NAMESPACED ComponentTypes (local stand-in for cloud's
+#    platform-api ProvisionOrgUnit) ────────────────────────────────────────
+# The BFF references the per-org namespaced ComponentType (kind=ComponentType),
+# not the cluster-scoped ClusterComponentType — see
+# asdlc-service/clients/openchoreo/component_client.go. In dev cloud,
+# platform-api's ProvisionOrgUnit creates `service`/`web-application`
+# ComponentTypes inside each org's namespace; locally nothing did, so a
+# kind=ComponentType reference resolved to `ComponentTypeNotFound` and user
+# components never deployed. Derive namespaced copies (in the org control-plane
+# ns `default`) from the cluster-scoped definitions above so the two can't
+# drift. Same NAME (`service`/`web-application`); only kind + namespace differ.
+echo ""
+echo "🧩 Provisioning per-org namespaced ComponentTypes (local ProvisionOrgUnit stand-in)..."
+for _ct in service web-application; do
+    kubectl get clustercomponenttype "$_ct" -o json \
+        | python3 -c 'import sys, json
+c = json.load(sys.stdin)
+print(json.dumps({
+    "apiVersion": c["apiVersion"],
+    "kind": "ComponentType",
+    "metadata": {"name": c["metadata"]["name"], "namespace": "default"},
+    "spec": c["spec"],
+}))' \
+        | kubectl apply -f -
+done
+echo "✅ Namespaced ComponentTypes 'service' + 'web-application' created in ns 'default'"
+
 # Environment: development — backed by the default ClusterDataPlane
 kubectl apply -f - <<'OCEOF'
 apiVersion: openchoreo.dev/v1alpha1
@@ -747,18 +790,33 @@ echo "✅ .env file generated at $(realpath "$ENV_FILE")"
 #
 # Derives the NS deterministically from Thunder's ouId for the default
 # org (= `wc-<ouId8>-<sha256(ouId)[:8]>`), matching
-# `secret-manager-api/internal/auth/jwt.go::GenerateNamespaceName` and
-# `services/codingagent/namespace.go::OrgBaseNamespace`.
+# `local-secret-manager-api/main.go::generateNamespaceName` (the in-repo
+# sm-api stub) and `services/codingagent/namespace.go::OrgBaseNamespace`.
 echo ""
 echo "🪪 Pre-creating default org base namespace (local-only, ou-service equivalent)..."
 THUNDER_URL="${THUNDER_URL:-http://thunder.openchoreo.localhost:8080}"
 SEEDER_CLIENT_ID="${SEEDER_CLIENT_ID:-asdlc-local-dev-seeder}"
 SEEDER_CLIENT_SECRET="${SEEDER_CLIENT_SECRET:-asdlc-local-dev-seeder-secret}"
-TOKEN_JSON=$(curl -sS -X POST "${THUNDER_URL}/oauth2/token" \
-    -d "grant_type=client_credentials&client_id=${SEEDER_CLIENT_ID}&client_secret=${SEEDER_CLIENT_SECRET}&scope=openid" || true)
-TOKEN=$(printf '%s' "$TOKEN_JSON" | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d.get("access_token",""))' 2>/dev/null || true)
+# Thunder may have come up moments ago and not yet be ready to serve
+# /oauth2/token (especially on the first setup after a fresh k3d
+# cluster). Retry up to ~30s with backoff before giving up — the
+# original one-shot curl left the NS unpopulated, which then surfaced
+# downstream as SM-API mirror 500s during the user's first Connect.
+TOKEN=""
+for ATTEMPT in 1 2 3 4 5 6 7 8 9 10; do
+    TOKEN_JSON=$(curl -sS -X POST "${THUNDER_URL}/oauth2/token" \
+        -d "grant_type=client_credentials&client_id=${SEEDER_CLIENT_ID}&client_secret=${SEEDER_CLIENT_SECRET}&scope=openid" 2>/dev/null || true)
+    TOKEN=$(printf '%s' "$TOKEN_JSON" | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d.get("access_token",""))' 2>/dev/null || true)
+    if [ -n "$TOKEN" ]; then
+        break
+    fi
+    if [ "$ATTEMPT" -lt 10 ]; then
+        sleep 3
+    fi
+done
 if [ -z "$TOKEN" ]; then
-    echo "⚠️  could not mint seeder token from Thunder; skipping NS pre-create (re-run after Thunder is reachable)"
+    echo "⚠️  could not mint seeder token from Thunder after 30s; skipping NS pre-create"
+    echo "    (re-run setup.sh once Thunder is reachable, or kubectl create the wc-* NS manually)"
 else
     # Decode JWT payload (middle base64url segment), extract ouId.
     PAYLOAD=$(printf '%s' "$TOKEN" | cut -d. -f2)

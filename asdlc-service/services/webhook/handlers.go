@@ -1,3 +1,19 @@
+// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package webhook
 
 import (
@@ -245,13 +261,13 @@ func (h *Handler) PullRequestClosed(ctx context.Context, event, action string, b
 	if mergeSHA == "" {
 		return nil
 	}
-	projectID, err := lookupProjectByRepo(h.db.WithContext(ctx), p.Repository.FullName)
+	orgID, projectID, err := lookupProjectByRepo(h.db.WithContext(ctx), p.Repository.FullName)
 	if err != nil || projectID == "" {
 		return nil
 	}
 	var task models.ComponentTask
 	if err := h.db.WithContext(ctx).
-		Where("project_id = ? AND pull_request_number = ?", projectID, p.PullRequest.Number).
+		Where("org_id = ? AND project_id = ? AND pull_request_number = ?", orgID, projectID, p.PullRequest.Number).
 		First(&task).Error; err != nil {
 		return nil // already handled above
 	}
@@ -304,23 +320,31 @@ func (h *Handler) IssueComment(ctx context.Context, event, action string, body [
 	return nil
 }
 
-// lookupProjectByRepo translates a GitHub repo full_name to an ASDLC project
-// ID via the git_repositories table. Pass either a request-scoped *gorm.DB
+// lookupProjectByRepo translates a GitHub repo full_name to its owning ASDLC
+// (orgID, projectID) via the git_repositories table. The repo row is the
+// authority: repo URLs are globally unique, so the matched row disambiguates
+// the project. Callers MUST scope task lookups by BOTH org_id and project_id —
+// project_id is only a per-org slug and is reused across orgs, so a
+// project_id-only filter collides across orgs that share a slug and can absorb
+// a webhook into the wrong org's task. Pass a request-scoped *gorm.DB
 // (db.WithContext(ctx)) or an open transaction.
-func lookupProjectByRepo(db *gorm.DB, repoFullName string) (string, error) {
+func lookupProjectByRepo(db *gorm.DB, repoFullName string) (orgID, projectID string, err error) {
 	if repoFullName == "" {
-		return "", nil
+		return "", "", nil
 	}
-	var r struct{ ProjectID string }
-	err := db.Raw(`
-		SELECT project_id
+	var r struct {
+		OrgID     string
+		ProjectID string
+	}
+	err = db.Raw(`
+		SELECT org_id, project_id
 		FROM git_repositories
 		WHERE repo_url ILIKE ? OR repo_url ILIKE ?
 		LIMIT 1
 	`, "%"+repoFullName, "%"+repoFullName+".git").Scan(&r).Error
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	return r.ProjectID, nil
+	return r.OrgID, r.ProjectID, nil
 }
 

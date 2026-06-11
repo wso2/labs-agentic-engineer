@@ -1,3 +1,19 @@
+// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 // Package thundersvc is the BFF-side Thunder admin client. It mints
 // `scope=system` access tokens via client_credentials against a Thunder
 // OAuth app (asdlc-system-client) that has the Administrator role
@@ -52,7 +68,14 @@ type Client interface {
 	// it up in their secret store. When the secret was lost (e.g.
 	// OpenBao was wiped), use RegenerateClientSecret to issue a new
 	// one.
-	EnsurePublisherApp(ctx context.Context, orgHandle string) (clientID, clientSecret string, created bool, err error)
+	//
+	// orgOUID is the org's Thunder OU id (the JWT `ouId`). The app is
+	// registered under that OU so its client_credentials token carries
+	// `ouHandle == orgHandle` — the publisher-token verifier's cross-org
+	// check requires this. When orgOUID is empty the default OU is used
+	// (single-org / local dev), which only matches when the default OU
+	// is the org's OU.
+	EnsurePublisherApp(ctx context.Context, orgHandle, orgOUID string) (clientID, clientSecret string, created bool, err error)
 
 	// DeletePublisherApp deletes the publisher app for the given org.
 	// Returns true when the app existed and was deleted, false when it
@@ -279,7 +302,7 @@ func (c *client) getDefaultOUID(ctx context.Context, token string) (string, erro
 
 // -- EnsurePublisherApp ---------------------------------------------------
 
-func (c *client) EnsurePublisherApp(ctx context.Context, orgHandle string) (string, string, bool, error) {
+func (c *client) EnsurePublisherApp(ctx context.Context, orgHandle, orgOUID string) (string, string, bool, error) {
 	if orgHandle == "" {
 		return "", "", false, fmt.Errorf("orgHandle required")
 	}
@@ -289,27 +312,99 @@ func (c *client) EnsurePublisherApp(ctx context.Context, orgHandle string) (stri
 	}
 	appName := PublisherAppName(orgHandle)
 
-	_, existingClientID, err := c.findApp(ctx, token, appName)
+	internalID, existingClientID, err := c.findApp(ctx, token, appName)
 	if err != nil {
-		return "", "", false, err
+		return "", "", false, fmt.Errorf("findApp %q: %w", appName, err)
 	}
 	if existingClientID != "" {
-		// Already exists. Thunder doesn't expose secrets on read so
-		// the caller must already have it in OpenBao; we return only
-		// the clientId + created=false.
-		return existingClientID, "", false, nil
+		// The app exists. Self-heal its OU: an app created under the wrong
+		// OU (e.g. the default OU, before this code registered under the
+		// org OU) issues cc tokens whose `ouHandle` won't match the org, so
+		// the publisher-token verifier rejects the runner. When we know the
+		// org OU and the existing app sits under a different one, delete +
+		// recreate it under the org OU. The client_id is deterministic
+		// (= app name) so it's unchanged; only the secret rotates, which
+		// the caller re-mirrors on the created=true branch.
+		if orgOUID == "" {
+			slog.WarnContext(ctx, "publisher app OU not verified — org OU unknown (falling back), token ouHandle may not match",
+				"appName", appName)
+			return existingClientID, "", false, nil
+		}
+		currentOU, ouErr := c.appOUID(ctx, token, internalID)
+		if ouErr != nil {
+			// Don't take a destructive heal on an uncertain read; log and
+			// keep the existing app so dispatch isn't blocked.
+			slog.WarnContext(ctx, "publisher app OU read failed — skipping OU self-heal",
+				"appName", appName, "appID", internalID, "error", ouErr)
+			return existingClientID, "", false, nil
+		}
+		if currentOU == "" || currentOU == orgOUID {
+			slog.DebugContext(ctx, "publisher app already under correct OU",
+				"appName", appName, "ouID", currentOU)
+			return existingClientID, "", false, nil
+		}
+		slog.InfoContext(ctx, "publisher app under wrong OU — re-registering under org OU",
+			"appName", appName, "appID", internalID, "currentOU", currentOU, "orgOU", orgOUID)
+		if _, derr := c.deleteApp(ctx, token, internalID); derr != nil {
+			// Thunder has been observed to return 5xx (SSE-5000) on delete
+			// even when the app was actually removed server-side. Don't abort
+			// the heal on that — re-check by name and, if the app is gone,
+			// continue to recreate so the heal completes in a single dispatch
+			// (otherwise the org is left with no publisher app until the next
+			// run). Only a genuinely-still-present app is a hard failure.
+			if _, stillID, ferr := c.findApp(ctx, token, appName); ferr != nil || stillID != "" {
+				return "", "", false, fmt.Errorf("heal publisher OU: delete %q (id=%s): %w", appName, internalID, derr)
+			}
+			slog.WarnContext(ctx, "publisher app delete returned an error but the app is gone — continuing to recreate",
+				"appName", appName, "appID", internalID, "deleteErr", derr)
+		}
+		id, secret, cerr := c.createApp(ctx, token, appName, orgOUID)
+		if cerr != nil {
+			// The old app is gone; the next dispatch re-enters the create
+			// path below and provisions fresh. Surface the error loudly.
+			return "", "", false, fmt.Errorf("heal publisher OU: recreate %q under OU %s: %w", appName, orgOUID, cerr)
+		}
+		slog.InfoContext(ctx, "publisher app re-registered under org OU (secret rotated)",
+			"appName", appName, "orgOU", orgOUID)
+		return id, secret, true, nil
 	}
 
-	ouID, err := c.getDefaultOUID(ctx, token)
-	if err != nil {
-		return "", "", false, err
+	// Register the app under the org's own OU so the cc token's `ouHandle`
+	// resolves to the org handle (the verifier's cross-org check). Fall
+	// back to the default OU only when the org OU is unknown.
+	ouID := orgOUID
+	if ouID == "" {
+		ouID, err = c.getDefaultOUID(ctx, token)
+		if err != nil {
+			return "", "", false, fmt.Errorf("getDefaultOUID: %w", err)
+		}
+		slog.WarnContext(ctx, "creating publisher app under DEFAULT OU — org OU unknown; token ouHandle may not match org",
+			"appName", appName, "defaultOU", ouID)
 	}
 
 	id, secret, err := c.createApp(ctx, token, appName, ouID)
 	if err != nil {
-		return "", "", false, err
+		return "", "", false, fmt.Errorf("createApp %q under OU %s: %w", appName, ouID, err)
 	}
+	slog.InfoContext(ctx, "publisher app created", "appName", appName, "ouID", ouID, "underOrgOU", orgOUID != "")
 	return id, secret, true, nil
+}
+
+// appOUID reads the OU id an existing Thunder application is registered
+// under, so EnsurePublisherApp can detect a wrong-OU app and heal it.
+// Returns "" (not an error) when the OU can't be determined from the app
+// body — callers treat that as "don't risk a destructive heal".
+func (c *client) appOUID(ctx context.Context, token, appID string) (string, error) {
+	app, err := c.getAppByID(ctx, token, appID)
+	if err != nil {
+		return "", err
+	}
+	for _, k := range []string{"ouId", "ou_id", "organizationUnitId"} {
+		if v, ok := app[k].(string); ok && v != "" {
+			return v, nil
+		}
+	}
+	return "", nil
 }
 
 func (c *client) DeletePublisherApp(ctx context.Context, orgHandle string) (bool, error) {
