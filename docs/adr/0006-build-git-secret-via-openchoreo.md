@@ -31,13 +31,18 @@ maintainability — one path, not two.
 
 ## Consequences
 
-- **Interim:** wso2cloud platform-api does **not** yet route
-  `/api/v1alpha1/gitsecrets` (tracked by wso2-enterprise/wso2cloud#319), so
-  cloud `CreateGitSecret` 404s. Until then cloud defaults to **public** repos
-  (`GITHUB_REPO_VISIBILITY` flipped to public, #34) and build-secret
-  provisioning **degrades gracefully** — empty `secretRef` + a loud warning;
-  ownership (`ErrRepoNotInOrg`) and disconnect (`ErrOrgDisconnected`) refusals
-  stay fatal.
+- **Interim — blocked on wso2cloud:** wso2cloud platform-api does **not** yet
+  route `/api/v1alpha1/gitsecrets` (tracked by wso2-enterprise/wso2cloud#319),
+  so cloud `CreateGitSecret` 404s and the build credential can't be delivered.
+  **→ app-factory cannot build _private_ repos in cloud until #319 lands.**
+  Until then cloud creates **public** repos (`GITHUB_REPO_VISIBILITY` default
+  flipped to public, #34) and clones them unauthenticated; build-secret
+  provisioning **degrades gracefully** — empty `secretRef` + a loud warning
+  (a private repo would just fail at checkout with a clear git error).
+  Ownership (`ErrRepoNotInOrg`) and disconnect (`ErrOrgDisconnected`) refusals
+  stay fatal. This is a credential-*delivery* gap, not a `dockerfile-builder`
+  limitation — the builder clones a private repo fine once the secret is
+  delivered (as it is locally).
 - Local k3d keeps **private** repos, with concurrent-build OC-409 tolerance
   (delete-not-found and create-conflict both mean another same-org build
   raced us).

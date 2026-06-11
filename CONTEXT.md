@@ -90,6 +90,15 @@ write — never a direct in-cluster Secret apply. The per-org SecretReference is
 refreshed (delete+create) every build because the App token is short-lived.
 See [[adr-build-git-secret-via-openchoreo]].
 
+### `GITHUB_REPO_VISIBILITY`
+Visibility of repos the BFF creates for new projects. **Cloud default: `public`**;
+local keeps `private`. Cloud is public because the build git secret can't be
+delivered there yet — wso2cloud platform-api doesn't route `/gitsecrets`
+(wso2-enterprise/wso2cloud#319), so `dockerfile-builder` clones unauthenticated,
+which only works for public repos. **Private-repo cloud builds are blocked on
+#319.** Not a builder limitation — local k3d builds private repos fine once the
+secret is delivered. See [[adr-build-git-secret-via-openchoreo]].
+
 ### `SM API` — Secret Manager API
 The platform secret backend service. **WriteOnly** — `GetSecretWithValue`
 returns `ErrNotSupported`. Authorizes via inbound user JWT. Implements
