@@ -32,7 +32,8 @@ maintainability — one path, not two.
 ## Consequences
 
 - **Interim — blocked on wso2cloud:** wso2cloud platform-api does **not** yet
-  route `/api/v1alpha1/gitsecrets` (tracked by wso2-enterprise/wso2cloud#319),
+  route `/api/v1alpha1/gitsecrets` (tracked by
+  [wso2-enterprise/wso2cloud#319](https://github.com/wso2-enterprise/wso2cloud/issues/319)),
   so cloud `CreateGitSecret` 404s and the build credential can't be delivered.
   **→ app-factory cannot build _private_ repos in cloud until #319 lands.**
   Until then cloud creates **public** repos (`GITHUB_REPO_VISIBILITY` default
