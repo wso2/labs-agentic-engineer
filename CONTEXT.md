@@ -106,13 +106,13 @@ returns `ErrNotSupported`. Authorizes via inbound user JWT. Implements
 `SecretReference` CR creation, so the calling BFF must not author SRs in
 addition.
 
-- **Server source:** `wso2cloud/backend/secret-manager-api/` (full Go
-  service with its own Dockerfile, `cmd/secret-manager-api/main.go`).
-- **Client library:** `agent-platform/agent-manager-service/secrets/`
-  (the Go HTTP client that the BFF calls).
+- **Server:** the wso2cloud `secret-manager-api` service (a separate WSO2
+  repo, not part of this repo).
+- **Client:** ported into this repo at `asdlc-service/clients/secretmanagersvc`
+  — the Go HTTP client the BFF calls.
 
 App-factory runs SM API in **both** local and cloud (deliberate divergence
-from agent-platform, which only runs SM API in cloud):
+from the upstream reference, which only runs SM API in cloud):
 - **Cloud:** `secret-manager-api.openchoreo.dp.${cloud_base_domain}` on
   `cloud-dp-oc-cp` — the real service.
 - **Local:** an **in-repo Go stub** at `deployments/local-secret-manager-api/`
@@ -180,10 +180,9 @@ coding-agent moves off OC WorkflowRun entirely (see
 ExternalSecret directly via cluster-gateway-proxy.
 
 ### `cluster-gateway-proxy`
-A wso2cloud-team-owned HTTP→DP-cluster reverse proxy
-(`wso2cloud/backend/cluster-gateway-proxy/`, deployed in
-`openchoreo-control-plane` on `cloud-dp-oc-cp`, also exposed externally
-at `cluster-gateway-proxy.openchoreo.dp.${cloud_base_domain}`). Forwards
+A wso2cloud-team-owned HTTP→DP-cluster reverse proxy (a separate WSO2 service),
+deployed in `openchoreo-control-plane` on `cloud-dp-oc-cp`, also exposed
+externally at `cluster-gateway-proxy.openchoreo.dp.${cloud_base_domain}`. Forwards
 namespace-scoped K8s API calls to a DP cluster via OC's cluster-gateway +
 cluster-agent WebSocket tunnel. Allowlist-gated by
 `CLUSTER_GATEWAY_PROXY_ALLOWED_CRS`. **The cloud proxy validates platform-idp
@@ -249,18 +248,19 @@ silently mis-routes/mis-bills to the Admin OU). See
 
 ---
 
-## Source repositories (reference layout, all under `wso2/software-factory/`)
+## Related WSO2 projects
 
-- `lab-app-factory/` — this repo. Platform code.
-- `agent-manager/` — OSS open-core AM (the reference "right way"). Source of
-  the `secretmanagersvc` interfaces + the `openbao` provider to port.
-- `agent-platform/` — Enterprise AM superset deployed on WSO2 Cloud. Source
-  of the `secret-manager-api` provider (private overlay artifact).
-- `wso2cloud/` — wso2cloud platform code. `backend/core/internal/ou/` is the
-  org-unit provisioner; its `util.GenerateNamespaceName` is the canonical
-  source of the `wc-<orgUUID8>-<orgHash8>` shape.
-- `wso2cloud-deployement-main/` — GitOps repo for cloud deployments. Holds
-  app-factory's release-bindings, ClusterWorkflow CRs, Vault SecretReference
-  definitions.
-- `openchoreo/` — OC source. Authoritative for what
-  `ClusterWorkflow`/`WorkflowRun`/`SecretReference`/`GitSecret` actually mean.
+Separate WSO2 repositories — **not part of this repo**, referenced here only to
+explain where upstream concepts originate:
+
+- **agent-manager** — OSS open-core Agent Manager; the reference pattern
+  app-factory's `secretmanagersvc` client follows.
+- **agent-platform** — the enterprise Agent Manager superset; origin of the
+  `secret-manager-api` provider pattern.
+- **wso2cloud** — the WSO2 Cloud platform; its org-unit provisioner is the
+  canonical source of the `wc-<orgUUID8>-<orgHash8>` namespace shape
+  (`GenerateNamespaceName`).
+- **OpenChoreo (OC)** — the upstream platform; authoritative for what
+  `ClusterWorkflow` / `WorkflowRun` / `SecretReference` / `GitSecret` mean.
+- the cloud **GitOps deployment repo** — holds app-factory's release-bindings,
+  ClusterWorkflow CRs, and Vault SecretReference definitions.

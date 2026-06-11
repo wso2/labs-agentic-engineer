@@ -4,6 +4,12 @@
 
 accepted (2026-05-25, per wso2cloud team direction)
 
+**Update (2026-06, #23):** the cloud `cluster-gateway-proxy` now validates
+platform-idp JWTs; the BFF attaches its M2M token (the additive token path this
+ADR anticipated). The "un-authed today" statements below describe the original
+2026-05-25 assumption — see [[adr-dual-mode-oc-auth-impersonation]] for the
+current auth model.
+
 ## Context
 
 Today app-factory dispatches the coding-agent as an OC `WorkflowRun` of a
@@ -12,9 +18,8 @@ Argo executes it. The new direction (see
 [[adr-coding-agent-off-workflow-plane]]) moves coding-agent off WP onto a
 DP-style namespace on `cloud-dp-oc-dp`, where wso2cloud has confirmed
 **there is no Argo and there will be no Argo** — coding-agent should run
-as a plain K8s Job. OC's `WorkflowRun` stack is hardcoded around Argo
-(`openchoreo/internal/dataplane/kubernetes/types/argoproj.io/workflow`)
-and cannot project to a non-Argo target.
+as a plain K8s Job. OC's `WorkflowRun` stack is hardcoded around Argo and
+cannot project to a non-Argo target.
 
 ## Decision
 
@@ -22,9 +27,9 @@ App-factory's BFF dispatches the coding-agent as a plain K8s `Job` on
 `cloud-dp-oc-dp` by posting the Job + ExternalSecret manifests directly
 to wso2cloud's existing `cluster-gateway-proxy` (in-cluster service URL
 `http://cluster-gateway-proxy.openchoreo-control-plane.svc.cluster.local:8085`).
-**No authentication is sent** — the proxy enforces none today, and
-wso2cloud's own `ou` service calls the proxy the same way (no
-`Authorization` header, just `X-Correlation-ID`). The
+**As of this decision no authentication was sent** — the proxy enforced none,
+and wso2cloud's own `ou` service called it the same way (no `Authorization`
+header, just `X-Correlation-ID`). (Since changed — see the Status update.) The
 `APP_FACTORY_BFF_TO_REMOTE_WORKER` Thunder M2M client (which we initially
 thought to use) was actually provisioned for the now-removed long-lived
 `remote-worker` service component and is not relevant here. The
@@ -40,15 +45,13 @@ manifest in the lab repo). The `dockerfile-builder` flow is **unchanged**
   compute with runtime workloads).
 - **Reuses proven mechanism.** wso2cloud's `ou` service already drives
   cluster-gateway-proxy to apply per-org bootstrap resources to DP. The
-  proxy is namespace-agnostic and JWT-authed; the only ask of wso2cloud
-  is expanding `CLUSTER_GATEWAY_PROXY_ALLOWED_CRS` to include `jobs` and
-  `externalsecrets`.
-- **No new credentials to provision.** The proxy is un-authed today; no
-  M2M client, no token-minting, no JWKS wiring on app-factory's side.
-  Matches the existing `ou-service` caller pattern exactly. (If/when
-  wso2cloud adds JWT enforcement to the proxy, app-factory's
-  `clustergatewayproxy` client adds a token-minting path — small,
-  additive change.)
+  proxy is namespace-agnostic; the only ask of wso2cloud is expanding
+  `CLUSTER_GATEWAY_PROXY_ALLOWED_CRS` to include `jobs` and `externalsecrets`.
+- **No new credentials to provision (at the time).** The proxy was un-authed
+  when this was decided; no M2M client, no token-minting on app-factory's side.
+  Matched the `ou-service` caller pattern. (wso2cloud later added JWT
+  enforcement — #23 — and the `clustergatewayproxy` client now attaches the
+  BFF's M2M token, the additive path this anticipated.)
 - **Stays true to the boundary rule.** App-factory's BFF never holds a
   DP-cluster kubeconfig; it only ever speaks HTTP to a single
   wso2cloud-owned in-cluster service. Matches the "no long-lived service
@@ -62,9 +65,8 @@ manifest in the lab repo). The `dockerfile-builder` flow is **unchanged**
   two proxy calls (ExternalSecret, Job).
 - Status tracking shifts from `WorkflowRun.status` polling to Job-status
   polling (also via the proxy) and/or runner callbacks.
-- The `app-factory-coding-agent.yaml` `ClusterWorkflow` CR in
-  `wso2cloud-deployement-main/dataplane/.../cluster-workflows/` is
-  deleted; the Job template moves into app-factory.
+- The `app-factory-coding-agent.yaml` `ClusterWorkflow` CR in the cloud
+  GitOps deployment repo is deleted; the Job template moves into app-factory.
 - **wso2cloud team dependency:** allowlist expansion
   (`CLUSTER_GATEWAY_PROXY_ALLOWED_CRS += jobs,externalsecrets[,…]`) and
   per-org bootstrap NS template for `wc-<org8>-<hash>-remote-worker`

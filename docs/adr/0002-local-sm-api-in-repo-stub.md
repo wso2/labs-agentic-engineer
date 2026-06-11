@@ -16,10 +16,11 @@ runs **no** SM-API service locally.
 App-factory's product requirement ("works locally as well as in the cloud")
 puts more weight on **local↔cloud parity** than agent-platform does. A first
 cut achieved parity by running the *real* cloud SM-API binary locally, built
-from `wso2cloud/backend/secret-manager-api/`. But that build context
-(`deployments/docker-compose.yml`) is the **only** `../../wso2cloud` dependency
-in the entire local setup, and `wso2cloud` is a **private** repo while
-lab-app-factory is **public** — so public users can't `docker compose up` at all.
+from a sibling checkout of the **private** wso2cloud repo. But that build
+context (`deployments/docker-compose.yml`) was the **only** dependency on a repo
+outside this one in the entire local setup — and since lab-app-factory is
+**public**, public users without that private checkout can't `docker compose up`
+at all.
 
 ## Decision
 
@@ -65,9 +66,9 @@ and decodes the JWT without signature verification (single-tenant local —
   `openbao` provider for local. Less code, but weaker local↔cloud parity: the
   locally-authored-SR path is structurally different from the cloud
   server-authored path, undermining "local testing covers the cloud case."
-- **Run the real cloud binary locally, built from `wso2cloud/`** — the original
-  approach; fails the public-repo goal (private build context, unbuildable for
-  the public audience).
+- **Run the real cloud binary locally, built from the private wso2cloud repo**
+  — the original approach; fails the public-repo goal (private build context,
+  unbuildable for the public audience).
 - **Publish a prebuilt image** — cloud's lives in private ECR, and publishing a
   binary built from private source needs policy sign-off.
 - **Open-source the service** — needs relicensing.
