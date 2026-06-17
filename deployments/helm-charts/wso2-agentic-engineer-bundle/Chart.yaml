@@ -1,12 +1,12 @@
 apiVersion: v2
-appVersion: 0.0.0-dev
+appVersion: "v0.5.1"
 dependencies:
 - name: wso2-ae-oc-extensions
   repository: file://../wso2-ae-oc-extensions
-  version: 0.0.0-dev
+  version: v0.5.1
 - name: wso2-ae-platform
   repository: file://../wso2-ae-platform
-  version: 0.0.0-dev
+  version: v0.5.1
 description: >
   Single-command install of WSO2 Agentic Engineer on an OpenChoreo cluster.
   Deploys ASDLC platform services (asdlc-api, agents-service, asdlc-console) as
@@ -15,4 +15,4 @@ description: >
   Registers all ASDLC OAuth clients in OC Thunder via a post-install bootstrap job.
 name: wso2-agentic-engineer-bundle
 type: application
-version: 0.0.0-dev
+version: v0.5.1
