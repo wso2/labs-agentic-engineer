@@ -17,22 +17,24 @@
 package api
 
 import (
-	"net/http"
-
 	"github.com/wso2/asdlc/asdlc-service/controllers"
 )
 
-// registerIDPRoutes wires the /api/v1/organizations/{orgId}/idp-profile
+// registerIDPRoutes wires the /api/v1/organizations/{orgHandle}/idp-profile
 // endpoints. GetProfile is what the console org-settings page reads;
-// RegenerateSecret is the admin-only emergency-rotate path. Per-org
-// IDP profile creation is automatic — no POST endpoint here because
-// trait_sync triggers EnsureOrgPublisher on first protected-component
-// deploy.
-func registerIDPRoutes(mux *http.ServeMux, c controllers.IDPController) {
-	mux.HandleFunc("GET /api/v1/organizations/{orgId}/idp-profile", c.GetProfile)
-	mux.HandleFunc("PUT /api/v1/organizations/{orgId}/idp-profile", c.UpdateProfile)
-	mux.HandleFunc("POST /api/v1/organizations/{orgId}/idp-profile/rotate", c.RegenerateSecret)
-	// Unscoped helper used by the IDP picker — needs only a User JWT,
-	// not an org assignment. Phase 7 BYO-IDP form auto-populates JWKS URL.
-	mux.HandleFunc("GET /api/v1/idp/discover", c.DiscoverIssuer)
+// RegenerateSecret is the admin-only emergency-rotate path. Per-org IDP
+// profile creation is automatic — no POST endpoint here because trait_sync
+// triggers EnsureOrgPublisher on first protected-component deploy.
+//
+// The org path var was renamed {orgId}→{orgHandle} so every gated route names
+// the org uniformly and the gate's allowlist invariant holds (closes IDOR-2,
+// §6.1b/§6.6f). The value has always been the handle, not a UUID.
+func registerIDPRoutes(rt *Router, c controllers.IDPController) {
+	rt.OrgScoped("GET /api/v1/organizations/{orgHandle}/idp-profile", c.GetProfile)
+	rt.OrgScoped("PUT /api/v1/organizations/{orgHandle}/idp-profile", c.UpdateProfile)
+	rt.OrgScoped("POST /api/v1/organizations/{orgHandle}/idp-profile/rotate", c.RegenerateSecret)
+	// Unscoped helper used by the IDP picker — needs only a User JWT, not an
+	// org assignment (enumerated carve-out, §6.6f). Phase 7 BYO-IDP form
+	// auto-populates JWKS URL.
+	rt.Public("GET /api/v1/idp/discover", c.DiscoverIssuer)
 }

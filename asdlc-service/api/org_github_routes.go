@@ -25,22 +25,23 @@ import (
 // registerOrgGitHubRoutes wires the per-org GitHub integration surface.
 //
 // Org-scoped routes mount under the existing /api/v1/organizations/{orgHandle}
-// prefix and inherit the JWT middleware that protects every other org-scoped
-// route. The connect callback is unscoped — GitHub's single configured
-// callback URL has no orgHandle to thread, so the JWT-carried `state`
-// parameter is the org-binding signal.
-func registerOrgGitHubRoutes(mux *http.ServeMux, c controllers.OrgGitHubController) {
-	mux.HandleFunc("POST /api/v1/organizations/{orgHandle}/github/connect/start", c.StartConnect)
-	mux.HandleFunc("POST /api/v1/organizations/{orgHandle}/github/pat", c.ConnectPAT)
-	mux.HandleFunc("GET /api/v1/organizations/{orgHandle}/github", c.GetStatus)
-	mux.HandleFunc("DELETE /api/v1/organizations/{orgHandle}/github", c.Disconnect)
+// prefix and inherit the central tenant gate that protects every other
+// org-scoped route. The connect callback is unscoped (registerConnectCallbackRoute)
+// — GitHub's single configured callback URL has no orgHandle to thread, so the
+// JWT-carried `state` parameter is the org-binding signal.
+func registerOrgGitHubRoutes(rt *Router, c controllers.OrgGitHubController) {
+	rt.OrgScoped("POST /api/v1/organizations/{orgHandle}/github/connect/start", c.StartConnect)
+	rt.OrgScoped("POST /api/v1/organizations/{orgHandle}/github/pat", c.ConnectPAT)
+	rt.OrgScoped("GET /api/v1/organizations/{orgHandle}/github", c.GetStatus)
+	rt.OrgScoped("DELETE /api/v1/organizations/{orgHandle}/github", c.Disconnect)
 }
 
 // registerConnectCallbackRoute mounts the App-mode connect callback
 // OUTSIDE the JWT-protected mux. GitHub redirects the user's browser
 // here with the OAuth code or post-install installation_id; we verify
 // the connect-state JWT (issued by StartConnect) instead of the console
-// JWT.
+// JWT. This is an enumerated carve-out: the signed connect-state is the
+// authn, bound to the org from that state (SourcePublisherCC, §6.6f).
 //
 // The deprecated old callback path /api/v1/github/app/callback returns
 // 410 Gone — any in-flight install URLs from prior PR D-followup setup

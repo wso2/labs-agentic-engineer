@@ -27,7 +27,7 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/utils"
 )
 
-// IDPController serves /api/v1/organizations/{orgId}/idp-profile — the
+// IDPController serves /api/v1/organizations/{orgHandle}/idp-profile — the
 // read endpoint backs the Phase 4 console UI; the rotate endpoint is a
 // platform-admin convenience for emergency rotation. EnsurePublisher
 // is invoked lazily from trait_sync.SyncComponentTraits so there's no
@@ -53,9 +53,9 @@ func NewIDPController(service services.IDPService) IDPController {
 // been created yet — the response carries `kind=null` so the console
 // can render "no IDP configured" state.
 func (c *idpController) GetProfile(w http.ResponseWriter, r *http.Request) {
-	orgID := r.PathValue("orgId")
+	orgID := r.PathValue("orgHandle")
 	if orgID == "" {
-		utils.WriteErrorResponse(w, http.StatusBadRequest, "orgId required")
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "orgHandle required")
 		return
 	}
 	profile, err := c.service.GetProfile(r.Context(), orgID)
@@ -79,9 +79,9 @@ func (c *idpController) GetProfile(w http.ResponseWriter, r *http.Request) {
 // Body shape: {"kind":"platform|asgardeo|custom", "issuer":"...", "jwksUrl":"..."}.
 // Empty fields leave the existing value unchanged.
 func (c *idpController) UpdateProfile(w http.ResponseWriter, r *http.Request) {
-	orgID := r.PathValue("orgId")
+	orgID := r.PathValue("orgHandle")
 	if orgID == "" {
-		utils.WriteErrorResponse(w, http.StatusBadRequest, "orgId required")
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "orgHandle required")
 		return
 	}
 	var body struct {
@@ -112,9 +112,9 @@ func (c *idpController) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 // secret-consumer pods immediately; subsequent GetProfile responses
 // will only confirm has-secret=true, never expose the value.
 func (c *idpController) RegenerateSecret(w http.ResponseWriter, r *http.Request) {
-	orgID := r.PathValue("orgId")
+	orgID := r.PathValue("orgHandle")
 	if orgID == "" {
-		utils.WriteErrorResponse(w, http.StatusBadRequest, "orgId required")
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "orgHandle required")
 		return
 	}
 	actor := actorFromContext(r.Context())

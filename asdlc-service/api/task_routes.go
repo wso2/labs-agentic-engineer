@@ -23,28 +23,28 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/middleware"
 )
 
-func registerTaskRoutes(mux *http.ServeMux, c controllers.TaskController) {
+func registerTaskRoutes(rt *Router, c controllers.TaskController) {
 	// Org-scoped tasks list (Phase 2 PR D — used by ReachReconciliationBanner).
 	// Supports ?status=, ?cause=, ?since= filters.
-	mux.HandleFunc("GET /api/v1/organizations/{orgHandle}/tasks", c.ListOrgTasks)
-	mux.HandleFunc("GET /api/v1/organizations/{orgHandle}/projects/{projectName}/tasks", c.ListTasks)
-	mux.HandleFunc("GET /api/v1/organizations/{orgHandle}/projects/{projectName}/tasks/generated", c.GetTasks)
-	mux.HandleFunc("GET /api/v1/organizations/{orgHandle}/projects/{projectName}/tasks/{taskId}", c.GetTask)
-	mux.HandleFunc("GET /api/v1/organizations/{orgHandle}/projects/{projectName}/tasks/{taskId}/status", c.GetTaskStatus)
-	mux.HandleFunc("POST /api/v1/organizations/{orgHandle}/projects/{projectName}/tasks/dispatch", c.DispatchTasks)
-	mux.HandleFunc("POST /api/v1/organizations/{orgHandle}/projects/{projectName}/tasks/generate", c.GenerateTasks)
-	mux.HandleFunc("POST /api/v1/organizations/{orgHandle}/projects/{projectName}/tasks/{taskId}/exec", c.ExecTask)
-	mux.HandleFunc("POST /api/v1/organizations/{orgHandle}/projects/{projectName}/tasks/{taskId}/regenerate-body", c.RegenerateTaskBody)
+	rt.OrgScoped("GET /api/v1/organizations/{orgHandle}/tasks", c.ListOrgTasks)
+	rt.OrgScoped("GET /api/v1/organizations/{orgHandle}/projects/{projectName}/tasks", c.ListTasks)
+	rt.OrgScoped("GET /api/v1/organizations/{orgHandle}/projects/{projectName}/tasks/generated", c.GetTasks)
+	rt.OrgScoped("GET /api/v1/organizations/{orgHandle}/projects/{projectName}/tasks/{taskId}", c.GetTask)
+	rt.OrgScoped("GET /api/v1/organizations/{orgHandle}/projects/{projectName}/tasks/{taskId}/status", c.GetTaskStatus)
+	rt.OrgScoped("POST /api/v1/organizations/{orgHandle}/projects/{projectName}/tasks/dispatch", c.DispatchTasks)
+	rt.OrgScoped("POST /api/v1/organizations/{orgHandle}/projects/{projectName}/tasks/generate", c.GenerateTasks)
+	rt.OrgScoped("POST /api/v1/organizations/{orgHandle}/projects/{projectName}/tasks/{taskId}/exec", c.ExecTask)
+	rt.OrgScoped("POST /api/v1/organizations/{orgHandle}/projects/{projectName}/tasks/{taskId}/regenerate-body", c.RegenerateTaskBody)
 	// F3c — operator retry for verification_failed tasks. Uses standard
 	// user auth (org/project-scoped).
-	mux.HandleFunc("POST /api/v1/organizations/{orgHandle}/projects/{projectName}/tasks/{taskId}/retry", c.Retry)
+	rt.OrgScoped("POST /api/v1/organizations/{orgHandle}/projects/{projectName}/tasks/{taskId}/retry", c.Retry)
 
 	// Progress endpoints — task-execution-progress.md §5.2. Per-org rate
 	// limited (token bucket, 100 req/s burst 200) so a single tenant can't
 	// starve Observer for others.
 	progressLimiter := middleware.ProgressRateLimit(100, 200)
-	mux.Handle("GET /api/v1/organizations/{orgHandle}/projects/{projectName}/tasks/{taskId}/progress/agent",
+	rt.HandleOrgScoped("GET /api/v1/organizations/{orgHandle}/projects/{projectName}/tasks/{taskId}/progress/agent",
 		progressLimiter(http.HandlerFunc(c.GetTaskAgentProgress)))
-	mux.Handle("GET /api/v1/organizations/{orgHandle}/projects/{projectName}/tasks/{taskId}/progress/build",
+	rt.HandleOrgScoped("GET /api/v1/organizations/{orgHandle}/projects/{projectName}/tasks/{taskId}/progress/build",
 		progressLimiter(http.HandlerFunc(c.GetTaskBuildProgress)))
 }

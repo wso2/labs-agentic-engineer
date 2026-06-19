@@ -66,3 +66,7 @@ deployments-v2/.webhook-relay.pid
 
 # Helm packaged chart archives
 deployments/helm-charts/*.tgz
+
+.turbo/
+
+docs/design/

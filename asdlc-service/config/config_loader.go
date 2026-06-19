@@ -52,6 +52,7 @@ func Load() (Config, error) {
 		TestMode:                  r.readOptionalBool("TEST_MODE", false),
 		LocalOpenBaoRepairEnabled: r.readOptionalBool("LOCAL_OPENBAO_REPAIR", false),
 		DeploymentTier:            r.readOptionalString("DEPLOYMENT_TIER", "dev"),
+		TenantGateMode:            r.readOptionalString("TENANT_GATE_MODE", "enforce"),
 		GitHubWebhookSecret:    r.readOptionalString("GITHUB_WEBHOOK_SECRET", ""),
 		OAuthStateSigningKey:   r.readOptionalString("OAUTH_STATE_SIGNING_KEY", ""),
 		GithubAppSlug:          r.readOptionalString("GITHUB_APP_SLUG", "asdlc-platform"),

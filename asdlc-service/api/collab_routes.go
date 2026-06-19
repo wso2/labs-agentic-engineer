@@ -22,12 +22,15 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/controllers"
 )
 
-func registerCollabRoutes(apiMux *http.ServeMux, mainMux *http.ServeMux, c controllers.CollabController) {
-	// User-facing: protected by the JWT middleware via apiMux.
-	apiMux.HandleFunc("GET /api/v1/organizations/{orgHandle}/projects/{projectName}/requirements/collab-session", c.GetCollabSession)
+func registerCollabRoutes(rt *Router, mainMux *http.ServeMux, c controllers.CollabController) {
+	// User-facing: org-scoped, gated by the central tenant gate via the Router.
+	rt.OrgScoped("GET /api/v1/organizations/{orgHandle}/projects/{projectName}/requirements/collab-session", c.GetCollabSession)
 
 	// Server-to-server: collab-server calls this with the user's Bearer JWT to
 	// validate identity. Registered on mainMux so it bypasses the standard JWT
-	// middleware; the controller validates the token inline.
+	// middleware; the controller validates the token inline. This is an
+	// enumerated carve-out (INT-8) — it MUST be brought under signature-verify
+	// + a project-scoped access check in the req+design phase; it must not ship
+	// signature-only.
 	mainMux.HandleFunc("GET /api/v1/collab/validate", c.ValidateCollabAccess)
 }

@@ -14,19 +14,13 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package api
+// Package ids is the platform-layer entry point for identifier validation
+// (slugs/UUIDs). It is the eventual rename of utils/validate (§5); during the
+// strangler migration it delegates to utils/validate so a single
+// implementation backs both call sites until that package is folded in.
+package ids
 
-import (
-	"github.com/wso2/asdlc/asdlc-service/controllers"
-)
+import "github.com/wso2/asdlc/asdlc-service/utils/validate"
 
-// registerOrganizationRoutes wires the unscoped /api/v1/organizations
-// endpoint. The BFF only lists orgs (the OC namespaces it can see); creating
-// orgs is the platform's job, not the BFF's.
-//
-// The listing is an enumerated gate carve-out (§6.6f): it carries no
-// {orgHandle} path var and is scoped to the caller's own org inside the
-// controller, so it registers via Public (no per-route org gate).
-func registerOrganizationRoutes(rt *Router, c controllers.OrganizationController) {
-	rt.Public("GET /api/v1/organizations", c.ListOrganizations)
-}
+// Slug validates a path identifier such as an org handle or project id.
+func Slug(v string) error { return validate.Slug(v) }

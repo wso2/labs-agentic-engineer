@@ -43,6 +43,10 @@ services:
       LOG_LEVEL: "debug"
       DATABASE_URL: "postgres://asdlc:asdlc@postgres:5432/asdlc?sslmode=disable"
       DEPLOYMENT_TIER: "${DEPLOYMENT_TIER:-dev}"
+      # Central per-route tenant gate (§6.1b). ENFORCE by default (404s
+      # cross-org); set TENANT_GATE_MODE=log for the observe-only canary
+      # (emits [SHAKEOUT:would-deny] then passes through).
+      TENANT_GATE_MODE: "${TENANT_GATE_MODE:-enforce}"
       TEST_MODE: "true"
       # Gates the /_test/sm-api-resync endpoint, which emits decrypted
       # per-org plaintext to repair OpenBao after a local cluster reseed.

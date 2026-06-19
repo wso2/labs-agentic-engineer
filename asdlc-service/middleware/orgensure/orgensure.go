@@ -62,10 +62,29 @@ func Middleware(svc services.OrganizationService) func(http.Handler) http.Handle
 			if claims != nil {
 				thunderOrgUUID = claims.OuId
 			}
-			if err := svc.EnsureForOuHandle(r.Context(), ouHandle, thunderOrgUUID); err != nil {
+			// [SHAKEOUT:ORG] — the org/namespace-resolution seam. Local hardcodes
+			// ouHandle=default with a pre-created namespace; cloud derives the
+			// wc-<first8>-<sha256[:8]> namespace from the Thunder ouId. Logging
+			// both at Info (cloud may not run Debug) lets the two planes be
+			// diffed (§6.13). Never logs a secret value.
+			err := svc.EnsureForOuHandle(r.Context(), ouHandle, thunderOrgUUID)
+			slog.InfoContext(r.Context(), "[SHAKEOUT:ORG]",
+				"ouHandle", ouHandle,
+				"thunderOrgUUID", thunderOrgUUID,
+				"ensured", err == nil,
+				"ensureError", errStr(err))
+			if err != nil {
 				slog.WarnContext(r.Context(), "org-ensure verify failed; continuing", "ouHandle", ouHandle, "error", err)
 			}
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// errStr renders an error for the SHAKEOUT log without panicking on nil.
+func errStr(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }

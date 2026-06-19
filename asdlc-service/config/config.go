@@ -46,6 +46,13 @@ type Config struct {
 	// tier=dev.
 	DeploymentTier string
 
+	// TenantGateMode controls the central per-route tenant gate (§6.1b).
+	// ENFORCE BY DEFAULT (zero-config): "enforce" 404s a path-vs-JWT org
+	// mismatch (closes IDOR-1..5). Set TENANT_GATE_MODE=log to downgrade to
+	// observe-only — compute the decision, emit a [SHAKEOUT:would-deny] canary
+	// line, and pass through. Read from TENANT_GATE_MODE; unset ⇒ enforce.
+	TenantGateMode string
+
 	// GitHubWebhookSecret is the HMAC key for inbound webhook validation
 	// (one-shot, set per-org in production; one global value in dev).
 	GitHubWebhookSecret string

@@ -27,6 +27,7 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/config"
 	"github.com/wso2/asdlc/asdlc-service/controllers"
 	"github.com/wso2/asdlc/asdlc-service/internal/credentials"
+	"github.com/wso2/asdlc/asdlc-service/internal/platform/tenant"
 	"github.com/wso2/asdlc/asdlc-service/middleware"
 	jwtmw "github.com/wso2/asdlc/asdlc-service/middleware/jwt"
 	"github.com/wso2/asdlc/asdlc-service/middleware/jwtassertion"
@@ -120,45 +121,53 @@ func NewHandler(params AppParams) http.Handler {
 	}
 
 	// API routes — JWT-authenticated via JWKS-backed RS256 verification.
+	// Org-scoped routes register through apiRouter, which applies the central
+	// per-route tenant gate (BindUserOrg). The gate matches the {orgHandle}
+	// path var against the verified JWT org and (in enforce mode) 404s on a
+	// mismatch — the allowlist-by-construction IDOR fence (§6.1b). The
+	// enumerated carve-outs (org listing, idp discover, _test/reset) register
+	// via apiRouter.Public, which bypasses the gate intentionally.
 	apiMux := http.NewServeMux()
+	apiRouter := NewRouter(apiMux, tenant.BindUserOrg("orgHandle", tenant.ParseGateMode(params.Config.TenantGateMode)))
+	slog.Info("tenant gate active", "mode", string(tenant.ParseGateMode(params.Config.TenantGateMode)))
 	if params.ProjectController != nil {
-		registerProjectRoutes(apiMux, params.ProjectController)
+		registerProjectRoutes(apiRouter, params.ProjectController)
 	}
 	if params.OrganizationController != nil {
-		registerOrganizationRoutes(apiMux, params.OrganizationController)
+		registerOrganizationRoutes(apiRouter, params.OrganizationController)
 	}
 	if params.ComponentController != nil {
-		registerComponentRoutes(apiMux, params.ComponentController)
+		registerComponentRoutes(apiRouter, params.ComponentController)
 	}
 	if params.RequirementsController != nil {
-		registerRequirementsRoutes(apiMux, params.RequirementsController)
+		registerRequirementsRoutes(apiRouter, params.RequirementsController)
 	}
 	if params.RequirementsChatController != nil {
-		registerRequirementsChatRoutes(apiMux, params.RequirementsChatController)
+		registerRequirementsChatRoutes(apiRouter, params.RequirementsChatController)
 	}
 	if params.DesignController != nil {
-		registerDesignRoutes(apiMux, params.DesignController)
+		registerDesignRoutes(apiRouter, params.DesignController)
 	}
 	if params.TaskController != nil {
-		registerTaskRoutes(apiMux, params.TaskController)
+		registerTaskRoutes(apiRouter, params.TaskController)
 	}
 	if params.BoardController != nil {
-		registerBoardRoutes(apiMux, params.BoardController)
+		registerBoardRoutes(apiRouter, params.BoardController)
 	}
 	if params.ConfigController != nil {
-		registerConfigRoutes(apiMux, params.ConfigController)
+		registerConfigRoutes(apiRouter, params.ConfigController)
 	}
 	if params.OrgGitHubController != nil {
-		registerOrgGitHubRoutes(apiMux, params.OrgGitHubController)
+		registerOrgGitHubRoutes(apiRouter, params.OrgGitHubController)
 	}
 	if params.OrgAnthropicController != nil {
-		registerOrgAnthropicRoutes(apiMux, params.OrgAnthropicController)
+		registerOrgAnthropicRoutes(apiRouter, params.OrgAnthropicController)
 	}
 	if params.SkillController != nil {
-		registerSkillRoutes(apiMux, params.SkillController)
+		registerSkillRoutes(apiRouter, params.SkillController)
 	}
 	if params.IDPController != nil {
-		registerIDPRoutes(apiMux, params.IDPController)
+		registerIDPRoutes(apiRouter, params.IDPController)
 	}
 
 	// Test-only reset endpoint — truncates local DB tables.
@@ -209,7 +218,7 @@ func NewHandler(params AppParams) http.Handler {
 	}
 
 	if params.CollabController != nil {
-		registerCollabRoutes(apiMux, mux, params.CollabController)
+		registerCollabRoutes(apiRouter, mux, params.CollabController)
 	}
 
 	// --- Git-service-side routes (folded in after WS0.1.i) -------------
