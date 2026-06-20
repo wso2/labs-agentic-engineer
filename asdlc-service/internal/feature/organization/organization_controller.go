@@ -14,14 +14,13 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package controllers
+package organization
 
 import (
 	"errors"
 	"log/slog"
 	"net/http"
 
-	"github.com/wso2/asdlc/asdlc-service/services"
 	"github.com/wso2/asdlc/asdlc-service/utils"
 )
 
@@ -36,17 +35,17 @@ type OrganizationController interface {
 }
 
 type organizationController struct {
-	service services.OrganizationService
+	service OrganizationService
 }
 
-func NewOrganizationController(service services.OrganizationService) OrganizationController {
+func NewOrganizationController(service OrganizationService) OrganizationController {
 	return &organizationController{service: service}
 }
 
 func (c *organizationController) ListOrganizations(w http.ResponseWriter, r *http.Request) {
 	list, err := c.service.List(r.Context())
 	if err != nil {
-		if errors.Is(err, services.ErrUnauthorized) {
+		if errors.Is(err, ErrUnauthorized) {
 			utils.WriteErrorResponse(w, http.StatusUnauthorized, "invalid or expired token")
 			return
 		}

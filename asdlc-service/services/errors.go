@@ -23,9 +23,8 @@ import (
 )
 
 var (
-	ErrProjectNotFound = errors.New("project not found")
-	ErrUnauthorized    = errors.New("unauthorized")
-	ErrForbidden       = errors.New("forbidden")
+	ErrUnauthorized = errors.New("unauthorized")
+	ErrForbidden    = errors.New("forbidden")
 	// ErrSpecNotFound / ErrDesignNotFound re-export the canonical sentinels now
 	// owned by the artifacts feature (the artifact-not-found family), so the
 	// task feature can reference them without importing the flat services pkg.

@@ -17,10 +17,10 @@
 package api
 
 import (
-	"github.com/wso2/asdlc/asdlc-service/controllers"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/project"
 )
 
-func registerProjectRoutes(rt *Router, c controllers.ProjectController) {
+func registerProjectRoutes(rt *Router, c project.ProjectController) {
 	rt.OrgScoped("GET /api/v1/organizations/{orgHandle}/projects", c.ListProjects)
 	rt.OrgScoped("POST /api/v1/organizations/{orgHandle}/projects", c.CreateProject)
 	rt.OrgScoped("GET /api/v1/organizations/{orgHandle}/projects/{projectName}", c.GetProject)

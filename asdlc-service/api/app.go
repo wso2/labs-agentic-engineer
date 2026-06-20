@@ -31,7 +31,10 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/component"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/design"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/idp"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/organization"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/orgcreds"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/project"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/requirements"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/task"
 	"github.com/wso2/asdlc/asdlc-service/internal/platform/tenant"
@@ -41,13 +44,12 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/middleware/logger"
 	"github.com/wso2/asdlc/asdlc-service/middleware/orgensure"
 	"github.com/wso2/asdlc/asdlc-service/repositories"
-	"github.com/wso2/asdlc/asdlc-service/services"
 )
 
 // AppParams holds all dependencies needed to build the HTTP handler.
 type AppParams struct {
 	Config                     config.Config
-	ProjectController          controllers.ProjectController
+	ProjectController          project.ProjectController
 	ComponentController        component.ComponentController
 	RequirementsController     requirements.RequirementsController
 	RequirementsChatController requirements.RequirementsChatController
@@ -60,15 +62,15 @@ type AppParams struct {
 	OrgGitHubController        orgcreds.OrgGitHubController
 	OrgAnthropicController     orgcreds.OrgAnthropicController
 	SkillController            controllers.SkillController
-	OrganizationController     controllers.OrganizationController
-	IDPController              controllers.IDPController
+	OrganizationController     organization.OrganizationController
+	IDPController              idp.IDPController
 	JWKSController             controllers.JWKSController
 	TaskRepo                   repositories.TaskRepository
 	ConfigRepo                 repositories.ConfigRepository
 
 	// OrganizationService backs the JIT org-provisioning middleware. nil
 	// disables the middleware (tests, dev configurations without a DB).
-	OrganizationService services.OrganizationService
+	OrganizationService organization.OrganizationService
 
 	// ThunderJWKS verifies User JWTs and Service JWTs presented to the BFF.
 	// May be nil in dev/test, in which case inbound auth falls back to

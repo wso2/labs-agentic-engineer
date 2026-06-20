@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package controllers
+package project
 
 import (
 	"encoding/json"
@@ -24,7 +24,6 @@ import (
 
 	"github.com/wso2/asdlc/asdlc-service/clients/openchoreo"
 	"github.com/wso2/asdlc/asdlc-service/models"
-	"github.com/wso2/asdlc/asdlc-service/services"
 	"github.com/wso2/asdlc/asdlc-service/utils"
 )
 
@@ -39,10 +38,10 @@ type ProjectController interface {
 }
 
 type projectController struct {
-	service services.ProjectService
+	service ProjectService
 }
 
-func NewProjectController(service services.ProjectService) ProjectController {
+func NewProjectController(service ProjectService) ProjectController {
 	return &projectController{service: service}
 }
 
@@ -73,7 +72,7 @@ func (c *projectController) ListProjects(w http.ResponseWriter, r *http.Request)
 
 	list, err := c.service.ListProjects(r.Context(), org, 100, cursor)
 	if err != nil {
-		if errors.Is(err, services.ErrUnauthorized) {
+		if errors.Is(err, ErrUnauthorized) {
 			utils.WriteErrorResponse(w, http.StatusUnauthorized, "invalid or expired token")
 			return
 		}
@@ -94,11 +93,11 @@ func (c *projectController) GetProject(w http.ResponseWriter, r *http.Request) {
 
 	project, err := c.service.GetProject(r.Context(), org, projectName)
 	if err != nil {
-		if errors.Is(err, services.ErrUnauthorized) {
+		if errors.Is(err, ErrUnauthorized) {
 			utils.WriteErrorResponse(w, http.StatusUnauthorized, "invalid or expired token")
 			return
 		}
-		if errors.Is(err, services.ErrProjectNotFound) {
+		if errors.Is(err, ErrProjectNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "project not found")
 			return
 		}
@@ -128,7 +127,7 @@ func (c *projectController) CreateProject(w http.ResponseWriter, r *http.Request
 
 	project, err := c.service.CreateProject(r.Context(), org, &req)
 	if err != nil {
-		if errors.Is(err, services.ErrUnauthorized) || errors.Is(err, openchoreo.ErrUnauthorized) {
+		if errors.Is(err, ErrUnauthorized) || errors.Is(err, openchoreo.ErrUnauthorized) {
 			utils.WriteErrorResponse(w, http.StatusUnauthorized, "invalid or expired token")
 			return
 		}
@@ -157,16 +156,16 @@ func (c *projectController) DeleteProject(w http.ResponseWriter, r *http.Request
 
 	err := c.service.DeleteProject(r.Context(), org, projectName)
 	if err != nil {
-		if errors.Is(err, services.ErrUnauthorized) {
+		if errors.Is(err, ErrUnauthorized) {
 			utils.WriteErrorResponse(w, http.StatusUnauthorized, "invalid or expired token")
 			return
 		}
-		if errors.Is(err, services.ErrForbidden) {
+		if errors.Is(err, ErrForbidden) {
 			slog.ErrorContext(r.Context(), "delete project forbidden by upstream", "error", err, "org", org, "project", projectName)
 			utils.WriteErrorResponse(w, http.StatusForbidden, "insufficient permissions to delete this project")
 			return
 		}
-		if errors.Is(err, services.ErrProjectNotFound) {
+		if errors.Is(err, ErrProjectNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "project not found")
 			return
 		}
@@ -187,7 +186,7 @@ func (c *projectController) GetRepoStatus(w http.ResponseWriter, r *http.Request
 
 	repo, err := c.service.GetRepoStatus(r.Context(), org, projectName)
 	if err != nil {
-		if errors.Is(err, services.ErrProjectNotFound) {
+		if errors.Is(err, ErrProjectNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "repository not found")
 			return
 		}
@@ -208,7 +207,7 @@ func (c *projectController) GetProjectStatus(w http.ResponseWriter, r *http.Requ
 
 	status, err := c.service.GetProjectStatus(r.Context(), org, projectName)
 	if err != nil {
-		if errors.Is(err, services.ErrUnauthorized) {
+		if errors.Is(err, ErrUnauthorized) {
 			utils.WriteErrorResponse(w, http.StatusUnauthorized, "invalid or expired token")
 			return
 		}

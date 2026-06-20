@@ -17,7 +17,7 @@
 package api
 
 import (
-	"github.com/wso2/asdlc/asdlc-service/controllers"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/organization"
 )
 
 // registerOrganizationRoutes wires the unscoped /api/v1/organizations
@@ -27,6 +27,6 @@ import (
 // The listing is an enumerated gate carve-out (§6.6f): it carries no
 // {orgHandle} path var and is scoped to the caller's own org inside the
 // controller, so it registers via Public (no per-route org gate).
-func registerOrganizationRoutes(rt *Router, c controllers.OrganizationController) {
+func registerOrganizationRoutes(rt *Router, c organization.OrganizationController) {
 	rt.Public("GET /api/v1/organizations", c.ListOrganizations)
 }

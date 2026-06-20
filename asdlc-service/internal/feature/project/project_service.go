@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package services
+package project
 
 import (
 	"context"
@@ -27,6 +27,16 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 	"github.com/wso2/asdlc/asdlc-service/models"
 	"github.com/wso2/asdlc/asdlc-service/repositories"
+)
+
+// Error sentinels for the project feature. ErrProjectNotFound is owned here.
+// ErrUnauthorized / ErrForbidden are feature-local copies (verbatim messages)
+// of the shared sentinels formerly in the flat services package — the
+// established duplication deviation (cf. component's ErrUnauthorized).
+var (
+	ErrProjectNotFound = errors.New("project not found")
+	ErrUnauthorized    = errors.New("unauthorized")
+	ErrForbidden       = errors.New("forbidden")
 )
 
 // ProjectService handles business logic for project operations.

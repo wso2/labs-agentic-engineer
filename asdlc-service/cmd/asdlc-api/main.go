@@ -52,8 +52,12 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/component"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/design"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/idp"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/organization"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/orgcreds"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/project"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/requirements"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/runtimeconfig"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/task"
 	"github.com/wso2/asdlc/asdlc-service/internal/seed"
 	"github.com/wso2/asdlc/asdlc-service/middleware"
@@ -632,8 +636,8 @@ func main() {
 	// Services. componentService is constructed before configService so
 	// configService can call back into it to mirror env-var edits onto
 	// the OC Component's workflow params.
-	projectService := services.NewProjectService(projectClient, repoService, webhookRegService, artifactSvcGit, artifactStore, taskRepo)
-	organizationService := services.NewOrganizationService(db, namespaceClient)
+	projectService := project.NewProjectService(projectClient, repoService, webhookRegService, artifactSvcGit, artifactStore, taskRepo)
+	organizationService := organization.NewOrganizationService(db, namespaceClient)
 	// componentService takes repoSvc + buildCredSvc so TriggerBuild can
 	// pre-stage the per-WorkflowRun build Secret in workflows-<orgID>
 	// before the WorkflowRun is created (see
@@ -721,7 +725,7 @@ func main() {
 	// SM-API on EnsureOrgPublisher / RegenerateClientSecret so the
 	// dispatcher's PUBLISHER_CLIENT_SECRET ExternalSecret can materialise
 	// it into runner pods without the BFF holding the plaintext.
-	idpService := services.NewIDPService(db, thunderAdminClient, services.PlatformIDPConfig{
+	idpService := idp.NewIDPService(db, thunderAdminClient, idp.PlatformIDPConfig{
 		Issuer:  cfg.PlatformIDP.Issuer,
 		JWKSURL: cfg.PlatformIDP.JWKSURL,
 	}).WithSMAPIWriter(smWriter)
@@ -823,7 +827,7 @@ func main() {
 				"clusterSecretStore", cfg.AgentClusterSecretStore)
 		}
 	}
-	runtimeConfigSvc := services.NewRuntimeConfigService(componentClient, artifactStore)
+	runtimeConfigSvc := runtimeconfig.NewRuntimeConfigService(componentClient, artifactStore)
 	runtimeConfigSvc.SetPlatformIDP(cfg.PlatformIDP.Issuer, "openid profile email")
 	if thunderAdminClient != nil {
 		runtimeConfigSvc.SetThunderAdmin(thunderAdminClient)
@@ -925,8 +929,8 @@ func main() {
 	// Controllers
 	params := api.AppParams{
 		Config:                     cfg,
-		ProjectController:          controllers.NewProjectController(projectService),
-		OrganizationController:     controllers.NewOrganizationController(organizationService),
+		ProjectController:          project.NewProjectController(projectService),
+		OrganizationController:     organization.NewOrganizationController(organizationService),
 		ComponentController:        component.NewComponentController(componentService),
 		RequirementsController:     requirements.NewRequirementsController(requirementsService),
 		RequirementsChatController: requirements.NewRequirementsChatController(requirementsChatService),
@@ -971,7 +975,7 @@ func main() {
 		OrgGitHubController:    orgGitHubCtrl,
 		OrgAnthropicController: orgAnthropicCtrl,
 		SkillController:        controllers.NewSkillController(skillSvc, skillMutationSvc, skillImportSvc),
-		IDPController:          controllers.NewIDPController(idpService),
+		IDPController:          idp.NewIDPController(idpService),
 		JWKSController:         controllers.NewJWKSController(taskTokens),
 		ThunderJWKS:            thunderJWKS,
 		OrganizationService:    organizationService,

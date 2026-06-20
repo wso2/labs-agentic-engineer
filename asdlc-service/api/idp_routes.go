@@ -17,7 +17,7 @@
 package api
 
 import (
-	"github.com/wso2/asdlc/asdlc-service/controllers"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/idp"
 )
 
 // registerIDPRoutes wires the /api/v1/organizations/{orgHandle}/idp-profile
@@ -29,7 +29,7 @@ import (
 // The org path var was renamed {orgId}→{orgHandle} so every gated route names
 // the org uniformly and the gate's allowlist invariant holds (closes IDOR-2,
 // §6.1b/§6.6f). The value has always been the handle, not a UUID.
-func registerIDPRoutes(rt *Router, c controllers.IDPController) {
+func registerIDPRoutes(rt *Router, c idp.IDPController) {
 	rt.OrgScoped("GET /api/v1/organizations/{orgHandle}/idp-profile", c.GetProfile)
 	rt.OrgScoped("PUT /api/v1/organizations/{orgHandle}/idp-profile", c.UpdateProfile)
 	rt.OrgScoped("POST /api/v1/organizations/{orgHandle}/idp-profile/rotate", c.RegenerateSecret)

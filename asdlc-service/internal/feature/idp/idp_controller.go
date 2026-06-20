@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package controllers
+package idp
 
 import (
 	"encoding/json"
@@ -24,7 +24,6 @@ import (
 
 	"github.com/wso2/asdlc/asdlc-service/clients/oidc"
 	"github.com/wso2/asdlc/asdlc-service/internal/platform/httpkit"
-	"github.com/wso2/asdlc/asdlc-service/services"
 	"github.com/wso2/asdlc/asdlc-service/utils"
 )
 
@@ -42,10 +41,10 @@ type IDPController interface {
 }
 
 type idpController struct {
-	service services.IDPService
+	service IDPService
 }
 
-func NewIDPController(service services.IDPService) IDPController {
+func NewIDPController(service IDPService) IDPController {
 	return &idpController{service: service}
 }
 
@@ -95,7 +94,7 @@ func (c *idpController) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := httpkit.ActorFromContext(r.Context())
-	updated, err := c.service.UpdateProfile(r.Context(), orgID, actor, services.UpdateProfileRequest{
+	updated, err := c.service.UpdateProfile(r.Context(), orgID, actor, UpdateProfileRequest{
 		Kind:    body.Kind,
 		Issuer:  body.Issuer,
 		JWKSURL: body.JWKSURL,
@@ -121,7 +120,7 @@ func (c *idpController) RegenerateSecret(w http.ResponseWriter, r *http.Request)
 	actor := httpkit.ActorFromContext(r.Context())
 	newSecret, err := c.service.RegenerateClientSecret(r.Context(), orgID, actor)
 	if err != nil {
-		if errors.Is(err, services.ErrIDPThunderUnavailable) {
+		if errors.Is(err, ErrIDPThunderUnavailable) {
 			utils.WriteErrorResponse(w, http.StatusServiceUnavailable, "Thunder admin client not configured")
 			return
 		}
