@@ -981,7 +981,7 @@ func (s *dispatchService) ensureOCComponent(
 	// `exposesAPI.auth` block. nil/none ⇒ no trait, no AP hop;
 	// `required` ⇒ trait attached with cors+jwtAuth enabled in every env.
 	// See services/trait_sync.go for the canonical emitter.
-	apiSecurityEnabled := ResolveAPISecurityEnabled(*comp)
+	apiSecurityEnabled := models.ResolveAPISecurityEnabled(*comp)
 	traits, _ := DesiredAPIConfigurationTrait(componentName, apiSecurityEnabled)
 
 	_, err = s.componentSvc.CreateComponent(ctx, task.OrgID, task.ProjectID, &models.CreateComponentRequest{

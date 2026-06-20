@@ -28,6 +28,7 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/clients/requests"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
+	"github.com/wso2/asdlc/asdlc-service/internal/platform/k8sname"
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
 
@@ -67,6 +68,15 @@ type ComponentService interface {
 	GetBuildLogs(ctx context.Context, orgName, projectName, componentName, buildName string) (*models.BuildLogs, error)
 }
 
+// BuildSecretStager pre-stages the org's build git Secret on the workflow
+// plane and returns the secretRef the build WorkflowRun consumes. Consumer-
+// side port over BuildCredentialsService; a thin composition-root adapter
+// maps the concrete *StageResult to the secretRef string so the component
+// feature need not import that services type.
+type BuildSecretStager interface {
+	StageBuildSecret(ctx context.Context, ocOrgID, repoSlug, workflowRunName string) (secretRef string, err error)
+}
+
 type componentService struct {
 	client        openchoreo.ComponentClient
 	observClient  observability.Client
@@ -75,13 +85,13 @@ type componentService struct {
 	// per-WorkflowRun build Secret. Optional — nil means "no staging"
 	// (tests / unit-only flows).
 	repoSvc      gitrepo.RepoService
-	buildCredSvc *BuildCredentialsService
+	buildCredSvc BuildSecretStager
 }
 
 // NewComponentService builds the component service. repoSvc + buildCredSvc
 // may be nil in tests / unit-only flows; production wiring passes both so
 // TriggerBuild can pre-stage the per-WorkflowRun build Secret.
-func NewComponentService(client openchoreo.ComponentClient, observClient observability.Client, artifactStore *artifacts.ArtifactStore, repoSvc gitrepo.RepoService, buildCredSvc *BuildCredentialsService) ComponentService {
+func NewComponentService(client openchoreo.ComponentClient, observClient observability.Client, artifactStore *artifacts.ArtifactStore, repoSvc gitrepo.RepoService, buildCredSvc BuildSecretStager) ComponentService {
 	return &componentService{
 		client:        client,
 		observClient:  observClient,
@@ -132,7 +142,7 @@ func (s *componentService) UpdateWorkflowEnvVars(ctx context.Context, orgName, p
 // GetComponentOpenAPI reads the `specs/design/` tree via the ArtifactStore
 // (assembling per-component design.md + openapi.yaml into the in-memory
 // design) and returns the OpenAPI spec for the named component. The URL
-// param is the k8s-shaped slug; we match it against toK8sName(design.Name)
+// param is the k8s-shaped slug; we match it against k8sname.ToK8sName(design.Name)
 // so callers can use the same identifier they use everywhere else (build,
 // deploy, configs). Returns ErrComponentNotFound when no design exists or
 // no component matches, ErrComponentNotService when the component exists
@@ -152,7 +162,7 @@ func (s *componentService) GetComponentOpenAPI(ctx context.Context, orgName, pro
 		return nil, ErrComponentNotFound
 	}
 	for _, c := range design.Components {
-		if toK8sName(c.Name) != componentName {
+		if k8sname.ToK8sName(c.Name) != componentName {
 			continue
 		}
 		if c.ComponentType != "service" {
@@ -196,13 +206,11 @@ func (s *componentService) TriggerBuild(ctx context.Context, orgName, projectNam
 			slog.WarnContext(ctx, "trigger-build: no repo / repoSlug; proceeding without git secret",
 				"orgName", orgName, "projectName", projectName)
 		default:
-			res, sErr := s.buildCredSvc.StageBuildSecret(ctx, orgName, repo.RepoSlug, runName)
+			secretRef, sErr := s.buildCredSvc.StageBuildSecret(ctx, orgName, repo.RepoSlug, runName)
 			if sErr != nil {
 				return nil, fmt.Errorf("trigger-build: stage-build-secret: %w", sErr)
 			}
-			if res != nil {
-				buildSecretRef = res.SecretRef
-			}
+			buildSecretRef = secretRef
 		}
 	}
 	run, err := s.client.TriggerBuild(ctx, orgName, projectName, componentName, buildSecretRef, runName)

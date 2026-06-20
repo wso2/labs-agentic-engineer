@@ -38,12 +38,11 @@ type ComponentController interface {
 }
 
 type componentController struct {
-	service     services.ComponentService
-	taskService services.TaskService
+	service services.ComponentService
 }
 
-func NewComponentController(service services.ComponentService, taskService services.TaskService) ComponentController {
-	return &componentController{service: service, taskService: taskService}
+func NewComponentController(service services.ComponentService) ComponentController {
+	return &componentController{service: service}
 }
 
 func (c *componentController) ListComponents(w http.ResponseWriter, r *http.Request) {

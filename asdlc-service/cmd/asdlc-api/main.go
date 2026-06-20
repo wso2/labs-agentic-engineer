@@ -61,6 +61,26 @@ import (
 	"gorm.io/gorm"
 )
 
+// buildSecretStagerAdapter maps the concrete *services.BuildCredentialsService
+// (StageBuildSecret → *StageResult) onto the component feature's
+// BuildSecretStager port (→ secretRef string), so the component package need
+// not import the services StageResult type. Composition-root wiring boundary
+// (§6.8: the adapter satisfies the consumer port, here, not in the feature).
+type buildSecretStagerAdapter struct {
+	svc *services.BuildCredentialsService
+}
+
+func (a buildSecretStagerAdapter) StageBuildSecret(ctx context.Context, ocOrgID, repoSlug, workflowRunName string) (string, error) {
+	res, err := a.svc.StageBuildSecret(ctx, ocOrgID, repoSlug, workflowRunName)
+	if err != nil {
+		return "", err
+	}
+	if res == nil {
+		return "", nil
+	}
+	return res.SecretRef, nil
+}
+
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
@@ -612,7 +632,11 @@ func main() {
 	// pre-stage the per-WorkflowRun build Secret in workflows-<orgID>
 	// before the WorkflowRun is created (see
 	// docs/design/build-credential-injection.md).
-	componentService := services.NewComponentService(componentClient, observClient, artifactStore, repoService, buildCredService)
+	var buildStager services.BuildSecretStager
+	if buildCredService != nil {
+		buildStager = buildSecretStagerAdapter{svc: buildCredService}
+	}
+	componentService := services.NewComponentService(componentClient, observClient, artifactStore, repoService, buildStager)
 	configService := services.NewConfigService(configRepo, componentService)
 	requirementsDirLocker := services.NewRequirementsDirLocker(db)
 	requirementsService := services.NewRequirementsService(artifactStore, agentsClient, artifactSvcGit)
@@ -892,7 +916,7 @@ func main() {
 		Config:                     cfg,
 		ProjectController:          controllers.NewProjectController(projectService),
 		OrganizationController:     controllers.NewOrganizationController(organizationService),
-		ComponentController:        controllers.NewComponentController(componentService, taskService),
+		ComponentController:        controllers.NewComponentController(componentService),
 		RequirementsController:     controllers.NewRequirementsController(requirementsService),
 		RequirementsChatController: controllers.NewRequirementsChatController(requirementsChatService),
 		DesignController:           controllers.NewDesignController(designService),

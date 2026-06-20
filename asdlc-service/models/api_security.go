@@ -14,13 +14,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package services
+package models
 
-import (
-	"strings"
-
-	"github.com/wso2/asdlc/asdlc-service/models"
-)
+import "strings"
 
 // ResolveAPISecurityEnabled is the single source of truth for "is JWT
 // validation enforced on this component's HTTP endpoint?" — used by the
@@ -28,7 +24,13 @@ import (
 //
 // Invariant: nil/empty `ExposesAPI` ⇒ false. The platform recognises
 // only the documented `Auth` values; anything else also yields false.
-func ResolveAPISecurityEnabled(comp models.DesignComponent) bool {
+//
+// Lives in models (a neutral, dependency-free home) so both the component
+// feature's trait emitter and the staying dispatch service can call it
+// without crossing a feature boundary. §4.7 ultimately assigns the API-
+// security predicates to the design feature; parked here until design
+// extracts.
+func ResolveAPISecurityEnabled(comp DesignComponent) bool {
 	if comp.ExposesAPI == nil {
 		return false
 	}
@@ -43,7 +45,7 @@ func ResolveAPISecurityEnabled(comp models.DesignComponent) bool {
 // gating. Only `end-user-required` APIs should advertise SPA origins in
 // their CORS allowlist (service-to-service APIs have no browser caller).
 // Returns "" when API security is not enabled.
-func ResolveAPISecurityCallerKind(comp models.DesignComponent) string {
+func ResolveAPISecurityCallerKind(comp DesignComponent) string {
 	if comp.ExposesAPI == nil {
 		return ""
 	}

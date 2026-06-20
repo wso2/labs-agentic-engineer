@@ -44,7 +44,7 @@ func TestBaseline_NoExposesAPI_ProducesNoTrait(t *testing.T) {
 				ComponentType: "service",
 				ExposesAPI:    c.exposes,
 			}
-			enabled := ResolveAPISecurityEnabled(comp)
+			enabled := models.ResolveAPISecurityEnabled(comp)
 			if enabled {
 				t.Fatalf("ResolveAPISecurityEnabled = true for %s (exposesAPI=%+v); want false", c.name, c.exposes)
 			}
@@ -80,7 +80,7 @@ func TestProtected_ProducesCanonicalTrait(t *testing.T) {
 		ComponentType: "service",
 		ExposesAPI:    &models.ExposesAPI{Auth: "end-user-required", UserContext: "X-User-Id"},
 	}
-	if !ResolveAPISecurityEnabled(comp) {
+	if !models.ResolveAPISecurityEnabled(comp) {
 		t.Fatal("ResolveAPISecurityEnabled should be true for auth=end-user-required")
 	}
 	traits, configs := DesiredAPIConfigurationTrait("todo-api", true)

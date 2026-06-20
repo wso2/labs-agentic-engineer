@@ -25,8 +25,19 @@ import (
 
 	"github.com/wso2/asdlc/asdlc-service/clients/openchoreo"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
+	"github.com/wso2/asdlc/asdlc-service/internal/platform/k8sname"
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
+
+// OrgPublisher is the narrow per-org Thunder publisher-provisioning surface
+// the trait emitter consumes from the idp feature. Declared consumer-side so
+// the component feature does not import idp's concrete service — the idp
+// service satisfies it structurally and is injected via SetIDPService at the
+// composition root.
+type OrgPublisher interface {
+	GetProfile(ctx context.Context, orgID string) (*models.OrganizationIDPProfile, error)
+	EnsureOrgPublisher(ctx context.Context, orgID, actor string) (clientID, clientSecret string, created bool, err error)
+}
 
 // TraitSyncService is the single shared emitter for `api-configuration`
 // trait state on a Component CR + its per-environment ReleaseBindings.
@@ -65,7 +76,7 @@ type TraitSyncService struct {
 	// are logged but don't block the trait emit — the API stays
 	// reachable, the org just lacks an outbound publisher identity
 	// until a subsequent sync succeeds. Wired via SetIDPService.
-	idp IDPService
+	idp OrgPublisher
 
 	mu    sync.Mutex
 	locks map[string]*sync.Mutex
@@ -74,7 +85,7 @@ type TraitSyncService struct {
 // SetIDPService wires the per-org Thunder publisher provisioning hook.
 // Optional — when not set the trait emit path skips the publisher
 // EnsureOrgPublisher call entirely.
-func (s *TraitSyncService) SetIDPService(idp IDPService) {
+func (s *TraitSyncService) SetIDPService(idp OrgPublisher) {
 	if s == nil {
 		return
 	}
@@ -137,7 +148,7 @@ func (s *TraitSyncService) SyncComponentTraits(ctx context.Context, orgID, proje
 	// Find the component in design by the k8s-shaped name (matches dispatch).
 	var match *models.DesignComponent
 	for i := range design.Components {
-		if toK8sName(design.Components[i].Name) == componentName {
+		if k8sname.ToK8sName(design.Components[i].Name) == componentName {
 			match = &design.Components[i]
 			break
 		}
@@ -148,7 +159,7 @@ func (s *TraitSyncService) SyncComponentTraits(ctx context.Context, orgID, proje
 		return nil
 	}
 
-	desiredEnabled := ResolveAPISecurityEnabled(*match)
+	desiredEnabled := models.ResolveAPISecurityEnabled(*match)
 
 	// Phase 3 — lazy provisioning of the org's Thunder publisher app.
 	// First protected reconcile in an org creates `asdlc-publisher-<orgID>`
@@ -183,7 +194,7 @@ func (s *TraitSyncService) SyncComponentTraits(ctx context.Context, orgID, proje
 	// caller (the watcher retries) — a partial allowlist would silently
 	// block the missing SPA's preflight.
 	var allowedOrigins []string
-	if desiredEnabled && ResolveAPISecurityCallerKind(*match) == "end-user" {
+	if desiredEnabled && models.ResolveAPISecurityCallerKind(*match) == "end-user" {
 		origins, originsErr := s.siblingSPAOrigins(ctx, orgID, projectID, design)
 		if originsErr != nil {
 			return fmt.Errorf("trait_sync: sibling SPA origins: %w", originsErr)
@@ -298,10 +309,10 @@ func (s *TraitSyncService) SyncProjectAPITraits(ctx context.Context, orgID, proj
 		if c.ComponentType != "service" {
 			continue
 		}
-		if !ResolveAPISecurityEnabled(c) {
+		if !models.ResolveAPISecurityEnabled(c) {
 			continue
 		}
-		k8sName := toK8sName(c.Name)
+		k8sName := k8sname.ToK8sName(c.Name)
 		if err := s.SyncComponentTraits(ctx, orgID, projectID, k8sName); err != nil {
 			slog.WarnContext(ctx, "trait_sync: sibling re-emit failed; continuing",
 				"orgID", orgID,
@@ -337,7 +348,7 @@ func (s *TraitSyncService) siblingSPAOrigins(ctx context.Context, orgID, project
 		if c.ComponentType != "web-app" {
 			continue
 		}
-		k8sName := toK8sName(c.Name)
+		k8sName := k8sname.ToK8sName(c.Name)
 		list, err := s.componentClient.ListDeployments(ctx, orgID, projectID, k8sName)
 		if err != nil {
 			return nil, fmt.Errorf("list deployments for %q: %w", c.Name, err)
