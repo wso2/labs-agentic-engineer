@@ -47,7 +47,7 @@ import (
 type CodingAgentWatcher struct {
 	db                *gorm.DB
 	ocClient          openchoreo.ComponentClient
-	projector         *Projector
+	projector         contracts.TaskTransitions
 	asServiceIdentity func(ctx context.Context) context.Context
 	tick              time.Duration
 }
@@ -55,7 +55,7 @@ type CodingAgentWatcher struct {
 func NewCodingAgentWatcher(
 	db *gorm.DB,
 	ocClient openchoreo.ComponentClient,
-	projector *Projector,
+	projector contracts.TaskTransitions,
 	asServiceIdentity func(ctx context.Context) context.Context,
 ) *CodingAgentWatcher {
 	return &CodingAgentWatcher{

@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package webhook
+package task
 
 import (
 	"context"
@@ -30,38 +30,46 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
 
-// Handlers wires the per-event handlers onto a Router. The shape is one
-// constructor that registers every (event, action) tuple at once, so the
-// caller doesn't need to know the routing table.
+// BuildDispatcher is the build-dispatch port the merge handler triggers
+// (pull_request.closed merged=true → build). services.WorkflowRunService
+// satisfies it structurally; it is wired at the composition root so the task
+// feature needn't import services.
+type BuildDispatcher interface {
+	DispatchTaskBuild(ctx context.Context, task *models.ComponentTask, sha string) (runName string, err error)
+}
+
+// RegisterHandlers builds the transition handlers and installs them via the
+// supplied register func (the composition root adapts it onto the webhook
+// Router) — so the task feature imports nothing from the webhook package.
 //
 // State transitions go through the projector; build triggers go through the
-// WorkflowRunService. Build dispatch runs off `pull_request.closed
-// merged=true` only — see PullRequestClosed for the rationale. The Push
-// handler is audit-only.
-func Register(
-	router *Router,
+// BuildDispatcher. Build dispatch runs off `pull_request.closed merged=true`
+// only — see PullRequestClosed for the rationale. The Push handler is
+// audit-only.
+func RegisterHandlers(
+	register func(event, action string, h func(ctx context.Context, event, action string, payload []byte) error),
 	db *gorm.DB,
 	projector *Projector,
-	wfService BuildOps,
+	builds BuildDispatcher,
 ) {
 	h := &Handler{
 		db:        db,
 		projector: projector,
-		wfService: wfService,
+		wfService: builds,
 	}
-	router.Register("pull_request", "opened", EventHandlerFunc(h.PullRequestOpened))
-	router.Register("pull_request", "edited", EventHandlerFunc(h.PullRequestEdited))
-	router.Register("pull_request", "reopened", EventHandlerFunc(h.PullRequestReopened))
-	router.Register("pull_request", "ready_for_review", EventHandlerFunc(h.PullRequestReady))
-	router.Register("pull_request", "closed", EventHandlerFunc(h.PullRequestClosed))
-	router.Register("push", "", EventHandlerFunc(h.Push))
-	router.Register("issue_comment", "", EventHandlerFunc(h.IssueComment))
+	register("pull_request", "opened", h.PullRequestOpened)
+	register("pull_request", "edited", h.PullRequestEdited)
+	register("pull_request", "reopened", h.PullRequestReopened)
+	register("pull_request", "ready_for_review", h.PullRequestReady)
+	register("pull_request", "closed", h.PullRequestClosed)
+	register("push", "", h.Push)
+	register("issue_comment", "", h.IssueComment)
 }
 
 type Handler struct {
 	db        *gorm.DB
 	projector *Projector
-	wfService BuildOps
+	wfService BuildDispatcher
 }
 
 // pull_request payload subset.

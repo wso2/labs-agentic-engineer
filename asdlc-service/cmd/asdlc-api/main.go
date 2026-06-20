@@ -51,6 +51,7 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/component"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/orgcreds"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/task"
 	"github.com/wso2/asdlc/asdlc-service/internal/seed"
 	"github.com/wso2/asdlc/asdlc-service/middleware"
 	"github.com/wso2/asdlc/asdlc-service/middleware/jwt"
@@ -785,7 +786,7 @@ func main() {
 	routingCache := webhook.NewRoutingCache(60 * time.Second)
 	deliveryStore := webhook.NewDeliveryStore(db)
 	webhookRouter := webhook.NewRouter()
-	projector := webhook.NewProjector(db)
+	projector := task.NewProjector(db)
 
 	wfRunService := services.NewWorkflowRunService(db, taskRepo, componentClient, repoService, buildCredService, artifactStore, projector, asServiceIdentity)
 
@@ -843,8 +844,10 @@ func main() {
 	cascadeHook.SetRuntimeConfig(runtimeConfigSvc)
 	projector.SetDispatchHook(cascadeHook)
 
-	webhook.Register(webhookRouter, db, projector, wfRunService)
-	webhook.RegisterInstallationHandlers(webhookRouter, db, credService, issueService, taskRepo, projector)
+	task.RegisterHandlers(func(event, action string, h func(ctx context.Context, event, action string, payload []byte) error) {
+		webhookRouter.Register(event, action, webhook.EventHandlerFunc(h))
+	}, db, projector, wfRunService)
+	webhook.RegisterInstallationHandlers(webhookRouter, db, credService, issueService, taskRepo)
 	webhookCtrl := controllers.NewWebhookController(webhookVerifier, deliveryStore, webhookRouter, routingLookup, routingCache)
 
 	// Build watcher — 10s sweep for in-flight WorkflowRuns. Started after

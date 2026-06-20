@@ -51,7 +51,7 @@ import (
 type BuildWatcher struct {
 	db                *gorm.DB
 	ocClient          openchoreo.ComponentClient
-	projector         *Projector
+	projector         contracts.TaskTransitions
 	asServiceIdentity func(ctx context.Context) context.Context
 	wfService         BuildOps
 	tick              time.Duration
@@ -61,7 +61,7 @@ type BuildWatcher struct {
 func NewBuildWatcher(
 	db *gorm.DB,
 	ocClient openchoreo.ComponentClient,
-	projector *Projector,
+	projector contracts.TaskTransitions,
 	asServiceIdentity func(ctx context.Context) context.Context,
 	wfService BuildOps,
 	authBudget int,

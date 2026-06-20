@@ -95,9 +95,9 @@ type CodingAgentTrigger struct {
 // WorkflowRunService needs to atomically transition task state alongside build
 // dispatch. It is the canonical contracts.TaskTransitions interface, aliased
 // here so the existing field/param type name keeps working and `services`
-// doesn't depend on `services/webhook` (webhook already depends on services for
-// the state machine). The concrete provider (webhook.Projector) is wired at
-// main and satisfies contracts.TaskTransitions.
+// doesn't depend on the task feature. The concrete provider
+// (internal/feature/task.Projector) is wired at main and satisfies
+// contracts.TaskTransitions.
 type TaskStateProjector = contracts.TaskTransitions
 
 type workflowRunService struct {
