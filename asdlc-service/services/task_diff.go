@@ -25,6 +25,7 @@ import (
 	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
 
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
 
@@ -209,7 +210,7 @@ func extractOpenAPIOps(spec string) (map[string]string, error) {
 	if spec == "" {
 		return map[string]string{}, nil
 	}
-	canonical, err := NormalizeOpenAPIYAML(spec)
+	canonical, err := artifacts.NormalizeOpenAPIYAML(spec)
 	if err != nil {
 		return nil, err
 	}

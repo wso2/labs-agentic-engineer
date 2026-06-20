@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/wso2/asdlc/asdlc-service/clients/agents"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
 )
 
 // RequirementsSnapshotFile is the JSON shape returned by GetSessionBaselineFile.
@@ -76,16 +77,16 @@ type ChatTurnRequest struct {
 }
 
 type requirementsChatService struct {
-	store        *ArtifactStore
+	store        *artifacts.ArtifactStore
 	agentsClient agents.Client
-	artifactSvc  ArtifactService
+	artifactSvc  artifacts.ArtifactService
 	locker       *RequirementsDirLocker
 }
 
 func NewRequirementsChatService(
-	store *ArtifactStore,
+	store *artifacts.ArtifactStore,
 	agentsClient agents.Client,
-	artifactSvc ArtifactService,
+	artifactSvc artifacts.ArtifactService,
 	locker *RequirementsDirLocker,
 ) RequirementsChatService {
 	return &requirementsChatService{
@@ -483,14 +484,14 @@ func (s *requirementsChatService) RevertFileToBaseline(ctx context.Context, orgI
 			// deleted, so the closest reachable approximation is to truncate
 			// to empty content; the user keeps a draft to edit instead of
 			// being stuck with the chat-generated content.
-			if filename == RequirementsMainFile {
+			if filename == artifacts.RequirementsMainFile {
 				if _, err := s.store.WriteRequirementFile(ctx, orgID, projectID, filename, ""); err != nil {
 					return fmt.Errorf("clear %s: %w", filename, err)
 				}
 				return nil
 			}
 			if err := s.store.DeleteRequirementFile(ctx, orgID, projectID, filename); err != nil {
-				if errors.Is(err, ErrArtifactNotFound) {
+				if errors.Is(err, artifacts.ErrArtifactNotFound) {
 					// Already gone — treat as success.
 					return nil
 				}

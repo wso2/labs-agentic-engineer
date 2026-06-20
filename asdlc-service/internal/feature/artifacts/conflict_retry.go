@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package services
+package artifacts
 
 // Conflict-retry helper for the artifact save flow (V1 of artifact-store-v2).
 //

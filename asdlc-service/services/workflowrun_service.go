@@ -25,6 +25,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/wso2/asdlc/asdlc-service/clients/openchoreo"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 	"github.com/wso2/asdlc/asdlc-service/models"
 	"github.com/wso2/asdlc/asdlc-service/repositories"
@@ -108,7 +109,7 @@ type workflowRunService struct {
 	ocClient          openchoreo.ComponentClient
 	repoSvc           gitrepo.RepoService
 	buildCredSvc      *BuildCredentialsService
-	store             *ArtifactStore
+	store             *artifacts.ArtifactStore
 	configSvc         ConfigService
 	projector         TaskStateProjector
 	asServiceIdentity func(ctx context.Context) context.Context
@@ -126,7 +127,7 @@ func NewWorkflowRunService(
 	ocClient openchoreo.ComponentClient,
 	repoSvc gitrepo.RepoService,
 	buildCredSvc *BuildCredentialsService,
-	store *ArtifactStore,
+	store *artifacts.ArtifactStore,
 	projector TaskStateProjector,
 	asServiceIdentity func(ctx context.Context) context.Context,
 ) WorkflowRunService {

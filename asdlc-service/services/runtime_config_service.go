@@ -26,6 +26,7 @@ import (
 
 	"github.com/wso2/asdlc/asdlc-service/clients/openchoreo"
 	"github.com/wso2/asdlc/asdlc-service/clients/thundersvc"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
 
@@ -40,7 +41,7 @@ import (
 // at ReleaseBinding time.
 type RuntimeConfigService struct {
 	componentClient openchoreo.ComponentClient
-	store           *ArtifactStore
+	store           *artifacts.ArtifactStore
 	// thunderAdmin, when non-nil, is used to declare the per-project
 	// OAuth client on the first SPA emission in a project. The returned
 	// client_id is the project name verbatim — the SPA reads it from
@@ -55,7 +56,7 @@ type RuntimeConfigService struct {
 	platformIDPScopes string
 }
 
-func NewRuntimeConfigService(componentClient openchoreo.ComponentClient, store *ArtifactStore) *RuntimeConfigService {
+func NewRuntimeConfigService(componentClient openchoreo.ComponentClient, store *artifacts.ArtifactStore) *RuntimeConfigService {
 	return &RuntimeConfigService{
 		componentClient:   componentClient,
 		store:             store,
@@ -106,7 +107,7 @@ func (s *RuntimeConfigService) EmitForComponent(ctx context.Context, orgID, proj
 
 	design, err := s.store.ReadDesign(ctx, orgID, projectID)
 	if err != nil {
-		if IsNotFound(err) {
+		if artifacts.IsNotFound(err) {
 			return nil
 		}
 		return fmt.Errorf("runtime_config: read design: %w", err)
@@ -178,7 +179,7 @@ func (s *RuntimeConfigService) EmitForProjectSPAs(ctx context.Context, orgID, pr
 	}
 	design, err := s.store.ReadDesign(ctx, orgID, projectID)
 	if err != nil {
-		if IsNotFound(err) {
+		if artifacts.IsNotFound(err) {
 			return nil
 		}
 		return fmt.Errorf("runtime_config: read design: %w", err)
@@ -217,7 +218,7 @@ func (s *RuntimeConfigService) EmitForProjectSPAs(ctx context.Context, orgID, pr
 // when a required key couldn't be populated yet (transient OC error,
 // SPA URL not yet resolved, etc.). The caller must NOT write a
 // partial env-config.js on `!ready` — see EmitForComponent.
-func (s *RuntimeConfigService) buildEnvValues(ctx context.Context, orgID, projectID string, webapp *models.DesignComponent, design *DesignFile) (out map[string]interface{}, ready bool) {
+func (s *RuntimeConfigService) buildEnvValues(ctx context.Context, orgID, projectID string, webapp *models.DesignComponent, design *artifacts.DesignFile) (out map[string]interface{}, ready bool) {
 	out = map[string]interface{}{}
 	ready = true
 

@@ -28,6 +28,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
+
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
 )
 
 // References is the JSONB-backed map of optional reference filenames →
@@ -78,8 +80,8 @@ func NewSkillService(db *gorm.DB) *SkillService {
 
 // Resolve returns a single skill by name visible to the given org —
 // the lookup is org-scoped (custom/imported for orgId) UNIONed with the
-// global builtin set (org_id=''). When both exist, the org-scoped row
-// wins (sorts after '' lexicographically).
+// global builtin set (org_id=”). When both exist, the org-scoped row
+// wins (sorts after ” lexicographically).
 func (s *SkillService) Resolve(ctx context.Context, orgID, name string) (*Skill, error) {
 	if s == nil || s.db == nil {
 		return nil, nil
@@ -231,7 +233,7 @@ type skillFrontmatter struct {
 // parseSkillMD splits frontmatter from body and decodes it. Returns the
 // decoded frontmatter, the body, and any parse error.
 func parseSkillMD(content string) (skillFrontmatter, string, error) {
-	fm, body, err := splitFrontmatter(content)
+	fm, body, err := artifacts.SplitFrontmatter(content)
 	if err != nil {
 		return skillFrontmatter{}, "", fmt.Errorf("split frontmatter: %w", err)
 	}
@@ -326,4 +328,3 @@ func contentSHA(skillMD string, references map[string]string) string {
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }
-

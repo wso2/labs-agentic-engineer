@@ -26,6 +26,7 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/clients/observability"
 	"github.com/wso2/asdlc/asdlc-service/clients/openchoreo"
 	"github.com/wso2/asdlc/asdlc-service/clients/requests"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
@@ -69,7 +70,7 @@ type ComponentService interface {
 type componentService struct {
 	client        openchoreo.ComponentClient
 	observClient  observability.Client
-	artifactStore *ArtifactStore
+	artifactStore *artifacts.ArtifactStore
 	// repoSvc + buildCredSvc are used by TriggerBuild to pre-stage the
 	// per-WorkflowRun build Secret. Optional — nil means "no staging"
 	// (tests / unit-only flows).
@@ -80,7 +81,7 @@ type componentService struct {
 // NewComponentService builds the component service. repoSvc + buildCredSvc
 // may be nil in tests / unit-only flows; production wiring passes both so
 // TriggerBuild can pre-stage the per-WorkflowRun build Secret.
-func NewComponentService(client openchoreo.ComponentClient, observClient observability.Client, artifactStore *ArtifactStore, repoSvc gitrepo.RepoService, buildCredSvc *BuildCredentialsService) ComponentService {
+func NewComponentService(client openchoreo.ComponentClient, observClient observability.Client, artifactStore *artifacts.ArtifactStore, repoSvc gitrepo.RepoService, buildCredSvc *BuildCredentialsService) ComponentService {
 	return &componentService{
 		client:        client,
 		observClient:  observClient,
@@ -142,7 +143,7 @@ func (s *componentService) GetComponentOpenAPI(ctx context.Context, orgName, pro
 	}
 	design, err := s.artifactStore.ReadDesign(ctx, orgName, projectName)
 	if err != nil {
-		if IsNotFound(err) {
+		if artifacts.IsNotFound(err) {
 			return nil, ErrComponentNotFound
 		}
 		return nil, fmt.Errorf("read design: %w", err)

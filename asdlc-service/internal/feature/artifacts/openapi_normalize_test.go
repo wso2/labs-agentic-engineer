@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package services
+package artifacts
 
 import (
 	"encoding/json"

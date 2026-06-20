@@ -25,6 +25,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
 
@@ -140,7 +141,7 @@ func readSnapshotRows(ctx context.Context, db *gorm.DB, projectID, designVersion
 func snapshotProjectSkills(
 	ctx context.Context,
 	db *gorm.DB,
-	store *ArtifactStore,
+	store *artifacts.ArtifactStore,
 	skillSvc *SkillService,
 	orgID, projectID, designVersion string,
 ) error {

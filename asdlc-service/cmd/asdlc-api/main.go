@@ -46,6 +46,7 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/database"
 	"github.com/wso2/asdlc/asdlc-service/database/migrations"
 	"github.com/wso2/asdlc/asdlc-service/internal/credentials"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 	"github.com/wso2/asdlc/asdlc-service/internal/seed"
 	"github.com/wso2/asdlc/asdlc-service/middleware"
@@ -557,7 +558,7 @@ func main() {
 	githubClient := gitrepo.NewGitHubClient()
 	repoService := gitrepo.NewRepoService(repoRepo, githubClient, credResolver, cfg.GitHubRepoVisibility, cfg.RepoBasePath)
 	gitOpsService := gitrepo.NewGitOpsService(repoRepo, credResolver, cfg.RepoBasePath, githubClient)
-	artifactSvcGit := services.NewArtifactService(repoRepo, gitOpsService)
+	artifactSvcGit := artifacts.NewArtifactService(repoRepo, gitOpsService)
 	githubV2Client := gitrepo.NewGitHubV2Client()
 	issueService := gitrepo.NewIssueService(repoRepo, githubClient, githubV2Client, credResolver)
 	gitOpsService.CleanupOrphanTmpClones()
@@ -592,7 +593,7 @@ func main() {
 	branchCtrl := gitrepo.NewBranchController(branchService)
 	prCtrl := gitrepo.NewPullRequestController(prService)
 	webhookRegCtrl := gitrepo.NewWebhookRegistrationController(webhookRegService)
-	artifactCtrlGit := controllers.NewArtifactController(artifactSvcGit)
+	artifactCtrlGit := artifacts.NewArtifactController(artifactSvcGit)
 	credRefreshCtrl := controllers.NewCredentialsRefreshController(credRefreshService)
 	gitProjectCtrl := gitrepo.NewGitProjectController(githubV2Client, credResolver, repoService)
 	repoBoardCtrl := gitrepo.NewRepoBoardController(repoBoardService)
@@ -600,7 +601,7 @@ func main() {
 	// Artifact store — in-process via artifactSvcGit. Adds the
 	// external-API catalog + the `DesignFile` YAML split/assemble layer
 	// on top of raw file I/O.
-	artifactStore := services.NewArtifactStore(artifactSvcGit)
+	artifactStore := artifacts.NewArtifactStore(artifactSvcGit)
 
 	// Services. componentService is constructed before configService so
 	// configService can call back into it to mirror env-var edits onto

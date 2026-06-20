@@ -23,6 +23,7 @@ import (
 	"log/slog"
 
 	"github.com/wso2/asdlc/asdlc-service/clients/openchoreo"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 	"github.com/wso2/asdlc/asdlc-service/models"
 	"github.com/wso2/asdlc/asdlc-service/repositories"
@@ -42,8 +43,8 @@ type projectService struct {
 	client      openchoreo.ProjectClient
 	repoSvc     gitrepo.RepoService
 	webhookSvc  gitrepo.WebhookService
-	artifactSvc ArtifactService
-	store       *ArtifactStore
+	artifactSvc artifacts.ArtifactService
+	store       *artifacts.ArtifactStore
 	taskRepo    repositories.TaskRepository
 }
 
@@ -51,8 +52,8 @@ func NewProjectService(
 	client openchoreo.ProjectClient,
 	repoSvc gitrepo.RepoService,
 	webhookSvc gitrepo.WebhookService,
-	artifactSvc ArtifactService,
-	store *ArtifactStore,
+	artifactSvc artifacts.ArtifactService,
+	store *artifacts.ArtifactStore,
 	taskRepo repositories.TaskRepository,
 ) ProjectService {
 	return &projectService{
@@ -172,7 +173,7 @@ func (s *projectService) GetProjectStatus(ctx context.Context, orgName, projectN
 
 	// Check requirements (any markdown doc under specs/requirements/ counts).
 	files, err := s.store.ListRequirements(ctx, orgName, projectName)
-	if err != nil && !IsNotFound(err) {
+	if err != nil && !artifacts.IsNotFound(err) {
 		return nil, fmt.Errorf("list requirements: %w", err)
 	}
 	status.HasSpec = len(files) > 0
@@ -198,7 +199,7 @@ func (s *projectService) GetProjectStatus(ctx context.Context, orgName, projectN
 
 	// Check design
 	design, err := s.store.ReadDesign(ctx, orgName, projectName)
-	if err != nil && !IsNotFound(err) {
+	if err != nil && !artifacts.IsNotFound(err) {
 		return nil, fmt.Errorf("read design: %w", err)
 	}
 	status.HasDesign = design != nil

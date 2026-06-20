@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package services
+package artifacts
 
 import (
 	"context"
@@ -131,10 +131,10 @@ func (s *ArtifactStore) DeleteRequirementFile(ctx context.Context, orgID, projec
 //	                                       # (componentAgentInstructions)
 //	components/<name>/openapi.yaml         # OpenAPI 3.0.3 (service components only)
 type DesignFile struct {
-	Overview       string                   `json:"overview"`
-	Components     []models.DesignComponent `json:"components"`
-	SourceSpec     string                   `json:"sourceSpec,omitempty"`
-	SkillsApplied  []string                 `json:"skillsApplied,omitempty"`
+	Overview      string                   `json:"overview"`
+	Components    []models.DesignComponent `json:"components"`
+	SourceSpec    string                   `json:"sourceSpec,omitempty"`
+	SkillsApplied []string                 `json:"skillsApplied,omitempty"`
 }
 
 // DesignRootFile is the canonical root design document. It cannot be deleted
@@ -272,9 +272,9 @@ func (s *ArtifactStore) WriteDesign(ctx context.Context, orgID, projectID string
 // from a real error.
 func IsNotFound(err error) bool { return errors.Is(err, ErrArtifactNotFound) }
 
-// designFilesEqual compares two design file maps after trimming whitespace
+// DesignFilesEqual compares two design file maps after trimming whitespace
 // from each value. Used by the has-unsaved-changes check.
-func designFilesEqual(a, b map[string]string) bool {
+func DesignFilesEqual(a, b map[string]string) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -336,10 +336,10 @@ type dependentApiConfig struct {
 	Authentication string `yaml:"authentication,omitempty"`
 }
 
-// splitFrontmatter separates the leading YAML frontmatter block (delimited
+// SplitFrontmatter separates the leading YAML frontmatter block (delimited
 // by `---` lines) from the body. If the file has no frontmatter, returns
 // ("", content, nil).
-func splitFrontmatter(content string) (fm string, body string, err error) {
+func SplitFrontmatter(content string) (fm string, body string, err error) {
 	trimmed := strings.TrimLeft(content, " \t\r\n")
 	// Strip an optional UTF-8 BOM (U+FEFF) before frontmatter detection.
 	trimmed = strings.TrimPrefix(trimmed, "\ufeff")
@@ -387,7 +387,7 @@ func AssembleDesign(files map[string]string) (*DesignFile, error) {
 		return nil, fmt.Errorf("design.md missing")
 	}
 
-	fm, body, err := splitFrontmatter(root)
+	fm, body, err := SplitFrontmatter(root)
 	if err != nil {
 		return nil, fmt.Errorf("parse design.md frontmatter: %w", err)
 	}
@@ -404,7 +404,7 @@ func AssembleDesign(files map[string]string) (*DesignFile, error) {
 	}
 
 	// Iterate component dirs in deterministic order.
-	componentNames := componentNamesIn(files)
+	componentNames := ComponentNamesIn(files)
 	out.Components = make([]models.DesignComponent, 0, len(componentNames))
 	for _, name := range componentNames {
 		designPath := componentDirPrefix + name + "/design.md"
@@ -422,7 +422,7 @@ func AssembleDesign(files map[string]string) (*DesignFile, error) {
 }
 
 func assembleComponent(name, designMd string, files map[string]string) (models.DesignComponent, error) {
-	fm, body, err := splitFrontmatter(designMd)
+	fm, body, err := SplitFrontmatter(designMd)
 	if err != nil {
 		return models.DesignComponent{}, fmt.Errorf("frontmatter: %w", err)
 	}
@@ -487,9 +487,9 @@ func assembleComponent(name, designMd string, files map[string]string) (models.D
 	}, nil
 }
 
-// componentNamesIn walks the file map and returns the unique component
+// ComponentNamesIn walks the file map and returns the unique component
 // directory names found under `components/`, sorted alphabetically.
-func componentNamesIn(files map[string]string) []string {
+func ComponentNamesIn(files map[string]string) []string {
 	seen := make(map[string]struct{})
 	for p := range files {
 		if !strings.HasPrefix(p, componentDirPrefix) {
@@ -524,7 +524,7 @@ func SplitDesign(d *DesignFile) (map[string]string, error) {
 	// in the design tag name (`v<N>-<M>`); we only write it to the file
 	// frontmatter when there is some other field that requires the block
 	// (currently: skillsApplied per docs/design/skills-system.md). The
-	// console's markdown preview strips frontmatter via splitFrontmatter,
+	// console's markdown preview strips frontmatter via SplitFrontmatter,
 	// so the visible Overview prose is unchanged.
 	if len(d.SkillsApplied) > 0 {
 		// Sorted copy for stable diffs.

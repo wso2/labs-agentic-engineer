@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
 
@@ -45,7 +46,7 @@ func (s *taskService) resolveDesignComponent(ctx context.Context, task *models.C
 	return resolveDesignComponentVia(ctx, s.store, task)
 }
 
-func resolveDesignComponentVia(ctx context.Context, store *ArtifactStore, task *models.ComponentTask) (*models.DesignComponent, error) {
+func resolveDesignComponentVia(ctx context.Context, store *artifacts.ArtifactStore, task *models.ComponentTask) (*models.DesignComponent, error) {
 	if store == nil {
 		return nil, fmt.Errorf("artifact store not configured")
 	}

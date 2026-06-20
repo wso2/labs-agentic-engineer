@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package controllers
+package artifacts
 
 import (
 	"encoding/json"
@@ -23,7 +23,6 @@ import (
 	"net/http"
 
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
-	"github.com/wso2/asdlc/asdlc-service/services"
 	"github.com/wso2/asdlc/asdlc-service/utils"
 )
 
@@ -61,10 +60,10 @@ type ArtifactController interface {
 }
 
 type artifactController struct {
-	svc services.ArtifactService
+	svc ArtifactService
 }
 
-func NewArtifactController(svc services.ArtifactService) ArtifactController {
+func NewArtifactController(svc ArtifactService) ArtifactController {
 	return &artifactController{svc: svc}
 }
 
@@ -77,19 +76,19 @@ type putBody struct {
 
 func writeArtifactError(w http.ResponseWriter, r *http.Request, err error, op string) {
 	switch {
-	case errors.Is(err, services.ErrArtifactNotFound):
+	case errors.Is(err, ErrArtifactNotFound):
 		utils.WriteErrorResponse(w, http.StatusNotFound, "artifact not found")
-	case errors.Is(err, services.ErrArtifactPathInvalid):
+	case errors.Is(err, ErrArtifactPathInvalid):
 		utils.WriteErrorResponse(w, http.StatusBadRequest, err.Error())
-	case errors.Is(err, services.ErrInvalidVersionTag):
+	case errors.Is(err, ErrInvalidVersionTag):
 		utils.WriteErrorResponse(w, http.StatusBadRequest, err.Error())
-	case errors.Is(err, services.ErrIfMatchFailed):
+	case errors.Is(err, ErrIfMatchFailed):
 		utils.WriteErrorResponse(w, http.StatusPreconditionFailed, "if-match precondition failed")
-	case errors.Is(err, services.ErrNoVersionToDiscard):
+	case errors.Is(err, ErrNoVersionToDiscard):
 		utils.WriteErrorResponse(w, http.StatusNotFound, "no saved version to revert to")
-	case errors.Is(err, services.ErrConcurrentTagWrite):
+	case errors.Is(err, ErrConcurrentTagWrite):
 		utils.WriteErrorResponse(w, http.StatusConflict, err.Error())
-	case errors.Is(err, services.ErrNoRequirementsBaseline):
+	case errors.Is(err, ErrNoRequirementsBaseline):
 		utils.WriteErrorResponse(w, http.StatusConflict, err.Error())
 	case errors.Is(err, gitrepo.ErrRepoNotFound):
 		utils.WriteErrorResponse(w, http.StatusNotFound, "repository not found")
@@ -121,7 +120,7 @@ func (c *artifactController) ListRequirements(w http.ResponseWriter, r *http.Req
 		writeArtifactError(w, r, err, "list requirements")
 		return
 	}
-	utils.WriteSuccessResponse(w, http.StatusOK, services.RequirementsListResult{Files: files})
+	utils.WriteSuccessResponse(w, http.StatusOK, RequirementsListResult{Files: files})
 }
 
 func (c *artifactController) GetRequirementFile(w http.ResponseWriter, r *http.Request) {
@@ -166,10 +165,10 @@ func (c *artifactController) DeleteRequirementFile(w http.ResponseWriter, r *htt
 }
 
 func (c *artifactController) SaveRequirements(w http.ResponseWriter, r *http.Request) {
-	var body services.SaveRequest
+	var body SaveRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		// Empty body is allowed — message is optional.
-		body = services.SaveRequest{}
+		body = SaveRequest{}
 	}
 	res, err := c.svc.SaveRequirements(r.Context(), orgIDFrom(r), projectIDFrom(r), body)
 	if err != nil {
@@ -185,7 +184,7 @@ func (c *artifactController) DiscardRequirements(w http.ResponseWriter, r *http.
 		writeArtifactError(w, r, err, "discard requirements")
 		return
 	}
-	utils.WriteSuccessResponse(w, http.StatusOK, services.RequirementsListResult{Files: files})
+	utils.WriteSuccessResponse(w, http.StatusOK, RequirementsListResult{Files: files})
 }
 
 func (c *artifactController) ListRequirementsVersions(w http.ResponseWriter, r *http.Request) {
@@ -204,7 +203,7 @@ func (c *artifactController) GetRequirementsVersion(w http.ResponseWriter, r *ht
 		writeArtifactError(w, r, err, "get requirements version")
 		return
 	}
-	utils.WriteSuccessResponse(w, http.StatusOK, services.VersionRequirementsResult{
+	utils.WriteSuccessResponse(w, http.StatusOK, VersionRequirementsResult{
 		Tag:   tag,
 		Files: files,
 	})
@@ -219,7 +218,7 @@ func (c *artifactController) CaptureRequirementsSnapshot(w http.ResponseWriter, 
 		writeArtifactError(w, r, err, "capture requirements snapshot")
 		return
 	}
-	utils.WriteSuccessResponse(w, http.StatusOK, services.RequirementsListResult{Files: files})
+	utils.WriteSuccessResponse(w, http.StatusOK, RequirementsListResult{Files: files})
 }
 
 // RestoreRequirementsSnapshot rewrites the working-tree requirements
@@ -231,7 +230,7 @@ func (c *artifactController) RestoreRequirementsSnapshot(w http.ResponseWriter, 
 		writeArtifactError(w, r, err, "restore requirements snapshot")
 		return
 	}
-	utils.WriteSuccessResponse(w, http.StatusOK, services.RequirementsListResult{Files: files})
+	utils.WriteSuccessResponse(w, http.StatusOK, RequirementsListResult{Files: files})
 }
 
 // SnapshotFileResult is the response of
@@ -279,11 +278,11 @@ func (c *artifactController) DeleteRequirementsSnapshot(w http.ResponseWriter, r
 // service-internal helper directly.
 func requirementsRelPath(name string) (string, error) {
 	if name == "" {
-		return "", services.ErrArtifactPathInvalid
+		return "", ErrArtifactPathInvalid
 	}
 	// Lean on the service's path validator — it'll catch path separators,
 	// traversal, and the .md suffix requirement.
-	return services.RequirementFilePath(name)
+	return RequirementFilePath(name)
 }
 
 // ----- Design handlers (multi-file) -----
@@ -361,9 +360,9 @@ func (c *artifactController) DeleteDesignDirectory(w http.ResponseWriter, r *htt
 }
 
 func (c *artifactController) SaveDesign(w http.ResponseWriter, r *http.Request) {
-	var body services.SaveRequest
+	var body SaveRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		body = services.SaveRequest{}
+		body = SaveRequest{}
 	}
 	res, err := c.svc.SaveDesign(r.Context(), orgIDFrom(r), projectIDFrom(r), body)
 	if err != nil {
@@ -409,7 +408,7 @@ func (c *artifactController) GetDesignVersion(w http.ResponseWriter, r *http.Req
 // helper directly.
 func designRelPath(sub string) (string, error) {
 	if sub == "" {
-		return "", services.ErrArtifactPathInvalid
+		return "", ErrArtifactPathInvalid
 	}
-	return services.DesignFilePath(sub)
+	return DesignFilePath(sub)
 }

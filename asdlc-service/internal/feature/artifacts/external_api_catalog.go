@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package services
+package artifacts
 
 // ExternalAPICatalog resolves architect-declared dependent-API intents
 // (keyed by component-style name like "employee-api") into concrete URLs.

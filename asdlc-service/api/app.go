@@ -27,6 +27,7 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/config"
 	"github.com/wso2/asdlc/asdlc-service/controllers"
 	"github.com/wso2/asdlc/asdlc-service/internal/credentials"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 	"github.com/wso2/asdlc/asdlc-service/internal/platform/tenant"
 	"github.com/wso2/asdlc/asdlc-service/middleware"
@@ -84,7 +85,7 @@ type AppParams struct {
 	BranchCtrl           gitrepo.BranchController
 	PullRequestCtrl      gitrepo.PullRequestController
 	WebhookRegCtrl       gitrepo.WebhookRegistrationController
-	ArtifactCtrl         controllers.ArtifactController
+	ArtifactCtrl         artifacts.ArtifactController
 	CredCtrl             controllers.CredentialsRefreshController
 	RepoBoardCtrl        gitrepo.RepoBoardController
 	RepoService          gitrepo.RepoService

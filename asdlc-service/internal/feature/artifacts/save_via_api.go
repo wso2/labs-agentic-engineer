@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package services
+package artifacts
 
 // Save flow implementations for artifact-store v2 (V1 scope).
 //

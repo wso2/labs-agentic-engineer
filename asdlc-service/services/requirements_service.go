@@ -28,6 +28,7 @@ import (
 	"strings"
 
 	"github.com/wso2/asdlc/asdlc-service/clients/agents"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
 
@@ -55,16 +56,16 @@ type RequirementsService interface {
 }
 
 type requirementsService struct {
-	store        *ArtifactStore
+	store        *artifacts.ArtifactStore
 	agentsClient agents.Client
-	artifactSvc  ArtifactService
+	artifactSvc  artifacts.ArtifactService
 	locker       *RequirementsDirLocker
 }
 
 func NewRequirementsService(
-	store *ArtifactStore,
+	store *artifacts.ArtifactStore,
 	agentsClient agents.Client,
-	artifactSvc ArtifactService,
+	artifactSvc artifacts.ArtifactService,
 ) RequirementsService {
 	return &requirementsService{
 		store:        store,
@@ -143,7 +144,7 @@ func (s *requirementsService) GetRequirementsAtTag(ctx context.Context, orgID, p
 	}
 	files, err := s.artifactSvc.GetRequirementsAtTag(ctx, orgID, projectID, tag)
 	if err != nil {
-		if errors.Is(err, ErrArtifactNotFound) {
+		if errors.Is(err, artifacts.ErrArtifactNotFound) {
 			return nil, ErrSpecNotFound
 		}
 		return nil, fmt.Errorf("get requirements at %s: %w", tag, err)
@@ -201,7 +202,7 @@ func (s *requirementsService) SaveAndProceed(ctx context.Context, orgID, project
 	}
 	var bundle *models.RequirementsBundle
 	err := s.withLock(ctx, orgID, projectID, func(ctx context.Context) error {
-		res, err := s.artifactSvc.SaveRequirements(ctx, orgID, projectID, SaveRequest{
+		res, err := s.artifactSvc.SaveRequirements(ctx, orgID, projectID, artifacts.SaveRequest{
 			Message: "Update requirements",
 		})
 		if err != nil {
@@ -229,7 +230,7 @@ func (s *requirementsService) DiscardChanges(ctx context.Context, orgID, project
 	var bundle *models.RequirementsBundle
 	err := s.withLock(ctx, orgID, projectID, func(ctx context.Context) error {
 		if _, err := s.artifactSvc.DiscardRequirements(ctx, orgID, projectID); err != nil {
-			if errors.Is(err, ErrArtifactNotFound) {
+			if errors.Is(err, artifacts.ErrArtifactNotFound) {
 				return fmt.Errorf("no saved version to revert to")
 			}
 			return fmt.Errorf("discard requirements: %w", err)
@@ -285,7 +286,7 @@ func (s *requirementsService) StreamGenerate(
 	for _, src := range sourceNames {
 		content, err := s.store.ReadRequirementFile(ctx, orgID, projectID, src)
 		if err != nil {
-			if errors.Is(err, ErrArtifactNotFound) {
+			if errors.Is(err, artifacts.ErrArtifactNotFound) {
 				continue
 			}
 			return fmt.Errorf("read source %q: %w", src, err)
@@ -428,9 +429,9 @@ func fileMapsEqual(a, b map[string]string) bool {
 // AssembleDesignFromFiles wraps the artifact-store assembler and rejects an
 // empty file map. Used by callers that receive a tagged design file map out
 // of band (e.g. task generation reading a design from a tagged version).
-func AssembleDesignFromFiles(files map[string]string) (*DesignFile, error) {
+func AssembleDesignFromFiles(files map[string]string) (*artifacts.DesignFile, error) {
 	if len(files) == 0 {
 		return nil, fmt.Errorf("decode design: empty file map")
 	}
-	return AssembleDesign(files)
+	return artifacts.AssembleDesign(files)
 }

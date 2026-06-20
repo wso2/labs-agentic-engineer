@@ -26,6 +26,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 	"github.com/wso2/asdlc/asdlc-service/models"
 	"github.com/wso2/asdlc/asdlc-service/repositories"
@@ -85,7 +86,7 @@ type dispatchService struct {
 	repoBoardSvc      gitrepo.RepoBoardService
 	componentSvc      ComponentService
 	configSvc         ConfigService
-	store             *ArtifactStore
+	store             *artifacts.ArtifactStore
 	taskTokens        *TaskTokenManager
 	asServiceIdentity func(ctx context.Context) context.Context
 	wfRunService      WorkflowRunService
@@ -184,7 +185,7 @@ func NewDispatchService(
 	repoBoardSvc gitrepo.RepoBoardService,
 	componentSvc ComponentService,
 	configSvc ConfigService,
-	store *ArtifactStore,
+	store *artifacts.ArtifactStore,
 	taskTokens *TaskTokenManager,
 	asServiceIdentity func(ctx context.Context) context.Context,
 	wfRunService WorkflowRunService,

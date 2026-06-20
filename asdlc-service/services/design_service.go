@@ -30,6 +30,7 @@ import (
 	"strings"
 
 	"github.com/wso2/asdlc/asdlc-service/clients/agents"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
 	"github.com/wso2/asdlc/asdlc-service/internal/platform/k8sname"
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
@@ -71,9 +72,9 @@ type DesignService interface {
 }
 
 type designService struct {
-	store        *ArtifactStore
+	store        *artifacts.ArtifactStore
 	agentsClient agents.Client
-	artifactSvc  ArtifactService
+	artifactSvc  artifacts.ArtifactService
 	taskSvc      TaskService // for SaveAndProceed reconciliation; may be nil in tests
 	// traitSync, when non-nil, is invoked after a per-component design
 	// edit so an `exposesAPI.auth` toggle propagates to the OC Component +
@@ -110,9 +111,9 @@ type DesignServiceWithSkills interface {
 }
 
 func NewDesignService(
-	store *ArtifactStore,
+	store *artifacts.ArtifactStore,
 	agentsClient agents.Client,
-	artifactSvc ArtifactService,
+	artifactSvc artifacts.ArtifactService,
 ) DesignService {
 	return &designService{
 		store:        store,
@@ -136,7 +137,7 @@ func (s *designService) SetSkillService(svc *SkillService) {
 func (s *designService) GetDesign(ctx context.Context, orgID, projectID string) (*models.Design, error) {
 	designFile, err := s.store.ReadDesign(ctx, orgID, projectID)
 	if err != nil {
-		if IsNotFound(err) {
+		if artifacts.IsNotFound(err) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("read design: %w", err)
@@ -177,7 +178,7 @@ func (s *designService) GetDesign(ctx context.Context, orgID, projectID string) 
 		current, err := s.store.ListDesignFiles(ctx, orgID, projectID)
 		if err == nil {
 			tagged, err := s.artifactSvc.GetDesignAtTag(ctx, orgID, projectID, tag)
-			if err == nil && !designFilesEqual(current, tagged) {
+			if err == nil && !artifacts.DesignFilesEqual(current, tagged) {
 				unsaved = true
 			}
 		}
@@ -210,7 +211,7 @@ func (s *designService) GetDesignAtTag(ctx context.Context, orgID, projectID, ta
 	}
 	files, err := s.artifactSvc.GetDesignAtTag(ctx, orgID, projectID, tag)
 	if err != nil {
-		if errors.Is(err, ErrArtifactNotFound) {
+		if errors.Is(err, artifacts.ErrArtifactNotFound) {
 			return nil, ErrDesignNotFound
 		}
 		return nil, fmt.Errorf("get design at %s: %w", tag, err)
@@ -274,7 +275,7 @@ func (s *designService) StreamGenerateDesign(ctx context.Context, orgID, project
 
 	var previousDesign *agents.ArchitectDesign
 	existingDesign, err := s.store.ReadDesign(ctx, orgID, projectID)
-	if err != nil && !IsNotFound(err) {
+	if err != nil && !artifacts.IsNotFound(err) {
 		slog.WarnContext(ctx, "failed to read existing design for incremental regen", "error", err)
 	} else if existingDesign != nil {
 		previousDesign = &agents.ArchitectDesign{
@@ -382,7 +383,7 @@ func (s *designService) StreamGenerateDesign(ctx context.Context, orgID, project
 		return fmt.Errorf("agents service closed stream without finishing")
 	}
 
-	designFile := &DesignFile{
+	designFile := &artifacts.DesignFile{
 		Overview:      finalDesign.Design.Overview,
 		Components:    finalDesign.Design.Components,
 		SourceSpec:    sourceTag,
@@ -397,11 +398,11 @@ func (s *designService) StreamGenerateDesign(ctx context.Context, orgID, project
 	for _, c := range designFile.Components {
 		keep[c.Name] = struct{}{}
 	}
-	for _, name := range componentNamesIn(existingFiles) {
+	for _, name := range artifacts.ComponentNamesIn(existingFiles) {
 		if _, ok := keep[name]; ok {
 			continue
 		}
-		if err := s.store.DeleteDesignDirectory(ctx, orgID, projectID, ComponentDirPath(name)); err != nil {
+		if err := s.store.DeleteDesignDirectory(ctx, orgID, projectID, artifacts.ComponentDirPath(name)); err != nil {
 			slog.WarnContext(ctx, "failed to delete removed component dir",
 				"project", projectID, "component", name, "error", err)
 		}
@@ -447,7 +448,7 @@ func (s *designService) GetDesignBundleAtTag(ctx context.Context, orgID, project
 	}
 	files, err := s.artifactSvc.GetDesignAtTag(ctx, orgID, projectID, tag)
 	if err != nil {
-		if errors.Is(err, ErrArtifactNotFound) {
+		if errors.Is(err, artifacts.ErrArtifactNotFound) {
 			return nil, ErrDesignNotFound
 		}
 		return nil, fmt.Errorf("get design at %s: %w", tag, err)
@@ -526,7 +527,7 @@ func (s *designService) DeleteComponent(ctx context.Context, orgID, projectID, c
 	if componentName == "" {
 		return nil, fmt.Errorf("component name required")
 	}
-	if err := s.store.DeleteDesignDirectory(ctx, orgID, projectID, ComponentDirPath(componentName)); err != nil {
+	if err := s.store.DeleteDesignDirectory(ctx, orgID, projectID, artifacts.ComponentDirPath(componentName)); err != nil {
 		return nil, err
 	}
 	if s.traitSync != nil {
@@ -554,7 +555,7 @@ func (s *designService) SaveAndProceed(ctx context.Context, orgID, projectID str
 
 	designFile, err := s.store.ReadDesign(ctx, orgID, projectID)
 	if err != nil {
-		if IsNotFound(err) {
+		if artifacts.IsNotFound(err) {
 			return nil, ErrDesignNotFound
 		}
 		return nil, fmt.Errorf("read design: %w", err)
@@ -563,7 +564,7 @@ func (s *designService) SaveAndProceed(ctx context.Context, orgID, projectID str
 		return nil, ErrDesignNotFound
 	}
 
-	res, err := s.artifactSvc.SaveDesign(ctx, orgID, projectID, SaveRequest{
+	res, err := s.artifactSvc.SaveDesign(ctx, orgID, projectID, artifacts.SaveRequest{
 		Message: "Update design",
 	})
 	if err != nil {
@@ -607,7 +608,7 @@ func (s *designService) DiscardChanges(ctx context.Context, orgID, projectID str
 		return nil, fmt.Errorf("git client not configured")
 	}
 	if _, err := s.artifactSvc.DiscardDesign(ctx, orgID, projectID); err != nil {
-		if errors.Is(err, ErrArtifactNotFound) {
+		if errors.Is(err, artifacts.ErrArtifactNotFound) {
 			return nil, fmt.Errorf("no saved version to revert to")
 		}
 		return nil, fmt.Errorf("discard design: %w", err)

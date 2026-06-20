@@ -19,6 +19,7 @@ package services
 import (
 	"fmt"
 
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
 
@@ -35,7 +36,7 @@ import (
 
 // mapRequirementsVersions converts the artifact-service requirements version
 // list to the BFF's flat ArtifactVersion shape.
-func mapRequirementsVersions(versions []RequirementsVersionInfo) []models.ArtifactVersion {
+func mapRequirementsVersions(versions []artifacts.RequirementsVersionInfo) []models.ArtifactVersion {
 	if len(versions) == 0 {
 		return nil
 	}
@@ -54,7 +55,7 @@ func mapRequirementsVersions(versions []RequirementsVersionInfo) []models.Artifa
 // per-row Version field carries the design revision number (M); the
 // SourceSpec field exposes the parent requirements tag (`v<N>`) so the UI
 // can render lineage without re-parsing tag names.
-func mapDesignVersions(versions []DesignVersionInfo) []models.ArtifactVersion {
+func mapDesignVersions(versions []artifacts.DesignVersionInfo) []models.ArtifactVersion {
 	if len(versions) == 0 {
 		return nil
 	}

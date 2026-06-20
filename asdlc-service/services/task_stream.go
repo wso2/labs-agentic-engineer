@@ -32,6 +32,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/wso2/asdlc/asdlc-service/clients/agents"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
@@ -110,7 +111,7 @@ func (s *taskService) StreamGenerateTasks(ctx context.Context, orgID, projectID 
 	}
 	design, err := s.store.ReadDesign(ctx, orgID, projectID)
 	if err != nil {
-		if IsNotFound(err) {
+		if artifacts.IsNotFound(err) {
 			return ErrDesignNotFound
 		}
 		return fmt.Errorf("read design: %w", err)
@@ -165,7 +166,7 @@ func (s *taskService) StreamGenerateTasks(ctx context.Context, orgID, projectID 
 	}
 
 	mode := "fresh"
-	var prevDesign *DesignFile
+	var prevDesign *artifacts.DesignFile
 	prevSpec := ""
 	if baseline != nil {
 		mode = "incremental"
@@ -173,7 +174,7 @@ func (s *taskService) StreamGenerateTasks(ctx context.Context, orgID, projectID 
 		// computers tolerate empty/nil prevs.
 		if s.artifactSvc != nil && baseline.SourceDesignVersion != "" {
 			if files, err := s.artifactSvc.GetDesignAtTag(ctx, orgID, projectID, baseline.SourceDesignVersion); err == nil {
-				prevDesign, _ = AssembleDesign(files)
+				prevDesign, _ = artifacts.AssembleDesign(files)
 			}
 		}
 		if s.artifactSvc != nil && baseline.SourceSpecVersion != "" {
@@ -262,7 +263,7 @@ func (s *taskService) runPhase2(
 	w *sseWriter,
 	orgID, projectID, specContent string,
 	survived []persistedItem,
-	design *DesignFile,
+	design *artifacts.DesignFile,
 	allTasks []models.ComponentTask,
 	repoURL, repoSlug string,
 	resolvedSkills []agents.SkillRecord,
@@ -427,7 +428,7 @@ func (s *taskService) persistAndIssue(
 	orgID, projectID, batchID string,
 	specVersion, designVersion string,
 	plan []planItemFrame,
-	design *DesignFile,
+	design *artifacts.DesignFile,
 	repoURL, repoSlug string,
 ) ([]persistedItem, error) {
 	// Index design components for slice extraction and DependsOn lookup.
@@ -627,7 +628,7 @@ func (s *taskService) editIssueBodyWithRetries(ctx context.Context, task *models
 // runReconciliationStreamed closes pending tasks for components removed from
 // the current design. Emits data-task-rejected to the console for each.
 // Counterpart to ReconcilePendingForDesignChange (no-SSE variant).
-func (s *taskService) runReconciliationStreamed(ctx context.Context, orgID, projectID string, design *DesignFile, w *sseWriter) error {
+func (s *taskService) runReconciliationStreamed(ctx context.Context, orgID, projectID string, design *artifacts.DesignFile, w *sseWriter) error {
 	tasks, err := s.taskRepo.ListByProjectID(ctx, orgID, projectID)
 	if err != nil {
 		return err
@@ -671,7 +672,7 @@ func (s *taskService) runReconciliationStreamed(ctx context.Context, orgID, proj
 func (s *taskService) ReconcilePendingForDesignChange(ctx context.Context, orgID, projectID string) error {
 	design, err := s.store.ReadDesign(ctx, orgID, projectID)
 	if err != nil {
-		if IsNotFound(err) {
+		if artifacts.IsNotFound(err) {
 			return nil
 		}
 		return fmt.Errorf("read design: %w", err)
@@ -872,7 +873,7 @@ func buildPlanRequest(
 func buildDetailRequest(
 	projectName, spec string,
 	persisted []persistedItem,
-	design *DesignFile,
+	design *artifacts.DesignFile,
 	allTasks []models.ComponentTask,
 	resolvedSkills []agents.SkillRecord,
 ) agents.TechLeadDetailRequest {
@@ -963,7 +964,7 @@ func buildDetailRequest(
 // (descriptions for the planner, full bodies for the detail phase).
 // Empty slices when SkillService isn't wired or skillsApplied is empty.
 // See docs/design/skills-system.md > "Tech-lead".
-func (s *taskService) resolveProjectSkills(ctx context.Context, orgID string, design *DesignFile) ([]agents.SkillDescription, []agents.SkillRecord) {
+func (s *taskService) resolveProjectSkills(ctx context.Context, orgID string, design *artifacts.DesignFile) ([]agents.SkillDescription, []agents.SkillRecord) {
 	if s.skillSvc == nil || design == nil || len(design.SkillsApplied) == 0 {
 		return nil, nil
 	}

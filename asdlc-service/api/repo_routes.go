@@ -17,7 +17,7 @@
 package api
 
 import (
-	"github.com/wso2/asdlc/asdlc-service/controllers"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 )
 
@@ -36,7 +36,7 @@ func registerRepoOnlyRoutes(
 	bc gitrepo.BranchController,
 	pc gitrepo.PullRequestController,
 	wc gitrepo.WebhookRegistrationController,
-	ac controllers.ArtifactController,
+	ac artifacts.ArtifactController,
 ) {
 	// CreateRepo is the one route without a path projectId — orgId travels
 	// in the body and is validated downstream by the controller. Enumerated
