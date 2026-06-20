@@ -67,20 +67,30 @@ type OrgDisconnectService struct {
 	db       *gorm.DB
 	credSvc  *CredentialService
 	issueSvc gitrepo.IssueService
+	// applyDisconnect runs the pure task-state transition for the
+	// org-disconnected event. Injected (rather than calling ApplyTaskEvent
+	// directly) so this service can extract to its own feature package
+	// without importing the task state machine — the composition root wires
+	// it to services.ApplyTaskEvent(_, TaskEventOrgDisconnected). Until the
+	// state machine moves to contracts (§6.9), this is the consumer-side seam.
+	applyDisconnect func(current models.TaskStatus) (models.TaskStatus, error)
 }
 
-// NewOrgDisconnectService constructs the cascade orchestrator.
+// NewOrgDisconnectService constructs the cascade orchestrator. applyDisconnect
+// is the injected task-state transition (see the struct field).
 func NewOrgDisconnectService(
 	taskRepo repositories.TaskRepository,
 	db *gorm.DB,
 	credSvc *CredentialService,
 	issueSvc gitrepo.IssueService,
+	applyDisconnect func(current models.TaskStatus) (models.TaskStatus, error),
 ) *OrgDisconnectService {
 	return &OrgDisconnectService{
-		taskRepo: taskRepo,
-		db:       db,
-		credSvc:  credSvc,
-		issueSvc: issueSvc,
+		taskRepo:        taskRepo,
+		db:              db,
+		credSvc:         credSvc,
+		issueSvc:        issueSvc,
+		applyDisconnect: applyDisconnect,
 	}
 }
 
@@ -138,7 +148,7 @@ func (s *OrgDisconnectService) Disconnect(ctx context.Context, ocOrgID, cause st
 		// Phase C — projector apply. cause overrides the default
 		// EventCause("org.disconnected") so callers can distinguish
 		// manual.disconnect, validator.unauthorized, installation.deleted, etc.
-		if newStatus, err := ApplyTaskEvent(models.TaskStatus(t.Status), TaskEventOrgDisconnected); err == nil {
+		if newStatus, err := s.applyDisconnect(models.TaskStatus(t.Status)); err == nil {
 			t.Status = string(newStatus)
 			if newStatus.IsTerminal() {
 				cc := cause

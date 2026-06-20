@@ -875,7 +875,10 @@ func main() {
 	}
 
 	// Phase 2 PR B — org-scoped GitHub connect/disconnect surface.
-	disconnectSvc := services.NewOrgDisconnectService(taskRepo, db, credService, issueService)
+	disconnectSvc := services.NewOrgDisconnectService(taskRepo, db, credService, issueService,
+		func(s models.TaskStatus) (models.TaskStatus, error) {
+			return services.ApplyTaskEvent(s, services.TaskEventOrgDisconnected)
+		})
 	orgGitHubCtrl := controllers.NewOrgGitHubController(
 		credService,
 		disconnectSvc,

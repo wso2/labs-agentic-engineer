@@ -54,12 +54,15 @@ func RegisterInstallationHandlers(
 	projector *Projector,
 ) {
 	h := &installationHandler{
-		db:         db,
-		credSvc:    credSvc,
-		issueSvc:   issueSvc,
-		taskRepo:   taskRepo,
-		projector:  projector,
-		disconnect: services.NewOrgDisconnectService(taskRepo, db, credSvc, issueSvc),
+		db:        db,
+		credSvc:   credSvc,
+		issueSvc:  issueSvc,
+		taskRepo:  taskRepo,
+		projector: projector,
+		disconnect: services.NewOrgDisconnectService(taskRepo, db, credSvc, issueSvc,
+			func(s models.TaskStatus) (models.TaskStatus, error) {
+				return services.ApplyTaskEvent(s, services.TaskEventOrgDisconnected)
+			}),
 	}
 	router.Register("installation", "created", EventHandlerFunc(h.handleCreated))
 	router.Register("installation", "deleted", EventHandlerFunc(h.handleDeleted))
