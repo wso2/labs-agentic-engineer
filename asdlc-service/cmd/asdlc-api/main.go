@@ -964,7 +964,7 @@ func main() {
 		}(),
 		BoardController:        task.NewBoardController(boardService),
 		ConfigController:       component.NewConfigController(configService),
-		CollabController:       controllers.NewCollabController(projectService),
+		CollabController:       requirements.NewCollabController(repoService),
 		WebhookController:      webhookCtrl,
 		TaskRepo:               taskRepo,
 		ConfigRepo:             configRepo,

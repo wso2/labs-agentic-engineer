@@ -55,7 +55,7 @@ type AppParams struct {
 	TaskController             controllers.TaskController
 	BoardController            task.BoardController
 	ConfigController           component.ConfigController
-	CollabController           controllers.CollabController
+	CollabController           requirements.CollabController
 	WebhookController          controllers.WebhookController
 	OrgGitHubController        orgcreds.OrgGitHubController
 	OrgAnthropicController     orgcreds.OrgAnthropicController
@@ -224,10 +224,6 @@ func NewHandler(params AppParams) http.Handler {
 		registerConnectCallbackRoute(mux, params.OrgGitHubController)
 	}
 
-	if params.CollabController != nil {
-		registerCollabRoutes(apiRouter, mux, params.CollabController)
-	}
-
 	// --- Git-service-side routes (folded in after WS0.1.i) -------------
 	// Wired onto a dedicated git-service mux to keep their auth posture
 	// (Service JWT for /api/v1/repos + /internal/credentials, Task JWT
@@ -315,6 +311,15 @@ func NewHandler(params AppParams) http.Handler {
 	// docs/design/default-org-seed-removal.md §3.2.
 	ensureOrg := orgensure.Middleware(params.OrganizationService)
 	mux.Handle("/api/", jwt(ensureOrg(apiMux)))
+
+	// Collab routes. GetCollabSession is org-scoped (on apiRouter/apiMux,
+	// gated). ValidateCollabAccess (INT-8) is the raw server-to-server route
+	// the collab-server calls — wrapped with the jwt verifier here so the
+	// forwarded user Bearer is signature-verified before the handler enforces
+	// the room's project-ownership oracle.
+	if params.CollabController != nil {
+		registerCollabRoutes(apiRouter, mux, params.CollabController, jwt)
+	}
 
 	// Global middleware stack (outermost applied last).
 	var handler http.Handler = mux
