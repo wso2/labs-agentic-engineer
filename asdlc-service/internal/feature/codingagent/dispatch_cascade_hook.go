@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package services
+package codingagent
 
 import (
 	"context"
@@ -33,11 +33,21 @@ import (
 // See docs/design/cross-component-wiring-gaps.md §3 F1. The dispatch
 // itself (gating logic + URL resolution) lives in DispatchService —
 // this type only takes the lock and invokes it.
+// projectSPARuntimeConfigEmitter re-emits env-config.js across a project's
+// SPAs. Consumer port for the RuntimeConfigService (which extracts LATER than
+// codingagent) — defined here and satisfied structurally by the concrete,
+// wired at the composition root, so the cascade needn't import the flat
+// services package. Mirrors the runtimeConfigEmitter pattern in
+// dispatch_service.go.
+type projectSPARuntimeConfigEmitter interface {
+	EmitForProjectSPAs(ctx context.Context, orgID, projectID string) error
+}
+
 type DispatchCascadeHook struct {
 	db            *gorm.DB
 	dispatch      DispatchService
 	traitSync     *component.TraitSyncService
-	runtimeConfig *RuntimeConfigService
+	runtimeConfig projectSPARuntimeConfigEmitter
 }
 
 func NewDispatchCascadeHook(db *gorm.DB, dispatch DispatchService) *DispatchCascadeHook {
@@ -57,7 +67,7 @@ func (h *DispatchCascadeHook) SetTraitSync(t *component.TraitSyncService) {
 // SetRuntimeConfig wires the env-config.js emitter so the cascade can
 // re-emit window._env_ values on every SPA in the project when any
 // component lands deployed (sibling API URLs become available). Optional.
-func (h *DispatchCascadeHook) SetRuntimeConfig(r *RuntimeConfigService) {
+func (h *DispatchCascadeHook) SetRuntimeConfig(r projectSPARuntimeConfigEmitter) {
 	if h == nil {
 		return
 	}

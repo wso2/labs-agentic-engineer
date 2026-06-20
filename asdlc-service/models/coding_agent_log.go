@@ -33,8 +33,8 @@ import (
 // `run_name` per minute-bucket and a new sidecar row, preserving
 // per-run logs across retries.
 //
-// Captured by `services/codingagent/JobWatcher` when a Job hits
-// terminal (Failed/Succeeded). Read by `services/progress_service`
+// Captured by `internal/feature/codingagent.JobWatcher` when a Job hits
+// terminal (Failed/Succeeded). Read by the codingagent progress service
 // on the post-terminal branch of `GetAgentProgress`.
 type CodingAgentLog struct {
 	TaskID      uuid.UUID `gorm:"type:uuid;primaryKey;column:task_id" json:"taskId"`

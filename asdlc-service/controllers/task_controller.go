@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/wso2/asdlc/asdlc-service/clients/openchoreo"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/codingagent"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/orgcreds"
 	taskfeature "github.com/wso2/asdlc/asdlc-service/internal/feature/task"
 	"github.com/wso2/asdlc/asdlc-service/models"
@@ -72,8 +73,8 @@ type TaskController interface {
 
 type taskController struct {
 	service           taskfeature.TaskService
-	dispatchSvc       services.DispatchService
-	progressSvc       services.ProgressService
+	dispatchSvc       codingagent.DispatchService
+	progressSvc       codingagent.ProgressService
 	ocClient          openchoreo.ComponentClient
 	taskTokens        *services.TaskTokenManager
 	publisherVerifier *services.PublisherTokenVerifier
@@ -83,8 +84,8 @@ type taskController struct {
 
 func NewTaskController(
 	service taskfeature.TaskService,
-	dispatchSvc services.DispatchService,
-	progressSvc services.ProgressService,
+	dispatchSvc codingagent.DispatchService,
+	progressSvc codingagent.ProgressService,
 	ocClient openchoreo.ComponentClient,
 	taskTokens *services.TaskTokenManager,
 ) TaskController {
@@ -460,7 +461,7 @@ func writeProgressError(w http.ResponseWriter, r *http.Request, err error, op st
 		utils.WriteErrorResponse(w, http.StatusNotFound, "task not found")
 		return
 	}
-	if errors.Is(err, services.ErrProgressUnavailable) {
+	if errors.Is(err, codingagent.ErrProgressUnavailable) {
 		utils.WriteErrorResponse(w, http.StatusServiceUnavailable, "progress_unavailable")
 		return
 	}

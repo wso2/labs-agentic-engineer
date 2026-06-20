@@ -23,20 +23,20 @@
 // Inputs and naming:
 //
 //   - runName     — short DNS-1123 label, used as the Job name and as
-//                   the workflow-run identifier persisted on
-//                   ComponentTask. The watcher (WS2.5) keys on this.
+//     the workflow-run identifier persisted on
+//     ComponentTask. The watcher (WS2.5) keys on this.
 //   - orgNS       — per-org remote-worker namespace
-//                   (`wc-<orgUUID8>-<orgHash8>-remote-worker`).
+//     (`wc-<orgUUID8>-<orgHash8>-remote-worker`).
 //   - anthropicSecretName / githubSecretName / publisherSecretName
-//                   — K8s Secret names materialized by per-run
-//                   ExternalSecrets just before the Job is applied.
-//                   Mounted as envFrom so a leaked process listing
-//                   won't disclose secret values.
+//     — K8s Secret names materialized by per-run
+//     ExternalSecrets just before the Job is applied.
+//     Mounted as envFrom so a leaked process listing
+//     won't disclose secret values.
 //   - runnerImage — the asdlc remote-worker image; pinned by the BFF
-//                   from cfg.AgentRunnerImage.
+//     from cfg.AgentRunnerImage.
 //   - prompt / repo URL / identity / callback URL — pre-rendered
-//                   dispatch payload the runner reads from
-//                   ASDLC_* env vars.
+//     dispatch payload the runner reads from
+//     ASDLC_* env vars.
 //
 // Mounts:
 //
@@ -61,11 +61,11 @@ import (
 // required unless the doc-comment says otherwise; Build returns an
 // error rather than producing a manifest that K8s will reject.
 type JobInputs struct {
-	RunName  string // Job name (DNS-1123 label, ≤ 63 chars)
-	OrgNS    string // target namespace
-	TaskID   string // ComponentTask UUID, stamped as a label for queries
-	OrgID    string // OC org handle, stamped as a label
-	ProjectID string
+	RunName       string // Job name (DNS-1123 label, ≤ 63 chars)
+	OrgNS         string // target namespace
+	TaskID        string // ComponentTask UUID, stamped as a label for queries
+	OrgID         string // OC org handle, stamped as a label
+	ProjectID     string
 	ComponentName string
 
 	// RunnerImage is the docker image the runner pod uses. Always pinned —
@@ -80,27 +80,27 @@ type JobInputs struct {
 	// Job applies before the secret arrives is possible in theory; in
 	// practice the BFF applies the ExternalSecret first and the per-run
 	// secret is in place by the time the kubelet pulls the image.
-	AnthropicSecretName       string
-	GitHubSecretName          string
+	AnthropicSecretName string
+	GitHubSecretName    string
 	// PublisherSecretName is the K8s Secret holding the per-org publisher
 	// cc creds (client_id + client_secret) materialised by a per-run ES
 	// from SM-API. Empty disables the WS2.4 runner-auth path; the runner
 	// then falls back to ASDLC_BEARER for /credentials/refresh calls.
-	PublisherSecretName       string
+	PublisherSecretName string
 	// PublisherTokenURL is the Thunder /oauth2/token endpoint used by the
 	// runner's cc helper. Non-secret; rides as a plain env. Set in lockstep
 	// with PublisherSecretName.
-	PublisherTokenURL         string
+	PublisherTokenURL string
 
 	// Dispatch payload — passed verbatim into the runner via ASDLC_* env vars.
-	RepoURL        string
-	Prompt         string
-	IdentityName   string
-	IdentityEmail  string
-	IdentityLogin  string // optional
-	GitServiceURL  string // ASDLC_GIT_SERVICE_URL (BFF URL reachable from the pod)
-	CallbackURL    string // ASDLC_PLATFORM_URL (BFF callback URL)
-	CorrelationID  string // optional; runner synthesizes one if absent
+	RepoURL       string
+	Prompt        string
+	IdentityName  string
+	IdentityEmail string
+	IdentityLogin string // optional
+	GitServiceURL string // ASDLC_GIT_SERVICE_URL (BFF URL reachable from the pod)
+	CallbackURL   string // ASDLC_PLATFORM_URL (BFF callback URL)
+	CorrelationID string // optional; runner synthesizes one if absent
 
 	// Bearer is the bespoke ASDLC_BEARER param. Deprecated by WS2.4 —
 	// when PublisherSecretName is set this field MUST be empty so

@@ -48,6 +48,7 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/internal/contracts"
 	"github.com/wso2/asdlc/asdlc-service/internal/credentials"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/codingagent"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/component"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/orgcreds"
@@ -60,7 +61,6 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/models"
 	"github.com/wso2/asdlc/asdlc-service/repositories"
 	"github.com/wso2/asdlc/asdlc-service/services"
-	"github.com/wso2/asdlc/asdlc-service/services/codingagent"
 	"github.com/wso2/asdlc/asdlc-service/services/webhook"
 	"gorm.io/gorm"
 )
@@ -788,7 +788,7 @@ func main() {
 	webhookRouter := webhook.NewRouter()
 	projector := task.NewProjector(db)
 
-	wfRunService := services.NewWorkflowRunService(db, taskRepo, componentClient, repoService, buildCredService, artifactStore, projector, asServiceIdentity)
+	wfRunService := codingagent.NewWorkflowRunService(db, taskRepo, componentClient, repoService, buildCredService, artifactStore, projector, asServiceIdentity)
 
 	// Dispatch service — replaces the legacy RemoteWorkerService. Routes to
 	// WorkflowRunService.TriggerCodingAgent (ClusterWorkflow `app-factory-coding-agent`)
@@ -797,15 +797,15 @@ func main() {
 	// AGENT_GIT_SERVICE_URL collapsed into AGENT_PLATFORM_URL: post-fold,
 	// the runner pod reaches every former git-service endpoint via the
 	// merged asdlc-api at AGENT_PLATFORM_URL.
-	dispatchSvc := services.NewDispatchService(taskRepo, repoService, credService, anthropicCredService, repoBoardService, componentService, configService, artifactStore, taskTokens, asServiceIdentity, wfRunService, projector, cfg.AgentPlatformURL, cfg.AgentPlatformURL)
-	if hook, ok := dispatchSvc.(services.DispatchServiceWithTraitSync); ok {
+	dispatchSvc := codingagent.NewDispatchService(taskRepo, repoService, credService, anthropicCredService, repoBoardService, componentService, configService, artifactStore, taskTokens, asServiceIdentity, wfRunService, projector, cfg.AgentPlatformURL, cfg.AgentPlatformURL)
+	if hook, ok := dispatchSvc.(codingagent.DispatchServiceWithTraitSync); ok {
 		hook.SetTraitSync(traitSyncService)
 	}
 	// WS2.4 — let the proxy dispatch pre-flight provision the per-org publisher
 	// cc on demand (decoupled from API security), so the runner can auth to the
 	// BFF through the gateway for every component, not just protected ones.
 	if idpSetter, ok := dispatchSvc.(interface {
-		SetIDPService(services.IDPService)
+		SetIDPService(codingagent.OrgPublisherProvisioner)
 	}); ok {
 		idpSetter.SetIDPService(idpService)
 	}
@@ -813,7 +813,7 @@ func main() {
 	// legacy ClusterWorkflow path stays the only dispatch flow.
 	if codingAgentDispatcher != nil {
 		if setter, ok := dispatchSvc.(interface {
-			WithCodingAgentDispatcher(*codingagent.Dispatcher, *gorm.DB, string, string) services.DispatchService
+			WithCodingAgentDispatcher(*codingagent.Dispatcher, *gorm.DB, string, string) codingagent.DispatchService
 		}); ok {
 			setter.WithCodingAgentDispatcher(codingAgentDispatcher, db, cfg.AgentClusterSecretStore, cfg.AgentRunnerImage)
 			slog.Info("dispatch: proxy-based coding-agent path enabled",
@@ -827,7 +827,7 @@ func main() {
 		runtimeConfigSvc.SetThunderAdmin(thunderAdminClient)
 	}
 	if rcSetter, ok := dispatchSvc.(interface {
-		SetRuntimeConfig(*services.RuntimeConfigService)
+		SetRuntimeConfig(codingagent.RuntimeConfigEmitter)
 	}); ok {
 		rcSetter.SetRuntimeConfig(runtimeConfigSvc)
 	}
@@ -839,7 +839,7 @@ func main() {
 	// re-evaluate `on_hold` siblings and auto-dispatch the ones
 	// whose deps are now satisfied. See docs/design/cross-component-
 	// wiring-gaps.md §3 F1.
-	cascadeHook := services.NewDispatchCascadeHook(db, dispatchSvc)
+	cascadeHook := codingagent.NewDispatchCascadeHook(db, dispatchSvc)
 	cascadeHook.SetTraitSync(traitSyncService)
 	cascadeHook.SetRuntimeConfig(runtimeConfigSvc)
 	projector.SetDispatchHook(cascadeHook)
@@ -854,12 +854,12 @@ func main() {
 	// the HTTP server is up so it's not killed during handler init failures.
 	// Phase 2 PR D — wfRunService.RetryAuthFailedBuild backs the auth
 	// retry path. authBudget is configurable for tests via env.
-	buildWatcher := webhook.NewBuildWatcher(db, componentClient, projector, asServiceIdentity, wfRunService, cfg.BuildAuthRetryBudget)
+	buildWatcher := codingagent.NewBuildWatcher(db, componentClient, projector, asServiceIdentity, wfRunService, cfg.BuildAuthRetryBudget)
 
 	// Coding-agent watcher — same cadence, complementary to the GitHub
 	// webhook path. Only acts on terminal-failed coding-agent WorkflowRuns;
 	// success transitions ride the pull_request:ready_for_review webhook.
-	codingAgentWatcher := webhook.NewCodingAgentWatcher(db, componentClient, projector, asServiceIdentity)
+	codingAgentWatcher := codingagent.NewCodingAgentWatcher(db, componentClient, projector, asServiceIdentity)
 
 	// Phase 2 — trait_sync drift watcher (10 s cadence). Idempotent
 	// reconcile of the `api-configuration` ClusterTrait on every
@@ -1021,7 +1021,7 @@ func main() {
 	// The watcher's OnHoldDispatcher port returns a dispatched count; adapt
 	// dispatchSvc.DispatchTasks (which returns []DispatchResult) here at the
 	// composition root so webhook needn't import services.
-	onHoldWatcher := webhook.NewOnHoldWatcher(db, func(ctx context.Context, orgID, projectID string) (int, error) {
+	onHoldWatcher := codingagent.NewOnHoldWatcher(db, func(ctx context.Context, orgID, projectID string) (int, error) {
 		r, e := dispatchSvc.DispatchTasks(ctx, orgID, projectID)
 		return len(r), e
 	})
@@ -1123,11 +1123,11 @@ func progressService(
 	observerClient observer.Client,
 	cgwClient *clustergatewayproxy.Client,
 	db *gorm.DB,
-) services.ProgressService {
-	svc := services.NewProgressService(taskSvc, ocClient, observerClient)
+) codingagent.ProgressService {
+	svc := codingagent.NewProgressService(taskSvc, ocClient, observerClient)
 	if cgwClient != nil && db != nil {
 		if setter, ok := svc.(interface {
-			WithCodingAgentLogSource(*clustergatewayproxy.Client, *gorm.DB) services.ProgressService
+			WithCodingAgentLogSource(*clustergatewayproxy.Client, *gorm.DB) codingagent.ProgressService
 		}); ok {
 			svc = setter.WithCodingAgentLogSource(cgwClient, db)
 			slog.Info("progress: cluster-gateway-proxy log source enabled (new-path ca-… runs)")

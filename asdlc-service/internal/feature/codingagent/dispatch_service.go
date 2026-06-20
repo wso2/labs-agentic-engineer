@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package services
+package codingagent
 
 import (
 	"context"
@@ -31,10 +31,10 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/component"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/orgcreds"
+	"github.com/wso2/asdlc/asdlc-service/internal/platform/k8sname"
 	"github.com/wso2/asdlc/asdlc-service/internal/platform/tenant"
 	"github.com/wso2/asdlc/asdlc-service/models"
 	"github.com/wso2/asdlc/asdlc-service/repositories"
-	"github.com/wso2/asdlc/asdlc-service/services/codingagent"
 	"gorm.io/gorm"
 )
 
@@ -92,12 +92,12 @@ type (
 	taskTokenIssuer interface {
 		Issue(taskID, ocOrgID, projectID string) (string, error)
 	}
-	// orgPublisherProvisioner is idp's get-or-create publisher hook (WS2.4).
-	orgPublisherProvisioner interface {
+	// OrgPublisherProvisioner is idp's get-or-create publisher hook (WS2.4).
+	OrgPublisherProvisioner interface {
 		EnsureOrgPublisher(ctx context.Context, orgID, actor string) (clientID, clientSecret string, created bool, err error)
 	}
-	// runtimeConfigEmitter writes env-config.js onto a web-app's ReleaseBindings.
-	runtimeConfigEmitter interface {
+	// RuntimeConfigEmitter writes env-config.js onto a web-app's ReleaseBindings.
+	RuntimeConfigEmitter interface {
 		EmitForComponent(ctx context.Context, orgID, projectID, componentName string) error
 	}
 )
@@ -128,7 +128,7 @@ type dispatchService struct {
 	// populated, the new path runs and the legacy
 	// wfRunService.TriggerCodingAgent is skipped. Both being absent
 	// keeps the legacy ClusterWorkflow path live.
-	codingAgentDispatcher *codingagent.Dispatcher
+	codingAgentDispatcher *Dispatcher
 
 	// db backs the SM-API triplet lookup; nil disables the new
 	// dispatch path even when codingAgentDispatcher is set. Wired by
@@ -149,7 +149,7 @@ type dispatchService struct {
 	// the file synchronously before its bundle so `window._env_` is
 	// populated before any React module runs — no rebuild needed when
 	// per-env values change. Wired via SetRuntimeConfig.
-	runtimeConfig runtimeConfigEmitter
+	runtimeConfig RuntimeConfigEmitter
 
 	// idp, when non-nil, provisions the per-org Thunder publisher
 	// client_credentials on demand so the coding-agent runner can
@@ -157,14 +157,14 @@ type dispatchService struct {
 	// Decoupled from API security: trait_sync only provisions it on the
 	// first protected deploy, but the runner needs it for every component,
 	// so the dispatch pre-flight ensures it too. Wired via SetIDPService.
-	idp orgPublisherProvisioner
+	idp OrgPublisherProvisioner
 }
 
 // WithCodingAgentDispatcher wires the WS2.3 proxy-based dispatch path.
 // db is required for the SM-API triplet lookup; clusterSecretStore +
 // runnerImage are pinned by the caller. Returns the receiver for
 // chained construction.
-func (s *dispatchService) WithCodingAgentDispatcher(d *codingagent.Dispatcher, db *gorm.DB, clusterSecretStore, runnerImage string) DispatchService {
+func (s *dispatchService) WithCodingAgentDispatcher(d *Dispatcher, db *gorm.DB, clusterSecretStore, runnerImage string) DispatchService {
 	s.codingAgentDispatcher = d
 	s.db = db
 	s.clusterSecretStore = clusterSecretStore
@@ -184,14 +184,14 @@ type DispatchServiceWithTraitSync interface {
 // by the proxy dispatch pre-flight (WS2.4 runner-auth). Optional — when
 // unset (e.g. local k3d without Thunder), the dispatch path falls back to
 // the per-task RS256 JWT.
-func (s *dispatchService) SetIDPService(idp orgPublisherProvisioner) {
+func (s *dispatchService) SetIDPService(idp OrgPublisherProvisioner) {
 	s.idp = idp
 }
 
 // SetRuntimeConfig installs the env-config.js emitter that writes
 // per-env values onto each web-app's ReleaseBindings. Call after
 // NewDispatchService in production wiring.
-func (s *dispatchService) SetRuntimeConfig(r runtimeConfigEmitter) {
+func (s *dispatchService) SetRuntimeConfig(r RuntimeConfigEmitter) {
 	s.runtimeConfig = r
 }
 
@@ -570,7 +570,7 @@ func (s *dispatchService) tryDispatchViaProxy(
 	// emits a third per-run ExternalSecret materialising PUBLISHER_CLIENT_ID +
 	// PUBLISHER_CLIENT_SECRET into the runner pod.
 	var (
-		publisherSR       *codingagent.SecretRef
+		publisherSR       *SecretRef
 		publisherTokenURL string
 	)
 	if s.idp != nil {
@@ -582,7 +582,7 @@ func (s *dispatchService) tryDispatchViaProxy(
 	var idpRow models.OrganizationIDPProfile
 	if err := s.db.WithContext(ctx).Where("org_id = ?", task.OrgID).First(&idpRow).Error; err == nil {
 		if idpRow.SMAPIKVPath != nil && idpRow.SMAPISecretRefName != nil {
-			publisherSR = &codingagent.SecretRef{
+			publisherSR = &SecretRef{
 				SecretRefName: derefStr(idpRow.SMAPISecretRefName),
 				KVPath:        derefStr(idpRow.SMAPIKVPath),
 				Property:      derefStr(idpRow.SMAPIProperty),
@@ -631,7 +631,7 @@ func (s *dispatchService) tryDispatchViaProxy(
 		"remoteWorkerNamespace", tenant.RemoteWorkerNamespace(orgUUID))
 
 	runName := codingAgentRunName(task)
-	job := codingagent.JobInputs{
+	job := JobInputs{
 		RunName:       runName,
 		TaskID:        task.ID,
 		OrgID:         task.OrgID,
@@ -657,11 +657,11 @@ func (s *dispatchService) tryDispatchViaProxy(
 		PublisherTokenURL: publisherTokenURL,
 	}
 
-	rn, err := s.codingAgentDispatcher.Dispatch(ctx, codingagent.Inputs{
+	rn, err := s.codingAgentDispatcher.Dispatch(ctx, Inputs{
 		OrgUUID:                orgUUID,
 		Job:                    job,
-		AnthropicSR:            codingagent.SecretRef{SecretRefName: derefStr(anthropicRow.SMAPISecretRefName), KVPath: derefStr(anthropicRow.SMAPIKVPath), Property: derefStr(anthropicRow.SMAPIProperty)},
-		GitHubSR:               codingagent.SecretRef{SecretRefName: derefStr(githubRow.SMAPISecretRefName), KVPath: derefStr(githubRow.SMAPIKVPath), Property: derefStr(githubRow.SMAPIProperty)},
+		AnthropicSR:            SecretRef{SecretRefName: derefStr(anthropicRow.SMAPISecretRefName), KVPath: derefStr(anthropicRow.SMAPIKVPath), Property: derefStr(anthropicRow.SMAPIProperty)},
+		GitHubSR:               SecretRef{SecretRefName: derefStr(githubRow.SMAPISecretRefName), KVPath: derefStr(githubRow.SMAPIKVPath), Property: derefStr(githubRow.SMAPIProperty)},
 		PublisherSR:            publisherSR,
 		ClusterSecretStoreName: s.clusterSecretStore,
 	})
@@ -854,7 +854,7 @@ func (s *dispatchService) RetryTask(ctx context.Context, taskID string) (Dispatc
 // component, since AnnounceDependencyDeployed doesn't need a per-task
 // task object — only the component name that just deployed.
 func (s *dispatchService) resolveExternalURL(ctx context.Context, orgID, projectID, componentName string) string {
-	list, err := s.componentSvc.ListDeployments(ctx, orgID, projectID, toK8sName(componentName))
+	list, err := s.componentSvc.ListDeployments(ctx, orgID, projectID, k8sname.ToK8sName(componentName))
 	if err != nil {
 		slog.WarnContext(ctx, "announce dep deployed: list deployments failed",
 			"project", projectID, "component", componentName, "error", err)
@@ -910,7 +910,7 @@ func (s *dispatchService) resolveDependencyEndpoints(
 	}
 	out := make([]DependencyEndpoint, 0, len(task.DependsOnComponents))
 	for _, depComponent := range task.DependsOnComponents {
-		ocName := toK8sName(depComponent)
+		ocName := k8sname.ToK8sName(depComponent)
 		list, err := s.componentSvc.ListDeployments(ctx, task.OrgID, task.ProjectID, ocName)
 		if err != nil {
 			return nil, fmt.Errorf("list deployments for %q: %w", depComponent, err)
@@ -939,6 +939,18 @@ func firstExternalURL(list *models.DeploymentList) string {
 	return ""
 }
 
+// ocEntrypoint maps a design component type to its OpenChoreo deployment
+// entrypoint. Local copy of services.ocEntrypoint (services/design_service.go),
+// kept in-package so codingagent needn't import the flat services package.
+func ocEntrypoint(componentType string) string {
+	switch strings.ToLower(componentType) {
+	case "web-app":
+		return "deployment/web-application"
+	default:
+		return "deployment/service"
+	}
+}
+
 // ensureOCComponent creates the OC Component (one per task component) needed
 // for the build to fire when the merge push arrives. AutoBuild=false — every
 // build is driven by the BFF's push-webhook handler creating a WorkflowRun
@@ -956,7 +968,7 @@ func (s *dispatchService) ensureOCComponent(
 	if s.asServiceIdentity != nil {
 		ctx = s.asServiceIdentity(ctx)
 	}
-	componentName := toK8sName(task.ComponentName)
+	componentName := k8sname.ToK8sName(task.ComponentName)
 	slog.InfoContext(ctx, "ensureOCComponent: creating OC component via service identity",
 		"task", task.ID, "org", task.OrgID, "project", task.ProjectID, "component", componentName)
 
