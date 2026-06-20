@@ -23,12 +23,12 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
 
-// issueTitle returns the GitHub issue title for a ComponentTask.
-func issueTitle(task *models.ComponentTask) string {
+// IssueTitle returns the GitHub issue title for a ComponentTask.
+func IssueTitle(task *models.ComponentTask) string {
 	return task.Title
 }
 
-// buildIssueBody produces the markdown body for the GitHub issue that anchors
+// BuildIssueBody produces the markdown body for the GitHub issue that anchors
 // a single ComponentTask. The body is intentionally task-specific — workflow,
 // constraints, deny-list, and project-structure conventions live in the
 // `asdlc` skill (`remote-worker/plugin/skills/asdlc/SKILL.md`), which the
@@ -53,13 +53,14 @@ func issueTitle(task *models.ComponentTask) string {
 // CORS middleware. The empty-URL silent-fallback bug (a `?? ""` default
 // that turned every fetch into a relative URL and produced `405 Method
 // Not Allowed` from the SPA's own nginx) is guarded against by:
-//   1. SKILL.md mandating `throw` on missing key in `src/env.ts` (no
-//      silent same-origin fallback);
-//   2. tech-lead's per-task issue body Setup subsection enumerating
-//      each upstream as `window._env_.<UPSTREAM>_URL`; and
-//   3. architect validator rule that every web-app's `dependsOn` is
-//      matched in `componentAgentInstructions` with the upstream's
-//      expected `window._env_` key.
+//  1. SKILL.md mandating `throw` on missing key in `src/env.ts` (no
+//     silent same-origin fallback);
+//  2. tech-lead's per-task issue body Setup subsection enumerating
+//     each upstream as `window._env_.<UPSTREAM>_URL`; and
+//  3. architect validator rule that every web-app's `dependsOn` is
+//     matched in `componentAgentInstructions` with the upstream's
+//     expected `window._env_` key.
+//
 // All of this lives in the `asdlc` skill and the architect/tech-lead
 // prompts; the issue body remains task-specific.
 //
@@ -72,7 +73,7 @@ func issueTitle(task *models.ComponentTask) string {
 // The two unused parameters (repoURL, repoSlug) are kept to preserve the
 // existing call sites; they were used by the now-removed Local Developer
 // Setup section. Drop them once the call sites stop passing them.
-func buildIssueBody(task *models.ComponentTask, comp *models.DesignComponent, _repoURL, _repoSlug string) string {
+func BuildIssueBody(task *models.ComponentTask, comp *models.DesignComponent, _repoURL, _repoSlug string) string {
 	var sb strings.Builder
 
 	if task.Rationale != "" {

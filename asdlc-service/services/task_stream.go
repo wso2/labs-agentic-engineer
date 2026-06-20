@@ -602,7 +602,7 @@ func (s *taskService) editIssueBodyWithRetries(ctx context.Context, task *models
 		return
 	}
 	comp, _ := s.resolveDesignComponent(ctx, task)
-	body := buildIssueBody(task, comp, repoURL, repoSlug)
+	body := BuildIssueBody(task, comp, repoURL, repoSlug)
 	var lastErr error
 	for attempt := 1; attempt <= 3; attempt++ {
 		err := s.issueSvc.EditIssueBody(ctx, task.OrgID, task.ProjectID, task.IssueNumber, body)

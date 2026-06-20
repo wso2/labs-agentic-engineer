@@ -52,9 +52,9 @@ type DesignDiffRemoved struct {
 }
 
 type DesignDiffModified struct {
-	Name              string   `json:"name"`
-	DependsOnAdded    []string `json:"dependsOnAdded,omitempty"`
-	DependsOnRemoved  []string `json:"dependsOnRemoved,omitempty"`
+	Name             string   `json:"name"`
+	DependsOnAdded   []string `json:"dependsOnAdded,omitempty"`
+	DependsOnRemoved []string `json:"dependsOnRemoved,omitempty"`
 	// Operation-level OpenAPI diffs, e.g. "+ POST /todos", "- DELETE /todos/{id}",
 	// "~ PUT /todos/{id} (request schema)".
 	OpenAPIOps []string `json:"openapiOps,omitempty"`
@@ -81,7 +81,7 @@ func (d DesignDiff) IsTrivial() bool {
 // computeDesignDiff walks current vs baseline and returns the structural
 // delta. Component matching is case-insensitive on Name. OpenAPI op-level
 // diffs come from a parse-and-compare of the canonicalised YAML — the same
-// canonicalisation `openapi_normalize.go::normalizeOpenAPIYAML` produces
+// canonicalisation `openapi_normalize.go::NormalizeOpenAPIYAML` produces
 // when writing each component's openapi.yaml, so whitespace/ordering noise
 // is stripped.
 //
@@ -209,7 +209,7 @@ func extractOpenAPIOps(spec string) (map[string]string, error) {
 	if spec == "" {
 		return map[string]string{}, nil
 	}
-	canonical, err := normalizeOpenAPIYAML(spec)
+	canonical, err := NormalizeOpenAPIYAML(spec)
 	if err != nil {
 		return nil, err
 	}

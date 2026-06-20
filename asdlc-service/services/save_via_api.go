@@ -37,8 +37,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/wso2/asdlc/asdlc-service/models"
 	"github.com/wso2/asdlc/asdlc-service/internal/credentials"
+	"github.com/wso2/asdlc/asdlc-service/models"
 )
 
 // saveDesignViaAPI implements §8.2 (Git Data API path) for V1: the working
@@ -60,7 +60,7 @@ func (s *artifactService) saveDesignViaAPI(
 	if owner == "" || repo == "" {
 		return nil, fmt.Errorf("cannot derive owner/repo from RepoURL %q", repoRecord.RepoURL)
 	}
-	cred, err := s.gitOps.resolver.Resolve(ctx, repoRecord.OrgID)
+	cred, err := s.gitOps.Resolver().Resolve(ctx, repoRecord.OrgID)
 	if err != nil {
 		return nil, fmt.Errorf("resolve credential: %w", err)
 	}
@@ -109,11 +109,11 @@ func (s *artifactService) saveDesignViaAPI(
 	}
 
 	// 5. Resolve current main commit + tree.
-	mainCommitSHA, err := s.gitOps.gitHub.GetRef(ctx, owner, repo, cred, "heads/"+repoRecord.DefaultBranch)
+	mainCommitSHA, err := s.gitOps.GitHubClient().GetRef(ctx, owner, repo, cred, "heads/"+repoRecord.DefaultBranch)
 	if err != nil {
 		return nil, fmt.Errorf("get ref main: %w", err)
 	}
-	mainCommit, err := s.gitOps.gitHub.GetCommit(ctx, owner, repo, cred, mainCommitSHA)
+	mainCommit, err := s.gitOps.GitHubClient().GetCommit(ctx, owner, repo, cred, mainCommitSHA)
 	if err != nil {
 		return nil, fmt.Errorf("get commit %s: %w", mainCommitSHA, err)
 	}
@@ -121,7 +121,7 @@ func (s *artifactService) saveDesignViaAPI(
 	// 6. Build tree entries from the changeset.
 	//    Add/Modify → upload blob + entry with sha
 	//    Delete     → entry with sha:null (skipped if path isn't on main — see §8.3 step 1)
-	mainTree, err := s.gitOps.gitHub.GetTree(ctx, owner, repo, cred, mainCommit.TreeSHA, true)
+	mainTree, err := s.gitOps.GitHubClient().GetTree(ctx, owner, repo, cred, mainCommit.TreeSHA, true)
 	if err != nil {
 		return nil, fmt.Errorf("get tree %s: %w", mainCommit.TreeSHA, err)
 	}
@@ -139,7 +139,7 @@ func (s *artifactService) saveDesignViaAPI(
 			if rerr != nil {
 				return nil, fmt.Errorf("read working tree %s: %w", ch.Name, rerr)
 			}
-			blobSHA, berr := s.gitOps.gitHub.CreateBlob(ctx, owner, repo, cred, data)
+			blobSHA, berr := s.gitOps.GitHubClient().CreateBlob(ctx, owner, repo, cred, data)
 			if berr != nil {
 				return nil, fmt.Errorf("create blob %s: %w", ch.Name, berr)
 			}
@@ -184,27 +184,27 @@ func (s *artifactService) saveDesignViaAPI(
 
 	// 7. CreateTree / CreateCommit / UpdateRef under CAS retry.
 	bucketKey := repoRecord.OrgID + ":" + repoRecord.ProjectID
-	author, committer := s.gitOps.resolveSaveIdentities(cred)
+	author, committer := s.gitOps.ResolveSaveIdentities(cred)
 
 	var newCommitSHA string
 	if len(entries) > 0 {
 		err = retryOnCASConflict(ctx, bucketKey, func() error {
 			// On retry, re-fetch ref/commit/tree so base_tree is fresh.
-			freshMain, ferr := s.gitOps.gitHub.GetRef(ctx, owner, repo, cred, "heads/"+repoRecord.DefaultBranch)
+			freshMain, ferr := s.gitOps.GitHubClient().GetRef(ctx, owner, repo, cred, "heads/"+repoRecord.DefaultBranch)
 			if ferr != nil {
 				return fmt.Errorf("refresh main: %w", ferr)
 			}
-			freshCommit, ferr := s.gitOps.gitHub.GetCommit(ctx, owner, repo, cred, freshMain)
+			freshCommit, ferr := s.gitOps.GitHubClient().GetCommit(ctx, owner, repo, cred, freshMain)
 			if ferr != nil {
 				return fmt.Errorf("refresh commit: %w", ferr)
 			}
 			mainCommitSHA = freshMain
 			mainCommit = freshCommit
-			treeSHA, terr := s.gitOps.gitHub.CreateTree(ctx, owner, repo, cred, freshCommit.TreeSHA, entries)
+			treeSHA, terr := s.gitOps.GitHubClient().CreateTree(ctx, owner, repo, cred, freshCommit.TreeSHA, entries)
 			if terr != nil {
 				return fmt.Errorf("create tree: %w", terr)
 			}
-			commitSHA, cerr := s.gitOps.gitHub.CreateCommit(ctx, owner, repo, cred, CreateCommitRequest{
+			commitSHA, cerr := s.gitOps.GitHubClient().CreateCommit(ctx, owner, repo, cred, CreateCommitRequest{
 				Message:   commitMessage,
 				TreeSHA:   treeSHA,
 				Parents:   []string{freshMain},
@@ -214,7 +214,7 @@ func (s *artifactService) saveDesignViaAPI(
 			if cerr != nil {
 				return fmt.Errorf("create commit: %w", cerr)
 			}
-			if uerr := s.gitOps.gitHub.UpdateRef(ctx, owner, repo, cred, "heads/"+repoRecord.DefaultBranch, commitSHA, false); uerr != nil {
+			if uerr := s.gitOps.GitHubClient().UpdateRef(ctx, owner, repo, cred, "heads/"+repoRecord.DefaultBranch, commitSHA, false); uerr != nil {
 				return uerr
 			}
 			newCommitSHA = commitSHA
@@ -244,7 +244,7 @@ func (s *artifactService) saveDesignViaAPI(
 
 	// 9. Best-effort sync local clone so subsequent reads see what we just
 	// saved. Failures are logged but don't fail the save.
-	if err := s.gitOps.bestEffortPullDefaultBranch(ctx, repoRecord); err != nil {
+	if err := s.gitOps.BestEffortPullDefaultBranch(ctx, repoRecord); err != nil {
 		slog.WarnContext(ctx, "best-effort pull after design save failed",
 			"project", repoRecord.ProjectID, "error", err)
 	}
@@ -281,7 +281,7 @@ func (s *artifactService) saveRequirementsViaAPI(
 	if owner == "" || repo == "" {
 		return nil, fmt.Errorf("cannot derive owner/repo from RepoURL %q", repoRecord.RepoURL)
 	}
-	cred, err := s.gitOps.resolver.Resolve(ctx, repoRecord.OrgID)
+	cred, err := s.gitOps.Resolver().Resolve(ctx, repoRecord.OrgID)
 	if err != nil {
 		return nil, fmt.Errorf("resolve credential: %w", err)
 	}
@@ -323,11 +323,11 @@ func (s *artifactService) saveRequirementsViaAPI(
 	}
 
 	// 5. Resolve current main commit + tree.
-	mainCommitSHA, err := s.gitOps.gitHub.GetRef(ctx, owner, repo, cred, "heads/"+repoRecord.DefaultBranch)
+	mainCommitSHA, err := s.gitOps.GitHubClient().GetRef(ctx, owner, repo, cred, "heads/"+repoRecord.DefaultBranch)
 	if err != nil {
 		return nil, fmt.Errorf("get ref main: %w", err)
 	}
-	mainCommit, err := s.gitOps.gitHub.GetCommit(ctx, owner, repo, cred, mainCommitSHA)
+	mainCommit, err := s.gitOps.GitHubClient().GetCommit(ctx, owner, repo, cred, mainCommitSHA)
 	if err != nil {
 		return nil, fmt.Errorf("get commit %s: %w", mainCommitSHA, err)
 	}
@@ -335,7 +335,7 @@ func (s *artifactService) saveRequirementsViaAPI(
 	// 6. Build tree entries from the changeset.
 	//    Add/Modify → upload blob + entry with sha
 	//    Delete     → entry with sha:null (skipped if path isn't on main — see §8.3 step 1)
-	mainTree, err := s.gitOps.gitHub.GetTree(ctx, owner, repo, cred, mainCommit.TreeSHA, true)
+	mainTree, err := s.gitOps.GitHubClient().GetTree(ctx, owner, repo, cred, mainCommit.TreeSHA, true)
 	if err != nil {
 		return nil, fmt.Errorf("get tree %s: %w", mainCommit.TreeSHA, err)
 	}
@@ -353,7 +353,7 @@ func (s *artifactService) saveRequirementsViaAPI(
 			if rerr != nil {
 				return nil, fmt.Errorf("read working tree %s: %w", ch.Name, rerr)
 			}
-			blobSHA, berr := s.gitOps.gitHub.CreateBlob(ctx, owner, repo, cred, data)
+			blobSHA, berr := s.gitOps.GitHubClient().CreateBlob(ctx, owner, repo, cred, data)
 			if berr != nil {
 				return nil, fmt.Errorf("create blob %s: %w", ch.Name, berr)
 			}
@@ -398,23 +398,23 @@ func (s *artifactService) saveRequirementsViaAPI(
 
 	// 7. CreateTree / CreateCommit / UpdateRef under CAS retry.
 	bucketKey := repoRecord.OrgID + ":" + repoRecord.ProjectID
-	author, committer := s.gitOps.resolveSaveIdentities(cred)
+	author, committer := s.gitOps.ResolveSaveIdentities(cred)
 
 	var newCommitSHA string
 	if len(entries) > 0 {
 		err = retryOnCASConflict(ctx, bucketKey, func() error {
 			// On retry, re-fetch ref/commit/tree so base_tree is fresh.
-			freshMain, ferr := s.gitOps.gitHub.GetRef(ctx, owner, repo, cred, "heads/"+repoRecord.DefaultBranch)
+			freshMain, ferr := s.gitOps.GitHubClient().GetRef(ctx, owner, repo, cred, "heads/"+repoRecord.DefaultBranch)
 			if ferr != nil {
 				return fmt.Errorf("refresh main: %w", ferr)
 			}
-			freshCommit, ferr := s.gitOps.gitHub.GetCommit(ctx, owner, repo, cred, freshMain)
+			freshCommit, ferr := s.gitOps.GitHubClient().GetCommit(ctx, owner, repo, cred, freshMain)
 			if ferr != nil {
 				return fmt.Errorf("refresh commit: %w", ferr)
 			}
 			mainCommitSHA = freshMain
 			mainCommit = freshCommit
-			treeSHA, terr := s.gitOps.gitHub.CreateTree(ctx, owner, repo, cred, freshCommit.TreeSHA, entries)
+			treeSHA, terr := s.gitOps.GitHubClient().CreateTree(ctx, owner, repo, cred, freshCommit.TreeSHA, entries)
 			if terr != nil {
 				return fmt.Errorf("create tree: %w", terr)
 			}
@@ -422,7 +422,7 @@ func (s *artifactService) saveRequirementsViaAPI(
 			if commitMsg == "" {
 				commitMsg = "Update requirements"
 			}
-			commitSHA, cerr := s.gitOps.gitHub.CreateCommit(ctx, owner, repo, cred, CreateCommitRequest{
+			commitSHA, cerr := s.gitOps.GitHubClient().CreateCommit(ctx, owner, repo, cred, CreateCommitRequest{
 				Message:   commitMsg,
 				TreeSHA:   treeSHA,
 				Parents:   []string{freshMain},
@@ -432,7 +432,7 @@ func (s *artifactService) saveRequirementsViaAPI(
 			if cerr != nil {
 				return fmt.Errorf("create commit: %w", cerr)
 			}
-			if uerr := s.gitOps.gitHub.UpdateRef(ctx, owner, repo, cred, "heads/"+repoRecord.DefaultBranch, commitSHA, false); uerr != nil {
+			if uerr := s.gitOps.GitHubClient().UpdateRef(ctx, owner, repo, cred, "heads/"+repoRecord.DefaultBranch, commitSHA, false); uerr != nil {
 				return uerr
 			}
 			newCommitSHA = commitSHA
@@ -462,7 +462,7 @@ func (s *artifactService) saveRequirementsViaAPI(
 	// 9. Best-effort sync local clone so subsequent reads see what we just
 	// saved. Failures are logged but don't fail the save (the user's bytes
 	// are on remote already).
-	if err := s.gitOps.bestEffortPullDefaultBranch(ctx, repoRecord); err != nil {
+	if err := s.gitOps.BestEffortPullDefaultBranch(ctx, repoRecord); err != nil {
 		slog.WarnContext(ctx, "post-save pull failed (continuing)",
 			"project", repoRecord.ProjectID, "error", err)
 	}
@@ -488,7 +488,7 @@ func (s *artifactService) saveRequirementsViaAPI(
 // `latestRequirementsVersion` / `nextDesignTag` helpers (artifact_versioning.go)
 // can consume them.
 func (s *artifactService) fetchGitHubTags(ctx context.Context, owner, repo string, cred credentials.Credential) ([]TagInfo, error) {
-	refs, err := s.gitOps.gitHub.ListMatchingRefs(ctx, owner, repo, cred, "tags/v")
+	refs, err := s.gitOps.GitHubClient().ListMatchingRefs(ctx, owner, repo, cred, "tags/v")
 	if err != nil {
 		return nil, err
 	}
@@ -541,7 +541,7 @@ func (s *artifactService) createAnnotatedTagViaAPI(
 	parentN int,
 	kind string,
 ) error {
-	author, _ := s.gitOps.resolveSaveIdentities(cred)
+	author, _ := s.gitOps.ResolveSaveIdentities(cred)
 	return retryOnTagCollision(ctx, func() error {
 		// Recompute the target name on each attempt so collisions push us forward.
 		switch kind {
@@ -560,7 +560,7 @@ func (s *artifactService) createAnnotatedTagViaAPI(
 			ver, name := nextRequirementsTag(*tags)
 			*nextN, *tagName = ver, name
 		}
-		tagObjSHA, err := s.gitOps.gitHub.CreateTagObject(ctx, owner, repo, cred, CreateTagObjectRequest{
+		tagObjSHA, err := s.gitOps.GitHubClient().CreateTagObject(ctx, owner, repo, cred, CreateTagObjectRequest{
 			Tag:     *tagName,
 			Message: tagBody,
 			Object:  commitSHA,
@@ -570,85 +570,11 @@ func (s *artifactService) createAnnotatedTagViaAPI(
 		if err != nil {
 			return fmt.Errorf("create tag object: %w", err)
 		}
-		if err := s.gitOps.gitHub.CreateTagRef(ctx, owner, repo, cred, *tagName, tagObjSHA); err != nil {
+		if err := s.gitOps.GitHubClient().CreateTagRef(ctx, owner, repo, cred, *tagName, tagObjSHA); err != nil {
 			return err // may be wrapped ErrTagAlreadyExists — retried
 		}
 		return nil
 	})
-}
-
-// resolveSaveIdentities returns (author, committer) identities for the save.
-//
-// V1: committer = author = credential identity (same as today's CLI flow).
-// V2 will split these per §11 (committer=bot, author=OC user).
-func (s *gitOpsService) resolveSaveIdentities(cred credentials.Credential) (*GitIdentity, *GitIdentity) {
-	id := cred.Identity()
-	if id.Name == "" {
-		id.Name = "ASDLC"
-	}
-	if id.Email == "" {
-		id.Email = "noreply@asdlc.dev"
-	}
-	gi := &GitIdentity{Name: id.Name, Email: id.Email}
-	return gi, gi
-}
-
-// bestEffortPullDefaultBranch advances the local clone's HEAD to remote main
-// so the next save's `git status` against HEAD reflects current remote
-// state. The working-tree files are LEFT ALONE — they're the user's draft
-// surface in V1 and we just wrote them on remote as the save's commit. We
-// also refresh the index so `git status` doesn't report every working-tree
-// file as "modified vs new HEAD."
-//
-// Implementation note: we use `update-ref` + `read-tree` rather than
-// `merge --ff-only` because the working tree contains untracked or
-// otherwise-modified files that merge would refuse to overwrite.
-func (s *gitOpsService) bestEffortPullDefaultBranch(ctx context.Context, repoRecord *models.GitRepository) error {
-	authedEnv, _, cleanup, err := s.prepareAuthedEnv(ctx, repoRecord)
-	if err != nil {
-		return err
-	}
-	defer cleanup()
-	clonePath := repoRecord.ClonePath
-	branch := repoRecord.DefaultBranch
-
-	// 1. Fetch the remote ref.
-	cmd := exec.CommandContext(ctx, "git", "fetch", "origin", branch)
-	cmd.Dir = clonePath
-	cmd.Env = authedEnv
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("git fetch: %s", stderr.String())
-	}
-
-	// 2. Read the new remote SHA.
-	originSHA, err := runGitOutput(ctx, clonePath, "rev-parse", "origin/"+branch)
-	if err != nil {
-		return fmt.Errorf("rev-parse origin/%s: %w", branch, err)
-	}
-	originSHA = strings.TrimSpace(originSHA)
-
-	// 3. Move local branch ref to origin's tip without touching working tree.
-	cmd = exec.CommandContext(ctx, "git", "update-ref", "refs/heads/"+branch, originSHA)
-	cmd.Dir = clonePath
-	stderr.Reset()
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("git update-ref refs/heads/%s: %s", branch, stderr.String())
-	}
-
-	// 4. Refresh the index to the new HEAD so `git status` against the
-	// working tree shows only the user's local drafts as modified, not
-	// every file that was renamed by the move.
-	cmd = exec.CommandContext(ctx, "git", "read-tree", "HEAD")
-	cmd.Dir = clonePath
-	stderr.Reset()
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("git read-tree HEAD: %s", stderr.String())
-	}
-	return nil
 }
 
 // changeRow is one row of `git diff --name-status HEAD -- <dir>`.
@@ -750,8 +676,3 @@ func diffWorkingTreeAgainstHEAD(ctx context.Context, clonePath, subdir string) (
 	}
 	return rows, nil
 }
-
-// gitHub is the GitHubClient pointer wired into gitOpsService at
-// construction. Resolved here as a convenience accessor — the field name
-// resolves to the artifact-store v2 (V1) injected client.
-func (s *gitOpsService) GitHubClient() GitHubClient { return s.gitHub }

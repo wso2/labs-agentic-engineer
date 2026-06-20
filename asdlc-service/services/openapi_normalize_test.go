@@ -48,11 +48,11 @@ info:
   title: x
 openapi: 3.0.3
 `
-	na, err := normalizeOpenAPIYAML(a)
+	na, err := NormalizeOpenAPIYAML(a)
 	if err != nil {
 		t.Fatalf("a: %v", err)
 	}
-	nb, err := normalizeOpenAPIYAML(b)
+	nb, err := NormalizeOpenAPIYAML(b)
 	if err != nil {
 		t.Fatalf("b: %v", err)
 	}
@@ -85,11 +85,11 @@ paths:
         "200":
           description: ok
 `
-	na, err := normalizeOpenAPIYAML(a)
+	na, err := NormalizeOpenAPIYAML(a)
 	if err != nil {
 		t.Fatalf("a: %v", err)
 	}
-	nb, err := normalizeOpenAPIYAML(b)
+	nb, err := NormalizeOpenAPIYAML(b)
 	if err != nil {
 		t.Fatalf("b: %v", err)
 	}
@@ -115,7 +115,7 @@ paths:
         "200":
           description: ok
 `
-	out, err := normalizeOpenAPIYAML(a)
+	out, err := NormalizeOpenAPIYAML(a)
 	if err != nil {
 		t.Fatalf("%v", err)
 	}
@@ -141,7 +141,7 @@ paths:
         "200":
           description: ok
 `
-	out, err := normalizeOpenAPIYAML(a)
+	out, err := NormalizeOpenAPIYAML(a)
 	if err != nil {
 		t.Fatalf("%v", err)
 	}
@@ -185,11 +185,11 @@ paths:
         "200":
           description: ok
 `
-	a, err := normalizeOpenAPIYAML(withAnchors)
+	a, err := NormalizeOpenAPIYAML(withAnchors)
 	if err != nil {
 		t.Fatalf("%v", err)
 	}
-	b, err := normalizeOpenAPIYAML(expanded)
+	b, err := NormalizeOpenAPIYAML(expanded)
 	if err != nil {
 		t.Fatalf("%v", err)
 	}
@@ -210,11 +210,11 @@ paths:
         "200":
           description: ok
 `
-	once, err := normalizeOpenAPIYAML(src)
+	once, err := NormalizeOpenAPIYAML(src)
 	if err != nil {
 		t.Fatalf("%v", err)
 	}
-	twice, err := normalizeOpenAPIYAML(once)
+	twice, err := NormalizeOpenAPIYAML(once)
 	if err != nil {
 		t.Fatalf("%v", err)
 	}

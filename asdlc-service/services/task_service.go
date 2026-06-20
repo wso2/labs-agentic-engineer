@@ -386,8 +386,8 @@ func (s *taskService) ensureIssueForTask(
 	// pull_request.opened webhook handler when the agent opens its PR.
 
 	issue, err := s.issueSvc.CreateIssue(ctx, task.OrgID, task.ProjectID, CreateIssueRequest{
-		Title:  issueTitle(task),
-		Body:   buildIssueBody(task, comp, repoURL, repoSlug),
+		Title:  IssueTitle(task),
+		Body:   BuildIssueBody(task, comp, repoURL, repoSlug),
 		Labels: []string{"asdlc", "implementation"},
 	})
 	if err != nil {

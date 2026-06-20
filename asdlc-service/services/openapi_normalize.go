@@ -59,7 +59,7 @@ func normalizeDesignJSON(raw []byte) ([]byte, error) {
 		if df.Components[i].OpenAPISpec == "" {
 			continue
 		}
-		canonical, err := normalizeOpenAPIYAML(df.Components[i].OpenAPISpec)
+		canonical, err := NormalizeOpenAPIYAML(df.Components[i].OpenAPISpec)
 		if err != nil {
 			// Don't fail the whole save on a single broken spec. The
 			// architect validator already gated on parse-ability before
@@ -78,9 +78,9 @@ func normalizeDesignJSON(raw []byte) ([]byte, error) {
 	return out, nil
 }
 
-// normalizeOpenAPIYAML applies the rules from design doc §10 to a single
+// NormalizeOpenAPIYAML applies the rules from design doc §10 to a single
 // OpenAPI spec.
-func normalizeOpenAPIYAML(in string) (string, error) {
+func NormalizeOpenAPIYAML(in string) (string, error) {
 	var raw any
 	if err := yaml.Unmarshal([]byte(in), &raw); err != nil {
 		return "", err

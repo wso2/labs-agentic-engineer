@@ -31,7 +31,9 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 
+	"github.com/wso2/asdlc/asdlc-service/internal/credentials"
 	"github.com/wso2/asdlc/asdlc-service/models"
 	"github.com/wso2/asdlc/asdlc-service/repositories"
 )
@@ -188,20 +190,34 @@ type ArtifactService interface {
 	GetDesignAtTag(ctx context.Context, orgID, projectID, tag string) (map[string]string, error)
 }
 
-type artifactService struct {
-	repo   repositories.RepoRepository
-	gitOps *gitOpsService
+// GitWorkspace is the narrow gitrepo capability surface the artifact save
+// flow needs: the per-project clone lock, clone readiness, the authed-env
+// helper, the GitHub client + credential resolver, and the save-identity /
+// post-save-pull helpers. The GitOpsService port (and the concrete
+// *gitOpsService) structurally satisfies it, so artifacts depends on this
+// narrow consumer port instead of the concrete struct — killing the old
+// panic-cast. When artifacts extracts to its own package this interface moves
+// with it (artifacts→gitrepo direction).
+type GitWorkspace interface {
+	RepoLock(projectID string) *sync.Mutex
+	EnsureCloneReady(ctx context.Context, repoRecord *models.GitRepository) error
+	PrepareAuthedEnv(ctx context.Context, repoRecord *models.GitRepository) ([]string, func(), error)
+	ResolveSaveIdentities(cred credentials.Credential) (*GitIdentity, *GitIdentity)
+	BestEffortPullDefaultBranch(ctx context.Context, repoRecord *models.GitRepository) error
+	GitHubClient() GitHubClient
+	Resolver() credentials.Resolver
 }
 
-// NewArtifactService builds an ArtifactService that piggy-backs on the
-// existing GitOpsService for shared infrastructure (locks, clone readiness,
-// credential resolution).
-func NewArtifactService(repo repositories.RepoRepository, gitOps GitOpsService) ArtifactService {
-	concrete, ok := gitOps.(*gitOpsService)
-	if !ok {
-		panic("artifact service requires the concrete gitOpsService for shared lock + clone helpers")
-	}
-	return &artifactService{repo: repo, gitOps: concrete}
+type artifactService struct {
+	repo   repositories.RepoRepository
+	gitOps GitWorkspace
+}
+
+// NewArtifactService builds an ArtifactService that piggy-backs on the gitrepo
+// GitWorkspace surface for shared infrastructure (per-project locks, clone
+// readiness, credential resolution, and the Git Data API save helpers).
+func NewArtifactService(repo repositories.RepoRepository, gitOps GitWorkspace) ArtifactService {
+	return &artifactService{repo: repo, gitOps: gitOps}
 }
 
 // ----- Path validation -----
@@ -363,7 +379,7 @@ func (s *artifactService) GetFile(ctx context.Context, orgID, projectID, relPath
 		return nil, err
 	}
 
-	mu := s.gitOps.getRepoLock(projectID)
+	mu := s.gitOps.RepoLock(projectID)
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -371,7 +387,7 @@ func (s *artifactService) GetFile(ctx context.Context, orgID, projectID, relPath
 	if err != nil {
 		return nil, err
 	}
-	if err := s.gitOps.ensureCloneReady(ctx, repoRecord); err != nil {
+	if err := s.gitOps.EnsureCloneReady(ctx, repoRecord); err != nil {
 		return nil, fmt.Errorf("ensure clone: %w", err)
 	}
 
@@ -399,7 +415,7 @@ func (s *artifactService) PutFile(ctx context.Context, orgID, projectID, relPath
 		return nil, fmt.Errorf("%w: content exceeds %d bytes", ErrArtifactPathInvalid, maxArtifactBytes)
 	}
 
-	mu := s.gitOps.getRepoLock(projectID)
+	mu := s.gitOps.RepoLock(projectID)
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -407,7 +423,7 @@ func (s *artifactService) PutFile(ctx context.Context, orgID, projectID, relPath
 	if err != nil {
 		return nil, err
 	}
-	if err := s.gitOps.ensureCloneReady(ctx, repoRecord); err != nil {
+	if err := s.gitOps.EnsureCloneReady(ctx, repoRecord); err != nil {
 		return nil, fmt.Errorf("ensure clone: %w", err)
 	}
 
@@ -441,7 +457,7 @@ func (s *artifactService) PutFile(ctx context.Context, orgID, projectID, relPath
 // ----- Requirements multi-file ops -----
 
 func (s *artifactService) ListRequirementFiles(ctx context.Context, orgID, projectID string) (map[string]string, error) {
-	mu := s.gitOps.getRepoLock(projectID)
+	mu := s.gitOps.RepoLock(projectID)
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -449,7 +465,7 @@ func (s *artifactService) ListRequirementFiles(ctx context.Context, orgID, proje
 	if err != nil {
 		return nil, err
 	}
-	if err := s.gitOps.ensureCloneReady(ctx, repoRecord); err != nil {
+	if err := s.gitOps.EnsureCloneReady(ctx, repoRecord); err != nil {
 		return nil, fmt.Errorf("ensure clone: %w", err)
 	}
 
@@ -495,7 +511,7 @@ func (s *artifactService) DeleteRequirementFile(ctx context.Context, orgID, proj
 		return fmt.Errorf("%w: %s cannot be deleted", ErrArtifactPathInvalid, requirementsMainFile)
 	}
 
-	mu := s.gitOps.getRepoLock(projectID)
+	mu := s.gitOps.RepoLock(projectID)
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -503,7 +519,7 @@ func (s *artifactService) DeleteRequirementFile(ctx context.Context, orgID, proj
 	if err != nil {
 		return err
 	}
-	if err := s.gitOps.ensureCloneReady(ctx, repoRecord); err != nil {
+	if err := s.gitOps.EnsureCloneReady(ctx, repoRecord); err != nil {
 		return fmt.Errorf("ensure clone: %w", err)
 	}
 
@@ -529,7 +545,7 @@ func (s *artifactService) DeleteRequirementFile(ctx context.Context, orgID, proj
 // deletions still land as tombstones. Unrelated files on remote main are
 // preserved by `base_tree=current main tree`.
 func (s *artifactService) SaveRequirements(ctx context.Context, orgID, projectID string, req SaveRequest) (*RequirementsSaveResult, error) {
-	mu := s.gitOps.getRepoLock(projectID)
+	mu := s.gitOps.RepoLock(projectID)
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -537,7 +553,7 @@ func (s *artifactService) SaveRequirements(ctx context.Context, orgID, projectID
 	if err != nil {
 		return nil, err
 	}
-	if err := s.gitOps.ensureCloneReady(ctx, repoRecord); err != nil {
+	if err := s.gitOps.EnsureCloneReady(ctx, repoRecord); err != nil {
 		return nil, fmt.Errorf("ensure clone: %w", err)
 	}
 
@@ -559,7 +575,7 @@ func (s *artifactService) SaveRequirements(ctx context.Context, orgID, projectID
 // ErrArtifactPathInvalid (400) if the root `design.md` is missing — a save
 // must produce at least that file.
 func (s *artifactService) SaveDesign(ctx context.Context, orgID, projectID string, req SaveRequest) (*DesignSaveResult, error) {
-	mu := s.gitOps.getRepoLock(projectID)
+	mu := s.gitOps.RepoLock(projectID)
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -567,7 +583,7 @@ func (s *artifactService) SaveDesign(ctx context.Context, orgID, projectID strin
 	if err != nil {
 		return nil, err
 	}
-	if err := s.gitOps.ensureCloneReady(ctx, repoRecord); err != nil {
+	if err := s.gitOps.EnsureCloneReady(ctx, repoRecord); err != nil {
 		return nil, fmt.Errorf("ensure clone: %w", err)
 	}
 
@@ -585,7 +601,7 @@ func (s *artifactService) SaveDesign(ctx context.Context, orgID, projectID strin
 // tag are removed; deletions are restored. Returns ErrNoVersionToDiscard if
 // no `v<N>` tag exists.
 func (s *artifactService) DiscardRequirements(ctx context.Context, orgID, projectID string) (map[string]string, error) {
-	mu := s.gitOps.getRepoLock(projectID)
+	mu := s.gitOps.RepoLock(projectID)
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -593,12 +609,12 @@ func (s *artifactService) DiscardRequirements(ctx context.Context, orgID, projec
 	if err != nil {
 		return nil, err
 	}
-	if err := s.gitOps.ensureCloneReady(ctx, repoRecord); err != nil {
+	if err := s.gitOps.EnsureCloneReady(ctx, repoRecord); err != nil {
 		return nil, fmt.Errorf("ensure clone: %w", err)
 	}
 	clonePath := repoRecord.ClonePath
 
-	authedEnv, _, cleanup, err := s.gitOps.prepareAuthedEnv(ctx, repoRecord)
+	authedEnv, cleanup, err := s.gitOps.PrepareAuthedEnv(ctx, repoRecord)
 	if err != nil {
 		return nil, err
 	}
@@ -629,7 +645,7 @@ func (s *artifactService) DiscardRequirements(ctx context.Context, orgID, projec
 // removed; deletions are restored. Returns ErrNoVersionToDiscard if no
 // design tag exists.
 func (s *artifactService) DiscardDesign(ctx context.Context, orgID, projectID string) (map[string]string, error) {
-	mu := s.gitOps.getRepoLock(projectID)
+	mu := s.gitOps.RepoLock(projectID)
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -637,12 +653,12 @@ func (s *artifactService) DiscardDesign(ctx context.Context, orgID, projectID st
 	if err != nil {
 		return nil, err
 	}
-	if err := s.gitOps.ensureCloneReady(ctx, repoRecord); err != nil {
+	if err := s.gitOps.EnsureCloneReady(ctx, repoRecord); err != nil {
 		return nil, fmt.Errorf("ensure clone: %w", err)
 	}
 	clonePath := repoRecord.ClonePath
 
-	authedEnv, _, cleanup, err := s.gitOps.prepareAuthedEnv(ctx, repoRecord)
+	authedEnv, cleanup, err := s.gitOps.PrepareAuthedEnv(ctx, repoRecord)
 	if err != nil {
 		return nil, err
 	}
@@ -693,7 +709,7 @@ func (s *artifactService) GetRequirementsAtTag(ctx context.Context, orgID, proje
 	}
 	_ = n // version is implicit in tag
 
-	mu := s.gitOps.getRepoLock(projectID)
+	mu := s.gitOps.RepoLock(projectID)
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -701,7 +717,7 @@ func (s *artifactService) GetRequirementsAtTag(ctx context.Context, orgID, proje
 	if err != nil {
 		return nil, err
 	}
-	if err := s.gitOps.ensureCloneReady(ctx, repoRecord); err != nil {
+	if err := s.gitOps.EnsureCloneReady(ctx, repoRecord); err != nil {
 		return nil, fmt.Errorf("ensure clone: %w", err)
 	}
 	clonePath := repoRecord.ClonePath
@@ -721,7 +737,7 @@ func (s *artifactService) GetDesignAtTag(ctx context.Context, orgID, projectID, 
 		return nil, fmt.Errorf("%w: %q is not a v<N>-<M> tag", ErrInvalidVersionTag, tag)
 	}
 
-	mu := s.gitOps.getRepoLock(projectID)
+	mu := s.gitOps.RepoLock(projectID)
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -729,7 +745,7 @@ func (s *artifactService) GetDesignAtTag(ctx context.Context, orgID, projectID, 
 	if err != nil {
 		return nil, err
 	}
-	if err := s.gitOps.ensureCloneReady(ctx, repoRecord); err != nil {
+	if err := s.gitOps.EnsureCloneReady(ctx, repoRecord); err != nil {
 		return nil, fmt.Errorf("ensure clone: %w", err)
 	}
 	clonePath := repoRecord.ClonePath
@@ -747,7 +763,7 @@ func (s *artifactService) GetDesignAtTag(ctx context.Context, orgID, projectID, 
 // ----- Design multi-file ops -----
 
 func (s *artifactService) ListDesignFiles(ctx context.Context, orgID, projectID string) (map[string]string, error) {
-	mu := s.gitOps.getRepoLock(projectID)
+	mu := s.gitOps.RepoLock(projectID)
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -755,7 +771,7 @@ func (s *artifactService) ListDesignFiles(ctx context.Context, orgID, projectID 
 	if err != nil {
 		return nil, err
 	}
-	if err := s.gitOps.ensureCloneReady(ctx, repoRecord); err != nil {
+	if err := s.gitOps.EnsureCloneReady(ctx, repoRecord); err != nil {
 		return nil, fmt.Errorf("ensure clone: %w", err)
 	}
 
@@ -771,7 +787,7 @@ func (s *artifactService) DeleteDesignFile(ctx context.Context, orgID, projectID
 		return fmt.Errorf("%w: %s cannot be deleted", ErrArtifactPathInvalid, designRootFile)
 	}
 
-	mu := s.gitOps.getRepoLock(projectID)
+	mu := s.gitOps.RepoLock(projectID)
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -779,7 +795,7 @@ func (s *artifactService) DeleteDesignFile(ctx context.Context, orgID, projectID
 	if err != nil {
 		return err
 	}
-	if err := s.gitOps.ensureCloneReady(ctx, repoRecord); err != nil {
+	if err := s.gitOps.EnsureCloneReady(ctx, repoRecord); err != nil {
 		return fmt.Errorf("ensure clone: %w", err)
 	}
 
@@ -818,7 +834,7 @@ func (s *artifactService) DeleteDesignDirectory(ctx context.Context, orgID, proj
 		return fmt.Errorf("%w: cannot delete the design root", ErrArtifactPathInvalid)
 	}
 
-	mu := s.gitOps.getRepoLock(projectID)
+	mu := s.gitOps.RepoLock(projectID)
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -826,7 +842,7 @@ func (s *artifactService) DeleteDesignDirectory(ctx context.Context, orgID, proj
 	if err != nil {
 		return err
 	}
-	if err := s.gitOps.ensureCloneReady(ctx, repoRecord); err != nil {
+	if err := s.gitOps.EnsureCloneReady(ctx, repoRecord); err != nil {
 		return fmt.Errorf("ensure clone: %w", err)
 	}
 
@@ -866,7 +882,7 @@ func (s *artifactService) requireReadyRepo(ctx context.Context, orgID, projectID
 // fetchAndListAllTags acquires the repo lock, ensures the clone is ready,
 // best-effort fetches remote tags, and returns the full local tag list.
 func (s *artifactService) fetchAndListAllTags(ctx context.Context, orgID, projectID string) ([]TagInfo, error) {
-	mu := s.gitOps.getRepoLock(projectID)
+	mu := s.gitOps.RepoLock(projectID)
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -874,12 +890,12 @@ func (s *artifactService) fetchAndListAllTags(ctx context.Context, orgID, projec
 	if err != nil {
 		return nil, err
 	}
-	if err := s.gitOps.ensureCloneReady(ctx, repoRecord); err != nil {
+	if err := s.gitOps.EnsureCloneReady(ctx, repoRecord); err != nil {
 		return nil, fmt.Errorf("ensure clone: %w", err)
 	}
 	clonePath := repoRecord.ClonePath
 
-	authedEnv, _, cleanup, err := s.gitOps.prepareAuthedEnv(ctx, repoRecord)
+	authedEnv, cleanup, err := s.gitOps.PrepareAuthedEnv(ctx, repoRecord)
 	if err != nil {
 		return nil, err
 	}
@@ -887,26 +903,6 @@ func (s *artifactService) fetchAndListAllTags(ctx context.Context, orgID, projec
 
 	_ = bestEffortFetchTags(ctx, clonePath, authedEnv)
 	return listAllTags(ctx, clonePath)
-}
-
-// prepareAuthedEnv resolves the org's GitHub token + identity and returns
-// an env slice configured with GIT_ASKPASS, plus a cleanup func that removes
-// the temp askpass script.
-func (s *gitOpsService) prepareAuthedEnv(ctx context.Context, repoRecord *models.GitRepository) ([]string, identityT, func(), error) {
-	token, identity, err := s.resolveToken(ctx, repoRecord)
-	if err != nil {
-		return nil, identityT{}, func() {}, err
-	}
-	askPass, err := createAskPassScript(token)
-	if err != nil {
-		return nil, identityT{}, func() {}, fmt.Errorf("askpass: %w", err)
-	}
-	cleanup := func() { _ = os.Remove(askPass) }
-	env := append(os.Environ(),
-		"GIT_ASKPASS="+askPass,
-		"GIT_TERMINAL_PROMPT=0",
-	)
-	return env, identityT{Name: identity.Name, Email: identity.Email}, cleanup, nil
 }
 
 // identityT is a local mirror of credentials.Identity to avoid a cross-package
@@ -1253,7 +1249,7 @@ func (s *artifactService) CaptureRequirementsSnapshot(ctx context.Context, orgID
 		return nil, err
 	}
 
-	mu := s.gitOps.getRepoLock(projectID)
+	mu := s.gitOps.RepoLock(projectID)
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -1261,7 +1257,7 @@ func (s *artifactService) CaptureRequirementsSnapshot(ctx context.Context, orgID
 	if err != nil {
 		return nil, err
 	}
-	if err := s.gitOps.ensureCloneReady(ctx, repoRecord); err != nil {
+	if err := s.gitOps.EnsureCloneReady(ctx, repoRecord); err != nil {
 		return nil, fmt.Errorf("ensure clone: %w", err)
 	}
 
@@ -1294,7 +1290,7 @@ func (s *artifactService) RestoreRequirementsSnapshot(ctx context.Context, orgID
 		return nil, err
 	}
 
-	mu := s.gitOps.getRepoLock(projectID)
+	mu := s.gitOps.RepoLock(projectID)
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -1302,7 +1298,7 @@ func (s *artifactService) RestoreRequirementsSnapshot(ctx context.Context, orgID
 	if err != nil {
 		return nil, err
 	}
-	if err := s.gitOps.ensureCloneReady(ctx, repoRecord); err != nil {
+	if err := s.gitOps.EnsureCloneReady(ctx, repoRecord); err != nil {
 		return nil, fmt.Errorf("ensure clone: %w", err)
 	}
 
@@ -1358,7 +1354,7 @@ func (s *artifactService) ReadFileFromRequirementsSnapshot(ctx context.Context, 
 		return "", false, err
 	}
 
-	mu := s.gitOps.getRepoLock(projectID)
+	mu := s.gitOps.RepoLock(projectID)
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -1366,7 +1362,7 @@ func (s *artifactService) ReadFileFromRequirementsSnapshot(ctx context.Context, 
 	if err != nil {
 		return "", false, err
 	}
-	if err := s.gitOps.ensureCloneReady(ctx, repoRecord); err != nil {
+	if err := s.gitOps.EnsureCloneReady(ctx, repoRecord); err != nil {
 		return "", false, fmt.Errorf("ensure clone: %w", err)
 	}
 
@@ -1394,7 +1390,7 @@ func (s *artifactService) DeleteRequirementsSnapshot(ctx context.Context, orgID,
 		return err
 	}
 
-	mu := s.gitOps.getRepoLock(projectID)
+	mu := s.gitOps.RepoLock(projectID)
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -1402,7 +1398,7 @@ func (s *artifactService) DeleteRequirementsSnapshot(ctx context.Context, orgID,
 	if err != nil {
 		return err
 	}
-	if err := s.gitOps.ensureCloneReady(ctx, repoRecord); err != nil {
+	if err := s.gitOps.EnsureCloneReady(ctx, repoRecord); err != nil {
 		return fmt.Errorf("ensure clone: %w", err)
 	}
 	if err := os.Remove(snapshotPath(repoRecord.ClonePath, snapshotID)); err != nil && !os.IsNotExist(err) {

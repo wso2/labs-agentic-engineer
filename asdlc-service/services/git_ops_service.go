@@ -31,8 +31,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wso2/asdlc/asdlc-service/models"
 	"github.com/wso2/asdlc/asdlc-service/internal/credentials"
+	"github.com/wso2/asdlc/asdlc-service/models"
 	"github.com/wso2/asdlc/asdlc-service/repositories"
 )
 
@@ -100,6 +100,19 @@ type GitOpsService interface {
 	//     multi-minute clone latency under the per-project mutex.
 	CleanupOrphanTmpClones()
 	PreWarmClones(ctx context.Context, workers int) (warmed, failed int)
+
+	// GitWorkspace surface — the per-project clone primitives the artifacts
+	// save flow drives through the GitOpsService port (no concrete cast).
+	// Spelled out here (not embedded from artifacts) so gitrepo never imports
+	// the artifacts feature; artifacts declares a narrower GitWorkspace port
+	// that this interface structurally satisfies.
+	RepoLock(projectID string) *sync.Mutex
+	EnsureCloneReady(ctx context.Context, repoRecord *models.GitRepository) error
+	PrepareAuthedEnv(ctx context.Context, repoRecord *models.GitRepository) ([]string, func(), error)
+	ResolveSaveIdentities(cred credentials.Credential) (*GitIdentity, *GitIdentity)
+	BestEffortPullDefaultBranch(ctx context.Context, repoRecord *models.GitRepository) error
+	GitHubClient() GitHubClient
+	Resolver() credentials.Resolver
 }
 
 type gitOpsService struct {
@@ -120,7 +133,7 @@ func NewGitOpsService(repo repositories.RepoRepository, resolver credentials.Res
 	return &gitOpsService{repo: repo, resolver: resolver, repoBasePath: repoBasePath, gitHub: github}
 }
 
-func (s *gitOpsService) getRepoLock(projectID string) *sync.Mutex {
+func (s *gitOpsService) RepoLock(projectID string) *sync.Mutex {
 	val, _ := s.locks.LoadOrStore(projectID, &sync.Mutex{})
 	return val.(*sync.Mutex)
 }
@@ -146,14 +159,14 @@ func (s *gitOpsService) resolveToken(ctx context.Context, gitRepo *models.GitRep
 // surface the state to the operator (503 + runbook) instead.
 var ErrCloneCorrupt = errors.New("clone has content but .git is missing or corrupt")
 
-// ensureCloneReady verifies that the clone directory exists on disk. If the
+// EnsureCloneReady verifies that the clone directory exists on disk. If the
 // stored clone path is stale (e.g. REPO_BASE_PATH changed between runs) it
 // updates the path. If the .git dir is absent, this performs a
 // non-destructive re-clone: clone into a sibling `.tmpclone-<ts>` dir, then
 // atomically rename over the existing path. If the existing path holds
 // content but no .git (corruption), refuse to nuke it and return
 // ErrCloneCorrupt.
-func (s *gitOpsService) ensureCloneReady(ctx context.Context, repoRecord *models.GitRepository) error {
+func (s *gitOpsService) EnsureCloneReady(ctx context.Context, repoRecord *models.GitRepository) error {
 	expectedPath := filepath.Join(s.repoBasePath, repoRecord.OrgID, repoRecord.ProjectID)
 
 	// If the stored clone path doesn't match the current base path, update it.
@@ -321,11 +334,11 @@ func (s *gitOpsService) PreWarmClones(ctx context.Context, workers int) (warmed,
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			lock := s.getRepoLock(repo.ProjectID)
+			lock := s.RepoLock(repo.ProjectID)
 			lock.Lock()
 			defer lock.Unlock()
 
-			if err := s.ensureCloneReady(ctx, repo); err != nil {
+			if err := s.EnsureCloneReady(ctx, repo); err != nil {
 				slog.Warn("pre-warm: ensure clone failed",
 					"project", repo.ProjectID, "org", repo.OrgID, "error", err)
 				mu.Lock()
@@ -357,7 +370,7 @@ func (s *gitOpsService) allRepos(ctx context.Context) ([]models.GitRepository, e
 }
 
 func (s *gitOpsService) Commit(ctx context.Context, orgID string, projectID string, req CommitRequest) (*CommitResult, error) {
-	mu := s.getRepoLock(projectID)
+	mu := s.RepoLock(projectID)
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -372,7 +385,7 @@ func (s *gitOpsService) Commit(ctx context.Context, orgID string, projectID stri
 		return nil, ErrRepoNotReady
 	}
 
-	if err := s.ensureCloneReady(ctx, repoRecord); err != nil {
+	if err := s.EnsureCloneReady(ctx, repoRecord); err != nil {
 		return nil, fmt.Errorf("ensure clone: %w", err)
 	}
 
@@ -451,7 +464,7 @@ func (s *gitOpsService) Commit(ctx context.Context, orgID string, projectID stri
 }
 
 func (s *gitOpsService) Push(ctx context.Context, orgID string, projectID string, branch string) error {
-	mu := s.getRepoLock(projectID)
+	mu := s.RepoLock(projectID)
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -466,7 +479,7 @@ func (s *gitOpsService) Push(ctx context.Context, orgID string, projectID string
 		return ErrRepoNotReady
 	}
 
-	if err := s.ensureCloneReady(ctx, repoRecord); err != nil {
+	if err := s.EnsureCloneReady(ctx, repoRecord); err != nil {
 		return fmt.Errorf("ensure clone: %w", err)
 	}
 
@@ -509,7 +522,7 @@ func (s *gitOpsService) Push(ctx context.Context, orgID string, projectID string
 }
 
 func (s *gitOpsService) Pull(ctx context.Context, orgID string, projectID string, branch string) error {
-	mu := s.getRepoLock(projectID)
+	mu := s.RepoLock(projectID)
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -524,7 +537,7 @@ func (s *gitOpsService) Pull(ctx context.Context, orgID string, projectID string
 		return ErrRepoNotReady
 	}
 
-	if err := s.ensureCloneReady(ctx, repoRecord); err != nil {
+	if err := s.EnsureCloneReady(ctx, repoRecord); err != nil {
 		return fmt.Errorf("ensure clone: %w", err)
 	}
 
@@ -571,7 +584,7 @@ func (s *gitOpsService) Status(ctx context.Context, orgID string, projectID stri
 		return nil, ErrRepoNotReady
 	}
 
-	if err := s.ensureCloneReady(ctx, repoRecord); err != nil {
+	if err := s.EnsureCloneReady(ctx, repoRecord); err != nil {
 		return nil, fmt.Errorf("ensure clone: %w", err)
 	}
 
@@ -602,7 +615,7 @@ func (s *gitOpsService) Status(ctx context.Context, orgID string, projectID stri
 }
 
 func (s *gitOpsService) CreateTag(ctx context.Context, orgID string, projectID string, req CreateTagRequest) (*TagResult, error) {
-	mu := s.getRepoLock(projectID)
+	mu := s.RepoLock(projectID)
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -617,7 +630,7 @@ func (s *gitOpsService) CreateTag(ctx context.Context, orgID string, projectID s
 		return nil, ErrRepoNotReady
 	}
 
-	if err := s.ensureCloneReady(ctx, repoRecord); err != nil {
+	if err := s.EnsureCloneReady(ctx, repoRecord); err != nil {
 		return nil, fmt.Errorf("ensure clone: %w", err)
 	}
 
@@ -686,7 +699,7 @@ func (s *gitOpsService) CreateTag(ctx context.Context, orgID string, projectID s
 }
 
 func (s *gitOpsService) ListTags(ctx context.Context, orgID string, projectID string, prefix string) ([]TagInfo, error) {
-	mu := s.getRepoLock(projectID)
+	mu := s.RepoLock(projectID)
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -701,7 +714,7 @@ func (s *gitOpsService) ListTags(ctx context.Context, orgID string, projectID st
 		return nil, ErrRepoNotReady
 	}
 
-	if err := s.ensureCloneReady(ctx, repoRecord); err != nil {
+	if err := s.EnsureCloneReady(ctx, repoRecord); err != nil {
 		return nil, fmt.Errorf("ensure clone: %w", err)
 	}
 
@@ -763,7 +776,7 @@ func (s *gitOpsService) ListTags(ctx context.Context, orgID string, projectID st
 }
 
 func (s *gitOpsService) GetFileAtTag(ctx context.Context, orgID string, projectID string, tag string, filePath string) (string, error) {
-	mu := s.getRepoLock(projectID)
+	mu := s.RepoLock(projectID)
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -778,7 +791,7 @@ func (s *gitOpsService) GetFileAtTag(ctx context.Context, orgID string, projectI
 		return "", ErrRepoNotReady
 	}
 
-	if err := s.ensureCloneReady(ctx, repoRecord); err != nil {
+	if err := s.EnsureCloneReady(ctx, repoRecord); err != nil {
 		return "", fmt.Errorf("ensure clone: %w", err)
 	}
 
@@ -822,4 +835,112 @@ func runGitOutput(ctx context.Context, dir string, args ...string) (string, erro
 		return "", fmt.Errorf("%s: %w", msg, err)
 	}
 	return string(out), nil
+}
+
+// ----- GitWorkspace surface (relocated from the artifacts save flow) -----
+// These operate on gitOpsService internals (token resolution, clone, GitHub
+// client, credential resolver) and are exposed to the artifacts feature
+// through the GitOpsService port — they previously lived as methods on
+// *gitOpsService inside the artifact files, which would be illegal once the
+// packages split.
+
+// GitHubClient returns the GitHubClient wired into gitOpsService at
+// construction (the artifact-store v2 save flow client).
+func (s *gitOpsService) GitHubClient() GitHubClient { return s.gitHub }
+
+// Resolver returns the credential resolver wired into gitOpsService.
+func (s *gitOpsService) Resolver() credentials.Resolver { return s.resolver }
+
+// PrepareAuthedEnv resolves the org's GitHub token and returns an env slice
+// configured with GIT_ASKPASS, plus a cleanup func that removes the temp
+// askpass script.
+func (s *gitOpsService) PrepareAuthedEnv(ctx context.Context, repoRecord *models.GitRepository) ([]string, func(), error) {
+	token, _, err := s.resolveToken(ctx, repoRecord)
+	if err != nil {
+		return nil, func() {}, err
+	}
+	askPass, err := createAskPassScript(token)
+	if err != nil {
+		return nil, func() {}, fmt.Errorf("askpass: %w", err)
+	}
+	cleanup := func() { _ = os.Remove(askPass) }
+	env := append(os.Environ(),
+		"GIT_ASKPASS="+askPass,
+		"GIT_TERMINAL_PROMPT=0",
+	)
+	return env, cleanup, nil
+}
+
+// ResolveSaveIdentities returns (author, committer) identities for the save.
+//
+// V1: committer = author = credential identity (same as today's CLI flow).
+// V2 will split these (committer=bot, author=OC user).
+func (s *gitOpsService) ResolveSaveIdentities(cred credentials.Credential) (*GitIdentity, *GitIdentity) {
+	id := cred.Identity()
+	if id.Name == "" {
+		id.Name = "ASDLC"
+	}
+	if id.Email == "" {
+		id.Email = "noreply@asdlc.dev"
+	}
+	gi := &GitIdentity{Name: id.Name, Email: id.Email}
+	return gi, gi
+}
+
+// BestEffortPullDefaultBranch advances the local clone's HEAD to remote main
+// so the next save's `git status` against HEAD reflects current remote state.
+// The working-tree files are LEFT ALONE — they're the user's draft surface in
+// V1 and we just wrote them on remote as the save's commit. We also refresh
+// the index so `git status` doesn't report every working-tree file as
+// "modified vs new HEAD."
+//
+// Implementation note: we use `update-ref` + `read-tree` rather than
+// `merge --ff-only` because the working tree contains untracked or
+// otherwise-modified files that merge would refuse to overwrite.
+func (s *gitOpsService) BestEffortPullDefaultBranch(ctx context.Context, repoRecord *models.GitRepository) error {
+	authedEnv, cleanup, err := s.PrepareAuthedEnv(ctx, repoRecord)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	clonePath := repoRecord.ClonePath
+	branch := repoRecord.DefaultBranch
+
+	// 1. Fetch the remote ref.
+	cmd := exec.CommandContext(ctx, "git", "fetch", "origin", branch)
+	cmd.Dir = clonePath
+	cmd.Env = authedEnv
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("git fetch: %s", stderr.String())
+	}
+
+	// 2. Read the new remote SHA.
+	originSHA, err := runGitOutput(ctx, clonePath, "rev-parse", "origin/"+branch)
+	if err != nil {
+		return fmt.Errorf("rev-parse origin/%s: %w", branch, err)
+	}
+	originSHA = strings.TrimSpace(originSHA)
+
+	// 3. Move local branch ref to origin's tip without touching working tree.
+	cmd = exec.CommandContext(ctx, "git", "update-ref", "refs/heads/"+branch, originSHA)
+	cmd.Dir = clonePath
+	stderr.Reset()
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("git update-ref refs/heads/%s: %s", branch, stderr.String())
+	}
+
+	// 4. Refresh the index to the new HEAD so `git status` against the working
+	// tree shows only the user's local drafts as modified, not every file that
+	// was renamed by the move.
+	cmd = exec.CommandContext(ctx, "git", "read-tree", "HEAD")
+	cmd.Dir = clonePath
+	stderr.Reset()
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("git read-tree HEAD: %s", stderr.String())
+	}
+	return nil
 }
