@@ -64,6 +64,14 @@ var (
 	// ErrInvalidVersionTag is returned when a tag string in a path/query does
 	// not parse as `v<N>` or `v<N>-<M>`. Maps to 400.
 	ErrInvalidVersionTag = errors.New("invalid version tag")
+	// ErrSpecNotFound / ErrDesignNotFound are the spec/design members of the
+	// artifact-not-found family — raised when the requirements or design corpus
+	// is absent in the project's clone. Shared by requirements/design/task (and
+	// re-exported as services.ErrSpecNotFound/ErrDesignNotFound for the still-
+	// flat callers) so the task feature can reference them without importing the
+	// flat services package.
+	ErrSpecNotFound   = errors.New("spec not found")
+	ErrDesignNotFound = errors.New("design not found")
 )
 
 // ----- Path constants -----

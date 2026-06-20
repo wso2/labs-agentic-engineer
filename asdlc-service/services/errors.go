@@ -16,16 +16,23 @@
 
 package services
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
+)
 
 var (
-	ErrProjectNotFound   = errors.New("project not found")
-	ErrUnauthorized      = errors.New("unauthorized")
-	ErrForbidden         = errors.New("forbidden")
-	ErrSpecNotFound      = errors.New("spec not found")
+	ErrProjectNotFound = errors.New("project not found")
+	ErrUnauthorized    = errors.New("unauthorized")
+	ErrForbidden       = errors.New("forbidden")
+	// ErrSpecNotFound / ErrDesignNotFound re-export the canonical sentinels now
+	// owned by the artifacts feature (the artifact-not-found family), so the
+	// task feature can reference them without importing the flat services pkg.
+	ErrSpecNotFound      = artifacts.ErrSpecNotFound
 	ErrSpecEmpty         = errors.New("spec content is empty")
 	ErrSpecNotApproved   = errors.New("spec must be saved (tagged) before generating a design")
-	ErrDesignNotFound    = errors.New("design not found")
+	ErrDesignNotFound    = artifacts.ErrDesignNotFound
 	ErrDesignNotApproved = errors.New("design must be saved (tagged) before generating tasks")
 	ErrTasksInFlight     = errors.New("tasks already in progress; cannot regenerate")
 	ErrBuildNotFound     = errors.New("build not found")
