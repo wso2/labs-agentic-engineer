@@ -31,6 +31,7 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/component"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/orgcreds"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/task"
 	"github.com/wso2/asdlc/asdlc-service/internal/platform/tenant"
 	"github.com/wso2/asdlc/asdlc-service/middleware"
 	jwtmw "github.com/wso2/asdlc/asdlc-service/middleware/jwt"
@@ -50,7 +51,7 @@ type AppParams struct {
 	RequirementsChatController controllers.RequirementsChatController
 	DesignController           controllers.DesignController
 	TaskController             controllers.TaskController
-	BoardController            controllers.BoardController
+	BoardController            task.BoardController
 	ConfigController           component.ConfigController
 	CollabController           controllers.CollabController
 	WebhookController          controllers.WebhookController

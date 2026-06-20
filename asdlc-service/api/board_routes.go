@@ -17,9 +17,9 @@
 package api
 
 import (
-	"github.com/wso2/asdlc/asdlc-service/controllers"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/task"
 )
 
-func registerBoardRoutes(rt *Router, c controllers.BoardController) {
+func registerBoardRoutes(rt *Router, c task.BoardController) {
 	rt.OrgScoped("GET /api/v1/organizations/{orgHandle}/projects/{projectName}/board", c.GetBoard)
 }

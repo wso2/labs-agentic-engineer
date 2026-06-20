@@ -14,13 +14,12 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package controllers
+package task
 
 import (
 	"log/slog"
 	"net/http"
 
-	"github.com/wso2/asdlc/asdlc-service/services"
 	"github.com/wso2/asdlc/asdlc-service/utils"
 )
 
@@ -29,10 +28,10 @@ type BoardController interface {
 }
 
 type boardController struct {
-	service services.BoardService
+	service BoardService
 }
 
-func NewBoardController(service services.BoardService) BoardController {
+func NewBoardController(service BoardService) BoardController {
 	return &boardController{service: service}
 }
 

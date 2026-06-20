@@ -653,7 +653,7 @@ func main() {
 	designService := services.NewDesignService(artifactStore, agentsClient, artifactSvcGit)
 
 	taskService := services.NewTaskService(db, taskRepo, artifactStore, componentService, tokenProvider, configService, issueService, artifactSvcGit, repoService, agentsClient, dbClient)
-	boardService := services.NewBoardService(repoBoardService, taskRepo)
+	boardService := task.NewBoardService(repoBoardService, taskRepo)
 
 	if hook, ok := designService.(services.DesignServiceWithTaskHook); ok {
 		hook.SetTaskService(taskService)
@@ -960,7 +960,7 @@ func main() {
 			}
 			return tc
 		}(),
-		BoardController:        controllers.NewBoardController(boardService),
+		BoardController:        task.NewBoardController(boardService),
 		ConfigController:       component.NewConfigController(configService),
 		CollabController:       controllers.NewCollabController(projectService),
 		WebhookController:      webhookCtrl,
