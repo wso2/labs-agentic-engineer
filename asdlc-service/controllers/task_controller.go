@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/wso2/asdlc/asdlc-service/clients/openchoreo"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/orgcreds"
 	"github.com/wso2/asdlc/asdlc-service/models"
 	"github.com/wso2/asdlc/asdlc-service/repositories"
 	"github.com/wso2/asdlc/asdlc-service/services"
@@ -76,7 +77,7 @@ type taskController struct {
 	taskTokens        *services.TaskTokenManager
 	publisherVerifier *services.PublisherTokenVerifier
 	skillsSvc         *services.TaskSkillsService
-	credsRefreshSvc   services.CredentialsRefreshService
+	credsRefreshSvc   orgcreds.CredentialsRefreshService
 }
 
 func NewTaskController(
@@ -113,7 +114,7 @@ func (c *taskController) SetPublisherVerifier(v *services.PublisherTokenVerifier
 // endpoint can delegate. Optional — when nil, the handler returns 503
 // and the runner must fall back to the legacy /api/v1/credentials/refresh
 // route (TaskJWT path).
-func (c *taskController) SetCredentialsRefreshService(s services.CredentialsRefreshService) {
+func (c *taskController) SetCredentialsRefreshService(s orgcreds.CredentialsRefreshService) {
 	c.credsRefreshSvc = s
 }
 

@@ -17,11 +17,27 @@
 package controllers
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/wso2/asdlc/asdlc-service/utils"
 	"github.com/wso2/asdlc/asdlc-service/utils/validate"
 )
+
+// actorFromContext extracts the requesting user's identifier from the
+// JWT-authenticated context. Falls back to "unknown" when the JWT
+// middleware didn't populate claims.
+//
+// A copy of this helper also lives in package orgcreds (the credential
+// controllers that moved there) — both are 7-line ctx readers.
+func actorFromContext(ctx context.Context) string {
+	if v := ctx.Value("user.sub"); v != nil { //nolint:revive — string-keyed legacy ctx
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return "unknown"
+}
 
 // requireOrgHandle validates the {orgHandle} path param. Returns true if
 // validation passed; on failure writes a 400 to w. orgHandle flows into

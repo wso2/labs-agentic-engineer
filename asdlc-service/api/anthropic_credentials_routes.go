@@ -21,8 +21,8 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/orgcreds"
 	"github.com/wso2/asdlc/asdlc-service/utils/validate"
-	"github.com/wso2/asdlc/asdlc-service/services"
 )
 
 // registerAnthropicCredentialsRoutes wires the per-org Anthropic API key
@@ -43,14 +43,14 @@ import (
 // else under /internal/).
 //
 // See docs/design/anthropic-key-dual-token.md.
-func registerAnthropicCredentialsRoutes(rt *ServiceRouter, svc *services.AnthropicCredentialService) {
+func registerAnthropicCredentialsRoutes(rt *ServiceRouter, svc *orgcreds.AnthropicCredentialService) {
 	rt.OrgScoped("POST /internal/credentials/orgs/{orgHandle}/anthropic", func(w http.ResponseWriter, r *http.Request) {
 		ocOrgID := r.PathValue("orgHandle")
 		if err := validate.Slug(ocOrgID); err != nil {
 			writeJSONError(w, http.StatusBadRequest, "orgHandle: "+err.Error())
 			return
 		}
-		var body services.AnthropicConnectRequest
+		var body orgcreds.AnthropicConnectRequest
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeJSONError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
 			return
@@ -105,7 +105,7 @@ func registerAnthropicCredentialsRoutes(rt *ServiceRouter, svc *services.Anthrop
 		}
 		out, err := svc.ApplyWPSecret(r.Context(), ocOrgID)
 		if err != nil {
-			if errors.Is(err, services.ErrAnthropicKeyRequired) {
+			if errors.Is(err, orgcreds.ErrAnthropicKeyRequired) {
 				writeJSON(w, http.StatusUnprocessableEntity, map[string]string{
 					"error": err.Error(),
 					"code":  "anthropic_key_required",
@@ -123,7 +123,7 @@ func registerAnthropicCredentialsRoutes(rt *ServiceRouter, svc *services.Anthrop
 // the agents-service calls without an Authorization header. Lives on
 // the outer mux (not behind ServiceJWT) — see the note above the
 // in-mux registration for the rationale.
-func registerAnthropicEffectiveKeyUnauth(mux *http.ServeMux, svc *services.AnthropicCredentialService) {
+func registerAnthropicEffectiveKeyUnauth(mux *http.ServeMux, svc *orgcreds.AnthropicCredentialService) {
 	mux.HandleFunc("GET /internal/credentials/orgs/{orgHandle}/anthropic/effective-key", func(w http.ResponseWriter, r *http.Request) {
 		ocOrgID := r.PathValue("orgHandle")
 		if err := validate.Slug(ocOrgID); err != nil {

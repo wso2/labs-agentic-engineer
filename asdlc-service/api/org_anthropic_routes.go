@@ -17,14 +17,14 @@
 package api
 
 import (
-	"github.com/wso2/asdlc/asdlc-service/controllers"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/orgcreds"
 )
 
 // registerOrgAnthropicRoutes wires the per-org Anthropic settings surface.
 // Inherits the central tenant gate that protects every other org-scoped route.
 //
 // See docs/design/anthropic-key-dual-token.md.
-func registerOrgAnthropicRoutes(rt *Router, c controllers.OrgAnthropicController) {
+func registerOrgAnthropicRoutes(rt *Router, c orgcreds.OrgAnthropicController) {
 	rt.OrgScoped("POST /api/v1/organizations/{orgHandle}/anthropic", c.Connect)
 	rt.OrgScoped("GET /api/v1/organizations/{orgHandle}/anthropic", c.GetStatus)
 	rt.OrgScoped("DELETE /api/v1/organizations/{orgHandle}/anthropic", c.Disconnect)

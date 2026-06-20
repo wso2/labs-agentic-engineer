@@ -27,6 +27,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/wso2/asdlc/asdlc-service/clients/thundersvc"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/orgcreds"
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
 
@@ -107,7 +108,7 @@ type idpService struct {
 	db       *gorm.DB
 	thunder  thundersvc.Client
 	platform PlatformIDPConfig
-	smAPI    *SMAPIWriter
+	smAPI    *orgcreds.SMAPIWriter
 }
 
 // NewIDPService builds the service. `thunder` may be nil in unit tests
@@ -126,7 +127,7 @@ func NewIDPService(db *gorm.DB, thunder thundersvc.Client, platform PlatformIDPC
 // (WS2.4 — runner pods consume them via per-run ExternalSecret). nil
 // writer or one with Enabled()==false is a no-op; publisher provisioning
 // still works but dispatcher's runner-auth path stays disabled.
-func (s *idpService) WithSMAPIWriter(w *SMAPIWriter) *idpService {
+func (s *idpService) WithSMAPIWriter(w *orgcreds.SMAPIWriter) *idpService {
 	s.smAPI = w
 	return s
 }

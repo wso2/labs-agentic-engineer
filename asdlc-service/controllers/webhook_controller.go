@@ -24,7 +24,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/wso2/asdlc/asdlc-service/services"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/orgcreds"
 	"github.com/wso2/asdlc/asdlc-service/services/webhook"
 )
 
@@ -32,7 +32,7 @@ import (
 // lookup. A 404 means "this event is for a repo or installation that
 // isn't connected to ASDLC" — ack noop instead of 5xx-retrying for hours.
 func isLookupNotFound(err error) bool {
-	var nfe *services.NotFoundError
+	var nfe *orgcreds.NotFoundError
 	if errors.As(err, &nfe) {
 		return true
 	}
@@ -47,15 +47,15 @@ func isLookupNotFound(err error) bool {
 //
 // Pipeline order (github-integration-phase0.md §8.2; PR B fills in routing):
 //
-//   1. Read raw body.
-//   2. Parse routing key (PR B: installation.id for App-mode events,
-//      repository.full_name for per-repo events).
-//   3. Resolve ocOrgID via git-service (60s in-process cache).
-//   4. HMAC-validate against that org's secrets.
-//   5. Dedup INSERT into webhook_deliveries.
-//   6. Dispatch the handler.
-//   7. Mark processed → ack 200 on success; ack 5xx on handler failure
-//      (GitHub redelivers up to ~9 hours).
+//  1. Read raw body.
+//  2. Parse routing key (PR B: installation.id for App-mode events,
+//     repository.full_name for per-repo events).
+//  3. Resolve ocOrgID via git-service (60s in-process cache).
+//  4. HMAC-validate against that org's secrets.
+//  5. Dedup INSERT into webhook_deliveries.
+//  6. Dispatch the handler.
+//  7. Mark processed → ack 200 on success; ack 5xx on handler failure
+//     (GitHub redelivers up to ~9 hours).
 type WebhookController interface {
 	Receive(w http.ResponseWriter, r *http.Request)
 }

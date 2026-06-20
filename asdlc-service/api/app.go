@@ -30,6 +30,7 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/component"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/orgcreds"
 	"github.com/wso2/asdlc/asdlc-service/internal/platform/tenant"
 	"github.com/wso2/asdlc/asdlc-service/middleware"
 	jwtmw "github.com/wso2/asdlc/asdlc-service/middleware/jwt"
@@ -53,8 +54,8 @@ type AppParams struct {
 	ConfigController           component.ConfigController
 	CollabController           controllers.CollabController
 	WebhookController          controllers.WebhookController
-	OrgGitHubController        controllers.OrgGitHubController
-	OrgAnthropicController     controllers.OrgAnthropicController
+	OrgGitHubController        orgcreds.OrgGitHubController
+	OrgAnthropicController     orgcreds.OrgAnthropicController
 	SkillController            controllers.SkillController
 	OrganizationController     controllers.OrganizationController
 	IDPController              controllers.IDPController
@@ -87,13 +88,13 @@ type AppParams struct {
 	PullRequestCtrl      gitrepo.PullRequestController
 	WebhookRegCtrl       gitrepo.WebhookRegistrationController
 	ArtifactCtrl         artifacts.ArtifactController
-	CredCtrl             controllers.CredentialsRefreshController
+	CredCtrl             orgcreds.CredentialsRefreshController
 	RepoBoardCtrl        gitrepo.RepoBoardController
 	RepoService          gitrepo.RepoService
 	RepoRepo             repositories.RepoRepository
-	CredService          *services.CredentialService
-	BuildCredService     *services.BuildCredentialsService
-	AnthropicCredService *services.AnthropicCredentialService
+	CredService          *orgcreds.CredentialService
+	BuildCredService     *orgcreds.BuildCredentialsService
+	AnthropicCredService *orgcreds.AnthropicCredentialService
 	Validator            *credentials.Validator
 
 	// ServiceJWT verifies User/Service JWTs presented to /api/v1/repos/* and
@@ -382,7 +383,7 @@ func testResetHandler(params AppParams) http.HandlerFunc {
 func testSMAPIResyncHandler(params AppParams) http.HandlerFunc {
 	type orgResult struct {
 		OcOrgID        string                     `json:"ocOrgId"`
-		Writes         []services.SMAPISeedBundle `json:"writes"`
+		Writes         []orgcreds.SMAPISeedBundle `json:"writes"`
 		AnthropicError string                     `json:"anthropicError,omitempty"`
 		GitHubPATError string                     `json:"githubPatError,omitempty"`
 	}

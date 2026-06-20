@@ -27,7 +27,7 @@
 // logs or memory beyond the inbound request.
 //
 // See docs/design/anthropic-key-dual-token.md.
-package controllers
+package orgcreds
 
 import (
 	"encoding/json"
@@ -35,7 +35,6 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/wso2/asdlc/asdlc-service/services"
 	"github.com/wso2/asdlc/asdlc-service/utils"
 )
 
@@ -47,11 +46,11 @@ type OrgAnthropicController interface {
 }
 
 type orgAnthropicController struct {
-	anthropicSvc *services.AnthropicCredentialService
+	anthropicSvc *AnthropicCredentialService
 }
 
 // NewOrgAnthropicController wires the controller.
-func NewOrgAnthropicController(anthropicSvc *services.AnthropicCredentialService) OrgAnthropicController {
+func NewOrgAnthropicController(anthropicSvc *AnthropicCredentialService) OrgAnthropicController {
 	return &orgAnthropicController{anthropicSvc: anthropicSvc}
 }
 
@@ -69,7 +68,7 @@ func (c *orgAnthropicController) Connect(w http.ResponseWriter, r *http.Request)
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	proj, err := c.anthropicSvc.Connect(r.Context(), orgHandle, services.AnthropicConnectRequest{
+	proj, err := c.anthropicSvc.Connect(r.Context(), orgHandle, AnthropicConnectRequest{
 		APIKey: body.APIKey,
 	})
 	if err != nil {
@@ -90,7 +89,7 @@ func (c *orgAnthropicController) GetStatus(w http.ResponseWriter, r *http.Reques
 	}
 	proj, err := c.anthropicSvc.Status(r.Context(), orgHandle)
 	if err != nil {
-		var nfe *services.NotFoundError
+		var nfe *NotFoundError
 		if errors.As(err, &nfe) {
 			utils.WriteSuccessResponse(w, http.StatusOK, map[string]any{
 				"ocOrgId": orgHandle,

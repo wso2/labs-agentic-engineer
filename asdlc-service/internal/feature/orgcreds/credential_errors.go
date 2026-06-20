@@ -14,14 +14,13 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package controllers
+package orgcreds
 
 import (
 	"encoding/json"
 	"errors"
 	"net/http"
 
-	"github.com/wso2/asdlc/asdlc-service/services"
 	"github.com/wso2/asdlc/asdlc-service/utils"
 )
 
@@ -31,22 +30,22 @@ import (
 // from the old loopback HTTP client: 404 for NotFoundError, 409 for
 // ConflictError, 400 for ValidationError. Anything else is a 500.
 func writeCredentialServiceError(w http.ResponseWriter, err error) {
-	var nfe *services.NotFoundError
+	var nfe *NotFoundError
 	if errors.As(err, &nfe) {
 		writeCredentialErrorJSON(w, http.StatusNotFound, err.Error(), "not_found")
 		return
 	}
-	var ce *services.ConflictError
+	var ce *ConflictError
 	if errors.As(err, &ce) {
 		writeCredentialErrorJSON(w, http.StatusConflict, err.Error(), "conflict")
 		return
 	}
-	var ve *services.ValidationError
+	var ve *ValidationError
 	if errors.As(err, &ve) {
 		writeCredentialErrorJSON(w, http.StatusBadRequest, err.Error(), "validation_failed")
 		return
 	}
-	if errors.Is(err, services.ErrAppBindNotConfigured) {
+	if errors.Is(err, ErrAppBindNotConfigured) {
 		writeCredentialErrorJSON(w, http.StatusServiceUnavailable, err.Error(), "app_bind_not_configured")
 		return
 	}

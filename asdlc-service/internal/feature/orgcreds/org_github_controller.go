@@ -17,18 +17,19 @@
 // Package controllers — phase 2's org-scoped GitHub integration surface.
 //
 // Routes:
-//   POST   /api/v1/organizations/{orgHandle}/github/connect/start  — start App connect (OAuth-driven)
-//   GET    /api/v1/github/connect/callback?...                     — App OAuth + post-install callback (unscoped)
-//   POST   /api/v1/organizations/{orgHandle}/github/pat            — PAT-mode connect / replace
-//   GET    /api/v1/organizations/{orgHandle}/github                — projection (no token)
-//   DELETE /api/v1/organizations/{orgHandle}/github                — disconnect cascade
+//
+//	POST   /api/v1/organizations/{orgHandle}/github/connect/start  — start App connect (OAuth-driven)
+//	GET    /api/v1/github/connect/callback?...                     — App OAuth + post-install callback (unscoped)
+//	POST   /api/v1/organizations/{orgHandle}/github/pat            — PAT-mode connect / replace
+//	GET    /api/v1/organizations/{orgHandle}/github                — projection (no token)
+//	DELETE /api/v1/organizations/{orgHandle}/github                — disconnect cascade
 //
 // Architecture: connect is fully binding-centric. Every App-mode connect
 // goes through GitHub OAuth first; the callback intersects /user/installations
 // with our App's installs and binds only what the requesting user actually
 // administers. There is no platform-wide "discover unbound installs"
 // surface — that would leak install metadata across tenants.
-package controllers
+package orgcreds
 
 import (
 	"context"
@@ -41,7 +42,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/wso2/asdlc/asdlc-service/services"
 	"github.com/wso2/asdlc/asdlc-service/utils"
 )
 
@@ -56,9 +56,9 @@ type OrgGitHubController interface {
 }
 
 type orgGitHubController struct {
-	credentialSvc *services.CredentialService
-	disconnectSv  *services.OrgDisconnectService
-	bearerSvc     *services.BearerService
+	credentialSvc *CredentialService
+	disconnectSv  *OrgDisconnectService
+	bearerSvc     *BearerService
 	appSlug       string
 	publicURL     string // for the post-callback redirect
 	// appClientID is the GitHub App's OAuth client_id used to build the
@@ -72,9 +72,9 @@ type orgGitHubController struct {
 // appClientID is the GitHub App's OAuth client_id; empty disables
 // App-mode connect.
 func NewOrgGitHubController(
-	credentialSvc *services.CredentialService,
-	disconnectSv *services.OrgDisconnectService,
-	bearerSvc *services.BearerService,
+	credentialSvc *CredentialService,
+	disconnectSv *OrgDisconnectService,
+	bearerSvc *BearerService,
 	appSlug, publicURL, appClientID string,
 ) OrgGitHubController {
 	if appSlug == "" {
@@ -180,11 +180,11 @@ func (c *orgGitHubController) HandleConnectCallback(w http.ResponseWriter, r *ht
 // handleOAuthCallback resolves the user's installs and routes by candidate
 // count. When claims.InstallationID is non-zero (picker re-OAuth), verifies
 // the pinned install is in the candidates before binding.
-func (c *orgGitHubController) handleOAuthCallback(w http.ResponseWriter, r *http.Request, claims *services.ConnectStateClaims, code, settingsURL string) {
+func (c *orgGitHubController) handleOAuthCallback(w http.ResponseWriter, r *http.Request, claims *ConnectStateClaims, code, settingsURL string) {
 	redirectURI := c.publicURL + connectCallbackPath
 	candidates, err := c.credentialSvc.ResolveUserInstallations(r.Context(), claims.OcOrgID, code, redirectURI)
 	if err != nil {
-		if errors.Is(err, services.ErrAppBindNotConfigured) {
+		if errors.Is(err, ErrAppBindNotConfigured) {
 			http.Redirect(w, r, settingsURL+"?error=app_bind_not_configured", http.StatusSeeOther)
 			return
 		}
@@ -242,7 +242,7 @@ func (c *orgGitHubController) handleOAuthCallback(w http.ResponseWriter, r *http
 // the App via the github.com install flow. We trust GitHub's enforcement
 // that "only admins can install Apps" and bind directly without an OAuth
 // re-check. Same trust assumption the original install-callback path used.
-func (c *orgGitHubController) handlePostInstallCallback(w http.ResponseWriter, r *http.Request, claims *services.ConnectStateClaims, idStr, settingsURL string) {
+func (c *orgGitHubController) handlePostInstallCallback(w http.ResponseWriter, r *http.Request, claims *ConnectStateClaims, idStr, settingsURL string) {
 	installID, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
 		http.Redirect(w, r, settingsURL+"?error=callback_invalid", http.StatusSeeOther)
@@ -253,14 +253,14 @@ func (c *orgGitHubController) handlePostInstallCallback(w http.ResponseWriter, r
 
 // bindAndRedirect calls CreateOrReplaceCredential to insert the platform
 // row for the installation, then 302s to the settings page.
-func (c *orgGitHubController) bindAndRedirect(w http.ResponseWriter, r *http.Request, claims *services.ConnectStateClaims, installID int64, settingsURL string) {
-	_, err := c.credentialSvc.Connect(r.Context(), claims.OcOrgID, services.ConnectRequest{
+func (c *orgGitHubController) bindAndRedirect(w http.ResponseWriter, r *http.Request, claims *ConnectStateClaims, installID int64, settingsURL string) {
+	_, err := c.credentialSvc.Connect(r.Context(), claims.OcOrgID, ConnectRequest{
 		Kind:           "app-installation",
 		InstallationID: installID,
 	})
 	if err != nil {
-		var ce *services.ConflictError
-		var ve *services.ValidationError
+		var ce *ConflictError
+		var ve *ValidationError
 		switch {
 		case errors.As(err, &ce):
 			http.Redirect(w, r, settingsURL+"?error=cross_mode", http.StatusSeeOther)
@@ -296,7 +296,7 @@ func (c *orgGitHubController) ConnectPAT(w http.ResponseWriter, r *http.Request)
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	proj, err := c.credentialSvc.Connect(r.Context(), orgHandle, services.ConnectRequest{
+	proj, err := c.credentialSvc.Connect(r.Context(), orgHandle, ConnectRequest{
 		Kind:        "user-pat",
 		PAT:         body.PAT,
 		GitHubLogin: body.GitHubLogin,
@@ -317,7 +317,7 @@ func (c *orgGitHubController) GetStatus(w http.ResponseWriter, r *http.Request) 
 	}
 	proj, err := c.credentialSvc.Status(r.Context(), orgHandle)
 	if err != nil {
-		var nfe *services.NotFoundError
+		var nfe *NotFoundError
 		if errors.As(err, &nfe) {
 			// Not connected — return a minimal payload so the UI can render
 			// the "Choose a connection method" panel without an error toast.
@@ -350,7 +350,7 @@ func (c *orgGitHubController) Disconnect(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err := c.disconnectSv.Disconnect(r.Context(), orgHandle, "manual.disconnect", uninstall); err != nil {
-		if errors.Is(err, services.ErrOrgNotFound) {
+		if errors.Is(err, ErrOrgNotFound) {
 			utils.WriteSuccessResponse(w, http.StatusOK, map[string]string{"status": "not_connected"})
 			return
 		}
@@ -376,4 +376,3 @@ func actorFromContext(ctx context.Context) string {
 	}
 	return "unknown"
 }
-

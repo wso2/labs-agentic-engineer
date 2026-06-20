@@ -23,9 +23,9 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/wso2/asdlc/asdlc-service/utils/validate"
 	"github.com/wso2/asdlc/asdlc-service/internal/credentials"
-	"github.com/wso2/asdlc/asdlc-service/services"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/orgcreds"
+	"github.com/wso2/asdlc/asdlc-service/utils/validate"
 )
 
 // registerCredentialsInternalRoutes wires the per-org connect / status /
@@ -40,7 +40,7 @@ import (
 // /mint-build writes the token into OpenBao but returns only the
 // SecretReference name + expiry — the token still doesn't cross the
 // boundary.
-func registerCredentialsInternalRoutes(rt *ServiceRouter, svc *services.CredentialService, buildSvc *services.BuildCredentialsService, validator *credentials.Validator) {
+func registerCredentialsInternalRoutes(rt *ServiceRouter, svc *orgcreds.CredentialService, buildSvc *orgcreds.BuildCredentialsService, validator *credentials.Validator) {
 	// POST /internal/credentials/orgs/{orgHandle} — connect or replace.
 	rt.OrgScoped("POST /internal/credentials/orgs/{orgHandle}", func(w http.ResponseWriter, r *http.Request) {
 		ocOrgID := r.PathValue("orgHandle")
@@ -48,7 +48,7 @@ func registerCredentialsInternalRoutes(rt *ServiceRouter, svc *services.Credenti
 			writeJSONError(w, http.StatusBadRequest, "orgHandle: "+err.Error())
 			return
 		}
-		var body services.ConnectRequest
+		var body orgcreds.ConnectRequest
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeJSONError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
 			return
@@ -118,7 +118,7 @@ func registerCredentialsInternalRoutes(rt *ServiceRouter, svc *services.Credenti
 			return
 		}
 		if err := svc.UninstallAppInstallation(r.Context(), ocOrgID); err != nil {
-			if errors.Is(err, services.ErrAppBindNotConfigured) {
+			if errors.Is(err, orgcreds.ErrAppBindNotConfigured) {
 				writeJSON(w, http.StatusServiceUnavailable, map[string]string{
 					"error": err.Error(),
 					"code":  "app_bind_not_configured",
@@ -365,7 +365,7 @@ func registerCredentialsInternalRoutes(rt *ServiceRouter, svc *services.Credenti
 		}
 		candidates, err := svc.ResolveUserInstallations(r.Context(), body.OcOrgID, body.OauthCode, body.RedirectURI)
 		if err != nil {
-			if errors.Is(err, services.ErrAppBindNotConfigured) {
+			if errors.Is(err, orgcreds.ErrAppBindNotConfigured) {
 				writeJSON(w, http.StatusServiceUnavailable, map[string]string{
 					"error": err.Error(),
 					"code":  "app_bind_not_configured",
@@ -403,9 +403,9 @@ func registerCredentialsInternalRoutes(rt *ServiceRouter, svc *services.Credenti
 // → 409. Everything else is 500.
 func writeStageError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, services.ErrRepoNotInOrg):
+	case errors.Is(err, orgcreds.ErrRepoNotInOrg):
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error(), "code": "repo_not_in_org"})
-	case errors.Is(err, services.ErrOrgDisconnected):
+	case errors.Is(err, orgcreds.ErrOrgDisconnected):
 		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error(), "code": "org_disconnected"})
 	default:
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -427,9 +427,9 @@ func writeJSONError(w http.ResponseWriter, status int, msg string) {
 }
 
 func writeServiceError(w http.ResponseWriter, err error) {
-	var ve *services.ValidationError
-	var ce *services.ConflictError
-	var ne *services.NotFoundError
+	var ve *orgcreds.ValidationError
+	var ce *orgcreds.ConflictError
+	var ne *orgcreds.NotFoundError
 	switch {
 	case errors.As(err, &ve):
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": ve.Message, "code": ve.Code})

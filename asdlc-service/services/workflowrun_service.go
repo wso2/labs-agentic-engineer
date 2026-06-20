@@ -27,6 +27,7 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/clients/openchoreo"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/orgcreds"
 	"github.com/wso2/asdlc/asdlc-service/models"
 	"github.com/wso2/asdlc/asdlc-service/repositories"
 )
@@ -108,7 +109,7 @@ type workflowRunService struct {
 	taskRepo          repositories.TaskRepository
 	ocClient          openchoreo.ComponentClient
 	repoSvc           gitrepo.RepoService
-	buildCredSvc      *BuildCredentialsService
+	buildCredSvc      *orgcreds.BuildCredentialsService
 	store             *artifacts.ArtifactStore
 	projector         TaskStateProjector
 	asServiceIdentity func(ctx context.Context) context.Context
@@ -125,7 +126,7 @@ func NewWorkflowRunService(
 	taskRepo repositories.TaskRepository,
 	ocClient openchoreo.ComponentClient,
 	repoSvc gitrepo.RepoService,
-	buildCredSvc *BuildCredentialsService,
+	buildCredSvc *orgcreds.BuildCredentialsService,
 	store *artifacts.ArtifactStore,
 	projector TaskStateProjector,
 	asServiceIdentity func(ctx context.Context) context.Context,
@@ -200,11 +201,11 @@ func (s *workflowRunService) dispatchBuild(
 		res, err := s.buildCredSvc.StageBuildSecret(ctx, orgID, repoSlug, runName)
 		if err != nil {
 			switch {
-			case errors.Is(err, ErrRepoNotInOrg):
+			case errors.Is(err, orgcreds.ErrRepoNotInOrg):
 				slog.WarnContext(ctx, "stage-build-secret refused: repo/org mismatch",
 					"orgId", orgID, "repoSlug", repoSlug, "task", task.ID)
 				return "", err
-			case errors.Is(err, ErrOrgDisconnected):
+			case errors.Is(err, orgcreds.ErrOrgDisconnected):
 				slog.WarnContext(ctx, "stage-build-secret refused: org disconnected; skipping build",
 					"orgId", orgID, "repoSlug", repoSlug, "task", task.ID)
 				return "", err
@@ -315,7 +316,7 @@ func (s *workflowRunService) RetryAuthFailedBuild(ctx context.Context, task *mod
 	res, err := s.buildCredSvc.StageBuildSecret(ctx, task.OrgID, repo.RepoSlug, runName)
 	if err != nil {
 		switch {
-		case errors.Is(err, ErrRepoNotInOrg), errors.Is(err, ErrOrgDisconnected):
+		case errors.Is(err, orgcreds.ErrRepoNotInOrg), errors.Is(err, orgcreds.ErrOrgDisconnected):
 			return "", err
 		default:
 			return "", fmt.Errorf("retry-auth-failed: stage-build-secret: %w", err)

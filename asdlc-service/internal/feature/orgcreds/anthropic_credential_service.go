@@ -32,7 +32,7 @@
 // the new `org_anthropic_credentials` table.
 //
 // See docs/design/anthropic-key-dual-token.md.
-package services
+package orgcreds
 
 import (
 	"bytes"
@@ -54,19 +54,19 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/wso2/asdlc/asdlc-service/clients/k8s"
-	"github.com/wso2/asdlc/asdlc-service/models"
 	"github.com/wso2/asdlc/asdlc-service/internal/credentials"
+	"github.com/wso2/asdlc/asdlc-service/models"
 )
 
 // AnthropicCredentialService — see package doc.
 type AnthropicCredentialService struct {
-	db            *gorm.DB
-	store         credentials.OpenBaoStore
-	wpClient      client.Client
-	platformKey   string
-	anthropicAPI  string // "https://api.anthropic.com" by default; overridden in tests
-	invalidator   AgentsCacheInvalidator
-	httpClient    *http.Client
+	db           *gorm.DB
+	store        credentials.OpenBaoStore
+	wpClient     client.Client
+	platformKey  string
+	anthropicAPI string // "https://api.anthropic.com" by default; overridden in tests
+	invalidator  AgentsCacheInvalidator
+	httpClient   *http.Client
 
 	// smAPIWriter mirrors the key into SM-API on Connect (WS2.2). nil-safe.
 	smAPIWriter *SMAPIWriter

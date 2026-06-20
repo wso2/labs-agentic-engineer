@@ -49,6 +49,7 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/component"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/orgcreds"
 	"github.com/wso2/asdlc/asdlc-service/internal/seed"
 	"github.com/wso2/asdlc/asdlc-service/middleware"
 	"github.com/wso2/asdlc/asdlc-service/middleware/jwt"
@@ -62,13 +63,13 @@ import (
 	"gorm.io/gorm"
 )
 
-// buildSecretStagerAdapter maps the concrete *services.BuildCredentialsService
+// buildSecretStagerAdapter maps the concrete *orgcreds.BuildCredentialsService
 // (StageBuildSecret → *StageResult) onto the component feature's
 // BuildSecretStager port (→ secretRef string), so the component package need
 // not import the services StageResult type. Composition-root wiring boundary
 // (§6.8: the adapter satisfies the consumer port, here, not in the feature).
 type buildSecretStagerAdapter struct {
-	svc *services.BuildCredentialsService
+	svc *orgcreds.BuildCredentialsService
 }
 
 func (a buildSecretStagerAdapter) StageBuildSecret(ctx context.Context, ocOrgID, repoSlug, workflowRunName string) (string, error) {
@@ -463,7 +464,7 @@ func main() {
 	// WS2.2 — SM-API mirror writer. Hoisted ahead of the credential / IDP
 	// service constructors so all consumers can attach via WithSMAPIWriter
 	// (the no-op case when smClient is nil is fine).
-	smWriter := services.NewSMAPIWriter(smClient, db)
+	smWriter := orgcreds.NewSMAPIWriter(smClient, db)
 
 	// --- Phase 1 — cluster-gateway-proxy client (WS1.4) ----------------
 	// Same shape as wso2cloud/backend/core/internal/ou's cpapi: no
@@ -592,19 +593,19 @@ func main() {
 	branchService := gitrepo.NewBranchService(repoRepo, githubClient, issueService)
 	prService := gitrepo.NewPullRequestService(repoRepo, githubClient, issueService)
 	webhookRegService := gitrepo.NewWebhookService(repoRepo, githubClient, repoService, issueService, cfg.WebhookDeliveryURL, cfg.WebhookHMACSecret)
-	credRefreshService := services.NewCredentialsRefreshService(credResolver)
-	credService := services.NewCredentialService(db, credStore, minter, cfg.WebhookHMACSecret, cfg.GitHubAppClientID, appClientSecret, githubClient)
-	buildCredService := services.NewBuildCredentialsService(repoRepo, credResolver, gitSecretClient)
+	credRefreshService := orgcreds.NewCredentialsRefreshService(credResolver)
+	credService := orgcreds.NewCredentialService(db, credStore, minter, cfg.WebhookHMACSecret, cfg.GitHubAppClientID, appClientSecret, githubClient)
+	buildCredService := orgcreds.NewBuildCredentialsService(repoRepo, credResolver, gitSecretClient)
 	credService.WithBuildSecretCleaner(buildCredService)
-	anthropicInvalidator := services.HTTPAgentsCacheInvalidator(cfg.AgentsServiceURL, "")
-	anthropicCredService := services.NewAnthropicCredentialService(db, credStore, wpClient, cfg.AnthropicPlatformKey, anthropicInvalidator)
+	anthropicInvalidator := orgcreds.HTTPAgentsCacheInvalidator(cfg.AgentsServiceURL, "")
+	anthropicCredService := orgcreds.NewAnthropicCredentialService(db, credStore, wpClient, cfg.AnthropicPlatformKey, anthropicInvalidator)
 
 	// WS2.2 — SM-API mirror writer wired into both credential services.
 	// The writer itself was hoisted ahead of the IDP service constructor
 	// (WS2.4) so it's already built; nil-safe via Enabled() check.
 	credService.WithSMAPIWriter(smWriter)
 	anthropicCredService.WithSMAPIWriter(smWriter)
-	validatorProbes := services.NewValidatorProbes(credService, githubClient, credResolver, minter)
+	validatorProbes := orgcreds.NewValidatorProbes(credService, githubClient, credResolver, minter)
 	credValidator := credentials.NewValidator(db, validatorProbes, nil, cfg.CredentialValidatorInterval)
 	repoBoardService := gitrepo.NewRepoBoardService(repoRepo, githubV2Client, credResolver)
 
@@ -615,7 +616,7 @@ func main() {
 	prCtrl := gitrepo.NewPullRequestController(prService)
 	webhookRegCtrl := gitrepo.NewWebhookRegistrationController(webhookRegService)
 	artifactCtrlGit := artifacts.NewArtifactController(artifactSvcGit)
-	credRefreshCtrl := controllers.NewCredentialsRefreshController(credRefreshService)
+	credRefreshCtrl := orgcreds.NewCredentialsRefreshController(credRefreshService)
 	gitProjectCtrl := gitrepo.NewGitProjectController(githubV2Client, credResolver, repoService)
 	repoBoardCtrl := gitrepo.NewRepoBoardController(repoBoardService)
 
@@ -728,7 +729,7 @@ func main() {
 	// path moved to RS256 (taskTokens below); this signing key is HS256 and
 	// only ever leaves the BFF as a JWT signature inside the GitHub OAuth
 	// `state` query param.
-	bearerSvc := services.NewBearerService(cfg.OAuthStateSigningKey, 24*time.Hour)
+	bearerSvc := orgcreds.NewBearerService(cfg.OAuthStateSigningKey, 24*time.Hour)
 	if cfg.OAuthStateSigningKey == "" {
 		slog.Warn("OAUTH_STATE_SIGNING_KEY not set — connect-state JWTs will fail to mint")
 	}
@@ -875,11 +876,11 @@ func main() {
 	}
 
 	// Phase 2 PR B — org-scoped GitHub connect/disconnect surface.
-	disconnectSvc := services.NewOrgDisconnectService(taskRepo, db, credService, issueService,
+	disconnectSvc := orgcreds.NewOrgDisconnectService(taskRepo, db, credService, issueService,
 		func(s models.TaskStatus) (models.TaskStatus, error) {
 			return services.ApplyTaskEvent(s, services.TaskEventOrgDisconnected)
 		})
-	orgGitHubCtrl := controllers.NewOrgGitHubController(
+	orgGitHubCtrl := orgcreds.NewOrgGitHubController(
 		credService,
 		disconnectSvc,
 		bearerSvc,
@@ -889,7 +890,7 @@ func main() {
 	)
 
 	// Per-org Anthropic settings surface. Same JWT gating as GitHub Integration.
-	orgAnthropicCtrl := controllers.NewOrgAnthropicController(anthropicCredService)
+	orgAnthropicCtrl := orgcreds.NewOrgAnthropicController(anthropicCredService)
 
 	var serviceJWT, taskJWT jwtassertion.Middleware
 	if cfg.JWKSURL != "" {
@@ -949,7 +950,7 @@ func main() {
 				}
 			}
 			if setter, ok := tc.(interface {
-				SetCredentialsRefreshService(services.CredentialsRefreshService)
+				SetCredentialsRefreshService(orgcreds.CredentialsRefreshService)
 			}); ok {
 				setter.SetCredentialsRefreshService(credRefreshService)
 			}

@@ -39,7 +39,7 @@
 // namespace) and reused across builds; concurrent builds clobber the value
 // benignly because installation tokens are account-scoped and any valid one
 // clones any of the org's repos.
-package services
+package orgcreds
 
 import (
 	"context"

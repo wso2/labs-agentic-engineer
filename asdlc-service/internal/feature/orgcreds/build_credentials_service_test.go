@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package services
+package orgcreds
 
 import (
 	"context"
@@ -68,8 +68,8 @@ func (f *fakeRepoRepo) ListAllReady(context.Context) ([]models.GitRepository, er
 func (f *fakeRepoRepo) GetByOrgAndSlug(ctx context.Context, ocOrgID, repoSlug string) (*models.GitRepository, error) {
 	return f.rows[ocOrgID+"/"+repoSlug], nil
 }
-func (f *fakeRepoRepo) Create(context.Context, *models.GitRepository) error { return nil }
-func (f *fakeRepoRepo) Update(context.Context, *models.GitRepository) error { return nil }
+func (f *fakeRepoRepo) Create(context.Context, *models.GitRepository) error           { return nil }
+func (f *fakeRepoRepo) Update(context.Context, *models.GitRepository) error           { return nil }
 func (f *fakeRepoRepo) Delete(context.Context, string) error                          { return nil }
 func (f *fakeRepoRepo) DeleteByOrgAndProjectID(context.Context, string, string) error { return nil }
 func (f *fakeRepoRepo) DeleteAll(context.Context) error                               { return nil }

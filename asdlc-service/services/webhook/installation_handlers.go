@@ -25,6 +25,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/orgcreds"
 	"github.com/wso2/asdlc/asdlc-service/models"
 	"github.com/wso2/asdlc/asdlc-service/repositories"
 	"github.com/wso2/asdlc/asdlc-service/services"
@@ -48,7 +49,7 @@ import (
 func RegisterInstallationHandlers(
 	router *Router,
 	db *gorm.DB,
-	credSvc *services.CredentialService,
+	credSvc *orgcreds.CredentialService,
 	issueSvc gitrepo.IssueService,
 	taskRepo repositories.TaskRepository,
 	projector *Projector,
@@ -59,7 +60,7 @@ func RegisterInstallationHandlers(
 		issueSvc:  issueSvc,
 		taskRepo:  taskRepo,
 		projector: projector,
-		disconnect: services.NewOrgDisconnectService(taskRepo, db, credSvc, issueSvc,
+		disconnect: orgcreds.NewOrgDisconnectService(taskRepo, db, credSvc, issueSvc,
 			func(s models.TaskStatus) (models.TaskStatus, error) {
 				return services.ApplyTaskEvent(s, services.TaskEventOrgDisconnected)
 			}),
@@ -74,11 +75,11 @@ func RegisterInstallationHandlers(
 
 type installationHandler struct {
 	db         *gorm.DB
-	credSvc    *services.CredentialService
+	credSvc    *orgcreds.CredentialService
 	issueSvc   gitrepo.IssueService
 	taskRepo   repositories.TaskRepository
 	projector  *Projector
-	disconnect *services.OrgDisconnectService
+	disconnect *orgcreds.OrgDisconnectService
 }
 
 // installationPayload covers the parts of the installation /
@@ -131,7 +132,7 @@ func (h *installationHandler) handleDeleted(ctx context.Context, _ string, _ str
 	}
 	ocOrgID, err := h.credSvc.OrgIDByInstallationID(ctx, p.Installation.ID)
 	if err != nil {
-		var nfe *services.NotFoundError
+		var nfe *orgcreds.NotFoundError
 		if errors.As(err, &nfe) {
 			// Install never connected on our side — ack noop.
 			slog.InfoContext(ctx, "webhook: installation.deleted: no matching org (ack noop)", "installationId", p.Installation.ID)
@@ -144,7 +145,7 @@ func (h *installationHandler) handleDeleted(ctx context.Context, _ string, _ str
 	// but adds noise. The disconnect cascade just needs the platform-side
 	// row torn down.
 	if err := h.disconnect.Disconnect(ctx, ocOrgID, "installation.deleted", false); err != nil {
-		if errors.Is(err, services.ErrOrgNotFound) {
+		if errors.Is(err, orgcreds.ErrOrgNotFound) {
 			return nil
 		}
 		return err

@@ -14,16 +14,15 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package controllers
+package orgcreds
 
 import (
 	"log/slog"
 	"net/http"
 
-	"github.com/wso2/asdlc/asdlc-service/utils/validate"
 	"github.com/wso2/asdlc/asdlc-service/middleware"
-	"github.com/wso2/asdlc/asdlc-service/services"
 	"github.com/wso2/asdlc/asdlc-service/utils"
+	"github.com/wso2/asdlc/asdlc-service/utils/validate"
 )
 
 // CredentialsRefreshController issues fresh GitHub tokens to the agent's
@@ -39,10 +38,10 @@ type CredentialsRefreshController interface {
 }
 
 type credentialsRefreshController struct {
-	service services.CredentialsRefreshService
+	service CredentialsRefreshService
 }
 
-func NewCredentialsRefreshController(service services.CredentialsRefreshService) CredentialsRefreshController {
+func NewCredentialsRefreshController(service CredentialsRefreshService) CredentialsRefreshController {
 	return &credentialsRefreshController{service: service}
 }
 

@@ -18,7 +18,7 @@
 // credential_service.go file implements the per-org credential connect /
 // status / disconnect surface defined in docs/design/github-integration-phase2.md
 // §5.2 and §6.4–6.7.
-package services
+package orgcreds
 
 import (
 	"context"

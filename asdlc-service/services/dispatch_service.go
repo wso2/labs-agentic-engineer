@@ -29,6 +29,7 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/component"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/orgcreds"
 	"github.com/wso2/asdlc/asdlc-service/models"
 	"github.com/wso2/asdlc/asdlc-service/repositories"
 	"github.com/wso2/asdlc/asdlc-service/services/codingagent"
@@ -82,8 +83,8 @@ type DispatchService interface {
 type dispatchService struct {
 	taskRepo          repositories.TaskRepository
 	repoSvc           gitrepo.RepoService
-	credSvc           *CredentialService
-	anthropicSvc      *AnthropicCredentialService
+	credSvc           *orgcreds.CredentialService
+	anthropicSvc      *orgcreds.AnthropicCredentialService
 	repoBoardSvc      gitrepo.RepoBoardService
 	componentSvc      component.ComponentService
 	configSvc         component.ConfigService
@@ -181,8 +182,8 @@ func (s *dispatchService) SetTraitSync(traitSync *component.TraitSyncService) {
 func NewDispatchService(
 	taskRepo repositories.TaskRepository,
 	repoSvc gitrepo.RepoService,
-	credSvc *CredentialService,
-	anthropicSvc *AnthropicCredentialService,
+	credSvc *orgcreds.CredentialService,
+	anthropicSvc *orgcreds.AnthropicCredentialService,
 	repoBoardSvc gitrepo.RepoBoardService,
 	componentSvc component.ComponentService,
 	configSvc component.ConfigService,
@@ -303,7 +304,7 @@ func (s *dispatchService) dispatchOne(
 	ctx context.Context,
 	task *models.ComponentTask,
 	repoInfo *models.GitRepository,
-	identity *Identity,
+	identity *orgcreds.Identity,
 ) DispatchResult {
 	res := DispatchResult{TaskID: task.ID, ComponentName: task.ComponentName}
 
@@ -385,13 +386,13 @@ func (s *dispatchService) dispatchOne(
 	)
 
 	// Per-dispatch pre-flight: ensure the org has an active Anthropic key,
-	// then SSA-refresh the WP Secret. Returns ErrAnthropicKeyRequired when
+	// then SSA-refresh the WP Secret. Returns orgcreds.ErrAnthropicKeyRequired when
 	// the org row is missing or inactive; we surface that as a structured
 	// failure rather than markFailed so the console can offer "configure
 	// key" instead of "retry". See docs/design/anthropic-key-dual-token.md §6.2.
 	anthropicRes, err := s.anthropicSvc.ApplyWPSecret(ctx, task.OrgID)
 	if err != nil {
-		if errors.Is(err, ErrAnthropicKeyRequired) {
+		if errors.Is(err, orgcreds.ErrAnthropicKeyRequired) {
 			s.markFailed(ctx, task, "anthropic_key_required: configure an Anthropic API key in org settings before dispatching the remote coding agent")
 			res = failResult(res, task.ErrorMessage)
 			res.Error = "anthropic_key_required"
@@ -478,7 +479,7 @@ func (s *dispatchService) tryDispatchViaProxy(
 	ctx context.Context,
 	task *models.ComponentTask,
 	repoURL, prompt string,
-	identity *Identity,
+	identity *orgcreds.Identity,
 	bearer string,
 ) (bool, string, error) {
 	slog.InfoContext(ctx, "[SHAKEOUT:DISPATCH] tryDispatchViaProxy entry",
