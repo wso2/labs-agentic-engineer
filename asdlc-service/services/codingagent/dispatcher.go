@@ -38,6 +38,7 @@ import (
 	"log/slog"
 
 	"github.com/wso2/asdlc/asdlc-service/clients/clustergatewayproxy"
+	"github.com/wso2/asdlc/asdlc-service/internal/platform/tenant"
 )
 
 // Inputs gathers everything one dispatch call needs. All fields are
@@ -127,7 +128,7 @@ func (d *Dispatcher) WithServiceAccount(name string) *Dispatcher {
 // fresh Job (use case: operator-triggered retry that intentionally
 // reuses the run name).
 func (d *Dispatcher) Dispatch(ctx context.Context, in Inputs) (string, error) {
-	ns := RemoteWorkerNamespace(in.OrgUUID)
+	ns := tenant.RemoteWorkerNamespace(in.OrgUUID)
 	if ns == "" {
 		return "", errors.New("codingagent dispatcher: failed to derive NS — empty OrgUUID")
 	}

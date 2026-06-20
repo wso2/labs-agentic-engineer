@@ -27,6 +27,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/wso2/asdlc/asdlc-service/clients/clustergatewayproxy"
+	"github.com/wso2/asdlc/asdlc-service/internal/platform/tenant"
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
 
@@ -303,7 +304,7 @@ func (w *JobWatcher) resolveNS(ctx context.Context, task *models.ComponentTask) 
 	if uid == "" || uid == "00000000-0000-0000-0000-000000000000" {
 		return "", false
 	}
-	return RemoteWorkerNamespace(uid), true
+	return tenant.RemoteWorkerNamespace(uid), true
 }
 
 func (w *JobWatcher) markFailed(ctx context.Context, task *models.ComponentTask, reason string) {

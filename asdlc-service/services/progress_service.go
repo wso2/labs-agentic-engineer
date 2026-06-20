@@ -35,8 +35,8 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/clients/observer"
 	"github.com/wso2/asdlc/asdlc-service/clients/openchoreo"
 	taskfeature "github.com/wso2/asdlc/asdlc-service/internal/feature/task"
+	"github.com/wso2/asdlc/asdlc-service/internal/platform/tenant"
 	"github.com/wso2/asdlc/asdlc-service/models"
-	"github.com/wso2/asdlc/asdlc-service/services/codingagent"
 )
 
 // Default cap on lines per /progress/* response. Keeps Observer query
@@ -640,7 +640,7 @@ func (s *progressService) resolveNewPathNS(ctx context.Context, task *models.Com
 	if uid == "" || uid == "00000000-0000-0000-0000-000000000000" {
 		return "", false
 	}
-	return codingagent.RemoteWorkerNamespace(uid), true
+	return tenant.RemoteWorkerNamespace(uid), true
 }
 
 // textToProgressEvents splits raw stdout/stderr into the

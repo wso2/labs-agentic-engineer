@@ -32,6 +32,7 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/orgcreds"
 	taskfeature "github.com/wso2/asdlc/asdlc-service/internal/feature/task"
+	"github.com/wso2/asdlc/asdlc-service/internal/platform/tenant"
 	"github.com/wso2/asdlc/asdlc-service/models"
 	"github.com/wso2/asdlc/asdlc-service/repositories"
 	"github.com/wso2/asdlc/asdlc-service/services/codingagent"
@@ -608,7 +609,7 @@ func (s *dispatchService) tryDispatchViaProxy(
 	slog.InfoContext(ctx, "[SHAKEOUT:DISPATCH] proxy dispatch proceeding",
 		"gatewayPlatform", isGatewayPlatformURL(s.platformURL),
 		"task", task.ID, "ocOrgId", task.OrgID, "orgUUID", orgUUID,
-		"remoteWorkerNamespace", codingagent.RemoteWorkerNamespace(orgUUID))
+		"remoteWorkerNamespace", tenant.RemoteWorkerNamespace(orgUUID))
 
 	runName := codingAgentRunName(task)
 	job := codingagent.JobInputs{
