@@ -26,7 +26,6 @@ import (
 	"time"
 
 	"github.com/wso2/asdlc/asdlc-service/config"
-	"github.com/wso2/asdlc/asdlc-service/controllers"
 	"github.com/wso2/asdlc/asdlc-service/internal/platform/auth"
 )
 
@@ -49,7 +48,7 @@ func TestJWKSRoute_PublishesActiveKey(t *testing.T) {
 
 	handler := NewHandler(AppParams{
 		Config:         config.Config{TestMode: false},
-		JWKSController: controllers.NewJWKSController(mgr),
+		JWKSController: auth.NewJWKSController(mgr),
 	})
 
 	srv := httptest.NewServer(handler)
@@ -105,7 +104,7 @@ func TestJWKSRoute_NotGatedByJWT(t *testing.T) {
 	// still respond.
 	handler := NewHandler(AppParams{
 		Config:         config.Config{TestMode: false},
-		JWKSController: controllers.NewJWKSController(mgr),
+		JWKSController: auth.NewJWKSController(mgr),
 		ThunderJWKS:    nil, // no inbound auth wired
 	})
 

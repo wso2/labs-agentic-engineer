@@ -19,12 +19,12 @@ package api
 import (
 	"net/http"
 
-	"github.com/wso2/asdlc/asdlc-service/controllers"
+	"github.com/wso2/asdlc/asdlc-service/internal/platform/auth"
 )
 
 // registerJWKSRoute registers the JWKS endpoint on the provided mux. MUST
 // be registered on the OUTER mux, not the JWT-gated apiMux: verifiers fetch
 // the JWKS unauthenticated, before any token verification.
-func registerJWKSRoute(mux *http.ServeMux, ctrl controllers.JWKSController) {
+func registerJWKSRoute(mux *http.ServeMux, ctrl auth.JWKSController) {
 	mux.HandleFunc("GET /auth/external/jwks.json", ctrl.GetJWKS)
 }

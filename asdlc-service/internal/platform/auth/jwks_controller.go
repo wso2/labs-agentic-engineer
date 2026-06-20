@@ -14,14 +14,12 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package controllers
+package auth
 
 import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
-
-	"github.com/wso2/asdlc/asdlc-service/internal/platform/auth"
 )
 
 // JWKSController serves the BFF Task JWT public key set at
@@ -32,13 +30,13 @@ type JWKSController interface {
 }
 
 type jwksController struct {
-	taskTokens *auth.TaskTokenManager
+	taskTokens *TaskTokenManager
 }
 
 // NewJWKSController returns a controller that serves the active signing
 // public key. taskTokens may be nil when Task JWT issuance is not configured;
 // in that case the endpoint returns an empty JWK set.
-func NewJWKSController(taskTokens *auth.TaskTokenManager) JWKSController {
+func NewJWKSController(taskTokens *TaskTokenManager) JWKSController {
 	return &jwksController{taskTokens: taskTokens}
 }
 
@@ -46,7 +44,7 @@ func (c *jwksController) GetJWKS(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	if c.taskTokens == nil {
-		_ = json.NewEncoder(w).Encode(auth.JWKSResponse{Keys: []auth.JWK{}})
+		_ = json.NewEncoder(w).Encode(JWKSResponse{Keys: []JWK{}})
 		return
 	}
 

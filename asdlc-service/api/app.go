@@ -39,6 +39,7 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/skills"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/task"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/webhook"
+	"github.com/wso2/asdlc/asdlc-service/internal/platform/auth"
 	"github.com/wso2/asdlc/asdlc-service/internal/platform/tenant"
 	"github.com/wso2/asdlc/asdlc-service/middleware"
 	jwtmw "github.com/wso2/asdlc/asdlc-service/middleware/jwt"
@@ -66,7 +67,7 @@ type AppParams struct {
 	SkillController            skills.SkillController
 	OrganizationController     organization.OrganizationController
 	IDPController              idp.IDPController
-	JWKSController             controllers.JWKSController
+	JWKSController             auth.JWKSController
 	TaskRepo                   repositories.TaskRepository
 	ConfigRepo                 repositories.ConfigRepository
 

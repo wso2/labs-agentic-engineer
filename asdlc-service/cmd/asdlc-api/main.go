@@ -977,7 +977,7 @@ func main() {
 		OrgAnthropicController: orgAnthropicCtrl,
 		SkillController:        skills.NewSkillController(skillSvc, skillMutationSvc, skillImportSvc),
 		IDPController:          idp.NewIDPController(idpService),
-		JWKSController:         controllers.NewJWKSController(taskTokens),
+		JWKSController:         authn.NewJWKSController(taskTokens),
 		ThunderJWKS:            thunderJWKS,
 		OrganizationService:    organizationService,
 
