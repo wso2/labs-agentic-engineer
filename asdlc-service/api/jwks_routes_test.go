@@ -27,7 +27,7 @@ import (
 
 	"github.com/wso2/asdlc/asdlc-service/config"
 	"github.com/wso2/asdlc/asdlc-service/controllers"
-	"github.com/wso2/asdlc/asdlc-service/services"
+	"github.com/wso2/asdlc/asdlc-service/internal/platform/auth"
 )
 
 // TestJWKSRoute_PublishesActiveKey verifies the BFF's JWKS endpoint is
@@ -37,7 +37,7 @@ func TestJWKSRoute_PublishesActiveKey(t *testing.T) {
 	priv := mustGenerateRSAKey(t)
 	pemKey := string(encodePKCS1(t, priv))
 
-	mgr, err := services.NewTaskTokenManager(services.TaskTokenConfig{
+	mgr, err := auth.NewTaskTokenManager(auth.TaskTokenConfig{
 		PrivateKey: pemKey,
 		Issuer:     "test-iss",
 		Audience:   "test-aud",
@@ -64,7 +64,7 @@ func TestJWKSRoute_PublishesActiveKey(t *testing.T) {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
 
-	var body services.JWKSResponse
+	var body auth.JWKSResponse
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestJWKSRoute_NotGatedByJWT(t *testing.T) {
 	priv := mustGenerateRSAKey(t)
 	pemKey := string(encodePKCS1(t, priv))
 
-	mgr, err := services.NewTaskTokenManager(services.TaskTokenConfig{
+	mgr, err := auth.NewTaskTokenManager(auth.TaskTokenConfig{
 		PrivateKey: pemKey,
 		Issuer:     "iss",
 		Audience:   "aud",

@@ -29,6 +29,7 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/codingagent"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/orgcreds"
 	taskfeature "github.com/wso2/asdlc/asdlc-service/internal/feature/task"
+	"github.com/wso2/asdlc/asdlc-service/internal/platform/auth"
 	"github.com/wso2/asdlc/asdlc-service/models"
 	"github.com/wso2/asdlc/asdlc-service/repositories"
 	"github.com/wso2/asdlc/asdlc-service/services"
@@ -76,8 +77,8 @@ type taskController struct {
 	dispatchSvc       codingagent.DispatchService
 	progressSvc       codingagent.ProgressService
 	ocClient          openchoreo.ComponentClient
-	taskTokens        *services.TaskTokenManager
-	publisherVerifier *services.PublisherTokenVerifier
+	taskTokens        *auth.TaskTokenManager
+	publisherVerifier *auth.PublisherTokenVerifier
 	skillsSvc         *taskfeature.TaskSkillsService
 	credsRefreshSvc   orgcreds.CredentialsRefreshService
 }
@@ -87,7 +88,7 @@ func NewTaskController(
 	dispatchSvc codingagent.DispatchService,
 	progressSvc codingagent.ProgressService,
 	ocClient openchoreo.ComponentClient,
-	taskTokens *services.TaskTokenManager,
+	taskTokens *auth.TaskTokenManager,
 ) TaskController {
 	return &taskController{
 		service:     service,
@@ -107,7 +108,7 @@ func (c *taskController) SetSkillsService(s *taskfeature.TaskSkillsService) {
 // SetPublisherVerifier wires WS2.4's publisher cc token verifier so the
 // runner-callback handlers accept Thunder-issued cc tokens alongside the
 // legacy BFF-signed TaskJWTs. Optional — when nil, only TaskJWTs work.
-func (c *taskController) SetPublisherVerifier(v *services.PublisherTokenVerifier) {
+func (c *taskController) SetPublisherVerifier(v *auth.PublisherTokenVerifier) {
 	c.publisherVerifier = v
 }
 

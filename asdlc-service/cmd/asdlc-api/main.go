@@ -60,6 +60,7 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/runtimeconfig"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/skills"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/task"
+	authn "github.com/wso2/asdlc/asdlc-service/internal/platform/auth"
 	"github.com/wso2/asdlc/asdlc-service/internal/seed"
 	"github.com/wso2/asdlc/asdlc-service/middleware"
 	"github.com/wso2/asdlc/asdlc-service/middleware/jwt"
@@ -67,7 +68,6 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/middleware/logger"
 	"github.com/wso2/asdlc/asdlc-service/models"
 	"github.com/wso2/asdlc/asdlc-service/repositories"
-	"github.com/wso2/asdlc/asdlc-service/services"
 	"github.com/wso2/asdlc/asdlc-service/services/webhook"
 	"gorm.io/gorm"
 )
@@ -745,9 +745,9 @@ func main() {
 
 	// Task JWT manager — RS256, 24h TTL. Public key is published on the
 	// JWKS endpoint and verified by git-service /credentials/refresh.
-	var taskTokens *services.TaskTokenManager
+	var taskTokens *authn.TaskTokenManager
 	if cfg.TaskTokenSigningKey != "" {
-		mgr, err := services.NewTaskTokenManager(services.TaskTokenConfig{
+		mgr, err := authn.NewTaskTokenManager(authn.TaskTokenConfig{
 			PrivateKey: cfg.TaskTokenSigningKey,
 			Issuer:     cfg.TaskTokenIssuer,
 			Audience:   cfg.TaskTokenAudience,
@@ -953,9 +953,9 @@ func main() {
 			// audience prefix "asdlc-publisher-"). When ThunderJWKS is
 			// nil (local dev without platform IDP), verifier is nil and
 			// runner callbacks accept TaskJWT only.
-			if pv := services.NewPublisherTokenVerifier(thunderJWKS, cfg.PlatformIDP.Issuer, "asdlc-publisher-"); pv != nil {
+			if pv := authn.NewPublisherTokenVerifier(thunderJWKS, cfg.PlatformIDP.Issuer, "asdlc-publisher-"); pv != nil {
 				if setter, ok := tc.(interface {
-					SetPublisherVerifier(*services.PublisherTokenVerifier)
+					SetPublisherVerifier(*authn.PublisherTokenVerifier)
 				}); ok {
 					setter.SetPublisherVerifier(pv)
 				}
