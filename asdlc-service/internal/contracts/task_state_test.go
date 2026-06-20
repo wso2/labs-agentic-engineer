@@ -14,30 +14,28 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package services
+package contracts
 
 import (
 	"errors"
 	"testing"
-
-	"github.com/wso2/asdlc/asdlc-service/models"
 )
 
 func TestApplyTaskEventHappyPath(t *testing.T) {
 	cases := []struct {
-		from  models.TaskStatus
+		from  TaskStatus
 		event TaskEvent
-		want  models.TaskStatus
+		want  TaskStatus
 	}{
-		{models.TaskStatusPending, TaskEventDispatchSuccess, models.TaskStatusInProgress},
-		{models.TaskStatusInProgress, TaskEventPRReady, models.TaskStatusReadyForReview},
-		{models.TaskStatusReadyForReview, TaskEventPRMerged, models.TaskStatusMerged},
-		{models.TaskStatusReadyForReview, TaskEventPRRejected, models.TaskStatusRejected},
-		{models.TaskStatusInProgress, TaskEventPRRejected, models.TaskStatusRejected},
-		{models.TaskStatusMerged, TaskEventPushMatched, models.TaskStatusBuilding},
-		{models.TaskStatusBuilding, TaskEventBuildSucceeded, models.TaskStatusDeployed},
-		{models.TaskStatusBuilding, TaskEventBuildFailed, models.TaskStatusFailed},
-		{models.TaskStatusMerged, TaskEventBuildPathMismatch, models.TaskStatusFailed},
+		{TaskStatusPending, TaskEventDispatchSuccess, TaskStatusInProgress},
+		{TaskStatusInProgress, TaskEventPRReady, TaskStatusReadyForReview},
+		{TaskStatusReadyForReview, TaskEventPRMerged, TaskStatusMerged},
+		{TaskStatusReadyForReview, TaskEventPRRejected, TaskStatusRejected},
+		{TaskStatusInProgress, TaskEventPRRejected, TaskStatusRejected},
+		{TaskStatusMerged, TaskEventPushMatched, TaskStatusBuilding},
+		{TaskStatusBuilding, TaskEventBuildSucceeded, TaskStatusDeployed},
+		{TaskStatusBuilding, TaskEventBuildFailed, TaskStatusFailed},
+		{TaskStatusMerged, TaskEventBuildPathMismatch, TaskStatusFailed},
 	}
 	for _, c := range cases {
 		got, err := ApplyTaskEvent(c.from, c.event)
@@ -51,10 +49,10 @@ func TestApplyTaskEventHappyPath(t *testing.T) {
 }
 
 func TestApplyTaskEventTerminalAbsorbsLateEvents(t *testing.T) {
-	for _, term := range []models.TaskStatus{
-		models.TaskStatusDeployed,
-		models.TaskStatusRejected,
-		models.TaskStatusFailed,
+	for _, term := range []TaskStatus{
+		TaskStatusDeployed,
+		TaskStatusRejected,
+		TaskStatusFailed,
 	} {
 		_, err := ApplyTaskEvent(term, TaskEventPRMerged)
 		if !errors.Is(err, ErrInvalidTransition) {
@@ -64,7 +62,7 @@ func TestApplyTaskEventTerminalAbsorbsLateEvents(t *testing.T) {
 }
 
 func TestApplyTaskEventRefusesUnknownTransition(t *testing.T) {
-	_, err := ApplyTaskEvent(models.TaskStatusPending, TaskEventBuildSucceeded)
+	_, err := ApplyTaskEvent(TaskStatusPending, TaskEventBuildSucceeded)
 	if !errors.Is(err, ErrInvalidTransition) {
 		t.Fatalf("expected ErrInvalidTransition, got %v", err)
 	}

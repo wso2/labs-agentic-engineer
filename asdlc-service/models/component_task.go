@@ -16,7 +16,11 @@
 
 package models
 
-import "time"
+import (
+	"time"
+
+	"github.com/wso2/asdlc/asdlc-service/internal/contracts"
+)
 
 // StringSlice is a reusable slice type for JSONB storage in PostgreSQL.
 type StringSlice []string
@@ -41,49 +45,27 @@ const (
 )
 
 // TaskStatus is the single, webhook-driven lifecycle for a ComponentTask.
-// Transitions live in services/task_state.go; the projector in services/webhook
-// is the only writer outside dispatch.
-type TaskStatus string
+// Its canonical definition + the transition algebra (ApplyTaskEvent, the
+// transition table, IsTerminal) live in internal/contracts — the
+// dependency-free layer (§6.9). These are re-export aliases so the gorm model
+// and every existing models.TaskStatus consumer keep working unchanged while
+// contracts owns the state machine. The projector in services/webhook is the
+// only writer outside dispatch.
+type TaskStatus = contracts.TaskStatus
 
 const (
-	TaskStatusPending        TaskStatus = "pending"
-	TaskStatusInProgress     TaskStatus = "in_progress"
-	TaskStatusReadyForReview TaskStatus = "ready_for_review"
-	TaskStatusMerged         TaskStatus = "merged"
-	TaskStatusBuilding       TaskStatus = "building"
-	TaskStatusDeployed       TaskStatus = "deployed"
-	TaskStatusRejected       TaskStatus = "rejected"
-	TaskStatusFailed         TaskStatus = "failed"
-	// TaskStatusAbandoned (Phase 2 PR B) is the cascade target when the
-	// org's GitHub credential is disconnected (or, in PR D, when reach
-	// reconciliation drops the task's repo from the App install). Terminal.
-	TaskStatusAbandoned TaskStatus = "abandoned"
-	// TaskStatusOnHold gates dispatch on un-deployed dependencies (F2
-	// deploy-gating, docs/design/cross-component-wiring-gaps.md §3). The
-	// dispatcher transitions a task into this state if any task it
-	// dependsOn (by component name) is not yet `deployed`; an upstream
-	// deploy fires the projector's onTaskDeployed cascade which
-	// re-evaluates and auto-dispatches. Uses the same "on_hold" value as
-	// the GitHub Project board column so both surfaces stay in sync.
-	TaskStatusOnHold TaskStatus = "on_hold"
-	// TaskStatusVerificationFailed (F3c, docs/design/cross-component-
-	// wiring-gaps.md §3 F3c) is the task state when the dispatched agent
-	// reports that integration verification against a dependency endpoint
-	// failed. The PR stays a draft, an "Operator action required" surface
-	// shows on the board, and the operator clicks Retry to re-dispatch
-	// (transition back to in_progress).
-	TaskStatusVerificationFailed TaskStatus = "verification_failed"
+	TaskStatusPending            = contracts.TaskStatusPending
+	TaskStatusInProgress         = contracts.TaskStatusInProgress
+	TaskStatusReadyForReview     = contracts.TaskStatusReadyForReview
+	TaskStatusMerged             = contracts.TaskStatusMerged
+	TaskStatusBuilding           = contracts.TaskStatusBuilding
+	TaskStatusDeployed           = contracts.TaskStatusDeployed
+	TaskStatusRejected           = contracts.TaskStatusRejected
+	TaskStatusFailed             = contracts.TaskStatusFailed
+	TaskStatusAbandoned          = contracts.TaskStatusAbandoned
+	TaskStatusOnHold             = contracts.TaskStatusOnHold
+	TaskStatusVerificationFailed = contracts.TaskStatusVerificationFailed
 )
-
-// IsTerminal reports whether the status is a terminal state. Terminal states
-// absorb late events and reject further transitions.
-func (s TaskStatus) IsTerminal() bool {
-	switch s {
-	case TaskStatusDeployed, TaskStatusRejected, TaskStatusFailed, TaskStatusAbandoned:
-		return true
-	}
-	return false
-}
 
 // ComponentTask is one implementation task targeting a single component.
 // Scoped to an append-only batch (see BatchID, SourceDesignVersion,
