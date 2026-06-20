@@ -24,7 +24,6 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/wso2/asdlc/asdlc-service/models"
-	"github.com/wso2/asdlc/asdlc-service/services"
 )
 
 // OnHoldWatcher retries dispatch for tasks that are on_hold because a
@@ -44,11 +43,11 @@ import (
 // process the same project simultaneously.
 type OnHoldWatcher struct {
 	db       *gorm.DB
-	dispatch services.DispatchService
+	dispatch OnHoldDispatcher
 	tick     time.Duration
 }
 
-func NewOnHoldWatcher(db *gorm.DB, dispatch services.DispatchService) *OnHoldWatcher {
+func NewOnHoldWatcher(db *gorm.DB, dispatch OnHoldDispatcher) *OnHoldWatcher {
 	return &OnHoldWatcher{
 		db:       db,
 		dispatch: dispatch,
@@ -109,15 +108,15 @@ func (w *OnHoldWatcher) sweep(ctx context.Context) {
 		}
 		seen[key] = struct{}{}
 
-		results, err := w.dispatch.DispatchTasks(ctx, r.OrgID, r.ProjectID)
+		count, err := w.dispatch(ctx, r.OrgID, r.ProjectID)
 		if err != nil {
 			slog.WarnContext(ctx, "on_hold watcher: DispatchTasks failed",
 				"org", r.OrgID, "project", r.ProjectID, "error", err)
 			continue
 		}
-		if len(results) > 0 {
+		if count > 0 {
 			slog.InfoContext(ctx, "on_hold watcher: dispatched deferred tasks",
-				"org", r.OrgID, "project", r.ProjectID, "count", len(results))
+				"org", r.OrgID, "project", r.ProjectID, "count", count)
 		}
 	}
 }

@@ -24,8 +24,8 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/wso2/asdlc/asdlc-service/clients/openchoreo"
+	"github.com/wso2/asdlc/asdlc-service/internal/contracts"
 	"github.com/wso2/asdlc/asdlc-service/models"
-	"github.com/wso2/asdlc/asdlc-service/services"
 )
 
 // CodingAgentWatcher polls OC for the status of in-flight coding-agent
@@ -138,12 +138,12 @@ func (w *CodingAgentWatcher) sweep(ctx context.Context) {
 // Status.Conditions[type=WorkflowCompleted, status=True] signal. Returns
 // empty event for in-flight runs and for succeeded runs (success transitions
 // via the GitHub webhook). Only terminal-failed maps to a transition.
-func classifyCodingAgentRun(run *models.WorkflowRun) (event services.TaskEvent, errMsg string) {
+func classifyCodingAgentRun(run *models.WorkflowRun) (event contracts.TaskEvent, errMsg string) {
 	if run == nil || !run.Completed {
 		return "", ""
 	}
 	if run.Status != openchoreo.ReasonWorkflowSucceeded {
-		return services.TaskEventCodingAgentFailed, "coding-agent failed: " + run.Status
+		return contracts.TaskEventCodingAgentFailed, "coding-agent failed: " + run.Status
 	}
 	return "", ""
 }

@@ -24,11 +24,11 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/wso2/asdlc/asdlc-service/internal/contracts"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/orgcreds"
 	"github.com/wso2/asdlc/asdlc-service/models"
 	"github.com/wso2/asdlc/asdlc-service/repositories"
-	"github.com/wso2/asdlc/asdlc-service/services"
 )
 
 // RegisterInstallationHandlers wires the Phase 2 PR B handlers for App-mode
@@ -62,7 +62,7 @@ func RegisterInstallationHandlers(
 		projector: projector,
 		disconnect: orgcreds.NewOrgDisconnectService(taskRepo, db, credSvc, issueSvc,
 			func(s models.TaskStatus) (models.TaskStatus, error) {
-				return services.ApplyTaskEvent(s, services.TaskEventOrgDisconnected)
+				return contracts.ApplyTaskEvent(s, contracts.TaskEventOrgDisconnected)
 			}),
 	}
 	router.Register("installation", "created", EventHandlerFunc(h.handleCreated))
@@ -322,7 +322,7 @@ func (h *installationHandler) handleReposRemoved(ctx context.Context, _ string, 
 				slog.WarnContext(ctx, "reach reconciliation: comment failed", "taskId", t.ID, "error", err)
 			}
 		}
-		next, err := services.ApplyTaskEvent(models.TaskStatus(t.Status), services.TaskEventRepoUnselected)
+		next, err := contracts.ApplyTaskEvent(models.TaskStatus(t.Status), contracts.TaskEventRepoUnselected)
 		if err != nil {
 			slog.WarnContext(ctx, "reach reconciliation: invalid transition (race with terminal)",
 				"taskId", t.ID, "fromStatus", t.Status, "error", err)

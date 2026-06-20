@@ -1014,7 +1014,13 @@ func main() {
 
 	// On-hold watcher retries dispatch for tasks deferred due to OC
 	// ReleaseBinding URL resolution lag (timing race at cascade time).
-	onHoldWatcher := webhook.NewOnHoldWatcher(db, dispatchSvc)
+	// The watcher's OnHoldDispatcher port returns a dispatched count; adapt
+	// dispatchSvc.DispatchTasks (which returns []DispatchResult) here at the
+	// composition root so webhook needn't import services.
+	onHoldWatcher := webhook.NewOnHoldWatcher(db, func(ctx context.Context, orgID, projectID string) (int, error) {
+		r, e := dispatchSvc.DispatchTasks(ctx, orgID, projectID)
+		return len(r), e
+	})
 
 	// Build watcher polls OC for in-flight WorkflowRun status. Goroutine is
 	// fine because state lives in Postgres — a restart resumes from the

@@ -26,8 +26,8 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/wso2/asdlc/asdlc-service/internal/contracts"
 	"github.com/wso2/asdlc/asdlc-service/models"
-	"github.com/wso2/asdlc/asdlc-service/services"
 )
 
 // Projector applies derived events to ComponentTask state under per-task
@@ -86,7 +86,7 @@ func (p *Projector) ApplyToTaskByPR(
 	ctx context.Context,
 	repoFullName string,
 	prNumber int,
-	event services.TaskEvent,
+	event contracts.TaskEvent,
 	fillFields func(t *models.ComponentTask),
 ) error {
 	if prNumber <= 0 {
@@ -135,9 +135,9 @@ func (p *Projector) ApplyToTaskByPR(
 			fillFields(&task)
 		}
 
-		next, err := services.ApplyTaskEvent(models.TaskStatus(task.Status), event)
+		next, err := contracts.ApplyTaskEvent(models.TaskStatus(task.Status), event)
 		if err != nil {
-			if errors.Is(err, services.ErrInvalidTransition) {
+			if errors.Is(err, contracts.ErrInvalidTransition) {
 				slog.InfoContext(ctx, "projector: late event ignored",
 					"task", task.ID, "current", task.Status, "event", event)
 				// Late events on terminal states are absorbed silently.
@@ -160,11 +160,11 @@ func (p *Projector) ApplyToTaskByPR(
 // terminal and EventCause has a defined value for the event. Non-terminal
 // transitions leave Cause unchanged. Re-applying the same event on a
 // row already terminal is a no-op (the projector returns early).
-func setCauseIfTerminal(task *models.ComponentTask, event services.TaskEvent) {
+func setCauseIfTerminal(task *models.ComponentTask, event contracts.TaskEvent) {
 	if !models.TaskStatus(task.Status).IsTerminal() {
 		return
 	}
-	cause := services.EventCause(event)
+	cause := contracts.EventCause(event)
 	if cause == "" {
 		return
 	}
@@ -211,7 +211,7 @@ func (p *Projector) MarkBuilding(
 func (p *Projector) ApplyBuildResult(
 	ctx context.Context,
 	taskID string,
-	event services.TaskEvent,
+	event contracts.TaskEvent,
 	errMsg string,
 ) error {
 	var (
@@ -228,9 +228,9 @@ func (p *Projector) ApplyBuildResult(
 		if err := tx.First(&task, "id = ?", taskID).Error; err != nil {
 			return fmt.Errorf("find task: %w", err)
 		}
-		next, err := services.ApplyTaskEvent(models.TaskStatus(task.Status), event)
+		next, err := contracts.ApplyTaskEvent(models.TaskStatus(task.Status), event)
 		if err != nil {
-			if errors.Is(err, services.ErrInvalidTransition) {
+			if errors.Is(err, contracts.ErrInvalidTransition) {
 				slog.InfoContext(ctx, "projector: late build result ignored",
 					"task", taskID, "current", task.Status, "event", event)
 				return nil

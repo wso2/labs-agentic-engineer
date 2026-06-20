@@ -25,8 +25,8 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/wso2/asdlc/asdlc-service/clients/openchoreo"
+	"github.com/wso2/asdlc/asdlc-service/internal/contracts"
 	"github.com/wso2/asdlc/asdlc-service/models"
-	"github.com/wso2/asdlc/asdlc-service/services"
 )
 
 // BuildWatcher polls OC for the status of in-flight builds and applies
@@ -53,7 +53,7 @@ type BuildWatcher struct {
 	ocClient          openchoreo.ComponentClient
 	projector         *Projector
 	asServiceIdentity func(ctx context.Context) context.Context
-	wfService         services.WorkflowRunService
+	wfService         BuildOps
 	tick              time.Duration
 	authBudget        int
 }
@@ -63,7 +63,7 @@ func NewBuildWatcher(
 	ocClient openchoreo.ComponentClient,
 	projector *Projector,
 	asServiceIdentity func(ctx context.Context) context.Context,
-	wfService services.WorkflowRunService,
+	wfService BuildOps,
 	authBudget int,
 ) *BuildWatcher {
 	if authBudget <= 0 {
@@ -147,7 +147,7 @@ func (w *BuildWatcher) sweep(ctx context.Context) {
 				continue
 			}
 			// Budget exhausted — terminal failure.
-			if err := w.projector.ApplyBuildResult(ctx, t.ID, services.TaskEventBuildAuthRetryExhausted, "build auth retry budget exceeded"); err != nil {
+			if err := w.projector.ApplyBuildResult(ctx, t.ID, contracts.TaskEventBuildAuthRetryExhausted, "build auth retry budget exceeded"); err != nil {
 				slog.ErrorContext(ctx, "build watcher: apply auth-budget exhaustion failed",
 					"task", t.ID, "error", err)
 			} else {
@@ -226,18 +226,18 @@ var authFailureMarkers = []string{
 // Phase ∈ {Failed, Error} with a Message matching an auth marker, returns
 // event="" + authFailure=true so the watcher routes through the retry path
 // instead of the terminal failed path.
-func classifyRun(run *models.WorkflowRun) (event services.TaskEvent, errMsg string, authFailure bool) {
+func classifyRun(run *models.WorkflowRun) (event contracts.TaskEvent, errMsg string, authFailure bool) {
 	if run == nil || !run.Completed {
 		return "", "", false
 	}
 	if run.Status == openchoreo.ReasonWorkflowSucceeded {
-		return services.TaskEventBuildSucceeded, "", false
+		return contracts.TaskEventBuildSucceeded, "", false
 	}
 	// Anything not Succeeded once Completed=True is a failure.
 	if isGitCloneAuthFailure(run) {
 		return "", "", true
 	}
-	return services.TaskEventBuildFailed, "build failed: " + run.Status, false
+	return contracts.TaskEventBuildFailed, "build failed: " + run.Status, false
 }
 
 // isGitCloneAuthFailure returns true when the failing checkout-source task

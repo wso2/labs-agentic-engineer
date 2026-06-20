@@ -26,8 +26,8 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/wso2/asdlc/asdlc-service/internal/contracts"
 	"github.com/wso2/asdlc/asdlc-service/models"
-	"github.com/wso2/asdlc/asdlc-service/services"
 )
 
 // Handlers wires the per-event handlers onto a Router. The shape is one
@@ -42,7 +42,7 @@ func Register(
 	router *Router,
 	db *gorm.DB,
 	projector *Projector,
-	wfService services.WorkflowRunService,
+	wfService BuildOps,
 ) {
 	h := &Handler{
 		db:        db,
@@ -61,7 +61,7 @@ func Register(
 type Handler struct {
 	db        *gorm.DB
 	projector *Projector
-	wfService services.WorkflowRunService
+	wfService BuildOps
 }
 
 // pull_request payload subset.
@@ -173,7 +173,7 @@ func (h *Handler) linkPRFromPayload(ctx context.Context, body []byte, action str
 
 	if !p.PullRequest.Draft {
 		err := h.projector.ApplyToTaskByPR(
-			ctx, p.Repository.FullName, p.PullRequest.Number, services.TaskEventPRReady, nil,
+			ctx, p.Repository.FullName, p.PullRequest.Number, contracts.TaskEventPRReady, nil,
 		)
 		if IsTaskNotFound(err) {
 			// Race: link succeeded above, but the row was renamed/deleted
@@ -199,7 +199,7 @@ func (h *Handler) PullRequestReady(ctx context.Context, event, action string, bo
 	if p.PullRequest.Number == 0 {
 		return nil
 	}
-	err := h.projector.ApplyToTaskByPR(ctx, p.Repository.FullName, p.PullRequest.Number, services.TaskEventPRReady, nil)
+	err := h.projector.ApplyToTaskByPR(ctx, p.Repository.FullName, p.PullRequest.Number, contracts.TaskEventPRReady, nil)
 	if IsTaskNotFound(err) {
 		slog.DebugContext(ctx, "ready_for_review: no matching task — likely human PR")
 		return nil
@@ -230,7 +230,7 @@ func (h *Handler) PullRequestClosed(ctx context.Context, event, action string, b
 	}
 
 	if !p.PullRequest.Merged {
-		err := h.projector.ApplyToTaskByPR(ctx, p.Repository.FullName, p.PullRequest.Number, services.TaskEventPRRejected, nil)
+		err := h.projector.ApplyToTaskByPR(ctx, p.Repository.FullName, p.PullRequest.Number, contracts.TaskEventPRRejected, nil)
 		if IsTaskNotFound(err) {
 			return nil
 		}
@@ -239,7 +239,7 @@ func (h *Handler) PullRequestClosed(ctx context.Context, event, action string, b
 
 	// Merged: record the merge SHA and advance.
 	mergeSHA := p.PullRequest.MergeCommitSHA
-	err := h.projector.ApplyToTaskByPR(ctx, p.Repository.FullName, p.PullRequest.Number, services.TaskEventPRMerged, func(t *models.ComponentTask) {
+	err := h.projector.ApplyToTaskByPR(ctx, p.Repository.FullName, p.PullRequest.Number, contracts.TaskEventPRMerged, func(t *models.ComponentTask) {
 		if mergeSHA != "" {
 			t.MergeCommitSHA = mergeSHA
 		}
@@ -352,4 +352,3 @@ func lookupProjectByRepo(db *gorm.DB, repoFullName string) (orgID, projectID str
 	}
 	return r.OrgID, r.ProjectID, nil
 }
-

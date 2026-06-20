@@ -19,8 +19,8 @@ package webhook
 import (
 	"testing"
 
+	"github.com/wso2/asdlc/asdlc-service/internal/contracts"
 	"github.com/wso2/asdlc/asdlc-service/models"
-	"github.com/wso2/asdlc/asdlc-service/services"
 )
 
 // classifyRun unit tests — pure function, no DB. The retry-budget +
@@ -52,7 +52,7 @@ func TestClassifyRun_NotCompleted(t *testing.T) {
 func TestClassifyRun_Succeeded(t *testing.T) {
 	run := &models.WorkflowRun{Status: "WorkflowSucceeded", Completed: true}
 	event, _, auth := classifyRun(run)
-	if event != services.TaskEventBuildSucceeded || auth {
+	if event != contracts.TaskEventBuildSucceeded || auth {
 		t.Fatalf("expected BuildSucceeded, got %q auth=%v", event, auth)
 	}
 }
@@ -60,7 +60,7 @@ func TestClassifyRun_Succeeded(t *testing.T) {
 func TestClassifyRun_Failed_NoTaskMessage(t *testing.T) {
 	run := &models.WorkflowRun{Status: "WorkflowFailed", Completed: true}
 	event, msg, auth := classifyRun(run)
-	if event != services.TaskEventBuildFailed || auth {
+	if event != contracts.TaskEventBuildFailed || auth {
 		t.Fatalf("plain failure should be terminal failed, got %q auth=%v", event, auth)
 	}
 	if msg == "" {
@@ -127,7 +127,7 @@ func TestClassifyRun_Failed_AuthMarkerOnNonCheckoutStep_NotRetried(t *testing.T)
 		},
 	}
 	event, _, auth := classifyRun(run)
-	if event != services.TaskEventBuildFailed {
+	if event != contracts.TaskEventBuildFailed {
 		t.Fatalf("non-checkout auth failure should still be terminal failed, got %q", event)
 	}
 	if auth {
@@ -145,7 +145,7 @@ func TestClassifyRun_Failed_NonAuthMarker_NotRetried(t *testing.T) {
 		},
 	}
 	event, _, auth := classifyRun(run)
-	if event != services.TaskEventBuildFailed {
+	if event != contracts.TaskEventBuildFailed {
 		t.Fatalf("non-auth failure should still be terminal failed, got %q", event)
 	}
 	if auth {
@@ -164,7 +164,7 @@ func TestClassifyRun_Failed_EmptyMessage_NotRetried(t *testing.T) {
 		},
 	}
 	event, _, auth := classifyRun(run)
-	if event != services.TaskEventBuildFailed || auth {
+	if event != contracts.TaskEventBuildFailed || auth {
 		t.Fatalf("empty-message checkout-source failure should be terminal failed, got %q auth=%v", event, auth)
 	}
 }
