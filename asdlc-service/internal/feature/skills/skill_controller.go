@@ -61,7 +61,7 @@ type skillController struct {
 }
 
 // NewSkillController wires the catalogue read surface plus the mutation +
-// import
+// import services.
 func NewSkillController(
 	skills *SkillService,
 	mutation *SkillMutationService,

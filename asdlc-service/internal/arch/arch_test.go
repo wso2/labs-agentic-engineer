@@ -27,28 +27,43 @@ package arch
 import (
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 )
 
 const mod = "github.com/wso2/asdlc/asdlc-service"
 
-// deps returns the full transitive import set of pkg via `go list -deps`.
-func deps(t *testing.T, pkg string) []string {
+// depCache memoizes each package's transitive import set so the boundary tests
+// shell out to `go list -deps` once per distinct package (not once per
+// assertion) — the same package is queried across multiple checks/tests.
+var (
+	depCacheMu sync.Mutex
+	depCache   = map[string]map[string]bool{}
+)
+
+// deps returns the transitive import set of pkg (as a set) via `go list -deps`,
+// memoized across all callers/tests.
+func deps(t *testing.T, pkg string) map[string]bool {
 	t.Helper()
+	depCacheMu.Lock()
+	defer depCacheMu.Unlock()
+	if set, ok := depCache[pkg]; ok {
+		return set
+	}
 	out, err := exec.Command("go", "list", "-deps", pkg).CombinedOutput()
 	if err != nil {
 		t.Fatalf("go list -deps %s failed: %v\n%s", pkg, err, out)
 	}
-	return strings.Split(strings.TrimSpace(string(out)), "\n")
+	set := map[string]bool{}
+	for _, d := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		set[d] = true
+	}
+	depCache[pkg] = set
+	return set
 }
 
 func imports(t *testing.T, pkg, dep string) bool {
-	for _, d := range deps(t, pkg) {
-		if d == dep {
-			return true
-		}
-	}
-	return false
+	return deps(t, pkg)[dep]
 }
 
 // TestNoFlatServicesOrControllers asserts the strangler's flat layers are gone:
@@ -74,7 +89,7 @@ func TestNoFlatServicesOrControllers(t *testing.T) {
 	// The platform leaves must not import any feature or the flat layers.
 	for _, p := range []string{"contracts", "platform/tenant", "platform/auth"} {
 		pkg := mod + "/internal/" + p
-		for _, d := range deps(t, pkg) {
+		for d := range deps(t, pkg) {
 			if strings.Contains(d, "/internal/feature/") {
 				t.Errorf("%s imports a feature (%s) — must stay a leaf", p, d)
 			}
@@ -108,7 +123,7 @@ func TestTaskCodingagentCycleBroken(t *testing.T) {
 // TestContractsIsLeaf asserts internal/contracts depends on nothing inside the
 // module except models value types (the §4.0 / §6.3 admission rule).
 func TestContractsIsLeaf(t *testing.T) {
-	for _, d := range deps(t, mod+"/internal/contracts") {
+	for d := range deps(t, mod+"/internal/contracts") {
 		if !strings.HasPrefix(d, mod) {
 			continue // stdlib / third-party
 		}
