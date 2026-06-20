@@ -31,7 +31,6 @@ import (
 
 	"github.com/wso2/asdlc/asdlc-service/clients/agents"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
-	"github.com/wso2/asdlc/asdlc-service/internal/feature/component"
 	"github.com/wso2/asdlc/asdlc-service/internal/platform/k8sname"
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
@@ -81,11 +80,28 @@ type designService struct {
 	// edit so an `exposesAPI.auth` toggle propagates to the OC Component +
 	// ReleaseBindings without waiting for the next dispatch. Set via
 	// SetTraitSync. Optional in tests.
-	traitSync *component.TraitSyncService
+	traitSync traitSyncReconciler
 	// skillSvc resolves the per-org skill catalogue for the architect input.
 	// Optional in tests; nil → architect runs with no skills attached
 	// (equivalent to pre-skills-system behaviour).
-	skillSvc *SkillService
+	skillSvc skillCatalog
+}
+
+// traitSyncReconciler is design_service's narrow consumer port for the
+// component feature's trait-sync surface. *component.TraitSyncService
+// satisfies it; defined here (consumer side) so design — which moves into its
+// own feature — needn't import the component package concretely.
+type traitSyncReconciler interface {
+	SyncComponentTraits(ctx context.Context, orgID, projectID, componentName string) error
+	DeleteComponentCascade(ctx context.Context, orgID, projectID, componentName string) error
+}
+
+// skillCatalog is design_service's narrow consumer port for the skills
+// feature's per-org catalogue lookup (architect input). *SkillService
+// satisfies it; defined here so design needn't import the skills feature
+// (which extracts later).
+type skillCatalog interface {
+	List(ctx context.Context, orgID string) ([]models.Skill, error)
 }
 
 // taskReconciler is design_service's narrow consumer port for the task
@@ -110,14 +126,14 @@ type DesignServiceWithTaskHook interface {
 // written. Mirrors the DesignServiceWithTaskHook pattern.
 type DesignServiceWithTraitSync interface {
 	DesignService
-	SetTraitSync(traitSync *component.TraitSyncService)
+	SetTraitSync(traitSync traitSyncReconciler)
 }
 
 // DesignServiceWithSkills surfaces the skill-catalogue setter so the
 // architect call ships the org's skill set as input.
 type DesignServiceWithSkills interface {
 	DesignService
-	SetSkillService(svc *SkillService)
+	SetSkillService(svc skillCatalog)
 }
 
 func NewDesignService(
@@ -136,7 +152,7 @@ func (s *designService) SetTaskService(taskSvc taskReconciler) {
 	s.taskSvc = taskSvc
 }
 
-func (s *designService) SetTraitSync(traitSync *component.TraitSyncService) {
+func (s *designService) SetTraitSync(traitSync traitSyncReconciler) {
 	s.traitSync = traitSync
 }
 
