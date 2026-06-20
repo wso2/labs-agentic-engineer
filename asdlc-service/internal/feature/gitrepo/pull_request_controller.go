@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package controllers
+package gitrepo
 
 import (
 	"encoding/json"
@@ -22,7 +22,6 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/wso2/asdlc/asdlc-service/services"
 	"github.com/wso2/asdlc/asdlc-service/utils"
 )
 
@@ -32,10 +31,10 @@ type PullRequestController interface {
 }
 
 type pullRequestController struct {
-	service services.PullRequestService
+	service PullRequestService
 }
 
-func NewPullRequestController(service services.PullRequestService) PullRequestController {
+func NewPullRequestController(service PullRequestService) PullRequestController {
 	return &pullRequestController{service: service}
 }
 
@@ -45,7 +44,7 @@ func (c *pullRequestController) CreateDraftPR(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	var req services.CreateDraftPRRequest
+	var req CreateDraftPRRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -57,7 +56,7 @@ func (c *pullRequestController) CreateDraftPR(w http.ResponseWriter, r *http.Req
 
 	result, err := c.service.CreateDraftPR(r.Context(), r.PathValue("orgId"), projectID, req)
 	if err != nil {
-		if errors.Is(err, services.ErrRepoNotFound) {
+		if errors.Is(err, ErrRepoNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "repository not found")
 			return
 		}

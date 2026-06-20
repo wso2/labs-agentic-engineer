@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package services
+package gitrepo
 
 import (
 	"context"
@@ -42,13 +42,13 @@ type WebhookService interface {
 }
 
 type webhookService struct {
-	repo               repositories.RepoRepository
-	github             GitHubClient
-	repoSvc            RepoService
-	issue              *issueService
-	deliveryURL        string
-	hmacSecret         string
-	subscribedEvents   []string
+	repo             repositories.RepoRepository
+	github           GitHubClient
+	repoSvc          RepoService
+	issue            *issueService
+	deliveryURL      string
+	hmacSecret       string
+	subscribedEvents []string
 }
 
 func NewWebhookService(

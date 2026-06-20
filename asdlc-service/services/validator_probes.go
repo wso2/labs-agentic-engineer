@@ -21,6 +21,7 @@ import (
 	"errors"
 
 	"github.com/wso2/asdlc/asdlc-service/internal/credentials"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 )
 
 // ValidatorProbes is the production credentials.ValidatorProbes that
@@ -31,7 +32,7 @@ import (
 // after the credential service + github client + minter are all up.
 type ValidatorProbes struct {
 	credSvc      *CredentialService
-	githubClient GitHubClient
+	githubClient gitrepo.GitHubClient
 	resolver     credentials.Resolver
 	minter       *credentials.AppTokenMinter
 }
@@ -39,7 +40,7 @@ type ValidatorProbes struct {
 // NewValidatorProbes constructs the probes adapter. All four
 // dependencies must be non-nil; nil short-circuits the validator at
 // construction so we don't half-fire later.
-func NewValidatorProbes(credSvc *CredentialService, githubClient GitHubClient, resolver credentials.Resolver, minter *credentials.AppTokenMinter) *ValidatorProbes {
+func NewValidatorProbes(credSvc *CredentialService, githubClient gitrepo.GitHubClient, resolver credentials.Resolver, minter *credentials.AppTokenMinter) *ValidatorProbes {
 	return &ValidatorProbes{
 		credSvc:      credSvc,
 		githubClient: githubClient,
@@ -81,9 +82,9 @@ func (p *ValidatorProbes) ProbePAT(ctx context.Context, row credentials.ActiveRo
 	user, err := p.githubClient.GetUser(ctx, cred)
 	if err != nil {
 		switch {
-		case IsHTTPStatus(err, 401), IsHTTPStatus(err, 403):
+		case gitrepo.IsHTTPStatus(err, 401), gitrepo.IsHTTPStatus(err, 403):
 			return "", "", "", credentials.ErrCredentialUnauthorized
-		case IsHTTPStatus(err, 404):
+		case gitrepo.IsHTTPStatus(err, 404):
 			return "", "", "", credentials.ErrCredentialUnauthorized
 		}
 		return "", "", "", credentials.ErrCredentialTransient
@@ -107,7 +108,7 @@ func (p *ValidatorProbes) ProbeApp(ctx context.Context, row credentials.ActiveRo
 	info, err := p.githubClient.GetAppInstallation(ctx, p.minter, *row.InstallationID)
 	if err != nil {
 		switch {
-		case IsHTTPStatus(err, 401), IsHTTPStatus(err, 404), IsHTTPStatus(err, 410):
+		case gitrepo.IsHTTPStatus(err, 401), gitrepo.IsHTTPStatus(err, 404), gitrepo.IsHTTPStatus(err, 410):
 			return "", credentials.ErrCredentialUnauthorized
 		}
 		return "", credentials.ErrCredentialTransient

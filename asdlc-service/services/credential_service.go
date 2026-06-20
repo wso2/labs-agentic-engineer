@@ -35,8 +35,9 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/wso2/asdlc/asdlc-service/models"
 	"github.com/wso2/asdlc/asdlc-service/internal/credentials"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
+	"github.com/wso2/asdlc/asdlc-service/models"
 )
 
 // CredentialService is the orchestration layer behind /internal/credentials/orgs/...
@@ -103,7 +104,7 @@ type CredentialService struct {
 	// (ListAppInstallations, ExchangeOAuthCode, GetUserInstallations);
 	// the rest of CredentialService still uses raw httpClient for legacy
 	// reasons. Optional — nil disables the bind path.
-	githubClient GitHubClient
+	githubClient gitrepo.GitHubClient
 
 	httpClient *http.Client
 }
@@ -122,7 +123,7 @@ func NewCredentialService(
 	minter *credentials.AppTokenMinter,
 	envWebhookSecret string,
 	appClientID, appClientSecret string,
-	githubClient GitHubClient,
+	githubClient gitrepo.GitHubClient,
 ) *CredentialService {
 	return &CredentialService{
 		db:               db,
@@ -177,10 +178,10 @@ func (e *NotFoundError) Error() string { return "not found: " + e.What }
 // Exactly one of {AppInstallation, UserPAT} must be populated; the kind field
 // must match.
 type ConnectRequest struct {
-	Kind            string `json:"kind"`
-	InstallationID  int64  `json:"installationId,omitempty"`
-	PAT             string `json:"pat,omitempty"`
-	GitHubLogin     string `json:"githubLogin,omitempty"`
+	Kind           string `json:"kind"`
+	InstallationID int64  `json:"installationId,omitempty"`
+	PAT            string `json:"pat,omitempty"`
+	GitHubLogin    string `json:"githubLogin,omitempty"`
 }
 
 // Projection is the JSON shape returned by status / connect / replace. It
@@ -321,14 +322,14 @@ func (s *CredentialService) connectPAT(ctx context.Context, tx *gorm.DB, ocOrgID
 			secret = gen
 		}
 		row := models.OrgCredential{
-			OcOrgID:       ocOrgID,
-			Kind:          "user-pat",
-			GitHubLogin:   req.GitHubLogin,
-			IdentityName:  identity.Name,
-			IdentityEmail: identity.Email,
-			IdentityLogin: identity.Login,
-			Status:        "active",
-			ConnectedAt:   now,
+			OcOrgID:         ocOrgID,
+			Kind:            "user-pat",
+			GitHubLogin:     req.GitHubLogin,
+			IdentityName:    identity.Name,
+			IdentityEmail:   identity.Email,
+			IdentityLogin:   identity.Login,
+			Status:          "active",
+			ConnectedAt:     now,
 			LastValidatedAt: &now,
 			WebhookSecrets: models.WebhookSecrets{
 				{Secret: secret, AddedAt: now},
@@ -1075,7 +1076,9 @@ func (s *CredentialService) validatePATMembership(ctx context.Context, pat, gith
 	if resp.StatusCode != 200 {
 		return &ValidationError{Code: "github_error", Message: fmt.Sprintf("membership probe %d: %s", resp.StatusCode, truncateForError(body))}
 	}
-	var membership struct{ State string `json:"state"` }
+	var membership struct {
+		State string `json:"state"`
+	}
 	_ = json.Unmarshal(body, &membership)
 	if !strings.EqualFold(membership.State, "active") {
 		return &ValidationError{Code: "pat_membership_inactive", Message: fmt.Sprintf("PAT membership in %q is %q (must be active)", githubLogin, membership.State)}
@@ -1207,7 +1210,7 @@ var ErrAppBindNotConfigured = errors.New("app bind path not configured (missing 
 // Architectural note: this single call replaces the earlier discover +
 // bind pair. There is no "list every install of our App" surface anymore
 // — discovery is always proven to the requesting user via OAuth.
-func (s *CredentialService) ResolveUserInstallations(ctx context.Context, ocOrgID, oauthCode, redirectURI string) ([]AppInstallationSummary, error) {
+func (s *CredentialService) ResolveUserInstallations(ctx context.Context, ocOrgID, oauthCode, redirectURI string) ([]gitrepo.AppInstallationSummary, error) {
 	if s.minter == nil || s.minter.AppID() == 0 || s.githubClient == nil {
 		return nil, ErrAppBindNotConfigured
 	}
@@ -1226,7 +1229,7 @@ func (s *CredentialService) ResolveUserInstallations(ctx context.Context, ocOrgI
 		return nil, &ValidationError{Code: "oauth_exchange_failed", Message: err.Error()}
 	}
 	if userToken == "" {
-		return []AppInstallationSummary{}, nil
+		return []gitrepo.AppInstallationSummary{}, nil
 	}
 
 	userInstalls, err := s.githubClient.GetUserInstallations(ctx, userToken)
@@ -1266,7 +1269,7 @@ func (s *CredentialService) ResolveUserInstallations(ctx context.Context, ocOrgI
 		}
 	}
 
-	candidates := make([]AppInstallationSummary, 0, len(all))
+	candidates := make([]gitrepo.AppInstallationSummary, 0, len(all))
 	for _, inst := range all {
 		if _, ok := userInstallSet[inst.InstallationID]; !ok {
 			continue

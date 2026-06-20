@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package controllers
+package gitrepo
 
 import (
 	"encoding/json"
@@ -22,9 +22,8 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/wso2/asdlc/asdlc-service/utils/validate"
-	"github.com/wso2/asdlc/asdlc-service/services"
 	"github.com/wso2/asdlc/asdlc-service/utils"
+	"github.com/wso2/asdlc/asdlc-service/utils/validate"
 )
 
 // requireProjectIDSlug validates the {projectId} path param and writes a 400
@@ -64,10 +63,10 @@ type GitOpsController interface {
 }
 
 type gitOpsController struct {
-	service services.GitOpsService
+	service GitOpsService
 }
 
-func NewGitOpsController(service services.GitOpsService) GitOpsController {
+func NewGitOpsController(service GitOpsService) GitOpsController {
 	return &gitOpsController{service: service}
 }
 
@@ -81,7 +80,7 @@ func (c *gitOpsController) Commit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req services.CommitRequest
+	var req CommitRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -171,31 +170,31 @@ func (c *gitOpsController) Status(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleGitOpsError(w http.ResponseWriter, r *http.Request, err error, op string) {
-	if errors.Is(err, services.ErrRepoNotFound) {
+	if errors.Is(err, ErrRepoNotFound) {
 		utils.WriteErrorResponse(w, http.StatusNotFound, "repository not found")
 		return
 	}
-	if errors.Is(err, services.ErrRepoNotReady) {
+	if errors.Is(err, ErrRepoNotReady) {
 		utils.WriteErrorResponse(w, http.StatusUnprocessableEntity, "repository is not ready")
 		return
 	}
-	if errors.Is(err, services.ErrAuthFailed) {
+	if errors.Is(err, ErrAuthFailed) {
 		utils.WriteErrorResponse(w, http.StatusUnauthorized, "git authentication failed")
 		return
 	}
-	if errors.Is(err, services.ErrPushConflict) {
+	if errors.Is(err, ErrPushConflict) {
 		utils.WriteErrorResponse(w, http.StatusConflict, err.Error())
 		return
 	}
-	if errors.Is(err, services.ErrTagAlreadyExists) {
+	if errors.Is(err, ErrTagAlreadyExists) {
 		utils.WriteErrorResponse(w, http.StatusConflict, err.Error())
 		return
 	}
-	if errors.Is(err, services.ErrTagNotFound) {
+	if errors.Is(err, ErrTagNotFound) {
 		utils.WriteErrorResponse(w, http.StatusNotFound, err.Error())
 		return
 	}
-	if errors.Is(err, services.ErrFileNotFound) {
+	if errors.Is(err, ErrFileNotFound) {
 		utils.WriteErrorResponse(w, http.StatusNotFound, err.Error())
 		return
 	}
@@ -213,7 +212,7 @@ func (c *gitOpsController) CreateTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req services.CreateTagRequest
+	var req CreateTagRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "invalid request body")
 		return

@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package controllers
+package gitrepo
 
 import (
 	"encoding/json"
@@ -22,7 +22,6 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/wso2/asdlc/asdlc-service/services"
 	"github.com/wso2/asdlc/asdlc-service/utils"
 )
 
@@ -33,10 +32,10 @@ type BranchController interface {
 }
 
 type branchController struct {
-	service services.BranchService
+	service BranchService
 }
 
-func NewBranchController(service services.BranchService) BranchController {
+func NewBranchController(service BranchService) BranchController {
 	return &branchController{service: service}
 }
 
@@ -68,7 +67,7 @@ func (c *branchController) CreateBranch(w http.ResponseWriter, r *http.Request) 
 
 	sha, err := c.service.CreateBranch(r.Context(), r.PathValue("orgId"), projectID, req.Branch, req.FromRef)
 	if err != nil {
-		if errors.Is(err, services.ErrRepoNotFound) {
+		if errors.Is(err, ErrRepoNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "repository not found")
 			return
 		}
@@ -108,7 +107,7 @@ func (c *branchController) SeedCommit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := c.service.SeedBranchCommit(r.Context(), r.PathValue("orgId"), projectID, req.Branch, req.Path, message, []byte(req.Content)); err != nil {
-		if errors.Is(err, services.ErrRepoNotFound) {
+		if errors.Is(err, ErrRepoNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "repository not found")
 			return
 		}

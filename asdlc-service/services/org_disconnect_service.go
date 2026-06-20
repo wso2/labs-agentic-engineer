@@ -24,6 +24,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 	"github.com/wso2/asdlc/asdlc-service/models"
 	"github.com/wso2/asdlc/asdlc-service/repositories"
 )
@@ -62,10 +63,10 @@ var ErrOrgNotFound = errors.New("org credentials: not found")
 // we keep the wall-clock cost reasonable in dev (small number of tasks);
 // PR D rebuilds the async split with a worker queue.
 type OrgDisconnectService struct {
-	taskRepo  repositories.TaskRepository
-	db        *gorm.DB
-	credSvc   *CredentialService
-	issueSvc  IssueService
+	taskRepo repositories.TaskRepository
+	db       *gorm.DB
+	credSvc  *CredentialService
+	issueSvc gitrepo.IssueService
 }
 
 // NewOrgDisconnectService constructs the cascade orchestrator.
@@ -73,7 +74,7 @@ func NewOrgDisconnectService(
 	taskRepo repositories.TaskRepository,
 	db *gorm.DB,
 	credSvc *CredentialService,
-	issueSvc IssueService,
+	issueSvc gitrepo.IssueService,
 ) *OrgDisconnectService {
 	return &OrgDisconnectService{
 		taskRepo: taskRepo,

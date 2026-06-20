@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package controllers
+package gitrepo
 
 import (
 	"context"
@@ -25,7 +25,6 @@ import (
 	"net/http"
 
 	"github.com/wso2/asdlc/asdlc-service/internal/credentials"
-	"github.com/wso2/asdlc/asdlc-service/services"
 	"github.com/wso2/asdlc/asdlc-service/utils"
 )
 
@@ -38,12 +37,12 @@ type GitProjectController interface {
 }
 
 type gitProjectController struct {
-	client      services.GitHubV2Client
+	client      GitHubV2Client
 	resolver    credentials.Resolver
-	repoService services.RepoService
+	repoService RepoService
 }
 
-func NewGitProjectController(client services.GitHubV2Client, resolver credentials.Resolver, repoService services.RepoService) GitProjectController {
+func NewGitProjectController(client GitHubV2Client, resolver credentials.Resolver, repoService RepoService) GitProjectController {
 	return &gitProjectController{client: client, resolver: resolver, repoService: repoService}
 }
 
@@ -70,7 +69,7 @@ func (c *gitProjectController) InitProject(w http.ResponseWriter, r *http.Reques
 
 	repo, err := c.repoService.CreateRepo(r.Context(), req.OrgID, req.ProjectID, req.ProjectName)
 	if err != nil {
-		if errors.Is(err, services.ErrRepoAlreadyExists) {
+		if errors.Is(err, ErrRepoAlreadyExists) {
 			utils.WriteErrorResponse(w, http.StatusConflict, "repository already exists for this project")
 			return
 		}
@@ -104,7 +103,7 @@ func (c *gitProjectController) InitProject(w http.ResponseWriter, r *http.Reques
 		slog.WarnContext(r.Context(), "failed to save github project id", "project", req.ProjectID, "error", err)
 	}
 
-	repoOwner, repoName, parseErr := services.ParseOwnerRepo(repo.RepoURL)
+	repoOwner, repoName, parseErr := ParseOwnerRepo(repo.RepoURL)
 	if parseErr == nil {
 		if linkErr := c.client.LinkProjectToRepository(r.Context(), githubProjectID, repoOwner, repoName, token); linkErr != nil {
 			slog.WarnContext(r.Context(), "failed to link project to repository", "project", req.ProjectID, "error", linkErr)

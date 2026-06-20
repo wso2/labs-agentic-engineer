@@ -14,18 +14,18 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package api
+package gitrepo
 
-import (
-	"net/http"
+import "errors"
 
-	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
+var (
+	// Folded in from git-service after WS0.1.g.
+	ErrRepoNotFound      = errors.New("repository not found")
+	ErrRepoAlreadyExists = errors.New("repository already exists for this project")
+	ErrRepoNotReady      = errors.New("repository is not ready")
+	ErrAuthFailed        = errors.New("git authentication failed")
+	ErrPushConflict      = errors.New("push rejected")
+	ErrFileNotFound      = errors.New("file not found")
+	ErrTagNotFound       = errors.New("tag not found")
+	ErrTagAlreadyExists  = errors.New("tag already exists")
 )
-
-func registerOrgRoutes(mux *http.ServeMux, pc gitrepo.GitProjectController) {
-	if pc == nil {
-		return
-	}
-	// GitHub project operations
-	mux.HandleFunc("POST /api/v1/orgs", pc.InitProject)
-}

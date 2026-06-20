@@ -22,20 +22,21 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 	"github.com/wso2/asdlc/asdlc-service/models"
 	"github.com/wso2/asdlc/asdlc-service/repositories"
 )
 
 // BoardTask is a single task item on the project board.
 type BoardTask struct {
-	ID              string                 `json:"id"`
-	Title           string                 `json:"title"`
-	URL             string                 `json:"url"`
-	Description     string                 `json:"description,omitempty"`
-	Assignee        string                 `json:"assignee,omitempty"`
-	ComponentTaskID string                 `json:"componentTaskId,omitempty"`
-	Labels          []LabelInfo `json:"labels,omitempty"`
-	LifecycleStatus string                 `json:"lifecycleStatus,omitempty"`
+	ID              string              `json:"id"`
+	Title           string              `json:"title"`
+	URL             string              `json:"url"`
+	Description     string              `json:"description,omitempty"`
+	Assignee        string              `json:"assignee,omitempty"`
+	ComponentTaskID string              `json:"componentTaskId,omitempty"`
+	Labels          []gitrepo.LabelInfo `json:"labels,omitempty"`
+	LifecycleStatus string              `json:"lifecycleStatus,omitempty"`
 	// Status is the ComponentTask execution status (pending, on_hold,
 	// in_progress, verification_failed, ready_for_review, merged, building,
 	// deployed, rejected, failed, abandoned). Empty when the row has no
@@ -68,12 +69,12 @@ type BoardTask struct {
 
 // ProjectBoard holds tasks grouped by their kanban column.
 type ProjectBoard struct {
-	URL string `json:"url"`
-	Todo        []BoardTask `json:"todo"`
-	InProgress  []BoardTask `json:"inProgress"`
-	Done        []BoardTask `json:"done"`
-	OnHold      []BoardTask `json:"onHold"`
-	Failed      []BoardTask `json:"failed"`
+	URL        string      `json:"url"`
+	Todo       []BoardTask `json:"todo"`
+	InProgress []BoardTask `json:"inProgress"`
+	Done       []BoardTask `json:"done"`
+	OnHold     []BoardTask `json:"onHold"`
+	Failed     []BoardTask `json:"failed"`
 }
 
 // BoardService fetches the kanban board for a project.
@@ -82,11 +83,11 @@ type BoardService interface {
 }
 
 type boardService struct {
-	repoBoardSvc RepoBoardService
+	repoBoardSvc gitrepo.RepoBoardService
 	taskRepo     repositories.TaskRepository
 }
 
-func NewBoardService(repoBoardSvc RepoBoardService, taskRepo repositories.TaskRepository) BoardService {
+func NewBoardService(repoBoardSvc gitrepo.RepoBoardService, taskRepo repositories.TaskRepository) BoardService {
 	return &boardService{repoBoardSvc: repoBoardSvc, taskRepo: taskRepo}
 }
 
@@ -201,9 +202,9 @@ func (s *boardService) GetBoard(ctx context.Context, orgID, projectID string) (*
 	// Fallback: when the GitHub board has no items, show all component tasks from DB.
 	if len(result.Items) == 0 && len(allComponentTasks) > 0 {
 		for _, ct := range allComponentTasks {
-			labels := make([]LabelInfo, 0, len(ct.Labels))
+			labels := make([]gitrepo.LabelInfo, 0, len(ct.Labels))
 			for _, l := range ct.Labels {
-				labels = append(labels, LabelInfo{Name: l})
+				labels = append(labels, gitrepo.LabelInfo{Name: l})
 			}
 			// Board has 0 items — GitHub Project hasn't synced yet.
 			// Override gh_issue_created → gh_issue_syncing in the response so

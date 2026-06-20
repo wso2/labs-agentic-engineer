@@ -24,6 +24,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 	"github.com/wso2/asdlc/asdlc-service/models"
 	"github.com/wso2/asdlc/asdlc-service/repositories"
 	"github.com/wso2/asdlc/asdlc-service/services"
@@ -36,19 +37,19 @@ import (
 // Handlers registered:
 //
 //   - installation.created      → no-op ack (the connect callback wins
-//                                  the race; webhook recovery is "click
-//                                  Connect again")
+//     the race; webhook recovery is "click
+//     Connect again")
 //   - installation.deleted      → trigger the disconnect cascade
 //   - installation.suspend      → flip status='suspended' on the row
 //   - installation.unsuspend    → flip status='active' on the row
 //   - installation_repositories.added   → JSON-merge selected_repos
 //   - installation_repositories.removed → JSON-merge selected_repos
-//                                          (cascade lands in PR D)
+//     (cascade lands in PR D)
 func RegisterInstallationHandlers(
 	router *Router,
 	db *gorm.DB,
 	credSvc *services.CredentialService,
-	issueSvc services.IssueService,
+	issueSvc gitrepo.IssueService,
 	taskRepo repositories.TaskRepository,
 	projector *Projector,
 ) {
@@ -71,7 +72,7 @@ func RegisterInstallationHandlers(
 type installationHandler struct {
 	db         *gorm.DB
 	credSvc    *services.CredentialService
-	issueSvc   services.IssueService
+	issueSvc   gitrepo.IssueService
 	taskRepo   repositories.TaskRepository
 	projector  *Projector
 	disconnect *services.OrgDisconnectService

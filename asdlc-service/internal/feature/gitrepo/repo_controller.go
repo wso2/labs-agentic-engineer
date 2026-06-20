@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package controllers
+package gitrepo
 
 import (
 	"encoding/json"
@@ -22,9 +22,8 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/wso2/asdlc/asdlc-service/utils/validate"
-	"github.com/wso2/asdlc/asdlc-service/services"
 	"github.com/wso2/asdlc/asdlc-service/utils"
+	"github.com/wso2/asdlc/asdlc-service/utils/validate"
 )
 
 // RepoController handles HTTP requests for repository management.
@@ -35,10 +34,10 @@ type RepoController interface {
 }
 
 type repoController struct {
-	service services.RepoService
+	service RepoService
 }
 
-func NewRepoController(service services.RepoService) RepoController {
+func NewRepoController(service RepoService) RepoController {
 	return &repoController{service: service}
 }
 
@@ -95,7 +94,7 @@ func (c *repoController) GetRepo(w http.ResponseWriter, r *http.Request) {
 
 	repo, err := c.service.GetRepo(r.Context(), orgID, projectID)
 	if err != nil {
-		if errors.Is(err, services.ErrRepoNotFound) {
+		if errors.Is(err, ErrRepoNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "repository not found")
 			return
 		}
@@ -120,7 +119,7 @@ func (c *repoController) DeleteRepo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := c.service.DeleteRepo(r.Context(), orgID, projectID); err != nil {
-		if errors.Is(err, services.ErrRepoNotFound) {
+		if errors.Is(err, ErrRepoNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "repository not found")
 			return
 		}

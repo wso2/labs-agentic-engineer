@@ -29,6 +29,7 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/clients/agents"
 	dbclient "github.com/wso2/asdlc/asdlc-service/clients/database"
 	"github.com/wso2/asdlc/asdlc-service/clients/oauth"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 	"github.com/wso2/asdlc/asdlc-service/models"
 	"github.com/wso2/asdlc/asdlc-service/repositories"
 )
@@ -73,9 +74,9 @@ type taskService struct {
 	componentSvc  ComponentService     // for creating OC components and checking build/deploy status
 	tokenProvider *oauth.TokenProvider // for service-to-service auth (OC API)
 	configSvc     ConfigService        // for fetching env vars at deploy time
-	issueSvc      IssueService         // GitHub issue CRUD for task lifecycle
+	issueSvc      gitrepo.IssueService // GitHub issue CRUD for task lifecycle
 	artifactSvc   ArtifactService      // artifact version + at-tag reads for in-flight tasks
-	repoSvc       RepoService          // repo metadata lookups (clone path, slug, …)
+	repoSvc       gitrepo.RepoService  // repo metadata lookups (clone path, slug, …)
 	agentsClient  agents.Client        // for calling tech-lead agent (plan + detail)
 	dbClient      dbclient.Client      // for provisioning and testing databases
 	// skillSvc resolves the per-org skill catalogue for tech-lead plan
@@ -98,9 +99,9 @@ func NewTaskService(
 	componentSvc ComponentService,
 	tokenProvider *oauth.TokenProvider,
 	configSvc ConfigService,
-	issueSvc IssueService,
+	issueSvc gitrepo.IssueService,
 	artifactSvc ArtifactService,
-	repoSvc RepoService,
+	repoSvc gitrepo.RepoService,
 	agentsClient agents.Client,
 	dbClient dbclient.Client,
 ) TaskService {
@@ -166,7 +167,7 @@ func (s *taskService) GetTasks(ctx context.Context, orgID, projectID string) (*m
 
 	// Best-effort: fetch all open GitHub issues to pick up kanban labels.
 	// If this fails we still render tasks from DB.
-	issueByNum := make(map[int]IssueInfo)
+	issueByNum := make(map[int]gitrepo.IssueInfo)
 	issues, err := s.issueSvc.ListIssues(ctx, orgID, projectID, nil)
 	if err != nil {
 		slog.WarnContext(ctx, "failed to list github issues; rendering from DB only", "error", err)
@@ -283,6 +284,7 @@ func topoSortComponents(components []models.DesignComponent) []models.DesignComp
 	}
 	return result
 }
+
 // ExecTask starts executing a task. For now, it just logs and doesn't perform any actions.
 func (s *taskService) ExecTask(ctx context.Context, taskID string) error {
 	task, err := s.taskRepo.GetByID(ctx, taskID)
@@ -385,9 +387,9 @@ func (s *taskService) ensureIssueForTask(
 	// doesn't pre-name a branch. BranchName is filled in later by the
 	// pull_request.opened webhook handler when the agent opens its PR.
 
-	issue, err := s.issueSvc.CreateIssue(ctx, task.OrgID, task.ProjectID, CreateIssueRequest{
-		Title:  IssueTitle(task),
-		Body:   BuildIssueBody(task, comp, repoURL, repoSlug),
+	issue, err := s.issueSvc.CreateIssue(ctx, task.OrgID, task.ProjectID, gitrepo.CreateIssueRequest{
+		Title:  gitrepo.IssueTitle(task),
+		Body:   gitrepo.BuildIssueBody(task, comp, repoURL, repoSlug),
 		Labels: []string{"asdlc", "implementation"},
 	})
 	if err != nil {

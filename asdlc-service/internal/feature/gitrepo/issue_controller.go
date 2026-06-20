@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package controllers
+package gitrepo
 
 import (
 	"encoding/json"
@@ -24,7 +24,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/wso2/asdlc/asdlc-service/services"
 	"github.com/wso2/asdlc/asdlc-service/utils"
 )
 
@@ -38,10 +37,10 @@ type IssueController interface {
 }
 
 type issueController struct {
-	service services.IssueService
+	service IssueService
 }
 
-func NewIssueController(service services.IssueService) IssueController {
+func NewIssueController(service IssueService) IssueController {
 	return &issueController{service: service}
 }
 
@@ -51,7 +50,7 @@ func (c *issueController) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req services.CreateIssueRequest
+	var req CreateIssueRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -63,7 +62,7 @@ func (c *issueController) CreateIssue(w http.ResponseWriter, r *http.Request) {
 
 	result, err := c.service.CreateIssue(r.Context(), r.PathValue("orgId"), projectID, req)
 	if err != nil {
-		if errors.Is(err, services.ErrRepoNotFound) {
+		if errors.Is(err, ErrRepoNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "repository not found")
 			return
 		}
@@ -93,7 +92,7 @@ func (c *issueController) ListIssues(w http.ResponseWriter, r *http.Request) {
 
 	issues, err := c.service.ListIssues(r.Context(), r.PathValue("orgId"), projectID, labels)
 	if err != nil {
-		if errors.Is(err, services.ErrRepoNotFound) {
+		if errors.Is(err, ErrRepoNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "repository not found")
 			return
 		}
@@ -130,7 +129,7 @@ func (c *issueController) CloseIssue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := c.service.CloseIssue(r.Context(), r.PathValue("orgId"), projectID, number, req.Comment); err != nil {
-		if errors.Is(err, services.ErrRepoNotFound) {
+		if errors.Is(err, ErrRepoNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "repository not found")
 			return
 		}
@@ -170,7 +169,7 @@ func (c *issueController) EditIssueBody(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err := c.service.EditIssueBody(r.Context(), r.PathValue("orgId"), projectID, number, req.Body); err != nil {
-		if errors.Is(err, services.ErrRepoNotFound) {
+		if errors.Is(err, ErrRepoNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "repository not found")
 			return
 		}
@@ -203,7 +202,7 @@ func (c *issueController) CommentIssue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := c.service.CommentIssue(r.Context(), r.PathValue("orgId"), projectID, number, req.Body); err != nil {
-		if errors.Is(err, services.ErrRepoNotFound) {
+		if errors.Is(err, ErrRepoNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "repository not found")
 			return
 		}

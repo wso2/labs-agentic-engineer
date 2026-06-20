@@ -32,6 +32,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/wso2/asdlc/asdlc-service/clients/agents"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
 
@@ -602,7 +603,7 @@ func (s *taskService) editIssueBodyWithRetries(ctx context.Context, task *models
 		return
 	}
 	comp, _ := s.resolveDesignComponent(ctx, task)
-	body := BuildIssueBody(task, comp, repoURL, repoSlug)
+	body := gitrepo.BuildIssueBody(task, comp, repoURL, repoSlug)
 	var lastErr error
 	for attempt := 1; attempt <= 3; attempt++ {
 		err := s.issueSvc.EditIssueBody(ctx, task.OrgID, task.ProjectID, task.IssueNumber, body)

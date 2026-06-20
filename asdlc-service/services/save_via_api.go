@@ -38,6 +38,7 @@ import (
 	"strings"
 
 	"github.com/wso2/asdlc/asdlc-service/internal/credentials"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
 
@@ -125,12 +126,12 @@ func (s *artifactService) saveDesignViaAPI(
 	if err != nil {
 		return nil, fmt.Errorf("get tree %s: %w", mainCommit.TreeSHA, err)
 	}
-	mainPaths := make(map[string]TreeEntryResult, len(mainTree.Entries))
+	mainPaths := make(map[string]gitrepo.TreeEntryResult, len(mainTree.Entries))
 	for _, e := range mainTree.Entries {
 		mainPaths[e.Path] = e
 	}
 
-	var entries []TreeEntry
+	var entries []gitrepo.TreeEntry
 	for _, ch := range changes {
 		repoPath := filepath.ToSlash(filepath.Join(DesignDir, ch.Name))
 		switch ch.Status {
@@ -143,7 +144,7 @@ func (s *artifactService) saveDesignViaAPI(
 			if berr != nil {
 				return nil, fmt.Errorf("create blob %s: %w", ch.Name, berr)
 			}
-			entries = append(entries, TreeEntry{
+			entries = append(entries, gitrepo.TreeEntry{
 				Path: repoPath,
 				Mode: "100644",
 				Type: "blob",
@@ -155,7 +156,7 @@ func (s *artifactService) saveDesignViaAPI(
 			if _, ok := mainPaths[repoPath]; !ok {
 				continue
 			}
-			entries = append(entries, TreeEntry{
+			entries = append(entries, gitrepo.TreeEntry{
 				Path: repoPath,
 				Mode: "100644",
 				Type: "blob",
@@ -204,7 +205,7 @@ func (s *artifactService) saveDesignViaAPI(
 			if terr != nil {
 				return fmt.Errorf("create tree: %w", terr)
 			}
-			commitSHA, cerr := s.gitOps.GitHubClient().CreateCommit(ctx, owner, repo, cred, CreateCommitRequest{
+			commitSHA, cerr := s.gitOps.GitHubClient().CreateCommit(ctx, owner, repo, cred, gitrepo.CreateCommitRequest{
 				Message:   commitMessage,
 				TreeSHA:   treeSHA,
 				Parents:   []string{freshMain},
@@ -339,12 +340,12 @@ func (s *artifactService) saveRequirementsViaAPI(
 	if err != nil {
 		return nil, fmt.Errorf("get tree %s: %w", mainCommit.TreeSHA, err)
 	}
-	mainPaths := make(map[string]TreeEntryResult, len(mainTree.Entries))
+	mainPaths := make(map[string]gitrepo.TreeEntryResult, len(mainTree.Entries))
 	for _, e := range mainTree.Entries {
 		mainPaths[e.Path] = e
 	}
 
-	var entries []TreeEntry
+	var entries []gitrepo.TreeEntry
 	for _, ch := range changes {
 		repoPath := filepath.ToSlash(filepath.Join(RequirementsDir, ch.Name))
 		switch ch.Status {
@@ -357,7 +358,7 @@ func (s *artifactService) saveRequirementsViaAPI(
 			if berr != nil {
 				return nil, fmt.Errorf("create blob %s: %w", ch.Name, berr)
 			}
-			entries = append(entries, TreeEntry{
+			entries = append(entries, gitrepo.TreeEntry{
 				Path: repoPath,
 				Mode: "100644",
 				Type: "blob",
@@ -369,7 +370,7 @@ func (s *artifactService) saveRequirementsViaAPI(
 			if _, ok := mainPaths[repoPath]; !ok {
 				continue
 			}
-			entries = append(entries, TreeEntry{
+			entries = append(entries, gitrepo.TreeEntry{
 				Path: repoPath,
 				Mode: "100644",
 				Type: "blob",
@@ -422,7 +423,7 @@ func (s *artifactService) saveRequirementsViaAPI(
 			if commitMsg == "" {
 				commitMsg = "Update requirements"
 			}
-			commitSHA, cerr := s.gitOps.GitHubClient().CreateCommit(ctx, owner, repo, cred, CreateCommitRequest{
+			commitSHA, cerr := s.gitOps.GitHubClient().CreateCommit(ctx, owner, repo, cred, gitrepo.CreateCommitRequest{
 				Message:   commitMsg,
 				TreeSHA:   treeSHA,
 				Parents:   []string{freshMain},
@@ -487,19 +488,19 @@ func (s *artifactService) saveRequirementsViaAPI(
 // translates them into the local TagInfo shape so the existing
 // `latestRequirementsVersion` / `nextDesignTag` helpers (artifact_versioning.go)
 // can consume them.
-func (s *artifactService) fetchGitHubTags(ctx context.Context, owner, repo string, cred credentials.Credential) ([]TagInfo, error) {
+func (s *artifactService) fetchGitHubTags(ctx context.Context, owner, repo string, cred credentials.Credential) ([]gitrepo.TagInfo, error) {
 	refs, err := s.gitOps.GitHubClient().ListMatchingRefs(ctx, owner, repo, cred, "tags/v")
 	if err != nil {
 		return nil, err
 	}
-	out := make([]TagInfo, 0, len(refs))
+	out := make([]gitrepo.TagInfo, 0, len(refs))
 	for _, r := range refs {
 		// "refs/tags/v1" -> "v1"
 		name := strings.TrimPrefix(r.Ref, "refs/tags/")
 		if name == "" || name == r.Ref {
 			continue
 		}
-		out = append(out, TagInfo{
+		out = append(out, gitrepo.TagInfo{
 			Name:       name,
 			CommitHash: r.SHA,
 			// Message is not surfaced by ListMatchingRefs; left empty.
@@ -511,10 +512,10 @@ func (s *artifactService) fetchGitHubTags(ctx context.Context, owner, repo strin
 
 // blobSHAOnMain returns the blob SHA of `path` on main, or "" if the file
 // doesn't exist there (404). Other errors are returned wrapped.
-func blobSHAOnMain(ctx context.Context, gh GitHubClient, owner, repo string, cred credentials.Credential, path string) (string, error) {
+func blobSHAOnMain(ctx context.Context, gh gitrepo.GitHubClient, owner, repo string, cred credentials.Credential, path string) (string, error) {
 	res, err := gh.GetContents(ctx, owner, repo, cred, path, "main")
 	if err != nil {
-		var httpErr *HTTPStatusError
+		var httpErr *gitrepo.HTTPStatusError
 		if errors.As(err, &httpErr) && httpErr.StatusCode == 404 {
 			return "", nil
 		}
@@ -534,7 +535,7 @@ func (s *artifactService) createAnnotatedTagViaAPI(
 	ctx context.Context,
 	owner, repo string,
 	cred credentials.Credential,
-	tags *[]TagInfo,
+	tags *[]gitrepo.TagInfo,
 	nextN *int,
 	tagName *string,
 	tagBody, commitSHA string,
@@ -560,7 +561,7 @@ func (s *artifactService) createAnnotatedTagViaAPI(
 			ver, name := nextRequirementsTag(*tags)
 			*nextN, *tagName = ver, name
 		}
-		tagObjSHA, err := s.gitOps.GitHubClient().CreateTagObject(ctx, owner, repo, cred, CreateTagObjectRequest{
+		tagObjSHA, err := s.gitOps.GitHubClient().CreateTagObject(ctx, owner, repo, cred, gitrepo.CreateTagObjectRequest{
 			Tag:     *tagName,
 			Message: tagBody,
 			Object:  commitSHA,

@@ -19,7 +19,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/wso2/asdlc/asdlc-service/controllers"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 )
 
 // registerRepoBoardRoutes wires the GitHub Projects board endpoints through the
@@ -29,7 +29,7 @@ import (
 // projectId alone (§6.6f). RepoScoped applies RequireOrgScope, which validates
 // the (orgId, projectId) pair against git_repositories and 404s a cross-org pair
 // before the handler runs.
-func registerRepoBoardRoutes(rt *ServiceRouter, bc controllers.RepoBoardController) {
+func registerRepoBoardRoutes(rt *ServiceRouter, bc gitrepo.RepoBoardController) {
 	if bc == nil {
 		return
 	}

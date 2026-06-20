@@ -14,14 +14,13 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package controllers
+package gitrepo
 
 import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
 
-	"github.com/wso2/asdlc/asdlc-service/services"
 	"github.com/wso2/asdlc/asdlc-service/utils"
 )
 
@@ -35,10 +34,10 @@ type RepoBoardController interface {
 }
 
 type repoBoardController struct {
-	service services.RepoBoardService
+	service RepoBoardService
 }
 
-func NewRepoBoardController(service services.RepoBoardService) RepoBoardController {
+func NewRepoBoardController(service RepoBoardService) RepoBoardController {
 	return &repoBoardController{service: service}
 }
 

@@ -34,6 +34,7 @@ import (
 	"sync"
 
 	"github.com/wso2/asdlc/asdlc-service/internal/credentials"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 	"github.com/wso2/asdlc/asdlc-service/models"
 	"github.com/wso2/asdlc/asdlc-service/repositories"
 )
@@ -202,9 +203,9 @@ type GitWorkspace interface {
 	RepoLock(projectID string) *sync.Mutex
 	EnsureCloneReady(ctx context.Context, repoRecord *models.GitRepository) error
 	PrepareAuthedEnv(ctx context.Context, repoRecord *models.GitRepository) ([]string, func(), error)
-	ResolveSaveIdentities(cred credentials.Credential) (*GitIdentity, *GitIdentity)
+	ResolveSaveIdentities(cred credentials.Credential) (*gitrepo.GitIdentity, *gitrepo.GitIdentity)
 	BestEffortPullDefaultBranch(ctx context.Context, repoRecord *models.GitRepository) error
-	GitHubClient() GitHubClient
+	GitHubClient() gitrepo.GitHubClient
 	Resolver() credentials.Resolver
 }
 
@@ -871,17 +872,17 @@ func (s *artifactService) requireReadyRepo(ctx context.Context, orgID, projectID
 		return nil, fmt.Errorf("get repo: %w", err)
 	}
 	if repoRecord == nil {
-		return nil, ErrRepoNotFound
+		return nil, gitrepo.ErrRepoNotFound
 	}
 	if repoRecord.Status != "ready" {
-		return nil, ErrRepoNotReady
+		return nil, gitrepo.ErrRepoNotReady
 	}
 	return repoRecord, nil
 }
 
 // fetchAndListAllTags acquires the repo lock, ensures the clone is ready,
 // best-effort fetches remote tags, and returns the full local tag list.
-func (s *artifactService) fetchAndListAllTags(ctx context.Context, orgID, projectID string) ([]TagInfo, error) {
+func (s *artifactService) fetchAndListAllTags(ctx context.Context, orgID, projectID string) ([]gitrepo.TagInfo, error) {
 	mu := s.gitOps.RepoLock(projectID)
 	mu.Lock()
 	defer mu.Unlock()
@@ -1104,17 +1105,17 @@ func readMarkdownDirAtTag(ctx context.Context, clonePath, tag, relPath string) (
 
 // listAllTags lists every tag in the local clone (used by callers that want
 // to filter by regex rather than by glob prefix).
-func listAllTags(ctx context.Context, clonePath string) ([]TagInfo, error) {
+func listAllTags(ctx context.Context, clonePath string) ([]gitrepo.TagInfo, error) {
 	output, err := runGitOutput(ctx, clonePath, "tag", "-l", "--sort=-version:refname")
 	if err != nil {
 		return nil, fmt.Errorf("git tag -l: %w", err)
 	}
 	output = strings.TrimSpace(output)
 	if output == "" {
-		return []TagInfo{}, nil
+		return []gitrepo.TagInfo{}, nil
 	}
 	lines := strings.Split(output, "\n")
-	tags := make([]TagInfo, 0, len(lines))
+	tags := make([]gitrepo.TagInfo, 0, len(lines))
 	for _, line := range lines {
 		name := strings.TrimSpace(line)
 		if name == "" {
@@ -1125,7 +1126,7 @@ func listAllTags(ctx context.Context, clonePath string) ([]TagInfo, error) {
 			continue
 		}
 		msg, _ := runGitOutput(ctx, clonePath, "tag", "-l", name, "--format=%(contents)")
-		tags = append(tags, TagInfo{
+		tags = append(tags, gitrepo.TagInfo{
 			Name:       name,
 			CommitHash: strings.TrimSpace(hash),
 			Message:    strings.TrimSpace(msg),
@@ -1213,6 +1214,29 @@ func runGitWithEnv(ctx context.Context, dir string, env []string, args ...string
 		return fmt.Errorf("%s: %w", strings.TrimSpace(stderr.String()), err)
 	}
 	return nil
+}
+
+func runGit(ctx context.Context, dir string, args ...string) error {
+	_, err := runGitOutput(ctx, dir, args...)
+	return err
+}
+
+// runGitOutput runs a git command and returns its stdout. On failure, stderr
+// is included in the returned error so caller logs show git's own diagnostic.
+func runGitOutput(ctx context.Context, dir string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = dir
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			return "", err
+		}
+		return "", fmt.Errorf("%s: %w", msg, err)
+	}
+	return string(out), nil
 }
 
 // ----- Requirements snapshots (chat per-turn undo) -----

@@ -23,6 +23,7 @@ import (
 	"log/slog"
 
 	"github.com/wso2/asdlc/asdlc-service/clients/openchoreo"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 	"github.com/wso2/asdlc/asdlc-service/models"
 	"github.com/wso2/asdlc/asdlc-service/repositories"
 )
@@ -39,8 +40,8 @@ type ProjectService interface {
 
 type projectService struct {
 	client      openchoreo.ProjectClient
-	repoSvc     RepoService
-	webhookSvc  WebhookService
+	repoSvc     gitrepo.RepoService
+	webhookSvc  gitrepo.WebhookService
 	artifactSvc ArtifactService
 	store       *ArtifactStore
 	taskRepo    repositories.TaskRepository
@@ -48,8 +49,8 @@ type projectService struct {
 
 func NewProjectService(
 	client openchoreo.ProjectClient,
-	repoSvc RepoService,
-	webhookSvc WebhookService,
+	repoSvc gitrepo.RepoService,
+	webhookSvc gitrepo.WebhookService,
 	artifactSvc ArtifactService,
 	store *ArtifactStore,
 	taskRepo repositories.TaskRepository,

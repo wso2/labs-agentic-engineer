@@ -26,6 +26,7 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/clients/observability"
 	"github.com/wso2/asdlc/asdlc-service/clients/openchoreo"
 	"github.com/wso2/asdlc/asdlc-service/clients/requests"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
 
@@ -72,14 +73,14 @@ type componentService struct {
 	// repoSvc + buildCredSvc are used by TriggerBuild to pre-stage the
 	// per-WorkflowRun build Secret. Optional — nil means "no staging"
 	// (tests / unit-only flows).
-	repoSvc      RepoService
+	repoSvc      gitrepo.RepoService
 	buildCredSvc *BuildCredentialsService
 }
 
 // NewComponentService builds the component service. repoSvc + buildCredSvc
 // may be nil in tests / unit-only flows; production wiring passes both so
 // TriggerBuild can pre-stage the per-WorkflowRun build Secret.
-func NewComponentService(client openchoreo.ComponentClient, observClient observability.Client, artifactStore *ArtifactStore, repoSvc RepoService, buildCredSvc *BuildCredentialsService) ComponentService {
+func NewComponentService(client openchoreo.ComponentClient, observClient observability.Client, artifactStore *ArtifactStore, repoSvc gitrepo.RepoService, buildCredSvc *BuildCredentialsService) ComponentService {
 	return &componentService{
 		client:        client,
 		observClient:  observClient,

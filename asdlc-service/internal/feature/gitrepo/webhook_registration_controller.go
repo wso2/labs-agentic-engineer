@@ -14,14 +14,13 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package controllers
+package gitrepo
 
 import (
 	"errors"
 	"log/slog"
 	"net/http"
 
-	"github.com/wso2/asdlc/asdlc-service/services"
 	"github.com/wso2/asdlc/asdlc-service/utils"
 )
 
@@ -36,10 +35,10 @@ type WebhookRegistrationController interface {
 }
 
 type webhookRegistrationController struct {
-	service services.WebhookService
+	service WebhookService
 }
 
-func NewWebhookRegistrationController(service services.WebhookService) WebhookRegistrationController {
+func NewWebhookRegistrationController(service WebhookService) WebhookRegistrationController {
 	return &webhookRegistrationController{service: service}
 }
 
@@ -60,7 +59,7 @@ func (c *webhookRegistrationController) Register(w http.ResponseWriter, r *http.
 
 	hookID, err := c.service.Register(r.Context(), orgID, projectID)
 	if err != nil {
-		if errors.Is(err, services.ErrRepoNotFound) {
+		if errors.Is(err, ErrRepoNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "repository not found")
 			return
 		}
@@ -84,7 +83,7 @@ func (c *webhookRegistrationController) Deregister(w http.ResponseWriter, r *htt
 	}
 
 	if err := c.service.Deregister(r.Context(), orgID, projectID); err != nil {
-		if errors.Is(err, services.ErrRepoNotFound) {
+		if errors.Is(err, ErrRepoNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "repository not found")
 			return
 		}

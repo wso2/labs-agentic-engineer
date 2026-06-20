@@ -18,6 +18,7 @@ package api
 
 import (
 	"github.com/wso2/asdlc/asdlc-service/controllers"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 )
 
 // registerRepoOnlyRoutes wires every Service-JWT-gated repo / git-ops
@@ -29,12 +30,12 @@ import (
 // no-op wrap while keeping their handler bindings.
 func registerRepoOnlyRoutes(
 	rt *ServiceRouter,
-	rc controllers.RepoController,
-	gc controllers.GitOpsController,
-	ic controllers.IssueController,
-	bc controllers.BranchController,
-	pc controllers.PullRequestController,
-	wc controllers.WebhookRegistrationController,
+	rc gitrepo.RepoController,
+	gc gitrepo.GitOpsController,
+	ic gitrepo.IssueController,
+	bc gitrepo.BranchController,
+	pc gitrepo.PullRequestController,
+	wc gitrepo.WebhookRegistrationController,
 	ac controllers.ArtifactController,
 ) {
 	// CreateRepo is the one route without a path projectId — orgId travels

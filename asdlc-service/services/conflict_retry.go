@@ -38,6 +38,8 @@ import (
 	"math/rand"
 	"sync"
 	"time"
+
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 )
 
 // casRetryAttempts is the per-call attempt schedule (50ms / 200ms / 800ms,
@@ -141,7 +143,7 @@ func retryOnCASConflict(ctx context.Context, bucketKey string, fn func() error) 
 // retries — without consuming the CAS leaky-bucket budget. See §9.3.
 func retryOnTagCollision(ctx context.Context, fn func() error) error {
 	err := fn()
-	if !errors.Is(err, ErrTagAlreadyExists) {
+	if !errors.Is(err, gitrepo.ErrTagAlreadyExists) {
 		return err
 	}
 	for _, delay := range tagRetryAttempts {
@@ -149,7 +151,7 @@ func retryOnTagCollision(ctx context.Context, fn func() error) error {
 			return jerr
 		}
 		err = fn()
-		if !errors.Is(err, ErrTagAlreadyExists) {
+		if !errors.Is(err, gitrepo.ErrTagAlreadyExists) {
 			return err
 		}
 	}
@@ -160,7 +162,7 @@ func retryOnTagCollision(ctx context.Context, fn func() error) error {
 // sentinels. ErrConflictBudgetExhausted is intentionally NOT counted — that
 // terminates retry, it doesn't trigger another.
 func isCASConflict(err error) bool {
-	return errors.Is(err, ErrSHAMismatch) || errors.Is(err, ErrRefNotFastForward)
+	return errors.Is(err, gitrepo.ErrSHAMismatch) || errors.Is(err, gitrepo.ErrRefNotFastForward)
 }
 
 // jitterSleep waits for `base` with ±50% uniform jitter, respecting ctx

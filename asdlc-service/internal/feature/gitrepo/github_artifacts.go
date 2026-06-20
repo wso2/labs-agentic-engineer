@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package services
+package gitrepo
 
 // GitHub artifact-store v2 (V1 scope) HTTP methods.
 //

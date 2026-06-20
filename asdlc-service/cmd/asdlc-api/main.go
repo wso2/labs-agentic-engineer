@@ -46,6 +46,7 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/database"
 	"github.com/wso2/asdlc/asdlc-service/database/migrations"
 	"github.com/wso2/asdlc/asdlc-service/internal/credentials"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 	"github.com/wso2/asdlc/asdlc-service/internal/seed"
 	"github.com/wso2/asdlc/asdlc-service/middleware"
 	"github.com/wso2/asdlc/asdlc-service/middleware/jwt"
@@ -553,12 +554,12 @@ func main() {
 
 	credResolver := credentials.NewOrgResolver(db, credStore, minter)
 
-	githubClient := services.NewGitHubClient()
-	repoService := services.NewRepoService(repoRepo, githubClient, credResolver, cfg.GitHubRepoVisibility, cfg.RepoBasePath)
-	gitOpsService := services.NewGitOpsService(repoRepo, credResolver, cfg.RepoBasePath, githubClient)
+	githubClient := gitrepo.NewGitHubClient()
+	repoService := gitrepo.NewRepoService(repoRepo, githubClient, credResolver, cfg.GitHubRepoVisibility, cfg.RepoBasePath)
+	gitOpsService := gitrepo.NewGitOpsService(repoRepo, credResolver, cfg.RepoBasePath, githubClient)
 	artifactSvcGit := services.NewArtifactService(repoRepo, gitOpsService)
-	githubV2Client := services.NewGitHubV2Client()
-	issueService := services.NewIssueService(repoRepo, githubClient, githubV2Client, credResolver)
+	githubV2Client := gitrepo.NewGitHubV2Client()
+	issueService := gitrepo.NewIssueService(repoRepo, githubClient, githubV2Client, credResolver)
 	gitOpsService.CleanupOrphanTmpClones()
 	go func() {
 		warmCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -566,9 +567,9 @@ func main() {
 		warmed, failed := gitOpsService.PreWarmClones(warmCtx, 10)
 		slog.Info("pre-warm complete", "warmed", warmed, "failed", failed)
 	}()
-	branchService := services.NewBranchService(repoRepo, githubClient, issueService)
-	prService := services.NewPullRequestService(repoRepo, githubClient, issueService)
-	webhookRegService := services.NewWebhookService(repoRepo, githubClient, repoService, issueService, cfg.WebhookDeliveryURL, cfg.WebhookHMACSecret)
+	branchService := gitrepo.NewBranchService(repoRepo, githubClient, issueService)
+	prService := gitrepo.NewPullRequestService(repoRepo, githubClient, issueService)
+	webhookRegService := gitrepo.NewWebhookService(repoRepo, githubClient, repoService, issueService, cfg.WebhookDeliveryURL, cfg.WebhookHMACSecret)
 	credRefreshService := services.NewCredentialsRefreshService(credResolver)
 	credService := services.NewCredentialService(db, credStore, minter, cfg.WebhookHMACSecret, cfg.GitHubAppClientID, appClientSecret, githubClient)
 	buildCredService := services.NewBuildCredentialsService(repoRepo, credResolver, gitSecretClient)
@@ -583,18 +584,18 @@ func main() {
 	anthropicCredService.WithSMAPIWriter(smWriter)
 	validatorProbes := services.NewValidatorProbes(credService, githubClient, credResolver, minter)
 	credValidator := credentials.NewValidator(db, validatorProbes, nil, cfg.CredentialValidatorInterval)
-	repoBoardService := services.NewRepoBoardService(repoRepo, githubV2Client, credResolver)
+	repoBoardService := gitrepo.NewRepoBoardService(repoRepo, githubV2Client, credResolver)
 
-	repoCtrl := controllers.NewRepoController(repoService)
-	gitOpsCtrl := controllers.NewGitOpsController(gitOpsService)
-	issueCtrl := controllers.NewIssueController(issueService)
-	branchCtrl := controllers.NewBranchController(branchService)
-	prCtrl := controllers.NewPullRequestController(prService)
-	webhookRegCtrl := controllers.NewWebhookRegistrationController(webhookRegService)
+	repoCtrl := gitrepo.NewRepoController(repoService)
+	gitOpsCtrl := gitrepo.NewGitOpsController(gitOpsService)
+	issueCtrl := gitrepo.NewIssueController(issueService)
+	branchCtrl := gitrepo.NewBranchController(branchService)
+	prCtrl := gitrepo.NewPullRequestController(prService)
+	webhookRegCtrl := gitrepo.NewWebhookRegistrationController(webhookRegService)
 	artifactCtrlGit := controllers.NewArtifactController(artifactSvcGit)
 	credRefreshCtrl := controllers.NewCredentialsRefreshController(credRefreshService)
-	gitProjectCtrl := controllers.NewGitProjectController(githubV2Client, credResolver, repoService)
-	repoBoardCtrl := controllers.NewRepoBoardController(repoBoardService)
+	gitProjectCtrl := gitrepo.NewGitProjectController(githubV2Client, credResolver, repoService)
+	repoBoardCtrl := gitrepo.NewRepoBoardController(repoBoardService)
 
 	// Artifact store — in-process via artifactSvcGit. Adds the
 	// external-API catalog + the `DesignFile` YAML split/assemble layer

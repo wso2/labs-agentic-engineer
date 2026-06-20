@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 	"github.com/wso2/asdlc/asdlc-service/services"
 	"github.com/wso2/asdlc/asdlc-service/utils"
 )
@@ -90,9 +91,9 @@ func writeArtifactError(w http.ResponseWriter, r *http.Request, err error, op st
 		utils.WriteErrorResponse(w, http.StatusConflict, err.Error())
 	case errors.Is(err, services.ErrNoRequirementsBaseline):
 		utils.WriteErrorResponse(w, http.StatusConflict, err.Error())
-	case errors.Is(err, services.ErrRepoNotFound):
+	case errors.Is(err, gitrepo.ErrRepoNotFound):
 		utils.WriteErrorResponse(w, http.StatusNotFound, "repository not found")
-	case errors.Is(err, services.ErrRepoNotReady):
+	case errors.Is(err, gitrepo.ErrRepoNotReady):
 		utils.WriteErrorResponse(w, http.StatusUnprocessableEntity, "repository is not ready")
 	default:
 		slog.ErrorContext(r.Context(), "artifact handler failed", "op", op, "error", err)

@@ -26,6 +26,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 	"github.com/wso2/asdlc/asdlc-service/models"
 	"github.com/wso2/asdlc/asdlc-service/repositories"
 	"github.com/wso2/asdlc/asdlc-service/services/codingagent"
@@ -78,10 +79,10 @@ type DispatchService interface {
 
 type dispatchService struct {
 	taskRepo          repositories.TaskRepository
-	repoSvc           RepoService
+	repoSvc           gitrepo.RepoService
 	credSvc           *CredentialService
 	anthropicSvc      *AnthropicCredentialService
-	repoBoardSvc      RepoBoardService
+	repoBoardSvc      gitrepo.RepoBoardService
 	componentSvc      ComponentService
 	configSvc         ConfigService
 	store             *ArtifactStore
@@ -177,10 +178,10 @@ func (s *dispatchService) SetTraitSync(traitSync *TraitSyncService) {
 
 func NewDispatchService(
 	taskRepo repositories.TaskRepository,
-	repoSvc RepoService,
+	repoSvc gitrepo.RepoService,
 	credSvc *CredentialService,
 	anthropicSvc *AnthropicCredentialService,
-	repoBoardSvc RepoBoardService,
+	repoBoardSvc gitrepo.RepoBoardService,
 	componentSvc ComponentService,
 	configSvc ConfigService,
 	store *ArtifactStore,

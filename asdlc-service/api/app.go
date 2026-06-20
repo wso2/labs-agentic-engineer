@@ -27,6 +27,7 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/config"
 	"github.com/wso2/asdlc/asdlc-service/controllers"
 	"github.com/wso2/asdlc/asdlc-service/internal/credentials"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 	"github.com/wso2/asdlc/asdlc-service/internal/platform/tenant"
 	"github.com/wso2/asdlc/asdlc-service/middleware"
 	jwtmw "github.com/wso2/asdlc/asdlc-service/middleware/jwt"
@@ -45,19 +46,19 @@ type AppParams struct {
 	RequirementsController     controllers.RequirementsController
 	RequirementsChatController controllers.RequirementsChatController
 	DesignController           controllers.DesignController
-	TaskController         controllers.TaskController
-	BoardController        controllers.BoardController
-	ConfigController       controllers.ConfigController
-	CollabController       controllers.CollabController
-	WebhookController      controllers.WebhookController
-	OrgGitHubController    controllers.OrgGitHubController
-	OrgAnthropicController controllers.OrgAnthropicController
-	SkillController        controllers.SkillController
-	OrganizationController controllers.OrganizationController
-	IDPController          controllers.IDPController
-	JWKSController         controllers.JWKSController
-	TaskRepo               repositories.TaskRepository
-	ConfigRepo             repositories.ConfigRepository
+	TaskController             controllers.TaskController
+	BoardController            controllers.BoardController
+	ConfigController           controllers.ConfigController
+	CollabController           controllers.CollabController
+	WebhookController          controllers.WebhookController
+	OrgGitHubController        controllers.OrgGitHubController
+	OrgAnthropicController     controllers.OrgAnthropicController
+	SkillController            controllers.SkillController
+	OrganizationController     controllers.OrganizationController
+	IDPController              controllers.IDPController
+	JWKSController             controllers.JWKSController
+	TaskRepo                   repositories.TaskRepository
+	ConfigRepo                 repositories.ConfigRepository
 
 	// OrganizationService backs the JIT org-provisioning middleware. nil
 	// disables the middleware (tests, dev configurations without a DB).
@@ -76,17 +77,17 @@ type AppParams struct {
 	// /api/v1/repos + /internal/credentials, Task JWT for
 	// /api/v1/credentials/refresh).
 	DB                   *gorm.DB
-	RepoCtrl             controllers.RepoController
-	GitOpsCtrl           controllers.GitOpsController
-	IssueCtrl            controllers.IssueController
-	GitProjectCtrl       controllers.GitProjectController
-	BranchCtrl           controllers.BranchController
-	PullRequestCtrl      controllers.PullRequestController
-	WebhookRegCtrl       controllers.WebhookRegistrationController
+	RepoCtrl             gitrepo.RepoController
+	GitOpsCtrl           gitrepo.GitOpsController
+	IssueCtrl            gitrepo.IssueController
+	GitProjectCtrl       gitrepo.GitProjectController
+	BranchCtrl           gitrepo.BranchController
+	PullRequestCtrl      gitrepo.PullRequestController
+	WebhookRegCtrl       gitrepo.WebhookRegistrationController
 	ArtifactCtrl         controllers.ArtifactController
 	CredCtrl             controllers.CredentialsRefreshController
-	RepoBoardCtrl        controllers.RepoBoardController
-	RepoService          services.RepoService
+	RepoBoardCtrl        gitrepo.RepoBoardController
+	RepoService          gitrepo.RepoService
 	RepoRepo             repositories.RepoRepository
 	CredService          *services.CredentialService
 	BuildCredService     *services.BuildCredentialsService
@@ -378,10 +379,10 @@ func testResetHandler(params AppParams) http.HandlerFunc {
 // cluster). Plaintext is never logged.
 func testSMAPIResyncHandler(params AppParams) http.HandlerFunc {
 	type orgResult struct {
-		OcOrgID        string                    `json:"ocOrgId"`
+		OcOrgID        string                     `json:"ocOrgId"`
 		Writes         []services.SMAPISeedBundle `json:"writes"`
-		AnthropicError string                    `json:"anthropicError,omitempty"`
-		GitHubPATError string                    `json:"githubPatError,omitempty"`
+		AnthropicError string                     `json:"anthropicError,omitempty"`
+		GitHubPATError string                     `json:"githubPatError,omitempty"`
 	}
 	type response struct {
 		Orgs []orgResult `json:"orgs"`
@@ -455,4 +456,3 @@ func collectResyncOrgs(ctx context.Context, db *gorm.DB, only string) ([]string,
 	}
 	return out, nil
 }
-

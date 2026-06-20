@@ -19,6 +19,8 @@ package services
 import (
 	"reflect"
 	"testing"
+
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 )
 
 func TestParseRequirementsTag(t *testing.T) {
@@ -49,11 +51,11 @@ func TestParseRequirementsTag(t *testing.T) {
 
 func TestParseDesignTag(t *testing.T) {
 	cases := []struct {
-		name    string
-		in      string
-		wantN   int
-		wantR   int
-		wantOK  bool
+		name   string
+		in     string
+		wantN  int
+		wantR  int
+		wantOK bool
 	}{
 		{"v1-1", "v1-1", 1, 1, true},
 		{"v3-12", "v3-12", 3, 12, true},
@@ -77,15 +79,15 @@ func TestParseDesignTag(t *testing.T) {
 func TestNextRequirementsTag(t *testing.T) {
 	cases := []struct {
 		name    string
-		tags    []TagInfo
+		tags    []gitrepo.TagInfo
 		wantN   int
 		wantTag string
 	}{
 		{"empty", nil, 1, "v1"},
-		{"single", []TagInfo{{Name: "v1"}}, 2, "v2"},
-		{"gappy", []TagInfo{{Name: "v1"}, {Name: "v3"}}, 4, "v4"},
-		{"design tags ignored", []TagInfo{{Name: "v2"}, {Name: "v9-3"}}, 3, "v3"},
-		{"non-matching ignored", []TagInfo{{Name: "release-1"}, {Name: "v2"}}, 3, "v3"},
+		{"single", []gitrepo.TagInfo{{Name: "v1"}}, 2, "v2"},
+		{"gappy", []gitrepo.TagInfo{{Name: "v1"}, {Name: "v3"}}, 4, "v4"},
+		{"design tags ignored", []gitrepo.TagInfo{{Name: "v2"}, {Name: "v9-3"}}, 3, "v3"},
+		{"non-matching ignored", []gitrepo.TagInfo{{Name: "release-1"}, {Name: "v2"}}, 3, "v3"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -100,16 +102,16 @@ func TestNextRequirementsTag(t *testing.T) {
 
 func TestNextDesignTag(t *testing.T) {
 	cases := []struct {
-		name      string
-		tags      []TagInfo
-		parent    int
-		wantR     int
-		wantTag   string
+		name    string
+		tags    []gitrepo.TagInfo
+		parent  int
+		wantR   int
+		wantTag string
 	}{
 		{"empty", nil, 1, 1, "v1-1"},
-		{"existing parent", []TagInfo{{Name: "v1-1"}, {Name: "v1-2"}}, 1, 3, "v1-3"},
-		{"different parent isolated", []TagInfo{{Name: "v1-5"}, {Name: "v2-1"}}, 2, 2, "v2-2"},
-		{"requirements tags ignored", []TagInfo{{Name: "v1"}, {Name: "v2"}}, 2, 1, "v2-1"},
+		{"existing parent", []gitrepo.TagInfo{{Name: "v1-1"}, {Name: "v1-2"}}, 1, 3, "v1-3"},
+		{"different parent isolated", []gitrepo.TagInfo{{Name: "v1-5"}, {Name: "v2-1"}}, 2, 2, "v2-2"},
+		{"requirements tags ignored", []gitrepo.TagInfo{{Name: "v1"}, {Name: "v2"}}, 2, 1, "v2-1"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -125,12 +127,12 @@ func TestNextDesignTag(t *testing.T) {
 func TestLatestRequirementsTag(t *testing.T) {
 	cases := []struct {
 		name string
-		tags []TagInfo
+		tags []gitrepo.TagInfo
 		want string
 	}{
 		{"empty", nil, ""},
-		{"only design tags", []TagInfo{{Name: "v1-1"}, {Name: "v2-3"}}, ""},
-		{"mixed", []TagInfo{{Name: "v1"}, {Name: "v3"}, {Name: "v2-9"}}, "v3"},
+		{"only design tags", []gitrepo.TagInfo{{Name: "v1-1"}, {Name: "v2-3"}}, ""},
+		{"mixed", []gitrepo.TagInfo{{Name: "v1"}, {Name: "v3"}, {Name: "v2-9"}}, "v3"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -144,13 +146,13 @@ func TestLatestRequirementsTag(t *testing.T) {
 func TestLatestDesignTag(t *testing.T) {
 	cases := []struct {
 		name string
-		tags []TagInfo
+		tags []gitrepo.TagInfo
 		want string
 	}{
 		{"empty", nil, ""},
-		{"only requirements tags", []TagInfo{{Name: "v1"}, {Name: "v2"}}, ""},
-		{"highest parent wins", []TagInfo{{Name: "v1-9"}, {Name: "v2-1"}, {Name: "v2-3"}}, "v2-3"},
-		{"highest revision within parent", []TagInfo{{Name: "v3-1"}, {Name: "v3-7"}, {Name: "v3-4"}}, "v3-7"},
+		{"only requirements tags", []gitrepo.TagInfo{{Name: "v1"}, {Name: "v2"}}, ""},
+		{"highest parent wins", []gitrepo.TagInfo{{Name: "v1-9"}, {Name: "v2-1"}, {Name: "v2-3"}}, "v2-3"},
+		{"highest revision within parent", []gitrepo.TagInfo{{Name: "v3-1"}, {Name: "v3-7"}, {Name: "v3-4"}}, "v3-7"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -162,7 +164,7 @@ func TestLatestDesignTag(t *testing.T) {
 }
 
 func TestTagsToRequirementsVersions_DescendingByVersion(t *testing.T) {
-	tags := []TagInfo{
+	tags := []gitrepo.TagInfo{
 		{Name: "v1", CommitHash: "h1", Message: "first"},
 		{Name: "v3", CommitHash: "h3", Message: "third"},
 		{Name: "v2", CommitHash: "h2", Message: "second"},
@@ -178,7 +180,7 @@ func TestTagsToRequirementsVersions_DescendingByVersion(t *testing.T) {
 }
 
 func TestTagsToDesignVersions_DescendingByParentThenRevision(t *testing.T) {
-	tags := []TagInfo{
+	tags := []gitrepo.TagInfo{
 		{Name: "v1-1", CommitHash: "h1", Message: "d1"},
 		{Name: "v2-3", CommitHash: "h2", Message: "d2"},
 		{Name: "v2-1", CommitHash: "h3", Message: "d3"},
@@ -286,9 +288,9 @@ func TestTagRegexes_Sanity(t *testing.T) {
 	}{
 		{"v1", true, false},
 		{"v1-1", false, true},
-		{"v0", false, false},      // zero rejected
-		{"v1-0", false, false},    // zero rejected
-		{"v1-1-1", false, false},  // extra segment rejected
+		{"v0", false, false},     // zero rejected
+		{"v1-0", false, false},   // zero rejected
+		{"v1-1-1", false, false}, // extra segment rejected
 		{"v 1", false, false},
 		{"V1", false, false}, // case-sensitive
 	}

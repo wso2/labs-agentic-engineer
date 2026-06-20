@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package services
+package gitrepo
 
 import (
 	"bytes"
@@ -271,11 +271,11 @@ func (c *githubV2Client) initProjectStatusOptions(ctx context.Context, projectID
 	// Colors: Todo (GRAY), In Progress (YELLOW), Done (GREEN), On Hold (ORANGE), Failed (RED).
 	optionNames := []string{"Todo", "In Progress", "Done", "On Hold", "Failed"}
 	optionColors := map[string]string{
-		"Todo":         "GRAY",
-		"In Progress":  "YELLOW",
-		"Done":         "GREEN",
-		"On Hold":      "ORANGE",
-		"Failed":       "RED",
+		"Todo":        "GRAY",
+		"In Progress": "YELLOW",
+		"Done":        "GREEN",
+		"On Hold":     "ORANGE",
+		"Failed":      "RED",
 	}
 
 	// Build the input options list: preserve existing (with ID), add missing (without ID).
