@@ -26,13 +26,13 @@ import (
 	"time"
 
 	"github.com/wso2/asdlc/asdlc-service/clients/openchoreo"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/codingagent"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/orgcreds"
 	taskfeature "github.com/wso2/asdlc/asdlc-service/internal/feature/task"
 	"github.com/wso2/asdlc/asdlc-service/internal/platform/auth"
 	"github.com/wso2/asdlc/asdlc-service/models"
 	"github.com/wso2/asdlc/asdlc-service/repositories"
-	"github.com/wso2/asdlc/asdlc-service/services"
 	"github.com/wso2/asdlc/asdlc-service/utils"
 )
 
@@ -316,9 +316,9 @@ func (c *taskController) GenerateTasks(w http.ResponseWriter, r *http.Request) {
 		slog.ErrorContext(r.Context(), "generate tasks failed", "error", err, "org", org, "project", project)
 		errText := err.Error()
 		switch {
-		case errors.Is(err, services.ErrDesignNotFound):
+		case errors.Is(err, artifacts.ErrDesignNotFound):
 			errText = "design not found"
-		case errors.Is(err, services.ErrSpecNotFound):
+		case errors.Is(err, artifacts.ErrSpecNotFound):
 			errText = "spec not found"
 		}
 		errFrame, _ := json.Marshal(map[string]any{"type": "error", "data": map[string]any{"scope": "plan", "errorText": errText}})
