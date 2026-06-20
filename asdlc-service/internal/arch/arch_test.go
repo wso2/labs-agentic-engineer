@@ -1,0 +1,119 @@
+// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+// Package arch holds the architecture-boundary invariant test for the
+// feature-based restructure (docs/design/asdlc-service-modularization.md §4/§6.3).
+// It is the CI lock-in that keeps the strangler migration's import boundaries
+// from regressing: the flat services/controllers packages are gone, no feature
+// imports another feature's concrete except along the allowed (acyclic) edges,
+// and the cross-feature cycles (task↔codingagent, design↔task) stay broken
+// through internal/contracts. Runs under plain `go test` (no extra tooling, so
+// it works even where golangci-lint/depguard isn't installed).
+package arch
+
+import (
+	"os/exec"
+	"strings"
+	"testing"
+)
+
+const mod = "github.com/wso2/asdlc/asdlc-service"
+
+// deps returns the full transitive import set of pkg via `go list -deps`.
+func deps(t *testing.T, pkg string) []string {
+	t.Helper()
+	out, err := exec.Command("go", "list", "-deps", pkg).CombinedOutput()
+	if err != nil {
+		t.Fatalf("go list -deps %s failed: %v\n%s", pkg, err, out)
+	}
+	return strings.Split(strings.TrimSpace(string(out)), "\n")
+}
+
+func imports(t *testing.T, pkg, dep string) bool {
+	for _, d := range deps(t, pkg) {
+		if d == dep {
+			return true
+		}
+	}
+	return false
+}
+
+// TestNoFlatServicesOrControllers asserts the strangler's flat layers are gone:
+// nothing imports the (deleted) flat services package, and no feature/platform
+// package imports the controllers HTTP-edge package. (The composition root and
+// api routes may still reference controllers.TaskController — the one remaining
+// documented edge — so we only assert it for internal/feature + internal/platform.)
+func TestNoFlatServicesOrControllers(t *testing.T) {
+	features := []string{
+		"artifacts", "gitrepo", "component", "orgcreds", "task", "codingagent",
+		"requirements", "design", "project", "organization", "idp",
+		"runtimeconfig", "skills", "webhook",
+	}
+	for _, f := range features {
+		pkg := mod + "/internal/feature/" + f
+		if imports(t, pkg, mod+"/services") {
+			t.Errorf("%s imports the flat services package (should be gone)", f)
+		}
+		if imports(t, pkg, mod+"/controllers") {
+			t.Errorf("%s imports the controllers package (forbidden — features own their controllers or use ports)", f)
+		}
+	}
+	// The platform leaves must not import any feature or the flat layers.
+	for _, p := range []string{"contracts", "platform/tenant", "platform/auth"} {
+		pkg := mod + "/internal/" + p
+		for _, d := range deps(t, pkg) {
+			if strings.Contains(d, "/internal/feature/") {
+				t.Errorf("%s imports a feature (%s) — must stay a leaf", p, d)
+			}
+			if d == mod+"/services" || d == mod+"/controllers" {
+				t.Errorf("%s imports %s — must stay a leaf", p, d)
+			}
+		}
+	}
+}
+
+// TestTaskCodingagentCycleBroken asserts the §4 bidirectional cycle stays cut:
+// both directions route through internal/contracts, so neither concrete package
+// imports the other.
+func TestTaskCodingagentCycleBroken(t *testing.T) {
+	if imports(t, mod+"/internal/feature/task", mod+"/internal/feature/codingagent") {
+		t.Error("task imports codingagent — the build-dispatch/status cycle must route through contracts")
+	}
+	if imports(t, mod+"/internal/feature/codingagent", mod+"/internal/feature/task") {
+		t.Error("codingagent imports task — the build-dispatch/status cycle must route through contracts")
+	}
+	// design must not import task or component concretely (its edges are ports
+	// + contracts).
+	if imports(t, mod+"/internal/feature/design", mod+"/internal/feature/task") {
+		t.Error("design imports task — must use the contracts/port hook")
+	}
+	if imports(t, mod+"/internal/feature/design", mod+"/internal/feature/component") {
+		t.Error("design imports component — must use the traitSync consumer port")
+	}
+}
+
+// TestContractsIsLeaf asserts internal/contracts depends on nothing inside the
+// module except models value types (the §4.0 / §6.3 admission rule).
+func TestContractsIsLeaf(t *testing.T) {
+	for _, d := range deps(t, mod+"/internal/contracts") {
+		if !strings.HasPrefix(d, mod) {
+			continue // stdlib / third-party
+		}
+		if d != mod+"/internal/contracts" && d != mod+"/models" {
+			t.Errorf("contracts imports %s — only %s/models is allowed", d, mod)
+		}
+	}
+}
