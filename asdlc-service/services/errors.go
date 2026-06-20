@@ -37,5 +37,4 @@ var (
 	ErrTasksInFlight     = errors.New("tasks already in progress; cannot regenerate")
 	ErrBuildNotFound     = errors.New("build not found")
 	ErrDeploymentFailed  = errors.New("deployment failed")
-	ErrTaskNotFound      = errors.New("task not found")
 )

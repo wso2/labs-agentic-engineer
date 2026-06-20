@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package services
+package task
 
 import (
 	"context"
@@ -43,10 +43,14 @@ var ErrComponentRemovedAfterGeneration = errors.New("component removed after gen
 // Lookups are case-insensitive on Name to mirror toposort/lookup behaviour
 // elsewhere in the codebase.
 func (s *taskService) resolveDesignComponent(ctx context.Context, task *models.ComponentTask) (*models.DesignComponent, error) {
-	return resolveDesignComponentVia(ctx, s.store, task)
+	return ResolveDesignComponentVia(ctx, s.store, task)
 }
 
-func resolveDesignComponentVia(ctx context.Context, store *artifacts.ArtifactStore, task *models.ComponentTask) (*models.DesignComponent, error) {
+// ResolveDesignComponentVia resolves a task's component from the project's
+// current `specs/design/` tree using the given store. Exported so the
+// dispatch service (which stays in the flat services package) can reuse the
+// same resolution logic without a services→task→services cycle.
+func ResolveDesignComponentVia(ctx context.Context, store *artifacts.ArtifactStore, task *models.ComponentTask) (*models.DesignComponent, error) {
 	if store == nil {
 		return nil, fmt.Errorf("artifact store not configured")
 	}

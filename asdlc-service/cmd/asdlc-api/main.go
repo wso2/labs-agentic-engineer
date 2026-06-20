@@ -652,7 +652,7 @@ func main() {
 	requirementsChatService := services.NewRequirementsChatService(artifactStore, agentsClient, artifactSvcGit, requirementsDirLocker)
 	designService := services.NewDesignService(artifactStore, agentsClient, artifactSvcGit)
 
-	taskService := services.NewTaskService(db, taskRepo, artifactStore, componentService, tokenProvider, configService, issueService, artifactSvcGit, repoService, agentsClient, dbClient)
+	taskService := task.NewTaskService(db, taskRepo, artifactStore, componentService, tokenProvider, configService, issueService, artifactSvcGit, repoService, agentsClient, dbClient)
 	boardService := task.NewBoardService(repoBoardService, taskRepo)
 
 	if hook, ok := designService.(services.DesignServiceWithTaskHook); ok {
@@ -665,13 +665,13 @@ func main() {
 		setter.SetSkillService(skillSvc)
 	}
 	if setter, ok := taskService.(interface {
-		SetSkillService(*services.SkillService)
+		SetSkillService(task.SkillResolver)
 	}); ok {
 		setter.SetSkillService(skillSvc)
 	}
 	// TaskSkillsService backs GET /api/v1/tasks/:taskId/skills which
 	// the runner pod calls at init to fetch its frozen SKILL.md bodies.
-	taskSkillsSvc := services.NewTaskSkillsService(db, taskRepo)
+	taskSkillsSvc := task.NewTaskSkillsService(db, taskRepo)
 
 	// Phase 2 (api-platform-integration) — trait_sync is the single shared
 	// emitter that reconciles the `api-configuration` ClusterTrait on a
@@ -938,7 +938,7 @@ func main() {
 				taskTokens,
 			)
 			if setter, ok := tc.(interface {
-				SetSkillsService(*services.TaskSkillsService)
+				SetSkillsService(*task.TaskSkillsService)
 			}); ok {
 				setter.SetSkillsService(taskSkillsSvc)
 			}
@@ -1118,7 +1118,7 @@ func splitAndTrim(s string) []string {
 // hardcoded NS filter no longer applies. Tasks on the legacy
 // ClusterWorkflow path are unaffected — same Observer fallback.
 func progressService(
-	taskSvc services.TaskService,
+	taskSvc task.TaskService,
 	ocClient openchoreo.ComponentClient,
 	observerClient observer.Client,
 	cgwClient *clustergatewayproxy.Client,

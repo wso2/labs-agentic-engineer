@@ -27,6 +27,7 @@ import (
 
 	"github.com/wso2/asdlc/asdlc-service/clients/openchoreo"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/orgcreds"
+	taskfeature "github.com/wso2/asdlc/asdlc-service/internal/feature/task"
 	"github.com/wso2/asdlc/asdlc-service/models"
 	"github.com/wso2/asdlc/asdlc-service/repositories"
 	"github.com/wso2/asdlc/asdlc-service/services"
@@ -70,18 +71,18 @@ type TaskController interface {
 }
 
 type taskController struct {
-	service           services.TaskService
+	service           taskfeature.TaskService
 	dispatchSvc       services.DispatchService
 	progressSvc       services.ProgressService
 	ocClient          openchoreo.ComponentClient
 	taskTokens        *services.TaskTokenManager
 	publisherVerifier *services.PublisherTokenVerifier
-	skillsSvc         *services.TaskSkillsService
+	skillsSvc         *taskfeature.TaskSkillsService
 	credsRefreshSvc   orgcreds.CredentialsRefreshService
 }
 
 func NewTaskController(
-	service services.TaskService,
+	service taskfeature.TaskService,
 	dispatchSvc services.DispatchService,
 	progressSvc services.ProgressService,
 	ocClient openchoreo.ComponentClient,
@@ -98,7 +99,7 @@ func NewTaskController(
 
 // SetSkillsService wires the per-task skills pull endpoint. Optional —
 // when nil, the handler returns 503.
-func (c *taskController) SetSkillsService(s *services.TaskSkillsService) {
+func (c *taskController) SetSkillsService(s *taskfeature.TaskSkillsService) {
 	c.skillsSvc = s
 }
 
@@ -231,7 +232,7 @@ func (c *taskController) GetTask(w http.ResponseWriter, r *http.Request) {
 	// (closes the by-UUID IDOR on this operator route).
 	task, err := c.service.GetTaskScoped(r.Context(), orgHandle, taskID)
 	if err != nil {
-		if errors.Is(err, services.ErrTaskNotFound) {
+		if errors.Is(err, taskfeature.ErrTaskNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "task not found")
 			return
 		}
@@ -334,7 +335,7 @@ func (c *taskController) RegenerateTaskBody(w http.ResponseWriter, r *http.Reque
 	// Org-scoped pre-check 404s on a cross-org/unknown {taskId} before any
 	// work (closes the by-UUID IDOR on this operator route).
 	if _, err := c.service.GetTaskScoped(r.Context(), orgHandle, taskID); err != nil {
-		if errors.Is(err, services.ErrTaskNotFound) {
+		if errors.Is(err, taskfeature.ErrTaskNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "task not found")
 			return
 		}
@@ -384,7 +385,7 @@ func (c *taskController) GetTaskStatus(w http.ResponseWriter, r *http.Request) {
 	// (closes the by-UUID IDOR — was: operated on another org's task / OC run).
 	task, err := c.service.GetTaskScoped(r.Context(), orgHandle, taskID)
 	if err != nil {
-		if errors.Is(err, services.ErrTaskNotFound) {
+		if errors.Is(err, taskfeature.ErrTaskNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "task not found")
 			return
 		}
@@ -455,7 +456,7 @@ func (c *taskController) GetTaskBuildProgress(w http.ResponseWriter, r *http.Req
 }
 
 func writeProgressError(w http.ResponseWriter, r *http.Request, err error, op string) {
-	if errors.Is(err, services.ErrTaskNotFound) {
+	if errors.Is(err, taskfeature.ErrTaskNotFound) {
 		utils.WriteErrorResponse(w, http.StatusNotFound, "task not found")
 		return
 	}
@@ -523,7 +524,7 @@ func (c *taskController) Retry(w http.ResponseWriter, r *http.Request) {
 	// Org-scoped pre-check 404s on a cross-org/unknown {taskId} before any
 	// dispatch work (closes the by-UUID IDOR on this operator route).
 	if _, err := c.service.GetTaskScoped(r.Context(), orgHandle, taskID); err != nil {
-		if errors.Is(err, services.ErrTaskNotFound) {
+		if errors.Is(err, taskfeature.ErrTaskNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "task not found")
 			return
 		}
@@ -550,7 +551,7 @@ func (c *taskController) ExecTask(w http.ResponseWriter, r *http.Request) {
 	// Org-scoped pre-check 404s on a cross-org/unknown {taskId} before any
 	// work (closes the by-UUID IDOR on this operator route).
 	if _, err := c.service.GetTaskScoped(r.Context(), orgHandle, taskID); err != nil {
-		if errors.Is(err, services.ErrTaskNotFound) {
+		if errors.Is(err, taskfeature.ErrTaskNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "task not found")
 			return
 		}
@@ -560,7 +561,7 @@ func (c *taskController) ExecTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := c.service.ExecTask(r.Context(), taskID); err != nil {
-		if errors.Is(err, services.ErrTaskNotFound) {
+		if errors.Is(err, taskfeature.ErrTaskNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "task not found")
 			return
 		}
@@ -596,7 +597,7 @@ func (c *taskController) Skills(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := c.skillsSvc.SkillsForTask(r.Context(), taskID)
 	if err != nil {
-		if errors.Is(err, services.ErrTaskNotFound) {
+		if errors.Is(err, taskfeature.ErrTaskNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "task not found")
 			return
 		}

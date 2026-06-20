@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package services
+package task
 
 import (
 	"context"
@@ -142,7 +142,7 @@ func snapshotProjectSkills(
 	ctx context.Context,
 	db *gorm.DB,
 	store *artifacts.ArtifactStore,
-	skillSvc *SkillService,
+	skillSvc SkillResolver,
 	orgID, projectID, designVersion string,
 ) error {
 	if store == nil || skillSvc == nil {

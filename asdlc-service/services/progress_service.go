@@ -34,6 +34,7 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/clients/clustergatewayproxy"
 	"github.com/wso2/asdlc/asdlc-service/clients/observer"
 	"github.com/wso2/asdlc/asdlc-service/clients/openchoreo"
+	taskfeature "github.com/wso2/asdlc/asdlc-service/internal/feature/task"
 	"github.com/wso2/asdlc/asdlc-service/models"
 	"github.com/wso2/asdlc/asdlc-service/services/codingagent"
 )
@@ -46,12 +47,12 @@ const defaultProgressLimit = 200
 // /progress/build. Schema-versioned so the console can branch on future
 // envelope changes without flag-flipping.
 type ProgressResponse struct {
-	SchemaVersion int                       `json:"schemaVersion"`
-	Lines         []observer.ProgressEvent  `json:"lines"`
-	CursorMillis  int64                     `json:"cursorMillis"`
-	Phase         string                    `json:"phase,omitempty"`
-	Truncated     bool                      `json:"truncated,omitempty"`
-	Final         bool                      `json:"final"`
+	SchemaVersion int                      `json:"schemaVersion"`
+	Lines         []observer.ProgressEvent `json:"lines"`
+	CursorMillis  int64                    `json:"cursorMillis"`
+	Phase         string                   `json:"phase,omitempty"`
+	Truncated     bool                     `json:"truncated,omitempty"`
+	Final         bool                     `json:"final"`
 }
 
 // ProgressService backs the BFF's /progress/* endpoints.
@@ -69,7 +70,7 @@ type ProgressService interface {
 }
 
 type progressService struct {
-	taskSvc        TaskService
+	taskSvc        taskfeature.TaskService
 	ocClient       openchoreo.ComponentClient
 	observerClient observer.Client
 
@@ -107,7 +108,7 @@ type progressService struct {
 // namespace where Argo schedules pods. There is no platform-wide
 // workflow-plane namespace once orgs are not collapsed.
 func NewProgressService(
-	taskSvc TaskService,
+	taskSvc taskfeature.TaskService,
 	ocClient openchoreo.ComponentClient,
 	observerClient observer.Client,
 ) ProgressService {

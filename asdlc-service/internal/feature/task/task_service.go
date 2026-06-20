@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package services
+package task
 
 import (
 	"context"
@@ -88,12 +88,21 @@ type taskService struct {
 	// (attached-skills context) + detail (full bodies). Snapshot writes
 	// to design_version_skill_snapshots also go through here. Optional
 	// in tests; nil → tech-lead runs with no skills attached.
-	skillSvc *SkillService
+	skillSvc SkillResolver
+}
+
+// SkillResolver is the task feature's consumer port for the skills
+// catalogue. It resolves a set of attached-skill names into their
+// materialised bodies. services.SkillService satisfies it; defining the
+// port here keeps the task package free of any edge to the flat services
+// package. See docs/design/skills-system.md > "Tech-lead".
+type SkillResolver interface {
+	ResolveMany(ctx context.Context, orgID string, names []string) ([]models.Skill, error)
 }
 
 // SetSkillService wires the skills catalogue + snapshot writer.
 // Mirrors the SetTraitSync setter pattern.
-func (s *taskService) SetSkillService(svc *SkillService) {
+func (s *taskService) SetSkillService(svc SkillResolver) {
 	s.skillSvc = svc
 }
 
@@ -423,5 +432,3 @@ func (s *taskService) ensureIssueForTask(
 		"task", task.ID, "component", task.ComponentName, "issue", issue.URL)
 	return nil
 }
-
-// toK8sName is defined in design_service.go (same package).

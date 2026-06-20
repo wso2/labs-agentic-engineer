@@ -76,7 +76,7 @@ type designService struct {
 	store        *artifacts.ArtifactStore
 	agentsClient agents.Client
 	artifactSvc  artifacts.ArtifactService
-	taskSvc      TaskService // for SaveAndProceed reconciliation; may be nil in tests
+	taskSvc      taskReconciler // for SaveAndProceed reconciliation; may be nil in tests
 	// traitSync, when non-nil, is invoked after a per-component design
 	// edit so an `exposesAPI.auth` toggle propagates to the OC Component +
 	// ReleaseBindings without waiting for the next dispatch. Set via
@@ -88,12 +88,21 @@ type designService struct {
 	skillSvc *SkillService
 }
 
+// taskReconciler is design_service's narrow consumer port for the task
+// feature's reconciliation hook. The full task.TaskService satisfies it.
+// Defining it here keeps design_service from importing the task package
+// (the reconcile edge is one-way: main wires task.TaskService into this
+// setter).
+type taskReconciler interface {
+	ReconcilePendingForDesignChange(ctx context.Context, orgID, projectID string) error
+}
+
 // DesignServiceWithTaskHook lets the construction wire-up surface the
 // reconciliation hook setter without polluting the public DesignService
 // interface.
 type DesignServiceWithTaskHook interface {
 	DesignService
-	SetTaskService(taskSvc TaskService)
+	SetTaskService(taskSvc taskReconciler)
 }
 
 // DesignServiceWithTraitSync surfaces the trait_sync setter so an
@@ -123,7 +132,7 @@ func NewDesignService(
 	}
 }
 
-func (s *designService) SetTaskService(taskSvc TaskService) {
+func (s *designService) SetTaskService(taskSvc taskReconciler) {
 	s.taskSvc = taskSvc
 }
 

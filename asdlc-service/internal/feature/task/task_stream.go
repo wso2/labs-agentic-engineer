@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package services
+package task
 
 import (
 	"bufio"
@@ -103,21 +103,21 @@ func (s *taskService) StreamGenerateTasks(ctx context.Context, orgID, projectID 
 		return fmt.Errorf("list requirements: %w", err)
 	}
 	if len(reqFiles) == 0 {
-		return ErrSpecNotFound
+		return artifacts.ErrSpecNotFound
 	}
 	specContent := concatRequirementBundle(reqFiles)
 	if specContent == "" {
-		return ErrSpecNotFound
+		return artifacts.ErrSpecNotFound
 	}
 	design, err := s.store.ReadDesign(ctx, orgID, projectID)
 	if err != nil {
 		if artifacts.IsNotFound(err) {
-			return ErrDesignNotFound
+			return artifacts.ErrDesignNotFound
 		}
 		return fmt.Errorf("read design: %w", err)
 	}
 	if design == nil {
-		return ErrDesignNotFound
+		return artifacts.ErrDesignNotFound
 	}
 
 	currentSpecVersion, currentDesignVersion := s.currentArtifactVersions(ctx, orgID, projectID)
