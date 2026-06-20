@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package services
+package skills
 
 import (
 	"context"
@@ -28,7 +28,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/wso2/asdlc/asdlc-service/skills"
+	embedskills "github.com/wso2/asdlc/asdlc-service/skills"
 )
 
 // SkillBootstrap UPSERTs the bundled built-in SKILL.md files into the
@@ -56,7 +56,7 @@ func (b *SkillBootstrap) Run(ctx context.Context) error {
 		return fmt.Errorf("skill bootstrap: nil receiver")
 	}
 
-	entries, err := fs.ReadDir(skills.BuiltinFS, "builtin")
+	entries, err := fs.ReadDir(embedskills.BuiltinFS, "builtin")
 	if err != nil {
 		return fmt.Errorf("skill bootstrap: read builtin dir: %w", err)
 	}
@@ -72,7 +72,7 @@ func (b *SkillBootstrap) Run(ctx context.Context) error {
 		bundled = append(bundled, name)
 
 		skillPath := path.Join("builtin", name, "SKILL.md")
-		raw, err := fs.ReadFile(skills.BuiltinFS, skillPath)
+		raw, err := fs.ReadFile(embedskills.BuiltinFS, skillPath)
 		if err != nil {
 			slog.WarnContext(ctx, "skill bootstrap: read failed", "name", name, "error", err)
 			continue

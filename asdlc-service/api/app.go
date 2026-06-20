@@ -36,6 +36,7 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/orgcreds"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/project"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/requirements"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/skills"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/task"
 	"github.com/wso2/asdlc/asdlc-service/internal/platform/tenant"
 	"github.com/wso2/asdlc/asdlc-service/middleware"
@@ -61,7 +62,7 @@ type AppParams struct {
 	WebhookController          controllers.WebhookController
 	OrgGitHubController        orgcreds.OrgGitHubController
 	OrgAnthropicController     orgcreds.OrgAnthropicController
-	SkillController            controllers.SkillController
+	SkillController            skills.SkillController
 	OrganizationController     organization.OrganizationController
 	IDPController              idp.IDPController
 	JWKSController             controllers.JWKSController

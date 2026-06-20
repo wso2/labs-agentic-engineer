@@ -17,7 +17,7 @@
 package api
 
 import (
-	"github.com/wso2/asdlc/asdlc-service/controllers"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/skills"
 )
 
 // registerSkillRoutes wires the org-scoped skills catalogue. Inherits the
@@ -26,7 +26,7 @@ import (
 // `POST .../skills/import` is more specific than `{name}` and is registered
 // for POST only, so it never collides with the create / update / delete
 // `{name}` patterns. See docs/design/skills-system.md > "REST API".
-func registerSkillRoutes(rt *Router, c controllers.SkillController) {
+func registerSkillRoutes(rt *Router, c skills.SkillController) {
 	rt.OrgScoped("GET /api/v1/organizations/{orgHandle}/skills", c.List)
 	rt.OrgScoped("POST /api/v1/organizations/{orgHandle}/skills", c.Create)
 	rt.OrgScoped("POST /api/v1/organizations/{orgHandle}/skills/import", c.Import)

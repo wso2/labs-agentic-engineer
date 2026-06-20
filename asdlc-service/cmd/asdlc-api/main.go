@@ -58,6 +58,7 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/project"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/requirements"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/runtimeconfig"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/skills"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/task"
 	"github.com/wso2/asdlc/asdlc-service/internal/seed"
 	"github.com/wso2/asdlc/asdlc-service/middleware"
@@ -314,13 +315,13 @@ func main() {
 	// the `skills` table, prune any built-ins removed between releases.
 	// Best-effort: log + warn on failure rather than refusing to start
 	// (BFF stays functional with an empty skills table).
-	skillBootstrap := services.NewSkillBootstrap(db)
+	skillBootstrap := skills.NewSkillBootstrap(db)
 	if err := skillBootstrap.Run(context.Background()); err != nil {
 		slog.Warn("skill bootstrap failed — continuing", "error", err)
 	}
-	skillSvc := services.NewSkillService(db)
-	skillMutationSvc := services.NewSkillMutationService(db, skillSvc)
-	skillImportSvc := services.NewSkillImportService(db, skillSvc)
+	skillSvc := skills.NewSkillService(db)
+	skillMutationSvc := skills.NewSkillMutationService(db, skillSvc)
+	skillImportSvc := skills.NewSkillImportService(db, skillSvc)
 
 	// Repositories — only task and config remain
 	taskRepo := repositories.NewTaskRepository(db)
@@ -974,7 +975,7 @@ func main() {
 		ConfigRepo:             configRepo,
 		OrgGitHubController:    orgGitHubCtrl,
 		OrgAnthropicController: orgAnthropicCtrl,
-		SkillController:        controllers.NewSkillController(skillSvc, skillMutationSvc, skillImportSvc),
+		SkillController:        skills.NewSkillController(skillSvc, skillMutationSvc, skillImportSvc),
 		IDPController:          idp.NewIDPController(idpService),
 		JWKSController:         controllers.NewJWKSController(taskTokens),
 		ThunderJWKS:            thunderJWKS,

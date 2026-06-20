@@ -27,7 +27,7 @@
 //
 // Built-ins are read-only — PUT/DELETE against them return 403
 // SKILL_NOT_EDITABLE. See docs/design/skills-system.md > "REST API".
-package controllers
+package skills
 
 import (
 	"encoding/json"
@@ -35,7 +35,6 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/wso2/asdlc/asdlc-service/services"
 	"github.com/wso2/asdlc/asdlc-service/utils"
 	"github.com/wso2/asdlc/asdlc-service/utils/validate"
 )
@@ -56,17 +55,17 @@ type SkillController interface {
 }
 
 type skillController struct {
-	skills   *services.SkillService
-	mutation *services.SkillMutationService
-	importer *services.SkillImportService
+	skills   *SkillService
+	mutation *SkillMutationService
+	importer *SkillImportService
 }
 
 // NewSkillController wires the catalogue read surface plus the mutation +
-// import services.
+// import
 func NewSkillController(
-	skills *services.SkillService,
-	mutation *services.SkillMutationService,
-	importer *services.SkillImportService,
+	skills *SkillService,
+	mutation *SkillMutationService,
+	importer *SkillImportService,
 ) SkillController {
 	return &skillController{skills: skills, mutation: mutation, importer: importer}
 }
@@ -74,7 +73,7 @@ func NewSkillController(
 // skillDetail is the full single-skill response — the resolved Skill plus
 // the derived `editable` flag.
 type skillDetail struct {
-	services.Skill
+	Skill
 	Editable bool `json:"editable"`
 }
 
@@ -131,7 +130,7 @@ func (c *skillController) Create(w http.ResponseWriter, r *http.Request) {
 		utils.WriteErrorResponse(w, http.StatusServiceUnavailable, "skill mutation not configured")
 		return
 	}
-	var in services.CreateSkillInput
+	var in CreateSkillInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "invalid JSON body")
 		return
@@ -158,7 +157,7 @@ func (c *skillController) Update(w http.ResponseWriter, r *http.Request) {
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "name: "+err.Error())
 		return
 	}
-	var in services.UpdateSkillInput
+	var in UpdateSkillInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "invalid JSON body")
 		return
@@ -232,19 +231,19 @@ func (c *skillController) Import(w http.ResponseWriter, r *http.Request) {
 // writeMutationError maps service-layer sentinels + structured validation
 // errors onto HTTP status codes with stable error codes the console keys on.
 func (c *skillController) writeMutationError(w http.ResponseWriter, r *http.Request, err error, op string) {
-	var verr *services.SkillValidationError
+	var verr *SkillValidationError
 	switch {
 	case errors.As(err, &verr):
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write(services.MarshalValidationIssues(verr))
-	case errors.Is(err, services.ErrSkillNameCollision):
+		_, _ = w.Write(MarshalValidationIssues(verr))
+	case errors.Is(err, ErrSkillNameCollision):
 		writeCodedError(w, http.StatusConflict, "NAME_COLLISION", err.Error())
-	case errors.Is(err, services.ErrSkillNotEditable):
+	case errors.Is(err, ErrSkillNotEditable):
 		writeCodedError(w, http.StatusForbidden, "SKILL_NOT_EDITABLE", "built-in skills are read-only")
-	case errors.Is(err, services.ErrSkillNotFound):
+	case errors.Is(err, ErrSkillNotFound):
 		utils.WriteErrorResponse(w, http.StatusNotFound, "skill not found")
-	case errors.Is(err, services.ErrImportedSkillInUse):
+	case errors.Is(err, ErrImportedSkillInUse):
 		writeCodedError(w, http.StatusConflict, "IMPORTED_SKILL_IN_USE",
 			"imported skill is referenced by in-flight tasks")
 	default:
