@@ -22,33 +22,27 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/wso2/asdlc/asdlc-service/internal/platform/httpkit"
 	"github.com/wso2/asdlc/asdlc-service/utils"
-	"github.com/wso2/asdlc/asdlc-service/utils/validate"
 )
 
 // requireProjectIDSlug validates the {projectId} path param and writes a 400
 // to w if invalid. Returns true if validation passed and the caller can
 // continue. projectID flows into the on-disk clone path (REPO_BASE_PATH /
 // orgId / projectId) so a malformed value would let a request escape the
-// per-org subtree before any service call.
+// per-org subtree before any service call. Thin delegate over the shared
+// httpkit.RequireSlug logic.
 func requireProjectIDSlug(w http.ResponseWriter, projectID string) bool {
-	if err := validate.Slug(projectID); err != nil {
-		utils.WriteErrorResponse(w, http.StatusBadRequest, "projectId: "+err.Error())
-		return false
-	}
-	return true
+	return httpkit.RequireSlug(w, "projectId", projectID)
 }
 
 // requireOrgIDSlug validates the {orgId} path param and writes a 400 to w if
 // invalid. orgId scopes the git_repositories lookup and flows into the on-disk
 // clone path (REPO_BASE_PATH / orgId / projectId), so a malformed value would
-// let a request escape the per-org subtree before any service call.
+// let a request escape the per-org subtree before any service call. Thin
+// delegate over the shared httpkit.RequireSlug logic.
 func requireOrgIDSlug(w http.ResponseWriter, orgID string) bool {
-	if err := validate.Slug(orgID); err != nil {
-		utils.WriteErrorResponse(w, http.StatusBadRequest, "orgId: "+err.Error())
-		return false
-	}
-	return true
+	return httpkit.RequireSlug(w, "orgId", orgID)
 }
 
 // GitOpsController handles HTTP requests for git operations.

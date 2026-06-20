@@ -28,6 +28,7 @@ import (
 
 	"github.com/wso2/asdlc/asdlc-service/internal/contracts"
 	"github.com/wso2/asdlc/asdlc-service/models"
+	"github.com/wso2/asdlc/asdlc-service/repositories"
 )
 
 // BuildDispatcher is the build-dispatch port the merge handler triggers
@@ -269,7 +270,7 @@ func (h *Handler) PullRequestClosed(ctx context.Context, event, action string, b
 	if mergeSHA == "" {
 		return nil
 	}
-	orgID, projectID, err := lookupProjectByRepo(h.db.WithContext(ctx), p.Repository.FullName)
+	orgID, projectID, err := repositories.LookupOrgProjectByRepoURL(h.db.WithContext(ctx), p.Repository.FullName)
 	if err != nil || projectID == "" {
 		return nil
 	}
@@ -326,37 +327,4 @@ func (h *Handler) Push(ctx context.Context, event, action string, body []byte) e
 func (h *Handler) IssueComment(ctx context.Context, event, action string, body []byte) error {
 	// Persisted in webhook_payloads for audit; no state effect.
 	return nil
-}
-
-// lookupProjectByRepo translates a GitHub repo full_name to its owning ASDLC
-// (orgID, projectID) via the git_repositories table. The repo row is the
-// authority: repo URLs are globally unique, so the matched row disambiguates
-// the project. Callers MUST scope task lookups by BOTH org_id and project_id —
-// project_id is only a per-org slug and is reused across orgs, so a
-// project_id-only filter collides across orgs that share a slug and can absorb
-// a webhook into the wrong org's task. Pass a request-scoped *gorm.DB
-// (db.WithContext(ctx)) or an open transaction.
-func lookupProjectByRepo(db *gorm.DB, repoFullName string) (orgID, projectID string, err error) {
-	if repoFullName == "" {
-		return "", "", nil
-	}
-	var r struct {
-		OrgID     string
-		ProjectID string
-	}
-	// INT-2 (sink): match the canonical clone URL EXACTLY, not with an
-	// unanchored `ILIKE '%'+fullName` whose leading wildcard matched any host
-	// and any path suffix — a payload could otherwise resolve another org's
-	// repo. Anchored on host+owner+repo; both `.git` and bare shapes.
-	canonical := "https://github.com/" + repoFullName
-	err = db.Raw(`
-		SELECT org_id, project_id
-		FROM git_repositories
-		WHERE repo_url = ? OR repo_url = ?
-		LIMIT 1
-	`, canonical, canonical+".git").Scan(&r).Error
-	if err != nil {
-		return "", "", err
-	}
-	return r.OrgID, r.ProjectID, nil
 }

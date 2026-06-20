@@ -32,7 +32,6 @@
 package orgcreds
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -42,6 +41,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/wso2/asdlc/asdlc-service/internal/platform/httpkit"
 	"github.com/wso2/asdlc/asdlc-service/utils"
 )
 
@@ -124,7 +124,7 @@ func (c *orgGitHubController) StartConnect(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	actor := actorFromContext(r.Context())
+	actor := httpkit.ActorFromContext(r.Context())
 	state, err := c.bearerSvc.IssueConnectState(orgHandle, actor, body.InstallationID, 15*time.Minute)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "issue connect-state failed", "error", err, "org", orgHandle)
@@ -359,20 +359,4 @@ func (c *orgGitHubController) Disconnect(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	utils.WriteSuccessResponse(w, http.StatusOK, map[string]string{"status": "disconnected"})
-}
-
-// ----------------------------------------------------------------------------
-// Helpers
-// ----------------------------------------------------------------------------
-
-// actorFromContext extracts the requesting user's identifier from the
-// JWT-authenticated context. Falls back to "unknown" when the JWT
-// middleware didn't populate claims.
-func actorFromContext(ctx context.Context) string {
-	if v := ctx.Value("user.sub"); v != nil { //nolint:revive — string-keyed legacy ctx
-		if s, ok := v.(string); ok {
-			return s
-		}
-	}
-	return "unknown"
 }

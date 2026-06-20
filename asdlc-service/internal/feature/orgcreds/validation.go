@@ -19,22 +19,14 @@ package orgcreds
 import (
 	"net/http"
 
-	"github.com/wso2/asdlc/asdlc-service/utils"
-	"github.com/wso2/asdlc/asdlc-service/utils/validate"
+	"github.com/wso2/asdlc/asdlc-service/internal/platform/httpkit"
 )
 
 // requireOrgHandle validates the {orgHandle} path param. Returns true if
 // validation passed; on failure writes a 400 to w. orgHandle flows into
 // OpenChoreo namespace lookups, GitHub repo paths, and OpenBao keys —
-// the slug invariant is the cross-tenant fence.
-//
-// This mirrors the same helper in package controllers; the credential
-// controllers that moved into orgcreds keep a local copy so the package
-// has no dependency on controllers.
+// the slug invariant is the cross-tenant fence. Thin delegate over the
+// shared httpkit.RequireSlug logic.
 func requireOrgHandle(w http.ResponseWriter, v string) bool {
-	if err := validate.Slug(v); err != nil {
-		utils.WriteErrorResponse(w, http.StatusBadRequest, "orgHandle: "+err.Error())
-		return false
-	}
-	return true
+	return httpkit.RequireSlug(w, "orgHandle", v)
 }

@@ -28,6 +28,7 @@ import (
 
 	"github.com/wso2/asdlc/asdlc-service/internal/contracts"
 	"github.com/wso2/asdlc/asdlc-service/models"
+	"github.com/wso2/asdlc/asdlc-service/repositories"
 )
 
 // Projector applies derived events to ComponentTask state under per-task
@@ -104,7 +105,7 @@ func (p *Projector) ApplyToTaskByPR(
 	return p.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Resolve repo_full_name → project_id via git_repositories. The repo
 		// row is the authority here; without it the PR number is ambiguous.
-		orgID, projectID, err := lookupProjectByRepo(tx, repoFullName)
+		orgID, projectID, err := repositories.LookupOrgProjectByRepoURL(tx, repoFullName)
 		if err != nil {
 			return fmt.Errorf("resolve project for repo %q: %w", repoFullName, err)
 		}
@@ -295,7 +296,7 @@ func (p *Projector) LinkTaskByIssue(
 		return fmt.Errorf("repoFullName is required")
 	}
 	return p.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		orgID, projectID, err := lookupProjectByRepo(tx, repoFullName)
+		orgID, projectID, err := repositories.LookupOrgProjectByRepoURL(tx, repoFullName)
 		if err != nil {
 			return fmt.Errorf("resolve project for repo %q: %w", repoFullName, err)
 		}

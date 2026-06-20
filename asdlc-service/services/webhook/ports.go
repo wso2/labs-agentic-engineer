@@ -22,11 +22,13 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
 
-// BuildOps is the build-dispatch surface webhook triggers (merge → build,
-// auth-retry). services.WorkflowRunService satisfies it structurally
-// (superset); wired at the composition root so webhook needn't import services.
+// BuildOps is the auth-retry surface webhook triggers: the build watcher
+// re-mints a build token and recreates the WorkflowRun when a build failed on
+// an expired/invalid token. (Merge → build dispatch now lives in the task
+// feature, off pull_request.closed, so it's no longer part of this port.)
+// services.WorkflowRunService satisfies it structurally (superset); wired at
+// the composition root so webhook needn't import services.
 type BuildOps interface {
-	DispatchTaskBuild(ctx context.Context, task *models.ComponentTask, sha string) (runName string, err error)
 	RetryAuthFailedBuild(ctx context.Context, task *models.ComponentTask) (runName string, err error)
 }
 

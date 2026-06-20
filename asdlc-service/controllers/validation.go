@@ -17,76 +17,47 @@
 package controllers
 
 import (
-	"context"
 	"net/http"
 
+	"github.com/wso2/asdlc/asdlc-service/internal/platform/httpkit"
 	"github.com/wso2/asdlc/asdlc-service/utils"
 	"github.com/wso2/asdlc/asdlc-service/utils/validate"
 )
 
-// actorFromContext extracts the requesting user's identifier from the
-// JWT-authenticated context. Falls back to "unknown" when the JWT
-// middleware didn't populate claims.
-//
-// A copy of this helper also lives in package orgcreds (the credential
-// controllers that moved there) — both are 7-line ctx readers.
-func actorFromContext(ctx context.Context) string {
-	if v := ctx.Value("user.sub"); v != nil { //nolint:revive — string-keyed legacy ctx
-		if s, ok := v.(string); ok {
-			return s
-		}
-	}
-	return "unknown"
-}
-
 // requireOrgHandle validates the {orgHandle} path param. Returns true if
 // validation passed; on failure writes a 400 to w. orgHandle flows into
 // OpenChoreo namespace lookups, GitHub repo paths, and OpenBao keys —
-// the slug invariant is the cross-tenant fence.
+// the slug invariant is the cross-tenant fence. Thin delegate over the
+// shared httpkit.RequireSlug logic.
 func requireOrgHandle(w http.ResponseWriter, v string) bool {
-	if err := validate.Slug(v); err != nil {
-		utils.WriteErrorResponse(w, http.StatusBadRequest, "orgHandle: "+err.Error())
-		return false
-	}
-	return true
+	return httpkit.RequireSlug(w, "orgHandle", v)
 }
 
 // requireProjectName validates the {projectName} path param. Same shape as
 // orgHandle — DNS-label-shaped slug. Used in repo paths, k8s resource
 // names, GitHub repo slugs.
 func requireProjectName(w http.ResponseWriter, v string) bool {
-	if err := validate.Slug(v); err != nil {
-		utils.WriteErrorResponse(w, http.StatusBadRequest, "projectName: "+err.Error())
-		return false
-	}
-	return true
+	return httpkit.RequireSlug(w, "projectName", v)
 }
 
 // requireComponentName validates the {componentName} path param. DNS-label
 // slug; used in workspace paths and k8s component names.
 func requireComponentName(w http.ResponseWriter, v string) bool {
-	if err := validate.Slug(v); err != nil {
-		utils.WriteErrorResponse(w, http.StatusBadRequest, "componentName: "+err.Error())
-		return false
-	}
-	return true
+	return httpkit.RequireSlug(w, "componentName", v)
 }
 
 // requireTaskID validates the {taskId} path param as a canonical UUID.
 // taskId is the only identifier in the BFF surface that's a real UUID
 // (ComponentTask PK).
 func requireTaskID(w http.ResponseWriter, v string) bool {
-	if err := validate.UUID(v); err != nil {
-		utils.WriteErrorResponse(w, http.StatusBadRequest, "taskId: "+err.Error())
-		return false
-	}
-	return true
+	return httpkit.RequireUUID(w, "taskId", v)
 }
 
 // validateSlugParam is a generic slug validator that lets a caller surface
 // a parameter name in the error. Returns the validation error (or nil).
 // Caller should `return` on non-nil because the 400 response is already
-// written.
+// written. The slug+400 logic lives in httpkit.RequireSlug; this keeps the
+// error-returning shape its callers' control flow depends on.
 func validateSlugParam(w http.ResponseWriter, paramName, v string) error {
 	if err := validate.Slug(v); err != nil {
 		utils.WriteErrorResponse(w, http.StatusBadRequest, paramName+": "+err.Error())

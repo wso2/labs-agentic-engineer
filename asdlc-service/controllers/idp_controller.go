@@ -23,6 +23,7 @@ import (
 	"net/http"
 
 	"github.com/wso2/asdlc/asdlc-service/clients/oidc"
+	"github.com/wso2/asdlc/asdlc-service/internal/platform/httpkit"
 	"github.com/wso2/asdlc/asdlc-service/services"
 	"github.com/wso2/asdlc/asdlc-service/utils"
 )
@@ -93,7 +94,7 @@ func (c *idpController) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	actor := actorFromContext(r.Context())
+	actor := httpkit.ActorFromContext(r.Context())
 	updated, err := c.service.UpdateProfile(r.Context(), orgID, actor, services.UpdateProfileRequest{
 		Kind:    body.Kind,
 		Issuer:  body.Issuer,
@@ -117,7 +118,7 @@ func (c *idpController) RegenerateSecret(w http.ResponseWriter, r *http.Request)
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "orgHandle required")
 		return
 	}
-	actor := actorFromContext(r.Context())
+	actor := httpkit.ActorFromContext(r.Context())
 	newSecret, err := c.service.RegenerateClientSecret(r.Context(), orgID, actor)
 	if err != nil {
 		if errors.Is(err, services.ErrIDPThunderUnavailable) {
@@ -166,6 +167,6 @@ func (c *idpController) DiscoverIssuer(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// actorFromContext lives in org_github_controller.go — reusing it
-// here keeps the audit-event actor field consistent across all
-// admin-action endpoints.
+// The audit-event actor for these admin-action endpoints comes from
+// httpkit.ActorFromContext, shared across all controllers so the actor
+// field stays consistent.

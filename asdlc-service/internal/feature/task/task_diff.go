@@ -377,36 +377,3 @@ func loadBaselineBatch(ctx context.Context, repo repositories.TaskRepository, or
 		SourceDesignVersion: designVersion,
 	}, nil
 }
-
-// concatRequirementBundle joins all requirement files into a single corpus
-// for agent input. Files are emitted in alphabetical order with a heading
-// prefix so the LLM sees consistent boundaries between documents.
-//
-// Only Markdown content is included in the spec. `.excalidraw` JSON is
-// noisy for the LLM (it's the rendered scene, not the DSL); `.dsl` files
-// are surfaced separately via the architect's `read_wireframe` tool.
-//
-// Verbatim copy of services/design_service.go::concatRequirementBundle —
-// kept local so the task package has no edge to the flat services package.
-func concatRequirementBundle(files map[string]string) string {
-	if len(files) == 0 {
-		return ""
-	}
-	names := make([]string, 0, len(files))
-	for k := range files {
-		if !strings.HasSuffix(strings.ToLower(k), ".md") {
-			continue
-		}
-		names = append(names, k)
-	}
-	sort.Strings(names)
-	var sb strings.Builder
-	for i, name := range names {
-		if i > 0 {
-			sb.WriteString("\n\n")
-		}
-		sb.WriteString(fmt.Sprintf("# %s\n\n", name))
-		sb.WriteString(files[name])
-	}
-	return sb.String()
-}

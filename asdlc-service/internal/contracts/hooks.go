@@ -24,14 +24,12 @@ import "context"
 // which is what keeps the design↔task and task↔codingagent edges acyclic.
 // They are wired (emitter EMITS, provider PROVIDES) at the composition root.
 //
-// NOTE: these interfaces are declared now (the `state-machine` phase) so the
-// later phases that wire them — projector/webhook, task, codingagent — have a
-// shared home to reference. Method signatures use only primitives + contracts
-// types (never models structs) to keep contracts a pure leaf; they are
-// PROVISIONAL and may be refined when their first real consumer/provider lands.
-// Today these still flow through concrete setters (component's
-// *TraitSyncService + SetTraitSync; org_disconnect's applyDisconnect func);
-// the migration onto these interfaces happens in the owning phases.
+// Today TaskTransitions is the only wired hook here. The merge-time build
+// trigger and the design→task reconcile edge still flow through concrete
+// wiring (task's merged-PR handler → BuildDispatcher port; the direct
+// design→task call); their contracts-level hooks will be re-added here, with
+// signatures matching the live consumers, when those consumers migrate onto
+// this leaf.
 
 // TaskTransitions is the task projector's status-write surface (sole writer of
 // ComponentTask.Status). Provided by task's projector; consumed by codingagent
@@ -39,19 +37,4 @@ import "context"
 type TaskTransitions interface {
 	MarkBuilding(ctx context.Context, taskID, sha, runName string) error
 	ApplyBuildResult(ctx context.Context, taskID string, event TaskEvent, errMsg string) error
-}
-
-// BuildDispatcher (a.k.a. OnTaskMerged) is the merge-time build trigger: task's
-// merged-PR handler EMITS it, codingagent's WorkflowRunService PROVIDES it.
-// A NEW hook — distinct from the post-deploy OnTaskDeployed cascade (§4 cycle
-// proof, §6.10).
-type BuildDispatcher interface {
-	DispatchTaskBuild(ctx context.Context, taskID string) error
-}
-
-// DesignChanged is emitted by the design feature after a design edit and
-// consumed by task to reconcile pending work — replacing today's direct
-// design→task call so design never imports task (§4).
-type DesignChanged interface {
-	OnDesignChanged(ctx context.Context, org, projectID string) error
 }

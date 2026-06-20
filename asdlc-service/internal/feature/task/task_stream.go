@@ -105,7 +105,7 @@ func (s *taskService) StreamGenerateTasks(ctx context.Context, orgID, projectID 
 	if len(reqFiles) == 0 {
 		return artifacts.ErrSpecNotFound
 	}
-	specContent := concatRequirementBundle(reqFiles)
+	specContent := artifacts.ConcatRequirementBundle(reqFiles)
 	if specContent == "" {
 		return artifacts.ErrSpecNotFound
 	}
@@ -181,7 +181,7 @@ func (s *taskService) StreamGenerateTasks(ctx context.Context, orgID, projectID 
 			// Pull every requirement file at the baseline tag and concatenate.
 			// The tag is a `v<N>` requirements tag; missing files are tolerated.
 			if files, err := s.artifactSvc.GetRequirementsAtTag(ctx, orgID, projectID, baseline.SourceSpecVersion); err == nil {
-				prevSpec = concatRequirementBundle(files)
+				prevSpec = artifacts.ConcatRequirementBundle(files)
 			}
 		}
 	}
@@ -727,7 +727,7 @@ func (s *taskService) RegenerateTaskBody(ctx context.Context, taskID string, out
 	if err != nil {
 		return fmt.Errorf("list requirements: %w", err)
 	}
-	specContent := concatRequirementBundle(reqFiles)
+	specContent := artifacts.ConcatRequirementBundle(reqFiles)
 	design, err := s.store.ReadDesign(ctx, task.OrgID, task.ProjectID)
 	if err != nil || design == nil {
 		return fmt.Errorf("read design: %w", err)
