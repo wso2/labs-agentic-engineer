@@ -38,6 +38,10 @@ type ListByOrgFilter struct {
 
 type TaskRepository interface {
 	GetByID(ctx context.Context, id string) (*models.ComponentTask, error)
+	// GetByIDScoped returns the task only when it belongs to orgID. Returns
+	// (nil, nil) when there is no such (orgID, id) row — the SAME result for
+	// "no such task" and "task belongs to another org" (no existence leak).
+	GetByIDScoped(ctx context.Context, orgID, id string) (*models.ComponentTask, error)
 	GetByComponentName(ctx context.Context, orgID, projectID, componentName string) (*models.ComponentTask, error)
 	GetByIssueURL(ctx context.Context, issueURL string) (*models.ComponentTask, error)
 	ListByProjectID(ctx context.Context, orgID, projectID string) ([]models.ComponentTask, error)
@@ -75,6 +79,20 @@ func NewTaskRepository(db *gorm.DB) TaskRepository {
 func (r *taskRepository) GetByID(ctx context.Context, id string) (*models.ComponentTask, error) {
 	var task models.ComponentTask
 	err := r.db.WithContext(ctx).First(&task, "id = ?", id).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &task, nil
+}
+
+func (r *taskRepository) GetByIDScoped(ctx context.Context, orgID, id string) (*models.ComponentTask, error) {
+	var task models.ComponentTask
+	err := r.db.WithContext(ctx).
+		Where("org_id = ? AND id = ?", orgID, id).
+		First(&task).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}

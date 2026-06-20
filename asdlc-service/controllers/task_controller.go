@@ -221,12 +221,15 @@ func (c *taskController) ListOrgTasks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *taskController) GetTask(w http.ResponseWriter, r *http.Request) {
+	orgHandle := r.PathValue("orgHandle")
 	taskID := r.PathValue("taskId")
-	if !requireTaskID(w, taskID) {
+	if !requireOrgHandle(w, orgHandle) || !requireTaskID(w, taskID) {
 		return
 	}
 
-	task, err := c.service.GetTask(r.Context(), taskID)
+	// Load org-scoped so a cross-org {taskId} cannot leak another org's task
+	// (closes the by-UUID IDOR on this operator route).
+	task, err := c.service.GetTaskScoped(r.Context(), orgHandle, taskID)
 	if err != nil {
 		if errors.Is(err, services.ErrTaskNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "task not found")
@@ -323,8 +326,20 @@ func (c *taskController) GenerateTasks(w http.ResponseWriter, r *http.Request) {
 
 // RegenerateTaskBody re-runs Phase 2 detail for a single task.
 func (c *taskController) RegenerateTaskBody(w http.ResponseWriter, r *http.Request) {
+	orgHandle := r.PathValue("orgHandle")
 	taskID := r.PathValue("taskId")
-	if !requireTaskID(w, taskID) {
+	if !requireOrgHandle(w, orgHandle) || !requireTaskID(w, taskID) {
+		return
+	}
+	// Org-scoped pre-check 404s on a cross-org/unknown {taskId} before any
+	// work (closes the by-UUID IDOR on this operator route).
+	if _, err := c.service.GetTaskScoped(r.Context(), orgHandle, taskID); err != nil {
+		if errors.Is(err, services.ErrTaskNotFound) {
+			utils.WriteErrorResponse(w, http.StatusNotFound, "task not found")
+			return
+		}
+		slog.ErrorContext(r.Context(), "regenerate task body: load task failed", "error", err, "taskId", taskID)
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "failed to get task")
 		return
 	}
 	flusher, ok := w.(http.Flusher)
@@ -359,12 +374,15 @@ type TaskStatusResponse struct {
 // GetTaskStatus combines ComponentTask + WorkflowRun.Status.Tasks[] for
 // the build run (when present). No new persisted state.
 func (c *taskController) GetTaskStatus(w http.ResponseWriter, r *http.Request) {
+	orgHandle := r.PathValue("orgHandle")
 	taskID := r.PathValue("taskId")
-	if !requireTaskID(w, taskID) {
+	if !requireOrgHandle(w, orgHandle) || !requireTaskID(w, taskID) {
 		return
 	}
 
-	task, err := c.service.GetTask(r.Context(), taskID)
+	// Org-scoped load 404s on a cross-org/unknown {taskId} before any work
+	// (closes the by-UUID IDOR — was: operated on another org's task / OC run).
+	task, err := c.service.GetTaskScoped(r.Context(), orgHandle, taskID)
 	if err != nil {
 		if errors.Is(err, services.ErrTaskNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "task not found")
@@ -493,12 +511,24 @@ func (c *taskController) VerificationFailed(w http.ResponseWriter, r *http.Reque
 // WorkflowRun + freshly minted per-task bearer. Standard user auth
 // applies (mounted on the org/project-scoped task path).
 func (c *taskController) Retry(w http.ResponseWriter, r *http.Request) {
+	orgHandle := r.PathValue("orgHandle")
 	taskID := r.PathValue("taskId")
-	if !requireTaskID(w, taskID) {
+	if !requireOrgHandle(w, orgHandle) || !requireTaskID(w, taskID) {
 		return
 	}
 	if c.dispatchSvc == nil {
 		utils.WriteErrorResponse(w, http.StatusServiceUnavailable, "dispatch service not configured")
+		return
+	}
+	// Org-scoped pre-check 404s on a cross-org/unknown {taskId} before any
+	// dispatch work (closes the by-UUID IDOR on this operator route).
+	if _, err := c.service.GetTaskScoped(r.Context(), orgHandle, taskID); err != nil {
+		if errors.Is(err, services.ErrTaskNotFound) {
+			utils.WriteErrorResponse(w, http.StatusNotFound, "task not found")
+			return
+		}
+		slog.ErrorContext(r.Context(), "retry: load task failed", "task", taskID, "error", err)
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "failed to get task")
 		return
 	}
 	res, err := c.dispatchSvc.RetryTask(r.Context(), taskID)
@@ -511,8 +541,21 @@ func (c *taskController) Retry(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *taskController) ExecTask(w http.ResponseWriter, r *http.Request) {
+	orgHandle := r.PathValue("orgHandle")
 	taskID := r.PathValue("taskId")
-	if !requireTaskID(w, taskID) {
+	if !requireOrgHandle(w, orgHandle) || !requireTaskID(w, taskID) {
+		return
+	}
+
+	// Org-scoped pre-check 404s on a cross-org/unknown {taskId} before any
+	// work (closes the by-UUID IDOR on this operator route).
+	if _, err := c.service.GetTaskScoped(r.Context(), orgHandle, taskID); err != nil {
+		if errors.Is(err, services.ErrTaskNotFound) {
+			utils.WriteErrorResponse(w, http.StatusNotFound, "task not found")
+			return
+		}
+		slog.ErrorContext(r.Context(), "exec task: load task failed", "error", err, "taskId", taskID)
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "failed to get task")
 		return
 	}
 

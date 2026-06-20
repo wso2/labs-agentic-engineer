@@ -38,6 +38,9 @@ import (
 
 type TaskService interface {
 	GetTask(ctx context.Context, taskID string) (*models.ComponentTask, error)
+	// GetTaskScoped returns the org's task or ErrTaskNotFound if the task does not
+	// exist OR belongs to another org (operator routes — closes the by-UUID IDOR).
+	GetTaskScoped(ctx context.Context, orgHandle, taskID string) (*models.ComponentTask, error)
 	GetTasks(ctx context.Context, orgID, projectID string) (*models.Tasks, error)
 	GetTaskByComponent(ctx context.Context, orgID, projectID, componentName string) (*models.ComponentTask, error)
 	ListTasks(ctx context.Context, orgID, projectID string) ([]models.ComponentTask, error)
@@ -148,6 +151,17 @@ func (s *taskService) GetTask(ctx context.Context, taskID string) (*models.Compo
 		return nil, ErrTaskNotFound
 	}
 	return task, nil
+}
+
+func (s *taskService) GetTaskScoped(ctx context.Context, orgHandle, taskID string) (*models.ComponentTask, error) {
+	t, err := s.taskRepo.GetByIDScoped(ctx, orgHandle, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("get task scoped: %w", err)
+	}
+	if t == nil {
+		return nil, ErrTaskNotFound
+	}
+	return t, nil
 }
 
 func (s *taskService) GetTasks(ctx context.Context, orgID, projectID string) (*models.Tasks, error) {
