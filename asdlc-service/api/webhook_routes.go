@@ -19,7 +19,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/wso2/asdlc/asdlc-service/controllers"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/webhook"
 )
 
 // registerWebhookRoutes mounts the inbound GitHub webhook receiver. The routes
@@ -34,7 +34,7 @@ import (
 //     scoped to base path /api/v1/webhooks and forwards to the BFF verbatim,
 //     so GitHub deliveries arrive here. (jwtAuth is disabled on that gateway
 //     endpoint; the per-repo webhook URL is GITHUB_WEBHOOK_DELIVERY_URL.)
-func registerWebhookRoutes(mux *http.ServeMux, c controllers.WebhookController) {
+func registerWebhookRoutes(mux *http.ServeMux, c webhook.WebhookController) {
 	mux.HandleFunc("POST /webhooks/github", c.Receive)
 	mux.HandleFunc("POST /api/v1/webhooks/github", c.Receive)
 }

@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package controllers
+package webhook
 
 import (
 	"encoding/json"
@@ -25,7 +25,6 @@ import (
 	"strings"
 
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/orgcreds"
-	"github.com/wso2/asdlc/asdlc-service/services/webhook"
 )
 
 // isLookupNotFound reports whether err is a 404 surfaced by the routing
@@ -61,16 +60,16 @@ type WebhookController interface {
 }
 
 type webhookController struct {
-	verifier   *webhook.Verifier
-	deliveries *webhook.DeliveryStore
-	router     *webhook.Router
-	lookup     webhook.OcOrgIDLookup // PR B: served by CredentialService
-	cache      *webhook.RoutingCache // PR B: 60s in-process cache
+	verifier   *Verifier
+	deliveries *DeliveryStore
+	router     *Router
+	lookup     OcOrgIDLookup // PR B: served by CredentialService
+	cache      *RoutingCache // PR B: 60s in-process cache
 }
 
 // NewWebhookController wires the receiver. lookup + cache are required
 // in PR B; passing nil disables the receiver.
-func NewWebhookController(verifier *webhook.Verifier, deliveries *webhook.DeliveryStore, router *webhook.Router, lookup webhook.OcOrgIDLookup, cache *webhook.RoutingCache) WebhookController {
+func NewWebhookController(verifier *Verifier, deliveries *DeliveryStore, router *Router, lookup OcOrgIDLookup, cache *RoutingCache) WebhookController {
 	return &webhookController{
 		verifier:   verifier,
 		deliveries: deliveries,
@@ -98,11 +97,11 @@ func (c *webhookController) Receive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ocOrgID, err := webhook.ResolveOcOrgID(ctx, c.lookup, c.cache, event, body)
+	ocOrgID, err := ResolveOcOrgID(ctx, c.lookup, c.cache, event, body)
 	if err != nil {
 		// No-routing-key events (ping, etc.) are 200 ack'd as Phase 0 audit
 		// behaviour.
-		if errors.Is(err, webhook.ErrNoRoutingKey) {
+		if errors.Is(err, ErrNoRoutingKey) {
 			slog.DebugContext(ctx, "webhook: no routing key — ack noop",
 				"event", event, "deliveryId", deliveryID, "result", "no_routing_key")
 			w.WriteHeader(http.StatusOK)
@@ -129,7 +128,7 @@ func (c *webhookController) Receive(w http.ResponseWriter, r *http.Request) {
 	limiterKey := ocOrgID + "|" + r.RemoteAddr
 
 	if err := c.verifier.VerifyWithKey(ctx, ocOrgID, limiterKey, signature, body); err != nil {
-		if errors.Is(err, webhook.ErrSignatureMismatch) || errors.Is(err, webhook.ErrSignatureMalformed) {
+		if errors.Is(err, ErrSignatureMismatch) || errors.Is(err, ErrSignatureMalformed) {
 			slog.WarnContext(ctx, "webhook: signature rejected",
 				"deliveryId", deliveryID, "event", event, "ocOrgId", ocOrgID, "error", err, "result", "hmac_failed")
 			http.Error(w, "signature", http.StatusUnauthorized)

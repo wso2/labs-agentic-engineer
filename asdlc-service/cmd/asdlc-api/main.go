@@ -68,7 +68,7 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/middleware/logger"
 	"github.com/wso2/asdlc/asdlc-service/models"
 	"github.com/wso2/asdlc/asdlc-service/repositories"
-	"github.com/wso2/asdlc/asdlc-service/services/webhook"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/webhook"
 	"gorm.io/gorm"
 )
 
@@ -855,7 +855,7 @@ func main() {
 		webhookRouter.Register(event, action, webhook.EventHandlerFunc(h))
 	}, db, projector, wfRunService)
 	webhook.RegisterInstallationHandlers(webhookRouter, db, credService, issueService, taskRepo)
-	webhookCtrl := controllers.NewWebhookController(webhookVerifier, deliveryStore, webhookRouter, routingLookup, routingCache)
+	webhookCtrl := webhook.NewWebhookController(webhookVerifier, deliveryStore, webhookRouter, routingLookup, routingCache)
 
 	// Build watcher — 10s sweep for in-flight WorkflowRuns. Started after
 	// the HTTP server is up so it's not killed during handler init failures.

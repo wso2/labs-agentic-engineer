@@ -33,9 +33,9 @@ var ErrNoRoutingKey = errors.New("webhook: no routing key")
 
 // RoutingKey extracts whichever identifier maps an event to an ocOrgId.
 type RoutingKey struct {
-	Kind            string // "installation" or "repository" or "platform"
-	InstallationID  int64
-	RepoFullName    string
+	Kind           string // "installation" or "repository" or "platform"
+	InstallationID int64
+	RepoFullName   string
 }
 
 // extractRoutingKey peeks at the relevant fields by event class.

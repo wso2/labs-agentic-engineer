@@ -38,6 +38,7 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/requirements"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/skills"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/task"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/webhook"
 	"github.com/wso2/asdlc/asdlc-service/internal/platform/tenant"
 	"github.com/wso2/asdlc/asdlc-service/middleware"
 	jwtmw "github.com/wso2/asdlc/asdlc-service/middleware/jwt"
@@ -59,7 +60,7 @@ type AppParams struct {
 	BoardController            task.BoardController
 	ConfigController           component.ConfigController
 	CollabController           requirements.CollabController
-	WebhookController          controllers.WebhookController
+	WebhookController          webhook.WebhookController
 	OrgGitHubController        orgcreds.OrgGitHubController
 	OrgAnthropicController     orgcreds.OrgAnthropicController
 	SkillController            skills.SkillController
