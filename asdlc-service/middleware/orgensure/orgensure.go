@@ -33,18 +33,26 @@
 package orgensure
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 
 	"github.com/wso2/asdlc/asdlc-service/middleware/jwt"
-	"github.com/wso2/asdlc/asdlc-service/services"
 )
+
+// OrgEnsurer is the narrow JIT-ensure port this middleware needs. The
+// organization feature's OrganizationService satisfies it; defining it here
+// (consumer side) keeps the middleware layer from importing a feature/the flat
+// services package — the concrete is wired at the composition root.
+type OrgEnsurer interface {
+	EnsureForOuHandle(ctx context.Context, ouHandle, thunderOrgUUID string) error
+}
 
 // Middleware verifies the inbound request's ouHandle has a matching OC
 // namespace and warms the local row cache. Best-effort — never 5xx the
 // user's request: missing namespace, transient OC blip, and DB issues
 // all log and pass through.
-func Middleware(svc services.OrganizationService) func(http.Handler) http.Handler {
+func Middleware(svc OrgEnsurer) func(http.Handler) http.Handler {
 	if svc == nil {
 		// Tests + dev configurations may run without a DB; the
 		// middleware is a passthrough in that case.
