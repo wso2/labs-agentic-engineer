@@ -19,6 +19,7 @@ package repositories
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"gorm.io/gorm"
@@ -49,6 +50,14 @@ type TaskRepository interface {
 	// ReachReconciliationBanner (status='abandoned', cause='repo.unselected',
 	// since=now-24h) and by future audit UIs.
 	ListByOrgID(ctx context.Context, orgID string, f ListByOrgFilter) ([]models.ComponentTask, error)
+	// GetBaselineBatch returns the most-recent active batch's (batchID,
+	// specVersion, designVersion) for an org+project, or zero values if none.
+	// "Active" means the batch has at least one task in a live status
+	// (pending, in_progress, ready_for_review, merged, building, deployed);
+	// rejected / failed / abandoned do not qualify a batch as a baseline.
+	// SourceSpecVersion / SourceDesignVersion are git tag strings (e.g. "v1",
+	// "v1-2"), not integers. Scoped by org_id AND project_id.
+	GetBaselineBatch(ctx context.Context, orgID, projectID string) (batchID, specVersion, designVersion string, err error)
 	Create(ctx context.Context, task *models.ComponentTask) error
 	Update(ctx context.Context, task *models.ComponentTask) error
 	DeleteByProjectID(ctx context.Context, orgID, projectID string) error
@@ -148,6 +157,47 @@ func (r *taskRepository) ListByOrgID(ctx context.Context, orgID string, f ListBy
 		return nil, err
 	}
 	return tasks, nil
+}
+
+func (r *taskRepository) GetBaselineBatch(ctx context.Context, orgID, projectID string) (batchID, specVersion, designVersion string, err error) {
+	type row struct {
+		BatchID             *string
+		SourceSpecVersion   *string
+		SourceDesignVersion *string
+	}
+	live := []string{
+		string(models.TaskStatusPending),
+		string(models.TaskStatusInProgress),
+		string(models.TaskStatusReadyForReview),
+		string(models.TaskStatusMerged),
+		string(models.TaskStatusBuilding),
+		string(models.TaskStatusDeployed),
+	}
+	var r0 row
+	res := r.db.WithContext(ctx).
+		Model(&models.ComponentTask{}).
+		Select("batch_id", "source_spec_version", "source_design_version").
+		Where("org_id = ? AND project_id = ?", orgID, projectID).
+		Where("batch_id IS NOT NULL").
+		Where("status IN ?", live).
+		Group("batch_id, source_spec_version, source_design_version").
+		Order("MAX(created_at) DESC").
+		Limit(1).
+		Scan(&r0)
+	if res.Error != nil {
+		return "", "", "", fmt.Errorf("baseline batch query: %w", res.Error)
+	}
+	if res.RowsAffected == 0 || r0.BatchID == nil {
+		return "", "", "", nil
+	}
+	batchID = *r0.BatchID
+	if r0.SourceSpecVersion != nil {
+		specVersion = *r0.SourceSpecVersion
+	}
+	if r0.SourceDesignVersion != nil {
+		designVersion = *r0.SourceDesignVersion
+	}
+	return batchID, specVersion, designVersion, nil
 }
 
 func (r *taskRepository) Create(ctx context.Context, task *models.ComponentTask) error {

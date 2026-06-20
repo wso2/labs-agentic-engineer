@@ -25,6 +25,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/wso2/asdlc/asdlc-service/clients/openchoreo"
+	"github.com/wso2/asdlc/asdlc-service/internal/contracts"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/orgcreds"
@@ -90,19 +91,14 @@ type CodingAgentTrigger struct {
 	AnthropicSecretRef string
 }
 
-// TaskStateProjector is the subset of webhook.Projector that WorkflowRunService
-// needs to atomically transition task state alongside build dispatch. Kept as
-// an interface here so `services` doesn't depend on `services/webhook`
-// (webhook already depends on services for the state machine).
-type TaskStateProjector interface {
-	// MarkBuilding records LastBuildSHA + LastBuildRunName and atomically
-	// transitions merged → building under the per-task lock.
-	MarkBuilding(ctx context.Context, taskID, sha, runName string) error
-	// ApplyBuildResult applies a non-PR lifecycle event (e.g.
-	// TaskEventBuildPathMismatch for merged → failed) with an optional
-	// error message, under the per-task lock.
-	ApplyBuildResult(ctx context.Context, taskID string, event TaskEvent, errMsg string) error
-}
+// TaskStateProjector is the task projector's status-write surface that
+// WorkflowRunService needs to atomically transition task state alongside build
+// dispatch. It is the canonical contracts.TaskTransitions interface, aliased
+// here so the existing field/param type name keeps working and `services`
+// doesn't depend on `services/webhook` (webhook already depends on services for
+// the state machine). The concrete provider (webhook.Projector) is wired at
+// main and satisfies contracts.TaskTransitions.
+type TaskStateProjector = contracts.TaskTransitions
 
 type workflowRunService struct {
 	db                *gorm.DB

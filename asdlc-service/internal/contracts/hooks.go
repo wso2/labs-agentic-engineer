@@ -33,14 +33,12 @@ import "context"
 // *TraitSyncService + SetTraitSync; org_disconnect's applyDisconnect func);
 // the migration onto these interfaces happens in the owning phases.
 
-// TaskTransitions is the task projector's status-write surface (the sole writer
-// of ComponentTask.Status). Consumed by codingagent + webhook so they never
-// import the task feature concretely; provided by task's projector
-// (§4.9 status write-back).
+// TaskTransitions is the task projector's status-write surface (sole writer of
+// ComponentTask.Status). Provided by task's projector; consumed by codingagent
+// (build dispatch + watchers) so they never import the task feature concretely.
 type TaskTransitions interface {
-	MarkBuilding(ctx context.Context, taskID string) error
-	MarkBuilt(ctx context.Context, taskID string) error
-	MarkFailed(ctx context.Context, taskID, cause string) error
+	MarkBuilding(ctx context.Context, taskID, sha, runName string) error
+	ApplyBuildResult(ctx context.Context, taskID string, event TaskEvent, errMsg string) error
 }
 
 // BuildDispatcher (a.k.a. OnTaskMerged) is the merge-time build trigger: task's

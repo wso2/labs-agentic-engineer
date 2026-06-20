@@ -26,6 +26,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/wso2/asdlc/asdlc-service/internal/contracts"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/component"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
@@ -753,7 +754,7 @@ func (s *dispatchService) MarkVerificationFailed(ctx context.Context, taskID, di
 	if len(diagnostic) > 4000 {
 		diagnostic = diagnostic[:4000] + "…(truncated)"
 	}
-	if err := s.projector.ApplyBuildResult(ctx, taskID, TaskEventVerificationFailed, diagnostic); err != nil {
+	if err := s.projector.ApplyBuildResult(ctx, taskID, contracts.TaskEventVerificationFailed, diagnostic); err != nil {
 		return fmt.Errorf("apply verification-failed: %w", err)
 	}
 	slog.InfoContext(ctx, "task marked verification_failed",
@@ -780,7 +781,7 @@ func (s *dispatchService) RetryTask(ctx context.Context, taskID string) (Dispatc
 	if s.projector == nil {
 		return DispatchResult{}, fmt.Errorf("retry: projector not configured")
 	}
-	if err := s.projector.ApplyBuildResult(ctx, taskID, TaskEventRetry, ""); err != nil {
+	if err := s.projector.ApplyBuildResult(ctx, taskID, contracts.TaskEventRetry, ""); err != nil {
 		return DispatchResult{}, fmt.Errorf("apply retry: %w", err)
 	}
 	// Load fresh and clear the dispatch idempotency fields so the next

@@ -23,10 +23,10 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
-	"gorm.io/gorm"
 
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
 	"github.com/wso2/asdlc/asdlc-service/models"
+	"github.com/wso2/asdlc/asdlc-service/repositories"
 )
 
 // DesignDiff captures component-level structural differences between two
@@ -356,41 +356,24 @@ type BaselineBatch struct {
 	SourceDesignVersion string
 }
 
-// loadBaselineBatch implements the SQL from design §7. "Live" means tasks
-// in {pending, in_progress, ready_for_review, merged, building, deployed}.
-// rejected / failed / abandoned do NOT qualify a batch as a baseline. All
-// tasks in a batch share source_spec_version / source_design_version, so
-// the GROUP BY is safe.
-func loadBaselineBatch(ctx context.Context, db *gorm.DB, projectID string) (*BaselineBatch, error) {
-	type row struct {
-		BatchID             *string
-		SourceSpecVersion   *string
-		SourceDesignVersion *string
+// loadBaselineBatch resolves the most recent baseline batch (design §7),
+// org-scoped. "Live" means tasks in {pending, in_progress, ready_for_review,
+// merged, building, deployed}; rejected / failed / abandoned do NOT qualify a
+// batch as a baseline. All tasks in a batch share source_spec_version /
+// source_design_version, so the underlying GROUP BY is safe. The query lives in
+// the repository (org+project scoped); this helper adapts the zero-value "no
+// baseline" signal to the (nil, nil) the diff flow expects.
+func loadBaselineBatch(ctx context.Context, repo repositories.TaskRepository, orgID, projectID string) (*BaselineBatch, error) {
+	batchID, specVersion, designVersion, err := repo.GetBaselineBatch(ctx, orgID, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("baseline: %w", err)
 	}
-	var r row
-	q := `
-		SELECT batch_id, source_spec_version, source_design_version
-		FROM component_tasks
-		WHERE project_id = ?
-		  AND batch_id IS NOT NULL
-		  AND status IN ('pending','in_progress','ready_for_review','merged','building','deployed')
-		GROUP BY batch_id, source_spec_version, source_design_version
-		ORDER BY MAX(created_at) DESC
-		LIMIT 1
-	`
-	res := db.WithContext(ctx).Raw(q, projectID).Scan(&r)
-	if res.Error != nil {
-		return nil, fmt.Errorf("baseline batch query: %w", res.Error)
-	}
-	if res.RowsAffected == 0 || r.BatchID == nil {
+	if batchID == "" {
 		return nil, nil
 	}
-	out := &BaselineBatch{BatchID: *r.BatchID}
-	if r.SourceSpecVersion != nil {
-		out.SourceSpecVersion = *r.SourceSpecVersion
-	}
-	if r.SourceDesignVersion != nil {
-		out.SourceDesignVersion = *r.SourceDesignVersion
-	}
-	return out, nil
+	return &BaselineBatch{
+		BatchID:             batchID,
+		SourceSpecVersion:   specVersion,
+		SourceDesignVersion: designVersion,
+	}, nil
 }

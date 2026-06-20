@@ -50,6 +50,12 @@ type Projector struct {
 	dispatchHook DispatchHook
 }
 
+// Projector is the canonical provider of contracts.TaskTransitions — the task
+// projector's status-write surface consumed by codingagent (build dispatch +
+// watchers). The assertion keeps MarkBuilding/ApplyBuildResult in lockstep
+// with the interface.
+var _ contracts.TaskTransitions = (*Projector)(nil)
+
 // DispatchHook is the post-commit callback fired by the projector when a
 // task transitions into a state that should unblock dependents. The hook
 // implementation owns the cascade (eligibility scan + DispatchService

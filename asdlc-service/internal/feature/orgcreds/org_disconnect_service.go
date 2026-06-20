@@ -71,7 +71,7 @@ type OrgDisconnectService struct {
 	// org-disconnected event. Injected (rather than calling ApplyTaskEvent
 	// directly) so this service can extract to its own feature package
 	// without importing the task state machine — the composition root wires
-	// it to services.ApplyTaskEvent(_, TaskEventOrgDisconnected). Until the
+	// it to contracts.ApplyTaskEvent(_, contracts.TaskEventOrgDisconnected). Until the
 	// state machine moves to contracts (§6.9), this is the consumer-side seam.
 	applyDisconnect func(current models.TaskStatus) (models.TaskStatus, error)
 }

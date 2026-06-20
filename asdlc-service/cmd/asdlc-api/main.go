@@ -45,6 +45,7 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/controllers"
 	"github.com/wso2/asdlc/asdlc-service/database"
 	"github.com/wso2/asdlc/asdlc-service/database/migrations"
+	"github.com/wso2/asdlc/asdlc-service/internal/contracts"
 	"github.com/wso2/asdlc/asdlc-service/internal/credentials"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/component"
@@ -878,7 +879,7 @@ func main() {
 	// Phase 2 PR B — org-scoped GitHub connect/disconnect surface.
 	disconnectSvc := orgcreds.NewOrgDisconnectService(taskRepo, db, credService, issueService,
 		func(s models.TaskStatus) (models.TaskStatus, error) {
-			return services.ApplyTaskEvent(s, services.TaskEventOrgDisconnected)
+			return contracts.ApplyTaskEvent(s, contracts.TaskEventOrgDisconnected)
 		})
 	orgGitHubCtrl := orgcreds.NewOrgGitHubController(
 		credService,

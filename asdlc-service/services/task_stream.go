@@ -160,7 +160,7 @@ func (s *taskService) StreamGenerateTasks(ctx context.Context, orgID, projectID 
 
 	existingForPrompt := filterNonRejectedForPrompt(allTasks)
 
-	baseline, err := loadBaselineBatch(ctx, s.db, projectID)
+	baseline, err := loadBaselineBatch(ctx, s.taskRepo, orgID, projectID)
 	if err != nil {
 		return fmt.Errorf("baseline: %w", err)
 	}
