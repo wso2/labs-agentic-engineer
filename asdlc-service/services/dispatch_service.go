@@ -31,7 +31,6 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/component"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/orgcreds"
-	taskfeature "github.com/wso2/asdlc/asdlc-service/internal/feature/task"
 	"github.com/wso2/asdlc/asdlc-service/internal/platform/tenant"
 	"github.com/wso2/asdlc/asdlc-service/models"
 	"github.com/wso2/asdlc/asdlc-service/repositories"
@@ -941,7 +940,7 @@ func (s *dispatchService) ensureOCComponent(
 	slog.InfoContext(ctx, "ensureOCComponent: creating OC component via service identity",
 		"task", task.ID, "org", task.OrgID, "project", task.ProjectID, "component", componentName)
 
-	comp, err := taskfeature.ResolveDesignComponentVia(ctx, s.store, task)
+	comp, err := artifacts.ResolveDesignComponent(ctx, s.store, task)
 	if err != nil {
 		return fmt.Errorf("resolve component: %w", err)
 	}
