@@ -43,11 +43,12 @@ func NewRepoBoardController(service services.RepoBoardService) RepoBoardControll
 }
 
 func (c *repoBoardController) GetBoard(w http.ResponseWriter, r *http.Request) {
+	orgID := r.PathValue("orgId")
 	projectID := r.PathValue("projectId")
 
-	result, err := c.service.GetBoard(r.Context(), projectID)
+	result, err := c.service.GetBoard(r.Context(), orgID, projectID)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "get board failed", "error", err, "project", projectID)
+		slog.ErrorContext(r.Context(), "get board failed", "error", err, "org", orgID, "project", projectID)
 		utils.WriteErrorResponse(w, http.StatusInternalServerError, "failed to get board")
 		return
 	}
@@ -56,6 +57,7 @@ func (c *repoBoardController) GetBoard(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *repoBoardController) MoveIssueToStatus(w http.ResponseWriter, r *http.Request) {
+	orgID := r.PathValue("orgId")
 	projectID := r.PathValue("projectId")
 
 	var req struct {
@@ -71,8 +73,8 @@ func (c *repoBoardController) MoveIssueToStatus(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	if err := c.service.MoveIssueToStatus(r.Context(), projectID, req.IssueURL, req.TargetStatus); err != nil {
-		slog.ErrorContext(r.Context(), "move board item failed", "error", err, "project", projectID, "issueUrl", req.IssueURL)
+	if err := c.service.MoveIssueToStatus(r.Context(), orgID, projectID, req.IssueURL, req.TargetStatus); err != nil {
+		slog.ErrorContext(r.Context(), "move board item failed", "error", err, "org", orgID, "project", projectID, "issueUrl", req.IssueURL)
 		utils.WriteErrorResponse(w, http.StatusInternalServerError, "failed to move board item")
 		return
 	}

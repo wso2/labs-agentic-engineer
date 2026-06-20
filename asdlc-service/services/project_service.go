@@ -105,7 +105,7 @@ func (s *projectService) CreateProject(ctx context.Context, orgName string, req 
 			// Register the per-repo webhook so the BFF starts receiving events
 			// (pull_request, push, issue_comment) on this repo. Best-effort.
 			if s.webhookSvc != nil {
-				if _, hookErr := s.webhookSvc.Register(ctx, project.Name); hookErr != nil {
+				if _, hookErr := s.webhookSvc.Register(ctx, orgName, project.Name); hookErr != nil {
 					slog.ErrorContext(ctx, "failed to register webhook on repo",
 						"project", project.Name, "error", hookErr)
 				}
@@ -123,7 +123,7 @@ func (s *projectService) DeleteProject(ctx context.Context, orgName, projectName
 
 	// Clean up the git clone
 	if s.repoSvc != nil {
-		if err := s.repoSvc.DeleteRepo(ctx, projectName); err != nil {
+		if err := s.repoSvc.DeleteRepo(ctx, orgName, projectName); err != nil {
 			slog.ErrorContext(ctx, "failed to delete git repo for project", "org", orgName, "project", projectName, "error", err)
 		}
 	}
@@ -135,7 +135,7 @@ func (s *projectService) GetRepoStatus(ctx context.Context, orgName, projectID s
 	if s.repoSvc == nil {
 		return nil, fmt.Errorf("repo service not configured")
 	}
-	repo, err := s.repoSvc.GetRepo(ctx, projectID)
+	repo, err := s.repoSvc.GetRepo(ctx, orgName, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("get repo: %w", err)
 	}
@@ -154,7 +154,7 @@ func (s *projectService) GetProjectStatus(ctx context.Context, orgName, projectN
 		return status, nil
 	}
 
-	repo, err := s.repoSvc.GetRepo(ctx, projectName)
+	repo, err := s.repoSvc.GetRepo(ctx, orgName, projectName)
 	if err != nil {
 		slog.ErrorContext(ctx, "get repo for project status", "error", err, "project", projectName)
 		status.Phase = "no-repo"
@@ -177,8 +177,8 @@ func (s *projectService) GetProjectStatus(ctx context.Context, orgName, projectN
 	status.HasSpec = len(files) > 0
 
 	if s.artifactSvc != nil {
-		reqVersions, _ := s.artifactSvc.ListRequirementsVersions(ctx, projectName)
-		designVersions, _ := s.artifactSvc.ListDesignVersions(ctx, projectName)
+		reqVersions, _ := s.artifactSvc.ListRequirementsVersions(ctx, orgName, projectName)
+		designVersions, _ := s.artifactSvc.ListDesignVersions(ctx, orgName, projectName)
 
 		if len(reqVersions) > 0 {
 			status.SpecStatus = "approved"

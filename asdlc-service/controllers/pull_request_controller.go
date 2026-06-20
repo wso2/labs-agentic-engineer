@@ -55,7 +55,7 @@ func (c *pullRequestController) CreateDraftPR(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	result, err := c.service.CreateDraftPR(r.Context(), projectID, req)
+	result, err := c.service.CreateDraftPR(r.Context(), r.PathValue("orgId"), projectID, req)
 	if err != nil {
 		if errors.Is(err, services.ErrRepoNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "repository not found")

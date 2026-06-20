@@ -228,12 +228,19 @@ func NewHandler(params AppParams) http.Handler {
 	// JWT path. The dedicated mux is mounted at the outer mux so its
 	// middleware chain is independent from the User-JWT-gated /api/.
 	gsMux := http.NewServeMux()
+	// repoScope is the repo+project Service-JWT binding (RequireOrgScope —
+	// validates {orgId}/{projectId}, 404s a cross-org pair, binds a
+	// Service-JWT Caller). nil in dev/test where no RepoRepository is wired;
+	// the ServiceRouter then degrades RepoScoped to a no-op wrap.
+	var repoScope func(http.Handler) http.Handler
+	if params.RepoRepo != nil {
+		repoScope = middleware.RequireOrgScope(params.RepoRepo)
+	}
+	// gsRouter is the typed Service-JWT router (allowlist-by-construction):
+	// every gsMux route registers via RepoScoped / OrgScoped / Public.
+	gsRouter := NewServiceRouter(gsMux, repoScope)
 	if params.RepoCtrl != nil {
-		var orgScope func(http.Handler) http.Handler
-		if params.RepoRepo != nil {
-			orgScope = middleware.RequireOrgScope(params.RepoRepo)
-		}
-		registerRepoOnlyRoutes(gsMux,
+		registerRepoOnlyRoutes(gsRouter,
 			params.RepoCtrl,
 			params.GitOpsCtrl,
 			params.IssueCtrl,
@@ -241,14 +248,13 @@ func NewHandler(params AppParams) http.Handler {
 			params.PullRequestCtrl,
 			params.WebhookRegCtrl,
 			params.ArtifactCtrl,
-			orgScope,
 		)
 	}
 	if params.CredService != nil {
-		registerCredentialsInternalRoutes(gsMux, params.CredService, params.BuildCredService, params.Validator)
+		registerCredentialsInternalRoutes(gsRouter, params.CredService, params.BuildCredService, params.Validator)
 	}
 	if params.AnthropicCredService != nil {
-		registerAnthropicCredentialsRoutes(gsMux, params.AnthropicCredService)
+		registerAnthropicCredentialsRoutes(gsRouter, params.AnthropicCredService)
 		// agents-service calls /effective-key without a Service JWT
 		// (matches cloud release-binding which carries no
 		// SERVICE_AUTH_GIT_* envs). Mount on the outer mux to bypass
@@ -259,7 +265,12 @@ func NewHandler(params AppParams) http.Handler {
 		registerOrgRoutes(mux, params.GitProjectCtrl)
 	}
 	if params.RepoBoardCtrl != nil {
-		registerRepoBoardRoutes(mux, params.RepoBoardCtrl)
+		// Re-keyed to /repos/{orgId}/{projectId}/board and repo-scoped (F3).
+		// Mounted on the OUTER mux (not gsMux) as before, but routed through a
+		// ServiceRouter over that mux so the scope binding stays
+		// allowlist-by-construction. repoScope is shared with gsRouter.
+		boardRouter := NewServiceRouter(mux, repoScope)
+		registerRepoBoardRoutes(boardRouter, params.RepoBoardCtrl)
 	}
 
 	taskMux := http.NewServeMux()

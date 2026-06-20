@@ -313,7 +313,7 @@ func (h *installationHandler) handleReposRemoved(ctx context.Context, _ string, 
 	for i := range tasks {
 		t := &tasks[i]
 		if t.IssueNumber > 0 && t.ProjectID != "" {
-			if err := h.issueSvc.CommentIssue(ctx, t.ProjectID, t.IssueNumber, "abandoned: repo unselected on GitHub App install"); err != nil {
+			if err := h.issueSvc.CommentIssue(ctx, t.OrgID, t.ProjectID, t.IssueNumber, "abandoned: repo unselected on GitHub App install"); err != nil {
 				slog.WarnContext(ctx, "reach reconciliation: comment failed", "taskId", t.ID, "error", err)
 			}
 		}

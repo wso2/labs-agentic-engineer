@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -55,6 +56,10 @@ func (p *TokenProvider) Token() (string, error) {
 
 	// Return cached token if still valid (with 60s buffer)
 	if p.token != "" && time.Now().Add(60*time.Second).Before(p.expiresAt) {
+		slog.Info("[SHAKEOUT:TOKEN] cache hit",
+			"clientIDConfigured", p.clientID != "",
+			"tokenURL", p.tokenURL, "clientID", p.clientID,
+			"source", "cache", "expiresAt", p.expiresAt)
 		return p.token, nil
 	}
 	return p.fetchLocked()
@@ -94,6 +99,10 @@ func (p *TokenProvider) fetchLocked() (string, error) {
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
+		slog.Info("[SHAKEOUT:TOKEN] fetch non-200",
+			"clientIDConfigured", p.clientID != "",
+			"tokenURL", p.tokenURL, "clientID", p.clientID,
+			"source", "fetch", "status", resp.StatusCode, "body", string(body))
 		return "", fmt.Errorf("token endpoint returned %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -108,5 +117,9 @@ func (p *TokenProvider) fetchLocked() (string, error) {
 	p.token = tokenResp.AccessToken
 	p.expiresAt = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
 
+	slog.Info("[SHAKEOUT:TOKEN] fetch ok",
+		"clientIDConfigured", p.clientID != "",
+		"tokenURL", p.tokenURL, "clientID", p.clientID,
+		"source", "fetch", "status", resp.StatusCode, "expiresAt", p.expiresAt)
 	return p.token, nil
 }

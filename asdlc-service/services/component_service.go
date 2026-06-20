@@ -185,7 +185,7 @@ func (s *componentService) TriggerBuild(ctx context.Context, orgName, projectNam
 	runName := openchoreo.NewBuildRunName(projectName, componentName)
 	buildSecretRef := ""
 	if s.repoSvc != nil && s.buildCredSvc != nil {
-		repo, err := s.repoSvc.GetRepo(ctx, projectName)
+		repo, err := s.repoSvc.GetRepo(ctx, orgName, projectName)
 		switch {
 		case err != nil:
 			slog.WarnContext(ctx, "trigger-build: GetRepo failed; proceeding without git secret (build will fail at clone)",

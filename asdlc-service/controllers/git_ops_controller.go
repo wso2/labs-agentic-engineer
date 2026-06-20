@@ -40,6 +40,18 @@ func requireProjectIDSlug(w http.ResponseWriter, projectID string) bool {
 	return true
 }
 
+// requireOrgIDSlug validates the {orgId} path param and writes a 400 to w if
+// invalid. orgId scopes the git_repositories lookup and flows into the on-disk
+// clone path (REPO_BASE_PATH / orgId / projectId), so a malformed value would
+// let a request escape the per-org subtree before any service call.
+func requireOrgIDSlug(w http.ResponseWriter, orgID string) bool {
+	if err := validate.Slug(orgID); err != nil {
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "orgId: "+err.Error())
+		return false
+	}
+	return true
+}
+
 // GitOpsController handles HTTP requests for git operations.
 type GitOpsController interface {
 	Commit(w http.ResponseWriter, r *http.Request)
@@ -60,6 +72,10 @@ func NewGitOpsController(service services.GitOpsService) GitOpsController {
 }
 
 func (c *gitOpsController) Commit(w http.ResponseWriter, r *http.Request) {
+	orgID := r.PathValue("orgId")
+	if !requireOrgIDSlug(w, orgID) {
+		return
+	}
 	projectID := r.PathValue("projectId")
 	if !requireProjectIDSlug(w, projectID) {
 		return
@@ -76,7 +92,7 @@ func (c *gitOpsController) Commit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := c.service.Commit(r.Context(), projectID, req)
+	result, err := c.service.Commit(r.Context(), orgID, projectID, req)
 	if err != nil {
 		handleGitOpsError(w, r, err, "commit")
 		return
@@ -90,6 +106,10 @@ type pushRequest struct {
 }
 
 func (c *gitOpsController) Push(w http.ResponseWriter, r *http.Request) {
+	orgID := r.PathValue("orgId")
+	if !requireOrgIDSlug(w, orgID) {
+		return
+	}
 	projectID := r.PathValue("projectId")
 	if !requireProjectIDSlug(w, projectID) {
 		return
@@ -98,7 +118,7 @@ func (c *gitOpsController) Push(w http.ResponseWriter, r *http.Request) {
 	var req pushRequest
 	json.NewDecoder(r.Body).Decode(&req) //nolint:errcheck — branch is optional
 
-	if err := c.service.Push(r.Context(), projectID, req.Branch); err != nil {
+	if err := c.service.Push(r.Context(), orgID, projectID, req.Branch); err != nil {
 		handleGitOpsError(w, r, err, "push")
 		return
 	}
@@ -111,6 +131,10 @@ type pullRequest struct {
 }
 
 func (c *gitOpsController) Pull(w http.ResponseWriter, r *http.Request) {
+	orgID := r.PathValue("orgId")
+	if !requireOrgIDSlug(w, orgID) {
+		return
+	}
 	projectID := r.PathValue("projectId")
 	if !requireProjectIDSlug(w, projectID) {
 		return
@@ -119,7 +143,7 @@ func (c *gitOpsController) Pull(w http.ResponseWriter, r *http.Request) {
 	var req pullRequest
 	json.NewDecoder(r.Body).Decode(&req) //nolint:errcheck — branch is optional
 
-	if err := c.service.Pull(r.Context(), projectID, req.Branch); err != nil {
+	if err := c.service.Pull(r.Context(), orgID, projectID, req.Branch); err != nil {
 		handleGitOpsError(w, r, err, "pull")
 		return
 	}
@@ -128,12 +152,16 @@ func (c *gitOpsController) Pull(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *gitOpsController) Status(w http.ResponseWriter, r *http.Request) {
+	orgID := r.PathValue("orgId")
+	if !requireOrgIDSlug(w, orgID) {
+		return
+	}
 	projectID := r.PathValue("projectId")
 	if !requireProjectIDSlug(w, projectID) {
 		return
 	}
 
-	status, err := c.service.Status(r.Context(), projectID)
+	status, err := c.service.Status(r.Context(), orgID, projectID)
 	if err != nil {
 		handleGitOpsError(w, r, err, "status")
 		return
@@ -176,6 +204,10 @@ func handleGitOpsError(w http.ResponseWriter, r *http.Request, err error, op str
 }
 
 func (c *gitOpsController) CreateTag(w http.ResponseWriter, r *http.Request) {
+	orgID := r.PathValue("orgId")
+	if !requireOrgIDSlug(w, orgID) {
+		return
+	}
 	projectID := r.PathValue("projectId")
 	if !requireProjectIDSlug(w, projectID) {
 		return
@@ -195,7 +227,7 @@ func (c *gitOpsController) CreateTag(w http.ResponseWriter, r *http.Request) {
 		req.Message = req.TagName
 	}
 
-	result, err := c.service.CreateTag(r.Context(), projectID, req)
+	result, err := c.service.CreateTag(r.Context(), orgID, projectID, req)
 	if err != nil {
 		handleGitOpsError(w, r, err, "create tag")
 		return
@@ -205,13 +237,17 @@ func (c *gitOpsController) CreateTag(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *gitOpsController) ListTags(w http.ResponseWriter, r *http.Request) {
+	orgID := r.PathValue("orgId")
+	if !requireOrgIDSlug(w, orgID) {
+		return
+	}
 	projectID := r.PathValue("projectId")
 	if !requireProjectIDSlug(w, projectID) {
 		return
 	}
 	prefix := r.URL.Query().Get("prefix")
 
-	tags, err := c.service.ListTags(r.Context(), projectID, prefix)
+	tags, err := c.service.ListTags(r.Context(), orgID, projectID, prefix)
 	if err != nil {
 		handleGitOpsError(w, r, err, "list tags")
 		return
@@ -221,6 +257,10 @@ func (c *gitOpsController) ListTags(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *gitOpsController) GetFileAtTag(w http.ResponseWriter, r *http.Request) {
+	orgID := r.PathValue("orgId")
+	if !requireOrgIDSlug(w, orgID) {
+		return
+	}
 	projectID := r.PathValue("projectId")
 	if !requireProjectIDSlug(w, projectID) {
 		return
@@ -233,7 +273,7 @@ func (c *gitOpsController) GetFileAtTag(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	content, err := c.service.GetFileAtTag(r.Context(), projectID, tag, filePath)
+	content, err := c.service.GetFileAtTag(r.Context(), orgID, projectID, tag, filePath)
 	if err != nil {
 		handleGitOpsError(w, r, err, "get file at tag")
 		return

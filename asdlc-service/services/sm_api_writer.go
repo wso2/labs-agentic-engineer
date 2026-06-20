@@ -97,6 +97,9 @@ func (w *SMAPIWriter) WriteAnthropic(ctx context.Context, ocOrgID string, apiKey
 	if err != nil {
 		return "", fmt.Errorf("sm-api writer: anthropic upload: %w", err)
 	}
+	slog.InfoContext(ctx, "[SHAKEOUT:SMAPI] WriteAnthropic uploaded",
+		"smapiEnabled", w.Enabled(), "ocOrgId", ocOrgID,
+		"secretLocation", loc, "secretRefName", secretRefName)
 	vaultKey, err := w.resolveVaultKey(ctx, secretRefName)
 	if err != nil {
 		return secretRefName, fmt.Errorf("sm-api writer: resolve anthropic vault key: %w", err)
@@ -143,6 +146,9 @@ func (w *SMAPIWriter) WriteGitHubPAT(ctx context.Context, ocOrgID string, pat st
 	if err != nil {
 		return "", fmt.Errorf("sm-api writer: github-pat upload: %w", err)
 	}
+	slog.InfoContext(ctx, "[SHAKEOUT:SMAPI] WriteGitHubPAT uploaded",
+		"smapiEnabled", w.Enabled(), "ocOrgId", ocOrgID,
+		"secretLocation", loc, "secretRefName", secretRefName)
 	vaultKey, err := w.resolveVaultKey(ctx, secretRefName)
 	if err != nil {
 		return secretRefName, fmt.Errorf("sm-api writer: resolve github-pat vault key: %w", err)
@@ -181,10 +187,19 @@ func (w *SMAPIWriter) WriteGitHubPAT(ctx context.Context, ocOrgID string, pat st
 func (w *SMAPIWriter) resolveVaultKey(ctx context.Context, secretRefName string) (string, error) {
 	claims := jwtassertion.GetTokenClaims(ctx)
 	if claims == nil || strings.TrimSpace(claims.OuId) == "" {
+		slog.InfoContext(ctx, "[SHAKEOUT:SMAPI] resolveVaultKey no ouId claim",
+			"smapiEnabled", w.Enabled(), "secretRefName", secretRefName, "hasClaims", claims != nil)
 		return "", errors.New("no ouId claim in JWT context")
 	}
 	ns := codingagent.OrgBaseNamespace(claims.OuId)
-	return vaultPathPrefix + "/" + ns + "/" + secretRefName, nil
+	vaultKey := vaultPathPrefix + "/" + ns + "/" + secretRefName
+	slog.InfoContext(ctx, "[SHAKEOUT:SMAPI] resolveVaultKey derived",
+		"smapiEnabled", w.Enabled(),
+		"ouId", claims.OuId,
+		"orgBaseNamespace", ns,
+		"secretRefName", secretRefName,
+		"vaultKey", vaultKey)
+	return vaultKey, nil
 }
 
 // DeleteAnthropic best-effort removes the SM-API secret + clears the

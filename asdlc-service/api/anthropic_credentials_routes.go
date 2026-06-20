@@ -26,16 +26,16 @@ import (
 )
 
 // registerAnthropicCredentialsRoutes wires the per-org Anthropic API key
-// surface. All routes mount under /internal/credentials/orgs/{ocOrgId}/anthropic
+// surface. All routes mount under /internal/credentials/orgs/{orgHandle}/anthropic
 // and are gated by Service JWT at the app.go layer.
 //
 // Routes:
 //
-//	POST   /internal/credentials/orgs/{ocOrgId}/anthropic                    — connect / replace
-//	GET    /internal/credentials/orgs/{ocOrgId}/anthropic                    — projection
-//	DELETE /internal/credentials/orgs/{ocOrgId}/anthropic                    — disconnect
-//	GET    /internal/credentials/orgs/{ocOrgId}/anthropic/effective-key      — agents-service resolver call
-//	POST   /internal/credentials/orgs/{ocOrgId}/anthropic/apply-wp-secret    — dispatch-time SSA refresh
+//	POST   /internal/credentials/orgs/{orgHandle}/anthropic                    — connect / replace
+//	GET    /internal/credentials/orgs/{orgHandle}/anthropic                    — projection
+//	DELETE /internal/credentials/orgs/{orgHandle}/anthropic                    — disconnect
+//	GET    /internal/credentials/orgs/{orgHandle}/anthropic/effective-key      — agents-service resolver call
+//	POST   /internal/credentials/orgs/{orgHandle}/anthropic/apply-wp-secret    — dispatch-time SSA refresh
 //
 // Security contract: never returns the raw key over /anthropic (projection
 // only carries prefix + last4). /effective-key does return the key — that
@@ -43,11 +43,11 @@ import (
 // else under /internal/).
 //
 // See docs/design/anthropic-key-dual-token.md.
-func registerAnthropicCredentialsRoutes(mux *http.ServeMux, svc *services.AnthropicCredentialService) {
-	mux.HandleFunc("POST /internal/credentials/orgs/{ocOrgId}/anthropic", func(w http.ResponseWriter, r *http.Request) {
-		ocOrgID := r.PathValue("ocOrgId")
+func registerAnthropicCredentialsRoutes(rt *ServiceRouter, svc *services.AnthropicCredentialService) {
+	rt.OrgScoped("POST /internal/credentials/orgs/{orgHandle}/anthropic", func(w http.ResponseWriter, r *http.Request) {
+		ocOrgID := r.PathValue("orgHandle")
 		if err := validate.Slug(ocOrgID); err != nil {
-			writeJSONError(w, http.StatusBadRequest, "ocOrgId: "+err.Error())
+			writeJSONError(w, http.StatusBadRequest, "orgHandle: "+err.Error())
 			return
 		}
 		var body services.AnthropicConnectRequest
@@ -63,10 +63,10 @@ func registerAnthropicCredentialsRoutes(mux *http.ServeMux, svc *services.Anthro
 		writeJSON(w, http.StatusOK, proj)
 	})
 
-	mux.HandleFunc("GET /internal/credentials/orgs/{ocOrgId}/anthropic", func(w http.ResponseWriter, r *http.Request) {
-		ocOrgID := r.PathValue("ocOrgId")
+	rt.OrgScoped("GET /internal/credentials/orgs/{orgHandle}/anthropic", func(w http.ResponseWriter, r *http.Request) {
+		ocOrgID := r.PathValue("orgHandle")
 		if err := validate.Slug(ocOrgID); err != nil {
-			writeJSONError(w, http.StatusBadRequest, "ocOrgId: "+err.Error())
+			writeJSONError(w, http.StatusBadRequest, "orgHandle: "+err.Error())
 			return
 		}
 		proj, err := svc.Status(r.Context(), ocOrgID)
@@ -77,10 +77,10 @@ func registerAnthropicCredentialsRoutes(mux *http.ServeMux, svc *services.Anthro
 		writeJSON(w, http.StatusOK, proj)
 	})
 
-	mux.HandleFunc("DELETE /internal/credentials/orgs/{ocOrgId}/anthropic", func(w http.ResponseWriter, r *http.Request) {
-		ocOrgID := r.PathValue("ocOrgId")
+	rt.OrgScoped("DELETE /internal/credentials/orgs/{orgHandle}/anthropic", func(w http.ResponseWriter, r *http.Request) {
+		ocOrgID := r.PathValue("orgHandle")
 		if err := validate.Slug(ocOrgID); err != nil {
-			writeJSONError(w, http.StatusBadRequest, "ocOrgId: "+err.Error())
+			writeJSONError(w, http.StatusBadRequest, "orgHandle: "+err.Error())
 			return
 		}
 		if err := svc.Disconnect(r.Context(), ocOrgID); err != nil {
@@ -97,10 +97,10 @@ func registerAnthropicCredentialsRoutes(mux *http.ServeMux, svc *services.Anthro
 	// mux by `registerAnthropicEffectiveKeyUnauth` so the merged binary
 	// preserves the pre-fold git-service behavior.
 
-	mux.HandleFunc("POST /internal/credentials/orgs/{ocOrgId}/anthropic/apply-wp-secret", func(w http.ResponseWriter, r *http.Request) {
-		ocOrgID := r.PathValue("ocOrgId")
+	rt.OrgScoped("POST /internal/credentials/orgs/{orgHandle}/anthropic/apply-wp-secret", func(w http.ResponseWriter, r *http.Request) {
+		ocOrgID := r.PathValue("orgHandle")
 		if err := validate.Slug(ocOrgID); err != nil {
-			writeJSONError(w, http.StatusBadRequest, "ocOrgId: "+err.Error())
+			writeJSONError(w, http.StatusBadRequest, "orgHandle: "+err.Error())
 			return
 		}
 		out, err := svc.ApplyWPSecret(r.Context(), ocOrgID)
@@ -124,10 +124,10 @@ func registerAnthropicCredentialsRoutes(mux *http.ServeMux, svc *services.Anthro
 // the outer mux (not behind ServiceJWT) — see the note above the
 // in-mux registration for the rationale.
 func registerAnthropicEffectiveKeyUnauth(mux *http.ServeMux, svc *services.AnthropicCredentialService) {
-	mux.HandleFunc("GET /internal/credentials/orgs/{ocOrgId}/anthropic/effective-key", func(w http.ResponseWriter, r *http.Request) {
-		ocOrgID := r.PathValue("ocOrgId")
+	mux.HandleFunc("GET /internal/credentials/orgs/{orgHandle}/anthropic/effective-key", func(w http.ResponseWriter, r *http.Request) {
+		ocOrgID := r.PathValue("orgHandle")
 		if err := validate.Slug(ocOrgID); err != nil {
-			writeJSONError(w, http.StatusBadRequest, "ocOrgId: "+err.Error())
+			writeJSONError(w, http.StatusBadRequest, "orgHandle: "+err.Error())
 			return
 		}
 		out, err := svc.EffectiveKey(r.Context(), ocOrgID)

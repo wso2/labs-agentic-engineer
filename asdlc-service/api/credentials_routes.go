@@ -40,14 +40,12 @@ import (
 // /mint-build writes the token into OpenBao but returns only the
 // SecretReference name + expiry — the token still doesn't cross the
 // boundary.
-func registerCredentialsInternalRoutes(mux *http.ServeMux, svc *services.CredentialService, buildSvc *services.BuildCredentialsService, validator *credentials.Validator) {
-	internal := mux
-
-	// POST /internal/credentials/orgs/{ocOrgId} — connect or replace.
-	internal.HandleFunc("POST /internal/credentials/orgs/{ocOrgId}", func(w http.ResponseWriter, r *http.Request) {
-		ocOrgID := r.PathValue("ocOrgId")
+func registerCredentialsInternalRoutes(rt *ServiceRouter, svc *services.CredentialService, buildSvc *services.BuildCredentialsService, validator *credentials.Validator) {
+	// POST /internal/credentials/orgs/{orgHandle} — connect or replace.
+	rt.OrgScoped("POST /internal/credentials/orgs/{orgHandle}", func(w http.ResponseWriter, r *http.Request) {
+		ocOrgID := r.PathValue("orgHandle")
 		if err := validate.Slug(ocOrgID); err != nil {
-			writeJSONError(w, http.StatusBadRequest, "ocOrgId: "+err.Error())
+			writeJSONError(w, http.StatusBadRequest, "orgHandle: "+err.Error())
 			return
 		}
 		var body services.ConnectRequest
@@ -63,11 +61,11 @@ func registerCredentialsInternalRoutes(mux *http.ServeMux, svc *services.Credent
 		writeJSON(w, http.StatusOK, proj)
 	})
 
-	// GET /internal/credentials/orgs/{ocOrgId} — projection.
-	internal.HandleFunc("GET /internal/credentials/orgs/{ocOrgId}", func(w http.ResponseWriter, r *http.Request) {
-		ocOrgID := r.PathValue("ocOrgId")
+	// GET /internal/credentials/orgs/{orgHandle} — projection.
+	rt.OrgScoped("GET /internal/credentials/orgs/{orgHandle}", func(w http.ResponseWriter, r *http.Request) {
+		ocOrgID := r.PathValue("orgHandle")
 		if err := validate.Slug(ocOrgID); err != nil {
-			writeJSONError(w, http.StatusBadRequest, "ocOrgId: "+err.Error())
+			writeJSONError(w, http.StatusBadRequest, "orgHandle: "+err.Error())
 			return
 		}
 		proj, err := svc.Status(r.Context(), ocOrgID)
@@ -78,12 +76,12 @@ func registerCredentialsInternalRoutes(mux *http.ServeMux, svc *services.Credent
 		writeJSON(w, http.StatusOK, proj)
 	})
 
-	// GET /internal/credentials/orgs/{ocOrgId}/identity — identity-only
+	// GET /internal/credentials/orgs/{orgHandle}/identity — identity-only
 	// projection used by the BFF dispatch path.
-	internal.HandleFunc("GET /internal/credentials/orgs/{ocOrgId}/identity", func(w http.ResponseWriter, r *http.Request) {
-		ocOrgID := r.PathValue("ocOrgId")
+	rt.OrgScoped("GET /internal/credentials/orgs/{orgHandle}/identity", func(w http.ResponseWriter, r *http.Request) {
+		ocOrgID := r.PathValue("orgHandle")
 		if err := validate.Slug(ocOrgID); err != nil {
-			writeJSONError(w, http.StatusBadRequest, "ocOrgId: "+err.Error())
+			writeJSONError(w, http.StatusBadRequest, "orgHandle: "+err.Error())
 			return
 		}
 		ident, err := svc.IdentityFor(r.Context(), ocOrgID)
@@ -94,11 +92,11 @@ func registerCredentialsInternalRoutes(mux *http.ServeMux, svc *services.Credent
 		writeJSON(w, http.StatusOK, ident)
 	})
 
-	// DELETE /internal/credentials/orgs/{ocOrgId} — disconnect Phase D.
-	internal.HandleFunc("DELETE /internal/credentials/orgs/{ocOrgId}", func(w http.ResponseWriter, r *http.Request) {
-		ocOrgID := r.PathValue("ocOrgId")
+	// DELETE /internal/credentials/orgs/{orgHandle} — disconnect Phase D.
+	rt.OrgScoped("DELETE /internal/credentials/orgs/{orgHandle}", func(w http.ResponseWriter, r *http.Request) {
+		ocOrgID := r.PathValue("orgHandle")
 		if err := validate.Slug(ocOrgID); err != nil {
-			writeJSONError(w, http.StatusBadRequest, "ocOrgId: "+err.Error())
+			writeJSONError(w, http.StatusBadRequest, "orgHandle: "+err.Error())
 			return
 		}
 		if err := svc.Disconnect(r.Context(), ocOrgID); err != nil {
@@ -108,15 +106,15 @@ func registerCredentialsInternalRoutes(mux *http.ServeMux, svc *services.Credent
 		w.WriteHeader(http.StatusNoContent)
 	})
 
-	// POST /internal/credentials/orgs/{ocOrgId}/uninstall — disconnect Phase E.
+	// POST /internal/credentials/orgs/{orgHandle}/uninstall — disconnect Phase E.
 	// Calls GitHub DELETE /app/installations/{id} to remove the install on
 	// the GitHub side. App-mode only; PAT rows are a no-op. The BFF's
 	// disconnect cascade calls this after the platform-side row is gone, so
 	// disconnect is symmetric and orphans don't accumulate on github.com.
-	internal.HandleFunc("POST /internal/credentials/orgs/{ocOrgId}/uninstall", func(w http.ResponseWriter, r *http.Request) {
-		ocOrgID := r.PathValue("ocOrgId")
+	rt.OrgScoped("POST /internal/credentials/orgs/{orgHandle}/uninstall", func(w http.ResponseWriter, r *http.Request) {
+		ocOrgID := r.PathValue("orgHandle")
 		if err := validate.Slug(ocOrgID); err != nil {
-			writeJSONError(w, http.StatusBadRequest, "ocOrgId: "+err.Error())
+			writeJSONError(w, http.StatusBadRequest, "orgHandle: "+err.Error())
 			return
 		}
 		if err := svc.UninstallAppInstallation(r.Context(), ocOrgID); err != nil {
@@ -133,11 +131,11 @@ func registerCredentialsInternalRoutes(mux *http.ServeMux, svc *services.Credent
 		w.WriteHeader(http.StatusNoContent)
 	})
 
-	// GET /internal/credentials/orgs/{ocOrgId}/webhook-secrets — list.
-	internal.HandleFunc("GET /internal/credentials/orgs/{ocOrgId}/webhook-secrets", func(w http.ResponseWriter, r *http.Request) {
-		ocOrgID := r.PathValue("ocOrgId")
+	// GET /internal/credentials/orgs/{orgHandle}/webhook-secrets — list.
+	rt.OrgScoped("GET /internal/credentials/orgs/{orgHandle}/webhook-secrets", func(w http.ResponseWriter, r *http.Request) {
+		ocOrgID := r.PathValue("orgHandle")
 		if err := validate.Slug(ocOrgID); err != nil {
-			writeJSONError(w, http.StatusBadRequest, "ocOrgId: "+err.Error())
+			writeJSONError(w, http.StatusBadRequest, "orgHandle: "+err.Error())
 			return
 		}
 		secrets, err := svc.GetWebhookSecrets(r.Context(), ocOrgID)
@@ -152,12 +150,12 @@ func registerCredentialsInternalRoutes(mux *http.ServeMux, svc *services.Credent
 		writeJSON(w, http.StatusOK, map[string]any{"secrets": out})
 	})
 
-	// POST /internal/credentials/orgs/{ocOrgId}/webhook-secrets — append.
+	// POST /internal/credentials/orgs/{orgHandle}/webhook-secrets — append.
 	// PAT only.
-	internal.HandleFunc("POST /internal/credentials/orgs/{ocOrgId}/webhook-secrets", func(w http.ResponseWriter, r *http.Request) {
-		ocOrgID := r.PathValue("ocOrgId")
+	rt.OrgScoped("POST /internal/credentials/orgs/{orgHandle}/webhook-secrets", func(w http.ResponseWriter, r *http.Request) {
+		ocOrgID := r.PathValue("orgHandle")
 		if err := validate.Slug(ocOrgID); err != nil {
-			writeJSONError(w, http.StatusBadRequest, "ocOrgId: "+err.Error())
+			writeJSONError(w, http.StatusBadRequest, "orgHandle: "+err.Error())
 			return
 		}
 		var body struct {
@@ -174,11 +172,11 @@ func registerCredentialsInternalRoutes(mux *http.ServeMux, svc *services.Credent
 		w.WriteHeader(http.StatusNoContent)
 	})
 
-	// DELETE /internal/credentials/orgs/{ocOrgId}/webhook-secrets/{secret} — drop.
-	internal.HandleFunc("DELETE /internal/credentials/orgs/{ocOrgId}/webhook-secrets/{secret}", func(w http.ResponseWriter, r *http.Request) {
-		ocOrgID := r.PathValue("ocOrgId")
+	// DELETE /internal/credentials/orgs/{orgHandle}/webhook-secrets/{secret} — drop.
+	rt.OrgScoped("DELETE /internal/credentials/orgs/{orgHandle}/webhook-secrets/{secret}", func(w http.ResponseWriter, r *http.Request) {
+		ocOrgID := r.PathValue("orgHandle")
 		if err := validate.Slug(ocOrgID); err != nil {
-			writeJSONError(w, http.StatusBadRequest, "ocOrgId: "+err.Error())
+			writeJSONError(w, http.StatusBadRequest, "orgHandle: "+err.Error())
 			return
 		}
 		secret := r.PathValue("secret")
@@ -191,7 +189,7 @@ func registerCredentialsInternalRoutes(mux *http.ServeMux, svc *services.Credent
 
 	// GET /internal/credentials/lookup/installation/{installationId} — used
 	// by the BFF webhook receiver to route App-mode events.
-	internal.HandleFunc("GET /internal/credentials/lookup/installation/{installationId}", func(w http.ResponseWriter, r *http.Request) {
+	rt.Public("GET /internal/credentials/lookup/installation/{installationId}", func(w http.ResponseWriter, r *http.Request) {
 		idStr := r.PathValue("installationId")
 		id, err := strconv.ParseInt(idStr, 10, 64)
 		if err != nil {
@@ -209,7 +207,7 @@ func registerCredentialsInternalRoutes(mux *http.ServeMux, svc *services.Credent
 	// GET /internal/credentials/lookup/repo/{owner}/{repo} — used by the
 	// BFF webhook receiver to route PAT-mode and App-mode per-repo events
 	// (pull_request, push, issue_comment, issues).
-	internal.HandleFunc("GET /internal/credentials/lookup/repo/{owner}/{repo}", func(w http.ResponseWriter, r *http.Request) {
+	rt.Public("GET /internal/credentials/lookup/repo/{owner}/{repo}", func(w http.ResponseWriter, r *http.Request) {
 		owner := r.PathValue("owner")
 		repo := r.PathValue("repo")
 		if owner == "" || repo == "" {
@@ -226,7 +224,7 @@ func registerCredentialsInternalRoutes(mux *http.ServeMux, svc *services.Credent
 
 	// PATCH /internal/credentials/installations/{installationId}/status —
 	// suspend / unsuspend handlers.
-	internal.HandleFunc("PATCH /internal/credentials/installations/{installationId}/status", func(w http.ResponseWriter, r *http.Request) {
+	rt.Public("PATCH /internal/credentials/installations/{installationId}/status", func(w http.ResponseWriter, r *http.Request) {
 		idStr := r.PathValue("installationId")
 		id, err := strconv.ParseInt(idStr, 10, 64)
 		if err != nil {
@@ -259,7 +257,7 @@ func registerCredentialsInternalRoutes(mux *http.ServeMux, svc *services.Credent
 	// POST /internal/credentials/installations/{installationId}/repos —
 	// installation_repositories.added/removed projection. Body
 	// {added:[...], removed:[...]} — Phase A merge only.
-	internal.HandleFunc("POST /internal/credentials/installations/{installationId}/repos", func(w http.ResponseWriter, r *http.Request) {
+	rt.Public("POST /internal/credentials/installations/{installationId}/repos", func(w http.ResponseWriter, r *http.Request) {
 		idStr := r.PathValue("installationId")
 		id, err := strconv.ParseInt(idStr, 10, 64)
 		if err != nil {
@@ -286,7 +284,7 @@ func registerCredentialsInternalRoutes(mux *http.ServeMux, svc *services.Credent
 	// GitHub directly. Used by the BFF's reach-reconciliation Phase B to
 	// distinguish a forged installation_repositories.removed payload from
 	// a genuine deselect before cascading tasks (§6.8).
-	internal.HandleFunc("GET /internal/credentials/installations/{installationId}/repositories", func(w http.ResponseWriter, r *http.Request) {
+	rt.Public("GET /internal/credentials/installations/{installationId}/repositories", func(w http.ResponseWriter, r *http.Request) {
 		idStr := r.PathValue("installationId")
 		id, err := strconv.ParseInt(idStr, 10, 64)
 		if err != nil {
@@ -301,20 +299,20 @@ func registerCredentialsInternalRoutes(mux *http.ServeMux, svc *services.Credent
 		writeJSON(w, http.StatusOK, map[string]any{"repositories": repos})
 	})
 
-	// POST /internal/credentials/orgs/{ocOrgId}/stage-build-secret —
+	// POST /internal/credentials/orgs/{orgHandle}/stage-build-secret —
 	// pre-stages a per-WorkflowRun K8s Secret named
 	// <workflowRunName>-git-secret in workflows-<ocOrgId> with the org's
 	// GitHub credential as kubernetes.io/basic-auth. The BFF calls this
 	// immediately before POSTing the WorkflowRun. The token never crosses
 	// the boundary. See docs/design/build-credential-injection.md.
-	internal.HandleFunc("POST /internal/credentials/orgs/{ocOrgId}/stage-build-secret", func(w http.ResponseWriter, r *http.Request) {
+	rt.OrgScoped("POST /internal/credentials/orgs/{orgHandle}/stage-build-secret", func(w http.ResponseWriter, r *http.Request) {
 		if buildSvc == nil {
 			writeJSONError(w, http.StatusServiceUnavailable, "build-credentials service unavailable")
 			return
 		}
-		ocOrgID := r.PathValue("ocOrgId")
+		ocOrgID := r.PathValue("orgHandle")
 		if err := validate.Slug(ocOrgID); err != nil {
-			writeJSONError(w, http.StatusBadRequest, "ocOrgId: "+err.Error())
+			writeJSONError(w, http.StatusBadRequest, "orgHandle: "+err.Error())
 			return
 		}
 		var body struct {
@@ -350,8 +348,8 @@ func registerCredentialsInternalRoutes(mux *http.ServeMux, svc *services.Credent
 	//
 	// Replaces the prior /app/discover (which leaked all installs cross-
 	// tenant) and /app/bind (which is now reduced to the BFF calling the
-	// existing /orgs/{ocOrgId} connect endpoint after this resolves).
-	internal.HandleFunc("POST /internal/credentials/app/resolve-user-installations", func(w http.ResponseWriter, r *http.Request) {
+	// existing /orgs/{orgHandle} connect endpoint after this resolves).
+	rt.Public("POST /internal/credentials/app/resolve-user-installations", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			OcOrgID     string `json:"ocOrgId"`
 			OauthCode   string `json:"oauthCode"`
@@ -362,7 +360,7 @@ func registerCredentialsInternalRoutes(mux *http.ServeMux, svc *services.Credent
 			return
 		}
 		if err := validate.Slug(body.OcOrgID); err != nil {
-			writeJSONError(w, http.StatusBadRequest, "ocOrgId: "+err.Error())
+			writeJSONError(w, http.StatusBadRequest, "orgHandle: "+err.Error())
 			return
 		}
 		candidates, err := svc.ResolveUserInstallations(r.Context(), body.OcOrgID, body.OauthCode, body.RedirectURI)
@@ -385,7 +383,7 @@ func registerCredentialsInternalRoutes(mux *http.ServeMux, svc *services.Credent
 	// Production also runs the validator on a 24h ticker; this endpoint
 	// is for ops debugging and E2E tests (manual revocation → tick →
 	// observe disconnect cascade).
-	internal.HandleFunc("POST /internal/credentials/_validator/tick", func(w http.ResponseWriter, r *http.Request) {
+	rt.Public("POST /internal/credentials/_validator/tick", func(w http.ResponseWriter, r *http.Request) {
 		if validator == nil {
 			writeJSONError(w, http.StatusServiceUnavailable, "validator not configured")
 			return

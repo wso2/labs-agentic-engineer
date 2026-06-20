@@ -66,7 +66,7 @@ func (c *branchController) CreateBranch(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	sha, err := c.service.CreateBranch(r.Context(), projectID, req.Branch, req.FromRef)
+	sha, err := c.service.CreateBranch(r.Context(), r.PathValue("orgId"), projectID, req.Branch, req.FromRef)
 	if err != nil {
 		if errors.Is(err, services.ErrRepoNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "repository not found")
@@ -107,7 +107,7 @@ func (c *branchController) SeedCommit(w http.ResponseWriter, r *http.Request) {
 		message = "chore: seed " + req.Path
 	}
 
-	if err := c.service.SeedBranchCommit(r.Context(), projectID, req.Branch, req.Path, message, []byte(req.Content)); err != nil {
+	if err := c.service.SeedBranchCommit(r.Context(), r.PathValue("orgId"), projectID, req.Branch, req.Path, message, []byte(req.Content)); err != nil {
 		if errors.Is(err, services.ErrRepoNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "repository not found")
 			return

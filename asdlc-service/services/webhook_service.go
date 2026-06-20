@@ -36,9 +36,9 @@ import (
 type WebhookService interface {
 	// Register installs a webhook on the repo. No-op when the credential's
 	// strategy is WebhookPlatform. Idempotent on (repo, deliveryURL).
-	Register(ctx context.Context, projectID string) (hookID *int64, err error)
+	Register(ctx context.Context, orgID, projectID string) (hookID *int64, err error)
 	// Deregister removes the previously-registered webhook for the repo.
-	Deregister(ctx context.Context, projectID string) error
+	Deregister(ctx context.Context, orgID, projectID string) error
 }
 
 type webhookService struct {
@@ -77,12 +77,12 @@ func NewWebhookService(
 	}
 }
 
-func (s *webhookService) Register(ctx context.Context, projectID string) (*int64, error) {
+func (s *webhookService) Register(ctx context.Context, orgID, projectID string) (*int64, error) {
 	if s.deliveryURL == "" || s.hmacSecret == "" {
 		return nil, fmt.Errorf("webhook delivery URL or HMAC secret not configured — set GITHUB_WEBHOOK_DELIVERY_URL and GITHUB_WEBHOOK_SECRET")
 	}
 
-	owner, repoName, cred, err := s.issue.resolveRepoAndCredential(ctx, projectID)
+	owner, repoName, cred, err := s.issue.resolveRepoAndCredential(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -102,19 +102,19 @@ func (s *webhookService) Register(ctx context.Context, projectID string) (*int64
 		return nil, fmt.Errorf("register webhook: %w", err)
 	}
 
-	if err := s.repoSvc.SetWebhookID(ctx, projectID, hookID); err != nil {
+	if err := s.repoSvc.SetWebhookID(ctx, orgID, projectID, hookID); err != nil {
 		return nil, fmt.Errorf("persist webhook id: %w", err)
 	}
 	return &hookID, nil
 }
 
-func (s *webhookService) Deregister(ctx context.Context, projectID string) error {
-	owner, repoName, cred, err := s.issue.resolveRepoAndCredential(ctx, projectID)
+func (s *webhookService) Deregister(ctx context.Context, orgID, projectID string) error {
+	owner, repoName, cred, err := s.issue.resolveRepoAndCredential(ctx, orgID, projectID)
 	if err != nil {
 		return err
 	}
 
-	gitRepo, err := s.repo.GetByProjectID(ctx, projectID)
+	gitRepo, err := s.repo.GetByOrgAndProjectID(ctx, orgID, projectID)
 	if err != nil {
 		return fmt.Errorf("get repo: %w", err)
 	}

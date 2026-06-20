@@ -171,14 +171,14 @@ func (s *taskService) StreamGenerateTasks(ctx context.Context, orgID, projectID 
 		// Best-effort: pull the prior design + spec at the baseline tag. Diff
 		// computers tolerate empty/nil prevs.
 		if s.artifactSvc != nil && baseline.SourceDesignVersion != "" {
-			if files, err := s.artifactSvc.GetDesignAtTag(ctx, projectID,baseline.SourceDesignVersion); err == nil {
+			if files, err := s.artifactSvc.GetDesignAtTag(ctx, orgID, projectID, baseline.SourceDesignVersion); err == nil {
 				prevDesign, _ = AssembleDesign(files)
 			}
 		}
 		if s.artifactSvc != nil && baseline.SourceSpecVersion != "" {
 			// Pull every requirement file at the baseline tag and concatenate.
 			// The tag is a `v<N>` requirements tag; missing files are tolerated.
-			if files, err := s.artifactSvc.GetRequirementsAtTag(ctx, projectID,baseline.SourceSpecVersion); err == nil {
+			if files, err := s.artifactSvc.GetRequirementsAtTag(ctx, orgID, projectID, baseline.SourceSpecVersion); err == nil {
 				prevSpec = concatRequirementBundle(files)
 			}
 		}
@@ -605,7 +605,7 @@ func (s *taskService) editIssueBodyWithRetries(ctx context.Context, task *models
 	body := buildIssueBody(task, comp, repoURL, repoSlug)
 	var lastErr error
 	for attempt := 1; attempt <= 3; attempt++ {
-		err := s.issueSvc.EditIssueBody(ctx, task.ProjectID,task.IssueNumber, body)
+		err := s.issueSvc.EditIssueBody(ctx, task.OrgID, task.ProjectID, task.IssueNumber, body)
 		if err == nil {
 			task.BodySyncPending = false
 			_ = s.taskRepo.Update(ctx, task)
@@ -645,7 +645,7 @@ func (s *taskService) runReconciliationStreamed(ctx context.Context, orgID, proj
 		}
 		// Component removed — close issue and reject task.
 		if s.issueSvc != nil && t.IssueNumber > 0 {
-			if err := s.issueSvc.CloseIssue(ctx, projectID, t.IssueNumber, "Component removed from architecture; auto-closed by tech-lead reconciliation."); err != nil {
+			if err := s.issueSvc.CloseIssue(ctx, orgID, projectID, t.IssueNumber, "Component removed from architecture; auto-closed by tech-lead reconciliation."); err != nil {
 				slog.WarnContext(ctx, "close issue on reconciliation", "task", t.ID, "issue", t.IssueNumber, "error", err)
 			}
 		}
@@ -695,7 +695,7 @@ func (s *taskService) ReconcilePendingForDesignChange(ctx context.Context, orgID
 			continue
 		}
 		if s.issueSvc != nil && t.IssueNumber > 0 {
-			if err := s.issueSvc.CloseIssue(ctx, projectID, t.IssueNumber, "Component removed from architecture; auto-closed by tech-lead reconciliation."); err != nil {
+			if err := s.issueSvc.CloseIssue(ctx, orgID, projectID, t.IssueNumber, "Component removed from architecture; auto-closed by tech-lead reconciliation."); err != nil {
 				slog.WarnContext(ctx, "close issue on reconciliation", "task", t.ID, "issue", t.IssueNumber, "error", err)
 			}
 		}
@@ -763,7 +763,7 @@ func (s *taskService) repoInfoForBody(ctx context.Context, orgID, projectID stri
 	if s.repoSvc == nil {
 		return "", ""
 	}
-	repo, err := s.repoSvc.GetRepo(ctx, projectID)
+	repo, err := s.repoSvc.GetRepo(ctx, orgID, projectID)
 	if err != nil || repo == nil {
 		return "", ""
 	}
@@ -774,10 +774,10 @@ func (s *taskService) currentArtifactVersions(ctx context.Context, orgID, projec
 	if s.artifactSvc == nil {
 		return "", ""
 	}
-	if vs, err := s.artifactSvc.ListRequirementsVersions(ctx, projectID); err == nil && len(vs) > 0 {
+	if vs, err := s.artifactSvc.ListRequirementsVersions(ctx, orgID, projectID); err == nil && len(vs) > 0 {
 		specV = vs[0].Tag
 	}
-	if vs, err := s.artifactSvc.ListDesignVersions(ctx, projectID); err == nil && len(vs) > 0 {
+	if vs, err := s.artifactSvc.ListDesignVersions(ctx, orgID, projectID); err == nil && len(vs) > 0 {
 		designV = vs[0].Tag
 	}
 	return specV, designV

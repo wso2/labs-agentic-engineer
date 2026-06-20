@@ -20,8 +20,9 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/wso2/asdlc/asdlc-service/middleware/jwtassertion"
 	"github.com/wso2/asdlc/asdlc-service/internal/credentials"
+	"github.com/wso2/asdlc/asdlc-service/internal/platform/tenant"
+	"github.com/wso2/asdlc/asdlc-service/middleware/jwtassertion"
 )
 
 type bearerContextKey string
@@ -58,6 +59,14 @@ func RequireTaskBearer(verifier jwtassertion.Middleware) func(http.Handler) http
 				claims.ExpiresAt = tc.ExpiresAt.Unix()
 			}
 			ctx := context.WithValue(r.Context(), claimsKey, claims)
+			// Bind the authorized Caller — org from the signed task claim
+			// (RS256, BFF-minted for this task); the per-route handler still
+			// asserts claims.TaskID == path taskId (INT-6). §6.1b BindRunnerScope.
+			ctx = tenant.With(ctx, tenant.Caller{
+				Org:     tenant.OrgHandle(claims.OcOrgID),
+				Subject: claims.TaskID,
+				Source:  tenant.SourceTaskJWT,
+			})
 			next.ServeHTTP(w, r.WithContext(ctx))
 		}))
 	}

@@ -147,45 +147,45 @@ type ArtifactService interface {
 	// Generic file I/O — used for individual file reads/writes (both
 	// requirements and design files). Path validation is the controller's
 	// responsibility before calling these.
-	GetFile(ctx context.Context, projectID, relPath string) (*FileResult, error)
-	PutFile(ctx context.Context, projectID, relPath, content, ifMatch string) (*PutResult, error)
+	GetFile(ctx context.Context, orgID, projectID, relPath string) (*FileResult, error)
+	PutFile(ctx context.Context, orgID, projectID, relPath, content, ifMatch string) (*PutResult, error)
 
 	// Requirements multi-file ops.
-	ListRequirementFiles(ctx context.Context, projectID string) (map[string]string, error)
-	DeleteRequirementFile(ctx context.Context, projectID, name string) error
+	ListRequirementFiles(ctx context.Context, orgID, projectID string) (map[string]string, error)
+	DeleteRequirementFile(ctx context.Context, orgID, projectID, name string) error
 
 	// Design multi-file ops. `sub` is relative to `specs/design/`.
-	ListDesignFiles(ctx context.Context, projectID string) (map[string]string, error)
-	DeleteDesignFile(ctx context.Context, projectID, sub string) error
-	DeleteDesignDirectory(ctx context.Context, projectID, sub string) error
+	ListDesignFiles(ctx context.Context, orgID, projectID string) (map[string]string, error)
+	DeleteDesignFile(ctx context.Context, orgID, projectID, sub string) error
+	DeleteDesignDirectory(ctx context.Context, orgID, projectID, sub string) error
 
 	// Save / Discard.
-	SaveRequirements(ctx context.Context, projectID string, req SaveRequest) (*RequirementsSaveResult, error)
-	SaveDesign(ctx context.Context, projectID string, req SaveRequest) (*DesignSaveResult, error)
-	DiscardRequirements(ctx context.Context, projectID string) (map[string]string, error)
-	DiscardDesign(ctx context.Context, projectID string) (map[string]string, error)
+	SaveRequirements(ctx context.Context, orgID, projectID string, req SaveRequest) (*RequirementsSaveResult, error)
+	SaveDesign(ctx context.Context, orgID, projectID string, req SaveRequest) (*DesignSaveResult, error)
+	DiscardRequirements(ctx context.Context, orgID, projectID string) (map[string]string, error)
+	DiscardDesign(ctx context.Context, orgID, projectID string) (map[string]string, error)
 
 	// Requirements directory snapshots (chat per-turn undo + chat
 	// session baseline). Stored out-of-band under
 	// `<clone>/.git/asdlc-reqchat-snapshots/` so they don't pollute the
 	// working tree, get committed, or appear in tag lists. Auto-cleaned
 	// when the clone directory is recreated.
-	CaptureRequirementsSnapshot(ctx context.Context, projectID, snapshotID string) (map[string]string, error)
-	RestoreRequirementsSnapshot(ctx context.Context, projectID, snapshotID string) (map[string]string, error)
-	DeleteRequirementsSnapshot(ctx context.Context, projectID, snapshotID string) error
+	CaptureRequirementsSnapshot(ctx context.Context, orgID, projectID, snapshotID string) (map[string]string, error)
+	RestoreRequirementsSnapshot(ctx context.Context, orgID, projectID, snapshotID string) (map[string]string, error)
+	DeleteRequirementsSnapshot(ctx context.Context, orgID, projectID, snapshotID string) error
 	// ReadFileFromRequirementsSnapshot returns the content of a single
 	// requirement file as captured in `snapshotID`. The `existed` flag
 	// distinguishes "file was present in the snapshot" from "snapshot
 	// existed but did not contain this file" — callers (per-file Revert)
 	// use it to decide between write-back vs. delete. Returns
 	// ErrArtifactNotFound only when the snapshot blob itself is missing.
-	ReadFileFromRequirementsSnapshot(ctx context.Context, projectID, snapshotID, filename string) (content string, existed bool, err error)
+	ReadFileFromRequirementsSnapshot(ctx context.Context, orgID, projectID, snapshotID, filename string) (content string, existed bool, err error)
 
 	// Versions.
-	ListRequirementsVersions(ctx context.Context, projectID string) ([]RequirementsVersionInfo, error)
-	ListDesignVersions(ctx context.Context, projectID string) ([]DesignVersionInfo, error)
-	GetRequirementsAtTag(ctx context.Context, projectID, tag string) (map[string]string, error)
-	GetDesignAtTag(ctx context.Context, projectID, tag string) (map[string]string, error)
+	ListRequirementsVersions(ctx context.Context, orgID, projectID string) ([]RequirementsVersionInfo, error)
+	ListDesignVersions(ctx context.Context, orgID, projectID string) ([]DesignVersionInfo, error)
+	GetRequirementsAtTag(ctx context.Context, orgID, projectID, tag string) (map[string]string, error)
+	GetDesignAtTag(ctx context.Context, orgID, projectID, tag string) (map[string]string, error)
 }
 
 type artifactService struct {
@@ -358,7 +358,7 @@ func DesignFilePath(sub string) (string, error) {
 
 // ----- Generic file ops -----
 
-func (s *artifactService) GetFile(ctx context.Context, projectID, relPath string) (*FileResult, error) {
+func (s *artifactService) GetFile(ctx context.Context, orgID, projectID, relPath string) (*FileResult, error) {
 	if err := validateRelPath(relPath); err != nil {
 		return nil, err
 	}
@@ -367,7 +367,7 @@ func (s *artifactService) GetFile(ctx context.Context, projectID, relPath string
 	mu.Lock()
 	defer mu.Unlock()
 
-	repoRecord, err := s.requireReadyRepo(ctx, projectID)
+	repoRecord, err := s.requireReadyRepo(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -391,7 +391,7 @@ func (s *artifactService) GetFile(ctx context.Context, projectID, relPath string
 	return &FileResult{Content: string(data), SHA: sha}, nil
 }
 
-func (s *artifactService) PutFile(ctx context.Context, projectID, relPath, content, ifMatch string) (*PutResult, error) {
+func (s *artifactService) PutFile(ctx context.Context, orgID, projectID, relPath, content, ifMatch string) (*PutResult, error) {
 	if err := validateRelPath(relPath); err != nil {
 		return nil, err
 	}
@@ -403,7 +403,7 @@ func (s *artifactService) PutFile(ctx context.Context, projectID, relPath, conte
 	mu.Lock()
 	defer mu.Unlock()
 
-	repoRecord, err := s.requireReadyRepo(ctx, projectID)
+	repoRecord, err := s.requireReadyRepo(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -440,12 +440,12 @@ func (s *artifactService) PutFile(ctx context.Context, projectID, relPath, conte
 
 // ----- Requirements multi-file ops -----
 
-func (s *artifactService) ListRequirementFiles(ctx context.Context, projectID string) (map[string]string, error) {
+func (s *artifactService) ListRequirementFiles(ctx context.Context, orgID, projectID string) (map[string]string, error) {
 	mu := s.gitOps.getRepoLock(projectID)
 	mu.Lock()
 	defer mu.Unlock()
 
-	repoRecord, err := s.requireReadyRepo(ctx, projectID)
+	repoRecord, err := s.requireReadyRepo(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -486,7 +486,7 @@ func readMarkdownDir(dir string) (map[string]string, error) {
 	return out, nil
 }
 
-func (s *artifactService) DeleteRequirementFile(ctx context.Context, projectID, name string) error {
+func (s *artifactService) DeleteRequirementFile(ctx context.Context, orgID, projectID, name string) error {
 	relPath, err := RequirementFilePath(name)
 	if err != nil {
 		return err
@@ -499,7 +499,7 @@ func (s *artifactService) DeleteRequirementFile(ctx context.Context, projectID, 
 	mu.Lock()
 	defer mu.Unlock()
 
-	repoRecord, err := s.requireReadyRepo(ctx, projectID)
+	repoRecord, err := s.requireReadyRepo(ctx, orgID, projectID)
 	if err != nil {
 		return err
 	}
@@ -528,12 +528,12 @@ func (s *artifactService) DeleteRequirementFile(ctx context.Context, projectID, 
 // computing the changeset (adds / modifies / deletes), so users' explicit
 // deletions still land as tombstones. Unrelated files on remote main are
 // preserved by `base_tree=current main tree`.
-func (s *artifactService) SaveRequirements(ctx context.Context, projectID string, req SaveRequest) (*RequirementsSaveResult, error) {
+func (s *artifactService) SaveRequirements(ctx context.Context, orgID, projectID string, req SaveRequest) (*RequirementsSaveResult, error) {
 	mu := s.gitOps.getRepoLock(projectID)
 	mu.Lock()
 	defer mu.Unlock()
 
-	repoRecord, err := s.requireReadyRepo(ctx, projectID)
+	repoRecord, err := s.requireReadyRepo(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -558,12 +558,12 @@ func (s *artifactService) SaveRequirements(ctx context.Context, projectID string
 // Returns ErrNoRequirementsBaseline (409) if no `v<N>` tag exists yet, and
 // ErrArtifactPathInvalid (400) if the root `design.md` is missing — a save
 // must produce at least that file.
-func (s *artifactService) SaveDesign(ctx context.Context, projectID string, req SaveRequest) (*DesignSaveResult, error) {
+func (s *artifactService) SaveDesign(ctx context.Context, orgID, projectID string, req SaveRequest) (*DesignSaveResult, error) {
 	mu := s.gitOps.getRepoLock(projectID)
 	mu.Lock()
 	defer mu.Unlock()
 
-	repoRecord, err := s.requireReadyRepo(ctx, projectID)
+	repoRecord, err := s.requireReadyRepo(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -584,12 +584,12 @@ func (s *artifactService) SaveDesign(ctx context.Context, projectID string, req 
 // directory to its content at the latest `v<N>` tag. Files added since that
 // tag are removed; deletions are restored. Returns ErrNoVersionToDiscard if
 // no `v<N>` tag exists.
-func (s *artifactService) DiscardRequirements(ctx context.Context, projectID string) (map[string]string, error) {
+func (s *artifactService) DiscardRequirements(ctx context.Context, orgID, projectID string) (map[string]string, error) {
 	mu := s.gitOps.getRepoLock(projectID)
 	mu.Lock()
 	defer mu.Unlock()
 
-	repoRecord, err := s.requireReadyRepo(ctx, projectID)
+	repoRecord, err := s.requireReadyRepo(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -628,12 +628,12 @@ func (s *artifactService) DiscardRequirements(ctx context.Context, projectID str
 // content at the latest `v<N>-<M>` tag. Files added since that tag are
 // removed; deletions are restored. Returns ErrNoVersionToDiscard if no
 // design tag exists.
-func (s *artifactService) DiscardDesign(ctx context.Context, projectID string) (map[string]string, error) {
+func (s *artifactService) DiscardDesign(ctx context.Context, orgID, projectID string) (map[string]string, error) {
 	mu := s.gitOps.getRepoLock(projectID)
 	mu.Lock()
 	defer mu.Unlock()
 
-	repoRecord, err := s.requireReadyRepo(ctx, projectID)
+	repoRecord, err := s.requireReadyRepo(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -670,23 +670,23 @@ func (s *artifactService) DiscardDesign(ctx context.Context, projectID string) (
 
 // ----- Versions -----
 
-func (s *artifactService) ListRequirementsVersions(ctx context.Context, projectID string) ([]RequirementsVersionInfo, error) {
-	tags, err := s.fetchAndListAllTags(ctx, projectID)
+func (s *artifactService) ListRequirementsVersions(ctx context.Context, orgID, projectID string) ([]RequirementsVersionInfo, error) {
+	tags, err := s.fetchAndListAllTags(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
 	return tagsToRequirementsVersions(tags), nil
 }
 
-func (s *artifactService) ListDesignVersions(ctx context.Context, projectID string) ([]DesignVersionInfo, error) {
-	tags, err := s.fetchAndListAllTags(ctx, projectID)
+func (s *artifactService) ListDesignVersions(ctx context.Context, orgID, projectID string) ([]DesignVersionInfo, error) {
+	tags, err := s.fetchAndListAllTags(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
 	return tagsToDesignVersions(tags), nil
 }
 
-func (s *artifactService) GetRequirementsAtTag(ctx context.Context, projectID, tag string) (map[string]string, error) {
+func (s *artifactService) GetRequirementsAtTag(ctx context.Context, orgID, projectID, tag string) (map[string]string, error) {
 	n, ok := parseRequirementsTag(tag)
 	if !ok {
 		return nil, fmt.Errorf("%w: %q is not a v<N> tag", ErrInvalidVersionTag, tag)
@@ -697,7 +697,7 @@ func (s *artifactService) GetRequirementsAtTag(ctx context.Context, projectID, t
 	mu.Lock()
 	defer mu.Unlock()
 
-	repoRecord, err := s.requireReadyRepo(ctx, projectID)
+	repoRecord, err := s.requireReadyRepo(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -716,7 +716,7 @@ func (s *artifactService) GetRequirementsAtTag(ctx context.Context, projectID, t
 	return out, nil
 }
 
-func (s *artifactService) GetDesignAtTag(ctx context.Context, projectID, tag string) (map[string]string, error) {
+func (s *artifactService) GetDesignAtTag(ctx context.Context, orgID, projectID, tag string) (map[string]string, error) {
 	if _, _, ok := parseDesignTag(tag); !ok {
 		return nil, fmt.Errorf("%w: %q is not a v<N>-<M> tag", ErrInvalidVersionTag, tag)
 	}
@@ -725,7 +725,7 @@ func (s *artifactService) GetDesignAtTag(ctx context.Context, projectID, tag str
 	mu.Lock()
 	defer mu.Unlock()
 
-	repoRecord, err := s.requireReadyRepo(ctx, projectID)
+	repoRecord, err := s.requireReadyRepo(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -746,12 +746,12 @@ func (s *artifactService) GetDesignAtTag(ctx context.Context, projectID, tag str
 
 // ----- Design multi-file ops -----
 
-func (s *artifactService) ListDesignFiles(ctx context.Context, projectID string) (map[string]string, error) {
+func (s *artifactService) ListDesignFiles(ctx context.Context, orgID, projectID string) (map[string]string, error) {
 	mu := s.gitOps.getRepoLock(projectID)
 	mu.Lock()
 	defer mu.Unlock()
 
-	repoRecord, err := s.requireReadyRepo(ctx, projectID)
+	repoRecord, err := s.requireReadyRepo(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -763,7 +763,7 @@ func (s *artifactService) ListDesignFiles(ctx context.Context, projectID string)
 	return readDesignDirRecursive(dir)
 }
 
-func (s *artifactService) DeleteDesignFile(ctx context.Context, projectID, sub string) error {
+func (s *artifactService) DeleteDesignFile(ctx context.Context, orgID, projectID, sub string) error {
 	if err := validateDesignSubPath(sub); err != nil {
 		return err
 	}
@@ -775,7 +775,7 @@ func (s *artifactService) DeleteDesignFile(ctx context.Context, projectID, sub s
 	mu.Lock()
 	defer mu.Unlock()
 
-	repoRecord, err := s.requireReadyRepo(ctx, projectID)
+	repoRecord, err := s.requireReadyRepo(ctx, orgID, projectID)
 	if err != nil {
 		return err
 	}
@@ -809,7 +809,7 @@ func (s *artifactService) DeleteDesignFile(ctx context.Context, projectID, sub s
 	return nil
 }
 
-func (s *artifactService) DeleteDesignDirectory(ctx context.Context, projectID, sub string) error {
+func (s *artifactService) DeleteDesignDirectory(ctx context.Context, orgID, projectID, sub string) error {
 	if err := validateDesignSubDir(sub); err != nil {
 		return err
 	}
@@ -822,7 +822,7 @@ func (s *artifactService) DeleteDesignDirectory(ctx context.Context, projectID, 
 	mu.Lock()
 	defer mu.Unlock()
 
-	repoRecord, err := s.requireReadyRepo(ctx, projectID)
+	repoRecord, err := s.requireReadyRepo(ctx, orgID, projectID)
 	if err != nil {
 		return err
 	}
@@ -849,8 +849,8 @@ func (s *artifactService) DeleteDesignDirectory(ctx context.Context, projectID, 
 
 // ----- Internal helpers -----
 
-func (s *artifactService) requireReadyRepo(ctx context.Context, projectID string) (*models.GitRepository, error) {
-	repoRecord, err := s.repo.GetByProjectID(ctx, projectID)
+func (s *artifactService) requireReadyRepo(ctx context.Context, orgID, projectID string) (*models.GitRepository, error) {
+	repoRecord, err := s.repo.GetByOrgAndProjectID(ctx, orgID, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("get repo: %w", err)
 	}
@@ -865,12 +865,12 @@ func (s *artifactService) requireReadyRepo(ctx context.Context, projectID string
 
 // fetchAndListAllTags acquires the repo lock, ensures the clone is ready,
 // best-effort fetches remote tags, and returns the full local tag list.
-func (s *artifactService) fetchAndListAllTags(ctx context.Context, projectID string) ([]TagInfo, error) {
+func (s *artifactService) fetchAndListAllTags(ctx context.Context, orgID, projectID string) ([]TagInfo, error) {
 	mu := s.gitOps.getRepoLock(projectID)
 	mu.Lock()
 	defer mu.Unlock()
 
-	repoRecord, err := s.requireReadyRepo(ctx, projectID)
+	repoRecord, err := s.requireReadyRepo(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -1248,7 +1248,7 @@ func snapshotPath(clonePath, id string) string {
 // `specs/requirements/` to a JSON blob keyed by `snapshotID`. Returns the
 // captured file map. Idempotent — re-capturing the same id overwrites the
 // blob.
-func (s *artifactService) CaptureRequirementsSnapshot(ctx context.Context, projectID, snapshotID string) (map[string]string, error) {
+func (s *artifactService) CaptureRequirementsSnapshot(ctx context.Context, orgID, projectID, snapshotID string) (map[string]string, error) {
 	if err := validateSnapshotID(snapshotID); err != nil {
 		return nil, err
 	}
@@ -1257,7 +1257,7 @@ func (s *artifactService) CaptureRequirementsSnapshot(ctx context.Context, proje
 	mu.Lock()
 	defer mu.Unlock()
 
-	repoRecord, err := s.requireReadyRepo(ctx, projectID)
+	repoRecord, err := s.requireReadyRepo(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -1289,7 +1289,7 @@ func (s *artifactService) CaptureRequirementsSnapshot(ctx context.Context, proje
 // RestoreRequirementsSnapshot rewrites `specs/requirements/` to the
 // contents captured under `snapshotID`. Files added since the snapshot are
 // removed; files deleted since the snapshot are restored.
-func (s *artifactService) RestoreRequirementsSnapshot(ctx context.Context, projectID, snapshotID string) (map[string]string, error) {
+func (s *artifactService) RestoreRequirementsSnapshot(ctx context.Context, orgID, projectID, snapshotID string) (map[string]string, error) {
 	if err := validateSnapshotID(snapshotID); err != nil {
 		return nil, err
 	}
@@ -1298,7 +1298,7 @@ func (s *artifactService) RestoreRequirementsSnapshot(ctx context.Context, proje
 	mu.Lock()
 	defer mu.Unlock()
 
-	repoRecord, err := s.requireReadyRepo(ctx, projectID)
+	repoRecord, err := s.requireReadyRepo(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -1350,7 +1350,7 @@ func (s *artifactService) RestoreRequirementsSnapshot(ctx context.Context, proje
 //     a Revert as "delete the working-tree file".
 //   - ("", false, ErrArtifactNotFound) when the snapshot blob itself is
 //     missing.
-func (s *artifactService) ReadFileFromRequirementsSnapshot(ctx context.Context, projectID, snapshotID, filename string) (string, bool, error) {
+func (s *artifactService) ReadFileFromRequirementsSnapshot(ctx context.Context, orgID, projectID, snapshotID, filename string) (string, bool, error) {
 	if err := validateSnapshotID(snapshotID); err != nil {
 		return "", false, err
 	}
@@ -1362,7 +1362,7 @@ func (s *artifactService) ReadFileFromRequirementsSnapshot(ctx context.Context, 
 	mu.Lock()
 	defer mu.Unlock()
 
-	repoRecord, err := s.requireReadyRepo(ctx, projectID)
+	repoRecord, err := s.requireReadyRepo(ctx, orgID, projectID)
 	if err != nil {
 		return "", false, err
 	}
@@ -1389,7 +1389,7 @@ func (s *artifactService) ReadFileFromRequirementsSnapshot(ctx context.Context, 
 }
 
 // DeleteRequirementsSnapshot removes a stored snapshot. Idempotent.
-func (s *artifactService) DeleteRequirementsSnapshot(ctx context.Context, projectID, snapshotID string) error {
+func (s *artifactService) DeleteRequirementsSnapshot(ctx context.Context, orgID, projectID, snapshotID string) error {
 	if err := validateSnapshotID(snapshotID); err != nil {
 		return err
 	}
@@ -1398,7 +1398,7 @@ func (s *artifactService) DeleteRequirementsSnapshot(ctx context.Context, projec
 	mu.Lock()
 	defer mu.Unlock()
 
-	repoRecord, err := s.requireReadyRepo(ctx, projectID)
+	repoRecord, err := s.requireReadyRepo(ctx, orgID, projectID)
 	if err != nil {
 		return err
 	}

@@ -104,7 +104,7 @@ func (s *boardService) GetBoard(ctx context.Context, orgID, projectID string) (*
 		return board, nil
 	}
 
-	result, err := s.repoBoardSvc.GetBoard(ctx, projectID)
+	result, err := s.repoBoardSvc.GetBoard(ctx, orgID, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("get board: %w", err)
 	}

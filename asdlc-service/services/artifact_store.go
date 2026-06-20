@@ -77,7 +77,7 @@ const RequirementsMainFile = "requirements.md"
 // `specs/requirements/`. A first-time project with no requirements yet
 // returns an empty map (not an error).
 func (s *ArtifactStore) ListRequirements(ctx context.Context, orgID, projectID string) (map[string]string, error) {
-	files, err := s.artifactSvc.ListRequirementFiles(ctx, projectID)
+	files, err := s.artifactSvc.ListRequirementFiles(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +89,7 @@ func (s *ArtifactStore) ListRequirements(ctx context.Context, orgID, projectID s
 
 // ReadRequirementFile reads a single requirement file by basename.
 func (s *ArtifactStore) ReadRequirementFile(ctx context.Context, orgID, projectID, name string) (string, error) {
-	res, err := s.artifactSvc.GetFile(ctx, projectID, path.Join(RequirementsDir, name))
+	res, err := s.artifactSvc.GetFile(ctx, orgID, projectID, path.Join(RequirementsDir, name))
 	if err != nil {
 		return "", err
 	}
@@ -100,7 +100,7 @@ func (s *ArtifactStore) ReadRequirementFile(ctx context.Context, orgID, projectI
 // The optional ifMatch sha (returned by the previous PUT) gives the
 // streaming caller optimistic concurrency control.
 func (s *ArtifactStore) WriteRequirementFile(ctx context.Context, orgID, projectID, name, content string) (sha string, err error) {
-	res, err := s.artifactSvc.PutFile(ctx, projectID, path.Join(RequirementsDir, name), content, "")
+	res, err := s.artifactSvc.PutFile(ctx, orgID, projectID, path.Join(RequirementsDir, name), content, "")
 	if err != nil {
 		return "", fmt.Errorf("write requirement file %q: %w", name, err)
 	}
@@ -113,7 +113,7 @@ func (s *ArtifactStore) DeleteRequirementFile(ctx context.Context, orgID, projec
 	if name == RequirementsMainFile {
 		return fmt.Errorf("cannot delete %s", RequirementsMainFile)
 	}
-	if err := s.artifactSvc.DeleteRequirementFile(ctx, projectID, name); err != nil {
+	if err := s.artifactSvc.DeleteRequirementFile(ctx, orgID, projectID, name); err != nil {
 		return fmt.Errorf("delete requirement file %q: %w", name, err)
 	}
 	return nil
@@ -149,7 +149,7 @@ const componentDirPrefix = "components/"
 // Keys are paths relative to that directory, using forward slashes (e.g.
 // `design.md`, `components/user-api/design.md`).
 func (s *ArtifactStore) ListDesignFiles(ctx context.Context, orgID, projectID string) (map[string]string, error) {
-	files, err := s.artifactSvc.ListDesignFiles(ctx, projectID)
+	files, err := s.artifactSvc.ListDesignFiles(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +161,7 @@ func (s *ArtifactStore) ListDesignFiles(ctx context.Context, orgID, projectID st
 
 // ReadDesignFile reads a single design file by sub-path.
 func (s *ArtifactStore) ReadDesignFile(ctx context.Context, orgID, projectID, subPath string) (string, error) {
-	res, err := s.artifactSvc.GetFile(ctx, projectID, path.Join(DesignDir, subPath))
+	res, err := s.artifactSvc.GetFile(ctx, orgID, projectID, path.Join(DesignDir, subPath))
 	if err != nil {
 		return "", err
 	}
@@ -171,7 +171,7 @@ func (s *ArtifactStore) ReadDesignFile(ctx context.Context, orgID, projectID, su
 // WriteDesignFile creates or overwrites a single design file. The path is
 // relative to `specs/design/` (forward slashes; nested components allowed).
 func (s *ArtifactStore) WriteDesignFile(ctx context.Context, orgID, projectID, subPath, content string) (sha string, err error) {
-	res, err := s.artifactSvc.PutFile(ctx, projectID, path.Join(DesignDir, subPath), content, "")
+	res, err := s.artifactSvc.PutFile(ctx, orgID, projectID, path.Join(DesignDir, subPath), content, "")
 	if err != nil {
 		return "", fmt.Errorf("write design file %q: %w", subPath, err)
 	}
@@ -184,7 +184,7 @@ func (s *ArtifactStore) DeleteDesignFile(ctx context.Context, orgID, projectID, 
 	if subPath == DesignRootFile {
 		return fmt.Errorf("cannot delete %s", DesignRootFile)
 	}
-	if err := s.artifactSvc.DeleteDesignFile(ctx, projectID, subPath); err != nil {
+	if err := s.artifactSvc.DeleteDesignFile(ctx, orgID, projectID, subPath); err != nil {
 		return fmt.Errorf("delete design file %q: %w", subPath, err)
 	}
 	return nil
@@ -194,7 +194,7 @@ func (s *ArtifactStore) DeleteDesignFile(ctx context.Context, orgID, projectID, 
 // its contents (e.g. `components/user-api` to remove a component's whole
 // subtree).
 func (s *ArtifactStore) DeleteDesignDirectory(ctx context.Context, orgID, projectID, subPath string) error {
-	if err := s.artifactSvc.DeleteDesignDirectory(ctx, projectID, subPath); err != nil {
+	if err := s.artifactSvc.DeleteDesignDirectory(ctx, orgID, projectID, subPath); err != nil {
 		return fmt.Errorf("delete design directory %q: %w", subPath, err)
 	}
 	return nil
@@ -205,7 +205,7 @@ func (s *ArtifactStore) DeleteDesignDirectory(ctx context.Context, orgID, projec
 // OC provisioning, issue bodies, etc.). Returns
 // (nil, ErrArtifactNotFound) when no design root exists yet.
 func (s *ArtifactStore) ReadDesign(ctx context.Context, orgID, projectID string) (*DesignFile, error) {
-	files, err := s.artifactSvc.ListDesignFiles(ctx, projectID)
+	files, err := s.artifactSvc.ListDesignFiles(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}

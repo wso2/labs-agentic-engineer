@@ -52,12 +52,13 @@ type registerWebhookResponse struct {
 }
 
 func (c *webhookRegistrationController) Register(w http.ResponseWriter, r *http.Request) {
+	orgID := r.PathValue("orgId")
 	projectID := r.PathValue("projectId")
 	if !requireProjectIDSlug(w, projectID) {
 		return
 	}
 
-	hookID, err := c.service.Register(r.Context(), projectID)
+	hookID, err := c.service.Register(r.Context(), orgID, projectID)
 	if err != nil {
 		if errors.Is(err, services.ErrRepoNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "repository not found")
@@ -76,12 +77,13 @@ func (c *webhookRegistrationController) Register(w http.ResponseWriter, r *http.
 }
 
 func (c *webhookRegistrationController) Deregister(w http.ResponseWriter, r *http.Request) {
+	orgID := r.PathValue("orgId")
 	projectID := r.PathValue("projectId")
 	if !requireProjectIDSlug(w, projectID) {
 		return
 	}
 
-	if err := c.service.Deregister(r.Context(), projectID); err != nil {
+	if err := c.service.Deregister(r.Context(), orgID, projectID); err != nil {
 		if errors.Is(err, services.ErrRepoNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "repository not found")
 			return

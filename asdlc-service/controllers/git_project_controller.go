@@ -100,7 +100,7 @@ func (c *gitProjectController) InitProject(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := c.repoService.SetGithubProjectID(r.Context(), req.ProjectID, githubProjectID); err != nil {
+	if err := c.repoService.SetGithubProjectID(r.Context(), req.OrgID, req.ProjectID, githubProjectID); err != nil {
 		slog.WarnContext(r.Context(), "failed to save github project id", "project", req.ProjectID, "error", err)
 	}
 

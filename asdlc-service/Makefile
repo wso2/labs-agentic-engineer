@@ -1,10 +1,17 @@
-.PHONY: build test check-no-legacy-creds gen-oc-client gen-oc-client-check gen-mocks
+.PHONY: build test test-db check-no-legacy-creds gen-oc-client gen-oc-client-check gen-mocks
 
 build:
 	go build ./...
 
 test: check-no-legacy-creds
 	go test ./...
+
+# DB-backed tenancy tests (§8.0). Requires the deployments Postgres on :5433
+# (bash deployments/scripts/start.sh); override the DSN with TEST_DATABASE_URL.
+# Tests skip gracefully if the database is unreachable. The `dbtest` build tag
+# keeps these out of the default `make test` so plain unit runs need no DB.
+test-db:
+	go test -tags dbtest ./...
 
 # Pinned spec version — bump this and re-run `make gen-oc-client` when the
 # upstream OC API changes. Keep aligned with the OC build deployed by the

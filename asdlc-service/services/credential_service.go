@@ -886,19 +886,20 @@ func (s *CredentialService) OrgIDByRepoFullName(ctx context.Context, fullName st
 	if fullName == "" {
 		return "", &NotFoundError{What: "empty repo full_name"}
 	}
-	// Look up the repo by repo_url. The git_repositories table stores
-	// the canonical clone URL — `https://github.com/<owner>/<repo>` or
-	// `...<repo>.git`. We match either shape so a webhook payload's
-	// `<owner>/<repo>` (without `.git`) routes correctly.
+	// INT-2 (routing leg): match the canonical clone URL EXACTLY, not with an
+	// unanchored `LIKE '%/owner/repo'`. The leading-`%` wildcard matched any
+	// host (and any path suffix), so a malicious or colliding repo_url could
+	// route a webhook to the wrong org. git_repositories stores the canonical
+	// `https://github.com/<owner>/<repo>` (optionally `.git`); match both exact
+	// shapes, anchored on host+owner+repo. No `LIKE`, no leading wildcard.
 	var row struct {
 		OrgID string `gorm:"column:org_id"`
 	}
-	suffix := "%/" + fullName
-	suffixGit := suffix + ".git"
+	canonical := "https://github.com/" + fullName
 	err := s.db.WithContext(ctx).
 		Table("git_repositories").
 		Select("org_id").
-		Where("repo_url LIKE ? OR repo_url LIKE ?", suffix, suffixGit).
+		Where("repo_url = ? OR repo_url = ?", canonical, canonical+".git").
 		Limit(1).
 		Scan(&row).Error
 	if err != nil {

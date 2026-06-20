@@ -161,7 +161,7 @@ func (s *workflowRunService) DispatchTaskBuild(ctx context.Context, task *models
 
 	var repoSlug string
 	if s.repoSvc != nil && s.buildCredSvc != nil {
-		repo, err := s.repoSvc.GetRepo(ctx, task.ProjectID)
+		repo, err := s.repoSvc.GetRepo(ctx, task.OrgID, task.ProjectID)
 		if err != nil {
 			return "", fmt.Errorf("get repo for slug: %w", err)
 		}
@@ -303,7 +303,7 @@ func (s *workflowRunService) RetryAuthFailedBuild(ctx context.Context, task *mod
 	if task.LastBuildSHA == "" {
 		return "", fmt.Errorf("retry-auth-failed: task has no LastBuildSHA")
 	}
-	repo, err := s.repoSvc.GetRepo(ctx, task.ProjectID)
+	repo, err := s.repoSvc.GetRepo(ctx, task.OrgID, task.ProjectID)
 	if err != nil {
 		return "", fmt.Errorf("retry-auth-failed: get repo: %w", err)
 	}

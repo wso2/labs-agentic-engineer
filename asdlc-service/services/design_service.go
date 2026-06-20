@@ -30,11 +30,9 @@ import (
 	"strings"
 
 	"github.com/wso2/asdlc/asdlc-service/clients/agents"
+	"github.com/wso2/asdlc/asdlc-service/internal/platform/k8sname"
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
-
-// invalidNameChars strips anything that isn't lowercase alphanumeric or a hyphen.
-var invalidNameChars = regexp.MustCompile(`[^a-z0-9-]`)
 
 // ocEntrypoint maps the AI-generated componentType to the OC component type reference.
 func ocEntrypoint(componentType string) string {
@@ -46,22 +44,9 @@ func ocEntrypoint(componentType string) string {
 	}
 }
 
-// toK8sName converts a human-readable name to an RFC 1123 compliant k8s name.
-func toK8sName(name string) string {
-	s := strings.ToLower(strings.TrimSpace(name))
-	s = strings.ReplaceAll(s, " ", "-")
-	s = invalidNameChars.ReplaceAllString(s, "")
-	s = strings.Trim(s, "-")
-	if s == "" {
-		s = "component"
-	}
-	return s
-}
-
-// ToK8sName is an exported alias for toK8sName so callers outside the
-// services package (e.g. webhook/trait_sync_watcher) can produce the
-// same k8s-shaped slug the dispatch path uses.
-func ToK8sName(name string) string { return toK8sName(name) }
+// toK8sName is a thin in-package shim over k8sname.ToK8sName so the many
+// existing lowercase callers in this package keep compiling unchanged.
+func toK8sName(name string) string { return k8sname.ToK8sName(name) }
 
 // DesignBundle is the file-map view returned to the architecture page. It
 // pairs the raw per-file working-tree contents (used by the Explorer) with
@@ -167,7 +152,7 @@ func (s *designService) GetDesign(ctx context.Context, orgID, projectID string) 
 	var versions []models.ArtifactVersion
 
 	if s.artifactSvc != nil {
-		v, err := s.artifactSvc.ListDesignVersions(ctx, projectID)
+		v, err := s.artifactSvc.ListDesignVersions(ctx, orgID, projectID)
 		if err != nil {
 			slog.WarnContext(ctx, "failed to list design versions", "error", err)
 		} else {
@@ -191,7 +176,7 @@ func (s *designService) GetDesign(ctx context.Context, orgID, projectID string) 
 	} else if s.artifactSvc != nil {
 		current, err := s.store.ListDesignFiles(ctx, orgID, projectID)
 		if err == nil {
-			tagged, err := s.artifactSvc.GetDesignAtTag(ctx, projectID, tag)
+			tagged, err := s.artifactSvc.GetDesignAtTag(ctx, orgID, projectID, tag)
 			if err == nil && !designFilesEqual(current, tagged) {
 				unsaved = true
 			}
@@ -223,7 +208,7 @@ func (s *designService) GetDesignAtTag(ctx context.Context, orgID, projectID, ta
 	if s.artifactSvc == nil {
 		return nil, fmt.Errorf("git client not configured")
 	}
-	files, err := s.artifactSvc.GetDesignAtTag(ctx, projectID, tag)
+	files, err := s.artifactSvc.GetDesignAtTag(ctx, orgID, projectID, tag)
 	if err != nil {
 		if errors.Is(err, ErrArtifactNotFound) {
 			return nil, ErrDesignNotFound
@@ -277,7 +262,7 @@ func (s *designService) StreamGenerateDesign(ctx context.Context, orgID, project
 	// Require an approved (tagged) requirements version before generating design.
 	var sourceTag string
 	if s.artifactSvc != nil {
-		versions, err := s.artifactSvc.ListRequirementsVersions(ctx, projectID)
+		versions, err := s.artifactSvc.ListRequirementsVersions(ctx, orgID, projectID)
 		if err != nil {
 			slog.WarnContext(ctx, "failed to check requirements versions", "error", err)
 		} else if len(versions) == 0 {
@@ -460,7 +445,7 @@ func (s *designService) GetDesignBundleAtTag(ctx context.Context, orgID, project
 	if s.artifactSvc == nil {
 		return nil, fmt.Errorf("git client not configured")
 	}
-	files, err := s.artifactSvc.GetDesignAtTag(ctx, projectID, tag)
+	files, err := s.artifactSvc.GetDesignAtTag(ctx, orgID, projectID, tag)
 	if err != nil {
 		if errors.Is(err, ErrArtifactNotFound) {
 			return nil, ErrDesignNotFound
@@ -578,7 +563,7 @@ func (s *designService) SaveAndProceed(ctx context.Context, orgID, projectID str
 		return nil, ErrDesignNotFound
 	}
 
-	res, err := s.artifactSvc.SaveDesign(ctx, projectID, SaveRequest{
+	res, err := s.artifactSvc.SaveDesign(ctx, orgID, projectID, SaveRequest{
 		Message: "Update design",
 	})
 	if err != nil {
@@ -591,7 +576,7 @@ func (s *designService) SaveAndProceed(ctx context.Context, orgID, projectID str
 		return nil, fmt.Errorf("save design: %w", err)
 	}
 
-	versions, err := s.artifactSvc.ListDesignVersions(ctx, projectID)
+	versions, err := s.artifactSvc.ListDesignVersions(ctx, orgID, projectID)
 	if err != nil {
 		slog.WarnContext(ctx, "list versions after save failed", "error", err)
 	}
@@ -621,7 +606,7 @@ func (s *designService) DiscardChanges(ctx context.Context, orgID, projectID str
 	if s.artifactSvc == nil {
 		return nil, fmt.Errorf("git client not configured")
 	}
-	if _, err := s.artifactSvc.DiscardDesign(ctx, projectID); err != nil {
+	if _, err := s.artifactSvc.DiscardDesign(ctx, orgID, projectID); err != nil {
 		if errors.Is(err, ErrArtifactNotFound) {
 			return nil, fmt.Errorf("no saved version to revert to")
 		}
@@ -634,7 +619,7 @@ func (s *designService) ListDesignVersions(ctx context.Context, orgID, projectID
 	if s.artifactSvc == nil {
 		return nil, nil
 	}
-	v, err := s.artifactSvc.ListDesignVersions(ctx, projectID)
+	v, err := s.artifactSvc.ListDesignVersions(ctx, orgID, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("list design versions: %w", err)
 	}

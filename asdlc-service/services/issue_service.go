@@ -29,16 +29,16 @@ import (
 
 // IssueService creates and lists GitHub issues on project repositories.
 type IssueService interface {
-	CreateIssue(ctx context.Context, projectID string, req CreateIssueRequest) (*IssueResult, error)
-	ListIssues(ctx context.Context, projectID string, labels []string) ([]IssueInfo, error)
+	CreateIssue(ctx context.Context, orgID, projectID string, req CreateIssueRequest) (*IssueResult, error)
+	ListIssues(ctx context.Context, orgID, projectID string, labels []string) ([]IssueInfo, error)
 	// CloseIssue closes the issue, optionally posting a closing comment first.
-	CloseIssue(ctx context.Context, projectID string, number int, comment string) error
+	CloseIssue(ctx context.Context, orgID, projectID string, number int, comment string) error
 	// CommentIssue posts a comment on the issue.
-	CommentIssue(ctx context.Context, projectID string, number int, body string) error
+	CommentIssue(ctx context.Context, orgID, projectID string, number int, body string) error
 	// EditIssueBody replaces the issue's body. Used by the tech-lead detail
 	// phase to write the LLM-authored body after the placeholder issue was
 	// created.
-	EditIssueBody(ctx context.Context, projectID string, number int, body string) error
+	EditIssueBody(ctx context.Context, orgID, projectID string, number int, body string) error
 }
 
 type issueService struct {
@@ -57,12 +57,12 @@ func NewIssueService(repo repositories.RepoRepository, github GitHubClient, gith
 	}
 }
 
-func (s *issueService) CreateIssue(ctx context.Context, projectID string, req CreateIssueRequest) (*IssueResult, error) {
+func (s *issueService) CreateIssue(ctx context.Context, orgID, projectID string, req CreateIssueRequest) (*IssueResult, error) {
 	if strings.TrimSpace(req.Title) == "" {
 		return nil, fmt.Errorf("title is required")
 	}
 
-	owner, repoName, cred, err := s.resolveRepoAndCredential(ctx, projectID)
+	owner, repoName, cred, err := s.resolveRepoAndCredential(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +82,7 @@ func (s *issueService) CreateIssue(ctx context.Context, projectID string, req Cr
 		return nil, err
 	}
 
-	gitRepo, repoErr := s.repo.GetByProjectID(ctx, projectID)
+	gitRepo, repoErr := s.repo.GetByOrgAndProjectID(ctx, orgID, projectID)
 	if repoErr == nil && gitRepo != nil {
 		// Mint the V2 (GraphQL) bearer once and reuse for the up-to-three
 		// sequential ensureBoard + addIssueToProject calls. App-installation
@@ -136,16 +136,16 @@ func (s *issueService) addIssueToProject(ctx context.Context, githubProjectID st
 	}
 }
 
-func (s *issueService) ListIssues(ctx context.Context, projectID string, labels []string) ([]IssueInfo, error) {
-	owner, repoName, cred, err := s.resolveRepoAndCredential(ctx, projectID)
+func (s *issueService) ListIssues(ctx context.Context, orgID, projectID string, labels []string) ([]IssueInfo, error) {
+	owner, repoName, cred, err := s.resolveRepoAndCredential(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
 	return s.github.ListIssues(ctx, owner, repoName, cred, labels)
 }
 
-func (s *issueService) CloseIssue(ctx context.Context, projectID string, number int, comment string) error {
-	owner, repoName, cred, err := s.resolveRepoAndCredential(ctx, projectID)
+func (s *issueService) CloseIssue(ctx context.Context, orgID, projectID string, number int, comment string) error {
+	owner, repoName, cred, err := s.resolveRepoAndCredential(ctx, orgID, projectID)
 	if err != nil {
 		return err
 	}
@@ -160,12 +160,12 @@ func (s *issueService) CloseIssue(ctx context.Context, projectID string, number 
 	return s.github.CloseIssue(ctx, owner, repoName, cred, number)
 }
 
-func (s *issueService) CommentIssue(ctx context.Context, projectID string, number int, body string) error {
+func (s *issueService) CommentIssue(ctx context.Context, orgID, projectID string, number int, body string) error {
 	if strings.TrimSpace(body) == "" {
 		return fmt.Errorf("comment body is required")
 	}
 
-	owner, repoName, cred, err := s.resolveRepoAndCredential(ctx, projectID)
+	owner, repoName, cred, err := s.resolveRepoAndCredential(ctx, orgID, projectID)
 	if err != nil {
 		return err
 	}
@@ -173,11 +173,11 @@ func (s *issueService) CommentIssue(ctx context.Context, projectID string, numbe
 	return s.github.CommentIssue(ctx, owner, repoName, cred, number, body)
 }
 
-func (s *issueService) EditIssueBody(ctx context.Context, projectID string, number int, body string) error {
+func (s *issueService) EditIssueBody(ctx context.Context, orgID, projectID string, number int, body string) error {
 	if strings.TrimSpace(body) == "" {
 		return fmt.Errorf("body is required")
 	}
-	owner, repoName, cred, err := s.resolveRepoAndCredential(ctx, projectID)
+	owner, repoName, cred, err := s.resolveRepoAndCredential(ctx, orgID, projectID)
 	if err != nil {
 		return err
 	}
@@ -188,8 +188,8 @@ func (s *issueService) EditIssueBody(ctx context.Context, projectID string, numb
 // owner/repo from the clone URL, and resolves the org's credential. Every
 // GitHub-bound op routes through here — the multi-tenant invariant
 // (operations parametrised by ocOrgID) is enforced at one place.
-func (s *issueService) resolveRepoAndCredential(ctx context.Context, projectID string) (owner, repo string, cred credentials.Credential, err error) {
-	gitRepo, err := s.repo.GetByProjectID(ctx, projectID)
+func (s *issueService) resolveRepoAndCredential(ctx context.Context, orgID, projectID string) (owner, repo string, cred credentials.Credential, err error) {
+	gitRepo, err := s.repo.GetByOrgAndProjectID(ctx, orgID, projectID)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("get repo: %w", err)
 	}

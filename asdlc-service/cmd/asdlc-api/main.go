@@ -240,6 +240,18 @@ func main() {
 		slog.Error("automigrate GitRepository failed", "error", err)
 		os.Exit(1)
 	}
+	// F2: composite (org_id, project_id) unique, replacing the global
+	// project_id unique. Must run AFTER AutoMigrate, which creates the new
+	// composite index from the model tag but never drops the old one.
+	{
+		c, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		if err := migrations.RunGitRepoCompositeUnique(c, db); err != nil {
+			cancel()
+			slog.Error("git_repositories composite-unique (F2) migration failed", "error", err)
+			os.Exit(1)
+		}
+		cancel()
+	}
 	if err := os.MkdirAll(cfg.RepoBasePath, 0o755); err != nil {
 		slog.Error("failed to create repo base path", "path", cfg.RepoBasePath, "error", err)
 		os.Exit(1)
@@ -308,6 +320,9 @@ func main() {
 		// dependency, and it's the same value Thunder embeds. Async paths
 		// (webhooks, watchers) have no JWT and fall through to the side-car.
 		if claims := jwt.ClaimsFromContext(ctx); claims != nil && claims.OuId != "" && jwt.ResolveOuHandle(claims) == namespace {
+			slog.InfoContext(ctx, "[SHAKEOUT:OCAUTH] orgUUIDResolver claim fast-path hit",
+				"platformAuth", cfg.ServiceAuth.ClientID != "",
+				"namespace", namespace, "branch", "claim-fast-path", "ouId", claims.OuId)
 			return claims.OuId, nil
 		}
 		// Side-car path: the organizations row is keyed by the org handle (the
@@ -318,8 +333,14 @@ func main() {
 			return "", fmt.Errorf("resolve impersonation org for namespace %q: %w", namespace, err)
 		}
 		if org.ThunderOrgUUID != nil {
+			slog.InfoContext(ctx, "[SHAKEOUT:OCAUTH] orgUUIDResolver side-car branch",
+				"platformAuth", cfg.ServiceAuth.ClientID != "",
+				"namespace", namespace, "branch", "db-thunder-org-uuid", "returned", org.ThunderOrgUUID.String())
 			return org.ThunderOrgUUID.String(), nil
 		}
+		slog.InfoContext(ctx, "[SHAKEOUT:OCAUTH] orgUUIDResolver side-car branch",
+			"platformAuth", cfg.ServiceAuth.ClientID != "",
+			"namespace", namespace, "branch", "db-local-pk-fallback", "returned", org.UUID.String())
 		return org.UUID.String(), nil
 	}
 

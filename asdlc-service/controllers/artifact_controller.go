@@ -102,6 +102,8 @@ func writeArtifactError(w http.ResponseWriter, r *http.Request, err error, op st
 
 func projectIDFrom(r *http.Request) string { return r.PathValue("projectId") }
 
+func orgIDFrom(r *http.Request) string { return r.PathValue("orgId") }
+
 func decodePutBody(r *http.Request) (putBody, error) {
 	var body putBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -113,7 +115,7 @@ func decodePutBody(r *http.Request) (putBody, error) {
 // ----- Requirements handlers -----
 
 func (c *artifactController) ListRequirements(w http.ResponseWriter, r *http.Request) {
-	files, err := c.svc.ListRequirementFiles(r.Context(), projectIDFrom(r))
+	files, err := c.svc.ListRequirementFiles(r.Context(), orgIDFrom(r), projectIDFrom(r))
 	if err != nil {
 		writeArtifactError(w, r, err, "list requirements")
 		return
@@ -127,7 +129,7 @@ func (c *artifactController) GetRequirementFile(w http.ResponseWriter, r *http.R
 		writeArtifactError(w, r, err, "get requirement file")
 		return
 	}
-	res, err := c.svc.GetFile(r.Context(), projectIDFrom(r), relPath)
+	res, err := c.svc.GetFile(r.Context(), orgIDFrom(r), projectIDFrom(r), relPath)
 	if err != nil {
 		writeArtifactError(w, r, err, "get requirement file")
 		return
@@ -146,7 +148,7 @@ func (c *artifactController) PutRequirementFile(w http.ResponseWriter, r *http.R
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	res, err := c.svc.PutFile(r.Context(), projectIDFrom(r), relPath, body.Content, body.IfMatch)
+	res, err := c.svc.PutFile(r.Context(), orgIDFrom(r), projectIDFrom(r), relPath, body.Content, body.IfMatch)
 	if err != nil {
 		writeArtifactError(w, r, err, "put requirement file")
 		return
@@ -155,7 +157,7 @@ func (c *artifactController) PutRequirementFile(w http.ResponseWriter, r *http.R
 }
 
 func (c *artifactController) DeleteRequirementFile(w http.ResponseWriter, r *http.Request) {
-	if err := c.svc.DeleteRequirementFile(r.Context(), projectIDFrom(r), r.PathValue("name")); err != nil {
+	if err := c.svc.DeleteRequirementFile(r.Context(), orgIDFrom(r), projectIDFrom(r), r.PathValue("name")); err != nil {
 		writeArtifactError(w, r, err, "delete requirement file")
 		return
 	}
@@ -168,7 +170,7 @@ func (c *artifactController) SaveRequirements(w http.ResponseWriter, r *http.Req
 		// Empty body is allowed — message is optional.
 		body = services.SaveRequest{}
 	}
-	res, err := c.svc.SaveRequirements(r.Context(), projectIDFrom(r), body)
+	res, err := c.svc.SaveRequirements(r.Context(), orgIDFrom(r), projectIDFrom(r), body)
 	if err != nil {
 		writeArtifactError(w, r, err, "save requirements")
 		return
@@ -177,7 +179,7 @@ func (c *artifactController) SaveRequirements(w http.ResponseWriter, r *http.Req
 }
 
 func (c *artifactController) DiscardRequirements(w http.ResponseWriter, r *http.Request) {
-	files, err := c.svc.DiscardRequirements(r.Context(), projectIDFrom(r))
+	files, err := c.svc.DiscardRequirements(r.Context(), orgIDFrom(r), projectIDFrom(r))
 	if err != nil {
 		writeArtifactError(w, r, err, "discard requirements")
 		return
@@ -186,7 +188,7 @@ func (c *artifactController) DiscardRequirements(w http.ResponseWriter, r *http.
 }
 
 func (c *artifactController) ListRequirementsVersions(w http.ResponseWriter, r *http.Request) {
-	versions, err := c.svc.ListRequirementsVersions(r.Context(), projectIDFrom(r))
+	versions, err := c.svc.ListRequirementsVersions(r.Context(), orgIDFrom(r), projectIDFrom(r))
 	if err != nil {
 		writeArtifactError(w, r, err, "list requirements versions")
 		return
@@ -196,7 +198,7 @@ func (c *artifactController) ListRequirementsVersions(w http.ResponseWriter, r *
 
 func (c *artifactController) GetRequirementsVersion(w http.ResponseWriter, r *http.Request) {
 	tag := r.PathValue("tag")
-	files, err := c.svc.GetRequirementsAtTag(r.Context(), projectIDFrom(r), tag)
+	files, err := c.svc.GetRequirementsAtTag(r.Context(), orgIDFrom(r), projectIDFrom(r), tag)
 	if err != nil {
 		writeArtifactError(w, r, err, "get requirements version")
 		return
@@ -211,7 +213,7 @@ func (c *artifactController) GetRequirementsVersion(w http.ResponseWriter, r *ht
 // `<clone>/.git/asdlc-reqchat-snapshots/<id>.json`. Idempotent.
 func (c *artifactController) CaptureRequirementsSnapshot(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	files, err := c.svc.CaptureRequirementsSnapshot(r.Context(), projectIDFrom(r), id)
+	files, err := c.svc.CaptureRequirementsSnapshot(r.Context(), orgIDFrom(r), projectIDFrom(r), id)
 	if err != nil {
 		writeArtifactError(w, r, err, "capture requirements snapshot")
 		return
@@ -223,7 +225,7 @@ func (c *artifactController) CaptureRequirementsSnapshot(w http.ResponseWriter, 
 // directory to match the snapshot blob.
 func (c *artifactController) RestoreRequirementsSnapshot(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	files, err := c.svc.RestoreRequirementsSnapshot(r.Context(), projectIDFrom(r), id)
+	files, err := c.svc.RestoreRequirementsSnapshot(r.Context(), orgIDFrom(r), projectIDFrom(r), id)
 	if err != nil {
 		writeArtifactError(w, r, err, "restore requirements snapshot")
 		return
@@ -247,7 +249,7 @@ type SnapshotFileResult struct {
 func (c *artifactController) GetRequirementsSnapshotFile(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	name := r.PathValue("name")
-	content, existed, err := c.svc.ReadFileFromRequirementsSnapshot(r.Context(), projectIDFrom(r), id, name)
+	content, existed, err := c.svc.ReadFileFromRequirementsSnapshot(r.Context(), orgIDFrom(r), projectIDFrom(r), id, name)
 	if err != nil {
 		writeArtifactError(w, r, err, "get requirements snapshot file")
 		return
@@ -264,7 +266,7 @@ func (c *artifactController) GetRequirementsSnapshotFile(w http.ResponseWriter, 
 // didn't exist (idempotent).
 func (c *artifactController) DeleteRequirementsSnapshot(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if err := c.svc.DeleteRequirementsSnapshot(r.Context(), projectIDFrom(r), id); err != nil {
+	if err := c.svc.DeleteRequirementsSnapshot(r.Context(), orgIDFrom(r), projectIDFrom(r), id); err != nil {
 		writeArtifactError(w, r, err, "delete requirements snapshot")
 		return
 	}
@@ -300,7 +302,7 @@ type VersionDesignResult struct {
 }
 
 func (c *artifactController) ListDesign(w http.ResponseWriter, r *http.Request) {
-	files, err := c.svc.ListDesignFiles(r.Context(), projectIDFrom(r))
+	files, err := c.svc.ListDesignFiles(r.Context(), orgIDFrom(r), projectIDFrom(r))
 	if err != nil {
 		writeArtifactError(w, r, err, "list design")
 		return
@@ -314,7 +316,7 @@ func (c *artifactController) GetDesignFile(w http.ResponseWriter, r *http.Reques
 		writeArtifactError(w, r, err, "get design file")
 		return
 	}
-	res, err := c.svc.GetFile(r.Context(), projectIDFrom(r), relPath)
+	res, err := c.svc.GetFile(r.Context(), orgIDFrom(r), projectIDFrom(r), relPath)
 	if err != nil {
 		writeArtifactError(w, r, err, "get design file")
 		return
@@ -333,7 +335,7 @@ func (c *artifactController) PutDesignFile(w http.ResponseWriter, r *http.Reques
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	res, err := c.svc.PutFile(r.Context(), projectIDFrom(r), relPath, body.Content, body.IfMatch)
+	res, err := c.svc.PutFile(r.Context(), orgIDFrom(r), projectIDFrom(r), relPath, body.Content, body.IfMatch)
 	if err != nil {
 		writeArtifactError(w, r, err, "put design file")
 		return
@@ -342,7 +344,7 @@ func (c *artifactController) PutDesignFile(w http.ResponseWriter, r *http.Reques
 }
 
 func (c *artifactController) DeleteDesignFile(w http.ResponseWriter, r *http.Request) {
-	if err := c.svc.DeleteDesignFile(r.Context(), projectIDFrom(r), r.PathValue("path")); err != nil {
+	if err := c.svc.DeleteDesignFile(r.Context(), orgIDFrom(r), projectIDFrom(r), r.PathValue("path")); err != nil {
 		writeArtifactError(w, r, err, "delete design file")
 		return
 	}
@@ -350,7 +352,7 @@ func (c *artifactController) DeleteDesignFile(w http.ResponseWriter, r *http.Req
 }
 
 func (c *artifactController) DeleteDesignDirectory(w http.ResponseWriter, r *http.Request) {
-	if err := c.svc.DeleteDesignDirectory(r.Context(), projectIDFrom(r), r.PathValue("path")); err != nil {
+	if err := c.svc.DeleteDesignDirectory(r.Context(), orgIDFrom(r), projectIDFrom(r), r.PathValue("path")); err != nil {
 		writeArtifactError(w, r, err, "delete design directory")
 		return
 	}
@@ -362,7 +364,7 @@ func (c *artifactController) SaveDesign(w http.ResponseWriter, r *http.Request) 
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		body = services.SaveRequest{}
 	}
-	res, err := c.svc.SaveDesign(r.Context(), projectIDFrom(r), body)
+	res, err := c.svc.SaveDesign(r.Context(), orgIDFrom(r), projectIDFrom(r), body)
 	if err != nil {
 		writeArtifactError(w, r, err, "save design")
 		return
@@ -371,7 +373,7 @@ func (c *artifactController) SaveDesign(w http.ResponseWriter, r *http.Request) 
 }
 
 func (c *artifactController) DiscardDesign(w http.ResponseWriter, r *http.Request) {
-	files, err := c.svc.DiscardDesign(r.Context(), projectIDFrom(r))
+	files, err := c.svc.DiscardDesign(r.Context(), orgIDFrom(r), projectIDFrom(r))
 	if err != nil {
 		writeArtifactError(w, r, err, "discard design")
 		return
@@ -380,7 +382,7 @@ func (c *artifactController) DiscardDesign(w http.ResponseWriter, r *http.Reques
 }
 
 func (c *artifactController) ListDesignVersions(w http.ResponseWriter, r *http.Request) {
-	versions, err := c.svc.ListDesignVersions(r.Context(), projectIDFrom(r))
+	versions, err := c.svc.ListDesignVersions(r.Context(), orgIDFrom(r), projectIDFrom(r))
 	if err != nil {
 		writeArtifactError(w, r, err, "list design versions")
 		return
@@ -390,7 +392,7 @@ func (c *artifactController) ListDesignVersions(w http.ResponseWriter, r *http.R
 
 func (c *artifactController) GetDesignVersion(w http.ResponseWriter, r *http.Request) {
 	tag := r.PathValue("tag")
-	files, err := c.svc.GetDesignAtTag(r.Context(), projectIDFrom(r), tag)
+	files, err := c.svc.GetDesignAtTag(r.Context(), orgIDFrom(r), projectIDFrom(r), tag)
 	if err != nil {
 		writeArtifactError(w, r, err, "get design version")
 		return

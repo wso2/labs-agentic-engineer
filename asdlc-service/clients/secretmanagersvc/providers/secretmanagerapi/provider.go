@@ -156,12 +156,19 @@ func (c *Client) PushSecret(ctx context.Context, location secretmanagersvc.Secre
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		slog.InfoContext(ctx, "[SHAKEOUT:SMAPI] PushSecret non-2xx",
+			"hasJWT", jwt != "", "baseURL", c.baseURL, "secretName", secretName,
+			"labelSelector", labelSelectorFromLocation(location), "status", resp.StatusCode)
 		return "", c.parseError(resp)
 	}
 	var sr SecretResponse
 	if err := json.NewDecoder(resp.Body).Decode(&sr); err != nil {
 		return "", fmt.Errorf("sm-api: decode response: %w", err)
 	}
+	slog.InfoContext(ctx, "[SHAKEOUT:SMAPI] PushSecret ok",
+		"hasJWT", jwt != "", "baseURL", c.baseURL, "secretName", secretName,
+		"labelSelector", labelSelectorFromLocation(location), "status", resp.StatusCode,
+		"secretReferenceName", sr.Spec.SecretReferenceName)
 	slog.DebugContext(ctx, "sm-api: secret created",
 		"name", secretName,
 		"secretReferenceName", sr.Spec.SecretReferenceName)
@@ -314,6 +321,9 @@ func (c *Client) resolveSecretID(ctx context.Context, jwt string, location secre
 	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
 		return "", fmt.Errorf("sm-api: decode list response: %w", err)
 	}
+	slog.InfoContext(ctx, "[SHAKEOUT:SMAPI] resolveSecretID list",
+		"hasJWT", jwt != "", "baseURL", c.baseURL, "labelSelector", selector,
+		"status", resp.StatusCode, "itemCount", len(list.Items))
 	if len(list.Items) == 0 {
 		return "", secretmanagersvc.ErrSecretNotFound
 	}

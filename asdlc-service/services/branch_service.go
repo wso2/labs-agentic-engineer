@@ -31,13 +31,13 @@ type BranchService interface {
 	// CreateBranch creates a new branch from `fromRef` (a branch name; resolved
 	// to its tip SHA at call time). Idempotent on the branch name: returns the
 	// existing tip SHA if the ref already exists.
-	CreateBranch(ctx context.Context, projectID, branch, fromRef string) (sha string, err error)
+	CreateBranch(ctx context.Context, orgID, projectID, branch, fromRef string) (sha string, err error)
 	// SeedBranchCommit creates or updates a single file on the given branch
 	// to seed at least one commit on it. GitHub's PR API rejects PRs whose
 	// head and base are at the same SHA, so a freshly-created task branch
 	// needs a placeholder commit before a draft PR can be opened. Idempotent
 	// on (path, content).
-	SeedBranchCommit(ctx context.Context, projectID, branch, path, message string, content []byte) error
+	SeedBranchCommit(ctx context.Context, orgID, projectID, branch, path, message string, content []byte) error
 }
 
 type branchService struct {
@@ -57,7 +57,7 @@ func NewBranchService(repo repositories.RepoRepository, github GitHubClient, iss
 	return &branchService{repo: repo, github: github, issue: is}
 }
 
-func (s *branchService) CreateBranch(ctx context.Context, projectID, branch, fromRef string) (string, error) {
+func (s *branchService) CreateBranch(ctx context.Context, orgID, projectID, branch, fromRef string) (string, error) {
 	if branch == "" {
 		return "", fmt.Errorf("branch name is required")
 	}
@@ -65,14 +65,14 @@ func (s *branchService) CreateBranch(ctx context.Context, projectID, branch, fro
 		fromRef = "" // caller may pass empty to default to repo's default branch
 	}
 
-	owner, repoName, cred, err := s.issue.resolveRepoAndCredential(ctx, projectID)
+	owner, repoName, cred, err := s.issue.resolveRepoAndCredential(ctx, orgID, projectID)
 	if err != nil {
 		return "", err
 	}
 
 	// Resolve fromRef to a SHA. Empty means "use default branch".
 	if fromRef == "" {
-		gitRepo, gerr := s.repo.GetByProjectID(ctx, projectID)
+		gitRepo, gerr := s.repo.GetByOrgAndProjectID(ctx, orgID, projectID)
 		if gerr != nil {
 			return "", fmt.Errorf("get repo: %w", gerr)
 		}
@@ -89,11 +89,11 @@ func (s *branchService) CreateBranch(ctx context.Context, projectID, branch, fro
 	return s.github.CreateBranch(ctx, owner, repoName, cred, branch, sha)
 }
 
-func (s *branchService) SeedBranchCommit(ctx context.Context, projectID, branch, path, message string, content []byte) error {
+func (s *branchService) SeedBranchCommit(ctx context.Context, orgID, projectID, branch, path, message string, content []byte) error {
 	if branch == "" || path == "" {
 		return fmt.Errorf("branch and path are required")
 	}
-	owner, repoName, cred, err := s.issue.resolveRepoAndCredential(ctx, projectID)
+	owner, repoName, cred, err := s.issue.resolveRepoAndCredential(ctx, orgID, projectID)
 	if err != nil {
 		return err
 	}

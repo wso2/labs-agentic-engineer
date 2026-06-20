@@ -82,13 +82,18 @@ func (c *repoController) CreateRepo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *repoController) GetRepo(w http.ResponseWriter, r *http.Request) {
+	orgID := r.PathValue("orgId")
 	projectID := r.PathValue("projectId")
+	if err := validate.Slug(orgID); err != nil {
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "orgId: "+err.Error())
+		return
+	}
 	if err := validate.Slug(projectID); err != nil {
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "projectId: "+err.Error())
 		return
 	}
 
-	repo, err := c.service.GetRepo(r.Context(), projectID)
+	repo, err := c.service.GetRepo(r.Context(), orgID, projectID)
 	if err != nil {
 		if errors.Is(err, services.ErrRepoNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "repository not found")
@@ -103,13 +108,18 @@ func (c *repoController) GetRepo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *repoController) DeleteRepo(w http.ResponseWriter, r *http.Request) {
+	orgID := r.PathValue("orgId")
 	projectID := r.PathValue("projectId")
+	if err := validate.Slug(orgID); err != nil {
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "orgId: "+err.Error())
+		return
+	}
 	if err := validate.Slug(projectID); err != nil {
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "projectId: "+err.Error())
 		return
 	}
 
-	if err := c.service.DeleteRepo(r.Context(), projectID); err != nil {
+	if err := c.service.DeleteRepo(r.Context(), orgID, projectID); err != nil {
 		if errors.Is(err, services.ErrRepoNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "repository not found")
 			return

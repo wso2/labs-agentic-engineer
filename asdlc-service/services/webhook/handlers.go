@@ -336,12 +336,17 @@ func lookupProjectByRepo(db *gorm.DB, repoFullName string) (orgID, projectID str
 		OrgID     string
 		ProjectID string
 	}
+	// INT-2 (sink): match the canonical clone URL EXACTLY, not with an
+	// unanchored `ILIKE '%'+fullName` whose leading wildcard matched any host
+	// and any path suffix — a payload could otherwise resolve another org's
+	// repo. Anchored on host+owner+repo; both `.git` and bare shapes.
+	canonical := "https://github.com/" + repoFullName
 	err = db.Raw(`
 		SELECT org_id, project_id
 		FROM git_repositories
-		WHERE repo_url ILIKE ? OR repo_url ILIKE ?
+		WHERE repo_url = ? OR repo_url = ?
 		LIMIT 1
-	`, "%"+repoFullName, "%"+repoFullName+".git").Scan(&r).Error
+	`, canonical, canonical+".git").Scan(&r).Error
 	if err != nil {
 		return "", "", err
 	}

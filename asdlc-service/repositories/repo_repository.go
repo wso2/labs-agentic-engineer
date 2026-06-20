@@ -24,9 +24,11 @@ import (
 	"gorm.io/gorm"
 )
 
-// RepoRepository manages GitRepository persistence.
+// RepoRepository manages GitRepository persistence. All lookups/deletes are
+// org-scoped by signature (§6.1c) — the org-blind GetByProjectID/Delete were
+// removed once project_id became only composite-unique (F2), so "forgot the
+// org filter" is a compile error.
 type RepoRepository interface {
-	GetByProjectID(ctx context.Context, projectID string) (*models.GitRepository, error)
 	GetByOrgAndProjectID(ctx context.Context, ocOrgID, projectID string) (*models.GitRepository, error)
 	GetByOrgAndSlug(ctx context.Context, ocOrgID, repoSlug string) (*models.GitRepository, error)
 	// ListAllReady returns every repo in `ready` status. Used by the
@@ -36,7 +38,11 @@ type RepoRepository interface {
 	ListAllReady(ctx context.Context) ([]models.GitRepository, error)
 	Create(ctx context.Context, repo *models.GitRepository) error
 	Update(ctx context.Context, repo *models.GitRepository) error
-	Delete(ctx context.Context, projectID string) error
+	// DeleteByOrgAndProjectID deletes the repo row scoped to (ocOrgID,
+	// projectID). The org-scoped replacement for the org-blind Delete — once
+	// project_id is only composite-unique (F2), an org-less delete could
+	// remove another org's row.
+	DeleteByOrgAndProjectID(ctx context.Context, ocOrgID, projectID string) error
 	DeleteAll(ctx context.Context) error
 }
 
@@ -46,17 +52,6 @@ type repoRepository struct {
 
 func NewRepoRepository(db *gorm.DB) RepoRepository {
 	return &repoRepository{db: db}
-}
-
-func (r *repoRepository) GetByProjectID(ctx context.Context, projectID string) (*models.GitRepository, error) {
-	var repo models.GitRepository
-	if err := r.db.WithContext(ctx).Where("project_id = ?", projectID).First(&repo).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return &repo, nil
 }
 
 // GetByOrgAndProjectID returns the repo row matching the (ocOrgID, projectID)
@@ -111,8 +106,10 @@ func (r *repoRepository) Update(ctx context.Context, repo *models.GitRepository)
 	return r.db.WithContext(ctx).Save(repo).Error
 }
 
-func (r *repoRepository) Delete(ctx context.Context, projectID string) error {
-	return r.db.WithContext(ctx).Where("project_id = ?", projectID).Delete(&models.GitRepository{}).Error
+func (r *repoRepository) DeleteByOrgAndProjectID(ctx context.Context, ocOrgID, projectID string) error {
+	return r.db.WithContext(ctx).
+		Where("org_id = ? AND project_id = ?", ocOrgID, projectID).
+		Delete(&models.GitRepository{}).Error
 }
 
 func (r *repoRepository) DeleteAll(ctx context.Context) error {

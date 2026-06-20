@@ -20,44 +20,28 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/google/uuid"
+	"github.com/wso2/asdlc/asdlc-service/internal/platform/obs"
 )
 
-type contextKey string
+// The correlation-ID context helpers now live in the leaf platform package
+// internal/platform/obs. These thin wrappers preserve the existing
+// middleware.* call sites and, crucially, share obs's context key so values
+// set via either package are readable by the other.
 
-const correlationIDKey contextKey = "correlationID"
-
-const CorrelationIDHeader = "X-Correlation-ID"
+// CorrelationIDHeader is the HTTP header carrying the request correlation ID.
+const CorrelationIDHeader = obs.CorrelationIDHeader
 
 // AddCorrelationID returns a middleware that attaches a correlation ID to every request.
-// It reads the ID from the incoming X-Correlation-ID header, or generates a new UUID if absent.
 func AddCorrelationID() func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			correlationID := r.Header.Get(CorrelationIDHeader)
-			if correlationID == "" {
-				correlationID = uuid.New().String()
-			}
-
-			w.Header().Set(CorrelationIDHeader, correlationID)
-
-			ctx := context.WithValue(r.Context(), correlationIDKey, correlationID)
-			next.ServeHTTP(w, r.WithContext(ctx))
-		})
-	}
+	return obs.AddCorrelationID()
 }
 
 // GetCorrelationID retrieves the correlation ID from the context.
 func GetCorrelationID(ctx context.Context) string {
-	if id, ok := ctx.Value(correlationIDKey).(string); ok {
-		return id
-	}
-	return ""
+	return obs.GetCorrelationID(ctx)
 }
 
-// WithCorrelationID returns a derived context carrying the given ID. Useful
-// for background workers that synthesize their own correlation ID before
-// calling outbound clients (which read the ID via GetCorrelationID).
+// WithCorrelationID returns a derived context carrying the given ID.
 func WithCorrelationID(ctx context.Context, id string) context.Context {
-	return context.WithValue(ctx, correlationIDKey, id)
+	return obs.WithCorrelationID(ctx, id)
 }

@@ -167,7 +167,7 @@ func (s *taskService) GetTasks(ctx context.Context, orgID, projectID string) (*m
 	// Best-effort: fetch all open GitHub issues to pick up kanban labels.
 	// If this fails we still render tasks from DB.
 	issueByNum := make(map[int]IssueInfo)
-	issues, err := s.issueSvc.ListIssues(ctx, projectID, nil)
+	issues, err := s.issueSvc.ListIssues(ctx, orgID, projectID, nil)
 	if err != nil {
 		slog.WarnContext(ctx, "failed to list github issues; rendering from DB only", "error", err)
 	} else {
@@ -385,7 +385,7 @@ func (s *taskService) ensureIssueForTask(
 	// doesn't pre-name a branch. BranchName is filled in later by the
 	// pull_request.opened webhook handler when the agent opens its PR.
 
-	issue, err := s.issueSvc.CreateIssue(ctx, task.ProjectID, CreateIssueRequest{
+	issue, err := s.issueSvc.CreateIssue(ctx, task.OrgID, task.ProjectID, CreateIssueRequest{
 		Title:  issueTitle(task),
 		Body:   buildIssueBody(task, comp, repoURL, repoSlug),
 		Labels: []string{"asdlc", "implementation"},

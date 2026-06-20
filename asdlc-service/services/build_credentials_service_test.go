@@ -70,8 +70,9 @@ func (f *fakeRepoRepo) GetByOrgAndSlug(ctx context.Context, ocOrgID, repoSlug st
 }
 func (f *fakeRepoRepo) Create(context.Context, *models.GitRepository) error { return nil }
 func (f *fakeRepoRepo) Update(context.Context, *models.GitRepository) error { return nil }
-func (f *fakeRepoRepo) Delete(context.Context, string) error                { return nil }
-func (f *fakeRepoRepo) DeleteAll(context.Context) error                     { return nil }
+func (f *fakeRepoRepo) Delete(context.Context, string) error                          { return nil }
+func (f *fakeRepoRepo) DeleteByOrgAndProjectID(context.Context, string, string) error { return nil }
+func (f *fakeRepoRepo) DeleteAll(context.Context) error                               { return nil }
 
 // fakeResolver dispatches a fixed Credential or returns a fixed error.
 type fakeResolver struct {

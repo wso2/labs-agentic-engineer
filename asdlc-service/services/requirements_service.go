@@ -118,7 +118,7 @@ func (s *requirementsService) GetRequirements(ctx context.Context, orgID, projec
 		return out, nil
 	}
 
-	versions, err := s.artifactSvc.ListRequirementsVersions(ctx, projectID)
+	versions, err := s.artifactSvc.ListRequirementsVersions(ctx, orgID, projectID)
 	if err != nil {
 		slog.WarnContext(ctx, "list requirements versions failed", "error", err)
 		return out, nil
@@ -129,7 +129,7 @@ func (s *requirementsService) GetRequirements(ctx context.Context, orgID, projec
 		out.Version = versions[0].Version
 
 		// Has-unsaved-changes: compare working tree to snapshot at latest tag.
-		tagged, err := s.artifactSvc.GetRequirementsAtTag(ctx, projectID,versions[0].Tag)
+		tagged, err := s.artifactSvc.GetRequirementsAtTag(ctx, orgID, projectID, versions[0].Tag)
 		if err == nil && !fileMapsEqual(tagged, files) {
 			out.HasUnsavedChanges = true
 		}
@@ -141,7 +141,7 @@ func (s *requirementsService) GetRequirementsAtTag(ctx context.Context, orgID, p
 	if s.artifactSvc == nil {
 		return nil, fmt.Errorf("git client not configured")
 	}
-	files, err := s.artifactSvc.GetRequirementsAtTag(ctx, projectID,tag)
+	files, err := s.artifactSvc.GetRequirementsAtTag(ctx, orgID, projectID, tag)
 	if err != nil {
 		if errors.Is(err, ErrArtifactNotFound) {
 			return nil, ErrSpecNotFound
@@ -201,7 +201,7 @@ func (s *requirementsService) SaveAndProceed(ctx context.Context, orgID, project
 	}
 	var bundle *models.RequirementsBundle
 	err := s.withLock(ctx, orgID, projectID, func(ctx context.Context) error {
-		res, err := s.artifactSvc.SaveRequirements(ctx, projectID, SaveRequest{
+		res, err := s.artifactSvc.SaveRequirements(ctx, orgID, projectID, SaveRequest{
 			Message: "Update requirements",
 		})
 		if err != nil {
@@ -228,7 +228,7 @@ func (s *requirementsService) DiscardChanges(ctx context.Context, orgID, project
 	}
 	var bundle *models.RequirementsBundle
 	err := s.withLock(ctx, orgID, projectID, func(ctx context.Context) error {
-		if _, err := s.artifactSvc.DiscardRequirements(ctx, projectID); err != nil {
+		if _, err := s.artifactSvc.DiscardRequirements(ctx, orgID, projectID); err != nil {
 			if errors.Is(err, ErrArtifactNotFound) {
 				return fmt.Errorf("no saved version to revert to")
 			}
@@ -251,7 +251,7 @@ func (s *requirementsService) ListVersions(ctx context.Context, orgID, projectID
 	if s.artifactSvc == nil {
 		return nil, nil
 	}
-	versions, err := s.artifactSvc.ListRequirementsVersions(ctx, projectID)
+	versions, err := s.artifactSvc.ListRequirementsVersions(ctx, orgID, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("list requirements versions: %w", err)
 	}

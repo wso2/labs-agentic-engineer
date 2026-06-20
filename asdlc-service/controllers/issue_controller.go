@@ -61,7 +61,7 @@ func (c *issueController) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := c.service.CreateIssue(r.Context(), projectID, req)
+	result, err := c.service.CreateIssue(r.Context(), r.PathValue("orgId"), projectID, req)
 	if err != nil {
 		if errors.Is(err, services.ErrRepoNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "repository not found")
@@ -91,7 +91,7 @@ func (c *issueController) ListIssues(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	issues, err := c.service.ListIssues(r.Context(), projectID, labels)
+	issues, err := c.service.ListIssues(r.Context(), r.PathValue("orgId"), projectID, labels)
 	if err != nil {
 		if errors.Is(err, services.ErrRepoNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "repository not found")
@@ -129,7 +129,7 @@ func (c *issueController) CloseIssue(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := c.service.CloseIssue(r.Context(), projectID, number, req.Comment); err != nil {
+	if err := c.service.CloseIssue(r.Context(), r.PathValue("orgId"), projectID, number, req.Comment); err != nil {
 		if errors.Is(err, services.ErrRepoNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "repository not found")
 			return
@@ -169,7 +169,7 @@ func (c *issueController) EditIssueBody(w http.ResponseWriter, r *http.Request) 
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "body is required")
 		return
 	}
-	if err := c.service.EditIssueBody(r.Context(), projectID, number, req.Body); err != nil {
+	if err := c.service.EditIssueBody(r.Context(), r.PathValue("orgId"), projectID, number, req.Body); err != nil {
 		if errors.Is(err, services.ErrRepoNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "repository not found")
 			return
@@ -202,7 +202,7 @@ func (c *issueController) CommentIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := c.service.CommentIssue(r.Context(), projectID, number, req.Body); err != nil {
+	if err := c.service.CommentIssue(r.Context(), r.PathValue("orgId"), projectID, number, req.Body); err != nil {
 		if errors.Is(err, services.ErrRepoNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "repository not found")
 			return

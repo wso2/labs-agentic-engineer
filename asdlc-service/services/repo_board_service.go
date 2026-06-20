@@ -29,8 +29,8 @@ import (
 // BoardService to avoid collision with the BFF-side BoardService that
 // aggregates ComponentTask DB rows on top of this layer.
 type RepoBoardService interface {
-	GetBoard(ctx context.Context, projectID string) (*ProjectBoardResult, error)
-	MoveIssueToStatus(ctx context.Context, projectID, issueURL, targetStatus string) error
+	GetBoard(ctx context.Context, orgID, projectID string) (*ProjectBoardResult, error)
+	MoveIssueToStatus(ctx context.Context, orgID, projectID, issueURL, targetStatus string) error
 }
 
 type repoBoardService struct {
@@ -43,8 +43,8 @@ func NewRepoBoardService(repo repositories.RepoRepository, github GitHubV2Client
 	return &repoBoardService{repo: repo, github: github, resolver: resolver}
 }
 
-func (s *repoBoardService) GetBoard(ctx context.Context, projectID string) (*ProjectBoardResult, error) {
-	gitRepo, err := s.repo.GetByProjectID(ctx, projectID)
+func (s *repoBoardService) GetBoard(ctx context.Context, orgID, projectID string) (*ProjectBoardResult, error) {
+	gitRepo, err := s.repo.GetByOrgAndProjectID(ctx, orgID, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("get repo: %w", err)
 	}
@@ -62,8 +62,8 @@ func (s *repoBoardService) GetBoard(ctx context.Context, projectID string) (*Pro
 	return s.github.GetProjectBoard(ctx, gitRepo.GithubProjectID, token)
 }
 
-func (s *repoBoardService) MoveIssueToStatus(ctx context.Context, projectID, issueURL, targetStatus string) error {
-	gitRepo, err := s.repo.GetByProjectID(ctx, projectID)
+func (s *repoBoardService) MoveIssueToStatus(ctx context.Context, orgID, projectID, issueURL, targetStatus string) error {
+	gitRepo, err := s.repo.GetByOrgAndProjectID(ctx, orgID, projectID)
 	if err != nil {
 		return fmt.Errorf("get repo: %w", err)
 	}

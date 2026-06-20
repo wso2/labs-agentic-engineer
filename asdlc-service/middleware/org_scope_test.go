@@ -51,8 +51,9 @@ func (f *fakeRepoRepo) ListAllReady(context.Context) ([]models.GitRepository, er
 }
 func (f *fakeRepoRepo) Create(context.Context, *models.GitRepository) error { return nil }
 func (f *fakeRepoRepo) Update(context.Context, *models.GitRepository) error { return nil }
-func (f *fakeRepoRepo) Delete(context.Context, string) error                { return nil }
-func (f *fakeRepoRepo) DeleteAll(context.Context) error                     { return nil }
+func (f *fakeRepoRepo) Delete(context.Context, string) error                                { return nil }
+func (f *fakeRepoRepo) DeleteByOrgAndProjectID(context.Context, string, string) error       { return nil }
+func (f *fakeRepoRepo) DeleteAll(context.Context) error                                     { return nil }
 
 // Compile-time check that fakeRepoRepo satisfies the interface — if the
 // interface ever grows a method, this fails the build instead of skipping

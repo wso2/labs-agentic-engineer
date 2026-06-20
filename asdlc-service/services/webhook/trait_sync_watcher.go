@@ -24,6 +24,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/wso2/asdlc/asdlc-service/internal/platform/k8sname"
 	"github.com/wso2/asdlc/asdlc-service/services"
 )
 
@@ -141,11 +142,10 @@ func (w *TraitSyncWatcher) sweep(ctx context.Context) {
 	}
 
 	for _, t := range tuples {
-		// SyncComponentTraits expects the k8s-shaped component name —
-		// services.toK8sName isn't exported, so the watcher mirrors the
-		// transform the dispatch path uses. component_tasks rows carry
-		// the user-friendly name; we lower / strip to match.
-		k8sName := services.ToK8sName(t.ComponentName)
+		// SyncComponentTraits expects the k8s-shaped component name. The
+		// component_tasks rows carry the user-friendly name; we lower /
+		// strip to match the transform the dispatch path uses.
+		k8sName := k8sname.ToK8sName(t.ComponentName)
 		w.reconcileOne(ctx, t.OrgID, t.ProjectID, k8sName)
 	}
 }

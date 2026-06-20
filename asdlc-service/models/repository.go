@@ -25,8 +25,13 @@ import (
 // GitRepository stores metadata about a platform-provisioned git repository.
 type GitRepository struct {
 	ID            string `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
-	OrgID         string `gorm:"index;not null" json:"orgId"`
-	ProjectID     string `gorm:"uniqueIndex;not null" json:"projectId"`
+	// OrgID + ProjectID form a composite UNIQUE (F2) — replacing the old
+	// global unique on ProjectID — so two orgs can own a same-named project
+	// and lookups must be org-scoped (GetByOrgAndProjectID). The old global
+	// unique is dropped by RunGitRepoCompositeUnique. The composite's leading
+	// org_id column also serves org-only queries (no separate index needed).
+	OrgID         string `gorm:"not null;uniqueIndex:ux_git_repositories_org_project,priority:1" json:"orgId"`
+	ProjectID     string `gorm:"not null;uniqueIndex:ux_git_repositories_org_project,priority:2" json:"projectId"`
 	RepoURL       string `gorm:"not null" json:"repoUrl"`
 	ClonePath     string `gorm:"type:text" json:"clonePath"`
 	DefaultBranch string `gorm:"default:main" json:"defaultBranch"`

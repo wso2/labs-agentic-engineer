@@ -204,6 +204,22 @@ func validateJWT(tokenString string, cfg Config, issuers compiledIssuers, audien
 		return nil, fmt.Errorf("JWKS not configured")
 	}
 
+	branch := "jwks-verified"
+	if cfg.JWKS == nil {
+		if cfg.IsLocalDevEnv {
+			branch = "localdev-unverified"
+		} else {
+			branch = "fail-closed"
+		}
+	}
+	slog.Info("[SHAKEOUT:CLAIMS] validateJWT branch",
+		"jwksConfigured", cfg.JWKS != nil,
+		"branch", branch,
+		"iss", claims.Issuer,
+		"aud", claims.Audience,
+		"allowedIssuers", cfg.AllowedIssuers,
+		"allowedAudiences", cfg.AllowedAudiences)
+
 	if err := issuers.match(claims.Issuer); err != nil {
 		return nil, err
 	}

@@ -22,10 +22,17 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/controllers"
 )
 
-func registerRepoBoardRoutes(mux *http.ServeMux, bc controllers.RepoBoardController) {
+// registerRepoBoardRoutes wires the GitHub Projects board endpoints through the
+// typed ServiceRouter. The org segment was added (was `/repos/{projectId}/board`)
+// so the route names the org and can be repo-scoped — closing the F3
+// confused-deputy where any caller could read/move another project's board by
+// projectId alone (§6.6f). RepoScoped applies RequireOrgScope, which validates
+// the (orgId, projectId) pair against git_repositories and 404s a cross-org pair
+// before the handler runs.
+func registerRepoBoardRoutes(rt *ServiceRouter, bc controllers.RepoBoardController) {
 	if bc == nil {
 		return
 	}
-	mux.HandleFunc("GET /api/v1/repos/{projectId}/board", bc.GetBoard)
-	mux.HandleFunc("POST /api/v1/repos/{projectId}/board/move", bc.MoveIssueToStatus)
+	rt.HandleRepoScoped("GET /api/v1/repos/{orgId}/{projectId}/board", http.HandlerFunc(bc.GetBoard))
+	rt.HandleRepoScoped("POST /api/v1/repos/{orgId}/{projectId}/board/move", http.HandlerFunc(bc.MoveIssueToStatus))
 }

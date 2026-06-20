@@ -84,13 +84,13 @@ type TagInfo struct {
 
 // GitOpsService handles git operations (commit, push, pull, status, tags).
 type GitOpsService interface {
-	Commit(ctx context.Context, projectID string, req CommitRequest) (*CommitResult, error)
-	Push(ctx context.Context, projectID string, branch string) error
-	Pull(ctx context.Context, projectID string, branch string) error
-	Status(ctx context.Context, projectID string) (*RepoStatus, error)
-	CreateTag(ctx context.Context, projectID string, req CreateTagRequest) (*TagResult, error)
-	ListTags(ctx context.Context, projectID string, prefix string) ([]TagInfo, error)
-	GetFileAtTag(ctx context.Context, projectID string, tag string, filePath string) (string, error)
+	Commit(ctx context.Context, orgID string, projectID string, req CommitRequest) (*CommitResult, error)
+	Push(ctx context.Context, orgID string, projectID string, branch string) error
+	Pull(ctx context.Context, orgID string, projectID string, branch string) error
+	Status(ctx context.Context, orgID string, projectID string) (*RepoStatus, error)
+	CreateTag(ctx context.Context, orgID string, projectID string, req CreateTagRequest) (*TagResult, error)
+	ListTags(ctx context.Context, orgID string, projectID string, prefix string) ([]TagInfo, error)
+	GetFileAtTag(ctx context.Context, orgID string, projectID string, tag string, filePath string) (string, error)
 
 	// Startup lifecycle (PR 1):
 	//   - CleanupOrphanTmpClones removes leftover .tmpclone-* dirs from a
@@ -356,12 +356,12 @@ func (s *gitOpsService) allRepos(ctx context.Context) ([]models.GitRepository, e
 	return nil, nil
 }
 
-func (s *gitOpsService) Commit(ctx context.Context, projectID string, req CommitRequest) (*CommitResult, error) {
+func (s *gitOpsService) Commit(ctx context.Context, orgID string, projectID string, req CommitRequest) (*CommitResult, error) {
 	mu := s.getRepoLock(projectID)
 	mu.Lock()
 	defer mu.Unlock()
 
-	repoRecord, err := s.repo.GetByProjectID(ctx, projectID)
+	repoRecord, err := s.repo.GetByOrgAndProjectID(ctx, orgID, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("get repo: %w", err)
 	}
@@ -450,12 +450,12 @@ func (s *gitOpsService) Commit(ctx context.Context, projectID string, req Commit
 	}, nil
 }
 
-func (s *gitOpsService) Push(ctx context.Context, projectID string, branch string) error {
+func (s *gitOpsService) Push(ctx context.Context, orgID string, projectID string, branch string) error {
 	mu := s.getRepoLock(projectID)
 	mu.Lock()
 	defer mu.Unlock()
 
-	repoRecord, err := s.repo.GetByProjectID(ctx, projectID)
+	repoRecord, err := s.repo.GetByOrgAndProjectID(ctx, orgID, projectID)
 	if err != nil {
 		return fmt.Errorf("get repo: %w", err)
 	}
@@ -508,12 +508,12 @@ func (s *gitOpsService) Push(ctx context.Context, projectID string, branch strin
 	return nil
 }
 
-func (s *gitOpsService) Pull(ctx context.Context, projectID string, branch string) error {
+func (s *gitOpsService) Pull(ctx context.Context, orgID string, projectID string, branch string) error {
 	mu := s.getRepoLock(projectID)
 	mu.Lock()
 	defer mu.Unlock()
 
-	repoRecord, err := s.repo.GetByProjectID(ctx, projectID)
+	repoRecord, err := s.repo.GetByOrgAndProjectID(ctx, orgID, projectID)
 	if err != nil {
 		return fmt.Errorf("get repo: %w", err)
 	}
@@ -559,8 +559,8 @@ func (s *gitOpsService) Pull(ctx context.Context, projectID string, branch strin
 	return nil
 }
 
-func (s *gitOpsService) Status(ctx context.Context, projectID string) (*RepoStatus, error) {
-	repoRecord, err := s.repo.GetByProjectID(ctx, projectID)
+func (s *gitOpsService) Status(ctx context.Context, orgID string, projectID string) (*RepoStatus, error) {
+	repoRecord, err := s.repo.GetByOrgAndProjectID(ctx, orgID, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("get repo: %w", err)
 	}
@@ -601,12 +601,12 @@ func (s *gitOpsService) Status(ctx context.Context, projectID string) (*RepoStat
 	}, nil
 }
 
-func (s *gitOpsService) CreateTag(ctx context.Context, projectID string, req CreateTagRequest) (*TagResult, error) {
+func (s *gitOpsService) CreateTag(ctx context.Context, orgID string, projectID string, req CreateTagRequest) (*TagResult, error) {
 	mu := s.getRepoLock(projectID)
 	mu.Lock()
 	defer mu.Unlock()
 
-	repoRecord, err := s.repo.GetByProjectID(ctx, projectID)
+	repoRecord, err := s.repo.GetByOrgAndProjectID(ctx, orgID, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("get repo: %w", err)
 	}
@@ -685,12 +685,12 @@ func (s *gitOpsService) CreateTag(ctx context.Context, projectID string, req Cre
 	}, nil
 }
 
-func (s *gitOpsService) ListTags(ctx context.Context, projectID string, prefix string) ([]TagInfo, error) {
+func (s *gitOpsService) ListTags(ctx context.Context, orgID string, projectID string, prefix string) ([]TagInfo, error) {
 	mu := s.getRepoLock(projectID)
 	mu.Lock()
 	defer mu.Unlock()
 
-	repoRecord, err := s.repo.GetByProjectID(ctx, projectID)
+	repoRecord, err := s.repo.GetByOrgAndProjectID(ctx, orgID, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("get repo: %w", err)
 	}
@@ -762,12 +762,12 @@ func (s *gitOpsService) ListTags(ctx context.Context, projectID string, prefix s
 	return tags, nil
 }
 
-func (s *gitOpsService) GetFileAtTag(ctx context.Context, projectID string, tag string, filePath string) (string, error) {
+func (s *gitOpsService) GetFileAtTag(ctx context.Context, orgID string, projectID string, tag string, filePath string) (string, error) {
 	mu := s.getRepoLock(projectID)
 	mu.Lock()
 	defer mu.Unlock()
 
-	repoRecord, err := s.repo.GetByProjectID(ctx, projectID)
+	repoRecord, err := s.repo.GetByOrgAndProjectID(ctx, orgID, projectID)
 	if err != nil {
 		return "", fmt.Errorf("get repo: %w", err)
 	}

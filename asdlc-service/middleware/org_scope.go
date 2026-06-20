@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/wso2/asdlc/asdlc-service/internal/platform/tenant"
 	"github.com/wso2/asdlc/asdlc-service/utils/validate"
 	"github.com/wso2/asdlc/asdlc-service/models"
 	"github.com/wso2/asdlc/asdlc-service/repositories"
@@ -83,6 +84,11 @@ func RequireOrgScope(repos repositories.RepoRepository) func(http.Handler) http.
 			}
 
 			ctx := context.WithValue(r.Context(), scopedRepoKey, repo)
+			// Bind the authorized Caller (Service-JWT, scoping not authz — the
+			// platform-wide Service JWT carries no org claim; the (org,project)
+			// row was validated above). Additive — ScopedRepo stays for existing
+			// readers. §6.1b BindServiceOrg.
+			ctx = tenant.With(ctx, tenant.Caller{Org: tenant.OrgHandle(orgID), Source: tenant.SourceServiceJWT})
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -95,4 +101,33 @@ func ScopedRepo(ctx context.Context) *models.GitRepository {
 		return r
 	}
 	return nil
+}
+
+// BindServiceOrgScope returns the org-ONLY Service-JWT binding for routes that
+// carry an org path var but NO project (the /internal/credentials/orgs/{orgHandle}/*
+// surface). Unlike RequireOrgScope it does not touch the DB — there is no
+// (org,project) row to resolve — it only validates the org slug and binds the
+// authorized Caller so the route is allowlisted-by-construction under the
+// ServiceRouter. The platform-wide Service JWT carries no org claim, so this is
+// scoping/observability, not authz.
+//
+// Behavior matches the inline validate.Slug check the credentials closures
+// already perform: a bad slug returns 400 with body {"error":"<pathVar>: <err>"}
+// via utils.WriteErrorResponse. Keeping the closures' inline checks too is
+// harmless (double-validation).
+func BindServiceOrgScope(pathVar string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			org := r.PathValue(pathVar)
+			if err := validate.Slug(org); err != nil {
+				utils.WriteErrorResponse(w, http.StatusBadRequest, pathVar+": "+err.Error())
+				return
+			}
+			ctx := tenant.With(r.Context(), tenant.Caller{
+				Org:    tenant.OrgHandle(org),
+				Source: tenant.SourceServiceJWT,
+			})
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
 }

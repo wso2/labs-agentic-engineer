@@ -37,14 +37,14 @@ import (
 // RepoService manages git repository lifecycle (create, get, delete).
 type RepoService interface {
 	CreateRepo(ctx context.Context, orgID, projectID, projectName string) (*models.GitRepository, error)
-	GetRepo(ctx context.Context, projectID string) (*models.GitRepository, error)
+	GetRepo(ctx context.Context, orgID, projectID string) (*models.GitRepository, error)
 	// SetWebhookID is called by the webhook registration service after a hook
 	// is provisioned for the repo on GitHub. Stored alongside the repo record
 	// so cleanup can deregister.
-	SetWebhookID(ctx context.Context, projectID string, hookID int64) error
-	DeleteRepo(ctx context.Context, projectID string) error
+	SetWebhookID(ctx context.Context, orgID, projectID string, hookID int64) error
+	DeleteRepo(ctx context.Context, orgID, projectID string) error
 	DeleteAll(ctx context.Context) error
-	SetGithubProjectID(ctx context.Context, projectID, githubProjectID string) error
+	SetGithubProjectID(ctx context.Context, orgID, projectID, githubProjectID string) error
 }
 
 type repoService struct {
@@ -80,7 +80,7 @@ func (s *repoService) CreateRepo(ctx context.Context, orgID, projectID, projectN
 	// row instead of erroring. Repo provisioning is the entry-point for many
 	// flows (project creation, retry, drift fix), all of which should be safe
 	// to retry. See evolution-doc §7.1 and phase0 §1.11.
-	existing, err := s.repo.GetByProjectID(ctx, projectID)
+	existing, err := s.repo.GetByOrgAndProjectID(ctx, orgID, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("check existing repo: %w", err)
 	}
@@ -154,8 +154,8 @@ func (s *repoService) createGitHubRepoWithRetry(ctx context.Context, cred creden
 	return "", "", fmt.Errorf("repo name for %q unavailable after 5 attempts: %w", slug, err)
 }
 
-func (s *repoService) GetRepo(ctx context.Context, projectID string) (*models.GitRepository, error) {
-	repo, err := s.repo.GetByProjectID(ctx, projectID)
+func (s *repoService) GetRepo(ctx context.Context, orgID, projectID string) (*models.GitRepository, error) {
+	repo, err := s.repo.GetByOrgAndProjectID(ctx, orgID, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("get repo: %w", err)
 	}
@@ -165,8 +165,8 @@ func (s *repoService) GetRepo(ctx context.Context, projectID string) (*models.Gi
 	return repo, nil
 }
 
-func (s *repoService) SetWebhookID(ctx context.Context, projectID string, hookID int64) error {
-	repo, err := s.repo.GetByProjectID(ctx, projectID)
+func (s *repoService) SetWebhookID(ctx context.Context, orgID, projectID string, hookID int64) error {
+	repo, err := s.repo.GetByOrgAndProjectID(ctx, orgID, projectID)
 	if err != nil {
 		return fmt.Errorf("get repo: %w", err)
 	}
@@ -178,8 +178,8 @@ func (s *repoService) SetWebhookID(ctx context.Context, projectID string, hookID
 	return s.repo.Update(ctx, repo)
 }
 
-func (s *repoService) DeleteRepo(ctx context.Context, projectID string) error {
-	repo, err := s.repo.GetByProjectID(ctx, projectID)
+func (s *repoService) DeleteRepo(ctx context.Context, orgID, projectID string) error {
+	repo, err := s.repo.GetByOrgAndProjectID(ctx, orgID, projectID)
 	if err != nil {
 		return fmt.Errorf("get repo: %w", err)
 	}
@@ -193,14 +193,14 @@ func (s *repoService) DeleteRepo(ctx context.Context, projectID string) error {
 		}
 	}
 
-	if err := s.repo.Delete(ctx, projectID); err != nil {
+	if err := s.repo.DeleteByOrgAndProjectID(ctx, orgID, projectID); err != nil {
 		return fmt.Errorf("delete repo record: %w", err)
 	}
 	return nil
 }
 
-func (s *repoService) SetGithubProjectID(ctx context.Context, projectID, githubProjectID string) error {
-	repo, err := s.repo.GetByProjectID(ctx, projectID)
+func (s *repoService) SetGithubProjectID(ctx context.Context, orgID, projectID, githubProjectID string) error {
+	repo, err := s.repo.GetByOrgAndProjectID(ctx, orgID, projectID)
 	if err != nil {
 		return fmt.Errorf("get repo: %w", err)
 	}
@@ -228,24 +228,24 @@ func (s *repoService) performClone(orgID, projectID, repoURL, clonePath string) 
 	slog.Info("cloning repository", "project", projectID, "url", repoURL, "path", clonePath)
 
 	if err := os.MkdirAll(filepath.Dir(clonePath), 0o755); err != nil {
-		s.updateRepoStatus(projectID, "error", fmt.Sprintf("create directory: %v", err))
+		s.updateRepoStatus(orgID, projectID, "error", fmt.Sprintf("create directory: %v", err))
 		return
 	}
 
 	cred, err := s.resolver.Resolve(ctx, orgID)
 	if err != nil {
-		s.updateRepoStatus(projectID, "error", fmt.Sprintf("resolve credential: %v", err))
+		s.updateRepoStatus(orgID, projectID, "error", fmt.Sprintf("resolve credential: %v", err))
 		return
 	}
 	token, _, err := cred.Token(ctx)
 	if err != nil {
-		s.updateRepoStatus(projectID, "error", fmt.Sprintf("token: %v", err))
+		s.updateRepoStatus(orgID, projectID, "error", fmt.Sprintf("token: %v", err))
 		return
 	}
 
 	askPassScript, err := createAskPassScript(token)
 	if err != nil {
-		s.updateRepoStatus(projectID, "error", fmt.Sprintf("create askpass script: %v", err))
+		s.updateRepoStatus(orgID, projectID, "error", fmt.Sprintf("create askpass script: %v", err))
 		return
 	}
 	defer os.Remove(askPassScript)
@@ -262,16 +262,16 @@ func (s *repoService) performClone(orgID, projectID, repoURL, clonePath string) 
 	if err := cmd.Run(); err != nil {
 		errMsg := stderr.String()
 		if strings.Contains(errMsg, "Authentication") || strings.Contains(errMsg, "could not read Username") {
-			s.updateRepoStatus(projectID, "error", "authentication failed — check platform PAT")
+			s.updateRepoStatus(orgID, projectID, "error", "authentication failed — check platform PAT")
 		} else {
-			s.updateRepoStatus(projectID, "error", fmt.Sprintf("clone failed: %s", errMsg))
+			s.updateRepoStatus(orgID, projectID, "error", fmt.Sprintf("clone failed: %s", errMsg))
 		}
 		return
 	}
 
 	defaultBranch := detectDefaultBranch(clonePath)
 
-	repo, err := s.repo.GetByProjectID(context.Background(), projectID)
+	repo, err := s.repo.GetByOrgAndProjectID(context.Background(), orgID, projectID)
 	if err != nil || repo == nil {
 		slog.Error("failed to update repo after clone", "project", projectID, "error", err)
 		return
@@ -286,8 +286,8 @@ func (s *repoService) performClone(orgID, projectID, repoURL, clonePath string) 
 	slog.Info("repository cloned successfully", "project", projectID, "branch", defaultBranch)
 }
 
-func (s *repoService) updateRepoStatus(projectID, status, errorMsg string) {
-	repo, err := s.repo.GetByProjectID(context.Background(), projectID)
+func (s *repoService) updateRepoStatus(orgID, projectID, status, errorMsg string) {
+	repo, err := s.repo.GetByOrgAndProjectID(context.Background(), orgID, projectID)
 	if err != nil || repo == nil {
 		slog.Error("failed to find repo for status update", "project", projectID, "error", err)
 		return

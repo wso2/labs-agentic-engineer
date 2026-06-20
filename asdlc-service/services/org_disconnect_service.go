@@ -130,7 +130,7 @@ func (s *OrgDisconnectService) Disconnect(ctx context.Context, ocOrgID, cause st
 		t := &tasks[i]
 		// Phase B — best-effort comment.
 		if t.IssueNumber > 0 && t.ProjectID != "" {
-			if err := s.issueSvc.CommentIssue(ctx, t.ProjectID, t.IssueNumber, "abandoned: org disconnected"); err != nil {
+			if err := s.issueSvc.CommentIssue(ctx, t.OrgID, t.ProjectID, t.IssueNumber, "abandoned: org disconnected"); err != nil {
 				slog.WarnContext(ctx, "disconnect Phase B: comment failed", "taskId", t.ID, "error", err)
 			}
 		}

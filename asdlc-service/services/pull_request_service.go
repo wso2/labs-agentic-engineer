@@ -30,7 +30,7 @@ import (
 type PullRequestService interface {
 	// CreateDraftPR opens a draft PR. Idempotent on (head, base): returns the
 	// existing PR if one is already open against the same head branch.
-	CreateDraftPR(ctx context.Context, projectID string, req CreateDraftPRRequest) (*PullRequestResult, error)
+	CreateDraftPR(ctx context.Context, orgID, projectID string, req CreateDraftPRRequest) (*PullRequestResult, error)
 }
 
 type pullRequestService struct {
@@ -44,12 +44,12 @@ func NewPullRequestService(repo repositories.RepoRepository, github GitHubClient
 	return &pullRequestService{repo: repo, github: github, issue: is}
 }
 
-func (s *pullRequestService) CreateDraftPR(ctx context.Context, projectID string, req CreateDraftPRRequest) (*PullRequestResult, error) {
+func (s *pullRequestService) CreateDraftPR(ctx context.Context, orgID, projectID string, req CreateDraftPRRequest) (*PullRequestResult, error) {
 	if req.Head == "" || req.Base == "" || req.Title == "" {
 		return nil, fmt.Errorf("head, base, and title are required")
 	}
 
-	owner, repoName, cred, err := s.issue.resolveRepoAndCredential(ctx, projectID)
+	owner, repoName, cred, err := s.issue.resolveRepoAndCredential(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
