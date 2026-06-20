@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package services
+package requirements
 
 import (
 	"bufio"
@@ -145,7 +145,7 @@ func (s *requirementsService) GetRequirementsAtTag(ctx context.Context, orgID, p
 	files, err := s.artifactSvc.GetRequirementsAtTag(ctx, orgID, projectID, tag)
 	if err != nil {
 		if errors.Is(err, artifacts.ErrArtifactNotFound) {
-			return nil, ErrSpecNotFound
+			return nil, artifacts.ErrSpecNotFound
 		}
 		return nil, fmt.Errorf("get requirements at %s: %w", tag, err)
 	}
@@ -424,14 +424,4 @@ func fileMapsEqual(a, b map[string]string) bool {
 		}
 	}
 	return true
-}
-
-// AssembleDesignFromFiles wraps the artifact-store assembler and rejects an
-// empty file map. Used by callers that receive a tagged design file map out
-// of band (e.g. task generation reading a design from a tagged version).
-func AssembleDesignFromFiles(files map[string]string) (*artifacts.DesignFile, error) {
-	if len(files) == 0 {
-		return nil, fmt.Errorf("decode design: empty file map")
-	}
-	return artifacts.AssembleDesign(files)
 }

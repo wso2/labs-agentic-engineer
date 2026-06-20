@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package controllers
+package requirements
 
 import (
 	"encoding/json"
@@ -23,7 +23,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/wso2/asdlc/asdlc-service/services"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
 	"github.com/wso2/asdlc/asdlc-service/utils"
 )
 
@@ -42,10 +42,10 @@ type RequirementsController interface {
 }
 
 type requirementsController struct {
-	service services.RequirementsService
+	service RequirementsService
 }
 
-func NewRequirementsController(service services.RequirementsService) RequirementsController {
+func NewRequirementsController(service RequirementsService) RequirementsController {
 	return &requirementsController{service: service}
 }
 
@@ -82,7 +82,7 @@ func (c *requirementsController) UpdateRequirementFile(w http.ResponseWriter, r 
 	}
 	out, err := c.service.UpdateRequirementFile(r.Context(), org, project, name, body.Content)
 	if err != nil {
-		if errors.Is(err, services.RequirementsDirLockBusy) {
+		if errors.Is(err, RequirementsDirLockBusy) {
 			utils.WriteErrorResponse(w, http.StatusConflict, "another writer is editing the requirements directory")
 			return
 		}
@@ -103,7 +103,7 @@ func (c *requirementsController) DeleteRequirementFile(w http.ResponseWriter, r 
 	}
 	out, err := c.service.DeleteRequirementFile(r.Context(), org, project, name)
 	if err != nil {
-		if errors.Is(err, services.RequirementsDirLockBusy) {
+		if errors.Is(err, RequirementsDirLockBusy) {
 			utils.WriteErrorResponse(w, http.StatusConflict, "another writer is editing the requirements directory")
 			return
 		}
@@ -122,11 +122,11 @@ func (c *requirementsController) SaveAndProceed(w http.ResponseWriter, r *http.R
 	}
 	out, err := c.service.SaveAndProceed(r.Context(), org, project)
 	if err != nil {
-		if errors.Is(err, services.RequirementsDirLockBusy) {
+		if errors.Is(err, RequirementsDirLockBusy) {
 			utils.WriteErrorResponse(w, http.StatusConflict, "another writer is editing the requirements directory")
 			return
 		}
-		if errors.Is(err, services.ErrSpecNotFound) {
+		if errors.Is(err, artifacts.ErrSpecNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "requirements not found")
 			return
 		}
@@ -145,7 +145,7 @@ func (c *requirementsController) DiscardChanges(w http.ResponseWriter, r *http.R
 	}
 	out, err := c.service.DiscardChanges(r.Context(), org, project)
 	if err != nil {
-		if errors.Is(err, services.RequirementsDirLockBusy) {
+		if errors.Is(err, RequirementsDirLockBusy) {
 			utils.WriteErrorResponse(w, http.StatusConflict, "another writer is editing the requirements directory")
 			return
 		}
@@ -229,7 +229,7 @@ func (c *requirementsController) GetRequirementsAtVersion(w http.ResponseWriter,
 	}
 	out, err := c.service.GetRequirementsAtTag(r.Context(), org, project, tag)
 	if err != nil {
-		if errors.Is(err, services.ErrSpecNotFound) {
+		if errors.Is(err, artifacts.ErrSpecNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "requirements not found at tag")
 			return
 		}

@@ -17,10 +17,10 @@
 package api
 
 import (
-	"github.com/wso2/asdlc/asdlc-service/controllers"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/design"
 )
 
-func registerDesignRoutes(rt *Router, c controllers.DesignController) {
+func registerDesignRoutes(rt *Router, c design.DesignController) {
 	// Assembled Design view (used by cell diagram + downstream code).
 	rt.OrgScoped("GET /api/v1/organizations/{orgHandle}/projects/{projectName}/design", c.GetDesign)
 

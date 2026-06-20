@@ -17,10 +17,10 @@
 package api
 
 import (
-	"github.com/wso2/asdlc/asdlc-service/controllers"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/requirements"
 )
 
-func registerRequirementsRoutes(rt *Router, c controllers.RequirementsController) {
+func registerRequirementsRoutes(rt *Router, c requirements.RequirementsController) {
 	prefix := "/api/v1/organizations/{orgHandle}/projects/{projectName}/requirements"
 
 	rt.OrgScoped("GET "+prefix, c.GetRequirements)

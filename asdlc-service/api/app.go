@@ -29,8 +29,10 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/internal/credentials"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/component"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/design"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/orgcreds"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/requirements"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/task"
 	"github.com/wso2/asdlc/asdlc-service/internal/platform/tenant"
 	"github.com/wso2/asdlc/asdlc-service/middleware"
@@ -47,9 +49,9 @@ type AppParams struct {
 	Config                     config.Config
 	ProjectController          controllers.ProjectController
 	ComponentController        component.ComponentController
-	RequirementsController     controllers.RequirementsController
-	RequirementsChatController controllers.RequirementsChatController
-	DesignController           controllers.DesignController
+	RequirementsController     requirements.RequirementsController
+	RequirementsChatController requirements.RequirementsChatController
+	DesignController           design.DesignController
 	TaskController             controllers.TaskController
 	BoardController            task.BoardController
 	ConfigController           component.ConfigController

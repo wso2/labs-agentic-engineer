@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package controllers
+package requirements
 
 import (
 	"encoding/json"
@@ -24,7 +24,6 @@ import (
 	"net/http"
 
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
-	"github.com/wso2/asdlc/asdlc-service/services"
 	"github.com/wso2/asdlc/asdlc-service/utils"
 )
 
@@ -41,10 +40,10 @@ type RequirementsChatController interface {
 }
 
 type requirementsChatController struct {
-	service services.RequirementsChatService
+	service RequirementsChatService
 }
 
-func NewRequirementsChatController(service services.RequirementsChatService) RequirementsChatController {
+func NewRequirementsChatController(service RequirementsChatService) RequirementsChatController {
 	return &requirementsChatController{service: service}
 }
 
@@ -54,7 +53,7 @@ func (c *requirementsChatController) StreamChat(w http.ResponseWriter, r *http.R
 	if !requireOrgHandle(w, org) || !requireProjectName(w, project) {
 		return
 	}
-	var body services.ChatTurnRequest
+	var body ChatTurnRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -130,7 +129,7 @@ func (c *requirementsChatController) RevertBaselineFile(w http.ResponseWriter, r
 		return
 	}
 	if err := c.service.RevertFileToBaseline(r.Context(), org, project, baseline, filename); err != nil {
-		if errors.Is(err, services.RequirementsDirLockBusy) {
+		if errors.Is(err, RequirementsDirLockBusy) {
 			utils.WriteErrorResponse(w, http.StatusConflict, "chat_in_progress")
 			return
 		}

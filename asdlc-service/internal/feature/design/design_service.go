@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package services
+package design
 
 import (
 	"bufio"
@@ -35,6 +35,12 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
 
+// ErrSpecNotApproved is the design-domain sentinel surfaced (as 409 by the
+// controller) when design generation is attempted before the requirements
+// spec has been saved (tagged). Owned by the design feature — it is the only
+// consumer.
+var ErrSpecNotApproved = errors.New("spec must be saved (tagged) before generating a design")
+
 // ocEntrypoint maps the AI-generated componentType to the OC component type reference.
 func ocEntrypoint(componentType string) string {
 	switch strings.ToLower(componentType) {
@@ -48,6 +54,16 @@ func ocEntrypoint(componentType string) string {
 // toK8sName is a thin in-package shim over k8sname.ToK8sName so the many
 // existing lowercase callers in this package keep compiling unchanged.
 func toK8sName(name string) string { return k8sname.ToK8sName(name) }
+
+// AssembleDesignFromFiles wraps the artifact-store assembler and rejects an
+// empty file map. Used by callers that receive a tagged design file map out
+// of band (e.g. task generation reading a design from a tagged version).
+func AssembleDesignFromFiles(files map[string]string) (*artifacts.DesignFile, error) {
+	if len(files) == 0 {
+		return nil, fmt.Errorf("decode design: empty file map")
+	}
+	return artifacts.AssembleDesign(files)
+}
 
 // DesignBundle is the file-map view returned to the architecture page. It
 // pairs the raw per-file working-tree contents (used by the Explorer) with
@@ -156,7 +172,7 @@ func (s *designService) SetTraitSync(traitSync traitSyncReconciler) {
 	s.traitSync = traitSync
 }
 
-func (s *designService) SetSkillService(svc *SkillService) {
+func (s *designService) SetSkillService(svc skillCatalog) {
 	s.skillSvc = svc
 }
 
@@ -238,7 +254,7 @@ func (s *designService) GetDesignAtTag(ctx context.Context, orgID, projectID, ta
 	files, err := s.artifactSvc.GetDesignAtTag(ctx, orgID, projectID, tag)
 	if err != nil {
 		if errors.Is(err, artifacts.ErrArtifactNotFound) {
-			return nil, ErrDesignNotFound
+			return nil, artifacts.ErrDesignNotFound
 		}
 		return nil, fmt.Errorf("get design at %s: %w", tag, err)
 	}
@@ -279,11 +295,11 @@ func (s *designService) StreamGenerateDesign(ctx context.Context, orgID, project
 		return fmt.Errorf("list requirements: %w", err)
 	}
 	if len(files) == 0 {
-		return ErrSpecNotFound
+		return artifacts.ErrSpecNotFound
 	}
 	specContent := artifacts.ConcatRequirementBundle(files)
 	if specContent == "" {
-		return ErrSpecNotFound
+		return artifacts.ErrSpecNotFound
 	}
 
 	// Require an approved (tagged) requirements version before generating design.
@@ -458,7 +474,7 @@ func (s *designService) GetDesignBundle(ctx context.Context, orgID, projectID st
 	if err != nil {
 		// If there's no design yet, return an empty bundle (not an error) so
 		// the page can render a "no design" state.
-		if errors.Is(err, ErrDesignNotFound) {
+		if errors.Is(err, artifacts.ErrDesignNotFound) {
 			return &DesignBundle{Files: files, Design: nil}, nil
 		}
 		return nil, err
@@ -475,7 +491,7 @@ func (s *designService) GetDesignBundleAtTag(ctx context.Context, orgID, project
 	files, err := s.artifactSvc.GetDesignAtTag(ctx, orgID, projectID, tag)
 	if err != nil {
 		if errors.Is(err, artifacts.ErrArtifactNotFound) {
-			return nil, ErrDesignNotFound
+			return nil, artifacts.ErrDesignNotFound
 		}
 		return nil, fmt.Errorf("get design at %s: %w", tag, err)
 	}
@@ -582,12 +598,12 @@ func (s *designService) SaveAndProceed(ctx context.Context, orgID, projectID str
 	designFile, err := s.store.ReadDesign(ctx, orgID, projectID)
 	if err != nil {
 		if artifacts.IsNotFound(err) {
-			return nil, ErrDesignNotFound
+			return nil, artifacts.ErrDesignNotFound
 		}
 		return nil, fmt.Errorf("read design: %w", err)
 	}
 	if designFile == nil {
-		return nil, ErrDesignNotFound
+		return nil, artifacts.ErrDesignNotFound
 	}
 
 	res, err := s.artifactSvc.SaveDesign(ctx, orgID, projectID, artifacts.SaveRequest{

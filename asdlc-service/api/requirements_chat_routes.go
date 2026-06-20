@@ -17,10 +17,10 @@
 package api
 
 import (
-	"github.com/wso2/asdlc/asdlc-service/controllers"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/requirements"
 )
 
-func registerRequirementsChatRoutes(rt *Router, c controllers.RequirementsChatController) {
+func registerRequirementsChatRoutes(rt *Router, c requirements.RequirementsChatController) {
 	prefix := "/api/v1/organizations/{orgHandle}/projects/{projectName}/requirements"
 	rt.OrgScoped("POST "+prefix+"/chat", c.StreamChat)
 	rt.OrgScoped("POST "+prefix+"/chat/turns/{turnId}/undo", c.UndoTurn)

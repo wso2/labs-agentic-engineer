@@ -27,6 +27,7 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/clients/openchoreo"
 	"github.com/wso2/asdlc/asdlc-service/clients/thundersvc"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
+	"github.com/wso2/asdlc/asdlc-service/internal/platform/k8sname"
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
 
@@ -118,7 +119,7 @@ func (s *RuntimeConfigService) EmitForComponent(ctx context.Context, orgID, proj
 
 	var match *models.DesignComponent
 	for i := range design.Components {
-		if toK8sName(design.Components[i].Name) == componentName {
+		if k8sname.ToK8sName(design.Components[i].Name) == componentName {
 			match = &design.Components[i]
 			break
 		}
@@ -191,7 +192,7 @@ func (s *RuntimeConfigService) EmitForProjectSPAs(ctx context.Context, orgID, pr
 		if c.ComponentType != "web-app" {
 			continue
 		}
-		k8sName := toK8sName(c.Name)
+		k8sName := k8sname.ToK8sName(c.Name)
 		if err := s.EmitForComponent(ctx, orgID, projectID, k8sName); err != nil {
 			slog.WarnContext(ctx, "runtime_config: per-SPA emit failed; continuing",
 				"orgID", orgID,
@@ -238,7 +239,7 @@ func (s *RuntimeConfigService) buildEnvValues(ctx context.Context, orgID, projec
 		if sibling.ComponentType != "service" {
 			continue
 		}
-		k8sName := toK8sName(dep)
+		k8sName := k8sname.ToK8sName(dep)
 		list, err := s.componentClient.ListDeployments(ctx, orgID, projectID, k8sName)
 		if err != nil {
 			// Transient OC failure on a required dep. Mark not-ready so
@@ -365,7 +366,7 @@ func (s *RuntimeConfigService) componentExternalURL(ctx context.Context, orgID, 
 	if s.componentClient == nil {
 		return ""
 	}
-	k8sName := toK8sName(componentName)
+	k8sName := k8sname.ToK8sName(componentName)
 	list, err := s.componentClient.ListDeployments(ctx, orgID, projectID, k8sName)
 	if err != nil || list == nil {
 		return ""

@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package controllers
+package design
 
 import (
 	"encoding/json"
@@ -23,7 +23,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/wso2/asdlc/asdlc-service/services"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
 	"github.com/wso2/asdlc/asdlc-service/utils"
 )
 
@@ -42,10 +42,10 @@ type DesignController interface {
 }
 
 type designController struct {
-	service services.DesignService
+	service DesignService
 }
 
-func NewDesignController(service services.DesignService) DesignController {
+func NewDesignController(service DesignService) DesignController {
 	return &designController{service: service}
 }
 
@@ -97,9 +97,9 @@ func (c *designController) GenerateDesign(w http.ResponseWriter, r *http.Request
 		// Headers already sent — surface the failure as a UI Message Stream error frame.
 		errText := err.Error()
 		switch {
-		case errors.Is(err, services.ErrSpecNotFound):
+		case errors.Is(err, artifacts.ErrSpecNotFound):
 			errText = "spec not found"
-		case errors.Is(err, services.ErrSpecNotApproved):
+		case errors.Is(err, ErrSpecNotApproved):
 			errText = "spec must be approved before generating a design"
 		}
 		errFrame, _ := json.Marshal(map[string]any{"type": "error", "errorText": errText})
@@ -117,11 +117,11 @@ func (c *designController) SaveAndProceed(w http.ResponseWriter, r *http.Request
 
 	design, err := c.service.SaveAndProceed(r.Context(), org, project)
 	if err != nil {
-		if errors.Is(err, services.ErrDesignNotFound) {
+		if errors.Is(err, artifacts.ErrDesignNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "design not found")
 			return
 		}
-		if errors.Is(err, services.ErrSpecNotApproved) {
+		if errors.Is(err, ErrSpecNotApproved) {
 			utils.WriteErrorResponse(w, http.StatusConflict, "save requirements first — no v<N> baseline tag")
 			return
 		}
@@ -164,7 +164,7 @@ func (c *designController) GetDesignAtTag(w http.ResponseWriter, r *http.Request
 
 	design, err := c.service.GetDesignAtTag(r.Context(), org, project, tag)
 	if err != nil {
-		if errors.Is(err, services.ErrDesignNotFound) {
+		if errors.Is(err, artifacts.ErrDesignNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "design not found")
 			return
 		}
@@ -224,7 +224,7 @@ func (c *designController) GetDesignBundleAtTag(w http.ResponseWriter, r *http.R
 	}
 	bundle, err := c.service.GetDesignBundleAtTag(r.Context(), org, project, tag)
 	if err != nil {
-		if errors.Is(err, services.ErrDesignNotFound) {
+		if errors.Is(err, artifacts.ErrDesignNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "design not found")
 			return
 		}
@@ -305,4 +305,3 @@ func (c *designController) DeleteComponent(w http.ResponseWriter, r *http.Reques
 	}
 	utils.WriteSuccessResponse(w, http.StatusOK, bundle)
 }
-

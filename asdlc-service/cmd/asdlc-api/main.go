@@ -50,8 +50,10 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/codingagent"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/component"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/design"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/orgcreds"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/requirements"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/task"
 	"github.com/wso2/asdlc/asdlc-service/internal/seed"
 	"github.com/wso2/asdlc/asdlc-service/middleware"
@@ -642,26 +644,26 @@ func main() {
 	}
 	componentService := component.NewComponentService(componentClient, observClient, artifactStore, repoService, buildStager)
 	configService := component.NewConfigService(configRepo, componentService)
-	requirementsDirLocker := services.NewRequirementsDirLocker(db)
-	requirementsService := services.NewRequirementsService(artifactStore, agentsClient, artifactSvcGit)
+	requirementsDirLocker := requirements.NewRequirementsDirLocker(db)
+	requirementsService := requirements.NewRequirementsService(artifactStore, agentsClient, artifactSvcGit)
 	if locked, ok := requirementsService.(interface {
-		WithLocker(*services.RequirementsDirLocker) services.RequirementsService
+		WithLocker(*requirements.RequirementsDirLocker) requirements.RequirementsService
 	}); ok {
 		requirementsService = locked.WithLocker(requirementsDirLocker)
 	}
-	requirementsChatService := services.NewRequirementsChatService(artifactStore, agentsClient, artifactSvcGit, requirementsDirLocker)
-	designService := services.NewDesignService(artifactStore, agentsClient, artifactSvcGit)
+	requirementsChatService := requirements.NewRequirementsChatService(artifactStore, agentsClient, artifactSvcGit, requirementsDirLocker)
+	designService := design.NewDesignService(artifactStore, agentsClient, artifactSvcGit)
 
 	taskService := task.NewTaskService(db, taskRepo, artifactStore, componentService, tokenProvider, configService, issueService, artifactSvcGit, repoService, agentsClient, dbClient)
 	boardService := task.NewBoardService(repoBoardService, taskRepo)
 
-	if hook, ok := designService.(services.DesignServiceWithTaskHook); ok {
+	if hook, ok := designService.(design.DesignServiceWithTaskHook); ok {
 		hook.SetTaskService(taskService)
 	}
 	// Wire the skills catalogue into design + task services so the
 	// architect input ships builtin/org skills, and the tech-lead detail
 	// phase ships full bodies of every attached skill.
-	if setter, ok := designService.(services.DesignServiceWithSkills); ok {
+	if setter, ok := designService.(design.DesignServiceWithSkills); ok {
 		setter.SetSkillService(skillSvc)
 	}
 	if setter, ok := taskService.(interface {
@@ -680,7 +682,7 @@ func main() {
 	// (after `components/<name>/design.md` PUT). See
 	// docs/design/api-platform-integration.md §6 Phase 2.
 	traitSyncService := component.NewTraitSyncService(componentClient, artifactStore)
-	if hook, ok := designService.(services.DesignServiceWithTraitSync); ok {
+	if hook, ok := designService.(design.DesignServiceWithTraitSync); ok {
 		hook.SetTraitSync(traitSyncService)
 	}
 
@@ -926,9 +928,9 @@ func main() {
 		ProjectController:          controllers.NewProjectController(projectService),
 		OrganizationController:     controllers.NewOrganizationController(organizationService),
 		ComponentController:        component.NewComponentController(componentService),
-		RequirementsController:     controllers.NewRequirementsController(requirementsService),
-		RequirementsChatController: controllers.NewRequirementsChatController(requirementsChatService),
-		DesignController:           controllers.NewDesignController(designService),
+		RequirementsController:     requirements.NewRequirementsController(requirementsService),
+		RequirementsChatController: requirements.NewRequirementsChatController(requirementsChatService),
+		DesignController:           design.NewDesignController(designService),
 		TaskController: func() controllers.TaskController {
 			tc := controllers.NewTaskController(
 				taskService,
