@@ -27,6 +27,8 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+
+	"github.com/wso2/asdlc/asdlc-service/models"
 )
 
 // Skill mutation sentinels — controllers map these to HTTP status codes.
@@ -275,7 +277,7 @@ func (m *SkillMutationService) importedSkillInUse(ctx context.Context, orgID, na
 		   ON t.project_id = s.project_id AND t.source_design_version = s.design_version
 		 WHERE s.skill_id = ? AND t.org_id = ?
 		   AND t.status NOT IN ('merged','rejected','abandoned','deployed','failed')`,
-		PrefixedID("imported", name), orgID,
+		models.PrefixedID("imported", name), orgID,
 	).Scan(&count).Error
 	if err != nil {
 		return false, err

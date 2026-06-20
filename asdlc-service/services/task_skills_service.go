@@ -197,8 +197,8 @@ func snapshotProjectSkills(
 			 VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, NOW())
 			 ON CONFLICT (project_id, design_version, skill_id) DO NOTHING`,
 			projectID, designVersion,
-			PrefixedID(sk.Kind, sk.Name),
-			MaterializedName(sk.Kind, sk.Name),
+			models.PrefixedID(sk.Kind, sk.Name),
+			models.MaterializedName(sk.Kind, sk.Name),
 			sk.Kind, sk.SkillMD, string(refsJSON),
 		).Error
 		if err != nil {

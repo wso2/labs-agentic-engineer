@@ -30,6 +30,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
+	"github.com/wso2/asdlc/asdlc-service/models"
 )
 
 // References is the JSONB-backed map of optional reference filenames →
@@ -37,22 +38,11 @@ import (
 // serializer:json directive — see skillRow below.
 type References map[string]string
 
-// Skill is the resolved shape that flows from the `skills` table to the
-// architect input, the tech-lead input, the runner pull endpoint, and
-// the console. Mirrors the row schema 1:1 plus a few derived fields.
-type Skill struct {
-	OrgID         string            `json:"orgId"`
-	Name          string            `json:"name"`
-	Kind          string            `json:"kind"` // builtin | custom | imported
-	Description   string            `json:"description"`
-	SkillMD       string            `json:"skillMd"`
-	References    map[string]string `json:"references"`
-	Version       int               `json:"version"`
-	ContentSHA    string            `json:"contentSha"`
-	License       string            `json:"license,omitempty"`
-	Compatibility string            `json:"compatibility,omitempty"`
-	UpdatedAt     time.Time         `json:"updatedAt"`
-}
+// Skill re-exports models.Skill — the canonical shared value type now lives in
+// models so the task feature can snapshot resolved skills without importing the
+// skills package. The skills surface (services.Skill) is unchanged via this
+// alias.
+type Skill = models.Skill
 
 // SkillSummary is the lightweight projection used in catalogue listings —
 // no body, no references. Architect's "org skills" manifest renders from
@@ -163,17 +153,8 @@ func (s *SkillService) ResolveMany(ctx context.Context, orgID string, names []st
 	return out, nil
 }
 
-// MaterializedName is the prefixed identifier used in the per-task
-// AgentSkills plugin tree (`builtin-api-management`, etc.). See
-// docs/design/skills-system.md > "Materialisation".
-func MaterializedName(kind, name string) string {
-	return kind + "-" + name
-}
-
-// PrefixedID is the catalogue ID surfaced in snapshot rows + audit log.
-func PrefixedID(kind, name string) string {
-	return kind + "/" + name
-}
+// MaterializedName + PrefixedID moved to models (shared with task's skill
+// snapshotting). Call models.MaterializedName / models.PrefixedID.
 
 // skillRow is the GORM row shape — kept private so callers always go
 // through rowToSkill for any post-processing.
