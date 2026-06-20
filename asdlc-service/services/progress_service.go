@@ -34,7 +34,6 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/clients/clustergatewayproxy"
 	"github.com/wso2/asdlc/asdlc-service/clients/observer"
 	"github.com/wso2/asdlc/asdlc-service/clients/openchoreo"
-	taskfeature "github.com/wso2/asdlc/asdlc-service/internal/feature/task"
 	"github.com/wso2/asdlc/asdlc-service/internal/platform/tenant"
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
@@ -69,8 +68,15 @@ type ProgressService interface {
 	GetBuildProgress(ctx context.Context, taskID string, sinceMillis int64) (*ProgressResponse, error)
 }
 
+// taskReader is the narrow task-lookup port the progress service needs.
+// task.TaskService satisfies it; defined here (consumer side) so this service
+// — which moves into the codingagent feature — needn't import internal/feature/task.
+type taskReader interface {
+	GetTask(ctx context.Context, taskID string) (*models.ComponentTask, error)
+}
+
 type progressService struct {
-	taskSvc        taskfeature.TaskService
+	taskSvc        taskReader
 	ocClient       openchoreo.ComponentClient
 	observerClient observer.Client
 
@@ -108,7 +114,7 @@ type progressService struct {
 // namespace where Argo schedules pods. There is no platform-wide
 // workflow-plane namespace once orgs are not collapsed.
 func NewProgressService(
-	taskSvc taskfeature.TaskService,
+	taskSvc taskReader,
 	ocClient openchoreo.ComponentClient,
 	observerClient observer.Client,
 ) ProgressService {

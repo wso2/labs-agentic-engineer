@@ -82,6 +82,26 @@ type DispatchService interface {
 	RetryTask(ctx context.Context, taskID string) (DispatchResult, error)
 }
 
+// Consumer ports for collaborators owned by features/platform layers that
+// extract LATER than codingagent (auth.TaskTokenManager, idp, runtimeconfig).
+// Defined here (consumer side) and satisfied structurally by the concretes,
+// wired at the composition root — so this service, which moves into the
+// codingagent feature, needn't import the flat services package for them.
+type (
+	// taskTokenIssuer mints the per-task RS256 bearer (auth.TaskTokenManager).
+	taskTokenIssuer interface {
+		Issue(taskID, ocOrgID, projectID string) (string, error)
+	}
+	// orgPublisherProvisioner is idp's get-or-create publisher hook (WS2.4).
+	orgPublisherProvisioner interface {
+		EnsureOrgPublisher(ctx context.Context, orgID, actor string) (clientID, clientSecret string, created bool, err error)
+	}
+	// runtimeConfigEmitter writes env-config.js onto a web-app's ReleaseBindings.
+	runtimeConfigEmitter interface {
+		EmitForComponent(ctx context.Context, orgID, projectID, componentName string) error
+	}
+)
+
 type dispatchService struct {
 	taskRepo          repositories.TaskRepository
 	repoSvc           gitrepo.RepoService
@@ -91,7 +111,7 @@ type dispatchService struct {
 	componentSvc      component.ComponentService
 	configSvc         component.ConfigService
 	store             *artifacts.ArtifactStore
-	taskTokens        *TaskTokenManager
+	taskTokens        taskTokenIssuer
 	asServiceIdentity func(ctx context.Context) context.Context
 	wfRunService      WorkflowRunService
 	projector         TaskStateProjector
@@ -129,7 +149,7 @@ type dispatchService struct {
 	// the file synchronously before its bundle so `window._env_` is
 	// populated before any React module runs — no rebuild needed when
 	// per-env values change. Wired via SetRuntimeConfig.
-	runtimeConfig *RuntimeConfigService
+	runtimeConfig runtimeConfigEmitter
 
 	// idp, when non-nil, provisions the per-org Thunder publisher
 	// client_credentials on demand so the coding-agent runner can
@@ -137,7 +157,7 @@ type dispatchService struct {
 	// Decoupled from API security: trait_sync only provisions it on the
 	// first protected deploy, but the runner needs it for every component,
 	// so the dispatch pre-flight ensures it too. Wired via SetIDPService.
-	idp IDPService
+	idp orgPublisherProvisioner
 }
 
 // WithCodingAgentDispatcher wires the WS2.3 proxy-based dispatch path.
@@ -164,14 +184,14 @@ type DispatchServiceWithTraitSync interface {
 // by the proxy dispatch pre-flight (WS2.4 runner-auth). Optional — when
 // unset (e.g. local k3d without Thunder), the dispatch path falls back to
 // the per-task RS256 JWT.
-func (s *dispatchService) SetIDPService(idp IDPService) {
+func (s *dispatchService) SetIDPService(idp orgPublisherProvisioner) {
 	s.idp = idp
 }
 
 // SetRuntimeConfig installs the env-config.js emitter that writes
 // per-env values onto each web-app's ReleaseBindings. Call after
 // NewDispatchService in production wiring.
-func (s *dispatchService) SetRuntimeConfig(r *RuntimeConfigService) {
+func (s *dispatchService) SetRuntimeConfig(r runtimeConfigEmitter) {
 	s.runtimeConfig = r
 }
 
@@ -190,7 +210,7 @@ func NewDispatchService(
 	componentSvc component.ComponentService,
 	configSvc component.ConfigService,
 	store *artifacts.ArtifactStore,
-	taskTokens *TaskTokenManager,
+	taskTokens taskTokenIssuer,
 	asServiceIdentity func(ctx context.Context) context.Context,
 	wfRunService WorkflowRunService,
 	projector TaskStateProjector,
