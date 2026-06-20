@@ -14,14 +14,13 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package controllers
+package component
 
 import (
 	"errors"
 	"log/slog"
 	"net/http"
 
-	"github.com/wso2/asdlc/asdlc-service/services"
 	"github.com/wso2/asdlc/asdlc-service/utils"
 )
 
@@ -38,10 +37,10 @@ type ComponentController interface {
 }
 
 type componentController struct {
-	service services.ComponentService
+	service ComponentService
 }
 
-func NewComponentController(service services.ComponentService) ComponentController {
+func NewComponentController(service ComponentService) ComponentController {
 	return &componentController{service: service}
 }
 
@@ -54,7 +53,7 @@ func (c *componentController) ListComponents(w http.ResponseWriter, r *http.Requ
 
 	list, err := c.service.ListComponents(r.Context(), org, projectName, 100, "")
 	if err != nil {
-		if errors.Is(err, services.ErrUnauthorized) {
+		if errors.Is(err, ErrUnauthorized) {
 			utils.WriteErrorResponse(w, http.StatusUnauthorized, "invalid or expired token")
 			return
 		}
@@ -76,11 +75,11 @@ func (c *componentController) GetComponent(w http.ResponseWriter, r *http.Reques
 
 	comp, err := c.service.GetComponent(r.Context(), org, projectName, componentName)
 	if err != nil {
-		if errors.Is(err, services.ErrComponentNotFound) {
+		if errors.Is(err, ErrComponentNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "component not found")
 			return
 		}
-		if errors.Is(err, services.ErrUnauthorized) {
+		if errors.Is(err, ErrUnauthorized) {
 			utils.WriteErrorResponse(w, http.StatusUnauthorized, "invalid or expired token")
 			return
 		}
@@ -102,7 +101,7 @@ func (c *componentController) TriggerBuild(w http.ResponseWriter, r *http.Reques
 
 	run, err := c.service.TriggerBuild(r.Context(), org, projectName, componentName)
 	if err != nil {
-		if errors.Is(err, services.ErrUnauthorized) {
+		if errors.Is(err, ErrUnauthorized) {
 			utils.WriteErrorResponse(w, http.StatusUnauthorized, "invalid or expired token")
 			return
 		}
@@ -124,7 +123,7 @@ func (c *componentController) ListBuilds(w http.ResponseWriter, r *http.Request)
 
 	list, err := c.service.ListBuilds(r.Context(), org, projectName, componentName, 20, "")
 	if err != nil {
-		if errors.Is(err, services.ErrUnauthorized) {
+		if errors.Is(err, ErrUnauthorized) {
 			utils.WriteErrorResponse(w, http.StatusUnauthorized, "invalid or expired token")
 			return
 		}
@@ -149,11 +148,11 @@ func (c *componentController) GetBuildStatus(w http.ResponseWriter, r *http.Requ
 
 	run, err := c.service.GetBuildStatus(r.Context(), org, buildName)
 	if err != nil {
-		if errors.Is(err, services.ErrComponentNotFound) {
+		if errors.Is(err, ErrComponentNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "build not found")
 			return
 		}
-		if errors.Is(err, services.ErrUnauthorized) {
+		if errors.Is(err, ErrUnauthorized) {
 			utils.WriteErrorResponse(w, http.StatusUnauthorized, "invalid or expired token")
 			return
 		}
@@ -179,11 +178,11 @@ func (c *componentController) GetBuildLogs(w http.ResponseWriter, r *http.Reques
 
 	logs, err := c.service.GetBuildLogs(r.Context(), org, projectName, componentName, buildName)
 	if err != nil {
-		if errors.Is(err, services.ErrUnauthorized) {
+		if errors.Is(err, ErrUnauthorized) {
 			utils.WriteErrorResponse(w, http.StatusUnauthorized, "invalid or expired token")
 			return
 		}
-		if errors.Is(err, services.ErrLogsUnavailable) {
+		if errors.Is(err, ErrLogsUnavailable) {
 			utils.WriteErrorResponse(w, http.StatusServiceUnavailable, "build logs service not available")
 			return
 		}
@@ -212,16 +211,16 @@ func (c *componentController) GetComponentOpenAPI(w http.ResponseWriter, r *http
 
 	spec, err := c.service.GetComponentOpenAPI(r.Context(), org, projectName, componentName)
 	if err != nil {
-		if errors.Is(err, services.ErrComponentNotFound) {
+		if errors.Is(err, ErrComponentNotFound) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "no OpenAPI spec for this component")
 			return
 		}
-		if errors.Is(err, services.ErrComponentNotService) {
+		if errors.Is(err, ErrComponentNotService) {
 			// Hand the type back so the client can say "this is a web-app, not a service".
 			utils.WriteSuccessResponse(w, http.StatusConflict, spec)
 			return
 		}
-		if errors.Is(err, services.ErrUnauthorized) {
+		if errors.Is(err, ErrUnauthorized) {
 			utils.WriteErrorResponse(w, http.StatusUnauthorized, "invalid or expired token")
 			return
 		}
@@ -243,7 +242,7 @@ func (c *componentController) ListDeployments(w http.ResponseWriter, r *http.Req
 
 	list, err := c.service.ListDeployments(r.Context(), org, projectName, componentName)
 	if err != nil {
-		if errors.Is(err, services.ErrUnauthorized) {
+		if errors.Is(err, ErrUnauthorized) {
 			utils.WriteErrorResponse(w, http.StatusUnauthorized, "invalid or expired token")
 			return
 		}

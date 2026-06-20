@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package webhook
+package component
 
 import (
 	"context"
@@ -25,14 +25,13 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/wso2/asdlc/asdlc-service/internal/platform/k8sname"
-	"github.com/wso2/asdlc/asdlc-service/services"
 )
 
 // TraitSyncWatcher is the convergence safety net for Phase 2 of the api-
 // platform-integration plan (docs/design/api-platform-integration.md §6
 // Phase 2). It runs on a 10 s ticker and, for every (orgID, projectID,
 // componentName) tuple with an existing task record, invokes
-// services.TraitSyncService.SyncComponentTraits — which is idempotent +
+// TraitSyncService.SyncComponentTraits — which is idempotent +
 // convergent so re-running it is safe.
 //
 // Why this matters:
@@ -56,7 +55,7 @@ import (
 // retries, and the failure counter starts over.
 type TraitSyncWatcher struct {
 	db                *gorm.DB
-	traitSync         *services.TraitSyncService
+	traitSync         *TraitSyncService
 	asServiceIdentity func(ctx context.Context) context.Context
 	tick              time.Duration
 
@@ -79,7 +78,7 @@ type tupleFailure struct {
 // impersonation).
 func NewTraitSyncWatcher(
 	db *gorm.DB,
-	traitSync *services.TraitSyncService,
+	traitSync *TraitSyncService,
 	asServiceIdentity func(ctx context.Context) context.Context,
 ) *TraitSyncWatcher {
 	return &TraitSyncWatcher{

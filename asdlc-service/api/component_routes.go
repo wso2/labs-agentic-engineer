@@ -17,10 +17,10 @@
 package api
 
 import (
-	"github.com/wso2/asdlc/asdlc-service/controllers"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/component"
 )
 
-func registerComponentRoutes(rt *Router, c controllers.ComponentController) {
+func registerComponentRoutes(rt *Router, c component.ComponentController) {
 	prefix := "/api/v1/organizations/{orgHandle}/projects/{projectName}/components"
 
 	rt.OrgScoped("GET "+prefix, c.ListComponents)

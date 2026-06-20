@@ -22,6 +22,8 @@ import (
 	"log/slog"
 
 	"gorm.io/gorm"
+
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/component"
 )
 
 // DispatchCascadeHook is the post-commit cascade fired by the webhook
@@ -34,7 +36,7 @@ import (
 type DispatchCascadeHook struct {
 	db            *gorm.DB
 	dispatch      DispatchService
-	traitSync     *TraitSyncService
+	traitSync     *component.TraitSyncService
 	runtimeConfig *RuntimeConfigService
 }
 
@@ -45,7 +47,7 @@ func NewDispatchCascadeHook(db *gorm.DB, dispatch DispatchService) *DispatchCasc
 // SetTraitSync wires the trait sync service so the cascade can re-emit
 // sibling-CORS origins on every protected API in the project when a SPA
 // lands deployed. Optional — when nil the cascade skips the re-emit step.
-func (h *DispatchCascadeHook) SetTraitSync(t *TraitSyncService) {
+func (h *DispatchCascadeHook) SetTraitSync(t *component.TraitSyncService) {
 	if h == nil {
 		return
 	}

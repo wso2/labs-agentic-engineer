@@ -27,6 +27,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/component"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 	"github.com/wso2/asdlc/asdlc-service/models"
 	"github.com/wso2/asdlc/asdlc-service/repositories"
@@ -84,8 +85,8 @@ type dispatchService struct {
 	credSvc           *CredentialService
 	anthropicSvc      *AnthropicCredentialService
 	repoBoardSvc      gitrepo.RepoBoardService
-	componentSvc      ComponentService
-	configSvc         ConfigService
+	componentSvc      component.ComponentService
+	configSvc         component.ConfigService
 	store             *artifacts.ArtifactStore
 	taskTokens        *TaskTokenManager
 	asServiceIdentity func(ctx context.Context) context.Context
@@ -97,7 +98,7 @@ type dispatchService struct {
 	// reconcile per-environment trait configs (the part CreateComponent
 	// can't pre-stamp because RBs are created asynchronously by OC's
 	// autoDeploy controller). Set via WithTraitSync. Optional in tests.
-	traitSync *TraitSyncService
+	traitSync *component.TraitSyncService
 	// codingAgentDispatcher, when non-nil, is the WS2.3 proxy-based
 	// dispatch path (NS + SA + ExternalSecret×2 + Job). When the
 	// dispatcher is wired AND the per-org SM-API triplets are
@@ -153,7 +154,7 @@ func (s *dispatchService) WithCodingAgentDispatcher(d *codingagent.Dispatcher, d
 // DesignServiceWithTaskHook pattern in design_service.go).
 type DispatchServiceWithTraitSync interface {
 	DispatchService
-	SetTraitSync(traitSync *TraitSyncService)
+	SetTraitSync(traitSync *component.TraitSyncService)
 }
 
 // SetIDPService wires the per-org Thunder publisher provisioning hook used
@@ -173,7 +174,7 @@ func (s *dispatchService) SetRuntimeConfig(r *RuntimeConfigService) {
 
 // SetTraitSync installs the shared trait_sync emitter. Call after
 // NewDispatchService in production wiring.
-func (s *dispatchService) SetTraitSync(traitSync *TraitSyncService) {
+func (s *dispatchService) SetTraitSync(traitSync *component.TraitSyncService) {
 	s.traitSync = traitSync
 }
 
@@ -183,8 +184,8 @@ func NewDispatchService(
 	credSvc *CredentialService,
 	anthropicSvc *AnthropicCredentialService,
 	repoBoardSvc gitrepo.RepoBoardService,
-	componentSvc ComponentService,
-	configSvc ConfigService,
+	componentSvc component.ComponentService,
+	configSvc component.ConfigService,
 	store *artifacts.ArtifactStore,
 	taskTokens *TaskTokenManager,
 	asServiceIdentity func(ctx context.Context) context.Context,
@@ -982,7 +983,7 @@ func (s *dispatchService) ensureOCComponent(
 	// `required` ⇒ trait attached with cors+jwtAuth enabled in every env.
 	// See services/trait_sync.go for the canonical emitter.
 	apiSecurityEnabled := models.ResolveAPISecurityEnabled(*comp)
-	traits, _ := DesiredAPIConfigurationTrait(componentName, apiSecurityEnabled)
+	traits, _ := component.DesiredAPIConfigurationTrait(componentName, apiSecurityEnabled)
 
 	_, err = s.componentSvc.CreateComponent(ctx, task.OrgID, task.ProjectID, &models.CreateComponentRequest{
 		Name:        componentName,

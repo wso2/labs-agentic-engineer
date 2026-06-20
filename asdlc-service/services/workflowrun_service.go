@@ -110,7 +110,6 @@ type workflowRunService struct {
 	repoSvc           gitrepo.RepoService
 	buildCredSvc      *BuildCredentialsService
 	store             *artifacts.ArtifactStore
-	configSvc         ConfigService
 	projector         TaskStateProjector
 	asServiceIdentity func(ctx context.Context) context.Context
 }

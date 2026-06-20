@@ -31,6 +31,7 @@ import (
 
 	"github.com/wso2/asdlc/asdlc-service/clients/agents"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/component"
 	"github.com/wso2/asdlc/asdlc-service/internal/platform/k8sname"
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
@@ -80,7 +81,7 @@ type designService struct {
 	// edit so an `exposesAPI.auth` toggle propagates to the OC Component +
 	// ReleaseBindings without waiting for the next dispatch. Set via
 	// SetTraitSync. Optional in tests.
-	traitSync *TraitSyncService
+	traitSync *component.TraitSyncService
 	// skillSvc resolves the per-org skill catalogue for the architect input.
 	// Optional in tests; nil → architect runs with no skills attached
 	// (equivalent to pre-skills-system behaviour).
@@ -100,7 +101,7 @@ type DesignServiceWithTaskHook interface {
 // written. Mirrors the DesignServiceWithTaskHook pattern.
 type DesignServiceWithTraitSync interface {
 	DesignService
-	SetTraitSync(traitSync *TraitSyncService)
+	SetTraitSync(traitSync *component.TraitSyncService)
 }
 
 // DesignServiceWithSkills surfaces the skill-catalogue setter so the
@@ -126,7 +127,7 @@ func (s *designService) SetTaskService(taskSvc TaskService) {
 	s.taskSvc = taskSvc
 }
 
-func (s *designService) SetTraitSync(traitSync *TraitSyncService) {
+func (s *designService) SetTraitSync(traitSync *component.TraitSyncService) {
 	s.traitSync = traitSync
 }
 

@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package controllers
+package component
 
 import (
 	"encoding/json"
@@ -22,7 +22,6 @@ import (
 	"net/http"
 
 	"github.com/wso2/asdlc/asdlc-service/models"
-	"github.com/wso2/asdlc/asdlc-service/services"
 	"github.com/wso2/asdlc/asdlc-service/utils"
 )
 
@@ -32,10 +31,10 @@ type ConfigController interface {
 }
 
 type configController struct {
-	service services.ConfigService
+	service ConfigService
 }
 
-func NewConfigController(service services.ConfigService) ConfigController {
+func NewConfigController(service ConfigService) ConfigController {
 	return &configController{service: service}
 }
 

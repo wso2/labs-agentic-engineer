@@ -83,22 +83,3 @@ func Test_upperSnakeKey(t *testing.T) {
 		}
 	}
 }
-
-// Test_originFromEndpointURL — extracts scheme://authority from a
-// ListDeployments-shaped URL with trailing path/query/fragment.
-func Test_originFromEndpointURL(t *testing.T) {
-	cases := []struct{ in, want string }{
-		{"http://host.example:19080/", "http://host.example:19080"},
-		{"http://host.example:19080", "http://host.example:19080"},
-		{"http://host.example:19080/path/here", "http://host.example:19080"},
-		{"https://host.example/abc?q=1", "https://host.example"},
-		{"", ""},
-		{"not-a-url", ""},
-	}
-	for _, c := range cases {
-		got := originFromEndpointURL(c.in)
-		if got != c.want {
-			t.Errorf("originFromEndpointURL(%q) = %q; want %q", c.in, got, c.want)
-		}
-	}
-}

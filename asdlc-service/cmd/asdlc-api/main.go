@@ -47,6 +47,7 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/database/migrations"
 	"github.com/wso2/asdlc/asdlc-service/internal/credentials"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/component"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 	"github.com/wso2/asdlc/asdlc-service/internal/seed"
 	"github.com/wso2/asdlc/asdlc-service/middleware"
@@ -632,12 +633,12 @@ func main() {
 	// pre-stage the per-WorkflowRun build Secret in workflows-<orgID>
 	// before the WorkflowRun is created (see
 	// docs/design/build-credential-injection.md).
-	var buildStager services.BuildSecretStager
+	var buildStager component.BuildSecretStager
 	if buildCredService != nil {
 		buildStager = buildSecretStagerAdapter{svc: buildCredService}
 	}
-	componentService := services.NewComponentService(componentClient, observClient, artifactStore, repoService, buildStager)
-	configService := services.NewConfigService(configRepo, componentService)
+	componentService := component.NewComponentService(componentClient, observClient, artifactStore, repoService, buildStager)
+	configService := component.NewConfigService(configRepo, componentService)
 	requirementsDirLocker := services.NewRequirementsDirLocker(db)
 	requirementsService := services.NewRequirementsService(artifactStore, agentsClient, artifactSvcGit)
 	if locked, ok := requirementsService.(interface {
@@ -675,7 +676,7 @@ func main() {
 	// dispatch path (after CreateComponent) and the design-edit path
 	// (after `components/<name>/design.md` PUT). See
 	// docs/design/api-platform-integration.md §6 Phase 2.
-	traitSyncService := services.NewTraitSyncService(componentClient, artifactStore)
+	traitSyncService := component.NewTraitSyncService(componentClient, artifactStore)
 	if hook, ok := designService.(services.DesignServiceWithTraitSync); ok {
 		hook.SetTraitSync(traitSyncService)
 	}
@@ -860,7 +861,7 @@ func main() {
 	// (org,project,component) tuple that has a task record. Closes
 	// write-write races between dispatch / design PUT and provides the
 	// convergence backstop the §6 Phase 2 plan calls for.
-	traitSyncWatcher := webhook.NewTraitSyncWatcher(db, traitSyncService, asServiceIdentity)
+	traitSyncWatcher := component.NewTraitSyncWatcher(db, traitSyncService, asServiceIdentity)
 
 	// Inbound JWT verifier — Thunder publishes the User JWT and Service JWT
 	// signing keys at JWKSURL. Lazy fetch on first request avoids compose
@@ -916,7 +917,7 @@ func main() {
 		Config:                     cfg,
 		ProjectController:          controllers.NewProjectController(projectService),
 		OrganizationController:     controllers.NewOrganizationController(organizationService),
-		ComponentController:        controllers.NewComponentController(componentService),
+		ComponentController:        component.NewComponentController(componentService),
 		RequirementsController:     controllers.NewRequirementsController(requirementsService),
 		RequirementsChatController: controllers.NewRequirementsChatController(requirementsChatService),
 		DesignController:           controllers.NewDesignController(designService),
@@ -952,7 +953,7 @@ func main() {
 			return tc
 		}(),
 		BoardController:        controllers.NewBoardController(boardService),
-		ConfigController:       controllers.NewConfigController(configService),
+		ConfigController:       component.NewConfigController(configService),
 		CollabController:       controllers.NewCollabController(projectService),
 		WebhookController:      webhookCtrl,
 		TaskRepo:               taskRepo,

@@ -30,6 +30,7 @@ import (
 	dbclient "github.com/wso2/asdlc/asdlc-service/clients/database"
 	"github.com/wso2/asdlc/asdlc-service/clients/oauth"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/component"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 	"github.com/wso2/asdlc/asdlc-service/models"
 	"github.com/wso2/asdlc/asdlc-service/repositories"
@@ -72,14 +73,14 @@ type taskService struct {
 	db            *gorm.DB
 	taskRepo      repositories.TaskRepository
 	store         *artifacts.ArtifactStore
-	componentSvc  ComponentService          // for creating OC components and checking build/deploy status
-	tokenProvider *oauth.TokenProvider      // for service-to-service auth (OC API)
-	configSvc     ConfigService             // for fetching env vars at deploy time
-	issueSvc      gitrepo.IssueService      // GitHub issue CRUD for task lifecycle
-	artifactSvc   artifacts.ArtifactService // artifact version + at-tag reads for in-flight tasks
-	repoSvc       gitrepo.RepoService       // repo metadata lookups (clone path, slug, …)
-	agentsClient  agents.Client             // for calling tech-lead agent (plan + detail)
-	dbClient      dbclient.Client           // for provisioning and testing databases
+	componentSvc  component.ComponentService // for creating OC components and checking build/deploy status
+	tokenProvider *oauth.TokenProvider       // for service-to-service auth (OC API)
+	configSvc     component.ConfigService    // for fetching env vars at deploy time
+	issueSvc      gitrepo.IssueService       // GitHub issue CRUD for task lifecycle
+	artifactSvc   artifacts.ArtifactService  // artifact version + at-tag reads for in-flight tasks
+	repoSvc       gitrepo.RepoService        // repo metadata lookups (clone path, slug, …)
+	agentsClient  agents.Client              // for calling tech-lead agent (plan + detail)
+	dbClient      dbclient.Client            // for provisioning and testing databases
 	// skillSvc resolves the per-org skill catalogue for tech-lead plan
 	// (attached-skills context) + detail (full bodies). Snapshot writes
 	// to design_version_skill_snapshots also go through here. Optional
@@ -97,9 +98,9 @@ func NewTaskService(
 	db *gorm.DB,
 	taskRepo repositories.TaskRepository,
 	store *artifacts.ArtifactStore,
-	componentSvc ComponentService,
+	componentSvc component.ComponentService,
 	tokenProvider *oauth.TokenProvider,
-	configSvc ConfigService,
+	configSvc component.ConfigService,
 	issueSvc gitrepo.IssueService,
 	artifactSvc artifacts.ArtifactService,
 	repoSvc gitrepo.RepoService,

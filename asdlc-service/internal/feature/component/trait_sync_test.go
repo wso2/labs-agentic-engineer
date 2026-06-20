@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package services
+package component
 
 import (
 	"reflect"
@@ -101,36 +101,29 @@ func TestDesiredAPIConfigurationTrait_Disabled(t *testing.T) {
 	}
 }
 
-// TestComponentNameFromDesignPath — only `components/<name>/design.md`
-// triggers trait_sync; root design.md and openapi.yaml are ignored. Gate
-// for the design-edit write site.
-func TestComponentNameFromDesignPath(t *testing.T) {
-	cases := []struct {
-		in       string
-		wantName string
-		wantOK   bool
-	}{
-		{"components/svc/design.md", "svc", true},
-		{"components/user-api/design.md", "user-api", true},
-		{"design.md", "", false},
-		{"components/svc/openapi.yaml", "", false},
-		{"components//design.md", "", false},
-		{"components/a/b/design.md", "", false},
-		{"", "", false},
-	}
-	for _, c := range cases {
-		name, ok := componentNameFromDesignPath(c.in)
-		if name != c.wantName || ok != c.wantOK {
-			t.Errorf("componentNameFromDesignPath(%q) = (%q,%v), want (%q,%v)",
-				c.in, name, ok, c.wantName, c.wantOK)
-		}
-	}
-}
-
 func keysOfAny[T any](m map[string]T) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
 		out = append(out, k)
 	}
 	return out
+}
+
+// Test_originFromEndpointURL — extracts scheme://authority from a
+// ListDeployments-shaped URL with trailing path/query/fragment.
+func Test_originFromEndpointURL(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"http://host.example:19080/", "http://host.example:19080"},
+		{"http://host.example:19080", "http://host.example:19080"},
+		{"http://host.example:19080/path/here", "http://host.example:19080"},
+		{"https://host.example/abc?q=1", "https://host.example"},
+		{"", ""},
+		{"not-a-url", ""},
+	}
+	for _, c := range cases {
+		got := originFromEndpointURL(c.in)
+		if got != c.want {
+			t.Errorf("originFromEndpointURL(%q) = %q; want %q", c.in, got, c.want)
+		}
+	}
 }

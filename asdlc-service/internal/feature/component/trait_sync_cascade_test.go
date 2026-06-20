@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package services
+package component
 
 import (
 	"context"
@@ -92,8 +92,8 @@ func TestTraitSync_DeleteCascade_EmptyArgsRejected(t *testing.T) {
 	}
 	svc := NewTraitSyncService(mock, nil)
 	cases := []struct {
-		name        string
-		org, p, c   string
+		name      string
+		org, p, c string
 	}{
 		{"no org", "", "p", "c"},
 		{"no project", "o", "", "c"},
