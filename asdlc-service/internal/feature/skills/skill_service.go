@@ -16,36 +16,34 @@
 
 package skills
 
+// Shared value types + pure SKILL.md parsing helpers. The read/write surface
+// itself is repo-backed and lives in repo_store.go + reconcile.go (the per-org
+// GitHub skills repo is the single source of truth — there is no `skills`
+// table). See docs/design/skills-repo-storage.md.
+
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
-	"time"
 
 	"gopkg.in/yaml.v3"
-	"gorm.io/gorm"
 
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
 
-// References is the JSONB-backed map of optional reference filenames →
-// body for a skill (e.g. `references/examples.md`). Uses GORM's
-// serializer:json directive — see skillRow below.
+// References is the map of optional reference filenames → body for a skill
+// (e.g. `references/examples.md`).
 type References map[string]string
 
 // Skill re-exports models.Skill — the canonical shared value type lives in
-// models so the task feature can snapshot resolved skills without importing
+// models so the task feature can reference resolved skills without importing
 // the skills package.
 type Skill = models.Skill
 
 // SkillSummary is the lightweight projection used in catalogue listings —
-// no body, no references. Architect's "org skills" manifest renders from
-// these (name + description only).
+// no body, no references.
 type SkillSummary struct {
 	Name        string `json:"name"`
 	Kind        string `json:"kind"`
@@ -53,144 +51,6 @@ type SkillSummary struct {
 	Description string `json:"description"`
 	ContentSHA  string `json:"contentSha"`
 	Editable    bool   `json:"editable"`
-}
-
-// SkillService is the single read/write surface for skills. Every consumer —
-// architect input building, tech-lead input building, the runner's pull
-// endpoint, the console — goes through here. The bootstrap step (see
-// SkillBootstrap.Run) is the only writer for builtin rows.
-type SkillService struct {
-	db *gorm.DB
-}
-
-func NewSkillService(db *gorm.DB) *SkillService {
-	return &SkillService{db: db}
-}
-
-// Resolve returns a single skill by name visible to the given org —
-// the lookup is org-scoped (custom/imported for orgId) UNIONed with the
-// global builtin set (org_id=”). When both exist, the org-scoped row
-// wins (sorts after ” lexicographically).
-func (s *SkillService) Resolve(ctx context.Context, orgID, name string) (*Skill, error) {
-	if s == nil || s.db == nil {
-		return nil, nil
-	}
-	var row skillRow
-	err := s.db.WithContext(ctx).
-		Table("skills").
-		Where(`skill_name = ? AND org_id IN ('', ?)`, name, orgID).
-		Order(`org_id DESC`).
-		Limit(1).
-		Take(&row).Error
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("skill resolve %q: %w", name, err)
-	}
-	return rowToSkill(row), nil
-}
-
-// List returns every skill visible to the org (builtins + this org's
-// custom/imported) sorted by kind then name.
-func (s *SkillService) List(ctx context.Context, orgID string) ([]Skill, error) {
-	if s == nil || s.db == nil {
-		return nil, nil
-	}
-	var rows []skillRow
-	if err := s.db.WithContext(ctx).
-		Table("skills").
-		Where(`org_id IN ('', ?)`, orgID).
-		Order(`kind, skill_name`).
-		Find(&rows).Error; err != nil {
-		return nil, fmt.Errorf("skill list: %w", err)
-	}
-	out := make([]Skill, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, *rowToSkill(r))
-	}
-	return out, nil
-}
-
-// ListSummaries is List() projected to (name, description, kind, ...).
-// Used by the console listing and the architect's "org skills" manifest.
-func (s *SkillService) ListSummaries(ctx context.Context, orgID string) ([]SkillSummary, error) {
-	skills, err := s.List(ctx, orgID)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]SkillSummary, 0, len(skills))
-	for _, sk := range skills {
-		out = append(out, SkillSummary{
-			Name:        sk.Name,
-			Kind:        sk.Kind,
-			Version:     sk.Version,
-			Description: sk.Description,
-			ContentSHA:  sk.ContentSHA,
-			Editable:    sk.Kind != "builtin",
-		})
-	}
-	return out, nil
-}
-
-// ResolveMany fans Resolve over a list of names, preserving order.
-// Skipped names (no row) are omitted; the caller may compare lengths
-// to detect missing skills.
-func (s *SkillService) ResolveMany(ctx context.Context, orgID string, names []string) ([]Skill, error) {
-	out := make([]Skill, 0, len(names))
-	for _, n := range names {
-		sk, err := s.Resolve(ctx, orgID, n)
-		if err != nil {
-			return nil, err
-		}
-		if sk == nil {
-			slog.WarnContext(ctx, "skill resolve missing", "orgID", orgID, "name", n)
-			continue
-		}
-		out = append(out, *sk)
-	}
-	return out, nil
-}
-
-// skillRow is the GORM row shape — kept private so callers always go
-// through rowToSkill for any post-processing.
-type skillRow struct {
-	OrgID         string     `gorm:"column:org_id"`
-	SkillName     string     `gorm:"column:skill_name"`
-	Kind          string     `gorm:"column:kind"`
-	Description   string     `gorm:"column:description"`
-	SkillMD       string     `gorm:"column:skill_md"`
-	References    References `gorm:"column:references;type:jsonb;serializer:json"`
-	Version       int        `gorm:"column:version"`
-	ContentSHA    string     `gorm:"column:content_sha"`
-	License       *string    `gorm:"column:license"`
-	Compatibility *string    `gorm:"column:compatibility"`
-	UpdatedAt     time.Time  `gorm:"column:updated_at"`
-}
-
-func rowToSkill(r skillRow) *Skill {
-	refs := map[string]string(r.References)
-	if refs == nil {
-		refs = map[string]string{}
-	}
-	skill := &Skill{
-		OrgID:       r.OrgID,
-		Name:        r.SkillName,
-		Kind:        r.Kind,
-		Description: r.Description,
-		SkillMD:     r.SkillMD,
-		References:  refs,
-		Version:     r.Version,
-		ContentSHA:  r.ContentSHA,
-		UpdatedAt:   r.UpdatedAt,
-	}
-	if r.License != nil {
-		skill.License = *r.License
-	}
-	if r.Compatibility != nil {
-		skill.Compatibility = *r.Compatibility
-	}
-	return skill
 }
 
 // ---- frontmatter parsing ----------------------------------------------------
@@ -238,9 +98,7 @@ func versionFromMetadata(s skillFrontmatter) int {
 		return 1
 	}
 	// Flat dotted-key form — the documented AgentSkills string→string
-	// representation: `metadata: { "asdlc.version": "2" }`. YAML does not
-	// treat the dot as nesting, so this is a single literal key. This is
-	// the form every bundled built-in uses.
+	// representation: `metadata: { "asdlc.version": "2" }`.
 	if v, ok := s.Metadata["asdlc.version"]; ok {
 		return coerceVersion(v)
 	}
@@ -283,7 +141,6 @@ func coerceVersion(v any) int {
 
 // contentSHA computes a deterministic hash over the canonical concat of
 // the SKILL.md body + sorted reference filenames + their contents.
-// Used by the bootstrap path to suppress no-op UPDATE writes.
 func contentSHA(skillMD string, references map[string]string) string {
 	h := sha256.New()
 	h.Write([]byte(skillMD))

@@ -24,11 +24,6 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
-	"time"
-
-	"gorm.io/gorm"
-
-	"github.com/wso2/asdlc/asdlc-service/models"
 )
 
 // Skill mutation sentinels — controllers map these to HTTP status codes.
@@ -39,9 +34,6 @@ var (
 	ErrSkillNotFound = errors.New("skill not found")
 	// ErrSkillNameCollision is returned when a create reuses a visible name.
 	ErrSkillNameCollision = errors.New("skill name already in use")
-	// ErrImportedSkillInUse is returned when an imported skill is referenced
-	// by an in-flight task's snapshot.
-	ErrImportedSkillInUse = errors.New("imported skill is referenced by in-flight tasks")
 )
 
 // maxSkillBytes caps total skill size (SKILL.md + references). Matches the
@@ -108,19 +100,19 @@ type UpdateSkillInput struct {
 
 // SkillMutationService owns the org-editable write surface: create/update/
 // delete for custom skills, delete for imported skills, and the read-only
-// guard for builtins. See docs/design/skills-system.md > "REST API".
+// guard for builtins. Writes commit directly to the org's skills repo on
+// `main`. See docs/design/skills-repo-storage.md §9.
 type SkillMutationService struct {
-	db     *gorm.DB
 	skills *SkillService
 }
 
-func NewSkillMutationService(db *gorm.DB, skills *SkillService) *SkillMutationService {
-	return &SkillMutationService{db: db, skills: skills}
+func NewSkillMutationService(skills *SkillService) *SkillMutationService {
+	return &SkillMutationService{skills: skills}
 }
 
-// Create validates and inserts a new kind=custom skill for the org.
+// Create validates and commits a new kind=custom skill for the org.
 func (m *SkillMutationService) Create(ctx context.Context, orgID, actor string, in CreateSkillInput) (*Skill, error) {
-	if m == nil || m.db == nil {
+	if m == nil || m.skills == nil {
 		return nil, fmt.Errorf("skill mutation service: not configured")
 	}
 	name := strings.TrimSpace(in.Name)
@@ -136,7 +128,7 @@ func (m *SkillMutationService) Create(ctx context.Context, orgID, actor string, 
 			fmt.Sprintf("frontmatter name %q must equal the request name %q", fm.Name, name), "name")
 	}
 
-	// Collision: any builtin (org_id='') OR this org's existing row.
+	// Collision: any visible skill (builtin or this org's custom/imported).
 	existing, err := m.skills.Resolve(ctx, orgID, name)
 	if err != nil {
 		return nil, fmt.Errorf("collision check: %w", err)
@@ -145,25 +137,10 @@ func (m *SkillMutationService) Create(ctx context.Context, orgID, actor string, 
 		return nil, ErrSkillNameCollision
 	}
 
-	refs := normalizeRefs(in.References)
-	sha := contentSHA(in.SkillMD, refs)
-	version := versionFromMetadata(fm)
-	now := time.Now().UTC()
-
-	refsJSON, _ := marshalRefs(refs)
-	q := `
-		INSERT INTO skills
-			(org_id, skill_name, kind, description, skill_md, "references",
-			 version, content_sha, license, compatibility, created_at, updated_at, updated_by)
-		VALUES (?, ?, 'custom', ?, ?, ?::jsonb, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?)
-	`
-	if err := m.db.WithContext(ctx).Exec(q,
-		orgID, name, strings.TrimSpace(fm.Description), in.SkillMD, string(refsJSON),
-		version, sha, fm.License, fm.Compatibility, now, now, actor,
-	).Error; err != nil {
-		return nil, fmt.Errorf("insert custom skill %q: %w", name, err)
+	msg := fmt.Sprintf("feat(skills): add custom skill %q\n\nby %s", name, actor)
+	if err := m.skills.writeSkillFiles(ctx, orgID, "custom", name, in.SkillMD, normalizeRefs(in.References), msg); err != nil {
+		return nil, fmt.Errorf("commit custom skill %q: %w", name, err)
 	}
-	m.audit(ctx, orgID, name, "create", actor)
 	slog.InfoContext(ctx, "skill created", "orgID", orgID, "name", name, "actor", actor)
 	return m.skills.Resolve(ctx, orgID, name)
 }
@@ -171,7 +148,7 @@ func (m *SkillMutationService) Create(ctx context.Context, orgID, actor string, 
 // Update rewrites an existing kind=custom skill. Returns ErrSkillNotEditable
 // for builtins, ErrSkillNotFound when the name is not an editable custom row.
 func (m *SkillMutationService) Update(ctx context.Context, orgID, actor, name string, in UpdateSkillInput) (*Skill, error) {
-	if m == nil || m.db == nil {
+	if m == nil || m.skills == nil {
 		return nil, fmt.Errorf("skill mutation service: not configured")
 	}
 	existing, err := m.skills.Resolve(ctx, orgID, name)
@@ -198,38 +175,21 @@ func (m *SkillMutationService) Update(ctx context.Context, orgID, actor, name st
 			"cannot rename a skill via update; frontmatter name must match the existing name", "name")
 	}
 
-	refs := normalizeRefs(in.References)
-	sha := contentSHA(in.SkillMD, refs)
-	version := versionFromMetadata(fm)
-	now := time.Now().UTC()
-
-	refsJSON, _ := marshalRefs(refs)
-	q := `
-		UPDATE skills
-		   SET description = ?, skill_md = ?, "references" = ?::jsonb,
-		       version = ?, content_sha = ?, updated_at = ?, updated_by = ?
-		 WHERE org_id = ? AND skill_name = ? AND kind = 'custom'
-	`
-	res := m.db.WithContext(ctx).Exec(q,
-		strings.TrimSpace(fm.Description), in.SkillMD, string(refsJSON),
-		version, sha, now, actor, orgID, name,
-	)
-	if res.Error != nil {
-		return nil, fmt.Errorf("update custom skill %q: %w", name, res.Error)
+	msg := fmt.Sprintf("chore(skills): update custom skill %q\n\nby %s", name, actor)
+	if err := m.skills.writeSkillFiles(ctx, orgID, "custom", name, in.SkillMD, normalizeRefs(in.References), msg); err != nil {
+		return nil, fmt.Errorf("commit update for %q: %w", name, err)
 	}
-	if res.RowsAffected == 0 {
-		return nil, ErrSkillNotFound
-	}
-	m.audit(ctx, orgID, name, "update", actor)
 	slog.InfoContext(ctx, "skill updated", "orgID", orgID, "name", name, "actor", actor)
 	return m.skills.Resolve(ctx, orgID, name)
 }
 
-// Delete removes a custom or imported skill. Builtins return
-// ErrSkillNotEditable; imported skills referenced by in-flight tasks
-// return ErrImportedSkillInUse.
+// Delete removes a custom or imported skill (deletes the skill's directory and
+// commits). Builtins return ErrSkillNotEditable. The prior
+// IMPORTED_SKILL_IN_USE guard is dropped — with HEAD reads and no snapshots
+// there are no rows to protect (docs/design/skills-repo-storage.md §9); an
+// in-flight task simply reads HEAD without the deleted skill.
 func (m *SkillMutationService) Delete(ctx context.Context, orgID, actor, name string) error {
-	if m == nil || m.db == nil {
+	if m == nil || m.skills == nil {
 		return fmt.Errorf("skill mutation service: not configured")
 	}
 	existing, err := m.skills.Resolve(ctx, orgID, name)
@@ -243,58 +203,12 @@ func (m *SkillMutationService) Delete(ctx context.Context, orgID, actor, name st
 		return ErrSkillNotEditable
 	}
 
-	if existing.Kind == "imported" {
-		inUse, err := m.importedSkillInUse(ctx, orgID, name)
-		if err != nil {
-			return fmt.Errorf("in-use check %q: %w", name, err)
-		}
-		if inUse {
-			return ErrImportedSkillInUse
-		}
+	msg := fmt.Sprintf("chore(skills): delete %s skill %q\n\nby %s", existing.Kind, name, actor)
+	if err := m.skills.deleteSkillDir(ctx, orgID, existing.Kind, name, msg); err != nil {
+		return fmt.Errorf("delete skill %q: %w", name, err)
 	}
-
-	res := m.db.WithContext(ctx).Exec(
-		`DELETE FROM skills WHERE org_id = ? AND skill_name = ? AND kind <> 'builtin'`, orgID, name)
-	if res.Error != nil {
-		return fmt.Errorf("delete skill %q: %w", name, res.Error)
-	}
-	if res.RowsAffected == 0 {
-		return ErrSkillNotFound
-	}
-	m.audit(ctx, orgID, name, "delete", actor)
 	slog.InfoContext(ctx, "skill deleted", "orgID", orgID, "name", name, "actor", actor)
 	return nil
-}
-
-// importedSkillInUse reports whether any in-flight task in the org has a
-// snapshot row referencing imported/<name>. In-flight = not yet
-// merged/rejected/abandoned/deployed/failed.
-func (m *SkillMutationService) importedSkillInUse(ctx context.Context, orgID, name string) (bool, error) {
-	var count int64
-	err := m.db.WithContext(ctx).Raw(
-		`SELECT COUNT(*) FROM design_version_skill_snapshots s
-		 JOIN component_tasks t
-		   ON t.project_id = s.project_id AND t.source_design_version = s.design_version
-		 WHERE s.skill_id = ? AND t.org_id = ?
-		   AND t.status NOT IN ('merged','rejected','abandoned','deployed','failed')`,
-		models.PrefixedID("imported", name), orgID,
-	).Scan(&count).Error
-	if err != nil {
-		return false, err
-	}
-	return count > 0, nil
-}
-
-// audit is a best-effort write to skill_audit_events. Failures log + ignore.
-func (m *SkillMutationService) audit(ctx context.Context, orgID, name, action, actor string) {
-	q := `
-		INSERT INTO skill_audit_events
-			(org_id, skill_name, action, actor, occurred_at)
-		VALUES (?, ?, ?, ?, NOW())
-	`
-	if err := m.db.WithContext(ctx).Exec(q, orgID, name, action, actor).Error; err != nil {
-		slog.WarnContext(ctx, "skill audit write failed", "action", action, "name", name, "error", err)
-	}
 }
 
 // ---- shared validation helpers ---------------------------------------------

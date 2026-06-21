@@ -30,6 +30,9 @@ func registerSkillRoutes(rt *Router, c skills.SkillController) {
 	rt.OrgScoped("GET /api/v1/organizations/{orgHandle}/skills", c.List)
 	rt.OrgScoped("POST /api/v1/organizations/{orgHandle}/skills", c.Create)
 	rt.OrgScoped("POST /api/v1/organizations/{orgHandle}/skills/import", c.Import)
+	// Literal sub-paths (more specific than `{name}`, so they win in ServeMux).
+	rt.OrgScoped("GET /api/v1/organizations/{orgHandle}/skills/updates", c.Updates)
+	rt.OrgScoped("POST /api/v1/organizations/{orgHandle}/skills/sync", c.Sync)
 	rt.OrgScoped("GET /api/v1/organizations/{orgHandle}/skills/{name}", c.Get)
 	rt.OrgScoped("PUT /api/v1/organizations/{orgHandle}/skills/{name}", c.Update)
 	rt.OrgScoped("DELETE /api/v1/organizations/{orgHandle}/skills/{name}", c.Delete)

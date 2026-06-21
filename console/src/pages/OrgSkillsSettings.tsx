@@ -18,7 +18,7 @@
 
 import { useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
   Box,
@@ -39,7 +39,7 @@ import {
   useTheme,
 } from '@wso2/oxygen-ui';
 import { Edit2, Eye, Package, Plus, RefreshCw, Search, Sparkles, Trash2 } from '@wso2/oxygen-ui-icons-react';
-import { orgSkillsApi, SkillApiError, type SkillKind, type SkillSummary } from '../services/api/orgSkills';
+import { orgSkillsApi, type SkillKind, type SkillSummary } from '../services/api/orgSkills';
 import { useOrgSkills, orgSkillsQueryKey } from '../hooks/useOrgSkills';
 import { kindChipColor, kindLabel } from '../components/skills/skillKind';
 import SkillViewer from '../components/skills/SkillViewer';
@@ -76,6 +76,42 @@ export default function OrgSkillsSettings() {
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: orgSkillsQueryKey(orgId) });
 
+  // "Updates available" — built-ins whose embedded version is newer than the
+  // org's repo copy. Drives the badge + the per-built-in chip. §6.3.
+  const { data: updatesData, refetch: refetchUpdates } = useQuery({
+    queryKey: ['orgSkillUpdates', orgId],
+    queryFn: () => orgSkillsApi.checkUpdates(orgId as string),
+    enabled: !!orgId,
+    staleTime: 30 * 1000,
+  });
+  const updateByName = useMemo(
+    () => new Map((updatesData?.updates ?? []).map((u) => [u.name, u])),
+    [updatesData],
+  );
+  const updatesCount = updatesData?.count ?? 0;
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
+
+  const handleSync = async () => {
+    if (!orgId) return;
+    setSyncing(true);
+    setSyncMsg(null);
+    try {
+      const res = await orgSkillsApi.syncBuiltins(orgId);
+      setSyncMsg(
+        res.updated > 0
+          ? `Synced ${res.updated} built-in skill${res.updated === 1 ? '' : 's'} to the latest version.`
+          : 'Built-in skills are already up to date.',
+      );
+      invalidate();
+      refetchUpdates();
+    } catch (e) {
+      setSyncMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const grouped = useMemo(() => {
     const q = filter.trim().toLowerCase();
     const match = (s: SkillSummary) =>
@@ -105,11 +141,7 @@ export default function OrgSkillsSettings() {
       setDeleteTarget(null);
       invalidate();
     } catch (e) {
-      if (e instanceof SkillApiError && e.code === 'IMPORTED_SKILL_IN_USE') {
-        setDeleteError('This imported skill is referenced by in-flight tasks and cannot be deleted yet.');
-      } else {
-        setDeleteError(e instanceof Error ? e.message : String(e));
-      }
+      setDeleteError(e instanceof Error ? e.message : String(e));
     } finally {
       setDeleting(false);
     }
@@ -148,6 +180,21 @@ export default function OrgSkillsSettings() {
           sx={{ flexGrow: 1, maxWidth: 360 }}
         />
         <Box sx={{ flexGrow: 1 }} />
+        {updatesCount > 0 && (
+          <Chip
+            size="small"
+            color="warning"
+            label={`${updatesCount} built-in update${updatesCount === 1 ? '' : 's'} available`}
+          />
+        )}
+        <Button
+          variant="outlined"
+          startIcon={syncing ? <CircularProgress size={16} /> : <RefreshCw size={18} />}
+          onClick={handleSync}
+          disabled={syncing}
+        >
+          {syncing ? 'Syncing…' : 'Sync built-in skills'}
+        </Button>
         <Button variant="outlined" startIcon={<Plus size={18} />} onClick={openCreate}>
           New Custom
         </Button>
@@ -155,6 +202,11 @@ export default function OrgSkillsSettings() {
           Import
         </Button>
       </Stack>
+      {syncMsg && (
+        <Alert severity="info" sx={{ mb: 2 }} onClose={() => setSyncMsg(null)}>
+          {syncMsg}
+        </Alert>
+      )}
 
       {isLoading && (
         <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
@@ -214,6 +266,13 @@ export default function OrgSkillsSettings() {
                                 </Typography>
                                 <Chip size="small" color={kindChipColor(s.kind)} label={kindLabel(s.kind)} />
                                 <Chip size="small" variant="outlined" label={`v${s.version}`} />
+                                {s.kind === 'builtin' && updateByName.has(s.name) && (
+                                  <Chip
+                                    size="small"
+                                    color="warning"
+                                    label={`update → v${updateByName.get(s.name)?.embeddedVersion}`}
+                                  />
+                                )}
                                 {!s.editable && <Chip size="small" variant="outlined" label="read-only" />}
                               </Stack>
                               <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
@@ -282,8 +341,8 @@ export default function OrgSkillsSettings() {
             <DialogTitle>Delete {deleteTarget?.name}?</DialogTitle>
             <DialogContent>
               <Typography variant="body2">
-                This removes the skill from your organization's catalogue. In-flight tasks that
-                already snapshotted it keep their frozen copy.
+                This removes the skill from your organization's skills repo. Agents read skills at
+                the repo's latest commit, so in-flight tasks simply stop seeing it.
               </Typography>
               {deleteError && (
                 <Alert severity="error" sx={{ mt: 2 }}>

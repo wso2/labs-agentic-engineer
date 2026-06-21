@@ -46,8 +46,8 @@ export interface SkillValidationIssue {
 
 /**
  * SkillApiError carries the HTTP status plus the BFF's stable error code
- * (`NAME_COLLISION`, `SKILL_NOT_EDITABLE`, `IMPORTED_SKILL_IN_USE`) and the
- * structured validation issues array when present.
+ * (`NAME_COLLISION`, `SKILL_NOT_EDITABLE`) and the structured validation
+ * issues array when present.
  */
 export class SkillApiError extends Error {
   status: number;
@@ -139,6 +139,24 @@ export interface SkillImportResult {
   warnings: string[];
 }
 
+/** One built-in whose embedded (platform) version is newer than the repo copy. */
+export interface SkillUpdate {
+  name: string;
+  /** -1 when the built-in is absent from the org's repo. */
+  repoVersion: number;
+  embeddedVersion: number;
+}
+
+export interface SkillUpdatesResponse {
+  updates: SkillUpdate[];
+  count: number;
+}
+
+export interface SkillSyncResponse {
+  status: string;
+  updated: number;
+}
+
 // ----------------------------------------------------------------------------
 // API surface
 // ----------------------------------------------------------------------------
@@ -188,6 +206,20 @@ export const orgSkillsApi = {
     await fetchJSON<void>(`${orgSkills(orgHandle)}/${encodeURIComponent(name)}`, {
       method: 'DELETE',
     });
+  },
+
+  /**
+   * List built-ins whose embedded version is newer than (or missing from) the
+   * org's skills repo — drives the "updates available" badge. §6.3.
+   */
+  async checkUpdates(orgHandle: string): Promise<SkillUpdatesResponse> {
+    const raw = await fetchJSON<SkillUpdatesResponse>(`${orgSkills(orgHandle)}/updates`);
+    return { updates: raw.updates ?? [], count: raw.count ?? 0 };
+  },
+
+  /** Reconcile (sync) built-in skills to the embedded versions. Admin action. §6.3. */
+  async syncBuiltins(orgHandle: string): Promise<SkillSyncResponse> {
+    return fetchJSON<SkillSyncResponse>(`${orgSkills(orgHandle)}/sync`, { method: 'POST' });
   },
 
   /** Import an AgentSkills tarball (.tar.gz) as a kind=imported skill. */

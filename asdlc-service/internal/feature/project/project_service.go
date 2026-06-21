@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/wso2/asdlc/asdlc-service/clients/openchoreo"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
@@ -54,7 +55,25 @@ type projectService struct {
 	artifactSvc artifacts.ArtifactService
 	store       *artifacts.ArtifactStore
 	taskRepo    repositories.TaskRepository
+	skillsProv  skillsProvisioner
 }
+
+// skillsProvisioner is the narrow port for eagerly provisioning the org's
+// skills repo on project creation. The full skills.SkillService satisfies it.
+// Defined here so project doesn't import the skills package. §6.3/§10.2.
+type skillsProvisioner interface {
+	EnsureProvisioned(ctx context.Context, orgID string) error
+}
+
+// ProjectServiceWithSkills surfaces the skills-provisioner setter so main can
+// wire the skills store without widening the constructor signature.
+type ProjectServiceWithSkills interface {
+	SetSkillsProvisioner(p skillsProvisioner)
+}
+
+func (s *projectService) SetSkillsProvisioner(p skillsProvisioner) { s.skillsProv = p }
+
+var _ ProjectServiceWithSkills = (*projectService)(nil)
 
 func NewProjectService(
 	client openchoreo.ProjectClient,
@@ -94,6 +113,20 @@ func (s *projectService) CreateProject(ctx context.Context, orgName string, req 
 	project, err := s.client.CreateProject(ctx, orgName, req)
 	if err != nil {
 		return nil, translateHTTPError(err)
+	}
+
+	// Eagerly provision the org's shared skills repo (+ seed built-ins) so the
+	// first design run doesn't pay repo-creation latency. Async + best-effort;
+	// reads self-heal via ensureSkillsRepo if this never ran. §6.3/§10.3.
+	if s.skillsProv != nil {
+		go func(orgID string) {
+			bg, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			if perr := s.skillsProv.EnsureProvisioned(bg, orgID); perr != nil {
+				slog.WarnContext(bg, "skills repo provisioning failed (will self-heal on read)",
+					"org", orgID, "error", perr)
+			}
+		}(orgName)
 	}
 
 	// Provision + clone the platform-owned git repo (async — polling via GetRepoStatus).

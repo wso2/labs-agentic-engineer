@@ -34,6 +34,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/wso2/asdlc/asdlc-service/internal/credentials"
 )
@@ -231,6 +232,51 @@ func (c *githubClient) GetTree(ctx context.Context, owner, repo string, cred cre
 		return nil, fmt.Errorf("github get-tree: response truncated (tree too large)")
 	}
 	return &TreeObject{SHA: parsed.SHA, Entries: parsed.Tree}, nil
+}
+
+func (c *githubClient) GetBlob(ctx context.Context, owner, repo string, cred credentials.Credential, sha string) ([]byte, error) {
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/git/blobs/%s", owner, repo, sha)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create get-blob request: %w", err)
+	}
+	if err := authHeaders(ctx, req, cred); err != nil {
+		return nil, err
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("github get-blob: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, &HTTPStatusError{StatusCode: resp.StatusCode, Body: string(body), URL: url}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("github get-blob (status %d): %s", resp.StatusCode, string(body))
+	}
+	var parsed struct {
+		Content  string `json:"content"`
+		Encoding string `json:"encoding"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return nil, fmt.Errorf("decode get-blob: %w", err)
+	}
+	switch parsed.Encoding {
+	case "base64":
+		// The Git Data blobs API wraps base64 content at 76 cols with "\n";
+		// strip whitespace before decoding so StdEncoding doesn't choke.
+		clean := strings.NewReplacer("\n", "", "\r", "").Replace(parsed.Content)
+		decoded, derr := base64.StdEncoding.DecodeString(clean)
+		if derr != nil {
+			return nil, fmt.Errorf("decode blob base64: %w", derr)
+		}
+		return decoded, nil
+	case "utf-8", "":
+		return []byte(parsed.Content), nil
+	default:
+		return nil, fmt.Errorf("github get-blob: unsupported encoding %q", parsed.Encoding)
+	}
 }
 
 func (c *githubClient) CreateBlob(ctx context.Context, owner, repo string, cred credentials.Credential, content []byte) (string, error) {

@@ -284,6 +284,11 @@ func (s *gitOpsService) PreWarmClones(ctx context.Context, workers int) (warmed,
 		if repo.Status != "ready" {
 			continue
 		}
+		// The per-org skills repo (sentinel project) is read/written via the
+		// GitHub API only — never cloned. Skip it. See skills-repo-storage.md §10.
+		if repo.ProjectID == models.SkillsRepoSentinelProjectID {
+			continue
+		}
 		wg.Add(1)
 		sem <- struct{}{}
 		go func() {

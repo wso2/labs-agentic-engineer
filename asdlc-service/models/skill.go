@@ -44,3 +44,11 @@ type Skill struct {
 // skills feature and task's skill snapshotting.
 func MaterializedName(kind, name string) string { return kind + "-" + name }
 func PrefixedID(kind, name string) string       { return kind + "/" + name }
+
+// SkillsRepoSentinelProjectID is the reserved git_repositories.project_id under
+// which the per-org skills repo row lives (so it is distinguishable from real
+// project repos). Defined in models — a neutral package — so both the skills
+// feature and gitrepo (which skips it from clone pre-warm; the skills repo is
+// API-read-only, never cloned) reference one constant.
+// See docs/design/skills-repo-storage.md §10.1.
+const SkillsRepoSentinelProjectID = "_skills"

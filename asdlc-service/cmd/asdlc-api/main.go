@@ -303,17 +303,10 @@ func main() {
 		cancel()
 	}
 
-	// Skill bootstrap — UPSERT the four bundled built-in skills into
-	// the `skills` table, prune any built-ins removed between releases.
-	// Best-effort: log + warn on failure rather than refusing to start
-	// (BFF stays functional with an empty skills table).
-	skillBootstrap := skills.NewSkillBootstrap(db)
-	if err := skillBootstrap.Run(context.Background()); err != nil {
-		slog.Warn("skill bootstrap failed — continuing", "error", err)
-	}
-	skillSvc := skills.NewSkillService(db)
-	skillMutationSvc := skills.NewSkillMutationService(db, skillSvc)
-	skillImportSvc := skills.NewSkillImportService(db, skillSvc)
+	// Skills are repo-backed now (one private org-skills repo per org —
+	// docs/design/skills-repo-storage.md). The store needs gitOpsService +
+	// repoService, so it is constructed below once those exist. No startup
+	// bootstrap: built-ins seed/reconcile into each org's repo on demand.
 
 	// Repositories
 	taskRepo := repositories.NewTaskRepository(db)
@@ -611,6 +604,14 @@ func main() {
 	// on top of raw file I/O.
 	artifactStore := artifacts.NewArtifactStore(artifactSvcGit)
 
+	// Repo-backed skills store (single source of truth = per-org org-skills
+	// repo). Reads HEAD via the GitHub API with an in-memory cache; writes
+	// commit to main. Built-ins seed/reconcile from the embedded files on
+	// demand. docs/design/skills-repo-storage.md.
+	skillSvc := skills.NewSkillService(gitOpsService, repoService)
+	skillMutationSvc := skills.NewSkillMutationService(skillSvc)
+	skillImportSvc := skills.NewSkillImportService(skillSvc)
+
 	// Services. componentService is constructed before configService so
 	// configService can call back into it to mirror env-var edits onto
 	// the OC Component's workflow params.
@@ -649,9 +650,14 @@ func main() {
 	if setter, ok := taskService.(task.TaskServiceWithSkills); ok {
 		setter.SetSkillService(skillSvc)
 	}
-	// TaskSkillsService backs GET /api/v1/tasks/:taskId/skills which
-	// the runner pod calls at init to fetch its frozen SKILL.md bodies.
-	taskSkillsSvc := task.NewTaskSkillsService(db, taskRepo)
+	// Eagerly provision each org's skills repo on project creation.
+	if setter, ok := projectService.(project.ProjectServiceWithSkills); ok {
+		setter.SetSkillsProvisioner(skillSvc)
+	}
+	// TaskSkillsService backs GET /api/v1/tasks/:taskId/skills which the
+	// runner pod calls at init. It resolves the task's design skillsApplied
+	// against the org's skills repo at HEAD (no snapshot).
+	taskSkillsSvc := task.NewTaskSkillsService(taskRepo, artifactStore, skillSvc)
 
 	// trait_sync is the single shared emitter that reconciles the
 	// `api-configuration` ClusterTrait on a Component CR + per-environment

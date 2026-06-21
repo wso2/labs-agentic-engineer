@@ -37,6 +37,14 @@ import (
 // RepoService manages git repository lifecycle (create, get, delete).
 type RepoService interface {
 	CreateRepo(ctx context.Context, orgID, projectID, projectName string) (*models.GitRepository, error)
+	// EnsureBareRepo idempotently provisions a private repo with a STABLE name
+	// (no random suffix) and NO local clone — used for the per-org skills repo
+	// (sentinel projectID, e.g. "_skills"). AutoInit gives it a `main` branch +
+	// base tree so the first API commit has a parent. If the GitHub repo already
+	// exists (name conflict), it is adopted (cloneURL derived from owner+name)
+	// so the call stays idempotent across a lost DB row.
+	// See docs/design/skills-repo-storage.md §10.
+	EnsureBareRepo(ctx context.Context, orgID, projectID, repoName string) (*models.GitRepository, error)
 	GetRepo(ctx context.Context, orgID, projectID string) (*models.GitRepository, error)
 	// SetWebhookID is called by the webhook registration service after a hook
 	// is provisioned for the repo on GitHub. Stored alongside the repo record
@@ -150,6 +158,63 @@ func (s *repoService) createGitHubRepoWithRetry(ctx context.Context, cred creden
 		}
 	}
 	return "", "", fmt.Errorf("repo name for %q unavailable after 5 attempts: %w", slug, err)
+}
+
+func (s *repoService) EnsureBareRepo(ctx context.Context, orgID, projectID, repoName string) (*models.GitRepository, error) {
+	if orgID == "" || projectID == "" || repoName == "" {
+		return nil, fmt.Errorf("orgID, projectID and repoName are required")
+	}
+	// Idempotent on (ocOrgId, projectID): a repeat-create returns the existing row.
+	existing, err := s.repo.GetByOrgAndProjectID(ctx, orgID, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("check existing repo: %w", err)
+	}
+	if existing != nil {
+		return existing, nil
+	}
+
+	cred, err := s.resolver.Resolve(ctx, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve credential for org %q: %w", orgID, err)
+	}
+
+	cloneURL, err := s.github.CreateOrgRepo(ctx, cred, CreateOrgRepoRequest{
+		Name:        repoName,
+		Private:     true,
+		AutoInit:    true,
+		Description: "WSO2 Labs Agentic Engineer — org skills (single source of truth)",
+	})
+	if err != nil {
+		if !IsRepoNameConflict(err) {
+			return nil, fmt.Errorf("create github skills repo: %w", err)
+		}
+		// Adopt a pre-existing repo of the same name under this owner.
+		cloneURL = fmt.Sprintf("https://github.com/%s/%s", cred.RepoOwner(), repoName)
+		slog.InfoContext(ctx, "adopting pre-existing skills repo", "owner", cred.RepoOwner(), "name", repoName, "org", orgID)
+	}
+
+	gitRepo := &models.GitRepository{
+		OrgID:         orgID,
+		ProjectID:     projectID,
+		RepoURL:       cloneURL,
+		DefaultBranch: "main",
+		Status:        "ready", // no clone — the BFF reads/writes via the GitHub API
+		RepoSlug:      models.SlugForURL(cloneURL),
+	}
+	if err := s.repo.Create(ctx, gitRepo); err != nil {
+		// A concurrent caller (e.g. the skills list + updates-badge requests
+		// firing together on page load) may have inserted the (org, projectID)
+		// row first — the unique constraint rejects ours. Adopt the winner's
+		// row so EnsureBareRepo stays idempotent under concurrency.
+		if winner, gerr := s.repo.GetByOrgAndProjectID(ctx, orgID, projectID); gerr == nil && winner != nil {
+			slog.InfoContext(ctx, "skills repo row created concurrently; adopting existing", "org", orgID, "project", projectID)
+			return winner, nil
+		}
+		return nil, fmt.Errorf("create skills repo record: %w", err)
+	}
+	slog.InfoContext(ctx, "provisioned bare skills repo",
+		"owner", cred.RepoOwner(), "name", repoName, "org", orgID)
+	return gitRepo, nil
 }
 
 func (s *repoService) GetRepo(ctx context.Context, orgID, projectID string) (*models.GitRepository, error) {

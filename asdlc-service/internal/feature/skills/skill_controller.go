@@ -52,6 +52,12 @@ type SkillController interface {
 	Update(w http.ResponseWriter, r *http.Request)
 	Delete(w http.ResponseWriter, r *http.Request)
 	Import(w http.ResponseWriter, r *http.Request)
+	// Updates returns the built-ins whose embedded version is newer than the
+	// org's repo copy — the "updates available" badge data. §6.3.
+	Updates(w http.ResponseWriter, r *http.Request)
+	// Sync runs the version-based built-in reconcile (admin "Sync built-in
+	// skills" action). §6.3.
+	Sync(w http.ResponseWriter, r *http.Request)
 }
 
 type skillController struct {
@@ -228,6 +234,46 @@ func (c *skillController) Import(w http.ResponseWriter, r *http.Request) {
 	utils.WriteSuccessResponse(w, http.StatusCreated, result)
 }
 
+func (c *skillController) Updates(w http.ResponseWriter, r *http.Request) {
+	org := r.PathValue("orgHandle")
+	if !requireOrgHandle(w, org) {
+		return
+	}
+	updates, err := c.skills.UpdatesAvailable(r.Context(), org)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "skill updates check failed", "error", err, "org", org)
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "failed to check for skill updates")
+		return
+	}
+	if updates == nil {
+		updates = []SkillUpdate{}
+	}
+	utils.WriteSuccessResponse(w, http.StatusOK, map[string]any{
+		"updates": updates,
+		"count":   len(updates),
+	})
+}
+
+func (c *skillController) Sync(w http.ResponseWriter, r *http.Request) {
+	org := r.PathValue("orgHandle")
+	if !requireOrgHandle(w, org) {
+		return
+	}
+	// TODO(org-rbac): gate to org_admin once an admin role exists; today any
+	// org member with a valid org-scoped JWT may trigger the (idempotent) sync.
+	updated, err := c.skills.Reconcile(r.Context(), org)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "skill sync failed", "error", err, "org", org)
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "failed to sync built-in skills")
+		return
+	}
+	slog.InfoContext(r.Context(), "skills synced", "org", org, "updated", updated)
+	utils.WriteSuccessResponse(w, http.StatusOK, map[string]any{
+		"status":  "synced",
+		"updated": updated,
+	})
+}
+
 // writeMutationError maps service-layer sentinels + structured validation
 // errors onto HTTP status codes with stable error codes the console keys on.
 func (c *skillController) writeMutationError(w http.ResponseWriter, r *http.Request, err error, op string) {
@@ -243,9 +289,6 @@ func (c *skillController) writeMutationError(w http.ResponseWriter, r *http.Requ
 		writeCodedError(w, http.StatusForbidden, "SKILL_NOT_EDITABLE", "built-in skills are read-only")
 	case errors.Is(err, ErrSkillNotFound):
 		utils.WriteErrorResponse(w, http.StatusNotFound, "skill not found")
-	case errors.Is(err, ErrImportedSkillInUse):
-		writeCodedError(w, http.StatusConflict, "IMPORTED_SKILL_IN_USE",
-			"imported skill is referenced by in-flight tasks")
 	default:
 		slog.ErrorContext(r.Context(), "skill mutation failed", "op", op, "error", err)
 		utils.WriteErrorResponse(w, http.StatusInternalServerError, "failed to "+op+" skill")

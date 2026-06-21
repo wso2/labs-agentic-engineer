@@ -25,9 +25,6 @@ import (
 	"log/slog"
 	"path"
 	"strings"
-	"time"
-
-	"gorm.io/gorm"
 )
 
 // importMaxBytes caps the total decompressed payload we read from a
@@ -48,23 +45,22 @@ type ImportResult struct {
 }
 
 // SkillImportService decodes an AgentSkills tarball, validates it against
-// our narrowed scope (SKILL.md + references/<file>.md only), and stores it
-// as a kind=imported row. See docs/design/skills-system.md > "Validation
-// rules" and "AgentSkills compatibility".
+// our narrowed scope (SKILL.md + references/<file>.md only), and commits it
+// as a kind=imported skill to the org's skills repo. See
+// docs/design/skills-repo-storage.md §9.
 type SkillImportService struct {
-	db     *gorm.DB
 	skills *SkillService
 }
 
-func NewSkillImportService(db *gorm.DB, skills *SkillService) *SkillImportService {
-	return &SkillImportService{db: db, skills: skills}
+func NewSkillImportService(skills *SkillService) *SkillImportService {
+	return &SkillImportService{skills: skills}
 }
 
-// Import reads a gzip-compressed tarball, validates it, and persists the
+// Import reads a gzip-compressed tarball, validates it, and commits the
 // skill. Returns a SkillValidationError for any structural/validation
 // failure (nothing persists), or the import result with warnings.
 func (s *SkillImportService) Import(ctx context.Context, orgID, actor string, r io.Reader) (*ImportResult, error) {
-	if s == nil || s.db == nil {
+	if s == nil || s.skills == nil {
 		return nil, fmt.Errorf("skill import service: not configured")
 	}
 
@@ -96,25 +92,10 @@ func (s *SkillImportService) Import(ctx context.Context, orgID, actor string, r 
 
 	warnings := importWarnings(fm)
 
-	refsMap := normalizeRefs(refs)
-	sha := contentSHA(skillMD, refsMap)
-	version := versionFromMetadata(fm)
-	now := time.Now().UTC()
-	refsJSON, _ := marshalRefs(refsMap)
-
-	q := `
-		INSERT INTO skills
-			(org_id, skill_name, kind, description, skill_md, "references",
-			 version, content_sha, license, compatibility, created_at, updated_at, updated_by)
-		VALUES (?, ?, 'imported', ?, ?, ?::jsonb, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?)
-	`
-	if err := s.db.WithContext(ctx).Exec(q,
-		orgID, name, strings.TrimSpace(fm.Description), skillMD, string(refsJSON),
-		version, sha, fm.License, fm.Compatibility, now, now, actor,
-	).Error; err != nil {
-		return nil, fmt.Errorf("insert imported skill %q: %w", name, err)
+	msg := fmt.Sprintf("feat(skills): import skill %q\n\nby %s", name, actor)
+	if err := s.skills.writeSkillFiles(ctx, orgID, "imported", name, skillMD, normalizeRefs(refs), msg); err != nil {
+		return nil, fmt.Errorf("commit imported skill %q: %w", name, err)
 	}
-	s.audit(ctx, orgID, name, actor)
 	slog.InfoContext(ctx, "skill imported", "orgID", orgID, "name", name, "actor", actor, "warnings", len(warnings))
 
 	return &ImportResult{
@@ -124,18 +105,6 @@ func (s *SkillImportService) Import(ctx context.Context, orgID, actor string, r 
 		Compatibility: fm.Compatibility,
 		Warnings:      warnings,
 	}, nil
-}
-
-// audit mirrors the mutation service's best-effort audit write.
-func (s *SkillImportService) audit(ctx context.Context, orgID, name, actor string) {
-	q := `
-		INSERT INTO skill_audit_events
-			(org_id, skill_name, action, actor, occurred_at)
-		VALUES (?, ?, 'import', ?, NOW())
-	`
-	if err := s.db.WithContext(ctx).Exec(q, orgID, name, actor).Error; err != nil {
-		slog.WarnContext(ctx, "skill audit write failed", "action", "import", "name", name, "error", err)
-	}
 }
 
 // extractTarball decodes a gzip+tar stream into (topDir, SKILL.md body,

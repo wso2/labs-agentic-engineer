@@ -342,19 +342,9 @@ func (s *taskService) ensureIssueForTask(
 		return fmt.Errorf("git client not configured")
 	}
 
-	// SNAPSHOT — freeze the project's currently-attached skills' bodies
-	// at (project_id, design_version) so the dispatched agent's
-	// workspace materialises the same content the tech-lead used. Idempotent:
-	// no-op when a snapshot already exists for the key. Best-effort —
-	// failures log but don't block issue creation, so a missing snapshot
-	// just produces an empty preload set on dispatch (same effective
-	// behaviour as today).
-	if s.skillSvc != nil && task.SourceDesignVersion != "" {
-		if err := snapshotProjectSkills(ctx, s.db, s.store, s.skillSvc, task.OrgID, task.ProjectID, task.SourceDesignVersion); err != nil {
-			slog.WarnContext(ctx, "ensureIssueForTask: skill snapshot failed — continuing",
-				"task", task.ID, "designVersion", task.SourceDesignVersion, "error", err)
-		}
-	}
+	// No skill snapshot: the repo is the single source of truth and the
+	// runner pulls skills at HEAD via GET /tasks/:id/skills (mid-flight drift
+	// accepted). See docs/design/skills-repo-storage.md §7.1/§7.4.
 
 	// The agent owns branch + PR creation, so the issue body intentionally
 	// doesn't pre-name a branch. BranchName is filled in later by the

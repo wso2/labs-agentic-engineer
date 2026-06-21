@@ -23,6 +23,10 @@ import type {
   ExistingTaskSummary,
   AttachedSkillSummary,
 } from "./schema.js";
+import {
+  resolveTechLeadPlanSkills,
+  resolveTechLeadDetailSkills,
+} from "../../skills/skills-source.js";
 
 // =============================================================================
 // Phase 1 — Plan
@@ -105,7 +109,7 @@ function renderAttachedSkills(skills: AttachedSkillSummary[] | undefined): strin
 
 export function buildPlanUserPrompt(input: TechLeadPlanInput): string {
   const { projectName, spec, slimDesign, mode } = input;
-  const skillsBlock = `\n## Project skills (active for every task)\n${renderAttachedSkills(input.attachedSkills)}\n`;
+  const skillsBlock = `\n## Project skills (active for every task)\n${renderAttachedSkills(resolveTechLeadPlanSkills(input))}\n`;
 
   if (mode === "fresh") {
     return `Project: ${projectName}
@@ -364,7 +368,7 @@ export function buildDetailUserPrompt(
     : "(none)";
 
   // ── Skills active for this project — full bodies inlined ─────────────────
-  const skills = item.skillsResolved ?? [];
+  const skills = resolveTechLeadDetailSkills(item);
   let skillsBlock = "";
   if (skills.length > 0) {
     skillsBlock = `\n## Skills active for this project

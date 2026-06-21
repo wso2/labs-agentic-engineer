@@ -106,6 +106,10 @@ type GitHubClient interface {
 	// nested trees in one call (capped by GitHub at ~100k entries).
 	GetTree(ctx context.Context, owner, repo string, cred credentials.Credential, treeSHA string, recursive bool) (*TreeObject, error)
 
+	// GetBlob returns the raw (decoded) content of a blob object by SHA.
+	// Returns an HTTPStatusError wrapping 404 when the blob is absent.
+	GetBlob(ctx context.Context, owner, repo string, cred credentials.Credential, sha string) ([]byte, error)
+
 	// CreateBlob stores raw content as a blob and returns its SHA.
 	CreateBlob(ctx context.Context, owner, repo string, cred credentials.Credential, content []byte) (string, error)
 

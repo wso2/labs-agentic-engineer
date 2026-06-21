@@ -18,6 +18,7 @@
 
 import type { ArchitectInput } from "./schema.js";
 import type { DesignDoc } from "./doc.js";
+import { resolveArchitectSkills } from "../../skills/skills-source.js";
 
 export const systemPrompt = `You are a software architect. You operate by calling tools that mutate a design document. The current state is shown to you under "Current design". Your job: make the document match the specification.
 
@@ -171,8 +172,12 @@ ${input.spec}
     prompt += "```json\n" + JSON.stringify(skeleton, null, 2) + "\n```\n";
   }
 
+  // Skills enter through the resolver seam (default = read from the request
+  // body; tests inject a canned set). docs/design/skills-repo-storage.md §5.
+  const { builtinSkills: builtins, orgSkills, skillsApplied } =
+    resolveArchitectSkills(input);
+
   // ── Platform skills — full bodies, MUST consult ─────────────────────────
-  const builtins = input.builtinSkills ?? [];
   if (builtins.length > 0) {
     prompt += `
 ## Platform skills — MUST consult before designing
@@ -186,7 +191,6 @@ The following encode ASDLC platform best practices, contracts, and pitfalls. App
   }
 
   // ── Org skills — manifest only, body via read_skill (PR 3) ──────────────
-  const orgSkills = input.orgSkills ?? [];
   if (orgSkills.length > 0) {
     prompt += `
 ## Org skills — load if relevant
@@ -201,7 +205,7 @@ The following are authored by your organization or imported from the AgentSkills
   }
 
   // ── Currently-attached skills (for context) ─────────────────────────────
-  const attached = input.skillsApplied ?? [];
+  const attached = skillsApplied;
   if (attached.length > 0) {
     prompt += `## Currently attached skills (on this project)
 
