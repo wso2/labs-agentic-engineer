@@ -599,8 +599,6 @@ func main() {
 		warmed, failed := gitOpsService.PreWarmClones(warmCtx, 10)
 		slog.Info("pre-warm complete", "warmed", warmed, "failed", failed)
 	}()
-	branchService := gitrepo.NewBranchService(repoRepo, githubClient, issueService)
-	prService := gitrepo.NewPullRequestService(repoRepo, githubClient, issueService)
 	webhookRegService := gitrepo.NewWebhookService(repoRepo, githubClient, repoService, issueService, cfg.WebhookDeliveryURL, cfg.WebhookHMACSecret)
 	credRefreshService := orgcreds.NewCredentialsRefreshService(credResolver)
 	credService := orgcreds.NewCredentialService(db, credStore, minter, cfg.WebhookHMACSecret, cfg.GitHubAppClientID, appClientSecret, githubClient)
@@ -618,16 +616,7 @@ func main() {
 	credValidator := credentials.NewValidator(db, validatorProbes, nil, cfg.CredentialValidatorInterval)
 	repoBoardService := gitrepo.NewRepoBoardService(repoRepo, githubV2Client, credResolver)
 
-	repoCtrl := gitrepo.NewRepoController(repoService)
-	gitOpsCtrl := gitrepo.NewGitOpsController(gitOpsService)
-	issueCtrl := gitrepo.NewIssueController(issueService)
-	branchCtrl := gitrepo.NewBranchController(branchService)
-	prCtrl := gitrepo.NewPullRequestController(prService)
-	webhookRegCtrl := gitrepo.NewWebhookRegistrationController(webhookRegService)
-	artifactCtrlGit := artifacts.NewArtifactController(artifactSvcGit)
 	credRefreshCtrl := orgcreds.NewCredentialsRefreshController(credRefreshService)
-	gitProjectCtrl := gitrepo.NewGitProjectController(githubV2Client, credResolver, repoService)
-	repoBoardCtrl := gitrepo.NewRepoBoardController(repoBoardService)
 
 	// Artifact store — in-process via artifactSvcGit. Adds the
 	// external-API catalog + the `DesignFile` YAML split/assemble layer
@@ -893,18 +882,7 @@ func main() {
 	// Per-org Anthropic settings surface. Same JWT gating as GitHub Integration.
 	orgAnthropicCtrl := orgcreds.NewOrgAnthropicController(anthropicCredService)
 
-	var serviceJWT, taskJWT jwtassertion.Middleware
-	if cfg.JWKSURL != "" {
-		thunderJWKSForGS := jwtassertion.NewJWKSCache(cfg.JWKSURL)
-		serviceJWT = jwtassertion.Authenticator(jwtassertion.Config{
-			JWKS:                thunderJWKSForGS,
-			AllowedIssuers:      splitAndTrim(cfg.JWTAllowedIssuer),
-			AllowedAudiences:    splitAndTrim(cfg.JWTAllowedAudience),
-			ResourceMetadataURL: cfg.JWTResourceMetadataURL,
-		})
-	} else {
-		slog.Warn("JWKS_URL not set — git-service Service JWT verification disabled (dev/test only)")
-	}
+	var taskJWT jwtassertion.Middleware
 	if cfg.BFFJWKSURL != "" {
 		bffJWKS := jwtassertion.NewJWKSCache(cfg.BFFJWKSURL)
 		taskJWT = jwtassertion.Authenticator(jwtassertion.Config{
@@ -965,25 +943,11 @@ func main() {
 		ThunderJWKS:            thunderJWKS,
 		OrganizationService:    organizationService,
 
-		// Folded-in git-service surface
+		// Retained from the git-service fold
 		DB:                   db,
-		RepoCtrl:             repoCtrl,
-		GitOpsCtrl:           gitOpsCtrl,
-		IssueCtrl:            issueCtrl,
-		GitProjectCtrl:       gitProjectCtrl,
-		BranchCtrl:           branchCtrl,
-		PullRequestCtrl:      prCtrl,
-		WebhookRegCtrl:       webhookRegCtrl,
-		ArtifactCtrl:         artifactCtrlGit,
 		CredCtrl:             credRefreshCtrl,
-		RepoBoardCtrl:        repoBoardCtrl,
-		RepoService:          repoService,
-		RepoRepo:             repoRepo,
 		CredService:          credService,
-		BuildCredService:     buildCredService,
 		AnthropicCredService: anthropicCredService,
-		Validator:            credValidator,
-		ServiceJWT:           serviceJWT,
 		TaskJWT:              taskJWT,
 	}
 

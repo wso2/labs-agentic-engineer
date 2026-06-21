@@ -45,7 +45,6 @@ type ProjectService interface {
 	GetProject(ctx context.Context, orgName, projectName string) (*models.Project, error)
 	CreateProject(ctx context.Context, orgName string, req *models.CreateProjectRequest) (*models.Project, error)
 	DeleteProject(ctx context.Context, orgName, projectName string) error
-	GetRepoStatus(ctx context.Context, orgName, projectID string) (*models.GitRepository, error)
 	GetProjectStatus(ctx context.Context, orgName, projectName string) (*models.ProjectStatus, error)
 }
 
@@ -141,20 +140,6 @@ func (s *projectService) DeleteProject(ctx context.Context, orgName, projectName
 	}
 
 	return nil
-}
-
-func (s *projectService) GetRepoStatus(ctx context.Context, orgName, projectID string) (*models.GitRepository, error) {
-	if s.repoSvc == nil {
-		return nil, fmt.Errorf("repo service not configured")
-	}
-	repo, err := s.repoSvc.GetRepo(ctx, orgName, projectID)
-	if err != nil {
-		return nil, fmt.Errorf("get repo: %w", err)
-	}
-	if repo == nil {
-		return nil, ErrProjectNotFound
-	}
-	return repo, nil
 }
 
 func (s *projectService) GetProjectStatus(ctx context.Context, orgName, projectName string) (*models.ProjectStatus, error) {

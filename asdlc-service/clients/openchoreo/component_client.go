@@ -325,16 +325,6 @@ func formatEndpointURL(u *gen.EndpointURL) string {
 	return fmt.Sprintf("%s://%s:%d%s", scheme, u.Host, port, path)
 }
 
-// envVarsToGen converts model EnvVars to gen EnvVars (gen.EnvVar.Value is *string).
-func envVarsToGen(envVars []models.EnvVar) []gen.EnvVar {
-	out := make([]gen.EnvVar, len(envVars))
-	for i, ev := range envVars {
-		v := ev.Value
-		out[i] = gen.EnvVar{Key: ev.Key, Value: &v}
-	}
-	return out
-}
-
 // -- Component CRUD ----------------------------------------------------------
 
 func (c *componentClient) ListComponents(ctx context.Context, orgName, projectName string, limit int, cursor string) (*models.ComponentList, error) {

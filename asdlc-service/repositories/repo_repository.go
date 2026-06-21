@@ -43,7 +43,6 @@ type RepoRepository interface {
 	// project_id is only composite-unique (F2), an org-less delete could
 	// remove another org's row.
 	DeleteByOrgAndProjectID(ctx context.Context, ocOrgID, projectID string) error
-	DeleteAll(ctx context.Context) error
 }
 
 type repoRepository struct {
@@ -110,10 +109,6 @@ func (r *repoRepository) DeleteByOrgAndProjectID(ctx context.Context, ocOrgID, p
 	return r.db.WithContext(ctx).
 		Where("org_id = ? AND project_id = ?", ocOrgID, projectID).
 		Delete(&models.GitRepository{}).Error
-}
-
-func (r *repoRepository) DeleteAll(ctx context.Context) error {
-	return r.db.WithContext(ctx).Where("1 = 1").Delete(&models.GitRepository{}).Error
 }
 
 // LookupOrgProjectByRepoURL translates a GitHub repo full_name to its owning

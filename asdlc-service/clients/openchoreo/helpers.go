@@ -17,27 +17,10 @@
 package openchoreo
 
 import (
-	"encoding/json"
 	"time"
 
 	"github.com/wso2/asdlc/asdlc-service/clients/openchoreo/gen"
 )
-
-// structToMap round-trips v through JSON into a `map[string]interface{}`.
-// The gen ClusterComponentTypeSpec has many inline anonymous structs that
-// would be tedious to unpack field-by-field; JSON-mirror keeps the wire
-// shape identical with one helper. Returns the parsed map or an error.
-func structToMap(v any) (map[string]interface{}, error) {
-	raw, err := json.Marshal(v)
-	if err != nil {
-		return nil, err
-	}
-	out := map[string]interface{}{}
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
 
 // derefStr returns *s or "" if s is nil. The generated OC types
 // (gen.ObjectMeta.Uid, gen.ObjectMeta.Namespace, …) are pointer-everywhere

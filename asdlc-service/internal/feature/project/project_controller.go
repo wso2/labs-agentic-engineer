@@ -33,7 +33,6 @@ type ProjectController interface {
 	GetProject(w http.ResponseWriter, r *http.Request)
 	CreateProject(w http.ResponseWriter, r *http.Request)
 	DeleteProject(w http.ResponseWriter, r *http.Request)
-	GetRepoStatus(w http.ResponseWriter, r *http.Request)
 	GetProjectStatus(w http.ResponseWriter, r *http.Request)
 }
 
@@ -175,27 +174,6 @@ func (c *projectController) DeleteProject(w http.ResponseWriter, r *http.Request
 	}
 
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func (c *projectController) GetRepoStatus(w http.ResponseWriter, r *http.Request) {
-	org := r.PathValue("orgHandle")
-	projectName := r.PathValue("projectName")
-	if !requireOrgHandle(w, org) || !requireProjectName(w, projectName) {
-		return
-	}
-
-	repo, err := c.service.GetRepoStatus(r.Context(), org, projectName)
-	if err != nil {
-		if errors.Is(err, ErrProjectNotFound) {
-			utils.WriteErrorResponse(w, http.StatusNotFound, "repository not found")
-			return
-		}
-		slog.ErrorContext(r.Context(), "get repo status failed", "error", err, "project", projectName)
-		utils.WriteErrorResponse(w, http.StatusInternalServerError, "failed to get repo status")
-		return
-	}
-
-	utils.WriteSuccessResponse(w, http.StatusOK, repo)
 }
 
 func (c *projectController) GetProjectStatus(w http.ResponseWriter, r *http.Request) {

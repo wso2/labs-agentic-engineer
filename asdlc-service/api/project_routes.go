@@ -25,6 +25,5 @@ func registerProjectRoutes(rt *Router, c project.ProjectController) {
 	rt.OrgScoped("POST /api/v1/organizations/{orgHandle}/projects", c.CreateProject)
 	rt.OrgScoped("GET /api/v1/organizations/{orgHandle}/projects/{projectName}", c.GetProject)
 	rt.OrgScoped("DELETE /api/v1/organizations/{orgHandle}/projects/{projectName}", c.DeleteProject)
-	rt.OrgScoped("GET /api/v1/organizations/{orgHandle}/projects/{projectName}/repo", c.GetRepoStatus)
 	rt.OrgScoped("GET /api/v1/organizations/{orgHandle}/projects/{projectName}/status", c.GetProjectStatus)
 }

@@ -41,11 +41,6 @@ import (
 // ----- Typed errors -----
 
 var (
-	// ErrSHAMismatch is returned by PutContents when the supplied `sha`
-	// precondition differs from the blob currently at the path on `branch`.
-	// Wraps a 409 from GitHub.
-	ErrSHAMismatch = errors.New("github contents: sha precondition mismatch")
-
 	// ErrRefNotFastForward is returned by UpdateRef when force=false and the
 	// requested move would be non-fast-forward (ref tip moved between read
 	// and write). Wraps a 422 from GitHub.
@@ -57,33 +52,6 @@ var (
 )
 
 // ----- Request / response types -----
-
-// ContentsResult is the subset of GET /contents we consume. `BlobSHA` is the
-// git blob SHA used as the OCC precondition on subsequent PutContents.
-type ContentsResult struct {
-	Content string // raw bytes (decoded from base64)
-	BlobSHA string // blob SHA (the `sha` field GitHub returns)
-	Path    string
-}
-
-// PutContentsRequest is the body of PUT /contents.
-type PutContentsRequest struct {
-	Path      string
-	Branch    string
-	Message   string
-	Content   []byte
-	SHA       string // OCC precondition; empty = create-only
-	Author    *GitIdentity
-	Committer *GitIdentity
-}
-
-// PutContentsResult exposes what callers need from the response: the new
-// commit SHA (used to anchor the annotated-tag two-step) and the new blob SHA
-// (used to upsert the read cache once V3 lands).
-type PutContentsResult struct {
-	CommitSHA string
-	BlobSHA   string
-}
 
 // GitIdentity mirrors GitHub's author/committer/tagger object. Date is
 // optional; GitHub defaults to the request time when omitted. Named with the
@@ -152,115 +120,6 @@ type MatchingRef struct {
 }
 
 // ----- Implementations -----
-
-func (c *githubClient) GetContents(ctx context.Context, owner, repo string, cred credentials.Credential, path, ref string) (*ContentsResult, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/contents/%s?ref=%s", owner, repo, path, ref)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create get-contents request: %w", err)
-	}
-	if err := authHeaders(ctx, req, cred); err != nil {
-		return nil, err
-	}
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("github get-contents: %w", err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, &HTTPStatusError{StatusCode: resp.StatusCode, Body: string(body), URL: url}
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("github get-contents (status %d): %s", resp.StatusCode, string(body))
-	}
-	var parsed struct {
-		Path     string `json:"path"`
-		SHA      string `json:"sha"`
-		Content  string `json:"content"`
-		Encoding string `json:"encoding"`
-	}
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		return nil, fmt.Errorf("decode get-contents: %w", err)
-	}
-	var content []byte
-	if parsed.Encoding == "base64" {
-		// GitHub returns base64 with embedded newlines; decode with StdEncoding tolerantly.
-		raw, err := base64.StdEncoding.DecodeString(stripNewlines(parsed.Content))
-		if err != nil {
-			return nil, fmt.Errorf("decode content base64: %w", err)
-		}
-		content = raw
-	} else {
-		content = []byte(parsed.Content)
-	}
-	return &ContentsResult{
-		Content: string(content),
-		BlobSHA: parsed.SHA,
-		Path:    parsed.Path,
-	}, nil
-}
-
-func (c *githubClient) PutContents(ctx context.Context, owner, repo string, cred credentials.Credential, req PutContentsRequest) (*PutContentsResult, error) {
-	payload := map[string]any{
-		"message": req.Message,
-		"branch":  req.Branch,
-		"content": base64.StdEncoding.EncodeToString(req.Content),
-	}
-	if req.SHA != "" {
-		payload["sha"] = req.SHA
-	}
-	if req.Author != nil {
-		payload["author"] = req.Author
-	}
-	if req.Committer != nil {
-		payload["committer"] = req.Committer
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("marshal put-contents: %w", err)
-	}
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/contents/%s", owner, repo, req.Path)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("create put-contents request: %w", err)
-	}
-	if err := authHeaders(ctx, httpReq, cred); err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("github put-contents: %w", err)
-	}
-	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
-	// GitHub returns 409 for SHA-precondition mismatch and 422 for "does not match"
-	// (the latter when content is unchanged on the path). The 422-unchanged case
-	// is treated as success by PutFileOnBranch elsewhere; here we surface it as
-	// ErrSHAMismatch so the save flow can retry with a refreshed precondition.
-	if resp.StatusCode == http.StatusConflict {
-		return nil, fmt.Errorf("%w: %s", ErrSHAMismatch, string(respBody))
-	}
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return nil, fmt.Errorf("github put-contents (status %d): %s", resp.StatusCode, string(respBody))
-	}
-	var parsed struct {
-		Content struct {
-			SHA string `json:"sha"`
-		} `json:"content"`
-		Commit struct {
-			SHA string `json:"sha"`
-		} `json:"commit"`
-	}
-	if err := json.Unmarshal(respBody, &parsed); err != nil {
-		return nil, fmt.Errorf("decode put-contents: %w", err)
-	}
-	return &PutContentsResult{
-		CommitSHA: parsed.Commit.SHA,
-		BlobSHA:   parsed.Content.SHA,
-	}, nil
-}
 
 func (c *githubClient) GetRef(ctx context.Context, owner, repo string, cred credentials.Credential, ref string) (string, error) {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/git/ref/%s", owner, repo, ref)
@@ -660,17 +519,4 @@ func (c *githubClient) ListMatchingRefs(ctx context.Context, owner, repo string,
 		out = append(out, MatchingRef{Ref: r.Ref, SHA: r.Object.SHA})
 	}
 	return out, nil
-}
-
-// stripNewlines removes literal CR/LF from a base64 string (GitHub returns
-// them in the contents response for human-readable wrapping).
-func stripNewlines(s string) string {
-	out := make([]byte, 0, len(s))
-	for i := 0; i < len(s); i++ {
-		if s[i] == '\n' || s[i] == '\r' {
-			continue
-		}
-		out = append(out, s[i])
-	}
-	return string(out)
 }

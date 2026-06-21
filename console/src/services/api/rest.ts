@@ -961,14 +961,6 @@ export const restApi = {
     }
   },
 
-  async getBuildStatus(orgHandle: string, projectId: string, componentId: string, buildName: string): Promise<Build | undefined> {
-    try {
-      return await fetchJSON<Build>(`${projectPrefix(orgHandle, projectId)}/components/${componentId}/builds/${buildName}`);
-    } catch {
-      return undefined;
-    }
-  },
-
   async getBuildLogs(orgHandle: string, projectId: string, componentId: string, buildName: string): Promise<BuildLogs | undefined> {
     try {
       return await fetchJSON<BuildLogs>(
@@ -1026,16 +1018,6 @@ export const restApi = {
   },
 
   // -- Tasks (implementation agents) -------------------------------------------
-
-  async createTasks(orgHandle: string, projectId: string): Promise<ComponentTask[]> {
-    try {
-      return await fetchJSON<ComponentTask[]>(`${projectPrefix(orgHandle, projectId)}/tasks/create`, {
-        method: 'POST',
-      });
-    } catch {
-      return [];
-    }
-  },
 
   async dispatchTasks(orgHandle: string, projectId: string): Promise<any[]> {
     return await fetchJSON<any[]>(`${projectPrefix(orgHandle, projectId)}/tasks/dispatch`, {

@@ -42,13 +42,6 @@ func registerOrgGitHubRoutes(rt *Router, c orgcreds.OrgGitHubController) {
 // the connect-state JWT (issued by StartConnect) instead of the console
 // JWT. This is an enumerated carve-out: the signed connect-state is the
 // authn, bound to the org from that state (SourcePublisherCC, §6.6f).
-//
-// The deprecated old callback path /api/v1/github/app/callback returns
-// 410 Gone — any in-flight install URLs from prior PR D-followup setup
-// configurations fail loudly instead of 404'ing silently.
 func registerConnectCallbackRoute(mux *http.ServeMux, c orgcreds.OrgGitHubController) {
 	mux.HandleFunc("GET /api/v1/github/connect/callback", c.HandleConnectCallback)
-	mux.HandleFunc("GET /api/v1/github/app/callback", func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, "endpoint moved to /api/v1/github/connect/callback; update GitHub App setup + callback URLs", http.StatusGone)
-	})
 }

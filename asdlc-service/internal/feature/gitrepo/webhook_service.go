@@ -37,8 +37,6 @@ type WebhookService interface {
 	// Register installs a webhook on the repo. No-op when the credential's
 	// strategy is WebhookPlatform. Idempotent on (repo, deliveryURL).
 	Register(ctx context.Context, orgID, projectID string) (hookID *int64, err error)
-	// Deregister removes the previously-registered webhook for the repo.
-	Deregister(ctx context.Context, orgID, projectID string) error
 }
 
 type webhookService struct {
@@ -106,28 +104,4 @@ func (s *webhookService) Register(ctx context.Context, orgID, projectID string) 
 		return nil, fmt.Errorf("persist webhook id: %w", err)
 	}
 	return &hookID, nil
-}
-
-func (s *webhookService) Deregister(ctx context.Context, orgID, projectID string) error {
-	owner, repoName, cred, err := s.issue.resolveRepoAndCredential(ctx, orgID, projectID)
-	if err != nil {
-		return err
-	}
-
-	gitRepo, err := s.repo.GetByOrgAndProjectID(ctx, orgID, projectID)
-	if err != nil {
-		return fmt.Errorf("get repo: %w", err)
-	}
-	if gitRepo == nil || gitRepo.WebhookID == nil {
-		return nil // nothing to deregister
-	}
-
-	if err := s.github.DeregisterWebhook(ctx, owner, repoName, cred, *gitRepo.WebhookID); err != nil {
-		return fmt.Errorf("deregister webhook: %w", err)
-	}
-	gitRepo.WebhookID = nil
-	if err := s.repo.Update(ctx, gitRepo); err != nil {
-		return fmt.Errorf("clear webhook id: %w", err)
-	}
-	return nil
 }

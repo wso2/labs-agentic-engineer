@@ -43,8 +43,6 @@ type RepoService interface {
 	// so cleanup can deregister.
 	SetWebhookID(ctx context.Context, orgID, projectID string, hookID int64) error
 	DeleteRepo(ctx context.Context, orgID, projectID string) error
-	DeleteAll(ctx context.Context) error
-	SetGithubProjectID(ctx context.Context, orgID, projectID, githubProjectID string) error
 }
 
 type repoService struct {
@@ -197,28 +195,6 @@ func (s *repoService) DeleteRepo(ctx context.Context, orgID, projectID string) e
 		return fmt.Errorf("delete repo record: %w", err)
 	}
 	return nil
-}
-
-func (s *repoService) SetGithubProjectID(ctx context.Context, orgID, projectID, githubProjectID string) error {
-	repo, err := s.repo.GetByOrgAndProjectID(ctx, orgID, projectID)
-	if err != nil {
-		return fmt.Errorf("get repo: %w", err)
-	}
-	if repo == nil {
-		return ErrRepoNotFound
-	}
-	repo.GithubProjectID = githubProjectID
-	return s.repo.Update(ctx, repo)
-}
-
-func (s *repoService) DeleteAll(ctx context.Context) error {
-	if err := os.RemoveAll(s.repoBasePath); err != nil {
-		slog.ErrorContext(ctx, "failed to remove repo base path", "path", s.repoBasePath, "error", err)
-	}
-	if err := os.MkdirAll(s.repoBasePath, 0o755); err != nil {
-		slog.ErrorContext(ctx, "failed to recreate repo base path", "path", s.repoBasePath, "error", err)
-	}
-	return s.repo.DeleteAll(ctx)
 }
 
 func (s *repoService) performClone(orgID, projectID, repoURL, clonePath string) {

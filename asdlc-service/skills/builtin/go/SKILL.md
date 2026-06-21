@@ -2,7 +2,7 @@
 name: go
 description: How to build a Go service on the platform — pinned golang:1.25-alpine builder (the build pod runs with GOTOOLCHAIN=local), pure-Go modernc.org/sqlite driver (CGO times out under the build pod's CPU throttle), suggested layout, port 9090, GET /health liveness, multi-stage Dockerfile → slim runtime, embedded SQLite for per-user data inside the owning service. Apply to every Go component.
 metadata:
-  asdlc.version: "1"
+  asdlc.version: "2"
 ---
 
 # Go
@@ -84,8 +84,10 @@ per-user data, include this Scope bullet:
 
 For every Go task, include this Acceptance criteria bullet:
 
-- "Local `go build -o /dev/null ./...` exits 0 and the committed
-  `go.sum` matches a fresh `go mod tidy` run."
+- "Local `go build -o /dev/null ./...` exits 0 and, if the service has
+  external dependencies, the committed `go.sum` matches a fresh
+  `go mod tidy` run. A stdlib-only service has NO `go.sum` — that is
+  expected; do not hand-create one."
 
 ### Coding agent — implementation
 
@@ -94,7 +96,7 @@ Layout (production-shaped, ~5–20 endpoints):
 ```
 <app-path>/
 ├── go.mod               # module path matches the app folder name
-├── go.sum
+├── go.sum               # ONLY when you have external deps — a stdlib-only service has none
 ├── main.go              # entrypoint — for small services, all in one file
 ├── cmd/                 # optional — multiple binaries; usually omitted
 ├── internal/
@@ -192,7 +194,12 @@ func problemJSON(w http.ResponseWriter, status int, title, detail string) {
 ```dockerfile
 FROM golang:1.25-alpine AS builder
 WORKDIR /src
-COPY go.mod go.sum ./
+# Copy only go.mod here — it is ALWAYS present. Do NOT name go.sum as a
+# COPY source: a stdlib-only service has no external deps and therefore
+# no go.sum, and `COPY go.mod go.sum ./` HARD-FAILS the build when it is
+# absent ("go.sum: no such file or directory"). When a go.sum does exist
+# it is brought in by the `COPY . .` below and verified by `go build`.
+COPY go.mod ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -ldflags='-s -w' -o /out/app ./
@@ -233,8 +240,12 @@ go build -o /dev/null ./...   # compile everything; fails on any error
 ```
 
 After `go mod tidy` succeeds, COMMIT the updated `go.sum` along with
-your source. Without it, the build pipeline will fail on the next
-`go mod download` step because lockfile entries are missing.
+your source IF one was produced. A stdlib-only service (no external
+imports) has no dependencies, so `go mod tidy` produces NO `go.sum` —
+that is correct and expected, and the Dockerfile above handles its
+absence. Only when you DO have external dependencies must the committed
+`go.sum` match a fresh `go mod tidy`; without it the build's
+`go mod download` / `go build` step fails on missing lockfile entries.
 
 ### Don't
 
@@ -259,4 +270,5 @@ your source. Without it, the build pipeline will fail on the next
 | Build times out at the `mattn/go-sqlite3` step | CGO compilation under throttle | Switch to `modernc.org/sqlite`. |
 | `sql.Open` returns `unknown driver "sqlite3"` | Used `mattn` driver name with `modernc` import | Use `sql.Open("sqlite", ...)`. |
 | `checksum mismatch ... SECURITY ERROR` at build | `go.sum` is stale or hand-edited | `go mod tidy` locally; commit the result. |
+| Build fails `COPY go.mod go.sum ./ ... go.sum: no such file or directory` | Dockerfile names `go.sum` but a stdlib-only service has none | Use the Dockerfile above (`COPY go.mod ./` only); `COPY . .` brings `go.sum` when it exists. |
 | Pod won't start; logs show "panic: listen tcp :8080" | Used wrong port | Use port 9090. |

@@ -368,12 +368,6 @@ func acquireTaskLock(tx *gorm.DB, taskID string) error {
 	return tx.Exec(`SELECT pg_advisory_xact_lock(?)`, hashKey("task:"+taskID)).Error
 }
 
-// acquireProjectLock takes a project-scoped advisory lock so concurrent
-// pushes to the same project's default branch serialise.
-func acquireProjectLock(tx *gorm.DB, projectID string) error {
-	return tx.Exec(`SELECT pg_advisory_xact_lock(?)`, hashKey("project:"+projectID)).Error
-}
-
 func hashKey(s string) int64 {
 	h := fnv.New64a()
 	h.Write([]byte(s))

@@ -19,7 +19,6 @@ package gitrepo
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -51,26 +50,9 @@ type GitHubClient interface {
 	// Used by the tech-lead detail phase to write the LLM-authored body
 	// after the placeholder issue was created.
 	EditIssueBody(ctx context.Context, owner, repo string, cred credentials.Credential, number int, body string) error
-	// CreateBranch creates a new git ref pointing at fromSHA. fromSHA may be a
-	// branch name (resolved to its tip) or a commit SHA. Idempotent on the
-	// branch name: returns the existing tip SHA if the ref already exists.
-	CreateBranch(ctx context.Context, owner, repo string, cred credentials.Credential, branch, fromSHA string) (sha string, err error)
-	// GetBranchSHA returns the tip SHA of a branch, used to seed CreateBranch.
-	GetBranchSHA(ctx context.Context, owner, repo string, cred credentials.Credential, branch string) (string, error)
-	// PutFileOnBranch creates or updates a file on the given branch via the
-	// Contents API. Idempotent on (path, content): if the file already exists
-	// with identical content, returns the existing SHA without a new commit.
-	// Used to seed a placeholder commit on a fresh feature branch so a draft
-	// PR can be opened against it.
-	PutFileOnBranch(ctx context.Context, owner, repo string, cred credentials.Credential, branch, path, message string, content []byte) error
-	// CreateDraftPR opens a draft pull request. Idempotent on (head, base):
-	// returns the existing PR if one already exists.
-	CreateDraftPR(ctx context.Context, owner, repo string, cred credentials.Credential, req CreateDraftPRRequest) (*PullRequestResult, error)
 	// RegisterWebhook installs a repository webhook delivering to deliveryURL,
 	// signed with hmacSecret. Returns the GitHub-assigned hook ID.
 	RegisterWebhook(ctx context.Context, owner, repo string, cred credentials.Credential, deliveryURL, hmacSecret string, events []string) (hookID int64, err error)
-	// DeregisterWebhook removes a previously-registered webhook by ID.
-	DeregisterWebhook(ctx context.Context, owner, repo string, cred credentials.Credential, hookID int64) error
 	// GetUser returns identity from GET /user. Used by the periodic
 	// validator to probe a PAT credential for liveness and identity drift.
 	// Returns an HTTPStatusError wrapping 401/404 etc. so callers can
@@ -111,21 +93,8 @@ type GitHubClient interface {
 	// These replace the `git commit + push` flow in SaveDesign/SaveRequirements;
 	// the working-tree clone remains the source of truth for draft content
 	// (Postgres drafts are V2). Errors map onto typed sentinels so the save
-	// flow can branch (ErrSHAMismatch → retry, ErrRefNotFastForward → retry,
-	// ErrTagAlreadyExists → recompute next tag).
-
-	// GetContents returns the file blob at `ref` (branch tip or tag) plus the
-	// blob SHA used as the precondition on subsequent PutContents.
-	// 404 → returns (nil, HTTPStatusError{404}); the caller treats it as
-	// "no file at this ref yet."
-	GetContents(ctx context.Context, owner, repo string, cred credentials.Credential, path, ref string) (*ContentsResult, error)
-
-	// PutContents creates or updates a single file via the Contents API,
-	// committing atomically to `branch`. `req.SHA` is the blob SHA of the
-	// file's current state on `branch` (the OCC precondition); empty =
-	// create-only, non-empty = update-only with CAS. A SHA mismatch returns
-	// ErrSHAMismatch. `req.Author` / `req.Committer` are GitIdentity.
-	PutContents(ctx context.Context, owner, repo string, cred credentials.Credential, req PutContentsRequest) (*PutContentsResult, error)
+	// flow can branch (ErrRefNotFastForward → retry, ErrTagAlreadyExists →
+	// recompute next tag).
 
 	// GetRef returns the tip SHA of a ref. `ref` is the ref name without
 	// "refs/" prefix (e.g. "heads/main" or "tags/v1").
@@ -257,21 +226,6 @@ type IssueResult struct {
 	NodeID string `json:"nodeId"`
 }
 
-// CreateDraftPRRequest is the body for POST /repos/{owner}/{repo}/pulls.
-type CreateDraftPRRequest struct {
-	Title string
-	Body  string
-	Head  string // feature branch name
-	Base  string // default branch
-}
-
-// PullRequestResult is the GitHub PR metadata returned after creation.
-type PullRequestResult struct {
-	Number int    `json:"number"`
-	URL    string `json:"html_url"`
-}
-
-// ErrRepoNameConflict is returned when GitHub rejects a repo name because it already exists.
 var ErrRepoNameConflict = errors.New("repo name already taken")
 
 // IsRepoNameConflict reports whether err represents a GitHub name-conflict rejection.
@@ -625,146 +579,6 @@ func (c *githubClient) ListIssues(ctx context.Context, owner, repo string, cred 
 	return issues, nil
 }
 
-func (c *githubClient) GetBranchSHA(ctx context.Context, owner, repo string, cred credentials.Credential, branch string) (string, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/git/ref/heads/%s", owner, repo, branch)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return "", fmt.Errorf("create request: %w", err)
-	}
-	if err := authHeaders(ctx, httpReq, cred); err != nil {
-		return "", err
-	}
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return "", fmt.Errorf("github API request: %w", err)
-	}
-	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("github get branch failed (status %d): %s", resp.StatusCode, string(respBody))
-	}
-	var ref struct {
-		Object struct {
-			SHA string `json:"sha"`
-		} `json:"object"`
-	}
-	if err := json.Unmarshal(respBody, &ref); err != nil {
-		return "", fmt.Errorf("decode response: %w", err)
-	}
-	return ref.Object.SHA, nil
-}
-
-func (c *githubClient) CreateBranch(ctx context.Context, owner, repo string, cred credentials.Credential, branch, fromSHA string) (string, error) {
-	payload := map[string]string{"ref": "refs/heads/" + branch, "sha": fromSHA}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return "", fmt.Errorf("marshal request: %w", err)
-	}
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/git/refs", owner, repo)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return "", fmt.Errorf("create request: %w", err)
-	}
-	if err := authHeaders(ctx, httpReq, cred); err != nil {
-		return "", err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return "", fmt.Errorf("github API request: %w", err)
-	}
-	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode == http.StatusCreated {
-		var ref struct {
-			Object struct {
-				SHA string `json:"sha"`
-			} `json:"object"`
-		}
-		if err := json.Unmarshal(respBody, &ref); err != nil {
-			return "", fmt.Errorf("decode response: %w", err)
-		}
-		return ref.Object.SHA, nil
-	}
-	// Idempotency: branch already exists. Look it up and return its tip SHA.
-	if resp.StatusCode == http.StatusUnprocessableEntity &&
-		strings.Contains(string(respBody), "Reference already exists") {
-		return c.GetBranchSHA(ctx, owner, repo, cred, branch)
-	}
-	return "", fmt.Errorf("github create branch failed (status %d): %s", resp.StatusCode, string(respBody))
-}
-
-func (c *githubClient) CreateDraftPR(ctx context.Context, owner, repo string, cred credentials.Credential, req CreateDraftPRRequest) (*PullRequestResult, error) {
-	payload := map[string]any{
-		"title": req.Title,
-		"body":  req.Body,
-		"head":  req.Head,
-		"base":  req.Base,
-		"draft": true,
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
-	}
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/pulls", owner, repo)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	if err := authHeaders(ctx, httpReq, cred); err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("github API request: %w", err)
-	}
-	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode == http.StatusCreated {
-		var pr PullRequestResult
-		if err := json.Unmarshal(respBody, &pr); err != nil {
-			return nil, fmt.Errorf("decode response: %w", err)
-		}
-		return &pr, nil
-	}
-	// Idempotency: PR already exists for head/base. Look it up.
-	if resp.StatusCode == http.StatusUnprocessableEntity &&
-		strings.Contains(string(respBody), "A pull request already exists") {
-		return c.findPullByHead(ctx, owner, repo, cred, req.Head)
-	}
-	return nil, fmt.Errorf("github create PR failed (status %d): %s", resp.StatusCode, string(respBody))
-}
-
-func (c *githubClient) findPullByHead(ctx context.Context, owner, repo string, cred credentials.Credential, head string) (*PullRequestResult, error) {
-	// Searching by head requires owner:branch form.
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/pulls?state=open&head=%s:%s", owner, repo, owner, head)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	if err := authHeaders(ctx, httpReq, cred); err != nil {
-		return nil, err
-	}
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("github API request: %w", err)
-	}
-	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("github list PRs failed (status %d): %s", resp.StatusCode, string(respBody))
-	}
-	var prs []PullRequestResult
-	if err := json.Unmarshal(respBody, &prs); err != nil {
-		return nil, fmt.Errorf("decode response: %w", err)
-	}
-	if len(prs) == 0 {
-		return nil, fmt.Errorf("no open PR found for head=%s", head)
-	}
-	return &prs[0], nil
-}
-
 func (c *githubClient) RegisterWebhook(ctx context.Context, owner, repo string, cred credentials.Credential, deliveryURL, hmacSecret string, events []string) (int64, error) {
 	payload := map[string]any{
 		"name":   "web",
@@ -845,97 +659,6 @@ func (c *githubClient) findHookByURL(ctx context.Context, owner, repo string, cr
 		}
 	}
 	return 0, fmt.Errorf("hook for url %s not found", deliveryURL)
-}
-
-func (c *githubClient) DeregisterWebhook(ctx context.Context, owner, repo string, cred credentials.Credential, hookID int64) error {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/hooks/%d", owner, repo, hookID)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
-	if err != nil {
-		return fmt.Errorf("create request: %w", err)
-	}
-	if err := authHeaders(ctx, httpReq, cred); err != nil {
-		return err
-	}
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return fmt.Errorf("github API request: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusNotFound {
-		return nil
-	}
-	respBody, _ := io.ReadAll(resp.Body)
-	return fmt.Errorf("github deregister webhook failed (status %d): %s", resp.StatusCode, string(respBody))
-}
-
-func (c *githubClient) PutFileOnBranch(ctx context.Context, owner, repo string, cred credentials.Credential, branch, path, message string, content []byte) error {
-	// Look up an existing file at the same path on the branch to get its SHA
-	// (required when updating an existing file). Missing file → create.
-	getURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/contents/%s?ref=%s",
-		owner, repo, path, branch)
-	getReq, err := http.NewRequestWithContext(ctx, http.MethodGet, getURL, nil)
-	if err != nil {
-		return fmt.Errorf("create get-file request: %w", err)
-	}
-	if err := authHeaders(ctx, getReq, cred); err != nil {
-		return err
-	}
-	getResp, err := c.httpClient.Do(getReq)
-	if err != nil {
-		return fmt.Errorf("github get-file request: %w", err)
-	}
-	defer getResp.Body.Close()
-	getBody, _ := io.ReadAll(getResp.Body)
-
-	var existingSHA string
-	if getResp.StatusCode == http.StatusOK {
-		var existing struct {
-			SHA string `json:"sha"`
-		}
-		if err := json.Unmarshal(getBody, &existing); err == nil {
-			existingSHA = existing.SHA
-		}
-	} else if getResp.StatusCode != http.StatusNotFound {
-		return fmt.Errorf("github get-file failed (status %d): %s", getResp.StatusCode, string(getBody))
-	}
-
-	payload := map[string]any{
-		"message": message,
-		"branch":  branch,
-		"content": base64.StdEncoding.EncodeToString(content),
-	}
-	if existingSHA != "" {
-		payload["sha"] = existingSHA
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("marshal request: %w", err)
-	}
-	putURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/contents/%s", owner, repo, path)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPut, putURL, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("create put-file request: %w", err)
-	}
-	if err := authHeaders(ctx, httpReq, cred); err != nil {
-		return err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return fmt.Errorf("github put-file request: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
-		return nil
-	}
-	respBody, _ := io.ReadAll(resp.Body)
-	// 422 unprocessable when content matches — treat as success (idempotent).
-	if resp.StatusCode == http.StatusUnprocessableEntity &&
-		strings.Contains(string(respBody), "does not match") {
-		// content already up-to-date; nothing to do
-		return nil
-	}
-	return fmt.Errorf("github put-file failed (status %d): %s", resp.StatusCode, string(respBody))
 }
 
 // GetUser performs GET /user using the credential's token. Returns

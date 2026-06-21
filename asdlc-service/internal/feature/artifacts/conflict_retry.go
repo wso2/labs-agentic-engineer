@@ -20,10 +20,9 @@ package artifacts
 //
 // Two retry policies live here:
 //
-//   - CAS retries: PutContents 409 (SHA precondition mismatch) and UpdateRef
-//     422 (non-fast-forward). Bounded by both an attempt count and a
-//     per-(org, project) leaky bucket, so a thrashing project can't starve
-//     legitimate retries from peers.
+//   - CAS retries: UpdateRef 422 (non-fast-forward). Bounded by both an
+//     attempt count and a per-(org, project) leaky bucket, so a thrashing
+//     project can't starve legitimate retries from peers.
 //
 //   - Tag-collision retries: CreateTagRef 422 when an external pusher claimed
 //     the same tag name. No leaky bucket — tag collisions can only come from
@@ -112,8 +111,8 @@ func (r *conflictRetrier) claim(key string) bool {
 	return true
 }
 
-// retryOnCASConflict runs `fn` and on a conflict error (ErrSHAMismatch or
-// ErrRefNotFastForward) backs off, claims a budget token, and retries.
+// retryOnCASConflict runs `fn` and on a conflict error (ErrRefNotFastForward)
+// backs off, claims a budget token, and retries.
 // Bounded by len(casRetryAttempts). Final failure returns the last error
 // wrapped so the caller can branch.
 //
@@ -158,11 +157,11 @@ func retryOnTagCollision(ctx context.Context, fn func() error) error {
 	return err
 }
 
-// isCASConflict reports whether err is one of the GitHub CAS-mismatch
-// sentinels. ErrConflictBudgetExhausted is intentionally NOT counted — that
-// terminates retry, it doesn't trigger another.
+// isCASConflict reports whether err is the GitHub CAS-mismatch sentinel.
+// ErrConflictBudgetExhausted is intentionally NOT counted — that terminates
+// retry, it doesn't trigger another.
 func isCASConflict(err error) bool {
-	return errors.Is(err, gitrepo.ErrSHAMismatch) || errors.Is(err, gitrepo.ErrRefNotFastForward)
+	return errors.Is(err, gitrepo.ErrRefNotFastForward)
 }
 
 // jitterSleep waits for `base` with ±50% uniform jitter, respecting ctx

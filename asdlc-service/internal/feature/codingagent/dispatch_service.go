@@ -870,21 +870,6 @@ func (s *dispatchService) RetryTask(ctx context.Context, taskID string) (Dispatc
 	return res, nil
 }
 
-// resolveExternalURL resolves a single component's first external URL, or
-// "" if the component has no deployed endpoint with `visibility: external`.
-// Mirrors resolveDependencyEndpoints' inner step but for a single
-// component, since AnnounceDependencyDeployed doesn't need a per-task
-// task object — only the component name that just deployed.
-func (s *dispatchService) resolveExternalURL(ctx context.Context, orgID, projectID, componentName string) string {
-	list, err := s.componentSvc.ListDeployments(ctx, orgID, projectID, k8sname.ToK8sName(componentName))
-	if err != nil {
-		slog.WarnContext(ctx, "announce dep deployed: list deployments failed",
-			"project", projectID, "component", componentName, "error", err)
-		return ""
-	}
-	return firstExternalURL(list)
-}
-
 // DependencyEndpoint is one row used by resolveDependencyEndpoints — the
 // dispatch-time §1.3 invariant guard ("every dep this task lists has a
 // non-empty external URL"). The URL handoff to the SPA now flows through

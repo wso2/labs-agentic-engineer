@@ -26,11 +26,8 @@ import (
 
 	"github.com/wso2/asdlc/asdlc-service/config"
 	"github.com/wso2/asdlc/asdlc-service/controllers"
-	"github.com/wso2/asdlc/asdlc-service/internal/credentials"
-	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/component"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/design"
-	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/idp"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/organization"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/orgcreds"
@@ -80,34 +77,17 @@ type AppParams struct {
 	// unverified claim extraction — gated by IsLocalDevEnv.
 	ThunderJWKS *jwtassertion.JWKSCache
 
-	// --- Folded in from git-service after WS0.1.i ----------------------
-	// Controllers + services for the repo / git-ops / credential surfaces
-	// the standalone git-service used to expose. Wired onto the same
-	// outer mux but under separate sub-routers so JWT verification
-	// matches the original audience expectations (Service JWT for
-	// /api/v1/repos + /internal/credentials, Task JWT for
-	// /api/v1/credentials/refresh).
+	// --- Folded in from git-service ------------------------------------
+	// What remains after the dead repo / git-ops / artifacts / credential
+	// HTTP routes were removed: their callers use the gitrepo + artifacts
+	// packages in-process, so only the runner-facing and agents-facing
+	// surfaces stay. CredService + AnthropicCredService + DB also back the
+	// local-dev SM-API resync helper (testSMAPIResyncHandler).
 	DB                   *gorm.DB
-	RepoCtrl             gitrepo.RepoController
-	GitOpsCtrl           gitrepo.GitOpsController
-	IssueCtrl            gitrepo.IssueController
-	GitProjectCtrl       gitrepo.GitProjectController
-	BranchCtrl           gitrepo.BranchController
-	PullRequestCtrl      gitrepo.PullRequestController
-	WebhookRegCtrl       gitrepo.WebhookRegistrationController
-	ArtifactCtrl         artifacts.ArtifactController
 	CredCtrl             orgcreds.CredentialsRefreshController
-	RepoBoardCtrl        gitrepo.RepoBoardController
-	RepoService          gitrepo.RepoService
-	RepoRepo             repositories.RepoRepository
 	CredService          *orgcreds.CredentialService
-	BuildCredService     *orgcreds.BuildCredentialsService
 	AnthropicCredService *orgcreds.AnthropicCredentialService
-	Validator            *credentials.Validator
 
-	// ServiceJWT verifies User/Service JWTs presented to /api/v1/repos/* and
-	// /internal/credentials/*. JWKS resolves to Thunder.
-	ServiceJWT jwtassertion.Middleware
 	// TaskJWT verifies Task JWTs presented to /api/v1/credentials/refresh.
 	// JWKS resolves to the BFF's /auth/external/jwks.json.
 	TaskJWT jwtassertion.Middleware
@@ -233,73 +213,25 @@ func NewHandler(params AppParams) http.Handler {
 		registerConnectCallbackRoute(mux, params.OrgGitHubController)
 	}
 
-	// --- Git-service-side routes (folded in after WS0.1.i) -------------
-	// Wired onto a dedicated git-service mux to keep their auth posture
-	// (Service JWT for /api/v1/repos + /internal/credentials, Task JWT
-	// for /api/v1/credentials/refresh) decoupled from the BFF's User
-	// JWT path. The dedicated mux is mounted at the outer mux so its
-	// middleware chain is independent from the User-JWT-gated /api/.
-	gsMux := http.NewServeMux()
-	// repoScope is the repo+project Service-JWT binding (RequireOrgScope —
-	// validates {orgId}/{projectId}, 404s a cross-org pair, binds a
-	// Service-JWT Caller). nil in dev/test where no RepoRepository is wired;
-	// the ServiceRouter then degrades RepoScoped to a no-op wrap.
-	var repoScope func(http.Handler) http.Handler
-	if params.RepoRepo != nil {
-		repoScope = middleware.RequireOrgScope(params.RepoRepo)
-	}
-	// gsRouter is the typed Service-JWT router (allowlist-by-construction):
-	// every gsMux route registers via RepoScoped / OrgScoped / Public.
-	gsRouter := NewServiceRouter(gsMux, repoScope)
-	if params.RepoCtrl != nil {
-		registerRepoOnlyRoutes(gsRouter,
-			params.RepoCtrl,
-			params.GitOpsCtrl,
-			params.IssueCtrl,
-			params.BranchCtrl,
-			params.PullRequestCtrl,
-			params.WebhookRegCtrl,
-			params.ArtifactCtrl,
-		)
-	}
-	if params.CredService != nil {
-		registerCredentialsInternalRoutes(gsRouter, params.CredService, params.BuildCredService, params.Validator)
-	}
+	// --- Surfaces retained from the git-service fold -------------------
+	// The repo / git-ops / artifacts / credential HTTP routes that came
+	// over from the standalone git-service were removed (callers use the
+	// gitrepo + artifacts packages in-process). Two server-to-server
+	// surfaces remain, each with its own auth posture independent of the
+	// User-JWT-gated /api/ subtree.
+
+	// agents-service resolves the per-org Anthropic key here WITHOUT a
+	// Service JWT (its cloud release-binding carries no SERVICE_AUTH_GIT_*
+	// envs). Mounted unauthenticated on the outer mux.
 	if params.AnthropicCredService != nil {
-		registerAnthropicCredentialsRoutes(gsRouter, params.AnthropicCredService)
-		// agents-service calls /effective-key without a Service JWT
-		// (matches cloud release-binding which carries no
-		// SERVICE_AUTH_GIT_* envs). Mount on the outer mux to bypass
-		// the gsMux's ServiceJWT wrapper.
 		registerAnthropicEffectiveKeyUnauth(mux, params.AnthropicCredService)
 	}
-	if params.GitProjectCtrl != nil {
-		registerOrgRoutes(mux, params.GitProjectCtrl)
-	}
-	if params.RepoBoardCtrl != nil {
-		// Re-keyed to /repos/{orgId}/{projectId}/board and repo-scoped (F3).
-		// Mounted on the OUTER mux (not gsMux) as before, but routed through a
-		// ServiceRouter over that mux so the scope binding stays
-		// allowlist-by-construction. repoScope is shared with gsRouter.
-		boardRouter := NewServiceRouter(mux, repoScope)
-		registerRepoBoardRoutes(boardRouter, params.RepoBoardCtrl)
-	}
 
+	// Per-task credentials refresh — runner pods present a Task JWT
+	// (verified against the BFF's own /auth/external/jwks.json).
 	taskMux := http.NewServeMux()
 	if params.CredCtrl != nil {
 		taskMux.HandleFunc("POST /api/v1/credentials/refresh", params.CredCtrl.Refresh)
-	}
-
-	if params.ServiceJWT != nil {
-		mux.Handle("/api/v1/repos/", params.ServiceJWT(gsMux))
-		mux.Handle("/api/v1/repos", params.ServiceJWT(gsMux))
-		mux.Handle("/internal/credentials/", params.ServiceJWT(gsMux))
-		slog.Info("git-service routes mounted under Service JWT")
-	} else {
-		mux.Handle("/api/v1/repos/", gsMux)
-		mux.Handle("/api/v1/repos", gsMux)
-		mux.Handle("/internal/credentials/", gsMux)
-		slog.Warn("git-service routes mounted WITHOUT Service JWT (dev/test)")
 	}
 	if params.TaskJWT != nil {
 		mux.Handle("/api/v1/credentials/", middleware.RequireTaskBearer(params.TaskJWT)(taskMux))
