@@ -25,7 +25,6 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/wso2/asdlc/asdlc-service/config"
-	"github.com/wso2/asdlc/asdlc-service/controllers"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/component"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/design"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/idp"
@@ -54,7 +53,7 @@ type AppParams struct {
 	RequirementsController     requirements.RequirementsController
 	RequirementsChatController requirements.RequirementsChatController
 	DesignController           design.DesignController
-	TaskController             controllers.TaskController
+	TaskController             task.TaskController
 	BoardController            task.BoardController
 	ConfigController           component.ConfigController
 	CollabController           requirements.CollabController

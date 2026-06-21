@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package controllers
+package task
 
 import (
 	"context"
@@ -22,8 +22,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/wso2/asdlc/asdlc-service/internal/feature/codingagent"
-	taskfeature "github.com/wso2/asdlc/asdlc-service/internal/feature/task"
+	"github.com/wso2/asdlc/asdlc-service/internal/contracts"
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
 
@@ -31,7 +30,7 @@ import (
 // unexpected method call panics) and only implements GetTaskScoped, which is
 // the authorization seam the progress handlers must consult.
 type fakeScopedTaskService struct {
-	taskfeature.TaskService
+	TaskService
 	scoped func(orgHandle, taskID string) (*models.ComponentTask, error)
 }
 
@@ -42,18 +41,18 @@ func (f *fakeScopedTaskService) GetTaskScoped(_ context.Context, orgHandle, task
 // spyProgressService records whether the progress methods were reached. If a
 // handler authorizes correctly, these are never called for a cross-org task.
 type spyProgressService struct {
-	codingagent.ProgressService
+	ProgressReader
 	called bool
 }
 
-func (s *spyProgressService) GetAgentProgress(_ context.Context, _ string, _ int64, _ int) (*codingagent.ProgressResponse, error) {
+func (s *spyProgressService) GetAgentProgress(_ context.Context, _ string, _ int64, _ int) (*contracts.ProgressResponse, error) {
 	s.called = true
-	return &codingagent.ProgressResponse{}, nil
+	return &contracts.ProgressResponse{}, nil
 }
 
-func (s *spyProgressService) GetBuildProgress(_ context.Context, _ string, _ int64) (*codingagent.ProgressResponse, error) {
+func (s *spyProgressService) GetBuildProgress(_ context.Context, _ string, _ int64) (*contracts.ProgressResponse, error) {
 	s.called = true
-	return &codingagent.ProgressResponse{}, nil
+	return &contracts.ProgressResponse{}, nil
 }
 
 // TestProgressRoutes_CrossOrgDenied locks the IDOR fix: a caller whose JWT org
@@ -82,7 +81,7 @@ func TestProgressRoutes_CrossOrgDenied(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ts := &fakeScopedTaskService{scoped: func(orgHandle, taskID string) (*models.ComponentTask, error) {
 				// org-a does not own this task → not found (no existence leak).
-				return nil, taskfeature.ErrTaskNotFound
+				return nil, ErrTaskNotFound
 			}}
 			spy := &spyProgressService{}
 			c := &taskController{service: ts, progressSvc: spy}

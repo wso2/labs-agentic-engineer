@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package controllers
+package task
 
 import (
 	"net/http"
@@ -24,16 +24,17 @@ import (
 
 // requireOrgHandle validates the {orgHandle} path param. Returns true if
 // validation passed; on failure writes a 400 to w. orgHandle flows into
-// OpenChoreo namespace lookups, GitHub repo paths, and OpenBao keys —
-// the slug invariant is the cross-tenant fence. Thin delegate over the
-// shared httpkit.RequireSlug logic.
+// OpenChoreo namespace lookups, GitHub repo paths, and OpenBao keys — the
+// slug invariant is the cross-tenant fence. Thin delegate over the shared
+// httpkit.RequireSlug logic. (Feature-local copy mirroring the sibling
+// features; replaces the deleted flat controllers/validation.go.)
 func requireOrgHandle(w http.ResponseWriter, v string) bool {
 	return httpkit.RequireSlug(w, "orgHandle", v)
 }
 
 // requireProjectName validates the {projectName} path param. Same shape as
-// orgHandle — DNS-label-shaped slug. Used in repo paths, k8s resource
-// names, GitHub repo slugs.
+// orgHandle — DNS-label-shaped slug. Used in repo paths, k8s resource names,
+// GitHub repo slugs.
 func requireProjectName(w http.ResponseWriter, v string) bool {
 	return httpkit.RequireSlug(w, "projectName", v)
 }

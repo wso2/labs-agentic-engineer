@@ -42,7 +42,6 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/clients/secretmanagersvc/providers/secretmanagerapi"
 	"github.com/wso2/asdlc/asdlc-service/clients/thundersvc"
 	"github.com/wso2/asdlc/asdlc-service/config"
-	"github.com/wso2/asdlc/asdlc-service/controllers"
 	"github.com/wso2/asdlc/asdlc-service/database"
 	"github.com/wso2/asdlc/asdlc-service/database/migrations"
 	"github.com/wso2/asdlc/asdlc-service/internal/contracts"
@@ -904,15 +903,15 @@ func main() {
 		RequirementsController:     requirements.NewRequirementsController(requirementsService),
 		RequirementsChatController: requirements.NewRequirementsChatController(requirementsChatService),
 		DesignController:           design.NewDesignController(designService),
-		TaskController: func() controllers.TaskController {
-			tc := controllers.NewTaskController(
+		TaskController: func() task.TaskController {
+			tc := task.NewTaskController(
 				taskService,
 				dispatchSvc,
 				progressService(taskService, componentClient, observerClient, cgwClient, db),
 				componentClient,
 				taskTokens,
 			)
-			if setter, ok := tc.(controllers.SkillsServiceSetter); ok {
+			if setter, ok := tc.(task.SkillsServiceSetter); ok {
 				setter.SetSkillsService(taskSkillsSvc)
 			}
 			// WS2.4 — wire publisher cc token verifier (Thunder JWKS,
@@ -920,11 +919,11 @@ func main() {
 			// nil (local dev without platform IDP), verifier is nil and
 			// runner callbacks accept TaskJWT only.
 			if pv := authn.NewPublisherTokenVerifier(thunderJWKS, cfg.PlatformIDP.Issuer, "asdlc-publisher-"); pv != nil {
-				if setter, ok := tc.(controllers.PublisherVerifierSetter); ok {
+				if setter, ok := tc.(task.PublisherVerifierSetter); ok {
 					setter.SetPublisherVerifier(pv)
 				}
 			}
-			if setter, ok := tc.(controllers.CredentialsRefreshSetter); ok {
+			if setter, ok := tc.(task.CredentialsRefreshSetter); ok {
 				setter.SetCredentialsRefreshService(credRefreshService)
 			}
 			return tc

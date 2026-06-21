@@ -19,11 +19,11 @@ package api
 import (
 	"net/http"
 
-	"github.com/wso2/asdlc/asdlc-service/controllers"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/task"
 	"github.com/wso2/asdlc/asdlc-service/middleware"
 )
 
-func registerTaskRoutes(rt *Router, c controllers.TaskController) {
+func registerTaskRoutes(rt *Router, c task.TaskController) {
 	// Org-scoped tasks list (Phase 2 PR D — used by ReachReconciliationBanner).
 	// Supports ?status=, ?cause=, ?since= filters.
 	rt.OrgScoped("GET /api/v1/organizations/{orgHandle}/tasks", c.ListOrgTasks)
