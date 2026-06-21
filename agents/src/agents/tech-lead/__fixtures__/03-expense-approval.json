@@ -1,0 +1,14 @@
+{
+  "name": "expense-approval",
+  "difficulty": "hard",
+  "input": {
+    "projectName": "expense-approvals",
+    "spec": "Internal Expense Approval app. Employees sign in and submit expense claims (amount, category, description, date). Managers sign in, see pending claims from their team, and approve or reject them. All access is authenticated. A React web-app and a Go Expense API; the Expense API reads employee and manager details from the organisation's external corporate employee directory at runtime.",
+    "slimDesign": [
+      { "name": "expense-web", "componentType": "web-app", "language": "TypeScript / React", "dependsOn": ["expense-api"] },
+      { "name": "expense-api", "componentType": "service", "language": "Go", "dependsOn": [] }
+    ],
+    "mode": "fresh"
+  },
+  "expect": { "minItems": 2, "coverAllComponents": true }
+}

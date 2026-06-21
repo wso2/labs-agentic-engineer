@@ -1,0 +1,13 @@
+{
+  "name": "orders-inventory",
+  "difficulty": "medium",
+  "input": {
+    "projectName": "shop-backend",
+    "spec": "Build two backend services for a small shop.\n\nFunctional requirements:\n- Inventory API: GET /inventory/{sku} returns the available quantity for a SKU; POST /inventory/{sku}/adjust changes the stock level. In-memory storage.\n- Orders API: POST /orders accepts {sku, quantity}, checks availability by calling the Inventory API, and records the order when stock is sufficient; GET /orders lists recorded orders. In-memory storage.\n- The Orders API depends on the Inventory API at runtime (it calls it to check stock).\n- No user accounts or authentication — both APIs are internal for the prototype.\n\nArchitecture:\n- Two Go backend services, each exposing REST endpoints.\n- No frontend."
+  },
+  "expect": {
+    "componentsMin": 2,
+    "componentsMax": 3,
+    "expectAuthService": false
+  }
+}

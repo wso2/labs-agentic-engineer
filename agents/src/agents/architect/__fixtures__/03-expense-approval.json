@@ -1,0 +1,14 @@
+{
+  "name": "expense-approval",
+  "difficulty": "hard",
+  "input": {
+    "projectName": "expense-approvals",
+    "spec": "Build an internal Expense Approval app.\n\nFunctional requirements:\n- Employees sign in and submit expense claims (amount, category, description, date).\n- Managers sign in, see pending claims from their team, and approve or reject each claim.\n- Every action is performed by an authenticated, signed-in user — there is no public access to any data.\n- The backend looks up employee and manager details (name, email, department, reporting line) from the organisation's existing corporate employee directory API.\n\nArchitecture:\n- A web frontend (TypeScript / React) where users sign in and manage claims.\n- A backend Expense API (Go) that stores claims and enforces the approval workflow.\n- The Expense API consumes the external corporate employee directory API at runtime; that directory is not built by this project."
+  },
+  "expect": {
+    "componentsMin": 2,
+    "componentsMax": 4,
+    "expectAuthService": true,
+    "expectDependentApi": true
+  }
+}

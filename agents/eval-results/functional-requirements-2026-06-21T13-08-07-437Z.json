@@ -1,0 +1,305 @@
+{
+  "agent": "functional-requirements",
+  "model": "claude-sonnet-4-5",
+  "at": "2026-06-21T13-08-07-437Z",
+  "aggregate": {
+    "totalSamples": 9,
+    "passed": 9,
+    "passRate": 1,
+    "perFixture": [
+      {
+        "fixture": "todo",
+        "difficulty": "trivial",
+        "passed": 3,
+        "total": 3,
+        "passRate": 1
+      },
+      {
+        "fixture": "time-off",
+        "difficulty": "medium",
+        "passed": 3,
+        "total": 3,
+        "passRate": 1
+      },
+      {
+        "fixture": "checkout",
+        "difficulty": "hard",
+        "passed": 3,
+        "total": 3,
+        "passRate": 1
+      }
+    ]
+  },
+  "results": [
+    {
+      "fixture": "todo",
+      "difficulty": "trivial",
+      "sample": 1,
+      "pass": true,
+      "checks": [
+        {
+          "name": "headings-present",
+          "pass": true
+        },
+        {
+          "name": "fr-count",
+          "pass": true,
+          "detail": "got 15, expect 5..30"
+        },
+        {
+          "name": "uses-shall",
+          "pass": true
+        },
+        {
+          "name": "no-code-fences",
+          "pass": true
+        }
+      ],
+      "usage": {
+        "inputTokens": 686,
+        "outputTokens": 635
+      },
+      "ms": 11564
+    },
+    {
+      "fixture": "todo",
+      "difficulty": "trivial",
+      "sample": 2,
+      "pass": true,
+      "checks": [
+        {
+          "name": "headings-present",
+          "pass": true
+        },
+        {
+          "name": "fr-count",
+          "pass": true,
+          "detail": "got 12, expect 5..30"
+        },
+        {
+          "name": "uses-shall",
+          "pass": true
+        },
+        {
+          "name": "no-code-fences",
+          "pass": true
+        }
+      ],
+      "usage": {
+        "inputTokens": 686,
+        "outputTokens": 561
+      },
+      "ms": 9352
+    },
+    {
+      "fixture": "todo",
+      "difficulty": "trivial",
+      "sample": 3,
+      "pass": true,
+      "checks": [
+        {
+          "name": "headings-present",
+          "pass": true
+        },
+        {
+          "name": "fr-count",
+          "pass": true,
+          "detail": "got 10, expect 5..30"
+        },
+        {
+          "name": "uses-shall",
+          "pass": true
+        },
+        {
+          "name": "no-code-fences",
+          "pass": true
+        }
+      ],
+      "usage": {
+        "inputTokens": 686,
+        "outputTokens": 453
+      },
+      "ms": 8902
+    },
+    {
+      "fixture": "time-off",
+      "difficulty": "medium",
+      "sample": 1,
+      "pass": true,
+      "checks": [
+        {
+          "name": "headings-present",
+          "pass": true
+        },
+        {
+          "name": "fr-count",
+          "pass": true,
+          "detail": "got 14, expect 12..30"
+        },
+        {
+          "name": "uses-shall",
+          "pass": true
+        },
+        {
+          "name": "no-code-fences",
+          "pass": true
+        }
+      ],
+      "usage": {
+        "inputTokens": 716,
+        "outputTokens": 648
+      },
+      "ms": 11894
+    },
+    {
+      "fixture": "time-off",
+      "difficulty": "medium",
+      "sample": 2,
+      "pass": true,
+      "checks": [
+        {
+          "name": "headings-present",
+          "pass": true
+        },
+        {
+          "name": "fr-count",
+          "pass": true,
+          "detail": "got 18, expect 12..30"
+        },
+        {
+          "name": "uses-shall",
+          "pass": true
+        },
+        {
+          "name": "no-code-fences",
+          "pass": true
+        }
+      ],
+      "usage": {
+        "inputTokens": 716,
+        "outputTokens": 753
+      },
+      "ms": 13490
+    },
+    {
+      "fixture": "time-off",
+      "difficulty": "medium",
+      "sample": 3,
+      "pass": true,
+      "checks": [
+        {
+          "name": "headings-present",
+          "pass": true
+        },
+        {
+          "name": "fr-count",
+          "pass": true,
+          "detail": "got 15, expect 12..30"
+        },
+        {
+          "name": "uses-shall",
+          "pass": true
+        },
+        {
+          "name": "no-code-fences",
+          "pass": true
+        }
+      ],
+      "usage": {
+        "inputTokens": 716,
+        "outputTokens": 636
+      },
+      "ms": 12784
+    },
+    {
+      "fixture": "checkout",
+      "difficulty": "hard",
+      "sample": 1,
+      "pass": true,
+      "checks": [
+        {
+          "name": "headings-present",
+          "pass": true
+        },
+        {
+          "name": "fr-count",
+          "pass": true,
+          "detail": "got 20, expect 15..30"
+        },
+        {
+          "name": "uses-shall",
+          "pass": true
+        },
+        {
+          "name": "no-code-fences",
+          "pass": true
+        }
+      ],
+      "usage": {
+        "inputTokens": 738,
+        "outputTokens": 961
+      },
+      "ms": 17389
+    },
+    {
+      "fixture": "checkout",
+      "difficulty": "hard",
+      "sample": 2,
+      "pass": true,
+      "checks": [
+        {
+          "name": "headings-present",
+          "pass": true
+        },
+        {
+          "name": "fr-count",
+          "pass": true,
+          "detail": "got 19, expect 15..30"
+        },
+        {
+          "name": "uses-shall",
+          "pass": true
+        },
+        {
+          "name": "no-code-fences",
+          "pass": true
+        }
+      ],
+      "usage": {
+        "inputTokens": 738,
+        "outputTokens": 761
+      },
+      "ms": 13401
+    },
+    {
+      "fixture": "checkout",
+      "difficulty": "hard",
+      "sample": 3,
+      "pass": true,
+      "checks": [
+        {
+          "name": "headings-present",
+          "pass": true
+        },
+        {
+          "name": "fr-count",
+          "pass": true,
+          "detail": "got 20, expect 15..30"
+        },
+        {
+          "name": "uses-shall",
+          "pass": true
+        },
+        {
+          "name": "no-code-fences",
+          "pass": true
+        }
+      ],
+      "usage": {
+        "inputTokens": 738,
+        "outputTokens": 950
+      },
+      "ms": 17145
+    }
+  ]
+}

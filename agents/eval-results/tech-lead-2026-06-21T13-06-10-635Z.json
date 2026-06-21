@@ -1,0 +1,269 @@
+{
+  "agent": "tech-lead",
+  "model": "claude-sonnet-4-5",
+  "at": "2026-06-21T13-06-10-635Z",
+  "aggregate": {
+    "totalSamples": 9,
+    "passed": 9,
+    "passRate": 1,
+    "perFixture": [
+      {
+        "fixture": "status-api",
+        "difficulty": "trivial",
+        "passed": 3,
+        "total": 3,
+        "passRate": 1
+      },
+      {
+        "fixture": "orders-inventory",
+        "difficulty": "medium",
+        "passed": 3,
+        "total": 3,
+        "passRate": 1
+      },
+      {
+        "fixture": "expense-approval",
+        "difficulty": "hard",
+        "passed": 3,
+        "total": 3,
+        "passRate": 1
+      }
+    ]
+  },
+  "results": [
+    {
+      "fixture": "status-api",
+      "difficulty": "trivial",
+      "sample": 1,
+      "pass": true,
+      "checks": [
+        {
+          "name": "min-items",
+          "pass": true,
+          "detail": "got 1, min 1"
+        },
+        {
+          "name": "validator-clean",
+          "pass": true
+        },
+        {
+          "name": "covers-all-components",
+          "pass": true
+        }
+      ],
+      "usage": {
+        "inputTokens": 1218,
+        "outputTokens": 54
+      },
+      "ms": 2564
+    },
+    {
+      "fixture": "status-api",
+      "difficulty": "trivial",
+      "sample": 2,
+      "pass": true,
+      "checks": [
+        {
+          "name": "min-items",
+          "pass": true,
+          "detail": "got 1, min 1"
+        },
+        {
+          "name": "validator-clean",
+          "pass": true
+        },
+        {
+          "name": "covers-all-components",
+          "pass": true
+        }
+      ],
+      "usage": {
+        "inputTokens": 1218,
+        "outputTokens": 55
+      },
+      "ms": 2514
+    },
+    {
+      "fixture": "status-api",
+      "difficulty": "trivial",
+      "sample": 3,
+      "pass": true,
+      "checks": [
+        {
+          "name": "min-items",
+          "pass": true,
+          "detail": "got 1, min 1"
+        },
+        {
+          "name": "validator-clean",
+          "pass": true
+        },
+        {
+          "name": "covers-all-components",
+          "pass": true
+        }
+      ],
+      "usage": {
+        "inputTokens": 1218,
+        "outputTokens": 55
+      },
+      "ms": 2622
+    },
+    {
+      "fixture": "orders-inventory",
+      "difficulty": "medium",
+      "sample": 1,
+      "pass": true,
+      "checks": [
+        {
+          "name": "min-items",
+          "pass": true,
+          "detail": "got 2, min 2"
+        },
+        {
+          "name": "validator-clean",
+          "pass": true
+        },
+        {
+          "name": "covers-all-components",
+          "pass": true
+        }
+      ],
+      "usage": {
+        "inputTokens": 1276,
+        "outputTokens": 109
+      },
+      "ms": 4218
+    },
+    {
+      "fixture": "orders-inventory",
+      "difficulty": "medium",
+      "sample": 2,
+      "pass": true,
+      "checks": [
+        {
+          "name": "min-items",
+          "pass": true,
+          "detail": "got 2, min 2"
+        },
+        {
+          "name": "validator-clean",
+          "pass": true
+        },
+        {
+          "name": "covers-all-components",
+          "pass": true
+        }
+      ],
+      "usage": {
+        "inputTokens": 1276,
+        "outputTokens": 97
+      },
+      "ms": 5632
+    },
+    {
+      "fixture": "orders-inventory",
+      "difficulty": "medium",
+      "sample": 3,
+      "pass": true,
+      "checks": [
+        {
+          "name": "min-items",
+          "pass": true,
+          "detail": "got 2, min 2"
+        },
+        {
+          "name": "validator-clean",
+          "pass": true
+        },
+        {
+          "name": "covers-all-components",
+          "pass": true
+        }
+      ],
+      "usage": {
+        "inputTokens": 1276,
+        "outputTokens": 97
+      },
+      "ms": 2885
+    },
+    {
+      "fixture": "expense-approval",
+      "difficulty": "hard",
+      "sample": 1,
+      "pass": true,
+      "checks": [
+        {
+          "name": "min-items",
+          "pass": true,
+          "detail": "got 2, min 2"
+        },
+        {
+          "name": "validator-clean",
+          "pass": true
+        },
+        {
+          "name": "covers-all-components",
+          "pass": true
+        }
+      ],
+      "usage": {
+        "inputTokens": 1276,
+        "outputTokens": 134
+      },
+      "ms": 4459
+    },
+    {
+      "fixture": "expense-approval",
+      "difficulty": "hard",
+      "sample": 2,
+      "pass": true,
+      "checks": [
+        {
+          "name": "min-items",
+          "pass": true,
+          "detail": "got 2, min 2"
+        },
+        {
+          "name": "validator-clean",
+          "pass": true
+        },
+        {
+          "name": "covers-all-components",
+          "pass": true
+        }
+      ],
+      "usage": {
+        "inputTokens": 1276,
+        "outputTokens": 144
+      },
+      "ms": 5796
+    },
+    {
+      "fixture": "expense-approval",
+      "difficulty": "hard",
+      "sample": 3,
+      "pass": true,
+      "checks": [
+        {
+          "name": "min-items",
+          "pass": true,
+          "detail": "got 2, min 2"
+        },
+        {
+          "name": "validator-clean",
+          "pass": true
+        },
+        {
+          "name": "covers-all-components",
+          "pass": true
+        }
+      ],
+      "usage": {
+        "inputTokens": 1276,
+        "outputTokens": 146
+      },
+      "ms": 4420
+    }
+  ]
+}

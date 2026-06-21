@@ -17,24 +17,12 @@
  */
 
 import type express from "express";
-import { streamText, stepCountIs } from "ai";
-import { createAnthropic } from "@ai-sdk/anthropic";
-import { config } from "../../shared/config.js";
+import { type LanguageModel } from "ai";
 import { ArchitectInput } from "../../agents/architect/schema.js";
-import {
-  systemPrompt,
-  buildUserPrompt,
-} from "../../agents/architect/prompt.js";
-import { DesignDoc } from "../../agents/architect/doc.js";
-import {
-  buildTools,
-  type SseSink,
-  type FinalizeResolver,
-} from "../../agents/architect/tools.js";
-import {
-  resolveAnthropicKey,
-  AnthropicKeyError,
-} from "../../shared/anthropic-key-resolver.js";
+import { runArchitect } from "../../agents/architect/run.js";
+import type { SseSink, FinalizeResolver } from "../../agents/architect/tools.js";
+import { AnthropicKeyError } from "../../shared/anthropic-key-resolver.js";
+import { resolveModelForOrg } from "../../shared/model.js";
 import { getOrgId } from "../../middleware/org-id.js";
 
 function writeFrame(res: express.Response, frame: unknown): void {
@@ -50,9 +38,9 @@ export function registerArchitect(app: express.Express) {
     }
 
     const orgId = getOrgId(res);
-    let anthropicApiKey: string;
+    let model: LanguageModel;
     try {
-      anthropicApiKey = (await resolveAnthropicKey(orgId)).key;
+      model = await resolveModelForOrg(orgId);
     } catch (err) {
       if (err instanceof AnthropicKeyError) {
         res.status(err.status).json({ error: err.message, code: err.code });
@@ -60,7 +48,6 @@ export function registerArchitect(app: express.Express) {
       }
       throw err;
     }
-    const anthropic = createAnthropic({ apiKey: anthropicApiKey });
 
     console.log(
       `[architect] streaming orgId=${orgId} (spec ${parsed.data.spec.length} chars, incremental=${parsed.data.previousDesign ? "yes" : "no"})`,
@@ -80,13 +67,13 @@ export function registerArchitect(app: express.Express) {
     });
 
     // Prevent OC API gateway idle-timeout from dropping the SSE connection
-    // while waiting for Anthropic. SSE comments are forwarded by the BFF and
+    // while waiting for the model. SSE comments are forwarded by the BFF and
     // ignored by browser SSE parsers.
     const keepAlive = setInterval(() => {
       if (!res.writableEnded) res.write(": keep-alive\n\n");
     }, 15_000);
 
-    const sse: SseSink = {
+    const sink: SseSink = {
       send(event, data) {
         if (res.writableEnded) return;
         writeFrame(res, { type: `data-${event}`, data });
@@ -105,38 +92,18 @@ export function registerArchitect(app: express.Express) {
       },
     };
 
-    const doc = DesignDoc.fromPrevious(parsed.data.previousDesign);
-    const tools = buildTools(doc, sse, finalizer, parsed.data.wireframes ?? {});
-
     try {
-      const result = streamText({
-        model: anthropic(config.model),
-        system: systemPrompt,
-        prompt: buildUserPrompt(parsed.data, doc),
-        tools,
-        // 64-step runaway-loop guard. finalize() is the real terminator.
-        stopWhen: stepCountIs(64),
+      const { finalized } = await runArchitect({
+        model,
+        input: parsed.data,
+        sink,
+        finalizer,
         abortSignal: abortController.signal,
-        onError: ({ error }) => {
-          console.error("[architect] streamText error:", error);
-        },
-        onFinish: (ev) => {
-          console.log(
-            `[architect] finish=${ev.finishReason} steps=${ev.steps?.length ?? 0} in=${ev.usage?.inputTokens ?? 0} out=${ev.usage?.outputTokens ?? 0}`,
-          );
-        },
       });
-
-      // Drive the loop. Tools emit SSE events as side effects; the textStream
-      // chunks are uninteresting to us (no UI surface for the model's natural
-      // language; the design doc never shows it).
-      for await (const _chunk of result.textStream) {
-        if (res.writableEnded) break;
-      }
 
       // Loop ended without finalize() succeeding. Could be: stepCountIs hit,
       // model gave up, or upstream error. Emit error so BFF doesn't write.
-      if (!finalizer.finalized && !res.writableEnded) {
+      if (!finalized && !res.writableEnded) {
         writeFrame(res, {
           type: "error",
           errorText:
@@ -146,22 +113,15 @@ export function registerArchitect(app: express.Express) {
 
       if (!res.writableEnded) res.write("data: [DONE]\n\n");
     } catch (err) {
-      // Ignore aborts triggered by our own finalize() resolver.
-      const aborted =
-        abortController.signal.aborted &&
-        (err instanceof Error
-          ? err.name === "AbortError" || /aborted/i.test(err.message)
-          : false);
-      if (aborted && finalizer.finalized) {
-        if (!res.writableEnded) res.write("data: [DONE]\n\n");
-      } else {
-        console.error("[architect] pipe error:", err);
-        if (!res.writableEnded) {
-          writeFrame(res, {
-            type: "error",
-            errorText: err instanceof Error ? err.message : String(err),
-          });
-        }
+      // runArchitect swallows the expected finalize-abort; anything reaching
+      // here is a real error (or a client-disconnect abort, where the socket
+      // is already gone and the guarded writes simply no-op).
+      console.error("[architect] pipe error:", err);
+      if (!res.writableEnded) {
+        writeFrame(res, {
+          type: "error",
+          errorText: err instanceof Error ? err.message : String(err),
+        });
       }
     } finally {
       clearInterval(keepAlive);

@@ -17,9 +17,7 @@
  */
 
 import type express from "express";
-import { streamText, stepCountIs } from "ai";
-import { createAnthropic } from "@ai-sdk/anthropic";
-import { config } from "../../shared/config.js";
+import { streamText, stepCountIs, type LanguageModel } from "ai";
 import {
   RequirementsChatInput,
   RequirementsDoc,
@@ -29,10 +27,8 @@ import {
   type SseSink,
   type FinalizeResolver,
 } from "../../agents/requirements-chat/index.js";
-import {
-  resolveAnthropicKey,
-  AnthropicKeyError,
-} from "../../shared/anthropic-key-resolver.js";
+import { AnthropicKeyError } from "../../shared/anthropic-key-resolver.js";
+import { resolveModelForOrg } from "../../shared/model.js";
 import { getOrgId } from "../../middleware/org-id.js";
 
 function writeFrame(res: express.Response, frame: unknown): void {
@@ -48,9 +44,9 @@ export function registerRequirementsChat(app: express.Express) {
     }
 
     const orgId = getOrgId(res);
-    let anthropicApiKey: string;
+    let model: LanguageModel;
     try {
-      anthropicApiKey = (await resolveAnthropicKey(orgId)).key;
+      model = await resolveModelForOrg(orgId);
     } catch (err) {
       if (err instanceof AnthropicKeyError) {
         res.status(err.status).json({ error: err.message, code: err.code });
@@ -58,7 +54,6 @@ export function registerRequirementsChat(app: express.Express) {
       }
       throw err;
     }
-    const anthropic = createAnthropic({ apiKey: anthropicApiKey });
 
     const fileCount = Object.keys(parsed.data.files).length;
     console.log(
@@ -104,7 +99,7 @@ export function registerRequirementsChat(app: express.Express) {
 
     try {
       const result = streamText({
-        model: anthropic(config.model),
+        model,
         system: systemPrompt,
         prompt: buildUserPrompt(
           parsed.data.message,

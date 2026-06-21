@@ -1,0 +1,365 @@
+{
+  "agent": "architect",
+  "model": "claude-sonnet-4-5",
+  "at": "2026-06-21T12-46-00-716Z",
+  "aggregate": {
+    "totalSamples": 9,
+    "passed": 9,
+    "passRate": 1,
+    "perFixture": [
+      {
+        "fixture": "status-api",
+        "difficulty": "trivial",
+        "passed": 3,
+        "total": 3,
+        "passRate": 1
+      },
+      {
+        "fixture": "orders-inventory",
+        "difficulty": "medium",
+        "passed": 3,
+        "total": 3,
+        "passRate": 1
+      },
+      {
+        "fixture": "expense-approval",
+        "difficulty": "hard",
+        "passed": 3,
+        "total": 3,
+        "passRate": 1
+      }
+    ]
+  },
+  "results": [
+    {
+      "fixture": "status-api",
+      "difficulty": "trivial",
+      "sample": 1,
+      "pass": true,
+      "checks": [
+        {
+          "name": "schema-valid",
+          "pass": true
+        },
+        {
+          "name": "finalized",
+          "pass": true
+        },
+        {
+          "name": "validator-clean",
+          "pass": true
+        },
+        {
+          "name": "component-count",
+          "pass": true,
+          "detail": "got 1, expect 1..2"
+        },
+        {
+          "name": "auth-service",
+          "pass": true,
+          "detail": "hasAuthService=false, expected=false"
+        }
+      ],
+      "usage": {
+        "inputTokens": 6678,
+        "outputTokens": 454
+      },
+      "ms": 25903
+    },
+    {
+      "fixture": "status-api",
+      "difficulty": "trivial",
+      "sample": 2,
+      "pass": true,
+      "checks": [
+        {
+          "name": "schema-valid",
+          "pass": true
+        },
+        {
+          "name": "finalized",
+          "pass": true
+        },
+        {
+          "name": "validator-clean",
+          "pass": true
+        },
+        {
+          "name": "component-count",
+          "pass": true,
+          "detail": "got 1, expect 1..2"
+        },
+        {
+          "name": "auth-service",
+          "pass": true,
+          "detail": "hasAuthService=false, expected=false"
+        }
+      ],
+      "usage": {
+        "inputTokens": 6651,
+        "outputTokens": 406
+      },
+      "ms": 17973
+    },
+    {
+      "fixture": "status-api",
+      "difficulty": "trivial",
+      "sample": 3,
+      "pass": true,
+      "checks": [
+        {
+          "name": "schema-valid",
+          "pass": true
+        },
+        {
+          "name": "finalized",
+          "pass": true
+        },
+        {
+          "name": "validator-clean",
+          "pass": true
+        },
+        {
+          "name": "component-count",
+          "pass": true,
+          "detail": "got 1, expect 1..2"
+        },
+        {
+          "name": "auth-service",
+          "pass": true,
+          "detail": "hasAuthService=false, expected=false"
+        }
+      ],
+      "usage": {
+        "inputTokens": 6717,
+        "outputTokens": 429
+      },
+      "ms": 20163
+    },
+    {
+      "fixture": "orders-inventory",
+      "difficulty": "medium",
+      "sample": 1,
+      "pass": true,
+      "checks": [
+        {
+          "name": "schema-valid",
+          "pass": true
+        },
+        {
+          "name": "finalized",
+          "pass": true
+        },
+        {
+          "name": "validator-clean",
+          "pass": true
+        },
+        {
+          "name": "component-count",
+          "pass": true,
+          "detail": "got 2, expect 2..3"
+        },
+        {
+          "name": "auth-service",
+          "pass": true,
+          "detail": "hasAuthService=false, expected=false"
+        }
+      ],
+      "usage": {
+        "inputTokens": 7434,
+        "outputTokens": 1304
+      },
+      "ms": 40037
+    },
+    {
+      "fixture": "orders-inventory",
+      "difficulty": "medium",
+      "sample": 2,
+      "pass": true,
+      "checks": [
+        {
+          "name": "schema-valid",
+          "pass": true
+        },
+        {
+          "name": "finalized",
+          "pass": true
+        },
+        {
+          "name": "validator-clean",
+          "pass": true
+        },
+        {
+          "name": "component-count",
+          "pass": true,
+          "detail": "got 2, expect 2..3"
+        },
+        {
+          "name": "auth-service",
+          "pass": true,
+          "detail": "hasAuthService=false, expected=false"
+        }
+      ],
+      "usage": {
+        "inputTokens": 7389,
+        "outputTokens": 1209
+      },
+      "ms": 34272
+    },
+    {
+      "fixture": "orders-inventory",
+      "difficulty": "medium",
+      "sample": 3,
+      "pass": true,
+      "checks": [
+        {
+          "name": "schema-valid",
+          "pass": true
+        },
+        {
+          "name": "finalized",
+          "pass": true
+        },
+        {
+          "name": "validator-clean",
+          "pass": true
+        },
+        {
+          "name": "component-count",
+          "pass": true,
+          "detail": "got 2, expect 2..3"
+        },
+        {
+          "name": "auth-service",
+          "pass": true,
+          "detail": "hasAuthService=false, expected=false"
+        }
+      ],
+      "usage": {
+        "inputTokens": 7615,
+        "outputTokens": 1551
+      },
+      "ms": 40841
+    },
+    {
+      "fixture": "expense-approval",
+      "difficulty": "hard",
+      "sample": 1,
+      "pass": true,
+      "checks": [
+        {
+          "name": "schema-valid",
+          "pass": true
+        },
+        {
+          "name": "finalized",
+          "pass": true
+        },
+        {
+          "name": "validator-clean",
+          "pass": true
+        },
+        {
+          "name": "component-count",
+          "pass": true,
+          "detail": "got 2, expect 2..4"
+        },
+        {
+          "name": "auth-service",
+          "pass": true,
+          "detail": "hasAuthService=true, expected=true"
+        },
+        {
+          "name": "dependent-api",
+          "pass": true,
+          "detail": "hasDependentApi=true, expected=true"
+        }
+      ],
+      "usage": {
+        "inputTokens": 9976,
+        "outputTokens": 620
+      },
+      "ms": 77635
+    },
+    {
+      "fixture": "expense-approval",
+      "difficulty": "hard",
+      "sample": 2,
+      "pass": true,
+      "checks": [
+        {
+          "name": "schema-valid",
+          "pass": true
+        },
+        {
+          "name": "finalized",
+          "pass": true
+        },
+        {
+          "name": "validator-clean",
+          "pass": true
+        },
+        {
+          "name": "component-count",
+          "pass": true,
+          "detail": "got 2, expect 2..4"
+        },
+        {
+          "name": "auth-service",
+          "pass": true,
+          "detail": "hasAuthService=true, expected=true"
+        },
+        {
+          "name": "dependent-api",
+          "pass": true,
+          "detail": "hasDependentApi=true, expected=true"
+        }
+      ],
+      "usage": {
+        "inputTokens": 10400,
+        "outputTokens": 644
+      },
+      "ms": 78269
+    },
+    {
+      "fixture": "expense-approval",
+      "difficulty": "hard",
+      "sample": 3,
+      "pass": true,
+      "checks": [
+        {
+          "name": "schema-valid",
+          "pass": true
+        },
+        {
+          "name": "finalized",
+          "pass": true
+        },
+        {
+          "name": "validator-clean",
+          "pass": true
+        },
+        {
+          "name": "component-count",
+          "pass": true,
+          "detail": "got 2, expect 2..4"
+        },
+        {
+          "name": "auth-service",
+          "pass": true,
+          "detail": "hasAuthService=true, expected=true"
+        },
+        {
+          "name": "dependent-api",
+          "pass": true,
+          "detail": "hasDependentApi=true, expected=true"
+        }
+      ],
+      "usage": {
+        "inputTokens": 10572,
+        "outputTokens": 680
+      },
+      "ms": 87093
+    }
+  ]
+}

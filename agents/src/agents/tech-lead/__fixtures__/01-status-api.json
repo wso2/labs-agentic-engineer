@@ -1,0 +1,13 @@
+{
+  "name": "status-api",
+  "difficulty": "trivial",
+  "input": {
+    "projectName": "status-service",
+    "spec": "A public Status API. GET /status returns the service name, a version string, and uptime in seconds. GET /health returns 200 when up. Single Go service, in-memory, no authentication.",
+    "slimDesign": [
+      { "name": "status-api", "componentType": "service", "language": "Go", "dependsOn": [] }
+    ],
+    "mode": "fresh"
+  },
+  "expect": { "minItems": 1, "coverAllComponents": true }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "checkout",
+  "difficulty": "hard",
+  "input": {
+    "sources": {
+      "requirements.md": "# Overview\nAn online store checkout for shoppers buying physical goods.\n\n# Personas\n- Shopper — browses products, builds a cart, and pays.\n- Store admin — manages the product catalog and views orders.\n\n# Features\n- A shopper browses the product catalog.\n- A shopper adds and removes items in a cart.\n- A shopper enters a shipping address and pays for an order.\n- A shopper sees an order confirmation and their order history.\n- An admin adds, edits, and removes products.\n- An admin views placed orders and updates their status.\n"
+    }
+  },
+  "expect": { "frMin": 15, "frMax": 30 }
+}

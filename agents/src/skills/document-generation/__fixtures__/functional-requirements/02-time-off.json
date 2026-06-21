@@ -1,0 +1,10 @@
+{
+  "name": "time-off",
+  "difficulty": "medium",
+  "input": {
+    "sources": {
+      "requirements.md": "# Overview\nA time-off request app for a small company.\n\n# Personas\n- Employee — requests time off and checks their remaining balance.\n- Manager — reviews and approves or rejects requests from their team.\n\n# Features\n- An employee requests time off for specific dates.\n- An employee sees how much leave they have left.\n- A manager sees pending requests from their team.\n- A manager approves or rejects a request.\n- Everyone sees the status of their own requests.\n"
+    }
+  },
+  "expect": { "frMin": 12, "frMax": 30 }
+}

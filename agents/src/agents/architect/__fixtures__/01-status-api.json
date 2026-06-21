@@ -1,0 +1,13 @@
+{
+  "name": "status-api",
+  "difficulty": "trivial",
+  "input": {
+    "projectName": "status-service",
+    "spec": "Build a small public Status API.\n\nFunctional requirements:\n- A GET /status endpoint returns the service name, a version string, and current uptime in seconds.\n- A GET /health endpoint returns 200 when the service is up.\n- No user accounts and no authentication — the API is fully public.\n\nArchitecture:\n- A single backend service written in Go exposing REST endpoints.\n- No database; uptime is computed from process start time in memory."
+  },
+  "expect": {
+    "componentsMin": 1,
+    "componentsMax": 2,
+    "expectAuthService": false
+  }
+}

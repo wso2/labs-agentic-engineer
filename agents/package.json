@@ -3,11 +3,15 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "start": "tsx src/index.ts",
+    "dev": "tsx watch src/server/index.ts",
+    "start": "tsx src/server/index.ts",
     "serve": "tsx src/server/index.ts",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/**/*.test.ts"
+    "test": "tsx --test \"src/**/*.test.ts\"",
+    "eval": "tsx --test \"src/**/*.eval.ts\"",
+    "eval:architect": "tsx --test \"src/agents/architect/*.eval.ts\"",
+    "eval:tech-lead": "tsx --test \"src/agents/tech-lead/*.eval.ts\"",
+    "eval:functional-requirements": "tsx --test \"src/skills/document-generation/functional-requirements.eval.ts\""
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.71",

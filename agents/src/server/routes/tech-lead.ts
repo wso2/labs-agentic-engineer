@@ -18,32 +18,22 @@
 
 import type express from "express";
 import { z } from "zod";
-import { streamObject, streamText } from "ai";
-import { createAnthropic, type AnthropicProvider } from "@ai-sdk/anthropic";
-import { config } from "../../shared/config.js";
-import {
-  resolveAnthropicKey,
-  AnthropicKeyError,
-} from "../../shared/anthropic-key-resolver.js";
+import { streamText, type LanguageModel } from "ai";
+import { AnthropicKeyError } from "../../shared/anthropic-key-resolver.js";
+import { resolveModelForOrg } from "../../shared/model.js";
 import { getOrgId } from "../../middleware/org-id.js";
 import {
-  PlanArraySchema,
-  PlanItemSchema,
   TechLeadPlanInput,
   TechLeadDetailInput,
-  type PlanItem,
 } from "../../agents/tech-lead/schema.js";
 import {
-  planSystemPrompt,
   detailSystemPrompt,
-  buildPlanUserPrompt,
   buildDetailUserPrompt,
 } from "../../agents/tech-lead/prompt.js";
 import {
-  validatePlan,
-  type DiffContext,
-  type PlanItemWithTempId,
-} from "../../agents/tech-lead/validator.js";
+  runTechLeadPlan,
+  MalformedPlanItemError,
+} from "../../agents/tech-lead/run.js";
 
 function writeFrame(res: express.Response, frame: unknown): void {
   if (res.writableEnded) return;
@@ -99,9 +89,9 @@ export function registerTechLeadPlan(app: express.Express) {
     }
 
     const orgId = getOrgId(res);
-    let anthropic: AnthropicProvider;
+    let model: LanguageModel;
     try {
-      anthropic = createAnthropic({ apiKey: (await resolveAnthropicKey(orgId)).key });
+      model = await resolveModelForOrg(orgId);
     } catch (err) {
       if (err instanceof AnthropicKeyError) {
         res.status(err.status).json({ error: err.message, code: err.code });
@@ -115,112 +105,51 @@ export function registerTechLeadPlan(app: express.Express) {
     );
 
     const { abortController, keepAlive } = setupSse(res);
-    const diffCtx: DiffContext | undefined = parsed.data.diff;
 
     try {
-      const result = streamObject({
-        model: anthropic(config.model),
-        system: planSystemPrompt,
-        prompt: buildPlanUserPrompt(parsed.data),
-        schema: PlanArraySchema,
+      const { items, issues } = await runTechLeadPlan({
+        model,
+        input: parsed.data,
+        diff: parsed.data.diff,
+        onSealed: (item) =>
+          writeFrame(res, { type: "data-plan-item", data: item }),
+        isClosed: () => res.writableEnded,
         abortSignal: abortController.signal,
-        onError: ({ error }) => {
-          console.error("[tech-lead/plan] streamObject error:", error);
-        },
       });
 
-      // Seal-rule emitter (design §4): emit element i when partial array length
-      // ≥ i+2 (so element i is no longer the trailing one being typed). Every
-      // sealed element is `safeParse`-d for the full PlanItem shape.
-      const sealed: PlanItemWithTempId[] = [];
-      let sealedThrough = -1;
-
-      for await (const partial of result.partialObjectStream) {
-        if (res.writableEnded) break;
-        if (!Array.isArray(partial)) continue;
-        const sealedTo = partial.length - 2;
-        for (let i = sealedThrough + 1; i <= sealedTo; i++) {
-          const parsedItem = PlanItemSchema.safeParse(partial[i]);
-          if (!parsedItem.success) {
-            writeFrame(res, {
-              type: "error",
-              data: {
-                scope: "plan",
-                code: "malformed-plan-item",
-                index: i,
-                issues: parsedItem.error.format(),
-              },
-            });
-            return;
-          }
-          const tempId = `p-${i}`;
-          const item: PlanItemWithTempId = { tempId, ...parsedItem.data };
-          sealed.push(item);
-          sealedThrough = i;
-          writeFrame(res, {
-            type: "data-plan-item",
-            data: item,
-          });
-        }
-      }
-
-      // Stream ended — flush the trailing element (if any).
-      const final = await result.object;
-      for (let i = sealedThrough + 1; i < final.length; i++) {
-        const parsedItem = PlanItemSchema.safeParse(final[i]);
-        if (!parsedItem.success) {
-          writeFrame(res, {
-            type: "error",
-            data: {
-              scope: "plan",
-              code: "malformed-plan-item",
-              index: i,
-              issues: parsedItem.error.format(),
-            },
-          });
-          return;
-        }
-        const tempId = `p-${i}`;
-        const item: PlanItemWithTempId = { tempId, ...parsedItem.data };
-        sealed.push(item);
-        writeFrame(res, { type: "data-plan-item", data: item });
-      }
-
-      // Validator pass.
-      const issues = validatePlan({
-        items: sealed,
-        design: parsed.data.slimDesign,
-        existingTasks: parsed.data.existingTasks ?? [],
-        mode: parsed.data.mode,
-        diff: diffCtx,
-      });
       if (issues.length > 0) {
-        writeFrame(res, {
-          type: "error",
-          data: { scope: "plan", issues },
-        });
+        writeFrame(res, { type: "error", data: { scope: "plan", issues } });
         return;
       }
 
-      writeFrame(res, {
-        type: "data-plan-complete",
-        data: { items: sealed },
-      });
+      writeFrame(res, { type: "data-plan-complete", data: { items } });
     } catch (err) {
-      const aborted =
-        abortController.signal.aborted &&
-        (err instanceof Error
-          ? err.name === "AbortError" || /aborted/i.test(err.message)
-          : false);
-      if (!aborted) {
-        console.error("[tech-lead/plan] error:", err);
+      if (err instanceof MalformedPlanItemError) {
         writeFrame(res, {
           type: "error",
           data: {
             scope: "plan",
-            errorText: err instanceof Error ? err.message : String(err),
+            code: "malformed-plan-item",
+            index: err.index,
+            issues: err.issues,
           },
         });
+      } else {
+        const aborted =
+          abortController.signal.aborted &&
+          (err instanceof Error
+            ? err.name === "AbortError" || /aborted/i.test(err.message)
+            : false);
+        if (!aborted) {
+          console.error("[tech-lead/plan] error:", err);
+          writeFrame(res, {
+            type: "error",
+            data: {
+              scope: "plan",
+              errorText: err instanceof Error ? err.message : String(err),
+            },
+          });
+        }
       }
     } finally {
       clearInterval(keepAlive);
@@ -251,9 +180,9 @@ export function registerTechLeadDetail(app: express.Express) {
     }
 
     const orgId = getOrgId(res);
-    let anthropic: AnthropicProvider;
+    let model: LanguageModel;
     try {
-      anthropic = createAnthropic({ apiKey: (await resolveAnthropicKey(orgId)).key });
+      model = await resolveModelForOrg(orgId);
     } catch (err) {
       if (err instanceof AnthropicKeyError) {
         res.status(err.status).json({ error: err.message, code: err.code });
@@ -284,7 +213,7 @@ export function registerTechLeadDetail(app: express.Express) {
           data.spec,
           item,
           abortController,
-          anthropic,
+          model,
         );
         await runNext();
       }
@@ -324,7 +253,7 @@ async function runDetailForItem(
   spec: string,
   item: TechLeadDetailInput["items"][number],
   abortController: AbortController,
-  anthropic: AnthropicProvider,
+  model: LanguageModel,
 ): Promise<void> {
   if (res.writableEnded) return;
 
@@ -345,7 +274,7 @@ async function runDetailForItem(
 
   try {
     const result = streamText({
-      model: anthropic(config.model),
+      model,
       system: detailSystemPrompt,
       prompt,
       abortSignal: abortController.signal,

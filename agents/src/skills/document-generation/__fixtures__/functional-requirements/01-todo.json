@@ -1,0 +1,10 @@
+{
+  "name": "todo",
+  "difficulty": "trivial",
+  "input": {
+    "sources": {
+      "requirements.md": "# Overview\nA simple personal to-do app for one person to keep track of their tasks.\n\n# Personas\n- User — adds, completes, and removes their own tasks.\n\n# Features\n- Add a task with a title.\n- See the list of all tasks.\n- Mark a task as done or not done.\n- Delete a task.\n"
+    }
+  },
+  "expect": { "frMin": 5, "frMax": 30 }
+}

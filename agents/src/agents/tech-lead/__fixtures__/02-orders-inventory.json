@@ -1,0 +1,14 @@
+{
+  "name": "orders-inventory",
+  "difficulty": "medium",
+  "input": {
+    "projectName": "shop-backend",
+    "spec": "Two Go backend services. Inventory API: GET /inventory/{sku} returns available quantity; POST /inventory/{sku}/adjust changes stock. Orders API: POST /orders accepts {sku, quantity}, calls the Inventory API to check stock, records the order when sufficient; GET /orders lists orders. In-memory storage, no authentication. The Orders API depends on the Inventory API at runtime.",
+    "slimDesign": [
+      { "name": "inventory-api", "componentType": "service", "language": "Go", "dependsOn": [] },
+      { "name": "orders-api", "componentType": "service", "language": "Go", "dependsOn": ["inventory-api"] }
+    ],
+    "mode": "fresh"
+  },
+  "expect": { "minItems": 2, "coverAllComponents": true }
+}

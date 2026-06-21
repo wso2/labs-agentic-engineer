@@ -88,8 +88,8 @@ function asdlcApiUrl(): string {
  * when no key is configured (org row absent AND platform env empty) or
  * when the resolver itself is unreachable / returns a non-2xx.
  *
- * The returned key is used inline by `createAnthropic({ apiKey: key })`
- * — see shared/create-agent.ts. It is never logged.
+ * The returned key is consumed by `createModel({ apiKey: key })`
+ * — see shared/model.ts. It is never logged.
  */
 export async function resolveAnthropicKey(
   ocOrgId: string,

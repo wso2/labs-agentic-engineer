@@ -18,14 +18,10 @@
 
 import type express from "express";
 import { z } from "zod";
-import { streamText } from "ai";
-import { createAnthropic } from "@ai-sdk/anthropic";
-import { config } from "../../shared/config.js";
+import { streamText, type LanguageModel } from "ai";
 import { getDocumentGenerationSkill } from "../../skills/document-generation/index.js";
-import {
-  resolveAnthropicKey,
-  AnthropicKeyError,
-} from "../../shared/anthropic-key-resolver.js";
+import { AnthropicKeyError } from "../../shared/anthropic-key-resolver.js";
+import { resolveModelForOrg } from "../../shared/model.js";
 import { getOrgId } from "../../middleware/org-id.js";
 
 const RequestBody = z.object({
@@ -71,9 +67,9 @@ export function registerDocumentGeneration(app: express.Express) {
       });
 
       const orgId = getOrgId(res);
-      let anthropicApiKey: string;
+      let model: LanguageModel;
       try {
-        anthropicApiKey = (await resolveAnthropicKey(orgId)).key;
+        model = await resolveModelForOrg(orgId);
       } catch (err) {
         if (err instanceof AnthropicKeyError) {
           res.status(err.status).json({ error: err.message, code: err.code });
@@ -81,7 +77,6 @@ export function registerDocumentGeneration(app: express.Express) {
         }
         throw err;
       }
-      const anthropic = createAnthropic({ apiKey: anthropicApiKey });
 
       console.log(
         `[document-generation/${skillId}] streaming orgId=${orgId} (user-prompt ${userPrompt.length} chars, sources=${Object.keys(parsed.data.sources ?? {}).length})`,
@@ -101,7 +96,7 @@ export function registerDocumentGeneration(app: express.Express) {
       });
 
       const result = streamText({
-        model: anthropic(config.model),
+        model,
         system: skill.systemPrompt,
         prompt: userPrompt,
         abortSignal: abortController.signal,
