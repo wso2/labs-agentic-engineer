@@ -66,11 +66,12 @@ func imports(t *testing.T, pkg, dep string) bool {
 	return deps(t, pkg)[dep]
 }
 
-// TestNoFlatServicesOrControllers asserts the strangler's flat layers are gone:
-// nothing imports the (deleted) flat services package, and no feature/platform
-// package imports the controllers HTTP-edge package. (The composition root and
-// api routes may still reference controllers.TaskController — the one remaining
-// documented edge — so we only assert it for internal/feature + internal/platform.)
+// TestNoFlatServicesOrControllers asserts the strangler's flat layers are fully
+// gone: nothing imports the (deleted) flat services package, and nothing — not
+// even the composition root or api routes — imports the (deleted) controllers
+// package. task_controller was the last documented edge; it now lives in
+// internal/feature/task behind task-local consumer ports (no codingagent
+// import), so there is no remaining carve-out.
 func TestNoFlatServicesOrControllers(t *testing.T) {
 	features := []string{
 		"artifacts", "gitrepo", "component", "orgcreds", "task", "codingagent",
@@ -96,6 +97,28 @@ func TestNoFlatServicesOrControllers(t *testing.T) {
 			if d == mod+"/services" || d == mod+"/controllers" {
 				t.Errorf("%s imports %s — must stay a leaf", p, d)
 			}
+		}
+	}
+	// The flat edges are drained everywhere now, including the wiring layer:
+	// the composition root and api routes own no controllers/services import.
+	for _, p := range []string{"/cmd/asdlc-api", "/api"} {
+		pkg := mod + p
+		if imports(t, pkg, mod+"/controllers") {
+			t.Errorf("%s imports the controllers package — it is deleted; wire features directly", p)
+		}
+		if imports(t, pkg, mod+"/services") {
+			t.Errorf("%s imports the flat services package — it is deleted", p)
+		}
+	}
+}
+
+// TestFlatPackagesDeleted asserts the flat services/ and controllers/ packages
+// no longer exist on disk — the strongest form of the boundary (a re-created
+// flat layer fails here even before anything imports it).
+func TestFlatPackagesDeleted(t *testing.T) {
+	for _, p := range []string{"/services", "/controllers"} {
+		if err := exec.Command("go", "list", mod+p).Run(); err == nil {
+			t.Errorf("package %s%s still resolves — the flat layer must stay deleted", mod, p)
 		}
 	}
 }
