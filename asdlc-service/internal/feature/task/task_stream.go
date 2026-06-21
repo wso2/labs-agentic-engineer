@@ -438,9 +438,9 @@ func (s *taskService) persistAndIssue(
 	}
 
 	// Persist rows up front, sequentially — ordering by plan index.
-	// F2: DependsOnComponents is pulled directly from the design (platform-
+	// DependsOnComponents is pulled directly from the design (platform-
 	// authored, not LLM-authored) and validated against the component set
-	// at persist time. The LLM's `PlanItem.dependsOn` is now context-only.
+	// at persist time. The LLM's `PlanItem.dependsOn` is context-only.
 	rows := make([]persistedItem, len(plan))
 	for i, p := range plan {
 		comp := byName[strings.ToLower(p.ComponentName)]
@@ -737,9 +737,7 @@ func (s *taskService) RegenerateTaskBody(ctx context.Context, taskID string, out
 		Task:   task,
 	}}
 	// RetryTask path: re-resolve the project's attached skills from the
-	// live design. Snapshot-aware path (read from
-	// design_version_skill_snapshots for task.SourceDesignVersion) lands
-	// in PR 3 when the snapshot writer is wired.
+	// live design.
 	_, resolvedSkills := s.resolveProjectSkills(ctx, task.OrgID, design)
 	detailReq := buildDetailRequest(task.ProjectID, specContent, survived, design, allTasks, resolvedSkills)
 	upstream, err := s.agentsClient.StreamTechLeadDetail(ctx, task.OrgID, detailReq)

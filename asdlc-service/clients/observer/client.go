@@ -41,10 +41,9 @@ type LogLine struct {
 }
 
 // Client reads workflow-run logs from the OpenChoreo Observer service.
-// Mirrors agent-manager-service/clients/observabilitysvc/client.go's
-// auth + retry shape (Thunder client_credentials, 401 → invalidate +
-// retry) but built directly on net/http so we don't pull in the
-// generated OpenAPI client.
+// Auth + retry shape is Thunder client_credentials with 401 → invalidate
+// + retry, built directly on net/http so we don't pull in the generated
+// OpenAPI client.
 type Client interface {
 	// GetWorkflowRunLogs returns logs for a specific workflow run within
 	// the given namespace, restricted to lines emitted at or after
@@ -92,8 +91,7 @@ func NewClient(cfg Config) (Client, error) {
 	}, nil
 }
 
-// On-the-wire types — matches the Observer OpenAPI
-// (agent-manager/.../observabilitysvc/gen/types.gen.go LogsQueryRequest +
+// On-the-wire types — matches the Observer OpenAPI (LogsQueryRequest +
 // WorkflowSearchScope), reduced to the fields we actually send.
 
 type workflowSearchScope struct {
@@ -130,7 +128,7 @@ func (c *httpClient) GetWorkflowRunLogs(ctx context.Context, runName, namespace 
 	endTime := time.Now().UTC()
 	startTime := sinceTime.UTC()
 	if startTime.IsZero() || startTime.After(endTime) {
-		// Default window: last 30 days, matching agent-manager's pattern.
+		// Default window: last 30 days.
 		startTime = endTime.Add(-30 * 24 * time.Hour)
 	}
 
@@ -167,7 +165,6 @@ func (c *httpClient) GetWorkflowRunLogs(ctx context.Context, runName, namespace 
 }
 
 // do executes a POST /api/v1/logs/query call with auth + 401 retry.
-// Mirrors clientBase.send in clients/openchoreo for shape consistency.
 func (c *httpClient) do(ctx context.Context, body any) (*logsQueryResponse, error) {
 	url := c.baseURL + "/api/v1/logs/query"
 

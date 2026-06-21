@@ -46,7 +46,7 @@ type TaskController interface {
 	RegenerateTaskBody(w http.ResponseWriter, r *http.Request)
 	ExecTask(w http.ResponseWriter, r *http.Request)
 
-	// F3c — agent-driven verification failure + operator retry.
+	// Agent-driven verification failure + operator retry.
 	// VerificationFailed authenticates the caller with the per-task JWT
 	// minted at dispatch (verified locally by TaskTokenManager.Verify
 	// against the BFF's own signing key). Retry is operator-only and
@@ -54,16 +54,14 @@ type TaskController interface {
 	VerificationFailed(w http.ResponseWriter, r *http.Request)
 	Retry(w http.ResponseWriter, r *http.Request)
 
-	// Skills (PR 3 of skills-system) is called by the dispatched agent
-	// inside the runner pod at init. Returns the snapshotted skill bodies
-	// for the task's (project_id, design_version). Authenticated via the
-	// per-task JWT.
+	// Skills is called by the dispatched agent inside the runner pod at
+	// init. Returns the snapshotted skill bodies for the task's
+	// (project_id, design_version). Authenticated via the per-task JWT.
 	Skills(w http.ResponseWriter, r *http.Request)
 
-	// RefreshCredentials (WS2.4) is the path-scoped equivalent of the
-	// legacy /api/v1/credentials/refresh endpoint. Accepts both the
-	// legacy BFF-signed TaskJWT and Thunder-issued publisher cc tokens
-	// via authorizeRunnerCallback. Used by the runner's credhelper.
+	// RefreshCredentials is the path-scoped credential refresh endpoint.
+	// Accepts both the BFF-signed TaskJWT and Thunder-issued publisher cc
+	// tokens via authorizeRunnerCallback. Used by the runner's credhelper.
 	RefreshCredentials(w http.ResponseWriter, r *http.Request)
 
 	// Progress endpoints — task-execution-progress.md §5.2.
@@ -104,18 +102,17 @@ func (c *taskController) SetSkillsService(s *TaskSkillsService) {
 	c.skillsSvc = s
 }
 
-// SetPublisherVerifier wires WS2.4's publisher cc token verifier so the
+// SetPublisherVerifier wires the publisher cc token verifier so the
 // runner-callback handlers accept Thunder-issued cc tokens alongside the
-// legacy BFF-signed TaskJWTs. Optional — when nil, only TaskJWTs work.
+// BFF-signed TaskJWTs. Optional — when nil, only TaskJWTs work.
 func (c *taskController) SetPublisherVerifier(v *auth.PublisherTokenVerifier) {
 	c.publisherVerifier = v
 }
 
 // SetCredentialsRefreshService wires the credentials-refresh service so
-// the WS2.4 path-scoped /api/v1/tasks/{taskId}/credentials/refresh
-// endpoint can delegate. Optional — when nil, the handler returns 503
-// and the runner must fall back to the legacy /api/v1/credentials/refresh
-// route (TaskJWT path).
+// the path-scoped /api/v1/tasks/{taskId}/credentials/refresh endpoint can
+// delegate. Optional — when nil, the handler returns 503 and the runner
+// must fall back to the /api/v1/credentials/refresh route (TaskJWT path).
 func (c *taskController) SetCredentialsRefreshService(s orgcreds.CredentialsRefreshService) {
 	c.credsRefreshSvc = s
 }
@@ -143,10 +140,10 @@ var (
 )
 
 // authorizeRunnerCallback validates the inbound Authorization header for
-// runner-facing routes (Skills, VerificationFailed, the WS2.4
-// per-task /credentials/refresh). Tries the BFF TaskJWT first; on
-// failure tries the publisher cc verifier (WS2.4). Returns the canonical
-// org handle the caller may need for downstream lookups.
+// runner-facing routes (Skills, VerificationFailed, the per-task
+// /credentials/refresh). Tries the BFF TaskJWT first; on failure tries
+// the publisher cc verifier. Returns the canonical org handle the caller
+// may need for downstream lookups.
 //
 // On error, writes the HTTP error response and returns ok=false.
 func (c *taskController) authorizeRunnerCallback(w http.ResponseWriter, r *http.Request, taskID string) (orgHandle string, ok bool) {
@@ -405,7 +402,8 @@ func (c *taskController) GetTaskStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Org-scoped load 404s on a cross-org/unknown {taskId} before any work
-	// (closes the by-UUID IDOR — was: operated on another org's task / OC run).
+	// (closes the by-UUID IDOR that would otherwise expose another org's
+	// task / OC run).
 	task, err := c.service.GetTaskScoped(r.Context(), orgHandle, taskID)
 	if err != nil {
 		if errors.Is(err, ErrTaskNotFound) {
@@ -530,7 +528,7 @@ type verificationFailedRequest struct {
 	Diagnostic string `json:"diagnostic"`
 }
 
-// VerificationFailed (F3c) is called by the dispatched agent inside the
+// VerificationFailed is called by the dispatched agent inside the
 // runner pod when it detects that a dependency endpoint is not behaving
 // as the spec describes. Authenticated via the per-task JWT the runner
 // already holds. The handler verifies the JWT, asserts the subject
@@ -561,7 +559,7 @@ func (c *taskController) VerificationFailed(w http.ResponseWriter, r *http.Reque
 	utils.WriteSuccessResponse(w, http.StatusAccepted, map[string]string{"status": "verification_failed"})
 }
 
-// Retry (F3c) is the operator-driven retry path: transitions
+// Retry is the operator-driven retry path: transitions
 // verification_failed → in_progress and re-dispatches with a fresh
 // WorkflowRun + freshly minted per-task bearer. Standard user auth
 // applies (mounted on the org/project-scoped task path).
@@ -627,14 +625,14 @@ func (c *taskController) ExecTask(w http.ResponseWriter, r *http.Request) {
 	utils.WriteSuccessResponse(w, http.StatusOK, map[string]string{"status": "task execution started"})
 }
 
-// Skills (PR 3 of skills-system) is called by the runner pod at init
-// time to fetch the snapshotted SKILL.md bodies for this task's
-// (project_id, design_version). Authenticated via the same per-task
-// bearer used by VerificationFailed.
+// Skills is called by the runner pod at init time to fetch the
+// snapshotted SKILL.md bodies for this task's (project_id,
+// design_version). Authenticated via the same per-task bearer used by
+// VerificationFailed.
 //
 // Response shape: {"skills": [{ id, materializedName, kind, skillMd, references }]}
-// Empty list (NOT 404) when the task has no snapshot — pre-PR-1
-// backfilled tasks or designs with no attached skills.
+// Empty list (NOT 404) when the task has no snapshot — e.g. designs with
+// no attached skills.
 func (c *taskController) Skills(w http.ResponseWriter, r *http.Request) {
 	taskID := r.PathValue("taskId")
 	if !requireTaskID(w, taskID) {
@@ -663,12 +661,11 @@ func (c *taskController) Skills(w http.ResponseWriter, r *http.Request) {
 	utils.WriteSuccessResponse(w, http.StatusOK, resp)
 }
 
-// RefreshCredentials (WS2.4) is the path-scoped credential refresh
-// endpoint that accepts either a legacy TaskJWT or a Thunder-issued
-// publisher cc token. The runner's credhelper.sh hits this after WS2.4
-// so the same auth-mode the runner uses for everything else also covers
-// /credentials/refresh. Legacy route `POST /api/v1/credentials/refresh`
-// still exists (TaskJWT only) and is deleted in WS2.6.
+// RefreshCredentials is the path-scoped credential refresh endpoint that
+// accepts either a TaskJWT or a Thunder-issued publisher cc token, so the
+// same auth-mode the runner uses for everything else also covers
+// /credentials/refresh. The route `POST /api/v1/credentials/refresh`
+// (TaskJWT only) also exists.
 func (c *taskController) RefreshCredentials(w http.ResponseWriter, r *http.Request) {
 	taskID := r.PathValue("taskId")
 	if !requireTaskID(w, taskID) {

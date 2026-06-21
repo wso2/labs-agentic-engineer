@@ -66,8 +66,7 @@ var (
 	ErrInvalidVersionTag = errors.New("invalid version tag")
 	// ErrSpecNotFound / ErrDesignNotFound are the spec/design members of the
 	// artifact-not-found family — raised when the requirements or design corpus
-	// is absent in the project's clone. They live in this (artifacts) package and
-	// are shared by requirements/design/task.
+	// is absent in the project's clone.
 	ErrSpecNotFound   = errors.New("spec not found")
 	ErrDesignNotFound = errors.New("design not found")
 )
@@ -202,9 +201,7 @@ type ArtifactService interface {
 // helper, the GitHub client + credential resolver, and the save-identity /
 // post-save-pull helpers. The GitOpsService port (and the concrete
 // *gitOpsService) structurally satisfies it, so artifacts depends on this
-// narrow consumer port instead of the concrete struct — killing the old
-// panic-cast. When artifacts extracts to its own package this interface moves
-// with it (artifacts→gitrepo direction).
+// narrow consumer port instead of the concrete struct.
 type GitWorkspace interface {
 	RepoLock(projectID string) *sync.Mutex
 	EnsureCloneReady(ctx context.Context, repoRecord *models.GitRepository) error
@@ -543,9 +540,8 @@ func (s *artifactService) DeleteRequirementFile(ctx context.Context, orgID, proj
 // ----- Save -----
 
 // SaveRequirements persists the working-tree `specs/requirements/` snapshot
-// as a new commit on remote main and creates the next `v<N>` annotated tag.
-// Replaces the legacy `git commit + push + tag` flow with GitHub API calls
-// (Git Data API path) per docs/design/artifact-store-v2.md V1.
+// as a new commit on remote main and creates the next `v<N>` annotated tag
+// via GitHub API calls (Git Data API path) per docs/design/artifact-store-v2.md.
 //
 // The local clone's HEAD provides the "what we last saved" baseline for
 // computing the changeset (adds / modifies / deletes), so users' explicit
@@ -575,8 +571,7 @@ func (s *artifactService) SaveRequirements(ctx context.Context, orgID, projectID
 // per-component `design.md` and optional `openapi.yaml`), pushes the
 // changeset to remote main via the GitHub Git Data API, then creates the
 // next `v<N>-<M>` annotated tag where N is the latest requirements version.
-// Replaces the legacy `git commit + push + tag` flow with API calls per
-// docs/design/artifact-store-v2.md V1.
+// See docs/design/artifact-store-v2.md.
 //
 // Returns ErrNoRequirementsBaseline (409) if no `v<N>` tag exists yet, and
 // ErrArtifactPathInvalid (400) if the root `design.md` is missing — a save
@@ -912,7 +907,6 @@ func (s *artifactService) fetchAndListAllTags(ctx context.Context, orgID, projec
 	return listAllTags(ctx, clonePath)
 }
 
-// identityT is a local mirror of credentials.Identity to avoid a cross-package
 // restoreDirAtTag rewrites the working-tree directory at `relPath` to match
 // the tagged version: removes the current contents (to handle files added
 // since the tag) and runs `git checkout <tag> -- <relPath>` to restore the

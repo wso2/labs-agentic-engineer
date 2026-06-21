@@ -14,11 +14,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package httpkit holds the shared HTTP response writers (the eventual home of
-// WriteJSON/WriteAppError and the SSE writer, §4.0). For the gate phase it
-// exposes the Write40x helpers the central tenant gate uses. Bodies are kept
-// byte-identical to the legacy utils.WriteErrorResponse payload by delegating
-// to it, so no client/test sees a changed error shape during the migration.
+// Package httpkit holds the shared HTTP response writers (§4.0). It exposes the
+// Write40x helpers the central tenant gate uses; bodies are kept byte-identical
+// to the utils.WriteErrorResponse payload by delegating to it, so no client/test
+// sees a changed error shape.
 package httpkit
 
 import (

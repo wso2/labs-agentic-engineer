@@ -18,12 +18,10 @@ package artifacts
 
 // ExternalAPICatalog resolves architect-declared dependent-API intents
 // (keyed by component-style name like "employee-api") into concrete URLs.
-// The architect prompt no longer carries hardcoded URL strings — it
-// declares the intent by name only, and the BFF supplies the URL from
-// this catalog at design-load time.
+// The architect declares the intent by name only, and the BFF supplies the
+// URL from this catalog at design-load time.
 //
-// Phase 1 scope: a single in-process map seeded from BFF config. Phase 2+
-// can swap this for a DB-backed table without changing the call sites.
+// Backed by a single in-process map seeded from BFF config.
 type ExternalAPICatalog struct {
 	entries map[string]ExternalAPIEntry
 }
@@ -44,10 +42,8 @@ func NewExternalAPICatalog(entries map[string]ExternalAPIEntry) *ExternalAPICata
 	return &ExternalAPICatalog{entries: entries}
 }
 
-// DefaultExternalAPICatalog returns the platform's shipped seed list. In
-// Phase 1 this is the single "employee-api" entry that powers the
-// Secret Santa scenario. Add more entries as more in-tree scenarios get
-// canonicalised.
+// DefaultExternalAPICatalog returns the platform's shipped seed list — the
+// single "employee-api" entry that powers the Secret Santa scenario.
 func DefaultExternalAPICatalog() *ExternalAPICatalog {
 	return NewExternalAPICatalog(map[string]ExternalAPIEntry{
 		"employee-api": {

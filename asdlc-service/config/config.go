@@ -41,9 +41,7 @@ type Config struct {
 	LocalOpenBaoRepairEnabled bool
 
 	// DeploymentTier guards dev-only destructive migrations and seed paths.
-	// Phase 0 used this for the platform-PAT startup gate (now retired in PR
-	// A); Phase 2 PR A's BFF migration (RunPhase2PRA) refuses to run unless
-	// tier=dev.
+	// The destructive BFF migrations refuse to run unless tier=dev.
 	DeploymentTier string
 
 	// TenantGateMode controls the central per-route tenant gate (§6.1b).
@@ -63,7 +61,7 @@ type Config struct {
 	// TaskTokenSigningKey; this key has no other use.
 	OAuthStateSigningKey string
 
-	// Phase 2 PR B — GitHub App connect surface.
+	// GitHub App connect surface.
 	GithubAppSlug     string // App's URL slug, used in the install URL
 	GithubAppClientID string // App's OAuth client_id; used to build the OAuth authorize URL
 	// BFFPublicURL is the user-visible BFF base — used as the basis for
@@ -79,13 +77,13 @@ type Config struct {
 	// only verifier of Task JWTs.
 	TaskTokenAudience string
 
-	// Phase 2 PR D §9.3 — build watcher git_clone_failed_auth retry budget.
-	// Default 3 attempts. Configurable via BUILD_AUTH_RETRY_BUDGET; tests
-	// set to 0 to force exhaustion on the first auth failure.
+	// Build watcher git_clone_failed_auth retry budget. Default 3 attempts.
+	// Configurable via BUILD_AUTH_RETRY_BUDGET; tests set to 0 to force
+	// exhaustion on the first auth failure.
 	BuildAuthRetryBudget int
 
-	// Phase 3 (api-platform-integration) — Thunder admin client config
-	// for per-org publisher OAuth app lifecycle. Loaded from env vars
+	// Thunder admin client config for per-org publisher OAuth app lifecycle.
+	// Loaded from env vars
 	// THUNDER_ADMIN_URL / THUNDER_SYSTEM_CLIENT_ID / THUNDER_SYSTEM_CLIENT_SECRET.
 	// When ClientID is empty the BFF logs a warning and the IDP service
 	// returns ErrIDPThunderUnavailable (non-fatal — protected components
@@ -124,12 +122,9 @@ type Config struct {
 	// pinned to the target service.
 	ServiceAuthAgentsService ServiceAuthConfig
 
-	// --- Folded in from git-service after WS0.1.g --------------------
-	// These were previously git-service/config.Config fields; the fold
-	// keeps the field names as-is so the copied services compile
-	// unchanged. Some overlap conceptually with the asdlc-side fields
-	// above (e.g. GitHubAppSlug vs GithubAppSlug); the loader sets both
-	// from the same env vars during the transition.
+	// Git-service config fields. Some overlap conceptually with the
+	// asdlc-side fields above (e.g. GitHubAppSlug vs GithubAppSlug); the
+	// loader sets both from the same env vars.
 
 	RepoBasePath string
 
@@ -139,16 +134,14 @@ type Config struct {
 
 	// WebhookDeliveryURL is the URL the platform registers on each repo.
 	WebhookDeliveryURL string
-	// WebhookHMACSecret is the HMAC key for inbound webhook validation
-	// (single-tenant in Phase 0; per-org in Phase 2).
+	// WebhookHMACSecret is the HMAC key for inbound webhook validation.
 	WebhookHMACSecret string
 
 	// CredentialEncryptionKey is the base64-encoded 32-byte AES-256 key
 	// used to encrypt per-org credentials at rest in org_secrets.
 	CredentialEncryptionKey string
 
-	// OpenBaoAddr / OpenBaoToken — retained until _platform secret
-	// env-mount migration lands.
+	// OpenBaoAddr / OpenBaoToken — OpenBao address and token.
 	OpenBaoAddr  string
 	OpenBaoToken string
 
@@ -158,7 +151,8 @@ type Config struct {
 	GitHubAppSlug           string
 	GitHubAppPrivateKeyPath string
 
-	// CredentialValidatorInterval — Phase 2 PR D §6.10. Default 24h.
+	// CredentialValidatorInterval is the periodic credential-validator
+	// sweep interval. Default 24h.
 	CredentialValidatorInterval time.Duration
 
 	// BFFJWKSURL is the BFF's JWKS endpoint used to verify Task JWTs.
@@ -171,22 +165,22 @@ type Config struct {
 	AnthropicPlatformKey string
 
 	// AgentsServiceURL — in-cluster base URL of asdlc-agents-service.
-	// (Folded-in name; the asdlc-side equivalent is AgentsService.BaseURL.)
+	// (Duplicates AgentsService.BaseURL under a different field name.)
 	AgentsServiceURL string
 
-	// --- Phase 1: Secret Manager API + cluster-gateway-proxy ----------
-	// SM-API URL the merged binary writes per-org credentials to (the
-	// `sm-api` secretmanagersvc provider). Empty disables the provider —
-	// the legacy `org_secrets` DB path keeps working but the new
-	// dispatch + cascade flows that depend on SecretReference / ESO
-	// will 503. ADR-0002: same provider in local + cloud.
+	// Secret Manager API + cluster-gateway-proxy.
+	// SM-API URL the binary writes per-org credentials to (the `sm-api`
+	// secretmanagersvc provider). Empty disables the provider — the legacy
+	// `org_secrets` DB path keeps working but the dispatch + cascade flows
+	// that depend on SecretReference / ESO will 503. ADR-0002: same provider
+	// in local + cloud.
 	SecretManagerAPIURL     string
 	SecretManagerAPITimeout time.Duration
 
-	// Cluster-gateway-proxy URL the merged binary POSTs Job +
-	// ExternalSecret manifests to on dispatch (ou-service shape;
-	// un-authed today). Empty disables the new dispatch path; the
-	// merged binary still boots and serves the spec/design endpoints.
+	// Cluster-gateway-proxy URL the BFF POSTs Job + ExternalSecret manifests
+	// to on dispatch (ou-service shape; un-authed today). Empty disables the
+	// proxy dispatch path; the BFF still boots and serves the spec/design
+	// endpoints.
 	ClusterGatewayProxyURL string
 
 	// AgentRunnerImage is the docker image the per-task coding-agent
@@ -201,7 +195,7 @@ type Config struct {
 	// `user-app-secrets/*`). `secretstore-read` on the same cluster only
 	// covers platform-component paths (CA bundles, observability creds)
 	// and will silently no-op our reads. Local k3d reuses the existing
-	// `default` CSS (per WS1.1 compose wiring).
+	// `default` CSS.
 	AgentClusterSecretStore string
 }
 
@@ -247,9 +241,9 @@ type ObservabilityConfig struct {
 	BaseURL string
 
 	// OAuth client_credentials settings — wired to the platform-default
-	// reader app `openchoreo-observer-resource-reader-client` on this
-	// branch. Promoting to multi-tenant cloud should swap this for a
-	// per-app registration (see task-execution-progress.md §5.4).
+	// reader app `openchoreo-observer-resource-reader-client`. Promoting to
+	// multi-tenant cloud should swap this for a per-app registration (see
+	// task-execution-progress.md §5.4).
 	TokenURL     string
 	ClientID     string
 	ClientSecret string

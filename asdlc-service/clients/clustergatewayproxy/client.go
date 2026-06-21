@@ -15,11 +15,9 @@
 // under the License.
 
 // Package clustergatewayproxy is the asdlc-service HTTP client for the
-// wso2cloud cluster-gateway-proxy (WS1.4). The proxy fronts the
-// cloud-dp k8s API and serves un-authenticated requests to the
-// CR allow-list (apigateways, restapis, configmaps, secrets, httproutes
-// today; jobs / externalsecrets / serviceaccounts after the WS1.0 PR
-// against wso2cloud-deployement-main lands).
+// wso2cloud cluster-gateway-proxy. The proxy fronts the cloud-dp k8s API
+// and serves requests to the CR allow-list (apigateways, restapis,
+// configmaps, secrets, httproutes, jobs, externalsecrets, serviceaccounts).
 //
 // We use the same call shape as `wso2cloud/backend/core/internal/ou`'s
 // `cpapi.go`:

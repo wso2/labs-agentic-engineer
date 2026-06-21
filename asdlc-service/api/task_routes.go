@@ -24,7 +24,7 @@ import (
 )
 
 func registerTaskRoutes(rt *Router, c task.TaskController) {
-	// Org-scoped tasks list (Phase 2 PR D — used by ReachReconciliationBanner).
+	// Org-scoped tasks list (used by ReachReconciliationBanner).
 	// Supports ?status=, ?cause=, ?since= filters.
 	rt.OrgScoped("GET /api/v1/organizations/{orgHandle}/tasks", c.ListOrgTasks)
 	rt.OrgScoped("GET /api/v1/organizations/{orgHandle}/projects/{projectName}/tasks", c.ListTasks)
@@ -35,7 +35,7 @@ func registerTaskRoutes(rt *Router, c task.TaskController) {
 	rt.OrgScoped("POST /api/v1/organizations/{orgHandle}/projects/{projectName}/tasks/generate", c.GenerateTasks)
 	rt.OrgScoped("POST /api/v1/organizations/{orgHandle}/projects/{projectName}/tasks/{taskId}/exec", c.ExecTask)
 	rt.OrgScoped("POST /api/v1/organizations/{orgHandle}/projects/{projectName}/tasks/{taskId}/regenerate-body", c.RegenerateTaskBody)
-	// F3c — operator retry for verification_failed tasks. Uses standard
+	// Operator retry for verification_failed tasks. Uses standard
 	// user auth (org/project-scoped).
 	rt.OrgScoped("POST /api/v1/organizations/{orgHandle}/projects/{projectName}/tasks/{taskId}/retry", c.Retry)
 

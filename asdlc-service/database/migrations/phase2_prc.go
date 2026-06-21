@@ -23,7 +23,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// RunPhase2PRC applies the PR C schema:
+// RunPhase2PRC adds the repo_slug schema:
 //
 //   - ALTER TABLE git_repositories ADD COLUMN repo_slug TEXT
 //     (nullable initially; backfilled from repo_url; then NOT NULL via index)

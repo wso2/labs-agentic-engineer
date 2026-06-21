@@ -19,7 +19,6 @@ package gitrepo
 import "errors"
 
 var (
-	// Folded in from git-service after WS0.1.g.
 	ErrRepoNotFound     = errors.New("repository not found")
 	ErrRepoNotReady     = errors.New("repository is not ready")
 	ErrTagAlreadyExists = errors.New("tag already exists")

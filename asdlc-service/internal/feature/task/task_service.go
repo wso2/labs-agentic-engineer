@@ -44,13 +44,12 @@ type TaskService interface {
 	GetTaskByComponent(ctx context.Context, orgID, projectID, componentName string) (*models.ComponentTask, error)
 	ListTasks(ctx context.Context, orgID, projectID string) ([]models.ComponentTask, error)
 	// ListTasksByOrg lists tasks across every project in the org with
-	// optional status / cause / since filters. Used by the PR D
+	// optional status / cause / since filters. Used by the
 	// ReachReconciliationBanner ({status: abandoned, cause: repo.unselected,
 	// since: now-24h}).
 	ListTasksByOrg(ctx context.Context, orgID string, f repositories.ListByOrgFilter) ([]models.ComponentTask, error)
-	// GenerateTasks is the legacy non-streaming entry point — kept on the
-	// interface for the migration window only. Always returns an error
-	// directing callers to the SSE endpoint.
+	// GenerateTasks is the non-streaming entry point. Always returns an
+	// error directing callers to the SSE endpoint.
 	GenerateTasks(ctx context.Context, orgID, projectID string) ([]models.ComponentTask, error)
 	// StreamGenerateTasks orchestrates the two-phase tech-lead agent:
 	// Phase 1 (plan) → BFF persists task rows + creates GH issues →
@@ -248,14 +247,11 @@ func (s *taskService) ListTasksByOrg(ctx context.Context, orgID string, f reposi
 	return tasks, nil
 }
 
-// GenerateTasks is the legacy non-streaming entry point. The tech-lead
-// agent revamp (docs/design/tech-lead-agent.md) replaces this with the
-// SSE-streaming orchestrator wired to the two-phase agent. The HTTP
-// controller now calls StreamGenerateTasks; this method exists only to
-// keep the TaskService interface shape during the migration window.
+// GenerateTasks is the non-streaming entry point. The HTTP controller
+// drives task generation through StreamGenerateTasks (SSE) instead.
 //
-// Returning an error here is intentional — any caller still hitting
-// /tasks/generate as a non-SSE call has not been updated to the new
+// Returning an error here is intentional — any caller hitting
+// /tasks/generate as a non-SSE call has not been updated to the
 // streaming protocol and should be fixed, not silently routed to a
 // half-implemented path.
 func (s *taskService) GenerateTasks(ctx context.Context, orgID, projectID string) ([]models.ComponentTask, error) {

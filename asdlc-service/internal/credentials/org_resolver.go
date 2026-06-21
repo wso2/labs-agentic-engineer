@@ -50,8 +50,8 @@ func (e *OrgNotFoundError) Error() string {
 	return fmt.Sprintf("credentials: no row for org %q", e.OcOrgID)
 }
 
-// orgResolver is the Phase 2 DB-backed Resolver. It looks up the
-// org_credentials row for the supplied ocOrgID and dispatches by kind:
+// orgResolver is the DB-backed Resolver. It looks up the org_credentials
+// row for the supplied ocOrgID and dispatches by kind:
 //
 //   - kind='user-pat'         → userPATCred (singleflight + OpenBao)
 //   - kind='app-installation' → appInstallationCred (delegates to minter)
@@ -66,11 +66,10 @@ type orgResolver struct {
 	patFlight *singleflight.Group
 }
 
-// NewOrgResolver constructs the Phase 2 resolver. db, store, and minter
-// must all be non-nil; in PR A the minter may be in "no app configured"
-// mode (App private key not yet in OpenBao), in which case any
-// app-installation row resolution falls through to ErrAppNotConfigured —
-// but PR A's seed is user-pat only, so no resolutions reach the minter.
+// NewOrgResolver constructs the resolver. db, store, and minter must all be
+// non-nil. The minter may be in "no app configured" mode (App private key
+// not in OpenBao), in which case any app-installation row resolution falls
+// through to ErrAppNotConfigured.
 func NewOrgResolver(db *gorm.DB, store OpenBaoStore, minter *AppTokenMinter) Resolver {
 	return &orgResolver{
 		db:        db,

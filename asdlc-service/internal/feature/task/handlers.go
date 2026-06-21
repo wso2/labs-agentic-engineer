@@ -195,8 +195,7 @@ func (h *Handler) linkPRFromPayload(ctx context.Context, body []byte, action str
 }
 
 func (h *Handler) PullRequestReopened(ctx context.Context, event, action string, body []byte) error {
-	// Phase 0: ignore. Reopen lands as a follow-up alongside `superseded`
-	// semantics.
+	// No-op: reopening a PR does not drive a task transition.
 	return nil
 }
 
@@ -287,9 +286,9 @@ func (h *Handler) PullRequestClosed(ctx context.Context, event, action string, b
 		}
 	}
 
-	// Under F2 deploy-gating, on_hold re-evaluation is driven by the
-	// dep's deploy event (services/webhook/projector.go::onTaskDeployed),
-	// not by PR merge. The merge handler no longer needs to touch siblings.
+	// on_hold re-evaluation is driven by the dep's deploy event
+	// (services/webhook/projector.go::onTaskDeployed), not by PR merge — the
+	// merge handler does not touch siblings.
 	return nil
 }
 

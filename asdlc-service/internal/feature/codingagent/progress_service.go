@@ -66,7 +66,7 @@ type ProgressService interface {
 
 // taskReader is the narrow task-lookup port the progress service needs.
 // task.TaskService satisfies it; defined here (consumer side) so this service
-// — which moves into the codingagent feature — needn't import internal/feature/task.
+// needn't import internal/feature/task.
 type taskReader interface {
 	GetTask(ctx context.Context, taskID string) (*models.ComponentTask, error)
 }

@@ -14,15 +14,14 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Phase 3 — coding_agent_logs sidecar table.
+// coding_agent_logs sidecar table.
 //
-// Captures the final pod-log tail for new-path (cluster-gateway-proxy)
-// coding-agent dispatches when the Job hits terminal state. Read by
+// Captures the final pod-log tail for cluster-gateway-proxy coding-agent
+// dispatches when the Job hits terminal state. Read by
 // `progress_service.GetAgentProgress` once the Job is past TTL so the
-// console can still surface diagnostics (the legacy path used
-// OpenChoreo's Observer + OpenSearch; the new dispatch NS
+// console can still surface diagnostics. The dispatch NS
 // (`wc-…-remote-worker`) doesn't match Observer's hardcoded
-// `workflows-<…>` filter, so the BFF tails `pods/log` itself).
+// `workflows-<…>` filter, so the BFF tails `pods/log` itself.
 //
 // Sidecar rather than a column on `component_tasks`: the parent table
 // holds only small hot fields and is read on every list / status /

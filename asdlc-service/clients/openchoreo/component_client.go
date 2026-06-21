@@ -40,8 +40,7 @@ import (
 // controller picks it up, hashes the spec, creates a ComponentRelease,
 // and binds it into the project's first environment. The BFF only reads
 // the result back via ListDeployments. Wrappers for the write side of
-// that chain are deliberately absent — add them back per the roadmap
-// when a real caller appears (e.g. per-env config overrides).
+// that chain are deliberately absent — no caller needs them yet.
 type ComponentClient interface {
 	ListComponents(ctx context.Context, orgName, projectName string, limit int, cursor string) (*models.ComponentList, error)
 	GetComponent(ctx context.Context, orgName, projectName, componentName string) (*models.Component, error)
@@ -117,8 +116,7 @@ type ComponentClient interface {
 	TriggerBuildAtCommit(ctx context.Context, orgName, projectName, componentName, commitSHA, secretRef, runName string) (*models.WorkflowRun, error)
 	// TriggerCodingAgent creates a WorkflowRun of ClusterWorkflow
 	// `app-factory-coding-agent` for the per-task ephemeral pod that runs the
-	// Claude Agent SDK against the task's feature branch. Replaces the legacy
-	// HTTP POST to remote-worker /dispatch. The label
+	// Claude Agent SDK against the task's feature branch. The label
 	// `app-factory.openchoreo.dev/coding-agent-task` carries the taskId so
 	// the BFF watcher can correlate runs back to the task.
 	TriggerCodingAgent(ctx context.Context, params CodingAgentParams) (*models.WorkflowRun, error)
@@ -143,7 +141,7 @@ type CodingAgentParams struct {
 	IdentityLogin string
 	Bearer        string
 	GitServiceURL string
-	// PlatformURL is the BFF base URL the runner pod uses for the F3c
+	// PlatformURL is the BFF base URL the runner pod uses for the
 	// verification-failed callback. Passed through to the ClusterWorkflow
 	// parameter `bff.platformUrl` → env var ASDLC_PLATFORM_URL in the pod.
 	// Empty means the runner won't call the BFF (the diagnostic still
@@ -211,11 +209,11 @@ func componentToModel(c gen.Component) models.Component {
 	}
 }
 
-// workflowRunToModel mirrors the OC condition logic the hand-rolled client
-// used: Reason of WorkflowCompleted wins; otherwise WorkflowRunning sets
-// "Running"; default "Pending". `Completed` flips when WorkflowCompleted has
-// Status=True — watchers gate terminal transitions on this, not on
-// substring-matching the Status string.
+// workflowRunToModel derives the run's status from OC's conditions: Reason of
+// WorkflowCompleted wins; otherwise WorkflowRunning sets "Running"; default
+// "Pending". `Completed` flips when WorkflowCompleted has Status=True —
+// watchers gate terminal transitions on this, not on substring-matching the
+// Status string.
 func workflowRunToModel(run gen.WorkflowRun) models.WorkflowRun {
 	var componentName, projectName string
 	if run.Metadata.Labels != nil {
@@ -268,9 +266,7 @@ func workflowRunToModel(run gen.WorkflowRun) models.WorkflowRun {
 }
 
 // deploymentFromReleaseBinding pulls the first HTTP external URL from the
-// binding's resolved endpoints. The gen surface flattened the legacy
-// `externalURLs[http]` map into a typed `ExternalURLs.Http *EndpointURL`,
-// so the lookup is direct.
+// binding's resolved endpoints via the typed `ExternalURLs.Http *EndpointURL`.
 func deploymentFromReleaseBinding(rb gen.ReleaseBinding) models.Deployment {
 	var projectName, componentName, environment, releaseName string
 	if rb.Spec != nil {
@@ -307,8 +303,7 @@ func deploymentFromReleaseBinding(rb gen.ReleaseBinding) models.Deployment {
 }
 
 // formatEndpointURL renders gen.EndpointURL as scheme://host:port/path. Path
-// of "" or "/" yields a trailing "/" for stable display; matches the legacy
-// format the UI consumed.
+// of "" or "/" yields a trailing "/" for stable display.
 func formatEndpointURL(u *gen.EndpointURL) string {
 	if u == nil {
 		return ""
@@ -390,8 +385,7 @@ func (c *componentClient) CreateComponent(ctx context.Context, orgName, projectN
 		return &comp, nil
 	case resp.StatusCode() == http.StatusConflict:
 		// Idempotent on (ocOrgId, project, componentName): a 409 means the
-		// component already exists, so fetch and return it. Asserted at the
-		// call boundary per phase0 §1.11.
+		// component already exists, so fetch and return it.
 		existing, gerr := c.GetComponent(ctx, orgName, projectName, req.Name)
 		if gerr != nil {
 			return nil, fmt.Errorf("create component returned conflict; refetch failed: %w", gerr)
@@ -686,7 +680,7 @@ func (c *componentClient) UpdateComponentTraitEnvironmentConfigs(ctx context.Con
 	return nil
 }
 
-// buildCreateComponentBody mirrors the legacy hand-rolled body verbatim.
+// buildCreateComponentBody assembles the CreateComponent request body.
 // gen's ComponentSpec.{ComponentType,Owner} are inline anonymous structs;
 // we materialize them with composite literals to stay clear of pointer
 // gymnastics.

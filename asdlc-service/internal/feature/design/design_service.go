@@ -41,8 +41,7 @@ import (
 // consumer.
 var ErrSpecNotApproved = errors.New("spec must be saved (tagged) before generating a design")
 
-// toK8sName is a thin in-package shim over k8sname.ToK8sName so the many
-// existing lowercase callers in this package keep compiling unchanged.
+// toK8sName is a thin in-package shim over k8sname.ToK8sName.
 func toK8sName(name string) string { return k8sname.ToK8sName(name) }
 
 // AssembleDesignFromFiles wraps the artifact-store assembler and rejects an
@@ -95,8 +94,8 @@ type designService struct {
 
 // traitSyncReconciler is design_service's narrow consumer port for the
 // component feature's trait-sync surface. *component.TraitSyncService
-// satisfies it; defined here (consumer side) so design — which moves into its
-// own feature — needn't import the component package concretely.
+// satisfies it; defined here (consumer side) so design needn't import the
+// component package concretely.
 type traitSyncReconciler interface {
 	SyncComponentTraits(ctx context.Context, orgID, projectID, componentName string) error
 	DeleteComponentCascade(ctx context.Context, orgID, projectID, componentName string) error
@@ -104,8 +103,7 @@ type traitSyncReconciler interface {
 
 // skillCatalog is design_service's narrow consumer port for the skills
 // feature's per-org catalogue lookup (architect input). *SkillService
-// satisfies it; defined here so design needn't import the skills feature
-// (which extracts later).
+// satisfies it; defined here so design needn't import the skills feature.
 type skillCatalog interface {
 	List(ctx context.Context, orgID string) ([]models.Skill, error)
 }
@@ -170,7 +168,7 @@ func (s *designService) SetSkillService(svc skillCatalog) {
 // and the composition root wires these optional setters via type-assertion.
 // Asserting *designService satisfies each optional interface here turns a
 // setter-signature drift into a build failure instead of a silently-skipped
-// wire at boot (the regression class behind the RD-1 / CA-3 fixes).
+// wire at boot.
 var (
 	_ DesignServiceWithTaskHook  = (*designService)(nil)
 	_ DesignServiceWithTraitSync = (*designService)(nil)
@@ -344,9 +342,8 @@ func (s *designService) StreamGenerateDesign(ctx context.Context, orgID, project
 	builtinRecords, orgDescriptions := s.resolveArchitectSkills(ctx, orgID)
 
 	// Carry forward currently-attached skill names (or seed the defaults
-	// when starting fresh). Until PR 3 ships the attach_skill tool, the
-	// seed-default helper attaches all four built-ins on every new design
-	// so propagation works end-to-end.
+	// when starting fresh). The seed-default helper attaches all four
+	// built-ins on every new design so propagation works end-to-end.
 	currentApplied := []string{}
 	if existingDesign != nil && len(existingDesign.SkillsApplied) > 0 {
 		currentApplied = append(currentApplied, existingDesign.SkillsApplied...)
@@ -719,11 +716,10 @@ func (s *designService) resolveArchitectSkills(ctx context.Context, orgID string
 }
 
 // seedDefaultSkillsApplied returns the skillsApplied list to persist on
-// the freshly-emitted design. PR 1 behaviour: if the caller passed a
-// non-empty existing set, use it; otherwise stamp every available
-// built-in so propagation works end-to-end without the architect having
-// an attach_skill tool yet (lands in PR 3). The seed runs at every
-// `StreamArchitect` finalize per docs/design/skills-system.md > PR 1.
+// the freshly-emitted design: if the caller passed a non-empty existing
+// set, use it; otherwise stamp every available built-in so propagation
+// works end-to-end. The seed runs at every `StreamArchitect` finalize.
+// See docs/design/skills-system.md.
 func seedDefaultSkillsApplied(current []string, builtins []agents.SkillRecord) []string {
 	if len(current) > 0 {
 		out := append([]string(nil), current...)

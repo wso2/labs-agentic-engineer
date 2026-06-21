@@ -35,8 +35,8 @@ import (
 // MUST match the ouHandle claim).
 //
 // Used by the runner-callback handlers (Skills, VerificationFailed,
-// Refresh) to accept WS2.4's per-org publisher cc tokens alongside the
-// legacy BFF-signed TaskJWT.
+// Refresh) to accept per-org publisher cc tokens alongside the
+// BFF-signed TaskJWT.
 type PublisherTokenVerifier struct {
 	jwks           *jwtassertion.JWKSCache
 	expectedIssuer string
@@ -60,7 +60,7 @@ type PublisherClaims struct {
 // jwks must be a populated cache pointed at the platform IDP's JWKS
 // endpoint; expectedIssuer is the iss claim Thunder stamps (e.g.
 // "platform-idp"). Returns nil when any input is empty — composition root
-// uses this to disable WS2.4 cc verification cleanly in dev.
+// uses this to disable cc verification cleanly in dev.
 func NewPublisherTokenVerifier(jwks *jwtassertion.JWKSCache, expectedIssuer, audiencePrefix string) *PublisherTokenVerifier {
 	if jwks == nil || strings.TrimSpace(expectedIssuer) == "" || strings.TrimSpace(audiencePrefix) == "" {
 		return nil

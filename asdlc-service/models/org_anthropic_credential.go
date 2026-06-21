@@ -33,10 +33,9 @@ type OrgAnthropicCredential struct {
 	LastValidatedAt *time.Time `gorm:"column:last_validated_at" json:"lastValidatedAt,omitempty"`
 	ValidationError *string    `gorm:"type:text;column:validation_error" json:"validationError,omitempty"`
 
-	// WS2.2 — SM-API triplet. Populated by Connect when SM-API is
-	// configured; NULL on rows from the legacy org_secrets-only flow.
-	// Dispatch (WS2.3) short-circuits the new path when NULL and falls
-	// back to the legacy ClusterWorkflow until WS2.6 deletes it.
+	// SM-API triplet. Populated by Connect when SM-API is configured;
+	// NULL when unset. Dispatch short-circuits the SM-API path when NULL
+	// and falls back to the org_secrets-only ClusterWorkflow.
 	SMAPISecretRefName *string `gorm:"type:text;column:sm_api_secret_ref_name" json:"-"`
 	SMAPIKVPath        *string `gorm:"type:text;column:sm_api_kv_path" json:"-"`
 	SMAPIProperty      *string `gorm:"type:text;column:sm_api_property" json:"-"`

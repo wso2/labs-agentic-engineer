@@ -14,15 +14,13 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Phase 3 — Thunder org UUID alignment.
+// Thunder org UUID alignment.
 //
-// The BFF historically generated `organizations.uuid` via `uuid.New()`
-// at backfill time, decoupled from Thunder's `ouId`. SM-API derives
-// per-org namespaces (`wc-<orgUUID8>-<orgHash8>`) from the JWT's
-// `ouId` claim — so the BFF's locally-generated UUID never matched
-// the NS SM-API actually writes into, and the new dispatch path
-// (which needs to compute the same NS to find the materialized
-// Secret) was structurally broken.
+// SM-API derives per-org namespaces (`wc-<orgUUID8>-<orgHash8>`) from
+// the JWT's `ouId` claim. A locally-generated `organizations.uuid`
+// (via `uuid.New()`) never matches the NS SM-API writes into, so the
+// dispatch path (which must compute the same NS to find the
+// materialized Secret) needs Thunder's authoritative `ouId`.
 //
 // This migration adds a nullable `thunder_org_uuid` column so the BFF
 // can persist Thunder's authoritative ouId alongside the local PK

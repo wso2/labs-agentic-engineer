@@ -22,8 +22,8 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/internal/platform/httpkit"
 )
 
-// requireOrgHandle is a feature-local copy of the controllers-package helper
-// (the established per-feature-local-copy deviation; reconciled in cleanup).
+// requireOrgHandle validates the {orgHandle} path param, writing a 400 to w
+// on failure. Thin delegate over the shared httpkit.RequireSlug logic.
 func requireOrgHandle(w http.ResponseWriter, v string) bool {
 	return httpkit.RequireSlug(w, "orgHandle", v)
 }

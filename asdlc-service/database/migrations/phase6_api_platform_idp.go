@@ -29,9 +29,9 @@ import (
 //
 //  1. organization_idp_profiles — one row per OC organisation, carrying
 //     the IDP kind + issuer + JWKS URL + the per-org OAuth publisher
-//     client_id and OpenBao secret path. v1 supports kind='platform'
-//     only (Thunder); v2 adds 'asgardeo' and 'custom'. The unique
-//     constraint enforces one profile per org.
+//     client_id and OpenBao secret path. kind is one of 'platform'
+//     (Thunder), 'asgardeo', or 'custom'. The unique constraint enforces
+//     one profile per org.
 //
 //  2. idp_audit_events — append-only log of EnsurePublisher /
 //     RevokePublisher / RegenerateClientSecret operations so org
@@ -62,8 +62,8 @@ func RunPhase6APIPlatformIDP(db *gorm.DB) error {
 		slog.Info("phase6_api_platform_idp migration: created table", "table", "organization_idp_profiles")
 	}
 
-	// publisher_client_secret was added after the initial table creation
-	// — pre-existing dev databases need the column too. Idempotent.
+	// Backfill publisher_client_secret on pre-existing tables that predate
+	// the column. Idempotent.
 	if !hasColumn(db, "organization_idp_profiles", "publisher_client_secret") {
 		if err := db.Exec(`ALTER TABLE organization_idp_profiles ADD COLUMN publisher_client_secret TEXT`).Error; err != nil {
 			return fmt.Errorf("phase6_api_platform_idp: add publisher_client_secret column: %w", err)

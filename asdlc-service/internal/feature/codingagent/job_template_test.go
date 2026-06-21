@@ -77,9 +77,9 @@ func TestBuild_MissingField(t *testing.T) {
 }
 
 func TestBuild_BearerAndPublisherCoexist(t *testing.T) {
-	// During the WS2.4 cutover Bearer + PublisherSecretName both ride on
-	// the same dispatch; the runner prefers cc and falls back to Bearer.
-	// Build must accept both being set.
+	// Bearer + PublisherSecretName can both ride on the same dispatch;
+	// the runner prefers cc and falls back to Bearer. Build must accept
+	// both being set.
 	in := validInputs()
 	in.PublisherSecretName = "run-abc12345-publisher"
 	in.PublisherTokenURL = "https://thunder.example.com/oauth2/token"

@@ -26,10 +26,7 @@ import (
 
 // ValidatorProbes is the production credentials.ValidatorProbes that
 // wraps the resolver, the GitHub client, the AppTokenMinter, and the
-// CredentialService's identity-update helpers. Phase 2 PR D §6.10.
-//
-// Construction lives in cmd/git-service/main.go; the validator is wired
-// after the credential service + github client + minter are all up.
+// CredentialService's identity-update helpers.
 type ValidatorProbes struct {
 	credSvc      *CredentialService
 	githubClient gitrepo.GitHubClient

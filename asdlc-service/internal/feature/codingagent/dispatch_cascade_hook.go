@@ -26,23 +26,22 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/component"
 )
 
-// DispatchCascadeHook is the post-commit cascade fired by the webhook
-// projector whenever a task lands in `deployed`. It owns the per-project
-// advisory lock + eligibility scan + DispatchService.DispatchTasks call.
-//
-// See docs/design/cross-component-wiring-gaps.md §3 F1. The dispatch
-// itself (gating logic + URL resolution) lives in DispatchService —
-// this type only takes the lock and invokes it.
 // projectSPARuntimeConfigEmitter re-emits env-config.js across a project's
-// SPAs. Consumer port for the RuntimeConfigService (which extracts LATER than
-// codingagent) — defined here and satisfied structurally by the concrete,
-// wired at the composition root, so the cascade needn't import the flat
-// services package. Mirrors the runtimeConfigEmitter pattern in
-// dispatch_service.go.
+// SPAs. Consumer port for the RuntimeConfigService — defined here and
+// satisfied structurally by the concrete, wired at the composition root, so
+// the cascade needn't import the runtime-config package. Mirrors the
+// runtimeConfigEmitter pattern in dispatch_service.go.
+//
+// See docs/design/cross-component-wiring-gaps.md §3.
 type projectSPARuntimeConfigEmitter interface {
 	EmitForProjectSPAs(ctx context.Context, orgID, projectID string) error
 }
 
+// DispatchCascadeHook is the post-commit cascade fired by the webhook
+// projector whenever a task lands in `deployed`. It owns the per-project
+// advisory lock + eligibility scan + DispatchService.DispatchTasks call. The
+// dispatch itself (gating logic + URL resolution) lives in DispatchService —
+// this type only takes the lock and invokes it.
 type DispatchCascadeHook struct {
 	db            *gorm.DB
 	dispatch      DispatchService
@@ -106,12 +105,12 @@ func (h *DispatchCascadeHook) OnTaskDeployed(ctx context.Context, orgID, project
 			"project", projectID, "error", err)
 		return
 	}
-	// Dependency URL handoff to consumer SPAs now flows through the
+	// Dependency URL handoff to consumer SPAs flows through the
 	// ReleaseBinding `env-config.js` (BFF emits per-env values into
-	// workloadOverrides.container.files), so no GitHub issue comment is
-	// posted here. dispatch's resolveDependencyEndpoints continues to
-	// enforce the §1.3 URL invariant at dispatch time.
-
+	// workloadOverrides.container.files). dispatch's
+	// resolveDependencyEndpoints enforces the §1.3 URL invariant at
+	// dispatch time.
+	//
 	// For OIDC-SPA web-apps the platform IDP redirect_uris are
 	// registered by RuntimeConfigService.layerThunderKeys when the SPA
 	// gets its env-config.js emitted below — no separate dispatch-side

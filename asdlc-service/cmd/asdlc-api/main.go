@@ -74,8 +74,8 @@ import (
 // buildSecretStagerAdapter maps the concrete *orgcreds.BuildCredentialsService
 // (StageBuildSecret → *StageResult) onto the component feature's
 // BuildSecretStager port (→ secretRef string), so the component package need
-// not import the services StageResult type. Composition-root wiring boundary
-// (§6.8: the adapter satisfies the consumer port, here, not in the feature).
+// not import the services StageResult type. The adapter satisfies the consumer
+// port at the composition root, not in the feature (§6.8).
 type buildSecretStagerAdapter struct {
 	svc *orgcreds.BuildCredentialsService
 }
@@ -100,9 +100,9 @@ func main() {
 
 	setupLogger(cfg.LogLevel)
 
-	// Database. ComponentTask + ComponentConfig + Phase 0 webhook +
-	// push-rendezvous tables. The org_credentials table moved to git-service
-	// in Phase 2 PR A — the BFF no longer auto-migrates or reads it locally.
+	// Database. ComponentTask + ComponentConfig + webhook + push-rendezvous
+	// tables. org_credentials lives in git-service — the BFF does not
+	// auto-migrate or read it locally.
 	db, err := database.Open(cfg.DatabaseURL,
 		&models.ComponentTask{},
 		&models.ComponentConfig{},
@@ -125,64 +125,59 @@ func main() {
 		cancel()
 	}
 
-	// Phase 2 PR A migration — DROP TABLE org_credentials (relocated to
-	// git-service) and TRUNCATE the dev tables that held legacy
-	// 'platform' references. Idempotent and dev-only.
+	// DROP TABLE org_credentials (relocated to git-service) and TRUNCATE the
+	// dev tables that held legacy 'platform' references. Idempotent and dev-only.
 	if err := migrations.RunPhase2PRA(db, cfg.DeploymentTier); err != nil {
 		slog.Error("phase2_pra migration failed", "error", err)
 		os.Exit(1)
 	}
 
-	// Phase 0 destructive migration — drops legacy four-status columns and
+	// Destructive migration — drops legacy four-status columns and
 	// truncates component_tasks. Refuses unless DEPLOYMENT_TIER=dev.
 	if err := migrations.RunPhase0(db, cfg.DeploymentTier); err != nil {
 		slog.Error("phase0 migration failed", "error", err)
 		os.Exit(1)
 	}
 
-	// Phase 2 PR D — adds `cause` and `build_auth_retry_count` columns to
-	// component_tasks. Idempotent; runs in every environment.
+	// Adds `cause` and `build_auth_retry_count` columns to component_tasks.
+	// Idempotent; runs in every environment.
 	if err := migrations.RunPhase2PRD(db); err != nil {
 		slog.Error("phase2_prd migration failed", "error", err)
 		os.Exit(1)
 	}
 
-	// Phase 3 — tech-lead agent revamp. Drops snapshot fields from
-	// component_tasks (component shape now read from the multi-file
-	// `specs/design/` tree on dispatch), adds body + lineage + batch
-	// fields. Idempotent.
+	// Drops snapshot fields from component_tasks (component shape is read from
+	// the multi-file `specs/design/` tree on dispatch), adds body + lineage +
+	// batch fields. Idempotent.
 	if err := migrations.RunPhase3TechLead(db); err != nil {
 		slog.Error("phase3_tech_lead migration failed", "error", err)
 		os.Exit(1)
 	}
 
-	// Phase 4 — coding-agent ClusterWorkflow refactor. Adds
-	// last_coding_agent_run_name to component_tasks. Idempotent.
+	// Adds last_coding_agent_run_name to component_tasks. Idempotent.
 	if err := migrations.RunPhase4CodingAgent(db); err != nil {
 		slog.Error("phase4_coding_agent migration failed", "error", err)
 		os.Exit(1)
 	}
 
-	// Phase 5 — F2 deploy-gating: renames task_depends_on → depends_on_components.
+	// Renames task_depends_on → depends_on_components for deploy-gating.
 	// See docs/design/cross-component-wiring-gaps.md. Idempotent.
 	if err := migrations.RunPhase5DeployGating(db); err != nil {
 		slog.Error("phase5_deploy_gating migration failed", "error", err)
 		os.Exit(1)
 	}
 
-	// Phase 6 — API platform IDP: organization_idp_profiles + idp_audit_events
-	// tables for per-org Thunder publisher client lifecycle. See
+	// API platform IDP: organization_idp_profiles + idp_audit_events tables
+	// for per-org Thunder publisher client lifecycle. See
 	// docs/design/api-platform-integration.md §6 Phase 3.
 	if err := migrations.RunPhase6APIPlatformIDP(db); err != nil {
 		slog.Error("phase6_api_platform_idp migration failed", "error", err)
 		os.Exit(1)
 	}
 
-	// --- Git-service migrations (folded in after WS0.1.i) ----------------
-	// Idempotent. Phase 2 PR A schema → PR C repo_slug → org_secrets →
-	// per-org secret-name collapse → org_anthropic_credentials projection.
-	// Schema migrations must run before AutoMigrate so raw-SQL CHECK
-	// constraints + partial indexes win over GORM struct-tag inference.
+	// Git-service schema migrations. Idempotent. Must run before AutoMigrate
+	// so raw-SQL CHECK constraints + partial indexes win over GORM struct-tag
+	// inference.
 	migCtx := func(d time.Duration) (context.Context, context.CancelFunc) {
 		return context.WithTimeout(context.Background(), d)
 	}
@@ -232,8 +227,8 @@ func main() {
 		cancel()
 	}
 	{
-		// WS2.2 — SM-API triplet columns on per-org credential tables.
-		// Nullable; back-fills happen lazily on next Connect.
+		// SM-API triplet columns on per-org credential tables. Nullable;
+		// back-fills happen lazily on next Connect.
 		c, cancel := migCtx(30 * time.Second)
 		if err := migrations.RunPhase3SMAPIColumns(c, db); err != nil {
 			cancel()
@@ -243,10 +238,9 @@ func main() {
 		cancel()
 	}
 	{
-		// Phase 3 — `thunder_org_uuid` column on organizations. Lets the
-		// BFF persist Thunder's authoritative ouId per row so the new
-		// dispatch path can compute the same `wc-<…>` NS that SM-API
-		// writes into.
+		// `thunder_org_uuid` column on organizations. Lets the BFF persist
+		// Thunder's authoritative ouId per row so dispatch can compute the
+		// same `wc-<…>` NS that SM-API writes into.
 		c, cancel := migCtx(30 * time.Second)
 		if err := migrations.RunPhase3ThunderOrgUUID(c, db); err != nil {
 			cancel()
@@ -256,10 +250,10 @@ func main() {
 		cancel()
 	}
 	{
-		// Phase 3 — `coding_agent_logs` sidecar table. Captures final
-		// pod-log tail for new-path dispatches (legacy path keeps using
-		// Observer/OpenSearch). Sidecar to keep MB-scale blobs off the
-		// hot `component_tasks` rows.
+		// `coding_agent_logs` sidecar table. Captures the final pod-log tail
+		// for proxy-path dispatches (the ClusterWorkflow path uses
+		// Observer/OpenSearch). Sidecar keeps MB-scale blobs off the hot
+		// `component_tasks` rows.
 		c, cancel := migCtx(30 * time.Second)
 		if err := migrations.RunPhase3CodingAgentLogs(c, db); err != nil {
 			cancel()
@@ -272,9 +266,9 @@ func main() {
 		slog.Error("automigrate GitRepository failed", "error", err)
 		os.Exit(1)
 	}
-	// F2: composite (org_id, project_id) unique, replacing the global
-	// project_id unique. Must run AFTER AutoMigrate, which creates the new
-	// composite index from the model tag but never drops the old one.
+	// Composite (org_id, project_id) unique, replacing the global project_id
+	// unique. Must run AFTER AutoMigrate, which creates the new composite
+	// index from the model tag but never drops the old one.
 	{
 		c, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		if err := migrations.RunGitRepoCompositeUnique(c, db); err != nil {
@@ -289,7 +283,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Phase 7 — Skills system tables (skills, skill_audit_events,
+	// Skills system tables (skills, skill_audit_events,
 	// design_version_skill_snapshots). See docs/design/skills-system.md.
 	if err := migrations.RunPhase7Skills(db); err != nil {
 		slog.Error("phase7_skills migration failed", "error", err)
@@ -297,10 +291,9 @@ func main() {
 	}
 
 	{
-		// Phase 8 — SM-API triplet on organization_idp_profiles (WS2.4).
-		// Mirrors phase3 sm_api_columns shape; populated by
-		// SMAPIWriter.WritePublisher after EnsureOrgPublisher provisions
-		// the Thunder cc app.
+		// SM-API triplet on organization_idp_profiles. Mirrors the
+		// sm_api_columns shape; populated by SMAPIWriter.WritePublisher
+		// after EnsureOrgPublisher provisions the Thunder cc app.
 		c, cancel := migCtx(30 * time.Second)
 		if err := migrations.RunPhase8IDPSMAPIColumns(c, db); err != nil {
 			cancel()
@@ -322,7 +315,7 @@ func main() {
 	skillMutationSvc := skills.NewSkillMutationService(db, skillSvc)
 	skillImportSvc := skills.NewSkillImportService(db, skillSvc)
 
-	// Repositories — only task and config remain
+	// Repositories
 	taskRepo := repositories.NewTaskRepository(db)
 	configRepo := repositories.NewConfigRepository(db)
 	repoRepo := repositories.NewRepoRepository(db)
@@ -445,10 +438,9 @@ func main() {
 		slog.Info("Database service", "baseURL", cfg.DatabaseService.BaseURL)
 	}
 
-	// --- Phase 1 — SM-API provider (ADR-0002) -------------------------
-	// Same provider in local + cloud. Local SM-API binary lives in the
-	// docker-compose stack (WS1.1); cloud SM-API is reached at its
-	// public DNS. When SECRET_MANAGER_API_URL is empty the provider is
+	// SM-API provider (ADR-0002). Same provider in local + cloud: local
+	// SM-API runs in the docker-compose stack, cloud SM-API is reached at
+	// its public DNS. When SECRET_MANAGER_API_URL is empty the provider is
 	// not constructed and downstream callers handle the absence.
 	var smClient secretmanagersvc.SecretManagementClient
 	if cfg.SecretManagerAPIURL != "" {
@@ -467,19 +459,18 @@ func main() {
 	} else {
 		slog.Warn("SECRET_MANAGER_API_URL not set — Phase 1 secret writes disabled")
 	}
-	_ = smClient // wired into dispatch + connect controllers in WS2.
+	_ = smClient // consumed via smWriter below.
 
-	// WS2.2 — SM-API mirror writer. Hoisted ahead of the credential / IDP
-	// service constructors so all consumers can attach via WithSMAPIWriter
-	// (the no-op case when smClient is nil is fine).
+	// SM-API mirror writer. Constructed ahead of the credential / IDP service
+	// constructors so all consumers can attach via WithSMAPIWriter (the no-op
+	// case when smClient is nil is fine).
 	smWriter := orgcreds.NewSMAPIWriter(smClient, db)
 
-	// --- Phase 1 — cluster-gateway-proxy client (WS1.4) ----------------
-	// Same shape as wso2cloud/backend/core/internal/ou's cpapi: no
-	// Authorization header, X-Correlation-ID-only tracing. When the URL
-	// is empty the client is not constructed; the new dispatch path
-	// will short-circuit and the legacy ClusterWorkflow path keeps
-	// running until WS2.3 cuts over.
+	// cluster-gateway-proxy client. Same shape as
+	// wso2cloud/backend/core/internal/ou's cpapi: no Authorization header,
+	// X-Correlation-ID-only tracing. When the URL is empty the client is not
+	// constructed and the proxy dispatch path short-circuits to the legacy
+	// ClusterWorkflow path.
 	var cgwClient *clustergatewayproxy.Client
 	if cfg.ClusterGatewayProxyURL != "" {
 		cgwCfg := clustergatewayproxy.Config{BaseURL: cfg.ClusterGatewayProxyURL}
@@ -494,16 +485,15 @@ func main() {
 	} else {
 		slog.Warn("CLUSTER_GATEWAY_PROXY_URL not set — Phase 2 dispatch disabled")
 	}
-	// WS2.3 — construct the coding-agent dispatcher when the proxy
-	// client is present. nil-safe at the call-site (dispatch_service
-	// falls back to the legacy ClusterWorkflow path).
+	// Construct the coding-agent dispatcher when the proxy client is present.
+	// nil-safe at the call-site (dispatch_service falls back to the legacy
+	// ClusterWorkflow path).
 	var codingAgentDispatcher *codingagent.Dispatcher
 	if cgwClient != nil {
 		codingAgentDispatcher = codingagent.New(cgwClient)
 	}
 
-	// --- Credentials + in-process services (folded in after WS0.1.i) ---
-	// --- Git-service services + controllers (folded in after WS0.1.i) ---
+	// Credentials + git-service services and controllers.
 	credKey, err := base64.StdEncoding.DecodeString(cfg.CredentialEncryptionKey)
 	if err != nil || len(credKey) != 32 {
 		slog.Error("CREDENTIAL_ENCRYPTION_KEY must be a base64-encoded 32-byte key", "error", err)
@@ -522,9 +512,9 @@ func main() {
 		wpClient = nil
 	}
 
-	// App-token minter — best-effort App-key load. PR A's seed is user-pat
-	// only, so PR A boots with `appKey == nil` and the minter answers in
-	// no-app mode; PR B's connect surface lights up the App path lazily.
+	// App-token minter — best-effort App-key load. With no App key the minter
+	// answers in no-app mode; the connect surface lights up the App path
+	// lazily on first use.
 	loadCtx, cancelLoad := context.WithTimeout(context.Background(), 10*time.Second)
 	appKey, err := credentials.LoadAppKeyFromOpenBao(loadCtx, credStore)
 	cancelLoad()
@@ -606,9 +596,8 @@ func main() {
 	anthropicInvalidator := orgcreds.HTTPAgentsCacheInvalidator(cfg.AgentsServiceURL, "")
 	anthropicCredService := orgcreds.NewAnthropicCredentialService(db, credStore, wpClient, cfg.AnthropicPlatformKey, anthropicInvalidator)
 
-	// WS2.2 — SM-API mirror writer wired into both credential services.
-	// The writer itself was hoisted ahead of the IDP service constructor
-	// (WS2.4) so it's already built; nil-safe via Enabled() check.
+	// SM-API mirror writer wired into both credential services. nil-safe via
+	// the Enabled() check.
 	credService.WithSMAPIWriter(smWriter)
 	anthropicCredService.WithSMAPIWriter(smWriter)
 	validatorProbes := orgcreds.NewValidatorProbes(credService, githubClient, credResolver, minter)
@@ -664,18 +653,18 @@ func main() {
 	// the runner pod calls at init to fetch its frozen SKILL.md bodies.
 	taskSkillsSvc := task.NewTaskSkillsService(db, taskRepo)
 
-	// Phase 2 (api-platform-integration) — trait_sync is the single shared
-	// emitter that reconciles the `api-configuration` ClusterTrait on a
-	// Component CR + per-environment ReleaseBindings. Hooked from both the
-	// dispatch path (after CreateComponent) and the design-edit path
-	// (after `components/<name>/design.md` PUT). See
+	// trait_sync is the single shared emitter that reconciles the
+	// `api-configuration` ClusterTrait on a Component CR + per-environment
+	// ReleaseBindings. Hooked from both the dispatch path (after
+	// CreateComponent) and the design-edit path (after
+	// `components/<name>/design.md` PUT). See
 	// docs/design/api-platform-integration.md §6 Phase 2.
 	traitSyncService := component.NewTraitSyncService(componentClient, artifactStore)
 	if hook, ok := designService.(design.DesignServiceWithTraitSync); ok {
 		hook.SetTraitSync(traitSyncService)
 	}
 
-	// Phase 3 — Thunder admin client + IDP service. Reads
+	// Thunder admin client + IDP service. Reads
 	// asdlc-system-client credentials from env (THUNDER_*) and exposes
 	// EnsureOrgPublisher / RevokeOrgPublisher / RegenerateClientSecret
 	// for per-org publisher OAuth app lifecycle. Optional — when the
@@ -706,10 +695,10 @@ func main() {
 	} else {
 		slog.Warn("Thunder admin client disabled — set THUNDER_ADMIN_URL + THUNDER_SYSTEM_CLIENT_ID + THUNDER_SYSTEM_CLIENT_SECRET")
 	}
-	// WS2.4 — WithSMAPIWriter mirrors per-org publisher client_secret to
-	// SM-API on EnsureOrgPublisher / RegenerateClientSecret so the
-	// dispatcher's PUBLISHER_CLIENT_SECRET ExternalSecret can materialise
-	// it into runner pods without the BFF holding the plaintext.
+	// WithSMAPIWriter mirrors per-org publisher client_secret to SM-API on
+	// EnsureOrgPublisher / RegenerateClientSecret so the dispatcher's
+	// PUBLISHER_CLIENT_SECRET ExternalSecret can materialise it into runner
+	// pods without the BFF holding the plaintext.
 	idpService := idp.NewIDPService(db, thunderAdminClient, idp.PlatformIDPConfig{
 		Issuer:  cfg.PlatformIDP.Issuer,
 		JWKSURL: cfg.PlatformIDP.JWKSURL,
@@ -718,10 +707,9 @@ func main() {
 	// provisions the publisher app lazily.
 	traitSyncService.SetIDPService(idpService)
 
-	// Connect-state JWT issuer (App-mode OAuth CSRF state). The Task JWT
-	// path moved to RS256 (taskTokens below); this signing key is HS256 and
-	// only ever leaves the BFF as a JWT signature inside the GitHub OAuth
-	// `state` query param.
+	// Connect-state JWT issuer (App-mode OAuth CSRF state). This HS256 signing
+	// key only ever leaves the BFF as a JWT signature inside the GitHub OAuth
+	// `state` query param. (Task JWTs use RS256 via taskTokens below.)
 	bearerSvc := orgcreds.NewBearerService(cfg.OAuthStateSigningKey, 24*time.Hour)
 	if cfg.OAuthStateSigningKey == "" {
 		slog.Warn("OAUTH_STATE_SIGNING_KEY not set — connect-state JWTs will fail to mint")
@@ -753,11 +741,6 @@ func main() {
 	// target org (via X-Impersonate-Org, derived from the request URL's
 	// namespace) instead of forwarding the inbound user JWT. The OC client's
 	// AuthProvider supplies the M2M token, so this only needs to set the marker.
-	//
-	// (Previously this injected the M2M token into the user-token ctx key, which
-	// collided with the user-JWT forwarding path and suppressed the impersonation
-	// header — mis-routing every async OC write to the service identity's own
-	// org. The explicit marker removes that ambiguity.)
 	asServiceIdentity := func(ctx context.Context) context.Context {
 		return middleware.WithServiceIdentity(ctx)
 	}
@@ -766,10 +749,8 @@ func main() {
 	// pipeline and creates a coding-agent WorkflowRun. wfRunService is
 	// constructed below; we wire DispatchService after it.
 
-	// Webhook receiver wiring. PR B swaps EnvSecretProvider for
-	// GitServiceSecretProvider — secrets now come from the per-org
-	// credential record (via git-service). The receiver pipeline shape
-	// is unchanged from Phase 0; only the lookup backend changes.
+	// Webhook receiver wiring. The verifier's HMAC secrets come from the
+	// per-org credential record (via git-service).
 	secretProvider := webhook.NewGitServiceSecretProvider(credService, 30*time.Second)
 	var routingLookup webhook.OcOrgIDLookup = credService
 	webhookVerifier := webhook.NewVerifier(secretProvider).
@@ -781,25 +762,23 @@ func main() {
 
 	wfRunService := codingagent.NewWorkflowRunService(db, taskRepo, componentClient, repoService, buildCredService, artifactStore, projector, asServiceIdentity)
 
-	// Dispatch service — replaces the legacy RemoteWorkerService. Routes to
-	// WorkflowRunService.TriggerCodingAgent (ClusterWorkflow `app-factory-coding-agent`)
-	// for the per-task agent pod. AGENT_GIT_SERVICE_URL must be reachable from
-	// the WorkflowPlane namespace (cross-namespace FQDN — see env-overlay).
-	// AGENT_GIT_SERVICE_URL collapsed into AGENT_PLATFORM_URL: post-fold,
-	// the runner pod reaches every former git-service endpoint via the
-	// merged asdlc-api at AGENT_PLATFORM_URL.
+	// Dispatch service routes to WorkflowRunService.TriggerCodingAgent
+	// (ClusterWorkflow `app-factory-coding-agent`) for the per-task agent pod.
+	// The runner pod reaches every BFF endpoint at AGENT_PLATFORM_URL, which
+	// must be reachable from the WorkflowPlane namespace (cross-namespace
+	// FQDN — see env-overlay).
 	dispatchSvc := codingagent.NewDispatchService(taskRepo, repoService, credService, anthropicCredService, repoBoardService, componentService, configService, artifactStore, taskTokens, asServiceIdentity, wfRunService, projector, cfg.AgentPlatformURL, cfg.AgentPlatformURL)
 	if hook, ok := dispatchSvc.(codingagent.DispatchServiceWithTraitSync); ok {
 		hook.SetTraitSync(traitSyncService)
 	}
-	// WS2.4 — let the proxy dispatch pre-flight provision the per-org publisher
-	// cc on demand (decoupled from API security), so the runner can auth to the
-	// BFF through the gateway for every component, not just protected ones.
+	// Let the proxy dispatch pre-flight provision the per-org publisher cc on
+	// demand (decoupled from API security), so the runner can auth to the BFF
+	// through the gateway for every component, not just protected ones.
 	if idpSetter, ok := dispatchSvc.(codingagent.DispatchServiceWithIDP); ok {
 		idpSetter.SetIDPService(idpService)
 	}
-	// WS2.3 — wire the proxy-based dispatcher. nil dispatcher → the
-	// legacy ClusterWorkflow path stays the only dispatch flow.
+	// Wire the proxy-based dispatcher. nil dispatcher → the legacy
+	// ClusterWorkflow path stays the only dispatch flow.
 	if codingAgentDispatcher != nil {
 		if setter, ok := dispatchSvc.(codingagent.DispatchServiceWithCodingAgent); ok {
 			setter.WithCodingAgentDispatcher(codingAgentDispatcher, db, cfg.AgentClusterSecretStore, cfg.AgentRunnerImage)
@@ -818,12 +797,11 @@ func main() {
 	}
 	slog.Info("Dispatch service", "agentPlatformURL", cfg.AgentPlatformURL)
 
-	// F1 — wire the post-deploy dispatch cascade. The projector fires
+	// Wire the post-deploy dispatch cascade. The projector fires
 	// OnTaskDeployed whenever ApplyBuildResult lands a task in `deployed`;
 	// the cascade takes a per-project lock and calls DispatchTasks to
-	// re-evaluate `on_hold` siblings and auto-dispatch the ones
-	// whose deps are now satisfied. See docs/design/cross-component-
-	// wiring-gaps.md §3 F1.
+	// re-evaluate `on_hold` siblings and auto-dispatch the ones whose deps
+	// are now satisfied. See docs/design/cross-component-wiring-gaps.md §3 F1.
 	cascadeHook := codingagent.NewDispatchCascadeHook(db, dispatchSvc)
 	cascadeHook.SetTraitSync(traitSyncService)
 	cascadeHook.SetRuntimeConfig(runtimeConfigSvc)
@@ -837,8 +815,8 @@ func main() {
 
 	// Build watcher — 10s sweep for in-flight WorkflowRuns. Started after
 	// the HTTP server is up so it's not killed during handler init failures.
-	// Phase 2 PR D — wfRunService.RetryAuthFailedBuild backs the auth
-	// retry path. authBudget is configurable for tests via env.
+	// wfRunService.RetryAuthFailedBuild backs the auth retry path; authBudget
+	// is configurable for tests via env.
 	buildWatcher := codingagent.NewBuildWatcher(db, componentClient, projector, asServiceIdentity, wfRunService, cfg.BuildAuthRetryBudget)
 
 	// Coding-agent watcher — same cadence, complementary to the GitHub
@@ -846,11 +824,11 @@ func main() {
 	// success transitions ride the pull_request:ready_for_review webhook.
 	codingAgentWatcher := codingagent.NewCodingAgentWatcher(db, componentClient, projector, asServiceIdentity)
 
-	// Phase 2 — trait_sync drift watcher (10 s cadence). Idempotent
-	// reconcile of the `api-configuration` ClusterTrait on every
-	// (org,project,component) tuple that has a task record. Closes
-	// write-write races between dispatch / design PUT and provides the
-	// convergence backstop the §6 Phase 2 plan calls for.
+	// trait_sync drift watcher (10 s cadence). Idempotent reconcile of the
+	// `api-configuration` ClusterTrait on every (org,project,component) tuple
+	// that has a task record. Closes write-write races between dispatch /
+	// design PUT and provides the convergence backstop. See
+	// docs/design/api-platform-integration.md §6 Phase 2.
 	traitSyncWatcher := component.NewTraitSyncWatcher(db, traitSyncService, asServiceIdentity)
 
 	// Inbound JWT verifier — Thunder publishes the User JWT and Service JWT
@@ -864,7 +842,7 @@ func main() {
 		slog.Warn("JWKS_URL not set — inbound JWT verification disabled (dev/test only)")
 	}
 
-	// Phase 2 PR B — org-scoped GitHub connect/disconnect surface.
+	// Org-scoped GitHub connect/disconnect surface.
 	disconnectSvc := orgcreds.NewOrgDisconnectService(taskRepo, db, credService, issueService,
 		func(s models.TaskStatus) (models.TaskStatus, error) {
 			return contracts.ApplyTaskEvent(s, contracts.TaskEventOrgDisconnected)
@@ -914,10 +892,10 @@ func main() {
 			if setter, ok := tc.(task.SkillsServiceSetter); ok {
 				setter.SetSkillsService(taskSkillsSvc)
 			}
-			// WS2.4 — wire publisher cc token verifier (Thunder JWKS,
-			// audience prefix "asdlc-publisher-"). When ThunderJWKS is
-			// nil (local dev without platform IDP), verifier is nil and
-			// runner callbacks accept TaskJWT only.
+			// Wire the publisher cc token verifier (Thunder JWKS, audience
+			// prefix "asdlc-publisher-"). When ThunderJWKS is nil (local dev
+			// without platform IDP), verifier is nil and runner callbacks
+			// accept TaskJWT only.
 			if pv := authn.NewPublisherTokenVerifier(thunderJWKS, cfg.PlatformIDP.Issuer, "asdlc-publisher-"); pv != nil {
 				if setter, ok := tc.(task.PublisherVerifierSetter); ok {
 					setter.SetPublisherVerifier(pv)
@@ -942,7 +920,6 @@ func main() {
 		ThunderJWKS:            thunderJWKS,
 		OrganizationService:    organizationService,
 
-		// Retained from the git-service fold
 		DB:                   db,
 		CredCtrl:             credRefreshCtrl,
 		CredService:          credService,
@@ -1004,10 +981,9 @@ func main() {
 		slog.Info("codingagent.JobWatcher: enabled (cluster-gateway-proxy configured)")
 	}
 
-	// Periodic credential validator (folded in from git-service). Walks
-	// every active org_credentials row once per
-	// cfg.CredentialValidatorInterval (default 24h), probes GitHub, and
-	// flags identity drift on confirmed unauthorised credentials.
+	// Periodic credential validator. Walks every active org_credentials row
+	// once per cfg.CredentialValidatorInterval (default 24h), probes GitHub,
+	// and flags identity drift on confirmed unauthorised credentials.
 	go func() {
 		slog.Info("credential validator started", "interval", cfg.CredentialValidatorInterval)
 		credValidator.Run(watcherCtx)
@@ -1066,11 +1042,11 @@ func splitAndTrim(s string) []string {
 }
 
 // progressService builds the BFF's progress service and, when the
-// cluster-gateway-proxy + DB are configured, wires the new-path log
-// source (cgw-proxy pods/log + coding_agent_logs sidecar) so tasks
-// dispatched via WS2.3 surface logs in the UI even though Observer's
-// hardcoded NS filter no longer applies. Tasks on the legacy
-// ClusterWorkflow path are unaffected — same Observer fallback.
+// cluster-gateway-proxy + DB are configured, wires the proxy-path log
+// source (cgw-proxy pods/log + coding_agent_logs sidecar) so proxy-dispatched
+// tasks surface logs in the UI even though Observer's hardcoded NS filter no
+// longer applies. Tasks on the legacy ClusterWorkflow path are unaffected —
+// same Observer fallback.
 func progressService(
 	taskSvc task.TaskService,
 	ocClient openchoreo.ComponentClient,

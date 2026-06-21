@@ -20,15 +20,11 @@ import (
 	"time"
 )
 
-// OrganizationIDPProfile is the per-org IDP configuration row backing
-// Phase 3 of docs/design/api-platform-integration.md (per-org Thunder
-// publisher client). One row per OC organisation.
-//
-//	v1 — every row has Kind="platform" + Thunder issuer/jwks_url, with
-//	     PublisherClientID + PublisherSecretRef populated lazily on
-//	     first protected-component deploy.
-//	v2 — Kind ∈ {"asgardeo","custom"} adds support for BYO-IDP. The
-//	     console org-settings page becomes editable in Phase 7.
+// OrganizationIDPProfile is the per-org IDP configuration row backing the
+// per-org Thunder publisher client (docs/design/api-platform-integration.md).
+// One row per OC organisation. Every row has Kind="platform" + Thunder
+// issuer/jwks_url, with PublisherClientID + PublisherSecretRef populated
+// lazily on first protected-component deploy.
 //
 // The OrgID field is the OC-side org handle (not a UUID) — matches
 // every other place the BFF identifies orgs.
@@ -42,16 +38,14 @@ type OrganizationIDPProfile struct {
 	PublisherClientID     string    `gorm:"column:publisher_client_id" json:"publisherClientId,omitempty"`
 	// PublisherClientSecret is the live secret used by the BFF when it
 	// needs to mint per-org publisher tokens or hand the secret out to
-	// user-app pods. v1 stores plaintext in PostgreSQL; v2 moves to
-	// OpenBao behind PublisherSecretRef (which stays nil until then).
-	// The JSON `-` tag keeps it off the wire — callers must use a
-	// purpose-built endpoint to fetch it.
+	// user-app pods. Stored plaintext in PostgreSQL. The JSON `-` tag
+	// keeps it off the wire — callers must use a purpose-built endpoint
+	// to fetch it.
 	PublisherClientSecret string    `gorm:"column:publisher_client_secret" json:"-"`
 	PublisherSecretRef    string    `gorm:"column:publisher_secret_ref" json:"publisherSecretRef,omitempty"`
-	// SM-API triplet (WS2.4) — populated by SMAPIWriter.WritePublisher
-	// after EnsureOrgPublisher provisions the Thunder cc app. Nullable
-	// rows pre-date WS2.4; the dispatcher short-circuits the per-run
-	// runner-auth ExternalSecret when missing.
+	// SM-API triplet — populated by SMAPIWriter.WritePublisher after
+	// EnsureOrgPublisher provisions the Thunder cc app. The dispatcher
+	// short-circuits the per-run runner-auth ExternalSecret when missing.
 	SMAPISecretRefName *string    `gorm:"type:text;column:sm_api_secret_ref_name" json:"-"`
 	SMAPIKVPath        *string    `gorm:"type:text;column:sm_api_kv_path" json:"-"`
 	SMAPIProperty      *string    `gorm:"type:text;column:sm_api_property" json:"-"`
@@ -67,8 +61,8 @@ func (OrganizationIDPProfile) TableName() string { return "organization_idp_prof
 
 // IDPAuditEvent is one row in the append-only audit log of
 // publisher-lifecycle operations. Used by the console "Audit" view
-// (Phase 4) and by incident response when investigating compromised
-// org credentials.
+// and by incident response when investigating compromised org
+// credentials.
 type IDPAuditEvent struct {
 	ID           int64     `gorm:"primaryKey;autoIncrement" json:"id"`
 	OrgID        string    `gorm:"column:org_id;not null;index:idx_idp_audit_events_org_occurred,priority:1" json:"orgId"`

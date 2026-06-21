@@ -39,11 +39,6 @@ var ErrComponentRemovedAfterGeneration = errors.New("component removed after gen
 // snapshot from when the task was generated — so design edits between
 // generation and dispatch propagate. Lookups are case-insensitive on Name to
 // mirror toposort/lookup behaviour elsewhere in the codebase.
-//
-// Home rationale: this is pure design-corpus resolution over the ArtifactStore,
-// so it belongs in the artifacts engine — letting both task (issue-body /
-// stream) and codingagent (dispatch ensure-component) call it without a
-// task↔codingagent import edge.
 func ResolveDesignComponent(ctx context.Context, store *ArtifactStore, task *models.ComponentTask) (*models.DesignComponent, error) {
 	if store == nil {
 		return nil, fmt.Errorf("artifact store not configured")

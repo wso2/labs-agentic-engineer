@@ -23,8 +23,8 @@ import (
 	"gorm.io/gorm"
 )
 
-// RunPhase5DeployGating implements the F2 rename from the cross-component-
-// wiring gap analysis (docs/design/cross-component-wiring-gaps.md):
+// RunPhase5DeployGating renames task_depends_on → depends_on_components
+// (docs/design/cross-component-wiring-gaps.md):
 //
 //  1. RENAME component_tasks.task_depends_on → depends_on_components.
 //     The old column held GitHub issue titles authored by the tech-lead LLM;
@@ -34,9 +34,8 @@ import (
 //     name doesn't match design.Components[*].name.
 //
 //  2. The JSONB type and default carry over unchanged. Pre-existing rows
-//     (always under DEPLOYMENT_TIER=dev for now) keep their value — local
-//     fixtures will be regenerated on the next plan-stream run because
-//     the new gating reads ComponentName, not title.
+//     keep their value — local fixtures are regenerated on the next
+//     plan-stream run because the gating reads ComponentName, not title.
 //
 // Idempotent — re-running is a no-op once the rename has taken effect.
 func RunPhase5DeployGating(db *gorm.DB) error {

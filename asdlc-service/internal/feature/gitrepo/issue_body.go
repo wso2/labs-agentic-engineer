@@ -71,8 +71,7 @@ func IssueTitle(task *models.ComponentTask) string {
 // case the skill is somehow not loaded.
 //
 // The two unused parameters (repoURL, repoSlug) are kept to preserve the
-// existing call sites; they were used by the now-removed Local Developer
-// Setup section. Drop them once the call sites stop passing them.
+// existing call sites. Drop them once the call sites stop passing them.
 func BuildIssueBody(task *models.ComponentTask, comp *models.DesignComponent, _repoURL, _repoSlug string) string {
 	var sb strings.Builder
 

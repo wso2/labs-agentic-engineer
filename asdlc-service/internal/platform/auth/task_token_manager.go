@@ -159,9 +159,9 @@ func (m *TaskTokenManager) Issue(taskID, ocOrgID, projectID string) (string, err
 // success. Issuer + audience must match the manager's configuration.
 // The exp / nbf claims are honored by jwt.ParseWithClaims automatically.
 //
-// Used by the BFF's per-task endpoints (F3c: verification-failed, retry)
-// to authenticate the runner pod's callback. The runner pod was issued
-// this token at dispatch time and persists it to a file inside the pod's
+// Used by the BFF's per-task endpoints (verification-failed, retry) to
+// authenticate the runner pod's callback. The runner pod was issued this
+// token at dispatch time and persists it to a file inside the pod's
 // emptyDir — see remote-worker/src/lib/runner.ts.
 func (m *TaskTokenManager) Verify(tokenString string) (*TaskClaims, error) {
 	if tokenString == "" {
@@ -191,7 +191,7 @@ func (m *TaskTokenManager) Verify(tokenString string) (*TaskClaims, error) {
 	}
 	// Audience deliberately not enforced — the BFF is the issuer, and the
 	// same token may be presented to git-service (aud=git-service) or
-	// back to the BFF self-callback (F3c). Trust comes from issuer +
+	// back to the BFF self-callback. Trust comes from issuer +
 	// signature; aud is the verifier's hint, not a BFF self-check.
 	return claims, nil
 }

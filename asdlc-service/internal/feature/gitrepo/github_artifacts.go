@@ -16,12 +16,12 @@
 
 package gitrepo
 
-// GitHub artifact-store v2 (V1 scope) HTTP methods.
+// GitHub artifact-store HTTP methods driving the SaveDesign and
+// SaveRequirements flows.
 //
-// These methods replace the `git commit + push` flow inside SaveDesign and
-// SaveRequirements. They live on the same `githubClient` struct as the rest of
-// the GitHub HTTP surface so the credentials boundary (Phase 2 §2.1) is
-// preserved — no token-bearing value crosses BFF↔git-service.
+// They live on the same `githubClient` struct as the rest of the GitHub HTTP
+// surface so the credentials boundary is preserved — no token-bearing value
+// crosses BFF↔git-service.
 //
 // See docs/design/artifact-store-v2.md §8 (save flows) and §9 (concurrency).
 

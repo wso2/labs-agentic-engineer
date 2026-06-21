@@ -24,13 +24,12 @@ import (
 	"time"
 )
 
-// OrgCredential is the per-org GitHub credential record. Phase 2 PR A
-// relocates this from BFF Postgres to git-service Postgres — credentials
-// live in the same service that holds them (evolution-doc §3.3).
+// OrgCredential is the per-org GitHub credential record, stored in
+// git-service Postgres so credentials live in the same service that holds
+// them (evolution-doc §3.3).
 //
 // One row per OC org. Mode is fixed at connect time (kind ∈
-// {app-installation, user-pat}). The Phase 0 single-tenant
-// kind='platform-pat' row is retired and not represented here.
+// {app-installation, user-pat}).
 //
 // CHECK constraints (secrets_shape_per_kind, app_fields) live in raw SQL
 // in the migration — GORM does not model them well.
@@ -51,8 +50,8 @@ type OrgCredential struct {
 	IdentityChangedAt  *time.Time     `gorm:"column:identity_changed_at" json:"identityChangedAt,omitempty"`
 	PrevIdentityLogin  *string        `gorm:"type:text;column:prev_identity_login" json:"prevIdentityLogin,omitempty"`
 
-	// WS2.2 — SM-API triplet + write timestamp. See OrgAnthropicCredential
-	// for lifecycle. Four columns stamped atomically in the Connect tx.
+	// SM-API triplet + write timestamp. See OrgAnthropicCredential for
+	// lifecycle. Four columns stamped atomically in the Connect tx.
 	SMAPISecretRefName *string    `gorm:"type:text;column:sm_api_secret_ref_name" json:"-"`
 	SMAPIKVPath        *string    `gorm:"type:text;column:sm_api_kv_path" json:"-"`
 	SMAPIProperty      *string    `gorm:"type:text;column:sm_api_property" json:"-"`

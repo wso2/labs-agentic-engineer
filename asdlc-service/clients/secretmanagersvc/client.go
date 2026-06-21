@@ -14,29 +14,22 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package secretmanagersvc is the asdlc-service port of agent-manager's
-// secretmanagersvc client (WS0.2). The provider/registry/types are
-// verbatim; client.go is forked along two axes:
+// Package secretmanagersvc is the secret-management client for the
+// asdlc-service workflows plane. Two shape choices drive the rest of the
+// package:
 //
-//  1. SecretLocation is reshaped from agent-manager's
-//     `{org, project, agent, environment, config, entity, secretKey}`
-//     to the workflows plan's `{org, project, task, entity, secretKey}`.
-//     The collapse is deliberate — app-factory has no agent or env-set
-//     concept at the secret layer; a coding-agent task is the smallest
-//     ownership unit and per-env scoping happens at the OC
-//     SecretReference level, not in the KV path.
+//  1. SecretLocation is keyed by `{org, project, task, entity, secretKey}`.
+//     A coding-agent task is the smallest ownership unit; app-factory has
+//     no agent or env-set concept at the secret layer, and per-env scoping
+//     happens at the OC SecretReference level, not in the KV path.
 //
-//  2. OpenChoreoSecretReferenceClient is a minimal local interface
-//     instead of the full `openchoreosvc.OpenChoreoClient`. The typed
-//     SecretReference wrapper lands in WS0.3; until then this file
-//     uses the small surface needed for upsertSecretReference /
-//     DeleteSecret.
+//  2. OpenChoreoSecretReferenceClient is a minimal local interface rather
+//     than the full OC client — it covers only the SecretReference surface
+//     upsertSecretReference / DeleteSecret need.
 //
-// Per ADR-0002 this package does NOT ship an openbao provider — local
-// is served by the actual SM-API binary backed by local OpenBao, cloud
-// is served by the cloud SM-API. The provider registry is shared with
-// `providers/sm_api` (cloud) and `providers/sm_api_local` (local)
-// when those land in Phase 1.
+// Per ADR-0002 this package does NOT ship an openbao provider — local is
+// served by the SM-API binary backed by local OpenBao, cloud is served by
+// the cloud SM-API.
 package secretmanagersvc
 
 import (
@@ -70,17 +63,12 @@ var ErrConflict = errors.New("conflict")
 
 // SecretLocation identifies where a secret lives in the KV hierarchy.
 //
-// Compared to agent-manager's SecretLocation, two collapses:
-//
-//   - {Agent, EnvironmentName, ConfigName} → {TaskID}.
-//     A coding-agent task is the smallest ownership unit. The
-//     dispatch path mints one ExternalSecret per task per credential;
-//     per-env scoping (when needed) happens at the SecretReference
-//     `environments:` slice on the OC side, not in the KV path.
-//
-//   - SecretRefName is derived from `{task, entity}` so two different
-//     tasks in the same project don't collide when both consume the
-//     same upstream credential.
+// A coding-agent task is the smallest ownership unit: the dispatch path
+// mints one ExternalSecret per task per credential; per-env scoping (when
+// needed) happens at the SecretReference `environments:` slice on the OC
+// side, not in the KV path. SecretRefName is derived from `{task, entity}`
+// so two different tasks in the same project don't collide when both
+// consume the same upstream credential.
 //
 // All segments are validated against `/` to prevent traversal +
 // path collisions.
@@ -249,11 +237,10 @@ func ParseKVPath(kvPath string) (SecretLocation, error) {
 	}
 }
 
-// OpenChoreoSecretReferenceClient is the small slice of the future OC
-// client (WS0.3) that this package needs. It covers SecretReference
-// CRUD only; the GitSecret CRUD lives elsewhere. Implementations are
-// expected to map ErrNotFound / ErrConflict on the namespaced errors
-// they return.
+// OpenChoreoSecretReferenceClient is the small slice of the OC client
+// that this package needs. It covers SecretReference CRUD only; the
+// GitSecret CRUD lives elsewhere. Implementations are expected to map
+// ErrNotFound / ErrConflict on the namespaced errors they return.
 type OpenChoreoSecretReferenceClient interface {
 	GetSecretReference(ctx context.Context, orgNS, name string) (*SecretReference, error)
 	CreateSecretReference(ctx context.Context, orgNS string, req CreateSecretReferenceRequest) (*SecretReference, error)
@@ -263,8 +250,8 @@ type OpenChoreoSecretReferenceClient interface {
 
 // CreateSecretReferenceRequest mirrors the field set the cluster-gateway
 // proxy accepts on POST /apis/openchoreo.dev/v1alpha1/.../secretreferences.
-// Kept minimal — the typed wrapper in WS0.3 fills in the rest from
-// per-call context (refreshInterval, target ClusterSecretStore).
+// Kept minimal — the rest (refreshInterval, target ClusterSecretStore) is
+// filled in from per-call context.
 type CreateSecretReferenceRequest struct {
 	Namespace       string
 	Name            string
@@ -276,14 +263,13 @@ type CreateSecretReferenceRequest struct {
 }
 
 // SecretReference is the projection of the OC SecretReference CR this
-// package needs back from the server. Fully-typed CR lands in WS0.3.
+// package needs back from the server.
 type SecretReference struct {
 	Namespace string
 	Name      string
 }
 
-// SecretManagementClient is the asdlc port of the high-level interface.
-// Same semantics as agent-manager's:
+// SecretManagementClient is the high-level secret-management interface.
 //   - CreateSecret REPLACES the whole record.
 //   - PatchSecret merges (server-side merge-patch).
 //   - DeleteSecret is idempotent and managed-by-fenced.

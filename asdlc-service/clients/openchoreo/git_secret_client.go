@@ -26,10 +26,9 @@ import (
 
 //go:generate go run github.com/matryer/moq@v0.7.1 -rm -fmt goimports -pkg mocks -out mocks/git_secret_client_mock.go . GitSecretClient
 
-// Default workflow plane targeting for GitSecret. The remote-worker NS
-// in WS1+ doesn't run Argo so the per-org GitSecret applied here only
-// matters for the legacy `dockerfile-builder` ClusterWorkflow that
-// keeps running on the WP. Callers needing a different target can use
+// Default workflow plane targeting for GitSecret. The per-org GitSecret
+// applied here matters for the `dockerfile-builder` ClusterWorkflow that
+// runs on the WorkflowPlane. Callers needing a different target can use
 // CreateGitSecretRequest fields below.
 const (
 	DefaultGitSecretWorkflowPlaneKind = gen.CreateGitSecretRequestWorkflowPlaneKindClusterWorkflowPlane
@@ -70,8 +69,7 @@ type GitSecretInfo struct {
 //go:generate go run github.com/matryer/moq@v0.7.1 -rm -fmt goimports -pkg mocks -out mocks/git_secret_client_mock.go . GitSecretClient
 
 // GitSecretClient wraps the OC GitSecret CRUD surface. Used by the
-// build-credentials path to land per-org GitSecrets on the
-// WorkflowPlane (today) and the new remote-worker NS (WS2 onwards).
+// build-credentials path to land per-org GitSecrets on the WorkflowPlane.
 type GitSecretClient interface {
 	CreateGitSecret(ctx context.Context, orgNS string, req CreateGitSecretRequest) (*GitSecretInfo, error)
 	ListGitSecrets(ctx context.Context, orgNS string) ([]*GitSecretInfo, error)

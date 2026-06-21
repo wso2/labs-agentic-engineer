@@ -41,7 +41,7 @@ type OrgPublisher interface {
 
 // TraitSyncService is the single shared emitter for `api-configuration`
 // trait state on a Component CR + its per-environment ReleaseBindings.
-// See docs/design/api-platform-integration.md section 6 (Phase 2).
+// See docs/design/api-platform-integration.md section 6.
 //
 // Two write triggers call SyncComponentTraits:
 //  1. Dispatch path (`dispatch_service.go`): after CreateComponent so a
@@ -58,16 +58,11 @@ type OrgPublisher interface {
 // is mid-flight must trigger its own read after the dispatch finishes,
 // not piggyback on the dispatch's stale read.
 //
-// The current implementation chooses the documented fallback path from
-// the plan: protected components keep `autoDeploy: true`, accept the
-// short first-deploy exposure window, and rely on this emitter +
-// SyncAllProjectComponentTraits (drift sweep) for convergence. This was
-// chosen over `autoDeploy: false` + BFF-managed RBs because the project→
-// environment→RB binding logic in OC requires autoDeploy to drive
-// initial RB creation; verifying we can short-circuit it is the
-// prerequisite spike documented in §6 Phase 2 (R2). When OC adds first-
-// class support for declarative RBs without autoDeploy, this code can
-// flip to that path.
+// Protected components keep `autoDeploy: true`, accept the short
+// first-deploy exposure window, and rely on this emitter + the drift
+// watcher for convergence. autoDeploy is required because OC's project→
+// environment→RB binding logic drives initial RB creation; BFF-managed
+// RBs without autoDeploy are not supported by OC.
 type TraitSyncService struct {
 	componentClient openchoreo.ComponentClient
 	store           *artifacts.ArtifactStore
@@ -161,8 +156,8 @@ func (s *TraitSyncService) SyncComponentTraits(ctx context.Context, orgID, proje
 
 	desiredEnabled := models.ResolveAPISecurityEnabled(*match)
 
-	// Phase 3 — lazy provisioning of the org's Thunder publisher app.
-	// First protected reconcile in an org creates `asdlc-publisher-<orgID>`
+	// Lazy provisioning of the org's Thunder publisher app: the first
+	// protected reconcile in an org creates `asdlc-publisher-<orgID>`
 	// (idempotent on subsequent calls). Failures are non-fatal — the
 	// trait still emits, the API stays reachable; the publisher will
 	// be retried on the next reconcile or via the drift watcher.
@@ -172,10 +167,10 @@ func (s *TraitSyncService) SyncComponentTraits(ctx context.Context, orgID, proje
 			slog.WarnContext(ctx, "trait_sync: EnsureOrgPublisher failed; continuing",
 				"orgID", orgID, "error", err)
 		}
-		// Phase 7 — when the org has a BYO-IDP (non-platform) profile,
-		// pass its issuer into the trait so the RestApi pins JWT
-		// validation to that issuer only. Platform-kind orgs keep
-		// `issuers` empty (any cluster-configured keymanager).
+		// When the org has a BYO-IDP (non-platform) profile, pass its
+		// issuer into the trait so the RestApi pins JWT validation to
+		// that issuer only. Platform-kind orgs keep `issuers` empty
+		// (any cluster-configured keymanager).
 		if profile, perr := s.idp.GetProfile(ctx, orgID); perr == nil && profile != nil {
 			if profile.Kind != "" && profile.Kind != "platform" && profile.Issuer != "" {
 				issuers = []string{profile.Issuer}
@@ -247,9 +242,8 @@ func (s *TraitSyncService) SyncComponentTraits(ctx context.Context, orgID, proje
 // The trait template's `creates` resources are tracked in
 // RenderedRelease.Status.Resources by the OC controller at apply time,
 // so the finalizer covers them even though they don't carry explicit
-// ownerReferences (R3 from an earlier revision of the plan turned out
-// to be unnecessary once we read OC's controller code — see
-// renderedrelease/controller_finalize.go in the OC tree).
+// ownerReferences (see renderedrelease/controller_finalize.go in the OC
+// tree).
 //
 // Acquires the per-component mutex BEFORE issuing the OC call so a
 // concurrent SyncComponentTraits (e.g. from a late design PUT) doesn't
@@ -423,8 +417,6 @@ func APIConfigurationInstanceName(componentName string) string {
 // DesiredAPIConfigurationTrait — convenience shim that calls
 // DesiredAPIConfigurationTraitWithIssuers with no issuer pinning and
 // no sibling origins (wildcard CORS).
-// Existing callers (tests, single-IDP code paths) get the same shape
-// as before.
 func DesiredAPIConfigurationTrait(componentName string, enabled bool) (traits []models.ComponentTrait, configs map[string]map[string]interface{}) {
 	return DesiredAPIConfigurationTraitWithIssuers(componentName, enabled, nil, nil)
 }
@@ -433,11 +425,11 @@ func DesiredAPIConfigurationTrait(componentName string, enabled bool) (traits []
 // desired state for the `api-configuration` trait. When `enabled` is
 // true, the trait is attached + jwtAuth is enabled in the per-env
 // config with `issuers` pinned to the supplied list (empty ⇒ accept
-// any cluster-configured keymanager, i.e. pre-Phase-7 behaviour). When
-// `enabled` is false, the function returns nil + a tombstone entry to
-// strip any previously-set config.
+// any cluster-configured keymanager). When `enabled` is false, the
+// function returns nil + a tombstone entry to strip any previously-set
+// config.
 //
-// `allowedOrigins` (Phase 1) lists the SPA hostnames the gateway should
+// `allowedOrigins` lists the SPA hostnames the gateway should
 // echo on CORS preflight. Empty/nil falls back to the trait schema's
 // default of `["*"]` (wildcard, allowCredentials=false). When non-empty
 // the BFF sets `allowCredentials: true` so browsers can send the

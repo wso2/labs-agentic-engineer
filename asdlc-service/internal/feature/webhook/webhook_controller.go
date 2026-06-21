@@ -44,10 +44,10 @@ func isLookupNotFound(err error) bool {
 
 // WebhookController is the BFF's inbound GitHub webhook receiver.
 //
-// Pipeline order (github-integration-phase0.md §8.2; PR B fills in routing):
+// Pipeline order (github-integration-phase0.md §8.2):
 //
 //  1. Read raw body.
-//  2. Parse routing key (PR B: installation.id for App-mode events,
+//  2. Parse routing key (installation.id for App-mode events,
 //     repository.full_name for per-repo events).
 //  3. Resolve ocOrgID via git-service (60s in-process cache).
 //  4. HMAC-validate against that org's secrets.
@@ -63,12 +63,12 @@ type webhookController struct {
 	verifier   *Verifier
 	deliveries *DeliveryStore
 	router     *Router
-	lookup     OcOrgIDLookup // PR B: served by CredentialService
-	cache      *RoutingCache // PR B: 60s in-process cache
+	lookup     OcOrgIDLookup // served by CredentialService
+	cache      *RoutingCache // 60s in-process cache
 }
 
-// NewWebhookController wires the receiver. lookup + cache are required
-// in PR B; passing nil disables the receiver.
+// NewWebhookController wires the receiver. lookup + cache are required;
+// passing nil disables the receiver.
 func NewWebhookController(verifier *Verifier, deliveries *DeliveryStore, router *Router, lookup OcOrgIDLookup, cache *RoutingCache) WebhookController {
 	return &webhookController{
 		verifier:   verifier,
@@ -99,8 +99,7 @@ func (c *webhookController) Receive(w http.ResponseWriter, r *http.Request) {
 
 	ocOrgID, err := ResolveOcOrgID(ctx, c.lookup, c.cache, event, body)
 	if err != nil {
-		// No-routing-key events (ping, etc.) are 200 ack'd as Phase 0 audit
-		// behaviour.
+		// No-routing-key events (ping, etc.) are 200 ack'd.
 		if errors.Is(err, ErrNoRoutingKey) {
 			slog.DebugContext(ctx, "webhook: no routing key — ack noop",
 				"event", event, "deliveryId", deliveryID, "result", "no_routing_key")
@@ -156,9 +155,8 @@ func (c *webhookController) Receive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Dispatch synchronously (Phase 0). Durable queue + async processing is
-	// a §9.1 hardening item. Errors drive the ack: 5xx → GitHub retries; the
-	// dedup row is preserved so retries re-enter the handler.
+	// Dispatch synchronously. Errors drive the ack: 5xx → GitHub retries;
+	// the dedup row is preserved so retries re-enter the handler.
 	if err := c.router.Dispatch(ctx, event, body); err != nil {
 		_ = c.deliveries.MarkFailed(ctx, deliveryID, err.Error())
 		slog.ErrorContext(ctx, "webhook: handler failed",

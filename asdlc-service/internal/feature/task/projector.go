@@ -38,9 +38,8 @@ import (
 //
 // Locking: each transition takes a transaction-scoped advisory lock keyed
 // on the task ID, so two concurrent webhook handlers that resolve to the
-// same task serialise. Phase 0 single-replica BFF inherits this scheme
-// unchanged when §9.3 (multi-replica hardening) lands — Postgres advisory
-// locks are cluster-wide.
+// same task serialise. Postgres advisory locks are cluster-wide, so this
+// holds across BFF replicas.
 //
 // DispatchHook (injected via SetDispatchHook) is invoked post-commit
 // whenever a task transitions into `deployed` so dependents in

@@ -20,10 +20,9 @@
 // then asks the credential for a token, identity, repo-owner, or webhook
 // strategy as needed.
 //
-// The Phase 0 implementation (PlatformPATResolver) returns a single platform
-// PAT for every org. Phase 2 introduces App-installation and per-org
-// user-PAT kinds; call sites do not change because they consume the
-// polymorphic Credential surface.
+// Implementations cover App-installation and per-org user-PAT kinds; call
+// sites stay identical because they consume the polymorphic Credential
+// surface and never branch on the kind.
 //
 // Three architectural rules these types enforce:
 //
@@ -41,8 +40,7 @@ import (
 )
 
 // Credential is a polymorphic surface over the ways the platform can
-// authenticate to GitHub. Phase 0 has one implementation (platform PAT);
-// Phase 2 adds App-installation and per-org user-PAT.
+// authenticate to GitHub (App-installation and per-org user-PAT).
 //
 // Callers MUST NOT type-switch on the implementation.
 type Credential interface {
@@ -82,19 +80,16 @@ type WebhookStrategy int
 
 const (
 	// WebhookPerRepo says: register a webhook on each repo at provision time.
-	// Phase 0 platform-PAT and Phase 2 user-PAT use this strategy.
+	// User-PAT mode uses this strategy.
 	WebhookPerRepo WebhookStrategy = iota
 	// WebhookPlatform says: event delivery is platform-wide (a GitHub App's
-	// configured callback). Phase 2 App-installation uses this strategy.
+	// configured callback). App-installation mode uses this strategy.
 	WebhookPlatform
 )
 
-// Resolver resolves the credential for a given organisation.
-//
-// Phase 0 ignores ocOrgID (there is one credential, shared across all
-// orgs); Phase 2 looks it up against the per-org connection record. The
-// parameter is MANDATORY in Phase 0 even though it's unused — call sites
-// that pass it from day one don't need to be revisited when Phase 2 lands.
+// Resolver resolves the credential for a given organisation by looking up
+// its per-org connection record. ocOrgID is MANDATORY — every external
+// GitHub op names the org it acts for.
 type Resolver interface {
 	Resolve(ctx context.Context, ocOrgID string) (Credential, error)
 }

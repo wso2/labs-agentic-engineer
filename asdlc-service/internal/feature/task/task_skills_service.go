@@ -64,7 +64,7 @@ func NewTaskSkillsService(db *gorm.DB, taskRepo interface {
 // SkillsForTask resolves the task → reads the snapshot rows → returns
 // the wire response. Returns ErrTaskNotFound if the task doesn't exist,
 // or an empty Skills list (NOT an error) when the snapshot is empty
-// (pre-PR-1 backfilled task, or design with no attached skills).
+// (e.g. a design with no attached skills).
 func (s *TaskSkillsService) SkillsForTask(ctx context.Context, taskID string) (*TaskSkillsResponse, error) {
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("task skills service: not configured")
@@ -176,9 +176,9 @@ func snapshotProjectSkills(
 		return nil
 	}
 
-	// Resolve each attached skill against the live catalogue (built-in
-	// in v1; PR 2 adds custom/imported). Missing skills are logged but
-	// don't fail the snapshot — they just don't get materialised.
+	// Resolve each attached skill against the live catalogue. Missing
+	// skills are logged but don't fail the snapshot — they just don't get
+	// materialised.
 	resolved, err := skillSvc.ResolveMany(ctx, orgID, design.SkillsApplied)
 	if err != nil {
 		return fmt.Errorf("resolve skills: %w", err)

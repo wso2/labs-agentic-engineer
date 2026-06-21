@@ -25,9 +25,8 @@ import (
 )
 
 // RepoBoardService fetches and manages the GitHub Project v2 kanban board for
-// a project. Folded in from git-service; renamed from the original
-// BoardService to avoid collision with the BFF-side BoardService that
-// aggregates ComponentTask DB rows on top of this layer.
+// a project. Named distinctly from the BFF-side BoardService, which aggregates
+// ComponentTask DB rows on top of this layer.
 type RepoBoardService interface {
 	GetBoard(ctx context.Context, orgID, projectID string) (*ProjectBoardResult, error)
 	MoveIssueToStatus(ctx context.Context, orgID, projectID, issueURL, targetStatus string) error

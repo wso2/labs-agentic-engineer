@@ -34,8 +34,7 @@ import (
 // TestTraitSync_DeleteCascade_HappyPath — calls componentClient.DeleteComponent
 // exactly once with the scoped (org, project, componentName) tuple and
 // returns nil. Audit logging is fire-and-forget — we don't assert on
-// it here because slog goes to a global sink; the cluster smoke test
-// in the prior Playwright run is the integration check.
+// it here because slog goes to a global sink.
 func TestTraitSync_DeleteCascade_HappyPath(t *testing.T) {
 	calls := 0
 	mock := &mocks.ComponentClientMock{

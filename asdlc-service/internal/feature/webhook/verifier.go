@@ -36,8 +36,8 @@ import (
 // with the new one. Legitimate rotation propagates within one event;
 // repeated forgery just thrashes the refetch path.
 //
-// Phase 2 PR B adds a token-bucket rate-limit (§8.4) on the forced-refetch
-// path so a forged stream can't amplify into git-service load.
+// A token-bucket rate-limit (§8.4) on the forced-refetch path keeps a
+// forged stream from amplifying into git-service load.
 type Verifier struct {
 	provider SecretProvider
 	limiter  *RefetchLimiter // optional; nil = unbounded refetch

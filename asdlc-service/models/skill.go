@@ -25,8 +25,7 @@ import "time"
 // Lives in models (the shared value-type layer) so both the skills feature and
 // the task feature (which snapshots resolved skills per design version) can
 // reference it without crossing a feature boundary. The skills package keeps a
-// `type Skill = models.Skill` alias so its own surface is unchanged (§6.9
-// shared-DTO dissolution).
+// `type Skill = models.Skill` alias.
 type Skill struct {
 	OrgID         string            `json:"orgId"`
 	Name          string            `json:"name"`

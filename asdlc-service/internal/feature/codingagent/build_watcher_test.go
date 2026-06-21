@@ -25,10 +25,9 @@ import (
 
 // classifyRun unit tests — pure function, no DB. The retry-budget +
 // projector dispatch are exercised in integration tests against the
-// docker-compose stack (M7 verification).
+// docker-compose stack.
 //
 // These fixtures use the OC-canonical Tasks[] shape ({Phase, Message});
-// the previous Outputs-based fixtures masked a phantom-field bug —
 // see docs/design/auth-failure-classification.md.
 
 func TestClassifyRun_Nil(t *testing.T) {

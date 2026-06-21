@@ -31,10 +31,7 @@ import (
 
 // ArtifactStore wraps the in-process artifact service to add value beyond
 // pure file I/O: external-API catalog resolution and the typed `DesignFile`
-// shape (YAML split/assemble). The 7 downstream services (design_service,
-// requirements_service, requirements_chat_service, project_service,
-// component_service, trait_sync, runtime_config_service) consume this
-// layer.
+// shape (YAML split/assemble).
 type ArtifactStore struct {
 	artifactSvc  ArtifactService
 	externalAPIs *ExternalAPICatalog

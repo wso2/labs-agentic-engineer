@@ -18,10 +18,6 @@ package runtimeconfig
 
 import "testing"
 
-// NOTE: the ResolveAPISecurity* predicates moved to package models
-// (models/api_security.go); their tests live in models/api_security_test.go.
-// NormalizeExternalURL is the runtimeconfig helper and is tested here until
-// that feature extracts.
 func TestNormalizeExternalURL(t *testing.T) {
 	cases := []struct {
 		in, want string

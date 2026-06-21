@@ -25,10 +25,9 @@ import (
 )
 
 // RunPerOrgSecretName collapses the per-repo `oc_secret_ref_name` column
-// to the post-2f26614 per-org shape (`git-<ocOrgID>`). Every active
-// git_repositories row in an org references the same per-org build secret
-// (see models.BuildSecretName / docs/design/cross-component-wiring-gaps.md
-// follow-up).
+// to the per-org shape (`git-<ocOrgID>`). Every active git_repositories row
+// in an org references the same per-org build secret
+// (see models.BuildSecretName / docs/design/cross-component-wiring-gaps.md).
 //
 // Backfill rule: for each (org_id, project_id) row whose oc_secret_ref_name
 // is non-NULL, overwrite to `git-<lower(org_id)>`. NULL rows stay NULL —

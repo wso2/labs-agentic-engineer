@@ -24,7 +24,7 @@ import (
 )
 
 // RunPhase8IDPSMAPIColumns adds the SM-API triplet columns to
-// organization_idp_profiles (WS2.4). The publisher cc client_secret is
+// organization_idp_profiles. The publisher cc client_secret is
 // mirrored to SM-API and materialised into the runner pod via a per-run
 // ExternalSecret; the triplet here is read by the dispatcher to build that
 // ExternalSecret without a label-selector lookup. Mirrors the per-row

@@ -26,10 +26,10 @@ import (
 
 // WebhookService manages per-repo webhook registration on GitHub.
 //
-// Phase 0 always uses the per-repo strategy (the credential's WebhookStrategy
-// is WebhookPerRepo). Phase 2 introduces App-installation credentials whose
-// strategy is WebhookPlatform; those skip per-repo registration entirely
-// because the App's configured callback handles delivery for every install.
+// PAT credentials carry WebhookStrategy WebhookPerRepo and get a per-repo
+// hook. App-installation credentials carry WebhookPlatform and skip per-repo
+// registration entirely, because the App's configured callback already
+// handles delivery for every install.
 //
 // Callers dispatch the strategy without inspecting the kind — see Register's
 // short-circuit on WebhookPlatform.
@@ -85,8 +85,8 @@ func (s *webhookService) Register(ctx context.Context, orgID, projectID string) 
 		return nil, err
 	}
 
-	// Phase 2 App-mode short-circuit: platform-level delivery, no per-repo
-	// registration. Phase 0 platform-PAT always returns WebhookPerRepo.
+	// App-mode short-circuit: platform-level delivery, no per-repo
+	// registration. Platform-PAT credentials always return WebhookPerRepo.
 	if cred.WebhookStrategy() == credentials.WebhookPlatform {
 		return nil, nil
 	}

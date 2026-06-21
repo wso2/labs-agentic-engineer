@@ -119,8 +119,8 @@ func parseDisplayIdentity(authHeader string) (name, email string) {
 
 // ValidateCollabAccess is the server-to-server endpoint the collab-server calls
 // (forwarding the end-user's Bearer + an X-Room-Id header) to authorize a user
-// for a collaboration room. INT-8 fix: the route is wrapped with the standard
-// jwt middleware so the Bearer signature is verified BEFORE this handler runs
+// for a collaboration room. The route is wrapped with the standard jwt
+// middleware so the Bearer signature is verified BEFORE this handler runs
 // (forged/unsigned/expired tokens never reach here); this handler then enforces
 // that the verified caller's org owns the room's project (the §6.6g oracle).
 //

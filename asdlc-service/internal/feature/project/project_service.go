@@ -30,9 +30,8 @@ import (
 )
 
 // Error sentinels for the project feature. ErrProjectNotFound is owned here.
-// ErrUnauthorized / ErrForbidden are feature-local copies (verbatim messages)
-// of the shared sentinels formerly in the flat services package — the
-// established duplication deviation (cf. component's ErrUnauthorized).
+// ErrUnauthorized / ErrForbidden are feature-local sentinels the controllers
+// branch on.
 var (
 	ErrProjectNotFound = errors.New("project not found")
 	ErrUnauthorized    = errors.New("unauthorized")
@@ -204,7 +203,7 @@ func (s *projectService) GetProjectStatus(ctx context.Context, orgName, projectN
 		return status, nil
 	}
 
-	// Check tasks — the unified Tasks feature replaces the old Plan step.
+	// Check tasks.
 	tasks, err := s.taskRepo.ListByProjectID(ctx, orgName, projectName)
 	if err != nil {
 		return nil, fmt.Errorf("list tasks: %w", err)

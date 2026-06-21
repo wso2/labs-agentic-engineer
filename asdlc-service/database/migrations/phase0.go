@@ -94,8 +94,3 @@ func RunPhase0(db *gorm.DB, deploymentTier string) error {
 
 	return nil
 }
-
-// SeedPlatformOrgCredential was the Phase 0 platform-PAT seed. PR A of
-// Phase 2 retires the kind='platform-pat' row entirely; the credential
-// record relocates to git-service Postgres and seeds itself there. This
-// function is intentionally absent — see RunPhase2PRA.

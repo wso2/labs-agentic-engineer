@@ -37,15 +37,11 @@ import (
 // with projectName internally (see ScopedComponentName) because OC components
 // share a single k8s namespace across all projects in an org.
 //
-// Deploy chain: the BFF used to drive Workload → ComponentRelease →
-// ReleaseBinding from `DeployFromBuild` to work around an OC v1.0.0 bug
-// where autoDeploy created bindings with empty environment configs and
-// rendering failed on missing schema defaults. The deployed OC version
-// (1.0.1-hotfix.1, pinned in wso2cloud-deployment) applies schema
-// defaults from the ClusterComponentType on empty configs, so we set
-// AutoDeploy=true on every Component (see dispatch_service.ensureOCComponent)
-// and the build workflow's generate-workload-cr step is the only writer
-// of the Workload CR. The BFF reads ReleaseBindings via ListDeployments.
+// Deploy chain: every Component is created with AutoDeploy=true (see
+// dispatch_service.ensureOCComponent), so OC drives Workload →
+// ComponentRelease → ReleaseBinding from the build. The build workflow's
+// generate-workload-cr step is the only writer of the Workload CR. The
+// BFF reads ReleaseBindings via ListDeployments.
 type ComponentService interface {
 	ListComponents(ctx context.Context, orgName, projectName string, limit int, cursor string) (*models.ComponentList, error)
 	GetComponent(ctx context.Context, orgName, projectName, componentName string) (*models.Component, error)

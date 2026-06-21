@@ -62,8 +62,7 @@ func label(lbls *map[string]string, key string) string {
 }
 
 // latestConditionReason returns the Reason of the last entry in conds, or "".
-// Mirrors the existing oc_types.go behaviour the hand-rolled clients used,
-// against the gen Condition shape (Type/Status/Reason/Message/…).
+// Reads against the gen Condition shape (Type/Status/Reason/Message/…).
 func latestConditionReason(conds *[]gen.Condition) string {
 	if conds == nil || len(*conds) == 0 {
 		return ""

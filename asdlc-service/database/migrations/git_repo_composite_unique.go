@@ -23,7 +23,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// RunGitRepoCompositeUnique implements F2: replace the global UNIQUE on
+// RunGitRepoCompositeUnique replaces the global UNIQUE on
 // git_repositories.project_id with a composite UNIQUE (org_id, project_id), so
 // two orgs can own a same-named project and repo resolution MUST be org-scoped
 // (GetByOrgAndProjectID). Forward-only, expand→backfill→verify→contract (§9.1):

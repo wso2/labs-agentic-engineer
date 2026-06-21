@@ -27,13 +27,12 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/repositories"
 )
 
-// TestTaskRepository_GetByIDScoped_OrgIsolation is the F6 forcing function for
-// the by-UUID cross-org task IDOR: the operator task routes are path-scoped
-// (orgHandle + taskId) but the controllers used to load tasks by UUID alone,
-// so org A could pass org B's {taskId} and operate on B's task. GetByIDScoped
-// loads by (org_id, id) and returns (nil, nil) for both "no such task" and
-// "task belongs to another org" — no existence leak. This test confirms the
-// scoping against real Postgres (no mock).
+// TestTaskRepository_GetByIDScoped_OrgIsolation guards against a by-UUID
+// cross-org task IDOR: the operator task routes are path-scoped (orgHandle +
+// taskId), so loading by UUID alone would let org A pass org B's {taskId} and
+// operate on B's task. GetByIDScoped loads by (org_id, id) and returns
+// (nil, nil) for both "no such task" and "task belongs to another org" — no
+// existence leak. This test confirms the scoping against real Postgres (no mock).
 func TestTaskRepository_GetByIDScoped_OrgIsolation(t *testing.T) {
 	db := dbtest.Open(t)
 	dbtest.Migrate(t, db, &models.ComponentTask{})

@@ -25,7 +25,7 @@ import (
 )
 
 // TestGateInvariant_NoRawGatedRouteRegistration is the CI allowlist lock for the
-// gate phase's STRUCTURAL invariant: every route under a gated prefix
+// gate's STRUCTURAL invariant: every route under a gated prefix
 // (/api/v1/organizations, /internal/credentials, /repos) MUST register through a
 // typed Router/ServiceRouter method (rt.OrgScoped / rt.RepoScoped /
 // rt.HandleRepoScoped / rt.Public) — never a raw *http.ServeMux receiver

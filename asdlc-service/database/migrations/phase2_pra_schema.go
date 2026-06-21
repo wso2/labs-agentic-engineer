@@ -27,13 +27,12 @@ import (
 	"gorm.io/gorm"
 )
 
-// RunPhase2PRASchema applies the PR A schema (formerly RunPhase2PRA in
-// git-service before the fold):
+// RunPhase2PRASchema applies the org_credentials schema:
 //
 //   - CREATE TABLE org_credentials with the §4.1 schema + CHECK constraints
 //   - Two partial unique indexes (one OC org : one GitHub org property)
-//   - ALTER TABLE git_repositories ADD oc_secret_ref_name (used by PR C's
-//     SecretReference flow; nullable until then)
+//   - ALTER TABLE git_repositories ADD oc_secret_ref_name (used by the
+//     SecretReference flow; nullable)
 //
 // Idempotent: re-running on a pre-migrated DB is a no-op.
 //

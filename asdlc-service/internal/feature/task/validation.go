@@ -26,8 +26,8 @@ import (
 // validation passed; on failure writes a 400 to w. orgHandle flows into
 // OpenChoreo namespace lookups, GitHub repo paths, and OpenBao keys — the
 // slug invariant is the cross-tenant fence. Thin delegate over the shared
-// httpkit.RequireSlug logic. (Feature-local copy mirroring the sibling
-// features; replaces the deleted flat controllers/validation.go.)
+// httpkit.RequireSlug logic; a feature-local copy mirroring the sibling
+// features.
 func requireOrgHandle(w http.ResponseWriter, v string) bool {
 	return httpkit.RequireSlug(w, "orgHandle", v)
 }

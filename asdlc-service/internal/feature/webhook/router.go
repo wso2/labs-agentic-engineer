@@ -23,12 +23,7 @@ import (
 )
 
 // Router dispatches a verified, dedup'd delivery to the per-event handler.
-//
-// Phase 0 implementation logs and no-ops every event — Step 8 of the
-// migration plugs in real handlers (pull_request.{opened,ready_for_review,
-// closed,reopened}, push, issue_comment). The seam exists so the receiver
-// pipeline can land first; handlers attach later without touching the
-// pipeline shape.
+// Events with no registered handler are logged and no-op'd.
 type Router struct {
 	handlers map[string]EventHandler
 }
@@ -71,7 +66,7 @@ func (r *Router) Dispatch(ctx context.Context, event string, payload []byte) err
 	if h, ok := r.handlers[key(event, "")]; ok {
 		return h.Handle(ctx, event, action, payload)
 	}
-	// Persisted, no-op. Phase 0 intentionally swallows unknown events.
+	// Persisted, no-op — unknown events are intentionally swallowed.
 	slog.DebugContext(ctx, "webhook: no handler", "event", event, "action", action, "result", "unhandled_event")
 	return nil
 }

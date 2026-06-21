@@ -76,12 +76,9 @@ type AppParams struct {
 	// unverified claim extraction — gated by IsLocalDevEnv.
 	ThunderJWKS *jwtassertion.JWKSCache
 
-	// --- Folded in from git-service ------------------------------------
-	// What remains after the dead repo / git-ops / artifacts / credential
-	// HTTP routes were removed: their callers use the gitrepo + artifacts
-	// packages in-process, so only the runner-facing and agents-facing
-	// surfaces stay. CredService + AnthropicCredService + DB also back the
-	// local-dev SM-API resync helper (testSMAPIResyncHandler).
+	// Runner-facing and agents-facing surfaces. Callers use the gitrepo +
+	// artifacts packages in-process. CredService + AnthropicCredService + DB
+	// also back the local-dev SM-API resync helper (testSMAPIResyncHandler).
 	DB                   *gorm.DB
 	CredCtrl             orgcreds.CredentialsRefreshController
 	CredService          *orgcreds.CredentialService
@@ -164,8 +161,7 @@ func NewHandler(params AppParams) http.Handler {
 	// Test-only reset endpoint — truncates local DB tables. INT-4: gated on
 	// DEPLOYMENT_TIER=dev (not TestMode alone) so the global truncate cannot
 	// mount on a shared/non-dev plane, where TEST_MODE is set on the release
-	// binding (see config.go). The org-scoped delete (replacing the global
-	// Where(1=1)) remains the deferred cleanup-phase leg.
+	// binding (see config.go).
 	if params.Config.TestMode && params.Config.DeploymentTier == "dev" {
 		apiMux.HandleFunc("POST /api/v1/_test/reset", testResetHandler(params))
 	}
@@ -189,7 +185,7 @@ func NewHandler(params AppParams) http.Handler {
 		registerWebhookRoutes(mux, params.WebhookController)
 	}
 
-	// F3c — per-task verification-failed callback. Outside the Thunder JWT
+	// Per-task verification-failed callback. Outside the Thunder JWT
 	// (the runner pod has no user identity); authenticated inside the
 	// handler with the per-task RS256 bearer the runner already holds.
 	if params.TaskController != nil {
@@ -199,10 +195,10 @@ func NewHandler(params AppParams) http.Handler {
 		// JWT path, authenticated inside the handler with the per-task
 		// RS256 bearer the runner already holds.
 		mux.HandleFunc("GET /api/v1/tasks/{taskId}/skills", params.TaskController.Skills)
-		// WS2.4 — path-scoped credentials refresh that accepts both
-		// TaskJWT and Thunder publisher cc tokens. Legacy
-		// POST /api/v1/credentials/refresh stays mounted below for
-		// pre-WS2.4 runner images.
+		// Path-scoped credentials refresh that accepts both TaskJWT and
+		// Thunder publisher cc tokens. The unscoped
+		// POST /api/v1/credentials/refresh stays mounted below for runner
+		// images that don't use the path-scoped form.
 		mux.HandleFunc("POST /api/v1/tasks/{taskId}/credentials/refresh", params.TaskController.RefreshCredentials)
 	}
 
@@ -212,12 +208,8 @@ func NewHandler(params AppParams) http.Handler {
 		registerConnectCallbackRoute(mux, params.OrgGitHubController)
 	}
 
-	// --- Surfaces retained from the git-service fold -------------------
-	// The repo / git-ops / artifacts / credential HTTP routes that came
-	// over from the standalone git-service were removed (callers use the
-	// gitrepo + artifacts packages in-process). Two server-to-server
-	// surfaces remain, each with its own auth posture independent of the
-	// User-JWT-gated /api/ subtree.
+	// Two server-to-server surfaces, each with its own auth posture
+	// independent of the User-JWT-gated /api/ subtree.
 
 	// agents-service resolves the per-org Anthropic key here WITHOUT a
 	// Service JWT (its cloud release-binding carries no SERVICE_AUTH_GIT_*

@@ -27,8 +27,8 @@ import (
 )
 
 // ErrNoRoutingKey is returned when an event lacks any routable identifier.
-// PR B treats these as 200-ack-noop (Phase 0 audit-only behaviour) so the
-// receiver doesn't 5xx on events for which no handler is configured.
+// The receiver 200-ack-noops these rather than 5xx-ing on events for which
+// no handler is configured.
 var ErrNoRoutingKey = errors.New("webhook: no routing key")
 
 // RoutingKey extracts whichever identifier maps an event to an ocOrgId.
@@ -42,7 +42,7 @@ type RoutingKey struct {
 //
 //   - installation, installation_repositories → installation.id
 //   - pull_request, push, issue_comment, issues → repository.full_name
-//   - everything else → "platform" (audit-only Phase 0 carry-over)
+//   - everything else → "platform" (audit-only)
 func extractRoutingKey(event string, payload []byte) RoutingKey {
 	switch event {
 	case "installation", "installation_repositories":

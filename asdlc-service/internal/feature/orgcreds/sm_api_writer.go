@@ -44,13 +44,13 @@ const vaultPathPrefix = "user-app-secrets"
 // SMAPIWriter is the small helper Connect flows call after the per-org
 // credential row is upserted. It uploads the secret value to SM-API
 // and stamps the resulting `{secretRefName, kvPath, property}` onto
-// the row so dispatch (WS2.3) can mint per-run ExternalSecrets without
-// a label-lookup.
+// the row so dispatch can mint per-run ExternalSecrets without a
+// label-lookup.
 //
 // Failures are logged but do not break the Connect transaction — the
-// legacy `org_secrets`-backed path keeps working until WS2.6 removes
-// it. The "SM-API row was upserted but the triplet is missing" state
-// surfaces in the next Connect attempt (overwrites the row cleanly).
+// `org_secrets`-backed path keeps working. The "SM-API row was upserted
+// but the triplet is missing" state surfaces in the next Connect attempt
+// (overwrites the row cleanly).
 type SMAPIWriter struct {
 	client secretmanagersvc.SecretManagementClient
 	db     *gorm.DB
@@ -240,8 +240,8 @@ func (w *SMAPIWriter) DeleteAnthropic(ctx context.Context, ocOrgID string) error
 
 // PublisherSecretFieldClientID and PublisherSecretFieldClientSecret are the
 // JSON field names inside the SM-API "publisher" secret. The dispatcher
-// (WS2.4) materialises both into the per-run Job as PUBLISHER_CLIENT_ID
-// and PUBLISHER_CLIENT_SECRET via a single 2-entry ExternalSecret. Token
+// materialises both into the per-run Job as PUBLISHER_CLIENT_ID and
+// PUBLISHER_CLIENT_SECRET via a single 2-entry ExternalSecret. Token
 // URL is non-secret and rides as a plain Job env from BFF config.
 const (
 	PublisherSecretFieldClientID     = "client_id"
@@ -253,7 +253,7 @@ const (
 // `organization_idp_profiles`. Called from idp_service.EnsureOrgPublisher
 // (on create) and RegenerateClientSecret (on rotation). The triplet is
 // read at dispatch time to mint the per-run ExternalSecret that hands
-// the runner pod its cc credentials (WS2.4 replaces ASDLC_BEARER).
+// the runner pod its cc credentials.
 //
 // Same semantics as WriteAnthropic: best-effort, errors returned, ctx
 // must carry the user JWT.

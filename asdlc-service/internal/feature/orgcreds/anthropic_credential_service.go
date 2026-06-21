@@ -29,7 +29,7 @@
 // Secret bytes live in the same `org_secrets` (Postgres + AES-256-GCM)
 // table as the GitHub PAT, keyed by `anthropic/key`. The metadata
 // (prefix / last4 / status / connected_at / last_validated_at) lives in
-// the new `org_anthropic_credentials` table.
+// the `org_anthropic_credentials` table.
 //
 // See docs/design/anthropic-key-dual-token.md.
 package orgcreds
@@ -68,12 +68,12 @@ type AnthropicCredentialService struct {
 	invalidator  AgentsCacheInvalidator
 	httpClient   *http.Client
 
-	// smAPIWriter mirrors the key into SM-API on Connect (WS2.2). nil-safe.
+	// smAPIWriter mirrors the key into SM-API on Connect. nil-safe.
 	smAPIWriter *SMAPIWriter
 }
 
 // WithSMAPIWriter injects the SM-API writer; chainable. nil disables
-// the mirror — the legacy org_secrets path remains authoritative.
+// the mirror — the org_secrets path remains authoritative.
 func (s *AnthropicCredentialService) WithSMAPIWriter(w *SMAPIWriter) *AnthropicCredentialService {
 	s.smAPIWriter = w
 	return s
@@ -223,8 +223,8 @@ func (s *AnthropicCredentialService) Connect(ctx context.Context, ocOrgID string
 	// connect — the 5-min TTL bounds staleness.
 	s.broadcastInvalidate(ctx, ocOrgID)
 
-	// WS2.2 — best-effort SM-API mirror. Same posture as
-	// CredentialService.mirrorPATToSMAPI: legacy store stays authoritative
+	// Best-effort SM-API mirror. Same posture as
+	// CredentialService.mirrorPATToSMAPI: org_secrets stays authoritative
 	// when SM-API is unavailable; the row's SM-API triplet stays NULL
 	// until the next successful Connect.
 	if s.smAPIWriter != nil && s.smAPIWriter.Enabled() {

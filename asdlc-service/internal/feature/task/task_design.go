@@ -26,8 +26,7 @@ import (
 // resolveDesignComponent reads the project's current `specs/design/` tree
 // and returns the entry whose Name matches task.ComponentName. The resolution
 // logic lives in the artifacts engine (artifacts.ResolveDesignComponent) so
-// both task and codingagent can reuse it without a task↔codingagent edge; this
-// thin method preserves the task-internal call sites (task_stream).
+// both task and codingagent can reuse it without a task↔codingagent edge.
 func (s *taskService) resolveDesignComponent(ctx context.Context, task *models.ComponentTask) (*models.DesignComponent, error) {
 	return artifacts.ResolveDesignComponent(ctx, s.store, task)
 }

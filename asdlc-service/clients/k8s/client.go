@@ -18,7 +18,7 @@
 // Secrets directly into each org's workflow-plane namespace.
 //
 // Architectural context: BuildCredentialsService stores the per-org credential
-// in Postgres (post-2f26614). To make that credential reachable by the build
+// in Postgres. To make that credential reachable by the build
 // pod's checkout step — which mounts a `kubernetes.io/basic-auth` Secret as a
 // volume — git-service writes the Secret straight into `workflows-<ocOrgID>`,
 // bypassing OpenBao + External-Secrets + SecretReference entirely for git

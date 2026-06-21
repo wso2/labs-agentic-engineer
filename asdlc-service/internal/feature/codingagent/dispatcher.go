@@ -14,21 +14,17 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package codingagent's Dispatcher is the WS2.3 orchestrator: it takes
-// a single per-task dispatch request and walks the cluster-gateway-proxy
-// to apply (in order):
+// Package codingagent's Dispatcher takes a single per-task dispatch
+// request and walks the cluster-gateway-proxy to apply (in order):
 //
 //  1. Namespace             — per-org `wc-…-remote-worker`
 //  2. ServiceAccount        — `remote-worker-runner`
 //  3. ExternalSecret×2      — anthropic + github-pat
 //  4. Job                   — the coding-agent runner pod
 //
-// The function is deliberately independent from the legacy dispatch
-// path in services/dispatch_service.go: when the BFF is wired with a
-// cluster-gateway-proxy client AND the per-org credential rows carry
-// the SM-API triplet, the dispatch caller picks this orchestrator;
-// otherwise the legacy ClusterWorkflow path runs. WS2.6 deletes the
-// legacy branch once the new path is the only one.
+// When the BFF is wired with a cluster-gateway-proxy client AND the
+// per-org credential rows carry the SM-API triplet, the dispatch caller
+// picks this orchestrator; otherwise the legacy ClusterWorkflow path runs.
 package codingagent
 
 import (
@@ -64,13 +60,12 @@ type Inputs struct {
 	AnthropicSR SecretRef
 	GitHubSR    SecretRef
 
-	// PublisherSR is WS2.4's per-org publisher cc credentials triplet
+	// PublisherSR is the per-org publisher cc credentials triplet
 	// (`organization_idp_profiles`). When present, the orchestrator
 	// emits a third per-run ExternalSecret materialising both
 	// client_id + client_secret into a K8s Secret that the runner
 	// mounts via envFrom (PUBLISHER_CLIENT_ID + PUBLISHER_CLIENT_SECRET).
-	// Optional during the WS2.4 rollout — when absent the runner falls
-	// back to ASDLC_BEARER.
+	// Optional — when absent the runner falls back to ASDLC_BEARER.
 	PublisherSR *SecretRef
 
 	// ClusterSecretStoreName is the ESO CSS that backs reads. On
@@ -82,7 +77,7 @@ type Inputs struct {
 }
 
 // SecretRef is the lookup triplet persisted on the per-org credential
-// row by WS2.2's Connect flow.
+// row by the Connect flow.
 type SecretRef struct {
 	SecretRefName string
 	KVPath        string

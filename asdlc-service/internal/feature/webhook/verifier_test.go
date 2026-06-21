@@ -26,10 +26,8 @@ import (
 )
 
 // staticProvider is a tiny test double for SecretProvider — returns the
-// configured list of secrets regardless of ocOrgID. The Phase 0
-// EnvSecretProvider has been replaced by GitServiceSecretProvider in PR
-// B; verifier tests don't need the cache layer, so they use this stub
-// directly.
+// configured list of secrets regardless of ocOrgID. Verifier tests don't
+// need the cache layer, so they use this stub directly.
 type staticProvider struct {
 	secrets [][]byte
 }

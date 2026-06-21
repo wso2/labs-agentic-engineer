@@ -33,11 +33,9 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
 
-// ErrUnauthorized / ErrForbidden are feature-local copies (verbatim messages)
-// of the shared sentinels formerly in the flat services package — the
-// established duplication deviation (cf. component's ErrUnauthorized).
-// ErrProjectNotFound is a feature-local copy referenced only by this feature's
-// translateHTTPError (which preserves the flat-services behavior verbatim).
+// ErrUnauthorized / ErrForbidden are feature-local sentinels the controllers
+// branch on. ErrProjectNotFound is referenced only by this feature's
+// translateHTTPError.
 var (
 	ErrProjectNotFound = errors.New("project not found")
 	ErrUnauthorized    = errors.New("unauthorized")
@@ -47,8 +45,7 @@ var (
 // translateHTTPError lifts OC-level sentinel errors (openchoreo.ErrNotFound
 // etc.) into the service vocabulary the controllers branch on. The underlying
 // err is preserved in the chain so deeper layers can still errors.Is against
-// openchoreo.* if they want richer context. Feature-local copy of the helper
-// formerly shared in the flat services package.
+// openchoreo.* if they want richer context.
 func translateHTTPError(err error) error {
 	if err == nil {
 		return nil

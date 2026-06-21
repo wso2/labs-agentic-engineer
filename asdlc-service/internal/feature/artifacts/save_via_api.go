@@ -16,15 +16,11 @@
 
 package artifacts
 
-// Save flow implementations for artifact-store v2 (V1 scope).
+// Save flow implementations for SaveDesign and SaveRequirements, using
+// GitHub API calls (Contents API + Git Data API + Refs/Tags API). The
+// working-tree clone is the source of truth for draft content.
 //
-// Replaces the `git commit + push + tag` flow inside SaveDesign and
-// SaveRequirements with GitHub API calls (Contents API + Git Data API +
-// Refs/Tags API). The working-tree clone remains the source of truth for
-// draft content in V1 — Postgres drafts are V2.
-//
-// See docs/design/artifact-store-v2.md §0 for the V1 scope and §8 for the
-// save flow shape.
+// See docs/design/artifact-store-v2.md §8 for the save flow shape.
 
 import (
 	"bytes"
@@ -42,7 +38,7 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
 
-// saveDesignViaAPI implements §8.2 (Git Data API path) for V1: the working
+// saveDesignViaAPI implements §8.2 (Git Data API path): the working
 // tree under `specs/design/` is the draft surface (root `design.md` plus
 // per-component `design.md` / `openapi.yaml`). We compute the changeset
 // against local-clone HEAD, apply it over current main via blob+tree+commit,
@@ -264,13 +260,13 @@ func (s *artifactService) saveDesignViaAPI(
 	}, nil
 }
 
-// saveRequirementsViaAPI implements §8.3 (Git Data API path) for V1. The
+// saveRequirementsViaAPI implements §8.3 (Git Data API path). The
 // working tree under `specs/requirements/` is the draft surface; we compute
 // the delta against the local clone's HEAD (which reflects what we last
 // saved), then apply that delta over current main via the Git Data API.
 //
 // The local-HEAD-vs-working-tree delta gives us tombstones for files the
-// user deleted (so V1 preserves today's delete UX). Files on remote main
+// user deleted (preserving the delete UX). Files on remote main
 // that we never touched are carried forward by `base_tree=current main tree`.
 func (s *artifactService) saveRequirementsViaAPI(
 	ctx context.Context,

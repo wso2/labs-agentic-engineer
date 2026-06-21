@@ -23,10 +23,9 @@ import (
 )
 
 // registerWebhookRoutes mounts the inbound GitHub webhook receiver. The routes
-// live outside the JWT middleware (same pattern the now-removed /mcp/ mount
-// used) — webhooks authenticate via HMAC, not JWT. Both patterns are more
-// specific than the JWT-gated "/api/" subtree, so net/http's ServeMux routes
-// them here rather than into the auth middleware.
+// live outside the JWT middleware — webhooks authenticate via HMAC, not JWT.
+// Both patterns are more specific than the JWT-gated "/api/" subtree, so
+// net/http's ServeMux routes them here rather than into the auth middleware.
 //
 // Two paths are registered for the same handler:
 //   - /webhooks/github         — local/dev (smee delivers here).

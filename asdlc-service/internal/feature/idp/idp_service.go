@@ -32,7 +32,7 @@ import (
 )
 
 // IDPService manages per-organisation IDP profiles + the matching
-// Thunder publisher OAuth apps. Backs Phase 3 of
+// Thunder publisher OAuth apps. See
 // docs/design/api-platform-integration.md.
 //
 // Lifecycle:
@@ -74,18 +74,17 @@ type IDPService interface {
 	// rotate any consumer pods after this call.
 	RegenerateClientSecret(ctx context.Context, orgID, actor string) (string, error)
 
-	// UpdateProfile changes the org's IDP kind / issuer / JWKS URL —
-	// Phase 7 BYO-IDP editable picker. Switching kind invalidates any
-	// existing publisher app (Thunder is a separate keymanager from
-	// Asgardeo/custom OIDC), so the call cascades a RevokeOrgPublisher
-	// against the previous kind's IDP. Audit-logged.
+	// UpdateProfile changes the org's IDP kind / issuer / JWKS URL.
+	// Switching kind invalidates any existing publisher app (Thunder is
+	// a separate keymanager from Asgardeo/custom OIDC), so the call
+	// cascades a RevokeOrgPublisher against the previous kind's IDP.
+	// Audit-logged.
 	//
 	// Operator follow-up: after this call, the platform admin must
 	// ensure the new IDP's keymanager is registered in
 	// deployments/manifests/api-platform/gateway-config.yaml's
-	// jwtauth_v1 block, then re-run setup-prerequisites. v2 will move
-	// keymanager registration into the BFF (writeback to the ConfigMap
-	// via the k8s API) but v1 keeps it as a manual ops step.
+	// jwtauth_v1 block, then re-run setup-prerequisites. Keymanager
+	// registration is a manual ops step.
 	UpdateProfile(ctx context.Context, orgID, actor string, req UpdateProfileRequest) (*models.OrganizationIDPProfile, error)
 }
 
@@ -115,8 +114,8 @@ type idpService struct {
 // — the service rejects EnsureOrgPublisher / RevokeOrgPublisher /
 // RegenerateClientSecret with ErrIDPThunderUnavailable when so. Read
 // methods (GetProfile, GetOrCreateProfile) keep working. Returns the
-// concrete type so WithSMAPIWriter (WS2.4) can chain at the composition
-// root; the concrete value still satisfies the IDPService interface for
+// concrete type so WithSMAPIWriter can chain at the composition root;
+// the concrete value still satisfies the IDPService interface for
 // consumers that store it as such.
 func NewIDPService(db *gorm.DB, thunder thundersvc.Client, platform PlatformIDPConfig) *idpService {
 	return &idpService{db: db, thunder: thunder, platform: platform}
@@ -124,9 +123,9 @@ func NewIDPService(db *gorm.DB, thunder thundersvc.Client, platform PlatformIDPC
 
 // WithSMAPIWriter attaches the SM-API writer so EnsureOrgPublisher /
 // RegenerateClientSecret mirror the publisher cc credentials to SM-API
-// (WS2.4 — runner pods consume them via per-run ExternalSecret). nil
-// writer or one with Enabled()==false is a no-op; publisher provisioning
-// still works but dispatcher's runner-auth path stays disabled.
+// (runner pods consume them via per-run ExternalSecret). nil writer or
+// one with Enabled()==false is a no-op; publisher provisioning still
+// works but dispatcher's runner-auth path stays disabled.
 func (s *idpService) WithSMAPIWriter(w *orgcreds.SMAPIWriter) *idpService {
 	s.smAPI = w
 	return s
@@ -256,7 +255,7 @@ func (s *idpService) EnsureOrgPublisher(ctx context.Context, orgID, actor string
 	// doesn't expose it on subsequent reads).
 	updates := map[string]interface{}{
 		"publisher_client_id":  clientID,
-		"publisher_secret_ref": secretRefPath(orgID), // logical path for v2 OpenBao migration
+		"publisher_secret_ref": secretRefPath(orgID), // logical OpenBao path persisted alongside the secret
 		"updated_at":           time.Now().UTC(),
 	}
 	if created && clientSecret != "" {
@@ -269,8 +268,8 @@ func (s *idpService) EnsureOrgPublisher(ctx context.Context, orgID, actor string
 		return "", "", false, fmt.Errorf("idp_service.EnsureOrgPublisher persist: %w", err)
 	}
 
-	// WS2.4 — mirror publisher creds to SM-API so the dispatcher can mint
-	// a per-run ExternalSecret for the runner's cc flow. Only on fresh
+	// Mirror publisher creds to SM-API so the dispatcher can mint a
+	// per-run ExternalSecret for the runner's cc flow. Only on fresh
 	// create (Thunder doesn't return the secret on subsequent reads); pre-
 	// existing apps without SM-API mirroring recover via an explicit
 	// RegenerateClientSecret. Best-effort: SM-API outage doesn't fail
@@ -330,8 +329,8 @@ func (s *idpService) RevokeOrgPublisher(ctx context.Context, orgID, actor string
 		return deleted, fmt.Errorf("idp_service.RevokeOrgPublisher persist: %w", err)
 	}
 
-	// WS2.4 — drop the SM-API publisher secret + clear the triplet. Best-
-	// effort so a missing SM-API doesn't strand the Thunder revoke.
+	// Drop the SM-API publisher secret + clear the triplet. Best-effort
+	// so a missing SM-API doesn't strand the Thunder revoke.
 	if s.smAPI != nil && s.smAPI.Enabled() {
 		if smerr := s.smAPI.DeletePublisher(ctx, orgID); smerr != nil {
 			slog.WarnContext(ctx, "idp_service: SM-API publisher delete failed (continuing)",
@@ -380,8 +379,8 @@ func (s *idpService) RegenerateClientSecret(ctx context.Context, orgID, actor st
 		return "", fmt.Errorf("idp_service.RegenerateClientSecret persist: %w", err)
 	}
 
-	// WS2.4 — mirror the rotated secret to SM-API; runner pods picking up
-	// from the next dispatch will receive the new secret via ExternalSecret
+	// Mirror the rotated secret to SM-API; runner pods picking up from
+	// the next dispatch will receive the new secret via ExternalSecret
 	// refresh. Best-effort.
 	if s.smAPI != nil && s.smAPI.Enabled() {
 		if _, smerr := s.smAPI.WritePublisher(ctx, orgID, profile.PublisherClientID, newSecret); smerr != nil {
@@ -523,10 +522,10 @@ func profileSummary(p *models.OrganizationIDPProfile) profileSummaryFields {
 	}
 }
 
-// secretRefPath returns the logical OpenBao path the BFF would write
-// the publisher secret to in a v2 deployment. v1 keeps the secret in
-// PostgreSQL but persists this path on the profile so future migration
-// can rewrite the row without schema changes.
+// secretRefPath returns the logical OpenBao path for the publisher
+// secret. The secret itself lives in PostgreSQL; this path is persisted
+// on the profile so a later migration to OpenBao can rewrite the row
+// without schema changes.
 func secretRefPath(orgID string) string {
 	return "secret/asdlc/" + orgID + "/idp/publisher"
 }

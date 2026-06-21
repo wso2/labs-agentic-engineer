@@ -39,11 +39,10 @@ var ErrOrgNotFound = errors.New("org credentials: not found")
 // Phase A (status flip — sub-second; runs synchronously on the request):
 //   - Calls git-service's internal projection to confirm the row exists.
 //   - Begins the cascade by calling git-service to flip status='disconnecting'.
-//     (PR B simplification: phase D is wired separately; we use a single
-//     DELETE call that does flip-then-finalize. The 'disconnecting'
-//     intermediate state lives in phase2.md §6.7 but isn't load-bearing
-//     for PR B because we run Phases A–D synchronously on this path.
-//     PR D rebuilds the async split when the periodic validator lands.)
+//     Phase D is wired separately via a single DELETE call that does
+//     flip-then-finalize. The 'disconnecting' intermediate state lives in
+//     phase2.md §6.7 but isn't load-bearing because Phases A–D run
+//     synchronously on this path.
 //
 // Phase B (best-effort issue comments — async, no lock):
 //   - Per task, post `gh issue comment "abandoned: org disconnected"` via
@@ -59,9 +58,7 @@ var ErrOrgNotFound = errors.New("org credentials: not found")
 //
 // Phases A and D run synchronously; B and C run inline (the disconnect
 // endpoint stays sub-second because Phase A is the only blocking step
-// from the user's perspective in the dialog confirmation flow). For PR B
-// we keep the wall-clock cost reasonable in dev (small number of tasks);
-// PR D rebuilds the async split with a worker queue.
+// from the user's perspective in the dialog confirmation flow).
 type OrgDisconnectService struct {
 	taskRepo repositories.TaskRepository
 	db       *gorm.DB
@@ -69,10 +66,9 @@ type OrgDisconnectService struct {
 	issueSvc gitrepo.IssueService
 	// applyDisconnect runs the pure task-state transition for the
 	// org-disconnected event. Injected (rather than calling ApplyTaskEvent
-	// directly) so this service can extract to its own feature package
-	// without importing the task state machine — the composition root wires
-	// it to contracts.ApplyTaskEvent(_, contracts.TaskEventOrgDisconnected). Until the
-	// state machine moves to contracts (§6.9), this is the consumer-side seam.
+	// directly) so this service doesn't import the task state machine — the
+	// composition root wires it to
+	// contracts.ApplyTaskEvent(_, contracts.TaskEventOrgDisconnected).
 	applyDisconnect func(current models.TaskStatus) (models.TaskStatus, error)
 }
 
@@ -126,9 +122,9 @@ func (s *OrgDisconnectService) Disconnect(ctx context.Context, ocOrgID, cause st
 		return nil
 	}
 
-	// Phase B + C — enumerate non-terminal tasks under the org. PR B keeps
-	// this best-effort: the issue-comment write is allowed to fail without
-	// blocking the cascade (the task still cascades to abandoned).
+	// Phase B + C — enumerate non-terminal tasks under the org. Best-effort:
+	// the issue-comment write is allowed to fail without blocking the cascade
+	// (the task still cascades to abandoned).
 	tasks, err := s.taskRepo.ListNonTerminalByOrgID(ctx, ocOrgID)
 	if err != nil {
 		slog.ErrorContext(ctx, "disconnect: list tasks failed", "ocOrgId", ocOrgID, "error", err)

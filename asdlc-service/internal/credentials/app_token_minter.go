@@ -39,8 +39,7 @@ import (
 
 // ErrAppNotConfigured is returned by AppTokenMinter methods when no App
 // private key is loaded — either because OpenBao has nothing at the
-// _platform path (Phase 2 PR A: dev seed is user-PAT only, App config lands
-// in PR B) or because the loader was skipped at startup. Callers must
+// _platform path or because the loader was skipped at startup. Callers must
 // handle this gracefully — the resolver should never reach the minter
 // unless there's an active app-installation row.
 var ErrAppNotConfigured = errors.New("app credentials: not configured")
@@ -60,16 +59,13 @@ type AppTokenMinter struct {
 	httpClient *http.Client
 
 	// botIdentity is the App's bot identity from GET /app, populated lazily
-	// on first successful mint. PR A leaves this empty (no app-installation
-	// rows exist); PR B's connect flow populates it as part of App-mode
-	// connect.
+	// on first successful mint and by the App-mode connect flow.
 	botIdentity Identity
 	identityMu  sync.RWMutex
 
-	// bao is set via WithOpenBao after construction. PR B post-startup
-	// platform reads (webhook secret list) go through this. The
-	// import-fence test enforces this is one of the only platformPath
-	// touchpoints.
+	// bao is set via WithOpenBao after construction. Post-startup platform
+	// reads (webhook secret list) go through this. The import-fence test
+	// enforces this is one of the only platformPath touchpoints.
 	bao OpenBaoStore
 }
 
@@ -82,9 +78,8 @@ type AppKeyMaterial struct {
 }
 
 // NewAppTokenMinter constructs the minter. material may be nil — in that
-// case all mint calls return ErrAppNotConfigured. This is the PR A shape:
-// the resolver still constructs the minter so the wiring is identical,
-// but no app-installation rows exist so it's never called.
+// case all mint calls return ErrAppNotConfigured, so the resolver can be
+// wired identically whether or not an App is configured.
 func NewAppTokenMinter(material *AppKeyMaterial) (*AppTokenMinter, error) {
 	m := &AppTokenMinter{
 		cache:      newAppTokenCache(),
@@ -311,9 +306,9 @@ func (m *AppTokenMinter) LoadAppWebhookSecrets(ctx context.Context) ([][]byte, e
 }
 
 // LoadAppClientSecret reads the App's OAuth client_secret from
-// secret/asdlc/_platform/github/app/client_secret. PR D-followup §6.4 —
-// consumed by CredentialService.BindAppInstallation to exchange OAuth
-// codes for user tokens during the bind path.
+// secret/asdlc/_platform/github/app/client_secret (§6.4). Consumed by
+// CredentialService.BindAppInstallation to exchange OAuth codes for user
+// tokens during the bind path.
 //
 // Returns "" + nil error if no row exists yet (deployment didn't seed it).
 // Callers gate the bind path on a non-empty value.
@@ -415,8 +410,8 @@ func (m *AppTokenMinter) WithOpenBao(store OpenBaoStore) {
 
 // LoadAppKeyFromOpenBao reads the App's appID + private-key from the
 // _platform namespace at startup. The only call site referencing
-// platformPath. Returns nil + nil if no App is configured (PR A: that's
-// expected; PR B's operator runbook seeds these).
+// platformPath. Returns nil + nil if no App is configured (the operator
+// runbook seeds these).
 //
 // IMPORTANT: this is one of three callers of platformPath. The other two
 // are LoadAppWebhookSecrets and LoadAppBotIdentity (transitively via

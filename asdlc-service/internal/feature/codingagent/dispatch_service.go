@@ -76,17 +76,16 @@ type DispatchService interface {
 	RetryTask(ctx context.Context, taskID string) (DispatchResult, error)
 }
 
-// Consumer ports for collaborators owned by features/platform layers that
-// extract LATER than codingagent (auth.TaskTokenManager, idp, runtimeconfig).
-// Defined here (consumer side) and satisfied structurally by the concretes,
-// wired at the composition root — so this service, which moves into the
-// codingagent feature, needn't import the flat services package for them.
+// Consumer ports for collaborators owned by other features/platform layers
+// (auth.TaskTokenManager, idp, runtimeconfig). Defined here (consumer side)
+// and satisfied structurally by the concretes, wired at the composition
+// root — so this service needn't import those packages directly.
 type (
 	// taskTokenIssuer mints the per-task RS256 bearer (auth.TaskTokenManager).
 	taskTokenIssuer interface {
 		Issue(taskID, ocOrgID, projectID string) (string, error)
 	}
-	// OrgPublisherProvisioner is idp's get-or-create publisher hook (WS2.4).
+	// OrgPublisherProvisioner is idp's get-or-create publisher hook.
 	OrgPublisherProvisioner interface {
 		EnsureOrgPublisher(ctx context.Context, orgID, actor string) (clientID, clientSecret string, created bool, err error)
 	}
@@ -110,23 +109,22 @@ type dispatchService struct {
 	wfRunService      WorkflowRunService
 	projector         TaskStateProjector
 	gitServiceURL     string // URL the agent pod uses to reach git-service; cross-namespace FQDN in cluster
-	platformURL       string // URL the agent pod uses to call the BFF F3c verification-failed callback
+	platformURL       string // URL the agent pod uses to call the BFF verification-failed callback
 	// traitSync, when non-nil, is invoked after CreateComponent to
 	// reconcile per-environment trait configs (the part CreateComponent
 	// can't pre-stamp because RBs are created asynchronously by OC's
 	// autoDeploy controller). Set via WithTraitSync. Optional in tests.
 	traitSync *component.TraitSyncService
-	// codingAgentDispatcher, when non-nil, is the WS2.3 proxy-based
-	// dispatch path (NS + SA + ExternalSecret×2 + Job). When the
-	// dispatcher is wired AND the per-org SM-API triplets are
-	// populated, the new path runs and the legacy
-	// wfRunService.TriggerCodingAgent is skipped. Both being absent
-	// keeps the legacy ClusterWorkflow path live.
+	// codingAgentDispatcher, when non-nil, is the proxy-based dispatch
+	// path (NS + SA + ExternalSecret×2 + Job). When the dispatcher is
+	// wired AND the per-org SM-API triplets are populated, the new path
+	// runs and the legacy wfRunService.TriggerCodingAgent is skipped.
+	// Both being absent keeps the legacy ClusterWorkflow path live.
 	codingAgentDispatcher *Dispatcher
 
 	// db backs the SM-API triplet lookup; nil disables the new
 	// dispatch path even when codingAgentDispatcher is set. Wired by
-	// main.go after WS2.3.
+	// main.go.
 	db *gorm.DB
 
 	// clusterSecretStore is the ESO ClusterSecretStore name the
@@ -147,14 +145,14 @@ type dispatchService struct {
 
 	// idp, when non-nil, provisions the per-org Thunder publisher
 	// client_credentials on demand so the coding-agent runner can
-	// authenticate to the BFF through the IdP-authed gateway (WS2.4).
+	// authenticate to the BFF through the IdP-authed gateway.
 	// Decoupled from API security: trait_sync only provisions it on the
 	// first protected deploy, but the runner needs it for every component,
 	// so the dispatch pre-flight ensures it too. Wired via SetIDPService.
 	idp OrgPublisherProvisioner
 }
 
-// WithCodingAgentDispatcher wires the WS2.3 proxy-based dispatch path.
+// WithCodingAgentDispatcher wires the proxy-based dispatch path.
 // db is required for the SM-API triplet lookup; clusterSecretStore +
 // runnerImage are pinned by the caller. Returns the receiver for
 // chained construction.
@@ -175,7 +173,7 @@ type DispatchServiceWithTraitSync interface {
 }
 
 // SetIDPService wires the per-org Thunder publisher provisioning hook used
-// by the proxy dispatch pre-flight (WS2.4 runner-auth). Optional — when
+// by the proxy dispatch pre-flight (runner-auth). Optional — when
 // unset (e.g. local k3d without Thunder), the dispatch path falls back to
 // the per-task RS256 JWT.
 func (s *dispatchService) SetIDPService(idp OrgPublisherProvisioner) {
@@ -198,8 +196,7 @@ func (s *dispatchService) SetTraitSync(traitSync *component.TraitSyncService) {
 // DispatchServiceWith* surface the optional setters the composition root
 // wires by type-assertion onto the DispatchService interface. Naming them
 // (and asserting the concrete satisfies them below) makes a setter-signature
-// drift a build failure instead of a wire silently skipped at boot — the
-// exact regression the CA-3 fix had to catch by hand.
+// drift a build failure instead of a wire silently skipped at boot.
 type DispatchServiceWithIDP interface {
 	SetIDPService(OrgPublisherProvisioner)
 }
@@ -272,7 +269,7 @@ func (s *dispatchService) DispatchTasks(ctx context.Context, orgID, projectID st
 		return nil, fmt.Errorf("get credential identity: %w", err)
 	}
 
-	// F2: deploy-gating. Build a {componentName → status} index for
+	// Deploy-gating. Build a {componentName → status} index for
 	// dependsOn resolution. A task is dispatchable only when every task
 	// it dependsOn (by component name) has reached `deployed`. This is
 	// per-batch — DependsOnComponents lists names that map 1:1 to tasks
@@ -372,9 +369,9 @@ func (s *dispatchService) dispatchOne(
 		s.markFailed(ctx, task, "workflow run service not configured")
 		return failResult(res, task.ErrorMessage)
 	}
-	// F3a — assert that every component this task depends on has a
-	// non-empty external URL at dispatch time. Under F2 deploy-gating,
-	// every dep is `deployed` at this point so ListDeployments must
+	// Assert that every component this task depends on has a non-empty
+	// external URL at dispatch time. Under deploy-gating, every dep is
+	// `deployed` at this point so ListDeployments must
 	// return a non-empty external URL — if any URL is empty, the deps
 	// invariant is broken (probably a missing `visibility: external` on
 	// the provider's spec.endpoints) and we fail loudly rather than
@@ -440,13 +437,13 @@ func (s *dispatchService) dispatchOne(
 		return failResult(res, task.ErrorMessage)
 	}
 
-	// WS2.3 — new dispatch path. When the proxy-based dispatcher is
-	// wired AND the per-org SM-API triplets are populated, dispatch
-	// goes through cluster-gateway-proxy (NS + SA + ExternalSecret×2
-	// + Job) instead of the legacy ClusterWorkflow path. Fall back to
-	// the legacy `wfRunService.TriggerCodingAgent` when the proxy
-	// path's prerequisites aren't satisfied — keeps mixed dev
-	// environments working until WS2.6 cuts over fully.
+	// New dispatch path. When the proxy-based dispatcher is wired AND
+	// the per-org SM-API triplets are populated, dispatch goes through
+	// cluster-gateway-proxy (NS + SA + ExternalSecret×2 + Job) instead
+	// of the legacy ClusterWorkflow path. Fall back to the legacy
+	// `wfRunService.TriggerCodingAgent` when the proxy path's
+	// prerequisites aren't satisfied — keeps mixed dev environments
+	// working.
 	var runName string
 	used, runName, err := s.tryDispatchViaProxy(ctx, task, repoInfo.RepoURL, prompt, identity, bearer)
 	if err != nil {
@@ -497,7 +494,7 @@ func (s *dispatchService) dispatchOne(
 	return res
 }
 
-// tryDispatchViaProxy is WS2.3's proxy-based dispatch attempt. Returns
+// tryDispatchViaProxy is the proxy-based dispatch attempt. Returns
 // (used=true, runName, nil) when dispatch succeeded; (used=false, "", nil)
 // when prerequisites aren't met so the caller falls back to the legacy
 // ClusterWorkflow path; (used=false, "", err) on actual failure.
@@ -507,7 +504,7 @@ func (s *dispatchService) dispatchOne(
 //   - db wired (for the SM-API triplet lookup);
 //   - runnerImage + clusterSecretStore configured;
 //   - the org's anthropic + github credential rows carry the SM-API
-//     triplet (populated by WS2.2's Connect flow);
+//     triplet (populated by the Connect flow);
 //   - the BFF has an Organization row with the OrgUUID for the NS derivation.
 //
 // When any of these fail, the function returns used=false with nil
@@ -577,7 +574,7 @@ func (s *dispatchService) tryDispatchViaProxy(
 		return false, "", nil
 	}
 
-	// WS2.4 — publisher cc creds. The runner authenticates to the BFF through
+	// Publisher cc creds. The runner authenticates to the BFF through
 	// the IdP-authed gateway with a Thunder publisher client_credentials token
 	// (a real platform-idp JWT). trait_sync only provisions that publisher on
 	// the first *protected* deploy, but the coding-agent runs for every
@@ -661,14 +658,12 @@ func (s *dispatchService) tryDispatchViaProxy(
 		IdentityLogin: identity.Login,
 		GitServiceURL: s.gitServiceURL,
 		CallbackURL:   s.platformURL,
-		// `ASDLC_BEARER` keeps the legacy per-task RS256 JWT path alive
-		// on the new dispatcher. The runner's `oneshot.ts` validates
-		// the env var at startup and uses it for /credentials/refresh
-		// callbacks. WS2.4 adds the publisher cc path alongside —
-		// PublisherSR (below) populates a 3rd per-run ExternalSecret;
-		// the TS runner prefers cc when PUBLISHER_CLIENT_ID is present
-		// and falls back to Bearer otherwise. Drop Bearer here once
-		// the TS runner is fully migrated.
+		// `ASDLC_BEARER` carries the per-task RS256 JWT path on the new
+		// dispatcher. The runner's `oneshot.ts` validates the env var at
+		// startup and uses it for /credentials/refresh callbacks.
+		// PublisherSR (below) populates a 3rd per-run ExternalSecret; the
+		// TS runner prefers the publisher cc when PUBLISHER_CLIENT_ID is
+		// present and falls back to Bearer otherwise.
 		Bearer:            bearer,
 		PublisherTokenURL: publisherTokenURL,
 	}
@@ -779,7 +774,7 @@ func (s *dispatchService) markFailed(ctx context.Context, task *models.Component
 	}
 }
 
-// MarkVerificationFailed (F3c) transitions a task from in_progress to
+// MarkVerificationFailed transitions a task from in_progress to
 // verification_failed under the projector's per-task lock. The
 // diagnostic is persisted to ErrorMessage so it surfaces on the board
 // card alongside the Retry button.
@@ -799,7 +794,7 @@ func (s *dispatchService) MarkVerificationFailed(ctx context.Context, taskID, di
 	return nil
 }
 
-// RetryTask (F3c) is the operator-driven retry path for a task in
+// RetryTask is the operator-driven retry path for a task in
 // `verification_failed`. It:
 //
 //  1. Transitions verification_failed → in_progress via the projector
@@ -866,10 +861,9 @@ func (s *dispatchService) RetryTask(ctx context.Context, taskID string) (Dispatc
 
 // DependencyEndpoint is one row used by resolveDependencyEndpoints — the
 // dispatch-time §1.3 invariant guard ("every dep this task lists has a
-// non-empty external URL"). The URL handoff to the SPA now flows through
+// non-empty external URL"). The URL handoff to the SPA flows through the
 // ReleaseBinding `env-config.js` (BFF emits per-env values into
-// workloadOverrides.container.files), not through GitHub issue comments
-// or the prompt.
+// workloadOverrides.container.files).
 type DependencyEndpoint struct {
 	Component string
 	URL       string
@@ -895,7 +889,7 @@ func buildAgentPrompt(task *models.ComponentTask) string {
 // resolveDependencyEndpoints turns the task's DependsOnComponents list into
 // a slice of (component, url) pairs by calling ComponentService.ListDeployments
 // — the same path that powers the Deploy page (single source of truth). Under
-// F2 deploy-gating every dep is `deployed` at dispatch time, so each
+// deploy-gating every dep is `deployed` at dispatch time, so each
 // ListDeployments call MUST return a non-empty external URL. An empty URL
 // means the provider component is missing `visibility: external` on its
 // `spec.endpoints` — that is the §1.3 invariant breaking. Fail loudly here.
@@ -1005,14 +999,14 @@ func (s *dispatchService) ensureOCComponent(
 		description = task.Title + " — " + task.Rationale
 	}
 
-	// Per-component env vars are no longer stamped onto the Component's
-	// workflow parameters. They live on the per-environment ReleaseBindings
-	// (spec.workloadOverrides.container.env). configService.UpdateEnvVars
-	// writes them out via componentSvc.UpdateWorkflowEnvVars, which patches
-	// each ReleaseBinding for this component. On first dispatch the
-	// ReleaseBindings don't exist yet — OC creates them after autoDeploy
-	// observes the build's Workload — so the next config save (or the
-	// caller's post-dispatch reconcile) is what lands env vars into them.
+	// Per-component env vars live on the per-environment ReleaseBindings
+	// (spec.workloadOverrides.container.env), not on the Component's
+	// workflow parameters. configService.UpdateEnvVars writes them out via
+	// componentSvc.UpdateWorkflowEnvVars, which patches each ReleaseBinding
+	// for this component. On first dispatch the ReleaseBindings don't exist
+	// yet — OC creates them after autoDeploy observes the build's Workload —
+	// so the next config save (or the caller's post-dispatch reconcile) is
+	// what lands env vars into them.
 	// Derive the `api-configuration` trait from design.md's optional
 	// `exposesAPI.auth` block. nil/none ⇒ no trait, no AP hop;
 	// `required` ⇒ trait attached with cors+jwtAuth enabled in every env.

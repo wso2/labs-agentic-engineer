@@ -54,8 +54,7 @@ import (
 // concrete struct from a sibling file (no real circular import today,
 // but keeps the seam minimal and testable).
 //
-// Renamed from WPSecretCleaner in the anthropic-key-dual-token work —
-// each WP-Secret-cleanup concern (build, anthropic, future providers)
+// Each WP-Secret-cleanup concern (build, anthropic, future providers)
 // has its own narrowly-typed interface so cred services only depend on
 // what they own. See docs/design/anthropic-key-dual-token.md §S5.
 type BuildSecretCleaner interface {
@@ -79,10 +78,9 @@ type CredentialService struct {
 	// row. nil is a graceful no-op (tests, off-cluster runs).
 	buildSecretCleaner BuildSecretCleaner
 
-	// smAPIWriter mirrors the PAT into SM-API on Connect (WS2.2) and
-	// clears it on Disconnect. nil-safe — no-op when the writer isn't
-	// configured (composition-root behavior when SECRET_MANAGER_API_URL
-	// is unset).
+	// smAPIWriter mirrors the PAT into SM-API on Connect and clears it on
+	// Disconnect. nil-safe — no-op when the writer isn't configured
+	// (composition-root behavior when SECRET_MANAGER_API_URL is unset).
 	smAPIWriter *SMAPIWriter
 
 	// envWebhookSecret is the platform-wide GITHUB_WEBHOOK_SECRET. The PAT
@@ -93,17 +91,16 @@ type CredentialService struct {
 	// AppendWebhookSecret route. Empty in tests.
 	envWebhookSecret string
 
-	// PR D-followup §6.4 — App OAuth client_id/secret used by the
-	// discover-then-bind path (BindAppInstallation). Empty values disable
-	// that path; the discover endpoint surfaces 503 in that mode.
+	// App OAuth client_id/secret used by the discover-then-bind path
+	// (BindAppInstallation). Empty values disable that path; the discover
+	// endpoint surfaces 503 in that mode.
 	appClientID     string
 	appClientSecret string
 
 	// githubClient is the typed wrapper for GitHub REST calls. CredentialService
-	// uses it for the PR D-followup discover-then-bind path
-	// (ListAppInstallations, ExchangeOAuthCode, GetUserInstallations);
-	// the rest of CredentialService still uses raw httpClient for legacy
-	// reasons. Optional — nil disables the bind path.
+	// uses it for the discover-then-bind path (ListAppInstallations,
+	// ExchangeOAuthCode, GetUserInstallations); the rest of CredentialService
+	// still uses raw httpClient. Optional — nil disables the bind path.
 	githubClient gitrepo.GitHubClient
 
 	httpClient *http.Client
@@ -113,8 +110,8 @@ type CredentialService struct {
 // non-nil. githubAPI may be empty (defaults to api.github.com).
 // envWebhookSecret is the GITHUB_WEBHOOK_SECRET — used as the seed value
 // for fresh PAT rows and cross-mode reseeds.
-// appClientID / appClientSecret enable the OAuth bind path (PR D-followup);
-// empty values disable it gracefully.
+// appClientID / appClientSecret enable the OAuth bind path; empty values
+// disable it gracefully.
 // githubClient is used by the discover-then-bind path (ListAppInstallations,
 // ExchangeOAuthCode, GetUserInstallations); nil disables the bind path.
 func NewCredentialService(
@@ -405,10 +402,9 @@ func (s *CredentialService) connectPAT(ctx context.Context, tx *gorm.DB, ocOrgID
 }
 
 // mirrorPATToSMAPI fires the SM-API write best-effort after a Connect.
-// Logged-and-swallowed on error — the legacy org_secrets path keeps
-// working when SM-API is down, so the user-facing Connect doesn't 5xx.
-// The SM-API row will be created/refreshed on the next successful
-// Connect (or by the periodic sync, once that lands).
+// Logged-and-swallowed on error — the org_secrets path keeps working when
+// SM-API is down, so the user-facing Connect doesn't 5xx. The SM-API row
+// is created/refreshed on the next successful Connect.
 func (s *CredentialService) mirrorPATToSMAPI(ctx context.Context, ocOrgID, pat string) {
 	if s.smAPIWriter == nil || !s.smAPIWriter.Enabled() {
 		return
@@ -642,7 +638,7 @@ func (s *CredentialService) Disconnect(ctx context.Context, ocOrgID string) erro
 	}
 
 	// Best-effort GC of credential-store keys. Failure is logged, not surfaced —
-	// the periodic GC sweep (PR D) catches anything missed.
+	// the periodic GC sweep catches anything missed.
 	if row.Kind == "user-pat" {
 		if err := s.store.Delete(ctx, ocOrgID, "github/pat"); err != nil {
 			slog.WarnContext(ctx, "disconnect: cred-store delete failed", "ocOrgId", ocOrgID, "key", "github/pat", "error", err)
@@ -671,9 +667,9 @@ func (s *CredentialService) WithBuildSecretCleaner(cleaner BuildSecretCleaner) *
 	return s
 }
 
-// WithSMAPIWriter injects the SM-API writer (WS2.2). When set, the
-// PAT-mode Connect path uploads the PAT to SM-API after the local
-// commit and stamps the triplet onto the row. nil-safe.
+// WithSMAPIWriter injects the SM-API writer. When set, the PAT-mode
+// Connect path uploads the PAT to SM-API after the local commit and
+// stamps the triplet onto the row. nil-safe.
 func (s *CredentialService) WithSMAPIWriter(w *SMAPIWriter) *CredentialService {
 	s.smAPIWriter = w
 	return s
@@ -715,8 +711,6 @@ func (s *CredentialService) UninstallAppInstallation(ctx context.Context, ocOrgI
 // ----------------------------------------------------------------------------
 
 // Identity is the identity-only projection used by the BFF dispatch path.
-// Replaces the dead Identity field on the legacy GetCredentials bridge
-// (PR C deletes that bridge entirely).
 type Identity struct {
 	Kind        string `json:"kind"`
 	Name        string `json:"name"`
@@ -1177,13 +1171,11 @@ func (s *CredentialService) fetchInstallation(ctx context.Context, installationI
 	return inst.Account.Login, inst.Account.Type, selectedRepos, nil
 }
 
-// listInstallationRepos returns the full_name of each repo accessible by
-// the installation. Uses the installation token (not the App JWT).
 // ListInstallationRepos calls GET /installation/repositories with a fresh
-// installation token. Used by Phase 2 PR D's reach-reconciliation Phase B
-// cascade to confirm GitHub agrees the install has shrunk before abandoning
-// tasks (§6.8). Public wrapper around the private helper that's also used
-// by the connect flow.
+// installation token. Used by the reach-reconciliation Phase B cascade to
+// confirm GitHub agrees the install has shrunk before abandoning tasks
+// (§6.8). Public wrapper around the private helper that's also used by the
+// connect flow.
 func (s *CredentialService) ListInstallationRepos(ctx context.Context, installationID int64) ([]string, error) {
 	return s.listInstallationRepos(ctx, installationID)
 }
@@ -1207,9 +1199,8 @@ var ErrAppBindNotConfigured = errors.New("app bind path not configured (missing 
 // The user-token is used only inside this call and discarded — it never
 // crosses any process boundary, never lands in storage, never logged.
 //
-// Architectural note: this single call replaces the earlier discover +
-// bind pair. There is no "list every install of our App" surface anymore
-// — discovery is always proven to the requesting user via OAuth.
+// There is no "list every install of our App" surface — discovery is
+// always proven to the requesting user via OAuth.
 func (s *CredentialService) ResolveUserInstallations(ctx context.Context, ocOrgID, oauthCode, redirectURI string) ([]gitrepo.AppInstallationSummary, error) {
 	if s.minter == nil || s.minter.AppID() == 0 || s.githubClient == nil {
 		return nil, ErrAppBindNotConfigured
@@ -1288,8 +1279,8 @@ func (s *CredentialService) ResolveUserInstallations(ctx context.Context, ocOrgI
 // and identity_changed_at per phase2.md §6.6.
 //
 // Used by:
-//   - the PAT-replace flow (existing call site, after this extraction)
-//   - the PR D periodic validator on a successful GET /user / /app/installations/{id}
+//   - the PAT-replace flow
+//   - the periodic validator on a successful GET /user / /app/installations/{id}
 //
 // Caller passes (login, name, email) — the same triple ghIdentity carries.
 // Returns true if drift was recorded.
@@ -1329,7 +1320,7 @@ func (s *CredentialService) RecordIdentityFromGitHub(ctx context.Context, ocOrgI
 }
 
 // TouchValidatedAt updates last_validated_at without modifying identity. Used
-// by the PR D validator's no-drift App-mode path to record the heartbeat.
+// by the validator's no-drift App-mode path to record the heartbeat.
 func (s *CredentialService) TouchValidatedAt(ctx context.Context, ocOrgID string) error {
 	now := time.Now().UTC()
 	return s.db.WithContext(ctx).Model(&models.OrgCredential{}).
@@ -1345,7 +1336,7 @@ func (s *CredentialService) UpdateGitHubLogin(ctx context.Context, ocOrgID, gith
 }
 
 // ListActiveRows returns all OrgCredential rows in 'active' or 'suspended'
-// status. The PR D validator (pkg/credentials/validator.go) walks this list
+// status. The validator (pkg/credentials/validator.go) walks this list
 // once per tick. The result is materialised — the validator releases the
 // validator-scoped advisory lock before iterating.
 func (s *CredentialService) ListActiveRows(ctx context.Context) ([]models.OrgCredential, error) {

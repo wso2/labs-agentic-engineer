@@ -43,9 +43,9 @@ import (
 // builds.go uses similar timing) and a fine starting point per
 // github-integration-phase0.md §15 q2.
 //
-// Phase 2 PR D §9.3 — git_clone_failed_auth retry budget. When classifyRun
-// detects a git-clone auth failure, the watcher mints a fresh build token
-// via WorkflowRunService.RetryAuthFailedBuild and recreates the run for the
+// git_clone_failed_auth retry budget (§9.3): when classifyRun detects a
+// git-clone auth failure, the watcher mints a fresh build token via
+// WorkflowRunService.RetryAuthFailedBuild and recreates the run for the
 // same SHA up to authRetryBudget times. Budget exhaustion → terminal
 // failed with cause "build.auth_retry_exceeded".
 type BuildWatcher struct {
@@ -136,11 +136,10 @@ func (w *BuildWatcher) sweep(ctx context.Context) {
 			continue // still pending or running — leave for next tick
 		}
 
-		// Phase 2 PR D §9.3 — git-clone auth-failure retry path.
-		// On classification, increment the budget counter; if still
-		// within budget, mint a fresh token and recreate the run for
-		// the same SHA. On exhaustion, transition to failed with the
-		// dedicated cause.
+		// git-clone auth-failure retry path (§9.3). On classification,
+		// increment the budget counter; if still within budget, mint a
+		// fresh token and recreate the run for the same SHA. On
+		// exhaustion, transition to failed with the dedicated cause.
 		if authFailure && w.wfService != nil {
 			if t.BuildAuthRetryCount < w.authBudget {
 				w.handleAuthRetry(ctx, t)
@@ -222,10 +221,10 @@ var authFailureMarkers = []string{
 // it is one of openchoreo.ReasonWorkflowSucceeded / ReasonWorkflowFailed
 // when terminal.
 //
-// Phase 2 PR D §9.3 — when the run failed AND the checkout-source task's
-// Phase ∈ {Failed, Error} with a Message matching an auth marker, returns
-// event="" + authFailure=true so the watcher routes through the retry path
-// instead of the terminal failed path.
+// When the run failed AND the checkout-source task's Phase ∈ {Failed, Error}
+// with a Message matching an auth marker, returns event="" + authFailure=true
+// so the watcher routes through the retry path instead of the terminal failed
+// path (§9.3).
 func classifyRun(run *models.WorkflowRun) (event contracts.TaskEvent, errMsg string, authFailure bool) {
 	if run == nil || !run.Completed {
 		return "", "", false
@@ -241,15 +240,12 @@ func classifyRun(run *models.WorkflowRun) (event contracts.TaskEvent, errMsg str
 }
 
 // isGitCloneAuthFailure returns true when the failing checkout-source task
-// matches a well-known git-clone auth marker. Drop-in replacement for the
-// previous Outputs-iterating version per
-// docs/design/auth-failure-classification.md §3 — OC's CRD does not expose
-// per-task outputs, so the previous implementation was always false. We
-// match on Tasks[].Phase ∈ {Failed, Error} on the `checkout-source` step
-// AND a substring of Tasks[].Message. Fallback to OC `/logs?task=` for
-// empty Messages is not yet wired (deferred — see §3.1 of the doc); when
-// Message is empty we return false conservatively (a non-auth failure is
-// safer than a runaway retry budget).
+// matches a well-known git-clone auth marker. OC's CRD does not expose
+// per-task outputs (see docs/design/auth-failure-classification.md §3), so
+// we match on Tasks[].Phase ∈ {Failed, Error} on the `checkout-source` step
+// AND a substring of Tasks[].Message. When Message is empty we return false
+// conservatively (a non-auth failure is safer than a runaway retry budget);
+// the OC `/logs?task=` fallback for empty Messages is not wired (see §3.1).
 func isGitCloneAuthFailure(run *models.WorkflowRun) bool {
 	for _, task := range run.Tasks {
 		if task.Name != "checkout-source" {

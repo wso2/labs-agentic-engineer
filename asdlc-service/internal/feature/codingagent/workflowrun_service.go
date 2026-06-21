@@ -34,9 +34,9 @@ import (
 )
 
 // WorkflowRunService creates OC WorkflowRun CRs pinned to a specific commit
-// SHA. This is what flips the BFF from "configure autoBuild=true and let OC
-// react to its own webhook" to "we drive every build from our webhook
-// handler with the merge SHA injected at trigger time."
+// SHA. Every build is driven from the BFF's webhook handler with the merge
+// SHA injected at trigger time (rather than letting OC react to its own
+// webhook).
 //
 // Mirrors agent-manager (clients/openchoreosvc/client/builds.go:71-85).
 //
@@ -51,13 +51,11 @@ type WorkflowRunService interface {
 	// task.LastBuildRunName): a second call with the same SHA after the
 	// first has committed is a no-op that returns the existing run name.
 	DispatchTaskBuild(ctx context.Context, task *models.ComponentTask, sha string) (runName string, err error)
-	// RetryAuthFailedBuild — Phase 2 PR D §9.3. Mints a fresh build token
-	// and recreates the task's WorkflowRun for the same SHA without
-	// advancing LastBuildSHA. Used by the build watcher when classifyRun
-	// returns TaskEventBuildAuthRetryExhausted-pending (i.e., the
-	// classifier detected a git_clone_failed_auth that is still inside
-	// the retry budget). Returns the new run name; caller persists it
-	// onto the task row.
+	// RetryAuthFailedBuild mints a fresh build token and recreates the
+	// task's WorkflowRun for the same SHA without advancing LastBuildSHA.
+	// Used by the build watcher when classifyRun detects a
+	// git_clone_failed_auth that is still inside the retry budget.
+	// Returns the new run name; caller persists it onto the task row.
 	RetryAuthFailedBuild(ctx context.Context, task *models.ComponentTask) (runName string, err error)
 	// TriggerCodingAgent creates a WorkflowRun of ClusterWorkflow
 	// `app-factory-coding-agent` for the per-task ephemeral pod that runs the
@@ -80,7 +78,7 @@ type CodingAgentTrigger struct {
 	Prompt        string
 	Bearer        string
 	GitServiceURL string
-	// PlatformURL is the BFF base URL the runner pod uses for the F3c
+	// PlatformURL is the BFF base URL the runner pod uses for the
 	// verification-failed callback. Empty disables that callback (the
 	// runner posts the diagnostic on the GitHub issue regardless).
 	PlatformURL string
@@ -93,9 +91,8 @@ type CodingAgentTrigger struct {
 
 // TaskStateProjector is the task projector's status-write surface that
 // WorkflowRunService needs to atomically transition task state alongside build
-// dispatch. It is the canonical contracts.TaskTransitions interface, aliased
-// here so the existing field/param type name keeps working and `services`
-// doesn't depend on the task feature. The concrete provider
+// dispatch. It aliases the canonical contracts.TaskTransitions interface so
+// this feature needn't depend on the task feature. The concrete provider
 // (internal/feature/task.Projector) is wired at main and satisfies
 // contracts.TaskTransitions.
 type TaskStateProjector = contracts.TaskTransitions
@@ -116,7 +113,7 @@ type workflowRunService struct {
 // repoSvc + buildCredSvc together pre-stage the per-WorkflowRun build
 // Secret in workflows-<orgID> before each WorkflowRun (phase2.md §9.2).
 // store is used to look up per-component AppPath for the changed-path
-// filter — tasks no longer snapshot AppPath, dispatch reads design fresh.
+// filter; dispatch reads AppPath from design fresh rather than from the task.
 func NewWorkflowRunService(
 	db *gorm.DB,
 	taskRepo repositories.TaskRepository,
@@ -242,13 +239,6 @@ func (s *workflowRunService) dispatchBuild(
 	return run.Name, nil
 }
 
-// RetryAuthFailedBuild mints a fresh build token + creates a new
-// WorkflowRun for the same commit SHA that the failed run targeted.
-// LastBuildSHA stays unchanged; LastBuildRunName advances to the new
-// run so the next watcher sweep tracks the retry rather than the dead
-// original. Mint failures (org disconnected, repo not in org) abort the
-// retry — the watcher will eventually exhaust the budget if the
-// underlying problem persists.
 // TriggerCodingAgent creates a fresh WorkflowRun of ClusterWorkflow
 // `app-factory-coding-agent`. Each call increments the attempt counter
 // implicitly via time.Now(); idempotency is at the dispatch-service level
@@ -291,6 +281,13 @@ func (s *workflowRunService) TriggerCodingAgent(ctx context.Context, p CodingAge
 	return run.Name, nil
 }
 
+// RetryAuthFailedBuild mints a fresh build token + creates a new
+// WorkflowRun for the same commit SHA that the failed run targeted.
+// LastBuildSHA stays unchanged; LastBuildRunName advances to the new
+// run so the next watcher sweep tracks the retry rather than the dead
+// original. Mint failures (org disconnected, repo not in org) abort the
+// retry — the watcher will eventually exhaust the budget if the
+// underlying problem persists.
 func (s *workflowRunService) RetryAuthFailedBuild(ctx context.Context, task *models.ComponentTask) (string, error) {
 	if s.asServiceIdentity != nil {
 		ctx = s.asServiceIdentity(ctx)

@@ -61,8 +61,8 @@ type BoardTask struct {
 	// can resolve dep -> task lookups (e.g. "what is component `todo-api`'s
 	// task currently doing while we wait?").
 	ComponentName string `json:"componentName,omitempty"`
-	// ErrorMessage mirrors ComponentTask.ErrorMessage. For F3c
-	// verification_failed it's the diagnostic the agent reported, shown
+	// ErrorMessage mirrors ComponentTask.ErrorMessage. For a
+	// verification_failed task it's the diagnostic the agent reported, shown
 	// on the card so the operator can decide whether to retry.
 	ErrorMessage string `json:"errorMessage,omitempty"`
 }

@@ -65,8 +65,8 @@ type GitHubClient interface {
 	GetAppInstallation(ctx context.Context, minter *credentials.AppTokenMinter, installationID int64) (*AppInstallationInfo, error)
 	// ListAppInstallations calls GET /app/installations using the App JWT.
 	// Returns the full list of installations our App has across GitHub.
-	// PR D-followup §6.4 — used by the discover-then-bind path to surface
-	// installations the platform has no row for yet.
+	// Used by the discover-then-bind path to surface installations the
+	// platform has no row for yet.
 	ListAppInstallations(ctx context.Context, minter *credentials.AppTokenMinter) ([]AppInstallationSummary, error)
 	// ExchangeOAuthCode exchanges a GitHub OAuth code for a user-to-server
 	// access token via POST github.com/login/oauth/access_token. Used by
@@ -87,14 +87,13 @@ type GitHubClient interface {
 	// this, disconnects leave orphan installs visible to discover.
 	DeleteInstallation(ctx context.Context, minter *credentials.AppTokenMinter, installationID int64) error
 
-	// ----- Artifact-store v2 (docs/design/artifact-store-v2.md V1) -----
+	// ----- Artifact store (docs/design/artifact-store-v2.md) -----
 	//
 	// Save-path GitHub API methods. All authed via the per-org credential.
-	// These replace the `git commit + push` flow in SaveDesign/SaveRequirements;
-	// the working-tree clone remains the source of truth for draft content
-	// (Postgres drafts are V2). Errors map onto typed sentinels so the save
-	// flow can branch (ErrRefNotFastForward → retry, ErrTagAlreadyExists →
-	// recompute next tag).
+	// They drive the SaveDesign/SaveRequirements flows; the working-tree clone
+	// remains the source of truth for draft content. Errors map onto typed
+	// sentinels so the save flow can branch (ErrRefNotFastForward → retry,
+	// ErrTagAlreadyExists → recompute next tag).
 
 	// GetRef returns the tip SHA of a ref. `ref` is the ref name without
 	// "refs/" prefix (e.g. "heads/main" or "tags/v1").
@@ -244,9 +243,9 @@ func NewGitHubClient() GitHubClient {
 }
 
 // authHeaders sets the standard GitHub API headers and the Authorization
-// header. Token is fetched fresh on every call from the credential — Phase 0
-// long-lived PATs are a no-op here, Phase 2 short-lived App tokens refresh
-// on demand through the same path.
+// header. Token is fetched fresh on every call from the credential —
+// long-lived PATs are a no-op here, short-lived App tokens refresh on
+// demand through the same path.
 func authHeaders(ctx context.Context, req *http.Request, cred credentials.Credential) error {
 	token, _, err := cred.Token(ctx)
 	if err != nil {

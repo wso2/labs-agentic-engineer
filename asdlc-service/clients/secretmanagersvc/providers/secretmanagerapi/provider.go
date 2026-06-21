@@ -14,24 +14,20 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package secretmanagerapi is the SM-API provider for the asdlc
-// secretmanagersvc client (WS1.3). Ported from
-// agent-platform/agent-manager-service/secrets/ with adaptations:
+// Package secretmanagerapi is the SM-API provider for the
+// secretmanagersvc client.
 //
-//   - SecretLocation reshaped from agent-manager's
-//     {org, project, env, agent, config, entity} to asdlc's
-//     {org, project, task, entity}. buildLabelsFromLocation and
-//     labelSelectorFromLocation drop the env/agent/config trio and add
-//     `task` for per-task secret materialization (per-run Anthropic
-//     key + GitHub PAT ExternalSecrets).
+//   - SecretLocation is keyed by {org, project, task, entity}.
+//     buildLabelsFromLocation and labelSelectorFromLocation carry `task`
+//     for per-task secret materialization (per-run Anthropic key + GitHub
+//     PAT ExternalSecrets).
 //
-//   - Inbound user JWT is read from the asdlc jwtassertion middleware
-//     instead of agent-manager's.
+//   - The inbound user JWT is read from the jwtassertion middleware.
 //
 // Per ADR-0002 this provider is the only path to the Secret Manager API
-// in both local and cloud deployments — there is no openbao provider.
-// The same binary is built once and the composition root constructs
-// this provider in both build configs.
+// in both local and cloud deployments — there is no openbao provider. The
+// same binary is built once and the composition root constructs this
+// provider in both build configs.
 package secretmanagerapi
 
 import (
@@ -330,10 +326,8 @@ func (c *Client) resolveSecretID(ctx context.Context, jwt string, location secre
 	return list.Items[0].Metadata.ID, nil
 }
 
-// buildLabelsFromLocation maps the asdlc SecretLocation onto the SM-API
-// label set. Drops agent-manager's env/agent/config labels (no longer
-// part of our shape); adds `task` so per-task ExternalSecrets are
-// addressable.
+// buildLabelsFromLocation maps the SecretLocation onto the SM-API label
+// set, including `task` so per-task ExternalSecrets are addressable.
 func buildLabelsFromLocation(location secretmanagersvc.SecretLocation, existing map[string]string) map[string]string {
 	labels := make(map[string]string, len(existing)+4)
 	for k, v := range existing {

@@ -47,10 +47,9 @@ const (
 // TaskStatus is the single, webhook-driven lifecycle for a ComponentTask.
 // Its canonical definition + the transition algebra (ApplyTaskEvent, the
 // transition table, IsTerminal) live in internal/contracts — the
-// dependency-free layer (§6.9). These are re-export aliases so the gorm model
-// and every existing models.TaskStatus consumer keep working unchanged while
-// contracts owns the state machine. The projector in services/webhook is the
-// only writer outside dispatch.
+// dependency-free layer. These are re-export aliases so the gorm model and
+// every models.TaskStatus consumer reuse the contracts state machine. The
+// projector in services/webhook is the only writer outside dispatch.
 type TaskStatus = contracts.TaskStatus
 
 const (
@@ -72,10 +71,9 @@ const (
 // SourceSpecVersion). Maps 1:1:1:1 to a GitHub issue, feature branch, and
 // draft PR; state is driven by webhooks (services/webhook/projector.go).
 //
-// As of the tech-lead agent revamp (docs/design/tech-lead-agent.md), the row
-// no longer snapshots component shape (OpenAPI, language, dependencies, etc.).
-// Dispatch reads the current design from the multi-file `specs/design/`
-// tree on every run.
+// The row does not snapshot component shape (OpenAPI, language, dependencies,
+// etc.); dispatch reads the current design from the multi-file `specs/design/`
+// tree on every run (docs/design/tech-lead-agent.md).
 type ComponentTask struct {
 	ID        string `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
 	ProjectID string `gorm:"index;not null" json:"projectId"`
@@ -140,8 +138,7 @@ type ComponentTask struct {
 	// LastCodingAgentRunName is the most recent OC WorkflowRun that ran the
 	// per-task coding agent. Mirrors LastBuildRunName for the build phase.
 	// Set by DispatchService at dispatch time; the coding-agent watcher
-	// reads it to poll the run's status. Replaces the legacy WorkspacePath
-	// column populated by remote-worker.
+	// reads it to poll the run's status.
 	LastCodingAgentRunName string `gorm:"type:text" json:"lastCodingAgentRunName,omitempty"`
 
 	// Error tracking

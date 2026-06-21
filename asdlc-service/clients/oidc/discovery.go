@@ -14,17 +14,16 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package oidc — minimal OIDC discovery helper. Phase 7 BYO-IDP. Given
-// an issuer URL, fetches /.well-known/openid-configuration and pulls
-// out the jwks_uri so the console picker can auto-populate it.
+// Package oidc is a minimal OIDC discovery helper for BYO-IDP. Given an
+// issuer URL, it fetches /.well-known/openid-configuration and pulls out
+// the jwks_uri so the console picker can auto-populate it.
 //
-// This is the v1 scope of what the plan called the "generic OIDC DCR
-// client". DCR (Dynamic Client Registration) is deferred to v2 — the
-// publisher app registration for BYO-IDP requires creating an OAuth
-// app in the user's IDP, which is per-IDP (Asgardeo Management API,
-// Okta DCR, Keycloak API, etc.) and out of scope for v1. v1 expects
-// the org admin to pre-register the App Factory publisher app in
-// their IDP and feed the credentials back into PUT idp-profile.
+// Scope is deliberately limited to discovery: it does NOT do Dynamic
+// Client Registration. Publisher-app registration for BYO-IDP requires
+// creating an OAuth app in the user's IDP, which is per-IDP (Asgardeo
+// Management API, Okta DCR, Keycloak API, etc.); the org admin instead
+// pre-registers the App Factory publisher app in their IDP and feeds the
+// credentials back into PUT idp-profile.
 package oidc
 
 import (

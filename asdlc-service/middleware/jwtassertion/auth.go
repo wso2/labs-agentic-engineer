@@ -255,7 +255,7 @@ func (c compiledIssuers) match(issuer string) error {
 
 // compiledAudiences is the per-request-friendly form of cfg.AllowedAudiences.
 // badConfig captures bare-wildcard / empty misconfiguration so every request
-// fails closed with a 401, matching the prior eager-validation behaviour.
+// fails closed with a 401.
 type compiledAudiences struct {
 	exact     map[string]struct{}
 	prefixes  []string
@@ -304,8 +304,8 @@ func (c compiledAudiences) match(audiences jwt.ClaimStrings) error {
 	return fmt.Errorf("invalid audience: got %v", audiences)
 }
 
-// validateIssuer and validateAudience are thin wrappers preserved for tests
-// that exercise the matcher directly with a raw allowed-list.
+// validateIssuer and validateAudience are thin wrappers for tests that
+// exercise the matcher directly with a raw allowed-list.
 func validateIssuer(issuer string, allowed []string) error {
 	return compileIssuers(allowed).match(issuer)
 }

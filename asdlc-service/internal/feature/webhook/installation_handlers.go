@@ -31,9 +31,9 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/repositories"
 )
 
-// RegisterInstallationHandlers wires the Phase 2 PR B handlers for App-mode
-// lifecycle events. The receiver pipeline (routing → HMAC → dispatch)
-// runs in front of these unchanged.
+// RegisterInstallationHandlers wires the handlers for App-mode lifecycle
+// events. The receiver pipeline (routing → HMAC → dispatch) runs in front
+// of these.
 //
 // Handlers registered:
 //
@@ -44,8 +44,7 @@ import (
 //   - installation.suspend      → flip status='suspended' on the row
 //   - installation.unsuspend    → flip status='active' on the row
 //   - installation_repositories.added   → JSON-merge selected_repos
-//   - installation_repositories.removed → JSON-merge selected_repos
-//     (cascade lands in PR D)
+//   - installation_repositories.removed → JSON-merge selected_repos + cascade
 func RegisterInstallationHandlers(
 	router *Router,
 	db *gorm.DB,
@@ -179,10 +178,9 @@ func (h *installationHandler) handleUnsuspend(ctx context.Context, _ string, _ s
 	return nil
 }
 
-// handleReposAdded merges new selected_repos. Phase 2 §6.8 Phase A only
-// (PR B); the cascade for "added" is a no-op (over-permissive reach is
-// a soft failure — the App's actual install state is what GitHub
-// enforces at API call time).
+// handleReposAdded merges new selected_repos. The cascade for "added" is
+// a no-op (over-permissive reach is a soft failure — the App's actual
+// install state is what GitHub enforces at API call time).
 func (h *installationHandler) handleReposAdded(ctx context.Context, _ string, _ string, payload []byte) error {
 	p, err := h.parse(payload)
 	if err != nil {

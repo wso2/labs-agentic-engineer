@@ -27,25 +27,19 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/internal/platform/k8sname"
 )
 
-// TraitSyncWatcher is the convergence safety net for Phase 2 of the api-
-// platform-integration plan (docs/design/api-platform-integration.md §6
-// Phase 2). It runs on a 10 s ticker and, for every (orgID, projectID,
-// componentName) tuple with an existing task record, invokes
-// TraitSyncService.SyncComponentTraits — which is idempotent +
-// convergent so re-running it is safe.
+// TraitSyncWatcher is the convergence safety net for api-configuration
+// trait state (docs/design/api-platform-integration.md §6). It runs on a
+// 10 s ticker and, for every (orgID, projectID, componentName) tuple with
+// an existing task record, invokes TraitSyncService.SyncComponentTraits —
+// which is idempotent + convergent so re-running it is safe.
 //
-// Why this matters:
-//   - The dispatch path emits the trait at CreateComponent time, but a
-//     write-write race with a concurrent design PUT (or a transient OC
-//     500 on the per-RB PATCH) can leave the cluster temporarily out of
-//     sync. The watcher closes that window within one tick.
-//   - The plan also calls for a bidirectional `trait_sync drift` metric
-//     (`direction=missing_protection` and `direction=stale_protection`).
-//     For now we log when a reconcile would change state, leaving the
-//     Prometheus counter integration as a follow-up. The reconcile path
-//     itself is the only writer of `traitEnvironmentConfigs.<inst>` so
-//     observability already lives in the BFF log stream:
-//     `trait_sync: reconciled` events.
+// Why this matters: the dispatch path emits the trait at CreateComponent
+// time, but a write-write race with a concurrent design PUT (or a
+// transient OC 500 on the per-RB PATCH) can leave the cluster temporarily
+// out of sync. The watcher closes that window within one tick. The
+// reconcile path is the only writer of `traitEnvironmentConfigs.<inst>`,
+// so observability lives in the BFF log stream: `trait_sync: reconciled`
+// events.
 //
 // Per-component retry budget: when SyncComponentTraits returns a non-nil
 // error for the same (orgID, projectID, componentName) for 5 consecutive

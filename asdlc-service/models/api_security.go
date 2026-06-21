@@ -24,12 +24,6 @@ import "strings"
 //
 // Invariant: nil/empty `ExposesAPI` ⇒ false. The platform recognises
 // only the documented `Auth` values; anything else also yields false.
-//
-// Lives in models (a neutral, dependency-free home) so both the component
-// feature's trait emitter and the staying dispatch service can call it
-// without crossing a feature boundary. §4.7 ultimately assigns the API-
-// security predicates to the design feature; parked here until design
-// extracts.
 func ResolveAPISecurityEnabled(comp DesignComponent) bool {
 	if comp.ExposesAPI == nil {
 		return false

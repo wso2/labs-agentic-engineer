@@ -23,13 +23,6 @@ import "context"
 // package that declares it is imported by neither side's concrete package,
 // which is what keeps the design↔task and task↔codingagent edges acyclic.
 // They are wired (emitter EMITS, provider PROVIDES) at the composition root.
-//
-// Today TaskTransitions is the only wired hook here. The merge-time build
-// trigger and the design→task reconcile edge still flow through concrete
-// wiring (task's merged-PR handler → BuildDispatcher port; the direct
-// design→task call); their contracts-level hooks will be re-added here, with
-// signatures matching the live consumers, when those consumers migrate onto
-// this leaf.
 
 // TaskTransitions is the task projector's status-write surface (sole writer of
 // ComponentTask.Status). Provided by task's projector; consumed by codingagent

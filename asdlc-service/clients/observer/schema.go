@@ -18,8 +18,8 @@
 // service plus the on-the-wire schema for runner progress events.
 //
 // schemaVersion=1 mirrors the TS source-of-truth at
-// remote-worker/src/lib/progress/schema.ts. CI gate (Track E) ensures
-// the two stay in sync against schemas/progress-event.schema.json.
+// remote-worker/src/lib/progress/schema.ts. A CI gate keeps the two in
+// sync against schemas/progress-event.schema.json.
 package observer
 
 import (
@@ -37,8 +37,7 @@ const ProgressSchemaVersion = 1
 // ProgressEvent is the unified progress envelope. The value type lives on the
 // dependency-free leaf (contracts) so the task HTTP edge can consume it without
 // importing this client; observer owns the wire parser (ParseProgressLine) that
-// produces it. Aliased here so every existing observer.ProgressEvent reference
-// keeps compiling.
+// produces it.
 type ProgressEvent = contracts.ProgressEvent
 
 // ParseProgressLine attempts to decode a fluent-bit log line as a versioned

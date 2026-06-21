@@ -65,9 +65,8 @@ func TestDesiredAPIConfigurationTrait_Enabled(t *testing.T) {
 	if jwt["enabled"] != true {
 		t.Errorf("jwtAuth.enabled = %v, want true", jwt["enabled"])
 	}
-	// Phase 6 — emit `issuers` + `audience` as empty arrays so the v1
-	// emission stays semantically equivalent to v0 until Phase 7 fills
-	// them with per-org values.
+	// `issuers` + `audience` default to empty arrays (no per-RestApi
+	// filter; trust any cluster-configured keymanager).
 	if iss, ok := jwt["issuers"].([]interface{}); !ok {
 		t.Errorf("jwtAuth.issuers should be []interface{}, got %T", jwt["issuers"])
 	} else if len(iss) != 0 {

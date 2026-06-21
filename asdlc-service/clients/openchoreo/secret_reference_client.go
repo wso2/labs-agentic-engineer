@@ -34,8 +34,8 @@ import (
 // that come from that codebase can be ported with only an import swap.
 //
 // Implements `secretmanagersvc.OpenChoreoSecretReferenceClient` so the
-// secret-management high-level client (WS0.2) can drive SR upsert /
-// delete without depending on the gen layer.
+// secret-management high-level client can drive SR upsert / delete
+// without depending on the gen layer.
 type SecretReferenceClient interface {
 	CreateSecretReference(ctx context.Context, orgNS string, req secretmanagersvc.CreateSecretReferenceRequest) (*secretmanagersvc.SecretReference, error)
 	GetSecretReference(ctx context.Context, orgNS, name string) (*secretmanagersvc.SecretReference, error)

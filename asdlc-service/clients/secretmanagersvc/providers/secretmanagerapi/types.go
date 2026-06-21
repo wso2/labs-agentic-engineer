@@ -14,10 +14,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package secretmanagerapi is the SM-API provider for the asdlc
-// secretmanagersvc client (WS1.3). Ported from
-// agent-platform/agent-manager-service/secrets/ with the SecretLocation
-// shape adapted to the asdlc fork (org/project/task/entity).
+// Package secretmanagerapi is the SM-API provider for the
+// secretmanagersvc client. The SecretLocation it serves is keyed by
+// org/project/task/entity.
 package secretmanagerapi
 
 // CreateSecretRequest is the request body for POST /secrets.

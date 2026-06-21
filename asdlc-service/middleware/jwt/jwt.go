@@ -73,7 +73,7 @@ func ClaimsFromContext(ctx context.Context) *Claims {
 }
 
 // Config configures the inbound JWT verifier. It is a thin shim over
-// jwtassertion.Config — same fields, names match Phase 2 wiring.
+// jwtassertion.Config with the same fields.
 type Config struct {
 	JWKS                *jwtassertion.JWKSCache
 	AllowedIssuers      []string

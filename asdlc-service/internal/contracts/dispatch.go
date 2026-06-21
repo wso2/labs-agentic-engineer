@@ -19,7 +19,7 @@ package contracts
 // DispatchResult represents the outcome of dispatching a single task.
 // BranchName / PullRequestURL are populated later by the
 // pull_request.opened webhook handler when the agent opens its PR — they are
-// not known at dispatch time anymore.
+// not known at dispatch time.
 //
 // Hosted on the leaf so codingagent can RETURN it and task's HTTP edge can
 // CONSUME it through a task-local TaskDispatcher port — without task importing

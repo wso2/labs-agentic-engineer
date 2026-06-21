@@ -58,7 +58,7 @@ func AppPlatformFromEnv(ctx context.Context, store credentials.OpenBaoStore, cfg
 	pemBytes, err := os.ReadFile(cfg.GitHubAppPrivateKeyPath)
 	if err != nil {
 		// Missing key file is a soft skip: the operator hasn't dropped the
-		// PEM yet. git-service stays in "no App configured" mode and PR B's
+		// PEM yet. git-service stays in "no App configured" mode and
 		// PAT-mode flows still work. App-mode connect surfaces a clear
 		// "App not configured" error at the connect endpoint.
 		if os.IsNotExist(err) {
@@ -93,7 +93,7 @@ func AppPlatformFromEnv(ctx context.Context, store credentials.OpenBaoStore, cfg
 	if cfg.GitHubAppClientID != "" {
 		pairs["github/app/client_id"] = cfg.GitHubAppClientID
 	}
-	// PR D-followup §6.4 — the OAuth bind path needs the client_secret
+	// §6.4 — the OAuth bind path needs the client_secret
 	// to exchange the user's OAuth code for a user-token. Stored alongside
 	// the App's other platform secrets; only consumed by git-service's
 	// CredentialService.BindAppInstallation. Empty value disables the
@@ -101,9 +101,9 @@ func AppPlatformFromEnv(ctx context.Context, store credentials.OpenBaoStore, cfg
 	if cfg.GitHubAppClientSecret != "" {
 		pairs["github/app/client_secret"] = cfg.GitHubAppClientSecret
 	}
-	// Reuse GITHUB_WEBHOOK_SECRET for the App-mode webhook (per the PR B
-	// plan decision). Stored as a JSON list of {secret, added_at} entries
-	// so rotation has the same shape as PAT-mode webhook_secrets[].
+	// Reuse GITHUB_WEBHOOK_SECRET for the App-mode webhook. Stored as a JSON
+	// list of {secret, added_at} entries so rotation has the same shape as
+	// PAT-mode webhook_secrets[].
 	if cfg.WebhookHMACSecret != "" {
 		entries := []map[string]any{
 			{"secret": cfg.WebhookHMACSecret, "added_at": time.Now().UTC().Format(time.RFC3339)},

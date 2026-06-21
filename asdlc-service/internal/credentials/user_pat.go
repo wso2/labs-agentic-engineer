@@ -28,12 +28,11 @@ import (
 // into one of these.
 //
 // Token() reads from OpenBao at secret/asdlc/{ocOrgID}/github/pat with
-// singleflight collapsing concurrent reads. There is NO plaintext cache
-// — phase2.md §1.13 / §6.2 explicitly drops the 30-min cache the
-// evolution doc speculated about. The security trade (process-memory
-// retention window) was undesirable; OpenBao reads are sub-10ms and
-// bursts are absorbed by singleflight. Reachability is now an
-// architectural property via the startup gate, not a runbook discipline.
+// singleflight collapsing concurrent reads. There is NO plaintext cache:
+// the process-memory retention window is an undesirable security trade,
+// OpenBao reads are sub-10ms, and bursts are absorbed by singleflight
+// (phase2.md §1.13 / §6.2). Reachability is an architectural property via
+// the startup gate, not a runbook discipline.
 type userPATCred struct {
 	ocOrgID     string
 	githubLogin string

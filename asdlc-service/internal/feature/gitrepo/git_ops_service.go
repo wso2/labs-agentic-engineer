@@ -49,7 +49,7 @@ type TagInfo struct {
 
 // GitOpsService handles git operations (commit, push, pull, status, tags).
 type GitOpsService interface {
-	// Startup lifecycle (PR 1):
+	// Startup lifecycle:
 	//   - CleanupOrphanTmpClones removes leftover .tmpclone-* dirs from a
 	//     prior crash mid-clone.
 	//   - PreWarmClones ensures every ready repo's clone is on disk before
@@ -77,8 +77,8 @@ type gitOpsService struct {
 	resolver     credentials.Resolver
 	repoBasePath string
 	locks        sync.Map // per-project mutex
-	// gitHub is the GitHubClient injected for artifact-store v2 (V1) save flows.
-	// May be nil in legacy test wiring that doesn't exercise SaveDesign /
+	// gitHub is the GitHubClient injected for artifact-store save flows.
+	// May be nil in test wiring that doesn't exercise SaveDesign /
 	// SaveRequirements; the save flows nil-check before dereferencing.
 	gitHub GitHubClient
 }
@@ -110,10 +110,9 @@ func (s *gitOpsService) resolveToken(ctx context.Context, gitRepo *models.GitRep
 }
 
 // ErrCloneCorrupt is returned when the working tree exists with content but
-// `.git` is missing/corrupt. Refusing to destructively re-clone in this
-// state is the PR 1 hardening: under the old code path we'd `RemoveAll` the
-// directory and silently lose any unsaved spec/design content. Now we
-// surface the state to the operator (503 + runbook) instead.
+// `.git` is missing/corrupt. We refuse to destructively re-clone in this
+// state — a `RemoveAll` would silently lose any unsaved spec/design content —
+// and instead surface the state to the operator (503 + runbook).
 var ErrCloneCorrupt = errors.New("clone has content but .git is missing or corrupt")
 
 // EnsureCloneReady verifies that the clone directory exists on disk. If the
@@ -179,7 +178,7 @@ func hasContent(path string) bool {
 	return len(entries) > 0
 }
 
-// cloneIntoPath does the git clone with PR 1 semantics: clone into a sibling
+// cloneIntoPath does the git clone non-destructively: clone into a sibling
 // `.tmpclone-<random>` directory, then atomically rename it onto the
 // expected path. Any existing empty directory at the path is removed first
 // so the rename can land. The temp dir is also cleaned on error so retries
@@ -344,12 +343,11 @@ func runGitOutput(ctx context.Context, dir string, args ...string) (string, erro
 	return string(out), nil
 }
 
-// ----- GitWorkspace surface (relocated from the artifacts save flow) -----
+// ----- GitWorkspace surface -----
 // These operate on gitOpsService internals (token resolution, clone, GitHub
 // client, credential resolver) and are exposed to the artifacts feature
-// through the GitOpsService port — they previously lived as methods on
-// *gitOpsService inside the artifact files, which would be illegal once the
-// packages split.
+// through the GitOpsService port, so the artifacts package never imports
+// gitrepo's concrete type.
 
 // GitHubClient returns the GitHubClient wired into gitOpsService at
 // construction (the artifact-store v2 save flow client).
@@ -379,9 +377,8 @@ func (s *gitOpsService) PrepareAuthedEnv(ctx context.Context, repoRecord *models
 }
 
 // ResolveSaveIdentities returns (author, committer) identities for the save.
-//
-// V1: committer = author = credential identity (same as today's CLI flow).
-// V2 will split these (committer=bot, author=OC user).
+// Both are set to the credential identity (falling back to a default ASDLC
+// name/email when the credential carries none).
 func (s *gitOpsService) ResolveSaveIdentities(cred credentials.Credential) (*GitIdentity, *GitIdentity) {
 	id := cred.Identity()
 	if id.Name == "" {
@@ -396,8 +393,8 @@ func (s *gitOpsService) ResolveSaveIdentities(cred credentials.Credential) (*Git
 
 // BestEffortPullDefaultBranch advances the local clone's HEAD to remote main
 // so the next save's `git status` against HEAD reflects current remote state.
-// The working-tree files are LEFT ALONE — they're the user's draft surface in
-// V1 and we just wrote them on remote as the save's commit. We also refresh
+// The working-tree files are LEFT ALONE — they're the user's draft surface
+// and we just wrote them on remote as the save's commit. We also refresh
 // the index so `git status` doesn't report every working-tree file as
 // "modified vs new HEAD."
 //

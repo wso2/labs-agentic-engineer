@@ -15,9 +15,8 @@
 // under the License.
 
 // Package ids is the platform-layer entry point for identifier validation
-// (slugs/UUIDs). It is the eventual rename of utils/validate (§5); during the
-// strangler migration it delegates to utils/validate so a single
-// implementation backs both call sites until that package is folded in.
+// (slugs/UUIDs). It delegates to utils/validate so a single implementation
+// backs both call sites.
 package ids
 
 import "github.com/wso2/asdlc/asdlc-service/utils/validate"

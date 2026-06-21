@@ -26,14 +26,9 @@ import (
 )
 
 // SecretProvider returns the accepted HMAC keys for a given org, ordered
-// current-first.
-//
-// Phase 0 ignored ocOrgID and returned a single platform-wide secret;
-// Phase 2 PR B looks the value up via git-service against the per-org
-// credential record. The receiver code path is identical: parse routing
-// key → resolve ocOrgID → provider.Secrets(ocOrgID) → HMAC-validate
-// against any of the returned secrets. The seam exists in Phase 0 so
-// PR B fills in without rippling.
+// current-first. The receiver path is: parse routing key → resolve
+// ocOrgID → provider.Secrets(ocOrgID) → HMAC-validate against any of the
+// returned secrets.
 type SecretProvider interface {
 	// Secrets returns the accepted HMAC keys. opts.Force=true bypasses any
 	// internal cache (used after an HMAC mismatch to handle in-flight rotation;
@@ -46,10 +41,6 @@ type SecretOpts struct {
 	// Force bypasses any caching layer to refetch from the source of truth.
 	Force bool
 }
-
-// ----------------------------------------------------------------------------
-// GitServiceSecretProvider — Phase 2 PR B
-// ----------------------------------------------------------------------------
 
 // SecretFetcher is the dependency the GitServiceSecretProvider calls to
 // fetch the accepted HMAC keys. Backed by CredentialService.GetWebhookSecrets

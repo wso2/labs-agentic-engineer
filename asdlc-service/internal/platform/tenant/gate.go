@@ -63,10 +63,9 @@ func ParseGateMode(s string) GateMode {
 // "[SHAKEOUT:would-deny]" canary line at Warn but always passes the request
 // through, so production traffic can be observed before enforcement is enabled.
 //
-// JIT org-ensure/namespace-warm is intentionally NOT done here in this phase —
-// orgensure.Middleware still owns that seam, so existing best-effort behavior
-// is unchanged. This gate adds only the missing claim-vs-path check, the
-// Caller binding, and the dual-plane SHAKEOUT instrumentation (§6.13).
+// JIT org-ensure/namespace-warm is intentionally NOT done here —
+// orgensure.Middleware owns that seam. This gate adds only the claim-vs-path
+// check, the Caller binding, and the dual-plane SHAKEOUT instrumentation (§6.13).
 func BindUserOrg(pathVar string, mode GateMode) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -38,10 +38,9 @@ import (
 // serializer:json directive — see skillRow below.
 type References map[string]string
 
-// Skill re-exports models.Skill — the canonical shared value type now lives in
-// models so the task feature can snapshot resolved skills without importing the
-// skills package. The skills surface (models.Skill) is unchanged via this
-// alias.
+// Skill re-exports models.Skill — the canonical shared value type lives in
+// models so the task feature can snapshot resolved skills without importing
+// the skills package.
 type Skill = models.Skill
 
 // SkillSummary is the lightweight projection used in catalogue listings —
@@ -152,9 +151,6 @@ func (s *SkillService) ResolveMany(ctx context.Context, orgID string, names []st
 	}
 	return out, nil
 }
-
-// MaterializedName + PrefixedID moved to models (shared with task's skill
-// snapshotting). Call models.MaterializedName / models.PrefixedID.
 
 // skillRow is the GORM row shape — kept private so callers always go
 // through rowToSkill for any post-processing.
@@ -295,7 +291,6 @@ func contentSHA(skillMD string, references map[string]string) string {
 	for k := range references {
 		keys = append(keys, k)
 	}
-	// Sort
 	for i := 1; i < len(keys); i++ {
 		for j := i; j > 0 && keys[j-1] > keys[j]; j-- {
 			keys[j-1], keys[j] = keys[j], keys[j-1]

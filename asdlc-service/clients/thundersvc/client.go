@@ -20,16 +20,12 @@
 // assigned, then uses those tokens to manage per-org publisher OAuth
 // apps via Thunder's /applications endpoint.
 //
-// Per docs/design/api-platform-integration.md §6 Phase 3 — Phase 3 of
-// the api-platform-integration plan. Mirrors agent-manager's
-// agent-manager-service/clients/thundersvc/client.go end-to-end; the
-// only differences are:
+// See docs/design/api-platform-integration.md §6.
 //
-//   - App naming convention: `asdlc-publisher-<orgHandle>` (instead of
-//     `amp-publisher-<orgName>`).
-//   - We don't carry an OU UUID argument — every BFF caller passes the
-//     OC org handle and we look up the matching Thunder OU once at
-//     first call (cached on the client).
+//   - App naming convention: `asdlc-publisher-<orgHandle>`.
+//   - There is no OU UUID argument — every BFF caller passes the OC org
+//     handle and we look up the matching Thunder OU once at first call
+//     (cached on the client).
 //
 // The system token has a TTL (Thunder default ~1h); the cache uses a
 // 30 s skew so concurrent callers don't all hit the slow path right
@@ -121,9 +117,8 @@ type Client interface {
 	DeleteProjectOAuthClient(ctx context.Context, projectName string) (bool, error)
 }
 
-// Config bundles the construction params. Mirrors the agent-manager
-// signature for readability — three-positional-args constructors are
-// annoying once the list grows past two.
+// Config bundles the construction params — a struct rather than
+// positional args, which get unwieldy once the list grows past two.
 type Config struct {
 	BaseURL      string // e.g. http://thunder.openchoreo.localhost:8080
 	ClientID     string // OAuth2 client id of the system app

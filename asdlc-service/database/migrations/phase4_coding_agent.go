@@ -27,8 +27,7 @@ import (
 // component_tasks plus the partial indices that back the watchers'
 // 10s-cadence sweep queries. Mirrors the existing LastBuildRunName column
 // but tracks the per-task WorkflowRun of ClusterWorkflow
-// `app-factory-coding-agent` (the new ephemeral-pod path that replaces
-// the long-lived remote-worker).
+// `app-factory-coding-agent` (the ephemeral-pod coding-agent path).
 //
 // Both watcher queries are non-sargable on the empty-string predicate:
 //

@@ -27,12 +27,9 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/repositories"
 )
 
-// TestRepoRepository_OrgScopedIsolation is the first DB-backed tenancy test and
-// the proving consumer of the dbtest harness (§8.0). It exercises real Postgres
-// (no mock) to confirm RepoRepository.GetByOrgAndProjectID scopes by org and
-// never returns another org's row. This is the template the F2 two-org-same-
-// slug forcing-function test will extend once the composite (org_id, project_id)
-// unique index lands in the gitrepo phase.
+// TestRepoRepository_OrgScopedIsolation exercises real Postgres (no mock) to
+// confirm RepoRepository.GetByOrgAndProjectID scopes by org and never returns
+// another org's row.
 func TestRepoRepository_OrgScopedIsolation(t *testing.T) {
 	db := dbtest.Open(t)
 	dbtest.Migrate(t, db, &models.GitRepository{})
@@ -71,12 +68,9 @@ func TestRepoRepository_OrgScopedIsolation(t *testing.T) {
 	}
 }
 
-// TestRepoRepository_TwoOrgsSameProjectSlug is the F2 forcing function: after
-// the composite (org_id, project_id) unique replaced the global project_id
-// unique, two different orgs CAN own a project with the same slug, and each
-// org's GetByOrgAndProjectID resolves only its own row. Before F2 the second
-// Create would have violated the global unique; this test would not compile/run
-// meaningfully without the org-scoped lookups either (GetByProjectID is gone).
+// TestRepoRepository_TwoOrgsSameProjectSlug confirms the composite
+// (org_id, project_id) unique lets two different orgs own a project with the
+// same slug, and each org's GetByOrgAndProjectID resolves only its own row.
 func TestRepoRepository_TwoOrgsSameProjectSlug(t *testing.T) {
 	db := dbtest.Open(t)
 	dbtest.Migrate(t, db, &models.GitRepository{})
@@ -86,8 +80,8 @@ func TestRepoRepository_TwoOrgsSameProjectSlug(t *testing.T) {
 	ctx := context.Background()
 
 	const slug = "dbtest-shared-slug"
-	// Same project slug under two different orgs — only allowed once the global
-	// unique on project_id is gone (F2).
+	// Same project slug under two different orgs — permitted by the composite
+	// (org_id, project_id) unique.
 	if err := repo.Create(ctx, &models.GitRepository{OrgID: "dbtest-orga", ProjectID: slug, RepoURL: "https://github.com/a/x", Status: "ready"}); err != nil {
 		t.Fatalf("create (orga,%s): %v", slug, err)
 	}

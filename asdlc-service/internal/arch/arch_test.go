@@ -14,14 +14,14 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package arch holds the architecture-boundary invariant test for the
-// feature-based restructure (docs/design/asdlc-service-modularization.md §4/§6.3).
-// It is the CI lock-in that keeps the strangler migration's import boundaries
-// from regressing: the flat services/controllers packages are gone, no feature
-// imports another feature's concrete except along the allowed (acyclic) edges,
-// and the cross-feature cycles (task↔codingagent, design↔task) stay broken
-// through internal/contracts. Runs under plain `go test` (no extra tooling, so
-// it works even where golangci-lint/depguard isn't installed).
+// Package arch holds the architecture-boundary invariant test
+// (docs/design/asdlc-service-modularization.md §4/§6.3). It is the CI lock-in
+// that keeps the feature import boundaries from regressing: there are no flat
+// services/controllers packages, no feature imports another feature's concrete
+// except along the allowed (acyclic) edges, and the cross-feature cycles
+// (task↔codingagent, design↔task) stay broken through internal/contracts. Runs
+// under plain `go test` (no extra tooling, so it works even where
+// golangci-lint/depguard isn't installed).
 package arch
 
 import (
@@ -66,12 +66,11 @@ func imports(t *testing.T, pkg, dep string) bool {
 	return deps(t, pkg)[dep]
 }
 
-// TestNoFlatServicesOrControllers asserts the strangler's flat layers are fully
-// gone: nothing imports the (deleted) flat services package, and nothing — not
-// even the composition root or api routes — imports the (deleted) controllers
-// package. task_controller was the last documented edge; it now lives in
-// internal/feature/task behind task-local consumer ports (no codingagent
-// import), so there is no remaining carve-out.
+// TestNoFlatServicesOrControllers asserts there are no flat layers: nothing
+// imports the flat services package, and nothing — not even the composition
+// root or api routes — imports the controllers package. Features own their
+// controllers behind task-local consumer ports (no cross-feature concrete
+// import).
 func TestNoFlatServicesOrControllers(t *testing.T) {
 	features := []string{
 		"artifacts", "gitrepo", "component", "orgcreds", "task", "codingagent",
@@ -99,8 +98,8 @@ func TestNoFlatServicesOrControllers(t *testing.T) {
 			}
 		}
 	}
-	// The flat edges are drained everywhere now, including the wiring layer:
-	// the composition root and api routes own no controllers/services import.
+	// The wiring layer holds no flat edges: the composition root and api
+	// routes own no controllers/services import.
 	for _, p := range []string{"/cmd/asdlc-api", "/api"} {
 		pkg := mod + p
 		if imports(t, pkg, mod+"/controllers") {

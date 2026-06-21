@@ -46,13 +46,13 @@ type ExternalSecretInputs struct {
 	// `approle-creds-application-read-permission` — the only one
 	// scoped to `user-app-secrets/*`). `secretstore-read` on the same
 	// cluster covers platform paths only and will no-op. Local k3d
-	// reuses the existing `default` CSS (per WS1.1 compose wiring).
+	// reuses the existing `default` CSS.
 	ClusterSecretStoreName string
 
 	// RemoteRefKey + RemoteRefProperty point at the SM-API-managed
 	// SecretReference (key=KV path, property=field name). Persisted on
-	// the per-org credential row by WS2.2's Connect flow. Single-field
-	// shape; for multi-field secrets (WS2.4 publisher) populate
+	// the per-org credential row by the Connect flow. Single-field
+	// shape; for multi-field secrets (the publisher cc) populate
 	// DataEntries instead and leave these empty.
 	RemoteRefKey      string
 	RemoteRefProperty string
@@ -65,7 +65,7 @@ type ExternalSecretInputs struct {
 
 	// DataEntries is the multi-field shape. When non-empty, RemoteRefKey
 	// is used as the single shared KV path and one ES data entry is
-	// emitted per element. Used by WS2.4 publisher (client_id +
+	// emitted per element. Used by the publisher cc (client_id +
 	// client_secret in one SM-API secret → one ES → one K8s Secret with
 	// two keys). Empty falls back to the single-field shape above.
 	DataEntries []ExternalSecretDataEntry

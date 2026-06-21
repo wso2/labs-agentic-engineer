@@ -45,13 +45,13 @@ type TaskRepository interface {
 	GetByComponentName(ctx context.Context, orgID, projectID, componentName string) (*models.ComponentTask, error)
 	ListByProjectID(ctx context.Context, orgID, projectID string) ([]models.ComponentTask, error)
 	// ListNonTerminalByOrgID returns every task under orgID whose status
-	// is non-terminal. Used by the Phase 2 PR B disconnect cascade
+	// is non-terminal. Used by the org disconnect cascade
 	// (services/org_disconnect_service.go).
 	ListNonTerminalByOrgID(ctx context.Context, orgID string) ([]models.ComponentTask, error)
 	// ListByOrgID returns every task under orgID matching the optional
-	// status / cause / since filter. Used by the PR D
+	// status / cause / since filter. Used by the
 	// ReachReconciliationBanner (status='abandoned', cause='repo.unselected',
-	// since=now-24h) and by future audit UIs.
+	// since=now-24h).
 	ListByOrgID(ctx context.Context, orgID string, f ListByOrgFilter) ([]models.ComponentTask, error)
 	// GetBaselineBatch returns the most-recent active batch's (batchID,
 	// specVersion, designVersion) for an org+project, or zero values if none.

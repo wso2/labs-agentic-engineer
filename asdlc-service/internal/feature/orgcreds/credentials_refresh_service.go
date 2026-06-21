@@ -25,8 +25,8 @@ import (
 )
 
 // RefreshResponse is what the workspace credential helper consumes. The
-// shape is identical for Phase 0 (long-lived PAT) and Phase 2 (short-lived
-// App tokens) — only the ExpiresAt differs.
+// shape is identical for long-lived PATs and short-lived App tokens —
+// only the ExpiresAt differs.
 type RefreshResponse struct {
 	Token     string               `json:"token"`
 	ExpiresAt time.Time            `json:"expiresAt"`
@@ -39,9 +39,8 @@ type RefreshResponse struct {
 //
 // The Task JWT is verified at the controller layer via JWKS-backed RS256
 // (jwtassertion). Its claims (taskID, ocOrgID) are trusted because the
-// signature originates from the BFF's RSA private key. There is no
-// callback into the BFF anymore — the JWT itself carries all the org
-// context needed.
+// signature originates from the BFF's RSA private key — the JWT itself
+// carries all the org context needed.
 type CredentialsRefreshService interface {
 	Refresh(ctx context.Context, taskID, ocOrgID string) (*RefreshResponse, error)
 }

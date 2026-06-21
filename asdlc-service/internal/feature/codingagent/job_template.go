@@ -15,16 +15,15 @@
 // under the License.
 
 // Package codingagent builds the per-task K8s Job manifest the BFF
-// POSTs through cluster-gateway-proxy in Phase 2 dispatch (WS2.1). The
-// shape is plain `map[string]any` so it composes directly with
-// clients/clustergatewayproxy.ApplyJob — no typed k8s.io/api/batch/v1
-// dependency leaks here.
+// POSTs through cluster-gateway-proxy. The shape is plain `map[string]any`
+// so it composes directly with clients/clustergatewayproxy.ApplyJob — no
+// typed k8s.io/api/batch/v1 dependency leaks here.
 //
 // Inputs and naming:
 //
 //   - runName     — short DNS-1123 label, used as the Job name and as
 //     the workflow-run identifier persisted on
-//     ComponentTask. The watcher (WS2.5) keys on this.
+//     ComponentTask. The watcher keys on this.
 //   - orgNS       — per-org remote-worker namespace
 //     (`wc-<orgUUID8>-<orgHash8>-remote-worker`).
 //   - anthropicSecretName / githubSecretName / publisherSecretName
@@ -72,8 +71,8 @@ type JobInputs struct {
 	// `:latest` is OK in dev but the BFF should resolve to a digest for prod.
 	RunnerImage string
 
-	// ServiceAccountName is the SA the runner pod runs as. WS2.3 ensures
-	// this SA exists in OrgNS before applying the Job.
+	// ServiceAccountName is the SA the runner pod runs as. The dispatcher
+	// ensures this SA exists in OrgNS before applying the Job.
 	ServiceAccountName string
 
 	// Per-run K8s Secret names that ExternalSecrets will materialize. The
@@ -84,8 +83,8 @@ type JobInputs struct {
 	GitHubSecretName    string
 	// PublisherSecretName is the K8s Secret holding the per-org publisher
 	// cc creds (client_id + client_secret) materialised by a per-run ES
-	// from SM-API. Empty disables the WS2.4 runner-auth path; the runner
-	// then falls back to ASDLC_BEARER for /credentials/refresh calls.
+	// from SM-API. Empty disables the runner-auth path; the runner then
+	// falls back to ASDLC_BEARER for /credentials/refresh calls.
 	PublisherSecretName string
 	// PublisherTokenURL is the Thunder /oauth2/token endpoint used by the
 	// runner's cc helper. Non-secret; rides as a plain env. Set in lockstep
@@ -102,9 +101,9 @@ type JobInputs struct {
 	CallbackURL   string // ASDLC_PLATFORM_URL (BFF callback URL)
 	CorrelationID string // optional; runner synthesizes one if absent
 
-	// Bearer is the bespoke ASDLC_BEARER param. Deprecated by WS2.4 —
-	// when PublisherSecretName is set this field MUST be empty so
-	// the runner uses the Thunder client_credentials flow instead.
+	// Bearer is the bespoke ASDLC_BEARER param. When PublisherSecretName
+	// is also set the runner prefers the Thunder client_credentials flow
+	// and uses Bearer only as a fallback.
 	Bearer string
 
 	// ActiveDeadlineSeconds bounds the agent run. Zero falls back to 1h.

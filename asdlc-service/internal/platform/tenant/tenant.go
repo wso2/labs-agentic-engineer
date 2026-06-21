@@ -137,10 +137,10 @@ func Scope(c Caller, pathOrg string) (OrgHandle, error) {
 	return c.Org, nil
 }
 
-// Resolver is the consumer-defined org port. In the gate phase the gate does
-// not require it (a pure claim-vs-path check closes the IDOR class); it is
-// defined here so the organization feature can satisfy it when it moves and
-// later phases can wire JIT-ensure through the gate.
+// Resolver is the consumer-defined org port. The gate does not require it (a
+// pure claim-vs-path check closes the IDOR class); it is defined here so the
+// organization feature can satisfy it and JIT-ensure can be wired through the
+// gate.
 type Resolver interface {
 	EnsureForOuHandle(ctx context.Context, ouHandle string, thunderOrgUUID string) error
 }

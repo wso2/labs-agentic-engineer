@@ -28,7 +28,7 @@ import (
 )
 
 // IDPController serves /api/v1/organizations/{orgHandle}/idp-profile — the
-// read endpoint backs the Phase 4 console UI; the rotate endpoint is a
+// read endpoint backs the console UI; the rotate endpoint is a
 // platform-admin convenience for emergency rotation. EnsurePublisher
 // is invoked lazily from trait_sync.SyncComponentTraits so there's no
 // explicit POST endpoint for it — the platform model is "user marks
@@ -75,7 +75,7 @@ func (c *idpController) GetProfile(w http.ResponseWriter, r *http.Request) {
 	utils.WriteSuccessResponse(w, http.StatusOK, profileResponse(profile))
 }
 
-// UpdateProfile changes kind/issuer/JWKS URL — Phase 7 editable picker.
+// UpdateProfile changes kind/issuer/JWKS URL.
 // Body shape: {"kind":"platform|asgardeo|custom", "issuer":"...", "jwksUrl":"..."}.
 // Empty fields leave the existing value unchanged.
 func (c *idpController) UpdateProfile(w http.ResponseWriter, r *http.Request) {

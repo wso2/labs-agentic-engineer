@@ -26,9 +26,9 @@ import (
 // registerAnthropicEffectiveKeyUnauth mounts the single resolver route
 // the agents-service calls without an Authorization header. Lives on
 // the outer mux (not behind ServiceJWT) — agents-service's cloud
-// release-binding carries no SERVICE_AUTH_GIT_* envs, matching the
-// pre-fold git-service behavior. The handler never returns the raw key
-// to any other caller; this endpoint is for agents-service alone.
+// release-binding carries no SERVICE_AUTH_GIT_* envs. The handler never
+// returns the raw key to any other caller; this endpoint is for
+// agents-service alone.
 //
 // See docs/design/anthropic-key-dual-token.md.
 func registerAnthropicEffectiveKeyUnauth(mux *http.ServeMux, svc *orgcreds.AnthropicCredentialService) {

@@ -37,14 +37,14 @@ const (
 	TaskStatusDeployed       TaskStatus = "deployed"
 	TaskStatusRejected       TaskStatus = "rejected"
 	TaskStatusFailed         TaskStatus = "failed"
-	// TaskStatusAbandoned (Phase 2 PR B) is the cascade target when the org's
-	// GitHub credential is disconnected (or, in PR D, when reach reconciliation
-	// drops the task's repo from the App install). Terminal.
+	// TaskStatusAbandoned is the cascade target when the org's GitHub credential
+	// is disconnected, or when reach reconciliation drops the task's repo from
+	// the App install. Terminal.
 	TaskStatusAbandoned TaskStatus = "abandoned"
-	// TaskStatusOnHold gates dispatch on un-deployed dependencies (F2
-	// deploy-gating). Mirrors the "on_hold" GitHub Project board column.
+	// TaskStatusOnHold gates dispatch on un-deployed dependencies (deploy-gating).
+	// Mirrors the "on_hold" GitHub Project board column.
 	TaskStatusOnHold TaskStatus = "on_hold"
-	// TaskStatusVerificationFailed (F3c) is the state when the dispatched agent
+	// TaskStatusVerificationFailed is the state when the dispatched agent
 	// reports integration verification against a dependency endpoint failed.
 	// The PR stays a draft; the operator clicks Retry to re-dispatch.
 	TaskStatusVerificationFailed TaskStatus = "verification_failed"
@@ -72,13 +72,13 @@ const (
 	TaskEventPushMatched     TaskEvent = "push.matched"
 	TaskEventBuildSucceeded  TaskEvent = "build.succeeded"
 	TaskEventBuildFailed     TaskEvent = "build.failed"
-	// Phase 2 PR B / PR D — org-disconnect and reach-reconciliation cascades.
-	// Both targets are TaskStatusAbandoned; the events differ so the projector
-	// can record a distinct cause for audit.
+	// Org-disconnect and reach-reconciliation cascades. Both targets are
+	// TaskStatusAbandoned; the events differ so the projector can record a
+	// distinct cause for audit.
 	TaskEventOrgDisconnected TaskEvent = "org.disconnected"
 	TaskEventRepoUnselected  TaskEvent = "repo.unselected"
-	// Phase 2 PR D — git-clone auth-failure retry budget exhausted (§9.3).
-	// Drives building → failed; cause column gets "build.auth_retry_exceeded".
+	// Git-clone auth-failure retry budget exhausted (§9.3). Drives building →
+	// failed; cause column gets "build.auth_retry_exceeded".
 	TaskEventBuildAuthRetryExhausted TaskEvent = "build.auth_retry_exceeded"
 	// Coding-agent WorkflowRun terminated Failed/Error. Drives in_progress →
 	// failed. Emitted by services/webhook/coding_agent_watcher.go.
@@ -86,12 +86,12 @@ const (
 	// Build dispatch was skipped because the task's own merge push contained no
 	// file under its design-declared appPath. Drives merged → failed.
 	TaskEventBuildPathMismatch TaskEvent = "build.path_mismatch"
-	// TaskEventVerificationFailed (F3c) — the dispatched agent could not verify
-	// the live api dependency before opening its PR. Drives in_progress →
+	// TaskEventVerificationFailed — the dispatched agent could not verify the
+	// live api dependency before opening its PR. Drives in_progress →
 	// verification_failed.
 	TaskEventVerificationFailed TaskEvent = "agent.verification_failed"
-	// TaskEventRetry (F3c) — operator clicked "Retry" on a verification_failed
-	// task. Drives verification_failed → in_progress.
+	// TaskEventRetry — operator clicked "Retry" on a verification_failed task.
+	// Drives verification_failed → in_progress.
 	TaskEventRetry TaskEvent = "operator.retry"
 )
 
@@ -150,26 +150,26 @@ var allowedTransitions = []stateTransition{
 	{TaskStatusMerged, TaskStatusBuilding, TaskEventPushMatched},
 	{TaskStatusBuilding, TaskStatusDeployed, TaskEventBuildSucceeded},
 	{TaskStatusBuilding, TaskStatusFailed, TaskEventBuildFailed},
-	// Phase 2 PR B — org disconnect cascade. All non-terminal statuses
-	// transition to abandoned. (Once a task is in 'building', the build runs to
-	// completion under whatever credential it captured.)
+	// Org disconnect cascade. All non-terminal statuses transition to abandoned.
+	// (Once a task is in 'building', the build runs to completion under whatever
+	// credential it captured.)
 	{TaskStatusPending, TaskStatusAbandoned, TaskEventOrgDisconnected},
 	{TaskStatusInProgress, TaskStatusAbandoned, TaskEventOrgDisconnected},
 	{TaskStatusReadyForReview, TaskStatusAbandoned, TaskEventOrgDisconnected},
-	// Phase 2 PR D — reach-reconciliation cascade (App mode only).
+	// Reach-reconciliation cascade (App mode only).
 	{TaskStatusPending, TaskStatusAbandoned, TaskEventRepoUnselected},
 	{TaskStatusInProgress, TaskStatusAbandoned, TaskEventRepoUnselected},
 	{TaskStatusReadyForReview, TaskStatusAbandoned, TaskEventRepoUnselected},
-	// Phase 2 PR D — build watcher auth-retry budget exhausted (§9.3).
+	// Build watcher auth-retry budget exhausted (§9.3).
 	{TaskStatusBuilding, TaskStatusFailed, TaskEventBuildAuthRetryExhausted},
 	// Coding-agent WorkflowRun terminated Failed/Error.
 	{TaskStatusInProgress, TaskStatusFailed, TaskEventCodingAgentFailed},
 	// Push containing this task's own merge SHA arrived but matched no file
 	// under the design-declared appPath — build was never dispatched.
 	{TaskStatusMerged, TaskStatusFailed, TaskEventBuildPathMismatch},
-	// F3c — agent's pre-PR integration verification failed.
+	// Agent's pre-PR integration verification failed.
 	{TaskStatusInProgress, TaskStatusVerificationFailed, TaskEventVerificationFailed},
-	// F3c — operator retry.
+	// Operator retry.
 	{TaskStatusVerificationFailed, TaskStatusInProgress, TaskEventRetry},
 }
 

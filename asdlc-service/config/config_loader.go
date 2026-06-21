@@ -102,9 +102,8 @@ func Load() (Config, error) {
 			BaseURL: r.readOptionalString("DATABASE_SERVICE_BASE_URL", ""),
 		},
 
-		// Folded in from git-service after WS0.1.g. Loader reuses the same
-		// env-var names the standalone git-service used so existing local
-		// .env files / release-bindings keep working.
+		// Git-service config. Uses the same env-var names git-service used so
+		// existing local .env files / release-bindings keep working.
 		RepoBasePath:                r.readOptionalString("REPO_BASE_PATH", "/tmp/asdlc-repos"),
 		GitHubRepoVisibility:        r.readOptionalString("GITHUB_REPO_VISIBILITY", "public"),
 		GitHubCommitterName:         r.readOptionalString("GIT_COMMITTER_NAME", "ASDLC Bot"),
@@ -126,12 +125,12 @@ func Load() (Config, error) {
 		AnthropicPlatformKey:        r.readOptionalString("ANTHROPIC_PLATFORM_KEY", ""),
 		AgentsServiceURL:            r.readOptionalString("AGENTS_SERVICE_URL", ""),
 
-		// Phase 1 — SM-API + cluster-gateway-proxy.
+		// SM-API + cluster-gateway-proxy.
 		SecretManagerAPIURL:     r.readOptionalString("SECRET_MANAGER_API_URL", ""),
 		SecretManagerAPITimeout: r.readOptionalDuration("SECRET_MANAGER_API_TIMEOUT", 30*time.Second),
 		ClusterGatewayProxyURL:  r.readOptionalString("CLUSTER_GATEWAY_PROXY_URL", ""),
 
-		// WS2.3 — agent runner image + ESO CSS for per-run ExternalSecrets.
+		// Agent runner image + ESO CSS for per-run ExternalSecrets.
 		AgentRunnerImage:        r.readOptionalString("AGENT_RUNNER_IMAGE", "docker.io/xlight05/app-factory-coding-agent-runner:latest"),
 		AgentClusterSecretStore: r.readOptionalString("AGENT_CLUSTER_SECRET_STORE", "default"),
 	}

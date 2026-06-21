@@ -23,10 +23,9 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/internal/platform/obs"
 )
 
-// The correlation-ID context helpers now live in the leaf platform package
-// internal/platform/obs. These thin wrappers preserve the existing
-// middleware.* call sites and, crucially, share obs's context key so values
-// set via either package are readable by the other.
+// These are thin wrappers over the correlation-ID context helpers in
+// internal/platform/obs. They share obs's context key so values set via
+// either package are readable by the other.
 
 // CorrelationIDHeader is the HTTP header carrying the request correlation ID.
 const CorrelationIDHeader = obs.CorrelationIDHeader

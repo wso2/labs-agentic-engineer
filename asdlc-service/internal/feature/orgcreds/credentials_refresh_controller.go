@@ -31,8 +31,7 @@ import (
 //
 // The Task JWT carries verified `taskId` and `ocOrgId` claims; the
 // controller projects them out of the request context and hands them to
-// the service. There is no longer a callback into the BFF — the trust
-// chain is JWT signature → JWKS → BFF private key.
+// the service. The trust chain is JWT signature → JWKS → BFF private key.
 type CredentialsRefreshController interface {
 	Refresh(w http.ResponseWriter, r *http.Request)
 }

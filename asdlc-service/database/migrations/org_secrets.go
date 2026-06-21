@@ -25,7 +25,6 @@ import (
 
 // RunOrgSecretsMigration creates the org_secrets table that stores per-org
 // credentials (GitHub PATs, build tokens) in git-service's own Postgres DB.
-// Replaces the previous OpenBao-backed store.
 //
 // Idempotent: safe to re-run on an already-migrated database.
 func RunOrgSecretsMigration(ctx context.Context, db *gorm.DB) error {

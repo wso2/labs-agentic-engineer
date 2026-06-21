@@ -24,10 +24,10 @@ import (
 )
 
 // RunPhase3SMAPIColumns adds the SM-API triplet columns to the per-org
-// credential tables (WS2.2). Idempotent — re-running on a migrated DB
+// credential tables. Idempotent — re-running on a migrated DB
 // is a no-op via ADD COLUMN IF NOT EXISTS.
 //
-// Per-row write semantics (filled by the Connect flow in WS2.2):
+// Per-row write semantics (filled by the Connect flow):
 //
 //   - sm_api_secret_ref_name — name returned by SM-API on POST /secrets;
 //     the asdlc-side persists this so subsequent dispatch can mint an
@@ -42,10 +42,9 @@ import (
 //     audit; useful for diffing against the GitHub side's
 //     connected_at when triaging.
 //
-// Phase 1 leaves these nullable so existing rows from the legacy
-// org_secrets-only flow keep working; the BFF tolerates NULL by
-// short-circuiting the new dispatch path (legacy ClusterWorkflow still
-// runs until WS2.6 deletes it).
+// These are nullable so existing rows from the org_secrets-only flow
+// keep working; the BFF tolerates NULL by short-circuiting the SM-API
+// dispatch path.
 func RunPhase3SMAPIColumns(ctx context.Context, db *gorm.DB) error {
 	stmts := []string{
 		// org_anthropic_credentials — added when the table itself exists
