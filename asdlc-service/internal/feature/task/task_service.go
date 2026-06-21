@@ -22,7 +22,6 @@ import (
 	"hash/fnv"
 	"io"
 	"log/slog"
-	"strings"
 
 	"gorm.io/gorm"
 
@@ -93,8 +92,8 @@ type taskService struct {
 
 // SkillResolver is the task feature's consumer port for the skills
 // catalogue. It resolves a set of attached-skill names into their
-// materialised bodies. services.SkillService satisfies it; defining the
-// port here keeps the task package free of any edge to the flat services
+// materialised bodies. skills.SkillService satisfies it; defining the
+// port here keeps the task package free of any edge to the skills
 // package. See docs/design/skills-system.md > "Tech-lead".
 type SkillResolver interface {
 	ResolveMany(ctx context.Context, orgID string, names []string) ([]models.Skill, error)
@@ -105,6 +104,15 @@ type SkillResolver interface {
 func (s *taskService) SetSkillService(svc SkillResolver) {
 	s.skillSvc = svc
 }
+
+// TaskServiceWithSkills names the optional skill-resolver setter the
+// composition root wires by type-assertion onto the TaskService interface,
+// so a signature drift is a build failure, not a silently-skipped wire.
+type TaskServiceWithSkills interface {
+	SetSkillService(SkillResolver)
+}
+
+var _ TaskServiceWithSkills = (*taskService)(nil)
 
 func NewTaskService(
 	db *gorm.DB,
@@ -252,62 +260,6 @@ func (s *taskService) ListTasksByOrg(ctx context.Context, orgID string, f reposi
 // half-implemented path.
 func (s *taskService) GenerateTasks(ctx context.Context, orgID, projectID string) ([]models.ComponentTask, error) {
 	return nil, fmt.Errorf("non-streaming task generation has been removed; use StreamGenerateTasks (POST /tasks/generate over SSE)")
-}
-
-// topoSortComponents returns design.Components in dependency order: a component
-// is emitted only after all components it dependsOn have been emitted. Missing
-// or cyclic dependencies don't block output — remaining components are emitted
-// in their original design order. Names are compared case-insensitively to
-// match the rest of the codebase's lookup pattern.
-func topoSortComponents(components []models.DesignComponent) []models.DesignComponent {
-	if len(components) == 0 {
-		return components
-	}
-	emitted := make(map[string]bool, len(components))
-	result := make([]models.DesignComponent, 0, len(components))
-
-	for {
-		progressed := false
-		for _, c := range components {
-			key := strings.ToLower(c.Name)
-			if emitted[key] {
-				continue
-			}
-			ready := true
-			for _, dep := range c.DependsOn {
-				if !emitted[strings.ToLower(dep)] {
-					// Only block on dependencies that actually refer to
-					// known components; dangling deps are treated as satisfied.
-					for _, other := range components {
-						if strings.EqualFold(other.Name, dep) {
-							ready = false
-							break
-						}
-					}
-					if !ready {
-						break
-					}
-				}
-			}
-			if ready {
-				result = append(result, c)
-				emitted[key] = true
-				progressed = true
-			}
-		}
-		if !progressed {
-			break
-		}
-	}
-
-	// Emit any remaining (cyclic) components in original order.
-	for _, c := range components {
-		if !emitted[strings.ToLower(c.Name)] {
-			result = append(result, c)
-			emitted[strings.ToLower(c.Name)] = true
-		}
-	}
-	return result
 }
 
 // ExecTask starts executing a task. For now, it just logs and doesn't perform any actions.

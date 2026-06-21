@@ -60,6 +60,7 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/runtimeconfig"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/skills"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/task"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/webhook"
 	authn "github.com/wso2/asdlc/asdlc-service/internal/platform/auth"
 	"github.com/wso2/asdlc/asdlc-service/internal/seed"
 	"github.com/wso2/asdlc/asdlc-service/middleware"
@@ -68,7 +69,6 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/middleware/logger"
 	"github.com/wso2/asdlc/asdlc-service/models"
 	"github.com/wso2/asdlc/asdlc-service/repositories"
-	"github.com/wso2/asdlc/asdlc-service/internal/feature/webhook"
 	"gorm.io/gorm"
 )
 
@@ -651,9 +651,7 @@ func main() {
 	configService := component.NewConfigService(configRepo, componentService)
 	requirementsDirLocker := requirements.NewRequirementsDirLocker(db)
 	requirementsService := requirements.NewRequirementsService(artifactStore, agentsClient, artifactSvcGit)
-	if locked, ok := requirementsService.(interface {
-		WithLocker(*requirements.RequirementsDirLocker) requirements.RequirementsService
-	}); ok {
+	if locked, ok := requirementsService.(requirements.RequirementsServiceWithLocker); ok {
 		requirementsService = locked.WithLocker(requirementsDirLocker)
 	}
 	requirementsChatService := requirements.NewRequirementsChatService(artifactStore, agentsClient, artifactSvcGit, requirementsDirLocker)
@@ -671,9 +669,7 @@ func main() {
 	if setter, ok := designService.(design.DesignServiceWithSkills); ok {
 		setter.SetSkillService(skillSvc)
 	}
-	if setter, ok := taskService.(interface {
-		SetSkillService(task.SkillResolver)
-	}); ok {
+	if setter, ok := taskService.(task.TaskServiceWithSkills); ok {
 		setter.SetSkillService(skillSvc)
 	}
 	// TaskSkillsService backs GET /api/v1/tasks/:taskId/skills which
@@ -811,17 +807,13 @@ func main() {
 	// WS2.4 — let the proxy dispatch pre-flight provision the per-org publisher
 	// cc on demand (decoupled from API security), so the runner can auth to the
 	// BFF through the gateway for every component, not just protected ones.
-	if idpSetter, ok := dispatchSvc.(interface {
-		SetIDPService(codingagent.OrgPublisherProvisioner)
-	}); ok {
+	if idpSetter, ok := dispatchSvc.(codingagent.DispatchServiceWithIDP); ok {
 		idpSetter.SetIDPService(idpService)
 	}
 	// WS2.3 — wire the proxy-based dispatcher. nil dispatcher → the
 	// legacy ClusterWorkflow path stays the only dispatch flow.
 	if codingAgentDispatcher != nil {
-		if setter, ok := dispatchSvc.(interface {
-			WithCodingAgentDispatcher(*codingagent.Dispatcher, *gorm.DB, string, string) codingagent.DispatchService
-		}); ok {
+		if setter, ok := dispatchSvc.(codingagent.DispatchServiceWithCodingAgent); ok {
 			setter.WithCodingAgentDispatcher(codingAgentDispatcher, db, cfg.AgentClusterSecretStore, cfg.AgentRunnerImage)
 			slog.Info("dispatch: proxy-based coding-agent path enabled",
 				"runnerImage", cfg.AgentRunnerImage,
@@ -833,9 +825,7 @@ func main() {
 	if thunderAdminClient != nil {
 		runtimeConfigSvc.SetThunderAdmin(thunderAdminClient)
 	}
-	if rcSetter, ok := dispatchSvc.(interface {
-		SetRuntimeConfig(codingagent.RuntimeConfigEmitter)
-	}); ok {
+	if rcSetter, ok := dispatchSvc.(codingagent.DispatchServiceWithRuntimeConfig); ok {
 		rcSetter.SetRuntimeConfig(runtimeConfigSvc)
 	}
 	slog.Info("Dispatch service", "agentPlatformURL", cfg.AgentPlatformURL)
@@ -944,9 +934,7 @@ func main() {
 				componentClient,
 				taskTokens,
 			)
-			if setter, ok := tc.(interface {
-				SetSkillsService(*task.TaskSkillsService)
-			}); ok {
+			if setter, ok := tc.(controllers.SkillsServiceSetter); ok {
 				setter.SetSkillsService(taskSkillsSvc)
 			}
 			// WS2.4 — wire publisher cc token verifier (Thunder JWKS,
@@ -954,15 +942,11 @@ func main() {
 			// nil (local dev without platform IDP), verifier is nil and
 			// runner callbacks accept TaskJWT only.
 			if pv := authn.NewPublisherTokenVerifier(thunderJWKS, cfg.PlatformIDP.Issuer, "asdlc-publisher-"); pv != nil {
-				if setter, ok := tc.(interface {
-					SetPublisherVerifier(*authn.PublisherTokenVerifier)
-				}); ok {
+				if setter, ok := tc.(controllers.PublisherVerifierSetter); ok {
 					setter.SetPublisherVerifier(pv)
 				}
 			}
-			if setter, ok := tc.(interface {
-				SetCredentialsRefreshService(orgcreds.CredentialsRefreshService)
-			}); ok {
+			if setter, ok := tc.(controllers.CredentialsRefreshSetter); ok {
 				setter.SetCredentialsRefreshService(credRefreshService)
 			}
 			return tc
@@ -1133,9 +1117,7 @@ func progressService(
 ) codingagent.ProgressService {
 	svc := codingagent.NewProgressService(taskSvc, ocClient, observerClient)
 	if cgwClient != nil && db != nil {
-		if setter, ok := svc.(interface {
-			WithCodingAgentLogSource(*clustergatewayproxy.Client, *gorm.DB) codingagent.ProgressService
-		}); ok {
+		if setter, ok := svc.(codingagent.ProgressServiceWithLogSource); ok {
 			svc = setter.WithCodingAgentLogSource(cgwClient, db)
 			slog.Info("progress: cluster-gateway-proxy log source enabled (new-path ca-… runs)")
 		}

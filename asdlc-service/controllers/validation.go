@@ -20,8 +20,6 @@ import (
 	"net/http"
 
 	"github.com/wso2/asdlc/asdlc-service/internal/platform/httpkit"
-	"github.com/wso2/asdlc/asdlc-service/utils"
-	"github.com/wso2/asdlc/asdlc-service/utils/validate"
 )
 
 // requireOrgHandle validates the {orgHandle} path param. Returns true if
@@ -40,28 +38,9 @@ func requireProjectName(w http.ResponseWriter, v string) bool {
 	return httpkit.RequireSlug(w, "projectName", v)
 }
 
-// requireComponentName validates the {componentName} path param. DNS-label
-// slug; used in workspace paths and k8s component names.
-func requireComponentName(w http.ResponseWriter, v string) bool {
-	return httpkit.RequireSlug(w, "componentName", v)
-}
-
 // requireTaskID validates the {taskId} path param as a canonical UUID.
 // taskId is the only identifier in the BFF surface that's a real UUID
 // (ComponentTask PK).
 func requireTaskID(w http.ResponseWriter, v string) bool {
 	return httpkit.RequireUUID(w, "taskId", v)
-}
-
-// validateSlugParam is a generic slug validator that lets a caller surface
-// a parameter name in the error. Returns the validation error (or nil).
-// Caller should `return` on non-nil because the 400 response is already
-// written. The slug+400 logic lives in httpkit.RequireSlug; this keeps the
-// error-returning shape its callers' control flow depends on.
-func validateSlugParam(w http.ResponseWriter, paramName, v string) error {
-	if err := validate.Slug(v); err != nil {
-		utils.WriteErrorResponse(w, http.StatusBadRequest, paramName+": "+err.Error())
-		return err
-	}
-	return nil
 }

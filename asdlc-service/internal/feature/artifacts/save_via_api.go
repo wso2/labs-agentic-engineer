@@ -510,20 +510,6 @@ func (s *artifactService) fetchGitHubTags(ctx context.Context, owner, repo strin
 	return out, nil
 }
 
-// blobSHAOnMain returns the blob SHA of `path` on main, or "" if the file
-// doesn't exist there (404). Other errors are returned wrapped.
-func blobSHAOnMain(ctx context.Context, gh gitrepo.GitHubClient, owner, repo string, cred credentials.Credential, path string) (string, error) {
-	res, err := gh.GetContents(ctx, owner, repo, cred, path, "main")
-	if err != nil {
-		var httpErr *gitrepo.HTTPStatusError
-		if errors.As(err, &httpErr) && httpErr.StatusCode == 404 {
-			return "", nil
-		}
-		return "", err
-	}
-	return res.BlobSHA, nil
-}
-
 // createAnnotatedTagViaAPI creates an annotated tag via the two-step
 // (POST /git/tags → POST /git/refs) API. On a tag-collision 422 it refreshes
 // the tag list and recomputes the next tag name in-place, then retries.

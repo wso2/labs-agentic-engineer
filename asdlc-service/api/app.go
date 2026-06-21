@@ -182,8 +182,12 @@ func NewHandler(params AppParams) http.Handler {
 		registerIDPRoutes(apiRouter, params.IDPController)
 	}
 
-	// Test-only reset endpoint — truncates local DB tables.
-	if params.Config.TestMode {
+	// Test-only reset endpoint — truncates local DB tables. INT-4: gated on
+	// DEPLOYMENT_TIER=dev (not TestMode alone) so the global truncate cannot
+	// mount on a shared/non-dev plane, where TEST_MODE is set on the release
+	// binding (see config.go). The org-scoped delete (replacing the global
+	// Where(1=1)) remains the deferred cleanup-phase leg.
+	if params.Config.TestMode && params.Config.DeploymentTier == "dev" {
 		apiMux.HandleFunc("POST /api/v1/_test/reset", testResetHandler(params))
 	}
 
@@ -361,6 +365,13 @@ func splitAndTrim(s string) []string {
 
 func testResetHandler(params AppParams) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// INT-4 defense-in-depth: the global truncate must be unreachable
+		// outside DEPLOYMENT_TIER=dev even if a future refactor mounts this
+		// route without the registration-time tier gate above.
+		if params.Config.DeploymentTier != "dev" {
+			http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+			return
+		}
 		ctx := r.Context()
 		if params.TaskRepo != nil {
 			if err := params.TaskRepo.DeleteAll(ctx); err != nil {

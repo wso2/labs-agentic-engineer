@@ -66,10 +66,8 @@ var (
 	ErrInvalidVersionTag = errors.New("invalid version tag")
 	// ErrSpecNotFound / ErrDesignNotFound are the spec/design members of the
 	// artifact-not-found family — raised when the requirements or design corpus
-	// is absent in the project's clone. Shared by requirements/design/task (and
-	// re-exported as services.ErrSpecNotFound/ErrDesignNotFound for the still-
-	// flat callers) so the task feature can reference them without importing the
-	// flat services package.
+	// is absent in the project's clone. They live in this (artifacts) package and
+	// are shared by requirements/design/task.
 	ErrSpecNotFound   = errors.New("spec not found")
 	ErrDesignNotFound = errors.New("design not found")
 )
@@ -915,84 +913,6 @@ func (s *artifactService) fetchAndListAllTags(ctx context.Context, orgID, projec
 }
 
 // identityT is a local mirror of credentials.Identity to avoid a cross-package
-// import for Save's commit/tag identity plumbing.
-type identityT struct {
-	Name  string
-	Email string
-}
-
-// runCommit runs `git commit -m <msg>` with the supplied identity. Returns
-// nil on success, an error containing "nothing to commit" when the index is
-// clean, or another error otherwise.
-func runCommit(ctx context.Context, clonePath, msg string, identity identityT) error {
-	args := []string{"commit", "-m", msg}
-	if identity.Name != "" && identity.Email != "" {
-		args = append(args, fmt.Sprintf("--author=%s <%s>", identity.Name, identity.Email))
-	}
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = clonePath
-	cmd.Env = append(os.Environ(),
-		"GIT_COMMITTER_NAME="+identity.Name,
-		"GIT_COMMITTER_EMAIL="+identity.Email,
-	)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("git commit: %s: %w", strings.TrimSpace(stderr.String()), err)
-	}
-	return nil
-}
-
-// isNothingToCommit returns true if the underlying `git commit` failed only
-// because the index was clean (i.e. no changes were staged).
-func isNothingToCommit(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "nothing to commit")
-}
-
-// createAndPushTag annotates + pushes a tag. On push failure the local tag
-// is deleted so a future save's self-heal sees the actual remote state.
-func createAndPushTag(ctx context.Context, clonePath string, authedEnv []string, identity identityT, tagName, tagBody string) error {
-	tagCmd := exec.CommandContext(ctx, "git", "tag", "-a", tagName, "-m", tagBody)
-	tagCmd.Dir = clonePath
-	tagCmd.Env = append(os.Environ(),
-		"GIT_COMMITTER_NAME="+identity.Name,
-		"GIT_COMMITTER_EMAIL="+identity.Email,
-	)
-	var tagStderr bytes.Buffer
-	tagCmd.Stderr = &tagStderr
-	if err := tagCmd.Run(); err != nil {
-		errMsg := tagStderr.String()
-		if strings.Contains(errMsg, "already exists") {
-			return fmt.Errorf("%w: %s", ErrConcurrentTagWrite, tagName)
-		}
-		return fmt.Errorf("git tag -a %s: %s: %w", tagName, errMsg, err)
-	}
-	if err := runGitWithEnv(ctx, clonePath, authedEnv, "push", "origin", tagName); err != nil {
-		if delErr := runGit(ctx, clonePath, "tag", "-d", tagName); delErr != nil {
-			slog.ErrorContext(ctx, "failed to delete local tag after push failure",
-				"tag", tagName, "error", delErr)
-		}
-		return fmt.Errorf("push tag %s: %w", tagName, err)
-	}
-	return nil
-}
-
-// treesEqualAtPath returns true iff `git diff --quiet revA revB -- path`
-// reports no differences. Used to short-circuit "unchanged" saves.
-func treesEqualAtPath(ctx context.Context, clonePath, revA, revB, path string) (bool, error) {
-	cmd := exec.CommandContext(ctx, "git", "diff", "--quiet", revA, revB, "--", path)
-	cmd.Dir = clonePath
-	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			if exitErr.ExitCode() == 1 {
-				return false, nil // diff found
-			}
-		}
-		return false, fmt.Errorf("git diff: %w", err)
-	}
-	return true, nil
-}
-
 // restoreDirAtTag rewrites the working-tree directory at `relPath` to match
 // the tagged version: removes the current contents (to handle files added
 // since the tag) and runs `git checkout <tag> -- <relPath>` to restore the
@@ -1181,21 +1101,6 @@ func blobSHAFor(ctx context.Context, clonePath string, data []byte) (string, err
 	return strings.TrimSpace(string(out)), nil
 }
 
-// pushAllTags is the step-0 self-heal: a previous save may have created and
-// pushed a commit but failed to push its annotated tag. `git push --tags`
-// uploads any local-only refs/tags. Best-effort.
-func pushAllTags(ctx context.Context, clonePath string, authedEnv []string) error {
-	cmd := exec.CommandContext(ctx, "git", "push", "--tags", "origin")
-	cmd.Dir = clonePath
-	cmd.Env = authedEnv
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("push --tags: %s: %w", stderr.String(), err)
-	}
-	return nil
-}
-
 // bestEffortFetchTags refreshes our local view of remote tags. The caller
 // logs a warning on failure rather than aborting.
 func bestEffortFetchTags(ctx context.Context, clonePath string, authedEnv []string) error {
@@ -1206,20 +1111,6 @@ func bestEffortFetchTags(ctx context.Context, clonePath string, authedEnv []stri
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("fetch --tags: %s", stderr.String())
-	}
-	return nil
-}
-
-// runGitWithEnv is the explicit-env variant of runGit used when we need to
-// pass GIT_ASKPASS for an authed remote operation.
-func runGitWithEnv(ctx context.Context, dir string, env []string, args ...string) error {
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = dir
-	cmd.Env = env
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("%s: %w", strings.TrimSpace(stderr.String()), err)
 	}
 	return nil
 }

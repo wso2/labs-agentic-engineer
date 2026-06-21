@@ -88,7 +88,7 @@ type CredentialService struct {
 	// envWebhookSecret is the platform-wide GITHUB_WEBHOOK_SECRET. The PAT
 	// connect path uses this value when seeding `webhook_secrets[0]` on a
 	// fresh or cross-mode-reseeded row so the per-repo webhook (which the
-	// services.webhook_service registers with the same env value) verifies
+	// webhook feature registers with the same env value) verifies
 	// against it. Rotation lands by appending a new entry via the
 	// AppendWebhookSecret route. Empty in tests.
 	envWebhookSecret string
@@ -372,7 +372,7 @@ func (s *CredentialService) connectPAT(ctx context.Context, tx *gorm.DB, ocOrgID
 	// If switching from App → PAT, the prior row had webhook_secrets=NULL
 	// (the secrets_shape_per_kind CHECK requires NOT NULL with array_length>=1
 	// for user-pat). Seed using the platform's GITHUB_WEBHOOK_SECRET so the
-	// per-repo hooks (registered by services.webhook_service against the
+	// per-repo hooks (registered by the webhook feature against the
 	// same env value) verify against it.
 	if existing.Kind == "app-installation" {
 		secret := s.envWebhookSecret

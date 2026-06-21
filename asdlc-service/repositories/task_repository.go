@@ -43,7 +43,6 @@ type TaskRepository interface {
 	// "no such task" and "task belongs to another org" (no existence leak).
 	GetByIDScoped(ctx context.Context, orgID, id string) (*models.ComponentTask, error)
 	GetByComponentName(ctx context.Context, orgID, projectID, componentName string) (*models.ComponentTask, error)
-	GetByIssueURL(ctx context.Context, issueURL string) (*models.ComponentTask, error)
 	ListByProjectID(ctx context.Context, orgID, projectID string) ([]models.ComponentTask, error)
 	// ListNonTerminalByOrgID returns every task under orgID whose status
 	// is non-terminal. Used by the Phase 2 PR B disconnect cascade
@@ -116,19 +115,6 @@ func (r *taskRepository) GetByComponentName(ctx context.Context, orgID, projectI
 	return &task, nil
 }
 
-func (r *taskRepository) GetByIssueURL(ctx context.Context, issueURL string) (*models.ComponentTask, error) {
-	var task models.ComponentTask
-	err := r.db.WithContext(ctx).
-		Where("issue_url = ?", issueURL).
-		First(&task).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &task, nil
-}
 
 func (r *taskRepository) ListByProjectID(ctx context.Context, orgID, projectID string) ([]models.ComponentTask, error) {
 	var tasks []models.ComponentTask

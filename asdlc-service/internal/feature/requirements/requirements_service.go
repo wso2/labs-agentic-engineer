@@ -86,6 +86,15 @@ func (s *requirementsService) WithLocker(locker *RequirementsDirLocker) Requirem
 	return s
 }
 
+// RequirementsServiceWithLocker names the optional dir-locker setter the
+// composition root wires by type-assertion, so a signature drift is a build
+// failure instead of a silently-skipped wire.
+type RequirementsServiceWithLocker interface {
+	WithLocker(*RequirementsDirLocker) RequirementsService
+}
+
+var _ RequirementsServiceWithLocker = (*requirementsService)(nil)
+
 // withLock runs `fn` under the dir lock when the locker is configured.
 // Returns RequirementsDirLockBusy if the lock is held by another writer
 // (the controller maps that to HTTP 409 with `chat_in_progress`).

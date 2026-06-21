@@ -32,9 +32,9 @@ import (
 )
 
 // BuildDispatcher is the build-dispatch port the merge handler triggers
-// (pull_request.closed merged=true → build). services.WorkflowRunService
+// (pull_request.closed merged=true → build). codingagent.WorkflowRunService
 // satisfies it structurally; it is wired at the composition root so the task
-// feature needn't import services.
+// feature needn't import codingagent.
 type BuildDispatcher interface {
 	DispatchTaskBuild(ctx context.Context, task *models.ComponentTask, sha string) (runName string, err error)
 }

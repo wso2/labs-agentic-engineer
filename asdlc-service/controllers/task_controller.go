@@ -121,6 +121,28 @@ func (c *taskController) SetCredentialsRefreshService(s orgcreds.CredentialsRefr
 	c.credsRefreshSvc = s
 }
 
+// The composition root wires the optional setters above via type-assertion
+// (NewTaskController returns the TaskController interface). Naming them and
+// asserting *taskController satisfies each turns a setter-signature drift into
+// a build failure rather than a wire silently skipped at boot.
+type (
+	SkillsServiceSetter interface {
+		SetSkillsService(*taskfeature.TaskSkillsService)
+	}
+	PublisherVerifierSetter interface {
+		SetPublisherVerifier(*auth.PublisherTokenVerifier)
+	}
+	CredentialsRefreshSetter interface {
+		SetCredentialsRefreshService(orgcreds.CredentialsRefreshService)
+	}
+)
+
+var (
+	_ SkillsServiceSetter      = (*taskController)(nil)
+	_ PublisherVerifierSetter  = (*taskController)(nil)
+	_ CredentialsRefreshSetter = (*taskController)(nil)
+)
+
 // authorizeRunnerCallback validates the inbound Authorization header for
 // runner-facing routes (Skills, VerificationFailed, the WS2.4
 // per-task /credentials/refresh). Tries the BFF TaskJWT first; on
@@ -416,12 +438,20 @@ func (c *taskController) GetTaskStatus(w http.ResponseWriter, r *http.Request) {
 // Observer for the per-task WorkflowRun's pod stdout. Cursor-driven —
 // pass ?sinceMillis=N (0 ⇒ initial load anchored to task.DispatchedAt).
 func (c *taskController) GetTaskAgentProgress(w http.ResponseWriter, r *http.Request) {
+	orgHandle := r.PathValue("orgHandle")
 	taskID := r.PathValue("taskId")
-	if !requireTaskID(w, taskID) {
+	if !requireOrgHandle(w, orgHandle) || !requireTaskID(w, taskID) {
 		return
 	}
 	if c.progressSvc == nil {
 		utils.WriteErrorResponse(w, http.StatusServiceUnavailable, "progress_unavailable")
+		return
+	}
+	// Org-scoped pre-check 404s on a cross-org/unknown {taskId} before reading
+	// another org's coding-agent progress. The OrgScoped gate only matches the
+	// path org against the JWT, not task ownership — without this a caller could
+	// read any org's agent logs by passing that org's taskId under their own path.
+	if !c.assertTaskInOrg(w, r, orgHandle, taskID) {
 		return
 	}
 	sinceMillis, _ := strconv.ParseInt(r.URL.Query().Get("sinceMillis"), 10, 64)
@@ -439,12 +469,18 @@ func (c *taskController) GetTaskAgentProgress(w http.ResponseWriter, r *http.Req
 // the build WorkflowRun's per-step Phase/Message/timestamps. Cursor
 // driven — same shape as /progress/agent.
 func (c *taskController) GetTaskBuildProgress(w http.ResponseWriter, r *http.Request) {
+	orgHandle := r.PathValue("orgHandle")
 	taskID := r.PathValue("taskId")
-	if !requireTaskID(w, taskID) {
+	if !requireOrgHandle(w, orgHandle) || !requireTaskID(w, taskID) {
 		return
 	}
 	if c.progressSvc == nil {
 		utils.WriteErrorResponse(w, http.StatusServiceUnavailable, "progress_unavailable")
+		return
+	}
+	// Org-scoped pre-check 404s on a cross-org/unknown {taskId} before reading
+	// another org's build progress (same by-UUID IDOR class as the agent route).
+	if !c.assertTaskInOrg(w, r, orgHandle, taskID) {
 		return
 	}
 	sinceMillis, _ := strconv.ParseInt(r.URL.Query().Get("sinceMillis"), 10, 64)
@@ -455,6 +491,23 @@ func (c *taskController) GetTaskBuildProgress(w http.ResponseWriter, r *http.Req
 		return
 	}
 	utils.WriteSuccessResponse(w, http.StatusOK, resp)
+}
+
+// assertTaskInOrg verifies the {orgHandle} on the path actually owns {taskId}
+// before a progress handler reads it by bare UUID. Returns true to proceed;
+// on a cross-org/unknown task it writes 404 (no existence leak) and returns
+// false, on a load error it writes 500 and returns false.
+func (c *taskController) assertTaskInOrg(w http.ResponseWriter, r *http.Request, orgHandle, taskID string) bool {
+	if _, err := c.service.GetTaskScoped(r.Context(), orgHandle, taskID); err != nil {
+		if errors.Is(err, taskfeature.ErrTaskNotFound) {
+			utils.WriteErrorResponse(w, http.StatusNotFound, "task not found")
+			return false
+		}
+		slog.ErrorContext(r.Context(), "progress: load task failed", "error", err, "taskId", taskID)
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "failed to get task")
+		return false
+	}
+	return true
 }
 
 func writeProgressError(w http.ResponseWriter, r *http.Request, err error, op string) {

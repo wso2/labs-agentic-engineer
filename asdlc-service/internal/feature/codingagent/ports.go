@@ -26,8 +26,8 @@ import (
 // re-mints a build token and recreates the WorkflowRun when a build failed on
 // an expired/invalid token. (Merge → build dispatch now lives in the task
 // feature, off pull_request.closed, so it's no longer part of this port.)
-// services.WorkflowRunService satisfies it structurally (superset); wired at
-// the composition root so webhook needn't import services.
+// codingagent.WorkflowRunService satisfies it structurally (superset); wired at
+// the composition root so webhook needn't import codingagent.
 type BuildOps interface {
 	RetryAuthFailedBuild(ctx context.Context, task *models.ComponentTask) (runName string, err error)
 }
@@ -35,5 +35,5 @@ type BuildOps interface {
 // OnHoldDispatcher re-dispatches a project's deferred (on_hold) tasks when an
 // upstream dependency deploys. Returns the count dispatched (the on_hold
 // watcher only logs len(results)). A composition-root closure adapts
-// services.DispatchService.DispatchTasks (which returns []DispatchResult).
+// codingagent.DispatchService.DispatchTasks (which returns []DispatchResult).
 type OnHoldDispatcher func(ctx context.Context, orgID, projectID string) (dispatched int, err error)

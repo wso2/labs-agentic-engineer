@@ -21,11 +21,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -990,7 +988,3 @@ func (s *taskService) resolveProjectSkills(ctx context.Context, orgID string, de
 }
 
 // AssembleDesign is defined in artifact_store.go.
-
-// shadow to keep the lint quiet for the unused result on advisory lock scan.
-var _ = strconv.Itoa
-var _ = errors.Is

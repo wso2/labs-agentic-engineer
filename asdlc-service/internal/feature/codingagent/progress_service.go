@@ -21,7 +21,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"sort"
 	"strings"
 	"sync"
@@ -135,6 +134,15 @@ func (s *progressService) WithCodingAgentLogSource(proxy *clustergatewayproxy.Cl
 	s.db = db
 	return s
 }
+
+// ProgressServiceWithLogSource names the optional log-source setter the
+// composition root wires by type-assertion, so a signature drift fails the
+// build rather than silently skipping the proxy log path at boot.
+type ProgressServiceWithLogSource interface {
+	WithCodingAgentLogSource(*clustergatewayproxy.Client, *gorm.DB) ProgressService
+}
+
+var _ ProgressServiceWithLogSource = (*progressService)(nil)
 
 // ErrProgressUnavailable signals that the Observer is not reachable.
 // The controller maps this to HTTP 503 progress_unavailable.
@@ -716,8 +724,3 @@ func splitTimestampPrefix(line string) (string, string) {
 	}
 	return candidate, line[i+1:]
 }
-
-// silence unused-import linter on io for environments where this
-// file is included without the streaming-tail branch (none today —
-// kept for future expansion to true streaming via ResponseWriter).
-var _ = io.EOF

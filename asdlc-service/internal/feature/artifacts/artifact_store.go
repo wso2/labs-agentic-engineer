@@ -610,19 +610,6 @@ func SplitDesign(d *DesignFile) (map[string]string, error) {
 	return out, nil
 }
 
-// ComponentDesignPath returns the design.md path for a given component name
-// (relative to specs/design/). Exported so callers (design_service stream
-// handlers, controllers) don't recompute the format.
-func ComponentDesignPath(componentName string) string {
-	return path.Join(componentDirPrefix, componentName, "design.md")
-}
-
-// ComponentOpenAPIPath returns the openapi.yaml path for a given component
-// name (relative to specs/design/).
-func ComponentOpenAPIPath(componentName string) string {
-	return path.Join(componentDirPrefix, componentName, "openapi.yaml")
-}
-
 // ComponentDirPath returns the directory path for a given component name
 // (relative to specs/design/), used by DeleteDesignDirectory.
 func ComponentDirPath(componentName string) string {

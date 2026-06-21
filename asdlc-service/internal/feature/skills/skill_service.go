@@ -40,7 +40,7 @@ type References map[string]string
 
 // Skill re-exports models.Skill — the canonical shared value type now lives in
 // models so the task feature can snapshot resolved skills without importing the
-// skills package. The skills surface (services.Skill) is unchanged via this
+// skills package. The skills surface (models.Skill) is unchanged via this
 // alias.
 type Skill = models.Skill
 

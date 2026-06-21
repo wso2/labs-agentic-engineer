@@ -61,7 +61,7 @@ var _ contracts.TaskTransitions = (*Projector)(nil)
 // task transitions into a state that should unblock dependents. The hook
 // implementation owns the cascade (eligibility scan + DispatchService
 // call); the projector only owns the trigger. Implemented by
-// services.DispatchCascadeHook.
+// codingagent.DispatchCascadeHook.
 type DispatchHook interface {
 	OnTaskDeployed(ctx context.Context, orgID, projectID, componentName string)
 }

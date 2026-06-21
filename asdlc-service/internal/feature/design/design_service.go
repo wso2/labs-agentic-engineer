@@ -41,16 +41,6 @@ import (
 // consumer.
 var ErrSpecNotApproved = errors.New("spec must be saved (tagged) before generating a design")
 
-// ocEntrypoint maps the AI-generated componentType to the OC component type reference.
-func ocEntrypoint(componentType string) string {
-	switch strings.ToLower(componentType) {
-	case "web-app":
-		return "deployment/web-application"
-	default:
-		return "deployment/service"
-	}
-}
-
 // toK8sName is a thin in-package shim over k8sname.ToK8sName so the many
 // existing lowercase callers in this package keep compiling unchanged.
 func toK8sName(name string) string { return k8sname.ToK8sName(name) }
@@ -175,6 +165,17 @@ func (s *designService) SetTraitSync(traitSync traitSyncReconciler) {
 func (s *designService) SetSkillService(svc skillCatalog) {
 	s.skillSvc = svc
 }
+
+// Compile-time guards: NewDesignService returns the DesignService interface,
+// and the composition root wires these optional setters via type-assertion.
+// Asserting *designService satisfies each optional interface here turns a
+// setter-signature drift into a build failure instead of a silently-skipped
+// wire at boot (the regression class behind the RD-1 / CA-3 fixes).
+var (
+	_ DesignServiceWithTaskHook  = (*designService)(nil)
+	_ DesignServiceWithTraitSync = (*designService)(nil)
+	_ DesignServiceWithSkills    = (*designService)(nil)
+)
 
 func (s *designService) GetDesign(ctx context.Context, orgID, projectID string) (*models.Design, error) {
 	designFile, err := s.store.ReadDesign(ctx, orgID, projectID)

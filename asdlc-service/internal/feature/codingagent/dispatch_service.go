@@ -201,6 +201,28 @@ func (s *dispatchService) SetTraitSync(traitSync *component.TraitSyncService) {
 	s.traitSync = traitSync
 }
 
+// DispatchServiceWith* surface the optional setters the composition root
+// wires by type-assertion onto the DispatchService interface. Naming them
+// (and asserting the concrete satisfies them below) makes a setter-signature
+// drift a build failure instead of a wire silently skipped at boot — the
+// exact regression the CA-3 fix had to catch by hand.
+type DispatchServiceWithIDP interface {
+	SetIDPService(OrgPublisherProvisioner)
+}
+type DispatchServiceWithRuntimeConfig interface {
+	SetRuntimeConfig(RuntimeConfigEmitter)
+}
+type DispatchServiceWithCodingAgent interface {
+	WithCodingAgentDispatcher(*Dispatcher, *gorm.DB, string, string) DispatchService
+}
+
+var (
+	_ DispatchServiceWithTraitSync     = (*dispatchService)(nil)
+	_ DispatchServiceWithIDP           = (*dispatchService)(nil)
+	_ DispatchServiceWithRuntimeConfig = (*dispatchService)(nil)
+	_ DispatchServiceWithCodingAgent   = (*dispatchService)(nil)
+)
+
 func NewDispatchService(
 	taskRepo repositories.TaskRepository,
 	repoSvc gitrepo.RepoService,
@@ -940,8 +962,7 @@ func firstExternalURL(list *models.DeploymentList) string {
 }
 
 // ocEntrypoint maps a design component type to its OpenChoreo deployment
-// entrypoint. Local copy of services.ocEntrypoint (services/design_service.go),
-// kept in-package so codingagent needn't import the flat services package.
+// entrypoint.
 func ocEntrypoint(componentType string) string {
 	switch strings.ToLower(componentType) {
 	case "web-app":

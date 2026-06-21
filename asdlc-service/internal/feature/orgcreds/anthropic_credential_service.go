@@ -564,11 +564,6 @@ type noopInvalidator struct{}
 
 func (noopInvalidator) Invalidate(context.Context, string) error { return nil }
 
-// NoopAgentsCacheInvalidator returns an invalidator that does nothing.
-// Useful in tests and in main.go before the agents-service URL is
-// configured.
-func NoopAgentsCacheInvalidator() AgentsCacheInvalidator { return noopInvalidator{} }
-
 // HTTPAgentsCacheInvalidator builds an invalidator that POSTs to
 // agents-service `/v1/internal/cache/invalidate`. authHeader, if non-empty,
 // is sent verbatim as the `Authorization` header so the caller can supply
