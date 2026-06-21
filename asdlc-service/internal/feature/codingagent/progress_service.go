@@ -33,6 +33,7 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/clients/clustergatewayproxy"
 	"github.com/wso2/asdlc/asdlc-service/clients/observer"
 	"github.com/wso2/asdlc/asdlc-service/clients/openchoreo"
+	"github.com/wso2/asdlc/asdlc-service/internal/contracts"
 	"github.com/wso2/asdlc/asdlc-service/internal/platform/tenant"
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
@@ -42,16 +43,12 @@ import (
 const defaultProgressLimit = 200
 
 // ProgressResponse is the shape returned by both /progress/agent and
-// /progress/build. Schema-versioned so the console can branch on future
-// envelope changes without flag-flipping.
-type ProgressResponse struct {
-	SchemaVersion int                      `json:"schemaVersion"`
-	Lines         []observer.ProgressEvent `json:"lines"`
-	CursorMillis  int64                    `json:"cursorMillis"`
-	Phase         string                   `json:"phase,omitempty"`
-	Truncated     bool                     `json:"truncated,omitempty"`
-	Final         bool                     `json:"final"`
-}
+// /progress/build. The value type lives on the contracts leaf so task's HTTP
+// edge consumes it through a task-local ProgressReader port (no codingagent
+// import, §4 cycle invariant); aliased here so this feature keeps building it
+// with []observer.ProgressEvent lines (observer.ProgressEvent is itself an
+// alias of contracts.ProgressEvent, so the element types are identical).
+type ProgressResponse = contracts.ProgressResponse
 
 // ProgressService backs the BFF's /progress/* endpoints.
 type ProgressService interface {
@@ -145,8 +142,10 @@ type ProgressServiceWithLogSource interface {
 var _ ProgressServiceWithLogSource = (*progressService)(nil)
 
 // ErrProgressUnavailable signals that the Observer is not reachable.
-// The controller maps this to HTTP 503 progress_unavailable.
-var ErrProgressUnavailable = errors.New("progress unavailable")
+// The controller maps this to HTTP 503 progress_unavailable. Aliased from
+// contracts so task's HTTP edge can errors.Is against the same sentinel
+// without importing codingagent.
+var ErrProgressUnavailable = contracts.ErrProgressUnavailable
 
 func (s *progressService) GetAgentProgress(ctx context.Context, taskID string, sinceMillis int64, limit int) (*ProgressResponse, error) {
 	// New-path branch: when the task's runName matches `ca-…` (the

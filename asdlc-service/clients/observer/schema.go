@@ -25,6 +25,8 @@ package observer
 import (
 	"encoding/json"
 	"strings"
+
+	"github.com/wso2/asdlc/asdlc-service/internal/contracts"
 )
 
 // ProgressSchemaVersion is the only version this BFF supports today.
@@ -32,42 +34,12 @@ import (
 // out-of-band lines never break the feed.
 const ProgressSchemaVersion = 1
 
-// ProgressEvent is the unified shape returned to /progress/agent and
-// /progress/build callers. Optional fields use omitempty so JSON
-// payloads stay compact.
-type ProgressEvent struct {
-	SchemaVersion int    `json:"schemaVersion"`
-	Ts            string `json:"ts"`
-	Seq           int64  `json:"seq"`
-	Kind          string `json:"kind"`
-
-	// Phase events.
-	Phase string `json:"phase,omitempty"`
-
-	// Tool-use events.
-	Tool string `json:"tool,omitempty"`
-
-	// git_commit / git_push.
-	SHA    string `json:"sha,omitempty"`
-	Branch string `json:"branch,omitempty"`
-	Files  int    `json:"files,omitempty"`
-
-	// gh_action.
-	Command string `json:"command,omitempty"`
-
-	// log + result.
-	Level   string `json:"level,omitempty"`
-	Status  string `json:"status,omitempty"`
-	Summary string `json:"summary,omitempty"`
-	Error   string `json:"error,omitempty"`
-
-	// build_step (BFF-synthetic, emitted by progress_service from
-	// WorkflowRun.Status.Tasks[] deltas).
-	Step        string `json:"step,omitempty"`
-	StartedAt   string `json:"startedAt,omitempty"`
-	CompletedAt string `json:"completedAt,omitempty"`
-	Message     string `json:"message,omitempty"`
-}
+// ProgressEvent is the unified progress envelope. The value type lives on the
+// dependency-free leaf (contracts) so the task HTTP edge can consume it without
+// importing this client; observer owns the wire parser (ParseProgressLine) that
+// produces it. Aliased here so every existing observer.ProgressEvent reference
+// keeps compiling.
+type ProgressEvent = contracts.ProgressEvent
 
 // ParseProgressLine attempts to decode a fluent-bit log line as a versioned
 // progress envelope. Lines that are non-JSON or that don't carry a

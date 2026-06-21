@@ -38,17 +38,11 @@ import (
 	"gorm.io/gorm"
 )
 
-// DispatchResult represents the outcome of dispatching a single task.
-// BranchName / PullRequestURL are populated later by the
-// pull_request.opened webhook handler when the agent opens its PR — they
-// are not known at dispatch time anymore.
-type DispatchResult struct {
-	TaskID        string `json:"taskId"`
-	ComponentName string `json:"componentName"`
-	RunName       string `json:"runName,omitempty"`
-	Status        string `json:"status"`
-	Error         string `json:"error,omitempty"`
-}
+// DispatchResult is the outcome of dispatching a single task. The value type
+// lives on the contracts leaf so task's HTTP edge can consume []DispatchResult
+// through a task-local port without importing codingagent (§4 cycle invariant);
+// aliased here so this feature's producers keep constructing it unqualified.
+type DispatchResult = contracts.DispatchResult
 
 // DispatchService orchestrates dispatching pending tasks. Per task it:
 //
