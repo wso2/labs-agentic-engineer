@@ -73,6 +73,14 @@ type Client interface {
 	// is the org's OU.
 	EnsurePublisherApp(ctx context.Context, orgHandle, orgOUID string) (clientID, clientSecret string, created bool, err error)
 
+	// OUExists reports whether an organization unit with the given id exists
+	// in Thunder (GET /organization-units/{id} → 200 exists / 404 absent). It
+	// lets callers validate a JWT-supplied `ouId` before trusting it: a
+	// stale/phantom ouId must not poison the org→OU mapping (wc- namespace,
+	// impersonation) nor trigger a destructive publisher re-registration under
+	// a non-existent OU (Thunder 400 APP-1018 → runner cc-token invalid_client).
+	OUExists(ctx context.Context, ouID string) (bool, error)
+
 	// DeletePublisherApp deletes the publisher app for the given org.
 	// Returns true when the app existed and was deleted, false when it
 	// didn't exist (idempotent — both states are success).
@@ -295,6 +303,42 @@ func (c *client) getDefaultOUID(ctx context.Context, token string) (string, erro
 	return ou.ID, nil
 }
 
+// OUExists reports whether the given OU id exists in Thunder. It mints a
+// system token then delegates to ouExists.
+func (c *client) OUExists(ctx context.Context, ouID string) (bool, error) {
+	if ouID == "" {
+		return false, nil
+	}
+	token, err := c.getSystemToken(ctx)
+	if err != nil {
+		return false, fmt.Errorf("getSystemToken: %w", err)
+	}
+	return c.ouExists(ctx, token, ouID)
+}
+
+// ouExists issues GET /organization-units/{id} with an existing system token:
+// 200 → exists, 404 → absent, anything else → error.
+func (c *client) ouExists(ctx context.Context, token, ouID string) (bool, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/organization-units/"+ouID, nil)
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("thunder get OU %s: %w", ouID, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return true, nil
+	case http.StatusNotFound:
+		return false, nil
+	}
+	body, _ := io.ReadAll(resp.Body)
+	return false, fmt.Errorf("thunder get OU %s returned %d: %s", ouID, resp.StatusCode, string(body))
+}
+
 // -- EnsurePublisherApp ---------------------------------------------------
 
 func (c *client) EnsurePublisherApp(ctx context.Context, orgHandle, orgOUID string) (string, string, bool, error) {
@@ -336,6 +380,22 @@ func (c *client) EnsurePublisherApp(ctx context.Context, orgHandle, orgOUID stri
 		if currentOU == "" || currentOU == orgOUID {
 			slog.DebugContext(ctx, "publisher app already under correct OU",
 				"appName", appName, "ouID", currentOU)
+			return existingClientID, "", false, nil
+		}
+		// Before a DESTRUCTIVE delete+recreate, confirm the target OU actually
+		// exists in Thunder. A stale/phantom orgOUID (a JWT carrying an OU that
+		// no longer exists) must NOT tear down a working publisher app only to
+		// fail recreating it under a non-existent OU (Thunder 400 APP-1018) —
+		// that strands the org with no publisher and surfaces downstream as the
+		// runner's cc-token `invalid_client` (401). Keep the existing app: its
+		// currentOU is real, so its cc token's ouHandle is still valid.
+		if exists, exErr := c.ouExists(ctx, token, orgOUID); exErr != nil {
+			slog.WarnContext(ctx, "publisher OU self-heal: could not verify the resolved org OU exists — keeping existing app, skipping destructive heal",
+				"appName", appName, "appID", internalID, "currentOU", currentOU, "orgOU", orgOUID, "error", exErr)
+			return existingClientID, "", false, nil
+		} else if !exists {
+			slog.ErrorContext(ctx, "publisher OU self-heal: resolved org OU does NOT exist in Thunder — REFUSING destructive re-registration; keeping existing app under its (valid) current OU. The org's thunder_org_uuid is a stale/phantom ouId — fix the org→OU mapping.",
+				"appName", appName, "appID", internalID, "currentOU", currentOU, "phantomOrgOU", orgOUID)
 			return existingClientID, "", false, nil
 		}
 		slog.InfoContext(ctx, "publisher app under wrong OU — re-registering under org OU",

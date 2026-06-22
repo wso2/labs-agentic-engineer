@@ -57,16 +57,11 @@ func TestGateInvariant_NoRawGatedRouteRegistration(t *testing.T) {
 
 	// allowlist — (file:line)-keyed carve-outs that intentionally register a
 	// gated-prefix route on a raw mux. Each MUST carry a justification.
-	allowlist := map[string]string{
-		// INT-1: the Anthropic /effective-key resolver is mounted UNAUTH on the
-		// outer mux on purpose — agents-service calls it without a Service JWT
-		// (cloud release-binding carries no SERVICE_AUTH_GIT_* envs). It is the
-		// single intentional unauth /internal/credentials route, pending
-		// deletion when agents-service moves to a Service JWT. See
-		// registerAnthropicEffectiveKeyUnauth + the note in
-		// registerAnthropicCredentialsRoutes.
-		"anthropic_credentials_routes.go:registerAnthropicEffectiveKeyUnauth": "INT-1 intentional unauth effective-key route (pending deletion)",
-	}
+	// The Anthropic /effective-key resolver and the JWKS endpoint are now
+	// code-first Huma operations (api/huma_infra.go), routed into apiMux from
+	// app.go (not a *_routes.go file), so there are no raw gated-prefix
+	// registrations in *_routes.go to carve out here.
+	allowlist := map[string]string{}
 
 	files, err := filepath.Glob("*_routes.go")
 	if err != nil {

@@ -211,11 +211,15 @@ func (s *idpService) GetOrCreateProfile(ctx context.Context, orgID string) (*mod
 func (s *idpService) lookupOrgOUID(ctx context.Context, orgHandle string) string {
 	var org models.Organization
 	if err := s.db.WithContext(ctx).Where("name = ?", orgHandle).First(&org).Error; err != nil {
+		slog.DebugContext(ctx, "idp lookupOrgOUID: no org row", "orgHandle", orgHandle, "error", err)
 		return ""
 	}
 	if org.ThunderOrgUUID == nil {
+		slog.DebugContext(ctx, "idp lookupOrgOUID: org row has NULL thunder_org_uuid (publisher will use default OU)", "orgHandle", orgHandle)
 		return ""
 	}
+	slog.DebugContext(ctx, "idp lookupOrgOUID: resolved org OU for publisher provisioning",
+		"orgHandle", orgHandle, "orgOU", org.ThunderOrgUUID.String())
 	return org.ThunderOrgUUID.String()
 }
 

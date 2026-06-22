@@ -25,17 +25,11 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/wso2/asdlc/asdlc-service/config"
-	"github.com/wso2/asdlc/asdlc-service/internal/feature/component"
-	"github.com/wso2/asdlc/asdlc-service/internal/feature/design"
-	"github.com/wso2/asdlc/asdlc-service/internal/feature/idp"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/organization"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/orgcreds"
-	"github.com/wso2/asdlc/asdlc-service/internal/feature/project"
-	"github.com/wso2/asdlc/asdlc-service/internal/feature/requirements"
-	"github.com/wso2/asdlc/asdlc-service/internal/feature/skills"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/task"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/webhook"
-	"github.com/wso2/asdlc/asdlc-service/internal/platform/auth"
+	"github.com/wso2/asdlc/asdlc-service/internal/platform/humakit"
 	"github.com/wso2/asdlc/asdlc-service/internal/platform/tenant"
 	"github.com/wso2/asdlc/asdlc-service/middleware"
 	jwtmw "github.com/wso2/asdlc/asdlc-service/middleware/jwt"
@@ -47,25 +41,24 @@ import (
 
 // AppParams holds all dependencies needed to build the HTTP handler.
 type AppParams struct {
-	Config                     config.Config
-	ProjectController          project.ProjectController
-	ComponentController        component.ComponentController
-	RequirementsController     requirements.RequirementsController
-	RequirementsChatController requirements.RequirementsChatController
-	DesignController           design.DesignController
-	TaskController             task.TaskController
-	BoardController            task.BoardController
-	ConfigController           component.ConfigController
-	CollabController           requirements.CollabController
-	WebhookController          webhook.WebhookController
-	OrgGitHubController        orgcreds.OrgGitHubController
-	OrgAnthropicController     orgcreds.OrgAnthropicController
-	SkillController            skills.SkillController
-	OrganizationController     organization.OrganizationController
-	IDPController              idp.IDPController
-	JWKSController             auth.JWKSController
-	TaskRepo                   repositories.TaskRepository
-	ConfigRepo                 repositories.ConfigRepository
+	Config config.Config
+
+	// HumaDeps carries the feature services for the code-first Huma API. main.go
+	// fills it; NewHandler creates the Huma API on apiMux and registers every
+	// migrated feature via RegisterAllHuma. See
+	// docs/design/bff-openapi-huma-migration.md.
+	HumaDeps HumaDeps
+
+	// The only controllers still wired as raw handlers (every other feature is
+	// code-first Huma): TaskController (Task-JWT runner callbacks),
+	// OrgGitHubController (App-mode connect callback), WebhookController (GitHub
+	// webhook HMAC). See docs/design/bff-openapi-huma-migration.md (deferred set).
+	TaskController      task.TaskController
+	OrgGitHubController orgcreds.OrgGitHubController
+	WebhookController   webhook.WebhookController
+
+	TaskRepo   repositories.TaskRepository
+	ConfigRepo repositories.ConfigRepository
 
 	// OrganizationService backs the JIT org-provisioning middleware. nil
 	// disables the middleware (tests, dev configurations without a DB).
@@ -101,12 +94,9 @@ func NewHandler(params AppParams) http.Handler {
 		w.Write([]byte(`{"status":"ok"}`)) //nolint:errcheck
 	})
 
-	// JWKS endpoint — unauthenticated, registered on the OUTER mux. git-service
-	// fetches this to verify Task JWTs; gating it on a User JWT would create a
-	// chicken/egg deadlock at first verify.
-	if params.JWKSController != nil {
-		registerJWKSRoute(mux, params.JWKSController)
-	}
+	// JWKS endpoint + Anthropic effective-key are now code-first Huma operations
+	// (registerInfraHuma) on apiMux; they are routed in below (unauthenticated,
+	// outside the JWT wrapper).
 
 	// API routes — JWT-authenticated via JWKS-backed RS256 verification.
 	// Org-scoped routes register through apiRouter, which applies the central
@@ -116,47 +106,24 @@ func NewHandler(params AppParams) http.Handler {
 	// enumerated carve-outs (org listing, idp discover, _test/reset) register
 	// via apiRouter.Public, which bypasses the gate intentionally.
 	apiMux := http.NewServeMux()
-	apiRouter := NewRouter(apiMux, tenant.BindUserOrg("orgHandle", tenant.ParseGateMode(params.Config.TenantGateMode)))
+	// Code-first OpenAPI surface (Huma). Mounted on apiMux so every operation
+	// inherits the JWT + orgensure middleware (see mux.Handle("/api/", ...)
+	// below); the per-route tenant gate (the IDOR fence) is applied by
+	// humakit.OrgScopedInput.Resolve, not a Router wrapper. The public spec +
+	// docs are served on the outer mux. See
+	// docs/design/bff-openapi-huma-migration.md.
+	humakit.SetGateMode(tenant.ParseGateMode(params.Config.TenantGateMode))
 	slog.Info("tenant gate active", "mode", string(tenant.ParseGateMode(params.Config.TenantGateMode)))
-	if params.ProjectController != nil {
-		registerProjectRoutes(apiRouter, params.ProjectController)
-	}
-	if params.OrganizationController != nil {
-		registerOrganizationRoutes(apiRouter, params.OrganizationController)
-	}
-	if params.ComponentController != nil {
-		registerComponentRoutes(apiRouter, params.ComponentController)
-	}
-	if params.RequirementsController != nil {
-		registerRequirementsRoutes(apiRouter, params.RequirementsController)
-	}
-	if params.RequirementsChatController != nil {
-		registerRequirementsChatRoutes(apiRouter, params.RequirementsChatController)
-	}
-	if params.DesignController != nil {
-		registerDesignRoutes(apiRouter, params.DesignController)
-	}
-	if params.TaskController != nil {
-		registerTaskRoutes(apiRouter, params.TaskController)
-	}
-	if params.BoardController != nil {
-		registerBoardRoutes(apiRouter, params.BoardController)
-	}
-	if params.ConfigController != nil {
-		registerConfigRoutes(apiRouter, params.ConfigController)
-	}
-	if params.OrgGitHubController != nil {
-		registerOrgGitHubRoutes(apiRouter, params.OrgGitHubController)
-	}
-	if params.OrgAnthropicController != nil {
-		registerOrgAnthropicRoutes(apiRouter, params.OrgAnthropicController)
-	}
-	if params.SkillController != nil {
-		registerSkillRoutes(apiRouter, params.SkillController)
-	}
-	if params.IDPController != nil {
-		registerIDPRoutes(apiRouter, params.IDPController)
-	}
+	humaAPI := newHumaAPI(apiMux)
+	registerHumaDocs(mux, humaAPI)
+	RegisterAllHuma(humaAPI, params.HumaDeps)
+
+	// Route the two UNAUTHENTICATED infra endpoints (JWKS + Anthropic
+	// effective-key) into apiMux, where their Huma operations (registerInfraHuma)
+	// serve them. They live outside the /api/ subtree and carry no user JWT, so
+	// they bypass the jwt/orgensure wrapper applied to /api/.
+	mux.Handle("/auth/external/jwks.json", apiMux)
+	mux.Handle("/internal/credentials/orgs/{orgHandle}/anthropic/effective-key", apiMux)
 
 	// Test-only reset endpoint — truncates local DB tables. INT-4: gated on
 	// DEPLOYMENT_TIER=dev (not TestMode alone) so the global truncate cannot
@@ -211,12 +178,9 @@ func NewHandler(params AppParams) http.Handler {
 	// Two server-to-server surfaces, each with its own auth posture
 	// independent of the User-JWT-gated /api/ subtree.
 
-	// agents-service resolves the per-org Anthropic key here WITHOUT a
-	// Service JWT (its cloud release-binding carries no SERVICE_AUTH_GIT_*
-	// envs). Mounted unauthenticated on the outer mux.
-	if params.AnthropicCredService != nil {
-		registerAnthropicEffectiveKeyUnauth(mux, params.AnthropicCredService)
-	}
+	// (agents-service resolves the per-org Anthropic effective key via the
+	// code-first Huma op registerInfraHuma, routed into apiMux above —
+	// unauthenticated, since its cloud release-binding carries no SERVICE_AUTH_*.)
 
 	// Per-task credentials refresh — runner pods present a Task JWT
 	// (verified against the BFF's own /auth/external/jwks.json).
@@ -244,14 +208,12 @@ func NewHandler(params AppParams) http.Handler {
 	ensureOrg := orgensure.Middleware(params.OrganizationService)
 	mux.Handle("/api/", jwt(ensureOrg(apiMux)))
 
-	// Collab routes. GetCollabSession is org-scoped (on apiRouter/apiMux,
-	// gated). ValidateCollabAccess (INT-8) is the raw server-to-server route
-	// the collab-server calls — wrapped with the jwt verifier here so the
-	// forwarded user Bearer is signature-verified before the handler enforces
-	// the room's project-ownership oracle.
-	if params.CollabController != nil {
-		registerCollabRoutes(apiRouter, mux, params.CollabController, jwt)
-	}
+	// Collab routes are registered code-first via requirements.RegisterCollab
+	// (called from params.RegisterHuma). GetCollabSession is org-scoped (gated by
+	// humakit.OrgScopedInput); ValidateCollabAccess (INT-8) is a carve-out at
+	// /api/v1/collab/validate that runs under the same User-JWT verification as
+	// the rest of /api/ (the forwarded user Bearer is signature-verified before
+	// the handler enforces the room's project-ownership oracle).
 
 	// Global middleware stack (outermost applied last).
 	var handler http.Handler = mux

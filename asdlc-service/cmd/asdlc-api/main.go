@@ -701,6 +701,18 @@ func main() {
 	} else {
 		slog.Warn("Thunder admin client disabled — set THUNDER_ADMIN_URL + THUNDER_SYSTEM_CLIENT_ID + THUNDER_SYSTEM_CLIENT_SECRET")
 	}
+
+	// Wire the Thunder OU validator into the org service so a stale/phantom JWT
+	// `ouId` can't poison the org→OU mapping (the root cause behind the runner
+	// publisher cc-token invalid_client: a phantom OU broke wc- namespace
+	// derivation + forced a publisher re-registration under a non-existent OU →
+	// Thunder 400 APP-1018). nil client → validation disabled (trust the JWT).
+	if thunderAdminClient != nil {
+		if setter, ok := organizationService.(organization.OrganizationServiceWithOUValidator); ok {
+			setter.SetOUValidator(thunderAdminClient)
+			slog.Info("org OU validation wired — JWT ouId is validated against Thunder before the org→OU mapping is (over)written")
+		}
+	}
 	// WithSMAPIWriter mirrors per-org publisher client_secret to SM-API on
 	// EnsureOrgPublisher / RegenerateClientSecret so the dispatcher's
 	// PUBLISHER_CLIENT_SECRET ExternalSecret can materialise it into runner
@@ -862,8 +874,6 @@ func main() {
 		cfg.GithubAppClientID,
 	)
 
-	// Per-org Anthropic settings surface. Same JWT gating as GitHub Integration.
-	orgAnthropicCtrl := orgcreds.NewOrgAnthropicController(anthropicCredService)
 
 	var taskJWT jwtassertion.Middleware
 	if cfg.BFFJWKSURL != "" {
@@ -878,20 +888,20 @@ func main() {
 		slog.Warn("BFF_JWKS_URL not set — Task JWT verification disabled (dev/test only)")
 	}
 
+	// progressService is shared by the legacy TaskController (SSE routes) and the
+	// code-first Huma task registration (RegisterHuma below).
+	taskProgressSvc := progressService(taskService, componentClient, observerClient, cgwClient, db)
+
 	// Controllers
 	params := api.AppParams{
-		Config:                     cfg,
-		ProjectController:          project.NewProjectController(projectService),
-		OrganizationController:     organization.NewOrganizationController(organizationService),
-		ComponentController:        component.NewComponentController(componentService),
-		RequirementsController:     requirements.NewRequirementsController(requirementsService),
-		RequirementsChatController: requirements.NewRequirementsChatController(requirementsChatService),
-		DesignController:           design.NewDesignController(designService),
+		Config: cfg,
+		// Only the three controllers still wired as raw handlers remain; every
+		// other feature registers code-first via params.HumaDeps below.
 		TaskController: func() task.TaskController {
 			tc := task.NewTaskController(
 				taskService,
 				dispatchSvc,
-				progressService(taskService, componentClient, observerClient, cgwClient, db),
+				taskProgressSvc,
 				componentClient,
 				taskTokens,
 			)
@@ -912,25 +922,49 @@ func main() {
 			}
 			return tc
 		}(),
-		BoardController:        task.NewBoardController(boardService),
-		ConfigController:       component.NewConfigController(configService),
-		CollabController:       requirements.NewCollabController(repoService),
-		WebhookController:      webhookCtrl,
-		TaskRepo:               taskRepo,
-		ConfigRepo:             configRepo,
-		OrgGitHubController:    orgGitHubCtrl,
-		OrgAnthropicController: orgAnthropicCtrl,
-		SkillController:        skills.NewSkillController(skillSvc, skillMutationSvc, skillImportSvc),
-		IDPController:          idp.NewIDPController(idpService),
-		JWKSController:         authn.NewJWKSController(taskTokens),
-		ThunderJWKS:            thunderJWKS,
-		OrganizationService:    organizationService,
+		WebhookController:   webhookCtrl,
+		OrgGitHubController: orgGitHubCtrl,
+		TaskRepo:            taskRepo,
+		ConfigRepo:          configRepo,
+		ThunderJWKS:         thunderJWKS,
+		OrganizationService: organizationService,
 
 		DB:                   db,
 		CredCtrl:             credRefreshCtrl,
 		CredService:          credService,
 		AnthropicCredService: anthropicCredService,
 		TaskJWT:              taskJWT,
+	}
+
+	// Code-first OpenAPI (Huma) feature dependencies. api.NewHandler creates the
+	// Huma API on apiMux and registers every migrated feature via
+	// RegisterAllHuma. See docs/design/bff-openapi-huma-migration.md.
+	params.HumaDeps = api.HumaDeps{
+		ProjectSvc:          projectService,
+		OrgSvc:              organizationService,
+		ComponentSvc:        componentService,
+		ConfigSvc:           configService,
+		RequirementsSvc:     requirementsService,
+		RequirementsChatSvc: requirementsChatService,
+		CollabRepo:          repoService,
+		DesignSvc:           designService,
+		TaskSvc:             taskService,
+		TaskDispatcher:      dispatchSvc,
+		TaskProgress:        taskProgressSvc,
+		ComponentClient:     componentClient,
+		BoardSvc:            boardService,
+		IDPSvc:              idpService,
+		CredentialSvc:       credService,
+		DisconnectSvc:       disconnectSvc,
+		BearerSvc:           bearerSvc,
+		AnthropicSvc:        anthropicCredService,
+		TaskTokens:          taskTokens,
+		SkillSvc:            skillSvc,
+		SkillMutationSvc:    skillMutationSvc,
+		SkillImportSvc:      skillImportSvc,
+		GitHubAppSlug:       cfg.GithubAppSlug,
+		BFFPublicURL:        cfg.BFFPublicURL,
+		GitHubAppClientID:   cfg.GithubAppClientID,
 	}
 
 	slog.Info("OpenChoreo API", "baseURL", cfg.PlatformAPI.BaseURL)

@@ -37,6 +37,7 @@ type thunderMock struct {
 	deleteStatus int    // override delete response code (0 = 204); app is removed regardless
 	createdOU    string // OU passed to the create call
 	createCount  int
+	ouMissing    bool // when true, GET /organization-units/{id} returns 404 (phantom OU)
 }
 
 func (m *thunderMock) server(t *testing.T) *httptest.Server {
@@ -57,6 +58,19 @@ func (m *thunderMock) server(t *testing.T) *httptest.Server {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id": m.appID, "name": m.appName, "ouId": m.ouID,
 			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/organization-units/tree/default":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "default-ou"})
+
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/organization-units/"):
+			// OU-existence check (ouExists) used by the non-destructive heal
+			// guard. By default the target OU exists (200); ouMissing models a
+			// stale/phantom ouId (404).
+			if m.ouMissing {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": strings.TrimPrefix(r.URL.Path, "/organization-units/")})
 
 		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/applications/"):
 			m.deleted = true
@@ -128,6 +142,31 @@ func TestEnsurePublisherApp_HealsWrongOU_DeleteReturns500ButGone(t *testing.T) {
 	}
 	if m.createdOU != "org-ou-1" || !created || secret != "fresh-secret" {
 		t.Errorf("want recreate under org-ou-1 (created+secret), got ou=%q created=%v secret=%q", m.createdOU, created, secret)
+	}
+}
+
+// Phantom org OU (resolved OU does NOT exist in Thunder) → the non-destructive
+// heal guard MUST keep the working app rather than delete it and fail to
+// recreate under a non-existent OU (Thunder 400 APP-1018). Regression test for
+// the runner publisher cc-token invalid_client root cause.
+func TestEnsurePublisherApp_PhantomOU_KeepsExistingApp(t *testing.T) {
+	m := &thunderMock{appID: "app-1", appName: "asdlc-publisher-org1", clientID: "asdlc-publisher-org1", ouID: "real-ou", ouMissing: true}
+	srv := m.server(t)
+	defer srv.Close()
+	c := newTestClient(srv.URL)
+
+	id, secret, created, err := c.EnsurePublisherApp(context.Background(), "org1", "phantom-ou")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m.deleted {
+		t.Error("MUST NOT delete the working app when the resolved target OU is phantom")
+	}
+	if created || secret != "" {
+		t.Errorf("expected no recreate (created=false, empty secret), got created=%v secret=%q", created, secret)
+	}
+	if id != "asdlc-publisher-org1" {
+		t.Errorf("should return the existing client_id, got %q", id)
 	}
 }
 

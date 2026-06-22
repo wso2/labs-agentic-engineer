@@ -90,7 +90,20 @@ async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
     let message = body;
     try {
       const parsed = JSON.parse(body);
-      if (parsed.message) message = parsed.message;
+      // Two error shapes coexist during the Huma migration:
+      //  - RFC 9457 problem+json (code-first Huma routes):
+      //      { title, status, detail, errors: [{ message, location }] }
+      //  - legacy envelope (remaining SSE / S2S routes): { error, message }
+      // Prefer the human-readable field of whichever is present.
+      message = parsed.detail || parsed.message || parsed.title || parsed.error || body;
+      if (Array.isArray(parsed.errors) && parsed.errors.length > 0) {
+        const details = parsed.errors
+          .map((e: { message?: string; location?: string }) =>
+            e.location ? `${e.location}: ${e.message ?? ''}` : e.message)
+          .filter(Boolean)
+          .join('; ');
+        if (details) message = message ? `${message} (${details})` : details;
+      }
     } catch { /* use raw body */ }
     throw new ApiError(res.status, message);
   }

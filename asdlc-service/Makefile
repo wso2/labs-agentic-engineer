@@ -1,7 +1,22 @@
-.PHONY: build test test-db check-no-legacy-creds gen-oc-client gen-oc-client-check gen-mocks
+.PHONY: build test test-db check-no-legacy-creds gen-oc-client gen-oc-client-check gen-mocks openapi openapi-check
 
 build:
 	go build ./...
+
+# Regenerate the BFF's code-first OpenAPI document from the Huma operations.
+# Checked in at api/openapi.yaml; consumed by the console client + drift guard.
+# See docs/design/bff-openapi-huma-migration.md.
+openapi:
+	@go run ./cmd/openapigen api/openapi.yaml
+
+# CI drift guard: fail if api/openapi.yaml is stale vs the code. (The Go test
+# TestOpenAPISpecFresh enforces the same in `go test`.)
+openapi-check: openapi
+	@if ! git diff --exit-code --quiet -- api/openapi.yaml; then \
+		echo "api/openapi.yaml is out of sync with the code. Run 'make openapi' and commit."; \
+		git diff --color -- api/openapi.yaml | cat; \
+		exit 1; \
+	fi
 
 test: check-no-legacy-creds
 	go test ./...

@@ -586,9 +586,11 @@ func (s *dispatchService) tryDispatchViaProxy(
 		publisherSR       *SecretRef
 		publisherTokenURL string
 	)
+	var pubErr error
 	if s.idp != nil {
 		if _, _, _, perr := s.idp.EnsureOrgPublisher(ctx, task.OrgID, "dispatch"); perr != nil {
-			slog.WarnContext(ctx, "proxy dispatch: EnsureOrgPublisher failed; publisher cc may be unavailable",
+			pubErr = perr
+			slog.ErrorContext(ctx, "proxy dispatch: EnsureOrgPublisher FAILED — the runner's publisher cc token may be invalid (stale/missing creds); cc auth will likely surface as invalid_client (401)",
 				"task", task.ID, "org", task.OrgID, "error", perr)
 		}
 	}
@@ -619,8 +621,13 @@ func (s *dispatchService) tryDispatchViaProxy(
 		"gatewayPlatform", isGatewayPlatformURL(s.platformURL),
 		"task", task.ID, "org", task.OrgID, "publisherSRPresent", publisherSR != nil)
 	if publisherSR != nil {
-		slog.InfoContext(ctx, "proxy dispatch: publisher cc path active",
-			"task", task.ID, "org", task.OrgID)
+		if pubErr != nil {
+			slog.WarnContext(ctx, "proxy dispatch: publisher cc path active but provisioning FAILED this run — runner will use possibly-stale publisher creds (expect cc-token invalid_client if the OU/secret drifted)",
+				"task", task.ID, "org", task.OrgID, "ensureErr", pubErr)
+		} else {
+			slog.InfoContext(ctx, "proxy dispatch: publisher cc path active",
+				"task", task.ID, "org", task.OrgID)
+		}
 	} else if isGatewayPlatformURL(s.platformURL) {
 		slog.InfoContext(ctx, "[SHAKEOUT:DISPATCH] fail: publisher cc missing on gateway platform",
 			"gatewayPlatform", true, "task", task.ID, "org", task.OrgID)

@@ -22,19 +22,9 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/orgcreds"
 )
 
-// registerOrgGitHubRoutes wires the per-org GitHub integration surface.
-//
-// Org-scoped routes mount under the existing /api/v1/organizations/{orgHandle}
-// prefix and inherit the central tenant gate that protects every other
-// org-scoped route. The connect callback is unscoped (registerConnectCallbackRoute)
-// — GitHub's single configured callback URL has no orgHandle to thread, so the
-// JWT-carried `state` parameter is the org-binding signal.
-func registerOrgGitHubRoutes(rt *Router, c orgcreds.OrgGitHubController) {
-	rt.OrgScoped("POST /api/v1/organizations/{orgHandle}/github/connect/start", c.StartConnect)
-	rt.OrgScoped("POST /api/v1/organizations/{orgHandle}/github/pat", c.ConnectPAT)
-	rt.OrgScoped("GET /api/v1/organizations/{orgHandle}/github", c.GetStatus)
-	rt.OrgScoped("DELETE /api/v1/organizations/{orgHandle}/github", c.Disconnect)
-}
+// The org-scoped GitHub routes (connect/start, pat, status, disconnect) are now
+// code-first Huma operations (orgcreds.RegisterOrgGitHub). Only the unscoped
+// connect callback remains a raw handler here.
 
 // registerConnectCallbackRoute mounts the App-mode connect callback
 // OUTSIDE the JWT-protected mux. GitHub redirects the user's browser

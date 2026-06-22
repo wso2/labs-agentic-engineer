@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "gen:api": "npx --yes openapi-typescript@7 openapi.yaml -o src/services/api/openapi.gen.ts"
   },
   "devDependencies": {
     "@types/js-yaml": "^4",

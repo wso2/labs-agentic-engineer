@@ -46,9 +46,10 @@ func TestJWKSRoute_PublishesActiveKey(t *testing.T) {
 		t.Fatalf("NewTaskTokenManager: %v", err)
 	}
 
+	// JWKS is now a code-first Huma op fed by HumaDeps.TaskTokens.
 	handler := NewHandler(AppParams{
-		Config:         config.Config{TestMode: false},
-		JWKSController: auth.NewJWKSController(mgr),
+		Config:   config.Config{TestMode: false},
+		HumaDeps: HumaDeps{TaskTokens: mgr},
 	})
 
 	srv := httptest.NewServer(handler)
@@ -103,9 +104,9 @@ func TestJWKSRoute_NotGatedByJWT(t *testing.T) {
 	// middleware would reject every /api/* request. The JWKS route must
 	// still respond.
 	handler := NewHandler(AppParams{
-		Config:         config.Config{TestMode: false},
-		JWKSController: auth.NewJWKSController(mgr),
-		ThunderJWKS:    nil, // no inbound auth wired
+		Config:      config.Config{TestMode: false},
+		HumaDeps:    HumaDeps{TaskTokens: mgr},
+		ThunderJWKS: nil, // no inbound auth wired
 	})
 
 	srv := httptest.NewServer(handler)
