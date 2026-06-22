@@ -191,10 +191,13 @@ func (f *fakeGitOps) ResolveSaveIdentities(credentials.Credential) (*gitrepo.Git
 
 type fakeRepoSvc struct {
 	gitrepo.RepoService
+	mu    sync.Mutex // models the DB's concurrency safety (the real GetRepo/EnsureBareRepo are serialized by Postgres)
 	repos map[string]*models.GitRepository
 }
 
 func (f *fakeRepoSvc) GetRepo(_ context.Context, orgID, _ string) (*models.GitRepository, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if r, ok := f.repos[orgID]; ok {
 		return r, nil
 	}
@@ -202,6 +205,8 @@ func (f *fakeRepoSvc) GetRepo(_ context.Context, orgID, _ string) (*models.GitRe
 }
 
 func (f *fakeRepoSvc) EnsureBareRepo(_ context.Context, orgID, projectID, repoName string) (*models.GitRepository, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if r, ok := f.repos[orgID]; ok {
 		return r, nil
 	}

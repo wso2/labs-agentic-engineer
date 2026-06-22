@@ -47,8 +47,16 @@ type SkillUpdate struct {
 
 // ensureSkillsRepo idempotently provisions the org's skills repo, seeding
 // built-ins on first creation (lazy self-heal on the read path). §10.3.
+//
+// The per-org lock is held across the WHOLE function — deliberately, not just
+// the provision branch. EnsureBareRepo creates the repo ROW before
+// reconcileBuiltins seeds it, so a concurrent reader that slipped past the lock
+// could see the row and read a still-empty repo (empty skills on first load).
+// Holding the lock across seeding makes the list + updates-badge requests that
+// fire together on page load wait for the seed, so first load is deterministic.
+// In steady state this lock wraps only a ~1ms GetRepo at design/task QPS — the
+// serialization cost is negligible and worth the first-load guarantee.
 func (s *SkillService) ensureSkillsRepo(ctx context.Context, orgID string) (*models.GitRepository, error) {
-	// Serialise first-time provisioning per org (cheap once the row exists).
 	mu := s.orgLock(orgID)
 	mu.Lock()
 	defer mu.Unlock()
@@ -106,22 +114,36 @@ func (s *SkillService) reconcileBuiltins(ctx context.Context, orgID string, repo
 		return 0, err
 	}
 
+	embeddedNames := make(map[string]bool, len(embedded))
 	writes := map[string][]byte{}
 	for _, b := range embedded {
+		embeddedNames[b.Name] = true
 		cur, ok := current[b.Name]
 		if !ok || b.Version > cur {
 			writes[skillRepoPath("builtin", b.Name)] = []byte(b.SkillMD)
 		}
 	}
-	if len(writes) == 0 {
+	// Purge built-ins the platform embed no longer ships. The old SkillBootstrap
+	// did this via `DELETE FROM skills WHERE kind='builtin' AND name NOT IN (...)`;
+	// without it a retired built-in would linger in every org repo forever and
+	// keep getting inlined into the architect/tech-lead prompts. §6.2.
+	var deletes []string
+	for name := range current {
+		if !embeddedNames[name] {
+			deletes = append(deletes, skillRepoDir("builtin", name))
+		}
+	}
+
+	changed := len(writes) + len(deletes)
+	if changed == 0 {
 		return 0, nil
 	}
-	msg := fmt.Sprintf("chore(skills): reconcile %d built-in skill(s) from platform embed", len(writes))
-	if _, err := s.commitFiles(ctx, orgID, repo, msg, writes, nil); err != nil {
+	msg := fmt.Sprintf("chore(skills): reconcile built-ins (%d written, %d retired)", len(writes), len(deletes))
+	if _, err := s.commitFiles(ctx, orgID, repo, msg, writes, deletes); err != nil {
 		return 0, err
 	}
-	slog.InfoContext(ctx, "skills: reconciled built-ins", "org", orgID, "written", len(writes))
-	return len(writes), nil
+	slog.InfoContext(ctx, "skills: reconciled built-ins", "org", orgID, "written", len(writes), "purged", len(deletes))
+	return changed, nil
 }
 
 // UpdatesAvailable returns the built-ins whose embedded version is newer than

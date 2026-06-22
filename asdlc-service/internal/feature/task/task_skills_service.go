@@ -19,6 +19,7 @@ package task
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
 	"github.com/wso2/asdlc/asdlc-service/models"
@@ -93,6 +94,20 @@ func (s *TaskSkillsService) SkillsForTask(ctx context.Context, taskID string) (*
 	resolved, err := s.skillSvc.ResolveMany(ctx, task.OrgID, design.SkillsApplied)
 	if err != nil {
 		return nil, fmt.Errorf("resolve skills: %w", err)
+	}
+	// Surface partial resolution: a skill attached at design time but absent
+	// from the repo at HEAD (deleted/renamed since dispatch) is silently
+	// dropped by ResolveMany. The runner pulls at HEAD by design (drift
+	// accepted, §7.1), but a missing mandatory skill should at least be visible.
+	if len(resolved) < len(design.SkillsApplied) {
+		resolvedNames := make([]string, len(resolved))
+		for i, sk := range resolved {
+			resolvedNames[i] = sk.Name
+		}
+		_, missing := stringSetDiff(design.SkillsApplied, resolvedNames)
+		slog.WarnContext(ctx, "task skills: attached skills missing from repo at HEAD",
+			"taskID", taskID, "project", task.ProjectID, "attached", len(design.SkillsApplied),
+			"resolved", len(resolved), "missing", missing)
 	}
 	if len(resolved) == 0 {
 		return empty, nil

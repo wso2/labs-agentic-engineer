@@ -91,17 +91,44 @@ func NewSkillService(git gitrepo.GitOpsService, repos gitrepo.RepoService) *Skil
 
 // ---- read surface (unchanged contract) -------------------------------------
 
+// findByName returns a copy of the first skill whose name matches, or nil. The
+// copy avoids aliasing the range variable in the returned pointer.
+func findByName(skills []Skill, name string) *Skill {
+	for _, sk := range skills {
+		if sk.Name == name {
+			out := sk
+			return &out
+		}
+	}
+	return nil
+}
+
 // Resolve returns a single skill by name visible to the org. A custom/imported
 // skill shadows a builtin of the same name (org wins), matching the prior
 // DB-backed union semantics.
 func (s *SkillService) Resolve(ctx context.Context, orgID, name string) (*Skill, error) {
-	for _, sk := range s.catalog(ctx, orgID) {
-		if sk.Name == name {
-			out := sk
-			return &out, nil
-		}
+	return findByName(s.catalog(ctx, orgID), name), nil
+}
+
+// resolveFresh resolves a single skill bypassing the soft-TTL cache (it still
+// reuses the cache when HEAD is unchanged). Used by the create-collision check
+// so a same-named skill just created on this replica is seen, and so a
+// transient read failure surfaces as an error rather than a phantom
+// "no collision". This narrows — but cannot eliminate — the cross-replica
+// TOCTOU window: git has no unique constraint (docs/design/skills-repo-storage.md §9).
+func (s *SkillService) resolveFresh(ctx context.Context, orgID, name string) (*Skill, error) {
+	if s == nil || s.git == nil || s.repos == nil || orgID == "" {
+		return nil, nil
 	}
-	return nil, nil
+	repo, err := s.ensureSkillsRepo(ctx, orgID)
+	if err != nil {
+		return nil, err
+	}
+	skills, err := s.loadCatalog(ctx, orgID, repo, false)
+	if err != nil {
+		return nil, err
+	}
+	return findByName(skills, name), nil
 }
 
 // List returns every skill visible to the org, sorted by kind then name.
@@ -390,11 +417,14 @@ func (s *SkillService) commitFiles(ctx context.Context, orgID string, repo *mode
 }
 
 // writeSkillFiles commits a skill's SKILL.md + references under
-// skills/<kind>/<name>/. Stale reference files (present in the repo but not in
-// the new set) are removed in the same commit; the SKILL.md path and any
-// reference being rewritten are protected from the delete. Used by the
-// mutation + import services and the reconciler. §9.
-func (s *SkillService) writeSkillFiles(ctx context.Context, orgID, kind, name, skillMD string, references map[string]string, message string) error {
+// skills/<kind>/<name>/. When pruneStaleRefs is set (updates), reference files
+// present in the repo but absent from the new set are removed in the same
+// commit (the SKILL.md path and any reference being rewritten are protected
+// from the delete). Creates/imports pass pruneStaleRefs=false: there is nothing
+// to prune for a brand-new skill, so we skip the recursive GetTree that the
+// sweep would otherwise force on every write. Used by the mutation + import
+// services and the reconciler. §9.
+func (s *SkillService) writeSkillFiles(ctx context.Context, orgID, kind, name, skillMD string, references map[string]string, message string, pruneStaleRefs bool) error {
 	repo, err := s.ensureSkillsRepo(ctx, orgID)
 	if err != nil {
 		return err
@@ -403,9 +433,12 @@ func (s *SkillService) writeSkillFiles(ctx context.Context, orgID, kind, name, s
 	for refKey, content := range references {
 		writes[skillRefPath(kind, name, refKey)] = []byte(content)
 	}
-	// Sweep the references/ subtree so removed refs don't linger; commitFiles
-	// skips deleting any path we're rewriting this commit.
-	deletes := []string{skillRepoDir(kind, name) + "/" + strings.TrimSuffix(refsPrefix, "/")}
+	var deletes []string
+	if pruneStaleRefs {
+		// Sweep the references/ subtree so removed refs don't linger; commitFiles
+		// skips deleting any path we're rewriting this commit.
+		deletes = []string{skillRepoDir(kind, name) + "/" + strings.TrimSuffix(refsPrefix, "/")}
+	}
 	_, err = s.commitFiles(ctx, orgID, repo, message, writes, deletes)
 	return err
 }

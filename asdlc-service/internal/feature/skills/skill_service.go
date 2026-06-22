@@ -26,12 +26,35 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
+
+// newSkillValue assembles the in-memory Skill from validated mutation input so
+// Create/Update can return the just-written skill WITHOUT a post-commit
+// read-back. A read-back through the repo store can transiently return
+// (nil, nil) on a GitHub blip (the cache was just evicted by the write), which
+// would make the success path hand the controller a nil *Skill and panic.
+// Every field here is derivable from what we just committed.
+func newSkillValue(orgID, kind, name, skillMD string, refs References, fm skillFrontmatter) *Skill {
+	return &Skill{
+		OrgID:         orgID,
+		Name:          name,
+		Kind:          kind,
+		Description:   strings.TrimSpace(fm.Description),
+		SkillMD:       skillMD,
+		References:    map[string]string(refs),
+		Version:       versionFromMetadata(fm),
+		ContentSHA:    contentSHA(skillMD, refs),
+		License:       fm.License,
+		Compatibility: fm.Compatibility,
+		UpdatedAt:     time.Now().UTC(),
+	}
+}
 
 // References is the map of optional reference filenames → body for a skill
 // (e.g. `references/examples.md`).

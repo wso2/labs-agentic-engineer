@@ -129,7 +129,11 @@ func (m *SkillMutationService) Create(ctx context.Context, orgID, actor string, 
 	}
 
 	// Collision: any visible skill (builtin or this org's custom/imported).
-	existing, err := m.skills.Resolve(ctx, orgID, name)
+	// Use a fresh read so a same-named skill just created on this replica is
+	// seen and a transient read failure surfaces (rather than a phantom
+	// "no collision" that would silently overwrite). The cross-replica TOCTOU
+	// window remains — git has no unique constraint (docs §9).
+	existing, err := m.skills.resolveFresh(ctx, orgID, name)
 	if err != nil {
 		return nil, fmt.Errorf("collision check: %w", err)
 	}
@@ -137,12 +141,15 @@ func (m *SkillMutationService) Create(ctx context.Context, orgID, actor string, 
 		return nil, ErrSkillNameCollision
 	}
 
+	refs := normalizeRefs(in.References)
 	msg := fmt.Sprintf("feat(skills): add custom skill %q\n\nby %s", name, actor)
-	if err := m.skills.writeSkillFiles(ctx, orgID, "custom", name, in.SkillMD, normalizeRefs(in.References), msg); err != nil {
+	if err := m.skills.writeSkillFiles(ctx, orgID, "custom", name, in.SkillMD, refs, msg, false); err != nil {
 		return nil, fmt.Errorf("commit custom skill %q: %w", name, err)
 	}
 	slog.InfoContext(ctx, "skill created", "orgID", orgID, "name", name, "actor", actor)
-	return m.skills.Resolve(ctx, orgID, name)
+	// Return the just-written skill from validated input — no read-back (a
+	// transient post-commit read could nil-panic the handler on a real success).
+	return newSkillValue(orgID, "custom", name, in.SkillMD, refs, fm), nil
 }
 
 // Update rewrites an existing kind=custom skill. Returns ErrSkillNotEditable
@@ -175,12 +182,14 @@ func (m *SkillMutationService) Update(ctx context.Context, orgID, actor, name st
 			"cannot rename a skill via update; frontmatter name must match the existing name", "name")
 	}
 
+	refs := normalizeRefs(in.References)
 	msg := fmt.Sprintf("chore(skills): update custom skill %q\n\nby %s", name, actor)
-	if err := m.skills.writeSkillFiles(ctx, orgID, "custom", name, in.SkillMD, normalizeRefs(in.References), msg); err != nil {
+	// pruneStaleRefs=true: an update may have removed reference files.
+	if err := m.skills.writeSkillFiles(ctx, orgID, "custom", name, in.SkillMD, refs, msg, true); err != nil {
 		return nil, fmt.Errorf("commit update for %q: %w", name, err)
 	}
 	slog.InfoContext(ctx, "skill updated", "orgID", orgID, "name", name, "actor", actor)
-	return m.skills.Resolve(ctx, orgID, name)
+	return newSkillValue(orgID, "custom", name, in.SkillMD, refs, fm), nil
 }
 
 // Delete removes a custom or imported skill (deletes the skill's directory and

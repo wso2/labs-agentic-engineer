@@ -93,7 +93,7 @@ func (s *SkillImportService) Import(ctx context.Context, orgID, actor string, r 
 	warnings := importWarnings(fm)
 
 	msg := fmt.Sprintf("feat(skills): import skill %q\n\nby %s", name, actor)
-	if err := s.skills.writeSkillFiles(ctx, orgID, "imported", name, skillMD, normalizeRefs(refs), msg); err != nil {
+	if err := s.skills.writeSkillFiles(ctx, orgID, "imported", name, skillMD, normalizeRefs(refs), msg, false); err != nil {
 		return nil, fmt.Errorf("commit imported skill %q: %w", name, err)
 	}
 	slog.InfoContext(ctx, "skill imported", "orgID", orgID, "name", name, "actor", actor, "warnings", len(warnings))
