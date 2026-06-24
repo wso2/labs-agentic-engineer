@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/wso2/asdlc/asdlc-service/models"
 	"gorm.io/gorm"
 )
 
@@ -47,13 +48,18 @@ func RunGitRepoCompositeUnique(ctx context.Context, db *gorm.DB) error {
 		return fmt.Errorf("F2 expand (composite unique): %w", err)
 	}
 
-	// 2. verify — audit SQL from §9.1; expected 0 (the global unique forbade dupes).
+	// 2. verify — audit SQL from §9.1; expected 0 for real project repos. The
+	// per-org skills sentinel (models.SkillsRepoSentinelProjectID) is by design
+	// one row per org and so legitimately spans every org — exclude it, or this
+	// guard would abort on any deployment where ≥2 orgs have a skills repo. Only
+	// real project repos had to satisfy the old global unique we are dropping.
 	var spanning int64
 	if err := db.WithContext(ctx).Raw(
 		`SELECT count(*) FROM (
 		   SELECT project_id FROM git_repositories
+		   WHERE project_id <> ?
 		   GROUP BY project_id HAVING count(DISTINCT org_id) > 1
-		 ) t`).Scan(&spanning).Error; err != nil {
+		 ) t`, models.SkillsRepoSentinelProjectID).Scan(&spanning).Error; err != nil {
 		return fmt.Errorf("F2 verify: %w", err)
 	}
 	if spanning > 0 {
