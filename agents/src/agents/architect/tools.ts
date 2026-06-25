@@ -20,7 +20,7 @@ import { tool } from "ai";
 import type { Tool } from "ai";
 import { z } from "zod";
 import { DesignDoc } from "./doc.js";
-import { DependentApi, SlimComponent } from "./schema.js";
+import { Dependency, DependencyStatus, SlimComponent } from "./schema.js";
 import { validate, type ValidationIssue } from "./validator.js";
 
 // Side-channel for tools to push SSE events to the client. Each tool emits at
@@ -162,97 +162,91 @@ export function buildTools(
 
     add_dependency: tool({
       description:
-        "Add a dependsOn entry to a component. Idempotent (duplicate adds are silently ignored). Invalidates the component's openapi (contract drift).",
+        "Add (or replace by name) a dependency on a component. A dependency is anything the component needs from outside itself, discriminated by `kind`:\n" +
+        "  - 'component': a sibling component built by THIS project (set `name` to the sibling's exact name). Invalidates this component's openapi (wire-contract drift).\n" +
+        "  - 'org-service': a service published by ANOTHER project in the org, declared by name (P3).\n" +
+        "  - 'external': an off-platform API / SaaS / DB the user supplies values for — carry a free-form `description` (which SDK / auth / where the spec lives) and a `config` key schema (which env-var keys, which are secret).\n" +
+        "  - 'platform-resource': a platform-provisioned resource (database / queue / cache / identity-provider), named by `resourceType` (P5).\n" +
+        "Idempotent on the dependency's `name` (a second add with the same name replaces it).",
       inputSchema: z.object({
-        name: z.string(),
-        dependsOn: z.string(),
+        name: z
+          .string()
+          .describe("Name of the component that has this dependency."),
+        dependency: Dependency,
       }),
-      execute: async ({ name, dependsOn }) =>
+      execute: async ({ name, dependency }) =>
         guard(() => {
           if (!doc.hasComponent(name)) {
             return { error: "not-found" };
           }
-          doc.addDependency(name, dependsOn);
+          doc.upsertDependency(name, dependency);
           const after = doc.getComponent(name);
+          const invalidated = dependency.kind === "component";
           sse.send("component-updated", {
             name,
-            patch: { dependsOn: after.slim.dependsOn },
-            openapiInvalidated: true,
+            patch: { dependencies: after.slim.dependencies },
+            openapiInvalidated: invalidated,
           });
-          return { ok: true, openapiInvalidated: true };
+          return { ok: true, openapiInvalidated: invalidated };
         }),
     }),
 
     remove_dependency: tool({
       description:
-        "Remove a dependsOn entry. No-op if the dep is not present. Invalidates the component's openapi.",
-      inputSchema: z.object({
-        name: z.string(),
-        dependsOn: z.string(),
-      }),
-      execute: async ({ name, dependsOn }) =>
-        guard(() => {
-          if (!doc.hasComponent(name)) {
-            return { error: "not-found" };
-          }
-          doc.removeDependency(name, dependsOn);
-          const after = doc.getComponent(name);
-          sse.send("component-updated", {
-            name,
-            patch: { dependsOn: after.slim.dependsOn },
-            openapiInvalidated: true,
-          });
-          return { ok: true, openapiInvalidated: true };
-        }),
-    }),
-
-    add_dependent_api: tool({
-      description:
-        "Declare an EXTERNAL HTTP API the component depends on at runtime — i.e. an API that already exists outside this project (corporate directory, payments processor, third-party SaaS). Use this for any upstream NOT built by this project; use add_dependency for sibling components that are. Idempotent on `dependentApi.name`. Does NOT invalidate openapi.",
-      inputSchema: z.object({
-        name: z
-          .string()
-          .describe("Name of the component that consumes the external API."),
-        dependentApi: DependentApi,
-      }),
-      execute: async ({ name, dependentApi }) =>
-        guard(() => {
-          if (!doc.hasComponent(name)) {
-            return { error: "not-found" };
-          }
-          doc.addDependentApi(name, dependentApi);
-          const after = doc.getComponent(name);
-          sse.send("component-updated", {
-            name,
-            patch: { dependentApis: after.slim.dependentApis },
-            openapiInvalidated: false,
-          });
-          return { ok: true, openapiInvalidated: false };
-        }),
-    }),
-
-    remove_dependent_api: tool({
-      description:
-        "Remove an external dependent API by name. No-op if not present.",
+        "Remove a dependency from a component by its `name` (any kind). No-op if not present. Invalidates openapi only when the removed dependency was a sibling component.",
       inputSchema: z.object({
         name: z.string().describe("Name of the component."),
-        dependentApiName: z
+        dependencyName: z
           .string()
-          .describe("`name` field of the DependentApi to remove."),
+          .describe("`name` of the dependency to remove."),
       }),
-      execute: async ({ name, dependentApiName }) =>
+      execute: async ({ name, dependencyName }) =>
         guard(() => {
           if (!doc.hasComponent(name)) {
             return { error: "not-found" };
           }
-          doc.removeDependentApi(name, dependentApiName);
+          const before = doc.getComponent(name).slim.dependencies ?? [];
+          const removed = before.find((d) => d.name === dependencyName);
+          doc.removeDependency(name, dependencyName);
+          const after = doc.getComponent(name);
+          const invalidated = removed?.kind === "component";
+          sse.send("component-updated", {
+            name,
+            patch: { dependencies: after.slim.dependencies },
+            openapiInvalidated: invalidated,
+          });
+          return { ok: true, openapiInvalidated: invalidated };
+        }),
+    }),
+
+    resolve_dependency: tool({
+      description:
+        "Set the resolution status of a dependency: 'resolved' (ready to wire), 'ambiguous' (candidates attached, needs a user pick), or 'unresolved' (user input required). Use this when you cannot fully resolve an external / org-service dependency on your own — the console surfaces non-resolved entries to the user, and a design with unresolved/ambiguous dependencies cannot be saved.",
+      inputSchema: z.object({
+        name: z.string().describe("Name of the component."),
+        dependencyName: z.string().describe("`name` of the dependency."),
+        status: DependencyStatus,
+      }),
+      execute: async ({ name, dependencyName, status }) =>
+        guard(() => {
+          if (!doc.hasComponent(name)) {
+            return { error: "not-found" };
+          }
+          try {
+            doc.resolveDependency(name, dependencyName, status);
+          } catch (err) {
+            return {
+              error: "not-found",
+              message: err instanceof Error ? err.message : String(err),
+            };
+          }
           const after = doc.getComponent(name);
           sse.send("component-updated", {
             name,
-            patch: { dependentApis: after.slim.dependentApis },
+            patch: { dependencies: after.slim.dependencies },
             openapiInvalidated: false,
           });
-          return { ok: true, openapiInvalidated: false };
+          return { ok: true };
         }),
     }),
 

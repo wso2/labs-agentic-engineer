@@ -22,7 +22,10 @@ type DesignComponent struct {
 	Name                       string          `json:"name"`
 	ComponentType              string          `json:"componentType"`
 	Language                   string          `json:"language"`
-	DependsOn                  []string        `json:"dependsOn"`
+	Dependencies               []Dependency    `json:"dependencies"`
+	Origin                     string          `json:"origin,omitempty"` // "source" (default) | "image"
+	Image                      string          `json:"image,omitempty"`  // container ref when Origin == "image"
+	Config                     []ConfigKey     `json:"config,omitempty"` // user-provided runtime config vars on THIS component
 	Entrypoint                 string          `json:"entrypoint"`
 	Buildpack                  string          `json:"buildpack"`
 	AppPath                    string          `json:"appPath"`
@@ -30,20 +33,79 @@ type DesignComponent struct {
 	ComponentAgentInstructions string          `json:"componentAgentInstructions"`
 	CallerIdentity             *CallerIdentity `json:"callerIdentity,omitempty"`
 	ExposesAPI                 *ExposesAPI     `json:"exposesAPI,omitempty"`
-	DependentApis              []DependentAPI  `json:"dependentApis,omitempty"`
 }
 
-// DependentAPI is an HTTP endpoint outside this project that a component
-// consumes at runtime — a corporate directory, a payments processor, etc.
-// Unlike `DependsOn` (which references sibling components built by this
-// project), the URL here is fixed at design time. The cell diagram renders
-// these outside the cell boundary, and the tech-lead carries the URL +
-// description into the coding-agent's issue body.
-type DependentAPI struct {
-	Name           string `json:"name"`
-	URL            string `json:"url"`
-	Description    string `json:"description,omitempty"`
-	Authentication string `json:"authentication,omitempty"`
+// DependencyKind discriminates the unified Dependency entry.
+type DependencyKind = string
+
+const (
+	DependencyKindComponent        DependencyKind = "component"
+	DependencyKindOrgService       DependencyKind = "org-service"
+	DependencyKindExternal         DependencyKind = "external"
+	DependencyKindPlatformResource DependencyKind = "platform-resource"
+)
+
+// Dependency is the unified, kind-discriminated dependency entry on a
+// component. It subsumes the legacy DependsOn (sibling components) and
+// DependentApis (external HTTP APIs). Go has no native discriminated union,
+// so a single struct carries every kind's fields; `Kind` selects which are
+// meaningful (Config for external; ResourceType/Parameters for
+// platform-resource; the rest common). Mirrors the agents-service Zod
+// `Dependency`.
+type Dependency struct {
+	Kind        string `json:"kind" yaml:"kind"`
+	Name        string `json:"name" yaml:"name"`
+	Description string `json:"description,omitempty" yaml:"description,omitempty"`
+	Status      string `json:"status,omitempty" yaml:"status,omitempty"` // resolved|ambiguous|unresolved
+	// external: the config key schema the consuming component codes against.
+	Config []ConfigKey `json:"config,omitempty" yaml:"config,omitempty"`
+	// platform-resource: the registered (Cluster)ResourceType + provisioning params.
+	ResourceType string            `json:"resourceType,omitempty" yaml:"resourceType,omitempty"`
+	Parameters   map[string]string `json:"parameters,omitempty" yaml:"parameters,omitempty"`
+	// resolution UI: candidates attached when Status == ambiguous.
+	Candidates []DependencyCandidate `json:"candidates,omitempty" yaml:"candidates,omitempty"`
+}
+
+// ConfigKey is one env-var key a component reads at runtime. For an external
+// connection these keys form the connection's schema (drives the OC
+// ResourceType in P2). Secret keys route through the secret path.
+type ConfigKey struct {
+	Key             string `json:"key" yaml:"key"`
+	Secret          bool   `json:"secret" yaml:"secret"`
+	CredentialClass string `json:"credentialClass,omitempty" yaml:"credentialClass,omitempty"` // publishable|secret
+}
+
+// DependencyCandidate is one option attached to an ambiguous dependency.
+type DependencyCandidate struct {
+	Label       string `json:"label" yaml:"label"`
+	Description string `json:"description,omitempty" yaml:"description,omitempty"`
+	URL         string `json:"url,omitempty" yaml:"url,omitempty"`
+}
+
+// ComponentDependsOn returns the names of this component's sibling-component
+// dependencies — the successor to the legacy DependsOn []string field. Used
+// for task deploy-gating, runtime-config URL wiring, and task diffing.
+func (c DesignComponent) ComponentDependsOn() []string {
+	out := make([]string, 0, len(c.Dependencies))
+	for _, d := range c.Dependencies {
+		if d.Kind == DependencyKindComponent {
+			out = append(out, d.Name)
+		}
+	}
+	return out
+}
+
+// ExternalDependencies returns the external + org-service dependencies — the
+// connection-bearing entries (successor to DependentApis). Used to surface
+// connection context into issue bodies and to drive value collection (P2).
+func (c DesignComponent) ExternalDependencies() []Dependency {
+	out := make([]Dependency, 0, len(c.Dependencies))
+	for _, d := range c.Dependencies {
+		if d.Kind == DependencyKindExternal || d.Kind == DependencyKindOrgService {
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 // ExposesAPI declares HTTP API exposure policy for a service component.

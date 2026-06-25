@@ -237,7 +237,7 @@ func TestNormalizeDesignJSON_Idempotent(t *testing.T) {
 				Name:                       "todo-api",
 				ComponentType:              "service",
 				Language:                   "Go",
-				DependsOn:                  []string{},
+				Dependencies:               []models.Dependency{},
 				Entrypoint:                 "deployment/service",
 				Buildpack:                  "docker",
 				AppPath:                    "/todo-api",

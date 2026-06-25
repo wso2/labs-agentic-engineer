@@ -192,7 +192,8 @@ for you.
   HTTP endpoint with `visibility: external` in its `workload.yaml`** —
   this is what makes the deployed URL reachable for the dependent SPA's
   browser AND lets the BFF resolve the URL into `window._env_` for any
-  sibling web-app that `dependsOn` this service.
+  sibling web-app that depends on this service (a `dependencies` entry of
+  `kind: component`).
 
 ## Do not
 

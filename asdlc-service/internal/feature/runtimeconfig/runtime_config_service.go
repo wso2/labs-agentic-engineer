@@ -230,7 +230,7 @@ func (s *RuntimeConfigService) buildEnvValues(ctx context.Context, orgID, projec
 	}
 
 	var firstServiceURL string
-	for _, dep := range webapp.DependsOn {
+	for _, dep := range webapp.ComponentDependsOn() {
 		sibling, ok := byName[dep]
 		if !ok {
 			continue

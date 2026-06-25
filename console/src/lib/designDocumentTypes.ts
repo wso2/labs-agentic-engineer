@@ -166,9 +166,9 @@ export function defaultComponentDesignMd(opts: {
   return `---
 type: ${type}
 language: ${language}
-dependsOn: []
+dependencies: []
 buildpack: docker
-appPath: /${name}
+appPath: ${name}
 entrypoint: ${entrypoint}
 ---
 

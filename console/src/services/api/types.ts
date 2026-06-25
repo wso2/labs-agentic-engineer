@@ -69,7 +69,14 @@ export interface DesignComponent {
   name: string;
   componentType: "service" | "web-app";
   language: string;
-  dependsOn: string[];
+  // Unified dependency model — everything this component needs from outside
+  // itself, kind-discriminated. Replaces the legacy dependsOn + dependentApis.
+  dependencies: Dependency[];
+  // Component origin: "source" (agent builds it, default) | "image" (prebuilt).
+  origin?: "source" | "image";
+  image?: string;
+  // User-provided runtime config vars on THIS component (not an external service).
+  config?: ConfigKey[];
   entrypoint: "deployment/service";
   buildpack: "docker";
   appPath: string;
@@ -79,14 +86,44 @@ export interface DesignComponent {
   openAPISpec?: string;
   componentAgentInstructions: string;
   // Optional API security policy. Absent ⇒ public (skips the AP gateway).
-  // `security: 'required'` ⇒ AP enforces JWT validation against the org's
-  // IDP. See docs/design/api-platform-integration.md section 5.1.
   api?: APISecurity;
-  // External HTTP APIs this component consumes at runtime — e.g. a
-  // corporate directory like the Secret Santa employee API. Rendered
-  // outside the cell in the architecture diagram; surfaced in the
-  // tech-lead issue body so the coding agent knows the URL + auth.
+  // Legacy fields — read-compat only; the BFF emits `dependencies` now.
+  dependsOn?: string[];
   dependentApis?: DependentApi[];
+}
+
+export type DependencyKind =
+  | "component"
+  | "org-service"
+  | "external"
+  | "platform-resource";
+
+// One env-var key a component reads at runtime. For an external connection
+// these keys form the connection schema; secret keys route through SM-API.
+export interface ConfigKey {
+  key: string;
+  secret: boolean;
+  credentialClass?: "publishable" | "secret";
+}
+
+export interface DependencyCandidate {
+  label: string;
+  description?: string;
+  url?: string;
+}
+
+// Unified, kind-discriminated dependency. A single shape carries all kinds;
+// `kind` selects which optional fields are meaningful (config for external;
+// resourceType/parameters for platform-resource).
+export interface Dependency {
+  kind: DependencyKind;
+  name: string;
+  description?: string;
+  status?: "resolved" | "ambiguous" | "unresolved";
+  config?: ConfigKey[];
+  resourceType?: string;
+  parameters?: Record<string, string>;
+  candidates?: DependencyCandidate[];
 }
 
 export interface APISecurity {

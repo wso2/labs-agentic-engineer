@@ -115,6 +115,14 @@ type ComponentTask struct {
 	SourceDesignVersion string  `gorm:"type:text" json:"sourceDesignVersion,omitempty"`
 	SourceSpecVersion   string  `gorm:"type:text" json:"sourceSpecVersion,omitempty"`
 
+	// Type discriminates the task graph. "component" = a code task (1:1 with a
+	// GitHub issue + PR; the only type today). Forward-compat for P2:
+	// "config-collection" (collect connection / component config values in the
+	// console; no GitHub issue) and "resource-provisioning" (P5). Kept an OPEN
+	// string, not a fixed switch — gating/cascade branch on "is this blocker
+	// satisfied" per type. Empty is treated as "component" for old rows.
+	Type string `gorm:"default:component;index" json:"type"`
+
 	// Execution
 	Order         int    `json:"order"` // 1-indexed; surfaces as a stable display order
 	Status        string `gorm:"default:pending;index" json:"status"`

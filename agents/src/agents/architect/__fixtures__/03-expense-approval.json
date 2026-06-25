@@ -9,6 +9,6 @@
     "componentsMin": 2,
     "componentsMax": 4,
     "expectAuthService": true,
-    "expectDependentApi": true
+    "expectExternalDependency": true
   }
 }

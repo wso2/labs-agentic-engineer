@@ -26,7 +26,7 @@ const slim = (overrides: Partial<SlimComponent> = {}): SlimComponent => ({
   name: "todo-api",
   componentType: "service",
   language: "Go",
-  dependsOn: [],
+  dependencies: [],
   entrypoint: "deployment/service",
   buildpack: "docker",
   appPath: "todo-api",
@@ -137,9 +137,11 @@ test("validate — appPath that looks like an http route flagged", () => {
   assert.ok(codes(issues).includes("app-path-not-relative"));
 });
 
-test("validate — dangling dependsOn flagged", () => {
+test("validate — dangling component dependency flagged", () => {
   const doc = new DesignDoc();
-  doc.addComponent(slim({ dependsOn: ["nonexistent"] }));
+  doc.addComponent(
+    slim({ dependencies: [{ kind: "component", name: "nonexistent" }] }),
+  );
   doc.setOpenApi("todo-api", healthYaml);
   const issues = validate(doc);
   assert.ok(codes(issues).includes("dangling-dep"));
@@ -147,12 +149,54 @@ test("validate — dangling dependsOn flagged", () => {
 
 test("validate — dependency cycle flagged", () => {
   const doc = new DesignDoc();
-  doc.addComponent(slim({ name: "a", appPath: "a", dependsOn: ["b"] }));
-  doc.addComponent(slim({ name: "b", appPath: "b", dependsOn: ["a"] }));
+  doc.addComponent(
+    slim({ name: "a", appPath: "a", dependencies: [{ kind: "component", name: "b" }] }),
+  );
+  doc.addComponent(
+    slim({ name: "b", appPath: "b", dependencies: [{ kind: "component", name: "a" }] }),
+  );
   doc.setOpenApi("a", healthYaml);
   doc.setOpenApi("b", healthYaml);
   const issues = validate(doc);
   assert.ok(codes(issues).includes("depends-on-cycle"));
+});
+
+test("validate — external dependency with no config flagged", () => {
+  const doc = new DesignDoc();
+  doc.addComponent(
+    slim({
+      dependencies: [
+        {
+          kind: "external",
+          name: "openweather",
+          description: "OpenWeatherMap REST API.",
+          config: [],
+        },
+      ],
+    }),
+  );
+  doc.setOpenApi("todo-api", healthYaml);
+  const issues = validate(doc);
+  assert.ok(codes(issues).includes("external-missing-config"));
+});
+
+test("validate — external dependency with config passes", () => {
+  const doc = new DesignDoc();
+  doc.addComponent(
+    slim({
+      dependencies: [
+        {
+          kind: "external",
+          name: "openweather",
+          description: "OpenWeatherMap REST API.",
+          config: [{ key: "OPENWEATHER_API_KEY", secret: true }],
+        },
+      ],
+    }),
+  );
+  doc.setOpenApi("todo-api", healthYaml);
+  const issues = validate(doc);
+  assert.deepEqual(issues, []);
 });
 
 test("validate — yaml parse error flagged", () => {

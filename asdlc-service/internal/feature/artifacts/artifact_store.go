@@ -213,33 +213,29 @@ func (s *ArtifactStore) ReadDesign(ctx context.Context, orgID, projectID string)
 	if err != nil {
 		return nil, err
 	}
-	// Resolve architect-declared dependent-API names against the external
-	// API catalog so the in-memory design always has concrete URLs even
-	// when the on-disk frontmatter declared by intent only.
+	// Mark catalog-known org-service dependencies as resolved so the
+	// architecture view renders them without user action. The concrete URL
+	// is resolved at wiring/dispatch time (P3).
 	s.resolveExternalAPIs(design)
 	return design, nil
 }
 
-// resolveExternalAPIs fills in URLs for catalog-known dependent-API
-// entries whose URL was left blank by the architect. Idempotent — already-
-// populated URLs are left untouched.
+// resolveExternalAPIs marks org-service dependencies whose name is known to
+// the in-cluster catalog as `resolved`. Concrete URL resolution happens at
+// wiring/dispatch time (P3); external connections (user-supplied values) are
+// handled by the connection flow, not here. Idempotent.
 func (s *ArtifactStore) resolveExternalAPIs(d *DesignFile) {
 	if s == nil || s.externalAPIs == nil || d == nil {
 		return
 	}
 	for i := range d.Components {
-		for j := range d.Components[i].DependentApis {
-			dep := &d.Components[i].DependentApis[j]
-			if dep.URL != "" {
+		for j := range d.Components[i].Dependencies {
+			dep := &d.Components[i].Dependencies[j]
+			if dep.Kind != models.DependencyKindOrgService || dep.Status != "" {
 				continue
 			}
-			entry := s.externalAPIs.Lookup(dep.Name)
-			if entry.URL == "" {
-				continue
-			}
-			dep.URL = entry.URL
-			if dep.Authentication == "" {
-				dep.Authentication = entry.Authentication
+			if entry := s.externalAPIs.Lookup(dep.Name); entry.URL != "" {
+				dep.Status = "resolved"
 			}
 		}
 	}
@@ -296,16 +292,194 @@ type rootFrontmatter struct {
 // componentFrontmatter is the YAML frontmatter we accept on each
 // `components/<name>/design.md`. Field names mirror the user-facing keys
 // (snake-free) so frontmatter the architect emits is human-editable.
+//
+// `Dependencies` is the unified model (write path emits only this). `DependsOn`
+// + `DependentApis` are LEGACY read-compat: when `Dependencies` is absent we
+// fold them in (one phase; see plan migration notes). Writes never emit them.
 type componentFrontmatter struct {
 	Type           string                `yaml:"type"`
 	Language       string                `yaml:"language,omitempty"`
-	DependsOn      []string              `yaml:"dependsOn,omitempty"`
+	Dependencies   []dependencyConfig    `yaml:"dependencies,omitempty"`
+	Origin         string                `yaml:"origin,omitempty"`
+	Image          string                `yaml:"image,omitempty"`
+	Config         []configKeyConfig     `yaml:"config,omitempty"`
 	Buildpack      string                `yaml:"buildpack,omitempty"`
 	AppPath        string                `yaml:"appPath,omitempty"`
 	Entrypoint     string                `yaml:"entrypoint,omitempty"`
 	ExposesAPI     *exposesAPIConfig     `yaml:"exposesAPI,omitempty"`
 	CallerIdentity *callerIdentityConfig `yaml:"callerIdentity,omitempty"`
-	DependentApis  []dependentApiConfig  `yaml:"dependentApis,omitempty"`
+	// Legacy (read-only fold-in when Dependencies is empty).
+	DependsOn     []string             `yaml:"dependsOn,omitempty"`
+	DependentApis []dependentApiConfig `yaml:"dependentApis,omitempty"`
+}
+
+// dependencyConfig is the on-disk shape for one unified dependency entry.
+// Mirrors models.Dependency.
+type dependencyConfig struct {
+	Kind         string                      `yaml:"kind"`
+	Name         string                      `yaml:"name"`
+	Description  string                      `yaml:"description,omitempty"`
+	Status       string                      `yaml:"status,omitempty"`
+	Config       []configKeyConfig           `yaml:"config,omitempty"`
+	ResourceType string                      `yaml:"resourceType,omitempty"`
+	Parameters   map[string]string           `yaml:"parameters,omitempty"`
+	Candidates   []dependencyCandidateConfig `yaml:"candidates,omitempty"`
+}
+
+// configKeyConfig is the on-disk shape for one config key (connection schema
+// or component config). Mirrors models.ConfigKey.
+type configKeyConfig struct {
+	Key             string `yaml:"key"`
+	Secret          bool   `yaml:"secret"`
+	CredentialClass string `yaml:"credentialClass,omitempty"`
+}
+
+// dependencyCandidateConfig mirrors models.DependencyCandidate.
+type dependencyCandidateConfig struct {
+	Label       string `yaml:"label"`
+	Description string `yaml:"description,omitempty"`
+	URL         string `yaml:"url,omitempty"`
+}
+
+func upperSnake(s string) string {
+	return strings.ToUpper(strings.ReplaceAll(s, "-", "_"))
+}
+
+func toModelConfigKeys(in []configKeyConfig) []models.ConfigKey {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]models.ConfigKey, 0, len(in))
+	for _, c := range in {
+		if c.Key == "" {
+			continue
+		}
+		out = append(out, models.ConfigKey{Key: c.Key, Secret: c.Secret, CredentialClass: c.CredentialClass})
+	}
+	return out
+}
+
+func toCfgConfigKeys(in []models.ConfigKey) []configKeyConfig {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]configKeyConfig, 0, len(in))
+	for _, c := range in {
+		out = append(out, configKeyConfig{Key: c.Key, Secret: c.Secret, CredentialClass: c.CredentialClass})
+	}
+	return out
+}
+
+func toModelCandidates(in []dependencyCandidateConfig) []models.DependencyCandidate {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]models.DependencyCandidate, 0, len(in))
+	for _, c := range in {
+		out = append(out, models.DependencyCandidate{Label: c.Label, Description: c.Description, URL: c.URL})
+	}
+	return out
+}
+
+func toCfgCandidates(in []models.DependencyCandidate) []dependencyCandidateConfig {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]dependencyCandidateConfig, 0, len(in))
+	for _, c := range in {
+		out = append(out, dependencyCandidateConfig{Label: c.Label, Description: c.Description, URL: c.URL})
+	}
+	return out
+}
+
+// assembleDependencies builds the unified dependency list from frontmatter.
+// Prefers the `dependencies` field; when absent, folds the legacy `dependsOn`
+// (→ kind component) and `dependentApis` (→ org-service when name-only, else
+// external) so pre-migration designs still load.
+func assembleDependencies(cfm componentFrontmatter) []models.Dependency {
+	if len(cfm.Dependencies) > 0 {
+		out := make([]models.Dependency, 0, len(cfm.Dependencies))
+		for _, d := range cfm.Dependencies {
+			if d.Name == "" || d.Kind == "" {
+				continue
+			}
+			out = append(out, models.Dependency{
+				Kind:         d.Kind,
+				Name:         d.Name,
+				Description:  d.Description,
+				Status:       d.Status,
+				Config:       toModelConfigKeys(d.Config),
+				ResourceType: d.ResourceType,
+				Parameters:   d.Parameters,
+				Candidates:   toModelCandidates(d.Candidates),
+			})
+		}
+		return out
+	}
+	out := make([]models.Dependency, 0, len(cfm.DependsOn)+len(cfm.DependentApis))
+	for _, name := range cfm.DependsOn {
+		if name == "" {
+			continue
+		}
+		out = append(out, models.Dependency{Kind: models.DependencyKindComponent, Name: name})
+	}
+	for _, d := range cfm.DependentApis {
+		if d.Name == "" {
+			continue
+		}
+		out = append(out, foldLegacyDependentApi(d))
+	}
+	return out
+}
+
+// foldLegacyDependentApi maps a legacy dependentApi to the unified model:
+// name-only (catalog/org-published) → org-service; URL-bearing third-party →
+// external with a base-URL config key (+ a credential key for the auth scheme).
+func foldLegacyDependentApi(d dependentApiConfig) models.Dependency {
+	if d.URL == "" {
+		return models.Dependency{
+			Kind:        models.DependencyKindOrgService,
+			Name:        d.Name,
+			Description: d.Description,
+		}
+	}
+	cfg := []models.ConfigKey{{Key: upperSnake(d.Name) + "_BASE_URL", Secret: false}}
+	switch d.Authentication {
+	case "bearer":
+		cfg = append(cfg, models.ConfigKey{Key: upperSnake(d.Name) + "_TOKEN", Secret: true})
+	case "api-key":
+		cfg = append(cfg, models.ConfigKey{Key: upperSnake(d.Name) + "_API_KEY", Secret: true})
+	}
+	return models.Dependency{
+		Kind:        models.DependencyKindExternal,
+		Name:        d.Name,
+		Description: d.Description,
+		Config:      cfg,
+	}
+}
+
+// toCfgDeps converts the unified model back to on-disk frontmatter shape.
+func toCfgDeps(in []models.Dependency) []dependencyConfig {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]dependencyConfig, 0, len(in))
+	for _, d := range in {
+		if d.Name == "" || d.Kind == "" {
+			continue
+		}
+		out = append(out, dependencyConfig{
+			Kind:         d.Kind,
+			Name:         d.Name,
+			Description:  d.Description,
+			Status:       d.Status,
+			Config:       toCfgConfigKeys(d.Config),
+			ResourceType: d.ResourceType,
+			Parameters:   d.Parameters,
+			Candidates:   toCfgCandidates(d.Candidates),
+		})
+	}
+	return out
 }
 
 // exposesAPIConfig is the on-disk shape for a service component's API
@@ -434,9 +608,9 @@ func assembleComponent(name, designMd string, files map[string]string) (models.D
 		// Fallback: support .yml as well.
 		openapi = files[componentDirPrefix+name+"/openapi.yml"]
 	}
-	dependsOn := append([]string(nil), cfm.DependsOn...)
-	if dependsOn == nil {
-		dependsOn = []string{}
+	deps := assembleDependencies(cfm)
+	if deps == nil {
+		deps = []models.Dependency{}
 	}
 	var exposes *models.ExposesAPI
 	if cfm.ExposesAPI != nil && (cfm.ExposesAPI.Auth != "" || cfm.ExposesAPI.Managed || cfm.ExposesAPI.UserContext != "") {
@@ -450,29 +624,14 @@ func assembleComponent(name, designMd string, files map[string]string) (models.D
 	if cfm.CallerIdentity != nil && cfm.CallerIdentity.Mode != "" {
 		caller = &models.CallerIdentity{Mode: cfm.CallerIdentity.Mode}
 	}
-	var depApis []models.DependentAPI
-	if len(cfm.DependentApis) > 0 {
-		depApis = make([]models.DependentAPI, 0, len(cfm.DependentApis))
-		for _, d := range cfm.DependentApis {
-			if d.Name == "" {
-				continue
-			}
-			// URL may be empty here — the architect can declare an
-			// intent by name only; the ArtifactStore's catalog post-
-			// process resolves it on the way out of ReadDesign.
-			depApis = append(depApis, models.DependentAPI{
-				Name:           d.Name,
-				URL:            d.URL,
-				Description:    d.Description,
-				Authentication: d.Authentication,
-			})
-		}
-	}
 	return models.DesignComponent{
 		Name:                       name,
 		ComponentType:              cfm.Type,
 		Language:                   cfm.Language,
-		DependsOn:                  dependsOn,
+		Dependencies:               deps,
+		Origin:                     cfm.Origin,
+		Image:                      cfm.Image,
+		Config:                     toModelConfigKeys(cfm.Config),
 		Entrypoint:                 cfm.Entrypoint,
 		Buildpack:                  cfm.Buildpack,
 		AppPath:                    cfm.AppPath,
@@ -480,7 +639,6 @@ func assembleComponent(name, designMd string, files map[string]string) (models.D
 		ComponentAgentInstructions: strings.TrimSpace(body),
 		ExposesAPI:                 exposes,
 		CallerIdentity:             caller,
-		DependentApis:              depApis,
 	}, nil
 }
 
@@ -543,12 +701,15 @@ func SplitDesign(d *DesignFile) (map[string]string, error) {
 		}
 		base := componentDirPrefix + comp.Name
 		cfm := componentFrontmatter{
-			Type:       comp.ComponentType,
-			Language:   comp.Language,
-			DependsOn:  comp.DependsOn,
-			Buildpack:  comp.Buildpack,
-			AppPath:    comp.AppPath,
-			Entrypoint: comp.Entrypoint,
+			Type:         comp.ComponentType,
+			Language:     comp.Language,
+			Dependencies: toCfgDeps(comp.Dependencies),
+			Origin:       comp.Origin,
+			Image:        comp.Image,
+			Config:       toCfgConfigKeys(comp.Config),
+			Buildpack:    comp.Buildpack,
+			AppPath:      comp.AppPath,
+			Entrypoint:   comp.Entrypoint,
 		}
 		// Preserve any non-empty field — gating on `Auth != ""` would drop
 		// designs that set only `managed` or `userContext`.
@@ -561,38 +722,6 @@ func SplitDesign(d *DesignFile) (map[string]string, error) {
 		}
 		if comp.CallerIdentity != nil && comp.CallerIdentity.Mode != "" {
 			cfm.CallerIdentity = &callerIdentityConfig{Mode: comp.CallerIdentity.Mode}
-		}
-		if len(comp.DependentApis) > 0 {
-			cfm.DependentApis = make([]dependentApiConfig, 0, len(comp.DependentApis))
-			for _, d := range comp.DependentApis {
-				if d.Name == "" {
-					continue
-				}
-				// Drop the URL on save when it matches the current
-				// catalog entry for this name — the in-memory URL came
-				// from ReadDesign's catalog substitution, not from the
-				// architect. Persisting it would defeat the
-				// "name-only declaration" contract and break catalog
-				// rotation. (catalog == nil in tests / standalone
-				// SplitDesign callers — fall through to write URL.)
-				url := d.URL
-				if catalog := splitDesignCatalog(); catalog != nil {
-					if entry := catalog.Lookup(d.Name); entry.URL != "" && entry.URL == d.URL {
-						url = ""
-					}
-				}
-				if url == "" && d.Description == "" && d.Authentication == "" {
-					// Name-only declaration — emit just the name.
-					cfm.DependentApis = append(cfm.DependentApis, dependentApiConfig{Name: d.Name})
-					continue
-				}
-				cfm.DependentApis = append(cfm.DependentApis, dependentApiConfig{
-					Name:           d.Name,
-					URL:            url,
-					Description:    d.Description,
-					Authentication: d.Authentication,
-				})
-			}
 		}
 		cfmBytes, err := marshalFrontmatter(cfm)
 		if err != nil {

@@ -24,11 +24,15 @@ import (
 )
 
 func mkComp(name, lang string, dependsOn []string, openapi string) models.DesignComponent {
+	deps := make([]models.Dependency, 0, len(dependsOn))
+	for _, d := range dependsOn {
+		deps = append(deps, models.Dependency{Kind: models.DependencyKindComponent, Name: d})
+	}
 	return models.DesignComponent{
 		Name:          name,
 		ComponentType: "service",
 		Language:      lang,
-		DependsOn:     dependsOn,
+		Dependencies:  deps,
 		OpenAPISpec:   openapi,
 	}
 }

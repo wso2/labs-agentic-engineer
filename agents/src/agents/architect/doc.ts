@@ -19,7 +19,8 @@
 import { parse as parseYaml } from "yaml";
 import type {
   ArchitectOutput,
-  DependentApi,
+  Dependency,
+  DependencyStatus,
   DesignComponent,
   SlimComponent,
 } from "./schema.js";
@@ -91,49 +92,47 @@ export class DesignDoc {
     entry.openapi = null;
   }
 
-  // Union-add. Invalidates openapi (caller wires a new contract).
-  addDependency(name: string, dependsOn: string): void {
+  // Upsert a dependency by its `name` (replace if present, else append).
+  // Invalidates openapi ONLY for sibling-component deps (wire-contract drift);
+  // external / org-service / platform-resource deps don't change the contract.
+  upsertDependency(name: string, dep: Dependency): void {
     const entry = this.requireEntry(name);
-    if (entry.slim.dependsOn.includes(dependsOn)) {
-      // Idempotent: already present, still invalidate caller intent.
-      return;
-    }
-    entry.slim = {
-      ...entry.slim,
-      dependsOn: [...entry.slim.dependsOn, dependsOn],
-    };
-    entry.openapi = null;
-  }
-
-  // Invalidates openapi.
-  removeDependency(name: string, dependsOn: string): void {
-    const entry = this.requireEntry(name);
-    if (!entry.slim.dependsOn.includes(dependsOn)) return;
-    entry.slim = {
-      ...entry.slim,
-      dependsOn: entry.slim.dependsOn.filter((d) => d !== dependsOn),
-    };
-    entry.openapi = null;
-  }
-
-  // Adds (or replaces by name) an external dependent API. Idempotent on name.
-  // Does NOT invalidate openapi — external calls are described in
-  // componentAgentInstructions, not the wire contract.
-  addDependentApi(name: string, dep: DependentApi): void {
-    const entry = this.requireEntry(name);
-    const existing = entry.slim.dependentApis ?? [];
+    const existing = entry.slim.dependencies ?? [];
     const filtered = existing.filter((d) => d.name !== dep.name);
-    entry.slim = { ...entry.slim, dependentApis: [...filtered, dep] };
+    entry.slim = { ...entry.slim, dependencies: [...filtered, dep] };
+    if (dep.kind === "component") entry.openapi = null;
   }
 
-  removeDependentApi(name: string, depName: string): void {
+  // Remove a dependency by name (any kind). No-op if absent. Invalidates
+  // openapi only when the removed dep was a sibling component.
+  removeDependency(name: string, depName: string): void {
     const entry = this.requireEntry(name);
-    const existing = entry.slim.dependentApis ?? [];
-    if (!existing.some((d) => d.name === depName)) return;
+    const existing = entry.slim.dependencies ?? [];
+    const removed = existing.find((d) => d.name === depName);
+    if (!removed) return;
     entry.slim = {
       ...entry.slim,
-      dependentApis: existing.filter((d) => d.name !== depName),
+      dependencies: existing.filter((d) => d.name !== depName),
     };
+    if (removed.kind === "component") entry.openapi = null;
+  }
+
+  // Update a dependency's resolution status in place. Does NOT invalidate
+  // openapi — resolution is metadata, not a contract change.
+  resolveDependency(
+    name: string,
+    depName: string,
+    status: DependencyStatus,
+  ): void {
+    const entry = this.requireEntry(name);
+    const existing = entry.slim.dependencies ?? [];
+    const idx = existing.findIndex((d) => d.name === depName);
+    if (idx < 0) {
+      throw new Error(`dependency ${depName} not found on ${name}`);
+    }
+    const next = [...existing];
+    next[idx] = { ...existing[idx], status } as Dependency;
+    entry.slim = { ...entry.slim, dependencies: next };
   }
 
   // ── OpenAPI ───────────────────────────────────────────────────────────

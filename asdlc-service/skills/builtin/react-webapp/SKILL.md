@@ -40,9 +40,10 @@ Use these EXACT spellings — do not invent new keys:
 
 | Key | Set when | Meaning |
 |---|---|---|
-| `API_BASE_URL` | this web-app `dependsOn` a service sibling | external gateway URL of the primary upstream service in this project |
-| `<UPSTREAM>_URL` | this web-app `dependsOn` `<upstream>` | external gateway URL of that sibling (`<UPSTREAM>` = upstream component name in `UPPER_SNAKE_CASE`, e.g. `todo-api` → `TODO_API_URL`) |
-| `<NAME>_URL` | this web-app `dependentApis` includes `<name>` | external gateway URL of that external dependent API (same UPPER_SNAKE convention, e.g. `employee-api` → `EMPLOYEE_API_URL`) |
+| `API_BASE_URL` | this web-app has a `kind: component` dependency on a service sibling | external gateway URL of the primary upstream service in this project |
+| `<UPSTREAM>_URL` | this web-app has a `kind: component` dependency on `<upstream>` | external gateway URL of that sibling (`<UPSTREAM>` = the dependency's `name` in `UPPER_SNAKE_CASE`, e.g. `todo-api` → `TODO_API_URL`) |
+| `<NAME>_URL` | this web-app has a `kind: org-service` dependency on `<name>` | external gateway URL of that org-published service (same UPPER_SNAKE convention, e.g. `employee-api` → `EMPLOYEE_API_URL`) |
+| `<NAME>_BASE_URL` (and other declared `config` keys) | this web-app has a `kind: external` dependency on `<name>` | the external API's declared `config` URL key (and any other non-secret declared key). A web-app reads only non-secret/publishable keys (URLs, publishable keys) — never a `secret: true` config key |
 | `THUNDER_*` | this web-app has `callerIdentity.mode: end-user` | OIDC config keys (`THUNDER_URL`, `THUNDER_CLIENT_ID`, `THUNDER_REDIRECT_URI`, `THUNDER_SCOPES`, `THUNDER_AFTER_SIGN_IN_URL`) — owned by the `thunder-authentication` skill; see it for the per-key meanings and wiring |
 | `<NAME>` (any) | the agent declared it in `workload.yaml` `configurations.env` | app-config default (per-env override possible) |
 
@@ -53,9 +54,13 @@ Use these EXACT spellings — do not invent new keys:
 - One web-app component per user-facing surface; do NOT split a frontend
   into "ui-shell" + "ui-pages" — every SPA is one component, one
   task, one bundle.
-- For every backend in the web-app's `dependsOn`, the architect MUST
-  include an instruction line in `componentAgentInstructions`:
+- For every backend the web-app depends on (a `kind: component` or
+  `kind: org-service` dependency), the architect MUST include an
+  instruction line in `componentAgentInstructions`:
   `Upstream <name>: read the URL from window._env_.<NAME_UPPER_SNAKE>_URL via src/env.ts. Throw (no ?? "" fallback) on missing.`
+  For a `kind: external` dependency, read its declared `config` URL key
+  (e.g. `window._env_.<NAME_UPPER_SNAKE>_BASE_URL`) instead — and only
+  non-secret/publishable keys; never a `secret: true` config key.
 - Do NOT write anything about `VITE_*`, `REACT_APP_*`,
   `NEXT_PUBLIC_*`, `.env` files, build-time substitution, or
   "Dependency endpoint resolved" comments. Those mechanisms are
@@ -63,7 +68,7 @@ Use these EXACT spellings — do not invent new keys:
 
 ### Tech-lead — issue body bullets
 
-For every web-app task whose `dependsOn` is non-empty, include one
+For every web-app task with a non-empty `dependencies` list, include one
 Scope bullet per upstream:
 
 - "Wire upstream `<name>`: Read the URL from
@@ -135,7 +140,9 @@ missing (which means a config bug, not a missing key default):
 ```ts
 type Env = {
   API_BASE_URL: string;
-  // Plus one <UPSTREAM>_URL per dependsOn entry, if any.
+  // Plus one <UPSTREAM>_URL per `kind: component`/`kind: org-service`
+  // dependency, and the declared `config` URL key (e.g.
+  // <NAME>_BASE_URL) per `kind: external` dependency, if any.
   // If this SPA has callerIdentity.mode: end-user, the THUNDER_* OIDC
   // keys are also present — extend this type with them per the
   // thunder-authentication skill, which owns the auth wiring.

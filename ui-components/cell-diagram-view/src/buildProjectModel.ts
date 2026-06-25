@@ -19,10 +19,22 @@
 import type { Component, ComponentType, Connection, Project } from '@wso2/cell-diagram';
 
 /**
- * One external HTTP API a component depends on at runtime. The diagram
- * renders each entry as a chain-link node *outside* the cell on the east
- * side, connected to the consuming component. Mirrors the architect's
- * `DependentApi` zod schema and the BFF's `models.DependentAPI`.
+ * One unified dependency entry. The diagram renders `component` /
+ * `org-service` siblings as in-cell links and `external` / `org-service`
+ * connections as chain-link nodes *outside* the cell. Mirrors the architect's
+ * `Dependency` zod schema and the BFF's `models.Dependency`.
+ */
+export interface CellDiagramDependency {
+  kind: 'component' | 'org-service' | 'external' | 'platform-resource' | string;
+  name: string;
+  description?: string;
+  status?: string;
+  resourceType?: string;
+}
+
+/**
+ * Legacy external-API shape (pre-unified-model). Still accepted on read so old
+ * designs render; new designs carry these under `dependencies` instead.
  */
 export interface CellDiagramDependentApi {
   name: string;
@@ -34,11 +46,14 @@ export interface CellDiagramDependentApi {
 /**
  * Structural shape consumed by {@link buildProjectModel}. Any object with these
  * fields (e.g. the console's `DesignComponent` API type) is acceptable.
+ * `dependencies` is the unified model; `dependsOn` / `dependentApis` are
+ * legacy read-compat (used only when `dependencies` is absent).
  */
 export interface CellDiagramComponent {
   name: string;
   componentType: string;
   language?: string;
+  dependencies?: CellDiagramDependency[];
   dependsOn?: string[];
   dependentApis?: CellDiagramDependentApi[];
 }
@@ -67,18 +82,41 @@ function dependentApiConnection(api: CellDiagramDependentApi): Connection {
   };
 }
 
+function externalDependencyConnection(dep: CellDiagramDependency): Connection {
+  const tooltipParts: string[] = [];
+  if (dep.description) tooltipParts.push(dep.description);
+  tooltipParts.push(dep.kind);
+  if (dep.status && dep.status !== 'resolved') tooltipParts.push(`status: ${dep.status}`);
+  return {
+    id: `default:${EXTERNAL_API_PROJECT_SEGMENT}:${dep.name}`,
+    label: dep.name,
+    tooltip: tooltipParts.join(' — ') || dep.name,
+  };
+}
+
+// Sibling-component dependency names (the in-cell edges). Prefers the unified
+// `dependencies` (kind: component); falls back to legacy `dependsOn`.
+function siblingNames(comp: CellDiagramComponent): string[] {
+  if (Array.isArray(comp.dependencies)) {
+    return comp.dependencies.filter((d) => d.kind === 'component').map((d) => d.name);
+  }
+  return comp.dependsOn || [];
+}
+
 export function buildProjectModel(components: CellDiagramComponent[]): Project {
   const mapped: Component[] = components.map((comp) => {
-    const siblingConnections: Connection[] = (comp.dependsOn || []).map(
-      (depName) => ({
-        id: `default:${PROJECT_ID}:${depName}`,
-        label: depName,
-        onPlatform: true,
-      }),
-    );
-    const externalConnections: Connection[] = (comp.dependentApis || []).map(
-      dependentApiConnection,
-    );
+    const siblings = siblingNames(comp);
+    const siblingConnections: Connection[] = siblings.map((depName) => ({
+      id: `default:${PROJECT_ID}:${depName}`,
+      label: depName,
+      onPlatform: true,
+    }));
+    // External nodes: unified external + org-service deps, else legacy dependentApis.
+    const externalConnections: Connection[] = Array.isArray(comp.dependencies)
+      ? comp.dependencies
+          .filter((d) => d.kind === 'external' || d.kind === 'org-service')
+          .map(externalDependencyConnection)
+      : (comp.dependentApis || []).map(dependentApiConnection);
 
     return {
       id: comp.name,
@@ -93,7 +131,7 @@ export function buildProjectModel(components: CellDiagramComponent[]): Project {
                 id: `${comp.name}:web`,
                 label: 'WebApp',
                 type: 'HTTP',
-                dependencyIds: (comp.dependsOn || []).map((dep) => `${dep}:api`),
+                dependencyIds: siblings.map((dep) => `${dep}:api`),
                 deploymentMetadata: {
                   gateways: { internet: { isExposed: true }, intranet: { isExposed: false } },
                 },
@@ -105,7 +143,7 @@ export function buildProjectModel(components: CellDiagramComponent[]): Project {
                   id: `${comp.name}:api`,
                   label: 'API',
                   type: 'HTTP',
-                  dependencyIds: (comp.dependsOn || []).map((dep) => `${dep}:api`),
+                  dependencyIds: siblings.map((dep) => `${dep}:api`),
                   deploymentMetadata: {
                     gateways: { internet: { isExposed: false }, intranet: { isExposed: false } },
                   },

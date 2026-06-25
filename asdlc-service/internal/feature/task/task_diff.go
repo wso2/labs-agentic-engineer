@@ -113,7 +113,7 @@ func computeDesignDiff(prev, curr []models.DesignComponent) DesignDiff {
 			continue
 		}
 		mod := DesignDiffModified{Name: cc.Name}
-		mod.DependsOnAdded, mod.DependsOnRemoved = stringSetDiff(pc.DependsOn, cc.DependsOn)
+		mod.DependsOnAdded, mod.DependsOnRemoved = stringSetDiff(pc.ComponentDependsOn(), cc.ComponentDependsOn())
 
 		ops, err := compareOpenAPIOps(pc.OpenAPISpec, cc.OpenAPISpec)
 		if err == nil {

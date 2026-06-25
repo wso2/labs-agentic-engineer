@@ -18,37 +18,129 @@
 
 import { z } from "zod";
 
-// DependentApi — an HTTP API outside this project that a component consumes
-// at runtime. The architect emits these so the cell diagram can render the
-// dependency outside the cell boundary, the tech-lead can carry the URL into
-// the coding-agent's issue body, and the BFF can pin the URL into a build-
-// time env var on the consuming component.
-export const DependentApi = z.object({
+// ── Unified dependency model ───────────────────────────────────────────────
+// A Dependency is a single, kind-discriminated entry on a component. It
+// subsumes the legacy `dependsOn` (sibling components) and `dependentApis`
+// (external HTTP APIs) into ONE list with one gating path. Four kinds:
+//   - component         — a sibling component built by THIS project (internal)
+//   - org-service       — a service deployed by another project in the org (P3)
+//   - external          — an off-platform API / SaaS / DB the user supplies
+//                         values for; the only kind that needs a connection +
+//                         value collection
+//   - platform-resource — a platform-PROVISIONED resource (db/queue/cache/idp);
+//                         forward-declared here, wired in P5
+// See docs/design (dependency management).
+
+export const DependencyStatus = z.enum(["resolved", "ambiguous", "unresolved"]);
+export type DependencyStatus = z.infer<typeof DependencyStatus>;
+
+// A single config key the consuming component reads at runtime. For an
+// `external` connection these keys ARE the connection's schema and drive the
+// OpenChoreo ResourceType in P2. `secret: true` routes the value through the
+// secret path (SM-API → ESO); `false` is plain config (URLs, ids, regions).
+export const ConfigKey = z.object({
+  key: z
+    .string()
+    .describe(
+      "Env var name the component reads, UPPER_SNAKE_CASE, e.g. 'SALESFORCE_CLIENT_ID' or 'OPENWEATHER_BASE_URL'.",
+    ),
+  secret: z
+    .boolean()
+    .describe(
+      "True if the value is a credential / token / password (secret path); false for plain config (URLs, ids, regions).",
+    ),
+  credentialClass: z
+    .enum(["publishable", "secret"])
+    .optional()
+    .describe(
+      "Only meaningful for a secret key consumed by a web-app: 'publishable' = safe to expose in the browser (window._env_); 'secret' = must stay server-side. Defaults to 'secret' when unknown.",
+    ),
+});
+export type ConfigKey = z.infer<typeof ConfigKey>;
+
+// A candidate attached to an `ambiguous` dependency for the resolution UI.
+export const DependencyCandidate = z.object({
+  label: z.string().describe("Human-readable candidate name."),
+  description: z.string().optional(),
+  url: z.string().optional().describe("Spec or homepage URL, when known."),
+});
+export type DependencyCandidate = z.infer<typeof DependencyCandidate>;
+
+// kind: component — a sibling component built by this same project. The
+// platform resolves its URL (deploy-gated) and wires an OC Connection.
+const ComponentDependency = z.object({
+  kind: z.literal("component"),
   name: z
     .string()
     .describe(
-      "Lowercase kebab-case identifier for the external API, e.g. 'employee-api'. The tech-lead will UPPER_SNAKE_CASE this for env-var names.",
+      "Exact `name` of the sibling component this one depends on (must match another component verbatim).",
     ),
-  url: z
+  status: DependencyStatus.optional(),
+});
+
+// kind: org-service — a service deployed by ANOTHER project in the same org,
+// consumed via the org catalog + an OC Connection (P3). Declare by name only.
+const OrgServiceDependency = z.object({
+  kind: z.literal("org-service"),
+  name: z
     .string()
-    .optional()
+    .describe("Catalog name of the org service this component calls."),
+  description: z.string().optional(),
+  status: DependencyStatus.optional(),
+  candidates: z.array(DependencyCandidate).optional(),
+});
+
+// kind: external — an off-platform service the user supplies values for: a
+// SaaS (Salesforce, GitHub), a public/corporate REST API (OpenWeather), or a
+// user-managed DB. ONE generic kind — the integration style (which SDK, which
+// auth, where the spec lives) rides in `description`, not a sub-kind enum.
+const ExternalDependency = z.object({
+  kind: z.literal("external"),
+  name: z
+    .string()
     .describe(
-      "Base URL the consuming component must call, e.g. 'http://development-default.openchoreoapis.localhost:19080/employee-app-employee-api-http/employees'. OMIT for catalog-backed APIs (name-only) — the platform resolves the URL from its in-cluster catalog at design-load time.",
+      "Stable key; the connection's registry + Resource name, e.g. 'salesforce', 'openweather'. Lowercase kebab-case.",
     ),
   description: z
     .string()
     .describe(
-      "One-line description of what the API returns / does, so the coding agent knows how to use it.",
+      "What the config is for + how to use it (which SDK to initialise, which auth scheme, where the API spec lives). Agent-facing, free-form.",
     ),
-  authentication: z
-    .enum(["none", "bearer", "api-key"])
-    .optional()
+  config: z
+    .array(ConfigKey)
     .describe(
-      "Auth scheme the upstream requires. 'none' = unauthenticated (default), 'bearer' = caller attaches Authorization: Bearer <token>, 'api-key' = static key via header/query.",
+      "The config key SCHEMA the agent codes against (which keys, which are secret). Values are collected later from the user, NOT here. A URL is a config key (it varies per env), not metadata.",
     ),
+  status: DependencyStatus.optional(),
+  candidates: z.array(DependencyCandidate).optional(),
 });
 
-export type DependentApi = z.infer<typeof DependentApi>;
+// kind: platform-resource — a resource the PLATFORM provisions (database,
+// message-queue, cache, identity-provider …), sub-typed by `resourceType`.
+// Forward-declared in P1; provisioning is wired in P5.
+const PlatformResourceDependency = z.object({
+  kind: z.literal("platform-resource"),
+  name: z.string().describe("Logical name for this resource on the component."),
+  resourceType: z
+    .string()
+    .describe(
+      "Registered OpenChoreo (Cluster)ResourceType name, e.g. 'database'. OPEN STRING — the available set is discovered from the cluster at runtime, not an enum.",
+    ),
+  parameters: z
+    .record(z.string(), z.string())
+    .optional()
+    .describe("Provisioning parameters (open key/value). Wired in P5."),
+  description: z.string().optional(),
+  status: DependencyStatus.optional(),
+});
+
+export const Dependency = z.discriminatedUnion("kind", [
+  ComponentDependency,
+  OrgServiceDependency,
+  ExternalDependency,
+  PlatformResourceDependency,
+]);
+export type Dependency = z.infer<typeof Dependency>;
 
 // SlimComponent — shape metadata only, no openAPISpec. The architect emits
 // these via add_component / set_* tools so the UI can render component cards
@@ -67,10 +159,28 @@ export const SlimComponent = z.object({
     .describe(
       "Primary programming language and framework, e.g. 'Go', 'TypeScript / React', 'Ballerina'",
     ),
-  dependsOn: z
-    .array(z.string())
+  dependencies: z
+    .array(Dependency)
     .describe(
-      "Names of other components this one depends on (must match other components' 'name' values exactly)",
+      "Everything this component needs from outside itself, as ONE kind-discriminated list: sibling components (kind 'component'), org services (kind 'org-service'), external connections (kind 'external'), and platform resources (kind 'platform-resource'). Empty array when the component is self-contained. Replaces the legacy dependsOn + dependentApis fields.",
+    ),
+  origin: z
+    .enum(["source", "image"])
+    .optional()
+    .describe(
+      "How this component is produced: 'source' = the agent writes + builds it (the default; omit for source); 'image' = a prebuilt container (e.g. Keycloak) the agent does NOT write source for. Image components are a later phase.",
+    ),
+  image: z
+    .string()
+    .optional()
+    .describe(
+      "Container image ref with tag when origin = 'image', e.g. 'quay.io/keycloak/keycloak:25.0'. Omit for source components.",
+    ),
+  config: z
+    .array(ConfigKey)
+    .optional()
+    .describe(
+      "User-provided runtime config vars on THIS component (plain settings and/or secrets) that are NOT an external service — e.g. a feature flag, a target repo name, an admin password. Collected from the user via the same value form as connections and injected into the component's own ReleaseBinding. Omit when the component needs no user-supplied config.",
     ),
   entrypoint: z
     .enum(["deployment/service", "deployment/web-application"])
@@ -117,12 +227,6 @@ export const SlimComponent = z.object({
     .optional()
     .describe(
       "Caller-identity intent. Set 'mode: end-user' on web-app components that sign users in via the platform IDP; the platform handles OIDC provisioning + runtime config injection.",
-    ),
-  dependentApis: z
-    .array(DependentApi)
-    .optional()
-    .describe(
-      "External HTTP APIs this component depends on at runtime. UNLIKE `dependsOn` (which references sibling components built by this project), these are pre-existing APIs outside the project — e.g. a corporate employee directory. They render outside the cell in the architecture diagram, and the tech-lead surfaces their URL + auth info in the coding agent's issue body. Omit when the component has no external upstreams.",
     ),
 });
 

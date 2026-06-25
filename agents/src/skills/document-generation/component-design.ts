@@ -26,7 +26,7 @@ import type { DocumentGenerationSkill } from "./types.js";
  *   - `prompt` set to the target component name (e.g. "user-api")
  *
  * The skill emits the full file content: YAML frontmatter (type, language,
- * dependsOn, buildpack, appPath, entrypoint) plus a Markdown body covering
+ * dependencies, buildpack, appPath, entrypoint) plus a Markdown body covering
  * Overview / Responsibilities / Interfaces / Implementation Notes.
  */
 export const componentDesign: DocumentGenerationSkill = {
@@ -49,13 +49,22 @@ The file MUST start with a YAML frontmatter block delimited by \`---\` lines:
 ---
 type: service                  # one of: service | web-app
 language: Go                   # the implementation language
-dependsOn:                     # other component names this depends on
-  - auth-service
+dependencies:                  # everything this component needs from outside itself (kind-discriminated)
+  - kind: component            #   a sibling component built by this project
+    name: auth-service
+  - kind: external             #   an off-platform API/SaaS/DB the user supplies values for
+    name: openweather
+    description: OpenWeatherMap current-weather REST API.
+    config:
+      - { key: OPENWEATHER_BASE_URL, secret: false }
+      - { key: OPENWEATHER_API_KEY, secret: true }
 buildpack: docker              # build pack for this component
-appPath: /user-api             # subdir in the project repo where the code lives
+appPath: user-api              # subdir in the project repo where the code lives (no leading slash)
 entrypoint: deployment/service # OC component entrypoint reference
 ---
 \`\`\`
+
+Use an empty list (\`dependencies: []\`) when the component is self-contained. Omit the \`external\` example above unless the component actually calls an off-platform service.
 
 Pick frontmatter values that are consistent with the rest of the design. If the previous design already had this component, prefer keeping its existing frontmatter unless the surrounding design has clearly changed in a way that demands updates.
 
@@ -83,7 +92,7 @@ Concrete guidance the coding-agent needs when implementing this component: tech 
 ## Voice and discipline
 
 - Output is exactly one Markdown document — frontmatter, then body. No surrounding prose. No fences around the whole thing.
-- Component names referenced in \`dependsOn\` and the prose must match the canonical sibling names exactly (no spaces, kebab-case).
+- Component names referenced in \`dependencies\` (kind: component) and the prose must match the canonical sibling names exactly (no spaces, kebab-case).
 - Don't redesign other components. Don't invent features the system overview doesn't imply.
 - If the requested component doesn't appear in the existing design at all, derive it from the system overview + siblings; the new design.md should still be coherent with the rest.
 

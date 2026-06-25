@@ -18,6 +18,16 @@
 
 import { parse as parseYaml } from "yaml";
 import type { DesignDoc } from "./doc.js";
+import type { SlimComponent } from "./schema.js";
+
+// Names of the sibling components a component depends on — the `component`-kind
+// entries of the unified dependency list. This is the successor to the legacy
+// `dependsOn: string[]` field and drives cycle / dangling / web-wiring checks.
+function siblingDeps(slim: SlimComponent): string[] {
+  return (slim.dependencies ?? [])
+    .filter((d) => d.kind === "component")
+    .map((d) => d.name);
+}
 
 // Structured validation issue. Per design doc §5.
 export type ValidationIssue = {
@@ -61,7 +71,30 @@ export function validate(doc: DesignDoc): ValidationIssue[] {
   validatePerOpenApi(doc, issues);
   validateCrossComponent(doc, issues);
   validateWebUpstreamWiring(doc, issues);
+  validateDependencyShapes(doc, issues);
   return issues;
+}
+
+// Per-dependency structural checks. An `external` connection MUST declare at
+// least one config key — without it there is nothing to collect from the user
+// and nothing to wire into a ResourceType (P2). Other kinds are validated for
+// existence/cycles in validateCrossComponent.
+function validateDependencyShapes(
+  doc: DesignDoc,
+  issues: ValidationIssue[],
+): void {
+  for (const [name, entry] of doc.components) {
+    for (const dep of entry.slim.dependencies ?? []) {
+      if (dep.kind === "external" && (dep.config ?? []).length === 0) {
+        issues.push({
+          component: name,
+          code: "external-missing-config",
+          dependency: dep.name,
+          hint: `external dependency '${dep.name}' has no config keys. Declare the env-var keys the component needs (mark credentials secret:true), e.g. [{ key: '${toUpperSnake(dep.name)}_API_KEY', secret: true }].`,
+        });
+      }
+    }
+  }
 }
 
 // Phase 1+ runtime-config: every web-app whose dependsOn is non-empty MUST
@@ -81,10 +114,11 @@ function validateWebUpstreamWiring(
   for (const [name, entry] of doc.components) {
     const slim = entry.slim;
     if (slim.componentType !== "web-app") continue;
-    if (slim.dependsOn.length === 0) continue;
+    const deps = siblingDeps(slim);
+    if (deps.length === 0) continue;
 
     const instructions = slim.componentAgentInstructions ?? "";
-    for (const upstream of slim.dependsOn) {
+    for (const upstream of deps) {
       const upstreamEntry = doc.components.get(upstream);
       // Skip non-existent deps (dangling-dep is already flagged elsewhere)
       // and skip web-app-on-web-app deps (no URL to wire).
@@ -317,20 +351,20 @@ function validateCrossComponent(
   doc: DesignDoc,
   issues: ValidationIssue[],
 ): void {
-  // dependsOn names exist
+  // sibling-component dep names exist
   const names = new Set(doc.components.keys());
   for (const [name, entry] of doc.components) {
-    for (const dep of entry.slim.dependsOn) {
+    for (const dep of siblingDeps(entry.slim)) {
       if (!names.has(dep)) {
         issues.push({ component: name, code: "dangling-dep", dep });
       }
     }
   }
 
-  // Topological sort — detect cycles
+  // Topological sort — detect cycles (over sibling-component deps only)
   const graph: Record<string, string[]> = {};
   for (const [name, entry] of doc.components) {
-    graph[name] = entry.slim.dependsOn.filter((d) => names.has(d));
+    graph[name] = siblingDeps(entry.slim).filter((d) => names.has(d));
   }
   const WHITE = 0,
     GRAY = 1,
