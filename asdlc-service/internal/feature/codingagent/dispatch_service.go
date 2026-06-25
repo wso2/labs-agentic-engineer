@@ -114,7 +114,8 @@ type dispatchService struct {
 	// reconcile per-environment trait configs (the part CreateComponent
 	// can't pre-stamp because RBs are created asynchronously by OC's
 	// autoDeploy controller). Set via WithTraitSync. Optional in tests.
-	traitSync *component.TraitSyncService
+	traitSync          *component.TraitSyncService
+	connSecretResolver ConnectionSecretResolveFunc
 	// codingAgentDispatcher, when non-nil, is the proxy-based dispatch
 	// path (NS + SA + ExternalSecret×2 + Job). When the dispatcher is
 	// wired AND the per-org SM-API triplets are populated, the new path
@@ -191,6 +192,18 @@ func (s *dispatchService) SetRuntimeConfig(r RuntimeConfigEmitter) {
 // NewDispatchService in production wiring.
 func (s *dispatchService) SetTraitSync(traitSync *component.TraitSyncService) {
 	s.traitSync = traitSync
+}
+
+// ConnectionSecretResolveFunc resolves the per-run ExternalSecret inputs for the
+// external connections a task binds (vault path + secret keys), for one env. The
+// composition root adapts connections.Provisioner.ResolveRunnerSecrets to it.
+type ConnectionSecretResolveFunc func(ctx context.Context, orgHandle, projectName, env string, connNames []string) ([]ConnectionSecretInputs, error)
+
+// SetConnectionSecretResolver wires the resolver so the runner pod receives the
+// task's bound connection secrets via envFrom (the agent integration-tests
+// against the live service). Optional — nil skips connection secrets.
+func (s *dispatchService) SetConnectionSecretResolver(f ConnectionSecretResolveFunc) {
+	s.connSecretResolver = f
 }
 
 // DispatchServiceWith* surface the optional setters the composition root
@@ -690,12 +703,25 @@ func (s *dispatchService) tryDispatchViaProxy(
 		PublisherTokenURL: publisherTokenURL,
 	}
 
+	// External connections the task binds: materialise their secrets into the
+	// runner via per-run ExternalSecrets so the agent integration-tests against
+	// the live service. Best-effort — a resolve hiccup must not block dispatch.
+	var connSRs []ConnectionSecretInputs
+	if s.connSecretResolver != nil && len(task.DependsOnConnections) > 0 {
+		if resolved, rerr := s.connSecretResolver(ctx, task.OrgID, task.ProjectID, "development", []string(task.DependsOnConnections)); rerr != nil {
+			slog.WarnContext(ctx, "resolve connection runner secrets failed", "task", task.ID, "error", rerr)
+		} else {
+			connSRs = resolved
+		}
+	}
+
 	rn, err := s.codingAgentDispatcher.Dispatch(ctx, Inputs{
 		OrgUUID:                orgUUID,
 		Job:                    job,
 		AnthropicSR:            SecretRef{SecretRefName: derefStr(anthropicRow.SMAPISecretRefName), KVPath: derefStr(anthropicRow.SMAPIKVPath), Property: derefStr(anthropicRow.SMAPIProperty)},
 		GitHubSR:               SecretRef{SecretRefName: derefStr(githubRow.SMAPISecretRefName), KVPath: derefStr(githubRow.SMAPIKVPath), Property: derefStr(githubRow.SMAPIProperty)},
 		PublisherSR:            publisherSR,
+		ConnectionSRs:          connSRs,
 		ClusterSecretStoreName: s.clusterSecretStore,
 	})
 	if err != nil {

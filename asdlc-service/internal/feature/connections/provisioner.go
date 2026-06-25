@@ -155,6 +155,53 @@ func (p *Provisioner) Deprovision(ctx context.Context, orgHandle, projectName, c
 	return nil
 }
 
+// ConnectionRunnerSecret describes one connection's per-env secret bundle for the
+// coding-agent runner: the SM-API vault KV path + the secret key list. The
+// dispatcher materialises these into the runner pod (the agent integration-tests
+// against the live service during implementation).
+type ConnectionRunnerSecret struct {
+	KVPath string   // user-app-secrets/<orgNs>/<secretRefName>
+	Keys   []string // the secret config keys (== env var names + the SM-API properties)
+}
+
+// ResolveRunnerSecrets returns the per-run-ExternalSecret inputs for the
+// connections a task depends on, for one environment: the secret key list (from
+// the registry) + the SM-API vault path (read back off the connection's per-env
+// ResourceReleaseBinding, where the provisioner pinned it). Connections with no
+// secret keys (or not yet provisioned) are skipped.
+func (p *Provisioner) ResolveRunnerSecrets(ctx context.Context, orgHandle, projectName, env string, connNames []string) ([]ConnectionRunnerSecret, error) {
+	out := make([]ConnectionRunnerSecret, 0, len(connNames))
+	for _, conn := range connNames {
+		c, err := p.registry.Get(ctx, orgHandle, conn)
+		if err != nil || c == nil {
+			continue
+		}
+		var keys []string
+		for _, k := range c.ConfigSchema {
+			if k.Secret {
+				keys = append(keys, k.Key)
+			}
+		}
+		if len(keys) == 0 {
+			continue
+		}
+		b, err := p.rc.GetBinding(ctx, orgHandle, connectionResourceName(projectName, conn)+"-"+env)
+		if err != nil || b == nil {
+			continue
+		}
+		var cfg map[string]string
+		if len(b.Spec.ResourceTypeEnvironmentConfigs) > 0 {
+			_ = json.Unmarshal(b.Spec.ResourceTypeEnvironmentConfigs, &cfg)
+		}
+		path := cfg[openchoreo.SecretStorePathField]
+		if path == "" {
+			continue
+		}
+		out = append(out, ConnectionRunnerSecret{KVPath: path, Keys: keys})
+	}
+	return out, nil
+}
+
 func (p *Provisioner) waitForLatestRelease(ctx context.Context, namespace, resourceName string) (string, error) {
 	deadline := time.Now().Add(p.pollTimeout)
 	for {

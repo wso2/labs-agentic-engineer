@@ -68,6 +68,13 @@ type Inputs struct {
 	// Optional — when absent the runner falls back to ASDLC_BEARER.
 	PublisherSR *SecretRef
 
+	// ConnectionSRs are the external-connection per-env secret bundles the task's
+	// component binds (the SM-API vault path + the secret keys). The orchestrator
+	// emits one per-run ExternalSecret each, materialising every key into a K8s
+	// Secret the runner mounts via envFrom — so the agent integration-tests
+	// against the live service. Empty when the task binds no secret-bearing conn.
+	ConnectionSRs []ConnectionSecretInputs
+
 	// ClusterSecretStoreName is the ESO CSS that backs reads. On
 	// cloud-dp-oc-dp this MUST be `application-secrets-read` (AppRole
 	// `approle-creds-application-read-permission` — the only one
@@ -82,6 +89,14 @@ type SecretRef struct {
 	SecretRefName string
 	KVPath        string
 	Property      string
+}
+
+// ConnectionSecretInputs is one external connection's per-env secret bundle for
+// the runner: the SM-API vault KV path + the secret keys (each key == its SM-API
+// property == the env var name the runner reads via envFrom).
+type ConnectionSecretInputs struct {
+	KVPath string
+	Keys   []string
 }
 
 // Dispatcher wraps the proxy client + defaults. Construct once at boot.
@@ -173,6 +188,20 @@ func (d *Dispatcher) Dispatch(ctx context.Context, in Inputs) (string, error) {
 			return "", fmt.Errorf("dispatcher: apply publisher ExternalSecret: %w", err)
 		}
 	}
+	// Per-connection ExternalSecrets — each key materialises into a K8s Secret the
+	// runner mounts via envFrom (the agent integration-tests against the live conn).
+	connSecretNames := make([]string, 0, len(in.ConnectionSRs))
+	for i, cs := range in.ConnectionSRs {
+		if cs.KVPath == "" || len(cs.Keys) == 0 {
+			continue
+		}
+		esName := fmt.Sprintf("%s-conn%d-es", runName, i)
+		secretName := fmt.Sprintf("%s-conn%d", runName, i)
+		if err := d.applyConnectionExternalSecret(ctx, in, ns, esName, secretName, cs); err != nil {
+			return "", fmt.Errorf("dispatcher: apply connection ExternalSecret: %w", err)
+		}
+		connSecretNames = append(connSecretNames, secretName)
+	}
 
 	// 4) Job — fill the secret names + NS + SA into the job inputs the
 	// caller pre-populated, then build + apply.
@@ -182,6 +211,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, in Inputs) (string, error) {
 	job.AnthropicSecretName = anthropicSecret
 	job.GitHubSecretName = githubSecret
 	job.PublisherSecretName = publisherSecret
+	job.ConnectionSecretNames = connSecretNames
 	manifest, err := Build(job)
 	if err != nil {
 		return "", fmt.Errorf("dispatcher: build Job manifest: %w", err)
@@ -226,6 +256,28 @@ func (d *Dispatcher) applyPublisherExternalSecret(ctx context.Context, in Inputs
 			{LocalKey: "PUBLISHER_CLIENT_ID", RemoteRefProperty: "client_id"},
 			{LocalKey: "PUBLISHER_CLIENT_SECRET", RemoteRefProperty: "client_secret"},
 		},
+	})
+	if err != nil {
+		return err
+	}
+	return d.proxy.ApplyExternalSecret(ctx, ns, manifest)
+}
+
+// applyConnectionExternalSecret emits one ExternalSecret reading all of a
+// connection's secret keys from its single SM-API path (one data entry per key,
+// localKey == property == key) into a K8s Secret the runner mounts via envFrom.
+func (d *Dispatcher) applyConnectionExternalSecret(ctx context.Context, in Inputs, ns, esName, secretName string, cs ConnectionSecretInputs) error {
+	entries := make([]ExternalSecretDataEntry, 0, len(cs.Keys))
+	for _, k := range cs.Keys {
+		entries = append(entries, ExternalSecretDataEntry{LocalKey: k, RemoteRefProperty: k})
+	}
+	manifest, err := BuildExternalSecret(ExternalSecretInputs{
+		Name:                   esName,
+		Namespace:              ns,
+		TargetSecretName:       secretName,
+		ClusterSecretStoreName: in.ClusterSecretStoreName,
+		RemoteRefKey:           cs.KVPath,
+		DataEntries:            entries,
 	})
 	if err != nil {
 		return err

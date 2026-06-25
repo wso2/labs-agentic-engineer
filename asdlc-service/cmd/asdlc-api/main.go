@@ -807,6 +807,22 @@ func main() {
 			_, derr := dispatchSvc.DispatchTasks(c, orgID, projectID)
 			return derr
 		})
+	// Materialise a task's bound connection secrets into the runner pod (envFrom).
+	if setter, ok := dispatchSvc.(interface {
+		SetConnectionSecretResolver(codingagent.ConnectionSecretResolveFunc)
+	}); ok {
+		setter.SetConnectionSecretResolver(func(c context.Context, orgHandle, projectName, env string, connNames []string) ([]codingagent.ConnectionSecretInputs, error) {
+			rs, rerr := connectionProvisioner.ResolveRunnerSecrets(c, orgHandle, projectName, env, connNames)
+			if rerr != nil {
+				return nil, rerr
+			}
+			out := make([]codingagent.ConnectionSecretInputs, 0, len(rs))
+			for _, r := range rs {
+				out = append(out, codingagent.ConnectionSecretInputs{KVPath: r.KVPath, Keys: r.Keys})
+			}
+			return out, nil
+		})
+	}
 	// Let the proxy dispatch pre-flight provision the per-org publisher cc on
 	// demand (decoupled from API security), so the runner can auth to the BFF
 	// through the gateway for every component, not just protected ones.

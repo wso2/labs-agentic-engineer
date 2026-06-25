@@ -86,6 +86,11 @@ type JobInputs struct {
 	// from SM-API. Empty disables the runner-auth path; the runner then
 	// falls back to ASDLC_BEARER for /credentials/refresh calls.
 	PublisherSecretName string
+	// ConnectionSecretNames are the per-run K8s Secrets holding the external
+	// connections' values (one per connection the task binds), each mounted via
+	// envFrom so every connection key (e.g. OPENWEATHER_API_KEY) is a runner env
+	// var. Empty when the task binds no secret-bearing connection.
+	ConnectionSecretNames []string
 	// PublisherTokenURL is the Thunder /oauth2/token endpoint used by the
 	// runner's cc helper. Non-secret; rides as a plain env. Set in lockstep
 	// with PublisherSecretName.
@@ -147,6 +152,11 @@ func Build(in JobInputs) (map[string]any, error) {
 	envFrom := []map[string]any{
 		{"secretRef": map[string]any{"name": in.AnthropicSecretName}},
 		{"secretRef": map[string]any{"name": in.GitHubSecretName}},
+	}
+	for _, n := range in.ConnectionSecretNames {
+		if n != "" {
+			envFrom = append(envFrom, map[string]any{"secretRef": map[string]any{"name": n}})
+		}
 	}
 	if in.PublisherSecretName != "" {
 		envFrom = append(envFrom, map[string]any{
