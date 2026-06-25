@@ -18,44 +18,37 @@ package connections
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/wso2/asdlc/asdlc-service/clients/openchoreo"
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
 
-// componentEnvPatcher is the slice of the OC component client the consumer
-// wiring needs. openchoreo.ComponentClient satisfies it.
-type componentEnvPatcher interface {
-	UpdateComponentWorkflowEnvVars(ctx context.Context, orgName, projectName, componentName string, envVars []models.WorkflowEnvVarRef) error
-}
-
-// bindingReader is the slice of the Resource client the consumer wiring needs.
-// openchoreo.ResourceClient satisfies it.
-type bindingReader interface {
-	GetBinding(ctx context.Context, namespace, name string) (*openchoreo.ResourceReleaseBinding, error)
-}
-
-// ConsumerWiring injects an external connection's resolved outputs into a
-// consuming component's runtime env (plan §6 consumption). Because the Resource
-// model's DP object names are OC-generated (hashed), the BFF reads the per-env
-// binding's `status.outputs[]` for the concrete secretKeyRef/configMapKeyRef and
-// patches them onto the consumer's ReleaseBindings via
-// UpdateComponentWorkflowEnvVars — the same no-rebuild ReleaseBinding-patch path
-// the runtime-config (env-config.js) pipeline uses.
+// ConsumerWiring wires an external connection's outputs into a consuming
+// component via the NATIVE OpenChoreo path: it sets the consumer Workload's
+// `spec.dependencies.resources[]` (ref → the connection Resource, envBindings →
+// output→env). OC then resolves each Resource's outputs (the ESO-materialized
+// Secret + ConfigMap) into the pod env and gates the consumer on
+// `ResourceDependenciesReady`. (The ReleaseBinding-env secretKeyRef path does
+// NOT work for this — it resolves through an OC SecretReference CR, not the raw
+// materialized Secret.) The connection's per-env binding gives the output names.
 type ConsumerWiring struct {
-	rc    bindingReader
-	comp  componentEnvPatcher
+	rc    openchoreo.ResourceClient
 	tasks TaskStore
 	envs  []string // project environments (just "development" today)
 }
 
-func NewConsumerWiring(rc bindingReader, comp componentEnvPatcher, tasks TaskStore, envs []string) *ConsumerWiring {
+func NewConsumerWiring(rc openchoreo.ResourceClient, tasks TaskStore, envs []string) *ConsumerWiring {
 	if len(envs) == 0 {
 		envs = []string{"development"}
 	}
-	return &ConsumerWiring{rc: rc, comp: comp, tasks: tasks, envs: envs}
+	return &ConsumerWiring{rc: rc, tasks: tasks, envs: envs}
+}
+
+// scopedWorkloadName is the OC Workload CR name for a component:
+// <project>-<component>-workload (the build's generate-workload-cr naming).
+func scopedWorkloadName(project, component string) string {
+	return project + "-" + component + "-workload"
 }
 
 // EmitForProjectConnections re-wires the connection env onto every component in
@@ -87,52 +80,34 @@ func connectionBindingName(project, conn, env string) string {
 	return connectionResourceName(project, conn) + "-" + env
 }
 
-// WireConsumer patches the connection env onto a consuming component across the
-// given environments, built from each connection's resolved binding outputs.
-// Idempotent (UpdateComponentWorkflowEnvVars replaces the env block) and a soft
-// no-op when the consumer's ReleaseBindings don't exist yet (pre-first-deploy) —
-// the caller re-drives it from the post-deploy cascade. orgHandle is the OC
-// namespace; envs are the project's environments (just "development" today).
-func (w *ConsumerWiring) WireConsumer(ctx context.Context, orgHandle, projectName, componentName string, connNames, envs []string) error {
-	envVars := make([]models.WorkflowEnvVarRef, 0)
+// WireConsumer sets the consumer Workload's spec.dependencies.resources[] so OC
+// resolves each bound connection's outputs into the pod env. The envBindings map
+// each output name (== the config key == the env var name) to itself; the output
+// set is read from the connection's development-env binding. A soft no-op until
+// the connection is provisioned (binding has outputs) and the Workload exists —
+// the post-deploy cascade re-drives it. orgHandle is the OC namespace.
+func (w *ConsumerWiring) WireConsumer(ctx context.Context, orgHandle, projectName, componentName string, connNames, _ []string) error {
+	resources := make([]openchoreo.WorkloadResourceDep, 0, len(connNames))
 	for _, conn := range connNames {
-		for _, env := range envs {
-			b, err := w.rc.GetBinding(ctx, orgHandle, connectionBindingName(projectName, conn, env))
-			if err != nil || b == nil || b.Status == nil {
-				// Not provisioned yet / transient — skip; the cascade re-drives.
-				continue
-			}
-			// Plain (configMap-backed) outputs are passed as literals (the BFF
-			// WorkflowEnvVarRef has no configMapKeyRef); read them off the binding's
-			// per-env configs (the values the user supplied).
-			var plain map[string]string
-			if len(b.Spec.ResourceTypeEnvironmentConfigs) > 0 {
-				_ = json.Unmarshal(b.Spec.ResourceTypeEnvironmentConfigs, &plain)
-			}
-			for _, out := range b.Status.Outputs {
-				switch {
-				case out.SecretKeyRef != nil:
-					envVars = append(envVars, models.WorkflowEnvVarRef{
-						Key: out.Name,
-						ValueFrom: &models.WorkflowEnvVarValueRef{
-							SecretKeyRef: &models.WorkflowSecretKeyRef{Name: out.SecretKeyRef.Name, Key: out.SecretKeyRef.Key},
-						},
-					})
-				case out.ConfigMapKeyRef != nil:
-					if v, ok := plain[out.Name]; ok {
-						envVars = append(envVars, models.WorkflowEnvVarRef{Key: out.Name, Value: v})
-					}
-				case out.Value != "":
-					envVars = append(envVars, models.WorkflowEnvVarRef{Key: out.Name, Value: out.Value})
-				}
-			}
+		b, err := w.rc.GetBinding(ctx, orgHandle, connectionBindingName(projectName, conn, "development"))
+		if err != nil || b == nil || b.Status == nil || len(b.Status.Outputs) == 0 {
+			// Not provisioned yet / transient — skip; the cascade re-drives.
+			continue
 		}
+		envBindings := make(map[string]string, len(b.Status.Outputs))
+		for _, out := range b.Status.Outputs {
+			envBindings[out.Name] = out.Name
+		}
+		resources = append(resources, openchoreo.WorkloadResourceDep{
+			Ref:         connectionResourceName(projectName, conn),
+			EnvBindings: envBindings,
+		})
 	}
-	if len(envVars) == 0 {
+	if len(resources) == 0 {
 		return nil
 	}
-	if err := w.comp.UpdateComponentWorkflowEnvVars(ctx, orgHandle, projectName, componentName, envVars); err != nil {
-		return fmt.Errorf("connections: wire consumer %q env: %w", componentName, err)
+	if err := w.rc.PatchWorkloadResourceDeps(ctx, orgHandle, scopedWorkloadName(projectName, componentName), resources); err != nil {
+		return fmt.Errorf("connections: wire consumer %q workload deps: %w", componentName, err)
 	}
 	return nil
 }

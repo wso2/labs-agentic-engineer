@@ -60,8 +60,8 @@ func TestBuildExternalConnectionResourceType_PlainAndSecret(t *testing.T) {
 		t.Error("ConfigMap missing readyWhen")
 	}
 	es := byID[connSecretID]
-	if !strings.Contains(es.ReadyWhen, "Ready") {
-		t.Errorf("ExternalSecret readyWhen should gate on Ready: %q", es.ReadyWhen)
+	if es.ReadyWhen == "" {
+		t.Error("ExternalSecret must set readyWhen (an ES-only Resource isn't Ready by default)")
 	}
 	// ExternalSecret template uses the store-backed pattern.
 	var esManifest map[string]any

@@ -858,7 +858,7 @@ func main() {
 	cascadeHook.SetTraitSync(traitSyncService)
 	cascadeHook.SetRuntimeConfig(runtimeConfigSvc)
 	// Re-wire external-connection env onto consumer components post-deploy.
-	cascadeHook.SetConnectionWiring(connections.NewConsumerWiring(resourceClient, componentClient, taskRepo, nil))
+	cascadeHook.SetConnectionWiring(connections.NewConsumerWiring(resourceClient, taskRepo, nil))
 	projector.SetDispatchHook(cascadeHook)
 
 	task.RegisterHandlers(func(event, action string, h func(ctx context.Context, event, action string, payload []byte) error) {

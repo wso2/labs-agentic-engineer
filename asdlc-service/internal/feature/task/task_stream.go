@@ -695,6 +695,11 @@ func (s *taskService) runReconciliationStreamed(ctx context.Context, orgID, proj
 		if t.Status != string(models.TaskStatusPending) {
 			continue
 		}
+		// Non-code tasks (config-collection, resource-provisioning) aren't tied to
+		// a design component — never reject them on a design change.
+		if t.Type == models.TaskTypeConfigCollection || t.Type == models.TaskTypeResourceProvisioning {
+			continue
+		}
 		if _, ok := current[strings.ToLower(t.ComponentName)]; ok {
 			continue
 		}
@@ -744,6 +749,11 @@ func (s *taskService) ReconcilePendingForDesignChange(ctx context.Context, orgID
 	for i := range tasks {
 		t := &tasks[i]
 		if t.Status != string(models.TaskStatusPending) {
+			continue
+		}
+		// Non-code tasks (config-collection, resource-provisioning) aren't tied to
+		// a design component — never reject them on a design change.
+		if t.Type == models.TaskTypeConfigCollection || t.Type == models.TaskTypeResourceProvisioning {
 			continue
 		}
 		if _, ok := current[strings.ToLower(t.ComponentName)]; ok {

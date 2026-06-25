@@ -173,10 +173,15 @@ func BuildExternalConnectionResourceType(name string, keys []ConnectionConfigKey
 		}
 		resources = append(resources, ResourceTypeManifest{
 			ID: connSecretID,
-			// Gate on ESO having synced the Secret (Ready=True).
-			ReadyWhen: "${has(applied." + connSecretID + ".status) && applied." + connSecretID +
-				".status.conditions.exists(c, c.type == 'Ready' && c.status == 'True')}",
-			Template: esTemplate,
+			// readyWhen MUST be set (an ExternalSecret-only Resource isn't Ready by
+			// default). We do NOT gate on the ExternalSecret's own Ready condition:
+			// OC's `applied.<id>.status` snapshot does not reflect ESO's live status
+			// for a foreign CRD (it reads empty/stale → the CEL strands the binding).
+			// `${true}` makes the binding Ready once applied; the binding's outputs
+			// still resolve the Secret, and ESO materialises it in ~1s — well before
+			// the consumer (gated separately by the config-collection task) renders.
+			ReadyWhen: "${true}",
+			Template:  esTemplate,
 		})
 		for _, k := range secret {
 			outputs = append(outputs, ResourceTypeOutput{

@@ -81,6 +81,19 @@ type ResourceClient interface {
 	// ListClusterResourceTypes discovers the installed cluster-scoped
 	// ClusterResourceTypes (the platform-resource catalog, P5 — read-only).
 	ListClusterResourceTypes(ctx context.Context) ([]ResourceType, error)
+
+	// PatchWorkloadResourceDeps sets a consuming Workload's
+	// spec.dependencies.resources[] (the native resource-consumption path:
+	// OC resolves each Resource's outputs into the pod env, gated on
+	// ResourceDependenciesReady). GET-modify-PUT, preserving the rest of the spec.
+	PatchWorkloadResourceDeps(ctx context.Context, namespace, workloadName string, resources []WorkloadResourceDep) error
+}
+
+// WorkloadResourceDep is one Workload.spec.dependencies.resources[] entry:
+// the Resource name + the output→env-var-name bindings.
+type WorkloadResourceDep struct {
+	Ref         string            // Resource name (<project>-<conn>)
+	EnvBindings map[string]string // outputName → container ENV var name
 }
 
 // ---- wire DTOs (openchoreo.dev/v1alpha1) -----------------------------------
@@ -433,6 +446,37 @@ func (c *resourceClient) DeleteResource(ctx context.Context, namespace, name str
 // resourceTypeList is the OC list envelope for (cluster)resourcetypes.
 type resourceTypeList struct {
 	Items []ResourceType `json:"items"`
+}
+
+// PatchWorkloadResourceDeps GETs the Workload as a generic object (so the rest of
+// its spec is preserved untouched), sets spec.dependencies.resources, and PUTs it.
+func (c *resourceClient) PatchWorkloadResourceDeps(ctx context.Context, namespace, workloadName string, resources []WorkloadResourceDep) error {
+	path := nsBase(namespace) + "/workloads/" + workloadName
+	obj := map[string]any{}
+	if _, err := c.do(ctx, http.MethodGet, path, nil, &obj); err != nil {
+		return fmt.Errorf("get workload %q: %w", workloadName, err)
+	}
+	spec, _ := obj["spec"].(map[string]any)
+	if spec == nil {
+		spec = map[string]any{}
+		obj["spec"] = spec
+	}
+	deps, _ := spec["dependencies"].(map[string]any)
+	if deps == nil {
+		deps = map[string]any{}
+		spec["dependencies"] = deps
+	}
+	resList := make([]map[string]any, 0, len(resources))
+	for _, r := range resources {
+		resList = append(resList, map[string]any{"ref": r.Ref, "envBindings": r.EnvBindings})
+	}
+	deps["resources"] = resList
+	// Drop status — PUT is a spec update; a stale status block can be rejected.
+	delete(obj, "status")
+	if _, err := c.do(ctx, http.MethodPut, path, obj, nil); err != nil {
+		return fmt.Errorf("update workload %q deps: %w", workloadName, err)
+	}
+	return nil
 }
 
 func (c *resourceClient) ListClusterResourceTypes(ctx context.Context) ([]ResourceType, error) {

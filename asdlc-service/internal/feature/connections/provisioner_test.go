@@ -28,10 +28,12 @@ import (
 
 // fakeRC records calls and returns a Resource that already has a latestRelease.
 type fakeRC struct {
-	ensuredRT  *openchoreo.ResourceType
-	appliedRes *openchoreo.Resource
-	bindings   []*openchoreo.ResourceReleaseBinding
-	latest     string
+	ensuredRT       *openchoreo.ResourceType
+	appliedRes      *openchoreo.Resource
+	bindings        []*openchoreo.ResourceReleaseBinding
+	latest          string
+	patchedWorkload string
+	patchedDeps     []openchoreo.WorkloadResourceDep
 }
 
 func (f *fakeRC) EnsureResourceType(_ context.Context, _ string, rt *openchoreo.ResourceType) (*openchoreo.ResourceType, error) {
@@ -59,6 +61,11 @@ func (f *fakeRC) DeleteBinding(_ context.Context, _, _ string) error  { return n
 func (f *fakeRC) DeleteResource(_ context.Context, _, _ string) error { return nil }
 func (f *fakeRC) ListClusterResourceTypes(_ context.Context) ([]openchoreo.ResourceType, error) {
 	return nil, nil
+}
+func (f *fakeRC) PatchWorkloadResourceDeps(_ context.Context, _, workloadName string, resources []openchoreo.WorkloadResourceDep) error {
+	f.patchedWorkload = workloadName
+	f.patchedDeps = resources
+	return nil
 }
 
 type fakeSW struct{ wrote map[string]map[string]string }
