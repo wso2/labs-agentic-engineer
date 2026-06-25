@@ -173,6 +173,46 @@ func (w *SMAPIWriter) WriteGitHubPAT(ctx context.Context, ocOrgID string, pat st
 	return secretRefName, nil
 }
 
+// WriteConnectionSecret uploads an external connection's secret values for a
+// (project, environment) to SM-API and returns the resulting Vault KV path —
+// the `secretStorePath` the connection provisioner pins onto the per-env
+// ResourceReleaseBinding's resourceTypeEnvironmentConfigs, where the
+// ResourceType-emitted ExternalSecret reads it (the (a)-synthesis seam, plan §6).
+// `data` is the {key: value} map of the connection's secret fields (one SM-API
+// secret per project+env, read per-property by the ExternalSecret).
+//
+// Unlike the per-org credential writers, nothing is stamped on a DB row — the
+// path lives on the per-env binding. ctx must carry the inbound user JWT (the
+// ouId claim drives the vault namespace, same as the per-org writers).
+func (w *SMAPIWriter) WriteConnectionSecret(ctx context.Context, ocOrgID, projectName, entityName string, data map[string]string) (vaultKey, secretRefName string, err error) {
+	if !w.Enabled() {
+		return "", "", nil
+	}
+	if strings.TrimSpace(ocOrgID) == "" || strings.TrimSpace(projectName) == "" || strings.TrimSpace(entityName) == "" {
+		return "", "", errors.New("sm-api writer: ocOrgID, projectName, entityName required")
+	}
+	if len(data) == 0 {
+		return "", "", errors.New("sm-api writer: no connection secret data to write")
+	}
+	loc := secretmanagersvc.SecretLocation{
+		OrgName:     ocOrgID,
+		ProjectName: projectName,
+		EntityName:  entityName,
+	}
+	secretRefName, err = w.client.CreateSecret(ctx, loc, data)
+	if err != nil {
+		return "", "", fmt.Errorf("sm-api writer: connection secret upload (%s): %w", entityName, err)
+	}
+	vaultKey, err = w.resolveVaultKey(ctx, secretRefName)
+	if err != nil {
+		return "", secretRefName, fmt.Errorf("sm-api writer: resolve connection vault key (%s): %w", entityName, err)
+	}
+	slog.InfoContext(ctx, "sm-api writer: connection secret uploaded",
+		"ocOrgId", ocOrgID, "project", projectName, "entity", entityName,
+		"secretRefName", secretRefName, "vaultKey", vaultKey)
+	return vaultKey, secretRefName, nil
+}
+
 // resolveVaultKey reconstructs the actual Vault KV key from the
 // JWT's `ouId` claim — matches the shape SM-API derives server-side
 // via vault.VaultPath() and stamps onto the SecretReference CR's
