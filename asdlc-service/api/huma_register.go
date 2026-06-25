@@ -25,6 +25,7 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/internal/platform/auth"
 
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/component"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/connections"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/design"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/idp"
@@ -67,6 +68,7 @@ type HumaDeps struct {
 	GitHubAppSlug       string
 	BFFPublicURL        string
 	GitHubAppClientID   string
+	ConnectionValueSvc  *connections.ValueService
 }
 
 // RegisterAllHuma registers every migrated feature's operations on the Huma API.
@@ -87,6 +89,7 @@ func RegisterAllHuma(api huma.API, d HumaDeps) {
 	orgcreds.RegisterOrgGitHub(api, d.CredentialSvc, d.DisconnectSvc, d.BearerSvc, d.GitHubAppSlug, d.BFFPublicURL, d.GitHubAppClientID)
 	orgcreds.RegisterOrgAnthropic(api, d.AnthropicSvc)
 	skills.RegisterSkill(api, d.SkillSvc, d.SkillMutationSvc, d.SkillImportSvc)
+	connections.RegisterConnections(api, d.ConnectionValueSvc)
 	registerInfraHuma(api, d.TaskTokens, d.AnthropicSvc)
 }
 

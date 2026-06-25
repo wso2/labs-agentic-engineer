@@ -797,6 +797,15 @@ func main() {
 	if hook, ok := dispatchSvc.(codingagent.DispatchServiceWithTraitSync); ok {
 		hook.SetTraitSync(traitSyncService)
 	}
+
+	// External-connection provisioning: author the OC Resource model from a
+	// connection's per-env values, then re-dispatch the gated component tasks.
+	connectionProvisioner := connections.NewProvisioner(connectionRegistry, openchoreo.NewResourceClient(ocConfig), smWriter)
+	connectionValueSvc := connections.NewValueService(connectionRegistry, connectionProvisioner, taskRepo,
+		func(c context.Context, orgID, projectID string) error {
+			_, derr := dispatchSvc.DispatchTasks(c, orgID, projectID)
+			return derr
+		})
 	// Let the proxy dispatch pre-flight provision the per-org publisher cc on
 	// demand (decoupled from API security), so the runner can auth to the BFF
 	// through the gateway for every component, not just protected ones.
@@ -973,6 +982,7 @@ func main() {
 		GitHubAppSlug:       cfg.GithubAppSlug,
 		BFFPublicURL:        cfg.BFFPublicURL,
 		GitHubAppClientID:   cfg.GithubAppClientID,
+		ConnectionValueSvc:  connectionValueSvc,
 	}
 
 	slog.Info("OpenChoreo API", "baseURL", cfg.PlatformAPI.BaseURL)
