@@ -66,6 +66,16 @@ const (
 	TaskStatusVerificationFailed = contracts.TaskStatusVerificationFailed
 )
 
+// Task types (the typed task graph, plan §4). "component" is a code task (1:1
+// with a GitHub issue + PR). "config-collection" collects a connection's per-env
+// values in the console (no GitHub issue; reaching `deployed` means provisioned).
+// "resource-provisioning" is P5. Empty Type is treated as "component" (old rows).
+const (
+	TaskTypeComponent            = "component"
+	TaskTypeConfigCollection     = "config-collection"
+	TaskTypeResourceProvisioning = "resource-provisioning"
+)
+
 // ComponentTask is one implementation task targeting a single component.
 // Scoped to an append-only batch (see BatchID, SourceDesignVersion,
 // SourceSpecVersion). Maps 1:1:1:1 to a GitHub issue, feature branch, and
@@ -109,6 +119,17 @@ type ComponentTask struct {
 	// the batch contains a task whose ComponentName == c and Status
 	// == deployed. See services/dispatch_service.go::depsAllDeployed.
 	DependsOnComponents StringSlice `gorm:"column:depends_on_components;type:jsonb;serializer:json" json:"dependsOnComponents,omitempty"`
+
+	// DependsOnConnections lists the `external` connection names this component
+	// binds. A component task gates (in addition to DependsOnComponents) until
+	// each connection's config-collection task is Completed — the typed task
+	// graph (plan §4). Platform-authored from the design's external dependencies.
+	DependsOnConnections StringSlice `gorm:"column:depends_on_connections;type:jsonb;serializer:json" json:"dependsOnConnections,omitempty"`
+
+	// ConnectionName is set only on config-collection tasks (Type ==
+	// config-collection): the external connection whose per-env values this task
+	// collects. Empty for component tasks.
+	ConnectionName string `gorm:"column:connection_name;index" json:"connectionName,omitempty"`
 
 	// Lineage — set at generation time, immutable thereafter.
 	BatchID             *string `gorm:"type:uuid;index" json:"batchId,omitempty"`

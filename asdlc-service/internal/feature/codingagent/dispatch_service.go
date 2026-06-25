@@ -275,15 +275,27 @@ func (s *dispatchService) DispatchTasks(ctx context.Context, orgID, projectID st
 	// per-batch — DependsOnComponents lists names that map 1:1 to tasks
 	// in the same batch (validated at persist time in task_stream.go).
 	statusByComponent := make(map[string]string, len(tasks))
+	statusByConnection := make(map[string]string, len(tasks))
 	for _, t := range tasks {
+		if t.Type == models.TaskTypeConfigCollection {
+			if t.ConnectionName != "" {
+				statusByConnection[t.ConnectionName] = t.Status
+			}
+			continue
+		}
 		statusByComponent[t.ComponentName] = t.Status
 	}
 
 	var results []DispatchResult
 	for i := range tasks {
 		task := &tasks[i]
+		// config-collection tasks are completed by the value-save endpoint, not
+		// the coding agent — never dispatch them (reaching `deployed` = provisioned).
+		if task.Type == models.TaskTypeConfigCollection {
+			continue
+		}
 		if task.Status == string(models.TaskStatusOnHold) {
-			if !depsAllDeployed(task, statusByComponent) {
+			if !depsAllDeployed(task, statusByComponent, statusByConnection) {
 				continue
 			}
 			task.Status = string(models.TaskStatusPending)
@@ -296,7 +308,7 @@ func (s *dispatchService) DispatchTasks(ctx context.Context, orgID, projectID st
 			continue
 		}
 
-		if !depsAllDeployed(task, statusByComponent) {
+		if !depsAllDeployed(task, statusByComponent, statusByConnection) {
 			task.Status = string(models.TaskStatusOnHold)
 			if err := s.taskRepo.Update(ctx, task); err != nil {
 				slog.WarnContext(ctx, "set on_hold", "task", task.ID, "error", err)
@@ -317,17 +329,20 @@ func (s *dispatchService) DispatchTasks(ctx context.Context, orgID, projectID st
 	return results, nil
 }
 
-// depsAllDeployed returns true when every component name listed in
-// DependsOnComponents corresponds to a task whose Status == deployed.
-// Unknown component names return false (fail closed; the persist-time
-// validator in task_stream.go is the upstream guard).
-func depsAllDeployed(task *models.ComponentTask, statusByComponent map[string]string) bool {
+// depsAllDeployed returns true when every blocker the task lists is satisfied:
+// each DependsOnComponents name maps to a task whose Status == deployed, AND
+// each DependsOnConnections name maps to a config-collection task whose
+// Status == deployed (i.e. the connection's values were collected + the OC
+// Resource model provisioned). Unknown names return false (fail closed; the
+// persist-time validator in task_stream.go is the upstream guard).
+func depsAllDeployed(task *models.ComponentTask, statusByComponent, statusByConnection map[string]string) bool {
 	for _, depComponent := range task.DependsOnComponents {
-		st, ok := statusByComponent[depComponent]
-		if !ok {
+		if statusByComponent[depComponent] != string(models.TaskStatusDeployed) {
 			return false
 		}
-		if st != string(models.TaskStatusDeployed) {
+	}
+	for _, depConn := range task.DependsOnConnections {
+		if statusByConnection[depConn] != string(models.TaskStatusDeployed) {
 			return false
 		}
 	}

@@ -442,6 +442,7 @@ func (s *taskService) persistAndIssue(
 	// authored, not LLM-authored) and validated against the component set
 	// at persist time. The LLM's `PlanItem.dependsOn` is context-only.
 	rows := make([]persistedItem, len(plan))
+	batchConns := map[string]struct{}{} // distinct `external` connections the batch binds
 	for i, p := range plan {
 		comp := byName[strings.ToLower(p.ComponentName)]
 		deps := comp.ComponentDependsOn()
@@ -453,20 +454,31 @@ func (s *taskService) persistAndIssue(
 				)
 			}
 		}
+		// External connection deps gate the component task until their
+		// config-collection task is provisioned (the typed task graph, plan §4).
+		var connDeps []string
+		for _, dep := range comp.Dependencies {
+			if dep.Kind == models.DependencyKindExternal {
+				connDeps = append(connDeps, dep.Name)
+				batchConns[dep.Name] = struct{}{}
+			}
+		}
 		task := &models.ComponentTask{
-			ProjectID:           projectID,
-			OrgID:               orgID,
-			ComponentName:       p.ComponentName,
-			Title:               p.Title,
-			Rationale:           p.Rationale,
-			DependsOnComponents: models.StringSlice(deps),
-			BatchID:             ptrString(batchID),
-			SourceSpecVersion:   specVersion,
-			SourceDesignVersion: designVersion,
-			Order:               i + 1,
-			Status:              string(models.TaskStatusPending),
-			LifecycleStatus:     string(models.TaskLifecycleGhIssueWaiting),
-			ExecType:            "WORKER",
+			ProjectID:            projectID,
+			OrgID:                orgID,
+			Type:                 models.TaskTypeComponent,
+			ComponentName:        p.ComponentName,
+			Title:                p.Title,
+			Rationale:            p.Rationale,
+			DependsOnComponents:  models.StringSlice(deps),
+			DependsOnConnections: models.StringSlice(connDeps),
+			BatchID:              ptrString(batchID),
+			SourceSpecVersion:    specVersion,
+			SourceDesignVersion:  designVersion,
+			Order:                i + 1,
+			Status:               string(models.TaskStatusPending),
+			LifecycleStatus:      string(models.TaskLifecycleGhIssueWaiting),
+			ExecType:             "WORKER",
 		}
 		if err := s.taskRepo.Create(ctx, task); err != nil {
 			return nil, fmt.Errorf("create task row %d: %w", i, err)
@@ -479,6 +491,49 @@ func (s *taskService) persistAndIssue(
 		compForPrompt.OpenAPISpec = ""
 		designSlice, _ := json.Marshal(compForPrompt)
 		rows[i] = persistedItem{TempID: p.TempID, Task: task, DesignSli: string(designSlice)}
+	}
+
+	// config-collection tasks: one per distinct `external` connection the batch
+	// binds, deduped against existing config-collection tasks for the project (a
+	// re-generation or a later batch binding an already-collected connection adds
+	// none). No GitHub issue (created outside `rows`, so the issue loop skips them;
+	// LifecycleStatus is gh_issue_created so reconcilers skip too). They gate the
+	// component tasks until the value-save endpoint provisions them → `deployed`.
+	if len(batchConns) > 0 {
+		existing, lerr := s.taskRepo.ListByProjectID(ctx, orgID, projectID)
+		if lerr != nil {
+			return nil, fmt.Errorf("list tasks for config-collection dedup: %w", lerr)
+		}
+		haveConn := map[string]struct{}{}
+		for _, t := range existing {
+			if t.Type == models.TaskTypeConfigCollection && t.ConnectionName != "" {
+				haveConn[t.ConnectionName] = struct{}{}
+			}
+		}
+		order := len(rows)
+		for conn := range batchConns {
+			if _, ok := haveConn[conn]; ok {
+				continue
+			}
+			order++
+			cc := &models.ComponentTask{
+				ProjectID:       projectID,
+				OrgID:           orgID,
+				Type:            models.TaskTypeConfigCollection,
+				ConnectionName:  conn,
+				ComponentName:   conn, // surfaces the connection on the board
+				Title:           "Provide configuration: " + conn,
+				Rationale:       "Collect the values for the '" + conn + "' external connection.",
+				BatchID:         ptrString(batchID),
+				Order:           order,
+				Status:          string(models.TaskStatusPending),
+				LifecycleStatus: string(models.TaskLifecycleGhIssueCreated),
+				ExecType:        "SYSTEM",
+			}
+			if err := s.taskRepo.Create(ctx, cc); err != nil {
+				return nil, fmt.Errorf("create config-collection task for %q: %w", conn, err)
+			}
+		}
 	}
 
 	// Parallel issue creation, bounded by ghCreateConcurrency.
