@@ -90,6 +90,10 @@ type designService struct {
 	// Optional in tests; nil → architect runs with no skills attached
 	// (equivalent to pre-skills-system behaviour).
 	skillSvc skillCatalog
+	// connReg registers `external` dependencies as org-level connections when a
+	// design is saved (the catalog "definition" layer, plan §3). Optional in
+	// tests; nil → no registration (values/wiring happen later regardless).
+	connReg connectionRegistrar
 }
 
 // traitSyncReconciler is design_service's narrow consumer port for the
@@ -106,6 +110,13 @@ type traitSyncReconciler interface {
 // satisfies it; defined here so design needn't import the skills feature.
 type skillCatalog interface {
 	List(ctx context.Context, orgID string) ([]models.Skill, error)
+}
+
+// connectionRegistrar is design_service's narrow port for the connection
+// registry. *connections.Registry satisfies it; defined here so design needn't
+// import the connections feature concretely.
+type connectionRegistrar interface {
+	Upsert(ctx context.Context, orgID, name, description string, schema []models.ConfigKey) (*models.Connection, error)
 }
 
 // taskReconciler is design_service's narrow consumer port for the task
@@ -162,6 +173,44 @@ func (s *designService) SetTraitSync(traitSync traitSyncReconciler) {
 
 func (s *designService) SetSkillService(svc skillCatalog) {
 	s.skillSvc = svc
+}
+
+// DesignServiceWithConnectionRegistry surfaces the connection-registry setter so
+// `external` dependencies are catalogued on save. Mirrors the other optional-dep
+// setter ports.
+type DesignServiceWithConnectionRegistry interface {
+	DesignService
+	SetConnectionRegistry(reg connectionRegistrar)
+}
+
+func (s *designService) SetConnectionRegistry(reg connectionRegistrar) {
+	s.connReg = reg
+}
+
+// registerConnections best-effort upserts every distinct `external` dependency
+// in the design into the org connection registry (the reusable definition layer,
+// plan §3). Non-fatal: a registry hiccup must not fail a design save — values +
+// wiring are provisioned later, independently.
+func (s *designService) registerConnections(ctx context.Context, orgID string, design *artifacts.DesignFile) {
+	if s.connReg == nil || design == nil {
+		return
+	}
+	seen := map[string]struct{}{}
+	for _, c := range design.Components {
+		for _, dep := range c.Dependencies {
+			if dep.Kind != models.DependencyKindExternal {
+				continue
+			}
+			if _, ok := seen[dep.Name]; ok {
+				continue
+			}
+			seen[dep.Name] = struct{}{}
+			if _, err := s.connReg.Upsert(ctx, orgID, dep.Name, dep.Description, dep.Config); err != nil {
+				slog.WarnContext(ctx, "failed to register external connection",
+					"org", orgID, "connection", dep.Name, "error", err)
+			}
+		}
+	}
 }
 
 // Compile-time guards: NewDesignService returns the DesignService interface,
@@ -451,6 +500,9 @@ func (s *designService) StreamGenerateDesign(ctx context.Context, orgID, project
 	if err := s.store.WriteDesign(ctx, orgID, projectID, designFile); err != nil {
 		return fmt.Errorf("write design: %w", err)
 	}
+
+	// Catalogue any `external` dependencies as org-level connections (best-effort).
+	s.registerConnections(ctx, orgID, designFile)
 
 	slog.InfoContext(ctx, "design written from stream",
 		"project", projectID, "components", len(designFile.Components))

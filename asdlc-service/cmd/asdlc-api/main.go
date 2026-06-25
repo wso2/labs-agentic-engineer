@@ -49,6 +49,7 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/codingagent"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/component"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/connections"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/design"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/idp"
@@ -641,6 +642,12 @@ func main() {
 
 	if hook, ok := designService.(design.DesignServiceWithTaskHook); ok {
 		hook.SetTaskService(taskService)
+	}
+	// Connection registry (org-level catalog of `external` dependencies). Wired
+	// into the design service so connections are catalogued on save.
+	connectionRegistry := connections.NewRegistry(db)
+	if setter, ok := designService.(design.DesignServiceWithConnectionRegistry); ok {
+		setter.SetConnectionRegistry(connectionRegistry)
 	}
 	// Wire the skills catalogue into design + task services so the
 	// architect input ships builtin/org skills, and the tech-lead detail
