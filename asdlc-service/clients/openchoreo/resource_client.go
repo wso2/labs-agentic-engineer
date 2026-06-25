@@ -195,8 +195,19 @@ type OCCondition struct {
 	Reason string `json:"reason,omitempty"`
 }
 
+// ResolvedOutput is one entry of a binding's status.outputs — the connection
+// output resolved to a concrete (hashed) DP object name. The BFF reads these to
+// wire the consuming component's env (the names are OC-generated, not guessable).
+type ResolvedOutput struct {
+	Name            string    `json:"name"`
+	Value           string    `json:"value,omitempty"`
+	SecretKeyRef    *OCKeyRef `json:"secretKeyRef,omitempty"`
+	ConfigMapKeyRef *OCKeyRef `json:"configMapKeyRef,omitempty"`
+}
+
 type ResourceReleaseBindingStatus struct {
-	Conditions []OCCondition `json:"conditions,omitempty"`
+	Conditions []OCCondition    `json:"conditions,omitempty"`
+	Outputs    []ResolvedOutput `json:"outputs,omitempty"`
 }
 
 type ResourceReleaseBinding struct {

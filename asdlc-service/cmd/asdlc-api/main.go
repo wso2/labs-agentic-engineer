@@ -800,7 +800,8 @@ func main() {
 
 	// External-connection provisioning: author the OC Resource model from a
 	// connection's per-env values, then re-dispatch the gated component tasks.
-	connectionProvisioner := connections.NewProvisioner(connectionRegistry, openchoreo.NewResourceClient(ocConfig), smWriter)
+	resourceClient := openchoreo.NewResourceClient(ocConfig)
+	connectionProvisioner := connections.NewProvisioner(connectionRegistry, resourceClient, smWriter)
 	connectionValueSvc := connections.NewValueService(connectionRegistry, connectionProvisioner, taskRepo,
 		func(c context.Context, orgID, projectID string) error {
 			_, derr := dispatchSvc.DispatchTasks(c, orgID, projectID)
@@ -840,6 +841,8 @@ func main() {
 	cascadeHook := codingagent.NewDispatchCascadeHook(db, dispatchSvc)
 	cascadeHook.SetTraitSync(traitSyncService)
 	cascadeHook.SetRuntimeConfig(runtimeConfigSvc)
+	// Re-wire external-connection env onto consumer components post-deploy.
+	cascadeHook.SetConnectionWiring(connections.NewConsumerWiring(resourceClient, componentClient, taskRepo, nil))
 	projector.SetDispatchHook(cascadeHook)
 
 	task.RegisterHandlers(func(event, action string, h func(ctx context.Context, event, action string, payload []byte) error) {
