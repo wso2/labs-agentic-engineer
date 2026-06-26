@@ -87,6 +87,14 @@ type ResourceClient interface {
 	// OC resolves each Resource's outputs into the pod env, gated on
 	// ResourceDependenciesReady). GET-modify-PUT, preserving the rest of the spec.
 	PatchWorkloadResourceDeps(ctx context.Context, namespace, workloadName string, resources []WorkloadResourceDep) error
+
+	// PatchWorkloadEndpointDeps sets a consuming Workload's
+	// spec.dependencies.endpoints[] (OC `WorkloadConnection` — the native
+	// component-to-component / cross-project consumption path: OC resolves the
+	// target endpoint and injects its address into the consumer pod env). Used for
+	// `component` (same project) and `org-service` (cross-project, visibility
+	// `namespace`) deps. GET-modify-PUT, preserving the rest of the spec.
+	PatchWorkloadEndpointDeps(ctx context.Context, namespace, workloadName string, endpoints []WorkloadEndpointDep) error
 }
 
 // WorkloadResourceDep is one Workload.spec.dependencies.resources[] entry:
@@ -94,6 +102,17 @@ type ResourceClient interface {
 type WorkloadResourceDep struct {
 	Ref         string            // Resource name (<project>-<conn>)
 	EnvBindings map[string]string // outputName → container ENV var name
+}
+
+// WorkloadEndpointDep is one Workload.spec.dependencies.endpoints[] entry — an OC
+// WorkloadConnection: the target endpoint (project/component/name), the visibility
+// it's consumed at, and the env var name OC binds the resolved address to.
+type WorkloadEndpointDep struct {
+	Project    string // target component's project; "" = same project as the consumer
+	Component  string // target component name
+	Name       string // target endpoint name on the target component
+	Visibility string // "project" (same-project) | "namespace" (cross-project)
+	AddressEnv string // consumer env var name for the resolved scheme://host:port/basePath
 }
 
 // ---- wire DTOs (openchoreo.dev/v1alpha1) -----------------------------------
@@ -475,6 +494,46 @@ func (c *resourceClient) PatchWorkloadResourceDeps(ctx context.Context, namespac
 	delete(obj, "status")
 	if _, err := c.do(ctx, http.MethodPut, path, obj, nil); err != nil {
 		return fmt.Errorf("update workload %q deps: %w", workloadName, err)
+	}
+	return nil
+}
+
+// PatchWorkloadEndpointDeps sets spec.dependencies.endpoints[] (OC
+// WorkloadConnection) on a consumer Workload — GET, set the endpoints, PUT,
+// preserving the rest of the spec.dependencies (e.g. resources) and the spec.
+func (c *resourceClient) PatchWorkloadEndpointDeps(ctx context.Context, namespace, workloadName string, endpoints []WorkloadEndpointDep) error {
+	path := nsBase(namespace) + "/workloads/" + workloadName
+	obj := map[string]any{}
+	if _, err := c.do(ctx, http.MethodGet, path, nil, &obj); err != nil {
+		return fmt.Errorf("get workload %q: %w", workloadName, err)
+	}
+	spec, _ := obj["spec"].(map[string]any)
+	if spec == nil {
+		spec = map[string]any{}
+		obj["spec"] = spec
+	}
+	deps, _ := spec["dependencies"].(map[string]any)
+	if deps == nil {
+		deps = map[string]any{}
+		spec["dependencies"] = deps
+	}
+	epList := make([]map[string]any, 0, len(endpoints))
+	for _, e := range endpoints {
+		entry := map[string]any{
+			"component":   e.Component,
+			"name":        e.Name,
+			"visibility":  e.Visibility,
+			"envBindings": map[string]any{"address": e.AddressEnv},
+		}
+		if e.Project != "" {
+			entry["project"] = e.Project
+		}
+		epList = append(epList, entry)
+	}
+	deps["endpoints"] = epList
+	delete(obj, "status")
+	if _, err := c.do(ctx, http.MethodPut, path, obj, nil); err != nil {
+		return fmt.Errorf("update workload %q endpoint deps: %w", workloadName, err)
 	}
 	return nil
 }

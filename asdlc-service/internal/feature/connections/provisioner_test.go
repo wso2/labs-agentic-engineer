@@ -68,6 +68,10 @@ func (f *fakeRC) PatchWorkloadResourceDeps(_ context.Context, _, workloadName st
 	return nil
 }
 
+func (f *fakeRC) PatchWorkloadEndpointDeps(_ context.Context, _, _ string, _ []openchoreo.WorkloadEndpointDep) error {
+	return nil
+}
+
 type fakeSW struct{ wrote map[string]map[string]string }
 
 func (s *fakeSW) Enabled() bool { return true }
