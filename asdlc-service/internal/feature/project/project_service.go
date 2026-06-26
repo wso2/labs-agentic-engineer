@@ -171,6 +171,16 @@ func (s *projectService) DeleteProject(ctx context.Context, orgName, projectName
 		}
 	}
 
+	// Clean up the project's ComponentTask rows. Without this they orphan in the
+	// DB and keep an org-level connection looking "in use" (its consumers query
+	// counts these tasks), blocking deletion of a connection whose only projects
+	// are already gone. Non-fatal — the OC project + repo are already deleted.
+	if s.taskRepo != nil {
+		if err := s.taskRepo.DeleteByProjectID(ctx, orgName, projectName); err != nil {
+			slog.ErrorContext(ctx, "failed to delete component tasks for project", "org", orgName, "project", projectName, "error", err)
+		}
+	}
+
 	return nil
 }
 
