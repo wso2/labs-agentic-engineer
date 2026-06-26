@@ -158,6 +158,7 @@ func handleToolCall(w http.ResponseWriter, r *http.Request, registry *Registry, 
 		writeRPCError(w, req.ID, -32602, "invalid params")
 		return
 	}
+	slog.InfoContext(r.Context(), "mcp tool call", "org", orgHandle, "tool", call.Name, "arg", call.Arguments.Name)
 
 	switch call.Name {
 	case "list_connections":

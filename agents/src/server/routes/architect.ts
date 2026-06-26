@@ -24,6 +24,7 @@ import type { SseSink, FinalizeResolver } from "../../agents/architect/tools.js"
 import { AnthropicKeyError } from "../../shared/anthropic-key-resolver.js";
 import { resolveModelForOrg } from "../../shared/model.js";
 import { getOrgId } from "../../middleware/org-id.js";
+import { loadMcpTools, connectionsMcpUrl } from "../../shared/mcp-client.js";
 
 function writeFrame(res: express.Response, frame: unknown): void {
   res.write(`data: ${JSON.stringify(frame)}\n\n`);
@@ -92,6 +93,12 @@ export function registerArchitect(app: express.Express) {
       },
     };
 
+    // Discover the org's registered `external` connections via the BFF-hosted MCP
+    // server so the design LLM reuses an existing connection (name + key schema)
+    // instead of inventing one. Best-effort: an unreachable server yields no tools.
+    const mcpUrl = connectionsMcpUrl(orgId);
+    const extraTools = mcpUrl ? await loadMcpTools(mcpUrl) : {};
+
     try {
       const { finalized } = await runArchitect({
         model,
@@ -99,6 +106,7 @@ export function registerArchitect(app: express.Express) {
         sink,
         finalizer,
         abortSignal: abortController.signal,
+        extraTools,
       });
 
       // Loop ended without finalize() succeeding. Could be: stepCountIs hit,

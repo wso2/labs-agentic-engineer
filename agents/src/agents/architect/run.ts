@@ -23,7 +23,7 @@
  * what makes the architect self-contained and evaluable in isolation.
  */
 
-import { streamText, stepCountIs, type LanguageModel } from "ai";
+import { streamText, stepCountIs, type LanguageModel, type ToolSet } from "ai";
 import { DesignDoc } from "./doc.js";
 import { buildTools, type SseSink, type FinalizeResolver } from "./tools.js";
 import { systemPrompt, buildUserPrompt } from "./prompt.js";
@@ -49,6 +49,13 @@ export interface ArchitectRunOpts {
   finalizer: FinalizeResolver;
   /** Aborted by the route on client disconnect, and by finalize() on success. */
   abortSignal: AbortSignal;
+  /**
+   * Read-only discovery tools merged into the architect's tool set — e.g. the
+   * connection-registry MCP tools (list_connections / get_connection_schema) so
+   * the LLM reuses already-registered `external` connections. Empty/omitted is
+   * fine; the design tools are unchanged.
+   */
+  extraTools?: ToolSet;
 }
 
 /**
@@ -62,7 +69,8 @@ export async function runArchitect(
   const { model, input, sink, finalizer, abortSignal } = opts;
 
   const doc = DesignDoc.fromPrevious(input.previousDesign);
-  const tools = buildTools(doc, sink, finalizer, input.wireframes ?? {});
+  // Design tools + any read-only discovery tools (connection-registry MCP).
+  const tools = { ...buildTools(doc, sink, finalizer, input.wireframes ?? {}), ...(opts.extraTools ?? {}) };
 
   let usage = { inputTokens: 0, outputTokens: 0 };
 
