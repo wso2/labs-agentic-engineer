@@ -36,6 +36,68 @@ export function setConnectionsTokenAccessor(fn: (() => Promise<string>) | null):
 /** Per-environment key→value map; `development` is required locally. */
 export type ConnectionEnvironments = Record<string, Record<string, string>>;
 
+export interface ConnectionConfigKey {
+  key: string;
+  secret: boolean;
+}
+
+export interface ConnectionConsumer {
+  projectId: string;
+  componentName: string;
+}
+
+/** An org-registered external connection with its consuming components. */
+export interface RegisteredConnection {
+  name: string;
+  description?: string;
+  configKeys: ConnectionConfigKey[];
+  consumers: ConnectionConsumer[];
+}
+
+async function authHeaders(extra?: Record<string, string>): Promise<Record<string, string>> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json', ...extra };
+  if (_getAccessToken) {
+    const token = await _getAccessToken();
+    if (token) headers.Authorization = `Bearer ${token}`;
+  }
+  return headers;
+}
+
+async function parseError(res: Response): Promise<ApiError> {
+  const body = await res.text();
+  let message = body;
+  try {
+    const parsed = JSON.parse(body);
+    message = parsed.detail || parsed.message || parsed.error || body;
+  } catch {
+    /* raw body */
+  }
+  return new ApiError(res.status, message);
+}
+
+/** List the org's registered connections with their consuming components. */
+export async function listConnections(orgHandle: string): Promise<RegisteredConnection[]> {
+  const res = await fetch(
+    `${BASE}/api/v1/organizations/${encodeURIComponent(orgHandle)}/connections`,
+    { headers: await authHeaders() },
+  );
+  if (!res.ok) throw await parseError(res);
+  const body = (await res.json()) as { connections?: RegisteredConnection[] };
+  return body.connections ?? [];
+}
+
+/**
+ * Delete a registered connection. The server returns 409 (thrown as ApiError)
+ * when any component still uses it.
+ */
+export async function deleteConnection(orgHandle: string, name: string): Promise<void> {
+  const res = await fetch(
+    `${BASE}/api/v1/organizations/${encodeURIComponent(orgHandle)}/connections/${encodeURIComponent(name)}`,
+    { method: 'DELETE', headers: await authHeaders() },
+  );
+  if (!res.ok && res.status !== 204) throw await parseError(res);
+}
+
 /**
  * Save a connection's per-environment values and provision it. Values are split
  * into plain/secret by the connection's registered schema server-side — the

@@ -32,6 +32,9 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
 
+// ErrConnectionNotFound is returned when a connection is not registered for the org.
+var ErrConnectionNotFound = errors.New("connection not found")
+
 // Registry is the org-level catalog of registered external connections.
 type Registry struct {
 	db *gorm.DB
@@ -99,6 +102,61 @@ func (r *Registry) List(ctx context.Context, orgID string) ([]models.Connection,
 		return nil, fmt.Errorf("connections: list org %q: %w", orgID, err)
 	}
 	return out, nil
+}
+
+// ConnectionConsumer is one component that uses a registered connection.
+type ConnectionConsumer struct {
+	ProjectID     string `json:"projectId"`
+	ComponentName string `json:"componentName"`
+}
+
+// Consumers returns the components that depend on a connection — every
+// component-type ComponentTask whose `dependsOnConnections` includes `name`,
+// deduplicated by (project, component). Empty ⇒ no project/component uses it, so
+// the connection is safe to delete. (Component tasks are removed with their
+// project, so a stale registration from a deleted project reports no consumers.)
+func (r *Registry) Consumers(ctx context.Context, orgID, name string) ([]ConnectionConsumer, error) {
+	if orgID == "" || name == "" {
+		return nil, fmt.Errorf("connections: orgID and name required")
+	}
+	var tasks []models.ComponentTask
+	// jsonb containment: depends_on_connections @> ["name"] — exact element
+	// match (won't false-positive `openweather` against `openweathermap`).
+	if err := r.db.WithContext(ctx).
+		Where("org_id = ? AND type = ? AND depends_on_connections @> ?::jsonb",
+			orgID, models.TaskTypeComponent, `["`+name+`"]`).
+		Find(&tasks).Error; err != nil {
+		return nil, fmt.Errorf("connections: consumers of %q: %w", name, err)
+	}
+	seen := make(map[string]struct{}, len(tasks))
+	out := make([]ConnectionConsumer, 0, len(tasks))
+	for i := range tasks {
+		k := tasks[i].ProjectID + "/" + tasks[i].ComponentName
+		if _, ok := seen[k]; ok {
+			continue
+		}
+		seen[k] = struct{}{}
+		out = append(out, ConnectionConsumer{ProjectID: tasks[i].ProjectID, ComponentName: tasks[i].ComponentName})
+	}
+	return out, nil
+}
+
+// Delete removes a connection's org-level registration. It does NOT check
+// consumers — the caller (DeleteConnection endpoint) enforces the "not in use"
+// guard so it can return a precise error. The shared, immutable OC ResourceType
+// is intentionally left in place (re-registration reuses it).
+func (r *Registry) Delete(ctx context.Context, orgID, name string) error {
+	if orgID == "" || name == "" {
+		return fmt.Errorf("connections: orgID and name required")
+	}
+	res := r.db.WithContext(ctx).Where("org_id = ? AND name = ?", orgID, name).Delete(&models.Connection{})
+	if res.Error != nil {
+		return fmt.Errorf("connections: delete %q: %w", name, res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrConnectionNotFound
+	}
+	return nil
 }
 
 // SchemaEqual reports whether two config key schemas are equivalent (same keys,

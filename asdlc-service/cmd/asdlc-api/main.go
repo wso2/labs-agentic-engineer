@@ -1003,6 +1003,7 @@ func main() {
 		BFFPublicURL:        cfg.BFFPublicURL,
 		GitHubAppClientID:   cfg.GithubAppClientID,
 		ConnectionValueSvc:  connectionValueSvc,
+		ConnectionRegistry:  connectionRegistry,
 	}
 
 	slog.Info("OpenChoreo API", "baseURL", cfg.PlatformAPI.BaseURL)

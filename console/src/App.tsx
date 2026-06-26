@@ -42,6 +42,7 @@ import OrgGitHubAppPicker from './pages/OrgGitHubAppPicker';
 import OrgAnthropicSettings from './pages/OrgAnthropicSettings';
 import OrgIDPSettings from './pages/OrgIDPSettings';
 import OrgSkillsSettings from './pages/OrgSkillsSettings';
+import OrgConnectionsSettings from './pages/OrgConnectionsSettings';
 import NoOrganizationPage from './pages/NoOrganizationPage';
 import { setOrgGithubTokenAccessor } from './services/api/orgGithub';
 import { setOrgAnthropicTokenAccessor } from './services/api/orgAnthropic';
@@ -125,6 +126,7 @@ export function App() {
           <Route path="anthropic" element={<OrgAnthropicSettings />} />
           <Route path="idp" element={<OrgIDPSettings />} />
           <Route path="skills" element={<OrgSkillsSettings />} />
+          <Route path="connections" element={<OrgConnectionsSettings />} />
         </Route>
 
         <Route path="/organizations/:orgId/projects/:projectId" element={<ContextForwardingOutlet />}>
