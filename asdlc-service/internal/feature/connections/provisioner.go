@@ -91,17 +91,20 @@ func (p *Provisioner) ProvisionConnection(
 		return nil, fmt.Errorf("connections: orgHandle and projectName required")
 	}
 
-	// 1. ResourceType (get-or-create; immutable once created).
-	rt, err := openchoreo.BuildExternalConnectionResourceType(conn.ResourceTypeName, toConnConfigKeys(conn.ConfigSchema))
+	// 1. ResourceType (get-or-create; immutable once created). The cluster RT name
+	// is pinned to the generator's template version — a template change authors a
+	// fresh RT instead of silently reusing a stale same-named one on 409-conflict.
+	rtName := openchoreo.ConnectionRTName(conn.ResourceTypeName)
+	rt, err := openchoreo.BuildExternalConnectionResourceType(rtName, toConnConfigKeys(conn.ConfigSchema))
 	if err != nil {
 		return nil, fmt.Errorf("connections: build resourcetype: %w", err)
 	}
 	if _, err := p.rc.EnsureResourceType(ctx, orgHandle, rt); err != nil {
-		return nil, fmt.Errorf("connections: ensure resourcetype %q: %w", conn.ResourceTypeName, err)
+		return nil, fmt.Errorf("connections: ensure resourcetype %q: %w", rtName, err)
 	}
 
 	// 2. Resource (one per project; controller cuts the ResourceRelease).
-	res := buildConnectionResource(projectName, conn)
+	res := buildConnectionResource(projectName, conn, rtName)
 	if _, err := p.rc.ApplyResource(ctx, orgHandle, res); err != nil {
 		return nil, fmt.Errorf("connections: apply resource: %w", err)
 	}
@@ -233,12 +236,15 @@ func connectionResourceName(project, conn string) string { return project + "-" 
 // secret bundle — one SM-API secret per (project, connection, env).
 func connectionSecretEntity(conn, env string) string { return "conn-" + conn + "-" + env }
 
-func buildConnectionResource(projectName string, conn *models.Connection) *openchoreo.Resource {
+// buildConnectionResource references the version-pinned cluster RT name (rtName),
+// not the logical conn.ResourceTypeName, so the Resource binds to the freshly
+// authored RT rather than a stale same-named one.
+func buildConnectionResource(projectName string, conn *models.Connection, rtName string) *openchoreo.Resource {
 	return &openchoreo.Resource{
 		Metadata: openchoreo.OCObjectMeta{Name: connectionResourceName(projectName, conn.Name)},
 		Spec: openchoreo.ResourceSpec{
 			Owner: openchoreo.ResourceOwner{ProjectName: projectName},
-			Type:  openchoreo.ResourceTypeRef{Kind: "ResourceType", Name: conn.ResourceTypeName},
+			Type:  openchoreo.ResourceTypeRef{Kind: "ResourceType", Name: rtName},
 		},
 	}
 }

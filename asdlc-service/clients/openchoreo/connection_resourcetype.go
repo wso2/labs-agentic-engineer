@@ -21,6 +21,31 @@ import (
 	"fmt"
 )
 
+// ConnectionRTTemplateVersion is bumped whenever BuildExternalConnectionResourceType's
+// emitted manifest shape changes in a way that an already-applied ResourceType would
+// NOT reflect. ResourceTypes are immutable AND shared by name across projects, and
+// EnsureResourceType reuses an existing RT on 409-conflict — so without a version in
+// the name, a stale RT authored by older code (e.g. v1's buggy `readyWhen` that gated
+// on a foreign CRD's `.status.conditions` and threw "no such key") is silently reused.
+// Pinning the version into the RT name makes a generator change author a fresh,
+// correctly-shaped RT instead.
+//
+//	v1 → original (secret readyWhen gated on the ExternalSecret Ready condition; broken)
+//	v2 → secret readyWhen = ${true} (an ES-only Resource isn't Ready by default; OC's
+//	     applied.<id>.status snapshot is stale for foreign CRDs)
+const ConnectionRTTemplateVersion = 2
+
+// connRTTemplateVersionLabel records the generator version on the RT for debugging.
+const connRTTemplateVersionLabel = "asdlc.dev/rt-template-version"
+
+// ConnectionRTName is the cluster ResourceType name for a connection's logical RT
+// name (the registry's ResourceTypeName), pinned to the current template version so
+// a generator change never collides with — and silently reuses — a stale RT of the
+// same logical name.
+func ConnectionRTName(base string) string {
+	return fmt.Sprintf("%s-t%d", base, ConnectionRTTemplateVersion)
+}
+
 // ConnectionConfigKey is one env-var key in a connection's schema. Mirrors the
 // agents/BFF ConfigKey without importing models (keeps the OC client leaf-level).
 type ConnectionConfigKey struct {
@@ -194,7 +219,10 @@ func BuildExternalConnectionResourceType(name string, keys []ConnectionConfigKey
 	return &ResourceType{
 		APIVersion: ocAPIVersion,
 		Kind:       kindResourceType,
-		Metadata:   OCObjectMeta{Name: name},
+		Metadata: OCObjectMeta{
+			Name:   name,
+			Labels: map[string]string{connRTTemplateVersionLabel: fmt.Sprintf("%d", ConnectionRTTemplateVersion)},
+		},
 		Spec: ResourceTypeSpec{
 			EnvironmentConfigs: envConfigSchema,
 			RetainPolicy:       retainPolicyDelete,

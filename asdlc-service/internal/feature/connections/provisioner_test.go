@@ -104,15 +104,16 @@ func TestProvisionConnection_OrchestratesResourceModel(t *testing.T) {
 		t.Fatalf("provision: %v", err)
 	}
 
-	// ResourceType built from the schema + ensured.
-	if rc.ensuredRT == nil || rc.ensuredRT.Metadata.Name != "openweather" {
-		t.Fatalf("resourcetype not ensured: %+v", rc.ensuredRT)
+	// ResourceType built from the schema + ensured, under the version-pinned name.
+	wantRT := openchoreo.ConnectionRTName("openweather")
+	if rc.ensuredRT == nil || rc.ensuredRT.Metadata.Name != wantRT {
+		t.Fatalf("resourcetype not ensured under %q: %+v", wantRT, rc.ensuredRT)
 	}
-	// Resource: project-prefixed name, owner, type ref.
+	// Resource: project-prefixed name, owner, type ref points at the versioned RT.
 	if rc.appliedRes.Metadata.Name != "weatherproj-openweather" {
 		t.Errorf("resource name = %q", rc.appliedRes.Metadata.Name)
 	}
-	if rc.appliedRes.Spec.Owner.ProjectName != "weatherproj" || rc.appliedRes.Spec.Type.Name != "openweather" {
+	if rc.appliedRes.Spec.Owner.ProjectName != "weatherproj" || rc.appliedRes.Spec.Type.Name != wantRT {
 		t.Errorf("resource spec wrong: %+v", rc.appliedRes.Spec)
 	}
 	if res.LatestRelease != "openweather-proj-abc123" {
