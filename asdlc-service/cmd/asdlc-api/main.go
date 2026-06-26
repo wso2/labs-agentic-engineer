@@ -801,6 +801,10 @@ func main() {
 	// External-connection provisioning: author the OC Resource model from a
 	// connection's per-env values, then re-dispatch the gated component tasks.
 	resourceClient := openchoreo.NewResourceClient(ocConfig)
+	// Dynamic org endpoint catalog (P3): enumerates in-org service endpoints from
+	// the OC Workloads. Backs the MCP `list_org_endpoints` tool + org-service
+	// consumer wiring.
+	orgEndpointCatalog := connections.NewOrgEndpointCatalog(resourceClient)
 	connectionProvisioner := connections.NewProvisioner(connectionRegistry, resourceClient, smWriter)
 	connectionValueSvc := connections.NewValueService(connectionRegistry, connectionProvisioner, taskRepo,
 		func(c context.Context, orgID, projectID string) error {
@@ -971,6 +975,7 @@ func main() {
 		AnthropicCredService: anthropicCredService,
 		TaskJWT:              taskJWT,
 		ConnectionRegistry:   connectionRegistry,
+		OrgEndpointCatalog:   orgEndpointCatalog,
 	}
 
 	// Code-first OpenAPI (Huma) feature dependencies. api.NewHandler creates the

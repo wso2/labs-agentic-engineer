@@ -95,6 +95,13 @@ type ResourceClient interface {
 	// `component` (same project) and `org-service` (cross-project, visibility
 	// `namespace`) deps. GET-modify-PUT, preserving the rest of the spec.
 	PatchWorkloadEndpointDeps(ctx context.Context, namespace, workloadName string, endpoints []WorkloadEndpointDep) error
+
+	// ListWorkloadEndpoints enumerates every provider-side endpoint declared by
+	// the Workloads in a namespace (one row per endpoint, carrying owner +
+	// visibility). This is the dynamic source for the org endpoint catalog (P3):
+	// the architect discovers org-service targets here, and resolution gates on
+	// each row's namespace visibility.
+	ListWorkloadEndpoints(ctx context.Context, namespace string) ([]WorkloadEndpointInfo, error)
 }
 
 // WorkloadResourceDep is one Workload.spec.dependencies.resources[] entry:
@@ -113,6 +120,32 @@ type WorkloadEndpointDep struct {
 	Name       string // target endpoint name on the target component
 	Visibility string // "project" (same-project) | "namespace" (cross-project)
 	AddressEnv string // consumer env var name for the resolved scheme://host:port/basePath
+}
+
+// WorkloadEndpointInfo is one provider-side endpoint discovered by enumerating
+// the org namespace's Workloads — the raw material for the org endpoint catalog
+// (P3). It names the owning project + component, the endpoint, and the extra
+// visibilities the provider declared (project visibility is always implicit).
+type WorkloadEndpointInfo struct {
+	Project    string   // owner project (spec.owner.projectName)
+	Component  string   // owner component (spec.owner.componentName)
+	Workload   string   // workload name (metadata.name)
+	Name       string   // endpoint name (spec.endpoints key)
+	Type       string   // HTTP | gRPC | GraphQL | Websocket | TCP | UDP
+	Port       int32    // endpoint port
+	BasePath   string   // optional root path
+	Visibility []string // explicit extra visibilities: namespace | internal | external
+}
+
+// NamespaceVisible reports whether this endpoint is consumable cross-project
+// within the same namespace (i.e. the provider published it for org-service use).
+func (e WorkloadEndpointInfo) NamespaceVisible() bool {
+	for _, v := range e.Visibility {
+		if v == "namespace" {
+			return true
+		}
+	}
+	return false
 }
 
 // ---- wire DTOs (openchoreo.dev/v1alpha1) -----------------------------------
@@ -536,6 +569,53 @@ func (c *resourceClient) PatchWorkloadEndpointDeps(ctx context.Context, namespac
 		return fmt.Errorf("update workload %q endpoint deps: %w", workloadName, err)
 	}
 	return nil
+}
+
+// workloadList / workloadItem mirror just the slice of the Workload CR the
+// catalog needs: the owner (project/component) and the endpoints map.
+type workloadList struct {
+	Items []workloadItem `json:"items"`
+}
+
+type workloadItem struct {
+	Metadata struct {
+		Name string `json:"name"`
+	} `json:"metadata"`
+	Spec struct {
+		Owner struct {
+			ProjectName   string `json:"projectName"`
+			ComponentName string `json:"componentName"`
+		} `json:"owner"`
+		Endpoints map[string]struct {
+			Type       string   `json:"type"`
+			Port       int32    `json:"port"`
+			BasePath   string   `json:"basePath"`
+			Visibility []string `json:"visibility"`
+		} `json:"endpoints"`
+	} `json:"spec"`
+}
+
+func (c *resourceClient) ListWorkloadEndpoints(ctx context.Context, namespace string) ([]WorkloadEndpointInfo, error) {
+	out := &workloadList{}
+	if _, err := c.do(ctx, http.MethodGet, nsBase(namespace)+"/workloads", nil, out); err != nil {
+		return nil, fmt.Errorf("list workloads in %q: %w", namespace, err)
+	}
+	infos := make([]WorkloadEndpointInfo, 0)
+	for _, w := range out.Items {
+		for name, ep := range w.Spec.Endpoints {
+			infos = append(infos, WorkloadEndpointInfo{
+				Project:    w.Spec.Owner.ProjectName,
+				Component:  w.Spec.Owner.ComponentName,
+				Workload:   w.Metadata.Name,
+				Name:       name,
+				Type:       ep.Type,
+				Port:       ep.Port,
+				BasePath:   ep.BasePath,
+				Visibility: ep.Visibility,
+			})
+		}
+	}
+	return infos, nil
 }
 
 func (c *resourceClient) ListClusterResourceTypes(ctx context.Context) ([]ResourceType, error) {

@@ -86,6 +86,11 @@ type AppParams struct {
 	// (agents-service) connects to so the design LLM reuses already-registered
 	// `external` connections. nil disables the MCP route.
 	ConnectionRegistry *connections.Registry
+
+	// OrgEndpointCatalog backs the MCP `list_org_endpoints` tool — the dynamic
+	// catalog of in-org service endpoints (the `org-service` targets, P3). nil ⇒
+	// the tool reports an empty catalog.
+	OrgEndpointCatalog *connections.OrgEndpointCatalog
 }
 
 // NewHandler assembles the full HTTP handler with middleware and routes.
@@ -136,7 +141,7 @@ func NewHandler(params AppParams) http.Handler {
 	// org's registered `external` connections during design. Raw handler (MCP is
 	// JSON-RPC, not REST/OpenAPI), so it lives on the outer mux, ungated.
 	if params.ConnectionRegistry != nil {
-		mux.Handle("POST /internal/organizations/{orgHandle}/mcp", connections.NewMCPHandler(params.ConnectionRegistry))
+		mux.Handle("POST /internal/organizations/{orgHandle}/mcp", connections.NewMCPHandler(params.ConnectionRegistry, params.OrgEndpointCatalog))
 	}
 
 	// Test-only reset endpoint — truncates local DB tables. INT-4: gated on

@@ -34,14 +34,17 @@ import (
 // `external` dependencies against connections that ALREADY exist in the org's
 // registry instead of inventing names/shapes.
 //
-// Two read-only tools, both backed by the org connection Registry:
-//   - list_connections        → every registered connection (name, description, keys)
+// Read-only tools:
+//   - list_connections        → every registered `external` connection (name, description, keys)
 //   - get_connection_schema    → one connection's config-key schema
+//   - list_org_endpoints       → every service endpoint published across the org's
+//                                projects + its visibility (the `org-service` catalog, P3)
 //
 // Mounted ungated at /internal/organizations/{orgHandle}/mcp (service-to-service
 // on the compose/cluster network, same trust boundary as the Anthropic
 // effective-key resolver the agents-service already calls). orgHandle is the OC
-// org id the Registry keys on (e.g. "default").
+// org id the Registry keys on (e.g. "default"); locally it is also the OC
+// namespace the catalog enumerates Workloads in.
 
 const mcpProtocolVersion = "2024-11-05"
 
@@ -83,9 +86,20 @@ type connectionKeyDTO struct {
 	Secret bool   `json:"secret"`
 }
 
-// NewMCPHandler returns the JSON-RPC MCP handler for the connection registry.
-// orgHandle is read from the request path.
-func NewMCPHandler(registry *Registry) http.Handler {
+// orgEndpointView is the JSON shape returned to the agent for one published
+// org endpoint (the `org-service` catalog row).
+type orgEndpointView struct {
+	Name            string `json:"name"`            // org-service dep name = provider component
+	Project         string `json:"project"`         // provider project
+	Endpoint        string `json:"endpoint"`        // endpoint name on the provider
+	Type            string `json:"type"`            // HTTP | gRPC | …
+	NamespaceVisible bool  `json:"namespaceVisible"` // consumable cross-project as an org-service
+}
+
+// NewMCPHandler returns the JSON-RPC MCP handler for the connection registry +
+// the org endpoint catalog. orgHandle is read from the request path. catalog may
+// be nil (the list_org_endpoints tool then reports an empty catalog).
+func NewMCPHandler(registry *Registry, catalog *OrgEndpointCatalog) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if registry == nil {
 			http.Error(w, "connections registry not configured", http.StatusServiceUnavailable)
@@ -117,7 +131,7 @@ func NewMCPHandler(registry *Registry) http.Handler {
 		case "tools/list":
 			writeRPCResult(w, req.ID, map[string]any{"tools": mcpTools()})
 		case "tools/call":
-			handleToolCall(w, r, registry, orgHandle, req)
+			handleToolCall(w, r, registry, catalog, orgHandle, req)
 		default:
 			writeRPCError(w, req.ID, -32601, "method not found: "+req.Method)
 		}
@@ -144,10 +158,21 @@ func mcpTools() []mcpTool {
 				"required":   []string{"name"},
 			},
 		},
+		{
+			Name: "list_org_endpoints",
+			Description: "List the service endpoints published by OTHER projects in this organization — the " +
+				"catalog of `org-service` dependency targets. Use this when a component needs to call an " +
+				"existing in-org service (instead of building it or treating it as `external`). Each row gives " +
+				"the org-service `name` (= the provider component name to put in the dependency), its project, " +
+				"endpoint, type, and `namespaceVisible`. Only propose an `org-service` dependency when " +
+				"`namespaceVisible` is true; a row with namespaceVisible=false exists but the provider has NOT " +
+				"published it cross-project, so it cannot be consumed yet.",
+			InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+		},
 	}
 }
 
-func handleToolCall(w http.ResponseWriter, r *http.Request, registry *Registry, orgHandle string, req jsonrpcRequest) {
+func handleToolCall(w http.ResponseWriter, r *http.Request, registry *Registry, catalog *OrgEndpointCatalog, orgHandle string, req jsonrpcRequest) {
 	var call struct {
 		Name      string `json:"name"`
 		Arguments struct {
@@ -187,6 +212,23 @@ func handleToolCall(w http.ResponseWriter, r *http.Request, registry *Registry, 
 			return
 		}
 		writeToolText(w, req.ID, mustJSON(map[string]any{"found": true, "connection": toConnectionView(c)}))
+	case "list_org_endpoints":
+		infos, err := catalog.List(r.Context(), orgHandle)
+		if err != nil {
+			writeToolError(w, req.ID, fmt.Sprintf("list org endpoints: %v", err))
+			return
+		}
+		views := make([]orgEndpointView, 0, len(infos))
+		for _, e := range infos {
+			views = append(views, orgEndpointView{
+				Name:             e.Component,
+				Project:          e.Project,
+				Endpoint:         e.Name,
+				Type:             e.Type,
+				NamespaceVisible: e.NamespaceVisible(),
+			})
+		}
+		writeToolText(w, req.ID, mustJSON(map[string]any{"endpoints": views}))
 	default:
 		writeRPCError(w, req.ID, -32602, "unknown tool: "+call.Name)
 	}
