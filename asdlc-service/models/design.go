@@ -116,6 +116,12 @@ type ExposesAPI struct {
 	Managed     bool   `json:"managed,omitempty"`
 	Auth        string `json:"auth,omitempty"`        // "end-user-required" | "service-required" | "none"
 	UserContext string `json:"userContext,omitempty"` // injected header name
+	// OrgPublished marks a service's endpoint as consumable by OTHER projects in
+	// the org (P3). When set, the coding agent writes `visibility: [external,
+	// namespace]` on the endpoint in its workload.yaml, and the org endpoint
+	// catalog lists it as a cross-project `org-service` target. Deliberate +
+	// source-of-truth: the provider owns this; the platform never patches it.
+	OrgPublished bool `json:"orgPublished,omitempty"`
 }
 
 // CallerIdentity declares the caller-identity intent for a web-app

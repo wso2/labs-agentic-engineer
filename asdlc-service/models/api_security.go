@@ -35,6 +35,13 @@ func ResolveAPISecurityEnabled(comp DesignComponent) bool {
 	return false
 }
 
+// ResolveOrgPublished reports whether a service is published for cross-project
+// (`org-service`) consumption — its endpoint should carry `namespace` visibility
+// and appear in the org endpoint catalog (P3). nil ExposesAPI ⇒ false.
+func ResolveOrgPublished(comp DesignComponent) bool {
+	return comp.ExposesAPI != nil && comp.ExposesAPI.OrgPublished
+}
+
 // ResolveAPISecurityCallerKind returns the auth flavor for sibling-CORS
 // gating. Only `end-user-required` APIs should advertise SPA origins in
 // their CORS allowlist (service-to-service APIs have no browser caller).

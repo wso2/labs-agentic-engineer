@@ -258,6 +258,14 @@ is mintable and reachable from the dependent's browser. The platform
 will fail loudly with a §1.3 invariant error at the dependent's dispatch
 time if a deployed dep has no external URL.
 
+**Org-published services (P3).** If THIS component's design frontmatter has
+`exposesAPI.orgPublished: true`, the service is meant to be consumed by
+components in OTHER projects of the org. In that case ALSO add `namespace`
+to the endpoint's `visibility` list — e.g. `visibility: [external, namespace]`
+— so OpenChoreo exposes it cross-project. This is the ONLY way a service
+becomes an `org-service` target; the platform never edits your workload.yaml.
+Add `namespace` only when `orgPublished` is set in the design.
+
 ### Service-to-service runtime injection (legacy / deferred)
 
 The OpenChoreo `dependencies.endpoints` block with `envBindings:` is a

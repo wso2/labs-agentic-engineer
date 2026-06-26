@@ -486,9 +486,10 @@ func toCfgDeps(in []models.Dependency) []dependencyConfig {
 // exposure policy. `Auth: "end-user-required"` ⇒ gateway validates a
 // user JWT and injects UserContext upstream.
 type exposesAPIConfig struct {
-	Managed     bool   `yaml:"managed,omitempty"`
-	Auth        string `yaml:"auth,omitempty"`
-	UserContext string `yaml:"userContext,omitempty"`
+	Managed      bool   `yaml:"managed,omitempty"`
+	Auth         string `yaml:"auth,omitempty"`
+	UserContext  string `yaml:"userContext,omitempty"`
+	OrgPublished bool   `yaml:"orgPublished,omitempty"` // P3: endpoint consumable cross-project (namespace visibility)
 }
 
 // callerIdentityConfig is the on-disk shape for a web-app's caller-
@@ -613,11 +614,12 @@ func assembleComponent(name, designMd string, files map[string]string) (models.D
 		deps = []models.Dependency{}
 	}
 	var exposes *models.ExposesAPI
-	if cfm.ExposesAPI != nil && (cfm.ExposesAPI.Auth != "" || cfm.ExposesAPI.Managed || cfm.ExposesAPI.UserContext != "") {
+	if cfm.ExposesAPI != nil && (cfm.ExposesAPI.Auth != "" || cfm.ExposesAPI.Managed || cfm.ExposesAPI.UserContext != "" || cfm.ExposesAPI.OrgPublished) {
 		exposes = &models.ExposesAPI{
-			Managed:     cfm.ExposesAPI.Managed,
-			Auth:        cfm.ExposesAPI.Auth,
-			UserContext: cfm.ExposesAPI.UserContext,
+			Managed:      cfm.ExposesAPI.Managed,
+			Auth:         cfm.ExposesAPI.Auth,
+			UserContext:  cfm.ExposesAPI.UserContext,
+			OrgPublished: cfm.ExposesAPI.OrgPublished,
 		}
 	}
 	var caller *models.CallerIdentity
@@ -713,11 +715,12 @@ func SplitDesign(d *DesignFile) (map[string]string, error) {
 		}
 		// Preserve any non-empty field — gating on `Auth != ""` would drop
 		// designs that set only `managed` or `userContext`.
-		if comp.ExposesAPI != nil && (comp.ExposesAPI.Auth != "" || comp.ExposesAPI.Managed || comp.ExposesAPI.UserContext != "") {
+		if comp.ExposesAPI != nil && (comp.ExposesAPI.Auth != "" || comp.ExposesAPI.Managed || comp.ExposesAPI.UserContext != "" || comp.ExposesAPI.OrgPublished) {
 			cfm.ExposesAPI = &exposesAPIConfig{
-				Managed:     comp.ExposesAPI.Managed,
-				Auth:        comp.ExposesAPI.Auth,
-				UserContext: comp.ExposesAPI.UserContext,
+				Managed:      comp.ExposesAPI.Managed,
+				Auth:         comp.ExposesAPI.Auth,
+				UserContext:  comp.ExposesAPI.UserContext,
+				OrgPublished: comp.ExposesAPI.OrgPublished,
 			}
 		}
 		if comp.CallerIdentity != nil && comp.CallerIdentity.Mode != "" {
