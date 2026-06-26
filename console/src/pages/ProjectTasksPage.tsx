@@ -39,8 +39,13 @@ export default function ProjectTasksPage() {
   const navigate = useNavigate();
   const failedRef = useRef<HTMLDivElement>(null);
 
+  // Expand the actionable + attention-worthy columns by default: To Do and In
+  // Progress, plus On Hold (dep-gated tasks must be VISIBLE so the planned scope
+  // is obvious even though they can't start yet) and Failed. Only Done collapses.
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>(() =>
-    Object.fromEntries(SECTIONS.map(s => [s.key, s.key === 'todo' || s.key === 'inProgress']))
+    Object.fromEntries(
+      SECTIONS.map(s => [s.key, s.key === 'todo' || s.key === 'inProgress' || s.key === 'onHold' || s.key === 'failed']),
+    )
   );
   const prevCountsRef = useRef<Record<string, number>>({});
 
