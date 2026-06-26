@@ -211,10 +211,16 @@ export const SlimComponent = z.object({
         .describe(
           "Caller authentication policy. 'end-user-required' = the gateway validates an end-user JWT and injects X-User-Id. 'service-required' = the gateway validates a service-to-service JWT (no end-user). 'none' = public.",
         ),
+      orgPublished: z
+        .boolean()
+        .optional()
+        .describe(
+          "Set true ONLY when this service is intended to be consumed by components in OTHER projects of the org (a shared org API). It marks the endpoint for cross-project (namespace) visibility so other projects can depend on it via an 'org-service' dependency. Leave unset for project-internal services.",
+        ),
     })
     .optional()
     .describe(
-      "API exposure policy (services only). Omit for public APIs. Set 'auth: end-user-required' when callers are end users; the gateway validates the JWT and injects X-User-Id.",
+      "API exposure policy (services only). Omit for public APIs. Set 'auth: end-user-required' when callers are end users; the gateway validates the JWT and injects X-User-Id. Set 'orgPublished: true' to publish the service for cross-project consumption.",
     ),
   callerIdentity: z
     .object({
