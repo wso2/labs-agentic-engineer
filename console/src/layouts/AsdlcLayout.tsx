@@ -48,6 +48,7 @@ import {
   Sparkles,
   X,
   ClipboardList,
+  Plug,
   Settings,
 } from '@wso2/oxygen-ui-icons-react';
 import { useUserClaims } from '../auth';
@@ -61,6 +62,7 @@ import {
   projectRequirementsPath,
   projectArchitecturePath,
   projectTasksPath,
+  projectDependenciesPath,
   componentDetailPath,
   componentBuildPath,
   componentDeployPath,
@@ -230,6 +232,11 @@ export default function AsdlcLayout() {
     ) {
       return 'tasks';
     }
+    if (
+      matchPath('/organizations/:orgId/projects/:projectId/dependencies', location.pathname)
+    ) {
+      return 'dependencies';
+    }
     return 'overview';
   })();
 
@@ -281,6 +288,9 @@ export default function AsdlcLayout() {
         break;
       case 'tasks':
         navigate(projectTasksPath(routeOrgId, projectId));
+        break;
+      case 'dependencies':
+        navigate(projectDependenciesPath(routeOrgId, projectId));
         break;
       default:
         break;
@@ -658,6 +668,12 @@ export default function AsdlcLayout() {
                     <ClipboardList size={20} />
                   </Sidebar.ItemIcon>
                   <Sidebar.ItemLabel>Implementation</Sidebar.ItemLabel>
+                </Sidebar.Item>
+                <Sidebar.Item id="dependencies">
+                  <Sidebar.ItemIcon>
+                    <Plug size={20} />
+                  </Sidebar.ItemIcon>
+                  <Sidebar.ItemLabel>Dependencies</Sidebar.ItemLabel>
                 </Sidebar.Item>
               </Sidebar.Category>
             )}

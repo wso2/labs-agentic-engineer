@@ -26,6 +26,7 @@ import OrgOverviewPage from './pages/OrgOverviewPage';
 import ProjectCreatePage from './pages/ProjectCreatePage';
 import ProjectArchitecturePage from './pages/ProjectArchitecturePage';
 import ProjectTasksPage from './pages/ProjectTasksPage';
+import ProjectDependenciesPage from './pages/ProjectDependenciesPage';
 import TaskDetailPage from './pages/TaskDetailPage';
 import ProjectRequirementsPage from './pages/ProjectRequirementsPage';
 import ProjectOverviewPage from './pages/ProjectOverviewPage';
@@ -44,6 +45,7 @@ import OrgSkillsSettings from './pages/OrgSkillsSettings';
 import NoOrganizationPage from './pages/NoOrganizationPage';
 import { setOrgGithubTokenAccessor } from './services/api/orgGithub';
 import { setOrgAnthropicTokenAccessor } from './services/api/orgAnthropic';
+import { setConnectionsTokenAccessor } from './services/api/connections';
 import { setOrgIDPTokenAccessor } from './services/api/orgIDP';
 import { setOrgSkillsTokenAccessor } from './services/api/orgSkills';
 import { useBillingOrg } from './hooks/useBillingOrg';
@@ -79,6 +81,7 @@ export function App() {
     setTokenAccessor(getAccessToken);
     setOrgGithubTokenAccessor(getAccessToken);
     setOrgAnthropicTokenAccessor(getAccessToken);
+    setConnectionsTokenAccessor(getAccessToken);
     setOrgIDPTokenAccessor(getAccessToken);
     setOrgSkillsTokenAccessor(getAccessToken);
   }, [getAccessToken]);
@@ -129,6 +132,7 @@ export function App() {
           <Route path="requirements" element={<ProjectRequirementsPage />} />
           <Route path="architecture" element={<ProjectArchitecturePage />} />
           <Route path="tasks" element={<ProjectTasksPage />} />
+          <Route path="dependencies" element={<ProjectDependenciesPage />} />
           <Route path="tasks/:taskId" element={<TaskDetailPage />} />
           <Route path="implementation-plan" element={<Navigate to="../tasks" replace />} />
           <Route path="implementation" element={<Navigate to="../tasks" replace />} />
