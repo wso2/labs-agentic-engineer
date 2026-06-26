@@ -805,6 +805,9 @@ func main() {
 	// the OC Workloads. Backs the MCP `list_org_endpoints` tool + org-service
 	// consumer wiring.
 	orgEndpointCatalog := connections.NewOrgEndpointCatalog(resourceClient)
+	// Mark org-service deps resolved/unresolved in the design view against the
+	// live catalog (supersedes the static external-API map for org-service).
+	artifactStore.SetOrgServiceResolver(orgEndpointCatalog)
 	connectionProvisioner := connections.NewProvisioner(connectionRegistry, resourceClient, smWriter)
 	connectionValueSvc := connections.NewValueService(connectionRegistry, connectionProvisioner, taskRepo,
 		func(c context.Context, orgID, projectID string) error {
@@ -862,7 +865,7 @@ func main() {
 	cascadeHook.SetTraitSync(traitSyncService)
 	cascadeHook.SetRuntimeConfig(runtimeConfigSvc)
 	// Re-wire external-connection env onto consumer components post-deploy.
-	cascadeHook.SetConnectionWiring(connections.NewConsumerWiring(resourceClient, taskRepo, nil))
+	cascadeHook.SetConnectionWiring(connections.NewConsumerWiring(resourceClient, taskRepo, orgEndpointCatalog, nil))
 	projector.SetDispatchHook(cascadeHook)
 
 	task.RegisterHandlers(func(event, action string, h func(ctx context.Context, event, action string, payload []byte) error) {
@@ -913,7 +916,6 @@ func main() {
 		cfg.BFFPublicURL,
 		cfg.GithubAppClientID,
 	)
-
 
 	var taskJWT jwtassertion.Middleware
 	if cfg.BFFJWKSURL != "" {

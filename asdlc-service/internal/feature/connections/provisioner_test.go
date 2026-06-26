@@ -34,6 +34,11 @@ type fakeRC struct {
 	latest          string
 	patchedWorkload string
 	patchedDeps     []openchoreo.WorkloadResourceDep
+
+	// org-service catalog + endpoint wiring (P3)
+	workloadEndpoints   []openchoreo.WorkloadEndpointInfo
+	patchedEPWorkload   string
+	patchedEndpointDeps []openchoreo.WorkloadEndpointDep
 }
 
 func (f *fakeRC) EnsureResourceType(_ context.Context, _ string, rt *openchoreo.ResourceType) (*openchoreo.ResourceType, error) {
@@ -68,12 +73,14 @@ func (f *fakeRC) PatchWorkloadResourceDeps(_ context.Context, _, workloadName st
 	return nil
 }
 
-func (f *fakeRC) PatchWorkloadEndpointDeps(_ context.Context, _, _ string, _ []openchoreo.WorkloadEndpointDep) error {
+func (f *fakeRC) PatchWorkloadEndpointDeps(_ context.Context, _, workloadName string, endpoints []openchoreo.WorkloadEndpointDep) error {
+	f.patchedEPWorkload = workloadName
+	f.patchedEndpointDeps = endpoints
 	return nil
 }
 
 func (f *fakeRC) ListWorkloadEndpoints(_ context.Context, _ string) ([]openchoreo.WorkloadEndpointInfo, error) {
-	return nil, nil
+	return f.workloadEndpoints, nil
 }
 
 type fakeSW struct{ wrote map[string]map[string]string }

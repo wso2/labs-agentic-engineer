@@ -19,6 +19,7 @@ package connections
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/wso2/asdlc/asdlc-service/clients/openchoreo"
 	"github.com/wso2/asdlc/asdlc-service/models"
@@ -33,16 +34,17 @@ import (
 // NOT work for this — it resolves through an OC SecretReference CR, not the raw
 // materialized Secret.) The connection's per-env binding gives the output names.
 type ConsumerWiring struct {
-	rc    openchoreo.ResourceClient
-	tasks TaskStore
-	envs  []string // project environments (just "development" today)
+	rc      openchoreo.ResourceClient
+	tasks   TaskStore
+	catalog *OrgEndpointCatalog // org-service endpoint resolution (P3); nil ⇒ org-service wiring is a no-op
+	envs    []string            // project environments (just "development" today)
 }
 
-func NewConsumerWiring(rc openchoreo.ResourceClient, tasks TaskStore, envs []string) *ConsumerWiring {
+func NewConsumerWiring(rc openchoreo.ResourceClient, tasks TaskStore, catalog *OrgEndpointCatalog, envs []string) *ConsumerWiring {
 	if len(envs) == 0 {
 		envs = []string{"development"}
 	}
-	return &ConsumerWiring{rc: rc, tasks: tasks, envs: envs}
+	return &ConsumerWiring{rc: rc, tasks: tasks, catalog: catalog, envs: envs}
 }
 
 // scopedWorkloadName is the OC Workload CR name for a component:
@@ -65,12 +67,82 @@ func (w *ConsumerWiring) EmitForProjectConnections(ctx context.Context, orgID, p
 	}
 	for i := range tasks {
 		t := &tasks[i]
-		if t.Type == models.TaskTypeConfigCollection || len(t.DependsOnConnections) == 0 {
+		if t.Type == models.TaskTypeConfigCollection {
 			continue
 		}
-		if err := w.WireConsumer(ctx, orgID, projectID, t.ComponentName, []string(t.DependsOnConnections), w.envs); err != nil {
-			return err
+		if len(t.DependsOnConnections) > 0 {
+			if err := w.WireConsumer(ctx, orgID, projectID, t.ComponentName, []string(t.DependsOnConnections), w.envs); err != nil {
+				return err
+			}
 		}
+		// P3: wire cross-project org-service deps as OC WorkloadConnections.
+		if len(t.DependsOnOrgServices) > 0 {
+			if err := w.WireOrgServiceConsumer(ctx, orgID, projectID, t.ComponentName, []string(t.DependsOnOrgServices)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// orgServiceURLEnv is the consumer env var OC binds the resolved org-service
+// address to — same `<UPPER_SNAKE>_URL` convention SPAs read via window._env_,
+// so a Go/Node consumer reads e.g. EMPLOYEE_API_URL regardless of how the URL
+// is delivered.
+func orgServiceURLEnv(name string) string {
+	var b strings.Builder
+	prevAlnum := false
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r - 'a' + 'A')
+			prevAlnum = true
+		case r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			prevAlnum = true
+		case r == '-' || r == '_':
+			if prevAlnum {
+				b.WriteByte('_')
+			}
+			prevAlnum = false
+		}
+	}
+	return strings.TrimSuffix(b.String(), "_") + "_URL"
+}
+
+// WireOrgServiceConsumer sets the consumer Workload's
+// spec.dependencies.endpoints[] (OC WorkloadConnection) for each cross-project
+// org-service dep: the org endpoint catalog resolves the dep name to a
+// namespace-visible provider endpoint and OC injects its internal address into
+// the consumer pod env (<NAME>_URL). A dep whose target isn't yet published
+// namespace-visible is skipped (soft no-op) — the cascade re-drives once the
+// provider redeploys with namespace visibility. orgHandle is the OC namespace.
+func (w *ConsumerWiring) WireOrgServiceConsumer(ctx context.Context, orgHandle, projectName, componentName string, orgServiceNames []string) error {
+	if w.catalog == nil || len(orgServiceNames) == 0 {
+		return nil
+	}
+	endpoints := make([]openchoreo.WorkloadEndpointDep, 0, len(orgServiceNames))
+	for _, name := range orgServiceNames {
+		target, ok, err := w.catalog.ResolveNamespaceVisible(ctx, orgHandle, name)
+		if err != nil {
+			return fmt.Errorf("connections: resolve org-service %q: %w", name, err)
+		}
+		if !ok {
+			continue // provider not published namespace-visible yet; cascade re-drives
+		}
+		endpoints = append(endpoints, openchoreo.WorkloadEndpointDep{
+			Project:    target.Project,
+			Component:  target.Component,
+			Name:       target.Name,
+			Visibility: "namespace",
+			AddressEnv: orgServiceURLEnv(name),
+		})
+	}
+	if len(endpoints) == 0 {
+		return nil
+	}
+	if err := w.rc.PatchWorkloadEndpointDeps(ctx, orgHandle, scopedWorkloadName(projectName, componentName), endpoints); err != nil {
+		return fmt.Errorf("connections: wire org-service consumer %q workload deps: %w", componentName, err)
 	}
 	return nil
 }

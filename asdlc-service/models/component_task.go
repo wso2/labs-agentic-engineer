@@ -126,6 +126,13 @@ type ComponentTask struct {
 	// graph (plan §4). Platform-authored from the design's external dependencies.
 	DependsOnConnections StringSlice `gorm:"column:depends_on_connections;type:jsonb;serializer:json" json:"dependsOnConnections,omitempty"`
 
+	// DependsOnOrgServices lists the cross-project `org-service` dependency names
+	// (= provider component names) this component consumes (P3). Platform-authored
+	// from the design's org-service dependencies. Drives the post-deploy OC
+	// WorkloadConnection wiring: the org endpoint catalog resolves each name to a
+	// namespace-visible provider endpoint, injected into the consumer pod env.
+	DependsOnOrgServices StringSlice `gorm:"column:depends_on_org_services;type:jsonb;serializer:json" json:"dependsOnOrgServices,omitempty"`
+
 	// ConnectionName is set only on config-collection tasks (Type ==
 	// config-collection): the external connection whose per-env values this task
 	// collects. Empty for component tasks.

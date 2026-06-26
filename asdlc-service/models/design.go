@@ -108,6 +108,20 @@ func (c DesignComponent) ExternalDependencies() []Dependency {
 	return out
 }
 
+// OrgServiceDependsOn returns the names of this component's cross-project
+// `org-service` dependencies (P3). Each name is the provider component name —
+// the key the org endpoint catalog resolves to a namespace-visible endpoint.
+// Used to wire the consumer Workload's OC WorkloadConnection post-deploy.
+func (c DesignComponent) OrgServiceDependsOn() []string {
+	out := make([]string, 0, len(c.Dependencies))
+	for _, d := range c.Dependencies {
+		if d.Kind == DependencyKindOrgService {
+			out = append(out, d.Name)
+		}
+	}
+	return out
+}
+
 // ExposesAPI declares HTTP API exposure policy for a service component.
 // Absent / nil ⇒ public (no gateway hop). `Auth: "end-user-required"` ⇒
 // the API Platform gateway validates an end-user JWT and injects

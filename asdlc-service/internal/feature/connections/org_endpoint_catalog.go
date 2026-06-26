@@ -81,3 +81,12 @@ func (c *OrgEndpointCatalog) ResolveNamespaceVisible(ctx context.Context, orgHan
 	}
 	return openchoreo.WorkloadEndpointInfo{}, false, nil
 }
+
+// IsNamespaceVisible reports whether an org-service named `name` is published
+// namespace-visible in the org — the resolution gate for design display. Used
+// by the ArtifactStore to mark an `org-service` dependency `resolved` (true) vs
+// `unresolved` (false). Errors are surfaced so the caller can degrade.
+func (c *OrgEndpointCatalog) IsNamespaceVisible(ctx context.Context, orgHandle, name string) (bool, error) {
+	_, ok, err := c.ResolveNamespaceVisible(ctx, orgHandle, name)
+	return ok, err
+}

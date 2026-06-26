@@ -29,18 +29,36 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
 
+// OrgServiceResolver answers whether an `org-service` dependency name is
+// published namespace-visible in the org — the dynamic org endpoint catalog
+// (P3). Satisfied by connections.OrgEndpointCatalog. Injected so the artifacts
+// package stays free of an OC-client dependency.
+type OrgServiceResolver interface {
+	IsNamespaceVisible(ctx context.Context, orgHandle, name string) (bool, error)
+}
+
 // ArtifactStore wraps the in-process artifact service to add value beyond
 // pure file I/O: external-API catalog resolution and the typed `DesignFile`
 // shape (YAML split/assemble).
 type ArtifactStore struct {
 	artifactSvc  ArtifactService
 	externalAPIs *ExternalAPICatalog
+	orgServices  OrgServiceResolver // dynamic org-service catalog (P3); nil ⇒ no live resolution
 }
 
 func NewArtifactStore(artifactSvc ArtifactService) *ArtifactStore {
 	store := &ArtifactStore{artifactSvc: artifactSvc, externalAPIs: DefaultExternalAPICatalog()}
 	registerSplitDesignCatalog(store.externalAPIs)
 	return store
+}
+
+// SetOrgServiceResolver wires the dynamic org endpoint catalog used to mark
+// `org-service` dependencies resolved/unresolved at design-read time (P3).
+func (s *ArtifactStore) SetOrgServiceResolver(r OrgServiceResolver) {
+	if s == nil {
+		return
+	}
+	s.orgServices = r
 }
 
 // SetExternalAPICatalog overrides the catalog the store uses to resolve
@@ -213,29 +231,47 @@ func (s *ArtifactStore) ReadDesign(ctx context.Context, orgID, projectID string)
 	if err != nil {
 		return nil, err
 	}
-	// Mark catalog-known org-service dependencies as resolved so the
-	// architecture view renders them without user action. The concrete URL
-	// is resolved at wiring/dispatch time (P3).
-	s.resolveExternalAPIs(design)
+	// Mark org-service dependencies resolved/unresolved against the live org
+	// endpoint catalog so the architecture view renders status without user
+	// action. The concrete URL is injected at wiring time (P3, cascade).
+	s.resolveOrgServices(ctx, orgID, design)
 	return design, nil
 }
 
-// resolveExternalAPIs marks org-service dependencies whose name is known to
-// the in-cluster catalog as `resolved`. Concrete URL resolution happens at
-// wiring/dispatch time (P3); external connections (user-supplied values) are
-// handled by the connection flow, not here. Idempotent.
-func (s *ArtifactStore) resolveExternalAPIs(d *DesignFile) {
-	if s == nil || s.externalAPIs == nil || d == nil {
+// resolveOrgServices marks each `org-service` dependency `resolved` when its
+// target is published namespace-visible in the org endpoint catalog, and
+// `unresolved` otherwise (the provider hasn't published it cross-project yet).
+// Falls back to the static external-API catalog when no dynamic resolver is
+// wired (tests / standalone). Best-effort: catalog errors leave status
+// untouched and never fail the read. orgID is the OC namespace (locally). The
+// concrete address is injected by the consumer wiring at dispatch (P3).
+func (s *ArtifactStore) resolveOrgServices(ctx context.Context, orgID string, d *DesignFile) {
+	if s == nil || d == nil {
 		return
 	}
 	for i := range d.Components {
 		for j := range d.Components[i].Dependencies {
 			dep := &d.Components[i].Dependencies[j]
-			if dep.Kind != models.DependencyKindOrgService || dep.Status != "" {
+			if dep.Kind != models.DependencyKindOrgService {
 				continue
 			}
-			if entry := s.externalAPIs.Lookup(dep.Name); entry.URL != "" {
-				dep.Status = "resolved"
+			if s.orgServices != nil {
+				visible, err := s.orgServices.IsNamespaceVisible(ctx, orgID, dep.Name)
+				if err != nil {
+					continue // transient OC error — leave whatever status is stored
+				}
+				if visible {
+					dep.Status = "resolved"
+				} else {
+					dep.Status = "unresolved"
+				}
+				continue
+			}
+			// Static fallback (no dynamic catalog wired).
+			if dep.Status == "" && s.externalAPIs != nil {
+				if entry := s.externalAPIs.Lookup(dep.Name); entry.URL != "" {
+					dep.Status = "resolved"
+				}
 			}
 		}
 	}

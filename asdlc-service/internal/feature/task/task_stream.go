@@ -472,6 +472,7 @@ func (s *taskService) persistAndIssue(
 			Rationale:            p.Rationale,
 			DependsOnComponents:  models.StringSlice(deps),
 			DependsOnConnections: models.StringSlice(connDeps),
+			DependsOnOrgServices: models.StringSlice(comp.OrgServiceDependsOn()),
 			BatchID:              ptrString(batchID),
 			SourceSpecVersion:    specVersion,
 			SourceDesignVersion:  designVersion,
