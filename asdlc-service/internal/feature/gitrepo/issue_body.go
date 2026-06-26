@@ -109,6 +109,17 @@ func BuildIssueBody(task *models.ComponentTask, comp *models.DesignComponent, _r
 	}
 	sb.WriteString("\n")
 
+	// Org-published services (P3): the design marks this service consumable by
+	// OTHER projects in the org, so its endpoint must be exposed cross-project.
+	// This is per-task design data (not a static rule), so it's surfaced here in
+	// the issue rather than only in the baked `asdlc` skill.
+	if comp != nil && models.ResolveOrgPublished(*comp) {
+		sb.WriteString("## Org-published service — endpoint visibility\n")
+		sb.WriteString("This service is **published org-wide**: components in OTHER projects depend on it as an `org-service`. ")
+		sb.WriteString("In your `workload.yaml`, the HTTP endpoint's `visibility` list MUST include **`namespace`** (in addition to `external`) — e.g. `visibility: [external, namespace]`. ")
+		sb.WriteString("`namespace` visibility is what lets OpenChoreo resolve this endpoint for cross-project consumers; without it the dependent components in other projects cannot reach it.\n\n")
+	}
+
 	sb.WriteString("---\n")
 	sb.WriteString(fmt.Sprintf("When you open the PR, include `Closes #%d` in its body so the platform links the PR back to this task. The full workflow, constraints, and deny-list are in the `asdlc` skill loaded in your Claude Code session.\n", task.IssueNumber))
 
