@@ -25,6 +25,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/wso2/asdlc/asdlc-service/config"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/connections"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/organization"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/orgcreds"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/task"
@@ -80,6 +81,11 @@ type AppParams struct {
 	// TaskJWT verifies Task JWTs presented to /api/v1/credentials/refresh.
 	// JWKS resolves to the BFF's /auth/external/jwks.json.
 	TaskJWT jwtassertion.Middleware
+
+	// ConnectionRegistry backs the MCP discovery server the architect
+	// (agents-service) connects to so the design LLM reuses already-registered
+	// `external` connections. nil disables the MCP route.
+	ConnectionRegistry *connections.Registry
 }
 
 // NewHandler assembles the full HTTP handler with middleware and routes.
@@ -124,6 +130,14 @@ func NewHandler(params AppParams) http.Handler {
 	// they bypass the jwt/orgensure wrapper applied to /api/.
 	mux.Handle("/auth/external/jwks.json", apiMux)
 	mux.Handle("/internal/credentials/orgs/{orgHandle}/anthropic/effective-key", apiMux)
+
+	// MCP discovery server — JSON-RPC, service-to-service (same trust boundary as
+	// the effective-key resolver). The architect connects here to list/inspect the
+	// org's registered `external` connections during design. Raw handler (MCP is
+	// JSON-RPC, not REST/OpenAPI), so it lives on the outer mux, ungated.
+	if params.ConnectionRegistry != nil {
+		mux.Handle("POST /internal/organizations/{orgHandle}/mcp", connections.NewMCPHandler(params.ConnectionRegistry))
+	}
 
 	// Test-only reset endpoint — truncates local DB tables. INT-4: gated on
 	// DEPLOYMENT_TIER=dev (not TestMode alone) so the global truncate cannot

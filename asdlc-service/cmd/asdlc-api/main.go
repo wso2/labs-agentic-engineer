@@ -970,6 +970,7 @@ func main() {
 		CredService:          credService,
 		AnthropicCredService: anthropicCredService,
 		TaskJWT:              taskJWT,
+		ConnectionRegistry:   connectionRegistry,
 	}
 
 	// Code-first OpenAPI (Huma) feature dependencies. api.NewHandler creates the
