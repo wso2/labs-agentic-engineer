@@ -204,9 +204,6 @@ for you.
 - Open more than one PR for this task.
 - Run `gh pr merge`, `gh pr close`, `gh repo create`, `gh repo delete`,
   `gh repo fork`, or `gh repo edit`.
-- Add a `dependencies.endpoints` block to `workload.yaml` (the
-  consumer-side OC runtime-injection wiring). Sibling URLs reach the
-  SPA at request time via `window._env_` (see the `react-webapp` skill).
 - Add CORS middleware in any service component (see the `api-management`
   skill).
 - Delete remote branches (`git push --delete`, `git push origin :branch`).
@@ -221,11 +218,14 @@ Every component must have a `workload.yaml` at its root. This file uses
 the **flat WorkloadDescriptor** format — **not** a Kubernetes CR. Do
 **not** use `kind: Workload`, `spec:`, `autoBuild`, or `autoDeploy`.
 
-For v1, **declare only `endpoints` (provider-side)**. Do **not** declare
-a `dependencies` block — consumer-side runtime URL injection is not used
-in v1. Sibling URLs reach SPAs at request time via `window._env_`; Go
-service consumers read sibling URLs from env vars set on the
-ReleaseBinding (see the `api-management` skill).
+Declare your component's **`endpoints`** (provider-side). When your issue
+has a **"Platform-resolved dependencies"** comment with a `dependencies:`
+block, you **MUST** also add that block to your `workload.yaml`
+(consumer-side) — the platform has already resolved the targets and the
+env-var bindings, so copy it **verbatim** (merging into any existing
+`dependencies:`). OpenChoreo injects the resolved addresses/outputs into
+your pod env at runtime. **This instruction overrides the legacy guidance
+in any other skill that says not to add a `dependencies` block.**
 
 ### Format
 
@@ -266,14 +266,32 @@ to the endpoint's `visibility` list — e.g. `visibility: [external, namespace]`
 becomes an `org-service` target; the platform never edits your workload.yaml.
 Add `namespace` only when `orgPublished` is set in the design.
 
-### Service-to-service runtime injection (legacy / deferred)
+### Consumer-side dependencies (`dependencies:`)
 
-The OpenChoreo `dependencies.endpoints` block with `envBindings:` is a
-real and supported primitive — it lets a Go/Node backend receive an
-upstream URL at pod startup via an env var. The v1 WSO2 Labs Agentic
-Engineer platform handles consumer-side env injection through a
-different path: the BFF emits `<NAME>_URL` env vars onto the consuming
-workload's ReleaseBinding directly (no `dependencies.endpoints` block
-required). When the platform later supports the native runtime
-injection grammar, this section will be updated. Do NOT add a
-`dependencies.endpoints` block preemptively.
+When this component consumes another service or an external connection,
+the platform resolves the wiring and posts it as a **"Platform-resolved
+dependencies"** comment on your issue (read it with
+`gh issue view <url> --comments`). Add that `dependencies:` block to your
+`workload.yaml` exactly as given — do not invent, rename, or omit fields:
+
+```yaml
+dependencies:
+  endpoints:                       # service-to-service / cross-project (org-service)
+    - project: <provider-project>  # present for cross-project; absent = same project
+      component: <provider-component>
+      name: <provider-endpoint>    # e.g. http
+      visibility: namespace        # or project (same-project)
+      envBindings:
+        address: <ENV_VAR>         # OpenChoreo injects the resolved URL here
+  resources:                       # external connection resources
+    - ref: <resource-name>
+      envBindings:
+        <output-name>: <ENV_VAR>   # OpenChoreo injects the connection output here
+```
+
+Read each injected value from its env var at startup (no hardcoded
+fallback). If your issue has **no** "Platform-resolved dependencies"
+comment, your component has no consumer-side dependencies — add no
+`dependencies:` block. The build's `generate-workload-cr` step propagates
+this block into the OpenChoreo `Workload` CR, and OpenChoreo resolves +
+injects the addresses; you never hardcode an upstream URL.

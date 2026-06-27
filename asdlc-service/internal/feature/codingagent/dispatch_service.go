@@ -1164,8 +1164,9 @@ func (s *dispatchService) postConsumerDependencyComment(ctx context.Context, tas
 		return
 	}
 	body := "**Platform-resolved dependencies** — add the following to this component's " +
-		"`workload.yaml` (merge with your existing `endpoints:`). OpenChoreo injects " +
-		"these addresses into your pod at runtime:\n\n```yaml\n" + block + "```"
+		"`workload.yaml` (merge into any existing `dependencies:`). The platform has " +
+		"already resolved the targets + env-var bindings; copy it verbatim. OpenChoreo " +
+		"injects these addresses/outputs into your pod env at runtime:\n\n```yaml\n" + block + "```"
 	if err := s.issueCommenter(ctx, task.OrgID, task.ProjectID, task.IssueNumber, body); err != nil {
 		slog.WarnContext(ctx, "consumer-dependency comment: post failed",
 			"task", task.ID, "component", task.ComponentName, "issue", task.IssueNumber, "error", err)
