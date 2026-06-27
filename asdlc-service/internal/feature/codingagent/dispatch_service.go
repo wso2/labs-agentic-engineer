@@ -26,15 +26,18 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/wso2/asdlc/asdlc-service/clients/openchoreo"
 	"github.com/wso2/asdlc/asdlc-service/internal/contracts"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/component"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/connections"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/gitrepo"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/orgcreds"
 	"github.com/wso2/asdlc/asdlc-service/internal/platform/k8sname"
 	"github.com/wso2/asdlc/asdlc-service/internal/platform/tenant"
 	"github.com/wso2/asdlc/asdlc-service/models"
 	"github.com/wso2/asdlc/asdlc-service/repositories"
+	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
 )
 
@@ -93,6 +96,21 @@ type (
 	RuntimeConfigEmitter interface {
 		EmitForComponent(ctx context.Context, orgID, projectID, componentName string) error
 	}
+	// OrgServiceResolver resolves a cross-project `org-service` name to its
+	// namespace-visible provider endpoint (target project/component/endpoint).
+	// Satisfied by *connections.OrgEndpointCatalog; used by the dispatch-time
+	// consumer-dependency YAML renderer. ok=false ⇒ not yet published.
+	OrgServiceResolver interface {
+		ResolveNamespaceVisible(ctx context.Context, orgHandle, name string) (openchoreo.WorkloadEndpointInfo, bool, error)
+	}
+	// ConnectionBindingReader reads a connection's per-env
+	// ResourceReleaseBinding so the renderer can enumerate its resolved
+	// outputs. Satisfied by openchoreo.ResourceClient.GetBinding (narrowed).
+	ConnectionBindingReader func(ctx context.Context, namespace, name string) (*openchoreo.ResourceReleaseBinding, error)
+	// IssueCommenter posts a comment to a task's GitHub issue. Satisfied by
+	// gitrepo.IssueService.CommentIssue (adapted at the composition root) — a
+	// narrow func so this feature needn't import the full issue service.
+	IssueCommenter func(ctx context.Context, orgID, projectID string, number int, body string) error
 )
 
 type dispatchService struct {
@@ -151,6 +169,40 @@ type dispatchService struct {
 	// first protected deploy, but the runner needs it for every component,
 	// so the dispatch pre-flight ensures it too. Wired via SetIDPService.
 	idp OrgPublisherProvisioner
+
+	// orgServiceResolver + connBindingReader + issueCommenter back the
+	// additive dispatch-time consumer-dependency comment (Phase A): when a
+	// task is dispatched, the BFF resolves the component's `org-service` and
+	// `external` connection deps and posts the exact `workload.yaml`
+	// `dependencies:` block to the task's GitHub issue so the coding agent
+	// declares them. Best-effort — all three nil ⇒ no comment is attempted.
+	// This does NOT replace the post-deploy cascade wiring, which keeps
+	// patching the resolved Workload deps after the provider deploys. Wired
+	// via SetConsumerDependencyResolver.
+	orgServiceResolver OrgServiceResolver
+	connBindingReader  ConnectionBindingReader
+	issueCommenter     IssueCommenter
+}
+
+// SetConsumerDependencyResolver wires the dispatch-time consumer-dependency
+// comment (Phase A, additive): the org-service resolver + connection-binding
+// reader resolve the component's deps and issueCommenter posts the resolved
+// `workload.yaml` block to the task's GitHub issue. Optional — leaving any
+// arg nil disables the comment (the post-deploy cascade still wires deps).
+func (s *dispatchService) SetConsumerDependencyResolver(
+	r OrgServiceResolver,
+	b ConnectionBindingReader,
+	c IssueCommenter,
+) {
+	s.orgServiceResolver = r
+	s.connBindingReader = b
+	s.issueCommenter = c
+}
+
+// DispatchServiceWithConsumerDeps surfaces the consumer-dependency setter so
+// the composition root wires it by type-assertion (drift = build failure).
+type DispatchServiceWithConsumerDeps interface {
+	SetConsumerDependencyResolver(OrgServiceResolver, ConnectionBindingReader, IssueCommenter)
 }
 
 // WithCodingAgentDispatcher wires the proxy-based dispatch path.
@@ -225,6 +277,7 @@ var (
 	_ DispatchServiceWithIDP           = (*dispatchService)(nil)
 	_ DispatchServiceWithRuntimeConfig = (*dispatchService)(nil)
 	_ DispatchServiceWithCodingAgent   = (*dispatchService)(nil)
+	_ DispatchServiceWithConsumerDeps  = (*dispatchService)(nil)
 )
 
 func NewDispatchService(
@@ -516,6 +569,13 @@ func (s *dispatchService) dispatchOne(
 
 	slog.InfoContext(ctx, "task dispatched",
 		"task", task.ID, "component", task.ComponentName, "run", runName)
+
+	// Additive (Phase A): post the resolved `workload.yaml` `dependencies:`
+	// block to the issue so the coding agent declares the consumer deps up
+	// front. Best-effort — never fails the dispatch. The post-deploy cascade
+	// still patches the resolved deps onto the Workload after the provider
+	// deploys, so this is purely a head-start for the agent.
+	s.postConsumerDependencyComment(ctx, task)
 
 	res.RunName = runName
 	res.Status = "running"
@@ -980,6 +1040,136 @@ func firstExternalURL(list *models.DeploymentList) string {
 		}
 	}
 	return ""
+}
+
+// ---- Phase A: dispatch-time consumer-dependency comment --------------------
+//
+// The post-deploy cascade (ConsumerWiring.WireConsumer / WireOrgServiceConsumer)
+// already patches the resolved deps onto the consumer Workload after the
+// provider deploys — that stays. The comment below is ADDITIVE: it hands the
+// coding agent the exact `dependencies:` block to author in its own
+// `workload.yaml` up front, so the consumer's Workload declares the deps the
+// moment it's built rather than only after the cascade re-drives. The two
+// converge on the same OC flat WorkloadDescriptor shape.
+
+// workloadDeps is the flat OC WorkloadDescriptor `dependencies:` block, rendered
+// to the YAML the coding agent merges into its component's `workload.yaml`.
+// Sub-keys are emitted only when non-empty (`omitempty`) so a connection-only
+// component gets `resources:` without an empty `endpoints:` and vice-versa.
+type workloadDeps struct {
+	Endpoints []workloadEndpointDepYAML `yaml:"endpoints,omitempty"`
+	Resources []workloadResourceDepYAML `yaml:"resources,omitempty"`
+}
+
+type workloadEndpointDepYAML struct {
+	Project     string            `yaml:"project,omitempty"` // omit if same project
+	Component   string            `yaml:"component"`
+	Name        string            `yaml:"name"`
+	Visibility  string            `yaml:"visibility"`
+	EnvBindings map[string]string `yaml:"envBindings"` // {address: <ENV>}
+}
+
+type workloadResourceDepYAML struct {
+	Ref         string            `yaml:"ref"`
+	EnvBindings map[string]string `yaml:"envBindings"` // {<output>: <ENV>}
+}
+
+// resolveConsumerDependenciesYAML resolves the task component's consumer deps —
+// cross-project `org-service` endpoints + bound `external` connection resources
+// — into the YAML `dependencies:` block the coding agent should add to its
+// `workload.yaml`. Mirrors connections.WireOrgServiceConsumer / WireConsumer
+// exactly (same resolution, same env-var/ref derivation) so the comment and the
+// post-deploy cascade can't diverge. Returns "" when nothing resolves (no deps,
+// or providers not yet published / connections not yet provisioned). orgHandle
+// is task.OrgID (the OC namespace, per the connections convention).
+func (s *dispatchService) resolveConsumerDependenciesYAML(
+	ctx context.Context,
+	task *models.ComponentTask,
+) (string, error) {
+	comp, err := artifacts.ResolveDesignComponent(ctx, s.store, task)
+	if err != nil {
+		return "", fmt.Errorf("resolve design component: %w", err)
+	}
+
+	var deps workloadDeps
+
+	// org-service endpoints (cross-project, visibility namespace). Skip any
+	// whose provider hasn't published namespace-visible yet — the cascade
+	// re-drives, and the agent can add it later.
+	if s.orgServiceResolver != nil {
+		for _, name := range comp.OrgServiceDependsOn() {
+			target, ok, rerr := s.orgServiceResolver.ResolveNamespaceVisible(ctx, task.OrgID, name)
+			if rerr != nil {
+				return "", fmt.Errorf("resolve org-service %q: %w", name, rerr)
+			}
+			if !ok {
+				continue
+			}
+			deps.Endpoints = append(deps.Endpoints, workloadEndpointDepYAML{
+				Project:     target.Project,
+				Component:   target.Component,
+				Name:        target.Name,
+				Visibility:  "namespace",
+				EnvBindings: map[string]string{"address": connections.OrgServiceURLEnv(name)},
+			})
+		}
+	}
+
+	// external connection resources. Read each connection's development binding
+	// for its resolved outputs (== env var names; mirror WireConsumer's
+	// output.Name → output.Name mapping). Skip any not provisioned yet.
+	if s.connBindingReader != nil {
+		for _, conn := range task.DependsOnConnections {
+			b, berr := s.connBindingReader(ctx, task.OrgID, connections.ConnectionBindingName(task.ProjectID, conn, "development"))
+			if berr != nil || b == nil || b.Status == nil || len(b.Status.Outputs) == 0 {
+				// Not provisioned yet / transient — skip; the cascade re-drives.
+				continue
+			}
+			envBindings := make(map[string]string, len(b.Status.Outputs))
+			for _, out := range b.Status.Outputs {
+				envBindings[out.Name] = out.Name
+			}
+			deps.Resources = append(deps.Resources, workloadResourceDepYAML{
+				Ref:         connections.ConnectionResourceName(task.ProjectID, conn),
+				EnvBindings: envBindings,
+			})
+		}
+	}
+
+	if len(deps.Endpoints) == 0 && len(deps.Resources) == 0 {
+		return "", nil
+	}
+
+	out, err := yaml.Marshal(map[string]workloadDeps{"dependencies": deps})
+	if err != nil {
+		return "", fmt.Errorf("marshal dependencies yaml: %w", err)
+	}
+	return string(out), nil
+}
+
+// postConsumerDependencyComment renders the resolved consumer-dependency block
+// (if any) and posts it to the task's GitHub issue. Best-effort: a resolve or
+// post failure is logged and swallowed — it must never fail the dispatch.
+func (s *dispatchService) postConsumerDependencyComment(ctx context.Context, task *models.ComponentTask) {
+	if s.issueCommenter == nil || task.IssueNumber == 0 {
+		return
+	}
+	block, err := s.resolveConsumerDependenciesYAML(ctx, task)
+	if err != nil {
+		slog.WarnContext(ctx, "consumer-dependency comment: resolve failed",
+			"task", task.ID, "component", task.ComponentName, "error", err)
+		return
+	}
+	if block == "" {
+		return
+	}
+	body := "**Platform-resolved dependencies** — add the following to this component's " +
+		"`workload.yaml` (merge with your existing `endpoints:`). OpenChoreo injects " +
+		"these addresses into your pod at runtime:\n\n```yaml\n" + block + "```"
+	if err := s.issueCommenter(ctx, task.OrgID, task.ProjectID, task.IssueNumber, body); err != nil {
+		slog.WarnContext(ctx, "consumer-dependency comment: post failed",
+			"task", task.ID, "component", task.ComponentName, "issue", task.IssueNumber, "error", err)
+	}
 }
 
 // ocEntrypoint maps a design component type to its OpenChoreo deployment

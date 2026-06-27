@@ -85,6 +85,24 @@ func (w *ConsumerWiring) EmitForProjectConnections(ctx context.Context, orgID, p
 	return nil
 }
 
+// OrgServiceURLEnv is the exported wrapper over orgServiceURLEnv so callers
+// outside this package (e.g. the dispatch-time consumer-dependency YAML
+// renderer) derive the same `<NAME>_URL` env var OC binds the resolved
+// org-service address to. Single source of truth — delegates, never forks.
+func OrgServiceURLEnv(name string) string { return orgServiceURLEnv(name) }
+
+// ConnectionBindingName is the exported wrapper over connectionBindingName —
+// the per-env ResourceReleaseBinding name a connection's outputs are read from.
+func ConnectionBindingName(project, conn, env string) string {
+	return connectionBindingName(project, conn, env)
+}
+
+// ConnectionResourceName is the exported wrapper over connectionResourceName —
+// the OC Resource name (== Workload dependency `ref`) for a project connection.
+func ConnectionResourceName(project, conn string) string {
+	return connectionResourceName(project, conn)
+}
+
 // orgServiceURLEnv is the consumer env var OC binds the resolved org-service
 // address to — same `<UPPER_SNAKE>_URL` convention SPAs read via window._env_,
 // so a Go/Node consumer reads e.g. EMPLOYEE_API_URL regardless of how the URL

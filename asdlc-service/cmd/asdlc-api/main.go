@@ -854,6 +854,19 @@ func main() {
 	if rcSetter, ok := dispatchSvc.(codingagent.DispatchServiceWithRuntimeConfig); ok {
 		rcSetter.SetRuntimeConfig(runtimeConfigSvc)
 	}
+	// Additive (Phase A): at dispatch the BFF resolves the component's
+	// `org-service` + `external` connection deps and comments the resolved
+	// `workload.yaml` `dependencies:` block onto the task's GitHub issue. The
+	// org endpoint catalog resolves org-service targets, the resource client's
+	// GetBinding yields connection outputs, and the issue service posts the
+	// comment. The post-deploy cascade still patches the Workload deps.
+	if cdSetter, ok := dispatchSvc.(codingagent.DispatchServiceWithConsumerDeps); ok {
+		cdSetter.SetConsumerDependencyResolver(
+			orgEndpointCatalog,
+			resourceClient.GetBinding,
+			issueService.CommentIssue,
+		)
+	}
 	slog.Info("Dispatch service", "agentPlatformURL", cfg.AgentPlatformURL)
 
 	// Wire the post-deploy dispatch cascade. The projector fires

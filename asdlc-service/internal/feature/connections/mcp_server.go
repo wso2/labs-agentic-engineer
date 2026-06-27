@@ -89,11 +89,11 @@ type connectionKeyDTO struct {
 // orgEndpointView is the JSON shape returned to the agent for one published
 // org endpoint (the `org-service` catalog row).
 type orgEndpointView struct {
-	Name            string `json:"name"`            // org-service dep name = provider component
-	Project         string `json:"project"`         // provider project
-	Endpoint        string `json:"endpoint"`        // endpoint name on the provider
-	Type            string `json:"type"`            // HTTP | gRPC | …
-	NamespaceVisible bool  `json:"namespaceVisible"` // consumable cross-project as an org-service
+	Name             string `json:"name"`             // org-service dep name = provider component
+	Project          string `json:"project"`          // provider project
+	Endpoint         string `json:"endpoint"`         // endpoint name on the provider
+	Type             string `json:"type"`             // HTTP | gRPC | …
+	NamespaceVisible bool   `json:"namespaceVisible"` // consumable cross-project as an org-service
 }
 
 // NewMCPHandler returns the JSON-RPC MCP handler for the connection registry +
