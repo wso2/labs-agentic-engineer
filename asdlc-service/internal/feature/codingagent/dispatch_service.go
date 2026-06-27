@@ -102,6 +102,11 @@ type (
 	// consumer-dependency YAML renderer. ok=false ⇒ not yet published.
 	OrgServiceResolver interface {
 		ResolveNamespaceVisible(ctx context.Context, orgHandle, name string) (openchoreo.WorkloadEndpointInfo, bool, error)
+		// ResolveProjectEndpoint resolves a same-project sibling `component`
+		// dependency to its endpoint by {project, ocComponent} — no visibility
+		// filter (project visibility is implicit). Used to also render
+		// `dependencies.endpoints` (visibility `project`) for same-project deps.
+		ResolveProjectEndpoint(ctx context.Context, orgHandle, project, ocComponent string) (openchoreo.WorkloadEndpointInfo, bool, error)
 	}
 	// ConnectionBindingReader reads a connection's per-env
 	// ResourceReleaseBinding so the renderer can enumerate its resolved
@@ -1158,6 +1163,33 @@ func (s *dispatchService) resolveConsumerDependenciesYAML(
 				Name:        target.Name,
 				Visibility:  "namespace",
 				EnvBindings: map[string]string{"address": connections.OrgServiceURLEnv(name)},
+			})
+		}
+	}
+
+	// same-project `component` siblings (visibility project). The sibling's OC
+	// component/owner name is `<project>-<logicalName>`; the gate already held
+	// this consumer until every same-project dep was deployed, so the sibling's
+	// Workload is in the catalog. project visibility is implicit, so this uses
+	// ResolveProjectEndpoint (NOT the namespace-visible lookup). The env var keys
+	// on the LOGICAL dep name (e.g. `todo-api` → `TODO_API_URL`), matching the
+	// ReleaseBinding `<NAME>_URL` convention. Project is omitted (same project).
+	if s.orgServiceResolver != nil {
+		for _, depName := range comp.ComponentDependsOn() {
+			ocComponent := task.ProjectID + "-" + depName
+			target, ok, rerr := s.orgServiceResolver.ResolveProjectEndpoint(ctx, task.OrgID, task.ProjectID, ocComponent)
+			if rerr != nil {
+				return "", fmt.Errorf("resolve same-project component %q: %w", depName, rerr)
+			}
+			if !ok {
+				// Sibling not resolvable yet — skip; the cascade re-drives.
+				continue
+			}
+			deps.Endpoints = append(deps.Endpoints, workloadEndpointDepYAML{
+				Component:   target.Component,
+				Name:        target.Name,
+				Visibility:  "project",
+				EnvBindings: map[string]string{"address": connections.OrgServiceURLEnv(depName)},
 			})
 		}
 	}

@@ -82,6 +82,38 @@ func (c *OrgEndpointCatalog) ResolveNamespaceVisible(ctx context.Context, orgHan
 	return openchoreo.WorkloadEndpointInfo{}, false, nil
 }
 
+// ResolveProjectEndpoint finds the endpoint owned by {project, ocComponent}
+// within the org namespace — the same-project sibling case (visibility
+// `project`). Unlike ResolveNamespaceVisible this applies NO visibility filter:
+// project visibility is always implicit, so a same-project sibling resolves
+// even when it publishes only `project` (no namespace/external). When the
+// component publishes several endpoints, an HTTP one wins (services expose a
+// single API endpoint in practice); otherwise the first match is the fallback.
+// ok=false ⇒ no endpoint owned by that project+component yet.
+func (c *OrgEndpointCatalog) ResolveProjectEndpoint(ctx context.Context, orgHandle, project, ocComponent string) (openchoreo.WorkloadEndpointInfo, bool, error) {
+	infos, err := c.List(ctx, orgHandle)
+	if err != nil {
+		return openchoreo.WorkloadEndpointInfo{}, false, err
+	}
+	var fallback *openchoreo.WorkloadEndpointInfo
+	for i := range infos {
+		e := &infos[i]
+		if e.Project != project || e.Component != ocComponent {
+			continue
+		}
+		if e.Type == "HTTP" {
+			return *e, true, nil
+		}
+		if fallback == nil {
+			fallback = e
+		}
+	}
+	if fallback != nil {
+		return *fallback, true, nil
+	}
+	return openchoreo.WorkloadEndpointInfo{}, false, nil
+}
+
 // IsNamespaceVisible reports whether an org-service named `name` is published
 // namespace-visible in the org — the resolution gate for design display. Used
 // by the ArtifactStore to mark an `org-service` dependency `resolved` (true) vs

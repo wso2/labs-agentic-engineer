@@ -31,6 +31,33 @@ func sampleEndpoints() []openchoreo.WorkloadEndpointInfo {
 		// project-only: no namespace visibility → NOT an org-service target.
 		{Project: "hr", Component: "payroll-internal", Workload: "hr-payroll-internal-workload",
 			Name: "http", Type: "HTTP", Port: 8081, Visibility: []string{"external"}},
+		// same-project sibling with ONLY implicit project visibility (no
+		// namespace/external) → resolvable by ResolveProjectEndpoint, but NOT
+		// namespace-visible.
+		{Project: "org-roster", Component: "org-roster-todo-api", Workload: "org-roster-todo-api-workload",
+			Name: "http", Type: "HTTP", Port: 8082, Visibility: nil},
+	}
+}
+
+func TestOrgEndpointCatalog_ResolveProjectEndpoint(t *testing.T) {
+	cat := NewOrgEndpointCatalog(&fakeRC{workloadEndpoints: sampleEndpoints()})
+
+	// A project-only sibling (NOT namespace-visible) resolves by project+component.
+	got, ok, err := cat.ResolveProjectEndpoint(context.Background(), "ns", "org-roster", "org-roster-todo-api")
+	if err != nil || !ok {
+		t.Fatalf("org-roster-todo-api: want resolved, got ok=%v err=%v", ok, err)
+	}
+	if got.Name != "http" || got.Component != "org-roster-todo-api" {
+		t.Fatalf("resolved wrong target: %+v", got)
+	}
+	// Sanity: this endpoint is project-only — it must NOT be namespace-visible.
+	if got.NamespaceVisible() {
+		t.Fatalf("expected project-only endpoint, got namespace-visible: %+v", got)
+	}
+
+	// Unknown component must not resolve.
+	if _, ok, _ := cat.ResolveProjectEndpoint(context.Background(), "ns", "org-roster", "org-roster-nope"); ok {
+		t.Fatalf("unknown component must not resolve")
 	}
 }
 
