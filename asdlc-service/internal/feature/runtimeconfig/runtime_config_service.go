@@ -206,80 +206,35 @@ func (s *RuntimeConfigService) EmitForProjectSPAs(ctx context.Context, orgID, pr
 }
 
 // buildEnvValues assembles the map that becomes `window._env_`.
-//   - `API_BASE_URL` — first sibling service dep's external URL (the
-//     conventional name for the primary backend).
-//   - `<UPPER_SNAKE_NAME>_URL` — every dep, keyed by component name. Lets
-//     a SPA with multiple backends address each one explicitly.
 //   - `THUNDER_*` — OIDC config. Emitted when the webapp's design
 //     declares `callerIdentity.mode: end-user`. The BFF declares the
 //     per-project OAuth client in Thunder lazily here; the agent never
-//     sees a client_id.
+//     sees a client_id. The browser redirects to the IDP for the PKCE
+//     flow, so this issuer URL cannot be proxied and must travel in
+//     `window._env_`.
+//   - user-config / feature-flag keys carried in `out` by callers.
+//
+// Backend service URLs are NO LONGER emitted here. A web-app reaches its
+// backends through its own nginx reverse-proxy (same-origin `/api/*`),
+// wired by a `dependencies.endpoints[]` `WorkloadConnection` that injects
+// the upstream address into the SPA pod's env — not via `window._env_`.
+// See docs/design/marketplace/declarative-wiring-refactor.md (Web-apps
+// proxy) and the react-webapp SKILL.md.
 //
 // buildEnvValues returns the map + a `ready` flag. The flag is false
 // when a required key couldn't be populated yet (transient OC error,
 // SPA URL not yet resolved, etc.). The caller must NOT write a
-// partial env-config.js on `!ready` — see EmitForComponent.
+// partial env-config.js on `!ready` — see EmitForComponent. With no
+// backend URL keys, readiness now depends only on the THUNDER_* layer
+// (the per-project OAuth client + the SPA's own external URL); a web-app
+// with no OIDC and no backend keys still emits cleanly (ready=true).
 func (s *RuntimeConfigService) buildEnvValues(ctx context.Context, orgID, projectID string, webapp *models.DesignComponent, design *artifacts.DesignFile) (out map[string]interface{}, ready bool) {
 	out = map[string]interface{}{}
 	ready = true
 
-	// Index sibling components by name for type lookup.
-	byName := make(map[string]models.DesignComponent, len(design.Components))
-	for _, c := range design.Components {
-		byName[c.Name] = c
-	}
-
-	var firstServiceURL string
-	for _, dep := range webapp.ComponentDependsOn() {
-		sibling, ok := byName[dep]
-		if !ok {
-			continue
-		}
-		// Skip non-service deps (peer webapps aren't called over HTTP).
-		if sibling.ComponentType != "service" {
-			continue
-		}
-		k8sName := k8sname.ToK8sName(dep)
-		list, err := s.componentClient.ListDeployments(ctx, orgID, projectID, k8sName)
-		if err != nil {
-			// Transient OC failure on a required dep. Mark not-ready so
-			// the caller skips the write and preserves the previously
-			// valid env-config.js for the pod.
-			slog.WarnContext(ctx, "runtime_config: ListDeployments error for dep; deferring",
-				"projectID", projectID, "component", webapp.Name, "dep", dep, "error", err)
-			ready = false
-			continue
-		}
-		if list == nil {
-			// A required dep with no deployment list is not resolvable
-			// yet — defer rather than ship an incomplete env-config.js.
-			ready = false
-			continue
-		}
-		url := ""
-		for _, d := range list.Items {
-			if d.EndpointURL != "" {
-				url = strings.TrimRight(d.EndpointURL, "/")
-				break
-			}
-		}
-		if url == "" {
-			// Dep not yet deployed — not an error, but we don't have a
-			// URL for it. Defer rather than ship a window._env_ that
-			// will throw at module load.
-			ready = false
-			continue
-		}
-		out[upperSnakeKey(dep)+"_URL"] = url
-		if firstServiceURL == "" {
-			firstServiceURL = url
-		}
-	}
-	if firstServiceURL != "" {
-		out["API_BASE_URL"] = firstServiceURL
-	}
-
-	// Layer THUNDER_* — OIDC config the SPA reads to drive PKCE.
+	// Layer THUNDER_* — OIDC config the SPA reads to drive PKCE. The
+	// browser redirects to the IDP, so the issuer can't be proxied; it
+	// must travel in window._env_.
 	if oidcSPAEnabled(webapp) {
 		ok := s.layerThunderKeys(ctx, orgID, projectID, webapp, out)
 		if !ok {
