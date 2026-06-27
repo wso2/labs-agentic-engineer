@@ -1,6 +1,6 @@
 ---
 name: api-management
-description: How the platform's API gateway validates JWTs, injects X-User-Id from the sub claim, attaches CORS, and how to design + write services and consumers that match. Apply to any service with exposesAPI.auth set, and to any consumer (a `kind: component` sibling, a `kind: org-service`, or a `kind: external` dependency) that calls a protected API.
+description: How the platform's API gateway validates JWTs and injects X-User-Id from the sub claim, and how to design + write services and consumers that match. Apply to any service with exposesAPI.auth set, and to any consumer (a `kind: component` sibling, a `kind: org-service`, or a `kind: external` dependency) that calls a protected API.
 metadata:
   asdlc.version: "1"
 ---
@@ -10,11 +10,15 @@ metadata:
 ## What this skill does
 
 The platform fronts every service with `exposesAPI.auth` set through an
-API gateway that validates JWTs, injects user-identity headers, and
-attaches CORS. This skill tells the agent how to design and write code
-that matches the gateway's contract, and how to call sibling protected
-APIs as well as org-service and external dependencies from a consumer
-component.
+API gateway that validates JWTs and injects user-identity headers. This
+skill tells the agent how to design and write code that matches the
+gateway's contract, and how to call sibling protected APIs as well as
+org-service and external dependencies from a consumer component.
+
+Browsers reach services **same-origin** through the web-app's nginx
+`/api/*` proxy, so there is no cross-origin CORS anywhere — your service
+does NOT add CORS middleware, and the platform does NOT attach a gateway
+CORS filter.
 
 ## Platform facts
 
@@ -31,10 +35,9 @@ output from reality.
   - `sub → X-User-Id` (canonical caller identifier — REQUIRED, always present on protected requests)
   - `username → X-User-Name` (display, optional)
   - `ouHandle → X-User-Ou` (multi-tenant, optional)
-- The gateway attaches an Envoy CORS filter to every `visibility: external`
-  HTTPRoute via the `api-configuration` ClusterTrait. Your service does
-  NOT add CORS middleware. Doubling produces two `Access-Control-Allow-Origin`
-  headers and browsers reject the response.
+- There is NO cross-origin CORS: browsers call a service same-origin via
+  the web-app's nginx `/api/*` proxy. Your service does NOT add CORS
+  middleware (it would have no effect and only risks doubled headers).
 - The agent does NOT see the gateway's `client_id`, JWT signing keys, or
   the IDP's discovery URL. Those live in BFF code.
 - For consumers of a sibling protected API (a `dependencies` entry of
@@ -89,7 +92,7 @@ output from reality.
   service MUST also carry an instruction line of the form:
   `Upstream <name>: read the URL from <NAME_UPPER_SNAKE>_URL via the runtime-config shim.`
 - Protected `service` `componentAgentInstructions` MUST say (verbatim or close):
-  `No /auth/* endpoints. The API Platform gateway validates the JWT and the api-configuration trait's jwt-auth policy injects X-User-Id (from JWT sub claim) on every request. Read X-User-Id to identify the caller; reject (401) when missing. Per-user records MUST be keyed on X-User-Id. Do NOT validate JWTs yourself; do NOT add CORS middleware (the gateway handles CORS).`
+  `No /auth/* endpoints. The API Platform gateway validates the JWT and the api-configuration trait's jwt-auth policy injects X-User-Id (from JWT sub claim) on every request. Read X-User-Id to identify the caller; reject (401) when missing. Per-user records MUST be keyed on X-User-Id. Do NOT validate JWTs yourself; do NOT add CORS middleware (browsers reach you same-origin via the web-app proxy).`
 - In the OpenAPI you author for a protected `service`, document the
   injected `X-User-Id` header under `parameters` so consumers know it's
   required-but-injected (the gateway adds it; clients don't set it). The
@@ -104,8 +107,9 @@ For every task targeting a `service` with `exposesAPI.auth: end-user-required`:
   the `api-configuration` trait's `jwt-auth` policy injects `X-User-Id`
   (from JWT `sub` claim) on every request. Read `X-User-Id`; reject
   (401) when missing. Per-user records MUST be keyed on `X-User-Id`."
-- Scope: "Do NOT validate JWTs in code; do NOT add CORS middleware. The
-  gateway handles both."
+- Scope: "Do NOT validate JWTs in code (the gateway validates them); do
+  NOT add CORS middleware (browsers reach you same-origin via the web-app
+  `/api/*` proxy)."
 - Acceptance criteria: "Every protected endpoint rejects requests
   missing `X-User-Id` with 401; with a valid `X-User-Id`, returns only
   data owned by that subject. `/health` is exempt and returns 200
@@ -135,9 +139,9 @@ Use the literal name, description, and declared `config` keys from the
 `dependencies` entry — do not invent values.
 
 For service components (NOT web-apps), always add a Scope bullet: "Do
-NOT add CORS middleware. The platform's gateway attaches an Envoy CORS
-filter to every `visibility: external` HTTPRoute via the
-`api-configuration` ClusterTrait; doubled CORS headers break browsers."
+NOT add CORS middleware. Browsers reach this service same-origin through
+the consuming web-app's nginx `/api/*` proxy, so there is no cross-origin
+request to allow."
 
 ### Coding agent — implementation
 
@@ -176,8 +180,9 @@ func updateTodo(w http.ResponseWriter, r *http.Request) {
 ```
 
 Gate per-user queries with `AND user_id = ?`. Do NOT validate JWTs in
-code. Do NOT add CORS middleware. Errors as `application/problem+json`
-with a top-level `type`, `title`, `status`.
+code. Do NOT add CORS middleware (browsers reach you same-origin via the
+web-app `/api/*` proxy). Errors as `application/problem+json` with a
+top-level `type`, `title`, `status`.
 
 `/health` should remain exempt (no `mustUserID` call) so the platform's
 readiness probe can reach it without auth.
@@ -212,6 +217,6 @@ addition is in the Architect sub-section above (document the injected
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| CORS error in browser when calling upstream | Backend wrongly ships its own CORS middleware (doubled headers), OR upstream's `workload.yaml` lacks `visibility: external` | Remove the middleware; confirm `visibility: external` on upstream's `workload.yaml`. |
+| CORS error in browser when calling upstream | Browser is calling the backend's URL directly instead of the web-app's same-origin `/api/*` proxy, OR the backend wrongly ships its own CORS middleware | Call `/api/<dep>` (relative, same-origin) from the frontend; remove any backend CORS middleware. |
 | Every protected request 401s in test | Test calls don't carry `X-User-Id`; in production the gateway sets it, in test you set it manually | In integration tests, set `X-User-Id` directly on the request; don't try to mint a JWT. |
 | `/health` returns 401 | Handler accidentally went through `mustUserID` middleware | Carve out `/health` (and any other public path) before the auth gate. |

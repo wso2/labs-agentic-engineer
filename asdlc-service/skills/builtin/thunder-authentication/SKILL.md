@@ -84,7 +84,7 @@ Checklist before emitting `add_component` for a web-app:
   3. If either is yes and you didn't include the structured `callerIdentity`
      block, your output is incomplete.
 - The web-app's `componentAgentInstructions` MUST say (verbatim or close):
-  `OIDC Authorization Code + PKCE against the platform IDP using oidc-client-ts. Read OIDC + upstream URLs from window._env_.THUNDER_* / window._env_.<UPSTREAM>_URL — typed via src/env.ts. Attach Authorization: Bearer <access_token> to every API call. DO NOT write a .env file. DO NOT read environment variables at build time (no import.meta.env). DO NOT use envsubst, /etc/nginx/templates/, or any custom nginx entrypoint — stock nginx:alpine serves the static bundle + env-config.js.`
+  `OIDC Authorization Code + PKCE against the platform IDP using oidc-client-ts. Read OIDC config from window._env_.THUNDER_* — typed via src/env.ts. Call backend services at relative /api/<dep> paths (same-origin; the nginx /api/* proxy forwards to each backend) — NOT from window._env_. Attach Authorization: Bearer <access_token> to every API call. DO NOT write a .env file. DO NOT read environment variables at build time (no import.meta.env). The nginx config uses envsubst to inject each backend's proxy_pass URL from a pod-env var (see react-webapp); env-config.js carries only THUNDER_* + flags.`
 - Do NOT create a separate `auth` / `identity` / `login` /
   `session` / `user-service` component. Thunder owns token issuance;
   the API just reads `X-User-Id` (covered by `api-management`).
@@ -98,14 +98,17 @@ For every web-app task whose component has `callerIdentity.mode: end-user`:
 
 - Scope: "Implement OIDC Authorization Code + PKCE using
   `oidc-client-ts`, configured from `window._env_.THUNDER_*`. The
-  platform writes OIDC + upstream URLs into `env-config.js` via the
-  SPA's ReleaseBinding; the agent's `index.html` loads it synchronously
-  before the bundle. Read values via the typed `src/env.ts` shim and
-  throw at module top-level on missing keys — no `?? ''` fallback. Do
-  NOT write a `.env` file. Do NOT use `import.meta.env.VITE_*`."
-- Scope: "Attach `Authorization: Bearer <access_token>` to every
-  `window._env_.API_BASE_URL` fetch. On 401, restart the login flow
-  via `signIn()`. Do NOT write a `/login` form that POSTs credentials
+  platform writes the `THUNDER_*` OIDC config + feature flags into
+  `env-config.js` via the SPA's ReleaseBinding; the agent's `index.html`
+  loads it synchronously before the bundle. Read values via the typed
+  `src/env.ts` shim and throw at module top-level on missing keys — no
+  `?? ''` fallback. Do NOT write a `.env` file. Do NOT use
+  `import.meta.env.VITE_*`."
+- Scope: "Attach `Authorization: Bearer <access_token>` to every backend
+  fetch. Call backends at relative `/api/<dep>` paths (same-origin; the
+  nginx `/api/*` proxy forwards to each backend) — do NOT read a backend
+  base URL from `window._env_`. On 401, restart the login flow via
+  `signIn()`. Do NOT write a `/login` form that POSTs credentials
   anywhere."
 - Acceptance criteria: "Loading the webapp unauthenticated redirects to
   the OIDC authorize endpoint; after sign-in, the user lands back on
@@ -115,16 +118,17 @@ For every web-app task whose component has `callerIdentity.mode: end-user`:
 
 ### Coding agent — implementation
 
-`src/env.ts` — the base shim (the `window._env_` presence guard,
-`API_BASE_URL`, any `<UPSTREAM>_URL` keys, and the `export const env`)
-is owned by the `react-webapp` skill — don't duplicate it. When the
-component's design has `callerIdentity.mode: end-user`, the platform
-also populates the `THUNDER_*` keys; extend the `Env` type with them:
+`src/env.ts` — the base shim (the `window._env_` presence guard, any
+feature flags, and the `export const env`) is owned by the `react-webapp`
+skill — don't duplicate it. Backend base URLs do NOT live in
+`window._env_`: the SPA calls backends at relative `/api/<dep>` paths
+(same-origin via the nginx proxy). When the component's design has
+`callerIdentity.mode: end-user`, the platform populates the `THUNDER_*`
+keys; extend the `Env` type with them:
 
 ```ts
 type Env = {
-  API_BASE_URL: string;
-  // ...plus any <UPSTREAM>_URL keys (see react-webapp).
+  // ...plus any feature-flag keys (see react-webapp).
   THUNDER_URL: string;
   THUNDER_CLIENT_ID: string;
   THUNDER_REDIRECT_URI: string;
@@ -175,7 +179,8 @@ async function authHeaders(): Promise<HeadersInit> {
 }
 
 export async function listTodos() {
-  const res = await fetch(`${env.API_BASE_URL}/todos`, {
+  // Same-origin relative path — nginx proxies /api/<dep>/* to the backend.
+  const res = await fetch(`/api/todo-api/todos`, {
     headers: await authHeaders(),
   });
   if (res.status === 401) { await signIn(); return []; }

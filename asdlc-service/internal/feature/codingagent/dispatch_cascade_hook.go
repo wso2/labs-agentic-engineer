@@ -53,9 +53,10 @@ func NewDispatchCascadeHook(db *gorm.DB, dispatch DispatchService) *DispatchCasc
 	return &DispatchCascadeHook{db: db, dispatch: dispatch}
 }
 
-// SetTraitSync wires the trait sync service so the cascade can re-emit
-// sibling-CORS origins on every protected API in the project when a SPA
-// lands deployed. Optional — when nil the cascade skips the re-emit step.
+// SetTraitSync wires the trait sync service so the cascade can re-reconcile
+// the `api-configuration` trait (jwtAuth + issuers) on every protected API
+// in the project when a component lands deployed. Optional — when nil the
+// cascade skips the re-emit step.
 func (h *DispatchCascadeHook) SetTraitSync(t *component.TraitSyncService) {
 	if h == nil {
 		return
@@ -105,22 +106,20 @@ func (h *DispatchCascadeHook) OnTaskDeployed(ctx context.Context, orgID, project
 			"project", projectID, "error", err)
 		return
 	}
-	// Dependency URL handoff to consumer SPAs flows through the
-	// ReleaseBinding `env-config.js` (BFF emits per-env values into
-	// workloadOverrides.container.files). dispatch's
-	// resolveDependencyEndpoints enforces the §1.3 URL invariant at
-	// dispatch time.
+	// Consumer→provider wiring now flows through the consumer's
+	// `workload.yaml` deps block (resolved at dispatch) + OC's internal
+	// address resolution; web-apps reach backends via the nginx `/api/*`
+	// proxy (same-origin). No CORS, no backend-URL handoff via env-config.js.
 	//
 	// For OIDC-SPA web-apps the platform IDP redirect_uris are
 	// registered by RuntimeConfigService.layerThunderKeys when the SPA
 	// gets its env-config.js emitted below — no separate dispatch-side
 	// Thunder call is needed.
 
-	// Sibling-CORS re-emit: any dispatch in a project re-emits the
-	// `cors.allowedOrigins` block on every protected API's ReleaseBinding
-	// so freshly added SPAs are echoed back on preflight. Without this,
-	// the first deploy of a new SPA cannot call the API cross-origin
-	// until something else triggers a sync. Idempotent + best-effort.
+	// jwtAuth re-emit: any dispatch in a project re-reconciles the
+	// `api-configuration` trait (jwtAuth + issuers) on every service so a
+	// BYO-IDP issuer change or auth toggle propagates to siblings.
+	// Idempotent + best-effort.
 	if h.traitSync != nil {
 		if err := h.traitSync.SyncProjectAPITraits(ctx, orgID, projectID); err != nil {
 			slog.WarnContext(ctx, "dispatch cascade: SyncProjectAPITraits failed",
@@ -128,11 +127,10 @@ func (h *DispatchCascadeHook) OnTaskDeployed(ctx context.Context, orgID, project
 		}
 	}
 
-	// Env-config.js re-emit: when a sibling service's external URL just
-	// resolved, the depending SPAs need their `window._env_.API_BASE_URL`
-	// refreshed. Re-emit env-config.js on every SPA in the project so
-	// the next pod restart picks up the latest values. Idempotent +
-	// best-effort.
+	// Env-config.js re-emit: re-emit env-config.js on every SPA in the
+	// project so the next pod restart picks up the latest `THUNDER_*` /
+	// OIDC values + feature flags. (Backend API URLs no longer live in
+	// window._env_.) Idempotent + best-effort.
 	if h.runtimeConfig != nil {
 		if err := h.runtimeConfig.EmitForProjectSPAs(ctx, orgID, projectID); err != nil {
 			slog.WarnContext(ctx, "dispatch cascade: EmitForProjectSPAs failed",

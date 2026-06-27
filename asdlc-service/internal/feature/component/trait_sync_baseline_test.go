@@ -101,7 +101,7 @@ func TestProtected_ProducesCanonicalTrait(t *testing.T) {
 		t.Errorf("endpointName = %v, want http", got)
 	}
 
-	// Per-env config must enable both cors + jwtAuth.
+	// Per-env config must enable jwtAuth ONLY (CORS has been removed).
 	cfg, ok := configs["todo-api-http"]
 	if !ok {
 		t.Fatalf("missing env config for todo-api-http; got keys: %v", keysOfAny(configs))
@@ -113,11 +113,7 @@ func TestProtected_ProducesCanonicalTrait(t *testing.T) {
 	if jwt["enabled"] != true {
 		t.Errorf("jwtAuth.enabled = %v, want true", jwt["enabled"])
 	}
-	cors, ok := cfg["cors"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("cors missing/wrong type: %#v", cfg["cors"])
-	}
-	if cors["enabled"] != true {
-		t.Errorf("cors.enabled = %v, want true", cors["enabled"])
+	if _, ok := cfg["cors"]; ok {
+		t.Errorf("cors must not be present after CORS removal; got %#v", cfg["cors"])
 	}
 }

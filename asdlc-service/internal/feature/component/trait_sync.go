@@ -178,26 +178,12 @@ func (s *TraitSyncService) SyncComponentTraits(ctx context.Context, orgID, proje
 		}
 	}
 
-	// Sibling-CORS: when this component is a service exposing a managed
-	// API to BROWSER callers (end-user-required), populate
-	// `cors.allowedOrigins` with every external web-app component in
-	// the same project. Service-to-service APIs (`service-required`)
-	// have no browser caller — emitting SPA origins there would
-	// unnecessarily widen the CORS surface.
-	//
-	// If a sibling lookup fails transiently, return the error to the
-	// caller (the watcher retries) — a partial allowlist would silently
-	// block the missing SPA's preflight.
-	var allowedOrigins []string
-	if desiredEnabled && models.ResolveAPISecurityCallerKind(*match) == "end-user" {
-		origins, originsErr := s.siblingSPAOrigins(ctx, orgID, projectID, design)
-		if originsErr != nil {
-			return fmt.Errorf("trait_sync: sibling SPA origins: %w", originsErr)
-		}
-		allowedOrigins = origins
-	}
-
-	traits, configs := DesiredAPIConfigurationTraitWithIssuers(componentName, desiredEnabled, issuers, allowedOrigins)
+	// CORS has been removed entirely: web-apps now reverse-proxy `/api/*`
+	// to their backends (same-origin), so cross-origin CORS is no longer
+	// needed anywhere. The api-configuration trait now carries only
+	// `jwtAuth`, gated on `authEnabled`. A public, no-auth service gets no
+	// trait at all.
+	traits, configs := DesiredAPIConfigurationTraitWithIssuers(componentName, desiredEnabled, issuers)
 
 	// Patch the Component CR's spec.traits. Skip when there's nothing to
 	// change — but the OC client's GET-then-PUT is harmless so we always
@@ -272,12 +258,12 @@ func (s *TraitSyncService) DeleteComponentCascade(ctx context.Context, orgID, pr
 	return nil
 }
 
-// SyncProjectAPITraits re-emits `api-configuration` trait state on every
-// service component in the project whose design has `exposesAPI.auth: end-user-required`.
-// Called from the dispatch path so that when ANY component lands `deployed`
-// (and especially a freshly-added SPA), every protected API in the project
-// picks up the new sibling origin in its `cors.allowedOrigins`. Without
-// this, stale CORS silently breaks preflight for newly added SPAs.
+// SyncProjectAPITraits re-emits `api-configuration` trait state (jwtAuth +
+// issuers) on every service component in the project. Called from the
+// dispatch path so that when ANY component lands `deployed`, every
+// protected API in the project reconciles its jwtAuth/issuers config
+// (e.g. after a BYO-IDP issuer change). CORS has been removed — this no
+// longer recomputes or spreads any cross-origin allowlist.
 //
 // Idempotent + best-effort: a failure on one component logs and continues
 // to the next. Returns nil unless reading design itself fails (no design ⇒
@@ -303,9 +289,9 @@ func (s *TraitSyncService) SyncProjectAPITraits(ctx context.Context, orgID, proj
 		if c.ComponentType != "service" {
 			continue
 		}
-		if !models.ResolveAPISecurityEnabled(c) {
-			continue
-		}
+		// Reconcile EVERY service: SyncComponentTraits emits the jwtAuth
+		// trait for protected services and clears it (tombstone) for
+		// public/no-auth ones — a no-op when already in the desired state.
 		k8sName := k8sname.ToK8sName(c.Name)
 		if err := s.SyncComponentTraits(ctx, orgID, projectID, k8sName); err != nil {
 			slog.WarnContext(ctx, "trait_sync: sibling re-emit failed; continuing",
@@ -317,74 +303,6 @@ func (s *TraitSyncService) SyncProjectAPITraits(ctx context.Context, orgID, proj
 		}
 	}
 	return nil
-}
-
-// siblingSPAOrigins returns the external SPA origins for every web-app
-// component declared in the project's design. Used as `cors.allowedOrigins`
-// on protected API ReleaseBindings (sibling-CORS rule). Pulls live URLs
-// from OC ListDeployments.
-//
-// When a SPA's lookup ERRORS transiently, the function returns the
-// error rather than silently dropping that SPA — a partial allowlist
-// would commit a CORS list that blocks the missing SPA's preflight.
-// When a SPA simply hasn't deployed yet (no items, no error), it
-// contributes nothing — the next cascade tick will pick it up. The
-// returned slice is empty when no SPA exists yet in the project — the
-// caller treats that as wildcard-CORS-fallback to keep dev curl
-// working.
-func (s *TraitSyncService) siblingSPAOrigins(ctx context.Context, orgID, projectID string, design *artifacts.DesignFile) ([]string, error) {
-	if s.componentClient == nil || design == nil {
-		return nil, nil
-	}
-	origins := make([]string, 0, len(design.Components))
-	seen := make(map[string]struct{}, len(design.Components))
-	for _, c := range design.Components {
-		if c.ComponentType != "web-app" {
-			continue
-		}
-		k8sName := k8sname.ToK8sName(c.Name)
-		list, err := s.componentClient.ListDeployments(ctx, orgID, projectID, k8sName)
-		if err != nil {
-			return nil, fmt.Errorf("list deployments for %q: %w", c.Name, err)
-		}
-		if list == nil {
-			continue
-		}
-		for _, d := range list.Items {
-			origin := originFromEndpointURL(d.EndpointURL)
-			if origin == "" {
-				continue
-			}
-			if _, ok := seen[origin]; ok {
-				continue
-			}
-			seen[origin] = struct{}{}
-			origins = append(origins, origin)
-		}
-	}
-	return origins, nil
-}
-
-// originFromEndpointURL extracts the scheme+host+port prefix from a
-// ListDeployments-style URL like `http://todo-web-...localhost:19080/`.
-// Returns "" when parsing fails — callers skip empty origins.
-func originFromEndpointURL(u string) string {
-	if u == "" {
-		return ""
-	}
-	// Trim path/query: keep scheme://authority only.
-	// Manual scan to avoid pulling net/url for this hot path.
-	const sep = "://"
-	i := strings.Index(u, sep)
-	if i < 0 {
-		return ""
-	}
-	rest := u[i+len(sep):]
-	end := strings.IndexAny(rest, "/?#")
-	if end < 0 {
-		return u
-	}
-	return u[:i+len(sep)+end]
 }
 
 func (s *TraitSyncService) lockFor(orgID, projectID, componentName string) *sync.Mutex {
@@ -415,35 +333,32 @@ func APIConfigurationInstanceName(componentName string) string {
 }
 
 // DesiredAPIConfigurationTrait — convenience shim that calls
-// DesiredAPIConfigurationTraitWithIssuers with no issuer pinning and
-// no sibling origins (wildcard CORS).
+// DesiredAPIConfigurationTraitWithIssuers with no issuer pinning.
 func DesiredAPIConfigurationTrait(componentName string, enabled bool) (traits []models.ComponentTrait, configs map[string]map[string]interface{}) {
-	return DesiredAPIConfigurationTraitWithIssuers(componentName, enabled, nil, nil)
+	return DesiredAPIConfigurationTraitWithIssuers(componentName, enabled, nil)
 }
 
 // DesiredAPIConfigurationTraitWithIssuers returns the BFF-internal
-// desired state for the `api-configuration` trait. When `enabled` is
-// true, the trait is attached + jwtAuth is enabled in the per-env
-// config with `issuers` pinned to the supplied list (empty ⇒ accept
-// any cluster-configured keymanager). When `enabled` is false, the
-// function returns nil + a tombstone entry to strip any previously-set
-// config.
+// desired state for the `api-configuration` trait. The trait now carries
+// ONLY gateway end-user JWT validation (`jwtAuth`) — CORS has been removed
+// entirely because web-apps reverse-proxy `/api/*` to their backends
+// (same-origin), so cross-origin CORS is never needed.
 //
-// `allowedOrigins` lists the SPA hostnames the gateway should
-// echo on CORS preflight. Empty/nil falls back to the trait schema's
-// default of `["*"]` (wildcard, allowCredentials=false). When non-empty
-// the BFF sets `allowCredentials: true` so browsers can send the
-// `Authorization: Bearer …` header on cross-origin fetches (the WSO2
-// platform forbids the `*` + credentials combo).
+// When `authEnabled` is true the trait is attached + jwtAuth is enabled in
+// the per-env config with `issuers` pinned to the supplied list (empty ⇒
+// accept any cluster-configured keymanager). When `authEnabled` is false
+// the function returns nil traits + a tombstone entry to strip any
+// previously-set config: a public, no-auth service needs no
+// api-configuration trait at all.
 //
 // `configs` is keyed by trait instance name; the value is the parameters
 // block that lands at `ReleaseBinding.spec.traitEnvironmentConfigs[<inst>]`.
-// The shape (cors / jwtAuth) matches the trait's environmentConfigSchema.
-func DesiredAPIConfigurationTraitWithIssuers(componentName string, enabled bool, issuers []string, allowedOrigins []string) (traits []models.ComponentTrait, configs map[string]map[string]interface{}) {
+// The shape (jwtAuth only) matches the trait's environmentConfigSchema.
+func DesiredAPIConfigurationTraitWithIssuers(componentName string, authEnabled bool, issuers []string) (traits []models.ComponentTrait, configs map[string]map[string]interface{}) {
 	inst := APIConfigurationInstanceName(componentName)
-	if !enabled {
-		// Clear both: empty traits + empty config marks the instance for
-		// removal in the OC client's merge logic.
+	if !authEnabled {
+		// No auth — clear the instance (empty traits + empty config marks
+		// it for removal in the OC client's merge logic).
 		return nil, map[string]map[string]interface{}{
 			inst: nil,
 		}
@@ -460,22 +375,8 @@ func DesiredAPIConfigurationTraitWithIssuers(componentName string, enabled bool,
 	for _, iss := range issuers {
 		issuersIface = append(issuersIface, iss)
 	}
-	cors := map[string]interface{}{
-		"enabled": true,
-	}
-	if len(allowedOrigins) > 0 {
-		originsIface := make([]interface{}, 0, len(allowedOrigins))
-		for _, o := range allowedOrigins {
-			originsIface = append(originsIface, o)
-		}
-		cors["allowedOrigins"] = originsIface
-		cors["allowedMethods"] = []interface{}{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"}
-		cors["allowedHeaders"] = []interface{}{"Authorization", "Content-Type", "Accept", "Origin"}
-		cors["allowCredentials"] = true
-	}
 	configs = map[string]map[string]interface{}{
 		inst: {
-			"cors": cors,
 			"jwtAuth": map[string]interface{}{
 				"enabled": true,
 				// jwt-auth v1 accepts `issuers` + `audience` arrays. Empty

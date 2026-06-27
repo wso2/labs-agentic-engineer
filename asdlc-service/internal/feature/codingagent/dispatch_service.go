@@ -502,18 +502,12 @@ func (s *dispatchService) dispatchOne(
 		s.markFailed(ctx, task, "workflow run service not configured")
 		return failResult(res, task.ErrorMessage)
 	}
-	// Assert that every component this task depends on has a non-empty
-	// external URL at dispatch time. Under deploy-gating, every dep is
-	// `deployed` at this point so ListDeployments must
-	// return a non-empty external URL — if any URL is empty, the deps
-	// invariant is broken (probably a missing `visibility: external` on
-	// the provider's spec.endpoints) and we fail loudly rather than
-	// dispatching a task that will fail to verify.
-	//
-	// The resolved URLs are NOT passed through the prompt. SPAs receive
-	// them at runtime via `window._env_` (BFF writes per-env values into
-	// `env-config.js` on each ReleaseBinding). Keeping the prompt thin
-	// matches both cluster and local flows.
+	// Resolve dependency endpoints for logging/diagnostics only. The §1.3
+	// "must be external" invariant has been relaxed: internal-only deps are
+	// valid (consumers reach them via the workload.yaml deps block + OC's
+	// internal address resolution, and web-apps via the nginx `/api/*`
+	// proxy). resolveDependencyEndpoints only returns a transient OC error;
+	// an empty URL is no longer fatal.
 	depEndpoints, err := s.resolveDependencyEndpoints(ctx, task)
 	if err != nil {
 		const deferDeadline = 2 * time.Minute
@@ -1048,11 +1042,17 @@ func buildAgentPrompt(task *models.ComponentTask) string {
 
 // resolveDependencyEndpoints turns the task's DependsOnComponents list into
 // a slice of (component, url) pairs by calling ComponentService.ListDeployments
-// — the same path that powers the Deploy page (single source of truth). Under
-// deploy-gating every dep is `deployed` at dispatch time, so each
-// ListDeployments call MUST return a non-empty external URL. An empty URL
-// means the provider component is missing `visibility: external` on its
-// `spec.endpoints` — that is the §1.3 invariant breaking. Fail loudly here.
+// — the same path that powers the Deploy page (single source of truth). The
+// result is informational only (logged at dispatch); the actual consumer→
+// provider wire is declared in the consumer's `workload.yaml`
+// (resolveConsumerDependenciesYAML) and resolved internally by OC.
+//
+// The §1.3 "dep must be external" invariant has been RELAXED: web-apps now
+// reverse-proxy `/api/*` to their backends (same-origin), so a dependency
+// that resolves only internally (no external URL) is valid and MUST NOT fail
+// dispatch. A dep with no external URL is simply skipped here (it's an
+// internal-only provider); genuinely-external deps still surface their URL.
+// A real ListDeployments error is still returned (transient OC failure).
 func (s *dispatchService) resolveDependencyEndpoints(
 	ctx context.Context,
 	task *models.ComponentTask,
@@ -1072,10 +1072,9 @@ func (s *dispatchService) resolveDependencyEndpoints(
 		}
 		url := firstExternalURL(list)
 		if url == "" {
-			return nil, fmt.Errorf(
-				"dep %q has no external URL — confirm the provider's `workload.yaml` spec.endpoints declares `visibility: external` (see docs/design/cross-component-wiring-gaps.md §1.3)",
-				depComponent,
-			)
+			// Internal-only provider — valid under the same-origin proxy
+			// model. Skip; the wire is carried by the workload.yaml deps block.
+			continue
 		}
 		out = append(out, DependencyEndpoint{Component: depComponent, URL: url})
 	}
@@ -1327,7 +1326,8 @@ func (s *dispatchService) ensureOCComponent(
 	// what lands env vars into them.
 	// Derive the `api-configuration` trait from design.md's optional
 	// `exposesAPI.auth` block. nil/none ⇒ no trait, no AP hop;
-	// `required` ⇒ trait attached with cors+jwtAuth enabled in every env.
+	// `required` ⇒ trait attached with jwtAuth enabled in every env.
+	// (CORS has been removed — web-apps proxy /api/* same-origin.)
 	// See services/trait_sync.go for the canonical emitter.
 	apiSecurityEnabled := models.ResolveAPISecurityEnabled(*comp)
 	traits, _ := component.DesiredAPIConfigurationTrait(componentName, apiSecurityEnabled)

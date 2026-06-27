@@ -38,8 +38,9 @@ func TestAPIConfigurationInstanceName(t *testing.T) {
 }
 
 // TestDesiredAPIConfigurationTrait_Enabled — protected component shape.
-// Trait carries `endpointName: http`; per-env configs enable cors + jwtAuth.
-// This is the schema the AP gateway-runtime expects (see
+// Trait carries `endpointName: http`; per-env configs enable jwtAuth ONLY
+// (CORS has been removed — web-apps reach backends same-origin via the nginx
+// `/api/*` proxy). This is the schema the AP gateway-runtime expects (see
 // deployments/manifests/api-platform/api-configuration-trait.yaml).
 func TestDesiredAPIConfigurationTrait_Enabled(t *testing.T) {
 	traits, configs := DesiredAPIConfigurationTrait("svc", true)
@@ -77,12 +78,9 @@ func TestDesiredAPIConfigurationTrait_Enabled(t *testing.T) {
 	} else if len(aud) != 0 {
 		t.Errorf("jwtAuth.audience should default empty, got %v", aud)
 	}
-	cors, ok := cfg["cors"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("cors missing or wrong type: %#v", cfg["cors"])
-	}
-	if cors["enabled"] != true {
-		t.Errorf("cors.enabled = %v, want true", cors["enabled"])
+	// CORS has been removed: the trait config must carry no `cors` key.
+	if _, ok := cfg["cors"]; ok {
+		t.Errorf("cors must not be present after CORS removal; got %#v", cfg["cors"])
 	}
 }
 
@@ -100,29 +98,26 @@ func TestDesiredAPIConfigurationTrait_Disabled(t *testing.T) {
 	}
 }
 
+// TestDesiredAPIConfigurationTrait_PublicNoAuthNoTrait — after CORS removal a
+// PUBLIC, no-auth service (authEnabled=false) gets NO api-configuration trait:
+// browsers reach it same-origin via the web-app's nginx `/api/*` proxy, so
+// there is no cross-origin CORS to emit and no auth filter to attach. The
+// config carries only the tombstone entry that strips any prior instance.
+func TestDesiredAPIConfigurationTrait_PublicNoAuthNoTrait(t *testing.T) {
+	traits, configs := DesiredAPIConfigurationTraitWithIssuers("svc", false, nil)
+	if traits != nil {
+		t.Fatalf("want nil traits for a public no-auth service, got %+v", traits)
+	}
+	want := map[string]map[string]interface{}{"svc-http": nil}
+	if !reflect.DeepEqual(configs, want) {
+		t.Fatalf("configs = %#v, want %#v (tombstone only)", configs, want)
+	}
+}
+
 func keysOfAny[T any](m map[string]T) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
 		out = append(out, k)
 	}
 	return out
-}
-
-// Test_originFromEndpointURL — extracts scheme://authority from a
-// ListDeployments-shaped URL with trailing path/query/fragment.
-func Test_originFromEndpointURL(t *testing.T) {
-	cases := []struct{ in, want string }{
-		{"http://host.example:19080/", "http://host.example:19080"},
-		{"http://host.example:19080", "http://host.example:19080"},
-		{"http://host.example:19080/path/here", "http://host.example:19080"},
-		{"https://host.example/abc?q=1", "https://host.example"},
-		{"", ""},
-		{"not-a-url", ""},
-	}
-	for _, c := range cases {
-		got := originFromEndpointURL(c.in)
-		if got != c.want {
-			t.Errorf("originFromEndpointURL(%q) = %q; want %q", c.in, got, c.want)
-		}
-	}
 }

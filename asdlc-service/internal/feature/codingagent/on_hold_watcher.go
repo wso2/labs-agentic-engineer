@@ -26,18 +26,17 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
 
-// OnHoldWatcher retries dispatch for tasks that are on_hold because a
-// dependency's external URL was not yet resolved by the OC ReleaseBinding
-// controller at cascade time. The cascade fires immediately when a dep
-// reaches `deployed`, but the ingress/gateway URL can take seconds to a
-// minute to appear in ReleaseBinding.Status — causing a transient failure
-// in resolveDependencyEndpoints. dispatchOne reverts those tasks to on_hold
-// (rather than permanently failing them) and sets DispatchDeferredAt.
+// OnHoldWatcher retries dispatch for tasks that are on_hold — primarily
+// because a dependency is not yet `deployed` (deploy-gating), but also when
+// dispatch hits a transient OC failure resolving dependency endpoints.
+// dispatchOne reverts those tasks to on_hold (rather than permanently
+// failing them) and sets DispatchDeferredAt.
 //
 // This watcher sweeps every 10s, finds projects with on_hold tasks, and
-// calls DispatchTasks — which re-evaluates the URL. If it's now available
-// the task dispatches; if still missing and within the 2-minute deadline it
-// stays on_hold for the next tick; after the deadline dispatchOne fails it.
+// calls DispatchTasks — which re-evaluates gating. If the deps are now
+// deployed the task dispatches; if still blocked and within the 2-minute
+// deadline it stays on_hold for the next tick; after the deadline
+// dispatchOne fails it.
 //
 // Multi-replica safe: FOR UPDATE SKIP LOCKED ensures two BFF replicas don't
 // process the same project simultaneously.
