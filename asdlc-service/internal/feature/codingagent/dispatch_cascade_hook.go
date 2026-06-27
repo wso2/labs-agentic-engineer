@@ -37,14 +37,6 @@ type projectSPARuntimeConfigEmitter interface {
 	EmitForProjectSPAs(ctx context.Context, orgID, projectID string) error
 }
 
-// projectConnectionWiringEmitter re-wires `external` connection env onto every
-// component that binds a connection (the consumer side of the OC Resource model,
-// plan §6). Mirrors projectSPARuntimeConfigEmitter; satisfied by
-// *connections.ConsumerWiring.
-type projectConnectionWiringEmitter interface {
-	EmitForProjectConnections(ctx context.Context, orgID, projectID string) error
-}
-
 // DispatchCascadeHook is the post-commit cascade fired by the webhook
 // projector whenever a task lands in `deployed`. It owns the per-project
 // advisory lock + eligibility scan + DispatchService.DispatchTasks call. The
@@ -55,7 +47,6 @@ type DispatchCascadeHook struct {
 	dispatch      DispatchService
 	traitSync     *component.TraitSyncService
 	runtimeConfig projectSPARuntimeConfigEmitter
-	connWiring    projectConnectionWiringEmitter
 }
 
 func NewDispatchCascadeHook(db *gorm.DB, dispatch DispatchService) *DispatchCascadeHook {
@@ -80,17 +71,6 @@ func (h *DispatchCascadeHook) SetRuntimeConfig(r projectSPARuntimeConfigEmitter)
 		return
 	}
 	h.runtimeConfig = r
-}
-
-// SetConnectionWiring wires the connection-env emitter so the cascade re-wires
-// every connection-binding component's env when any component lands deployed
-// (the connection's Resource bindings/outputs resolve before its consumers
-// deploy, per the config-collection gate). Optional.
-func (h *DispatchCascadeHook) SetConnectionWiring(c projectConnectionWiringEmitter) {
-	if h == nil {
-		return
-	}
-	h.connWiring = c
 }
 
 // OnTaskDeployed is the post-commit hook. Acquires a per-project advisory
@@ -153,12 +133,6 @@ func (h *DispatchCascadeHook) OnTaskDeployed(ctx context.Context, orgID, project
 	// refreshed. Re-emit env-config.js on every SPA in the project so
 	// the next pod restart picks up the latest values. Idempotent +
 	// best-effort.
-	if h.connWiring != nil {
-		if err := h.connWiring.EmitForProjectConnections(ctx, orgID, projectID); err != nil {
-			slog.WarnContext(ctx, "dispatch cascade: EmitForProjectConnections failed",
-				"org", orgID, "project", projectID, "error", err)
-		}
-	}
 	if h.runtimeConfig != nil {
 		if err := h.runtimeConfig.EmitForProjectSPAs(ctx, orgID, projectID); err != nil {
 			slog.WarnContext(ctx, "dispatch cascade: EmitForProjectSPAs failed",

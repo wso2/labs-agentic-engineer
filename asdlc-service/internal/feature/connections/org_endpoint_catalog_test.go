@@ -55,31 +55,6 @@ func TestOrgEndpointCatalog_ResolveNamespaceVisible(t *testing.T) {
 	}
 }
 
-func TestConsumerWiring_WireOrgServiceConsumer(t *testing.T) {
-	rc := &fakeRC{workloadEndpoints: sampleEndpoints()}
-	w := NewConsumerWiring(rc, nil, NewOrgEndpointCatalog(rc), nil)
-
-	// org-chart in project `directory` consumes the org-published employee-api
-	// plus a project-only one (skipped) and an unknown one (skipped).
-	err := w.WireOrgServiceConsumer(context.Background(), "ns", "directory", "org-chart",
-		[]string{"employee-api", "payroll-internal", "nope"})
-	if err != nil {
-		t.Fatalf("WireOrgServiceConsumer: %v", err)
-	}
-	if rc.patchedEPWorkload != "directory-org-chart-workload" {
-		t.Fatalf("patched wrong workload: %q", rc.patchedEPWorkload)
-	}
-	if len(rc.patchedEndpointDeps) != 1 {
-		t.Fatalf("want 1 endpoint dep (only the namespace-visible target), got %d: %+v",
-			len(rc.patchedEndpointDeps), rc.patchedEndpointDeps)
-	}
-	dep := rc.patchedEndpointDeps[0]
-	if dep.Project != "hr" || dep.Component != "employee-api" || dep.Name != "http" ||
-		dep.Visibility != "namespace" || dep.AddressEnv != "EMPLOYEE_API_URL" {
-		t.Fatalf("wrong WorkloadConnection: %+v", dep)
-	}
-}
-
 func TestOrgServiceURLEnv(t *testing.T) {
 	cases := map[string]string{
 		"employee-api": "EMPLOYEE_API_URL",
