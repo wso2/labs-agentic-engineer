@@ -2,7 +2,7 @@
 name: react-webapp
 description: How to build a React SPA on the platform — Vite project layout, multi-stage Dockerfile → nginx:alpine runtime, an envsubst reverse-proxy that forwards same-origin /api/<dep>/* to each backend dependency, synchronous /env-config.js load before the bundle for THUNDER_* (auth) + feature flags, and the throw-on-missing-key rule. Apply to every web-app component.
 metadata:
-  asdlc.version: "1"
+  asdlc.version: "2"
 ---
 
 # React Webapp

@@ -2,7 +2,7 @@
 name: api-management
 description: How the platform's API gateway validates JWTs and injects X-User-Id from the sub claim, and how to design + write services and consumers that match. Apply to any service with exposesAPI.auth set, and to any consumer (a `kind: component` sibling, a `kind: org-service`, or a `kind: external` dependency) that calls a protected API.
 metadata:
-  asdlc.version: "1"
+  asdlc.version: "2"
 ---
 
 # API Management
