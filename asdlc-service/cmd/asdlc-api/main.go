@@ -884,11 +884,15 @@ func main() {
 	cascadeHook := codingagent.NewDispatchCascadeHook(db, dispatchSvc)
 	cascadeHook.SetTraitSync(traitSyncService)
 	cascadeHook.SetRuntimeConfig(runtimeConfigSvc)
+	// P3.5: close the access-request loop when a provider's org-publish task
+	// deploys — flip the requests to `granted`, persist exposesAPI.orgPublished
+	// (durability), and close the provider issue. Best-effort inside the cascade.
+	cascadeHook.SetAccessGrant(accessRepo, artifactStore, issueService)
 	projector.SetDispatchHook(cascadeHook)
 
 	task.RegisterHandlers(func(event, action string, h func(ctx context.Context, event, action string, payload []byte) error) {
 		webhookRouter.Register(event, action, webhook.EventHandlerFunc(h))
-	}, db, projector, wfRunService)
+	}, db, projector, wfRunService, accessSvc)
 	webhook.RegisterInstallationHandlers(webhookRouter, db, credService, issueService, taskRepo)
 	webhookCtrl := webhook.NewWebhookController(webhookVerifier, deliveryStore, webhookRouter, routingLookup, routingCache)
 

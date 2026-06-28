@@ -39,6 +39,16 @@ type BuildDispatcher interface {
 	DispatchTaskBuild(ctx context.Context, task *models.ComponentTask, sha string) (runName string, err error)
 }
 
+// AccessRejector is the P3.5 close-out port for a provider's `org-publish` task
+// that is rejected (PR closed unmerged → task `rejected`). The handler invokes
+// it after the rejected transition so every consumer AccessRequest riding on
+// the provider task flips to `rejected`. Satisfied structurally by
+// access.AccessService; wired at the composition root so the task feature
+// needn't import access. Optional — nil disables the step.
+type AccessRejector interface {
+	RejectByProviderTask(ctx context.Context, providerTaskID string) error
+}
+
 // RegisterHandlers builds the transition handlers and installs them via the
 // supplied register func (the composition root adapts it onto the webhook
 // Router) — so the task feature imports nothing from the webhook package.
@@ -52,11 +62,13 @@ func RegisterHandlers(
 	db *gorm.DB,
 	projector *Projector,
 	builds BuildDispatcher,
+	accessRejector AccessRejector,
 ) {
 	h := &Handler{
-		db:        db,
-		projector: projector,
-		wfService: builds,
+		db:             db,
+		projector:      projector,
+		wfService:      builds,
+		accessRejector: accessRejector,
 	}
 	register("pull_request", "opened", h.PullRequestOpened)
 	register("pull_request", "edited", h.PullRequestEdited)
@@ -68,9 +80,10 @@ func RegisterHandlers(
 }
 
 type Handler struct {
-	db        *gorm.DB
-	projector *Projector
-	wfService BuildDispatcher
+	db             *gorm.DB
+	projector      *Projector
+	wfService      BuildDispatcher
+	accessRejector AccessRejector
 }
 
 // pull_request payload subset.
@@ -242,7 +255,15 @@ func (h *Handler) PullRequestClosed(ctx context.Context, event, action string, b
 		if IsTaskNotFound(err) {
 			return nil
 		}
-		return err
+		if err != nil {
+			return err
+		}
+		// P3.5: if the rejected task is a provider `org-publish` task, flip every
+		// consumer AccessRequest riding on it to `rejected`. Best-effort — a sync
+		// failure here must never fail webhook processing. The task transition
+		// above has already committed.
+		h.rejectAccessRequestsForPR(ctx, p.Repository.FullName, p.PullRequest.Number)
+		return nil
 	}
 
 	// Merged: record the merge SHA and advance.
@@ -326,4 +347,33 @@ func (h *Handler) Push(ctx context.Context, event, action string, body []byte) e
 func (h *Handler) IssueComment(ctx context.Context, event, action string, body []byte) error {
 	// Persisted in webhook_payloads for audit; no state effect.
 	return nil
+}
+
+// rejectAccessRequestsForPR is the P3.5 reject close-out. After a PR closes
+// unmerged (the task already transitioned to `rejected`), it looks up the task
+// by (repo, PR number) and — if it is a provider `org-publish` task — flips
+// every consumer AccessRequest riding on that provider task to `rejected`.
+// Entirely best-effort: any lookup/flip failure is logged and swallowed so it
+// never fails webhook processing.
+func (h *Handler) rejectAccessRequestsForPR(ctx context.Context, repoFullName string, prNumber int) {
+	if h.accessRejector == nil {
+		return
+	}
+	orgID, projectID, err := repositories.LookupOrgProjectByRepoURL(h.db.WithContext(ctx), repoFullName)
+	if err != nil || projectID == "" {
+		return
+	}
+	var task models.ComponentTask
+	if err := h.db.WithContext(ctx).
+		Where("org_id = ? AND project_id = ? AND pull_request_number = ?", orgID, projectID, prNumber).
+		First(&task).Error; err != nil {
+		return
+	}
+	if task.Type != models.TaskTypeOrgPublish {
+		return
+	}
+	if rerr := h.accessRejector.RejectByProviderTask(ctx, task.ID); rerr != nil {
+		slog.WarnContext(ctx, "access reject: RejectByProviderTask failed",
+			"task", task.ID, "error", rerr)
+	}
 }

@@ -314,6 +314,33 @@ func (s *ArtifactStore) WriteDesign(ctx context.Context, orgID, projectID string
 	return nil
 }
 
+// WriteComponentDesign writes ONLY the given component's `design.md` (frontmatter
+// + body), leaving every sibling file untouched. It renders through the same
+// SplitDesign machinery used by WriteDesign — wrapping the single component in a
+// throwaway DesignFile — so the frontmatter round-trips identically to a full
+// write (no risk of a hand-rolled YAML drifting from the canonical encoder). The
+// targeted write is what the P3.5 grant cascade uses to set
+// `exposesAPI.orgPublished:true` on a provider component without rewriting the
+// rest of the design.
+func (s *ArtifactStore) WriteComponentDesign(ctx context.Context, orgID, projectID string, comp models.DesignComponent) error {
+	if comp.Name == "" {
+		return fmt.Errorf("write component design: empty component name")
+	}
+	files, err := SplitDesign(&DesignFile{Components: []models.DesignComponent{comp}})
+	if err != nil {
+		return fmt.Errorf("render component %q design: %w", comp.Name, err)
+	}
+	subPath := componentDirPrefix + comp.Name + "/design.md"
+	content, ok := files[subPath]
+	if !ok {
+		return fmt.Errorf("render component %q design: %q missing from split", comp.Name, subPath)
+	}
+	if _, err := s.WriteDesignFile(ctx, orgID, projectID, subPath, content); err != nil {
+		return fmt.Errorf("write %s: %w", subPath, err)
+	}
+	return nil
+}
+
 // ---- Helpers ------------------------------------------------------------
 
 // IsNotFound is sugar for callers that want to distinguish "no artifact yet"

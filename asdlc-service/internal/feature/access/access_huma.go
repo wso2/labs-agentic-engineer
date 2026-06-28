@@ -43,6 +43,15 @@ type createAccessRequestOutput struct {
 	Body *models.AccessRequest
 }
 
+type listAccessRequestsInput struct {
+	humakit.OrgScopedInput
+	ProjectName string `path:"projectName" doc:"Consumer project name (DNS-label slug)"`
+}
+
+type listAccessRequestsOutput struct {
+	Body []models.AccessRequest
+}
+
 // RegisterAccess registers the cross-project access-request endpoint (P3.5). A
 // consumer asks the provider project to publish a project-only org-service
 // org-wide; this creates the provider publish task + GitHub issue (or dedupes
@@ -76,5 +85,29 @@ func RegisterAccess(api huma.API, svc *AccessService) {
 			return nil, huma.Error500InternalServerError("failed to create access request", err)
 		}
 		return &createAccessRequestOutput{Body: ar}, nil
+	})
+
+	// Consumer-side list: every access request a project's components have
+	// raised, newest first. The console reads this to render per-dependency
+	// request status chips against the live design view (P3.5 §6).
+	huma.Register(api, huma.Operation{
+		OperationID: "list-access-requests",
+		Method:      http.MethodGet,
+		Path:        "/api/v1/organizations/{orgHandle}/projects/{projectName}/access-requests",
+		Summary:     "List a project's cross-project access requests",
+		Tags:        []string{"Access Requests"},
+		Security:    humakit.SecurityUserJWT,
+	}, func(ctx context.Context, in *listAccessRequestsInput) (*listAccessRequestsOutput, error) {
+		if svc == nil {
+			return nil, huma.Error503ServiceUnavailable("access requests are not configured")
+		}
+		rows, err := svc.ListByConsumerProject(ctx, in.OrgHandle, in.ProjectName)
+		if err != nil {
+			return nil, huma.Error500InternalServerError("failed to list access requests", err)
+		}
+		if rows == nil {
+			rows = []models.AccessRequest{}
+		}
+		return &listAccessRequestsOutput{Body: rows}, nil
 	})
 }

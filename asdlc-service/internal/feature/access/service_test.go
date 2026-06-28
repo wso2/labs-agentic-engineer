@@ -95,6 +95,33 @@ func (r *fakeRepo) Create(_ context.Context, ar *models.AccessRequest) error {
 	r.rows = append(r.rows, ar)
 	return nil
 }
+func (r *fakeRepo) ListByProviderTask(_ context.Context, providerTaskID string) ([]models.AccessRequest, error) {
+	var out []models.AccessRequest
+	for _, ar := range r.rows {
+		if ar.ProviderTaskID == providerTaskID {
+			out = append(out, *ar)
+		}
+	}
+	return out, nil
+}
+func (r *fakeRepo) ListByConsumerProject(_ context.Context, orgID, projectID string) ([]models.AccessRequest, error) {
+	var out []models.AccessRequest
+	for _, ar := range r.rows {
+		if ar.OrgID == orgID && ar.ConsumerProjectID == projectID {
+			out = append(out, *ar)
+		}
+	}
+	return out, nil
+}
+func (r *fakeRepo) UpdateStatus(_ context.Context, id, status string) error {
+	for _, ar := range r.rows {
+		if ar.ID == id {
+			ar.Status = status
+			return nil
+		}
+	}
+	return ErrAccessRequestNotFound
+}
 
 func sampleEndpoints() []openchoreo.WorkloadEndpointInfo {
 	return []openchoreo.WorkloadEndpointInfo{
@@ -181,6 +208,47 @@ func TestRequestAccess_IdempotentDedupe(t *testing.T) {
 	}
 	if len(repo.rows) != 2 {
 		t.Fatalf("want 2 access-request rows, got %d", len(repo.rows))
+	}
+}
+
+func TestRejectByProviderTask_FlipsOpenRowsOnly(t *testing.T) {
+	repo := &fakeRepo{rows: []*models.AccessRequest{
+		{ID: "a", ProviderTaskID: "task-1", Status: models.AccessRequestStatusRequested},
+		{ID: "b", ProviderTaskID: "task-1", Status: models.AccessRequestStatusInProgress},
+		{ID: "c", ProviderTaskID: "task-1", Status: models.AccessRequestStatusGranted},
+		{ID: "d", ProviderTaskID: "other", Status: models.AccessRequestStatusRequested},
+	}}
+	svc := newSvc(repo, connections.NewOrgEndpointCatalog(&fakeRC{}), &fakeIssueSvc{}, &fakeTaskRepo{})
+
+	if err := svc.RejectByProviderTask(context.Background(), "task-1"); err != nil {
+		t.Fatalf("RejectByProviderTask: %v", err)
+	}
+	want := map[string]string{
+		"a": models.AccessRequestStatusRejected,  // open → rejected
+		"b": models.AccessRequestStatusRejected,  // open → rejected
+		"c": models.AccessRequestStatusGranted,   // already granted, untouched
+		"d": models.AccessRequestStatusRequested, // different task, untouched
+	}
+	for _, ar := range repo.rows {
+		if ar.Status != want[ar.ID] {
+			t.Fatalf("row %s status = %q, want %q", ar.ID, ar.Status, want[ar.ID])
+		}
+	}
+}
+
+func TestListByConsumerProject(t *testing.T) {
+	repo := &fakeRepo{rows: []*models.AccessRequest{
+		{ID: "a", OrgID: "acme", ConsumerProjectID: "store-front", Status: models.AccessRequestStatusRequested},
+		{ID: "b", OrgID: "acme", ConsumerProjectID: "other", Status: models.AccessRequestStatusGranted},
+	}}
+	svc := newSvc(repo, connections.NewOrgEndpointCatalog(&fakeRC{}), &fakeIssueSvc{}, &fakeTaskRepo{})
+
+	rows, err := svc.ListByConsumerProject(context.Background(), "acme", "store-front")
+	if err != nil {
+		t.Fatalf("ListByConsumerProject: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != "a" {
+		t.Fatalf("want only row a for store-front, got %+v", rows)
 	}
 }
 

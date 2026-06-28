@@ -114,6 +114,41 @@ func TestComponentFrontmatterAPIRoundTrip(t *testing.T) {
 	}
 }
 
+// TestWriteComponentDesignRendersOrgPublished verifies the rendering path
+// WriteComponentDesign relies on: a single-component DesignFile splits to a
+// `components/<name>/design.md` whose frontmatter carries `orgPublished: true`,
+// and that file round-trips back to a component with OrgPublished set. (The
+// store's PutFile is exercised via integration; this guards the encoding.)
+func TestWriteComponentDesignRendersOrgPublished(t *testing.T) {
+	comp := models.DesignComponent{
+		Name:                       "employee-api",
+		ComponentType:              "service",
+		Language:                   "Go",
+		AppPath:                    "employee-api",
+		ComponentAgentInstructions: "serve employees",
+		ExposesAPI:                 &models.ExposesAPI{OrgPublished: true},
+	}
+	files, err := SplitDesign(&DesignFile{Components: []models.DesignComponent{comp}})
+	if err != nil {
+		t.Fatalf("SplitDesign: %v", err)
+	}
+	subPath := componentDirPrefix + comp.Name + "/design.md"
+	content, ok := files[subPath]
+	if !ok {
+		t.Fatalf("expected %s in files; got %v", subPath, keysOf(files))
+	}
+	if !strings.Contains(content, "orgPublished: true") {
+		t.Fatalf("rendered design.md missing orgPublished:\n%s", content)
+	}
+	out, err := AssembleDesign(files)
+	if err != nil {
+		t.Fatalf("AssembleDesign: %v", err)
+	}
+	if len(out.Components) != 1 || out.Components[0].ExposesAPI == nil || !out.Components[0].ExposesAPI.OrgPublished {
+		t.Fatalf("orgPublished did not round-trip: %+v", out.Components)
+	}
+}
+
 func keysOf(m map[string]string) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {

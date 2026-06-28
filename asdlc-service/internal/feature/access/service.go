@@ -42,12 +42,16 @@ type taskRepo interface {
 	Create(ctx context.Context, task *models.ComponentTask) error
 }
 
-// accessStore is the subset of *Repository the request flow needs — the
-// idempotency lookup + the row insert. Narrowed to an interface so the flow is
+// accessStore is the subset of *Repository the request + sync flows need — the
+// idempotency lookup, the row insert, and the provider-task fan-out + status
+// flip used by the reject close-out. Narrowed to an interface so the flow is
 // testable without a DB (the concrete *Repository satisfies it).
 type accessStore interface {
 	FindOpenForTarget(ctx context.Context, orgID, providerProjectID, providerComponentName string) (*models.AccessRequest, error)
 	Create(ctx context.Context, ar *models.AccessRequest) error
+	ListByProviderTask(ctx context.Context, providerTaskID string) ([]models.AccessRequest, error)
+	ListByConsumerProject(ctx context.Context, orgID, projectID string) ([]models.AccessRequest, error)
+	UpdateStatus(ctx context.Context, id, status string) error
 }
 
 // AccessService implements the cross-project access-request flow (marketplace
@@ -209,6 +213,52 @@ func (s *AccessService) RequestAccess(ctx context.Context, in RequestAccessInput
 		"providerComponent", providerLogicalComponent, "providerIssue", issue.URL,
 		"providerTask", task.ID, "consumer", in.ConsumerProject+"/"+in.ConsumerComponent)
 	return ar, nil
+}
+
+// ListByConsumerProject returns every access request a consumer project's
+// components have raised, newest first — the data the console reads to render
+// per-dependency request status chips (P3.5 §6).
+func (s *AccessService) ListByConsumerProject(ctx context.Context, orgHandle, projectName string) ([]models.AccessRequest, error) {
+	if orgHandle == "" || projectName == "" {
+		return nil, fmt.Errorf("access: orgHandle and projectName are required")
+	}
+	return s.repo.ListByConsumerProject(ctx, orgHandle, projectName)
+}
+
+// RejectByProviderTask is the P3.5 reject close-out: the provider's
+// `org-publish` task was rejected (its PR closed unmerged), so every consumer
+// AccessRequest riding on that provider task is flipped to `rejected`. Already-
+// terminal rows (granted/rejected) are skipped — only still-open requests move.
+// Best-effort per row: a single UpdateStatus failure is logged and the loop
+// continues; the method returns the first error so the caller can log it, but
+// callers treat it as advisory (webhook processing must not fail on it).
+func (s *AccessService) RejectByProviderTask(ctx context.Context, providerTaskID string) error {
+	if providerTaskID == "" {
+		return fmt.Errorf("access: providerTaskID is required")
+	}
+	rows, err := s.repo.ListByProviderTask(ctx, providerTaskID)
+	if err != nil {
+		return fmt.Errorf("access: list rejected provider task %q: %w", providerTaskID, err)
+	}
+	var firstErr error
+	flipped := 0
+	for i := range rows {
+		if rows[i].Status == models.AccessRequestStatusGranted || rows[i].Status == models.AccessRequestStatusRejected {
+			continue
+		}
+		if uerr := s.repo.UpdateStatus(ctx, rows[i].ID, models.AccessRequestStatusRejected); uerr != nil {
+			slog.WarnContext(ctx, "access reject: UpdateStatus failed",
+				"accessRequest", rows[i].ID, "error", uerr)
+			if firstErr == nil {
+				firstErr = uerr
+			}
+			continue
+		}
+		flipped++
+	}
+	slog.InfoContext(ctx, "access requests rejected on provider task rejection",
+		"providerTask", providerTaskID, "rejected", flipped)
+	return firstErr
 }
 
 // lookupAppPath reads the provider project's design and returns the app path of
