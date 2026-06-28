@@ -21,11 +21,9 @@ import (
 	"fmt"
 	"hash/fnv"
 	"log/slog"
-	"strings"
 
 	"gorm.io/gorm"
 
-	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/component"
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
@@ -54,12 +52,14 @@ type accessGrantStore interface {
 	UpdateStatus(ctx context.Context, id, status string) error
 }
 
-// accessDesignStore is the consumer port for the provider design read + the
-// targeted single-component write the grant uses to persist
-// `exposesAPI.orgPublished:true` (durability). Satisfied by *artifacts.ArtifactStore.
+// accessDesignStore is the consumer port for the durability write the grant
+// uses to persist `exposesAPI.orgPublished:true` on the provider component. The
+// store reads the design, matches the component (logical or OC name), flips the
+// flag idempotently, and COMMITS the single design.md to the provider repo (no
+// new version tag) using the org's service-identity credential. Satisfied by
+// *artifacts.ArtifactStore.
 type accessDesignStore interface {
-	ReadDesign(ctx context.Context, orgID, projectID string) (*artifacts.DesignFile, error)
-	WriteComponentDesign(ctx context.Context, orgID, projectID string, comp models.DesignComponent) error
+	SetComponentOrgPublished(ctx context.Context, orgID, projectID, componentName string) error
 }
 
 // accessIssueCloser is the consumer port for closing the provider GitHub issue
@@ -277,54 +277,21 @@ func (h *DispatchCascadeHook) grantAccessRequests(ctx context.Context, orgID, pr
 		"providerTask", open.ProviderTaskID, "granted", flipped)
 }
 
-// markOrgPublished sets exposesAPI.orgPublished:true on the named provider
-// component and writes only that component's design.md back (durability per
-// P3.5 §4). Idempotent: if already published it skips the write. Best-effort:
-// any read/write failure is logged and swallowed — the grant proceeds.
+// markOrgPublished durably persists exposesAPI.orgPublished:true on the named
+// provider component and COMMITS the change to the provider repo (durability per
+// P3.5 §4) — not just a working-tree write, so a future re-implementation can't
+// silently drop namespace visibility. The store handles component matching
+// (logical or OC name), idempotency (no-op if already published), and the
+// service-identity commit. Best-effort: any failure is logged and swallowed —
+// the grant proceeds.
 func (h *DispatchCascadeHook) markOrgPublished(ctx context.Context, orgID, projectID, componentName string) {
 	if h.accessDesign == nil {
 		return
 	}
-	design, err := h.accessDesign.ReadDesign(ctx, orgID, projectID)
-	if err != nil || design == nil {
-		if err != nil {
-			slog.WarnContext(ctx, "access grant: ReadDesign for orgPublished durability failed",
-				"project", projectID, "error", err)
-		}
-		return
+	if err := h.accessDesign.SetComponentOrgPublished(ctx, orgID, projectID, componentName); err != nil {
+		slog.WarnContext(ctx, "access grant: persist orgPublished durability failed",
+			"project", projectID, "component", componentName, "error", err)
 	}
-	for i := range design.Components {
-		// The provider component is identified by its OC component name; the
-		// design knows it by its logical name. Match either form so the
-		// durability write lands whether componentName is `<project>-<logical>`
-		// or the bare logical name.
-		if !componentMatches(design.Components[i].Name, projectID, componentName) {
-			continue
-		}
-		comp := design.Components[i]
-		if comp.ExposesAPI == nil {
-			comp.ExposesAPI = &models.ExposesAPI{}
-		}
-		if comp.ExposesAPI.OrgPublished {
-			return // idempotent — already durable.
-		}
-		comp.ExposesAPI.OrgPublished = true
-		if werr := h.accessDesign.WriteComponentDesign(ctx, orgID, projectID, comp); werr != nil {
-			slog.WarnContext(ctx, "access grant: persist orgPublished failed",
-				"project", projectID, "component", comp.Name, "error", werr)
-		}
-		return
-	}
-}
-
-// componentMatches reports whether a design component named `logical` is the
-// provider identified by `target` (which may be the OC component name
-// `<project>-<logical>` or the bare logical name).
-func componentMatches(logical, project, target string) bool {
-	if strings.EqualFold(logical, target) {
-		return true
-	}
-	return strings.EqualFold(project+"-"+logical, target)
 }
 
 func hashCascadeKey(s string) int64 {

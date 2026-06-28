@@ -53,18 +53,44 @@ func (f *fakeAccessStore) UpdateStatus(_ context.Context, id, status string) err
 	return nil
 }
 
-// fakeDesignStore is an in-memory accessDesignStore.
+// fakeDesignStore is an in-memory accessDesignStore. It mirrors the real
+// ArtifactStore.SetComponentOrgPublished contract: it matches the component
+// (logical or OC `<project>-<logical>` name), flips orgPublished idempotently,
+// and records each component it "committed" so tests can assert the durability
+// write fired exactly once.
 type fakeDesignStore struct {
 	design  *artifacts.DesignFile
 	written []models.DesignComponent
+	err     error // when set, SetComponentOrgPublished returns it
 }
 
-func (f *fakeDesignStore) ReadDesign(_ context.Context, _, _ string) (*artifacts.DesignFile, error) {
-	return f.design, nil
-}
-func (f *fakeDesignStore) WriteComponentDesign(_ context.Context, _, _ string, comp models.DesignComponent) error {
-	f.written = append(f.written, comp)
+func (f *fakeDesignStore) SetComponentOrgPublished(_ context.Context, _, projectID, componentName string) error {
+	if f.err != nil {
+		return f.err
+	}
+	if f.design == nil {
+		return nil
+	}
+	for i := range f.design.Components {
+		comp := f.design.Components[i]
+		if !designComponentMatchesTest(comp.Name, projectID, componentName) {
+			continue
+		}
+		if comp.ExposesAPI != nil && comp.ExposesAPI.OrgPublished {
+			return nil // idempotent — no commit.
+		}
+		if comp.ExposesAPI == nil {
+			comp.ExposesAPI = &models.ExposesAPI{}
+		}
+		comp.ExposesAPI.OrgPublished = true
+		f.written = append(f.written, comp)
+		return nil
+	}
 	return nil
+}
+
+func designComponentMatchesTest(logical, project, target string) bool {
+	return logical == target || project+"-"+logical == target
 }
 
 // fakeIssueCloser records the closed issue number.

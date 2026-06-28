@@ -315,13 +315,17 @@ func (s *ArtifactStore) WriteDesign(ctx context.Context, orgID, projectID string
 }
 
 // WriteComponentDesign writes ONLY the given component's `design.md` (frontmatter
-// + body), leaving every sibling file untouched. It renders through the same
-// SplitDesign machinery used by WriteDesign — wrapping the single component in a
-// throwaway DesignFile — so the frontmatter round-trips identically to a full
-// write (no risk of a hand-rolled YAML drifting from the canonical encoder). The
-// targeted write is what the P3.5 grant cascade uses to set
-// `exposesAPI.orgPublished:true` on a provider component without rewriting the
-// rest of the design.
+// + body) to the LOCAL CLONE's working tree, leaving every sibling file
+// untouched. It renders through the same SplitDesign machinery used by
+// WriteDesign — wrapping the single component in a throwaway DesignFile — so the
+// frontmatter round-trips identically to a full write (no risk of a hand-rolled
+// YAML drifting from the canonical encoder).
+//
+// IMPORTANT: this is a working-tree write only — it does NOT commit or push. A
+// subsequent SaveDesign is required to persist the change. For internal
+// durability touch-ups that must land on remote main WITHOUT minting a new
+// design version (e.g. the P3.5 grant cascade), use SetComponentOrgPublished,
+// which commits via the Git Data API.
 func (s *ArtifactStore) WriteComponentDesign(ctx context.Context, orgID, projectID string, comp models.DesignComponent) error {
 	if comp.Name == "" {
 		return fmt.Errorf("write component design: empty component name")
@@ -339,6 +343,70 @@ func (s *ArtifactStore) WriteComponentDesign(ctx context.Context, orgID, project
 		return fmt.Errorf("write %s: %w", subPath, err)
 	}
 	return nil
+}
+
+// SetComponentOrgPublished durably persists `exposesAPI.orgPublished:true` on
+// the provider component and COMMITS that one `design.md` to remote main
+// (no new design version tag). This is the P3.5 grant-cascade durability write:
+// when a provider's `org-publish` task deploys, the flag must survive a future
+// re-implementation so namespace visibility isn't silently dropped.
+//
+// `componentName` may be the design's logical component name OR the OC component
+// name `<project>-<logical>` — both forms match. Idempotent: a no-op (no commit)
+// when the component already has the flag set, when no design exists, or when no
+// matching component is found. Unlike WriteComponentDesign (working-tree only),
+// this reaches a real GitHub commit so the change is never lost.
+func (s *ArtifactStore) SetComponentOrgPublished(ctx context.Context, orgID, projectID, componentName string) error {
+	design, err := s.ReadDesign(ctx, orgID, projectID)
+	if err != nil {
+		return fmt.Errorf("read design: %w", err)
+	}
+	if design == nil {
+		return nil // no design yet — nothing to persist.
+	}
+	for i := range design.Components {
+		comp := design.Components[i]
+		if !designComponentMatches(comp.Name, projectID, componentName) {
+			continue
+		}
+		if comp.ExposesAPI == nil {
+			comp.ExposesAPI = &models.ExposesAPI{}
+		}
+		if comp.ExposesAPI.OrgPublished {
+			return nil // idempotent — already durable, no commit.
+		}
+		comp.ExposesAPI.OrgPublished = true
+
+		// Render ONLY this component's design.md through the canonical encoder
+		// (same machinery as WriteComponentDesign) so the frontmatter round-trips
+		// identically, then commit that single file to remote main without tagging.
+		files, ferr := SplitDesign(&DesignFile{Components: []models.DesignComponent{comp}})
+		if ferr != nil {
+			return fmt.Errorf("render component %q design: %w", comp.Name, ferr)
+		}
+		subPath := componentDirPrefix + comp.Name + "/design.md"
+		content, ok := files[subPath]
+		if !ok {
+			return fmt.Errorf("render component %q design: %q missing from split", comp.Name, subPath)
+		}
+		msg := fmt.Sprintf("chore(marketplace): mark %s org-published (namespace visibility)", comp.Name)
+		if _, cerr := s.artifactSvc.CommitDesignFile(ctx, orgID, projectID, subPath, content, msg); cerr != nil {
+			return fmt.Errorf("commit %s: %w", subPath, cerr)
+		}
+		return nil
+	}
+	return nil // no matching component — nothing to persist.
+}
+
+// designComponentMatches reports whether a design component named `logical` is
+// the provider identified by `target`, which may be the bare logical name or
+// the OC component name `<project>-<logical>`. Mirrors the cascade's
+// componentMatches so the durability write lands in either form.
+func designComponentMatches(logical, project, target string) bool {
+	if strings.EqualFold(logical, target) {
+		return true
+	}
+	return strings.EqualFold(project+"-"+logical, target)
 }
 
 // ---- Helpers ------------------------------------------------------------

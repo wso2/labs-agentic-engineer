@@ -167,6 +167,14 @@ type ArtifactService interface {
 	DeleteDesignFile(ctx context.Context, orgID, projectID, sub string) error
 	DeleteDesignDirectory(ctx context.Context, orgID, projectID, sub string) error
 
+	// CommitDesignFile lands a single `specs/design/` file on remote main
+	// directly (no version tag), using the org's service-identity credential.
+	// `sub` is relative to `specs/design/`. Returns the new commit SHA, or
+	// ("", nil) when the content already matches main. Used by internal
+	// durability touch-ups (e.g. the P3.5 grant cascade) that must NOT mint a
+	// new design version.
+	CommitDesignFile(ctx context.Context, orgID, projectID, sub, content, message string) (string, error)
+
 	// Save / Discard.
 	SaveRequirements(ctx context.Context, orgID, projectID string, req SaveRequest) (*RequirementsSaveResult, error)
 	SaveDesign(ctx context.Context, orgID, projectID string, req SaveRequest) (*DesignSaveResult, error)
