@@ -126,6 +126,52 @@ func BuildIssueBody(task *models.ComponentTask, comp *models.DesignComponent, _r
 	return sb.String()
 }
 
+// BuildOrgPublishIssueBody produces the markdown body for a cross-project
+// publish task's GitHub issue (marketplace P3.5). Unlike BuildIssueBody this is
+// NOT a build-from-design task: the provider component is already built and
+// deployed, and the requested change is a single targeted edit — add `namespace`
+// to its HTTP endpoint's `visibility` list in `workload.yaml` so OpenChoreo
+// resolves it for cross-project consumers. The body is purpose-built (it does
+// not depend on the design's `orgPublished` flag being set yet) and imperative,
+// matching the tone of BuildIssueBody.
+//
+// The trailing `Closes #<this-issue>` reminder is restated for the
+// human-on-GitHub audience and as a fail-safe if the `asdlc` skill isn't loaded.
+// The issue number isn't known until GitHub mints it, so the body references
+// "this issue" rather than a literal number (the agent reads the live number
+// via `gh issue view`).
+func BuildOrgPublishIssueBody(providerComponentName, appPath, requesterProject string) string {
+	var sb strings.Builder
+
+	sb.WriteString(fmt.Sprintf("> Access request from project `%s`: publish the **%s** service org-wide so it can be consumed across projects.\n\n",
+		requesterProject, providerComponentName))
+
+	sb.WriteString("## What to do\n")
+	sb.WriteString("This is a **targeted change to an already-built component** — do NOT regenerate or re-implement anything.\n\n")
+	sb.WriteString("1. Clone the repository.\n")
+	if appPath != "" {
+		sb.WriteString(fmt.Sprintf("2. Open `%s/workload.yaml`.\n", normalizeAppPath(appPath)))
+	} else {
+		sb.WriteString("2. Open the component's `workload.yaml`.\n")
+	}
+	sb.WriteString("3. Add `namespace` to the HTTP endpoint's `visibility` list — e.g. it should read `visibility: [external, namespace]`. ")
+	sb.WriteString("`namespace` visibility is what lets OpenChoreo resolve this endpoint for cross-project consumers.\n")
+	sb.WriteString("4. Do **NOT** change anything else — no code, no other config, no other endpoints.\n")
+	sb.WriteString("5. Open a PR for this single-line change.\n\n")
+
+	sb.WriteString("## Component Reference\n")
+	sb.WriteString(fmt.Sprintf("- **Name:** %s\n", providerComponentName))
+	if appPath != "" {
+		sb.WriteString(fmt.Sprintf("- **App Path (within repo):** `%s`\n", normalizeAppPath(appPath)))
+	}
+	sb.WriteString("\n")
+
+	sb.WriteString("---\n")
+	sb.WriteString("When you open the PR, include `Closes #<this-issue>` in its body so the platform links the PR back to this task. The full workflow, constraints, and deny-list are in the `asdlc` skill loaded in your Claude Code session.\n")
+
+	return sb.String()
+}
+
 // normalizeAppPath trims a single leading slash so the rendered Component
 // Reference shows e.g. `hello-api` instead of `/hello-api`.
 func normalizeAppPath(appPath string) string {

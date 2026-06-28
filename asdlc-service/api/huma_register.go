@@ -24,6 +24,7 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/clients/openchoreo"
 	"github.com/wso2/asdlc/asdlc-service/internal/platform/auth"
 
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/access"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/component"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/connections"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/design"
@@ -70,6 +71,7 @@ type HumaDeps struct {
 	GitHubAppClientID   string
 	ConnectionValueSvc  *connections.ValueService
 	ConnectionRegistry  *connections.Registry
+	AccessSvc           *access.AccessService
 }
 
 // RegisterAllHuma registers every migrated feature's operations on the Huma API.
@@ -91,6 +93,7 @@ func RegisterAllHuma(api huma.API, d HumaDeps) {
 	orgcreds.RegisterOrgAnthropic(api, d.AnthropicSvc)
 	skills.RegisterSkill(api, d.SkillSvc, d.SkillMutationSvc, d.SkillImportSvc)
 	connections.RegisterConnections(api, d.ConnectionValueSvc, d.ConnectionRegistry)
+	access.RegisterAccess(api, d.AccessSvc)
 	registerInfraHuma(api, d.TaskTokens, d.AnthropicSvc)
 }
 

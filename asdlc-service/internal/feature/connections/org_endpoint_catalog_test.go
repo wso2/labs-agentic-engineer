@@ -105,6 +105,30 @@ func TestOrgEndpointCatalog_ExistsAnyVisibility(t *testing.T) {
 	}
 }
 
+func TestOrgEndpointCatalog_FindByComponent(t *testing.T) {
+	cat := NewOrgEndpointCatalog(&fakeRC{workloadEndpoints: sampleEndpoints()})
+
+	// A project-only component (NOT namespace-visible) is still found — P3.5
+	// resolves the provider row regardless of visibility to derive its project.
+	got, ok, err := cat.FindByComponent(context.Background(), "ns", "payroll-internal")
+	if err != nil || !ok {
+		t.Fatalf("payroll-internal: want found, got ok=%v err=%v", ok, err)
+	}
+	if got.Project != "hr" || got.Name != "http" || got.Type != "HTTP" {
+		t.Fatalf("resolved wrong row: %+v", got)
+	}
+
+	// An org-published component is also found.
+	if _, ok, _ := cat.FindByComponent(context.Background(), "ns", "employee-api"); !ok {
+		t.Fatalf("employee-api: want found")
+	}
+
+	// Unknown component must not resolve (the `not-found` case).
+	if _, ok, _ := cat.FindByComponent(context.Background(), "ns", "nope"); ok {
+		t.Fatalf("unknown component must not resolve")
+	}
+}
+
 func TestOrgServiceURLEnv(t *testing.T) {
 	cases := map[string]string{
 		"employee-api": "EMPLOYEE_API_URL",

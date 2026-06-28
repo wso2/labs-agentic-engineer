@@ -46,6 +46,7 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/database/migrations"
 	"github.com/wso2/asdlc/asdlc-service/internal/contracts"
 	"github.com/wso2/asdlc/asdlc-service/internal/credentials"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/access"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/codingagent"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/component"
@@ -815,6 +816,11 @@ func main() {
 			_, derr := dispatchSvc.DispatchTasks(c, orgID, projectID)
 			return derr
 		})
+	// Cross-project access requests (P3.5): a consumer asks a provider project to
+	// publish a project-only org-service org-wide. Creates the provider publish
+	// task + GitHub issue on the provider's repo and records an AccessRequest.
+	accessRepo := access.NewRepository(db)
+	accessSvc := access.NewAccessService(accessRepo, orgEndpointCatalog, issueService, taskRepo, artifactStore)
 	// Materialise a task's bound connection secrets into the runner pod (envFrom).
 	if setter, ok := dispatchSvc.(interface {
 		SetConnectionSecretResolver(codingagent.ConnectionSecretResolveFunc)
@@ -1023,6 +1029,7 @@ func main() {
 		GitHubAppClientID:   cfg.GithubAppClientID,
 		ConnectionValueSvc:  connectionValueSvc,
 		ConnectionRegistry:  connectionRegistry,
+		AccessSvc:           accessSvc,
 	}
 
 	slog.Info("OpenChoreo API", "baseURL", cfg.PlatformAPI.BaseURL)

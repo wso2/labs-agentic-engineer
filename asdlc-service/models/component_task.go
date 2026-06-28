@@ -74,6 +74,13 @@ const (
 	TaskTypeComponent            = "component"
 	TaskTypeConfigCollection     = "config-collection"
 	TaskTypeResourceProvisioning = "resource-provisioning"
+	// TaskTypeOrgPublish is a cross-project publish task (marketplace P3.5): a
+	// TARGETED modification of an already-built provider component, created on
+	// the PROVIDER's project/repo when a consumer requests access to a
+	// project-only org-service. It behaves like a normal component task for
+	// dispatch + lifecycle; only its issue body differs (BuildOrgPublishIssueBody)
+	// — the agent adds `namespace` visibility to the component's workload.yaml.
+	TaskTypeOrgPublish = "org-publish"
 )
 
 // ComponentTask is one implementation task targeting a single component.

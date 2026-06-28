@@ -123,6 +123,38 @@ func (c *OrgEndpointCatalog) IsNamespaceVisible(ctx context.Context, orgHandle, 
 	return ok, err
 }
 
+// FindByComponent returns the catalog row owned by a component named `name`,
+// regardless of visibility — the P3.5 provider lookup. The org-service name a
+// consumer references is the OC component name (catalog key); this resolves it
+// to the provider row so the request flow can derive the provider project and
+// the component's app path. When the component publishes several endpoints, an
+// HTTP one wins (services expose a single API endpoint in practice); otherwise
+// the first match is the fallback. ok=false ⇒ no component with that name (the
+// `not-found` case — not requestable).
+func (c *OrgEndpointCatalog) FindByComponent(ctx context.Context, orgHandle, name string) (openchoreo.WorkloadEndpointInfo, bool, error) {
+	infos, err := c.List(ctx, orgHandle)
+	if err != nil {
+		return openchoreo.WorkloadEndpointInfo{}, false, err
+	}
+	var fallback *openchoreo.WorkloadEndpointInfo
+	for i := range infos {
+		e := &infos[i]
+		if e.Component != name {
+			continue
+		}
+		if e.Type == "HTTP" {
+			return *e, true, nil
+		}
+		if fallback == nil {
+			fallback = e
+		}
+	}
+	if fallback != nil {
+		return *fallback, true, nil
+	}
+	return openchoreo.WorkloadEndpointInfo{}, false, nil
+}
+
 // ExistsAnyVisibility reports whether ANY endpoint in the catalog is owned by a
 // component named `name`, regardless of visibility. It distinguishes "published
 // only project-only" (exists → requestable, P3.5 `unpublished`) from "no such
