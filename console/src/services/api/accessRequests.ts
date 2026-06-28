@@ -49,7 +49,7 @@ export interface AccessRequest {
   providerComponentName: string;
   providerTaskID: string;
   providerIssueNumber: number;
-  providerIssueURL: string;
+  providerIssueUrl: string;
   status: AccessRequestStatus;
   createdAt: string;
   updatedAt: string;
