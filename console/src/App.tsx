@@ -47,6 +47,7 @@ import NoOrganizationPage from './pages/NoOrganizationPage';
 import { setOrgGithubTokenAccessor } from './services/api/orgGithub';
 import { setOrgAnthropicTokenAccessor } from './services/api/orgAnthropic';
 import { setConnectionsTokenAccessor } from './services/api/connections';
+import { setAccessRequestsTokenAccessor } from './services/api/accessRequests';
 import { setOrgIDPTokenAccessor } from './services/api/orgIDP';
 import { setOrgSkillsTokenAccessor } from './services/api/orgSkills';
 import { useBillingOrg } from './hooks/useBillingOrg';
@@ -83,6 +84,7 @@ export function App() {
     setOrgGithubTokenAccessor(getAccessToken);
     setOrgAnthropicTokenAccessor(getAccessToken);
     setConnectionsTokenAccessor(getAccessToken);
+    setAccessRequestsTokenAccessor(getAccessToken);
     setOrgIDPTokenAccessor(getAccessToken);
     setOrgSkillsTokenAccessor(getAccessToken);
   }, [getAccessToken]);

@@ -120,6 +120,11 @@ export interface Dependency {
   name: string;
   description?: string;
   status?: "resolved" | "ambiguous" | "unresolved";
+  // Why an org-service dep is `unresolved`. `unpublished` = the provider
+  // component exists but is project-only (requestable via P3.5 access
+  // requests); `not-found` = no such component (plain warning). `""` for
+  // resolved/non-org-service deps.
+  reason?: "" | "unpublished" | "not-found";
   config?: ConfigKey[];
   resourceType?: string;
   parameters?: Record<string, string>;
