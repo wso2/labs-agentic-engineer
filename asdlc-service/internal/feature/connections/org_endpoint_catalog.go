@@ -122,3 +122,22 @@ func (c *OrgEndpointCatalog) IsNamespaceVisible(ctx context.Context, orgHandle, 
 	_, ok, err := c.ResolveNamespaceVisible(ctx, orgHandle, name)
 	return ok, err
 }
+
+// ExistsAnyVisibility reports whether ANY endpoint in the catalog is owned by a
+// component named `name`, regardless of visibility. It distinguishes "published
+// only project-only" (exists → requestable, P3.5 `unpublished`) from "no such
+// component at all" (P3.5 `not-found`). Used by the ArtifactStore to compute the
+// `reason` for an unresolved org-service dependency. Errors are surfaced so the
+// caller can degrade (best-effort: leave the reason empty).
+func (c *OrgEndpointCatalog) ExistsAnyVisibility(ctx context.Context, orgHandle, name string) (bool, error) {
+	infos, err := c.List(ctx, orgHandle)
+	if err != nil {
+		return false, err
+	}
+	for i := range infos {
+		if infos[i].Component == name {
+			return true, nil
+		}
+	}
+	return false, nil
+}

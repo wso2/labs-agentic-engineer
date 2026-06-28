@@ -57,6 +57,14 @@ type Dependency struct {
 	Name        string `json:"name" yaml:"name"`
 	Description string `json:"description,omitempty" yaml:"description,omitempty"`
 	Status      string `json:"status,omitempty" yaml:"status,omitempty"` // resolved|ambiguous|unresolved
+	// Reason refines an unresolved org-service dependency (P3.5). Enum:
+	// "" (n/a or resolved) | "unpublished" (the provider component exists but
+	// publishes only project-only — requestable) | "not-found" (no component
+	// with that name in the org catalog). Like Status it is a READ-TIME computed
+	// field (recomputed against the live catalog on every design read); it is NOT
+	// persisted to frontmatter and NOT part of the agents Zod schema — the
+	// platform computes it, the architect never sets it.
+	Reason string `json:"reason,omitempty" yaml:"reason,omitempty"`
 	// external: the config key schema the consuming component codes against.
 	Config []ConfigKey `json:"config,omitempty" yaml:"config,omitempty"`
 	// platform-resource: the registered (Cluster)ResourceType + provisioning params.

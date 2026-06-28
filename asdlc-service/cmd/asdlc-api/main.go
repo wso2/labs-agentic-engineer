@@ -111,6 +111,7 @@ func main() {
 		&models.WebhookPayload{},
 		&models.Organization{},
 		&models.Connection{},
+		&models.AccessRequest{},
 	)
 	if err != nil {
 		slog.Error("database init failed", "error", err)

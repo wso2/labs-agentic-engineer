@@ -82,6 +82,29 @@ func TestOrgEndpointCatalog_ResolveNamespaceVisible(t *testing.T) {
 	}
 }
 
+func TestOrgEndpointCatalog_ExistsAnyVisibility(t *testing.T) {
+	cat := NewOrgEndpointCatalog(&fakeRC{workloadEndpoints: sampleEndpoints()})
+
+	// A project-only component (NOT namespace-visible) still exists in the
+	// catalog → ExistsAnyVisibility true (the P3.5 `unpublished`/requestable case).
+	got, err := cat.ExistsAnyVisibility(context.Background(), "ns", "org-roster-todo-api")
+	if err != nil {
+		t.Fatalf("org-roster-todo-api: unexpected error: %v", err)
+	}
+	if !got {
+		t.Fatalf("org-roster-todo-api: want exists=true (project-only but present)")
+	}
+
+	// An unknown component does not exist at any visibility → the `not-found` case.
+	got, err = cat.ExistsAnyVisibility(context.Background(), "ns", "nope")
+	if err != nil {
+		t.Fatalf("nope: unexpected error: %v", err)
+	}
+	if got {
+		t.Fatalf("nope: want exists=false")
+	}
+}
+
 func TestOrgServiceURLEnv(t *testing.T) {
 	cases := map[string]string{
 		"employee-api": "EMPLOYEE_API_URL",

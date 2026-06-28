@@ -35,6 +35,11 @@ import (
 // package stays free of an OC-client dependency.
 type OrgServiceResolver interface {
 	IsNamespaceVisible(ctx context.Context, orgHandle, name string) (bool, error)
+	// ExistsAnyVisibility reports whether a component named `name` publishes ANY
+	// endpoint in the org catalog regardless of visibility — used to refine an
+	// unresolved org-service dep into `unpublished` (exists, project-only) vs
+	// `not-found` (no such component). P3.5.
+	ExistsAnyVisibility(ctx context.Context, orgHandle, name string) (bool, error)
 }
 
 // ArtifactStore wraps the in-process artifact service to add value beyond
@@ -262,8 +267,22 @@ func (s *ArtifactStore) resolveOrgServices(ctx context.Context, orgID string, d 
 				}
 				if visible {
 					dep.Status = "resolved"
-				} else {
-					dep.Status = "unresolved"
+					dep.Reason = ""
+					continue
+				}
+				// Unresolved: refine the reason so the consumer view can offer a
+				// "Request access" affordance only when the provider component
+				// actually exists (project-only ⇒ `unpublished`/requestable;
+				// missing ⇒ `not-found`). Best-effort: an ExistsAnyVisibility error
+				// leaves the reason empty rather than failing the read (P3.5).
+				dep.Status = "unresolved"
+				dep.Reason = ""
+				if exists, err := s.orgServices.ExistsAnyVisibility(ctx, orgID, dep.Name); err == nil {
+					if exists {
+						dep.Reason = "unpublished"
+					} else {
+						dep.Reason = "not-found"
+					}
 				}
 				continue
 			}
