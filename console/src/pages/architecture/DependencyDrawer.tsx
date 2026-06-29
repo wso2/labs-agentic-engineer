@@ -21,6 +21,7 @@ import Drawer from '@mui/material/Drawer';
 import { Box, Chip, Divider, IconButton, Stack, Typography } from '@wso2/oxygen-ui';
 import { X } from '@wso2/oxygen-ui-icons-react';
 import type { DepRef } from './DependenciesSection';
+import { ConnectionValues } from './ConnectionValues';
 import { OrgServiceResolution } from './OrgServiceResolution';
 import { ProvideSpec } from './ProvideSpec';
 
@@ -111,28 +112,47 @@ export function DependencyDrawer({
             onChanged={onChanged}
           />
         ) : dep.kind === 'external' ? (
-          dep.needsSpec && !dep.specPath ? (
-            <ProvideSpec
-              orgHandle={orgHandle}
-              projectId={projectId}
-              component={depRef!.component}
-              dep={dep}
-              onChanged={onChanged}
-            />
-          ) : dep.specPath ? (
-            <Box>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
-                Spec attached ✓
+          <Stack spacing={3}>
+            {/* B3: spec attachment — shown only when a spec is needed */}
+            {dep.needsSpec && !dep.specPath ? (
+              <ProvideSpec
+                orgHandle={orgHandle}
+                projectId={projectId}
+                component={depRef!.component}
+                dep={dep}
+                onChanged={onChanged}
+              />
+            ) : dep.specPath ? (
+              <Box>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
+                  Spec attached ✓
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {dep.specPath}
+                </Typography>
+              </Box>
+            ) : null}
+
+            {/* B4: per-environment value entry + rotation — shown when the dep
+                declares config keys. Rendered regardless of spec state so
+                users can enter values both during initial setup and later
+                for rotation. */}
+            {dep.config && dep.config.length > 0 && (
+              <ConnectionValues
+                orgHandle={orgHandle}
+                projectId={projectId}
+                dep={dep}
+                onSaved={onChanged}
+              />
+            )}
+
+            {/* Fallback: no spec and no config — placeholder */}
+            {!dep.needsSpec && !(dep.config && dep.config.length > 0) && (
+              <Typography variant="body2" color="text.secondary">
+                No additional configuration required for this dependency.
               </Typography>
-              <Typography variant="caption" color="text.secondary">
-                {dep.specPath}
-              </Typography>
-            </Box>
-          ) : (
-            <Typography variant="body2" color="text.secondary">
-              Resolution UI arrives in B4.
-            </Typography>
-          )
+            )}
+          </Stack>
         ) : (
           <Typography variant="body2" color="text.secondary">
             Resolution UI arrives in B3–B4.
