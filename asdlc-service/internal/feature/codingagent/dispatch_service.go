@@ -357,12 +357,14 @@ func (s *dispatchService) DispatchTasks(ctx context.Context, orgID, projectID st
 		statusByComponent[t.ComponentName] = t.Status
 	}
 
-	// Cross-project `org-service` gate (declarative-wiring refactor): a consumer
-	// is held On Hold until each org-service target is deployed + namespace-
-	// visible in the org catalog, so at dispatch the dependency is fully
-	// resolvable (the issue comment + the agent's workload.yaml block can name a
-	// real endpoint). nil ⇒ catalog not wired (tests) ⇒ org-service gate off.
-	orgServiceVisible := s.orgServiceGates(ctx, orgID, tasks)
+	// NOTE(A2c): The cross-project `org-service` gate (orgServiceGates /
+	// orgServiceVisible) has been retired. Under the block-at-proceed model
+	// (A2b), a consumer task can only be dispatched once its org-service deps
+	// are `resolved` (namespace-visible in the catalog), so it is impossible
+	// to reach this dispatch sweep with an unresolved org-service dep. The
+	// org-service On-Hold gate was therefore a redundant double-check; it is
+	// removed here. Same-project component and external-connection gating in
+	// depsAllDeployed are unchanged.
 
 	var results []DispatchResult
 	for i := range tasks {
@@ -373,7 +375,7 @@ func (s *dispatchService) DispatchTasks(ctx context.Context, orgID, projectID st
 			continue
 		}
 		if task.Status == string(models.TaskStatusOnHold) {
-			if !depsAllDeployed(task, statusByComponent, statusByConnection, orgServiceVisible) {
+			if !depsAllDeployed(task, statusByComponent, statusByConnection) {
 				continue
 			}
 			task.Status = string(models.TaskStatusPending)
@@ -386,7 +388,7 @@ func (s *dispatchService) DispatchTasks(ctx context.Context, orgID, projectID st
 			continue
 		}
 
-		if !depsAllDeployed(task, statusByComponent, statusByConnection, orgServiceVisible) {
+		if !depsAllDeployed(task, statusByComponent, statusByConnection) {
 			task.Status = string(models.TaskStatusOnHold)
 			if err := s.taskRepo.Update(ctx, task); err != nil {
 				slog.WarnContext(ctx, "set on_hold", "task", task.ID, "error", err)
@@ -407,46 +409,22 @@ func (s *dispatchService) DispatchTasks(ctx context.Context, orgID, projectID st
 	return results, nil
 }
 
-// orgServiceGates resolves, once per dispatch sweep, which distinct
-// `org-service` names referenced by the project's tasks are currently
-// namespace-visible in the org catalog (provider deployed + published). The
-// result feeds depsAllDeployed's org-service gate. Returns nil when the catalog
-// resolver isn't wired (tests/legacy) — nil disables the gate. Fail-closed on a
-// per-name resolve error (left false → the consumer stays On Hold; the 10s
-// on_hold watcher retries), so a transient OC blip delays rather than mis-fires.
-func (s *dispatchService) orgServiceGates(ctx context.Context, orgID string, tasks []models.ComponentTask) map[string]bool {
-	if s.orgServiceResolver == nil {
-		return nil
-	}
-	visible := map[string]bool{}
-	for ti := range tasks {
-		for _, name := range tasks[ti].DependsOnOrgServices {
-			if _, seen := visible[name]; seen {
-				continue
-			}
-			_, ok, err := s.orgServiceResolver.ResolveNamespaceVisible(ctx, orgID, name)
-			if err != nil {
-				slog.WarnContext(ctx, "org-service gate: resolve failed (holding consumer)",
-					"org", orgID, "orgService", name, "error", err)
-				ok = false
-			}
-			visible[name] = ok
-		}
-	}
-	return visible
-}
-
-// depsAllDeployed returns true when every blocker the task lists is satisfied:
-// each DependsOnComponents name maps to a task whose Status == deployed, AND
-// each DependsOnConnections name maps to a config-collection task whose
-// Status == deployed (i.e. the connection's values were collected + the OC
-// Resource model provisioned), AND — when orgServiceVisible is non-nil — each
-// DependsOnOrgServices name resolves to a namespace-visible provider endpoint
-// in the org catalog (i.e. the cross-project provider is deployed + published).
-// Unknown names return false (fail closed; the persist-time validator in
-// task_stream.go is the upstream guard). orgServiceVisible == nil disables the
-// org-service gate (catalog not wired — tests/legacy), keeping the others.
-func depsAllDeployed(task *models.ComponentTask, statusByComponent, statusByConnection map[string]string, orgServiceVisible map[string]bool) bool {
+// depsAllDeployed returns true when every same-project blocker the task lists
+// is satisfied: each DependsOnComponents name maps to a task whose Status ==
+// deployed, AND each DependsOnConnections name maps to a config-collection
+// task whose Status == deployed (i.e. the connection's values were collected +
+// the OC Resource model provisioned).
+//
+// NOTE(A2c): The org-service (cross-project) gate has been retired. Under the
+// block-at-proceed model (A2b) a consumer task can only reach dispatch after
+// its org-service deps are `resolved` (namespace-visible in the catalog), so
+// the On-Hold gate was a redundant double-check. DependsOnOrgServices is still
+// stored on the task row and used for workload.yaml dep-comment rendering
+// (resolveConsumerDependenciesYAML) — it just no longer gates dispatch.
+//
+// Unknown component/connection names return false (fail closed; the persist-
+// time validator in task_stream.go is the upstream guard).
+func depsAllDeployed(task *models.ComponentTask, statusByComponent, statusByConnection map[string]string) bool {
 	for _, depComponent := range task.DependsOnComponents {
 		if statusByComponent[depComponent] != string(models.TaskStatusDeployed) {
 			return false
@@ -455,13 +433,6 @@ func depsAllDeployed(task *models.ComponentTask, statusByComponent, statusByConn
 	for _, depConn := range task.DependsOnConnections {
 		if statusByConnection[depConn] != string(models.TaskStatusDeployed) {
 			return false
-		}
-	}
-	if orgServiceVisible != nil {
-		for _, depOrg := range task.DependsOnOrgServices {
-			if !orgServiceVisible[depOrg] {
-				return false
-			}
 		}
 	}
 	return true
