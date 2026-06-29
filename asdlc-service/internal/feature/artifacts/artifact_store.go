@@ -469,6 +469,8 @@ type dependencyConfig struct {
 	Kind         string                      `yaml:"kind"`
 	Name         string                      `yaml:"name"`
 	Description  string                      `yaml:"description,omitempty"`
+	NeedsSpec    bool                        `yaml:"needsSpec,omitempty"`
+	SpecPath     string                      `yaml:"specPath,omitempty"`
 	Status       string                      `yaml:"status,omitempty"`
 	Config       []configKeyConfig           `yaml:"config,omitempty"`
 	ResourceType string                      `yaml:"resourceType,omitempty"`
@@ -557,6 +559,8 @@ func assembleDependencies(cfm componentFrontmatter) []models.Dependency {
 				Kind:         d.Kind,
 				Name:         d.Name,
 				Description:  d.Description,
+				NeedsSpec:    d.NeedsSpec,
+				SpecPath:     d.SpecPath,
 				Status:       d.Status,
 				Config:       toModelConfigKeys(d.Config),
 				ResourceType: d.ResourceType,
@@ -622,6 +626,8 @@ func toCfgDeps(in []models.Dependency) []dependencyConfig {
 			Kind:         d.Kind,
 			Name:         d.Name,
 			Description:  d.Description,
+			NeedsSpec:    d.NeedsSpec,
+			SpecPath:     d.SpecPath,
 			Status:       d.Status,
 			Config:       toCfgConfigKeys(d.Config),
 			ResourceType: d.ResourceType,

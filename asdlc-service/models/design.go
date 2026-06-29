@@ -65,6 +65,13 @@ type Dependency struct {
 	// persisted to frontmatter and NOT part of the agents Zod schema — the
 	// platform computes it, the architect never sets it.
 	Reason string `json:"reason,omitempty" yaml:"reason,omitempty"`
+	// external (REST/GraphQL): the architect sets NeedsSpec when the agent must
+	// call the API by specific endpoints; SpecPath points at the stored contract
+	// (relative to the component dir: dependencies/<name>.openapi.yaml). Unlike
+	// Status/Reason these ARE persisted to frontmatter. NeedsSpec && SpecPath==""
+	// ⇒ Status unresolved (gates save).
+	NeedsSpec bool   `json:"needsSpec,omitempty" yaml:"needsSpec,omitempty"`
+	SpecPath  string `json:"specPath,omitempty" yaml:"specPath,omitempty"`
 	// external: the config key schema the consuming component codes against.
 	Config []ConfigKey `json:"config,omitempty" yaml:"config,omitempty"`
 	// platform-resource: the registered (Cluster)ResourceType + provisioning params.
