@@ -29,9 +29,8 @@
  *                                 providerIssueUrl when present.
  *   unresolved / not-found     — no such component anywhere; plain warning, NO button.
  *
- * Ported from ProjectDependenciesPage.tsx (OrgServiceCard + AccessRequestAffordance,
- * lines 296–431) and re-keyed on the P4 4-state model. Does NOT modify the source
- * file (it is retired in B5).
+ * Ported from the retired ProjectDependenciesPage (OrgServiceCard + AccessRequestAffordance)
+ * and re-keyed on the P4 4-state model.
  */
 
 import type { JSX } from 'react';
@@ -47,10 +46,8 @@ import {
 import { ApiError } from '../../services/api/rest';
 
 // ---------------------------------------------------------------------------
-// Stable query-key helpers — mirrored from ProjectDependenciesPage.tsx.
-// These are intentionally co-located here so that OrgServiceResolution can
-// invalidate the correct caches without importing from the (to-be-deleted)
-// ProjectDependenciesPage. They must produce the same keys as the originals
+// Stable query-key helpers — co-located here so OrgServiceResolution can
+// invalidate the correct caches. They produce the same keys as the originals
 // so that any existing cached queries are correctly invalidated.
 // ---------------------------------------------------------------------------
 

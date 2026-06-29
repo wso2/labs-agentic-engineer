@@ -126,7 +126,6 @@ export interface Dependency {
   // `access-required` = org-service exists but is not accessible (requestable
   // via P3.5 access requests); `access-pending` = access request in flight.
   // `""` for resolved deps.
-  // TODO(B5): remove "unpublished" once ProjectDependenciesPage is retired.
   reason?: "" | "needs-spec" | "needs-input" | "not-found" | "access-required" | "access-pending" | "unpublished";
   // Whether the architect requires a spec file to be provided for this dep.
   needsSpec?: boolean;

@@ -49,10 +49,6 @@ export function projectTasksPath(orgId: string, projectId: string): string {
   return `/organizations/${orgId}/projects/${projectId}/tasks`;
 }
 
-export function projectDependenciesPath(orgId: string, projectId: string): string {
-  return `/organizations/${orgId}/projects/${projectId}/dependencies`;
-}
-
 export function projectTaskDetailPath(orgId: string, projectId: string, taskId: string): string {
   return `/organizations/${orgId}/projects/${projectId}/tasks/${taskId}`;
 }

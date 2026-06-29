@@ -18,8 +18,8 @@
 
 /**
  * ConnectionValues — per-environment value entry form for an external
- * dependency. Ported from `ConnectionValuesDialog` in ProjectDependenciesPage
- * and adapted for drawer-embedded use (no dialog wrapper). Supports:
+ * dependency. Adapted from the retired ProjectDependenciesPage for
+ * drawer-embedded use (no dialog wrapper). Supports:
  *   - An environment Tabs row (only `development` active today; higher envs
  *     are rendered as disabled tabs for forward-compatibility).
  *   - One TextField per config key; `type="password"` + `autoComplete="off"`
