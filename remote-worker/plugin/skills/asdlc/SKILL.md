@@ -295,3 +295,10 @@ comment, your component has no consumer-side dependencies — add no
 `dependencies:` block. The build's `generate-workload-cr` step propagates
 this block into the OpenChoreo `Workload` CR, and OpenChoreo resolves +
 injects the addresses; you never hardcode an upstream URL.
+
+**Consumed API contracts.** If your issue lists an "API contract" for an external
+dependency with a `specPath`, read that OpenAPI file in the repo and generate the
+client strictly from its operations, parameters, and schemas — do not invent
+endpoints or guess shapes. Authenticate using the injected config env-var NAMES
+only (never hardcode or echo secret values; the pre-push guard scans for leaked
+values).

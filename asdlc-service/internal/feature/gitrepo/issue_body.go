@@ -106,6 +106,17 @@ func BuildIssueBody(task *models.ComponentTask, comp *models.DesignComponent, _r
 			sb.WriteString(fmt.Sprintf("- **Contract:** `specs/design/components/%s/openapi.yaml`\n", task.ComponentName))
 		}
 		sb.WriteString("- **System overview:** `specs/design/design.md`\n")
+
+		// External API contracts: for each external dependency with a stored
+		// OpenAPI spec, surface the contract path so the coding agent implements
+		// the client against the exact operations rather than guessing endpoints.
+		for _, dep := range comp.Dependencies {
+			if dep.Kind == models.DependencyKindExternal && dep.SpecPath != "" {
+				sb.WriteString(fmt.Sprintf(
+					"- **API contract — %s:** `specs/design/components/%s/%s` — implement the client against these exact operations; do not invent endpoints.\n",
+					dep.Name, comp.Name, dep.SpecPath))
+			}
+		}
 	}
 	sb.WriteString("\n")
 
