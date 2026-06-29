@@ -34,6 +34,8 @@ import { MdEditor } from '@asdlc/md-editor';
 import { OpenApiView } from '@asdlc/openapi-view';
 import { api } from '../services/api';
 import type { ArtifactVersion, Design, DesignComponent } from '../services/api';
+import { DependenciesSection, type DepRef } from './architecture/DependenciesSection';
+import { DependencyDrawer } from './architecture/DependencyDrawer';
 import { projectTasksPath } from '../lib/paths';
 import VersionSelector from '../components/VersionSelector';
 import LineageLabel from '../components/LineageLabel';
@@ -99,6 +101,7 @@ export default function ProjectArchitecturePage() {
   const [generating, setGenerating] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
+  const [activeDep, setActiveDep] = useState<DepRef | null>(null);
 
   // Streaming state populated from architect SSE events while `generating`.
   // The cell diagram reads from `streamingComponents` and the file tree shows
@@ -437,6 +440,14 @@ export default function ProjectArchitecturePage() {
                 placeholder="System architecture overview…"
               />
             </Box>
+            {/* Dependencies section — one row per (component × dependency).
+                Clicking a row opens the DependencyDrawer for resolution. */}
+            <Box sx={{ flexShrink: 0 }}>
+              <DependenciesSection
+                components={effectiveComponents}
+                onOpen={setActiveDep}
+              />
+            </Box>
           </Box>
         ),
       },
@@ -579,6 +590,15 @@ export default function ProjectArchitecturePage() {
       </Box>
 
       {DESIGN_DOCUMENT_TYPES.length > 0 && null /* keep import used for tree-shake stability */}
+
+      <DependencyDrawer
+        open={!!activeDep}
+        depRef={activeDep}
+        orgHandle={routeOrgId}
+        projectId={projectId ?? ''}
+        onClose={() => setActiveDep(null)}
+        onChanged={refreshBundle}
+      />
     </PageContent>
   );
 }

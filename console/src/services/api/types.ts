@@ -119,12 +119,19 @@ export interface Dependency {
   kind: DependencyKind;
   name: string;
   description?: string;
-  status?: "resolved" | "ambiguous" | "unresolved";
-  // Why an org-service dep is `unresolved`. `unpublished` = the provider
-  // component exists but is project-only (requestable via P3.5 access
-  // requests); `not-found` = no such component (plain warning). `""` for
-  // resolved/non-org-service deps.
-  reason?: "" | "unpublished" | "not-found";
+  // P4 4-state resolution model.
+  status?: "resolved" | "ambiguous" | "unresolved" | "blocked";
+  // Why a dep is not yet resolved. `needs-spec` = external dep has no spec
+  // yet; `needs-input` = value entry required; `not-found` = no match found;
+  // `access-required` = org-service exists but is not accessible (requestable
+  // via P3.5 access requests); `access-pending` = access request in flight.
+  // `""` for resolved deps.
+  // TODO(B5): remove "unpublished" once ProjectDependenciesPage is retired.
+  reason?: "" | "needs-spec" | "needs-input" | "not-found" | "access-required" | "access-pending" | "unpublished";
+  // Whether the architect requires a spec file to be provided for this dep.
+  needsSpec?: boolean;
+  // Path (relative to `specs/design/`) where the dep spec file lives.
+  specPath?: string;
   config?: ConfigKey[];
   resourceType?: string;
   parameters?: Record<string, string>;

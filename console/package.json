@@ -10,12 +10,16 @@
     "gen:api": "npx --yes openapi-typescript@7 openapi.yaml -o src/services/api/openapi.gen.ts"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
     "@types/js-yaml": "^4",
     "@types/react": "19.1.6",
     "@types/react-dom": "19.0.2",
     "@vitejs/plugin-react-swc": "4.2.0",
+    "jsdom": "^29.1.1",
     "typescript": "5.9.3",
-    "vite": "7.2.2"
+    "vite": "7.2.2",
+    "vitest": "^4.1.9"
   },
   "dependencies": {
     "@asdlc/cell-diagram-view": "workspace:*",
