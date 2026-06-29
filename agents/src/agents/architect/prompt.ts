@@ -68,6 +68,31 @@ Every component carries a single \`dependencies\` list — everything it needs f
       - \`config\` (the env-var key SCHEMA the component codes against — list each key, mark credentials/tokens \`secret: true\`, plain values like base URLs \`secret: false\`). You declare the KEYS only; the user provides the VALUES later. A base URL is a config key (it varies per environment), not metadata.
     Example: \`{ "kind": "external", "name": "openweather", "description": "OpenWeatherMap current-weather REST API; call GET {base}/data/2.5/weather?q=&appid={key}.", "config": [ { "key": "OPENWEATHER_BASE_URL", "secret": false }, { "key": "OPENWEATHER_API_KEY", "secret": true } ] }\`
       - REUSE existing connections: before proposing an \`external\` dependency, call \`list_connections\` to see what this organization has ALREADY registered. If a registered connection fits the need, reuse its EXACT \`name\` and config-key schema (call \`get_connection_schema\` to confirm the keys) instead of inventing a new name/shape — the user has already provided its values, so a matching name avoids re-collecting them. Only invent a new connection when nothing registered fits.
+
+## External dependency discovery (web_search)
+
+When you need to propose a NEW \`external\` dependency that is not already in \`list_connections\`:
+
+1. **Reuse-first**: always call \`list_connections\` before proposing a new external. If a registered connection fits, reuse it (see above).
+
+2. **Discover with web_search**: for a new external, call \`web_search\` to identify the service and its integration style. Search for the service name + "OpenAPI spec" or "REST API docs" or "npm package". Put any useful URLs you find in \`candidates[]\` — each entry is \`{ label, description, url }\` (e.g. the API homepage, a docs page, a spec URL).
+
+3. **Classify the integration style**, then set the fields accordingly:
+
+   **REST / GraphQL API** (the component calls specific HTTP endpoints):
+   - Set \`needsSpec: true\` — a machine-readable spec is required for the coding agent.
+   - If the search surfaces a published OpenAPI / Swagger / AsyncAPI URL (e.g. \`/openapi.json\`, \`/swagger.yaml\`, a GitHub raw URL, or an official "OpenAPI spec" link), set \`specUrl\` to that URL. **Never fetch or inline the spec yourself** — the PLATFORM fetches and stores it; your job is to record the URL hint.
+   - Derive \`config\` keys from the spec's \`securitySchemes\` when known:
+     - \`apiKey\` scheme → one key for the API key (e.g. \`OPENWEATHER_API_KEY\`, \`secret: true\`) plus a base-URL key (\`secret: false\`).
+     - \`oauth2\` with \`clientCredentials\` flow → two keys: client id (\`secret: false\`) + client secret (\`secret: true\`), plus a base-URL key (\`secret: false\`).
+     - When the securityScheme is unknown or not found, fall back to a sensible guess (API key + base URL) and note the uncertainty in \`description\`.
+   - If \`needsSpec: true\` and no \`specUrl\` was found, set \`status: "unresolved"\` so the user knows they must supply a spec before the coding agent can proceed.
+
+   **SaaS SDK** (the component uses a language-level SDK, not raw HTTP):
+   - Omit \`needsSpec\` (or set \`false\`) — a machine spec is not required; the SDK encapsulates the API surface.
+   - Name the language package + exact version in \`description\` and in \`componentAgentInstructions\` (e.g. \`"Use the @salesforce/core npm package v6.x. Initialise with a connected-app OAuth2 client."\`).
+
+4. **Always** emit \`candidates[]\` with the URLs you found during web_search so the user can verify the sources.
   - **\`platform-resource\`** — a resource the PLATFORM provisions (database, message-queue, cache, identity-provider), named by \`resourceType\`. Forward-looking; declare when the spec clearly wants a platform-managed datastore, otherwise prefer \`external\` for a user-managed one. Provisioning is wired in a later phase.
 
 ## Resolution status

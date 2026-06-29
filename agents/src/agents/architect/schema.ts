@@ -111,6 +111,18 @@ const ExternalDependency = z.object({
     .describe(
       "The config key SCHEMA the agent codes against (which keys, which are secret). Values are collected later from the user, NOT here. A URL is a config key (it varies per env), not metadata.",
     ),
+  needsSpec: z
+    .boolean()
+    .optional()
+    .describe(
+      "True for a REST/GraphQL API the component must call by specific endpoints (⇒ a spec is required). False/omitted for SaaS-SDK or trivial keys-only externals.",
+    ),
+  specUrl: z
+    .string()
+    .optional()
+    .describe(
+      "If web-search found a published OpenAPI/Swagger spec, the URL to it. The PLATFORM fetches + stores it; do NOT fetch or inline it yourself.",
+    ),
   status: DependencyStatus.optional(),
   candidates: z.array(DependencyCandidate).optional(),
 });

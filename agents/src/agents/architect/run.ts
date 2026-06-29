@@ -24,6 +24,11 @@
  */
 
 import { streamText, stepCountIs, type LanguageModel, type ToolSet } from "ai";
+// anthropic is imported here solely for the provider-executed web_search tool.
+// The architect is Anthropic-only today (model.ts hard-wires createAnthropic);
+// this import is safe. If a non-Anthropic provider is ever added, guard the
+// injection below with a provider-type check so non-Anthropic runs still work.
+import { anthropic } from "@ai-sdk/anthropic";
 import { DesignDoc } from "./doc.js";
 import { buildTools, type SseSink, type FinalizeResolver } from "./tools.js";
 import { systemPrompt, buildUserPrompt } from "./prompt.js";
@@ -69,8 +74,16 @@ export async function runArchitect(
   const { model, input, sink, finalizer, abortSignal } = opts;
 
   const doc = DesignDoc.fromPrevious(input.previousDesign);
-  // Design tools + any read-only discovery tools (connection-registry MCP).
-  const tools = { ...buildTools(doc, sink, finalizer, input.wireframes ?? {}), ...(opts.extraTools ?? {}) };
+  // Design tools + any read-only discovery tools (connection-registry MCP) +
+  // provider-executed web_search for external dependency discovery (A5).
+  // The project is Anthropic-only (model.ts uses createAnthropic exclusively),
+  // so the injection is unconditional. If a non-Anthropic provider is added,
+  // guard this with: isAnthropicModel(model) && { web_search: ... }
+  const tools = {
+    ...buildTools(doc, sink, finalizer, input.wireframes ?? {}),
+    ...(opts.extraTools ?? {}),
+    web_search: anthropic.tools.webSearch_20250305({ maxUses: 4 }),
+  };
 
   let usage = { inputTokens: 0, outputTokens: 0 };
 

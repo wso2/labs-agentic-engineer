@@ -27,9 +27,10 @@
  */
 
 import { test } from "node:test";
+import assert from "node:assert/strict";
 import { runArchitect } from "./run.js";
 import type { FinalizeResolver } from "./tools.js";
-import { ArchitectInput, ArchitectOutput } from "./schema.js";
+import { ArchitectInput, ArchitectOutput, Dependency } from "./schema.js";
 import {
   modelFromEnv,
   makeCollectingSink,
@@ -42,6 +43,70 @@ import {
   type Check,
   type SampleResult,
 } from "../../eval/harness.js";
+
+// ── Schema-level unit tests for needsSpec / specUrl (A5) ────────────────────
+// These run offline (no model call) and verify the Zod schema additions.
+// The full eval (real model + web_search) is nondeterministic and only runs
+// when ANTHROPIC_API_KEY is set (see "architect eval" test below).
+
+test("external dependency schema: needsSpec + specUrl are optional on external variant", () => {
+  // Base external without new fields — must still validate (backwards-compat).
+  const base = {
+    kind: "external",
+    name: "openweather",
+    description: "OpenWeatherMap REST API",
+    config: [{ key: "OPENWEATHER_API_KEY", secret: true }],
+  };
+  const baseResult = Dependency.safeParse(base);
+  assert.ok(baseResult.success, `base external failed: ${JSON.stringify(baseResult.error?.issues)}`);
+
+  // External with needsSpec: true and a specUrl — must validate.
+  const withSpec = {
+    ...base,
+    needsSpec: true,
+    specUrl: "https://openweathermap.org/openapi.json",
+    candidates: [{ label: "OpenWeatherMap API", url: "https://openweathermap.org/api" }],
+  };
+  const withSpecResult = Dependency.safeParse(withSpec);
+  assert.ok(withSpecResult.success, `external with needsSpec+specUrl failed: ${JSON.stringify(withSpecResult.error?.issues)}`);
+  if (withSpecResult.success && withSpecResult.data.kind === "external") {
+    assert.strictEqual(withSpecResult.data.needsSpec, true);
+    assert.strictEqual(withSpecResult.data.specUrl, "https://openweathermap.org/openapi.json");
+  }
+
+  // External with needsSpec: true but NO specUrl — must validate (status unresolved).
+  const noSpecUrl = {
+    ...base,
+    needsSpec: true,
+    status: "unresolved" as const,
+  };
+  const noSpecUrlResult = Dependency.safeParse(noSpecUrl);
+  assert.ok(noSpecUrlResult.success, `external with needsSpec+no specUrl failed: ${JSON.stringify(noSpecUrlResult.error?.issues)}`);
+
+  // SaaS-SDK style: needsSpec omitted — must validate.
+  const sdkStyle = {
+    kind: "external",
+    name: "salesforce",
+    description: "Salesforce CRM — use @salesforce/core npm package v6.x",
+    config: [
+      { key: "SF_CLIENT_ID", secret: false },
+      { key: "SF_CLIENT_SECRET", secret: true },
+    ],
+  };
+  const sdkResult = Dependency.safeParse(sdkStyle);
+  assert.ok(sdkResult.success, `SaaS-SDK external without needsSpec failed: ${JSON.stringify(sdkResult.error?.issues)}`);
+  if (sdkResult.success && sdkResult.data.kind === "external") {
+    assert.strictEqual(sdkResult.data.needsSpec, undefined);
+  }
+});
+
+// NOTE: The full eval that tests model behavior (web_search calls, needsSpec
+// emitted for a REST API prompt) requires a PAID Anthropic API call and
+// nondeterministic web_search results. It cannot reliably assert on exact
+// URLs. A fixture-driven eval for this would belong in the "architect eval"
+// test below, gated by ANTHROPIC_API_KEY. The schema-level test above covers
+// the structural contract deterministically.
+// ─────────────────────────────────────────────────────────────────────────────
 
 interface ArchitectFixture {
   name: string;
