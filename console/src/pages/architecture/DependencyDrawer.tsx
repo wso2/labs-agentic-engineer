@@ -52,7 +52,17 @@ export function DependencyDrawer({
       open={open}
       onClose={onClose}
       PaperProps={{
-        sx: { width: DRAWER_WIDTH, display: 'flex', flexDirection: 'column' },
+        sx: {
+          width: DRAWER_WIDTH,
+          display: 'flex',
+          flexDirection: 'column',
+          // Oxygen's default Drawer/Paper surface is translucent (#ffffffe1) with a
+          // backdrop blur (glass effect), which lets page content show through and
+          // hurts readability. Force a fully opaque surface for the drawer.
+          backgroundColor: (theme) => (theme.palette.mode === 'dark' ? '#1e1e1e' : '#ffffff'),
+          backdropFilter: 'none',
+          WebkitBackdropFilter: 'none',
+        },
       }}
     >
       {/* Header */}
