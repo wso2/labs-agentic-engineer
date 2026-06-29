@@ -22,6 +22,7 @@ import { Box, Chip, Divider, IconButton, Stack, Typography } from '@wso2/oxygen-
 import { X } from '@wso2/oxygen-ui-icons-react';
 import type { DepRef } from './DependenciesSection';
 import { OrgServiceResolution } from './OrgServiceResolution';
+import { ProvideSpec } from './ProvideSpec';
 
 const DRAWER_WIDTH = 480;
 
@@ -109,6 +110,29 @@ export function DependencyDrawer({
             dep={dep}
             onChanged={onChanged}
           />
+        ) : dep.kind === 'external' ? (
+          dep.needsSpec && !dep.specPath ? (
+            <ProvideSpec
+              orgHandle={orgHandle}
+              projectId={projectId}
+              component={depRef!.component}
+              dep={dep}
+              onChanged={onChanged}
+            />
+          ) : dep.specPath ? (
+            <Box>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
+                Spec attached ✓
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                {dep.specPath}
+              </Typography>
+            </Box>
+          ) : (
+            <Typography variant="body2" color="text.secondary">
+              Resolution UI arrives in B4.
+            </Typography>
+          )
         ) : (
           <Typography variant="body2" color="text.secondary">
             Resolution UI arrives in B3–B4.
