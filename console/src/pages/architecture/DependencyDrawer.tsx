@@ -21,6 +21,7 @@ import Drawer from '@mui/material/Drawer';
 import { Box, Chip, Divider, IconButton, Stack, Typography } from '@wso2/oxygen-ui';
 import { X } from '@wso2/oxygen-ui-icons-react';
 import type { DepRef } from './DependenciesSection';
+import { OrgServiceResolution } from './OrgServiceResolution';
 
 const DRAWER_WIDTH = 480;
 
@@ -36,7 +37,10 @@ interface DependencyDrawerProps {
 export function DependencyDrawer({
   open,
   depRef,
+  orgHandle,
+  projectId,
   onClose,
+  onChanged,
 }: DependencyDrawerProps): JSX.Element {
   const dep = depRef?.dependency ?? null;
 
@@ -91,15 +95,23 @@ export function DependencyDrawer({
 
       <Divider />
 
-      {/* Body — resolution UI filled in by tasks B2–B4 */}
+      {/* Body — resolution UI. B2 fills org-service; B3/B4 fill other kinds. */}
       <Box sx={{ flex: 1, overflow: 'auto', px: 2.5, py: 2.5 }}>
-        {dep ? (
-          <Typography variant="body2" color="text.secondary">
-            Resolution UI arrives in B2–B4.
-          </Typography>
-        ) : (
+        {!dep ? (
           <Typography variant="body2" color="text.secondary">
             Select a dependency to see details.
+          </Typography>
+        ) : dep.kind === 'org-service' ? (
+          <OrgServiceResolution
+            orgHandle={orgHandle}
+            projectId={projectId}
+            component={depRef!.component}
+            dep={dep}
+            onChanged={onChanged}
+          />
+        ) : (
+          <Typography variant="body2" color="text.secondary">
+            Resolution UI arrives in B3–B4.
           </Typography>
         )}
       </Box>
