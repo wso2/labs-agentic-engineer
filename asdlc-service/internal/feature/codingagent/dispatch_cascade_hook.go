@@ -194,9 +194,11 @@ func (h *DispatchCascadeHook) OnTaskDeployed(ctx context.Context, orgID, project
 	// the PROVIDER of an open cross-project access request, flip every consumer
 	// request riding on its publish task to `granted`, persist
 	// exposesAPI.orgPublished (durability), and close the provider issue. The
-	// consumer's component resumes on its OWN org-service gate independently —
-	// this is purely the provider-side status close-out. Best-effort: a sync
-	// failure here must never break the deploy cascade.
+	// consumer cannot proceed past the save-and-proceed gate until the provider
+	// is granted (block-at-proceed model, A2c); there is no separate org-service
+	// On-Hold gate. This is purely the provider-side status close-out; the
+	// DispatchTasks call below will unblock any waiting consumer tasks. Best-effort:
+	// a sync failure here must never break the deploy cascade.
 	h.grantAccessRequests(ctx, orgID, projectID, componentName)
 
 	results, err := h.dispatch.DispatchTasks(ctx, orgID, projectID)

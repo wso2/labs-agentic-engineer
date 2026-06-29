@@ -20,7 +20,7 @@
  * `specPath`, the user can attach an OpenAPI spec by pasting raw YAML/JSON or
  * providing a public URL. The BFF validates, stores, and commits the spec then
  * returns the relative path and operation count.
- * See asdlc-service/internal/feature/dependencies/spec_huma.go (A4).
+ * See asdlc-service/internal/feature/design/design_huma.go (A4).
  */
 
 import { env } from '../../config/env';

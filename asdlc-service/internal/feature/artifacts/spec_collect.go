@@ -86,6 +86,14 @@ const (
 	specMaxBytes     = 5 << 20 // 5 MiB
 )
 
+// cgnatNet is the IANA Shared Address Space (RFC 6598, 100.64.0.0/10) used
+// by carrier-grade NAT. It is not publicly routable and must be blocked to
+// prevent SSRF via CGNAT-addressed hosts.
+var cgnatNet = func() *net.IPNet {
+	_, n, _ := net.ParseCIDR("100.64.0.0/10")
+	return n
+}()
+
 // maxRedirects is the maximum number of redirects FetchSpecFromURL will follow.
 const maxRedirects = 5
 
@@ -121,7 +129,7 @@ func FetchSpecFromURL(ctx context.Context, rawURL string) (string, error) {
 			}
 			// Validate every resolved IP; reject the entire set if any is non-public.
 			for _, ip := range ips {
-				if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
+				if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() || cgnatNet.Contains(ip) {
 					return nil, fmt.Errorf("refusing to fetch from non-public address %s", ip)
 				}
 			}
