@@ -40,9 +40,66 @@ func (f fakeOrgServiceResolver) ExistsAnyVisibility(_ context.Context, _, name s
 	return f.exists[name] || f.visible[name], nil
 }
 
+// TestResolveOrgServices_BlockedAccessRequired asserts the 4-state model
+// (task A2b): a project-only org-service (exists but NOT namespace-visible)
+// must produce status="blocked" / reason="access-required".
+func TestResolveOrgServices_BlockedAccessRequired(t *testing.T) {
+	store := &ArtifactStore{}
+	store.SetOrgServiceResolver(fakeOrgServiceResolver{
+		visible: map[string]bool{},
+		exists:  map[string]bool{"payroll-internal": true},
+	})
+
+	d := &DesignFile{Components: []models.DesignComponent{{
+		Name: "consumer",
+		Dependencies: []models.Dependency{
+			{Kind: models.DependencyKindOrgService, Name: "payroll-internal"},
+		},
+	}}}
+
+	store.resolveOrgServices(context.Background(), "org", d)
+
+	dep := d.Components[0].Dependencies[0]
+	if dep.Status != "blocked" {
+		t.Errorf("project-only org-service: status = %q, want %q", dep.Status, "blocked")
+	}
+	if dep.Reason != "access-required" {
+		t.Errorf("project-only org-service: reason = %q, want %q", dep.Reason, "access-required")
+	}
+}
+
+// TestResolveOrgServices_AbsentNotFound asserts the 4-state model (task A2b):
+// an org-service absent from the catalog must produce status="unresolved" /
+// reason="not-found".
+func TestResolveOrgServices_AbsentNotFound(t *testing.T) {
+	store := &ArtifactStore{}
+	store.SetOrgServiceResolver(fakeOrgServiceResolver{
+		visible: map[string]bool{},
+		exists:  map[string]bool{},
+	})
+
+	d := &DesignFile{Components: []models.DesignComponent{{
+		Name: "consumer",
+		Dependencies: []models.Dependency{
+			{Kind: models.DependencyKindOrgService, Name: "ghost-svc"},
+		},
+	}}}
+
+	store.resolveOrgServices(context.Background(), "org", d)
+
+	dep := d.Components[0].Dependencies[0]
+	if dep.Status != "unresolved" {
+		t.Errorf("absent org-service: status = %q, want %q", dep.Status, "unresolved")
+	}
+	if dep.Reason != "not-found" {
+		t.Errorf("absent org-service: reason = %q, want %q", dep.Reason, "not-found")
+	}
+}
+
 // TestResolveOrgServices_ReasonSplit asserts the P3.5 reason refinement on top
-// of the resolved/unresolved status: namespace-visible → resolved/"";
-// exists-but-project-only → unresolved/"unpublished"; absent → unresolved/"not-found".
+// of the resolved/unresolved/blocked status (4-state model, task A2b):
+// namespace-visible → resolved/"";
+// exists-but-project-only → blocked/"access-required"; absent → unresolved/"not-found".
 func TestResolveOrgServices_ReasonSplit(t *testing.T) {
 	store := &ArtifactStore{}
 	store.SetOrgServiceResolver(fakeOrgServiceResolver{
@@ -68,7 +125,7 @@ func TestResolveOrgServices_ReasonSplit(t *testing.T) {
 		wantReason string
 	}{
 		{"employee-api", "resolved", ""},
-		{"payroll-internal", "unresolved", "unpublished"},
+		{"payroll-internal", "blocked", "access-required"},
 		{"ghost", "unresolved", "not-found"},
 	}
 	for i, c := range cases {

@@ -157,7 +157,7 @@ func (c *OrgEndpointCatalog) FindByComponent(ctx context.Context, orgHandle, nam
 
 // ExistsAnyVisibility reports whether ANY endpoint in the catalog is owned by a
 // component named `name`, regardless of visibility. It distinguishes "published
-// only project-only" (exists → requestable, P3.5 `unpublished`) from "no such
+// only project-only" (exists → requestable, P3.5 `blocked`/`access-required`) from "no such
 // component at all" (P3.5 `not-found`). Used by the ArtifactStore to compute the
 // `reason` for an unresolved org-service dependency. Errors are surfaced so the
 // caller can degrade (best-effort: leave the reason empty).

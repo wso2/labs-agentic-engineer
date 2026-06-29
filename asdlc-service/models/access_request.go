@@ -20,12 +20,13 @@ import "time"
 
 // AccessRequest is the tracking/UX record for a cross-project request to publish
 // an org service (marketplace P3.5). A consumer component depends on an
-// `org-service` that exists but is published only project-only (catalog reason
-// `unpublished`); requesting access creates a publish ComponentTask on the
-// provider's project + repo and writes this row. The functional resume is the
-// existing org-service gate (the provider going namespace-visible), not this
-// row — the AccessRequest is the tracking layer that drives the consumer-side
-// chip and lets many consumers fan out from one provider publish task.
+// `org-service` that exists but is published only project-only (dep status:
+// `blocked`, reason: `access-required`); requesting access creates a publish
+// ComponentTask on the provider's project + repo and writes this row. The
+// functional resume is the existing org-service gate (the provider going
+// namespace-visible), not this row — the AccessRequest is the tracking layer
+// that drives the consumer-side chip and lets many consumers fan out from one
+// provider publish task.
 //
 // One row per (OrgID, ConsumerProjectID, ConsumerComponentName, OrgServiceName).
 type AccessRequest struct {

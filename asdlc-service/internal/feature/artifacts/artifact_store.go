@@ -37,8 +37,8 @@ type OrgServiceResolver interface {
 	IsNamespaceVisible(ctx context.Context, orgHandle, name string) (bool, error)
 	// ExistsAnyVisibility reports whether a component named `name` publishes ANY
 	// endpoint in the org catalog regardless of visibility — used to refine an
-	// unresolved org-service dep into `unpublished` (exists, project-only) vs
-	// `not-found` (no such component). P3.5.
+	// org-service dep into `blocked`/`access-required` (exists, project-only) vs
+	// `unresolved`/`not-found` (no such component). P3.5.
 	ExistsAnyVisibility(ctx context.Context, orgHandle, name string) (bool, error)
 }
 
@@ -243,9 +243,10 @@ func (s *ArtifactStore) ReadDesign(ctx context.Context, orgID, projectID string)
 	return design, nil
 }
 
-// resolveOrgServices marks each `org-service` dependency `resolved` when its
-// target is published namespace-visible in the org endpoint catalog, and
-// `unresolved` otherwise (the provider hasn't published it cross-project yet).
+// resolveOrgServices marks each `org-service` dependency with a 4-state
+// status at read time: `resolved` (namespace-visible), `blocked`
+// (exists project-only — consumer must request access), `unresolved`/not-found
+// (absent from catalog), or leaves the status unchanged on catalog errors.
 // Falls back to the static external-API catalog when no dynamic resolver is
 // wired (tests / standalone). Best-effort: catalog errors leave status
 // untouched and never fail the read. orgID is the OC namespace (locally). The
@@ -270,16 +271,19 @@ func (s *ArtifactStore) resolveOrgServices(ctx context.Context, orgID string, d 
 					dep.Reason = ""
 					continue
 				}
-				// Unresolved: refine the reason so the consumer view can offer a
-				// "Request access" affordance only when the provider component
-				// actually exists (project-only ⇒ `unpublished`/requestable;
-				// missing ⇒ `not-found`). Best-effort: an ExistsAnyVisibility error
-				// leaves the reason empty rather than failing the read (P3.5).
+				// Not namespace-visible: refine into `blocked` (project-only —
+				// requestable via access request) vs `unresolved` (absent — not
+				// in catalog at all). Best-effort: an ExistsAnyVisibility error
+				// leaves the dep unresolved with no reason rather than failing
+				// the read (P3.5).
 				dep.Status = "unresolved"
 				dep.Reason = ""
 				if exists, err := s.orgServices.ExistsAnyVisibility(ctx, orgID, dep.Name); err == nil {
 					if exists {
-						dep.Reason = "unpublished"
+						// Provider exists but publishes only project-only —
+						// consumer must request access (4-state: blocked).
+						dep.Status = "blocked"
+						dep.Reason = "access-required"
 					} else {
 						dep.Reason = "not-found"
 					}
@@ -573,6 +577,7 @@ func assembleDependencies(cfm componentFrontmatter) []models.Dependency {
 			// prior resolution pass for a different reason.
 			if dep.Kind == models.DependencyKindExternal && dep.NeedsSpec && strings.TrimSpace(dep.SpecPath) == "" && dep.Status == "" {
 				dep.Status = "unresolved"
+				dep.Reason = "needs-spec"
 			}
 			out = append(out, dep)
 		}

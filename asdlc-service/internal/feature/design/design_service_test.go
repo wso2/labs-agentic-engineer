@@ -26,15 +26,19 @@ import (
 
 // stubArtifactService is a minimal ArtifactService stub for design_service
 // unit tests. All methods return sensible zero values unless overridden by
-// the test via the listDesignFilesFunc field.
+// the test via the hook fields.
 type stubArtifactService struct {
 	listDesignFilesFunc func(ctx context.Context, orgID, projectID string) (map[string]string, error)
+	putFileFunc         func(ctx context.Context, orgID, projectID, path, content, sha string) (*artifacts.PutResult, error)
 }
 
 func (s *stubArtifactService) GetFile(_ context.Context, _, _, _ string) (*artifacts.FileResult, error) {
 	return nil, errors.New("stub: GetFile not implemented")
 }
-func (s *stubArtifactService) PutFile(_ context.Context, _, _, _, _, _ string) (*artifacts.PutResult, error) {
+func (s *stubArtifactService) PutFile(ctx context.Context, orgID, projectID, path, content, sha string) (*artifacts.PutResult, error) {
+	if s.putFileFunc != nil {
+		return s.putFileFunc(ctx, orgID, projectID, path, content, sha)
+	}
 	return nil, errors.New("stub: PutFile not implemented")
 }
 func (s *stubArtifactService) ListRequirementFiles(_ context.Context, _, _ string) (map[string]string, error) {
@@ -130,6 +134,105 @@ Build a weather service.
 	}
 	if !errors.Is(saveErr, ErrUnresolvedDependency) {
 		t.Fatalf("want ErrUnresolvedDependency, got: %v", saveErr)
+	}
+}
+
+// blockedDepFiles returns a design file map with one component having a
+// blocked org-service dependency (status embedded in frontmatter for test
+// isolation — no live resolver needed).
+func blockedDepFiles() map[string]string {
+	compDesignMd := `---
+type: service
+language: go
+dependencies:
+  - kind: org-service
+    name: payroll-internal
+    status: blocked
+    reason: access-required
+---
+A consumer that needs access to payroll-internal.
+`
+	return map[string]string{
+		"design.md":                          "System overview.\n",
+		"components/consumer-app/design.md":  compDesignMd,
+	}
+}
+
+// TestSaveAndProceedBlockedByBlockedDep (test d) asserts that SaveAndProceed
+// returns ErrUnresolvedDependency when the design contains a dep with
+// status="blocked" (project-only org-service, access not yet granted).
+func TestSaveAndProceedBlockedByBlockedDep(t *testing.T) {
+	stub := &stubArtifactService{
+		listDesignFilesFunc: func(_ context.Context, _, _ string) (map[string]string, error) {
+			return blockedDepFiles(), nil
+		},
+	}
+	store := artifacts.NewArtifactStore(stub)
+	svc := NewDesignService(store, nil, stub)
+
+	_, saveErr := svc.SaveAndProceed(context.Background(), "org1", "proj1")
+	if saveErr == nil {
+		t.Fatal("want error from SaveAndProceed for blocked dep, got nil")
+	}
+	if !errors.Is(saveErr, ErrUnresolvedDependency) {
+		t.Fatalf("want ErrUnresolvedDependency for blocked dep, got: %v", saveErr)
+	}
+}
+
+// TestSaveAndProceedBlockedByAmbiguousDep (test e) asserts that SaveAndProceed
+// returns ErrUnresolvedDependency when the design contains a dep with
+// status="ambiguous".
+func TestSaveAndProceedBlockedByAmbiguousDep(t *testing.T) {
+	compDesignMd := `---
+type: service
+language: go
+dependencies:
+  - kind: org-service
+    name: maybe-svc
+    status: ambiguous
+---
+Ambiguous dependency.
+`
+	files := map[string]string{
+		"design.md":                        "System overview.\n",
+		"components/consumer-app/design.md": compDesignMd,
+	}
+	stub := &stubArtifactService{
+		listDesignFilesFunc: func(_ context.Context, _, _ string) (map[string]string, error) {
+			return files, nil
+		},
+	}
+	store := artifacts.NewArtifactStore(stub)
+	svc := NewDesignService(store, nil, stub)
+
+	_, saveErr := svc.SaveAndProceed(context.Background(), "org1", "proj1")
+	if saveErr == nil {
+		t.Fatal("want error from SaveAndProceed for ambiguous dep, got nil")
+	}
+	if !errors.Is(saveErr, ErrUnresolvedDependency) {
+		t.Fatalf("want ErrUnresolvedDependency for ambiguous dep, got: %v", saveErr)
+	}
+}
+
+// TestUpdateDesignFileSucceedsWithBlockedDep (test f) asserts that the draft
+// autosave path (UpdateDesignFile) does NOT gate on dep status — a design
+// with a blocked dep can still be draft-saved.
+func TestUpdateDesignFileSucceedsWithBlockedDep(t *testing.T) {
+	files := blockedDepFiles()
+	stub := &stubArtifactService{
+		listDesignFilesFunc: func(_ context.Context, _, _ string) (map[string]string, error) {
+			return files, nil
+		},
+		putFileFunc: func(_ context.Context, _, _, _, _, _ string) (*artifacts.PutResult, error) {
+			return &artifacts.PutResult{SHA: "abc123"}, nil
+		},
+	}
+	store := artifacts.NewArtifactStore(stub)
+	svc := NewDesignService(store, nil, stub)
+
+	_, err := svc.UpdateDesignFile(context.Background(), "org1", "proj1", "design.md", "Updated overview.\n")
+	if err != nil {
+		t.Fatalf("UpdateDesignFile must succeed for blocked dep (draft autosave not gated), got: %v", err)
 	}
 }
 

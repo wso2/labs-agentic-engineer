@@ -663,15 +663,17 @@ func (s *designService) SaveAndProceed(ctx context.Context, orgID, projectID str
 		return nil, artifacts.ErrDesignNotFound
 	}
 
-	// Block save when any dependency is unresolved — e.g. an external dep that
-	// declares needsSpec but has no specPath yet. Status is computed at read
-	// time (assembleDependencies + resolveOrgServices) so we check the
-	// assembled view.
+	// Block save when any dependency is in a non-actionable state — unresolved
+	// (e.g. external needsSpec with no specPath, or absent org-service),
+	// ambiguous, or blocked (project-only org-service awaiting access grant).
+	// Status is computed at read time (assembleDependencies + resolveOrgServices)
+	// so we check the assembled view. Draft autosave (UpdateDesignFile) is NOT
+	// gated — only this SaveAndProceed path blocks.
 	for _, c := range designFile.Components {
 		for _, dep := range c.Dependencies {
-			if dep.Status == "unresolved" {
-				return nil, fmt.Errorf("%w: component %q dep %q",
-					ErrUnresolvedDependency, c.Name, dep.Name)
+			if dep.Status == "ambiguous" || dep.Status == "unresolved" || dep.Status == "blocked" {
+				return nil, fmt.Errorf("%w: component %q dep %q (status: %s)",
+					ErrUnresolvedDependency, c.Name, dep.Name, dep.Status)
 			}
 		}
 	}

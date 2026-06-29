@@ -86,7 +86,7 @@ func TestOrgEndpointCatalog_ExistsAnyVisibility(t *testing.T) {
 	cat := NewOrgEndpointCatalog(&fakeRC{workloadEndpoints: sampleEndpoints()})
 
 	// A project-only component (NOT namespace-visible) still exists in the
-	// catalog → ExistsAnyVisibility true (the P3.5 `unpublished`/requestable case).
+	// catalog → ExistsAnyVisibility true (the P3.5 `blocked`/`access-required` case).
 	got, err := cat.ExistsAnyVisibility(context.Background(), "ns", "org-roster-todo-api")
 	if err != nil {
 		t.Fatalf("org-roster-todo-api: unexpected error: %v", err)

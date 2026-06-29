@@ -56,11 +56,13 @@ type Dependency struct {
 	Kind        string `json:"kind" yaml:"kind"`
 	Name        string `json:"name" yaml:"name"`
 	Description string `json:"description,omitempty" yaml:"description,omitempty"`
-	Status      string `json:"status,omitempty" yaml:"status,omitempty"` // resolved|ambiguous|unresolved
-	// Reason refines an unresolved org-service dependency (P3.5). Enum:
-	// "" (n/a or resolved) | "unpublished" (the provider component exists but
-	// publishes only project-only — requestable) | "not-found" (no component
-	// with that name in the org catalog). Like Status it is a READ-TIME computed
+	Status      string `json:"status,omitempty" yaml:"status,omitempty"` // resolved|ambiguous|unresolved|blocked
+	// Reason refines the dependency status (4-state model, P3.5 / A2b). Enum:
+	// "" (n/a or resolved) | "access-required" (org-service exists but is
+	// project-only — consumer must request access; status: blocked) |
+	// "not-found" (no component with that name in the org catalog; status:
+	// unresolved) | "needs-spec" (external dep with needsSpec=true but no
+	// specPath yet; status: unresolved). Like Status it is a READ-TIME computed
 	// field (recomputed against the live catalog on every design read); it is NOT
 	// persisted to frontmatter and NOT part of the agents Zod schema — the
 	// platform computes it, the architect never sets it.

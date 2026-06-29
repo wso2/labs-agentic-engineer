@@ -56,6 +56,36 @@ func TestExternalNeedsSpecWithSpecPathResolved(t *testing.T) {
 	}
 }
 
+// TestExternalNeedsSpecReasonNeedsSpec asserts the 4-state model (task A2b):
+// an external dep with needsSpec=true and no specPath must produce
+// status="unresolved" AND reason="needs-spec".
+func TestExternalNeedsSpecReasonNeedsSpec(t *testing.T) {
+	files, err := SplitDesign(&DesignFile{
+		Overview: "x",
+		Components: []models.DesignComponent{{
+			Name: "weather-api", ComponentType: "service", Language: "go",
+			Dependencies: []models.Dependency{{
+				Kind: models.DependencyKindExternal, Name: "openweather",
+				Description: "weather", NeedsSpec: true, // no SpecPath
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := AssembleDesign(files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep := out.Components[0].Dependencies[0]
+	if dep.Status != "unresolved" {
+		t.Errorf("needsSpec/no-specPath: status = %q, want %q", dep.Status, "unresolved")
+	}
+	if dep.Reason != "needs-spec" {
+		t.Errorf("needsSpec/no-specPath: reason = %q, want %q", dep.Reason, "needs-spec")
+	}
+}
+
 func TestDependencyNeedsSpecRoundTrip(t *testing.T) {
 	in := &DesignFile{
 		Overview: "x",
