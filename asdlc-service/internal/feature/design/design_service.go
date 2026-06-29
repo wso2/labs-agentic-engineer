@@ -53,6 +53,13 @@ var ErrUnresolvedDependency = errors.New("design has unresolved dependencies —
 // user-supplied URL.
 var ErrSpecFetchFailed = errors.New("failed to fetch spec from URL")
 
+// ErrInvalidSpec is the design-domain sentinel surfaced (as 400 by the HTTP
+// handler) when the supplied OpenAPI document fails content validation —
+// depName path-traversal rejection or an invalid/incomplete OpenAPI 3.x doc.
+// Storage and git/commit failures are intentionally NOT wrapped with this
+// sentinel so the handler can distinguish them and return 500.
+var ErrInvalidSpec = errors.New("invalid OpenAPI spec")
+
 // toK8sName is a thin in-package shim over k8sname.ToK8sName.
 func toK8sName(name string) string { return k8sname.ToK8sName(name) }
 
@@ -771,6 +778,13 @@ func (s *designService) CollectSpec(ctx context.Context, orgID, projectID, compo
 	}
 	specPath, n, err := s.store.StoreConsumedSpec(ctx, orgID, projectID, component, depName, rawSpec)
 	if err != nil {
+		// Re-wrap validation-class errors (depName traversal + invalid OpenAPI) as
+		// ErrInvalidSpec so the HTTP handler maps them to 400. Infrastructure
+		// failures (normalize/commit/git) are not wrapped with ErrInvalidSpecContent
+		// and fall through as plain errors → handler maps them to 500.
+		if errors.Is(err, artifacts.ErrInvalidSpecContent) {
+			return "", 0, fmt.Errorf("%w: %v", ErrInvalidSpec, err)
+		}
 		return "", 0, err
 	}
 	if err := s.store.SetDependencySpecPath(ctx, orgID, projectID, component, depName, specPath); err != nil {

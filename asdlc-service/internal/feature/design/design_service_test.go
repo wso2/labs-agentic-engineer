@@ -406,3 +406,72 @@ func TestCollectSpec_NeitherFieldReturns400(t *testing.T) {
 		t.Fatal("expected error when neither rawSpec nor specURL provided, got nil")
 	}
 }
+
+// TestCollectSpec_InvalidOpenAPIDocMapsToErrInvalidSpec asserts that supplying
+// a rawSpec that is not a valid OpenAPI 3.x document surfaces ErrInvalidSpec
+// (which the HTTP handler maps to 400). This tests the validation-class error
+// path from StoreConsumedSpec → CollectSpec.
+func TestCollectSpec_InvalidOpenAPIDocMapsToErrInvalidSpec(t *testing.T) {
+	stub := &stubArtifactService{
+		listDesignFilesFunc: func(_ context.Context, _, _ string) (map[string]string, error) {
+			return map[string]string{"design.md": "overview\n"}, nil
+		},
+	}
+	store := artifacts.NewArtifactStore(stub)
+	svc := NewDesignService(store, nil, stub)
+
+	_, _, err := svc.CollectSpec(
+		context.Background(), "org1", "proj1",
+		"comp", "dep",
+		"not openapi yaml at all", "",
+	)
+	if err == nil {
+		t.Fatal("expected error for invalid OpenAPI doc, got nil")
+	}
+	if !errors.Is(err, ErrInvalidSpec) {
+		t.Errorf("want errors.Is(err, ErrInvalidSpec)=true for invalid OpenAPI doc, got: %v", err)
+	}
+	// Must NOT be misclassified as a fetch failure.
+	if errors.Is(err, ErrSpecFetchFailed) {
+		t.Errorf("invalid OpenAPI doc must not be classified as ErrSpecFetchFailed")
+	}
+}
+
+// TestCollectSpec_CommitFailureMapsToInfraError asserts that a storage/commit
+// failure from StoreConsumedSpec (e.g. git commit error) surfaces as a plain
+// error — NOT ErrInvalidSpec and NOT ErrSpecFetchFailed — so the HTTP handler
+// maps it to 500 (not 400 or 502). This covers the infra-error classification
+// fix (code review finding: all non-502 errors were previously mapped to 400).
+func TestCollectSpec_CommitFailureMapsToInfraError(t *testing.T) {
+	commitErr := errors.New("git commit failed: remote unreachable")
+	stub := &stubArtifactService{
+		listDesignFilesFunc: func(_ context.Context, _, _ string) (map[string]string, error) {
+			return map[string]string{"design.md": "overview\n"}, nil
+		},
+		commitDesignFileFunc: func(_ context.Context, _, _, _, _, _ string) (string, error) {
+			return "", commitErr
+		},
+	}
+	store := artifacts.NewArtifactStore(stub)
+	svc := NewDesignService(store, nil, stub)
+
+	_, _, err := svc.CollectSpec(
+		context.Background(), "org1", "proj1",
+		"comp", "dep",
+		sampleOpenAPISpec, "",
+	)
+	if err == nil {
+		t.Fatal("expected error for commit failure, got nil")
+	}
+	// Infra failure must NOT be misclassified as a client (400) or gateway (502) error.
+	if errors.Is(err, ErrInvalidSpec) {
+		t.Errorf("commit failure must not be classified as ErrInvalidSpec (400)")
+	}
+	if errors.Is(err, ErrSpecFetchFailed) {
+		t.Errorf("commit failure must not be classified as ErrSpecFetchFailed (502)")
+	}
+	// Verify the underlying cause is preserved (unwrappable).
+	if !strings.Contains(err.Error(), "git commit failed") {
+		t.Errorf("expected underlying commit error to be preserved, got: %v", err)
+	}
+}

@@ -331,7 +331,10 @@ func RegisterDesign(api huma.API, svc DesignService) {
 			if errors.Is(err, ErrSpecFetchFailed) {
 				return nil, huma.Error502BadGateway("failed to fetch spec from URL", err)
 			}
-			return nil, huma.Error400BadRequest("invalid spec: " + err.Error())
+			if errors.Is(err, ErrInvalidSpec) {
+				return nil, huma.Error400BadRequest("invalid spec: " + err.Error())
+			}
+			return nil, huma.Error500InternalServerError("failed to store spec")
 		}
 		out := &collectSpecOutput{}
 		out.Body.SpecPath = specPath

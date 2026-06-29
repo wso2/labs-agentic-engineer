@@ -26,6 +26,7 @@ package artifacts
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -164,6 +165,14 @@ func FetchSpecFromURL(ctx context.Context, rawURL string) (string, error) {
 	return string(body), nil
 }
 
+// ErrInvalidSpecContent is a sentinel wrapped around validation-class errors
+// from StoreConsumedSpec — depName path-traversal rejection and ValidateOpenAPI
+// failures — so that callers can distinguish them from infrastructure errors
+// (NormalizeOpenAPIYAML failures and CommitDesignFile git/storage failures).
+// The design feature's CollectSpec re-wraps this as design.ErrInvalidSpec so
+// the HTTP handler can map it to a 400 without importing artifacts.
+var ErrInvalidSpecContent = errors.New("invalid spec content")
+
 // ---- StoreConsumedSpec -----------------------------------------------------
 
 // StoreConsumedSpec validates + normalizes rawSpec and commits it to the
@@ -175,16 +184,20 @@ func FetchSpecFromURL(ctx context.Context, rawURL string) (string, error) {
 // and the operation count. Commits via ArtifactService.CommitDesignFile (no
 // new version tag — same untagged commit path as SetComponentOrgPublished in
 // P3.5). subPath passed to CommitDesignFile is relative to specs/design/.
+//
+// Error classification:
+//   - %w-wraps ErrInvalidSpecContent: depName path-traversal rejection + ValidateOpenAPI failures (client/400).
+//   - bare errors: NormalizeOpenAPIYAML + CommitDesignFile failures (infra/500).
 func (s *ArtifactStore) StoreConsumedSpec(ctx context.Context, orgID, projectID, component, depName, rawSpec string) (string, int, error) {
 	// Defense-in-depth: reject depName values that could escape the dependencies/
 	// directory via path traversal — belt-and-suspenders even though depName is
 	// normally architect/catalog-controlled.
 	if strings.Contains(depName, "/") || strings.Contains(depName, `\`) || strings.Contains(depName, "..") {
-		return "", 0, fmt.Errorf("invalid dependency name %q: must not contain path separators or '..'", depName)
+		return "", 0, fmt.Errorf("%w: invalid dependency name %q: must not contain path separators or '..'", ErrInvalidSpecContent, depName)
 	}
 	opCount, err := ValidateOpenAPI(rawSpec)
 	if err != nil {
-		return "", 0, err
+		return "", 0, fmt.Errorf("%w: %v", ErrInvalidSpecContent, err)
 	}
 	normalized, err := NormalizeOpenAPIYAML(rawSpec)
 	if err != nil {
