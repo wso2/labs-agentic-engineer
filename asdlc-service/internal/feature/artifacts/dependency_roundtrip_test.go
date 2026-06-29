@@ -7,6 +7,55 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
 
+func TestExternalNeedsSpecUnresolvedAtRead(t *testing.T) {
+	files, err := SplitDesign(&DesignFile{
+		Overview: "x",
+		Components: []models.DesignComponent{{
+			Name: "weather-api", ComponentType: "service", Language: "go",
+			Dependencies: []models.Dependency{{
+				Kind: models.DependencyKindExternal, Name: "openweather",
+				Description: "weather", NeedsSpec: true, // no SpecPath
+				Config: []models.ConfigKey{{Key: "OPENWEATHER_API_KEY", Secret: true}},
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := AssembleDesign(files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := out.Components[0].Dependencies[0].Status; got != "unresolved" {
+		t.Fatalf("want unresolved, got %q", got)
+	}
+}
+
+func TestExternalNeedsSpecWithSpecPathResolved(t *testing.T) {
+	files, err := SplitDesign(&DesignFile{
+		Overview: "x",
+		Components: []models.DesignComponent{{
+			Name: "weather-api", ComponentType: "service", Language: "go",
+			Dependencies: []models.Dependency{{
+				Kind: models.DependencyKindExternal, Name: "openweather",
+				Description: "weather", NeedsSpec: true,
+				SpecPath: "dependencies/openweather.openapi.yaml",
+				Config:   []models.ConfigKey{{Key: "OPENWEATHER_API_KEY", Secret: true}},
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := AssembleDesign(files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := out.Components[0].Dependencies[0].Status; got == "unresolved" {
+		t.Fatalf("want not-unresolved (specPath set), got %q", got)
+	}
+}
+
 func TestDependencyNeedsSpecRoundTrip(t *testing.T) {
 	in := &DesignFile{
 		Overview: "x",

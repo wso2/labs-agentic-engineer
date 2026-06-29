@@ -41,6 +41,13 @@ import (
 // consumer.
 var ErrSpecNotApproved = errors.New("spec must be saved (tagged) before generating a design")
 
+// ErrUnresolvedDependency is the design-domain sentinel surfaced (as 409 by
+// the controller) when a design save is attempted while one or more
+// dependencies are still unresolved (e.g. an external dep that declares
+// needsSpec but has no specPath yet). The caller must resolve the dependency
+// before the design can be approved.
+var ErrUnresolvedDependency = errors.New("design has unresolved dependencies — resolve them before saving")
+
 // toK8sName is a thin in-package shim over k8sname.ToK8sName.
 func toK8sName(name string) string { return k8sname.ToK8sName(name) }
 
@@ -654,6 +661,19 @@ func (s *designService) SaveAndProceed(ctx context.Context, orgID, projectID str
 	}
 	if designFile == nil {
 		return nil, artifacts.ErrDesignNotFound
+	}
+
+	// Block save when any dependency is unresolved — e.g. an external dep that
+	// declares needsSpec but has no specPath yet. Status is computed at read
+	// time (assembleDependencies + resolveOrgServices) so we check the
+	// assembled view.
+	for _, c := range designFile.Components {
+		for _, dep := range c.Dependencies {
+			if dep.Status == "unresolved" {
+				return nil, fmt.Errorf("%w: component %q dep %q",
+					ErrUnresolvedDependency, c.Name, dep.Name)
+			}
+		}
 	}
 
 	res, err := s.artifactSvc.SaveDesign(ctx, orgID, projectID, artifacts.SaveRequest{

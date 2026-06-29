@@ -555,7 +555,7 @@ func assembleDependencies(cfm componentFrontmatter) []models.Dependency {
 			if d.Name == "" || d.Kind == "" {
 				continue
 			}
-			out = append(out, models.Dependency{
+			dep := models.Dependency{
 				Kind:         d.Kind,
 				Name:         d.Name,
 				Description:  d.Description,
@@ -566,7 +566,15 @@ func assembleDependencies(cfm componentFrontmatter) []models.Dependency {
 				ResourceType: d.ResourceType,
 				Parameters:   d.Parameters,
 				Candidates:   toModelCandidates(d.Candidates),
-			})
+			}
+			// External deps that declare needsSpec but have no specPath yet are
+			// unresolved at read time — the user must supply the spec before the
+			// design can be saved. Do not override a status already set by a
+			// prior resolution pass for a different reason.
+			if dep.Kind == models.DependencyKindExternal && dep.NeedsSpec && strings.TrimSpace(dep.SpecPath) == "" && dep.Status == "" {
+				dep.Status = "unresolved"
+			}
+			out = append(out, dep)
 		}
 		return out
 	}
