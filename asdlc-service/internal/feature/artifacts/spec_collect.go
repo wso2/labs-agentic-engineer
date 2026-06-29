@@ -176,26 +176,26 @@ func FetchSpecFromURL(ctx context.Context, rawURL string) (string, error) {
 // ErrInvalidSpecContent is a sentinel wrapped around validation-class errors
 // from StoreConsumedSpec — depName path-traversal rejection and ValidateOpenAPI
 // failures — so that callers can distinguish them from infrastructure errors
-// (NormalizeOpenAPIYAML failures and CommitDesignFile git/storage failures).
+// (NormalizeOpenAPIYAML failures and WriteDesignFile storage failures).
 // The design feature's CollectSpec re-wraps this as design.ErrInvalidSpec so
 // the HTTP handler can map it to a 400 without importing artifacts.
 var ErrInvalidSpecContent = errors.New("invalid spec content")
 
 // ---- StoreConsumedSpec -----------------------------------------------------
 
-// StoreConsumedSpec validates + normalizes rawSpec and commits it to the
-// consumer component's dependencies/ directory at:
+// StoreConsumedSpec validates + normalizes rawSpec and writes it to the
+// consumer component's dependencies/ directory in the working-tree draft at:
 //
 //	specs/design/components/<component>/dependencies/<depName>.openapi.yaml
 //
 // Returns the component-relative specPath ("dependencies/<depName>.openapi.yaml")
-// and the operation count. Commits via ArtifactService.CommitDesignFile (no
-// new version tag — same untagged commit path as SetComponentOrgPublished in
-// P3.5). subPath passed to CommitDesignFile is relative to specs/design/.
+// and the operation count. Writes via WriteDesignFile → PutFile (working-tree
+// only — no commit, no version tag). The file becomes part of the design draft
+// and will be committed atomically when SaveDesign is called.
 //
 // Error classification:
 //   - %w-wraps ErrInvalidSpecContent: depName path-traversal rejection + ValidateOpenAPI failures (client/400).
-//   - bare errors: NormalizeOpenAPIYAML + CommitDesignFile failures (infra/500).
+//   - bare errors: NormalizeOpenAPIYAML + WriteDesignFile failures (infra/500).
 func (s *ArtifactStore) StoreConsumedSpec(ctx context.Context, orgID, projectID, component, depName, rawSpec string) (string, int, error) {
 	// Defense-in-depth: reject depName values that could escape the dependencies/
 	// directory via path traversal — belt-and-suspenders even though depName is
@@ -213,11 +213,10 @@ func (s *ArtifactStore) StoreConsumedSpec(ctx context.Context, orgID, projectID,
 	}
 	// specPath is component-relative (returned to callers / stored in dependency.specPath).
 	specPath := "dependencies/" + depName + ".openapi.yaml"
-	// subPath is relative to specs/design/ — CommitDesignFile prepends DesignDir internally.
+	// subPath is relative to specs/design/ — WriteDesignFile prepends DesignDir internally.
 	subPath := componentDirPrefix + component + "/" + specPath
-	msg := fmt.Sprintf("chore(marketplace): store consumed API spec for %s/%s", component, depName)
-	if _, cerr := s.artifactSvc.CommitDesignFile(ctx, orgID, projectID, subPath, normalized, msg); cerr != nil {
-		return "", 0, cerr
+	if _, werr := s.WriteDesignFile(ctx, orgID, projectID, subPath, normalized); werr != nil {
+		return "", 0, werr
 	}
 	return specPath, opCount, nil
 }

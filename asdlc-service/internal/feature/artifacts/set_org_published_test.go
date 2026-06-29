@@ -31,24 +31,53 @@ type commitRecord struct {
 	message string
 }
 
+// putRecord captures one PutFile call.
+type putRecord struct {
+	relPath string
+	content string
+}
+
 // fakeArtifactSvc embeds ArtifactService so it satisfies the interface while we
-// implement only the two methods SetComponentOrgPublished exercises:
-// ListDesignFiles (the read) + CommitDesignFile (the commit). Every other method
-// panics if reached, proving the durability path takes the commit seam — NOT the
-// working-tree-only PutFile path.
+// implement only the methods the tests exercise:
+//   - ListDesignFiles (the read)
+//   - CommitDesignFile (the durable commit — used by SetComponentOrgPublished only)
+//   - PutFile (the working-tree draft write — used by WriteDesignFile, which
+//     StoreConsumedSpec and SetDependencySpecPath now call instead of CommitDesignFile)
+//
+// Every other method panics if reached.
 type fakeArtifactSvc struct {
 	ArtifactService
 	files   map[string]string
 	commits []commitRecord
+	puts    []putRecord
 }
 
 func (f *fakeArtifactSvc) ListDesignFiles(_ context.Context, _, _ string) (map[string]string, error) {
-	return f.files, nil
+	// Return a copy so in-place mutations to the map don't affect the fake's
+	// stored state between ReadDesign and WriteDesignFile calls.
+	out := make(map[string]string, len(f.files))
+	for k, v := range f.files {
+		out[k] = v
+	}
+	return out, nil
 }
 
 func (f *fakeArtifactSvc) CommitDesignFile(_ context.Context, _, _, sub, content, message string) (string, error) {
 	f.commits = append(f.commits, commitRecord{sub: sub, content: content, message: message})
 	return "deadbeef", nil
+}
+
+func (f *fakeArtifactSvc) PutFile(_ context.Context, _, _, relPath, content, _ string) (*PutResult, error) {
+	f.puts = append(f.puts, putRecord{relPath: relPath, content: content})
+	// Also update the in-memory files map so that a subsequent ListDesignFiles
+	// (e.g. inside SetDependencySpecPath's ReadDesign) sees the written content.
+	// Keys in files are relative to specs/design/; relPath includes the full
+	// DesignDir prefix ("specs/design/..."), so strip the prefix.
+	const prefix = DesignDir + "/"
+	if key := strings.TrimPrefix(relPath, prefix); key != relPath {
+		f.files[key] = content
+	}
+	return &PutResult{SHA: "cafebabe"}, nil
 }
 
 // designFilesFor builds a minimal working-tree map for a single service

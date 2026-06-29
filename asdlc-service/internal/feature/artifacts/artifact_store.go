@@ -402,13 +402,14 @@ func (s *ArtifactStore) SetComponentOrgPublished(ctx context.Context, orgID, pro
 	return nil // no matching component — nothing to persist.
 }
 
-// SetDependencySpecPath durably records specPath on the named dependency
-// within the named component and COMMITS that one design.md to remote main
-// (no new version tag). This is the A4 spec-collection durability write:
-// after StoreConsumedSpec commits the spec blob, this records the path on
-// the dependency so the needsSpec gate is cleared on next read.
+// SetDependencySpecPath records specPath on the named dependency within the
+// named component by writing that component's design.md to the working-tree
+// draft (no commit, no version tag). This is the A4 spec-collection draft
+// write: after StoreConsumedSpec writes the spec blob to the draft, this
+// records the specPath on the dependency so the needsSpec gate is cleared on
+// next read. Both changes are committed atomically when SaveDesign is called.
 //
-// Idempotent: a no-op (no commit) when the component/dependency is not found
+// Idempotent: a no-op (no write) when the component/dependency is not found
 // or when specPath already matches. Returns nil in all no-op cases.
 func (s *ArtifactStore) SetDependencySpecPath(ctx context.Context, orgID, projectID, component, depName, specPath string) error {
 	design, err := s.ReadDesign(ctx, orgID, projectID)
@@ -445,7 +446,10 @@ func (s *ArtifactStore) SetDependencySpecPath(ctx context.Context, orgID, projec
 		if !found {
 			return nil // dep not found — nothing to persist.
 		}
-		// Render ONLY this component's design.md through the canonical encoder.
+		// Render ONLY this component's design.md through the canonical encoder,
+		// then write it to the working-tree draft via WriteDesignFile (not
+		// CommitDesignFile). The draft save (SaveDesign) will commit both the
+		// spec blob and this design.md atomically with the v<N>-<M> tag.
 		files, ferr := SplitDesign(&DesignFile{Components: []models.DesignComponent{comp}})
 		if ferr != nil {
 			return fmt.Errorf("render component %q design: %w", comp.Name, ferr)
@@ -455,9 +459,8 @@ func (s *ArtifactStore) SetDependencySpecPath(ctx context.Context, orgID, projec
 		if !ok {
 			return fmt.Errorf("render component %q design: %q missing from split", comp.Name, subPath)
 		}
-		msg := fmt.Sprintf("chore(marketplace): record specPath for %s/%s", component, depName)
-		if _, cerr := s.artifactSvc.CommitDesignFile(ctx, orgID, projectID, subPath, content, msg); cerr != nil {
-			return fmt.Errorf("commit %s: %w", subPath, cerr)
+		if _, werr := s.WriteDesignFile(ctx, orgID, projectID, subPath, content); werr != nil {
+			return fmt.Errorf("write %s: %w", subPath, werr)
 		}
 		return nil
 	}

@@ -309,9 +309,9 @@ paths:
 // TestCollectSpec_RawSpecReturnsSpecPathAndOpCount asserts that CollectSpec
 // with a rawSpec argument stores the spec (via StoreConsumedSpec), sets the
 // specPath on the dependency (via SetDependencySpecPath), and returns the
-// component-relative specPath + operation count. Two CommitDesignFile calls
-// are expected: one from StoreConsumedSpec for the spec blob, one from
-// SetDependencySpecPath for the component's design.md.
+// component-relative specPath + operation count. Both operations write to the
+// working-tree draft via PutFile (NOT CommitDesignFile), so the spec and the
+// updated design.md are committed atomically by the subsequent SaveDesign.
 func TestCollectSpec_RawSpecReturnsSpecPathAndOpCount(t *testing.T) {
 	compDesignMd := `---
 type: service
@@ -324,14 +324,33 @@ dependencies:
 ---
 Build a weather service.
 `
+	// Use a mutable map so that PutFile writes are visible to subsequent
+	// ListDesignFiles calls (SetDependencySpecPath reads the design after
+	// StoreConsumedSpec writes the spec blob).
 	files := map[string]string{
 		"design.md":                        "System overview.\n",
 		"components/weather-api/design.md": compDesignMd,
 	}
 
+	var putCalls []struct{ relPath, content string }
 	stub := &stubArtifactService{
 		listDesignFilesFunc: func(_ context.Context, _, _ string) (map[string]string, error) {
-			return files, nil
+			// Return a copy so mutations inside WriteDesignFile don't race.
+			cp := make(map[string]string, len(files))
+			for k, v := range files {
+				cp[k] = v
+			}
+			return cp, nil
+		},
+		putFileFunc: func(_ context.Context, _, _, relPath, content, _ string) (*artifacts.PutResult, error) {
+			putCalls = append(putCalls, struct{ relPath, content string }{relPath, content})
+			// Reflect the write back into files so SetDependencySpecPath's
+			// ReadDesign sees the updated design.md written by itself.
+			const prefix = "specs/design/"
+			if key := strings.TrimPrefix(relPath, prefix); key != relPath {
+				files[key] = content
+			}
+			return &artifacts.PutResult{SHA: "abc"}, nil
 		},
 	}
 	store := artifacts.NewArtifactStore(stub)
@@ -352,24 +371,27 @@ Build a weather service.
 	if opCount != 3 {
 		t.Errorf("operationCount = %d, want 3", opCount)
 	}
-	// Two CommitDesignFile calls: spec blob + design.md with specPath.
-	if len(stub.commitDesignFileCalls) != 2 {
-		t.Fatalf("expected 2 CommitDesignFile calls, got %d", len(stub.commitDesignFileCalls))
+	// Two PutFile calls: spec blob + design.md with specPath.
+	if len(putCalls) != 2 {
+		t.Fatalf("expected 2 PutFile calls (spec blob + design.md), got %d", len(putCalls))
 	}
 	// First call: spec blob.
-	firstCall := stub.commitDesignFileCalls[0]
-	wantSpecSubPath := "components/weather-api/dependencies/openweather.openapi.yaml"
-	if firstCall.subPath != wantSpecSubPath {
-		t.Errorf("first CommitDesignFile subPath = %q, want %q", firstCall.subPath, wantSpecSubPath)
+	wantSpecRelPath := "specs/design/components/weather-api/dependencies/openweather.openapi.yaml"
+	if putCalls[0].relPath != wantSpecRelPath {
+		t.Errorf("first PutFile relPath = %q, want %q", putCalls[0].relPath, wantSpecRelPath)
 	}
 	// Second call: design.md with specPath.
-	secondCall := stub.commitDesignFileCalls[1]
-	wantDesignSubPath := "components/weather-api/design.md"
-	if secondCall.subPath != wantDesignSubPath {
-		t.Errorf("second CommitDesignFile subPath = %q, want %q", secondCall.subPath, wantDesignSubPath)
+	wantDesignRelPath := "specs/design/components/weather-api/design.md"
+	if putCalls[1].relPath != wantDesignRelPath {
+		t.Errorf("second PutFile relPath = %q, want %q", putCalls[1].relPath, wantDesignRelPath)
 	}
-	if !strings.Contains(secondCall.content, "specPath:") {
-		t.Errorf("updated design.md should contain specPath, got:\n%s", secondCall.content)
+	if !strings.Contains(putCalls[1].content, "specPath:") {
+		t.Errorf("updated design.md should contain specPath, got:\n%s", putCalls[1].content)
+	}
+	// REGRESSION: neither StoreConsumedSpec nor SetDependencySpecPath must
+	// call CommitDesignFile — both must write to the draft only.
+	if len(stub.commitDesignFileCalls) != 0 {
+		t.Errorf("neither CollectSpec sub-call must use CommitDesignFile (regression guard): got %d calls", len(stub.commitDesignFileCalls))
 	}
 }
 
@@ -437,19 +459,22 @@ func TestCollectSpec_InvalidOpenAPIDocMapsToErrInvalidSpec(t *testing.T) {
 	}
 }
 
-// TestCollectSpec_CommitFailureMapsToInfraError asserts that a storage/commit
-// failure from StoreConsumedSpec (e.g. git commit error) surfaces as a plain
-// error — NOT ErrInvalidSpec and NOT ErrSpecFetchFailed — so the HTTP handler
+// TestCollectSpec_WriteFailureMapsToInfraError asserts that a storage/write
+// failure from StoreConsumedSpec (e.g. git-service PutFile error) surfaces as a
+// plain error — NOT ErrInvalidSpec and NOT ErrSpecFetchFailed — so the HTTP handler
 // maps it to 500 (not 400 or 502). This covers the infra-error classification
 // fix (code review finding: all non-502 errors were previously mapped to 400).
-func TestCollectSpec_CommitFailureMapsToInfraError(t *testing.T) {
-	commitErr := errors.New("git commit failed: remote unreachable")
+// Previously this tested CommitDesignFile failure; now that StoreConsumedSpec
+// uses WriteDesignFile (→ PutFile) for draft writes, the infra error comes from
+// PutFile. The semantic contract is unchanged: storage failures → 500.
+func TestCollectSpec_WriteFailureMapsToInfraError(t *testing.T) {
+	writeErr := errors.New("git commit failed: remote unreachable")
 	stub := &stubArtifactService{
 		listDesignFilesFunc: func(_ context.Context, _, _ string) (map[string]string, error) {
 			return map[string]string{"design.md": "overview\n"}, nil
 		},
-		commitDesignFileFunc: func(_ context.Context, _, _, _, _, _ string) (string, error) {
-			return "", commitErr
+		putFileFunc: func(_ context.Context, _, _, _, _, _ string) (*artifacts.PutResult, error) {
+			return nil, writeErr
 		},
 	}
 	store := artifacts.NewArtifactStore(stub)
@@ -461,18 +486,18 @@ func TestCollectSpec_CommitFailureMapsToInfraError(t *testing.T) {
 		sampleOpenAPISpec, "",
 	)
 	if err == nil {
-		t.Fatal("expected error for commit failure, got nil")
+		t.Fatal("expected error for write failure, got nil")
 	}
 	// Infra failure must NOT be misclassified as a client (400) or gateway (502) error.
 	if errors.Is(err, ErrInvalidSpec) {
-		t.Errorf("commit failure must not be classified as ErrInvalidSpec (400)")
+		t.Errorf("write failure must not be classified as ErrInvalidSpec (400)")
 	}
 	if errors.Is(err, ErrSpecFetchFailed) {
-		t.Errorf("commit failure must not be classified as ErrSpecFetchFailed (502)")
+		t.Errorf("write failure must not be classified as ErrSpecFetchFailed (502)")
 	}
 	// Verify the underlying cause is preserved (unwrappable).
 	if !strings.Contains(err.Error(), "git commit failed") {
-		t.Errorf("expected underlying commit error to be preserved, got: %v", err)
+		t.Errorf("expected underlying write error to be preserved, got: %v", err)
 	}
 }
 
@@ -498,7 +523,14 @@ paths:
 // auto-fetches the spec via the injectable fetchSpec func, stores it via
 // CollectSpec, and then the dep is no longer unresolved — so SaveAndProceed
 // proceeds to SaveDesign (and eventually succeeds). The dep's specUrl should be
-// cleared from the stored design.md after the auto-fetch.
+// cleared from the written design.md after the auto-fetch.
+//
+// CollectSpec now uses PutFile (working-tree draft) for both writes:
+//  1. StoreConsumedSpec → PutFile for the spec blob
+//  2. SetDependencySpecPath → PutFile for the component design.md
+//
+// The ListDesignFiles stub reflects PutFile writes back into the files map so
+// the second read (inside SetDependencySpecPath) sees the spec blob already present.
 func TestSaveAndProceed_AutoFetch_Success(t *testing.T) {
 	// Initial design: external dep with needsSpec + specUrl, no specPath.
 	initialCompDesignMd := `---
@@ -513,49 +545,34 @@ dependencies:
 ---
 Build a service that calls an external API.
 `
-	// After CollectSpec runs (StoreConsumedSpec + SetDependencySpecPath), the
-	// component design.md will have specPath set and specUrl cleared. We simulate
-	// this by returning the updated file map on subsequent ListDesignFiles calls
-	// (i.e. after the first CommitDesignFile that sets specPath).
-	updatedCompDesignMd := `---
-type: service
-language: go
-dependencies:
-  - kind: external
-    name: external-api
-    description: some external API
-    needsSpec: true
-    specPath: dependencies/external-api.openapi.yaml
----
-Build a service that calls an external API.
-`
-	initialFiles := map[string]string{
-		"design.md":                         "System overview.\n",
-		"components/my-service/design.md":   initialCompDesignMd,
-	}
-	updatedFiles := map[string]string{
-		"design.md":                         "System overview.\n",
-		"components/my-service/design.md":   updatedCompDesignMd,
+	// Mutable files map — PutFile writes are reflected here so subsequent
+	// ListDesignFiles calls see the updated content.
+	files := map[string]string{
+		"design.md":                       "System overview.\n",
+		"components/my-service/design.md": initialCompDesignMd,
 	}
 
-	// Track how many CommitDesignFile calls have been made.
-	// CollectSpec makes two commits:
-	//   1. StoreConsumedSpec: commits the spec blob.
-	//   2. SetDependencySpecPath: reads the design (must still see initialFiles so
-	//      specPath appears unset), then commits design.md with specPath recorded.
-	// Only after BOTH commits does the working tree reflect the updated state, so
-	// the ListDesignFiles stub returns updatedFiles only when commitCount >= 2.
-	var commitCount int
+	type putCall struct{ relPath, content string }
+	var putCalls []putCall
+
 	stub := &stubArtifactService{
 		listDesignFilesFunc: func(_ context.Context, _, _ string) (map[string]string, error) {
-			if commitCount >= 2 {
-				return updatedFiles, nil
+			cp := make(map[string]string, len(files))
+			for k, v := range files {
+				cp[k] = v
 			}
-			return initialFiles, nil
+			return cp, nil
 		},
-		commitDesignFileFunc: func(_ context.Context, _, _, _, _, _ string) (string, error) {
-			commitCount++
-			return "sha-" + string(rune('0'+commitCount)), nil
+		putFileFunc: func(_ context.Context, _, _, relPath, content, _ string) (*artifacts.PutResult, error) {
+			putCalls = append(putCalls, putCall{relPath, content})
+			// Reflect writes back into the mutable files map so that a
+			// subsequent ListDesignFiles (inside SetDependencySpecPath's
+			// ReadDesign) sees the updated content.
+			const prefix = "specs/design/"
+			if key := strings.TrimPrefix(relPath, prefix); key != relPath {
+				files[key] = content
+			}
+			return &artifacts.PutResult{SHA: "abc"}, nil
 		},
 	}
 	// Override SaveDesign to succeed (simulate a tagged version).
@@ -580,29 +597,33 @@ Build a service that calls an external API.
 		t.Fatal("expected non-nil design after SaveAndProceed")
 	}
 
-	// Verify that CommitDesignFile was called at least twice:
-	// 1) StoreConsumedSpec: spec blob commit
+	// Verify that PutFile was called at least twice:
+	// 1) StoreConsumedSpec: spec blob
 	// 2) SetDependencySpecPath: design.md with specPath recorded
-	if commitCount < 2 {
-		t.Errorf("expected at least 2 CommitDesignFile calls (spec blob + specPath), got %d", commitCount)
+	if len(putCalls) < 2 {
+		t.Errorf("expected at least 2 PutFile calls (spec blob + specPath), got %d", len(putCalls))
 	}
 
-	// Verify the last design.md commit has specPath set (no specUrl).
-	var lastDesignMdCommit *commitDesignFileCall
-	for i := range stub.commitDesignFileCalls {
-		call := &stub.commitDesignFileCalls[i]
-		if strings.HasSuffix(call.subPath, "/design.md") {
-			lastDesignMdCommit = call
+	// Find the PutFile call for design.md and verify it has specPath set (no specUrl).
+	var lastDesignMdPut *putCall
+	for i := range putCalls {
+		c := &putCalls[i]
+		if strings.HasSuffix(c.relPath, "/design.md") {
+			lastDesignMdPut = c
 		}
 	}
-	if lastDesignMdCommit == nil {
-		t.Fatal("no CommitDesignFile call for design.md found")
+	if lastDesignMdPut == nil {
+		t.Fatal("no PutFile call for design.md found")
 	}
-	if !strings.Contains(lastDesignMdCommit.content, "specPath:") {
-		t.Errorf("committed design.md should contain specPath, got:\n%s", lastDesignMdCommit.content)
+	if !strings.Contains(lastDesignMdPut.content, "specPath:") {
+		t.Errorf("written design.md should contain specPath, got:\n%s", lastDesignMdPut.content)
 	}
-	if strings.Contains(lastDesignMdCommit.content, "specUrl:") {
-		t.Errorf("committed design.md must NOT contain specUrl after auto-fetch, got:\n%s", lastDesignMdCommit.content)
+	if strings.Contains(lastDesignMdPut.content, "specUrl:") {
+		t.Errorf("written design.md must NOT contain specUrl after auto-fetch, got:\n%s", lastDesignMdPut.content)
+	}
+	// REGRESSION: CommitDesignFile must NOT be called for consumer spec writes.
+	if len(stub.commitDesignFileCalls) != 0 {
+		t.Errorf("auto-fetch CollectSpec must not use CommitDesignFile (regression guard): got %d calls", len(stub.commitDesignFileCalls))
 	}
 }
 
