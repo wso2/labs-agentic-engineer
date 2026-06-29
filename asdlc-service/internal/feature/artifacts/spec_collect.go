@@ -85,9 +85,14 @@ const (
 	specMaxBytes     = 5 << 20 // 5 MiB
 )
 
+// maxRedirects is the maximum number of redirects FetchSpecFromURL will follow.
+const maxRedirects = 5
+
 // FetchSpecFromURL GETs an OpenAPI spec from a user-supplied URL with SSRF
 // guards: https only, public IPs only (no loopback/private/link-local/
-// unspecified), size cap (5 MiB), and timeout (10 s).
+// unspecified), size cap (5 MiB), timeout (10 s), redirect guard (https-only,
+// max 5 hops), and TOCTOU-safe single-resolution dial (resolves the host
+// exactly once and dials the validated IP directly — no second resolution).
 //
 // PLATFORM-TOUCHING — reviewed by platform-design-expert; do NOT weaken
 // guards without a new review.
@@ -98,21 +103,44 @@ func FetchSpecFromURL(ctx context.Context, rawURL string) (string, error) {
 	}
 	dialer := &net.Dialer{Timeout: specFetchTimeout}
 	transport := &http.Transport{
+		// DialContext resolves the host ONCE, validates every returned IP, then
+		// dials the chosen IP directly — eliminating the TOCTOU DNS-rebinding
+		// window that would exist if the dialer performed its own second lookup.
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			host, _, _ := net.SplitHostPort(addr)
+			host, port, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, fmt.Errorf("invalid address %q: %w", addr, err)
+			}
 			ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
 			if err != nil {
 				return nil, err
 			}
+			if len(ips) == 0 {
+				return nil, fmt.Errorf("no IP addresses resolved for %s", host)
+			}
+			// Validate every resolved IP; reject the entire set if any is non-public.
 			for _, ip := range ips {
 				if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
 					return nil, fmt.Errorf("refusing to fetch from non-public address %s", ip)
 				}
 			}
-			return dialer.DialContext(ctx, network, addr)
+			// Dial the first validated IP directly — no second DNS resolution.
+			return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].String(), port))
 		},
 	}
-	client := &http.Client{Timeout: specFetchTimeout, Transport: transport}
+	// CheckRedirect rejects any redirect whose target is not https and caps
+	// the total number of redirects at maxRedirects. This closes the
+	// https→http downgrade-via-redirect vector at the application layer.
+	checkRedirect := func(req *http.Request, via []*http.Request) error {
+		if req.URL.Scheme != "https" {
+			return fmt.Errorf("redirect to non-https URL %q is not allowed", req.URL)
+		}
+		if len(via) >= maxRedirects {
+			return fmt.Errorf("too many redirects (max %d)", maxRedirects)
+		}
+		return nil
+	}
+	client := &http.Client{Timeout: specFetchTimeout, Transport: transport, CheckRedirect: checkRedirect}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return "", err
@@ -148,6 +176,12 @@ func FetchSpecFromURL(ctx context.Context, rawURL string) (string, error) {
 // new version tag — same untagged commit path as SetComponentOrgPublished in
 // P3.5). subPath passed to CommitDesignFile is relative to specs/design/.
 func (s *ArtifactStore) StoreConsumedSpec(ctx context.Context, orgID, projectID, component, depName, rawSpec string) (string, int, error) {
+	// Defense-in-depth: reject depName values that could escape the dependencies/
+	// directory via path traversal — belt-and-suspenders even though depName is
+	// normally architect/catalog-controlled.
+	if strings.Contains(depName, "/") || strings.Contains(depName, `\`) || strings.Contains(depName, "..") {
+		return "", 0, fmt.Errorf("invalid dependency name %q: must not contain path separators or '..'", depName)
+	}
 	opCount, err := ValidateOpenAPI(rawSpec)
 	if err != nil {
 		return "", 0, err

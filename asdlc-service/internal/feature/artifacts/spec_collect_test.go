@@ -104,8 +104,15 @@ func TestStoreConsumedSpec_PathAndCount(t *testing.T) {
 		t.Fatal("committed content must not be empty")
 	}
 	// Must still be parseable as OpenAPI after normalization.
-	if _, err := ValidateOpenAPI(c.content); err != nil {
+	normalizedOpCount, err := ValidateOpenAPI(c.content)
+	if err != nil {
 		t.Fatalf("normalized content fails ValidateOpenAPI: %v", err)
+	}
+	// Normalization must not drop any operations — the normalized output must
+	// contain the same number of operations as the original spec (3).
+	const wantOps = 3
+	if normalizedOpCount != wantOps {
+		t.Fatalf("normalization changed operation count: want %d, got %d", wantOps, normalizedOpCount)
 	}
 }
 
@@ -123,5 +130,36 @@ func TestStoreConsumedSpec_RejectsInvalidSpec(t *testing.T) {
 	}
 	if len(svc.commits) != 0 {
 		t.Fatalf("no commit must happen on invalid spec, got %d", len(svc.commits))
+	}
+}
+
+// TestStoreConsumedSpec_RejectsPathTraversalDepName verifies that depName
+// values containing path separators or ".." are rejected before any file
+// path is constructed (defense-in-depth path traversal guard).
+func TestStoreConsumedSpec_RejectsPathTraversalDepName(t *testing.T) {
+	dangerousNames := []string{
+		"../evil",
+		"../../etc/passwd",
+		"sub/name",
+		`sub\name`,
+		"..",
+	}
+	for _, name := range dangerousNames {
+		t.Run(name, func(t *testing.T) {
+			svc := &fakeArtifactSvc{files: map[string]string{}}
+			store := NewArtifactStore(svc)
+
+			_, _, err := store.StoreConsumedSpec(
+				context.Background(),
+				"acme", "weather-app", "frontend", name,
+				sampleSpec,
+			)
+			if err == nil {
+				t.Fatalf("expected error for dangerous depName %q, got nil", name)
+			}
+			if len(svc.commits) != 0 {
+				t.Fatalf("no commit must happen for dangerous depName %q, got %d commits", name, len(svc.commits))
+			}
+		})
 	}
 }
