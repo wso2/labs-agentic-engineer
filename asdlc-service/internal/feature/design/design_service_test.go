@@ -475,3 +475,195 @@ func TestCollectSpec_CommitFailureMapsToInfraError(t *testing.T) {
 		t.Errorf("expected underlying commit error to be preserved, got: %v", err)
 	}
 }
+
+// ---- A6: auto-fetch specUrl at SaveAndProceed ----------------------------
+
+// sampleOpenAPISpecA6 is the minimal valid OpenAPI spec returned by the
+// stub fetch function in the A6 auto-fetch tests.
+const sampleOpenAPISpecA6 = `openapi: 3.0.3
+info:
+  title: External API
+  version: "1.0"
+paths:
+  /items:
+    get:
+      summary: List items
+      responses:
+        "200":
+          description: OK
+`
+
+// TestSaveAndProceed_AutoFetch_Success asserts that when a component has an
+// external dep with needsSpec:true, no specPath, and a specUrl hint, SaveAndProceed
+// auto-fetches the spec via the injectable fetchSpec func, stores it via
+// CollectSpec, and then the dep is no longer unresolved — so SaveAndProceed
+// proceeds to SaveDesign (and eventually succeeds). The dep's specUrl should be
+// cleared from the stored design.md after the auto-fetch.
+func TestSaveAndProceed_AutoFetch_Success(t *testing.T) {
+	// Initial design: external dep with needsSpec + specUrl, no specPath.
+	initialCompDesignMd := `---
+type: service
+language: go
+dependencies:
+  - kind: external
+    name: external-api
+    description: some external API
+    needsSpec: true
+    specUrl: "https://api.example.com/openapi.yaml"
+---
+Build a service that calls an external API.
+`
+	// After CollectSpec runs (StoreConsumedSpec + SetDependencySpecPath), the
+	// component design.md will have specPath set and specUrl cleared. We simulate
+	// this by returning the updated file map on subsequent ListDesignFiles calls
+	// (i.e. after the first CommitDesignFile that sets specPath).
+	updatedCompDesignMd := `---
+type: service
+language: go
+dependencies:
+  - kind: external
+    name: external-api
+    description: some external API
+    needsSpec: true
+    specPath: dependencies/external-api.openapi.yaml
+---
+Build a service that calls an external API.
+`
+	initialFiles := map[string]string{
+		"design.md":                         "System overview.\n",
+		"components/my-service/design.md":   initialCompDesignMd,
+	}
+	updatedFiles := map[string]string{
+		"design.md":                         "System overview.\n",
+		"components/my-service/design.md":   updatedCompDesignMd,
+	}
+
+	// Track how many CommitDesignFile calls have been made.
+	// CollectSpec makes two commits:
+	//   1. StoreConsumedSpec: commits the spec blob.
+	//   2. SetDependencySpecPath: reads the design (must still see initialFiles so
+	//      specPath appears unset), then commits design.md with specPath recorded.
+	// Only after BOTH commits does the working tree reflect the updated state, so
+	// the ListDesignFiles stub returns updatedFiles only when commitCount >= 2.
+	var commitCount int
+	stub := &stubArtifactService{
+		listDesignFilesFunc: func(_ context.Context, _, _ string) (map[string]string, error) {
+			if commitCount >= 2 {
+				return updatedFiles, nil
+			}
+			return initialFiles, nil
+		},
+		commitDesignFileFunc: func(_ context.Context, _, _, _, _, _ string) (string, error) {
+			commitCount++
+			return "sha-" + string(rune('0'+commitCount)), nil
+		},
+	}
+	// Override SaveDesign to succeed (simulate a tagged version).
+	stub2 := &saveDesignStub{stubArtifactService: stub}
+
+	store := artifacts.NewArtifactStore(stub2)
+	svc := NewDesignService(store, nil, stub2).(*designService)
+
+	// Inject a stub fetch func that returns a valid OpenAPI spec.
+	svc.fetchSpec = func(_ context.Context, url string) (string, error) {
+		if url != "https://api.example.com/openapi.yaml" {
+			return "", errors.New("unexpected URL: " + url)
+		}
+		return sampleOpenAPISpecA6, nil
+	}
+
+	design, err := svc.SaveAndProceed(context.Background(), "org1", "proj1")
+	if err != nil {
+		t.Fatalf("SaveAndProceed must succeed after auto-fetch, got: %v", err)
+	}
+	if design == nil {
+		t.Fatal("expected non-nil design after SaveAndProceed")
+	}
+
+	// Verify that CommitDesignFile was called at least twice:
+	// 1) StoreConsumedSpec: spec blob commit
+	// 2) SetDependencySpecPath: design.md with specPath recorded
+	if commitCount < 2 {
+		t.Errorf("expected at least 2 CommitDesignFile calls (spec blob + specPath), got %d", commitCount)
+	}
+
+	// Verify the last design.md commit has specPath set (no specUrl).
+	var lastDesignMdCommit *commitDesignFileCall
+	for i := range stub.commitDesignFileCalls {
+		call := &stub.commitDesignFileCalls[i]
+		if strings.HasSuffix(call.subPath, "/design.md") {
+			lastDesignMdCommit = call
+		}
+	}
+	if lastDesignMdCommit == nil {
+		t.Fatal("no CommitDesignFile call for design.md found")
+	}
+	if !strings.Contains(lastDesignMdCommit.content, "specPath:") {
+		t.Errorf("committed design.md should contain specPath, got:\n%s", lastDesignMdCommit.content)
+	}
+	if strings.Contains(lastDesignMdCommit.content, "specUrl:") {
+		t.Errorf("committed design.md must NOT contain specUrl after auto-fetch, got:\n%s", lastDesignMdCommit.content)
+	}
+}
+
+// TestSaveAndProceed_AutoFetch_FetchFailure asserts that when the fetch stub
+// returns an error, SaveAndProceed does NOT fail the whole save attempt due to
+// the fetch error itself, but the dep remains unresolved so ErrUnresolvedDependency
+// is still returned by the proceed-gate — consistent with the user needing to
+// supply the spec manually.
+func TestSaveAndProceed_AutoFetch_FetchFailure(t *testing.T) {
+	compDesignMd := `---
+type: service
+language: go
+dependencies:
+  - kind: external
+    name: external-api
+    description: some external API
+    needsSpec: true
+    specUrl: "https://api.example.com/openapi.yaml"
+---
+Build a service.
+`
+	files := map[string]string{
+		"design.md":                         "System overview.\n",
+		"components/my-service/design.md":   compDesignMd,
+	}
+	stub := &stubArtifactService{
+		listDesignFilesFunc: func(_ context.Context, _, _ string) (map[string]string, error) {
+			return files, nil
+		},
+	}
+	store := artifacts.NewArtifactStore(stub)
+	svc := NewDesignService(store, nil, stub).(*designService)
+
+	// Inject a fetch func that always fails.
+	svc.fetchSpec = func(_ context.Context, _ string) (string, error) {
+		return "", errors.New("network unreachable")
+	}
+
+	_, saveErr := svc.SaveAndProceed(context.Background(), "org1", "proj1")
+	if saveErr == nil {
+		t.Fatal("want error from SaveAndProceed when fetch fails + dep unresolved, got nil")
+	}
+	// The error must be ErrUnresolvedDependency (the gate caught the still-unresolved dep),
+	// NOT an infra/fetch error bubbling up.
+	if !errors.Is(saveErr, ErrUnresolvedDependency) {
+		t.Fatalf("want ErrUnresolvedDependency after failed fetch, got: %v", saveErr)
+	}
+}
+
+// saveDesignStub wraps stubArtifactService to override SaveDesign so that
+// SaveAndProceed can proceed past the git-save step in auto-fetch success tests.
+// All other ArtifactService methods are promoted from the embedded stub.
+type saveDesignStub struct {
+	*stubArtifactService
+}
+
+func (s *saveDesignStub) SaveDesign(_ context.Context, _, _ string, _ artifacts.SaveRequest) (*artifacts.DesignSaveResult, error) {
+	return &artifacts.DesignSaveResult{
+		Tag:                 "v1-1",
+		RequirementsVersion: 1,
+		DesignRevision:      1,
+		Status:              "tagged",
+	}, nil
+}

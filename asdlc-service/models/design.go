@@ -74,6 +74,11 @@ type Dependency struct {
 	// ⇒ Status unresolved (gates save).
 	NeedsSpec bool   `json:"needsSpec,omitempty" yaml:"needsSpec,omitempty"`
 	SpecPath  string `json:"specPath,omitempty" yaml:"specPath,omitempty"`
+	// SpecUrl is a TRANSIENT hint from the architect: a published OpenAPI URL
+	// to auto-fetch at design save. Persisted transiently through the
+	// generate→save hop (yaml/json serialised) but cleared immediately after a
+	// successful auto-fetch so it is never stored long-term.
+	SpecUrl string `json:"specUrl,omitempty" yaml:"specUrl,omitempty"`
 	// external: the config key schema the consuming component codes against.
 	Config []ConfigKey `json:"config,omitempty" yaml:"config,omitempty"`
 	// platform-resource: the registered (Cluster)ResourceType + provisioning params.

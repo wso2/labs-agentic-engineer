@@ -429,10 +429,16 @@ func (s *ArtifactStore) SetDependencySpecPath(ctx context.Context, orgID, projec
 			if comp.Dependencies[j].Name != depName {
 				continue
 			}
-			if comp.Dependencies[j].SpecPath == specPath {
-				return nil // idempotent — already recorded.
+			if comp.Dependencies[j].SpecPath == specPath && comp.Dependencies[j].SpecUrl == "" {
+				return nil // idempotent — already recorded + transient hint cleared.
 			}
 			comp.Dependencies[j].SpecPath = specPath
+			// Clear the transient architect hint now that specPath is recorded; also
+			// clear the computed status so the next read re-derives it from specPath
+			// (needsSpec+specPath set → resolved, not unresolved).
+			comp.Dependencies[j].SpecUrl = ""
+			comp.Dependencies[j].Status = ""
+			comp.Dependencies[j].Reason = ""
 			found = true
 			break
 		}
@@ -531,6 +537,9 @@ type dependencyConfig struct {
 	Description  string                      `yaml:"description,omitempty"`
 	NeedsSpec    bool                        `yaml:"needsSpec,omitempty"`
 	SpecPath     string                      `yaml:"specPath,omitempty"`
+	// SpecUrl is a transient architect-supplied hint (published OpenAPI URL).
+	// Cleared by the BFF after a successful auto-fetch; never stored long-term.
+	SpecUrl      string                      `yaml:"specUrl,omitempty"`
 	Status       string                      `yaml:"status,omitempty"`
 	Config       []configKeyConfig           `yaml:"config,omitempty"`
 	ResourceType string                      `yaml:"resourceType,omitempty"`
@@ -621,6 +630,7 @@ func assembleDependencies(cfm componentFrontmatter) []models.Dependency {
 				Description:  d.Description,
 				NeedsSpec:    d.NeedsSpec,
 				SpecPath:     d.SpecPath,
+				SpecUrl:      d.SpecUrl,
 				Status:       d.Status,
 				Config:       toModelConfigKeys(d.Config),
 				ResourceType: d.ResourceType,
@@ -697,6 +707,7 @@ func toCfgDeps(in []models.Dependency) []dependencyConfig {
 			Description:  d.Description,
 			NeedsSpec:    d.NeedsSpec,
 			SpecPath:     d.SpecPath,
+			SpecUrl:      d.SpecUrl,
 			Status:       d.Status,
 			Config:       toCfgConfigKeys(d.Config),
 			ResourceType: d.ResourceType,

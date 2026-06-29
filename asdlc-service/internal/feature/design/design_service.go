@@ -117,6 +117,10 @@ type designService struct {
 	// design is saved (the catalog "definition" layer, plan §3). Optional in
 	// tests; nil → no registration (values/wiring happen later regardless).
 	connReg connectionRegistrar
+	// fetchSpec is the SSRF-guarded HTTP fetch function used by the auto-fetch
+	// path in SaveAndProceed (A6). Defaults to artifacts.FetchSpecFromURL;
+	// injectable for tests so no real HTTP calls are made.
+	fetchSpec func(ctx context.Context, url string) (string, error)
 }
 
 // traitSyncReconciler is design_service's narrow consumer port for the
@@ -183,6 +187,7 @@ func NewDesignService(
 		store:        store,
 		agentsClient: agentsClient,
 		artifactSvc:  artifactSvc,
+		fetchSpec:    artifacts.FetchSpecFromURL,
 	}
 }
 
@@ -677,6 +682,57 @@ func (s *designService) SaveAndProceed(ctx context.Context, orgID, projectID str
 	}
 	if designFile == nil {
 		return nil, artifacts.ErrDesignNotFound
+	}
+
+	// Auto-fetch phase (A6): for each external dep that the architect flagged with
+	// a specUrl hint but no specPath yet, attempt a fetch+store before the
+	// unresolved-dep gate runs. A successful fetch clears the specUrl hint and
+	// records the specPath via CollectSpec → store.SetDependencySpecPath, so the
+	// gate sees the dep as resolved. A failed fetch is non-fatal — we log a
+	// warning and leave the dep unresolved (the user can supply the spec manually
+	// or the gate will block the save as usual). After any fetch attempt (success
+	// or failure), re-read the design so the gate operates on the updated state.
+	needsReread := false
+	fetchFn := s.fetchSpec
+	if fetchFn == nil {
+		fetchFn = artifacts.FetchSpecFromURL
+	}
+	for _, c := range designFile.Components {
+		for _, dep := range c.Dependencies {
+			if dep.Kind != models.DependencyKindExternal {
+				continue
+			}
+			if !dep.NeedsSpec || dep.SpecPath != "" || strings.TrimSpace(dep.SpecUrl) == "" {
+				continue
+			}
+			// Attempt auto-fetch via the injectable seam.
+			rawSpec, fetchErr := fetchFn(ctx, dep.SpecUrl)
+			if fetchErr != nil {
+				slog.WarnContext(ctx, "auto-fetch spec failed — dep left unresolved",
+					"org", orgID, "project", projectID,
+					"component", c.Name, "dep", dep.Name,
+					"specUrl", dep.SpecUrl, "error", fetchErr)
+				needsReread = true
+				continue
+			}
+			// Store the spec + record specPath on the dependency (commits both
+			// the spec blob and the component design.md frontmatter). Pass the
+			// raw spec directly (rawSpec path) to avoid a second HTTP round-trip;
+			// CollectSpec handles validate + normalize + commit + SetDependencySpecPath.
+			if _, _, collectErr := s.CollectSpec(ctx, orgID, projectID, c.Name, dep.Name, rawSpec, ""); collectErr != nil {
+				slog.WarnContext(ctx, "auto-fetch: CollectSpec failed — dep left unresolved",
+					"org", orgID, "project", projectID,
+					"component", c.Name, "dep", dep.Name, "error", collectErr)
+			}
+			needsReread = true
+		}
+	}
+	// Re-read the design so the gate below sees the updated specPath values.
+	if needsReread {
+		updated, rerr := s.store.ReadDesign(ctx, orgID, projectID)
+		if rerr == nil && updated != nil {
+			designFile = updated
+		}
 	}
 
 	// Block save when any dependency is in a non-actionable state — unresolved
