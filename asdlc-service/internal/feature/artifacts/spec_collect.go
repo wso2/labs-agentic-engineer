@@ -94,6 +94,17 @@ var cgnatNet = func() *net.IPNet {
 	return n
 }()
 
+// nat64Net is the IPv6 Well-Known Prefix for NAT64 (RFC 6052, 64:ff9b::/96).
+// In a NAT64/DNS64 cluster a DNS64 resolver can synthesize a 64:ff9b:: AAAA for
+// an attacker domain that NAT64 then routes to an embedded IPv4 — including the
+// link-local cloud-metadata endpoint and the RFC1918 pod/service CIDR. None of
+// Go's IsPrivate/IsLoopback/IsLinkLocalUnicast catch this prefix, so block it
+// explicitly to close the metadata-SSRF-via-NAT64 vector.
+var nat64Net = func() *net.IPNet {
+	_, n, _ := net.ParseCIDR("64:ff9b::/96")
+	return n
+}()
+
 // maxRedirects is the maximum number of redirects FetchSpecFromURL will follow.
 const maxRedirects = 5
 
@@ -128,9 +139,11 @@ func FetchSpecFromURL(ctx context.Context, rawURL string) (string, error) {
 				return nil, fmt.Errorf("no IP addresses resolved for %s", host)
 			}
 			// Validate every resolved IP; reject the entire set if any is non-public.
+			// (Resolved IP is intentionally NOT echoed in the error — it would be a
+			// blind-SSRF oracle leaking internal DNS results; log server-side instead.)
 			for _, ip := range ips {
-				if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() || cgnatNet.Contains(ip) {
-					return nil, fmt.Errorf("refusing to fetch from non-public address %s", ip)
+				if !ip.IsGlobalUnicast() || ip.IsPrivate() || cgnatNet.Contains(ip) || nat64Net.Contains(ip) {
+					return nil, fmt.Errorf("refusing to fetch from non-public address")
 				}
 			}
 			// Dial the first validated IP directly — no second DNS resolution.

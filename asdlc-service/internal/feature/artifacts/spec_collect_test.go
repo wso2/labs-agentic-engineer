@@ -20,9 +20,52 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
+
+// TestValidateOpenAPI_RejectsYAMLAliasBomb locks the transitive-dependency
+// guarantee that yaml.v3 (>= v3.0.4) rejects alias-expansion ("billion laughs")
+// bombs via its alias budget rather than OOM/hang — a platform-design-expert
+// SSRF-review item (the fetched/pasted spec is attacker-controlled). The doc
+// below has 8 levels each referencing the previous 10×, i.e. ~10^8 expansions;
+// ValidateOpenAPI parses via yaml.Unmarshal first, so the budget guard must fire
+// there. A future dependency downgrade that drops the budget would resurface the
+// OOM and trip this test (via the hang timeout).
+func TestValidateOpenAPI_RejectsYAMLAliasBomb(t *testing.T) {
+	var sb strings.Builder
+	sb.WriteString("a: &a \"lol\"\n")
+	prev := "a"
+	for _, name := range []string{"b", "c", "d", "e", "f", "g", "h", "i"} {
+		sb.WriteString(name + ": &" + name + " [")
+		for j := 0; j < 10; j++ {
+			if j > 0 {
+				sb.WriteString(",")
+			}
+			sb.WriteString("*" + prev)
+		}
+		sb.WriteString("]\n")
+		prev = name
+	}
+	bomb := sb.String()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := ValidateOpenAPI(bomb)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		// Either the alias budget rejects it, or it parses to a non-OpenAPI doc —
+		// both are an error. The point is it returns quickly, not OOM/hang.
+		if err == nil {
+			t.Fatal("expected an error for a YAML alias bomb, got nil")
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("ValidateOpenAPI did not return on a YAML alias bomb — alias budget not enforced (dep downgrade?)")
+	}
+}
 
 const sampleSpec = `openapi: 3.0.3
 info: { title: Weather, version: "1.0" }
