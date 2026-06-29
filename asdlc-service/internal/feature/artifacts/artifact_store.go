@@ -402,6 +402,62 @@ func (s *ArtifactStore) SetComponentOrgPublished(ctx context.Context, orgID, pro
 	return nil // no matching component — nothing to persist.
 }
 
+// SetDependencySpecPath durably records specPath on the named dependency
+// within the named component and COMMITS that one design.md to remote main
+// (no new version tag). This is the A4 spec-collection durability write:
+// after StoreConsumedSpec commits the spec blob, this records the path on
+// the dependency so the needsSpec gate is cleared on next read.
+//
+// Idempotent: a no-op (no commit) when the component/dependency is not found
+// or when specPath already matches. Returns nil in all no-op cases.
+func (s *ArtifactStore) SetDependencySpecPath(ctx context.Context, orgID, projectID, component, depName, specPath string) error {
+	design, err := s.ReadDesign(ctx, orgID, projectID)
+	if err != nil {
+		return fmt.Errorf("read design: %w", err)
+	}
+	if design == nil {
+		return nil // no design yet — nothing to persist.
+	}
+	for i := range design.Components {
+		comp := design.Components[i]
+		if comp.Name != component {
+			continue
+		}
+		// Found the component — now find the dependency.
+		found := false
+		for j := range comp.Dependencies {
+			if comp.Dependencies[j].Name != depName {
+				continue
+			}
+			if comp.Dependencies[j].SpecPath == specPath {
+				return nil // idempotent — already recorded.
+			}
+			comp.Dependencies[j].SpecPath = specPath
+			found = true
+			break
+		}
+		if !found {
+			return nil // dep not found — nothing to persist.
+		}
+		// Render ONLY this component's design.md through the canonical encoder.
+		files, ferr := SplitDesign(&DesignFile{Components: []models.DesignComponent{comp}})
+		if ferr != nil {
+			return fmt.Errorf("render component %q design: %w", comp.Name, ferr)
+		}
+		subPath := componentDirPrefix + comp.Name + "/design.md"
+		content, ok := files[subPath]
+		if !ok {
+			return fmt.Errorf("render component %q design: %q missing from split", comp.Name, subPath)
+		}
+		msg := fmt.Sprintf("chore(marketplace): record specPath for %s/%s", component, depName)
+		if _, cerr := s.artifactSvc.CommitDesignFile(ctx, orgID, projectID, subPath, content, msg); cerr != nil {
+			return fmt.Errorf("commit %s: %w", subPath, cerr)
+		}
+		return nil
+	}
+	return nil // component not found — nothing to persist.
+}
+
 // designComponentMatches reports whether a design component named `logical` is
 // the provider identified by `target`, which may be the bare logical name or
 // the OC component name `<project>-<logical>`. Mirrors the cascade's

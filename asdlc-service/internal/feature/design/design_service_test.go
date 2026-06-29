@@ -19,6 +19,7 @@ package design
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
@@ -28,8 +29,16 @@ import (
 // unit tests. All methods return sensible zero values unless overridden by
 // the test via the hook fields.
 type stubArtifactService struct {
-	listDesignFilesFunc func(ctx context.Context, orgID, projectID string) (map[string]string, error)
-	putFileFunc         func(ctx context.Context, orgID, projectID, path, content, sha string) (*artifacts.PutResult, error)
+	listDesignFilesFunc    func(ctx context.Context, orgID, projectID string) (map[string]string, error)
+	putFileFunc            func(ctx context.Context, orgID, projectID, path, content, sha string) (*artifacts.PutResult, error)
+	commitDesignFileFunc   func(ctx context.Context, orgID, projectID, subPath, content, msg string) (string, error)
+	commitDesignFileCalls  []commitDesignFileCall
+}
+
+type commitDesignFileCall struct {
+	subPath string
+	content string
+	msg     string
 }
 
 func (s *stubArtifactService) GetFile(_ context.Context, _, _, _ string) (*artifacts.FileResult, error) {
@@ -57,7 +66,15 @@ func (s *stubArtifactService) DeleteDesignFile(_ context.Context, _, _, _ string
 func (s *stubArtifactService) DeleteDesignDirectory(_ context.Context, _, _, _ string) error {
 	return nil
 }
-func (s *stubArtifactService) CommitDesignFile(_ context.Context, _, _, _, _, _ string) (string, error) {
+func (s *stubArtifactService) CommitDesignFile(ctx context.Context, orgID, projectID, subPath, content, msg string) (string, error) {
+	s.commitDesignFileCalls = append(s.commitDesignFileCalls, commitDesignFileCall{
+		subPath: subPath,
+		content: content,
+		msg:     msg,
+	})
+	if s.commitDesignFileFunc != nil {
+		return s.commitDesignFileFunc(ctx, orgID, projectID, subPath, content, msg)
+	}
 	return "", nil
 }
 func (s *stubArtifactService) SaveRequirements(_ context.Context, _, _ string, _ artifacts.SaveRequest) (*artifacts.RequirementsSaveResult, error) {
@@ -260,5 +277,132 @@ func TestComponentNameFromDesignPath(t *testing.T) {
 			t.Errorf("componentNameFromDesignPath(%q) = (%q,%v), want (%q,%v)",
 				c.in, name, ok, c.wantName, c.wantOK)
 		}
+	}
+}
+
+// sampleOpenAPISpec is a minimal 3-operation OpenAPI spec used by
+// TestCollectSpec tests below.
+const sampleOpenAPISpec = `openapi: 3.0.3
+info:
+  title: OpenWeather API
+  version: "1.0"
+paths:
+  /weather:
+    get:
+      summary: Current weather
+      responses:
+        "200":
+          description: OK
+  /forecast:
+    get:
+      summary: Forecast
+      responses:
+        "200":
+          description: OK
+    post:
+      summary: Request forecast
+      responses:
+        "200":
+          description: OK
+`
+
+// TestCollectSpec_RawSpecReturnsSpecPathAndOpCount asserts that CollectSpec
+// with a rawSpec argument stores the spec (via StoreConsumedSpec), sets the
+// specPath on the dependency (via SetDependencySpecPath), and returns the
+// component-relative specPath + operation count. Two CommitDesignFile calls
+// are expected: one from StoreConsumedSpec for the spec blob, one from
+// SetDependencySpecPath for the component's design.md.
+func TestCollectSpec_RawSpecReturnsSpecPathAndOpCount(t *testing.T) {
+	compDesignMd := `---
+type: service
+language: go
+dependencies:
+  - kind: external
+    name: openweather
+    description: weather API
+    needsSpec: true
+---
+Build a weather service.
+`
+	files := map[string]string{
+		"design.md":                        "System overview.\n",
+		"components/weather-api/design.md": compDesignMd,
+	}
+
+	stub := &stubArtifactService{
+		listDesignFilesFunc: func(_ context.Context, _, _ string) (map[string]string, error) {
+			return files, nil
+		},
+	}
+	store := artifacts.NewArtifactStore(stub)
+	svc := NewDesignService(store, nil, stub)
+
+	specPath, opCount, err := svc.CollectSpec(
+		context.Background(), "org1", "proj1",
+		"weather-api", "openweather",
+		sampleOpenAPISpec, "",
+	)
+	if err != nil {
+		t.Fatalf("CollectSpec returned unexpected error: %v", err)
+	}
+	wantSpecPath := "dependencies/openweather.openapi.yaml"
+	if specPath != wantSpecPath {
+		t.Errorf("specPath = %q, want %q", specPath, wantSpecPath)
+	}
+	if opCount != 3 {
+		t.Errorf("operationCount = %d, want 3", opCount)
+	}
+	// Two CommitDesignFile calls: spec blob + design.md with specPath.
+	if len(stub.commitDesignFileCalls) != 2 {
+		t.Fatalf("expected 2 CommitDesignFile calls, got %d", len(stub.commitDesignFileCalls))
+	}
+	// First call: spec blob.
+	firstCall := stub.commitDesignFileCalls[0]
+	wantSpecSubPath := "components/weather-api/dependencies/openweather.openapi.yaml"
+	if firstCall.subPath != wantSpecSubPath {
+		t.Errorf("first CommitDesignFile subPath = %q, want %q", firstCall.subPath, wantSpecSubPath)
+	}
+	// Second call: design.md with specPath.
+	secondCall := stub.commitDesignFileCalls[1]
+	wantDesignSubPath := "components/weather-api/design.md"
+	if secondCall.subPath != wantDesignSubPath {
+		t.Errorf("second CommitDesignFile subPath = %q, want %q", secondCall.subPath, wantDesignSubPath)
+	}
+	if !strings.Contains(secondCall.content, "specPath:") {
+		t.Errorf("updated design.md should contain specPath, got:\n%s", secondCall.content)
+	}
+}
+
+// TestCollectSpec_BothFieldsReturns400 asserts that providing both rawSpec
+// and specURL returns an error (validation: exactly one must be set).
+func TestCollectSpec_BothFieldsReturns400(t *testing.T) {
+	stub := &stubArtifactService{}
+	store := artifacts.NewArtifactStore(stub)
+	svc := NewDesignService(store, nil, stub)
+
+	_, _, err := svc.CollectSpec(
+		context.Background(), "org1", "proj1",
+		"comp", "dep",
+		sampleOpenAPISpec, "https://example.com/openapi.yaml",
+	)
+	if err == nil {
+		t.Fatal("expected error when both rawSpec and specURL provided, got nil")
+	}
+}
+
+// TestCollectSpec_NeitherFieldReturns400 asserts that providing neither
+// rawSpec nor specURL returns an error.
+func TestCollectSpec_NeitherFieldReturns400(t *testing.T) {
+	stub := &stubArtifactService{}
+	store := artifacts.NewArtifactStore(stub)
+	svc := NewDesignService(store, nil, stub)
+
+	_, _, err := svc.CollectSpec(
+		context.Background(), "org1", "proj1",
+		"comp", "dep",
+		"", "",
+	)
+	if err == nil {
+		t.Fatal("expected error when neither rawSpec nor specURL provided, got nil")
 	}
 }

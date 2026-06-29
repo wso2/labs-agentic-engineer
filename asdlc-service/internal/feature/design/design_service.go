@@ -48,6 +48,11 @@ var ErrSpecNotApproved = errors.New("spec must be saved (tagged) before generati
 // before the design can be approved.
 var ErrUnresolvedDependency = errors.New("design has unresolved dependencies — resolve them before saving")
 
+// ErrSpecFetchFailed is the design-domain sentinel surfaced (as 502 by the
+// HTTP handler) when FetchSpecFromURL fails to retrieve the spec from the
+// user-supplied URL.
+var ErrSpecFetchFailed = errors.New("failed to fetch spec from URL")
+
 // toK8sName is a thin in-package shim over k8sname.ToK8sName.
 func toK8sName(name string) string { return k8sname.ToK8sName(name) }
 
@@ -81,6 +86,10 @@ type DesignService interface {
 	SaveAndProceed(ctx context.Context, orgID, projectID string) (*models.Design, error)
 	DiscardChanges(ctx context.Context, orgID, projectID string) (*models.Design, error)
 	ListDesignVersions(ctx context.Context, orgID, projectID string) ([]models.ArtifactVersion, error)
+	// CollectSpec stores a consumed OpenAPI spec for an external dependency and
+	// records its specPath on the component design (clearing the needsSpec gate).
+	// Exactly one of rawSpec or specURL must be non-empty.
+	CollectSpec(ctx context.Context, orgID, projectID, component, depName, rawSpec, specURL string) (specPath string, operationCount int, err error)
 }
 
 type designService struct {
@@ -739,6 +748,35 @@ func (s *designService) ListDesignVersions(ctx context.Context, orgID, projectID
 		return nil, fmt.Errorf("list design versions: %w", err)
 	}
 	return mapDesignVersions(v), nil
+}
+
+// CollectSpec stores a consumed OpenAPI spec for an external dependency and
+// records its specPath on the component design (clearing the needsSpec gate).
+// Exactly one of rawSpec or specURL must be non-empty. When specURL is
+// provided, FetchSpecFromURL is called first; a fetch failure is wrapped in
+// ErrSpecFetchFailed so the HTTP handler can map it to a 502.
+func (s *designService) CollectSpec(ctx context.Context, orgID, projectID, component, depName, rawSpec, specURL string) (string, int, error) {
+	if rawSpec == "" && specURL == "" {
+		return "", 0, fmt.Errorf("provide rawSpec or specUrl")
+	}
+	if rawSpec != "" && specURL != "" {
+		return "", 0, fmt.Errorf("provide only one of rawSpec or specUrl")
+	}
+	if rawSpec == "" {
+		fetched, err := artifacts.FetchSpecFromURL(ctx, specURL)
+		if err != nil {
+			return "", 0, fmt.Errorf("%w: %v", ErrSpecFetchFailed, err)
+		}
+		rawSpec = fetched
+	}
+	specPath, n, err := s.store.StoreConsumedSpec(ctx, orgID, projectID, component, depName, rawSpec)
+	if err != nil {
+		return "", 0, err
+	}
+	if err := s.store.SetDependencySpecPath(ctx, orgID, projectID, component, depName, specPath); err != nil {
+		return "", 0, err
+	}
+	return specPath, n, nil
 }
 
 // extractWireframeDsls picks `.dsl` files from the requirements bundle and
