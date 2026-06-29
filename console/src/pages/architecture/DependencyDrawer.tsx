@@ -155,7 +155,7 @@ export function DependencyDrawer({
           </Stack>
         ) : (
           <Typography variant="body2" color="text.secondary">
-            Resolution UI arrives in B3–B4.
+            This dependency is resolved by the platform — no action needed here.
           </Typography>
         )}
       </Box>
