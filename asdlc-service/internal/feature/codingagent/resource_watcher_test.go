@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/wso2/asdlc/asdlc-service/clients/openchoreo"
+	"github.com/wso2/asdlc/asdlc-service/models"
 )
 
 // ---- classifyBinding unit tests (Step 1 / TDD RED → GREEN) -----------------
@@ -165,24 +166,27 @@ func readyBinding() *openchoreo.ResourceReleaseBinding {
 	}
 }
 
-// TestResourceWatcher_Sweep_ReadyBinding_DeploysTask verifies the full sweep
-// path using the real Postgres (skipped when unavailable). It inserts a
-// resource-provisioning task in `building`, runs sweep with a ready-binding fake,
-// and confirms the task reaches `deployed` + redispatch is called once.
-// Run with: go test -tags dbtest ./internal/feature/codingagent/...
+// TestResourceWatcher_Sweep_ReadyBinding_DeploysTask is a placeholder for a
+// future Postgres-backed test that verifies the full sweep path: it would insert
+// a `building` resource-provisioning task, run sweep with a ready-binding fake,
+// and confirm the task reaches `deployed` + redispatch is called once. The test
+// requires the deployments Postgres (docker-compose on :5433) and is not yet
+// implemented; remove this Skip and add assertions when that harness is wired.
 func TestResourceWatcher_Sweep_ReadyBinding_DeploysTask(t *testing.T) {
-	t.Skip("requires -tags dbtest and a live Postgres (deployments Postgres on :5433)")
+	t.Skip("placeholder: requires a live Postgres (deployments Postgres on :5433) — no assertions yet")
 }
 
 // TestResourceWatcher_Sweep_NilBinding_LeavesTask is a no-DB unit test that
-// exercises the sweep path when GetBinding returns (nil, nil) — the in-flight
-// case where the binding was not yet created. The task must remain `building`.
+// exercises the real handleTask path when GetBinding returns (nil, nil) — the
+// in-flight case where the binding has not been created yet. handleTask must
+// return without touching w.db or calling redispatch (the nil-binding branch
+// hits classifyBinding → (false,false) → default case → leave for next tick).
 func TestResourceWatcher_Sweep_NilBinding_LeavesTask(t *testing.T) {
-	// We test the classify branch: when GetBinding returns nil the classify
-	// function returns (false,false) — no DB write, no redispatch.
 	redispatchCalled := 0
-	_ = &ResourceWatcher{
-		db: nil, // handleTask only reaches DB after classifyBinding; nil binding → no DB call
+	w := &ResourceWatcher{
+		// db is nil intentionally: the not-ready branch of handleTask never
+		// reaches any DB call, so a nil *gorm.DB must not cause a panic.
+		db: nil,
 		rc: &fakeResourceClient{binding: nil},
 		redispatch: func(_ context.Context, _, _ string) (int, error) {
 			redispatchCalled++
@@ -193,25 +197,35 @@ func TestResourceWatcher_Sweep_NilBinding_LeavesTask(t *testing.T) {
 		staleAfter:        10 * time.Minute,
 	}
 
-	// classifyBinding(nil) → (false,false) → no DB write, no redispatch.
-	// We verify this by asserting redispatch is NOT called.
-	done, failed := classifyBinding(nil)
-	if done || failed {
-		t.Fatalf("nil binding classify: want (false,false), got (%v,%v)", done, failed)
+	task := models.ComponentTask{
+		ID:           "test-task-nil-binding",
+		OrgID:        "test-org",
+		ProjectID:    "test-project",
+		ResourceName: "my-db",
+		Status:       string(models.TaskStatusBuilding),
+		// LastEventAt is nil → stale guard is skipped.
 	}
+
+	// Call the real per-task method — must not panic even with db==nil.
+	w.handleTask(context.Background(), &task)
+
 	if redispatchCalled != 0 {
 		t.Fatalf("nil binding must not trigger redispatch, got %d calls", redispatchCalled)
 	}
+	// Status is a local copy; the real status remains unchanged because no DB
+	// write is issued on the not-ready branch.
+	if task.Status != string(models.TaskStatusBuilding) {
+		t.Fatalf("nil binding must leave task status unchanged; got %q", task.Status)
+	}
 }
 
-// TestResourceWatcher_HandleTask_ReadyBinding_CallsRedispatch exercises the
-// handleTask happy path with a fake DB. We verify that classifyBinding(readyBinding())
-// returns (true,false) and that the redispatch path is reachable.
-func TestResourceWatcher_HandleTask_ReadyBinding_CallsRedispatch(t *testing.T) {
+// TestClassifyBinding_ReadyBinding_ReturnsDone asserts that classifyBinding
+// returns (true, false) for a binding whose Ready condition is True.
+// The full handleTask path (DB update + redispatch) is exercised separately
+// by the Postgres-backed stub above once that harness is wired.
+func TestClassifyBinding_ReadyBinding_ReturnsDone(t *testing.T) {
 	done, failed := classifyBinding(readyBinding())
 	if !done || failed {
 		t.Fatalf("ready binding classify: want (true,false), got (%v,%v)", done, failed)
 	}
-	// The full handleTask path (DB update + redispatch) is tested with -tags dbtest;
-	// here we verify the classify decision that drives it.
 }
