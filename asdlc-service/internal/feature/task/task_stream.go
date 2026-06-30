@@ -442,7 +442,8 @@ func (s *taskService) persistAndIssue(
 	// authored, not LLM-authored) and validated against the component set
 	// at persist time. The LLM's `PlanItem.dependsOn` is context-only.
 	rows := make([]persistedItem, len(plan))
-	batchConns := map[string]struct{}{} // distinct `external` connections the batch binds
+	batchConns := map[string]struct{}{}   // distinct `external` connections the batch binds
+	batchResources := map[string]string{} // distinct `platform-resource` deps: name → resourceType
 	for i, p := range plan {
 		comp := byName[strings.ToLower(p.ComponentName)]
 		deps := comp.ComponentDependsOn()
@@ -463,6 +464,15 @@ func (s *taskService) persistAndIssue(
 				batchConns[dep.Name] = struct{}{}
 			}
 		}
+		// Platform-resource deps gate the component task until their
+		// resource-provisioning task is provisioned (plan §4, P5).
+		var resDeps []string
+		for _, dep := range comp.Dependencies {
+			if dep.Kind == models.DependencyKindPlatformResource {
+				resDeps = append(resDeps, dep.Name)
+				batchResources[dep.Name] = dep.ResourceType // distinct platform-resources the batch binds
+			}
+		}
 		task := &models.ComponentTask{
 			ProjectID:            projectID,
 			OrgID:                orgID,
@@ -473,6 +483,7 @@ func (s *taskService) persistAndIssue(
 			DependsOnComponents:  models.StringSlice(deps),
 			DependsOnConnections: models.StringSlice(connDeps),
 			DependsOnOrgServices: models.StringSlice(comp.OrgServiceDependsOn()),
+			DependsOnResources:   models.StringSlice(resDeps),
 			BatchID:              ptrString(batchID),
 			SourceSpecVersion:    specVersion,
 			SourceDesignVersion:  designVersion,
@@ -533,6 +544,52 @@ func (s *taskService) persistAndIssue(
 			}
 			if err := s.taskRepo.Create(ctx, cc); err != nil {
 				return nil, fmt.Errorf("create config-collection task for %q: %w", conn, err)
+			}
+		}
+	}
+
+	// resource-provisioning tasks: one per distinct `platform-resource` dep the
+	// batch binds, deduped against existing resource-provisioning tasks for the
+	// project (a re-generation or a later batch binding an already-provisioned
+	// resource adds none). No GitHub issue — created outside `rows`, so the issue
+	// loop skips them; LifecycleStatus is gh_issue_created so reconcilers skip too.
+	// NOTE(§4): No GitHub issue is created here because P5 resource provisioning
+	// commits no repo artifacts (the OC Resource + binding are authored directly
+	// against the OC API, not committed to git). A future resourceType that does
+	// commit repo artifacts would re-introduce issue creation — keep the no-issue
+	// behavior keyed on "commits artifacts", do not treat it as universal.
+	if len(batchResources) > 0 {
+		existing, lerr := s.taskRepo.ListByProjectID(ctx, orgID, projectID)
+		if lerr != nil {
+			return nil, fmt.Errorf("list tasks for resource-provisioning dedup: %w", lerr)
+		}
+		haveRes := map[string]struct{}{}
+		for _, t := range existing {
+			if t.Type == models.TaskTypeResourceProvisioning && t.ResourceName != "" {
+				haveRes[t.ResourceName] = struct{}{}
+			}
+		}
+		order := len(rows)
+		for depName := range batchResources {
+			if _, ok := haveRes[depName]; ok {
+				continue
+			}
+			order++
+			rp := &models.ComponentTask{
+				ProjectID:       projectID,
+				OrgID:           orgID,
+				Type:            models.TaskTypeResourceProvisioning,
+				ResourceName:    depName,
+				ComponentName:   depName, // surfaces the resource on the board
+				Title:           "Provision resource: " + depName,
+				BatchID:         ptrString(batchID),
+				Order:           order,
+				Status:          string(models.TaskStatusPending),
+				LifecycleStatus: string(models.TaskLifecycleGhIssueCreated),
+				ExecType:        "SYSTEM",
+			}
+			if err := s.taskRepo.Create(ctx, rp); err != nil {
+				return nil, fmt.Errorf("create resource-provisioning task for %q: %w", depName, err)
 			}
 		}
 	}

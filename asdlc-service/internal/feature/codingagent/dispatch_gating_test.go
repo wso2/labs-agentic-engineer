@@ -48,7 +48,7 @@ func makeTask(name string, deps, connDeps, orgServiceDeps []string) *models.Comp
 // TestDepsAllDeployed_NoDeps: a task with no deps is always dispatchable.
 func TestDepsAllDeployed_NoDeps(t *testing.T) {
 	task := makeTask("frontend", nil, nil, nil)
-	if !depsAllDeployed(task, nil, nil) {
+	if !depsAllDeployed(task, nil, nil, nil) {
 		t.Fatal("want true for a task with no deps, got false")
 	}
 }
@@ -58,7 +58,7 @@ func TestDepsAllDeployed_NoDeps(t *testing.T) {
 func TestDepsAllDeployed_ComponentDepMet(t *testing.T) {
 	task := makeTask("frontend", []string{"backend-api"}, nil, nil)
 	statusByComp := map[string]string{"backend-api": string(models.TaskStatusDeployed)}
-	if !depsAllDeployed(task, statusByComp, nil) {
+	if !depsAllDeployed(task, statusByComp, nil, nil) {
 		t.Fatal("want true when component dep is deployed, got false")
 	}
 }
@@ -71,7 +71,7 @@ func TestDepsAllDeployed_ComponentDepNotMet(t *testing.T) {
 
 	// dep is pending — not deployed.
 	statusByComp := map[string]string{"backend-api": string(models.TaskStatusPending)}
-	if depsAllDeployed(task, statusByComp, nil) {
+	if depsAllDeployed(task, statusByComp, nil, nil) {
 		t.Fatal("want false when component dep is pending (not yet deployed), got true")
 	}
 }
@@ -81,7 +81,7 @@ func TestDepsAllDeployed_ComponentDepNotMet(t *testing.T) {
 func TestDepsAllDeployed_ComponentDepUnknown(t *testing.T) {
 	task := makeTask("frontend", []string{"backend-api"}, nil, nil)
 	// statusByComp is empty — dep is unknown.
-	if depsAllDeployed(task, map[string]string{}, nil) {
+	if depsAllDeployed(task, map[string]string{}, nil, nil) {
 		t.Fatal("want false for unknown component dep (fail-closed), got true")
 	}
 }
@@ -91,7 +91,7 @@ func TestDepsAllDeployed_ComponentDepUnknown(t *testing.T) {
 func TestDepsAllDeployed_ConnectionDepMet(t *testing.T) {
 	task := makeTask("worker", nil, []string{"stripe"}, nil)
 	statusByConn := map[string]string{"stripe": string(models.TaskStatusDeployed)}
-	if !depsAllDeployed(task, nil, statusByConn) {
+	if !depsAllDeployed(task, nil, statusByConn, nil) {
 		t.Fatal("want true when connection dep is deployed, got false")
 	}
 }
@@ -101,7 +101,7 @@ func TestDepsAllDeployed_ConnectionDepMet(t *testing.T) {
 func TestDepsAllDeployed_ConnectionDepNotMet(t *testing.T) {
 	task := makeTask("worker", nil, []string{"stripe"}, nil)
 	statusByConn := map[string]string{"stripe": string(models.TaskStatusPending)}
-	if depsAllDeployed(task, nil, statusByConn) {
+	if depsAllDeployed(task, nil, statusByConn, nil) {
 		t.Fatal("want false when connection dep is not deployed, got true")
 	}
 }
@@ -116,7 +116,7 @@ func TestDepsAllDeployed_OrgServiceDepDoesNotGate(t *testing.T) {
 	task := makeTask("consumer", nil, nil, []string{"payment-service"})
 	// Both maps are empty — there is no "payment-service" entry anywhere.
 	// Post-A2c: this must return true (org-service deps are not checked here).
-	if !depsAllDeployed(task, map[string]string{}, map[string]string{}) {
+	if !depsAllDeployed(task, map[string]string{}, map[string]string{}, nil) {
 		t.Fatal("A2c regression: org-service dep must NOT gate dispatch (block-at-proceed guarantees pre-resolution); want true, got false")
 	}
 }
@@ -130,7 +130,7 @@ func TestDepsAllDeployed_OrgServiceAndComponentMixed(t *testing.T) {
 
 	// org-service dep ("payment-service") is unknown — must still pass because
 	// the component dep is deployed and org-service no longer gates.
-	if !depsAllDeployed(task, statusByComp, nil) {
+	if !depsAllDeployed(task, statusByComp, nil, nil) {
 		t.Fatal("want true when same-project dep deployed and org-service dep present but ignored; got false")
 	}
 }
@@ -143,7 +143,7 @@ func TestDepsAllDeployed_OrgServiceAndComponentMixed_ComponentNotDeployed(t *tes
 	// local-api is in_progress, not deployed.
 	statusByComp := map[string]string{"local-api": string(models.TaskStatusInProgress)}
 
-	if depsAllDeployed(task, statusByComp, nil) {
+	if depsAllDeployed(task, statusByComp, nil, nil) {
 		t.Fatal("want false when same-project component dep is not deployed; got true")
 	}
 }
@@ -160,7 +160,23 @@ func TestDepsAllDeployed_AllDepsDeployed(t *testing.T) {
 	statusByComp := map[string]string{"backend": string(models.TaskStatusDeployed)}
 	statusByConn := map[string]string{"postgres": string(models.TaskStatusDeployed)}
 
-	if !depsAllDeployed(task, statusByComp, statusByConn) {
+	if !depsAllDeployed(task, statusByComp, statusByConn, nil) {
 		t.Fatal("want true when component and connection deps are deployed; got false")
+	}
+}
+
+// TestDepsAllDeployed_GatesOnResource: a component task with a platform-resource
+// dep is held until the resource-provisioning task reaches `deployed`.
+func TestDepsAllDeployed_GatesOnResource(t *testing.T) {
+	task := &models.ComponentTask{DependsOnResources: models.StringSlice{"maindb"}}
+	byComp := map[string]string{}
+	byConn := map[string]string{}
+	notReady := map[string]string{"maindb": string(models.TaskStatusBuilding)}
+	if depsAllDeployed(task, byComp, byConn, notReady) {
+		t.Fatal("should gate while provisioning")
+	}
+	ready := map[string]string{"maindb": string(models.TaskStatusDeployed)}
+	if !depsAllDeployed(task, byComp, byConn, ready) {
+		t.Fatal("should dispatch when deployed")
 	}
 }

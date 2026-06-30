@@ -340,17 +340,24 @@ func (s *dispatchService) DispatchTasks(ctx context.Context, orgID, projectID st
 		return nil, fmt.Errorf("get credential identity: %w", err)
 	}
 
-	// Deploy-gating. Build a {componentName → status} index for
-	// dependsOn resolution. A task is dispatchable only when every task
-	// it dependsOn (by component name) has reached `deployed`. This is
-	// per-batch — DependsOnComponents lists names that map 1:1 to tasks
-	// in the same batch (validated at persist time in task_stream.go).
+	// Deploy-gating. Build {componentName → status}, {connectionName → status},
+	// and {resourceName → status} indexes for dependsOn resolution. A task is
+	// dispatchable only when every task it dependsOn has reached `deployed`.
+	// Per-batch — DependsOnComponents lists names that map 1:1 to tasks in the
+	// same batch (validated at persist time in task_stream.go).
 	statusByComponent := make(map[string]string, len(tasks))
 	statusByConnection := make(map[string]string, len(tasks))
+	statusByResource := make(map[string]string, len(tasks))
 	for _, t := range tasks {
 		if t.Type == models.TaskTypeConfigCollection {
 			if t.ConnectionName != "" {
 				statusByConnection[t.ConnectionName] = t.Status
+			}
+			continue
+		}
+		if t.Type == models.TaskTypeResourceProvisioning {
+			if t.ResourceName != "" {
+				statusByResource[t.ResourceName] = t.Status
 			}
 			continue
 		}
@@ -374,8 +381,13 @@ func (s *dispatchService) DispatchTasks(ctx context.Context, orgID, projectID st
 		if task.Type == models.TaskTypeConfigCollection {
 			continue
 		}
+		// resource-provisioning tasks are driven by the resource provisioner +
+		// readiness watcher, not the coding agent — never dispatch them.
+		if task.Type == models.TaskTypeResourceProvisioning {
+			continue
+		}
 		if task.Status == string(models.TaskStatusOnHold) {
-			if !depsAllDeployed(task, statusByComponent, statusByConnection) {
+			if !depsAllDeployed(task, statusByComponent, statusByConnection, statusByResource) {
 				continue
 			}
 			task.Status = string(models.TaskStatusPending)
@@ -388,7 +400,7 @@ func (s *dispatchService) DispatchTasks(ctx context.Context, orgID, projectID st
 			continue
 		}
 
-		if !depsAllDeployed(task, statusByComponent, statusByConnection) {
+		if !depsAllDeployed(task, statusByComponent, statusByConnection, statusByResource) {
 			task.Status = string(models.TaskStatusOnHold)
 			if err := s.taskRepo.Update(ctx, task); err != nil {
 				slog.WarnContext(ctx, "set on_hold", "task", task.ID, "error", err)
@@ -413,7 +425,9 @@ func (s *dispatchService) DispatchTasks(ctx context.Context, orgID, projectID st
 // is satisfied: each DependsOnComponents name maps to a task whose Status ==
 // deployed, AND each DependsOnConnections name maps to a config-collection
 // task whose Status == deployed (i.e. the connection's values were collected +
-// the OC Resource model provisioned).
+// the OC Resource model provisioned), AND each DependsOnResources name maps
+// to a resource-provisioning task whose Status == deployed (i.e. the platform
+// resource has been provisioned and is Ready).
 //
 // NOTE(A2c): The org-service (cross-project) gate has been retired. Under the
 // block-at-proceed model (A2b) a consumer task can only reach dispatch after
@@ -422,9 +436,9 @@ func (s *dispatchService) DispatchTasks(ctx context.Context, orgID, projectID st
 // stored on the task row and used for workload.yaml dep-comment rendering
 // (resolveConsumerDependenciesYAML) — it just no longer gates dispatch.
 //
-// Unknown component/connection names return false (fail closed; the persist-
-// time validator in task_stream.go is the upstream guard).
-func depsAllDeployed(task *models.ComponentTask, statusByComponent, statusByConnection map[string]string) bool {
+// Unknown component/connection/resource names return false (fail closed; the
+// persist-time validator in task_stream.go is the upstream guard).
+func depsAllDeployed(task *models.ComponentTask, statusByComponent, statusByConnection, statusByResource map[string]string) bool {
 	for _, depComponent := range task.DependsOnComponents {
 		if statusByComponent[depComponent] != string(models.TaskStatusDeployed) {
 			return false
@@ -432,6 +446,11 @@ func depsAllDeployed(task *models.ComponentTask, statusByComponent, statusByConn
 	}
 	for _, depConn := range task.DependsOnConnections {
 		if statusByConnection[depConn] != string(models.TaskStatusDeployed) {
+			return false
+		}
+	}
+	for _, depRes := range task.DependsOnResources {
+		if statusByResource[depRes] != string(models.TaskStatusDeployed) {
 			return false
 		}
 	}

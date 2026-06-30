@@ -145,6 +145,17 @@ type ComponentTask struct {
 	// collects. Empty for component tasks.
 	ConnectionName string `gorm:"column:connection_name;index" json:"connectionName,omitempty"`
 
+	// DependsOnResources lists the `platform-resource` dependency names this
+	// component binds. Gates the component task until each resource's
+	// resource-provisioning task is `deployed` (provisioned + Ready). Platform-
+	// authored from the design's platform-resource dependencies (plan §4, P5).
+	DependsOnResources StringSlice `gorm:"column:depends_on_resources;type:jsonb;serializer:json" json:"dependsOnResources,omitempty"`
+
+	// ResourceName is set only on resource-provisioning tasks (Type ==
+	// resource-provisioning): the platform-resource dependency this task
+	// provisions. Empty for other task types. (Mirrors ConnectionName.)
+	ResourceName string `gorm:"column:resource_name;index" json:"resourceName,omitempty"`
+
 	// Lineage — set at generation time, immutable thereafter.
 	BatchID             *string `gorm:"type:uuid;index" json:"batchId,omitempty"`
 	SourceDesignVersion string  `gorm:"type:text" json:"sourceDesignVersion,omitempty"`
