@@ -1,0 +1,44 @@
+# RBAC for OpenChoreo to render the postgres-cnpg ClusterResourceType.
+#
+# OC's RenderedRelease controller applies a ResourceType's rendered resources[]
+# into the consuming project's data-plane namespace (`dp-<...>`) — but it does so
+# as the DATA-PLANE agent SA `cluster-agent-dataplane` (namespace
+# `openchoreo-data-plane`), NOT the control-plane controller-manager. For
+# postgres-cnpg the rendered object is a `postgresql.cnpg.io/v1 Cluster`, a CRD
+# neither of that agent's roles
+# (`cluster-agent-dataplane-openchoreo-data-plane`, `wso2-api-platform-gateway-module`)
+# covers. Without this grant provisioning fails with:
+#   clusters.postgresql.cnpg.io "<name>" is forbidden: User
+#   "system:serviceaccount:openchoreo-data-plane:cluster-agent-dataplane"
+#   cannot patch resource "clusters" in API group "postgresql.cnpg.io" ...
+#
+# Least privilege: only the CNPG Cluster lifecycle verbs the data-plane applier
+# needs (create/patch/update to apply, get/list/watch to track status into
+# applied.<id> for readyWhen, delete for retainPolicy: Delete). The
+# CNPG-generated `<cluster>-app` Secret is read for outputs via the agent's
+# EXISTING secrets grant, so secrets are intentionally NOT re-granted here.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: openchoreo-dataplane-cnpg
+  labels:
+    app.kubernetes.io/part-of: asdlc
+rules:
+  - apiGroups: ["postgresql.cnpg.io"]
+    resources: ["clusters"]
+    verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: openchoreo-dataplane-cnpg
+  labels:
+    app.kubernetes.io/part-of: asdlc
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: openchoreo-dataplane-cnpg
+subjects:
+  - kind: ServiceAccount
+    name: cluster-agent-dataplane
+    namespace: openchoreo-data-plane

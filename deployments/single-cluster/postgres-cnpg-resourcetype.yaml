@@ -1,0 +1,82 @@
+# postgres-cnpg — sample platform-resource ClusterResourceType (P5).
+#
+# Installed by the local deployments/ scripts (acting as the cluster PE would);
+# app-factory's BFF only DISCOVERS and REFERENCES this type — it never authors a
+# ClusterResourceType (see p5-constraints "app-factory authors only the Resource +
+# binding"). This is the concrete `resourceType` an architect's platform-resource
+# dependency names (resourceType == ClusterResourceType.metadata.name == "postgres-cnpg").
+#
+# It renders a CloudNativePG `Cluster` (postgresql.cnpg.io/v1). CNPG auto-generates
+# a `<cluster>-app` Secret with keys: host, port, dbname, username, password, user,
+# uri (+ pgpass / *-jdbc-uri variants). The Resource model resolves `${metadata.name}`
+# to a hashed render name (e.g. `r-<binding>-<hash>`); CNPG names the app secret and
+# the `-rw` Service off that same name, so the `${metadata.name}-...` refs line up.
+#
+# CEL context (per OC 1.1.1 ResourceType CRD docs): readyWhen/outputs are evaluated
+# against metadata.*, parameters.*, environmentConfigs.*, dataplane.*, and — once the
+# manifest is applied — applied.<id>.status.* (the rendered object's live status).
+---
+apiVersion: openchoreo.dev/v1alpha1
+kind: ClusterResourceType
+metadata:
+  name: postgres-cnpg
+spec:
+  retainPolicy: Delete
+  parameters:
+    openAPIV3Schema:
+      type: object
+      properties:
+        version:
+          type: string
+          default: "16"
+        storage:
+          type: string
+          default: "1Gi"
+        instances:
+          type: integer
+          default: 1
+  resources:
+    - id: cluster
+      # NO readyWhen: we rely on OC 1.1.1's per-Kind health inference (CRD doc:
+      # "If unset, falls back to RenderedRelease per-Kind health inference"). OC
+      # tracks the rendered Cluster's live health (`healthStatus: Healthy`) off
+      # CNPG's own phase/Ready signals. A CEL readyWhen on the Cluster status does
+      # NOT work here: OC freezes only a minimal subset of a foreign CRD's status
+      # into `applied.<id>.status` (image / operatorCertificateFingerprint /
+      # pgDataImageInfo) at apply time — it omits `.phase` AND `.conditions`, so
+      # `applied.cluster.status.phase` / `.conditions` raise "no such key" and the
+      # binding never settles. Same foreign-CRD snapshot limitation P2 hit with ESO.
+      template:
+        apiVersion: postgresql.cnpg.io/v1
+        kind: Cluster
+        metadata:
+          name: ${metadata.name}
+          namespace: ${metadata.namespace}
+          labels: ${metadata.labels}
+        spec:
+          instances: ${parameters.instances}
+          imageName: ghcr.io/cloudnative-pg/postgresql:${parameters.version}
+          storage:
+            size: ${parameters.storage}
+          bootstrap:
+            initdb:
+              database: appdb
+              owner: appuser
+  outputs:
+    # Plain coordinates — exposed as values (the BFF surfaces them un-masked).
+    - name: host
+      value: ${metadata.name}-rw.${metadata.namespace}.svc.cluster.local
+    - name: port
+      value: "5432"
+    - name: dbname
+      value: appdb
+    # Credentials — resolved from the CNPG-generated `<cluster>-app` Secret as
+    # references only (the BFF reads the secretKeyRef, never the value).
+    - name: user
+      secretKeyRef:
+        name: ${metadata.name}-app
+        key: username
+    - name: password
+      secretKeyRef:
+        name: ${metadata.name}-app
+        key: password

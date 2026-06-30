@@ -543,6 +543,16 @@ spec:
 OCEOF
 echo "✅ ClusterComponentType 'deployment/web-application' created"
 
+# ── Sample platform-resource: postgres-cnpg ClusterResourceType (P5) ────────
+# The cluster PE installs the platform-resource catalog; app-factory's BFF only
+# DISCOVERS and REFERENCES these types (it never authors a ClusterResourceType).
+# postgres-cnpg renders a CloudNativePG `Cluster`; its RBAC grant lets OC's
+# data-plane agent apply that foreign CRD into the `dp-*` namespace (without it,
+# provisioning fails with a `clusters.postgresql.cnpg.io is forbidden` denial).
+kubectl apply -f "${SCRIPT_DIR}/../single-cluster/postgres-cnpg-rbac.yaml"
+kubectl apply -f "${SCRIPT_DIR}/../single-cluster/postgres-cnpg-resourcetype.yaml"
+echo "✅ ClusterResourceType 'postgres-cnpg' + CNPG data-plane RBAC created"
+
 # ── Per-org NAMESPACED ComponentTypes (local stand-in for cloud's
 #    platform-api ProvisionOrgUnit) ────────────────────────────────────────
 # The BFF references the per-org namespaced ComponentType (kind=ComponentType),
