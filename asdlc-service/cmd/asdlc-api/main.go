@@ -58,6 +58,7 @@ import (
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/orgcreds"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/project"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/requirements"
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/resources"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/runtimeconfig"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/skills"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/task"
@@ -807,6 +808,9 @@ func main() {
 	// the OC Workloads. Backs the MCP `list_org_endpoints` tool + org-service
 	// consumer wiring.
 	orgEndpointCatalog := connections.NewOrgEndpointCatalog(resourceClient)
+	// Platform-resource-type catalog (P5): read-only discovery of installed
+	// ClusterResourceTypes. Backs the MCP `list_platform_resource_types` tool.
+	resourceTypeCatalog := resources.NewResourceTypeCatalog(resourceClient)
 	// Mark org-service deps resolved/unresolved in the design view against the
 	// live catalog (supersedes the static external-API map for org-service).
 	artifactStore.SetOrgServiceResolver(orgEndpointCatalog)
@@ -1000,6 +1004,7 @@ func main() {
 		TaskJWT:              taskJWT,
 		ConnectionRegistry:   connectionRegistry,
 		OrgEndpointCatalog:   orgEndpointCatalog,
+		ResourceTypeCatalog:  resourceTypeCatalog,
 	}
 
 	// Code-first OpenAPI (Huma) feature dependencies. api.NewHandler creates the

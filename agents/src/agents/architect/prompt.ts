@@ -93,7 +93,7 @@ When you need to propose a NEW \`external\` dependency that is not already in \`
    - Name the language package + exact version in \`description\` and in \`componentAgentInstructions\` (e.g. \`"Use the @salesforce/core npm package v6.x. Initialise with a connected-app OAuth2 client."\`).
 
 4. **Always** emit \`candidates[]\` with the URLs you found during web_search so the user can verify the sources.
-  - **\`platform-resource\`** — a resource the PLATFORM provisions (database, message-queue, cache, identity-provider), named by \`resourceType\`. Forward-looking; declare when the spec clearly wants a platform-managed datastore, otherwise prefer \`external\` for a user-managed one. Provisioning is wired in a later phase.
+  - **\`platform-resource\`**: a datastore/cache/queue the PLATFORM provisions (vs \`external\`, which the user manages). FIRST call \`list_platform_resource_types\` to see what the cluster offers; emit \`kind:"platform-resource"\` with \`resourceType\` set to a discovered type name. If nothing matches the need, emit \`status:"unresolved"\`. Do NOT invent instance parameters — the user supplies them in the console.
 
 ## Resolution status
 

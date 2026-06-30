@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/wso2/asdlc/asdlc-service/internal/feature/resources"
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
 
@@ -96,12 +97,22 @@ type orgEndpointView struct {
 	NamespaceVisible bool   `json:"namespaceVisible"` // consumable cross-project as an org-service
 }
 
+// mcpHandler holds the dependencies for the JSON-RPC MCP server.
+type mcpHandler struct {
+	registry      *Registry
+	catalog       *OrgEndpointCatalog
+	resourceTypes *resources.ResourceTypeCatalog
+}
+
 // NewMCPHandler returns the JSON-RPC MCP handler for the connection registry +
-// the org endpoint catalog. orgHandle is read from the request path. catalog may
-// be nil (the list_org_endpoints tool then reports an empty catalog).
-func NewMCPHandler(registry *Registry, catalog *OrgEndpointCatalog) http.Handler {
+// the org endpoint catalog + the platform-resource-type catalog. orgHandle is
+// read from the request path. catalog may be nil (the list_org_endpoints tool
+// then reports an empty catalog). resourceTypes may be nil (the
+// list_platform_resource_types tool then reports an empty list).
+func NewMCPHandler(registry *Registry, catalog *OrgEndpointCatalog, resourceTypes *resources.ResourceTypeCatalog) http.Handler {
+	h := &mcpHandler{registry: registry, catalog: catalog, resourceTypes: resourceTypes}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if registry == nil {
+		if h.registry == nil {
 			http.Error(w, "connections registry not configured", http.StatusServiceUnavailable)
 			return
 		}
@@ -131,7 +142,7 @@ func NewMCPHandler(registry *Registry, catalog *OrgEndpointCatalog) http.Handler
 		case "tools/list":
 			writeRPCResult(w, req.ID, map[string]any{"tools": mcpTools()})
 		case "tools/call":
-			handleToolCall(w, r, registry, catalog, orgHandle, req)
+			handleToolCall(w, r, h, orgHandle, req)
 		default:
 			writeRPCError(w, req.ID, -32601, "method not found: "+req.Method)
 		}
@@ -169,10 +180,18 @@ func mcpTools() []mcpTool {
 				"published it cross-project, so it cannot be consumed yet.",
 			InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
 		},
+		{
+			Name: "list_platform_resource_types",
+			Description: "List the platform-provisioned resource types (databases, caches, queues) installed " +
+				"on the cluster. Each entry is a resourceType you can reference in a platform-resource " +
+				"dependency, with its provisioning parameters and the outputs it exposes. Read-only — you " +
+				"never author these.",
+			InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+		},
 	}
 }
 
-func handleToolCall(w http.ResponseWriter, r *http.Request, registry *Registry, catalog *OrgEndpointCatalog, orgHandle string, req jsonrpcRequest) {
+func handleToolCall(w http.ResponseWriter, r *http.Request, h *mcpHandler, orgHandle string, req jsonrpcRequest) {
 	var call struct {
 		Name      string `json:"name"`
 		Arguments struct {
@@ -187,7 +206,7 @@ func handleToolCall(w http.ResponseWriter, r *http.Request, registry *Registry, 
 
 	switch call.Name {
 	case "list_connections":
-		conns, err := registry.List(r.Context(), orgHandle)
+		conns, err := h.registry.List(r.Context(), orgHandle)
 		if err != nil {
 			writeToolError(w, req.ID, fmt.Sprintf("list connections: %v", err))
 			return
@@ -202,7 +221,7 @@ func handleToolCall(w http.ResponseWriter, r *http.Request, registry *Registry, 
 			writeToolError(w, req.ID, "missing required argument: name")
 			return
 		}
-		c, err := registry.Get(r.Context(), orgHandle, call.Arguments.Name)
+		c, err := h.registry.Get(r.Context(), orgHandle, call.Arguments.Name)
 		if err != nil {
 			writeToolError(w, req.ID, fmt.Sprintf("get connection: %v", err))
 			return
@@ -213,7 +232,7 @@ func handleToolCall(w http.ResponseWriter, r *http.Request, registry *Registry, 
 		}
 		writeToolText(w, req.ID, mustJSON(map[string]any{"found": true, "connection": toConnectionView(c)}))
 	case "list_org_endpoints":
-		infos, err := catalog.List(r.Context(), orgHandle)
+		infos, err := h.catalog.List(r.Context(), orgHandle)
 		if err != nil {
 			writeToolError(w, req.ID, fmt.Sprintf("list org endpoints: %v", err))
 			return
@@ -229,6 +248,13 @@ func handleToolCall(w http.ResponseWriter, r *http.Request, registry *Registry, 
 			})
 		}
 		writeToolText(w, req.ID, mustJSON(map[string]any{"endpoints": views}))
+	case "list_platform_resource_types":
+		types, err := h.resourceTypes.List(r.Context())
+		if err != nil {
+			writeToolError(w, req.ID, fmt.Sprintf("list platform resource types: %v", err))
+			return
+		}
+		writeToolText(w, req.ID, mustJSON(map[string]any{"resourceTypes": types}))
 	default:
 		writeRPCError(w, req.ID, -32602, "unknown tool: "+call.Name)
 	}
