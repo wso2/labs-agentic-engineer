@@ -1127,17 +1127,21 @@ func (s *dispatchService) resolveConsumerDependenciesYAML(
 	ctx context.Context,
 	task *models.ComponentTask,
 ) (string, error) {
-	comp, err := artifacts.ResolveDesignComponent(ctx, s.store, task)
-	if err != nil {
-		return "", fmt.Errorf("resolve design component: %w", err)
-	}
-
 	var deps workloadDeps
 
-	// org-service endpoints (cross-project, visibility namespace). Skip any
-	// whose provider hasn't published namespace-visible yet — the cascade
-	// re-drives, and the agent can add it later.
+	// org-service endpoints (cross-project, visibility namespace) and same-project
+	// component siblings both require the design component to enumerate dep names.
+	// Resolve lazily — only when the org-service resolver is wired — so the
+	// platform-resource branch can run without a store in unit tests.
 	if s.orgServiceResolver != nil {
+		comp, err := artifacts.ResolveDesignComponent(ctx, s.store, task)
+		if err != nil {
+			return "", fmt.Errorf("resolve design component: %w", err)
+		}
+
+		// org-service endpoints (cross-project, visibility namespace). Skip any
+		// whose provider hasn't published namespace-visible yet — the cascade
+		// re-drives, and the agent can add it later.
 		for _, name := range comp.OrgServiceDependsOn() {
 			target, ok, rerr := s.orgServiceResolver.ResolveNamespaceVisible(ctx, task.OrgID, name)
 			if rerr != nil {
@@ -1154,16 +1158,14 @@ func (s *dispatchService) resolveConsumerDependenciesYAML(
 				EnvBindings: map[string]string{"address": connections.OrgServiceURLEnv(name)},
 			})
 		}
-	}
 
-	// same-project `component` siblings (visibility project). The sibling's OC
-	// component/owner name is `<project>-<logicalName>`; the gate already held
-	// this consumer until every same-project dep was deployed, so the sibling's
-	// Workload is in the catalog. project visibility is implicit, so this uses
-	// ResolveProjectEndpoint (NOT the namespace-visible lookup). The env var keys
-	// on the LOGICAL dep name (e.g. `todo-api` → `TODO_API_URL`), matching the
-	// ReleaseBinding `<NAME>_URL` convention. Project is omitted (same project).
-	if s.orgServiceResolver != nil {
+		// same-project `component` siblings (visibility project). The sibling's OC
+		// component/owner name is `<project>-<logicalName>`; the gate already held
+		// this consumer until every same-project dep was deployed, so the sibling's
+		// Workload is in the catalog. project visibility is implicit, so this uses
+		// ResolveProjectEndpoint (NOT the namespace-visible lookup). The env var keys
+		// on the LOGICAL dep name (e.g. `todo-api` → `TODO_API_URL`), matching the
+		// ReleaseBinding `<NAME>_URL` convention. Project is omitted (same project).
 		for _, depName := range comp.ComponentDependsOn() {
 			ocComponent := task.ProjectID + "-" + depName
 			target, ok, rerr := s.orgServiceResolver.ResolveProjectEndpoint(ctx, task.OrgID, task.ProjectID, ocComponent)
@@ -1183,10 +1185,12 @@ func (s *dispatchService) resolveConsumerDependenciesYAML(
 		}
 	}
 
-	// external connection resources. Read each connection's development binding
-	// for its resolved outputs (== env var names; mirror WireConsumer's
-	// output.Name → output.Name mapping). Skip any not provisioned yet.
 	if s.connBindingReader != nil {
+		// external connection resources. Read each connection's development binding
+		// for its resolved outputs. Connection outputs are pre-namespaced by the
+		// connection schema, so the env-var name == output name verbatim (mirrors
+		// WireConsumer's output.Name → output.Name mapping). Skip any not
+		// provisioned yet — the cascade re-drives.
 		for _, conn := range task.DependsOnConnections {
 			b, berr := s.connBindingReader(ctx, task.OrgID, connections.ConnectionBindingName(task.ProjectID, conn, "development"))
 			if berr != nil || b == nil || b.Status == nil || len(b.Status.Outputs) == 0 {
@@ -1199,6 +1203,34 @@ func (s *dispatchService) resolveConsumerDependenciesYAML(
 			}
 			deps.Resources = append(deps.Resources, workloadResourceDepYAML{
 				Ref:         connections.ConnectionResourceName(task.ProjectID, conn),
+				EnvBindings: envBindings,
+			})
+		}
+
+		// platform-resource deps (DependsOnResources). Read the development binding
+		// for each dep's resolved outputs. Unlike connection outputs (which are
+		// pre-namespaced by the connection schema), platform-resource outputs are
+		// generic names (host, port, user, password), so we prefix them with the
+		// dep name to avoid collisions when a component binds multiple resources:
+		//   env var = strings.ToUpper(depName + "_" + outputName)
+		// e.g. dep "db" output "host" → DB_HOST; "password" → DB_PASSWORD.
+		// This is a deliberate divergence from the connection output.Name→output.Name
+		// verbatim mapping and matches the todo-db scenario's DB_* env convention.
+		// Binding name: <project>-<depName>-development (mirrors BuildPlatformBinding).
+		// Ref: <project>-<depName> (mirrors BuildPlatformResource / A2's name).
+		for _, depName := range task.DependsOnResources {
+			bindingName := task.ProjectID + "-" + depName + "-development"
+			b, berr := s.connBindingReader(ctx, task.OrgID, bindingName)
+			if berr != nil || b == nil || b.Status == nil || len(b.Status.Outputs) == 0 {
+				// Not provisioned / not ready yet — skip; the cascade re-drives.
+				continue
+			}
+			envBindings := make(map[string]string, len(b.Status.Outputs))
+			for _, out := range b.Status.Outputs {
+				envBindings[out.Name] = strings.ToUpper(depName + "_" + out.Name)
+			}
+			deps.Resources = append(deps.Resources, workloadResourceDepYAML{
+				Ref:         task.ProjectID + "-" + depName,
 				EnvBindings: envBindings,
 			})
 		}
