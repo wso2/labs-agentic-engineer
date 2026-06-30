@@ -201,3 +201,157 @@ pattern**: per-org OAuth client-secret + per-run ExternalSecret +
   definitions.
 - `openchoreo/` — OC source. Authoritative for what
   `ClusterWorkflow`/`WorkflowRun`/`SecretReference`/`GitSecret` actually mean.
+
+## Dependencies ("marketplace")
+
+### `Marketplace`
+**Working title** for app-factory's dependency-management subsystem:
+identifying what each user component needs during the design phase, collecting
+the config/secrets required to reach those needs, and wiring them through to
+the coding agent and the deployed component. Not a browsable storefront —
+there is no publish/consume surface.
+
+### `Dependency`
+A single, unified, kind-discriminated entry on a component's design
+(frontmatter `dependencies`), **subsuming the legacy `dependsOn`
+(same-project siblings) and `dependentApis` (external HTTP APIs) fields**.
+Authored during the design phase. Invariant carried over from the
+cross-component-wiring work: the dependency identifier must be a primitive
+the LLM didn't invent.
+
+### `internal dependency`
+A dependency that runs within wso2cloud: a sibling component in the same
+project (`component`), a service in another project of the same org
+(`org-service`), or (future) a [[#platform-resource]] the platform provisions
+on demand. The platform resolves URLs/credentials itself; the user is never
+asked for them.
+
+### `platform-resource`
+An internal dependency that wso2cloud **provisions on demand** — future, not
+yet available in wso2cloud, so its shape is not pinned down here. One
+dependency kind sub-typed by `resourceType` (e.g. `database`, `message-queue`,
+`cache`, `identity-provider`, …); the provisionable set is a **platform
+catalog** so new types are added without changing the taxonomy. Scope (per
+project vs. per organization) is undecided. Provisioning maps onto OpenChoreo's
+`ResourceType` system.
+
+### `external dependency`
+A dependency that does not run within wso2cloud — a SaaS (Salesforce, GitHub),
+a public/corporate API, or user-managed infrastructure (a MySQL, a queue).
+**One generic kind** (`kind: external`); the old `external-api` / `saas` /
+`external-resource` split is retired. The platform asks the user for the
+config/secret **values**; how to use it (which SDK, which auth, where the spec
+lives) is carried in the dependency's free-form `description`, not a kind enum.
+A library with no external service behind it is not a dependency.
+
+### `connection`
+A registered [[#external-dependency]] the org reuses. Two layers: a **registry**
+(app-factory-owned, **org-level**) holding the definition — `name`,
+`description`, the config **key schema**, and "used by" bindings, read by the
+architect so other projects reuse the shape; and **values + wiring** (OpenChoreo,
+**per project** — see [[#connection-resourcetype]]) created when the user fills
+values via a config-collection task. "Reuse" = reuse of the *schema*, not the
+*credentials* (values are per-project; #3245 Resources can't be shared
+cross-project). `component` / `org-service` need no connection — the platform
+resolves them per consumer.
+
+### `connection form`
+The shape of an external connection = its **`config` key schema** (which keys,
+which `secret`). It determines the [[#connection-resourcetype]]'s wiring
+(ConfigMap + ESO ExternalSecret + outputs); `authType` is **not** part of it —
+the auth *mechanism* is the agent's code, carried in `description`. A schema
+change for a connection = a new ResourceType (suffix), never an edit, so RTs are
+effectively immutable.
+
+### `connection ResourceType`
+The OpenChoreo `ResourceType` (namespaced, per-org) backing an external
+connection's values + wiring, per the **Resource model**
+([openchoreo#3245](https://github.com/openchoreo/openchoreo/discussions/3245),
+shipped v1.1). Get-or-created **per connection** (named after it; wiring from its
+[[#connection-form]]) in the org NS; a `Resource` is cut per project, a
+`ResourceReleaseBinding` per env (BFF-authored + pinned —
+the Resource path has no `AutoDeploy`). Secrets land via a store-backed ESO
+`ExternalSecret` the RT emits into the workload's release NS (value written
+through SM-API); the workload consumes outputs via
+`Workload.spec.dependencies.resources[].ref` + `envBindings`, gated by
+`ResourceDependenciesReady`. Living in the shared org NS, it is visible to both
+app-factory and Devant ([[#oc-project]]s are a single shared entity per org).
+Supersedes the earlier BFF-env / ConfigurationGroup (#3595) approaches.
+
+### `credential class`
+Whether an external connection's credential may be exposed to the browser:
+**publishable** (a client-side key, fine in a SPA's `window._env_`) or
+**secret** (server-side only — a backend `service`, never a SPA). The primary
+signal is the per-key `secret: true|false`; `credential class` is the SPA
+browser-exposure advisory layered on top.
+
+### `image-based component`
+A project component whose **origin** is a prebuilt container image (e.g.
+Keycloak), not agent-written source. Resolved (image + version) and configured
+via the same resolution + config-collection flow as a [[#connection]], deployed
+as an ordinary OC Component; other components reach it via the `component`
+dependency + OC Connections. **Not** a dependency kind, and **not** a
+[[#platform-resource]] identity-provider (which the *platform* provisions and
+shares) — an image component is a project running *its own* image.
+
+### `component config`
+Runtime config **variables a user supplies** on a component (source or image) —
+plain settings and/or secrets that are *not* an external service. Collected via a
+config-collection task + the per-env value form, injected into the component's
+own ReleaseBinding (plain as env literals; secrets via the **component-native**
+path — the ComponentType template emits an ESO `ExternalSecret` + `secretKeyRef`).
+The Resource model is reserved for external [[#connection]]s; component config
+never needs a Resource.
+
+### `dependency task`
+A typed task on the project board representing the work needed to satisfy a
+dependency: **config-collection** (done by the user — completes when values
+are saved in the console) or **resource-provisioning** (future — done by the
+platform; completes when the OC `Resource` is ready and its outputs resolve).
+Part of one task graph with component-implementation tasks; any task type can
+gate any other. **Only task types that produce repo artifacts get GitHub
+issues** (component implementation today); config-collection tasks are
+platform-only — nothing dependency-related is written to (currently public)
+project repos.
+
+### `resolution` / `scoped resolution chat`
+How a dependency the (single-turn) architect couldn't resolve alone gets
+settled on the Architecture page. The dependency shows as a **tile**
+(`ambiguous` — has candidates; `unresolved` — needs input). The target UI is a
+**scoped resolution chat** — a per-dependency side chat (own conversational
+agent + tools) that presents candidates as **chips** and talks through
+discovery; an interim inline-card form does the same before that ships.
+Resolving **pins** the choice; an **Apply / regenerate** action folds all pins
+into one architect re-run. A design with `ambiguous`/`unresolved` dependencies
+cannot be saved.
+
+---
+
+
+### `ClusterResourceType`
+The **cluster-scoped, platform-engineer-authored** OpenChoreo provisioning
+template (`openchoreo.dev/v1alpha1`, `kind: ClusterResourceType`) a
+[[#platform-resource]] references. app-factory **discovers** the installed set
+read-only (`ListClusterResourceTypes`) and **never authors** them — the cluster
+operator installs them (wso2cloud in cloud; the local `deployments/` scripts
+stand in for the platform-engineer locally, e.g. the `postgres-cnpg` sample
+backed by the CloudNativePG operator). Distinct from a
+[[#connection-resourcetype]], which is **namespaced, per-org, and
+app-factory-authored** for an external connection's wiring. The dependency's
+`resourceType` open-string IS the discovered `ClusterResourceType.metadata.name`
+— no abstract→concrete indirection. See
+[[adr-platform-resource-via-direct-oc-resource-model]].
+
+### `ResourceProvisioner`
+The BFF seam (P5) that fills a [[#platform-resource]]'s outputs.
+**`OCNativeProvisioner`** (built) authors a `Resource` + per-env
+`ResourceReleaseBinding` against a discovered [[#clusterresourcetype]] and lets
+the OC controller + the cluster's real provisioner fill the binding outputs
+**asynchronously** (a readiness watcher observes the native `Ready` condition —
+a real DB takes minutes). **`PlatformProvisioner`** is a **reserved** second
+implementation for `wso2-enterprise/wso2cloud#638` ("Platform Services
+Provisioning") — designed-for, not built. Consumption
+(`workload.spec.dependencies.resources[]`) is identical regardless of which
+implementation provisioned. The P1-era "platform-resource = future" note above
+is realized by P5 **locally**; it remains future in wso2cloud (#638). See
+[[adr-platform-resource-via-direct-oc-resource-model]].
