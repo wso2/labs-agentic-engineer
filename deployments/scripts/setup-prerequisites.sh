@@ -188,4 +188,11 @@ kubectl --context ${CLUSTER_CONTEXT} apply -f "${SCRIPT_DIR}/../manifests/api-pl
 echo "✅ APIGateway CR applied — operator will deploy the gateway runtime"
 
 echo ""
+echo "7️⃣  CloudNativePG operator (platform-resource sample provisioner)"
+helm_install_if_not_exists "cnpg" "cnpg-system" \
+    "oci://ghcr.io/cloudnative-pg/charts/cloudnative-pg" --version "${CNPG_VERSION}"
+kubectl wait --for=condition=available deployment --all -n cnpg-system --context ${CLUSTER_CONTEXT} --timeout=120s
+echo "✅ CloudNativePG operator ready"
+
+echo ""
 echo "✅ All prerequisites installed!"
