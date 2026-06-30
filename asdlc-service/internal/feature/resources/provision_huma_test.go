@@ -19,9 +19,15 @@ package resources
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
+	"github.com/danielgtaylor/huma/v2/humatest"
+
+	"github.com/wso2/asdlc/asdlc-service/clients/openchoreo"
 	"github.com/wso2/asdlc/asdlc-service/internal/feature/artifacts"
+	"github.com/wso2/asdlc/asdlc-service/internal/platform/humakit"
+	"github.com/wso2/asdlc/asdlc-service/internal/platform/tenant"
 	"github.com/wso2/asdlc/asdlc-service/models"
 )
 
@@ -49,16 +55,54 @@ func (f *fakeProvisioner) Provision(_ context.Context, _, _, _, _ string, _ map[
 
 type fakeTaskRepo struct {
 	tasks   []models.ComponentTask
+	listErr error
 	updated *models.ComponentTask
 }
 
 func (f *fakeTaskRepo) ListByProjectID(_ context.Context, _, _ string) ([]models.ComponentTask, error) {
-	return f.tasks, nil
+	return f.tasks, f.listErr
 }
 func (f *fakeTaskRepo) Update(_ context.Context, t *models.ComponentTask) error {
 	cp := *t
 	f.updated = &cp
 	return nil
+}
+
+// fakeResourceClient is a minimal stub for openchoreo.ResourceClient used in
+// handler-level tests. Only GetBinding is exercised by the GetStatus tests.
+type fakeResourceClient struct {
+	binding *openchoreo.ResourceReleaseBinding
+	bindErr error
+}
+
+func (f *fakeResourceClient) EnsureResourceType(_ context.Context, _ string, rt *openchoreo.ResourceType) (*openchoreo.ResourceType, error) {
+	return rt, nil
+}
+func (f *fakeResourceClient) ApplyResource(_ context.Context, _ string, r *openchoreo.Resource) (*openchoreo.Resource, error) {
+	return r, nil
+}
+func (f *fakeResourceClient) GetResource(_ context.Context, _, _ string) (*openchoreo.Resource, error) {
+	return &openchoreo.Resource{}, nil
+}
+func (f *fakeResourceClient) EnsureBinding(_ context.Context, _ string, b *openchoreo.ResourceReleaseBinding) (*openchoreo.ResourceReleaseBinding, error) {
+	return b, nil
+}
+func (f *fakeResourceClient) GetBinding(_ context.Context, _, _ string) (*openchoreo.ResourceReleaseBinding, error) {
+	return f.binding, f.bindErr
+}
+func (f *fakeResourceClient) DeleteBinding(_ context.Context, _, _ string) error { return nil }
+func (f *fakeResourceClient) DeleteResource(_ context.Context, _, _ string) error { return nil }
+func (f *fakeResourceClient) ListClusterResourceTypes(_ context.Context) ([]openchoreo.ResourceType, error) {
+	return nil, nil
+}
+func (f *fakeResourceClient) PatchWorkloadResourceDeps(_ context.Context, _, _ string, _ []openchoreo.WorkloadResourceDep) error {
+	return nil
+}
+func (f *fakeResourceClient) PatchWorkloadEndpointDeps(_ context.Context, _, _ string, _ []openchoreo.WorkloadEndpointDep) error {
+	return nil
+}
+func (f *fakeResourceClient) ListWorkloadEndpoints(_ context.Context, _ string) ([]openchoreo.WorkloadEndpointInfo, error) {
+	return nil, nil
 }
 
 // ---- helpers ----------------------------------------------------------------
@@ -184,5 +228,63 @@ func TestResourceService_Provision_ProvisionerFail(t *testing.T) {
 	}
 	if !errors.Is(err, ErrProvisionFailed) {
 		t.Errorf("expected ErrProvisionFailed, got %v", err)
+	}
+}
+
+// TestGetStatus_BindingNotYetCreated asserts that GetStatus returns HTTP 200
+// (not 500) when GetBinding returns (nil, nil) — the not-yet-created case that
+// occurs between POST-provision and the first watcher sweep. The response must
+// carry ready=false and the task status from the DB (here: "building").
+func TestGetStatus_BindingNotYetCreated(t *testing.T) {
+	humakit.SetGateMode(tenant.GateModeLog)
+	t.Cleanup(func() { humakit.SetGateMode(tenant.GateModeEnforce) })
+
+	rc := &fakeResourceClient{binding: nil, bindErr: nil} // GetBinding returns (nil, nil)
+	taskRepo := &fakeTaskRepo{
+		tasks: []models.ComponentTask{
+			{Type: models.TaskTypeResourceProvisioning, ResourceName: "db", Status: string(models.TaskStatusBuilding)},
+		},
+	}
+	store := &fakeDesignStore{design: designWithPlatformResource("api", "db", "postgres-cnpg")}
+	svc := NewResourceService(store, &fakeProvisioner{result: &ProvisionResult{}}, taskRepo)
+
+	_, api := humatest.New(t)
+	RegisterResources(api, svc, rc)
+
+	resp := api.Get("/api/v1/organizations/default/projects/proj/components/api/dependencies/db/status")
+	if resp.Code != 200 {
+		t.Fatalf("want HTTP 200 when binding not yet created, got %d; body=%s", resp.Code, resp.Body.String())
+	}
+	body := resp.Body.String()
+	if !strings.Contains(body, `"ready":false`) {
+		t.Errorf("want ready=false in response, got: %s", body)
+	}
+	if !strings.Contains(body, `"status":"building"`) {
+		t.Errorf("want status=building from DB task in response, got: %s", body)
+	}
+}
+
+// TestGetStatus_ListByProjectIDError asserts that when ListByProjectID errors,
+// GetStatus still returns HTTP 200 with status "pending" (polling-resilient
+// fallback) rather than 500 — the error is logged but not surfaced.
+func TestGetStatus_ListByProjectIDError(t *testing.T) {
+	humakit.SetGateMode(tenant.GateModeLog)
+	t.Cleanup(func() { humakit.SetGateMode(tenant.GateModeEnforce) })
+
+	rc := &fakeResourceClient{binding: nil, bindErr: nil}
+	taskRepo := &fakeTaskRepo{listErr: errors.New("db transient")}
+	store := &fakeDesignStore{design: designWithPlatformResource("api", "db", "postgres-cnpg")}
+	svc := NewResourceService(store, &fakeProvisioner{result: &ProvisionResult{}}, taskRepo)
+
+	_, api := humatest.New(t)
+	RegisterResources(api, svc, rc)
+
+	resp := api.Get("/api/v1/organizations/default/projects/proj/components/api/dependencies/db/status")
+	if resp.Code != 200 {
+		t.Fatalf("want HTTP 200 on ListByProjectID error, got %d; body=%s", resp.Code, resp.Body.String())
+	}
+	body := resp.Body.String()
+	if !strings.Contains(body, `"status":"pending"`) {
+		t.Errorf("want status=pending fallback, got: %s", body)
 	}
 }

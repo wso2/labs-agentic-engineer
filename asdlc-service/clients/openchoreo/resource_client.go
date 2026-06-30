@@ -473,7 +473,14 @@ func (c *resourceClient) EnsureBinding(ctx context.Context, namespace string, b 
 
 func (c *resourceClient) GetBinding(ctx context.Context, namespace, name string) (*ResourceReleaseBinding, error) {
 	out := &ResourceReleaseBinding{}
-	if _, err := c.do(ctx, http.MethodGet, nsBase(namespace)+"/resourcereleasebindings/"+name, nil, out); err != nil {
+	code, err := c.do(ctx, http.MethodGet, nsBase(namespace)+"/resourcereleasebindings/"+name, nil, out)
+	if err != nil {
+		// Mirror DeleteBinding: suppress 404 — binding may not exist yet (e.g.
+		// the provision watcher hasn't run). Callers receive (nil, nil) and
+		// must treat it as "not yet created" (ready=false, no outputs).
+		if code == http.StatusNotFound {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("get binding %q: %w", name, err)
 	}
 	return out, nil

@@ -278,7 +278,10 @@ func RegisterResources(api huma.API, svc *ResourceService, rc openchoreo.Resourc
 		taskStatus := "pending"
 		if svc.taskRepo != nil {
 			tasks, terr := svc.taskRepo.ListByProjectID(ctx, in.OrgHandle, in.ProjectName)
-			if terr == nil {
+			if terr != nil {
+				slog.WarnContext(ctx, "resources: failed to list tasks for status; defaulting to pending",
+					"org", in.OrgHandle, "project", in.ProjectName, "dep", in.DepName, "error", terr)
+			} else {
 				for _, t := range tasks {
 					if t.Type == models.TaskTypeResourceProvisioning && t.ResourceName == in.DepName {
 						taskStatus = t.Status
