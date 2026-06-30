@@ -119,8 +119,11 @@ export interface Dependency {
   kind: DependencyKind;
   name: string;
   description?: string;
-  // P4 4-state resolution model.
-  status?: "resolved" | "ambiguous" | "unresolved" | "blocked";
+  // P4 4-state resolution model + P5 provisioning state.
+  status?: "resolved" | "ambiguous" | "unresolved" | "blocked" | "provisioning";
+  // P5: masked outputs from the OC resource binding (name only; values are
+  // never surfaced — they live in OC-rendered Secrets via ESO).
+  outputs?: { name: string; secret: boolean }[];
   // Why a dep is not yet resolved. `needs-spec` = external dep has no spec
   // yet; `needs-input` = value entry required; `not-found` = no match found;
   // `access-required` = org-service exists but is not accessible (requestable

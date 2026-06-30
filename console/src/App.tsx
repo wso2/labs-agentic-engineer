@@ -48,6 +48,7 @@ import { setOrgAnthropicTokenAccessor } from './services/api/orgAnthropic';
 import { setConnectionsTokenAccessor } from './services/api/connections';
 import { setAccessRequestsTokenAccessor } from './services/api/accessRequests';
 import { setSpecsTokenAccessor } from './services/api/specs';
+import { setResourcesTokenAccessor } from './services/api/provisioning';
 import { setOrgIDPTokenAccessor } from './services/api/orgIDP';
 import { setOrgSkillsTokenAccessor } from './services/api/orgSkills';
 import { useBillingOrg } from './hooks/useBillingOrg';
@@ -86,6 +87,7 @@ export function App() {
     setConnectionsTokenAccessor(getAccessToken);
     setAccessRequestsTokenAccessor(getAccessToken);
     setSpecsTokenAccessor(getAccessToken);
+    setResourcesTokenAccessor(getAccessToken);
     setOrgIDPTokenAccessor(getAccessToken);
     setOrgSkillsTokenAccessor(getAccessToken);
   }, [getAccessToken]);
