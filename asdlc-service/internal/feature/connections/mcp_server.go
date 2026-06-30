@@ -232,6 +232,10 @@ func handleToolCall(w http.ResponseWriter, r *http.Request, h *mcpHandler, orgHa
 		}
 		writeToolText(w, req.ID, mustJSON(map[string]any{"found": true, "connection": toConnectionView(c)}))
 	case "list_org_endpoints":
+		if h.catalog == nil {
+			writeToolText(w, req.ID, mustJSON(map[string]any{"endpoints": []any{}}))
+			return
+		}
 		infos, err := h.catalog.List(r.Context(), orgHandle)
 		if err != nil {
 			writeToolError(w, req.ID, fmt.Sprintf("list org endpoints: %v", err))
@@ -249,6 +253,10 @@ func handleToolCall(w http.ResponseWriter, r *http.Request, h *mcpHandler, orgHa
 		}
 		writeToolText(w, req.ID, mustJSON(map[string]any{"endpoints": views}))
 	case "list_platform_resource_types":
+		if h.resourceTypes == nil {
+			writeToolText(w, req.ID, mustJSON(map[string]any{"resourceTypes": []any{}}))
+			return
+		}
 		types, err := h.resourceTypes.List(r.Context())
 		if err != nil {
 			writeToolError(w, req.ID, fmt.Sprintf("list platform resource types: %v", err))

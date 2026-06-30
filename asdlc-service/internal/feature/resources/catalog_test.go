@@ -81,4 +81,14 @@ func TestResourceTypeCatalog_List(t *testing.T) {
 	if !reflect.DeepEqual(got[0].Outputs, []string{"host", "port", "password"}) {
 		t.Fatalf("outputs: %+v", got[0].Outputs)
 	}
+	// got[1] is redis-cnpg: no Parameters spec and no Outputs (zero-value path).
+	if got[1].Name != "redis-cnpg" {
+		t.Fatalf("want redis-cnpg at index 1, got %q", got[1].Name)
+	}
+	if got[1].Parameters != nil {
+		t.Fatalf("want nil Parameters for redis-cnpg, got %+v", got[1].Parameters)
+	}
+	if len(got[1].Outputs) != 0 {
+		t.Fatalf("want empty Outputs for redis-cnpg, got %+v", got[1].Outputs)
+	}
 }
