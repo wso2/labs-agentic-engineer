@@ -295,14 +295,37 @@ describe('PlatformResourcePanel', () => {
     });
 
     it('does NOT render any output value strings (secret safety)', () => {
+      // Render with outputs that have both a name and a (hypothetical) value field.
+      // The component must render ONLY the name strings — never values.
+      const depWithOutputs: Dependency = {
+        kind: 'platform-resource',
+        name: 'postgres',
+        resourceType: 'postgres-cnpg',
+        status: 'resolved',
+        outputs: [
+          { name: 'DB_HOST', secret: false },
+          { name: 'DB_PASSWORD', secret: true },
+        ],
+      };
+
+      // getResourceStatus is mocked to return deployed/ready (see beforeEach)
       render(
-        <PlatformResourcePanel {...BASE_PROPS} dep={resolvedDep} />,
+        <PlatformResourcePanel {...BASE_PROPS} dep={depWithOutputs} />,
         { wrapper },
       );
 
-      // There are no values in the response — the test confirms nothing that
-      // looks like a value (long random string) appears. We verify the text
-      // shown is only the names.
+      // Positive: both output names must be present
+      expect(screen.getByText('DB_HOST')).toBeInTheDocument();
+      expect(screen.getByText('DB_PASSWORD')).toBeInTheDocument();
+
+      // Exact count: the output list should contain exactly 2 name items.
+      // Use the monospace typography elements rendered inside the outputs stack.
+      const outputNames = screen
+        .getAllByText(/^DB_/)
+        .filter((el) => el.tagName !== 'INPUT');
+      expect(outputNames).toHaveLength(2);
+
+      // Negative: no secret values must leak into the render tree
       expect(screen.queryByText(/password123/i)).not.toBeInTheDocument();
       expect(screen.queryByText(/secretvalue/i)).not.toBeInTheDocument();
     });
@@ -314,6 +337,51 @@ describe('PlatformResourcePanel', () => {
       );
 
       expect(screen.getByRole('button', { name: /re-provision/i })).toBeInTheDocument();
+    });
+
+    it('renders provisioned view (not spinner) when getResourceStatus returns deployed+ready for a resolved dep', async () => {
+      // This is the critical robustness scenario: dep.status='resolved', and
+      // the status query comes back with { status: 'deployed', ready: true }.
+      // The panel must show the provisioned view driven by the QUERY result —
+      // NOT fall through to the fallback spinner.
+      vi.mocked(provisioningModule.getResourceStatus).mockResolvedValue({
+        status: 'deployed',
+        ready: true,
+        outputs: [
+          { name: 'REDIS_URL' },
+          { name: 'REDIS_PORT' },
+        ],
+      });
+
+      const resolvedDepWithQuery: Dependency = {
+        kind: 'platform-resource',
+        name: 'redis',
+        resourceType: 'redis-standalone',
+        status: 'resolved',
+        outputs: [],
+      };
+
+      render(
+        <PlatformResourcePanel {...BASE_PROPS} dep={resolvedDepWithQuery} />,
+        { wrapper },
+      );
+
+      // Provisioned heading must appear (not the fallback spinner)
+      await waitFor(() => {
+        expect(screen.getByText(/Provisioned ✓/)).toBeInTheDocument();
+      });
+
+      // Output names from the query result must be rendered once the query resolves
+      await waitFor(() => {
+        expect(screen.getByText('REDIS_URL')).toBeInTheDocument();
+      });
+      expect(screen.getByText('REDIS_PORT')).toBeInTheDocument();
+
+      // Re-provision button must be present
+      expect(screen.getByRole('button', { name: /re-provision/i })).toBeInTheDocument();
+
+      // Spinner must NOT be present
+      expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
     });
 
     it('clicking Re-provision calls provisionResource again', async () => {

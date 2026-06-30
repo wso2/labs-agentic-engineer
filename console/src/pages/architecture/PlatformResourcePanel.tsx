@@ -121,7 +121,6 @@ function ParamForm({
               onChange={(e) => setValues((prev) => ({ ...prev, [k]: e.target.value }))}
               fullWidth
               size="small"
-              inputProps={{ 'aria-label': k }}
             />
           ))}
         </Stack>
@@ -157,8 +156,15 @@ export function PlatformResourcePanel({
   const statusQuery = useQuery({
     queryKey: ['resourceStatus', orgHandle, projectId, component, dep.name],
     queryFn: () => getResourceStatus(orgHandle, projectId, component, dep.name, 'development'),
-    // Only fetch when provisioning is in-flight or resource was previously provisioned
-    enabled: dep.status === 'provisioning' || dep.status === 'resolved' || dep.status === 'blocked',
+    // Only fetch when provisioning is in-flight or resource was previously provisioned.
+    // 'deployed' is a task-status, not a valid dep.status, but included defensively so
+    // that if the BFF ever surfaces it on a dep, the query still fires and the ready/
+    // provisioned branch renders correctly (driven by the query result, not dep.status).
+    enabled:
+      dep.status === 'provisioning' ||
+      dep.status === 'resolved' ||
+      dep.status === 'blocked' ||
+      (dep.status as string) === 'deployed',
     refetchInterval: (q) => {
       const data = q.state.data;
       if (isTerminal(data?.status, data?.ready)) return false;
