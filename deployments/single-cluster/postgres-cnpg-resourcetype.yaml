@@ -29,23 +29,41 @@ spec:
         version:
           type: string
           default: "16"
+          # Bound the image tag to a small allowlist so a consumer can't request an
+          # arbitrary `ghcr.io/cloudnative-pg/postgresql:<tag>` image.
+          enum: ["16", "15"]
         storage:
           type: string
           default: "1Gi"
+          # Fixed-size allowlist — closes the arbitrary-PVC-size over-provision surface.
+          enum: ["1Gi", "5Gi", "10Gi"]
         instances:
           type: integer
           default: 1
+          minimum: 1
+          # Cap replica count so a consumer can't over-provision the data plane.
+          maximum: 3
   resources:
     - id: cluster
-      # NO readyWhen: we rely on OC 1.1.1's per-Kind health inference (CRD doc:
-      # "If unset, falls back to RenderedRelease per-Kind health inference"). OC
-      # tracks the rendered Cluster's live health (`healthStatus: Healthy`) off
-      # CNPG's own phase/Ready signals. A CEL readyWhen on the Cluster status does
-      # NOT work here: OC freezes only a minimal subset of a foreign CRD's status
-      # into `applied.<id>.status` (image / operatorCertificateFingerprint /
-      # pgDataImageInfo) at apply time — it omits `.phase` AND `.conditions`, so
-      # `applied.cluster.status.phase` / `.conditions` raise "no such key" and the
-      # binding never settles. Same foreign-CRD snapshot limitation P2 hit with ESO.
+      # readyWhen gates the binding's ResourcesReady/Ready on the CNPG Cluster
+      # actually SERVING — not merely on a successful apply. This is load-bearing
+      # for P5's async-provisioning safety: OC 1.1.1's getUnknownResourceHealth
+      # returns `Healthy` UNCONDITIONALLY for unknown Kinds (a foreign CRD like the
+      # CNPG `Cluster`), so WITHOUT this gate the binding flips Ready=True at APPLY
+      # time — before Postgres serves — and the A5 watcher would mark the consumer
+      # task `deployed` against a non-serving DB.
+      #
+      # OC 1.1.1 DOES copy the foreign CRD's FULL live `status` into
+      # `applied.<id>.status` every reconcile, so `applied.cluster.status.phase` is
+      # available once CNPG writes it. The `has()` chain makes both the brief
+      # pre-APPLY window (the `applied.cluster` key does not exist yet) and the
+      # pre-PHASE window (status object exists but `.phase` not yet written)
+      # evaluate to `false` cleanly — fail-closed until the real CNPG healthy phase
+      # "Cluster in healthy state" appears. LIVE-VERIFIED 2026-06-30: the binding
+      # held Ready=False through "Setting up primary" / "Waiting for the instances
+      # to become active" and flipped Ready=True ONLY after phase reached "Cluster
+      # in healthy state" (gated transition, never an early flip).
+      readyWhen: '${has(applied.cluster) && has(applied.cluster.status) && has(applied.cluster.status.phase) && applied.cluster.status.phase == "Cluster in healthy state"}'
       template:
         apiVersion: postgresql.cnpg.io/v1
         kind: Cluster

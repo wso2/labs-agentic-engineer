@@ -13,8 +13,9 @@
 #   cannot patch resource "clusters" in API group "postgresql.cnpg.io" ...
 #
 # Least privilege: only the CNPG Cluster lifecycle verbs the data-plane applier
-# needs (create/patch/update to apply, get/list/watch to track status into
-# applied.<id> for readyWhen, delete for retainPolicy: Delete). The
+# needs (create/patch/update to apply, get/list/watch to copy the live Cluster
+# status into applied.<id>.status — which the ResourceType's readyWhen gates on
+# (`status.phase == "Cluster in healthy state"`) — delete for retainPolicy: Delete). The
 # CNPG-generated `<cluster>-app` Secret is read for outputs via the agent's
 # EXISTING secrets grant, so secrets are intentionally NOT re-granted here.
 apiVersion: rbac.authorization.k8s.io/v1
