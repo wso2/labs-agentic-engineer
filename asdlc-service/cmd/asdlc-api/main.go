@@ -912,6 +912,16 @@ func main() {
 	// is configurable for tests via env.
 	buildWatcher := codingagent.NewBuildWatcher(db, componentClient, projector, asServiceIdentity, wfRunService, cfg.BuildAuthRetryBudget)
 
+	// Resource readiness watcher — polls OC for the binding's native Ready
+	// condition on in-flight resource-provisioning tasks (status=building) and,
+	// when ready, transitions to `deployed` + cascades DispatchTasks so any
+	// gated component tasks are unblocked. The redispatch adapter mirrors the
+	// OnHoldWatcher closure (same shape: returns dispatched count).
+	resourceWatcher := codingagent.NewResourceWatcher(db, resourceClient, func(ctx context.Context, orgID, projectID string) (int, error) {
+		r, e := dispatchSvc.DispatchTasks(ctx, orgID, projectID)
+		return len(r), e
+	}, asServiceIdentity)
+
 	// Coding-agent watcher — same cadence, complementary to the GitHub
 	// webhook path. Only acts on terminal-failed coding-agent WorkflowRuns;
 	// success transitions ride the pull_request:ready_for_review webhook.
@@ -1086,6 +1096,7 @@ func main() {
 	defer cancelWatcher()
 	go buildWatcher.Run(watcherCtx)
 	go onHoldWatcher.Run(watcherCtx)
+	go resourceWatcher.Run(watcherCtx)
 	go traitSyncWatcher.Run(watcherCtx)
 
 	// Coding-agent run watchers — both can coexist because each filters
