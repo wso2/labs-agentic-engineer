@@ -23,6 +23,7 @@ import { X } from '@wso2/oxygen-ui-icons-react';
 import type { DepRef } from './DependenciesSection';
 import { ConnectionValues } from './ConnectionValues';
 import { OrgServiceResolution } from './OrgServiceResolution';
+import { PlatformResourcePanel } from './PlatformResourcePanel';
 import { ProvideSpec } from './ProvideSpec';
 
 const DRAWER_WIDTH = 480;
@@ -163,6 +164,14 @@ export function DependencyDrawer({
               </Typography>
             )}
           </Stack>
+        ) : dep.kind === 'platform-resource' ? (
+          <PlatformResourcePanel
+            dep={dep}
+            orgHandle={orgHandle}
+            projectId={projectId}
+            component={depRef!.component}
+            onChanged={onChanged}
+          />
         ) : (
           <Typography variant="body2" color="text.secondary">
             This dependency is resolved by the platform — no action needed here.
