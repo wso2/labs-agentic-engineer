@@ -820,6 +820,12 @@ func main() {
 			_, derr := dispatchSvc.DispatchTasks(c, orgID, projectID)
 			return derr
 		})
+	// Platform-resource provisioning (P5): author the OC Resource+binding model
+	// for a platform-resource dependency and mark the resource-provisioning task
+	// in-flight. Readiness is observed by the resource watcher (A5).
+	resourceProvisioner := resources.NewOCNativeProvisioner(resourceClient)
+	resourceSvc := resources.NewResourceService(artifactStore, resourceProvisioner, taskRepo)
+
 	// Cross-project access requests (P3.5): a consumer asks a provider project to
 	// publish a project-only org-service org-wide. Creates the provider publish
 	// task + GitHub issue on the provider's repo and records an AccessRequest.
@@ -1039,6 +1045,8 @@ func main() {
 		ConnectionValueSvc:  connectionValueSvc,
 		ConnectionRegistry:  connectionRegistry,
 		AccessSvc:           accessSvc,
+		ResourceSvc:         resourceSvc,
+		ResourceClient:      resourceClient,
 	}
 
 	slog.Info("OpenChoreo API", "baseURL", cfg.PlatformAPI.BaseURL)
