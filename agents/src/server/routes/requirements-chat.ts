@@ -97,6 +97,14 @@ export function registerRequirementsChat(app: express.Express) {
     const doc = new RequirementsDoc(parsed.data.files);
     const tools = buildTools(doc, sse, finalizer, parsed.data.mode);
 
+    // The model can end a turn without calling finish() for two very
+    // different reasons: a benign refusal from Anthropic's safety system
+    // (finishReason === "content-filter" — the model declines the input and
+    // emits ~nothing) versus an actual agent malfunction. We track the last
+    // finishReason so the fallthrough below can surface the refusal case with
+    // a clear, user-facing message instead of an opaque
+    // "ended without calling finish".
+    let lastFinishReason: string | undefined;
     try {
       const result = streamText({
         model,
@@ -116,6 +124,7 @@ export function registerRequirementsChat(app: express.Express) {
           console.error("[requirements-chat] streamText error:", error);
         },
         onFinish: (ev) => {
+          lastFinishReason = ev.finishReason;
           console.log(
             `[requirements-chat] finish=${ev.finishReason} steps=${ev.steps?.length ?? 0} in=${ev.usage?.inputTokens ?? 0} out=${ev.usage?.outputTokens ?? 0}`,
           );
@@ -132,10 +141,17 @@ export function registerRequirementsChat(app: express.Express) {
       }
 
       if (!finalizer.finalized && !res.writableEnded) {
+        // Anthropic maps a model-level safety refusal to
+        // finishReason "content-filter" — the model declines the input and
+        // returns almost no output. Surface it as a clear, actionable message
+        // rather than the generic agent-malfunction error so the user knows to
+        // rephrase, and downstream logs aren't misread as an infra fault.
+        const refused = lastFinishReason === "content-filter";
         writeFrame(res, {
           type: "error",
-          errorText:
-            "requirements-chat agent ended without calling finish",
+          errorText: refused
+            ? "The AI assistant declined this request as it appears to conflict with its usage policies. Please rephrase and try again."
+            : "requirements-chat agent ended without calling finish",
         });
       }
 

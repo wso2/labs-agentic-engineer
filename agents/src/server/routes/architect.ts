@@ -100,7 +100,7 @@ export function registerArchitect(app: express.Express) {
     const extraTools = mcpUrl ? await loadMcpTools(mcpUrl) : {};
 
     try {
-      const { finalized } = await runArchitect({
+      const { finalized, finishReason } = await runArchitect({
         model,
         input: parsed.data,
         sink,
@@ -112,10 +112,16 @@ export function registerArchitect(app: express.Express) {
       // Loop ended without finalize() succeeding. Could be: stepCountIs hit,
       // model gave up, or upstream error. Emit error so BFF doesn't write.
       if (!finalized && !res.writableEnded) {
+        // Anthropic maps a model-level safety refusal to finishReason
+        // "content-filter" — the model declines the input and returns almost
+        // no output. Surface it distinctly so the user knows to rephrase
+        // rather than reading it as an agent malfunction.
+        const refused = finishReason === "content-filter";
         writeFrame(res, {
           type: "error",
-          errorText:
-            "architect agent ended without calling finalize — design not produced",
+          errorText: refused
+            ? "The AI assistant declined this request as it appears to conflict with its usage policies. Please rephrase and try again."
+            : "architect agent ended without calling finalize — design not produced",
         });
       }
 

@@ -43,6 +43,12 @@ export interface ArchitectRunResult {
   /** Validator issues against the final doc — empty when finalized. */
   issues: ValidationIssue[];
   usage: { inputTokens: number; outputTokens: number };
+  /**
+   * Last finishReason reported by the model. "content-filter" means Anthropic's
+   * safety system declined the input (a benign refusal, not an agent fault) —
+   * the route surfaces that distinctly.
+   */
+  finishReason?: string;
 }
 
 export interface ArchitectRunOpts {
@@ -86,6 +92,7 @@ export async function runArchitect(
   };
 
   let usage = { inputTokens: 0, outputTokens: 0 };
+  let finishReason: string | undefined;
 
   const result = streamText({
     model,
@@ -103,6 +110,7 @@ export async function runArchitect(
         inputTokens: ev.usage?.inputTokens ?? 0,
         outputTokens: ev.usage?.outputTokens ?? 0,
       };
+      finishReason = ev.finishReason;
       console.log(
         `[architect] finish=${ev.finishReason} steps=${ev.steps?.length ?? 0} in=${usage.inputTokens} out=${usage.outputTokens}`,
       );
@@ -132,5 +140,6 @@ export async function runArchitect(
     design: doc.materialize(),
     issues: validate(doc),
     usage,
+    finishReason,
   };
 }
