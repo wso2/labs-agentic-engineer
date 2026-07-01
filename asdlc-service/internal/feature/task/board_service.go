@@ -148,7 +148,11 @@ func (s *boardService) GetBoard(ctx context.Context, orgID, projectID string) (*
 		}
 	}
 
+	// Track which DB tasks (by issue URL) the canonical board actually renders,
+	// so the reconcile pass below can surface any issued task the board omits.
+	renderedIssueURLs := map[string]bool{}
 	for _, item := range result.Items {
+		renderedIssueURLs[item.URL] = true
 		task := BoardTask{
 			ID:              item.ID,
 			Title:           item.Title,
@@ -264,6 +268,48 @@ func (s *boardService) GetBoard(ctx context.Context, orgID, projectID string) (*
 		if ct.LifecycleStatus == string(models.TaskLifecycleGhIssueFailed) {
 			board.Failed = append(board.Failed, task)
 		} else {
+			board.Todo = append(board.Todo, task)
+		}
+	}
+
+	// Reconcile: a task may carry an IssueURL yet be absent from the canonical
+	// GitHub Project board — e.g. a board-provisioning race split the project's
+	// issues across two boards, or a project-item add failed. Such a task is
+	// matched by neither the primary loop (its issue is not in result.Items) nor
+	// the unissued path (it HAS a URL), so it would silently vanish. Surface any
+	// issued task the board omitted, routed by its authoritative ComponentTask
+	// status (the same mapping the zero-items fallback uses).
+	for _, ct := range allComponentTasks {
+		if ct.IssueURL == "" || renderedIssueURLs[ct.IssueURL] {
+			continue
+		}
+		task := BoardTask{
+			ID:                  ct.ID,
+			Title:               ct.Title,
+			URL:                 ct.IssueURL,
+			Description:         ct.Body,
+			ComponentTaskID:     ct.ID,
+			LifecycleStatus:     ct.LifecycleStatus,
+			Status:              ct.Status,
+			DispatchedAt:        ct.DispatchedAt,
+			ExecType:            ct.ExecType,
+			DependsOnComponents: []string(ct.DependsOnComponents),
+			ComponentName:       ct.ComponentName,
+			ErrorMessage:        ct.ErrorMessage,
+		}
+		for _, l := range ct.Labels {
+			task.Labels = append(task.Labels, gitrepo.LabelInfo{Name: l})
+		}
+		switch ct.Status {
+		case "on_hold":
+			board.OnHold = append(board.OnHold, task)
+		case "in_progress":
+			board.InProgress = append(board.InProgress, task)
+		case "ready_for_review", "merged", "building", "deployed":
+			board.Done = append(board.Done, task)
+		case "failed", "rejected", "verification_failed", "abandoned":
+			board.Failed = append(board.Failed, task)
+		default:
 			board.Todo = append(board.Todo, task)
 		}
 	}

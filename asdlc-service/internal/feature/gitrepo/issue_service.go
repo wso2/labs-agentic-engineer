@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 
 	"github.com/wso2/asdlc/asdlc-service/internal/credentials"
 	"github.com/wso2/asdlc/asdlc-service/models"
@@ -46,6 +47,12 @@ type issueService struct {
 	github   GitHubClient
 	githubV2 GitHubV2Client
 	resolver credentials.Resolver
+	// boardMu serializes lazy GitHub Project board creation per project (keyed by
+	// projectID). Task generation creates several issues concurrently; without
+	// this, each goroutine sees an empty GithubProjectID and creates its own
+	// board (a check-then-act race), splitting the project's issues across two
+	// boards. Requires issueService to be a singleton (it is — built once in main).
+	boardMu sync.Map
 }
 
 func NewIssueService(repo repositories.RepoRepository, github GitHubClient, githubV2 GitHubV2Client, resolver credentials.Resolver) IssueService {
@@ -93,12 +100,19 @@ func (s *issueService) CreateIssue(ctx context.Context, orgID, projectID string,
 			slog.WarnContext(ctx, "fetch credential token for board ops failed", "project", projectID, "error", tokenErr)
 		} else {
 			if gitRepo.GithubProjectID == "" {
-				if boardID, err := s.ensureBoard(ctx, gitRepo, owner, repoName, token); err == nil {
+				// Serialize board creation per project + re-read under the lock: a
+				// concurrent CreateIssue may have just created and persisted the board,
+				// in which case we reuse it instead of creating a second (orphan) board.
+				unlock := s.lockProjectBoard(projectID)
+				if fresh, freshErr := s.repo.GetByOrgAndProjectID(ctx, orgID, projectID); freshErr == nil && fresh != nil && fresh.GithubProjectID != "" {
+					gitRepo.GithubProjectID = fresh.GithubProjectID
+				} else if boardID, err := s.ensureBoard(ctx, gitRepo, owner, repoName, token); err == nil {
 					gitRepo.GithubProjectID = boardID
 					if updateErr := s.repo.Update(ctx, gitRepo); updateErr != nil {
 						slog.WarnContext(ctx, "failed to persist github project id after lazy creation", "project", projectID, "error", updateErr)
 					}
 				}
+				unlock()
 			}
 			s.addIssueToProject(ctx, gitRepo.GithubProjectID, issue, token)
 		}
@@ -124,6 +138,15 @@ func (s *issueService) ensureBoard(ctx context.Context, gitRepo *models.GitRepos
 
 	slog.InfoContext(ctx, "lazy-created github project board", "project", gitRepo.ProjectID, "boardId", githubProjectID)
 	return githubProjectID, nil
+}
+
+// lockProjectBoard acquires the per-project board-creation mutex and returns a
+// release function. Serializes the check-then-act around lazy board creation.
+func (s *issueService) lockProjectBoard(projectID string) func() {
+	muAny, _ := s.boardMu.LoadOrStore(projectID, &sync.Mutex{})
+	mu := muAny.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
 }
 
 func (s *issueService) addIssueToProject(ctx context.Context, githubProjectID string, issue *IssueResult, token string) {
