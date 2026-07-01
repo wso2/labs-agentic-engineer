@@ -26,11 +26,11 @@ import {
   Typography,
 } from '@wso2/oxygen-ui';
 import ReactMarkdown from 'react-markdown';
-import { useNavigate } from 'react-router-dom';
 import { Play, RotateCcw, ExternalLink } from '@wso2/oxygen-ui-icons-react';
 import { api } from '../../services/api';
 import type { Task } from '../../services/api';
-import { projectArchitecturePath } from '../../lib/paths';
+import { DependencyDrawer } from '../../pages/architecture/DependencyDrawer';
+import type { DepRef } from '../../pages/architecture/DependenciesSection';
 import { AssigneeChip } from './AssigneeChip';
 
 interface TaskDetailPanelProps {
@@ -43,11 +43,13 @@ interface TaskDetailPanelProps {
 export function TaskDetailPanel({ task, orgId, projectId, onClose }: TaskDetailPanelProps) {
   const [isExecuting, setIsExecuting] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
-  const navigate = useNavigate();
+  const [drawerDepRef, setDrawerDepRef] = useState<DepRef | null>(null);
+  const [isOpeningDrawer, setIsOpeningDrawer] = useState(false);
 
   // resource-provisioning / config-collection tasks are resolved in the
-  // architecture-page drawer (Provision / Provide configuration), NOT the
-  // per-task exec endpoint (a no-op). Deep-link the drawer to this task's dep.
+  // dependency drawer (Provision / Provide configuration), NOT the per-task
+  // exec endpoint (a no-op). The drawer opens as an overlay ON the tasks page —
+  // no navigation to the architecture view.
   const drawerDep =
     task.type === 'resource-provisioning' ? task.resourceName
     : task.type === 'config-collection' ? task.connectionName
@@ -59,10 +61,32 @@ export function TaskDetailPanel({ task, orgId, projectId, onClose }: TaskDetailP
   const needsDrawerAction =
     !!drawerDep && (!task.status || ['pending', 'on_hold', 'failed'].includes(task.status));
 
-  const goToDrawer = (e: React.MouseEvent) => {
+  // Resolve the task's dep name → the full dependency object the drawer needs
+  // (read from the design), then open the drawer overlay in place.
+  const openDrawer = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!drawerDep) return;
-    navigate(`${projectArchitecturePath(orgId, projectId)}?dep=${encodeURIComponent(drawerDep)}`);
+    setIsOpeningDrawer(true);
+    try {
+      const design = await api.getDesign(orgId, projectId);
+      const comp = design?.components?.find((c) => c.name === task.componentName);
+      const dep = comp?.dependencies?.find((d) => d.name === drawerDep);
+      if (comp && dep) setDrawerDepRef({ component: comp.name, dependency: dep });
+    } catch {
+      // swallow — the button stays; the user can retry
+    } finally {
+      setIsOpeningDrawer(false);
+    }
+  };
+
+  // Re-read the design after a drawer action so the open drawer reflects the
+  // fresh dependency (provisioning kicked off / values saved).
+  const refreshDrawerDep = async () => {
+    if (!drawerDepRef) return;
+    const design = await api.getDesign(orgId, projectId);
+    const comp = design?.components?.find((c) => c.name === drawerDepRef.component);
+    const dep = comp?.dependencies?.find((d) => d.name === drawerDepRef.dependency.name);
+    if (comp && dep) setDrawerDepRef({ component: comp.name, dependency: dep });
   };
 
   const handleExecute = async (e: React.MouseEvent) => {
@@ -94,6 +118,7 @@ export function TaskDetailPanel({ task, orgId, projectId, onClose }: TaskDetailP
   };
 
   return (
+    <>
     <Box
       onClick={(e) => e.stopPropagation()}
       sx={{
@@ -211,8 +236,9 @@ export function TaskDetailPanel({ task, orgId, projectId, onClose }: TaskDetailP
           <Button
             variant="contained"
             size="small"
-            startIcon={<ExternalLink size={12} />}
-            onClick={goToDrawer}
+            startIcon={isOpeningDrawer ? <CircularProgress size={12} color="inherit" /> : <ExternalLink size={12} />}
+            disabled={isOpeningDrawer}
+            onClick={openDrawer}
           >
             {drawerCtaLabel}
           </Button>
@@ -250,5 +276,14 @@ export function TaskDetailPanel({ task, orgId, projectId, onClose }: TaskDetailP
         )}
       </Box>
     </Box>
+    <DependencyDrawer
+      open={!!drawerDepRef}
+      depRef={drawerDepRef}
+      orgHandle={orgId}
+      projectId={projectId}
+      onClose={() => setDrawerDepRef(null)}
+      onChanged={refreshDrawerDep}
+    />
+    </>
   );
 }
