@@ -87,3 +87,50 @@ func TestGetBoard_NoDoubleCountForOnBoardTask(t *testing.T) {
 		t.Fatalf("OnHold has %d tasks, want 1 (no double-count)", len(board.OnHold))
 	}
 }
+
+// TestGetBoard_SurfacesGateKindsAndSystemTaskFields asserts the payload carries
+// the full set of gate kinds (so the On Hold reason is complete) and the type +
+// dep name of SYSTEM tasks (so the frontend can deep-link the drawer).
+func TestGetBoard_SurfacesGateKindsAndSystemTaskFields(t *testing.T) {
+	repoBoard := &stubRepoBoard{result: &gitrepo.ProjectBoardResult{}} // 0 items → whole-DB fallback
+	taskRepo := &stubTaskRepo{tasks: []models.ComponentTask{
+		{ID: "t-api", ComponentName: "order-api", Type: "component", Status: "on_hold",
+			DependsOnResources:   models.StringSlice{"orders-db"},
+			DependsOnConnections: models.StringSlice{"exchangerate"},
+			DependsOnOrgServices: models.StringSlice{"catalog-product-api"}},
+		{ID: "t-db", ComponentName: "orders-db", Type: "resource-provisioning", Status: "pending", ResourceName: "orders-db"},
+		{ID: "t-cfg", ComponentName: "exchangerate", Type: "config-collection", Status: "pending", ConnectionName: "exchangerate"},
+	}}
+	board, err := NewBoardService(repoBoard, taskRepo).GetBoard(context.Background(), "o", "p")
+	if err != nil {
+		t.Fatalf("GetBoard: %v", err)
+	}
+
+	var api *BoardTask
+	for i := range board.OnHold {
+		if board.OnHold[i].ComponentName == "order-api" {
+			api = &board.OnHold[i]
+		}
+	}
+	if api == nil {
+		t.Fatal("order-api not in OnHold")
+	}
+	if len(api.DependsOnResources) != 1 || len(api.DependsOnConnections) != 1 || len(api.DependsOnOrgServices) != 1 {
+		t.Errorf("gate kinds not surfaced: res=%v conn=%v org=%v", api.DependsOnResources, api.DependsOnConnections, api.DependsOnOrgServices)
+	}
+
+	find := func(name string) *BoardTask {
+		for i := range board.Todo {
+			if board.Todo[i].ComponentName == name {
+				return &board.Todo[i]
+			}
+		}
+		return nil
+	}
+	if db := find("orders-db"); db == nil || db.Type != "resource-provisioning" || db.ResourceName != "orders-db" {
+		t.Errorf("orders-db SYSTEM fields wrong: %+v", db)
+	}
+	if cfg := find("exchangerate"); cfg == nil || cfg.Type != "config-collection" || cfg.ConnectionName != "exchangerate" {
+		t.Errorf("exchangerate SYSTEM fields wrong: %+v", cfg)
+	}
+}

@@ -433,6 +433,21 @@ export interface Task {
   // The Pending Deps column renders "Waiting for: …" from this. Empty
   // for unblocked tasks.
   dependsOnComponents?: string[];
+  // The other gate kinds a component task waits on — platform-resource
+  // provisions, cross-project org-services, and external connections. The
+  // On Hold row explains the full reason (not just component gates) from these.
+  dependsOnResources?: string[];
+  dependsOnOrgServices?: string[];
+  dependsOnConnections?: string[];
+  // Task type: "component" (coding-agent), "resource-provisioning", or
+  // "config-collection". Routes the row's action — the last two are resolved
+  // in the architecture-page drawer, not the (no-op) exec endpoint.
+  type?: string;
+  // The dependency this SYSTEM task resolves (resource-provisioning →
+  // resourceName; config-collection → connectionName). Used to deep-link the
+  // architecture drawer (?dep=<name>).
+  resourceName?: string;
+  connectionName?: string;
   // F3c — diagnostic surface for `verification_failed` tasks. Shown on
   // the card so the operator can decide whether to retry.
   errorMessage?: string;

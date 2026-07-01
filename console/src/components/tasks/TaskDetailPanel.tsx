@@ -26,9 +26,11 @@ import {
   Typography,
 } from '@wso2/oxygen-ui';
 import ReactMarkdown from 'react-markdown';
-import { Play, RotateCcw } from '@wso2/oxygen-ui-icons-react';
+import { useNavigate } from 'react-router-dom';
+import { Play, RotateCcw, ExternalLink } from '@wso2/oxygen-ui-icons-react';
 import { api } from '../../services/api';
 import type { Task } from '../../services/api';
+import { projectArchitecturePath } from '../../lib/paths';
 import { AssigneeChip } from './AssigneeChip';
 
 interface TaskDetailPanelProps {
@@ -41,6 +43,27 @@ interface TaskDetailPanelProps {
 export function TaskDetailPanel({ task, orgId, projectId, onClose }: TaskDetailPanelProps) {
   const [isExecuting, setIsExecuting] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
+  const navigate = useNavigate();
+
+  // resource-provisioning / config-collection tasks are resolved in the
+  // architecture-page drawer (Provision / Provide configuration), NOT the
+  // per-task exec endpoint (a no-op). Deep-link the drawer to this task's dep.
+  const drawerDep =
+    task.type === 'resource-provisioning' ? task.resourceName
+    : task.type === 'config-collection' ? task.connectionName
+    : undefined;
+  const drawerCtaLabel =
+    task.type === 'resource-provisioning' ? 'Provision resource'
+    : task.type === 'config-collection' ? 'Provide configuration'
+    : '';
+  const needsDrawerAction =
+    !!drawerDep && (!task.status || ['pending', 'on_hold', 'failed'].includes(task.status));
+
+  const goToDrawer = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!drawerDep) return;
+    navigate(`${projectArchitecturePath(orgId, projectId)}?dep=${encodeURIComponent(drawerDep)}`);
+  };
 
   const handleExecute = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -181,14 +204,25 @@ export function TaskDetailPanel({ task, orgId, projectId, onClose }: TaskDetailP
           </Button>
         )}
 
-        {/* Execute Now only fires the per-task /tasks/{id}/exec endpoint,
-            which does meaningful work only for SYSTEM tasks (DB / infra
-            provisioning). WORKER (coding-agent) tasks must go through the
-            batch dispatch path — hide the button for them so users don't
-            see a no-op affordance. Pre-dispatch states only; once
-            dispatched, the row's Live progress button is the primary
-            affordance. */}
-        {task.componentTaskId && task.execType === 'SYSTEM' && (!task.status || task.status === 'pending' || task.status === 'on_hold') && (
+        {/* resource-provisioning / config-collection tasks are resolved in the
+            architecture-page drawer — deep-link there (Provision / Provide
+            configuration) instead of the no-op exec endpoint. */}
+        {needsDrawerAction && (
+          <Button
+            variant="contained"
+            size="small"
+            startIcon={<ExternalLink size={12} />}
+            onClick={goToDrawer}
+          >
+            {drawerCtaLabel}
+          </Button>
+        )}
+
+        {/* Execute Now fires the per-task /tasks/{id}/exec endpoint. It is
+            gated to SYSTEM tasks, but excludes the drawer-resolved types above
+            (resource-provisioning / config-collection) which have a dedicated
+            CTA. Pre-dispatch states only. */}
+        {task.componentTaskId && task.execType === 'SYSTEM' && !drawerDep && (!task.status || task.status === 'pending' || task.status === 'on_hold') && (
           task.status === 'on_hold' ? (
             <Tooltip title="Waiting on prerequisite tasks to complete">
               <span>

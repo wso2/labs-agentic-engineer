@@ -17,7 +17,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   Box,
   Button,
@@ -87,6 +87,7 @@ function getArchitectureFileLabel(path: string): string | undefined {
 export default function ProjectArchitecturePage() {
   const navigate = useNavigate();
   const { orgId, projectId } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const routeOrgId = orgId ?? 'default';
 
   const [loading, setLoading] = useState(true);
@@ -341,6 +342,24 @@ export default function ProjectArchitecturePage() {
   // each `component-added` event progressively populates the canvas. Once
   // finalize fires and the bundle refreshes, fall back to design.components.
   const effectiveComponents = generating ? streamingComponents : (design?.components ?? []);
+
+  // Deep-link: /architecture?dep=<name> opens that dependency's drawer directly
+  // (the tasks board's Provision / Provide configuration CTAs link here). Runs
+  // once the design is loaded, then clears the param so closing the drawer sticks.
+  useEffect(() => {
+    const depName = searchParams.get('dep');
+    if (!depName || activeDep || effectiveComponents.length === 0) return;
+    for (const comp of effectiveComponents) {
+      const dep = comp.dependencies?.find((d) => d.name === depName);
+      if (dep) {
+        setActiveDep({ component: comp.name, dependency: dep });
+        break;
+      }
+    }
+    const next = new URLSearchParams(searchParams);
+    next.delete('dep');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, effectiveComponents, activeDep, setSearchParams]);
 
   // When effectiveComponents changes (e.g. after onChanged refetches the design),
   // re-derive activeDep from the fresh component list so the open drawer always

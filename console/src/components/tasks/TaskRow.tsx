@@ -51,6 +51,19 @@ export function TaskRow({ task, section, orgId, projectId, index }: TaskRowProps
 
   const animationDelay = `${index * 0.045}s`;
 
+  // Full set of gates an on_hold task is waiting on, across every dep kind —
+  // not just sibling components. Resource/connection gates carry the action
+  // needed so the reason doubles as a hint (provision / configure).
+  const waitingFor =
+    task.status === 'on_hold'
+      ? [
+          ...(task.dependsOnComponents ?? []),
+          ...(task.dependsOnResources ?? []).map((r) => `${r} (needs provisioning)`),
+          ...(task.dependsOnConnections ?? []).map((c) => `${c} (needs configuration)`),
+          ...(task.dependsOnOrgServices ?? []).map((o) => `${o} (org-service)`),
+        ]
+      : [];
+
   if (isWaiting || isSyncing) {
     return (
       <Box
@@ -183,7 +196,7 @@ export function TaskRow({ task, section, orgId, projectId, index }: TaskRowProps
           >
             {task.title}
           </Typography>
-          {task.status === 'on_hold' && task.dependsOnComponents && task.dependsOnComponents.length > 0 && (
+          {waitingFor.length > 0 && (
             <Typography
               variant="caption"
               sx={{
@@ -193,7 +206,7 @@ export function TaskRow({ task, section, orgId, projectId, index }: TaskRowProps
                 whiteSpace: 'nowrap',
               }}
             >
-              Waiting for: {task.dependsOnComponents.join(', ')}
+              Waiting for: {waitingFor.join(', ')}
             </Typography>
           )}
           {task.status === 'verification_failed' && task.errorMessage && (
