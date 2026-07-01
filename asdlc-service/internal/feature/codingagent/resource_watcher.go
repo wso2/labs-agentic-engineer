@@ -19,6 +19,7 @@ package codingagent
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -211,16 +212,31 @@ func classifyBinding(b *openchoreo.ResourceReleaseBinding) (done bool, failed bo
 }
 
 // progressingReasons are non-terminal False reasons — the controller is still
-// working. Any False condition with a reason NOT in this set is considered terminal.
+// working. Any False condition with a reason NOT matched here is considered
+// terminal. An empty reason means "still initializing".
 var progressingReasons = map[string]bool{
-	"":             true, // empty reason → still initializing
-	"Creating":     true,
-	"Initializing": true,
-	"Progressing":  true,
-	"Pending":      true,
-	"Waiting":      true,
+	"": true, // empty reason → still initializing
+}
+
+// progressingSubstrings catch OpenChoreo's COMPOUND progressing reasons — the
+// binding controller emits e.g. "ResourcesProgressing" (ResourcesReady=False)
+// while the backing resource (a CNPG Postgres "Setting up primary") is still
+// coming up. A bare "Progressing" whitelist missed these, so a healthy
+// mid-provision binding was mis-classified as a hard failure. Matching the
+// substring is deliberately lenient: a genuinely stuck binding is caught by the
+// watcher's staleAfter age guard, so erring toward "still working" is safe.
+var progressingSubstrings = []string{
+	"Progressing", "Pending", "Waiting", "Creating", "Initializing", "Provisioning",
 }
 
 func isTerminalReason(reason string) bool {
-	return !progressingReasons[reason]
+	if progressingReasons[reason] {
+		return false
+	}
+	for _, s := range progressingSubstrings {
+		if strings.Contains(reason, s) {
+			return false
+		}
+	}
+	return true
 }

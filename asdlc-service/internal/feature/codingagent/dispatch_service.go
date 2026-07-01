@@ -1212,8 +1212,11 @@ func (s *dispatchService) resolveConsumerDependenciesYAML(
 		// pre-namespaced by the connection schema), platform-resource outputs are
 		// generic names (host, port, user, password), so we prefix them with the
 		// dep name to avoid collisions when a component binds multiple resources:
-		//   env var = strings.ToUpper(depName + "_" + outputName)
-		// e.g. dep "db" output "host" → DB_HOST; "password" → DB_PASSWORD.
+		//   env var = envVarName(depName, outputName)  (upper-cased, kebab → C-identifier)
+		// e.g. dep "orders-db" output "host" → ORDERS_DB_HOST; "password" → ORDERS_DB_PASSWORD.
+		// The dep name is kebab-case, so hyphens MUST be sanitized to underscores —
+		// a k8s env-var name must be a C_IDENTIFIER ([A-Za-z_][A-Za-z0-9_]*); a
+		// hyphen (e.g. "ORDERS-DB_HOST") makes the pod spec invalid and deploy fails.
 		// This is a deliberate divergence from the connection output.Name→output.Name
 		// verbatim mapping and matches the todo-db scenario's DB_* env convention.
 		// Binding name: <project>-<depName>-development (mirrors BuildPlatformBinding).
@@ -1227,7 +1230,7 @@ func (s *dispatchService) resolveConsumerDependenciesYAML(
 			}
 			envBindings := make(map[string]string, len(b.Status.Outputs))
 			for _, out := range b.Status.Outputs {
-				envBindings[out.Name] = strings.ToUpper(depName + "_" + out.Name)
+				envBindings[out.Name] = envVarName(depName, out.Name)
 			}
 			deps.Resources = append(deps.Resources, workloadResourceDepYAML{
 				Ref:         task.ProjectID + "-" + depName,
@@ -1245,6 +1248,24 @@ func (s *dispatchService) resolveConsumerDependenciesYAML(
 		return "", fmt.Errorf("marshal dependencies yaml: %w", err)
 	}
 	return string(out), nil
+}
+
+// envVarName builds a valid Kubernetes/C-identifier env-var name from a
+// platform-resource dep name + output name. The dep name is kebab-case (e.g.
+// "orders-db") and outputs are generic (host/port/user/…), so every character
+// outside [A-Za-z0-9_] is mapped to '_' and the whole thing upper-cased —
+// "orders-db" + "host" → "ORDERS_DB_HOST". A k8s env-var name must be a
+// C_IDENTIFIER; a hyphen would make the pod spec invalid and fail the deploy.
+func envVarName(depName, outName string) string {
+	mapped := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_':
+			return r
+		default:
+			return '_'
+		}
+	}, depName+"_"+outName)
+	return strings.ToUpper(mapped)
 }
 
 // postConsumerDependencyComment renders the resolved consumer-dependency block

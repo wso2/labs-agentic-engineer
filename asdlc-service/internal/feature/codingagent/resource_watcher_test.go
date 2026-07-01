@@ -77,7 +77,9 @@ func TestClassifyBinding_ReadyFalse_TerminalReason(t *testing.T) {
 
 func TestClassifyBinding_ReadyFalse_ProgressingReason(t *testing.T) {
 	// A False condition with a progressing reason is NOT terminal — still waiting.
-	for _, reason := range []string{"Creating", "Initializing", "Progressing", "Pending", ""} {
+	// Includes OpenChoreo's COMPOUND reasons (e.g. "ResourcesProgressing", emitted
+	// while a CNPG Postgres is "Setting up primary") — the live-E2E regression.
+	for _, reason := range []string{"Creating", "Initializing", "Progressing", "Pending", "", "ResourcesProgressing", "ResourcesProvisioning"} {
 		b := &openchoreo.ResourceReleaseBinding{
 			Status: &openchoreo.ResourceReleaseBindingStatus{
 				Conditions: []openchoreo.OCCondition{
