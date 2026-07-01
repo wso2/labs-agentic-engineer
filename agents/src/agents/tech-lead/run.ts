@@ -28,7 +28,7 @@
 
 import { streamObject, type LanguageModel } from "ai";
 import {
-  PlanArraySchema,
+  PlanResultSchema,
   PlanItemSchema,
   type TechLeadPlanInput,
   type PlanIssue,
@@ -79,8 +79,13 @@ export async function runTechLeadPlan(
     model,
     system: planSystemPrompt,
     prompt: buildPlanUserPrompt(input),
-    schema: PlanArraySchema,
+    schema: PlanResultSchema,
     abortSignal,
+    // Force the older tool-based structured-output path. The default `auto` picks
+    // Anthropic's native structured-outputs beta (`structured-outputs-2025-11-13`)
+    // for sonnet-4-5, which hangs streamObject here (the object never finalizes),
+    // breaking task generation. `jsonTool` restores the stable P4 behavior.
+    providerOptions: { anthropic: { structuredOutputMode: "jsonTool" } },
     onError: ({ error }) => {
       console.error("[tech-lead/plan] streamObject error:", error);
     },
@@ -101,17 +106,20 @@ export async function runTechLeadPlan(
   };
 
   // Seal-rule: emit element i when the partial array length ≥ i+2 (so element
-  // i is no longer the trailing one still being typed).
+  // i is no longer the trailing one still being typed). The stream now yields
+  // `{ tasks: [...] }` (object-wrapped, see PlanResultSchema) — read `.tasks`.
   for await (const partial of result.partialObjectStream) {
     if (isClosed?.()) break;
-    if (!Array.isArray(partial)) continue;
-    const sealedTo = partial.length - 2;
-    for (let i = sealedThrough + 1; i <= sealedTo; i++) sealOne(i, partial[i]);
+    const arr = partial?.tasks;
+    if (!Array.isArray(arr)) continue;
+    const sealedTo = arr.length - 2;
+    for (let i = sealedThrough + 1; i <= sealedTo; i++) sealOne(i, arr[i]);
   }
 
   // Stream ended — flush the trailing element(s).
   const final = await result.object;
-  for (let i = sealedThrough + 1; i < final.length; i++) sealOne(i, final[i]);
+  const finalTasks = final.tasks;
+  for (let i = sealedThrough + 1; i < finalTasks.length; i++) sealOne(i, finalTasks[i]);
 
   const issues = validatePlan({
     items: sealed,

@@ -69,6 +69,12 @@ export type PlanItem = z.infer<typeof PlanItemSchema>;
 // The full plan is a non-empty (in fresh mode) array of PlanItem.
 export const PlanArraySchema = z.array(PlanItemSchema);
 
+// The plan streamed by the tech-lead, wrapped in an object (rather than a bare
+// top-level array) so the stable `jsonTool` structured-output path produces a
+// valid tool `input_schema` — Anthropic requires it to be `type: object`; a
+// top-level array is rejected. The elements live under `tasks`.
+export const PlanResultSchema = z.object({ tasks: PlanArraySchema });
+
 // Lightweight skill projection shipped to the planner — name + description
 // only. The planner uses these as context for splitting tasks but does not
 // load the bodies (those go to the detail phase via TechLeadDetailItem).
