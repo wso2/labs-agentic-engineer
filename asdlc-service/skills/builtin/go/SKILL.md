@@ -1,6 +1,6 @@
 ---
 name: go
-description: How to build a Go service on the platform — pinned golang:1.25-alpine builder (the build pod runs with GOTOOLCHAIN=local), pure-Go modernc.org/sqlite driver (CGO times out under the build pod's CPU throttle), suggested layout, port 9090, GET /health liveness, multi-stage Dockerfile → slim runtime, embedded SQLite for per-user data inside the owning service. Apply to every Go component.
+description: How to build a Go service on the platform — pinned golang:1.25-alpine builder (the build pod runs with GOTOOLCHAIN=local), suggested layout, port 9090, GET /health liveness, multi-stage Dockerfile → slim runtime, and persistence via a platform-provisioned database (a `platform-resource` dependency) — embedded modernc.org/sqlite ONLY when the design explicitly asks for local storage. Apply to every Go component.
 metadata:
   asdlc.version: "2"
 ---
@@ -11,10 +11,11 @@ metadata:
 
 The platform's coding-agent + build pipeline have specific constraints
 on the Go toolchain (no network-installed newer Go), on CGO (build pods
-are CPU-throttled), and on persistence (embedded only — there is no
-external Postgres for v1). This skill tells the agent to pin its
-Dockerfile base image, use the pure-Go SQLite driver, and follow a
-production-shaped project layout.
+are CPU-throttled), and on persistence (prefer the platform-provisioned
+database from a `platform-resource` dependency; embedded SQLite only when
+the design explicitly requests local storage). This skill tells the agent
+to pin its Dockerfile base image, choose the right persistence backend,
+and follow a production-shaped project layout.
 
 ## Platform facts
 
@@ -32,8 +33,13 @@ production-shaped project layout.
   budget. The CPU-throttled build pod compiling the SQLite amalgamation
   (`sqlite3-binding.c`, ~3 MB of C) takes 10–20 minutes and frequently
   times out.
-- The pure-Go `modernc.org/sqlite` driver compiles in ~30 seconds and
-  has the same `database/sql` interface. Use it everywhere.
+- When embedded storage IS explicitly called for, use the pure-Go
+  `modernc.org/sqlite` driver (compiles in ~30 seconds, same
+  `database/sql` interface) — never the CGO `mattn/go-sqlite3`.
+- Persistence default: a real datastore is a platform-provisioned
+  database, declared as a `platform-resource` dependency and reached via
+  the injected `<DEP>_HOST/PORT/DBNAME/USER/PASSWORD` env vars
+  (`database/sql` + `lib/pq`/`pgx`). Do NOT default to embedded SQLite.
 - Default backend port is 9090.
 - Every service exposes `GET /health` returning 200 (the platform's
   readiness probe hits this).
@@ -44,9 +50,11 @@ production-shaped project layout.
 ### Architect
 
 - Default new backend services to Go + `net/http` on port 9090.
-- Prefer fewer components: a single Go service owns its API + its
-  embedded SQLite database. Do NOT spin off a separate `storage` /
-  `database` / `persistence` component.
+- Prefer fewer components: a single Go service owns its API + its data.
+  Do NOT spin off a separate `storage` / `database` / `persistence`
+  component. For a real datastore, declare a `platform-resource`
+  dependency ON the service (the platform provisions a managed database)
+  rather than embedding SQLite.
 - Do NOT create scheduled-task / cronjob components in Go (or anywhere
   else). Fold periodic work into the owning service as a background
   goroutine kicked off at startup. Call this out in
@@ -56,11 +64,14 @@ production-shaped project layout.
   (`github.com/go-chi/chi/v5`) is a fine choice. Avoid framework-heavy
   options (Gin, Echo, Fiber) for v1 — they pull large dep trees and
   add little for the platform's typical 5–20-endpoint services.
-- Suggest the embedded `modernc.org/sqlite` driver in
-  `componentAgentInstructions` when the component owns per-user data
-  (e.g. todos, drafts, notes, profile-extension data). Include a
-  short note: "Use `modernc.org/sqlite` (pure-Go); driver name is
-  `\"sqlite\"`. Store the DB under `/data/<name>.db`."
+- When the component has a `platform-resource` database dependency,
+  persist to THAT (Postgres via the injected `<DEP>_HOST/PORT/DBNAME/
+  USER/PASSWORD` env vars) — never SQLite. Suggest embedded
+  `modernc.org/sqlite` ONLY when the design explicitly asks for
+  lightweight local/embedded storage (or the data is trivial/ephemeral
+  and no `platform-resource` DB is declared); then note in
+  `componentAgentInstructions`: "Use `modernc.org/sqlite` (pure-Go);
+  driver name is `\"sqlite\"`. Store the DB under `/data/<name>.db`."
 
 ### Tech-lead — issue body bullets
 
@@ -73,8 +84,16 @@ For every Go service task, include this Scope bullet (HARD requirement):
   `go mod download` to fail with `go.mod requires go >= X.Y` at build
   time even when the local `go build` verification succeeded."
 
-For every Go service task whose component is expected to persist
-per-user data, include this Scope bullet:
+For a Go service task whose component has a `platform-resource` database
+dependency, include this Scope bullet:
+
+- "Persistence: connect to the platform-provisioned database via the
+  injected env vars (`<DEP>_HOST`, `<DEP>_PORT`, `<DEP>_DBNAME`,
+  `<DEP>_USER`, `<DEP>_PASSWORD`) using `database/sql` with `lib/pq` or
+  `pgx`. Do NOT use SQLite or any embedded/local database."
+
+Only when the design EXPLICITLY calls for embedded/local storage (no
+`platform-resource` DB is declared), include the SQLite bullet instead:
 
 - "Persistence: use the pure-Go `modernc.org/sqlite` driver (import
   `_ \"modernc.org/sqlite\"`; `sql.Open(\"sqlite\", ...)` — note the
