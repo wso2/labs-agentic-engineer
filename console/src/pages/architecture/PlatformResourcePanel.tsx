@@ -172,10 +172,12 @@ export function PlatformResourcePanel({
     },
   });
 
-  // Derive the effective status from the query response when available,
-  // otherwise fall back to dep.status.
+  // Provisioning status is authoritative from the status query (the
+  // resource-provisioning task status + binding readiness) — NOT dep.status.
+  // dep.status === 'resolved' only means the architect matched a resource type;
+  // it does NOT mean the resource has been provisioned.
   const effectiveStatus = statusQuery.data?.status ?? dep.status;
-  const effectiveReady = statusQuery.data?.ready ?? (dep.status === 'resolved');
+  const effectiveReady = statusQuery.data?.ready === true;
   const outputs = statusQuery.data?.outputs ?? dep.outputs ?? [];
 
   // -------------------------------------------------------------------------
@@ -194,10 +196,25 @@ export function PlatformResourcePanel({
   }
 
   // -------------------------------------------------------------------------
-  // State: provisioning / pending / building (in-flight)
+  // While the real provisioning status loads, don't guess — otherwise a
+  // resolved-but-unprovisioned resource briefly flashes "Provisioned ✓".
+  // -------------------------------------------------------------------------
+  if (statusQuery.isLoading) {
+    return (
+      <Stack direction="row" alignItems="center" spacing={1.5}>
+        <CircularProgress size={18} />
+        <Typography variant="body2" color="text.secondary">
+          Checking provisioning status…
+        </Typography>
+      </Stack>
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // State: provisioning / building (in-flight)
   // -------------------------------------------------------------------------
   if (
-    dep.status === 'provisioning' &&
+    (effectiveStatus === 'building' || effectiveStatus === 'provisioning') &&
     !isTerminal(effectiveStatus, effectiveReady)
   ) {
     return (
@@ -220,7 +237,7 @@ export function PlatformResourcePanel({
   // -------------------------------------------------------------------------
   // State: failed
   // -------------------------------------------------------------------------
-  if (effectiveStatus === 'failed' || (dep.status === 'provisioning' && effectiveStatus === 'failed')) {
+  if (effectiveStatus === 'failed') {
     return (
       <Box>
         <Alert severity="error" sx={{ mb: 2 }}>
@@ -239,9 +256,11 @@ export function PlatformResourcePanel({
   }
 
   // -------------------------------------------------------------------------
-  // State: deployed / resolved / ready — show outputs + re-provision
+  // State: deployed / ready — show outputs + re-provision. Only a genuinely
+  // provisioned resource (binding Ready, or the task deployed) qualifies —
+  // NOT merely architect-resolved.
   // -------------------------------------------------------------------------
-  if (effectiveReady || effectiveStatus === 'deployed' || effectiveStatus === 'resolved' || dep.status === 'resolved') {
+  if (effectiveReady || effectiveStatus === 'deployed') {
     return (
       <Box>
         <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
@@ -284,17 +303,17 @@ export function PlatformResourcePanel({
   }
 
   // -------------------------------------------------------------------------
-  // Fallback (blocked or unknown status) — provisioning in progress via
-  // a status we don't explicitly enumerate
+  // Fallback: resolved by the architect but NOT yet provisioned (task pending)
+  // — show the provision form so the user can kick it off.
   // -------------------------------------------------------------------------
   return (
-    <Box>
-      <Stack direction="row" alignItems="center" spacing={1.5} sx={{ mb: 1.5 }}>
-        <CircularProgress size={18} />
-        <Typography variant="body2">
-          Provisioning… (a database can take a few minutes)
-        </Typography>
-      </Stack>
-    </Box>
+    <ParamForm
+      dep={dep}
+      orgHandle={orgHandle}
+      projectId={projectId}
+      component={component}
+      onChanged={onChanged}
+      submitLabel="Provision"
+    />
   );
 }

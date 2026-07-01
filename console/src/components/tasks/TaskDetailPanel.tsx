@@ -61,17 +61,23 @@ export function TaskDetailPanel({ task, orgId, projectId, onClose }: TaskDetailP
   const needsDrawerAction =
     !!drawerDep && (!task.status || ['pending', 'on_hold', 'failed'].includes(task.status));
 
-  // Resolve the task's dep name → the full dependency object the drawer needs
-  // (read from the design), then open the drawer overlay in place.
+  // Resolve the task's dep NAME → the full dependency object the drawer needs.
+  // NB: a resource-provisioning / config-collection task's componentName is the
+  // resource/connection name, NOT the owning component — so we search for the dep
+  // by name across every component (the owner is whichever component declares it).
   const openDrawer = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!drawerDep) return;
     setIsOpeningDrawer(true);
     try {
       const design = await api.getDesign(orgId, projectId);
-      const comp = design?.components?.find((c) => c.name === task.componentName);
-      const dep = comp?.dependencies?.find((d) => d.name === drawerDep);
-      if (comp && dep) setDrawerDepRef({ component: comp.name, dependency: dep });
+      for (const comp of design?.components ?? []) {
+        const dep = comp.dependencies?.find((d) => d.name === drawerDep);
+        if (dep) {
+          setDrawerDepRef({ component: comp.name, dependency: dep });
+          break;
+        }
+      }
     } catch {
       // swallow — the button stays; the user can retry
     } finally {
@@ -82,11 +88,15 @@ export function TaskDetailPanel({ task, orgId, projectId, onClose }: TaskDetailP
   // Re-read the design after a drawer action so the open drawer reflects the
   // fresh dependency (provisioning kicked off / values saved).
   const refreshDrawerDep = async () => {
-    if (!drawerDepRef) return;
+    if (!drawerDep) return;
     const design = await api.getDesign(orgId, projectId);
-    const comp = design?.components?.find((c) => c.name === drawerDepRef.component);
-    const dep = comp?.dependencies?.find((d) => d.name === drawerDepRef.dependency.name);
-    if (comp && dep) setDrawerDepRef({ component: comp.name, dependency: dep });
+    for (const comp of design?.components ?? []) {
+      const dep = comp.dependencies?.find((d) => d.name === drawerDep);
+      if (dep) {
+        setDrawerDepRef({ component: comp.name, dependency: dep });
+        break;
+      }
+    }
   };
 
   const handleExecute = async (e: React.MouseEvent) => {
