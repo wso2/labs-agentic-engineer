@@ -134,3 +134,37 @@ func TestGetBoard_SurfacesGateKindsAndSystemTaskFields(t *testing.T) {
 		t.Errorf("exchangerate SYSTEM fields wrong: %+v", cfg)
 	}
 }
+
+// TestGetBoard_UnissuedSystemTaskRoutedByStatus asserts a resource-provisioning /
+// config-collection task (no issue → the unissued path) is routed by its own
+// status: deployed → Done (not pinned to Todo with a "deployed" label), pending
+// → Todo.
+func TestGetBoard_UnissuedSystemTaskRoutedByStatus(t *testing.T) {
+	// One board item that matches no DB task keeps result.Items > 0 so the
+	// whole-DB fallback does not fire; the DB-only tasks flow through unissued.
+	repoBoard := &stubRepoBoard{result: &gitrepo.ProjectBoardResult{
+		Items: []gitrepo.BoardItem{{ID: "PVTI_x", URL: "https://github.com/o/r/issues/9", Status: "Todo"}},
+	}}
+	taskRepo := &stubTaskRepo{tasks: []models.ComponentTask{
+		{ID: "t-db", ComponentName: "orders-db", Type: "resource-provisioning", ResourceName: "orders-db", Status: "deployed"},
+		{ID: "t-cfg", ComponentName: "exchangerate", Type: "config-collection", ConnectionName: "exchangerate", Status: "pending"},
+	}}
+	board, err := NewBoardService(repoBoard, taskRepo).GetBoard(context.Background(), "o", "p")
+	if err != nil {
+		t.Fatalf("GetBoard: %v", err)
+	}
+	has := func(list []BoardTask, name string) bool {
+		for _, tk := range list {
+			if tk.ComponentName == name {
+				return true
+			}
+		}
+		return false
+	}
+	if !has(board.Done, "orders-db") {
+		t.Errorf("deployed resource-provisioning task not in Done (Todo=%v)", has(board.Todo, "orders-db"))
+	}
+	if !has(board.Todo, "exchangerate") {
+		t.Errorf("pending config-collection task should be in Todo")
+	}
+}

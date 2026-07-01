@@ -111,10 +111,18 @@ export function buildProjectModel(components: CellDiagramComponent[]): Project {
       label: depName,
       onPlatform: true,
     }));
-    // External nodes: unified external + org-service deps, else legacy dependentApis.
+    // External nodes: unified external + org-service + platform-resource deps
+    // (each is a backing dependency outside the component's own code), else
+    // legacy dependentApis. platform-resource (a provisioned db/cache/queue)
+    // renders as a chain-link node just like an external API or org-service.
     const externalConnections: Connection[] = Array.isArray(comp.dependencies)
       ? comp.dependencies
-          .filter((d) => d.kind === 'external' || d.kind === 'org-service')
+          .filter(
+            (d) =>
+              d.kind === 'external' ||
+              d.kind === 'org-service' ||
+              d.kind === 'platform-resource',
+          )
           .map(externalDependencyConnection)
       : (comp.dependentApis || []).map(dependentApiConnection);
 

@@ -221,14 +221,26 @@ func (s *boardService) GetBoard(ctx context.Context, orgID, projectID string) (*
 		return board, nil
 	}
 
-	// Always surface unissued tasks (gh_issue_waiting / gh_issue_failed) even
-	// when the primary path is active. These have no IssueURL and are invisible
-	// to the GitHub Project board.
+	// Always surface unissued tasks (no IssueURL — either a coding task still
+	// awaiting its GitHub issue, or a SYSTEM resource-provisioning /
+	// config-collection task that never gets an issue by design). These are
+	// invisible to the GitHub Project board, so route them by their own status:
+	// a SYSTEM task moves Todo → In Progress → Done as it provisions, rather than
+	// sitting in Todo with a "deployed" label forever.
 	for _, ct := range unissuedTasks {
 		task := boardTaskFromCT(ct)
-		if ct.LifecycleStatus == string(models.TaskLifecycleGhIssueFailed) {
+		switch {
+		case ct.LifecycleStatus == string(models.TaskLifecycleGhIssueFailed):
 			board.Failed = append(board.Failed, task)
-		} else {
+		case ct.Status == "deployed":
+			board.Done = append(board.Done, task)
+		case ct.Status == "building" || ct.Status == "in_progress":
+			board.InProgress = append(board.InProgress, task)
+		case ct.Status == "failed" || ct.Status == "rejected" || ct.Status == "verification_failed":
+			board.Failed = append(board.Failed, task)
+		case ct.Status == "on_hold":
+			board.OnHold = append(board.OnHold, task)
+		default: // pending / empty — needs action, or a coding task awaiting its issue
 			board.Todo = append(board.Todo, task)
 		}
 	}
