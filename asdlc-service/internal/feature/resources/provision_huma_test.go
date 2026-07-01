@@ -43,14 +43,20 @@ func (f *fakeDesignStore) ReadDesign(_ context.Context, _, _ string) (*artifacts
 }
 
 type fakeProvisioner struct {
-	called int
-	result *ProvisionResult
-	err    error
+	called        int
+	deprovisioned int
+	result        *ProvisionResult
+	err           error
 }
 
 func (f *fakeProvisioner) Provision(_ context.Context, _, _, _, _ string, _ map[string]string, _ []string) (*ProvisionResult, error) {
 	f.called++
 	return f.result, f.err
+}
+
+func (f *fakeProvisioner) Deprovision(_ context.Context, _, _, _ string, _ []string) error {
+	f.deprovisioned++
+	return f.err
 }
 
 type fakeTaskRepo struct {
@@ -71,8 +77,10 @@ func (f *fakeTaskRepo) Update(_ context.Context, t *models.ComponentTask) error 
 // fakeResourceClient is a minimal stub for openchoreo.ResourceClient used in
 // handler-level tests. Only GetBinding is exercised by the GetStatus tests.
 type fakeResourceClient struct {
-	binding *openchoreo.ResourceReleaseBinding
-	bindErr error
+	binding         *openchoreo.ResourceReleaseBinding
+	bindErr         error
+	deletedBindings []string
+	deletedResource []string
 }
 
 func (f *fakeResourceClient) EnsureResourceType(_ context.Context, _ string, rt *openchoreo.ResourceType) (*openchoreo.ResourceType, error) {
@@ -90,8 +98,14 @@ func (f *fakeResourceClient) EnsureBinding(_ context.Context, _ string, b *openc
 func (f *fakeResourceClient) GetBinding(_ context.Context, _, _ string) (*openchoreo.ResourceReleaseBinding, error) {
 	return f.binding, f.bindErr
 }
-func (f *fakeResourceClient) DeleteBinding(_ context.Context, _, _ string) error { return nil }
-func (f *fakeResourceClient) DeleteResource(_ context.Context, _, _ string) error { return nil }
+func (f *fakeResourceClient) DeleteBinding(_ context.Context, _, name string) error {
+	f.deletedBindings = append(f.deletedBindings, name)
+	return nil
+}
+func (f *fakeResourceClient) DeleteResource(_ context.Context, _, name string) error {
+	f.deletedResource = append(f.deletedResource, name)
+	return nil
+}
 func (f *fakeResourceClient) ListClusterResourceTypes(_ context.Context) ([]openchoreo.ResourceType, error) {
 	return nil, nil
 }
@@ -103,6 +117,23 @@ func (f *fakeResourceClient) PatchWorkloadEndpointDeps(_ context.Context, _, _ s
 }
 func (f *fakeResourceClient) ListWorkloadEndpoints(_ context.Context, _ string) ([]openchoreo.WorkloadEndpointInfo, error) {
 	return nil, nil
+}
+
+// TestOCNativeProvisioner_Deprovision asserts the teardown deletes each per-env
+// binding (<project>-<dep>-<env>) and then the per-project Resource
+// (<project>-<dep>) — the cleanup project deletion invokes to avoid orphans.
+func TestOCNativeProvisioner_Deprovision(t *testing.T) {
+	rc := &fakeResourceClient{}
+	p := NewOCNativeProvisioner(rc)
+	if err := p.Deprovision(context.Background(), "default", "storefront-3", "orders-db", []string{"development", "production"}); err != nil {
+		t.Fatalf("Deprovision: %v", err)
+	}
+	if got, want := strings.Join(rc.deletedBindings, ","), "storefront-3-orders-db-development,storefront-3-orders-db-production"; got != want {
+		t.Errorf("deleted bindings = %q, want %q", got, want)
+	}
+	if got, want := strings.Join(rc.deletedResource, ","), "storefront-3-orders-db"; got != want {
+		t.Errorf("deleted resource = %q, want %q", got, want)
+	}
 }
 
 // ---- helpers ----------------------------------------------------------------

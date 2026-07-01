@@ -49,13 +49,21 @@ type ProjectService interface {
 }
 
 type projectService struct {
-	client      openchoreo.ProjectClient
-	repoSvc     gitrepo.RepoService
-	webhookSvc  gitrepo.WebhookService
-	artifactSvc artifacts.ArtifactService
-	store       *artifacts.ArtifactStore
-	taskRepo    repositories.TaskRepository
-	skillsProv  skillsProvisioner
+	client       openchoreo.ProjectClient
+	repoSvc      gitrepo.RepoService
+	webhookSvc   gitrepo.WebhookService
+	artifactSvc  artifacts.ArtifactService
+	store        *artifacts.ArtifactStore
+	taskRepo     repositories.TaskRepository
+	skillsProv   skillsProvisioner
+	resourceProv resourceDeprovisioner
+}
+
+// resourceDeprovisioner is the narrow port for tearing down a project's
+// platform-resource databases (P5) on delete. *resources.OCNativeProvisioner
+// satisfies it. Defined here so project doesn't import the resources package.
+type resourceDeprovisioner interface {
+	Deprovision(ctx context.Context, orgHandle, projectName, depName string, envs []string) error
 }
 
 // skillsProvisioner is the narrow port for eagerly provisioning the org's
@@ -74,6 +82,16 @@ type ProjectServiceWithSkills interface {
 func (s *projectService) SetSkillsProvisioner(p skillsProvisioner) { s.skillsProv = p }
 
 var _ ProjectServiceWithSkills = (*projectService)(nil)
+
+// ProjectServiceWithResourceProvisioner surfaces a setter so main can wire the
+// platform-resource deprovisioner without widening the constructor.
+type ProjectServiceWithResourceProvisioner interface {
+	SetResourceDeprovisioner(p resourceDeprovisioner)
+}
+
+func (s *projectService) SetResourceDeprovisioner(p resourceDeprovisioner) { s.resourceProv = p }
+
+var _ ProjectServiceWithResourceProvisioner = (*projectService)(nil)
 
 func NewProjectService(
 	client openchoreo.ProjectClient,
@@ -168,6 +186,28 @@ func (s *projectService) DeleteProject(ctx context.Context, orgName, projectName
 	if s.repoSvc != nil {
 		if err := s.repoSvc.DeleteRepo(ctx, orgName, projectName); err != nil {
 			slog.ErrorContext(ctx, "failed to delete git repo for project", "org", orgName, "project", projectName, "error", err)
+		}
+	}
+
+	// Tear down the project's platform-resource databases (P5) BEFORE deleting the
+	// tasks that name them. The OC Project delete above does NOT cascade to these:
+	// the Resource/binding carry only a logical spec.owner.projectName, not a k8s
+	// ownerReference, so without this the OC Resource + ResourceReleaseBinding and
+	// the provisioned CNPG Postgres orphan on the cluster. Best-effort — the OC
+	// project + repo are already gone; a stuck DB must not block the delete.
+	if s.resourceProv != nil && s.taskRepo != nil {
+		if tasks, err := s.taskRepo.ListByProjectID(ctx, orgName, projectName); err == nil {
+			for _, t := range tasks {
+				if t.Type == models.TaskTypeResourceProvisioning && t.ResourceName != "" {
+					if derr := s.resourceProv.Deprovision(ctx, orgName, projectName, t.ResourceName, []string{"development"}); derr != nil {
+						slog.ErrorContext(ctx, "failed to deprovision platform-resource on project delete",
+							"org", orgName, "project", projectName, "resource", t.ResourceName, "error", derr)
+					}
+				}
+			}
+		} else {
+			slog.ErrorContext(ctx, "failed to list tasks for platform-resource teardown on project delete",
+				"org", orgName, "project", projectName, "error", err)
 		}
 	}
 

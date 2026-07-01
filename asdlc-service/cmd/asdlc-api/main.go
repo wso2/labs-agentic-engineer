@@ -826,6 +826,12 @@ func main() {
 	resourceProvisioner := resources.NewOCNativeProvisioner(resourceClient)
 	resourceSvc := resources.NewResourceService(artifactStore, resourceProvisioner, taskRepo)
 
+	// Wire the platform-resource deprovisioner into project deletion so deleting a
+	// project tears down its provisioned databases (P5) instead of orphaning them.
+	if setter, ok := projectService.(project.ProjectServiceWithResourceProvisioner); ok {
+		setter.SetResourceDeprovisioner(resourceProvisioner)
+	}
+
 	// Cross-project access requests (P3.5): a consumer asks a provider project to
 	// publish a project-only org-service org-wide. Creates the provider publish
 	// task + GitHub issue on the provider's repo and records an AccessRequest.

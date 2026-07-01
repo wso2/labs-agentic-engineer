@@ -19,6 +19,7 @@ package resources
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -45,6 +46,14 @@ type ResourceProvisioner interface {
 	// name. params are user-supplied provisioning parameters (spec.parameters).
 	Provision(ctx context.Context, orgHandle, projectName, depName, resourceType string,
 		params map[string]string, envs []string) (*ProvisionResult, error)
+
+	// Deprovision tears down what Provision authored: the per-env bindings (their
+	// retainPolicy cascades the rendered backing instance — for postgres-cnpg the
+	// CNPG Cluster + its generated Secret/PVC), then the Resource. Best-effort and
+	// 404-tolerant — used by project deletion, where the Resource/binding would
+	// otherwise orphan (the OC Project delete does NOT cascade them; they carry a
+	// logical spec.owner.projectName, not a k8s ownerReference).
+	Deprovision(ctx context.Context, orgHandle, projectName, depName string, envs []string) error
 }
 
 // ProvisionResult reports what was authored: the per-project Resource name and
@@ -160,6 +169,24 @@ func (p *OCNativeProvisioner) waitForLatestRelease(ctx context.Context, namespac
 		case <-time.After(p.pollInterval):
 		}
 	}
+}
+
+// Deprovision deletes the per-env bindings (their retainPolicy cascades the
+// rendered CNPG Cluster + generated Secret/PVC), then the Resource. Best-effort:
+// DeleteBinding/DeleteResource are 404-tolerant, and errors are collected rather
+// than short-circuited so one failed env doesn't leave the Resource behind.
+func (p *OCNativeProvisioner) Deprovision(ctx context.Context, orgHandle, projectName, depName string, envs []string) error {
+	resourceName := platformResourceName(projectName, depName)
+	var errs []error
+	for _, env := range envs {
+		if err := p.rc.DeleteBinding(ctx, orgHandle, resourceName+"-"+env); err != nil {
+			errs = append(errs, fmt.Errorf("delete binding (%s/%s): %w", depName, env, err))
+		}
+	}
+	if err := p.rc.DeleteResource(ctx, orgHandle, resourceName); err != nil {
+		errs = append(errs, fmt.Errorf("delete resource (%s): %w", depName, err))
+	}
+	return errors.Join(errs...)
 }
 
 // ---- pure builders (unit-tested) -------------------------------------------
