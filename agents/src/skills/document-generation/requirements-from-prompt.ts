@@ -40,7 +40,7 @@ One or two sentences describing what the product is and who it's for. No more.
 # Personas
 
 1-4 personas. Often one is enough — only add more if the product truly requires distinct kinds of users.
-ho
+
 Each on a single line, under 12 words, in the form:
 
 - role — what they do with the product.
@@ -81,6 +81,17 @@ Unless the user explicitly asked, DO NOT include:
 
 If the core flow genuinely requires distinguishing between two types of users (e.g., a requester and an approver), that's fine — express it through the personas and the stories, not as a separate auth capability.
 
+## Keep explicit external dependencies (these are product facts, not tech details)
+
+A technology you INVENT is noise — leave it out. But an external system the user EXPLICITLY says the product must use, consume, or integrate with is a product-level fact that defines the product's boundary, and you MUST keep it as a Feature in plain language. This OVERRIDES the "no tech stack / no architecture" rule below — that rule is about UNREQUESTED implementation choices, never about a dependency the user asked for. Preserve, when the user states it:
+
+- A third-party / external service or API the product calls (e.g. a payment, mapping, weather, or currency service — especially one needing an API key or account).
+- Another team's or the organization's EXISTING shared service the product should consume instead of building its own (e.g. "use the organization's Product Catalog service").
+- A backing resource the user says the PLATFORM should provide/provision (e.g. "a database provisioned by the platform", a managed queue or cache) — as opposed to the product managing its own.
+- A stated data-ownership boundary (e.g. "must NOT store products itself", "does not keep its own copy").
+
+Write each as one plain feature bullet describing what the product does with that system — e.g. "Product details come from the organization's shared Product Catalog service.", "Order totals are converted using live rates from an external currency service.", "Orders are saved in a database the platform provides." Keep the business voice: do NOT name a specific vendor/product/library the user did not name, and do NOT add schemas, field lists, endpoints, or config keys — just preserve the dependency and the boundary. Dropping a dependency the user explicitly required is a failure: the later design stage never sees this prompt, only these requirements, so an omitted integration is lost for good.
+
 ## Budget (hard caps)
 
 - Overview: at most 2 sentences.
@@ -90,7 +101,7 @@ If the core flow genuinely requires distinguishing between two types of users (e
 
 ## Detail level
 
-- No implementation details, tech stack, or architecture.
+- No implementation details, tech stack, or architecture — EXCEPT the user-stated external dependencies covered above, which you keep.
 - No data schemas, field lists, or validation rules.
 - No edge cases, error handling, or failure modes.
 - No timelines, milestones, or team structure.
