@@ -123,8 +123,15 @@ kind by WHAT the target is:
 - **`component`** — a SIBLING component in this same design (a `<name>/` under
   `components/`). Just `{ "kind": "component", "name": "expense-webapp" }`.
 - **`org-service`** — a service owned by ANOTHER project in the org that
-  publishes its endpoint for cross-project use. `name` is the provider's
-  component name. `{ "kind": "org-service", "name": "identity-api" }`.
+  publishes its endpoint for cross-project use. Discover it with
+  `list_org_endpoints` first, and use the returned `name` **EXACTLY AND
+  VERBATIM** — it is project-prefixed (e.g. `hr-directory-employee-api`, NOT
+  `employee-api`); shortening or stripping the prefix resolves to nothing. Only
+  a target whose `namespaceVisible` is `true` is actually published for
+  cross-project use; if it shows `false` or isn't listed, still declare it by
+  its exact name (the platform marks it blocked/unresolved so the user can
+  request access) — never invent a substitute.
+  `{ "kind": "org-service", "name": "hr-directory-employee-api" }`.
 - **`external`** — a system OUTSIDE the platform (a SaaS API, a legacy
   service). Two shapes:
   - *SDK-style SaaS* (Stripe, SendGrid, ...): no spec needed — the component
@@ -138,6 +145,16 @@ kind by WHAT the target is:
   database, cache, object store). Set `resourceType` to a registered type and
   `parameters` for provisioning:
   `{ "kind": "platform-resource", "name": "orders-db", "resourceType": "postgres", "parameters": { "size": "small" } }`.
+  **Persistence trigger — not optional:** whenever a component must persist
+  data or needs a datastore / cache / queue (the requirements say "database",
+  "persistence", "store … in Postgres", "save records", a data store of any
+  kind), you MUST emit a `platform-resource` dependency ON that component. Never
+  treat persistence as an internal implementation detail and omit it, and never
+  spin off a separate database/storage component (per the split rules above) —
+  the datastore is a dependency on the component that owns it. Call
+  `list_platform_resource_types` for a valid `resourceType`; if nothing offered
+  matches, still emit the dependency with your best-guess type (the platform
+  marks it unresolved so the user can pick a real one).
 
 ```json
 "dependencies": [
@@ -167,6 +184,24 @@ component codes against. Use `SCREAMING_SNAKE_CASE` keys. Mark credentials
 `"secret": true` (they route through the secret path); set `credentialClass`
 to `"secret"` for values the user supplies privately or `"publishable"` for
 non-sensitive config. Keep the keys minimal — only what the component reads.
+Derive the keys from the API's auth scheme when known: an `apiKey` scheme → one
+secret key for the API key + a non-secret base-URL key; an `oauth2`
+client-credentials flow → a non-secret client-id + a secret client-secret + a
+non-secret base-URL key. When the scheme is unknown, fall back to API key +
+base URL and note the uncertainty in `description`. An `external` almost always
+carries at least one `config` key — the value-collection gate needs something
+to collect. (Web-app secret rule: a true secret bound to a web-app leaks via
+`window._env_`; place a `secret: true` external on a backend `service`, and put
+only `credentialClass: "publishable"` keys on a web-app.)
+
+**Discovering a NEW external.** When nothing registered fits, use `web_search`
+to identify the service and its integration style — search the service name +
+"OpenAPI spec" / "REST API docs" / "npm package". For a REST/GraphQL API set
+`needsSpec: true` and, if the search surfaces a published OpenAPI/Swagger/
+AsyncAPI URL, put it in `specUrl` (the platform fetches + stores it — never
+fetch or inline it yourself). For an SDK-style SaaS omit `needsSpec` and name
+the language package + exact version in `description`. Record every useful URL
+you found in `candidates[]`.
 
 **Resolution status is platform-computed.** A dependency's `status` (resolved /
 ambiguous / unresolved / blocked) and its `reason` are computed by the platform
