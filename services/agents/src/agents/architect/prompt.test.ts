@@ -102,8 +102,15 @@ test("buildUserPrompt inlines high-level-architecture BEFORE the stack builtins"
   assert.ok(prompt.indexOf("### high-level-architecture") < prompt.indexOf("### go"), "HLA leads the platform skills");
 });
 
-test("buildUserPrompt renders no platform-skills section when nothing is pushed", () => {
+test("buildUserPrompt without a pushed HLA skill degrades to the compact fallback (planner parity)", () => {
   const doc = DesignDoc.fromPrevious(undefined);
   const prompt = buildUserPrompt(baseInput, doc);
-  assert.ok(!prompt.includes("## Platform skills — MUST consult"), "no section without pushed skills");
+  // The section still renders — carrying the fallback — so the scaffolding's
+  // "judgment lives in the high-level-architecture Platform skill below"
+  // pointer never dangles (the drift that motivated ADR-0005).
+  assert.ok(prompt.includes("## Platform skills — MUST consult"), "fallback section renders");
+  assert.ok(prompt.includes("### high-level-architecture"), "fallback keeps the skill heading the pointer targets");
+  assert.ok(prompt.includes("compact fallback"), "fallback body present");
+  assert.ok(prompt.includes("EXACTLY AND VERBATIM"), "org-service verbatim-name rule survives degradation");
+  assert.ok(prompt.includes("never invent instance parameters"), "no-invented-params rule survives degradation");
 });

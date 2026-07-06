@@ -133,6 +133,8 @@ WHEN to emit it, its pairing with \`exposesAPI.auth: end-user-required\`, the pr
 // per design doc §8. Also inlines built-in skill bodies under "Platform skills
 // — MUST consult" and lists org skills as a manifest. See
 // docs/design/skills-system.md > "Per-agent integration > Architect".
+const FALLBACK_HLA_GUIDANCE = `Dependency authoring (compact fallback — the full high-level-architecture skill was not provided this call): every component declares its needs in \`dependencies[]\` using exactly four kinds. \`component\` = a sibling in this project. \`org-service\` = another project's org-published service — call \`list_org_endpoints\` first and use the returned project-prefixed \`name\` EXACTLY AND VERBATIM; only rely on entries with \`namespaceVisible: true\`; never invent a URL. \`external\` = a third-party service the user manages — call \`list_external_resources\` first and reuse a registered name + config schema when one matches; name is lowercase kebab-case; declare the SCREAMING_SNAKE_CASE \`config\` keys the component reads (secrets marked \`"secret": true\`, never consumed by a browser-side web app); set \`needsSpec\`/\`specUrl\` when specific REST endpoints must be called. \`platform-resource\` = platform-provisioned infrastructure (database/cache/queue) — whenever a component persists data you MUST declare one (call \`list_platform_resource_types\` for a valid \`resourceType\`); never spin off a separate database component and never invent instance parameters. Every dependency carries a one-line \`description\`. \`candidates[]\` (URLs found during discovery) are authorable.`;
+
 export function buildUserPrompt(input: ArchitectInput, doc: DesignDoc): string {
   let prompt = `Project: ${input.projectName}
 
@@ -167,9 +169,15 @@ ${input.spec}
   // design-authoring judgment (component decomposition + the unified dependency
   // model) that governs the whole design, ahead of the per-stack builtins.
   // Pushed on `highLevelArchitectureSkill` (not in `builtinSkills`) so it never
-  // enters the org catalogue / applied set. See ADR-0005.
+  // enters the org catalogue / applied set. When the caller omits it (older
+  // aep-api, embed failure) FALLBACK_HLA_GUIDANCE keeps the dependency
+  // judgment functional — the same degrade posture as the task-planner's
+  // FALLBACK_BREAKDOWN_GUIDANCE. See ADR-0005.
   const platformSkills = [
-    ...(input.highLevelArchitectureSkill ? [input.highLevelArchitectureSkill] : []),
+    input.highLevelArchitectureSkill ?? {
+      name: "high-level-architecture",
+      body: FALLBACK_HLA_GUIDANCE,
+    },
     ...builtins,
   ];
 

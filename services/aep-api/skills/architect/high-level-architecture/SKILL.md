@@ -142,9 +142,11 @@ kind by WHAT the target is:
     fetch. A `needsSpec` external with no spec yet is left UNRESOLVED for the
     user to supply — that is expected, not an error to fix.
 - **`platform-resource`** — a backing resource the platform provisions (a
-  database, cache, object store). Set `resourceType` to a registered type and
-  `parameters` for provisioning:
-  `{ "kind": "platform-resource", "name": "orders-db", "resourceType": "postgres", "parameters": { "size": "small" } }`.
+  database, cache, object store). Set `resourceType` to a registered type:
+  `{ "kind": "platform-resource", "name": "orders-db", "resourceType": "postgres-cnpg", "description": "stores orders" }`.
+  Do NOT invent instance `parameters` (size / version / storage) — the user
+  supplies them in the console when provisioning; omit `parameters` unless the
+  requirements literally state them.
   **Persistence trigger — not optional:** whenever a component must persist
   data or needs a datastore / cache / queue (the requirements say "database",
   "persistence", "store … in Postgres", "save records", a data store of any
@@ -178,6 +180,9 @@ tools, USE them before authoring an `external`, `org-service`, or
   `org-service` before referencing it.
 - `list_platform_resource_types` — get a valid `resourceType` (and its
   parameters) before declaring a `platform-resource`.
+
+**Naming.** An `external` dependency's `name` is lowercase kebab-case — it is
+the external resource key the registry and per-project values are filed under.
 
 **Config-key conventions.** `config` is the env-var schema the consuming
 component codes against. Use `SCREAMING_SNAKE_CASE` keys. Mark credentials
