@@ -165,6 +165,17 @@ type ArchitectRequest struct {
 	BuiltinSkills []SkillRecord      `json:"builtinSkills,omitempty"`
 	OrgSkills     []SkillDescription `json:"orgSkills,omitempty"`
 	SkillsApplied []string           `json:"skillsApplied,omitempty"`
+	// HighLevelArchitectureSkill is the `high-level-architecture` skill body
+	// pushed to the architect on every design call. It carries the design-
+	// authoring judgment (component decomposition + the unified dependency
+	// model: kind selection, discovery-tool ordering, exact-catalog-name rule,
+	// platform-resource database trigger, external needsSpec/specUrl/config
+	// derivation, authorable candidates, per-dep description) so the architect
+	// prompt stays wire/output scaffolding. Sourced from the embedded default
+	// (never the org catalogue — it is design guidance, not a per-component
+	// attachable skill); when nil the agent falls back to its prompt guidance.
+	// Mirrors TaskBreakdownSkill on the task-planner. See ADR-0005.
+	HighLevelArchitectureSkill *SkillRecord `json:"highLevelArchitectureSkill,omitempty"`
 	// MCP, when present, tells agents-service where the BFF's internal MCP
 	// discovery surface lives and carries the BFF-signed token to reach it.
 	// Injected by the client at send time (StreamArchitect) — callers never

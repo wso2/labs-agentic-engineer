@@ -417,6 +417,11 @@ func (s *designService) StreamGenerateDesign(ctx context.Context, orgID, project
 		BuiltinSkills:       builtinRecords,
 		OrgSkills:           orgDescriptions,
 		SkillsApplied:       currentApplied,
+		// Pushed directly (embedded default), not via the org catalogue: the
+		// high-level-architecture skill is design-authoring guidance, not a
+		// per-component attachable skill. Mirrors the task-planner's
+		// TaskBreakdownSkill push. See ADR-0005.
+		HighLevelArchitectureSkill: loadHighLevelArchitectureSkill(),
 	})
 	if err != nil {
 		return fmt.Errorf("agents service request: %w", err)

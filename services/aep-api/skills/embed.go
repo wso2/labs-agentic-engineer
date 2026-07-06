@@ -38,3 +38,22 @@ var PlannerFS embed.FS
 
 // TaskBreakdownSkillPath is the embedded path of the task-breakdown SKILL.md.
 const TaskBreakdownSkillPath = "planner/task-breakdown/SKILL.md"
+
+// ArchitectFS carries the architect-facing built-in skills that are pushed on
+// every architect (design) call directly on the wire — NOT bootstrapped into
+// the `skills` table (unlike BuiltinFS). Today this is the
+// `high-level-architecture` skill: it is authoring guidance for the design
+// itself (component decomposition + dependency edges), not a design-attachable
+// per-component coding skill, so it never enters the org catalogue. This
+// mirrors PlannerFS (task-breakdown pushed to the planner) rather than
+// BuiltinFS (the four stack skills bootstrapped to the catalogue).
+// See docs/decisions/ADR-0005-single-skill-library.md and
+// skills/high-level-architecture/SKILL.md (the single authored source; the
+// embedded copy below is its go:embed-only mirror).
+//
+//go:embed architect/high-level-architecture/SKILL.md
+var ArchitectFS embed.FS
+
+// HighLevelArchitectureSkillPath is the embedded path of the
+// high-level-architecture SKILL.md.
+const HighLevelArchitectureSkillPath = "architect/high-level-architecture/SKILL.md"
