@@ -60,49 +60,16 @@ Call finalize() to end the session. If finalize returns validation issues, addre
 
 # Dependencies (the unified model)
 
-Every component carries a single \`dependencies\` list — everything it needs from outside itself, each entry discriminated by \`kind\`. This ONE list replaces the old \`dependsOn\` + \`dependentApis\` split. Classify each need into exactly one kind:
+Every component carries a single \`dependencies\` list — everything it needs from outside itself, each entry discriminated by \`kind\`. This ONE list replaces the old \`dependsOn\` + \`dependentApis\` split. The four kinds:
 
-  - **\`component\`** — a sibling component built by THIS project (e.g. a web-app's backend \`todo-api\`). \`name\` must match the sibling's name verbatim. The platform resolves its URL (deploy-gated) and wires the binding. This is the old \`dependsOn\`.
-  - **\`org-service\`** — a service published by ANOTHER project in the same organisation (e.g. an organisation-wide employee directory). Before proposing one, call \`list_org_endpoints\` to discover what in-org services exist: it returns each endpoint's org-service \`name\`, its project, and \`namespaceVisible\`. **Use the \`name\` value from \`list_org_endpoints\` EXACTLY AND VERBATIM** as the dependency \`name\` — it is project-prefixed (e.g. \`hr-directory-employee-api\`, NOT \`employee-api\`). Do NOT shorten it, strip the project prefix, or invent a friendlier form; the platform matches the dependency to the catalog by this exact string, and a shortened name resolves to nothing. Only declare an \`org-service\` dependency when the target's \`namespaceVisible\` is **true** — that means the provider has published it for cross-project use. If the service you need shows \`namespaceVisible: false\` (it exists but isn't published cross-project) or isn't listed at all, still declare it by name (the platform computes it as blocked/unresolved so the user can request access or the provider can publish it) — do NOT silently invent a substitute. Declare it **by name only** (the platform resolves + injects the internal URL); do NOT invent a \`url\`, and do NOT create a sibling component of your own for it. \`{ "kind": "org-service", "name": "hr-directory-employee-api", "description": "Organisation-wide employee directory — name, email, department." }\`
-  - **\`external\`** — an off-platform service the user must supply values for: a SaaS reached via an SDK (Salesforce, GitHub), a public/corporate REST API (OpenWeather), or a user-managed database. ONE generic kind. Carry:
-      - \`name\` (lowercase kebab-case, the external resource key, e.g. \`openweather\`, \`salesforce\`)
-      - \`description\` (free-form: which SDK to initialise, which auth scheme, where the API spec lives — so the coding agent knows how to use it)
-      - \`config\` (the env-var key SCHEMA the component codes against — list each key, mark credentials/tokens \`secret: true\`, plain values like base URLs \`secret: false\`). You declare the KEYS only; the user provides the VALUES later. A base URL is a config key (it varies per environment), not metadata.
-    Example: \`{ "kind": "external", "name": "openweather", "description": "OpenWeatherMap current-weather REST API; call GET {base}/data/2.5/weather?q=&appid={key}.", "config": [ { "key": "OPENWEATHER_BASE_URL", "secret": false }, { "key": "OPENWEATHER_API_KEY", "secret": true } ] }\`
-      - REUSE existing external resources: before proposing an \`external\` dependency, call \`list_external_resources\` to see what this organization has ALREADY registered. If a registered external resource fits the need, reuse its EXACT \`name\` and config-key schema (call \`get_external_resource_schema\` to confirm the keys) instead of inventing a new name/shape — the user has already provided its values, so a matching name avoids re-collecting them. Only invent a new external resource when nothing registered fits.
-  - **\`platform-resource\`**: infrastructure the PLATFORM provisions for a component — a **database** (persistent storage), cache, or message queue (vs \`external\`, which the user manages, and vs a sibling \`component\`). **TRIGGER — this is not optional: whenever a component must persist data or needs a datastore / cache / queue (the spec says "database", "persistence", "store … in Postgres", "save records", a data store of any kind, etc.) you MUST emit a \`platform-resource\` dependency ON that component.** Do NOT treat persistence as an internal implementation detail and omit it, and do NOT spin off a separate database/storage component (per the decomposition rule at the top) — the datastore is a \`platform-resource\` DEPENDENCY on the owning component. Steps: (1) call \`list_platform_resource_types\` to see what the cluster offers (each entry has a \`name\`, \`parameters\`, and \`outputs\` the component will read as env vars); (2) emit \`{ "kind": "platform-resource", "name": <kebab-case logical name, e.g. "orders-db">, "resourceType": <the discovered type name VERBATIM, e.g. "postgres-cnpg">, "description": "what it stores / why" }\`. If NO offered type matches the need, still emit the dependency with your best-guess \`resourceType\` (the platform computes it as unresolved so the user can pick a real one). Do NOT invent instance parameters (size / version) — the user supplies them in the console.
+  - **\`component\`** — a sibling component built by THIS project; \`name\` matches the sibling verbatim (the old \`dependsOn\`).
+  - **\`org-service\`** — a service published by ANOTHER project in the same org.
+  - **\`external\`** — an off-platform SaaS / REST API / user-managed DB the user supplies values for.
+  - **\`platform-resource\`** — infrastructure the PLATFORM provisions for a component (database, cache, queue).
 
-## External dependency discovery (web_search)
+**Dependency-authoring judgment lives in the \`high-level-architecture\` Platform skill below — apply it for every dependency you emit.** It carries: which kind to pick; the discovery tools and reuse-first ordering (\`list_external_resources\` / \`get_external_resource_schema\`, \`list_org_endpoints\`, \`list_platform_resource_types\`) to call BEFORE inventing a name or config schema; using an \`org-service\`'s exact project-prefixed catalog name verbatim; the persistence ⇒ \`platform-resource\` trigger (never omit a datastore, never spin off a separate database component); \`external\` \`needsSpec\`/\`specUrl\`/\`config\`-key derivation with \`web_search\` discovery and authorable \`candidates[]\`; the web-app secret rule; and the one-line \`description\` every dependency carries. Do not restate that guidance here — read it from the skill.
 
-When you need to propose a NEW \`external\` dependency that is not already returned by \`list_external_resources\`:
-
-1. **Reuse-first**: always call \`list_external_resources\` BEFORE proposing a new external dependency. If a registered external resource fits, reuse its exact name + config-key schema (see above).
-
-2. **Discover with web_search**: for a new external, call \`web_search\` to identify the service and its integration style. Search for the service name + "OpenAPI spec" or "REST API docs" or "npm package". Put any useful URLs you find in \`candidates[]\` — each entry is \`{ label, description, url }\` (e.g. the API homepage, a docs page, a spec URL).
-
-3. **Classify the integration style**, then set the fields accordingly:
-
-   **REST / GraphQL API** (the component calls specific HTTP endpoints):
-   - Set \`needsSpec: true\` — a machine-readable spec is required for the coding agent.
-   - If the search surfaces a published OpenAPI / Swagger / AsyncAPI URL (e.g. \`/openapi.json\`, \`/swagger.yaml\`, a GitHub raw URL, or an official "OpenAPI spec" link), set \`specUrl\` to that URL. **Never fetch or inline the spec yourself** — the PLATFORM fetches and stores it; your job is to record the URL hint.
-   - Derive \`config\` keys from the spec's \`securitySchemes\` when known:
-     - \`apiKey\` scheme → one key for the API key (e.g. \`OPENWEATHER_API_KEY\`, \`secret: true\`) plus a base-URL key (\`secret: false\`).
-     - \`oauth2\` with \`clientCredentials\` flow → two keys: client id (\`secret: false\`) + client secret (\`secret: true\`), plus a base-URL key (\`secret: false\`).
-     - When the securityScheme is unknown or not found, fall back to a sensible guess (API key + base URL) and note the uncertainty in \`description\`.
-
-   **SaaS SDK** (the component uses a language-level SDK, not raw HTTP):
-   - Omit \`needsSpec\` (or set \`false\`) — a machine spec is not required; the SDK encapsulates the API surface.
-   - Name the language package + exact version in \`description\` and in \`componentAgentInstructions\` (e.g. \`"Use the @salesforce/core npm package v6.x. Initialise with a connected-app OAuth2 client."\`).
-
-4. **Always** emit \`candidates[]\` with the URLs you found during web_search so the user can verify the sources.
-
-## Resolution status is platform-computed — never author it
-
-Dependency resolution state (whether an \`external\`, \`org-service\`, or \`platform-resource\` dependency is resolved, ambiguous, unresolved, or blocked) is computed by the PLATFORM at read/save time against the live catalog — you never set it, and there is no tool to set it. Just emit your best-effort dependency (name, description, config/resourceType as applicable) even when you cannot fully resolve it from the spec alone — e.g. an \`org-service\` you cannot confirm is published, or an \`external\` you cannot find a spec for. The console surfaces non-resolved entries to the user; a design with unresolved dependencies cannot be saved until the user (or the platform) resolves them, but your job is only to declare the dependency correctly, not to mark its status.
-
-## SPA secret rule (web-apps)
-
-A web-app reads its config from \`window._env_\` in the browser, so a true secret bound to a web-app would be exposed. When an \`external\` dependency carries a \`secret: true\` key, prefer placing that dependency on a **backend \`service\`** (reuse an existing one, or note the gap) rather than directly on a web-app. Only \`publishable\` keys (mark \`credentialClass: "publishable"\`) belong on a web-app. The exact runtime-config instruction lines a consuming component must carry are in the \`api-management\` Platform skill below — follow them.
+**Wire-contract invariant (never author):** dependency resolution \`status\`/\`reason\` is PLATFORM-computed at read/save time against the live catalog — there is no tool to set it and you must never emit a \`status\` or \`reason\` key. Emit your best-effort dependency (name, description, config/resourceType as applicable) even when you cannot resolve it from the spec alone; the console surfaces non-resolved entries to the user.
 
 # API security classification (\`exposesAPI\`)
 
@@ -196,15 +163,25 @@ ${input.spec}
   const orgSkills = input.orgSkills ?? [];
   const skillsApplied = input.skillsApplied ?? [];
 
+  // The high-level-architecture skill is inlined FIRST — it carries the
+  // design-authoring judgment (component decomposition + the unified dependency
+  // model) that governs the whole design, ahead of the per-stack builtins.
+  // Pushed on `highLevelArchitectureSkill` (not in `builtinSkills`) so it never
+  // enters the org catalogue / applied set. See ADR-0005.
+  const platformSkills = [
+    ...(input.highLevelArchitectureSkill ? [input.highLevelArchitectureSkill] : []),
+    ...builtins,
+  ];
+
   // ── Platform skills — full bodies, MUST consult ─────────────────────────
-  if (builtins.length > 0) {
+  if (platformSkills.length > 0) {
     prompt += `
 ## Platform skills — MUST consult before designing
 
 The following encode AEP platform best practices, contracts, and pitfalls. Apply them to every component where their concern is relevant. Their full content is below — you do not need to load them.
 
 `;
-    for (const sk of builtins) {
+    for (const sk of platformSkills) {
       prompt += `### ${sk.name}\n\n${sk.body.trim()}\n\n---\n\n`;
     }
   }

@@ -319,6 +319,15 @@ export const ArchitectInput = z.object({
     .describe(
       "Built-in platform skills — bodies are inlined into the prompt under 'Platform skills — MUST consult'.",
     ),
+  // The high-level-architecture skill — pushed directly on every architect
+  // call (embedded default in aep-api), NOT part of the org catalogue. It
+  // carries the design-authoring judgment (component decomposition + the
+  // unified dependency model) that the prompt used to inline. Inlined under
+  // "Platform skills — MUST consult" alongside builtinSkills. Mirrors the
+  // task-planner's taskBreakdownSkill. See ADR-0005.
+  highLevelArchitectureSkill: SkillRecord.optional().describe(
+    "The high-level-architecture skill body — inlined into the prompt under 'Platform skills — MUST consult'. Carries component-decomposition + dependency-authoring guidance.",
+  ),
   // Org skills — manifest-only (name + description). The architect
   // loads bodies on demand via read_skill (PR 3) if any apply.
   orgSkills: z
