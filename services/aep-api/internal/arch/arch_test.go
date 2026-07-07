@@ -60,6 +60,13 @@ var featureEdgeAllowlist = map[string][]string{
 	// at the composition root, so it holds no other feature edge.
 	"codingagent": {"execution"},
 	"component":   {"artifacts", "gitrepo"},
+	// cycle drives the Temporal DevelopmentFlowWorkflow. Every collaborator is a
+	// consumer-side port: the Temporal control surface (cycle.WorkflowClient,
+	// satisfied by the orchestration client at the composition root), the
+	// development_cycles read-model store (repositories), and the requirements/
+	// design approval hooks (those features define narrow interfaces cycle.Service
+	// satisfies). So it holds no feature edges.
+	"cycle": {},
 	// dependencies is the dependency-management feature: the parent package (MCP
 	// discovery server + endpoints catalog) composes its own resources subpackage
 	// (external/platform provisioner cores). endpoints/ and resources/ hold no
@@ -77,7 +84,11 @@ var featureEdgeAllowlist = map[string][]string{
 	"genai":        {"gitrepo"},
 	"gitrepo":      {},
 	"idp":          {"orgcreds"},
-	"organization": {},
+	// orchestration is aep-api's dial-only Temporal client wrapper — pure
+	// infrastructure over the shared contract module (packages/contracts/
+	// orchestration). It holds no feature edges; cycle is its only consumer.
+	"orchestration": {},
+	"organization":  {},
 	// orgconfig is the consolidated /config surface (org-config-consolidation.md):
 	// one orchestrator over the reused Anthropic/GitHub (orgcreds) and IDP (idp)
 	// services. These two edges ARE the feature — it assembles GET /config and runs

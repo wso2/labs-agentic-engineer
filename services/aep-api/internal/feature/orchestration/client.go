@@ -23,13 +23,16 @@ package orchestration
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
+	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/client"
 
 	"github.com/wso2/aep/aep-api/internal/config"
 	contract "github.com/wso2/labs-agentic-engineer/packages/contracts/orchestration"
 )
+
 
 // Client wraps a Temporal SDK client for start/signal/query only.
 type Client struct {
@@ -64,6 +67,13 @@ func (c *Client) StartCycle(ctx context.Context, in contract.DevelopmentFlowInpu
 		client.StartWorkflowOptions{ID: wfID, TaskQueue: c.taskQueue},
 		contract.WorkflowDevelopmentFlow, in,
 	); err != nil {
+		// A retried start for a still-running cycle is idempotent: the cycle
+		// already exists, so return its ID with no error (the deterministic ID is
+		// the dedup key).
+		var already *serviceerror.WorkflowExecutionAlreadyStarted
+		if errors.As(err, &already) {
+			return wfID, nil
+		}
 		return "", fmt.Errorf("start cycle %s: %w", wfID, err)
 	}
 	return wfID, nil

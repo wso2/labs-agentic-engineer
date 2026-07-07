@@ -47,6 +47,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/feature/artifacts"
 	"github.com/wso2/aep/aep-api/internal/feature/codingagent"
 	"github.com/wso2/aep/aep-api/internal/feature/component"
+	"github.com/wso2/aep/aep-api/internal/feature/cycle"
 	"github.com/wso2/aep/aep-api/internal/feature/dependencies/endpoints"
 	"github.com/wso2/aep/aep-api/internal/feature/dependencies/resources"
 	"github.com/wso2/aep/aep-api/internal/feature/design"
@@ -55,6 +56,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/feature/genai"
 	"github.com/wso2/aep/aep-api/internal/feature/gitrepo"
 	"github.com/wso2/aep/aep-api/internal/feature/idp"
+	"github.com/wso2/aep/aep-api/internal/feature/orchestration"
 	"github.com/wso2/aep/aep-api/internal/feature/organization"
 	"github.com/wso2/aep/aep-api/internal/feature/orgconfig"
 	"github.com/wso2/aep/aep-api/internal/feature/orgcreds"
@@ -469,6 +471,28 @@ func Build(cfg config.Config, db *gorm.DB) (*App, error) {
 	requirementsService := requirements.NewRequirementsService(artifactStore, artifactSvcGit)
 	designService := design.NewDesignService(artifactStore, artifactSvcGit)
 
+	// Development-flow orchestration (Temporal). The BFF is a dial-only client:
+	// it starts/signals/queries the DevelopmentFlowWorkflow that
+	// services/orchestrator executes. A dial failure is NON-FATAL — the BFF boots
+	// with orchestration disabled (the cycle surface returns 503, the save-path
+	// hooks no-op) so local dev without Temporal still works. Requirements
+	// approval starts the cycle; design approval advances it to implement.
+	// cycleClient stays a true nil interface when Temporal is unreachable, so the
+	// cycle service's nil-check disables the feature cleanly (avoiding the
+	// typed-nil-in-interface trap).
+	var cycleClient cycle.WorkflowClient
+	if oc, oerr := orchestration.New(cfg.Temporal); oerr != nil {
+		slog.Warn("temporal dial failed — development-flow orchestration disabled",
+			"hostPort", cfg.Temporal.HostPort, "error", oerr)
+	} else {
+		cycleClient = oc
+		slog.Info("temporal client connected", "hostPort", cfg.Temporal.HostPort,
+			"namespace", cfg.Temporal.Namespace, "taskQueue", cfg.Temporal.TaskQueue)
+	}
+	cycleService := cycle.NewService(cycleClient, repositories.NewDevelopmentCycleRepository(db))
+	requirementsService.SetCycleHook(cycleService)
+	designService.SetCycleHook(cycleService)
+
 	// Tasks are GitHub issues (the Task/Execution split, tasks-github-native):
 	// the read + plan surface reads them live and fuses executions. The dispatch
 	// half (funnel, coding executor, watchers) is wired below, after
@@ -733,6 +757,7 @@ func Build(cfg config.Config, db *gorm.DB) (*App, error) {
 		RequirementsSvc:   requirementsService,
 		CollabRepo:        repoService,
 		DesignSvc:         designService,
+		CycleSvc:          cycleService,
 		TaskReads:         taskReads,
 		TaskCommands:      taskCommands,
 		TaskPlan:          taskPlan,

@@ -115,6 +115,7 @@ type designService struct {
 	externalResourceReg externalResourceRegistrar // for SaveAndProceed external-resource registration; may be nil
 	provisionMinter     provisionIssueMinter      // for SaveAndProceed aep:provision gate minting; may be nil
 	fileCommitter       designFileCommitter       // for CollectSpec's committed-truth spec write; may be nil
+	cycle               designCycleHook           // for SaveAndProceed cycle advance; may be nil
 }
 
 // DesignFileWrite is one file in a CollectSpec atomic commit. Path is the full
@@ -168,6 +169,14 @@ type taskReconciler interface {
 	ReconcilePendingForDesignChange(ctx context.Context, orgID, projectID string) error
 }
 
+// designCycleHook is design_service's narrow consumer port for the
+// development-cycle coupling: when a design is approved (a v<N>-<M> tag cut) it
+// advances the requirement version's cycle to implement. Wired one-way from main
+// (cycle.Service satisfies it); nil when orchestration is disabled.
+type designCycleHook interface {
+	OnDesignApproved(ctx context.Context, orgHandle, projectName string, reqVersion int) error
+}
+
 func NewDesignService(
 	store *artifacts.ArtifactStore,
 	artifactSvc artifacts.ArtifactService,
@@ -180,6 +189,12 @@ func NewDesignService(
 
 func (s *designService) SetTaskService(taskSvc taskReconciler) {
 	s.taskSvc = taskSvc
+}
+
+// SetCycleHook wires the optional development-cycle advancer (see
+// designCycleHook). A nil hook is a documented no-op (mirrors SetTaskService).
+func (s *designService) SetCycleHook(h designCycleHook) {
+	s.cycle = h
 }
 
 // SetExternalResourceRegistry wires the external-resource catalog so `external`
@@ -691,6 +706,15 @@ func (s *designService) SaveAndProceed(ctx context.Context, orgID, projectID, co
 	if s.taskSvc != nil {
 		if rerr := s.taskSvc.ReconcilePendingForDesignChange(ctx, orgID, projectID); rerr != nil {
 			slog.WarnContext(ctx, "task reconciliation after design save failed", "error", rerr)
+		}
+	}
+
+	// Advance the requirement version's development cycle to implement.
+	// Best-effort: a signal failure must not fail the design save.
+	if s.cycle != nil {
+		if herr := s.cycle.OnDesignApproved(ctx, orgID, projectID, res.RequirementsVersion); herr != nil {
+			slog.WarnContext(ctx, "advance development cycle after design save failed (non-fatal)",
+				"project", projectID, "requirementsVersion", res.RequirementsVersion, "error", herr)
 		}
 	}
 

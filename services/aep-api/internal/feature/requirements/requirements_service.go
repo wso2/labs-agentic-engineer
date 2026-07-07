@@ -46,9 +46,18 @@ type RequirementsService interface {
 	ListVersions(ctx context.Context, orgID, projectID string) ([]models.ArtifactVersion, error)
 }
 
+// cycleHook is the optional development-cycle coupling: when requirements are
+// approved (a v<N> tag cut) it starts the cycle's Temporal workflow. Wired
+// post-construction via SetCycleHook; nil in tests and when orchestration is
+// disabled (dev without Temporal), so the call site is always nil-guarded.
+type cycleHook interface {
+	OnRequirementsApproved(ctx context.Context, orgHandle, projectName, reqTag string) error
+}
+
 type requirementsService struct {
 	store       *artifacts.ArtifactStore
 	artifactSvc artifacts.ArtifactService
+	cycle       cycleHook // optional; may be nil
 }
 
 func NewRequirementsService(
@@ -60,6 +69,9 @@ func NewRequirementsService(
 		artifactSvc: artifactSvc,
 	}
 }
+
+// SetCycleHook wires the optional development-cycle starter (see cycleHook).
+func (s *requirementsService) SetCycleHook(h cycleHook) { s.cycle = h }
 
 // GetRequirements returns the requirements file map at HEAD plus version
 // metadata. An empty tree yields a draft with no files (the "no requirements
@@ -139,6 +151,15 @@ func (s *requirementsService) SaveAndProceed(ctx context.Context, orgID, project
 	}
 	slog.InfoContext(ctx, "requirements save completed",
 		"project", projectID, "tag", res.Tag, "status", res.Status)
+
+	// Start (idempotently) the development cycle for this requirement version.
+	// Best-effort: a workflow-start failure must not fail the save.
+	if s.cycle != nil && res.Tag != "" {
+		if herr := s.cycle.OnRequirementsApproved(ctx, orgID, projectID, res.Tag); herr != nil {
+			slog.WarnContext(ctx, "start development cycle after requirements save failed (non-fatal)",
+				"project", projectID, "tag", res.Tag, "error", herr)
+		}
+	}
 	return s.GetRequirements(ctx, orgID, projectID)
 }
 

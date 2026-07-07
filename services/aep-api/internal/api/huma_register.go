@@ -26,6 +26,7 @@ import (
 
 	"github.com/wso2/aep/aep-api/internal/feature/artifacts"
 	"github.com/wso2/aep/aep-api/internal/feature/component"
+	"github.com/wso2/aep/aep-api/internal/feature/cycle"
 	"github.com/wso2/aep/aep-api/internal/feature/design"
 	"github.com/wso2/aep/aep-api/internal/feature/execution"
 	"github.com/wso2/aep/aep-api/internal/feature/files"
@@ -55,6 +56,7 @@ type HumaDeps struct {
 	RequirementsSvc   requirements.RequirementsService
 	CollabRepo        gitrepo.RepoService
 	DesignSvc         design.DesignService
+	CycleSvc          *cycle.Service
 	ProvisioningSvc   *provisioning.Service
 	TaskReads         *task.Reads
 	TaskCommands      *task.Commands
@@ -90,6 +92,7 @@ func RegisterAllHuma(api huma.API, d HumaDeps) {
 	requirements.RegisterRequirements(api, d.RequirementsSvc)
 	requirements.RegisterCollab(api, d.CollabRepo)
 	design.RegisterDesign(api, d.DesignSvc)
+	cycle.RegisterCycle(api, d.CycleSvc)
 	provisioning.RegisterResources(api, d.ProvisioningSvc)
 	task.RegisterTask(api, d.TaskReads, d.TaskCommands, d.TaskPlan)
 	execution.RegisterProgress(api, d.ExecProgress)
