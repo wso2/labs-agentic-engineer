@@ -52,7 +52,7 @@ func main() {
 		workflow.RegisterOptions{Name: orchestration.WorkflowDevelopmentFlow})
 	w.RegisterWorkflowWithOptions(workflows.TaskLifecycleWorkflow,
 		workflow.RegisterOptions{Name: orchestration.WorkflowTaskLifecycle})
-	w.RegisterActivity(deps.NewActivities())
+	w.RegisterActivity(deps.NewActivities(cfg))
 
 	log.Printf("orchestrator worker starting — temporal=%s ns=%s queue=%s",
 		cfg.TemporalHostPort, cfg.TemporalNamespace, cfg.TaskQueue)

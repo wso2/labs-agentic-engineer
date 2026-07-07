@@ -25,6 +25,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/contracts/taskmeta"
 	"github.com/wso2/aep/aep-api/models"
 	"github.com/wso2/aep/aep-api/repositories"
+	contract "github.com/wso2/labs-agentic-engineer/packages/contracts/orchestration"
 )
 
 // BuildRetrier re-mints the build clone credential and re-triggers a build at
@@ -33,6 +34,11 @@ import (
 // configured, so the retry path is inert on public-repo-only deployments.
 type BuildRetrier interface {
 	RetryAuthFailedBuild(ctx context.Context, row *models.Execution) (newRunName string, err error)
+}
+
+// TaskSignaler sends task lifecycle events to Temporal.
+type TaskSignaler interface {
+	Signal(ctx context.Context, workflowID, signalName string, arg any) error
 }
 
 // ExecWatcher reconciles running execution rows against their OpenChoreo
@@ -62,6 +68,8 @@ type ExecWatcher struct {
 	// deployObserver is notified when a component deploys (build success), so the
 	// provisioning feature can grant pending cross-project access (nil → skipped).
 	deployObserver DeployObserver
+
+	signals TaskSignaler
 }
 
 // NewExecWatcher wires the watcher. asService may be nil (tests); tick defaults
@@ -88,6 +96,12 @@ func (w *ExecWatcher) WithBuildRetrier(retrier BuildRetrier, budget int) *ExecWa
 // (nil → skipped). Returns the receiver for chained construction.
 func (w *ExecWatcher) WithDeployObserver(o DeployObserver) *ExecWatcher {
 	w.deployObserver = o
+	return w
+}
+
+// WithTaskSignaler enables watcher -> TaskLifecycleWorkflow signaling.
+func (w *ExecWatcher) WithTaskSignaler(signals TaskSignaler) *ExecWatcher {
+	w.signals = signals
 	return w
 }
 
@@ -149,6 +163,7 @@ func (w *ExecWatcher) reconcile(ctx context.Context, row *models.Execution, run 
 			if _, err := w.execRows.Finish(ctx, row.ID, string(taskmeta.ExecFailed), workflowReason(run)); err != nil {
 				slog.WarnContext(ctx, "exec watcher: finish coding failed", "execution", row.ID, "error", err)
 			}
+			w.signal(ctx, row, contract.SignalCodingAgentFailed)
 		}
 		// A succeeded coding run rides the pull_request-opened webhook — no action.
 	case string(taskmeta.KindBuild):
@@ -170,6 +185,9 @@ func (w *ExecWatcher) reconcile(ctx context.Context, row *models.Execution, run 
 					slog.WarnContext(ctx, "exec watcher: deploy observer failed", "component", row.Component, "error", derr)
 				}
 			}
+			w.signal(ctx, row, contract.SignalBuildSucceeded)
+			w.signal(ctx, row, contract.SignalDeployStarted)
+			w.signal(ctx, row, contract.SignalDeploySucceeded)
 			return
 		}
 		w.reconcileBuildFailure(ctx, row, run)
@@ -187,6 +205,7 @@ func (w *ExecWatcher) reconcileBuildFailure(ctx context.Context, row *models.Exe
 		if _, err := w.execRows.Finish(ctx, row.ID, string(taskmeta.ExecFailed), workflowReason(run)); err != nil {
 			slog.WarnContext(ctx, "exec watcher: finish build failed", "execution", row.ID, "error", err)
 		}
+		w.signal(ctx, row, contract.SignalBuildFailed)
 		return
 	}
 	attempt := parseBuildAuthRetryAttempt(row.Reason)
@@ -213,6 +232,16 @@ func (w *ExecWatcher) reconcileBuildFailure(ctx context.Context, row *models.Exe
 		return
 	}
 	slog.InfoContext(ctx, "exec watcher: re-minted + re-triggered build after git-auth failure", "execution", row.ID, "newRun", newRun, "attempt", attempt+1)
+}
+
+func (w *ExecWatcher) signal(ctx context.Context, row *models.Execution, signal string) {
+	if w.signals == nil || row == nil || row.Component == "" {
+		return
+	}
+	wfID := contract.TaskWorkflowID(row.OrgID, row.ProjectID, row.Component)
+	if err := w.signals.Signal(ctx, wfID, signal, nil); err != nil {
+		slog.WarnContext(ctx, "exec watcher: task workflow signal failed", "workflow", wfID, "signal", signal, "error", err)
+	}
 }
 
 // workflowReason returns a short reason string for a terminal WorkflowRun.

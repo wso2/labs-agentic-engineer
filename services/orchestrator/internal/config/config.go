@@ -36,6 +36,12 @@ type Config struct {
 	// TaskQueue is the queue this worker polls; defaults to the shared constant
 	// so config and code can never disagree.
 	TaskQueue string
+	// AEPAPIInternalBaseURL is the aep-api internal S2S endpoint base URL the
+	// worker's activities call for side effects.
+	AEPAPIInternalBaseURL string
+	// AEPAPIInternalBearer is an optional bearer token attached to internal S2S
+	// calls. Local dev may leave it empty when the internal surface is loopback.
+	AEPAPIInternalBearer string
 }
 
 // Load reads the orchestrator config from the environment, applying defaults
@@ -45,6 +51,9 @@ func Load() Config {
 		TemporalHostPort:  getenv("TEMPORAL_HOSTPORT", "localhost:7233"),
 		TemporalNamespace: getenv("TEMPORAL_NAMESPACE", "default"),
 		TaskQueue:         getenv("TEMPORAL_TASK_QUEUE", orchestration.TaskQueue),
+		AEPAPIInternalBaseURL: getenv("AEP_API_INTERNAL_BASE_URL",
+			"http://localhost:8080"),
+		AEPAPIInternalBearer: getenv("AEP_API_INTERNAL_BEARER", ""),
 	}
 }
 

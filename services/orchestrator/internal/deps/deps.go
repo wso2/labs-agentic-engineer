@@ -27,15 +27,23 @@
 // activity methods treat as safe no-ops, so the worker still builds and runs.
 package deps
 
-import "github.com/wso2/labs-agentic-engineer/services/orchestrator/internal/activities"
+import (
+	"github.com/wso2/labs-agentic-engineer/services/orchestrator/internal/activities"
+	"github.com/wso2/labs-agentic-engineer/services/orchestrator/internal/config"
+)
 
-// NewActivities builds the activity set for the worker. Real adapters are added
-// here as they are ported; today all dependencies are nil (no-op activities).
-func NewActivities() *activities.Activities {
+// NewActivities builds the activity set for the worker. When aep-api's internal
+// base URL is configured, activities delegate to its S2S orchestration surface;
+// otherwise they remain nil-backed no-ops for local workflow tests.
+func NewActivities(cfg config.Config) *activities.Activities {
+	var api *activities.HTTPClient
+	if cfg.AEPAPIInternalBaseURL != "" {
+		api = activities.NewHTTPClient(cfg.AEPAPIInternalBaseURL, cfg.AEPAPIInternalBearer, nil)
+	}
 	return activities.New(
-		nil, // Design   — database client (O4-real)
-		nil, // Checker  — gate runner (O4-real)
-		nil, // Dispatch — k8s/OpenChoreo via packages/clients (O4-real)
-		nil, // Merger   — GitHub client (O4-real)
+		api, // Design   — aep-api reads the approved design
+		api, // Checker  — aep-api runs tests/lint/self-review checks
+		api, // Dispatch — aep-api preserves coding-agent/build/deploy integrations
+		api, // Merger   — aep-api owns GitHub PR side effects
 	)
 }

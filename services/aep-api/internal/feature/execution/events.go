@@ -25,11 +25,18 @@ import (
 
 	"github.com/wso2/aep/aep-api/internal/contracts/taskmeta"
 	"github.com/wso2/aep/aep-api/models"
+	contract "github.com/wso2/labs-agentic-engineer/packages/contracts/orchestration"
 )
 
 // RegisterFunc is the webhook-router registration seam (the same closure shape
 // app.go passes so this package imports nothing from feature/webhook).
 type RegisterFunc func(event, action string, h func(ctx context.Context, event, action string, payload []byte) error)
+
+// TaskSignaler sends task lifecycle events to Temporal. Wired optionally during
+// the R3 cutover; the old reactive engine still runs until R4.
+type TaskSignaler interface {
+	Signal(ctx context.Context, workflowID, signalName string, arg any) error
+}
 
 // Events holds the pull_request webhook handlers — the platform-owned half of
 // webhook handling (§9.2). PR-opened ends the coding Execution; PR-merged spawns
@@ -50,12 +57,19 @@ type Events struct {
 	funnel   *Funnel
 	registry *Registry
 	prs      PRReader // for the sweep's PR-state reconciliation (may be nil)
+	signals  TaskSignaler
 }
 
 // NewEvents wires the pull_request handlers. prs may be nil (then the sweep
 // healer no-ops).
 func NewEvents(store ExecutionStore, funnel *Funnel, registry *Registry, prs PRReader) *Events {
 	return &Events{store: store, funnel: funnel, registry: registry, prs: prs}
+}
+
+// WithTaskSignaler enables webhook -> TaskLifecycleWorkflow signaling.
+func (e *Events) WithTaskSignaler(signals TaskSignaler) *Events {
+	e.signals = signals
+	return e
 }
 
 // RegisterHandlers installs the pull_request handlers on the webhook router.
@@ -131,6 +145,9 @@ func (e *Events) PullRequestOpened(ctx context.Context, _, _ string, payload []b
 	// close/merge webhook — §5).
 	if _, err := e.store.Finish(ctx, coding.ID, string(taskmeta.ExecSucceeded), reasonPROpenPrefix+strconv.Itoa(p.PullRequest.Number)); err != nil {
 		return err
+	}
+	if facts, ok, ferr := e.funnel.TaskFactsFor(ctx, p.Repository.FullName, issueNumber); ferr == nil && ok {
+		e.signal(ctx, facts, contract.SignalPRReady)
 	}
 	return nil
 }
@@ -218,6 +235,8 @@ func (e *Events) spawnBuild(ctx context.Context, repoFullName string, issueNumbe
 		_, _ = e.store.Finish(ctx, adRow.ID, string(taskmeta.ExecFailed), err.Error())
 		return err
 	}
+	e.signal(ctx, facts, contract.SignalPRMerged)
+	e.signal(ctx, facts, contract.SignalBuildStarted)
 	return nil
 }
 
@@ -285,6 +304,9 @@ func (e *Events) recordRejection(ctx context.Context, repo string, issueNumber i
 	}
 	if coding := execs[string(taskmeta.KindCoding)]; coding != nil && taskmeta.ExecutionStatus(coding.Status).IsActive() {
 		_, ferr := e.store.Finish(ctx, coding.ID, string(taskmeta.ExecFailed), taskmeta.ReasonPRClosedUnmerged)
+		if facts, ok, terr := e.funnel.TaskFactsFor(ctx, repo, issueNumber); terr == nil && ok {
+			e.signal(ctx, facts, contract.SignalPRRejected)
+		}
 		return ferr
 	}
 	// No active coding row — the run already succeeded at PR-open. Look up the
@@ -311,5 +333,16 @@ func (e *Events) recordRejection(ctx context.Context, repo string, issueNumber i
 		return nil
 	}
 	_, ferr := e.store.Finish(ctx, adRow.ID, string(taskmeta.ExecFailed), taskmeta.ReasonPRClosedUnmerged)
+	e.signal(ctx, facts, contract.SignalPRRejected)
 	return ferr
+}
+
+func (e *Events) signal(ctx context.Context, facts TaskFacts, signal string) {
+	if e.signals == nil || facts.Component == "" {
+		return
+	}
+	wfID := contract.TaskWorkflowID(facts.OrgID, facts.ProjectID, facts.Component)
+	if err := e.signals.Signal(ctx, wfID, signal, nil); err != nil {
+		slog.WarnContext(ctx, "task workflow signal failed", "workflow", wfID, "signal", signal, "error", err)
+	}
 }

@@ -18,18 +18,23 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"gorm.io/gorm"
 
+	"github.com/wso2/aep/aep-api/internal/contracts/taskmeta"
 	"github.com/wso2/aep/aep-api/internal/feature/artifacts"
 	"github.com/wso2/aep/aep-api/internal/feature/codingagent"
 	"github.com/wso2/aep/aep-api/internal/feature/execution"
 	"github.com/wso2/aep/aep-api/internal/feature/gitrepo"
+	"github.com/wso2/aep/aep-api/internal/feature/orchestration"
 	"github.com/wso2/aep/aep-api/internal/feature/orgcreds"
 	"github.com/wso2/aep/aep-api/internal/feature/provisioning"
+	"github.com/wso2/aep/aep-api/internal/feature/task"
 	"github.com/wso2/aep/aep-api/models"
 	"github.com/wso2/aep/aep-api/repositories"
+	contract "github.com/wso2/labs-agentic-engineer/packages/contracts/orchestration"
 )
 
 // The composition-root adapters that satisfy the tasks/execution/codingagent
@@ -74,6 +79,20 @@ func (d designComponents) ReadDesignComponents(ctx context.Context, orgID, proje
 		return nil, nil
 	}
 	return design.Components, nil
+}
+
+// Components projects the approved design into the orchestrator's DAG shape.
+// Satisfies orchestration.DesignReader.
+func (d designComponents) Components(ctx context.Context, orgID, projectID string) ([]orchestration.ComponentSpec, error) {
+	components, err := d.ReadDesignComponents(ctx, orgID, projectID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]orchestration.ComponentSpec, 0, len(components))
+	for _, c := range components {
+		out = append(out, orchestration.ComponentSpec{Name: c.Name, DependsOn: c.ComponentDependsOn()})
+	}
+	return out, nil
 }
 
 // ProvisionDepNames exposes each component's provisioning dependencies (external
@@ -182,6 +201,103 @@ func (l repoLister) ListAll(ctx context.Context) ([]execution.RepoRef, error) {
 		out = append(out, execution.RepoRef{OrgID: rows[i].OrgID, ProjectID: rows[i].ProjectID, FullName: owner + "/" + name})
 	}
 	return out, nil
+}
+
+// orchestrationTaskDriver adapts the Temporal task activities to the preserved
+// aep-api task side effects. Dispatch deliberately bypasses the old funnel gate:
+// the workflow is now responsible for dependency ordering, while this adapter
+// reuses the funnel only to parse GitHub task facts.
+type orchestrationTaskDriver struct {
+	reads    *task.Reads
+	repos    repositories.RepoRepository
+	funnel   *execution.Funnel
+	execs    repositories.ExecutionRepository
+	executor execution.Executor
+}
+
+func (d orchestrationTaskDriver) DispatchTask(ctx context.Context, in contract.TaskLifecycleInput) error {
+	repoFullName, issueNumber, err := d.resolveTask(ctx, in)
+	if err != nil {
+		return err
+	}
+	facts, ok, err := d.funnel.TaskFactsFor(ctx, repoFullName, issueNumber)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("task %s/%s/%s no longer exists", in.Org, in.Project, in.TaskID)
+	}
+	row := &models.Execution{
+		OrgID:       facts.OrgID,
+		ProjectID:   facts.ProjectID,
+		Repo:        facts.Repo,
+		IssueNumber: facts.IssueNumber,
+		Kind:        string(taskmeta.KindCoding),
+		Status:      string(taskmeta.ExecQueued),
+		DesignTag:   facts.DesignTag,
+		Component:   facts.Component,
+	}
+	admitted, admittedRow, err := d.execs.TryAdmit(ctx, row)
+	if err != nil {
+		return err
+	}
+	if !admitted {
+		return nil
+	}
+	if err := d.executor.Run(ctx, execution.DispatchRequest{Execution: admittedRow, Task: facts}); err != nil {
+		_, _ = d.execs.Finish(ctx, admittedRow.ID, string(taskmeta.ExecFailed), err.Error())
+		return err
+	}
+	return nil
+}
+
+func (d orchestrationTaskDriver) DeployTask(context.Context, contract.TaskLifecycleInput) error {
+	// Components are created with AutoDeploy=true; OpenChoreo drives deployment
+	// after the build succeeds. ExecWatcher signals the workflow when it observes
+	// the successful build/deploy materialization.
+	return nil
+}
+
+func (d orchestrationTaskDriver) AutoMerge(context.Context, contract.TaskLifecycleInput) error {
+	// GitHub auto-merge is intentionally left as a no-op until the git host grows
+	// a merge port. Human mode and webhook-driven PR merges are unaffected.
+	return nil
+}
+
+func (d orchestrationTaskDriver) resolveTask(ctx context.Context, in contract.TaskLifecycleInput) (string, int, error) {
+	repo, err := d.repos.GetByOrgAndProjectID(ctx, in.Org, in.Project)
+	if err != nil {
+		return "", 0, err
+	}
+	if repo == nil {
+		return "", 0, fmt.Errorf("repo not found for %s/%s", in.Org, in.Project)
+	}
+	owner, name := models.OwnerRepoFromURL(repo.RepoURL)
+	if owner == "" || name == "" {
+		return "", 0, fmt.Errorf("repo %q has no owner/name", repo.RepoURL)
+	}
+	repoFullName := owner + "/" + name
+
+	views, err := d.reads.List(ctx, in.Org, in.Project, "open")
+	if err != nil {
+		return "", 0, err
+	}
+	component := strings.ToLower(firstNonEmpty(in.ComponentName, in.TaskID))
+	for i := range views {
+		if strings.ToLower(views[i].Component) == component && views[i].ExecutorClass == string(taskmeta.ClassCoding) {
+			return repoFullName, views[i].IssueNumber, nil
+		}
+	}
+	return "", 0, fmt.Errorf("coding task for component %q not found", component)
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // identities projects orgcreds.CredentialService.IdentityFor onto the

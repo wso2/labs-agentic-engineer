@@ -64,6 +64,8 @@ services:
         condition: service_started
       workspace-init:
         condition: service_completed_successfully
+      temporal:
+        condition: service_started
     environment:
       SERVER_HOST: "0.0.0.0"
       SERVER_PORT: "9090"
@@ -90,6 +92,15 @@ services:
       # in services/agents/.env.example). Local-only by design — never set in
       # helm release bindings.
       PLAYGROUND_TOKEN_ENABLED: "true"
+
+      # ── Temporal orchestrator (dial-only client). aep-api starts/signals/
+      # queries development-flow workflows executed by the `orchestrator`
+      # service below; it runs no worker itself. NOTE: this var is spelled
+      # differently than the orchestrator's own TEMPORAL_HOSTPORT (no
+      # underscore between HOST and PORT) — see internal/config/config.go.
+      TEMPORAL_HOST_PORT: "temporal:7233"
+      TEMPORAL_NAMESPACE: "default"
+      TEMPORAL_TASK_QUEUE: "aep-orchestrator"
 
       # ── OpenChoreo platform API (reached via k3d loadbalancer + Host header)
       PLATFORM_API_SERVICE_BASE_URL: "${PLATFORM_API_SERVICE_BASE_URL}"
@@ -473,6 +484,32 @@ services:
     ports:
       - "7233:7233"  # frontend gRPC (TEMPORAL_HOST_PORT)
       - "8233:8233"  # Web UI
+    networks:
+      - aep
+
+  # ---------------------------------------------------------------------------
+  # orchestrator — the Temporal worker (services/orchestrator). The only
+  # process that registers/executes the DevelopmentFlowWorkflow +
+  # TaskLifecycleWorkflow. aep-api is a dial-only client and runs no worker
+  # (ADR-0005). No ports — it only polls Temporal's task queue, it serves
+  # nothing itself.
+  # ---------------------------------------------------------------------------
+  orchestrator:
+    build:
+      context: ..
+      dockerfile: services/orchestrator/Dockerfile
+    container_name: aep-orchestrator
+    depends_on:
+      - aep-api
+      - temporal
+    environment:
+      # NOTE: the orchestrator reads TEMPORAL_HOSTPORT (no underscore between
+      # HOST and PORT) — a different spelling than aep-api's TEMPORAL_HOST_PORT
+      # below. See services/orchestrator/internal/config/config.go.
+      TEMPORAL_HOSTPORT: "temporal:7233"
+      TEMPORAL_NAMESPACE: "default"
+      TEMPORAL_TASK_QUEUE: "aep-orchestrator"
+      AEP_API_INTERNAL_BASE_URL: "http://aep-api:9090"
     networks:
       - aep
 

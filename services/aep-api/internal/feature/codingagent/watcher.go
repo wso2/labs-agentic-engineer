@@ -31,6 +31,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/tenant"
 	"github.com/wso2/aep/aep-api/models"
 	"github.com/wso2/aep/aep-api/repositories"
+	contract "github.com/wso2/labs-agentic-engineer/packages/contracts/orchestration"
 )
 
 // finalLogTailBytes caps the captured snapshot size (~3000 lines).
@@ -50,6 +51,7 @@ type JobWatcher struct {
 
 	pollInterval time.Duration
 	once         sync.Once
+	signals      TaskSignaler
 }
 
 // NewJobWatcher constructs a watcher. db + proxy + execRows required.
@@ -58,6 +60,12 @@ func NewJobWatcher(db *gorm.DB, proxy *clustergatewayproxy.Client, execRows repo
 		panic("codingagent.JobWatcher: db + proxy + execRows are required")
 	}
 	return &JobWatcher{db: db, proxy: proxy, execRows: execRows, pollInterval: 30 * time.Second}
+}
+
+// WithTaskSignaler enables proxy job failure -> TaskLifecycleWorkflow signaling.
+func (w *JobWatcher) WithTaskSignaler(signals TaskSignaler) *JobWatcher {
+	w.signals = signals
+	return w
 }
 
 // Run blocks until ctx is canceled, ticking immediately then on pollInterval.
@@ -136,7 +144,18 @@ func (w *JobWatcher) finishFailed(ctx context.Context, row *models.Execution, re
 		slog.ErrorContext(ctx, "codingagent.JobWatcher: finish failed", "execution", row.ID, "reason", reason, "error", err)
 		return
 	}
+	w.signal(ctx, row, contract.SignalCodingAgentFailed)
 	slog.InfoContext(ctx, "codingagent.JobWatcher: coding execution failed", "execution", row.ID, "reason", reason)
+}
+
+func (w *JobWatcher) signal(ctx context.Context, row *models.Execution, signal string) {
+	if w.signals == nil || row == nil || row.Component == "" {
+		return
+	}
+	wfID := contract.TaskWorkflowID(row.OrgID, row.ProjectID, row.Component)
+	if err := w.signals.Signal(ctx, wfID, signal, nil); err != nil {
+		slog.WarnContext(ctx, "codingagent.JobWatcher: task workflow signal failed", "workflow", wfID, "signal", signal, "error", err)
+	}
 }
 
 // cleanupPerRunExternalSecrets deletes the per-run ExternalSecrets the

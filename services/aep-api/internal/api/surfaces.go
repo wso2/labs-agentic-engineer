@@ -125,6 +125,7 @@ func mountSurfaces(params AppParams) *http.ServeMux {
 	internalAPI := newInternalAPI(internalMux)
 	RegisterAllInternal(internalAPI, params.InternalDeps)
 	mux.Handle(internalV1+"/executions/", internalMux)
+	mux.Handle(internalV1+"/orchestration/", internalMux)
 
 	// ── internal MCP discovery (POST /internal/v1/mcp) ───────────────────────
 	// A raw (non-Huma) JSON-RPC mount: the MCP server the agents service's

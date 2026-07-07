@@ -641,6 +641,17 @@ func Build(cfg config.Config, db *gorm.DB) (*App, error) {
 	// service's ensureOCComponent; componentService reads the design facts.
 	codingExecutor.WithComponentEnsurer(componentService)
 	registry.Register(taskmeta.ClassCoding, codingExecutor)
+	internalOrchestrationSvc := orchestration.NewInternalService(
+		designComponents{store: artifactStore},
+		nil,
+		orchestrationTaskDriver{
+			reads:    taskReads,
+			repos:    repoRepo,
+			funnel:   funnel,
+			execs:    executionRepo,
+			executor: codingExecutor,
+		},
+	)
 
 	// Command surface calls into the funnel; webhook handling splits across the
 	// two package halves: issues.* (task birth / block repair / command labels)
@@ -654,6 +665,9 @@ func Build(cfg config.Config, db *gorm.DB) (*App, error) {
 	// pull_request.* handlers apply NO echo suppression (the platform authors no
 	// PRs; in App mode the runner's PR opens as <slug>[bot] and must be acted on).
 	execEvents := execution.NewEvents(executionRepo, funnel, registry, issueService)
+	if cycleClient != nil {
+		execEvents.WithTaskSignaler(cycleClient)
+	}
 	execEvents.RegisterHandlers(registerWebhook)
 	webhook.RegisterInstallationHandlers(webhookRouter, db, credService, issueService, trashWorkspaceOrg)
 	webhookCtrl := webhook.NewWebhookController(webhookVerifier, deliveryStore, webhookRouter, routingLookup, routingCache)
@@ -663,6 +677,9 @@ func Build(cfg config.Config, db *gorm.DB) (*App, error) {
 	// outcomes; build success re-evaluates the funnel).
 	sweep := execution.NewSweep(funnel, execEvents, executionRepo, repoLister{repos: repoRepo}, issueService, 0)
 	execWatcher := codingagent.NewExecWatcher(componentClient, executionRepo, funnel, asServiceIdentity, 0)
+	if cycleClient != nil {
+		execWatcher.WithTaskSignaler(cycleClient)
+	}
 	// A build that fails at git-clone-auth within budget is re-minted + re-tried
 	// (§7). Only meaningful when a credential can be staged; otherwise a git-auth
 	// failure is terminal like any other.
@@ -717,8 +734,9 @@ func Build(cfg config.Config, db *gorm.DB) (*App, error) {
 		// connect-callback + webhook controllers remain raw handlers. Every other
 		// feature registers code-first via params.HumaDeps below.
 		InternalDeps: api.InternalDeps{
-			ExecSkills:   execSkillsSvc,
-			CredsRefresh: credRefreshService,
+			ExecSkills:    execSkillsSvc,
+			CredsRefresh:  credRefreshService,
+			Orchestration: internalOrchestrationSvc,
 		},
 		WebhookController:   webhookCtrl,
 		OrgGitHubController: orgGitHubCtrl,
@@ -902,7 +920,11 @@ func Build(cfg config.Config, db *gorm.DB) (*App, error) {
 	// the coding execution FAILED on Job failure (success rides the PR webhook),
 	// capturing the pod's final log. Only when the proxy path is configured.
 	if cgwClient != nil {
-		watchers = append(watchers, codingagent.NewJobWatcher(db, cgwClient, executionRepo))
+		jobWatcher := codingagent.NewJobWatcher(db, cgwClient, executionRepo)
+		if cycleClient != nil {
+			jobWatcher.WithTaskSignaler(cycleClient)
+		}
+		watchers = append(watchers, jobWatcher)
 		slog.Info("codingagent.JobWatcher: enabled (cluster-gateway-proxy configured)")
 	}
 
