@@ -1600,6 +1600,9 @@ components:
           type: string
         namespaceName:
           type: string
+        repoUrl:
+          description: Clone URL of the project's Git repository; absent when no repo is provisioned (issue #108).
+          type: string
         status:
           type: string
         uid:

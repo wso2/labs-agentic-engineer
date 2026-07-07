@@ -26,6 +26,11 @@ import {
   CardContent,
   CircularProgress,
   Grid,
+  IconButton,
+  ListItemIcon,
+  ListItemText,
+  Menu,
+  MenuItem,
   PageContent,
   PageTitle,
   SearchBar,
@@ -33,11 +38,17 @@ import {
   useMediaQuery,
   useTheme,
 } from "@wso2/oxygen-ui";
-import { Folder, Plus } from "@wso2/oxygen-ui-icons-react";
+import {
+  EllipsisVertical,
+  Folder,
+  Plus,
+  Trash2,
+} from "@wso2/oxygen-ui-icons-react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import type { components } from "../../../generated/aep-api";
 import { useProjectsList } from "../api/queries";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
+import { DeleteProjectDialog } from "./DeleteProjectDialog";
 
 type Project = components["schemas"]["Project"];
 
@@ -52,12 +63,21 @@ function formatCreatedAt(createdAt?: string): string | null {
   })}`;
 }
 
-function ProjectCard({ project }: { project: Project }) {
+function ProjectCard({
+  project,
+  onDelete,
+}: {
+  project: Project;
+  onDelete: (project: Project) => void;
+}) {
   const navigate = useNavigate();
   const created = formatCreatedAt(project.createdAt);
+  // Overflow (⋮) menu anchor — a sibling of CardActionArea (never nested
+  // inside it: button-in-button), absolutely positioned over the corner.
+  const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
 
   return (
-    <Card variant="outlined" sx={{ height: "100%" }}>
+    <Card variant="outlined" sx={{ height: "100%", position: "relative" }}>
       <CardActionArea
         sx={{ height: "100%", alignItems: "stretch" }}
         onClick={() =>
@@ -70,7 +90,7 @@ function ProjectCard({ project }: { project: Project }) {
         <CardContent
           sx={{ display: "flex", flexDirection: "column", height: "100%" }}
         >
-          <Typography variant="h6" gutterBottom>
+          <Typography variant="h6" gutterBottom sx={{ pr: 4 }}>
             {project.displayName ?? project.name}
           </Typography>
           <Typography
@@ -93,6 +113,31 @@ function ProjectCard({ project }: { project: Project }) {
           )}
         </CardContent>
       </CardActionArea>
+      <IconButton
+        aria-label={`Actions for ${project.displayName ?? project.name}`}
+        size="small"
+        onClick={(e) => setMenuAnchor(e.currentTarget)}
+        sx={{ position: "absolute", top: 8, right: 8 }}
+      >
+        <EllipsisVertical size={18} />
+      </IconButton>
+      <Menu
+        anchorEl={menuAnchor}
+        open={menuAnchor !== null}
+        onClose={() => setMenuAnchor(null)}
+      >
+        <MenuItem
+          onClick={() => {
+            setMenuAnchor(null);
+            onDelete(project);
+          }}
+        >
+          <ListItemIcon>
+            <Trash2 size={18} />
+          </ListItemIcon>
+          <ListItemText>Delete project</ListItemText>
+        </MenuItem>
+      </Menu>
     </Card>
   );
 }
@@ -137,6 +182,8 @@ const GRID_ROWS_PER_PAGE = 3;
 
 export function ProjectsList() {
   const [search, setSearch] = useState("");
+  // The project awaiting delete confirmation; one dialog serves the grid.
+  const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
   const debouncedSearch = useDebouncedValue(search.trim());
   const columns = useGridColumns();
   const {
@@ -208,7 +255,7 @@ export function ProjectsList() {
               <Grid container spacing={3}>
                 {items.map((project) => (
                   <Grid key={project.name} size={{ xs: 12, sm: 6, md: 4, lg: 3 }}>
-                    <ProjectCard project={project} />
+                    <ProjectCard project={project} onDelete={setDeleteTarget} />
                   </Grid>
                 ))}
               </Grid>
@@ -227,6 +274,10 @@ export function ProjectsList() {
           )}
         </>
       )}
+      <DeleteProjectDialog
+        project={deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+      />
     </PageContent>
   );
 }
