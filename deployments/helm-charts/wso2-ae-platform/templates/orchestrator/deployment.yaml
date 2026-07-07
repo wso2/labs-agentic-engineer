@@ -1,0 +1,51 @@
+---
+# The Temporal worker (services/orchestrator, ADR-0005). The only process that
+# registers/executes DevelopmentFlowWorkflow + TaskLifecycleWorkflow; aep-api
+# is a dial-only client and runs no worker. No Service — it only polls
+# Temporal's task queue, it serves nothing itself (no ports, no HTTPRoute).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orchestrator
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: orchestrator
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/part-of: wso2-agentic-engineer
+spec:
+  replicas: {{ .Values.orchestrator.replicas | default 1 }}
+  selector:
+    matchLabels:
+      app: orchestrator
+  template:
+    metadata:
+      labels:
+        app: orchestrator
+        app.kubernetes.io/part-of: wso2-agentic-engineer
+    spec:
+      containers:
+        - name: orchestrator
+          image: "{{ .Values.orchestrator.image.repository }}:{{ .Values.orchestrator.image.tag }}"
+          imagePullPolicy: {{ .Values.orchestrator.image.pullPolicy }}
+          resources: {{ toYaml .Values.orchestrator.resources | nindent 12 }}
+          env:
+            # NOTE: this var is spelled differently than aep-api's
+            # TEMPORAL_HOST_PORT (no underscore between HOST and PORT) — see
+            # services/orchestrator/internal/config/config.go.
+            - name: TEMPORAL_HOSTPORT
+              value: "temporal-frontend:7233"
+            - name: TEMPORAL_NAMESPACE
+              value: "default"
+            - name: TEMPORAL_TASK_QUEUE
+              value: "aep-orchestrator"
+            # The orchestrator's activities are thin HTTP clients of aep-api's
+            # /internal/v1/orchestration/* S2S surface (R3), guarded by
+            # auth.SecurityRunner — same in-cluster Service DNS aep-api itself
+            # uses for its peers. AEP_API_INTERNAL_BEARER must be a credential
+            # that surface actually accepts; wire the real one once R3's
+            # runner-auth minting story for the orchestrator is settled (this
+            # value is a placeholder, not a verified credential).
+            - name: AEP_API_INTERNAL_BASE_URL
+              value: "http://aep-api.{{ .Release.Namespace }}:{{ .Values.aepApi.port }}"
+            - name: AEP_API_INTERNAL_BEARER
+              value: {{ .Values.orchestrator.aepAPIInternalBearer | default "" | quote }}

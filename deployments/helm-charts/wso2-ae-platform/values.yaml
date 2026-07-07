@@ -63,6 +63,62 @@ postgres:
     password: "aep-dev-password"
   storage: "5Gi"
 
+# ── Temporal orchestrator server (R5, ADR-0005) ──────────────────────────────
+# Postgres-backed, using the SAME shared Postgres instance as aep-api/agents
+# (new `temporal` + `temporal_visibility` databases on it, not a dedicated
+# StatefulSet — a deliberate simplicity trade-off; see R5-handover notes).
+temporal:
+  postgresHost: "aep-db"
+  image:
+    # temporalio/auto-setup runs schema create+migrate on boot against
+    # POSTGRES_SEEDS — no separate schema-bootstrap Job needed for the server
+    # itself (only the search-attribute Job below is separate).
+    # UNVERIFIED TAG — no registry access at authoring time; confirm the
+    # latest compatible auto-setup tag against Docker Hub before install.
+    repository: temporalio/auto-setup
+    tag: "1.28.0"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+  # CLI image for the search-attribute-job.yaml admin Job. DELIBERATELY a
+  # different image family than temporal.image above: auto-setup bundles the
+  # server binary + schema-setup tool, not necessarily the unified `temporal`
+  # CLI this Job's script invokes. Matches the tag already pinned for the dev
+  # docker-compose server (deployments/docker-compose.yml) — a known-good CLI
+  # image, so no new tag to separately verify.
+  cliImage:
+    repository: temporalio/temporal
+    tag: "1.7.2"
+    pullPolicy: IfNotPresent
+
+temporalUI:
+  enabled: true
+  hostname: "temporal.aep.openchoreo.localhost"
+  image:
+    repository: temporalio/ui
+    tag: "2.31.2"
+    pullPolicy: IfNotPresent
+
+# ── Orchestrator worker (services/orchestrator) ──────────────────────────────
+# The only process that registers/executes DevelopmentFlowWorkflow +
+# TaskLifecycleWorkflow. No Service/HTTPRoute — polls Temporal only.
+orchestrator:
+  image:
+    repository: ghcr.io/wso2/aep-orchestrator
+    tag: 0.0.0-dev
+    pullPolicy: Always
+  replicas: 1
+  # Bearer credential for the /internal/v1/orchestration/* S2S surface
+  # (auth.SecurityRunner). Placeholder — wire the real minted credential once
+  # R3's runner-auth story for the orchestrator is settled.
+  aepAPIInternalBearer: ""
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+
 # ── Shared git workspaces (RWX PVC) ──────────────────────────────────────────
 # Bare repo mirrors + per-SHA snapshots shared between aep-api (sole writer)
 # and agents (read-only). See docs/design/shared-volume-clone-architecture.md §13.

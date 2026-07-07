@@ -1,0 +1,102 @@
+---
+# Temporal server — Postgres-backed (R5, ADR-0005). Uses the `auto-setup` image
+# (not the plain `temporal`/`server` image) because it runs the schema
+# create+migrate step itself on boot against POSTGRES_SEEDS — no separate
+# schema-bootstrap Job needed, unlike the search-attribute registration below
+# which DOES need one (auto-setup only migrates schema, not search attributes).
+#
+# Backs onto the SAME shared Postgres StatefulSet aep-api/agents use
+# (templates/postgres/statefulset.yaml) — new `temporal` + `temporal_visibility`
+# databases on that instance, not a dedicated Postgres. This couples Temporal's
+# schema lifecycle to the platform DB instance (a deliberate simplicity
+# trade-off over a fully isolated second StatefulSet).
+#
+# Single all-in-one process (frontend+history+matching+worker roles) — fine for
+# this deployment's scale; split into per-role Deployments only if history/
+# matching becomes a bottleneck.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: temporal-frontend
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: temporal-frontend
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/part-of: wso2-agentic-engineer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: temporal-frontend
+  template:
+    metadata:
+      labels:
+        app: temporal-frontend
+        app.kubernetes.io/part-of: wso2-agentic-engineer
+    spec:
+      # aep-db must be ready before this pod's auto-setup schema migration runs.
+      initContainers:
+        - name: wait-for-postgres
+          image: postgres:16-alpine
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h {{ .Values.temporal.postgresHost | default "aep-db" }} -p 5432; do
+                echo "waiting for postgres..."; sleep 2
+              done
+      containers:
+        - name: temporal
+          image: "{{ .Values.temporal.image.repository }}:{{ .Values.temporal.image.tag }}"
+          imagePullPolicy: {{ .Values.temporal.image.pullPolicy }}
+          ports:
+            - containerPort: 7233
+              name: grpc
+          resources: {{ toYaml .Values.temporal.resources | nindent 12 }}
+          env:
+            - name: DB
+              value: "postgres12"
+            - name: DB_PORT
+              value: "5432"
+            - name: POSTGRES_SEEDS
+              value: {{ .Values.temporal.postgresHost | default "aep-db" | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.postgres.auth.username | quote }}
+            - name: POSTGRES_PWD
+              value: {{ .Values.postgres.auth.password | quote }}
+            - name: DBNAME
+              value: "temporal"
+            - name: VISIBILITY_DBNAME
+              value: "temporal_visibility"
+            - name: TEMPORAL_ADDRESS
+              value: "temporal-frontend:7233"
+            - name: SKIP_SCHEMA_SETUP
+              value: "false"
+          readinessProbe:
+            tcpSocket:
+              port: 7233
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 7233
+            initialDelaySeconds: 30
+            periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: temporal-frontend
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: temporal-frontend
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/part-of: wso2-agentic-engineer
+spec:
+  selector:
+    app: temporal-frontend
+  ports:
+    - port: 7233
+      targetPort: grpc
+      name: grpc
+  type: ClusterIP

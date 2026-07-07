@@ -1,0 +1,84 @@
+---
+# Temporal Web UI — read-only observability into cycle/task workflow state.
+# Exposed via the OC control-plane gateway (mirrors templates/aep-api/httproute.yaml);
+# the existing templates/reference-grant.yaml already grants any Service in
+# this namespace to HTTPRoutes in the gateway namespace, so no new
+# ReferenceGrant is needed here.
+{{- if .Values.temporalUI.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: temporal-ui
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: temporal-ui
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/part-of: wso2-agentic-engineer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: temporal-ui
+  template:
+    metadata:
+      labels:
+        app: temporal-ui
+        app.kubernetes.io/part-of: wso2-agentic-engineer
+    spec:
+      containers:
+        - name: temporal-ui
+          image: "{{ .Values.temporalUI.image.repository }}:{{ .Values.temporalUI.image.tag }}"
+          imagePullPolicy: {{ .Values.temporalUI.image.pullPolicy }}
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: TEMPORAL_ADDRESS
+              value: "temporal-frontend:7233"
+            - name: TEMPORAL_CORS_ORIGINS
+              value: "*"
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: temporal-ui
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: temporal-ui
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/part-of: wso2-agentic-engineer
+spec:
+  selector:
+    app: temporal-ui
+  ports:
+    - port: 8080
+      targetPort: http
+      name: http
+  type: ClusterIP
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: temporal-ui
+  namespace: {{ .Values.ocGateway.namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/part-of: wso2-agentic-engineer
+spec:
+  parentRefs:
+    - name: {{ .Values.ocGateway.name }}
+      namespace: {{ .Values.ocGateway.namespace }}
+  hostnames:
+    - {{ .Values.temporalUI.hostname | quote }}
+  rules:
+    - backendRefs:
+        - name: temporal-ui
+          namespace: {{ .Release.Namespace }}
+          port: 8080
+{{- end }}

@@ -1,0 +1,71 @@
+---
+# Post-install/upgrade Job: registers the `org` custom Search Attribute
+# (Keyword — exact-match filtering) so the Temporal UI / CLI can filter cycle
+# and task workflows by org (ADR-0005 multi-tenancy: org is encoded in every
+# workflow ID + this Search Attribute). Idempotent — "already exists" is
+# swallowed so a re-run on helm upgrade doesn't fail the release.
+#
+# Mirrors the wso2-ae-thunder-bootstrap Job pattern (post-install/post-upgrade
+# hook, before-hook-creation delete policy). Uses temporal.cliImage
+# (temporalio/temporal — the unified CLI/server-in-a-box tool, same tag already
+# pinned for the dev docker-compose server) — DELIBERATELY NOT temporal.image
+# (temporalio/auto-setup), which is the server+schema-setup image and doesn't
+# necessarily bundle the `temporal` CLI this script invokes.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: wso2-ae-temporal-search-attributes
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/part-of: wso2-agentic-engineer
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 5
+  ttlSecondsAfterFinished: 300
+  # Bounds the whole Job — if temporal-frontend never becomes healthy, this Job
+  # (and thus the blocking post-install/upgrade hook) fails instead of hanging
+  # the helm install/upgrade forever.
+  activeDeadlineSeconds: 180
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: wso2-agentic-engineer
+        app.kubernetes.io/component: temporal-search-attributes
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: register-search-attributes
+          image: "{{ .Values.temporal.cliImage.repository }}:{{ .Values.temporal.cliImage.tag }}"
+          imagePullPolicy: {{ .Values.temporal.cliImage.pullPolicy }}
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              # Bounded wait (~30 attempts * 5s = 150s), leaving headroom under
+              # activeDeadlineSeconds for the create call itself.
+              i=0
+              until temporal operator cluster health --address temporal-frontend:7233 2>/dev/null; do
+                i=$((i+1))
+                if [ "$i" -ge 30 ]; then
+                  echo "temporal-frontend did not become healthy in time" >&2
+                  exit 1
+                fi
+                echo "waiting for temporal-frontend... ($i/30)"; sleep 5
+              done
+              out=$(temporal operator search-attribute create \
+                --address temporal-frontend:7233 \
+                --namespace default \
+                --name org \
+                --type Keyword 2>&1) && { echo "$out"; exit 0; }
+              # Only swallow the specific "already registered" case — a real
+              # connection/auth/config error must still fail the Job.
+              echo "$out"
+              case "$out" in
+                *"already"*|*"AlreadyExists"*) echo "org search attribute already registered — ok"; exit 0 ;;
+                *) exit 1 ;;
+              esac

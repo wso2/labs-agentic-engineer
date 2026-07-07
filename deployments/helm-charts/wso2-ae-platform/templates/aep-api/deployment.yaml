@@ -96,6 +96,20 @@ spec:
             - name: AGENT_CLUSTER_SECRET_STORE
               value: {{ .Values.aepApi.agentClusterSecretStore | default "" | quote }}
 
+            # ── Temporal orchestrator (dial-only client, R5) ───────────────────
+            # aep-api starts/signals/queries development-flow workflows executed
+            # by the `orchestrator` Deployment; it runs no worker itself. NOTE:
+            # spelled differently than the orchestrator's own TEMPORAL_HOSTPORT
+            # (no underscore between HOST and PORT) — see
+            # services/aep-api/internal/config/config.go vs
+            # services/orchestrator/internal/config/config.go.
+            - name: TEMPORAL_HOST_PORT
+              value: "temporal-frontend:7233"
+            - name: TEMPORAL_NAMESPACE
+              value: "default"
+            - name: TEMPORAL_TASK_QUEUE
+              value: "aep-orchestrator"
+
             # ── Identity Provider (OC Thunder) ────────────────────────────────
             - name: JWKS_URL
               value: {{ .Values.idp.jwksInternalURL | default .Values.idp.jwksURL | quote }}
