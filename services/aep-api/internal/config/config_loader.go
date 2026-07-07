@@ -140,6 +140,13 @@ func Load() (Config, error) {
 		// Agent runner image + ESO CSS for per-run ExternalSecrets.
 		AgentRunnerImage:        r.readOptionalString("AGENT_RUNNER_IMAGE", defaultRunnerImage),
 		AgentClusterSecretStore: r.readOptionalString("AGENT_CLUSTER_SECRET_STORE", "default"),
+
+		// Temporal orchestrator client config (dial-only).
+		Temporal: TemporalConfig{
+			HostPort:  r.readOptionalString("TEMPORAL_HOST_PORT", "localhost:7233"),
+			Namespace: r.readOptionalString("TEMPORAL_NAMESPACE", "default"),
+			TaskQueue: r.readOptionalString("TEMPORAL_TASK_QUEUE", "aep-orchestrator"),
+		},
 	}
 
 	if len(r.errors) > 0 {

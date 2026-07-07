@@ -31,6 +31,15 @@ import "fmt"
 // aep-api targets when starting workflows. Same value in every environment.
 const TaskQueue = "aep-orchestrator"
 
+// Workflow type names. aep-api starts workflows by name (it never imports the
+// orchestrator's workflow package), and the orchestrator registers them under
+// exactly these names — so there is one source of truth for each and no
+// stringly-typed drift between starter and worker.
+const (
+	WorkflowDevelopmentFlow = "DevelopmentFlowWorkflow"
+	WorkflowTaskLifecycle   = "TaskLifecycleWorkflow"
+)
+
 // Signal names for DevelopmentFlowWorkflow (the per-cycle workflow).
 const (
 	SignalApproveRequirements = "ApproveRequirements"

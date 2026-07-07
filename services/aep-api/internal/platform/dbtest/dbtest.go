@@ -213,6 +213,7 @@ var baseModels = []any{
 	&models.Organization{},
 	&models.Execution{},
 	&models.AgentTurn{},
+	&models.DevelopmentCycle{},
 }
 
 // Migrate provisions the template exactly as the app provisions a fresh DB at

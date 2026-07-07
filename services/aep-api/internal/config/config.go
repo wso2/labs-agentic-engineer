@@ -197,6 +197,14 @@ type Config struct {
 	// and will silently no-op our reads. Local k3d reuses the existing
 	// `default` CSS.
 	AgentClusterSecretStore string
+
+	// Temporal orchestrator dial-only client config. The BFF (aep-api) acts as
+	// a client (start/signal/query workflows) while services/orchestrator runs
+	// the Temporal worker. Read from TEMPORAL_HOST_PORT / TEMPORAL_NAMESPACE /
+	// TEMPORAL_TASK_QUEUE. Defaults to localhost:7233 / default / aep-orchestrator
+	// for local dev; cloud deployments must set TEMPORAL_HOST_PORT + optionally
+	// TEMPORAL_NAMESPACE.
+	Temporal TemporalConfig
 }
 
 // Validate checks format/consistency invariants the per-field env readers
@@ -215,6 +223,14 @@ func (c Config) Validate() error {
 		return fmt.Errorf("configuration errors:\n%s", strings.Join(errs, "\n"))
 	}
 	return nil
+}
+
+// TemporalConfig holds the Temporal orchestrator frontend connection + task queue.
+// The BFF uses this to start/signal/query development-flow workflows (no worker).
+type TemporalConfig struct {
+	HostPort  string // gRPC frontend (e.g. localhost:7233 or temporal-frontend.temporal.svc:7233)
+	Namespace string // Temporal namespace (default: "default")
+	TaskQueue string // Task queue (default: "aep-orchestrator")
 }
 
 // ThunderAdminConfig holds the aep-system-client OAuth2 credentials

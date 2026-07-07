@@ -25,10 +25,13 @@ package main
 import (
 	"log"
 
+	"go.temporal.io/sdk/workflow"
+
+	"github.com/wso2/labs-agentic-engineer/packages/contracts/orchestration"
 	"github.com/wso2/labs-agentic-engineer/services/orchestrator/internal/config"
 	"github.com/wso2/labs-agentic-engineer/services/orchestrator/internal/deps"
 	"github.com/wso2/labs-agentic-engineer/services/orchestrator/internal/temporal"
-	"github.com/wso2/labs-agentic-engineer/services/orchestrator/internal/worker"
+	orchworker "github.com/wso2/labs-agentic-engineer/services/orchestrator/internal/worker"
 	"github.com/wso2/labs-agentic-engineer/services/orchestrator/internal/workflows"
 )
 
@@ -41,15 +44,19 @@ func main() {
 	}
 	defer c.Close()
 
-	w := worker.New(c, cfg.TaskQueue)
+	w := orchworker.New(c, cfg.TaskQueue)
 	w.RegisterWorkflow(workflows.PingWorkflow)
-	w.RegisterWorkflow(workflows.DevelopmentFlowWorkflow)
-	w.RegisterWorkflow(workflows.TaskLifecycleWorkflow)
+	// Register the cycle + task workflows under the shared contract names so
+	// aep-api (which starts them by name) and the worker never drift.
+	w.RegisterWorkflowWithOptions(workflows.DevelopmentFlowWorkflow,
+		workflow.RegisterOptions{Name: orchestration.WorkflowDevelopmentFlow})
+	w.RegisterWorkflowWithOptions(workflows.TaskLifecycleWorkflow,
+		workflow.RegisterOptions{Name: orchestration.WorkflowTaskLifecycle})
 	w.RegisterActivity(deps.NewActivities())
 
 	log.Printf("orchestrator worker starting — temporal=%s ns=%s queue=%s",
 		cfg.TemporalHostPort, cfg.TemporalNamespace, cfg.TaskQueue)
-	if err := worker.Run(w); err != nil {
+	if err := orchworker.Run(w); err != nil {
 		log.Fatalf("orchestrator: worker stopped: %v", err)
 	}
 }
