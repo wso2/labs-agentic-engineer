@@ -38,9 +38,14 @@ type TaskSignaler interface {
 	Signal(ctx context.Context, workflowID, signalName string, arg any) error
 }
 
+// TaskFactResolver resolves a GitHub task issue into dispatch/build facts.
+type TaskFactResolver interface {
+	TaskFactsFor(ctx context.Context, repoFullName string, issueNumber int) (TaskFacts, bool, error)
+}
+
 // Events holds the pull_request webhook handlers — the platform-owned half of
 // webhook handling (§9.2). PR-opened ends the coding Execution; PR-merged spawns
-// a build Execution through the funnel's registered executor; PR-closed-unmerged
+// a build Execution through the registered executor; PR-closed-unmerged
 // records the coding attempt as rejected. The issues.* handlers are the Task
 // feature's job (the §1 split is a package boundary).
 //
@@ -54,16 +59,16 @@ type TaskSignaler interface {
 // platform projection, so its deliveries are always acted on.
 type Events struct {
 	store    ExecutionStore
-	funnel   *Funnel
+	tasks    TaskFactResolver
 	registry *Registry
-	prs      PRReader // for the sweep's PR-state reconciliation (may be nil)
+	prs      PRReader // for PR-state reconciliation helpers (may be nil)
 	signals  TaskSignaler
 }
 
-// NewEvents wires the pull_request handlers. prs may be nil (then the sweep
-// healer no-ops).
-func NewEvents(store ExecutionStore, funnel *Funnel, registry *Registry, prs PRReader) *Events {
-	return &Events{store: store, funnel: funnel, registry: registry, prs: prs}
+// NewEvents wires the pull_request handlers. prs may be nil (then PR-state
+// reconciliation helpers no-op).
+func NewEvents(store ExecutionStore, tasks TaskFactResolver, registry *Registry, prs PRReader) *Events {
+	return &Events{store: store, tasks: tasks, registry: registry, prs: prs}
 }
 
 // WithTaskSignaler enables webhook -> TaskLifecycleWorkflow signaling.
@@ -141,12 +146,12 @@ func (e *Events) PullRequestOpened(ctx context.Context, _, _ string, payload []b
 	if coding == nil || !taskmeta.ExecutionStatus(coding.Status).IsActive() {
 		return nil // no active coding attempt to end (already ended, or none)
 	}
-	// Stamp the PR number so the sweep can GET the live PR later (heals a missed
-	// close/merge webhook — §5).
+	// Stamp the PR number so reconciliation can GET the live PR later (heals a
+	// missed close/merge webhook — §5).
 	if _, err := e.store.Finish(ctx, coding.ID, string(taskmeta.ExecSucceeded), reasonPROpenPrefix+strconv.Itoa(p.PullRequest.Number)); err != nil {
 		return err
 	}
-	if facts, ok, ferr := e.funnel.TaskFactsFor(ctx, p.Repository.FullName, issueNumber); ferr == nil && ok {
+	if facts, ok, ferr := e.tasks.TaskFactsFor(ctx, p.Repository.FullName, issueNumber); ferr == nil && ok {
 		e.signal(ctx, facts, contract.SignalPRReady)
 	}
 	return nil
@@ -178,7 +183,7 @@ func (e *Events) PullRequestClosed(ctx context.Context, _, _ string, payload []b
 }
 
 // spawnBuild admits + dispatches a build Execution for a merged Task. Shared by
-// the PR-closed(merged) webhook and the sweep's PR-state healer.
+// the PR-closed(merged) webhook and the PR-state reconciliation helper.
 func (e *Events) spawnBuild(ctx context.Context, repoFullName string, issueNumber int, mergeSHA string) error {
 	// Dedupe on MERGE IDENTITY (the merge commit SHA), NOT task lifetime: skip
 	// only when a build row already exists FOR THIS MERGE (active OR terminal) —
@@ -197,7 +202,7 @@ func (e *Events) spawnBuild(ctx context.Context, repoFullName string, issueNumbe
 			return nil // re-delivery of this same merge — already built
 		}
 	}
-	facts, ok, err := e.funnel.TaskFactsFor(ctx, repoFullName, issueNumber)
+	facts, ok, err := e.tasks.TaskFactsFor(ctx, repoFullName, issueNumber)
 	if err != nil {
 		return err
 	}
@@ -257,12 +262,12 @@ func (e *Events) buildExistsForMerge(ctx context.Context, repoFullName string, i
 	return false, nil
 }
 
-// ReconcileTaskPR is the sweep's PR-state healer (§5): for one Task whose latest
-// coding Execution claims an open PR (and no build yet), it GETs the live PR
-// state and applies the handler a missed webhook would have — merged spawns the
-// build, closed-unmerged records the rejection. A no-divergence PR is a no-op.
-// The Task facts and its latest-per-kind executions are passed in (the sweep
-// already listed the issues and batch-loaded the rows for the whole repo).
+// ReconcileTaskPR is the retained PR-state healer (§5): for one Task whose
+// latest coding Execution claims an open PR (and no build yet), it GETs the live
+// PR state and applies the handler a missed webhook would have — merged spawns
+// the build, closed-unmerged records the rejection. A no-divergence PR is a
+// no-op. The Task facts and its latest-per-kind executions are passed in by the
+// caller.
 func (e *Events) ReconcileTaskPR(ctx context.Context, orgID, projectID, repoFullName string, issueNumber int, execs map[string]*models.Execution) error {
 	if e.prs == nil {
 		return nil
@@ -282,7 +287,7 @@ func (e *Events) ReconcileTaskPR(ctx context.Context, orgID, projectID, repoFull
 	}
 	pr, err := e.prs.GetPullRequestState(ctx, orgID, projectID, prNum)
 	if err != nil || pr == nil {
-		return err // transient — next sweep retries
+		return err // transient — caller can retry
 	}
 	switch {
 	case pr.Merged:
@@ -304,14 +309,14 @@ func (e *Events) recordRejection(ctx context.Context, repo string, issueNumber i
 	}
 	if coding := execs[string(taskmeta.KindCoding)]; coding != nil && taskmeta.ExecutionStatus(coding.Status).IsActive() {
 		_, ferr := e.store.Finish(ctx, coding.ID, string(taskmeta.ExecFailed), taskmeta.ReasonPRClosedUnmerged)
-		if facts, ok, terr := e.funnel.TaskFactsFor(ctx, repo, issueNumber); terr == nil && ok {
+		if facts, ok, terr := e.tasks.TaskFactsFor(ctx, repo, issueNumber); terr == nil && ok {
 			e.signal(ctx, facts, contract.SignalPRRejected)
 		}
 		return ferr
 	}
 	// No active coding row — the run already succeeded at PR-open. Look up the
 	// org/project to append the rejection row.
-	facts, ok, err := e.funnel.TaskFactsFor(ctx, repo, issueNumber)
+	facts, ok, err := e.tasks.TaskFactsFor(ctx, repo, issueNumber)
 	if err != nil || !ok {
 		return err
 	}

@@ -106,13 +106,3 @@ type TurnClient interface {
 type RepoLocator interface {
 	ByFullName(ctx context.Context, fullName string) (orgID, projectID string, err error)
 }
-
-// Dispatcher is the funnel's entry surface (the platform-owned half). The
-// execute endpoint and the hold-release path call INTO it — the design's "no
-// sibling entry points" rule (§5, §10.1). This is a consumer-side port so the
-// Task package imports NOTHING from feature/execution; the funnel satisfies it
-// structurally and is wired at the composition root (task↛execution arch-lock).
-type Dispatcher interface {
-	OnExecuteIntent(ctx context.Context, repoFullName string, issueNumber int) error
-	Reevaluate(ctx context.Context) error
-}

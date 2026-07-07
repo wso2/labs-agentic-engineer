@@ -18,55 +18,39 @@ package task
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"strings"
-	"time"
 
 	"github.com/wso2/aep/aep-api/internal/contracts/taskmeta"
 )
 
-// Commands is the write surface for the reactive control labels (§5): execute
-// (edge-triggered, consumed by the funnel) and hold (level-triggered). The
-// effect always flows through the funnel — there is no imperative dispatch path.
-//
-// Echo-suppression subtlety (§9.2): a platform-stamped aep:execute fires an
-// issues.labeled delivery whose sender IS the platform, so the webhook path
-// drops it. The console Execute button therefore stamps the label for the audit
-// timeline AND calls INTO the funnel directly (the Dispatcher port) — both are
-// the SAME single dispatch path; external actors stamping the label in the
-// GitHub UI reach the funnel via the (non-dropped) webhook instead.
+// Commands is the write surface for Task control labels. R4 removes reactive
+// dispatch: Temporal owns task execution ordering, while these labels remain
+// human/audit controls on the GitHub issue.
 type Commands struct {
-	issues     IssueClient
-	repos      RepoResolver
-	dispatcher Dispatcher
+	issues IssueClient
+	repos  RepoResolver
 }
 
 // NewCommands wires the command surface.
-func NewCommands(issues IssueClient, repos RepoResolver, dispatcher Dispatcher) *Commands {
-	return &Commands{issues: issues, repos: repos, dispatcher: dispatcher}
+func NewCommands(issues IssueClient, repos RepoResolver) *Commands {
+	return &Commands{issues: issues, repos: repos}
 }
 
-// Execute stamps aep:execute (audit) and dispatches through the funnel. Returns
-// ErrTaskNotFound for a non-Task issue and ErrIssueClosed for a closed issue
-// (closed = no new dispatches, §4). Idempotent — a second Execute while an
-// Execution is active is a no-op inside the funnel.
+// Execute stamps aep:execute for audit/intent only. Temporal dispatches tasks
+// from the DevelopmentFlowWorkflow; this command no longer starts work.
 func (c *Commands) Execute(ctx context.Context, orgID, projectID string, issueNumber int) error {
-	repoFullName, issueState, err := c.resolveTaskIssue(ctx, orgID, projectID, issueNumber)
+	_, issueState, err := c.resolveTaskIssue(ctx, orgID, projectID, issueNumber)
 	if err != nil {
 		return err
 	}
 	if !strings.EqualFold(issueState, "open") {
 		return ErrIssueClosed
 	}
-	// Stamp for the audit timeline (best-effort — the funnel consumes it).
+	// Stamp for the audit timeline (best-effort; Temporal owns dispatch).
 	if err := c.issues.AddLabels(ctx, orgID, projectID, issueNumber, []string{taskmeta.LabelExecute}); err != nil {
 		slog.WarnContext(ctx, "execute: stamp aep:execute failed", "issue", issueNumber, "error", err)
 	}
-	// Dispatch through the funnel out-of-band (the effect is async, §9.1 202).
-	c.dispatchAsync(func(bg context.Context) error {
-		return c.dispatcher.OnExecuteIntent(bg, repoFullName, issueNumber)
-	}, "execute dispatch", issueNumber)
 	return nil
 }
 
@@ -78,9 +62,8 @@ func (c *Commands) Hold(ctx context.Context, orgID, projectID string, issueNumbe
 	return c.issues.AddLabels(ctx, orgID, projectID, issueNumber, []string{taskmeta.LabelHold})
 }
 
-// Unhold removes aep:hold and re-evaluates the funnel so any Execution queued
-// behind the hold can dispatch (the unlabel webhook is dropped by echo
-// suppression, so the release must trigger re-evaluation directly). Idempotent.
+// Unhold removes aep:hold. Temporal owns dependency ordering; no reactive
+// re-evaluation is triggered.
 func (c *Commands) Unhold(ctx context.Context, orgID, projectID string, issueNumber int) error {
 	if _, _, err := c.resolveTaskIssue(ctx, orgID, projectID, issueNumber); err != nil {
 		return err
@@ -88,9 +71,6 @@ func (c *Commands) Unhold(ctx context.Context, orgID, projectID string, issueNum
 	if err := c.issues.RemoveLabel(ctx, orgID, projectID, issueNumber, taskmeta.LabelHold); err != nil {
 		return err
 	}
-	c.dispatchAsync(func(bg context.Context) error {
-		return c.dispatcher.Reevaluate(bg)
-	}, "unhold reevaluate", issueNumber)
 	return nil
 }
 
@@ -113,16 +93,4 @@ func (c *Commands) resolveTaskIssue(ctx context.Context, orgID, projectID string
 		}
 	}
 	return "", "", ErrTaskNotFound
-}
-
-// dispatchAsync runs a funnel call out-of-band with a bounded detached context
-// so it survives the request return (the effect is async, §9.1).
-func (c *Commands) dispatchAsync(fn func(context.Context) error, what string, issueNumber int) {
-	go func() {
-		bg, cancel := context.WithTimeout(context.WithoutCancel(context.Background()), 2*time.Minute)
-		defer cancel()
-		if err := fn(bg); err != nil && !errors.Is(err, context.Canceled) {
-			slog.WarnContext(bg, "task command "+what+" failed", "issue", issueNumber, "error", err)
-		}
-	}()
 }

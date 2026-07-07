@@ -49,7 +49,7 @@ func (r repoLocator) ByFullName(_ context.Context, fullName string) (string, str
 	return repositories.LookupOrgProjectByRepoURL(r.db, fullName)
 }
 
-// designComponents exposes the design's component names at HEAD for the funnel's
+// designComponents exposes the design's component names at HEAD for
 // dispatch-time re-verification. Satisfies execution.DesignReader.
 type designComponents struct{ store *artifacts.ArtifactStore }
 
@@ -95,9 +95,8 @@ func (d designComponents) Components(ctx context.Context, orgID, projectID strin
 	return out, nil
 }
 
-// ProvisionDepNames exposes each component's provisioning dependencies (external
-// + platform-resource) for the funnel's dependency-kind-aware gate. Satisfies
-// execution.DesignReader.
+// ProvisionDepNames exposes each component's provisioning dependencies
+// (external + platform-resource). Satisfies execution.DesignReader.
 func (d designComponents) ProvisionDepNames(ctx context.Context, orgID, projectID string) (map[string][]string, error) {
 	design, err := d.store.ReadDesign(ctx, orgID, projectID)
 	if err != nil {
@@ -135,7 +134,8 @@ func (r runnerSecretResolver) ResolveRunnerSecrets(ctx context.Context, orgID, p
 
 // repoNamer resolves an org+project to its GitHub repo full name ("owner/name")
 // — the provision Execution row's Repo must equal the gate issue's repo full
-// name so the funnel gate resolves the run. Satisfies provisioning.RepoLocator.
+// name so provisioning and execution rows resolve to the same Task issue.
+// Satisfies provisioning.RepoLocator.
 type repoNamer struct {
 	repos repositories.RepoRepository
 	db    *gorm.DB
@@ -183,8 +183,7 @@ func (p provisionProjects) ListProjects(ctx context.Context, orgID string) ([]pr
 	return out, nil
 }
 
-// repoLister enumerates ready project repos for the reconciliation sweep.
-// Satisfies execution.RepoLister.
+// repoLister enumerates ready project repos. Satisfies execution.RepoLister.
 type repoLister struct{ repos repositories.RepoRepository }
 
 func (l repoLister) ListAll(ctx context.Context) ([]execution.RepoRef, error) {
@@ -204,13 +203,13 @@ func (l repoLister) ListAll(ctx context.Context) ([]execution.RepoRef, error) {
 }
 
 // orchestrationTaskDriver adapts the Temporal task activities to the preserved
-// aep-api task side effects. Dispatch deliberately bypasses the old funnel gate:
-// the workflow is now responsible for dependency ordering, while this adapter
-// reuses the funnel only to parse GitHub task facts.
+// aep-api task side effects. The workflow is now responsible for dependency
+// ordering; this adapter only resolves GitHub task facts and launches the
+// preserved executor side effect.
 type orchestrationTaskDriver struct {
 	reads    *task.Reads
 	repos    repositories.RepoRepository
-	funnel   *execution.Funnel
+	tasks    execution.TaskFactResolver
 	execs    repositories.ExecutionRepository
 	executor execution.Executor
 }
@@ -220,7 +219,7 @@ func (d orchestrationTaskDriver) DispatchTask(ctx context.Context, in contract.T
 	if err != nil {
 		return err
 	}
-	facts, ok, err := d.funnel.TaskFactsFor(ctx, repoFullName, issueNumber)
+	facts, ok, err := d.tasks.TaskFactsFor(ctx, repoFullName, issueNumber)
 	if err != nil {
 		return err
 	}

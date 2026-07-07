@@ -44,15 +44,14 @@ type RegisterFunc func(event, action string, h func(ctx context.Context, event, 
 type WebhookEvents struct {
 	issues         IssueClient
 	repos          RepoLocator
-	dispatcher     Dispatcher
 	platformSender string
 }
 
 // NewWebhookEvents wires the issues.* handlers. platformSender is the platform's
 // GitHub identity (App bot login, e.g. "aep-platform[bot]"); empty disables echo
 // suppression (dev without an App).
-func NewWebhookEvents(issues IssueClient, repos RepoLocator, dispatcher Dispatcher, platformSender string) *WebhookEvents {
-	return &WebhookEvents{issues: issues, repos: repos, dispatcher: dispatcher, platformSender: platformSender}
+func NewWebhookEvents(issues IssueClient, repos RepoLocator, platformSender string) *WebhookEvents {
+	return &WebhookEvents{issues: issues, repos: repos, platformSender: platformSender}
 }
 
 // RegisterHandlers installs the issues.* handlers on the webhook router.
@@ -140,10 +139,8 @@ func (e *WebhookEvents) OnOpenedOrEdited(ctx context.Context, _, _ string, paylo
 	return nil
 }
 
-// OnLabeled reacts to a command label stamped by an external actor. A platform
-// stamp is dropped by echo suppression (the Execute endpoint dispatches those
-// directly), so this path is reactive birth for humans/incident tools stamping
-// aep:execute in the GitHub UI (§5 trust boundary).
+// OnLabeled keeps legacy command-label deliveries inert. Temporal owns task
+// dispatch; aep:execute labels are audit/intent only in R4.
 func (e *WebhookEvents) OnLabeled(ctx context.Context, _, _ string, payload []byte) error {
 	var p issuesPayload
 	if err := json.Unmarshal(payload, &p); err != nil {
@@ -155,11 +152,10 @@ func (e *WebhookEvents) OnLabeled(ctx context.Context, _, _ string, payload []by
 	if p.Label.Name != taskmeta.LabelExecute {
 		return nil
 	}
-	return e.dispatcher.OnExecuteIntent(ctx, p.Repository.FullName, p.Issue.Number)
+	return nil
 }
 
-// OnUnlabeled re-evaluates the funnel when a hold is lifted externally so any
-// Execution queued behind the hold can dispatch.
+// OnUnlabeled is inert for hold release in R4; Temporal owns task ordering.
 func (e *WebhookEvents) OnUnlabeled(ctx context.Context, _, _ string, payload []byte) error {
 	var p issuesPayload
 	if err := json.Unmarshal(payload, &p); err != nil {
@@ -171,7 +167,7 @@ func (e *WebhookEvents) OnUnlabeled(ctx context.Context, _, _ string, payload []
 	if p.Label.Name != taskmeta.LabelHold {
 		return nil
 	}
-	return e.dispatcher.Reevaluate(ctx)
+	return nil
 }
 
 func (e *WebhookEvents) flagAttention(ctx context.Context, orgID, projectID string, number int, msg string) error {

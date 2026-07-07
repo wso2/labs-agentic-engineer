@@ -213,47 +213,6 @@ func (f *fakeExecReader) ListByIssueScoped(_ context.Context, _, _ string, numbe
 	return f.history[number], nil
 }
 
-// fakeDispatcher records funnel calls (thread-safe — Execute/Unhold dispatch on
-// a detached goroutine) and signals each on a channel so tests can await them.
-type fakeDispatcher struct {
-	mu           sync.Mutex
-	executeCalls []int // issue numbers
-	reevalCalls  int
-	signal       chan struct{}
-}
-
-func newFakeDispatcher() *fakeDispatcher {
-	return &fakeDispatcher{signal: make(chan struct{}, 8)}
-}
-
-func (f *fakeDispatcher) OnExecuteIntent(_ context.Context, _ string, number int) error {
-	f.mu.Lock()
-	f.executeCalls = append(f.executeCalls, number)
-	f.mu.Unlock()
-	f.signal <- struct{}{}
-	return nil
-}
-
-func (f *fakeDispatcher) Reevaluate(context.Context) error {
-	f.mu.Lock()
-	f.reevalCalls++
-	f.mu.Unlock()
-	f.signal <- struct{}{}
-	return nil
-}
-
-func (f *fakeDispatcher) executed() []int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]int{}, f.executeCalls...)
-}
-
-func (f *fakeDispatcher) reevaluated() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.reevalCalls
-}
-
 // fakeRepoLocator resolves any full name to one org/project.
 type fakeRepoLocator struct{}
 

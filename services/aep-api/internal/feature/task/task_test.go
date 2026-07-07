@@ -153,28 +153,19 @@ func TestReads_Get_NotFound(t *testing.T) {
 
 // ---- commands --------------------------------------------------------------
 
-func newCommands(issues *fakeIssues, disp *fakeDispatcher) *Commands {
-	return NewCommands(issues, fakeRepos{repo: defaultRepo()}, disp)
+func newCommands(issues *fakeIssues) *Commands {
+	return NewCommands(issues, fakeRepos{repo: defaultRepo()})
 }
 
-func TestCommands_Execute_OpenIssue_StampsAndDispatches(t *testing.T) {
+func TestCommands_Execute_OpenIssue_StampsIntentOnly(t *testing.T) {
 	issues := newFakeIssues()
 	issues.seed(gitrepoIssue(7, "order-service", "design-v1"))
-	disp := newFakeDispatcher()
 
-	if err := newCommands(issues, disp).Execute(context.Background(), "org1", "proj1", 7); err != nil {
+	if err := newCommands(issues).Execute(context.Background(), "org1", "proj1", 7); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	if !issueHasAll(issues.labelsOf(7), []string{taskmeta.LabelExecute}) {
 		t.Errorf("expected aep:execute stamped, got %v", issues.labelsOf(7))
-	}
-	select {
-	case <-disp.signal:
-	case <-time.After(2 * time.Second):
-		t.Fatal("dispatcher.OnExecuteIntent was not called")
-	}
-	if got := disp.executed(); len(got) != 1 || got[0] != 7 {
-		t.Errorf("expected dispatch for issue 7, got %v", got)
 	}
 }
 
@@ -184,7 +175,7 @@ func TestCommands_Execute_ClosedIssue_409(t *testing.T) {
 	closed.State = "closed"
 	issues.seed(closed)
 
-	err := newCommands(issues, newFakeDispatcher()).Execute(context.Background(), "org1", "proj1", 8)
+	err := newCommands(issues).Execute(context.Background(), "org1", "proj1", 8)
 	if !errors.Is(err, ErrIssueClosed) {
 		t.Errorf("expected ErrIssueClosed, got %v", err)
 	}
@@ -193,8 +184,7 @@ func TestCommands_Execute_ClosedIssue_409(t *testing.T) {
 func TestCommands_HoldUnhold(t *testing.T) {
 	issues := newFakeIssues()
 	issues.seed(gitrepoIssue(9, "order-service", "design-v1"))
-	disp := newFakeDispatcher()
-	c := newCommands(issues, disp)
+	c := newCommands(issues)
 
 	if err := c.Hold(context.Background(), "org1", "proj1", 9); err != nil {
 		t.Fatalf("Hold: %v", err)
@@ -208,17 +198,12 @@ func TestCommands_HoldUnhold(t *testing.T) {
 	if issueHasAll(issues.labelsOf(9), []string{taskmeta.LabelHold}) {
 		t.Errorf("expected aep:hold removed, got %v", issues.labelsOf(9))
 	}
-	select {
-	case <-disp.signal:
-	case <-time.After(2 * time.Second):
-		t.Fatal("Unhold did not trigger Reevaluate")
-	}
 }
 
 // ---- issues.* webhook events -----------------------------------------------
 
-func newEvents(issues *fakeIssues, disp *fakeDispatcher) *WebhookEvents {
-	return NewWebhookEvents(issues, fakeRepoLocator{}, disp, "aep-platform[bot]")
+func newEvents(issues *fakeIssues) *WebhookEvents {
+	return NewWebhookEvents(issues, fakeRepoLocator{}, "aep-platform[bot]")
 }
 
 func issuesLabeledPayload(number int, label, sender string, extraLabels ...string) []byte {
@@ -239,42 +224,30 @@ func issuesLabeledPayload(number int, label, sender string, extraLabels ...strin
 	}`, number, labelJSON, label, sender))
 }
 
-func TestEvents_ExternalExecuteLabel_Dispatches(t *testing.T) {
-	disp := newFakeDispatcher()
-	e := newEvents(newFakeIssues(), disp)
+func TestEvents_ExternalExecuteLabel_IsInert(t *testing.T) {
+	e := newEvents(newFakeIssues())
 
 	if err := e.OnLabeled(context.Background(), "issues", "labeled",
 		issuesLabeledPayload(11, taskmeta.LabelExecute, "some-human")); err != nil {
 		t.Fatalf("OnLabeled: %v", err)
 	}
-	if got := disp.executed(); len(got) != 1 || got[0] != 11 {
-		t.Errorf("expected external execute to dispatch issue 11, got %v", got)
-	}
 }
 
 func TestEvents_EchoSuppression_DropsPlatformStamp(t *testing.T) {
-	disp := newFakeDispatcher()
-	e := newEvents(newFakeIssues(), disp)
+	e := newEvents(newFakeIssues())
 
 	if err := e.OnLabeled(context.Background(), "issues", "labeled",
 		issuesLabeledPayload(11, taskmeta.LabelExecute, "aep-platform[bot]")); err != nil {
 		t.Fatalf("OnLabeled: %v", err)
 	}
-	if got := disp.executed(); len(got) != 0 {
-		t.Errorf("platform-stamped execute must be dropped (echo), got %v", got)
-	}
 }
 
-func TestEvents_Unlabeled_Hold_Reevaluates(t *testing.T) {
-	disp := newFakeDispatcher()
-	e := newEvents(newFakeIssues(), disp)
+func TestEvents_Unlabeled_Hold_IsInert(t *testing.T) {
+	e := newEvents(newFakeIssues())
 	payload := []byte(fmt.Sprintf(`{"action":"unlabeled","issue":{"number":9,"state":"open"},"label":{"name":%q},"repository":{"full_name":"o/r"},"sender":{"login":"human"}}`, taskmeta.LabelHold))
 
 	if err := e.OnUnlabeled(context.Background(), "issues", "unlabeled", payload); err != nil {
 		t.Fatalf("OnUnlabeled: %v", err)
-	}
-	if disp.reevaluated() != 1 {
-		t.Errorf("expected Reevaluate on hold release, got %d", disp.reevaluated())
 	}
 }
 
@@ -285,7 +258,7 @@ func TestEvents_BlockRepair_OnlyWhenDiffers(t *testing.T) {
 
 	issues := newFakeIssues()
 	issues.seed(gitrepoIssue(20, "order-service", "design-v1"))
-	e := newEvents(issues, newFakeDispatcher())
+	e := newEvents(issues)
 
 	editedPayload := func(body string) []byte {
 		return []byte(fmt.Sprintf(`{
@@ -318,7 +291,7 @@ func TestEvents_BlockRepair_OnlyWhenDiffers(t *testing.T) {
 func TestEvents_MangledBlock_FlagsAttention(t *testing.T) {
 	issues := newFakeIssues()
 	issues.seed(gitrepoIssue(21, "order-service", "design-v1"))
-	e := newEvents(issues, newFakeDispatcher())
+	e := newEvents(issues)
 	// A block marker with an unparseable payload (no component/operation).
 	mangled := "<!-- aep:task/v1\ngarbage line without colon\n-->\n"
 	payload := []byte(fmt.Sprintf(`{"action":"edited","issue":{"number":21,"state":"open","title":"t","body":%q,"labels":[{"name":%q},{"name":%q}]},"repository":{"full_name":"o/r"},"sender":{"login":"human"}}`, mangled, taskmeta.LabelMarker, taskmeta.LabelCoding))

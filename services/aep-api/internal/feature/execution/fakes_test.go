@@ -225,6 +225,26 @@ func (f fakeRepos) ByFullName(context.Context, string) (string, string, error) {
 	return f.orgID, f.projectID, nil
 }
 
+func taskIssue(number int, comp string, deps []string, extraLabels []string, state string) gitrepo.IssueInfo {
+	block := taskmeta.Block{
+		Component: comp,
+		DependsOn: deps,
+		Origin:    taskmeta.OriginSpecPlan,
+		SpecTag:   "req-v1",
+		DesignTag: "design-v1",
+	}
+	body := taskmeta.ComposeBody(block, taskmeta.Human{Rationale: "because", Body: "## Scope\nwork"})
+	labels := append(taskmeta.NewTaskLabels(taskmeta.ClassCoding, taskmeta.OriginSpecPlan), extraLabels...)
+	return gitrepo.IssueInfo{
+		Number: number,
+		Title:  "Implement " + comp,
+		Body:   body,
+		State:  state,
+		URL:    fmt.Sprintf("https://github.com/o/r/issues/%d", number),
+		Labels: labels,
+	}
+}
+
 // fakeDesign returns a fixed component-name set and optional per-component
 // provisioning deps.
 type fakeDesign struct {

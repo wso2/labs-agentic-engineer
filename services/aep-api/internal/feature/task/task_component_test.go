@@ -17,7 +17,7 @@
 // Component tier for the tasks-github-native surface: the REAL Huma handler
 // (via componenttest, tenant gate in ENFORCE) over the new task routes, with
 // only the out-of-process edges faked (GitHub issues, executions rows, the
-// funnel dispatcher, the agents-service turn client). Proves the HTTP contract
+// agents-service turn client). Proves the HTTP contract
 // end to end — derived-status shapes, the 202/409/400 status codes, the label
 // stamps, and the no-claims 401 the API-surface guard exists for.
 package task_test
@@ -131,24 +131,6 @@ func (f fakeExecs) ListByIssueScoped(_ context.Context, _, _ string, n int) ([]m
 	return f.history[n], nil
 }
 
-type fakeDispatcher struct {
-	mu      sync.Mutex
-	execute []int
-	signal  chan struct{}
-}
-
-func (f *fakeDispatcher) OnExecuteIntent(_ context.Context, _ string, n int) error {
-	f.mu.Lock()
-	f.execute = append(f.execute, n)
-	f.mu.Unlock()
-	select {
-	case f.signal <- struct{}{}:
-	default:
-	}
-	return nil
-}
-func (f *fakeDispatcher) Reevaluate(context.Context) error { return nil }
-
 // fakeVersions drives the plan approved-design gate.
 type fakeVersions struct{ design, req []artifacts.DesignVersionInfo }
 
@@ -194,22 +176,20 @@ func taskIssue(number int, component, state string, extra ...string) gitrepo.Iss
 // ---- harness ---------------------------------------------------------------
 
 type rig struct {
-	h    *componenttest.Harness
-	iss  *fakeIssues
-	disp *fakeDispatcher
+	h   *componenttest.Harness
+	iss *fakeIssues
 }
 
 func newRig(t *testing.T, iss *fakeIssues, execs fakeExecs, designVersions []artifacts.DesignVersionInfo) *rig {
 	t.Helper()
-	disp := &fakeDispatcher{signal: make(chan struct{}, 8)}
 	reads := task.NewReads(iss, fakeRepos{}, execs, nil)
-	commands := task.NewCommands(iss, fakeRepos{}, disp)
+	commands := task.NewCommands(iss, fakeRepos{})
 	plan := task.NewPlanService(fakeRepos{}, fakeVersions{design: designVersions}, nil,
 		func(context.Context, string) (string, error) { return "sk-key", nil }, nil, iss, nil, nil)
 	h := componenttest.New(t, componenttest.Options{Deps: api.HumaDeps{
 		TaskReads: reads, TaskCommands: commands, TaskPlan: plan,
 	}})
-	return &rig{h: h, iss: iss, disp: disp}
+	return &rig{h: h, iss: iss}
 }
 
 // ---- tests -----------------------------------------------------------------
@@ -279,11 +259,6 @@ func TestExecute_202StampsLabel_And409Closed(t *testing.T) {
 	}
 	if !hasAll(iss.addedTo(7), []string{taskmeta.LabelExecute}) {
 		t.Errorf("execute must stamp aep:execute, got %v", iss.addedTo(7))
-	}
-	select {
-	case <-r.disp.signal:
-	case <-time.After(2 * time.Second):
-		t.Fatal("execute did not dispatch through the funnel")
 	}
 
 	if closed := r.h.AsOrg(org).Post(tasks+"/8/execute", ""); closed.Code != http.StatusConflict {

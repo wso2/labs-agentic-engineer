@@ -28,8 +28,7 @@ import (
 	"github.com/wso2/aep/aep-api/repositories"
 )
 
-// reconcile loads the Task's latest-per-kind rows (as the sweep's batch load
-// would) and runs the PR-state healer.
+// reconcile loads the Task's latest-per-kind rows and runs the PR-state healer.
 func reconcile(t *testing.T, e *Events, repo string, issue int) error {
 	t.Helper()
 	execs, err := e.store.LatestPerKind(context.Background(), repo, issue)
@@ -57,8 +56,8 @@ func newEventsWithPR(store *fakeStore, issues *fakeIssues, exec Executor, prs PR
 	if exec != nil {
 		reg.Register(taskmeta.ClassCoding, exec)
 	}
-	funnel := NewFunnel(store, issues, fakeRepos{orgID: "org1", projectID: "proj1"}, fakeDesign{names: map[string]bool{"order-service": true}}, reg)
-	return NewEvents(store, funnel, reg, prs)
+	resolver := NewTaskResolver(issues, fakeRepos{orgID: "org1", projectID: "proj1"})
+	return NewEvents(store, resolver, reg, prs)
 }
 
 func TestEvents_PROpened_EndsCodingExecution(t *testing.T) {
@@ -122,7 +121,7 @@ func TestEvents_PRClosedUnmerged_RecordsRejection(t *testing.T) {
 	}
 }
 
-// --- sweep PR-state healer (§5 reconciliation, amended decision #1) ----------
+// --- PR-state healer (§5 reconciliation, amended decision #1) ----------------
 
 func seedOpenPRTask(store *fakeStore, prNumber int) {
 	// A coding execution that succeeded at PR-open, claiming PR #prNumber open.

@@ -494,10 +494,10 @@ func Build(cfg config.Config, db *gorm.DB) (*App, error) {
 	designService.SetCycleHook(cycleService)
 
 	// Tasks are GitHub issues (the Task/Execution split, tasks-github-native):
-	// the read + plan surface reads them live and fuses executions. The dispatch
-	// half (funnel, coding executor, watchers) is wired below, after
-	// asServiceIdentity. repoService/artifactStore/artifactSvcGit/gitOpsService
-	// satisfy the task consumer ports directly.
+	// the read + plan surface reads them live and fuses executions. The
+	// Temporal-driven dispatch half is wired below, after asServiceIdentity.
+	// repoService/artifactStore/artifactSvcGit/gitOpsService satisfy the task
+	// consumer ports directly.
 	taskReads := task.NewReads(issueService, repoService, executionRepo, artifactSvcGit)
 	taskPlan := task.NewPlanService(repoService, artifactSvcGit, gitOpsService,
 		anthropicKeyForGenAI, agentsvcClient, issueService, workspaceEngine, task.SkillsRepoResolver(skillsRepoForTurns))
@@ -604,16 +604,15 @@ func Build(cfg config.Config, db *gorm.DB) (*App, error) {
 	webhookRouter := webhook.NewRouter()
 
 	// The reactive engine (tasks-github-native §5): the executions repository +
-	// an executor registry + THE single funnel. The execute endpoint, the
-	// webhook handlers, and the reconciliation sweep all call into the funnel —
-	// there is no imperative second door, so gates cannot be bypassed.
+	// an executor registry. R4 removes the Funnel/Sweep dispatch gate; Temporal
+	// owns task ordering, while aep-api still resolves GitHub task facts for
+	// preserved dispatch/build side effects.
 	registry := execution.NewRegistry()
-	funnel := execution.NewFunnel(executionRepo, issueService, repoLocator{db: db}, designComponents{store: artifactStore}, registry)
+	taskResolver := execution.NewTaskResolver(issueService, repoLocator{db: db})
 
 	// The coding-class executor (feature/codingagent) is the one wired executor.
 	// It dispatches the coding-agent run and the post-merge build, writing
-	// execution rows. The ops class has no executor yet (§11 — the funnel flags
-	// aep:attention for it).
+	// execution rows. The ops class has no executor yet (§11).
 	codingExecutor := codingagent.NewCodingExecutor(
 		componentClient, repoService, identities{cred: credService},
 		anthropicProvisioner{svc: anthropicCredService}, taskTokens, executionRepo,
@@ -647,24 +646,23 @@ func Build(cfg config.Config, db *gorm.DB) (*App, error) {
 		orchestrationTaskDriver{
 			reads:    taskReads,
 			repos:    repoRepo,
-			funnel:   funnel,
+			tasks:    taskResolver,
 			execs:    executionRepo,
 			executor: codingExecutor,
 		},
 	)
 
-	// Command surface calls into the funnel; webhook handling splits across the
-	// two package halves: issues.* (task birth / block repair / command labels)
-	// in feature/task, pull_request.* (end coding / spawn build) in feature/execution.
-	taskCommands := task.NewCommands(issueService, repoService, funnel)
+	// Command surface stamps/audits task command labels. Temporal owns dispatch,
+	// so aep:execute no longer calls into the removed reactive engine.
+	taskCommands := task.NewCommands(issueService, repoService)
 	platformSender := githubBotLogin(cfg.GitHubAppSlug)
 	registerWebhook := func(event, action string, h func(ctx context.Context, event, action string, payload []byte) error) {
 		webhookRouter.Register(event, action, webhook.EventHandlerFunc(h))
 	}
-	task.NewWebhookEvents(issueService, repoLocator{db: db}, funnel, platformSender).RegisterHandlers(registerWebhook)
+	task.NewWebhookEvents(issueService, repoLocator{db: db}, platformSender).RegisterHandlers(registerWebhook)
 	// pull_request.* handlers apply NO echo suppression (the platform authors no
 	// PRs; in App mode the runner's PR opens as <slug>[bot] and must be acted on).
-	execEvents := execution.NewEvents(executionRepo, funnel, registry, issueService)
+	execEvents := execution.NewEvents(executionRepo, taskResolver, registry, issueService)
 	if cycleClient != nil {
 		execEvents.WithTaskSignaler(cycleClient)
 	}
@@ -672,11 +670,10 @@ func Build(cfg config.Config, db *gorm.DB) (*App, error) {
 	webhook.RegisterInstallationHandlers(webhookRouter, db, credService, issueService, trashWorkspaceOrg)
 	webhookCtrl := webhook.NewWebhookController(webhookVerifier, deliveryStore, webhookRouter, routingLookup, routingCache)
 
-	// Reconciliation sweep (missed webhooks / requeue gating / PR-state healing /
-	// disaster recovery, §5) + the exec watcher (OC WorkflowRun → execution-row
-	// outcomes; build success re-evaluates the funnel).
-	sweep := execution.NewSweep(funnel, execEvents, executionRepo, repoLister{repos: repoRepo}, issueService, 0)
-	execWatcher := codingagent.NewExecWatcher(componentClient, executionRepo, funnel, asServiceIdentity, 0)
+	// The exec watcher remains temporarily as the completion bridge (OC
+	// WorkflowRun → execution-row outcomes + task workflow signals) until the
+	// R4 watcher-deletion slice replaces it with workflow-owned polling.
+	execWatcher := codingagent.NewExecWatcher(componentClient, executionRepo, nil, asServiceIdentity, 0)
 	if cycleClient != nil {
 		execWatcher.WithTaskSignaler(cycleClient)
 	}
@@ -827,7 +824,7 @@ func Build(cfg config.Config, db *gorm.DB) (*App, error) {
 	designService.SetExternalResourceRegistry(externalResourceRepo)
 
 	// Dependency provisioning (dependency-management Phase 6): the value/param
-	// collection surface + the aep:provision gate funnel. The provisioner cores
+	// collection surface + aep:provision gate issues. The provisioner cores
 	// author the OC Resource model; the service drives gate issues + provision
 	// Executions (Kind=provision) and closes each issue with a no-secrets
 	// reference; the readiness watcher observes platform-resource bindings'
@@ -837,7 +834,7 @@ func Build(cfg config.Config, db *gorm.DB) (*App, error) {
 	provisioningSvc := provisioning.NewService(provisioning.Deps{
 		Issues:    issueService,
 		Execs:     executionRepo,
-		Reeval:    funnel,
+		Reeval:    nil,
 		Design:    designComponents{store: artifactStore},
 		Repos:     repoNamer{repos: repoRepo, db: db},
 		Catalog:   externalResourceRepo,
@@ -891,12 +888,10 @@ func Build(cfg config.Config, db *gorm.DB) (*App, error) {
 
 	// Background watchers, launched by main under a shared cancellable context.
 	// State lives in Postgres + GitHub, so a plain goroutine per watcher is
-	// enough. The reconciliation sweep re-gates queued executions and picks up
-	// missed command labels; the exec watcher turns OC WorkflowRun outcomes into
+	// enough. The exec watcher temporarily turns OC WorkflowRun outcomes into
 	// execution-row terminals; the trait-sync + credential-validator watchers
 	// are unchanged.
 	watchers := []Watcher{
-		sweep,
 		execWatcher,
 		// Resource-readiness watcher: turns platform-resource bindings going Ready
 		// into provision-Execution terminals + gate-issue closes, releasing gated
