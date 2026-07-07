@@ -1,0 +1,2 @@
+# Compiled worker binary from `go build ./cmd/worker`
+/worker

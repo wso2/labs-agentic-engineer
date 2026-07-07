@@ -453,6 +453,29 @@ services:
     networks:
       - aep
 
+  # ---------------------------------------------------------------------------
+  # temporal — dev server (in-memory/SQLite) exposing the workflow frontend
+  # (gRPC :7233) and the Web UI (:8233). The services/orchestrator worker polls
+  # this task queue; aep-api dials it to start/signal/query development cycles.
+  # Dev only — the cluster uses a Postgres-backed Helm release (ADR-0005,
+  # docs/design/orchestration/). --ip 0.0.0.0 so sibling containers can reach it.
+  # ---------------------------------------------------------------------------
+  temporal:
+    image: temporalio/temporal:1.7.2
+    container_name: aep-temporal
+    command:
+      - server
+      - start-dev
+      - --ip
+      - 0.0.0.0
+      - --namespace
+      - default
+    ports:
+      - "7233:7233"  # frontend gRPC (TEMPORAL_HOST_PORT)
+      - "8233:8233"  # Web UI
+    networks:
+      - aep
+
 volumes:
   pgdata:
   # Shared git workspaces — bare mirrors + per-SHA snapshots. A single Docker

@@ -7,3 +7,7 @@ go 1.26.0
 // workspace modules dynamically, so adding a `use` line is the only edit
 // needed to adopt a new Go module.
 use ./services/aep-api
+
+use ./services/orchestrator
+
+use ./packages/contracts/orchestration
