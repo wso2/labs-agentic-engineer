@@ -19,6 +19,7 @@ package clustergatewayproxy
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -125,5 +126,121 @@ func TestApplyExternalSecret_ConflictThenPUTError(t *testing.T) {
 	err := c.ApplyExternalSecret(context.Background(), "wc-x", esManifest())
 	if err == nil || !strings.Contains(err.Error(), "PUT") {
 		t.Fatalf("a failing PUT after 409 must surface, got %v", err)
+	}
+}
+
+func quotaManifest() map[string]any {
+	return map[string]any{
+		"apiVersion": "v1",
+		"kind":       "ResourceQuota",
+		"metadata":   map[string]any{"name": "remote-worker-jobs", "namespace": "wc-x"},
+		"spec":       map[string]any{"hard": map[string]any{"count/jobs.batch": "5"}},
+	}
+}
+
+// TestApplyResourceQuota_FreshPOSTNoConflict mirrors
+// TestApplyExternalSecret_FreshPOSTNoConflict for the §R3.4 quota ensure.
+func TestApplyResourceQuota_FreshPOSTNoConflict(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"metadata":{"name":"remote-worker-jobs","resourceVersion":"1"}}`))
+	}))
+	defer srv.Close()
+
+	c := New(Config{BaseURL: srv.URL})
+	if err := c.ApplyResourceQuota(context.Background(), "wc-x", quotaManifest()); err != nil {
+		t.Fatalf("ApplyResourceQuota: %v", err)
+	}
+	if gotPath != "/cloud-dp-cgw/api/v1/namespaces/wc-x/resourcequotas" {
+		t.Errorf("path = %s", gotPath)
+	}
+}
+
+// TestApplyResourceQuota_ConflictRecoversWithResourceVersion mirrors the
+// ExternalSecret upsert-on-409 behavior for ResourceQuota.
+func TestApplyResourceQuota_ConflictRecoversWithResourceVersion(t *testing.T) {
+	var sawPut bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			w.WriteHeader(http.StatusConflict)
+		case http.MethodGet:
+			_, _ = w.Write([]byte(`{"metadata":{"name":"remote-worker-jobs","resourceVersion":"7"}}`))
+		case http.MethodPut:
+			sawPut = true
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer srv.Close()
+
+	c := New(Config{BaseURL: srv.URL})
+	if err := c.ApplyResourceQuota(context.Background(), "wc-x", quotaManifest()); err != nil {
+		t.Fatalf("ApplyResourceQuota(conflict): %v", err)
+	}
+	if !sawPut {
+		t.Error("expected a PUT after the 409")
+	}
+}
+
+// TestApplyLimitRange_FreshPOSTNoConflict is the LimitRange sibling.
+func TestApplyLimitRange_FreshPOSTNoConflict(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"metadata":{"name":"remote-worker-limits","resourceVersion":"1"}}`))
+	}))
+	defer srv.Close()
+
+	c := New(Config{BaseURL: srv.URL})
+	manifest := map[string]any{
+		"apiVersion": "v1", "kind": "LimitRange",
+		"metadata": map[string]any{"name": "remote-worker-limits", "namespace": "wc-x"},
+	}
+	if err := c.ApplyLimitRange(context.Background(), "wc-x", manifest); err != nil {
+		t.Fatalf("ApplyLimitRange: %v", err)
+	}
+}
+
+// TestApplyJob_QuotaExceeded_ReturnsErrQuotaExceeded covers the §R3.4
+// retriable-error mapping: a 403 whose body is k8s's ResourceQuota rejection
+// surfaces as the typed ErrQuotaExceeded sentinel, not a generic error.
+func TestApplyJob_QuotaExceeded_ReturnsErrQuotaExceeded(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"message":"jobs.batch \"run-1\" is forbidden: exceeded quota: remote-worker-jobs, requested: count/jobs.batch=1, used: count/jobs.batch=5, limited: count/jobs.batch=5"}`))
+	}))
+	defer srv.Close()
+
+	c := New(Config{BaseURL: srv.URL})
+	manifest := map[string]any{
+		"apiVersion": "batch/v1", "kind": "Job",
+		"metadata": map[string]any{"name": "run-1", "namespace": "wc-x"},
+	}
+	err := c.ApplyJob(context.Background(), "wc-x", manifest)
+	if !errors.Is(err, ErrQuotaExceeded) {
+		t.Fatalf("ApplyJob on quota-exceeded 403 = %v, want ErrQuotaExceeded", err)
+	}
+}
+
+// TestApplyJob_ForbiddenNotQuota_PlainError covers the negative case: a 403
+// that is NOT a quota rejection (e.g. RBAC) must NOT be misclassified as
+// ErrQuotaExceeded — Temporal would then retry a permanently-broken RBAC
+// setup forever instead of failing loudly.
+func TestApplyJob_ForbiddenNotQuota_PlainError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"message":"User \"system:serviceaccount:aep:aep-api\" cannot create resource \"jobs\""}`))
+	}))
+	defer srv.Close()
+
+	c := New(Config{BaseURL: srv.URL})
+	manifest := map[string]any{
+		"apiVersion": "batch/v1", "kind": "Job",
+		"metadata": map[string]any{"name": "run-1", "namespace": "wc-x"},
+	}
+	err := c.ApplyJob(context.Background(), "wc-x", manifest)
+	if err == nil || errors.Is(err, ErrQuotaExceeded) {
+		t.Fatalf("ApplyJob on RBAC 403 = %v, want a plain (non-quota) error", err)
 	}
 }

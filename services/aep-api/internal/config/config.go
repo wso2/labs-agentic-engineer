@@ -205,6 +205,14 @@ type Config struct {
 	// for local dev; cloud deployments must set TEMPORAL_HOST_PORT + optionally
 	// TEMPORAL_NAMESPACE.
 	Temporal TemporalConfig
+
+	// AEPAPIInternalBearer is the shared secret the /internal/v1/orchestration/*
+	// ops verify on every request's Authorization header. Must equal the
+	// orchestrator's AEP_API_INTERNAL_BEARER (services/orchestrator/internal/
+	// config/config.go) — it is the same value on both sides of that S2S call.
+	// Empty leaves the surface unauthenticated (every request 503s) — only
+	// acceptable for local loopback dev.
+	AEPAPIInternalBearer string
 }
 
 // Validate checks format/consistency invariants the per-field env readers

@@ -19,6 +19,7 @@ package repositories
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"gorm.io/gorm"
@@ -100,6 +101,27 @@ type ExecutionRepository interface {
 	// the project; the Task issues are deleted with the repo). Org-scoped so a
 	// per-org project slug reused across orgs cannot cross-delete.
 	DeleteByProject(ctx context.Context, orgID, projectID string) error
+
+	// UpsertReadModel upserts a Temporal-driven task snapshot keyed by
+	// e.WorkflowID (required — errors if empty), via INSERT … ON CONFLICT
+	// (workflow_id) DO UPDATE against ux_executions_readmodel. One row per task
+	// workflow; Version increments on every write (including the first, which
+	// starts at 1). Distinct from TryAdmit's per-attempt admission-mutex insert
+	// — the two paths never collide (disjoint partial indexes).
+	UpsertReadModel(ctx context.Context, e *models.Execution) (*models.Execution, error)
+
+	// GetByWorkflowID returns the read-model row for a task workflow, or
+	// (nil, nil) if none has been upserted yet.
+	GetByWorkflowID(ctx context.Context, workflowID string) (*models.Execution, error)
+
+	// ListReadModelByStatus returns every read-model row (non-empty
+	// WorkflowID) at the given status — the deploy-completion poll's input
+	// (§R3.2/§R4.1: ExecWatcher polls rows at "deploying" for the component's
+	// ReleaseBinding Ready condition, replacing the old synthetic
+	// DeploySucceeded signal). Status here is a plain string, not a
+	// taskmeta.ExecutionStatus — read-model rows track workflow-position
+	// checkpoints, not dispatch-attempt lifecycle.
+	ListReadModelByStatus(ctx context.Context, status string) ([]models.Execution, error)
 }
 
 type executionRepository struct {
@@ -305,6 +327,57 @@ func (r *executionRepository) DeleteByProject(ctx context.Context, orgID, projec
 	return r.db.WithContext(ctx).
 		Where("org_id = ? AND project_id = ?", orgID, projectID).
 		Delete(&models.Execution{}).Error
+}
+
+func (r *executionRepository) UpsertReadModel(ctx context.Context, e *models.Execution) (*models.Execution, error) {
+	if e.WorkflowID == "" {
+		return nil, fmt.Errorf("upsert read model: workflow id required")
+	}
+	if e.Status == "" {
+		e.Status = string(taskmeta.ExecQueued)
+	}
+	if e.Version == 0 {
+		e.Version = 1
+	}
+	res := r.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "workflow_id"}},
+		DoUpdates: clause.Assignments(map[string]any{
+			"status":     e.Status,
+			"reason":     e.Reason,
+			"run_name":   e.RunName,
+			"component":  e.Component,
+			"design_tag": e.DesignTag,
+			"version":    gorm.Expr("executions.version + 1"),
+		}),
+	}).Create(e)
+	if res.Error != nil {
+		return nil, res.Error
+	}
+	return r.GetByWorkflowID(ctx, e.WorkflowID)
+}
+
+func (r *executionRepository) ListReadModelByStatus(ctx context.Context, status string) ([]models.Execution, error) {
+	var rows []models.Execution
+	err := r.db.WithContext(ctx).
+		Where("workflow_id <> '' AND status = ?", status).
+		Order("created_at ASC").
+		Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+func (r *executionRepository) GetByWorkflowID(ctx context.Context, workflowID string) (*models.Execution, error) {
+	var e models.Execution
+	err := r.db.WithContext(ctx).Where("workflow_id = ?", workflowID).First(&e).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &e, nil
 }
 
 // ExecutionFacts projects latest-per-kind Execution rows into the minimal

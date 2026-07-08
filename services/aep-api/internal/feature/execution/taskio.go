@@ -43,9 +43,11 @@ const (
 	reasonPROpenPrefix = "pr#"
 )
 
-// openPRNumber returns the PR number a succeeded coding row claims is open, or
-// 0 when the row is not a succeeded coding row with a pr# reason.
-func openPRNumber(row *models.Execution) int {
+// OpenPRNumber returns the PR number a succeeded coding row claims is open, or
+// 0 when the row is not a succeeded coding row with a pr# reason. Exported so
+// the orchestration TaskDriver (§R3.5 auto-merge) can recover a task's open PR
+// number from its latest coding Execution without re-parsing GitHub itself.
+func OpenPRNumber(row *models.Execution) int {
 	if row == nil || row.Kind != string(taskmeta.KindCoding) || row.Status != string(taskmeta.ExecSucceeded) {
 		return 0
 	}

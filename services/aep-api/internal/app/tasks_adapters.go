@@ -19,6 +19,8 @@ package app
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"strconv"
 	"strings"
 
 	"gorm.io/gorm"
@@ -202,6 +204,17 @@ func (l repoLister) ListAll(ctx context.Context) ([]execution.RepoRef, error) {
 	return out, nil
 }
 
+// prMerger is the minimal PR-merge port orchestrationTaskDriver needs for auto
+// code-review mode (§R3.5) — satisfied by gitrepo.IssueService without pulling
+// its full surface into this adapter.
+type prMerger interface {
+	MergePullRequest(ctx context.Context, orgID, projectID string, number int) error
+}
+
+// reasonAutoMergedPrefix is stamped on the read-model row after AutoMerge
+// merges a task's PR — mirrors execution's reasonPROpenPrefix convention.
+const reasonAutoMergedPrefix = "auto-merged pr#"
+
 // orchestrationTaskDriver adapts the Temporal task activities to the preserved
 // aep-api task side effects. The workflow is now responsible for dependency
 // ordering; this adapter only resolves GitHub task facts and launches the
@@ -212,6 +225,7 @@ type orchestrationTaskDriver struct {
 	tasks    execution.TaskFactResolver
 	execs    repositories.ExecutionRepository
 	executor execution.Executor
+	merger   prMerger // nil disables AutoMerge (falls back to a no-op)
 }
 
 func (d orchestrationTaskDriver) DispatchTask(ctx context.Context, in contract.TaskLifecycleInput) error {
@@ -245,21 +259,73 @@ func (d orchestrationTaskDriver) DispatchTask(ctx context.Context, in contract.T
 	}
 	if err := d.executor.Run(ctx, execution.DispatchRequest{Execution: admittedRow, Task: facts}); err != nil {
 		_, _ = d.execs.Finish(ctx, admittedRow.ID, string(taskmeta.ExecFailed), err.Error())
+		d.upsertReadModel(ctx, in, facts, taskmeta.KindCoding, taskmeta.ExecFailed, err.Error())
 		return err
 	}
+	d.upsertReadModel(ctx, in, facts, taskmeta.KindCoding, taskmeta.ExecRunning, "")
 	return nil
 }
 
-func (d orchestrationTaskDriver) DeployTask(context.Context, contract.TaskLifecycleInput) error {
+func (d orchestrationTaskDriver) DeployTask(ctx context.Context, in contract.TaskLifecycleInput) error {
 	// Components are created with AutoDeploy=true; OpenChoreo drives deployment
-	// after the build succeeds. ExecWatcher signals the workflow when it observes
-	// the successful build/deploy materialization.
+	// after the build succeeds. The deploy heartbeating activity observes the
+	// ReleaseBinding's Ready condition and signals the workflow (§R3.2/§R4.1);
+	// this call only checkpoints the read-model with "deploy requested".
+	d.upsertReadModel(ctx, in, execution.TaskFacts{}, taskmeta.KindBuild, taskmeta.ExecRunning, "deploy requested")
 	return nil
 }
 
-func (d orchestrationTaskDriver) AutoMerge(context.Context, contract.TaskLifecycleInput) error {
-	// GitHub auto-merge is intentionally left as a no-op until the git host grows
-	// a merge port. Human mode and webhook-driven PR merges are unaffected.
+// upsertReadModel is a best-effort checkpoint of the task workflow's position
+// into the executions read-model (§R3.3) — it never fails the caller (dispatch/
+// deploy/merge already succeeded or is independently retried by Temporal; a
+// read-model write hiccup should not roll that back or block a retry).
+func (d orchestrationTaskDriver) upsertReadModel(ctx context.Context, in contract.TaskLifecycleInput, facts execution.TaskFacts, kind taskmeta.ExecutionKind, status taskmeta.ExecutionStatus, reason string) {
+	row := &models.Execution{
+		WorkflowID: contract.TaskWorkflowID(in.Org, in.Project, in.TaskID),
+		OrgID:      firstNonEmpty(facts.OrgID, in.Org),
+		ProjectID:  firstNonEmpty(facts.ProjectID, in.Project),
+		Repo:       facts.Repo,
+		Kind:       string(kind),
+		Status:     string(status),
+		Component:  firstNonEmpty(facts.Component, in.ComponentName, in.TaskID),
+		DesignTag:  facts.DesignTag,
+		Reason:     reason,
+	}
+	if _, err := d.execs.UpsertReadModel(ctx, row); err != nil {
+		slog.WarnContext(ctx, "orchestration read-model upsert failed",
+			"workflowId", row.WorkflowID, "kind", kind, "status", status, "error", err)
+	}
+}
+
+// AutoMerge merges the task's open PR in auto code-review mode (§R3.5). The PR
+// number is recovered from the task's latest coding Execution (the reason
+// stamp PullRequestOpened leaves, execution.OpenPRNumber) rather than carried
+// on the activity input, since TaskLifecycleInput has no PR-number field.
+// Idempotent: MergePullRequest treats an already-merged PR as success, and a
+// task with no open PR on record errors (nothing to merge yet) rather than
+// silently no-op-ing, so a misordered/duplicate activity call surfaces instead
+// of masking a real problem.
+func (d orchestrationTaskDriver) AutoMerge(ctx context.Context, in contract.TaskLifecycleInput) error {
+	if d.merger == nil {
+		return nil
+	}
+	repoFullName, issueNumber, err := d.resolveTask(ctx, in)
+	if err != nil {
+		return err
+	}
+	execs, err := d.execs.LatestPerKind(ctx, repoFullName, issueNumber)
+	if err != nil {
+		return err
+	}
+	prNumber := execution.OpenPRNumber(execs[string(taskmeta.KindCoding)])
+	if prNumber == 0 {
+		return fmt.Errorf("no open PR recorded for task %s/%s/%s", in.Org, in.Project, in.TaskID)
+	}
+	if err := d.merger.MergePullRequest(ctx, in.Org, in.Project, prNumber); err != nil {
+		return err
+	}
+	d.upsertReadModel(ctx, in, execution.TaskFacts{Repo: repoFullName}, taskmeta.KindCoding, taskmeta.ExecSucceeded,
+		reasonAutoMergedPrefix+strconv.Itoa(prNumber))
 	return nil
 }
 

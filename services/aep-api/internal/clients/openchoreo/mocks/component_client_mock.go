@@ -33,6 +33,9 @@ var _ openchoreo.ComponentClient = &ComponentClientMock{}
 //			GetWorkflowRunFunc: func(ctx context.Context, orgName string, runName string) (*models.WorkflowRun, error) {
 //				panic("mock out the GetWorkflowRun method")
 //			},
+//			IsComponentReadyFunc: func(ctx context.Context, orgName string, projectName string, componentName string) (bool, error) {
+//				panic("mock out the IsComponentReady method")
+//			},
 //			ListComponentsFunc: func(ctx context.Context, orgName string, projectName string, limit int, cursor string) (*models.ComponentList, error) {
 //				panic("mock out the ListComponents method")
 //			},
@@ -81,6 +84,9 @@ type ComponentClientMock struct {
 
 	// GetWorkflowRunFunc mocks the GetWorkflowRun method.
 	GetWorkflowRunFunc func(ctx context.Context, orgName string, runName string) (*models.WorkflowRun, error)
+
+	// IsComponentReadyFunc mocks the IsComponentReady method.
+	IsComponentReadyFunc func(ctx context.Context, orgName string, projectName string, componentName string) (bool, error)
 
 	// ListComponentsFunc mocks the ListComponents method.
 	ListComponentsFunc func(ctx context.Context, orgName string, projectName string, limit int, cursor string) (*models.ComponentList, error)
@@ -155,6 +161,17 @@ type ComponentClientMock struct {
 			OrgName string
 			// RunName is the runName argument value.
 			RunName string
+		}
+		// IsComponentReady holds details about calls to the IsComponentReady method.
+		IsComponentReady []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// OrgName is the orgName argument value.
+			OrgName string
+			// ProjectName is the projectName argument value.
+			ProjectName string
+			// ComponentName is the componentName argument value.
+			ComponentName string
 		}
 		// ListComponents holds details about calls to the ListComponents method.
 		ListComponents []struct {
@@ -291,6 +308,7 @@ type ComponentClientMock struct {
 	lockDeleteComponent                        sync.RWMutex
 	lockGetComponent                           sync.RWMutex
 	lockGetWorkflowRun                         sync.RWMutex
+	lockIsComponentReady                       sync.RWMutex
 	lockListComponents                         sync.RWMutex
 	lockListDeployments                        sync.RWMutex
 	lockListWorkflowRuns                       sync.RWMutex
@@ -472,6 +490,50 @@ func (mock *ComponentClientMock) GetWorkflowRunCalls() []struct {
 	mock.lockGetWorkflowRun.RLock()
 	calls = mock.calls.GetWorkflowRun
 	mock.lockGetWorkflowRun.RUnlock()
+	return calls
+}
+
+// IsComponentReady calls IsComponentReadyFunc.
+func (mock *ComponentClientMock) IsComponentReady(ctx context.Context, orgName string, projectName string, componentName string) (bool, error) {
+	if mock.IsComponentReadyFunc == nil {
+		panic("ComponentClientMock.IsComponentReadyFunc: method is nil but ComponentClient.IsComponentReady was just called")
+	}
+	callInfo := struct {
+		Ctx           context.Context
+		OrgName       string
+		ProjectName   string
+		ComponentName string
+	}{
+		Ctx:           ctx,
+		OrgName:       orgName,
+		ProjectName:   projectName,
+		ComponentName: componentName,
+	}
+	mock.lockIsComponentReady.Lock()
+	mock.calls.IsComponentReady = append(mock.calls.IsComponentReady, callInfo)
+	mock.lockIsComponentReady.Unlock()
+	return mock.IsComponentReadyFunc(ctx, orgName, projectName, componentName)
+}
+
+// IsComponentReadyCalls gets all the calls that were made to IsComponentReady.
+// Check the length with:
+//
+//	len(mockedComponentClient.IsComponentReadyCalls())
+func (mock *ComponentClientMock) IsComponentReadyCalls() []struct {
+	Ctx           context.Context
+	OrgName       string
+	ProjectName   string
+	ComponentName string
+} {
+	var calls []struct {
+		Ctx           context.Context
+		OrgName       string
+		ProjectName   string
+		ComponentName string
+	}
+	mock.lockIsComponentReady.RLock()
+	calls = mock.calls.IsComponentReady
+	mock.lockIsComponentReady.RUnlock()
 	return calls
 }
 

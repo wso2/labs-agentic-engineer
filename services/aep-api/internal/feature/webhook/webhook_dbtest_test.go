@@ -252,6 +252,9 @@ func (f *fakeIssueSvc) SetLabels(context.Context, string, string, int, []string)
 func (f *fakeIssueSvc) GetPullRequestState(context.Context, string, string, int) (*gitrepo.PullRequestState, error) {
 	panic("fakeIssueSvc: GetPullRequestState not expected")
 }
+func (f *fakeIssueSvc) MergePullRequest(context.Context, string, string, int) error {
+	panic("fakeIssueSvc: MergePullRequest not expected")
+}
 
 // credAESKey is a fixed 32-byte AES-256 key for the real credential store. The
 // tested handler paths never read/write it (app-installation Disconnect GCs only

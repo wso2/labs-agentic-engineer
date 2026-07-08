@@ -252,3 +252,71 @@ func TestExecutionRepository_Reads(t *testing.T) {
 		t.Fatalf("LatestPerKindForRepo should include the orgb ops row: %+v", all[5])
 	}
 }
+
+// TestExecutionRepository_UpsertReadModel covers the §R3.3 read-model path:
+// one row per WorkflowID, idempotent on repeat writes (Version bumps, no
+// duplicate row), and disjoint from the admission-mutex path (a WorkflowID-
+// less TryAdmit row never collides with a read-model upsert for the same
+// repo/issue).
+func TestExecutionRepository_UpsertReadModel(t *testing.T) {
+	t.Parallel()
+	db := dbtest.New(t)
+	repo := repositories.NewExecutionRepository(db)
+	ctx := context.Background()
+
+	wfID := "task:orga:proj1:comp-a"
+	row := newExec("orga", "acme/repo", 7, taskmeta.KindCoding)
+	row.WorkflowID = wfID
+	row.Status = string(taskmeta.ExecRunning)
+
+	first, err := repo.UpsertReadModel(ctx, row)
+	if err != nil || first == nil {
+		t.Fatalf("UpsertReadModel(first): row=%v err=%v", first, err)
+	}
+	if first.Version != 1 {
+		t.Fatalf("first upsert Version = %d; want 1", first.Version)
+	}
+
+	// A second upsert for the same WorkflowID updates in place — no new row,
+	// Version bumps.
+	again := newExec("orga", "acme/repo", 7, taskmeta.KindBuild)
+	again.WorkflowID = wfID
+	again.Status = string(taskmeta.ExecSucceeded)
+	again.RunName = "build-42"
+	second, err := repo.UpsertReadModel(ctx, again)
+	if err != nil || second == nil {
+		t.Fatalf("UpsertReadModel(second): row=%v err=%v", second, err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("second upsert created a new row: first=%s second=%s", first.ID, second.ID)
+	}
+	if second.Version != 2 {
+		t.Fatalf("second upsert Version = %d; want 2", second.Version)
+	}
+	if second.Status != string(taskmeta.ExecSucceeded) || second.RunName != "build-42" {
+		t.Fatalf("second upsert did not update status/run_name: %+v", second)
+	}
+
+	got, err := repo.GetByWorkflowID(ctx, wfID)
+	if err != nil || got == nil || got.ID != first.ID {
+		t.Fatalf("GetByWorkflowID: row=%v err=%v", got, err)
+	}
+
+	if _, err := repo.GetByWorkflowID(ctx, "no-such-workflow"); err != nil {
+		t.Fatalf("GetByWorkflowID(missing) should not error: %v", err)
+	} else if got, _ := repo.GetByWorkflowID(ctx, "no-such-workflow"); got != nil {
+		t.Fatalf("GetByWorkflowID(missing) = %+v; want nil", got)
+	}
+
+	// Empty WorkflowID is rejected — it would collide with every other
+	// WorkflowID-less row were it not for the partial index excluding them.
+	if _, err := repo.UpsertReadModel(ctx, newExec("orga", "acme/repo", 8, taskmeta.KindCoding)); err == nil {
+		t.Fatalf("UpsertReadModel with empty WorkflowID should error")
+	}
+
+	// A plain TryAdmit row (no WorkflowID) for the same repo/issue coexists
+	// fine — the two partial indexes are disjoint.
+	if ok, _, err := repo.TryAdmit(ctx, newExec("orga", "acme/repo", 7, taskmeta.KindCoding)); err != nil || !ok {
+		t.Fatalf("TryAdmit alongside a read-model row: ok=%v err=%v", ok, err)
+	}
+}

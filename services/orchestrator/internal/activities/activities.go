@@ -66,8 +66,11 @@ func (a *Activities) PlanTasks(ctx context.Context, in types.DevelopmentFlowInpu
 	return componentsToTasks(components), nil
 }
 
-// RunGateChecks runs the automated gate (auto mode). No-op pass when no checker
-// is wired, so an auto cycle still advances in a not-yet-integrated environment.
+// RunGateChecks runs the automated gate (auto mode). No real checker exists yet
+// (tests/lint/self-review is out of scope for the R3 gap-closure pass — see
+// docs/design/orchestration/R4-handover.md); a nil checker is an explicit,
+// documented pass so an auto cycle advances rather than deadlocks — not a
+// silent bypass of a check that ran.
 func (a *Activities) RunGateChecks(ctx context.Context, in types.GateChecksInput) (types.GateChecksResult, error) {
 	if a == nil || a.Checker == nil {
 		return types.GateChecksResult{Passed: true}, nil

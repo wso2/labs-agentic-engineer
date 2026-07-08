@@ -101,6 +101,10 @@ services:
       TEMPORAL_HOST_PORT: "temporal:7233"
       TEMPORAL_NAMESPACE: "default"
       TEMPORAL_TASK_QUEUE: "aep-orchestrator"
+      # Shared secret the orchestrator presents on /internal/v1/orchestration/*
+      # calls — must be byte-identical to the orchestrator's own
+      # AEP_API_INTERNAL_BEARER below.
+      AEP_API_INTERNAL_BEARER: "local-dev-orchestration-secret"
 
       # ── OpenChoreo platform API (reached via k3d loadbalancer + Host header)
       PLATFORM_API_SERVICE_BASE_URL: "${PLATFORM_API_SERVICE_BASE_URL}"
@@ -510,6 +514,8 @@ services:
       TEMPORAL_NAMESPACE: "default"
       TEMPORAL_TASK_QUEUE: "aep-orchestrator"
       AEP_API_INTERNAL_BASE_URL: "http://aep-api:9090"
+      # Must be byte-identical to aep-api's AEP_API_INTERNAL_BEARER above.
+      AEP_API_INTERNAL_BEARER: "local-dev-orchestration-secret"
     networks:
       - aep
 

@@ -167,3 +167,74 @@ func TestUpdateWebhookEvents(t *testing.T) {
 		t.Errorf("events payload missing 'issues': %v", got["events"])
 	}
 }
+
+// routedFake starts an httptest server that dispatches by method, so a test
+// can drive a multi-request sequence (merge PUT, then a fallback GET) unlike
+// newFake's single fixed response.
+func routedFake(t *testing.T, byMethod map[string]struct {
+	status int
+	body   string
+}) *Client {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp, ok := byMethod[r.Method]
+		if !ok {
+			t.Fatalf("unexpected method %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(resp.status)
+		_, _ = io.WriteString(w, resp.body)
+	}))
+	t.Cleanup(srv.Close)
+	c, ok := NewClient(WithAPIBase(srv.URL)).(*Client)
+	if !ok {
+		t.Fatalf("NewClient did not return *Client")
+	}
+	return c
+}
+
+func TestMergePullRequest_Success(t *testing.T) {
+	c, cap := newFake(t, http.StatusOK, `{"merged":true,"message":"Pull Request successfully merged"}`)
+	if err := c.MergePullRequest(context.Background(), "acme", "repo", stubCred{}, 7); err != nil {
+		t.Fatalf("MergePullRequest: %v", err)
+	}
+	if cap.method != http.MethodPut {
+		t.Errorf("method = %s; want PUT", cap.method)
+	}
+	if cap.escapedPath != "/repos/acme/repo/pulls/7/merge" {
+		t.Errorf("path = %s", cap.escapedPath)
+	}
+}
+
+// TestMergePullRequest_AlreadyMerged covers the idempotency fallback: a 405
+// from the merge PUT (GitHub's response for "not mergeable right now", which
+// also covers "already merged") is not an error if the live PR state shows it
+// merged — a Temporal retry of an activity whose success response was lost
+// must not fail.
+func TestMergePullRequest_AlreadyMerged(t *testing.T) {
+	c := routedFake(t, map[string]struct {
+		status int
+		body   string
+	}{
+		http.MethodPut: {http.StatusMethodNotAllowed, `{"message":"Pull Request is not mergeable"}`},
+		http.MethodGet: {http.StatusOK, `{"state":"closed","merged":true,"merge_commit_sha":"abc123"}`},
+	})
+	if err := c.MergePullRequest(context.Background(), "acme", "repo", stubCred{}, 7); err != nil {
+		t.Fatalf("MergePullRequest(already merged) should not error: %v", err)
+	}
+}
+
+// TestMergePullRequest_NotMergeable covers the real-blocker case: a 405 whose
+// live PR state is NOT merged surfaces the original error.
+func TestMergePullRequest_NotMergeable(t *testing.T) {
+	c := routedFake(t, map[string]struct {
+		status int
+		body   string
+	}{
+		http.MethodPut: {http.StatusMethodNotAllowed, `{"message":"Required status check has not passed"}`},
+		http.MethodGet: {http.StatusOK, `{"state":"open","merged":false}`},
+	})
+	if err := c.MergePullRequest(context.Background(), "acme", "repo", stubCred{}, 7); err == nil {
+		t.Fatalf("MergePullRequest should surface the real blocker")
+	}
+}

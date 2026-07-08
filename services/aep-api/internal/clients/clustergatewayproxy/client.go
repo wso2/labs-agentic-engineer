@@ -60,6 +60,14 @@ var ErrNotFound = errors.New("clustergatewayproxy: not found")
 // than surfacing it as a hard error.
 var ErrPodNotReady = errors.New("clustergatewayproxy: pod not ready")
 
+// ErrQuotaExceeded is returned by ApplyJob when the k8s API server rejects
+// the Job because the namespace's ResourceQuota is exhausted (§R3.4 — the
+// per-org concurrency cap). This is RETRIABLE: the caller (the dispatch
+// endpoint) should surface it as such rather than a hard failure, so
+// Temporal backs off and retries once a slot frees, instead of the task
+// dispatch failing permanently.
+var ErrQuotaExceeded = errors.New("clustergatewayproxy: namespace resource quota exceeded")
+
 // AuthProvider supplies the Bearer token attached to proxy requests. It
 // matches the Token() method of *oauth.TokenProvider so that type satisfies
 // the interface as-is.
@@ -475,8 +483,50 @@ func (c *Client) post(ctx context.Context, path string, body any, opts postOpts)
 				reResp.StatusCode, string(reBody))
 		}
 	}
+	if resp.StatusCode == http.StatusForbidden && isQuotaExceeded(string(respBody)) {
+		return fmt.Errorf("%w: %s", ErrQuotaExceeded, string(respBody))
+	}
 	return fmt.Errorf("clustergatewayproxy: POST %s status %d: %s",
 		path, resp.StatusCode, string(respBody))
+}
+
+// isQuotaExceeded reports whether a k8s 403 Forbidden body is the API
+// server's ResourceQuota-exhausted rejection ("exceeded quota: <name>,
+// requested: ..., used: ..., limited: ...") rather than an RBAC denial.
+func isQuotaExceeded(body string) bool {
+	return strings.Contains(body, "exceeded quota")
+}
+
+// ----- ResourceQuota / LimitRange (§R3.4 concurrency cap) -------------
+
+// ApplyResourceQuota upserts a namespace's ResourceQuota — the per-org
+// concurrency cap that replaces the DB admission mutex. manifest is the full
+// object (apiVersion/kind/metadata/spec); callers do not have to model the
+// ResourceQuota spec shape here. Best-effort by design: the cluster-gateway-
+// proxy's CR/verb allow-list may not include "resourcequotas" yet (a
+// cross-service dependency — see docs/design/orchestration §R3.4); callers
+// should treat a failure here as non-fatal and keep the DB mutex as the
+// active gate rather than block dispatch on it.
+func (c *Client) ApplyResourceQuota(ctx context.Context, namespace string, manifest map[string]any) error {
+	name, err := manifestName(manifest)
+	if err != nil {
+		return err
+	}
+	listPath := fmt.Sprintf("/api/v1/namespaces/%s/resourcequotas", namespace)
+	itemPath := fmt.Sprintf("%s/%s", listPath, name)
+	return c.upsert(ctx, listPath, itemPath, manifest)
+}
+
+// ApplyLimitRange upserts a namespace's LimitRange, alongside
+// ApplyResourceQuota — same best-effort caveat.
+func (c *Client) ApplyLimitRange(ctx context.Context, namespace string, manifest map[string]any) error {
+	name, err := manifestName(manifest)
+	if err != nil {
+		return err
+	}
+	listPath := fmt.Sprintf("/api/v1/namespaces/%s/limitranges", namespace)
+	itemPath := fmt.Sprintf("%s/%s", listPath, name)
+	return c.upsert(ctx, listPath, itemPath, manifest)
 }
 
 // upsert POSTs the manifest; if the object already exists (409), it PUTs at

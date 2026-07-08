@@ -83,6 +83,10 @@ func RunAll(ctx context.Context, db *gorm.DB, deploymentTier string) error {
 		// Executions table (AutoMigrated from the model) gains its partial
 		// admission-mutex unique index, which AutoMigrate cannot express.
 		ctxStep("executions", RunExecutions),
+		// Executions table gains its partial read-model unique index (§R3.3),
+		// disjoint from the admission-mutex index above (keyed on workflow_id,
+		// not repo/issue_number/kind).
+		ctxStep("executions_readmodel", RunExecutionsReadModel),
 		// agent_turns table (AutoMigrated from the model) gains the D18
 		// one-active-turn-per-project partial unique index.
 		ctxStep("agent_turns", RunAgentTurns),

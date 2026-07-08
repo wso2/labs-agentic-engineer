@@ -30,11 +30,13 @@ import (
 // newInternalAPI creates the Huma API for the internal service-to-service
 // surface over internalMux. It is the sibling of newHumaAPI (the public edge),
 // with three deliberate differences: (1) it is NOT wrapped by the user-JWT
-// middleware — each operation authenticates by construction via
-// auth.ExecutionScopedInput (BFF Task-JWT / publisher-cc); (2) its security
-// schemes are the S2S ones, not userJWT; (3) its spec is non-public — it is
-// generated to a checked-in file and is never advertised on the gateway. See
-// docs/design/internal-s2s-api.md §3.
+// middleware — every operation authenticates by construction via an embedded
+// resolver: execution-scoped runner callbacks use auth.ExecutionScopedInput
+// (BFF Task-JWT / publisher-cc), while the org/project-scoped orchestrator
+// callback surface (orchestration.bearerAuth) verifies a shared secret; (2)
+// its security schemes are the S2S ones, not userJWT; (3) its spec is
+// non-public — it is generated to a checked-in file and is never advertised
+// on the gateway. See docs/design/internal-s2s-api.md §3.
 func newInternalAPI(internalMux *http.ServeMux) huma.API {
 	cfg := huma.DefaultConfig("AEP Internal S2S API", apiVersion)
 	// Same rationale as newHumaAPI: clear the built-in spec/docs/schema routes

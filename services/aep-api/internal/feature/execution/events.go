@@ -273,7 +273,7 @@ func (e *Events) ReconcileTaskPR(ctx context.Context, orgID, projectID, repoFull
 		return nil
 	}
 	coding := execs[string(taskmeta.KindCoding)]
-	prNum := openPRNumber(coding)
+	prNum := OpenPRNumber(coding)
 	if prNum == 0 {
 		return nil // latest coding is not claiming an open PR — nothing to heal
 	}

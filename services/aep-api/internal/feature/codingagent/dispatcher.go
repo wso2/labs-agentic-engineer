@@ -100,6 +100,11 @@ type ExternalResourceSecretInputs struct {
 	Keys   []string
 }
 
+// defaultMaxConcurrentJobs bounds concurrent coding-agent Jobs per org
+// namespace (§R3.4) — the ResourceQuota concurrency cap that replaces the DB
+// admission mutex. A conservative default; WithConcurrencyLimit overrides it.
+const defaultMaxConcurrentJobs = 5
+
 // Dispatcher wraps the proxy client + defaults. Construct once at boot.
 type Dispatcher struct {
 	proxy *clustergatewayproxy.Client
@@ -107,6 +112,11 @@ type Dispatcher struct {
 	// serviceAccount is the SA name applied to the per-org NS. Defaults
 	// to "remote-worker-runner" but configurable for tests.
 	serviceAccount string
+
+	// maxConcurrentJobs is the ResourceQuota's count/jobs.batch cap per org
+	// namespace (§R3.4). 0 disables quota ensure entirely (concurrency stays
+	// gated by the DB admission mutex alone).
+	maxConcurrentJobs int
 }
 
 // New constructs a Dispatcher. proxy must be non-nil — the orchestrator
@@ -116,8 +126,9 @@ func New(proxy *clustergatewayproxy.Client) *Dispatcher {
 		panic("codingagent.Dispatcher: proxy is required")
 	}
 	return &Dispatcher{
-		proxy:          proxy,
-		serviceAccount: "remote-worker-runner",
+		proxy:             proxy,
+		serviceAccount:    "remote-worker-runner",
+		maxConcurrentJobs: defaultMaxConcurrentJobs,
 	}
 }
 
@@ -127,6 +138,15 @@ func (d *Dispatcher) WithServiceAccount(name string) *Dispatcher {
 	if name != "" {
 		d.serviceAccount = name
 	}
+	return d
+}
+
+// WithConcurrencyLimit overrides the per-org ResourceQuota's concurrent-Jobs
+// cap (§R3.4). limit <= 0 disables the quota ensure step entirely — dispatch
+// falls back to the DB admission mutex alone. Returns the receiver for
+// chained construction.
+func (d *Dispatcher) WithConcurrencyLimit(limit int) *Dispatcher {
+	d.maxConcurrentJobs = limit
 	return d
 }
 
@@ -160,6 +180,17 @@ func (d *Dispatcher) Dispatch(ctx context.Context, in Inputs) (string, error) {
 		},
 	}); err != nil {
 		return "", fmt.Errorf("dispatcher: ensure namespace %s: %w", ns, err)
+	}
+
+	// 1.5) ResourceQuota (§R3.4 concurrency cap). Best-effort: the proxy's
+	// CR/verb allow-list may not include "resourcequotas" yet (a cross-service
+	// dependency) — degrade gracefully rather than block dispatch on it; the
+	// DB admission mutex (TryAdmit) remains the active gate either way.
+	if d.maxConcurrentJobs > 0 {
+		if err := d.proxy.ApplyResourceQuota(ctx, ns, resourceQuotaManifest(ns, d.maxConcurrentJobs)); err != nil {
+			slog.WarnContext(ctx, "dispatcher: ensure resource quota failed — falling back to the DB admission mutex alone",
+				"namespace", ns, "error", err)
+		}
 	}
 
 	// 2) ServiceAccount.
@@ -302,4 +333,24 @@ func (d *Dispatcher) validate(in Inputs) error {
 		return errors.New("codingagent dispatcher: GitHubSR not populated — Connect flow must complete the SM-API mirror first")
 	}
 	return nil
+}
+
+// resourceQuotaManifest builds the per-org namespace's ResourceQuota (§R3.4):
+// caps concurrent coding-agent Jobs at limit. One quota object per namespace,
+// named deterministically so ApplyResourceQuota's upsert always targets the
+// same object.
+func resourceQuotaManifest(namespace string, limit int) map[string]any {
+	return map[string]any{
+		"apiVersion": "v1",
+		"kind":       "ResourceQuota",
+		"metadata": map[string]any{
+			"name":      "remote-worker-jobs",
+			"namespace": namespace,
+		},
+		"spec": map[string]any{
+			"hard": map[string]any{
+				"count/jobs.batch": fmt.Sprintf("%d", limit),
+			},
+		},
+	}
 }

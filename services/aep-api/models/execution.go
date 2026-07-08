@@ -68,6 +68,17 @@ type Execution struct {
 	CreatedAt time.Time  `json:"createdAt"`
 	StartedAt *time.Time `json:"startedAt,omitempty"`
 	EndedAt   *time.Time `json:"endedAt,omitempty"`
+
+	// WorkflowID + Version make this row a Temporal-driven read-model snapshot
+	// in addition to a per-attempt dispatch record (§R3.3): the orchestration
+	// TaskDriver upserts one row per task workflow (contract.TaskWorkflowID),
+	// keyed on WorkflowID via a partial unique index (empty WorkflowID rows —
+	// the pre-existing per-kind dispatch attempts — are excluded from that
+	// constraint). Version increments on every upsert so a caller can detect a
+	// stale read without a second round trip. Empty/0 for rows written only
+	// through TryAdmit (no workflow attached).
+	WorkflowID string `gorm:"index" json:"workflowId,omitempty"`
+	Version    int64  `gorm:"not null;default:1" json:"version,omitempty"`
 }
 
 // TableName pins the table name (the default pluralization would already give

@@ -69,8 +69,13 @@ func (s *InternalService) Components(ctx context.Context, orgID, projectID strin
 	return s.design.Components(ctx, orgID, projectID)
 }
 
-// RunChecks executes an automated gate. Nil checker is an explicit pass so an
-// auto-mode cycle can advance in environments before checks are wired.
+// RunChecks executes an automated gate. No real tests/lint/self-review checker
+// exists yet (deliberately out of scope for the R3 gap-closure pass — see
+// docs/design/orchestration/R4-handover.md) — a nil checker is an EXPLICIT,
+// authenticated pass (not a silent bypass: the caller is verified by
+// bearerAuth same as every other orchestration op) so an `auto`-mode cycle can
+// advance rather than deadlock in every environment until a real checker is
+// wired. Do not read this as "checks ran and passed" — no check runs.
 func (s *InternalService) RunChecks(ctx context.Context, in contract.GateChecksInput) (contract.GateChecksResult, error) {
 	if s == nil || s.checks == nil {
 		return contract.GateChecksResult{Passed: true}, nil

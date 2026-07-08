@@ -401,6 +401,31 @@ func (c *Client) GetPullRequest(ctx context.Context, owner, repo string, cred cr
 	return &gitrepo.PullRequestState{State: raw.State, Merged: raw.Merged, MergeCommitSHA: raw.MergeCommitSHA}, nil
 }
 
+// MergePullRequest merges a pull request via PUT /pulls/{number}/merge
+// (auto code-review mode, §R3.5). Idempotent: if the PUT reports the PR is not
+// currently mergeable (405 — GitHub's response for "already merged" as well as
+// "not mergeable yet"), it re-checks the live PR state and treats an
+// already-merged PR as success rather than an error, so a Temporal retry after
+// a successful merge whose response was lost does not fail the activity.
+func (c *Client) MergePullRequest(ctx context.Context, owner, repo string, cred credentials.Credential, number int) error {
+	url := fmt.Sprintf(c.apiBase+"/repos/%s/%s/pulls/%d/merge", owner, repo, number)
+	var out struct {
+		Merged  bool   `json:"merged"`
+		Message string `json:"message"`
+	}
+	err := c.doJSON(ctx, http.MethodPut, url, "pull request merge", cred,
+		map[string]string{"merge_method": "squash"}, &out, http.StatusOK)
+	if err == nil {
+		return nil
+	}
+	// Re-check live state before surfacing the error — a 405 "not mergeable"
+	// can mean "already merged" as well as a real blocker.
+	if state, gerr := c.GetPullRequest(ctx, owner, repo, cred, number); gerr == nil && state != nil && state.Merged {
+		return nil
+	}
+	return err
+}
+
 func (c *Client) CommentIssue(ctx context.Context, owner, repo string, cred credentials.Credential, number int, body string) error {
 	payload := map[string]string{"body": body}
 	reqBody, err := json.Marshal(payload)

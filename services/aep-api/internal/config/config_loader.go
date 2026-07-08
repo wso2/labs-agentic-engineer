@@ -147,6 +147,9 @@ func Load() (Config, error) {
 			Namespace: r.readOptionalString("TEMPORAL_NAMESPACE", "default"),
 			TaskQueue: r.readOptionalString("TEMPORAL_TASK_QUEUE", "aep-orchestrator"),
 		},
+		// Shared secret verified on /internal/v1/orchestration/* — must match the
+		// orchestrator's AEP_API_INTERNAL_BEARER.
+		AEPAPIInternalBearer: r.readOptionalString("AEP_API_INTERNAL_BEARER", ""),
 	}
 
 	if len(r.errors) > 0 {

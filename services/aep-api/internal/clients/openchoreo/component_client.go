@@ -99,6 +99,13 @@ type ComponentClient interface {
 
 	// Deploy (read-only — auto-deploy on the Component drives the chain)
 	ListDeployments(ctx context.Context, orgName, projectName, componentName string) (*models.DeploymentList, error)
+	// IsComponentReady reports whether the component has at least one
+	// ReleaseBinding whose aggregate Ready condition is True (§R3.2/§R4.1 —
+	// the real deploy-completion check, replacing the synthetic
+	// DeploySucceeded signal ExecWatcher used to fire in the same tick as
+	// BuildSucceeded). False (not an error) when the component has no
+	// ReleaseBindings yet — deploy has not materialized.
+	IsComponentReady(ctx context.Context, orgName, projectName, componentName string) (bool, error)
 
 	// Build (workflow runs). `runName` is the WorkflowRun metadata.name; if
 	// empty the OC client auto-generates one via NewBuildRunName. Callers
@@ -881,6 +888,45 @@ func (c *componentClient) ListDeployments(ctx context.Context, orgName, projectN
 		items[i] = deploymentFromReleaseBinding(rb)
 	}
 	return &models.DeploymentList{Items: items}, nil
+}
+
+func (c *componentClient) IsComponentReady(ctx context.Context, orgName, projectName, componentName string) (bool, error) {
+	scopedComp := ScopedComponentName(projectName, componentName)
+	componentQ := gen.ComponentQueryParam(scopedComp)
+	resp, err := c.oc.ListReleaseBindingsWithResponse(ctx, orgName, &gen.ListReleaseBindingsParams{
+		Component: &componentQ,
+	})
+	if err != nil {
+		return false, fmt.Errorf("failed to list release bindings: %w", err)
+	}
+	if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil {
+		return false, handleErrorResponse(resp.StatusCode(), ErrorResponses{
+			JSON401: resp.JSON401,
+			JSON403: resp.JSON403,
+			JSON500: resp.JSON500,
+		})
+	}
+	for _, rb := range resp.JSON200.Items {
+		if releaseBindingReady(rb) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// releaseBindingReady reports whether rb's aggregate Ready condition is True.
+// Mirrors ResourceReleaseBinding.IsReady() (resource_client.go) for the
+// component's ReleaseBinding shape.
+func releaseBindingReady(rb gen.ReleaseBinding) bool {
+	if rb.Status == nil || rb.Status.Conditions == nil {
+		return false
+	}
+	for _, c := range *rb.Status.Conditions {
+		if c.Type == "Ready" {
+			return c.Status == "True"
+		}
+	}
+	return false
 }
 
 // -- WorkflowRuns (builds + coding-agent) ------------------------------------

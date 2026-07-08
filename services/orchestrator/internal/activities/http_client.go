@@ -131,7 +131,7 @@ func (c *HTTPClient) post(ctx context.Context, path string, in, out any) error {
 	if err != nil {
 		return fmt.Errorf("post %s: %w", path, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return fmt.Errorf("post %s: status %d: %s", path, resp.StatusCode, strings.TrimSpace(string(msg)))

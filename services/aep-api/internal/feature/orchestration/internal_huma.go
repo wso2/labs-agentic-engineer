@@ -18,15 +18,18 @@ package orchestration
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/wso2/aep/aep-api/internal/clients/clustergatewayproxy"
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
 	contract "github.com/wso2/labs-agentic-engineer/packages/contracts/orchestration"
 )
 
 type componentsInput struct {
+	bearerAuth
 	Body struct {
 		Org     string `json:"org" required:"true"`
 		Project string `json:"project" required:"true"`
@@ -40,6 +43,7 @@ type componentsOutput struct {
 }
 
 type gateCheckInput struct {
+	bearerAuth
 	Body contract.GateChecksInput
 }
 
@@ -48,6 +52,7 @@ type gateCheckOutput struct {
 }
 
 type taskLifecycleInput struct {
+	bearerAuth
 	Body contract.TaskLifecycleInput
 }
 
@@ -97,6 +102,12 @@ func RegisterInternalOrchestration(api huma.API, svc *InternalService) {
 		Security:    auth.SecurityRunner,
 	}, func(ctx context.Context, in *taskLifecycleInput) (*noBodyOutput, error) {
 		if err := svc.DispatchTask(ctx, in.Body); err != nil {
+			if errors.Is(err, clustergatewayproxy.ErrQuotaExceeded) {
+				// Retriable (§R3.4): the org's ResourceQuota is exhausted, not a
+				// hard dispatch failure — 429 (not 500) so Temporal's retry policy
+				// backs off and tries again once a slot frees.
+				return nil, huma.Error429TooManyRequests("org concurrency quota exceeded")
+			}
 			return nil, huma.Error500InternalServerError("task dispatch failed")
 		}
 		return &noBodyOutput{}, nil

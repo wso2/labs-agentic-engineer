@@ -643,6 +643,13 @@ func Build(cfg config.Config, db *gorm.DB) (*App, error) {
 	// service's ensureOCComponent; componentService reads the design facts.
 	codingExecutor.WithComponentEnsurer(componentService)
 	registry.Register(taskmeta.ClassCoding, codingExecutor)
+	// The orchestrator's activities are the only caller of /internal/v1/
+	// orchestration/* — a shared secret (not a per-caller token, since these
+	// ops are org/project-scoped, not execution-scoped) authenticates every
+	// request by construction (orchestration.bearerAuth, embedded in each op's
+	// input). Empty leaves the surface unauthenticated (503s) — local-loopback-
+	// only; see .env.example.
+	orchestration.SetInternalBearer(cfg.AEPAPIInternalBearer)
 	internalOrchestrationSvc := orchestration.NewInternalService(
 		designComponents{store: artifactStore},
 		nil,
@@ -652,6 +659,7 @@ func Build(cfg config.Config, db *gorm.DB) (*App, error) {
 			tasks:    taskResolver,
 			execs:    executionRepo,
 			executor: codingExecutor,
+			merger:   issueService,
 		},
 	)
 
