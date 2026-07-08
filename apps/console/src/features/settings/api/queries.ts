@@ -263,11 +263,19 @@ export function useImportSkillUrl() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (url: string) => {
-      const { data, error } = await client.POST("/skills/import-url", {
+      const { data, error, response } = await client.POST("/skills/import-url", {
         body: { url },
       });
-      if (error) {
-        throw new Error(errorMessage(error, "Failed to import from the URL"));
+      // Gate on response.ok, not just `error`: a non-ok response with an
+      // empty body (e.g. the gateway's 405 before this endpoint ships, part
+      // of BE handshake #100) leaves `error` undefined, which would slip
+      // through an `if (error)` check and read as a silent success.
+      if (error || !response.ok) {
+        throw new Error(
+          response.status === 405
+            ? "Import by URL isn't available on this server yet."
+            : errorMessage(error, "Failed to import from the URL"),
+        );
       }
       return data;
     },
