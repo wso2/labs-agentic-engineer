@@ -574,6 +574,34 @@ components:
         - name
         - skillMd
       type: object
+    CycleStateView:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - /api/v1/CycleStateView.json
+          format: uri
+          readOnly: true
+          type: string
+        CycleID:
+          type: string
+        GatesPassed:
+          $ref: "#/components/schemas/GateStatus"
+        Phase:
+          type: string
+        Tasks:
+          items:
+            $ref: "#/components/schemas/TaskStateView"
+          type:
+            - array
+            - "null"
+      required:
+        - CycleID
+        - Phase
+        - GatesPassed
+        - Tasks
+      type: object
     DeleteOp:
       additionalProperties: false
       properties:
@@ -835,6 +863,20 @@ components:
       required:
         - path
         - sha
+      type: object
+    GateStatus:
+      additionalProperties: false
+      properties:
+        Design:
+          type: boolean
+        Requirements:
+          type: boolean
+        Tasks:
+          type: boolean
+      required:
+        - Requirements
+        - Design
+        - Tasks
       type: object
     GitProviderProjection:
       additionalProperties: false
@@ -1253,6 +1295,21 @@ components:
       required:
         - environments
       type: object
+    SignalAckOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - /api/v1/SignalAckOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        status:
+          type: string
+      required:
+        - status
+      type: object
     SkillDetailBody:
       additionalProperties: false
       properties:
@@ -1575,6 +1632,17 @@ components:
         - hold
         - attention
         - executions
+      type: object
+    TaskStateView:
+      additionalProperties: false
+      properties:
+        Status:
+          type: string
+        TaskID:
+          type: string
+      required:
+        - TaskID
+        - Status
       type: object
     TaskView:
       additionalProperties: false
@@ -2860,6 +2928,238 @@ paths:
       summary: Start a generation/chat turn (202 — runs detached; attach via the turn stream)
       tags:
         - GenAI
+  /projects/{projectName}/cycle/approve-design:
+    post:
+      operationId: cycle-approve-design
+      parameters:
+        - description: Project name (DNS-label slug)
+          in: path
+          name: projectName
+          required: true
+          schema:
+            description: Project name (DNS-label slug)
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignalAckOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      security:
+        - userJWT: []
+      summary: Approve design (advance to implement)
+      tags:
+        - DevelopmentFlow
+  /projects/{projectName}/cycle/approve-requirements:
+    post:
+      operationId: cycle-approve-requirements
+      parameters:
+        - description: Project name (DNS-label slug)
+          in: path
+          name: projectName
+          required: true
+          schema:
+            description: Project name (DNS-label slug)
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignalAckOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      security:
+        - userJWT: []
+      summary: Approve requirements (advance to design)
+      tags:
+        - DevelopmentFlow
+  /projects/{projectName}/cycle/back-to-design:
+    post:
+      operationId: cycle-back-to-design
+      parameters:
+        - description: Project name (DNS-label slug)
+          in: path
+          name: projectName
+          required: true
+          schema:
+            description: Project name (DNS-label slug)
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignalAckOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      security:
+        - userJWT: []
+      summary: Return the cycle to design
+      tags:
+        - DevelopmentFlow
+  /projects/{projectName}/cycle/back-to-requirements:
+    post:
+      operationId: cycle-back-to-requirements
+      parameters:
+        - description: Project name (DNS-label slug)
+          in: path
+          name: projectName
+          required: true
+          schema:
+            description: Project name (DNS-label slug)
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignalAckOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      security:
+        - userJWT: []
+      summary: Return the cycle to requirements
+      tags:
+        - DevelopmentFlow
+  /projects/{projectName}/cycle/complete:
+    post:
+      operationId: cycle-complete
+      parameters:
+        - description: Project name (DNS-label slug)
+          in: path
+          name: projectName
+          required: true
+          schema:
+            description: Project name (DNS-label slug)
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignalAckOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      security:
+        - userJWT: []
+      summary: Mark the cycle complete
+      tags:
+        - DevelopmentFlow
+  /projects/{projectName}/cycle/revise-design:
+    post:
+      operationId: cycle-revise-design
+      parameters:
+        - description: Project name (DNS-label slug)
+          in: path
+          name: projectName
+          required: true
+          schema:
+            description: Project name (DNS-label slug)
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignalAckOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      security:
+        - userJWT: []
+      summary: Revise design (stay in design)
+      tags:
+        - DevelopmentFlow
+  /projects/{projectName}/cycle/revise-requirements:
+    post:
+      operationId: cycle-revise-requirements
+      parameters:
+        - description: Project name (DNS-label slug)
+          in: path
+          name: projectName
+          required: true
+          schema:
+            description: Project name (DNS-label slug)
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignalAckOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      security:
+        - userJWT: []
+      summary: Revise requirements (stay in requirements)
+      tags:
+        - DevelopmentFlow
+  /projects/{projectName}/cycle/state:
+    get:
+      operationId: get-cycle-state
+      parameters:
+        - description: Project name (DNS-label slug)
+          in: path
+          name: projectName
+          required: true
+          schema:
+            description: Project name (DNS-label slug)
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CycleStateView"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      security:
+        - userJWT: []
+      summary: Get the development cycle's durable flow state
+      tags:
+        - DevelopmentFlow
   /projects/{projectName}/dependencies/access-requests:
     get:
       operationId: list-access-requests
