@@ -43,7 +43,8 @@ services:
   # ---------------------------------------------------------------------------
   aep-api:
     build:
-      context: ../services/aep-api
+      context: ..
+      dockerfile: services/aep-api/Dockerfile
     container_name: aep-api
     # Fast SYN-retransmit recovery for the local Colima env. Its docker-bridge
     # NAT intermittently drops a SYN under concurrent outbound bursts (the BFF's

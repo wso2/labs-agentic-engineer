@@ -1,15 +1,23 @@
 # Root Docker build-context ignore.
 #
-# agents-service (deployments/docker-compose.yml) is the one image built with
-# the REPO ROOT as context — it needs sibling workspace packages
-# (packages/excalidraw-dsl, packages/design-projection) alongside
-# services/agents, which live outside services/agents/'s own directory. See
-# services/agents/Dockerfile. Every other image (aep-api, console, the local
-# stub services) builds from a narrower per-service context and never sees
-# this file, so entries here only need to keep the root build sane.
+# Images built with the REPO ROOT as context (docker-compose sets
+# `context: ..`) because their go.mod/package.json needs sibling workspace
+# packages that live outside their own service directory:
+#   - agents        — packages/excalidraw-dsl, packages/design-projection
+#   - orchestrator  — packages/contracts/orchestration (relative `replace`)
+#   - aep-api       — packages/contracts/orchestration (relative `replace`)
+# Every other image (console, the local stub services) builds from a
+# narrower per-service context and never sees this file, so entries here
+# only need to keep those three root builds sane.
 #
 # Mirrors .gitignore's build-artifact set — none of this is needed inside the
-# image; the Dockerfile builds workspace deps from source.
+# image; the Dockerfile builds workspace deps from source. EXCEPTION:
+# aep-api's OpenChoreo client (internal/clients/openchoreo/gen/*.gen.go) is
+# gitignored (regenerated via `make gen` — oapi-codegen against a fetched
+# upstream spec) but NOT regenerated as a Docker build step, so it must ride
+# along as already-generated local output — un-ignored below, same as it
+# always was when aep-api built from its own narrower per-service context
+# (services/aep-api/.dockerignore has no *.gen.go exclusion).
 node_modules
 **/node_modules
 dist
@@ -23,6 +31,7 @@ generated
 **/generated
 *.gen.go
 *.gen.ts
+!services/aep-api/internal/clients/openchoreo/gen/*.gen.go
 
 # VCS / editor / OS cruft.
 .git

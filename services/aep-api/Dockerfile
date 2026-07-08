@@ -14,13 +14,21 @@
 # specific language governing permissions and limitations
 # under the License.
 
+# Built from the REPO ROOT context (docker-compose sets `context: ..`) because
+# go.mod has a relative `replace` to the unpublished sibling module
+# packages/contracts/orchestration (ADR-0001: no `replace` is the default;
+# this is the documented deviation for an intra-repo module go.work covers at
+# dev time but a container build must see directly — mirrors
+# services/orchestrator/Dockerfile). Preserving the repo's real directory
+# layout inside the image keeps that relative path valid.
 FROM golang:1.26-alpine AS builder
 
 WORKDIR /app
-COPY go.mod go.sum ./
+COPY packages/contracts/orchestration ./packages/contracts/orchestration
+COPY services/aep-api ./services/aep-api
+WORKDIR /app/services/aep-api
 RUN go mod download
-COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o bin/aep-api ./cmd/aep-api
+RUN CGO_ENABLED=0 GOOS=linux go build -o /app/bin/aep-api ./cmd/aep-api
 
 FROM alpine:3.21
 
