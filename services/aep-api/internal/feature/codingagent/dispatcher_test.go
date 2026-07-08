@@ -52,7 +52,7 @@ func minimalDispatchInputs() Inputs {
 // TestDispatch_ResourceQuotaUnavailable_StillDispatches covers the §R3.4
 // graceful-degrade requirement: when the cluster-gateway-proxy's allow-list
 // doesn't yet support "resourcequotas" (a real cross-service dependency, not
-// hypothetical — see docs/design/orchestration/R4-handover.md), the quota
+// hypothetical — see docs/design/orchestration/README.md), the quota
 // ensure step fails but MUST NOT block dispatch — the DB admission mutex
 // remains the active concurrency gate.
 func TestDispatch_ResourceQuotaUnavailable_StillDispatches(t *testing.T) {
