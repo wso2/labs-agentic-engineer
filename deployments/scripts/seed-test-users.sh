@@ -124,5 +124,50 @@ for row in "${USERS[@]}"; do
     esac
 done
 
+# 4. Ensure every test user is in the Administrators group. OpenChoreo's
+# authz grants console access via the token's `groups` claim
+# (administrators-group-binding in wso2-ae-oc-extensions maps the group to
+# the admin ClusterAuthzRole); a user with no group has NO OC entitlement,
+# so every OC-backed project read 403s and the project view never renders
+# (#123). jq is required here, like patch-thunder-new-console.sh.
+echo ""
+GROUP_ID=$(curl -sS -H "Authorization: Bearer ${TOKEN}" \
+    "${THUNDER_URL%/}/groups" 2>/dev/null \
+    | jq -r '.groups[] | select(.name == "Administrators") | .id' | head -1)
+if [ -z "$GROUP_ID" ]; then
+    echo "❌ Administrators group not found in Thunder — OC access will 403 (#123)."
+    exit 1
+fi
+
+MEMBER_IDS=$(curl -sS -H "Authorization: Bearer ${TOKEN}" \
+    "${THUNDER_URL%/}/groups/${GROUP_ID}/members" 2>/dev/null \
+    | jq -r '.members[].id')
+ALL_USERS=$(curl -sS -H "Authorization: Bearer ${TOKEN}" \
+    "${THUNDER_URL%/}/users" 2>/dev/null)
+
+for row in "${USERS[@]}"; do
+    IFS='|' read -r username _ _ <<<"$row"
+    user_id=$(printf '%s' "$ALL_USERS" \
+        | jq -r --arg u "$username" '.users[] | select(.attributes.username == $u) | .id' | head -1)
+    if [ -z "$user_id" ]; then
+        echo "❌ $username — no user id found; cannot add to Administrators"
+        continue
+    fi
+    if printf '%s\n' "$MEMBER_IDS" | grep -qx "$user_id"; then
+        echo "⏭️  $username — already in Administrators"
+        continue
+    fi
+    code=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+        -H "Authorization: Bearer ${TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d "{\"members\":[{\"type\":\"user\",\"id\":\"${user_id}\"}]}" \
+        "${THUNDER_URL%/}/groups/${GROUP_ID}/members/add" 2>/dev/null || echo 000)
+    if [ "$code" = "200" ]; then
+        echo "✅ $username → Administrators group"
+    else
+        echo "❌ $username — members/add failed (HTTP $code)"
+    fi
+done
+
 echo ""
 echo "=== seed-test-users complete ==="
