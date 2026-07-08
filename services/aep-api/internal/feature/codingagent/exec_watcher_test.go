@@ -19,7 +19,9 @@ package codingagent
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	ocmocks "github.com/wso2/aep/aep-api/internal/clients/openchoreo/mocks"
@@ -185,6 +187,159 @@ func TestExecWatcher_SkipsProxyJobRuns(t *testing.T) {
 	}
 	if len(polled) != 1 || polled[0] != "wf-xyz" {
 		t.Fatalf("ExecWatcher must skip ca- rows and poll only wf-, polled=%v", polled)
+	}
+}
+
+// fakeSignaler records every Signal call.
+type fakeSignaler struct {
+	mu    sync.Mutex
+	calls []signalCall
+}
+
+type signalCall struct {
+	workflowID, name string
+}
+
+func (f *fakeSignaler) Signal(_ context.Context, workflowID, name string, _ any) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, signalCall{workflowID, name})
+	return nil
+}
+
+func (f *fakeSignaler) names() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]string, len(f.calls))
+	for i, c := range f.calls {
+		out[i] = c.name
+	}
+	return out
+}
+
+// TestExecWatcher_BuildSuccess_StartsDeployPollInsteadOfSynthesizing covers
+// the §R3.2 fix: build success signals BuildSucceeded + DeployStarted and
+// records a "deploying" read-model checkpoint, but does NOT fire
+// DeploySucceeded synthetically in the same tick — that now waits for
+// pollDeploys to observe a real Ready ReleaseBinding.
+func TestExecWatcher_BuildSuccess_StartsDeployPollInsteadOfSynthesizing(t *testing.T) {
+	row := runningBuild("b1", "run-1", "")
+	repo := newFakeExecRepo(row)
+	signals := &fakeSignaler{}
+	ok := &models.WorkflowRun{Name: "run-1", Completed: true, Status: openchoreo.ReasonWorkflowSucceeded}
+	w := NewExecWatcher(ocRuns(map[string]*models.WorkflowRun{"run-1": ok}), repo, nil, nil, 0).
+		WithTaskSignaler(signals)
+
+	if err := w.Sweep(context.Background()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+	got := signals.names()
+	if len(got) != 2 || got[0] != "BuildSucceeded" || got[1] != "DeployStarted" {
+		t.Fatalf("signals = %v, want exactly [BuildSucceeded, DeployStarted] (no synthetic DeploySucceeded)", got)
+	}
+
+	wfID := "task:acme:widgets:order-service"
+	rm, err := repo.GetByWorkflowID(context.Background(), wfID)
+	if err != nil || rm == nil {
+		t.Fatalf("GetByWorkflowID: row=%v err=%v", rm, err)
+	}
+	if rm.Status != readModelStatusDeploying {
+		t.Errorf("read-model status = %q, want %q", rm.Status, readModelStatusDeploying)
+	}
+}
+
+// TestExecWatcher_PollDeploys_ReadyFiresDeploySucceeded covers the real
+// completion path: once the component's ReleaseBinding reports Ready, the
+// next Sweep fires DeploySucceeded and marks the read-model row terminal.
+func TestExecWatcher_PollDeploys_ReadyFiresDeploySucceeded(t *testing.T) {
+	repo := newFakeExecRepo()
+	signals := &fakeSignaler{}
+	oc := &ocmocks.ComponentClientMock{
+		IsComponentReadyFunc: func(context.Context, string, string, string) (bool, error) { return true, nil },
+	}
+	w := NewExecWatcher(oc, repo, nil, nil, 0).WithTaskSignaler(signals)
+
+	wfID := "task:acme:widgets:order-service"
+	if _, err := repo.UpsertReadModel(context.Background(), &models.Execution{
+		WorkflowID: wfID, OrgID: "acme", ProjectID: "widgets", Component: "order-service",
+		Kind: string(taskmeta.KindBuild), Status: readModelStatusDeploying,
+	}); err != nil {
+		t.Fatalf("seed UpsertReadModel: %v", err)
+	}
+
+	if err := w.Sweep(context.Background()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+	if got := signals.names(); len(got) != 1 || got[0] != "DeploySucceeded" {
+		t.Fatalf("signals = %v, want [DeploySucceeded]", got)
+	}
+	rm, err := repo.GetByWorkflowID(context.Background(), wfID)
+	if err != nil || rm == nil || rm.Status != readModelStatusDeployed {
+		t.Fatalf("read-model row not marked deployed: row=%v err=%v", rm, err)
+	}
+}
+
+// TestExecWatcher_PollDeploys_NotReadyKeepsPolling covers the in-progress
+// case: not-yet-ready leaves the row at "deploying" and fires no signal.
+func TestExecWatcher_PollDeploys_NotReadyKeepsPolling(t *testing.T) {
+	repo := newFakeExecRepo()
+	signals := &fakeSignaler{}
+	oc := &ocmocks.ComponentClientMock{
+		IsComponentReadyFunc: func(context.Context, string, string, string) (bool, error) { return false, nil },
+	}
+	w := NewExecWatcher(oc, repo, nil, nil, 0).WithTaskSignaler(signals)
+
+	wfID := "task:acme:widgets:order-service"
+	if _, err := repo.UpsertReadModel(context.Background(), &models.Execution{
+		WorkflowID: wfID, OrgID: "acme", ProjectID: "widgets", Component: "order-service",
+		Kind: string(taskmeta.KindBuild), Status: readModelStatusDeploying,
+	}); err != nil {
+		t.Fatalf("seed UpsertReadModel: %v", err)
+	}
+
+	if err := w.Sweep(context.Background()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+	if got := signals.names(); len(got) != 0 {
+		t.Fatalf("signals = %v, want none (still deploying)", got)
+	}
+	rm, err := repo.GetByWorkflowID(context.Background(), wfID)
+	if err != nil || rm == nil || rm.Status != readModelStatusDeploying {
+		t.Fatalf("read-model row should stay deploying: row=%v err=%v", rm, err)
+	}
+}
+
+// TestExecWatcher_PollDeploys_StaleGivesUpAndFiresDeployFailed covers the
+// bound: a row stuck "deploying" past deployPollStaleAfter fires
+// DeployFailed rather than polling forever.
+func TestExecWatcher_PollDeploys_StaleGivesUpAndFiresDeployFailed(t *testing.T) {
+	repo := newFakeExecRepo()
+	signals := &fakeSignaler{}
+	oc := &ocmocks.ComponentClientMock{
+		IsComponentReadyFunc: func(context.Context, string, string, string) (bool, error) { return false, nil },
+	}
+	w := NewExecWatcher(oc, repo, nil, nil, 0).WithTaskSignaler(signals)
+
+	wfID := "task:acme:widgets:order-service"
+	stale, err := repo.UpsertReadModel(context.Background(), &models.Execution{
+		WorkflowID: wfID, OrgID: "acme", ProjectID: "widgets", Component: "order-service",
+		Kind: string(taskmeta.KindBuild), Status: readModelStatusDeploying,
+	})
+	if err != nil {
+		t.Fatalf("seed UpsertReadModel: %v", err)
+	}
+	stale.CreatedAt = time.Now().Add(-2 * deployPollStaleAfter)
+	repo.rows[wfID] = stale
+
+	if err := w.Sweep(context.Background()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+	if got := signals.names(); len(got) != 1 || got[0] != "DeployFailed" {
+		t.Fatalf("signals = %v, want [DeployFailed]", got)
+	}
+	rm, err := repo.GetByWorkflowID(context.Background(), wfID)
+	if err != nil || rm == nil || rm.Status != readModelStatusDeployFailed {
+		t.Fatalf("read-model row should be marked deploy_failed: row=%v err=%v", rm, err)
 	}
 }
 

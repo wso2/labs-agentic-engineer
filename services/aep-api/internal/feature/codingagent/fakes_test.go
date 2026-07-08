@@ -18,7 +18,9 @@ package codingagent
 
 import (
 	"context"
+	"fmt"
 	"sync"
+	"time"
 
 	"github.com/wso2/aep/aep-api/internal/contracts/taskmeta"
 	"github.com/wso2/aep/aep-api/models"
@@ -225,3 +227,53 @@ func (f *fakeExecRepo) ListByIssueScoped(context.Context, string, string, int) (
 	return nil, nil
 }
 func (f *fakeExecRepo) DeleteByProject(context.Context, string, string) error { return nil }
+
+// UpsertReadModel/GetByWorkflowID/ListReadModelByStatus are real in-memory
+// implementations (not stubs) — the deploy-poll tests (§R3.2/§R4.1) exercise
+// them directly. Read-model rows are keyed by WorkflowID (never by ID, which
+// stays empty — they are a distinct row space from the admission-mutex rows
+// above, exactly as the real repository's disjoint partial indexes keep them).
+func (f *fakeExecRepo) UpsertReadModel(_ context.Context, e *models.Execution) (*models.Execution, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if e.WorkflowID == "" {
+		return nil, fmt.Errorf("upsert read model: workflow id required")
+	}
+	if existing := f.rows[e.WorkflowID]; existing != nil {
+		e.Version = existing.Version + 1
+		if e.CreatedAt.IsZero() {
+			e.CreatedAt = existing.CreatedAt
+		}
+	} else {
+		e.Version = 1
+		if e.CreatedAt.IsZero() {
+			e.CreatedAt = time.Now() // gorm auto-populates this on real Create
+		}
+	}
+	cp := *e
+	f.rows[e.WorkflowID] = &cp
+	out := cp
+	return &out, nil
+}
+
+func (f *fakeExecRepo) GetByWorkflowID(_ context.Context, workflowID string) (*models.Execution, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if r := f.rows[workflowID]; r != nil {
+		cp := *r
+		return &cp, nil
+	}
+	return nil, nil
+}
+
+func (f *fakeExecRepo) ListReadModelByStatus(_ context.Context, status string) ([]models.Execution, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []models.Execution
+	for _, r := range f.rows {
+		if r.WorkflowID != "" && r.Status == status {
+			out = append(out, *r)
+		}
+	}
+	return out, nil
+}

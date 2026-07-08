@@ -121,11 +121,16 @@ func (w *ExecWatcher) Run(ctx context.Context) {
 	}
 }
 
-// Sweep runs one reconciliation pass over running executions. Exported for tests.
+// Sweep runs one reconciliation pass over running executions. Exported for
+// tests. pollDeploys runs FIRST, over rows a PRIOR tick's build-success
+// started — a row this SAME tick's reconcile starts is deliberately left for
+// the next tick, so a fresh "deploying" checkpoint is never polled before the
+// component has had any chance to materialize.
 func (w *ExecWatcher) Sweep(ctx context.Context) error {
 	if w.asService != nil {
 		ctx = w.asService(ctx)
 	}
+	w.pollDeploys(ctx)
 	active, err := w.execRows.ListActive(ctx)
 	if err != nil {
 		return err
@@ -187,11 +192,87 @@ func (w *ExecWatcher) reconcile(ctx context.Context, row *models.Execution, run 
 			}
 			w.signal(ctx, row, contract.SignalBuildSucceeded)
 			w.signal(ctx, row, contract.SignalDeployStarted)
-			w.signal(ctx, row, contract.SignalDeploySucceeded)
+			// Deploy completion is NOT synthesized here (§R3.2 fix) — record a
+			// "deploying" read-model checkpoint; pollDeploys (called from Sweep)
+			// polls the component's real ReleaseBinding Ready condition on
+			// subsequent ticks and only then fires DeploySucceeded/DeployFailed.
+			w.startDeployPoll(ctx, row)
 			return
 		}
 		w.reconcileBuildFailure(ctx, row, run)
 	}
+}
+
+// deployPollStaleAfter bounds how long a "deploying" read-model row waits for
+// the component's ReleaseBinding to report Ready before pollDeploys gives up
+// and fires DeployFailed — mirrors provisioning.ResourceWatcher's
+// resourceWatchStaleAfter bound for the analogous OC-materialization wait.
+const deployPollStaleAfter = 30 * time.Minute
+
+// startDeployPoll records the "deploying" read-model checkpoint pollDeploys
+// consumes. Best-effort: a write failure is logged, never propagated — the
+// build success itself already succeeded.
+func (w *ExecWatcher) startDeployPoll(ctx context.Context, row *models.Execution) {
+	if row.Component == "" {
+		return
+	}
+	wfID := contract.TaskWorkflowID(row.OrgID, row.ProjectID, row.Component)
+	if _, err := w.execRows.UpsertReadModel(ctx, &models.Execution{
+		WorkflowID: wfID,
+		OrgID:      row.OrgID,
+		ProjectID:  row.ProjectID,
+		Repo:       row.Repo,
+		Kind:       string(taskmeta.KindBuild),
+		Status:     readModelStatusDeploying,
+		Component:  row.Component,
+	}); err != nil {
+		slog.WarnContext(ctx, "exec watcher: start deploy poll failed", "workflow", wfID, "error", err)
+	}
+}
+
+// readModelStatusDeploying / readModelStatusDeployed are read-model-only
+// status values (§R3.2) — never taskmeta.ExecutionStatus, since read-model
+// rows track workflow-position checkpoints, not a dispatch attempt's own
+// lifecycle.
+const (
+	readModelStatusDeploying    = "deploying"
+	readModelStatusDeployed     = "deployed"
+	readModelStatusDeployFailed = "deploy_failed"
+)
+
+// pollDeploys checks every pending "deploying" read-model row's component for
+// a real Ready ReleaseBinding, firing DeploySucceeded on success or
+// DeployFailed once deployPollStaleAfter elapses with no Ready condition.
+func (w *ExecWatcher) pollDeploys(ctx context.Context) {
+	rows, err := w.execRows.ListReadModelByStatus(ctx, readModelStatusDeploying)
+	if err != nil {
+		slog.WarnContext(ctx, "exec watcher: list deploying read-model rows failed", "error", err)
+		return
+	}
+	for i := range rows {
+		row := &rows[i]
+		ready, rerr := w.oc.IsComponentReady(ctx, row.OrgID, row.ProjectID, row.Component)
+		if rerr != nil {
+			slog.WarnContext(ctx, "exec watcher: is component ready failed", "component", row.Component, "error", rerr)
+			continue
+		}
+		if ready {
+			w.finishDeployPoll(ctx, row, readModelStatusDeployed, contract.SignalDeploySucceeded)
+			continue
+		}
+		if time.Since(row.CreatedAt) > deployPollStaleAfter {
+			slog.WarnContext(ctx, "exec watcher: deploy poll stale — giving up", "component", row.Component, "since", row.CreatedAt)
+			w.finishDeployPoll(ctx, row, readModelStatusDeployFailed, contract.SignalDeployFailed)
+		}
+	}
+}
+
+func (w *ExecWatcher) finishDeployPoll(ctx context.Context, row *models.Execution, terminalStatus, signal string) {
+	row.Status = terminalStatus
+	if _, err := w.execRows.UpsertReadModel(ctx, row); err != nil {
+		slog.WarnContext(ctx, "exec watcher: finish deploy poll failed", "workflow", row.WorkflowID, "error", err)
+	}
+	w.signal(ctx, row, signal)
 }
 
 // reconcileBuildFailure handles a completed-failed build run. A git-clone-auth
