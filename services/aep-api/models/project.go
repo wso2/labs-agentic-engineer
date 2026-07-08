@@ -63,4 +63,14 @@ type ProjectStatus struct {
 	HasTasks         bool   `json:"hasTasks"`
 	SpecStatus       string `json:"specStatus"`   // "", "draft", "approved"
 	DesignStatus     string `json:"designStatus"` // "", "draft", "approved"
+
+	// CyclePhase is the project's active Temporal development-cycle position
+	// (§R2.2 — split responsibility): "requirements" | "design" | "implement" |
+	// "merge" | "complete" (packages/contracts/orchestration.Phase, carried as a
+	// plain string so this package need not import that module). Nil when
+	// orchestration is disabled or the project has no active cycle yet — Phase
+	// above keeps reporting artifact facts (repo/spec/design existence)
+	// unchanged either way; CyclePhase is the workflow's authoritative position
+	// once a cycle exists, not a replacement for Phase.
+	CyclePhase *string `json:"cyclePhase,omitempty"`
 }

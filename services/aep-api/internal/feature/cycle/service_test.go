@@ -198,3 +198,63 @@ func TestGetFlowStateQueriesActiveCycle(t *testing.T) {
 		t.Errorf("flow state = %+v, want phase=implement", st)
 	}
 }
+
+// TestOnIssueTaskOpened_BootstrapsFirstCycle: an issue-first project (no
+// existing cycle row) starts one directly at PhaseImplement via SourceIssue.
+func TestOnIssueTaskOpened_BootstrapsFirstCycle(t *testing.T) {
+	t.Parallel()
+	fc, fr := &fakeClient{}, &fakeRepo{}
+	svc := cycle.NewService(fc, fr)
+
+	if err := svc.OnIssueTaskOpened(context.Background(), "acme", "web", 42); err != nil {
+		t.Fatalf("OnIssueTaskOpened: %v", err)
+	}
+	if fc.startInput.Source != contract.SourceIssue {
+		t.Errorf("start source = %q, want issue", fc.startInput.Source)
+	}
+	if fc.startInput.StartPhase != contract.PhaseImplement {
+		t.Errorf("start phase = %q, want implement", fc.startInput.StartPhase)
+	}
+	if fc.startInput.CycleID != "issue-42" {
+		t.Errorf("cycle id = %q, want issue-42", fc.startInput.CycleID)
+	}
+	wantWf := contract.DevFlowWorkflowID("acme", "web", "issue-42")
+	if len(fr.rows) != 1 || fr.rows[0].WorkflowID != wantWf {
+		t.Errorf("expected one cycle row for %s, got %+v", wantWf, fr.rows)
+	}
+}
+
+// TestOnIssueTaskOpened_SkipsWhenCycleExists: a project that already has a
+// cycle (from a prior requirements approval, or a prior fast-path bootstrap)
+// never re-triggers — the fast path only bootstraps an issue-first project
+// once.
+func TestOnIssueTaskOpened_SkipsWhenCycleExists(t *testing.T) {
+	t.Parallel()
+	fc, fr := &fakeClient{}, &fakeRepo{}
+	svc := cycle.NewService(fc, fr)
+	ctx := context.Background()
+
+	if err := svc.OnRequirementsApproved(ctx, "acme", "web", "v1"); err != nil {
+		t.Fatalf("OnRequirementsApproved: %v", err)
+	}
+	fc.startInput = contract.DevelopmentFlowInput{} // reset so a second call would be visible
+
+	if err := svc.OnIssueTaskOpened(ctx, "acme", "web", 42); err != nil {
+		t.Fatalf("OnIssueTaskOpened: %v", err)
+	}
+	if fc.startInput != (contract.DevelopmentFlowInput{}) {
+		t.Errorf("OnIssueTaskOpened should not start a second cycle, got %+v", fc.startInput)
+	}
+	if len(fr.rows) != 1 {
+		t.Errorf("expected still exactly one cycle row, got %+v", fr.rows)
+	}
+}
+
+// TestOnIssueTaskOpened_DisabledIsNoop mirrors TestDisabledServiceDegradesGracefully.
+func TestOnIssueTaskOpened_DisabledIsNoop(t *testing.T) {
+	t.Parallel()
+	svc := cycle.NewService(nil, &fakeRepo{})
+	if err := svc.OnIssueTaskOpened(context.Background(), "acme", "web", 1); err != nil {
+		t.Errorf("OnIssueTaskOpened (disabled) = %v, want nil", err)
+	}
+}

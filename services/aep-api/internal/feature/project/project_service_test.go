@@ -34,6 +34,8 @@ import (
 
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	ocmocks "github.com/wso2/aep/aep-api/internal/clients/openchoreo/mocks"
+	"github.com/wso2/aep/aep-api/internal/feature/cycle"
+	contract "github.com/wso2/labs-agentic-engineer/packages/contracts/orchestration"
 	"github.com/wso2/aep/aep-api/internal/feature/artifacts"
 	"github.com/wso2/aep/aep-api/internal/feature/artifacts/artifactstest"
 	"github.com/wso2/aep/aep-api/internal/feature/gitrepo"
@@ -145,6 +147,15 @@ func (f *fakeExecs) ListByIssueScoped(context.Context, string, string, int) ([]m
 	return nil, nil
 }
 func (f *fakeExecs) ListActive(context.Context) ([]models.Execution, error) { return nil, nil }
+func (f *fakeExecs) UpsertReadModel(context.Context, *models.Execution) (*models.Execution, error) {
+	return nil, nil
+}
+func (f *fakeExecs) GetByWorkflowID(context.Context, string) (*models.Execution, error) {
+	return nil, nil
+}
+func (f *fakeExecs) ListReadModelByStatus(context.Context, string) ([]models.Execution, error) {
+	return nil, nil
+}
 
 type fakeSkillsProvisioner struct{ called chan string }
 
@@ -689,4 +700,63 @@ func TestGetProjectStatus_PhaseLadder(t *testing.T) {
 			}
 		})
 	}
+}
+
+// fakeCycleFlowReader is a cycleFlowReader test double.
+type fakeCycleFlowReader struct {
+	state *contract.CycleStateView
+	err   error
+}
+
+func (f fakeCycleFlowReader) GetFlowState(context.Context, string, string) (*contract.CycleStateView, error) {
+	return f.state, f.err
+}
+
+// TestGetProjectStatus_CyclePhase covers §R2.2: CyclePhase is layered onto
+// the artifact-derived status from a nil-safe cycleFlowReader, on every rung
+// of the phase ladder, and never breaks the base status on failure.
+func TestGetProjectStatus_CyclePhase(t *testing.T) {
+	t.Parallel()
+
+	t.Run("no reader wired → CyclePhase unset", func(t *testing.T) {
+		fx := statusFixture{reqFiles: map[string]string{"req.md": "# R"}}
+		st, err := fx.service().GetProjectStatus(context.Background(), "acme", "web")
+		if err != nil {
+			t.Fatalf("status: %v", err)
+		}
+		if st.CyclePhase != nil {
+			t.Errorf("CyclePhase = %v, want nil (no reader wired)", *st.CyclePhase)
+		}
+	})
+
+	t.Run("active cycle → CyclePhase set, base Phase unchanged", func(t *testing.T) {
+		fx := statusFixture{reqFiles: map[string]string{"req.md": "# R"}}
+		svc := fx.service()
+		svc.SetCycleFlowReader(fakeCycleFlowReader{state: &contract.CycleStateView{Phase: contract.PhaseImplement}})
+
+		st, err := svc.GetProjectStatus(context.Background(), "acme", "web")
+		if err != nil {
+			t.Fatalf("status: %v", err)
+		}
+		if st.Phase != "spec" {
+			t.Errorf("base Phase = %q, want unchanged %q", st.Phase, "spec")
+		}
+		if st.CyclePhase == nil || *st.CyclePhase != string(contract.PhaseImplement) {
+			t.Errorf("CyclePhase = %v, want %q", st.CyclePhase, contract.PhaseImplement)
+		}
+	})
+
+	t.Run("cycle read failure → CyclePhase unset, no error propagated", func(t *testing.T) {
+		fx := statusFixture{reqFiles: map[string]string{"req.md": "# R"}}
+		svc := fx.service()
+		svc.SetCycleFlowReader(fakeCycleFlowReader{err: cycle.ErrNoActiveCycle})
+
+		st, err := svc.GetProjectStatus(context.Background(), "acme", "web")
+		if err != nil {
+			t.Fatalf("a cycle-read failure must not fail the whole status read: %v", err)
+		}
+		if st.CyclePhase != nil {
+			t.Errorf("CyclePhase = %v, want nil", *st.CyclePhase)
+		}
+	})
 }

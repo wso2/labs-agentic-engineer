@@ -492,6 +492,9 @@ func Build(cfg config.Config, db *gorm.DB) (*App, error) {
 	cycleService := cycle.NewService(cycleClient, repositories.NewDevelopmentCycleRepository(db))
 	requirementsService.SetCycleHook(cycleService)
 	designService.SetCycleHook(cycleService)
+	// Project.Phase reconciliation (§R2.2): surface the live workflow position
+	// as CyclePhase alongside the artifact-derived Phase.
+	projectService.SetCycleFlowReader(cycleService)
 
 	// Tasks are GitHub issues (the Task/Execution split, tasks-github-native):
 	// the read + plan surface reads them live and fuses executions. The
@@ -659,7 +662,9 @@ func Build(cfg config.Config, db *gorm.DB) (*App, error) {
 	registerWebhook := func(event, action string, h func(ctx context.Context, event, action string, payload []byte) error) {
 		webhookRouter.Register(event, action, webhook.EventHandlerFunc(h))
 	}
-	task.NewWebhookEvents(issueService, repoLocator{db: db}, platformSender).RegisterHandlers(registerWebhook)
+	task.NewWebhookEvents(issueService, repoLocator{db: db}, platformSender).
+		WithCycle(cycleService).
+		RegisterHandlers(registerWebhook)
 	// pull_request.* handlers apply NO echo suppression (the platform authors no
 	// PRs; in App mode the runner's PR opens as <slug>[bot] and must be acted on).
 	execEvents := execution.NewEvents(executionRepo, taskResolver, registry, issueService)

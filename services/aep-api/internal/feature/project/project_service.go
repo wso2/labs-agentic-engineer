@@ -29,6 +29,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/feature/gitrepo"
 	"github.com/wso2/aep/aep-api/models"
 	"github.com/wso2/aep/aep-api/repositories"
+	contract "github.com/wso2/labs-agentic-engineer/packages/contracts/orchestration"
 )
 
 // Error sentinels for the project feature. ErrProjectNotFound is owned here.
@@ -58,7 +59,20 @@ type projectService struct {
 	execs         repositories.ExecutionRepository
 	skillsProv    skillsProvisioner
 	deprovisioner resourceDeprovisioner // dependency provisioning teardown; may be nil
+	cycle         cycleFlowReader       // live Temporal cycle phase (§R2.2); may be nil
 }
+
+// cycleFlowReader is project_service's narrow consumer port for the cycle's
+// live workflow phase (§R2.2 Project.Phase reconciliation). *cycle.Service
+// satisfies it. Defined here — over the shared contract module, not
+// feature/cycle's concrete type — so project holds no feature edge to cycle
+// (internal/arch/arch_test.go featureEdgeAllowlist). Wired via
+// SetCycleFlowReader at the composition root; nil disables CyclePhase.
+type cycleFlowReader interface {
+	GetFlowState(ctx context.Context, orgHandle, projectName string) (*contract.CycleStateView, error)
+}
+
+func (s *projectService) SetCycleFlowReader(c cycleFlowReader) { s.cycle = c }
 
 // resourceDeprovisioner is project_service's narrow consumer port for the
 // dependency-provisioning teardown: on project delete it deprovisions the
@@ -246,7 +260,39 @@ func (s *projectService) DeleteProject(ctx context.Context, orgName, projectName
 	return nil
 }
 
+// GetProjectStatus computes the artifact-derived status, then augments it
+// with the live Temporal cycle phase (§R2.2 — split responsibility): Phase
+// keeps reporting artifact facts unchanged regardless of the path below;
+// CyclePhase is layered on afterward from a single exit point so every
+// return in computeProjectStatus gets it without duplicating the call.
 func (s *projectService) GetProjectStatus(ctx context.Context, orgName, projectName string) (*models.ProjectStatus, error) {
+	status, err := s.computeProjectStatus(ctx, orgName, projectName)
+	if err != nil {
+		return nil, err
+	}
+	s.attachCyclePhase(ctx, orgName, projectName, status)
+	return status, nil
+}
+
+// attachCyclePhase sets status.CyclePhase from the active development
+// cycle's live workflow query, if any. Best-effort: no cycle reader wired, no
+// active cycle (ErrNoActiveCycle), orchestration disabled
+// (ErrOrchestrationDisabled), or a query failure all leave CyclePhase unset
+// rather than failing the whole status read — the artifact-derived Phase
+// above is always a valid status on its own.
+func (s *projectService) attachCyclePhase(ctx context.Context, orgName, projectName string, status *models.ProjectStatus) {
+	if s.cycle == nil {
+		return
+	}
+	st, err := s.cycle.GetFlowState(ctx, orgName, projectName)
+	if err != nil || st == nil {
+		return
+	}
+	phase := string(st.Phase)
+	status.CyclePhase = &phase
+}
+
+func (s *projectService) computeProjectStatus(ctx context.Context, orgName, projectName string) (*models.ProjectStatus, error) {
 	status := &models.ProjectStatus{}
 
 	// Check git repo

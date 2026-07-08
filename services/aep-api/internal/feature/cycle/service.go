@@ -109,6 +109,63 @@ func (s *Service) OnRequirementsApproved(ctx context.Context, orgHandle, project
 	return nil
 }
 
+// OnIssueTaskOpened starts a development cycle via the GitHub-issue fast-path
+// (§R2.1): a Task issue opened on a project that has never started a cycle
+// through the requirements/design approval flow bootstraps one directly at
+// PhaseImplement, skipping the requirements/design gates entirely — there is
+// no requirement/design version to anchor a "v<N>" cycle ID to, so the issue
+// number anchors it instead. DevelopmentFlowWorkflow needs no special-casing
+// for this (confirmed by the orchestrator's TestDevFlow_IssueFastPath):
+// starting at PhaseImplement already skips straight to planning tasks from
+// the project's current approved design (if any).
+//
+// Idempotent per project: a project with ANY existing cycle row — from this
+// path or a prior requirements approval — never re-triggers here. The fast
+// path exists only to bootstrap an issue-first project once; a project that
+// already went through requirements/design (or a prior fast-path bootstrap)
+// drives further cycles through that existing cycle instead. Best-effort:
+// called from the issues.opened webhook, never fatal to it.
+func (s *Service) OnIssueTaskOpened(ctx context.Context, orgHandle, projectName string, issueNumber int) error {
+	if !s.enabled() {
+		return nil
+	}
+	existing, err := s.cycles.ListByProject(ctx, orgHandle, projectName)
+	if err != nil {
+		return fmt.Errorf("list cycles for %s/%s: %w", orgHandle, projectName, err)
+	}
+	if len(existing) > 0 {
+		return nil // not an issue-first project — a cycle already anchors it
+	}
+	cycleID := fmt.Sprintf("issue-%d", issueNumber)
+	in := contract.DevelopmentFlowInput{
+		Org:        orgHandle,
+		Project:    projectName,
+		CycleID:    cycleID,
+		Source:     contract.SourceIssue,
+		StartPhase: contract.PhaseImplement,
+		GatePolicy: contract.GatePolicy{
+			Requirements: contract.GateHuman,
+			Design:       contract.GateHuman,
+			CodeReview:   contract.GateHuman,
+		},
+	}
+	wfID, err := s.client.StartCycle(ctx, in)
+	if err != nil {
+		return fmt.Errorf("start issue-fast-path cycle for %s/%s issue#%d: %w", orgHandle, projectName, issueNumber, err)
+	}
+	if _, derr := s.cycles.Ensure(ctx, &models.DevelopmentCycle{
+		OrgID:              orgHandle,
+		ProjectID:          projectName,
+		RequirementVersion: cycleID,
+		WorkflowID:         wfID,
+	}); derr != nil {
+		return fmt.Errorf("record issue-fast-path cycle %s: %w", wfID, derr)
+	}
+	slog.InfoContext(ctx, "development cycle started via issue fast-path",
+		"org", orgHandle, "project", projectName, "issue", issueNumber, "workflow", wfID)
+	return nil
+}
+
 // OnDesignApproved advances the requirement version's cycle to implement by
 // signaling ApproveDesign. reqVersion is the parent requirements version the
 // design tag was cut under. Best-effort: called from the design save path.

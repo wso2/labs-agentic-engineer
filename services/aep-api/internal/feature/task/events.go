@@ -30,6 +30,14 @@ import (
 // app.go passes so this package imports nothing from feature/webhook).
 type RegisterFunc func(event, action string, h func(ctx context.Context, event, action string, payload []byte) error)
 
+// CycleStarter is the minimal issue-fast-path port WebhookEvents needs
+// (§R2.1) — satisfied by *cycle.Service. Kept as a consumer-side port so this
+// package does not import feature/cycle, matching execution.TaskSignaler's
+// pattern for the pull_request half.
+type CycleStarter interface {
+	OnIssueTaskOpened(ctx context.Context, orgHandle, projectName string, issueNumber int) error
+}
+
 // WebhookEvents holds the issues.* handlers — the GitHub-facing half of webhook
 // handling (§9.2). It reacts to task birth (a labeled issue IS a Task, from
 // anyone), command labels stamped by external actors, machine-block validation
@@ -45,6 +53,7 @@ type WebhookEvents struct {
 	issues         IssueClient
 	repos          RepoLocator
 	platformSender string
+	cycle          CycleStarter // nil disables the issue fast-path (§R2.1)
 }
 
 // NewWebhookEvents wires the issues.* handlers. platformSender is the platform's
@@ -52,6 +61,14 @@ type WebhookEvents struct {
 // suppression (dev without an App).
 func NewWebhookEvents(issues IssueClient, repos RepoLocator, platformSender string) *WebhookEvents {
 	return &WebhookEvents{issues: issues, repos: repos, platformSender: platformSender}
+}
+
+// WithCycle enables the GitHub-issue fast-path (§R2.1): a newly opened Task
+// issue on an issue-first project bootstraps a development cycle straight to
+// implement. Optional — nil-safe, mirrors execution.Events.WithTaskSignaler.
+func (e *WebhookEvents) WithCycle(cycle CycleStarter) *WebhookEvents {
+	e.cycle = cycle
+	return e
 }
 
 // RegisterHandlers installs the issues.* handlers on the webhook router.
@@ -118,6 +135,17 @@ func (e *WebhookEvents) OnOpenedOrEdited(ctx context.Context, _, _ string, paylo
 	orgID, projectID, err := e.repos.ByFullName(ctx, p.Repository.FullName)
 	if err != nil {
 		return err
+	}
+
+	// Issue fast-path (§R2.1): only on a genuine new-issue delivery, never on
+	// an edit of an existing one (this handler serves both actions), and
+	// BEFORE the machine-block repair below — a human filing a bare Task issue
+	// with no block yet must still bootstrap the cycle; the block-repair /
+	// attention-flagging paths below are independent and both still run.
+	if p.Action == "opened" && e.cycle != nil {
+		if cerr := e.cycle.OnIssueTaskOpened(ctx, orgID, projectID, p.Issue.Number); cerr != nil {
+			slog.WarnContext(ctx, "issue fast-path cycle start failed", "issue", p.Issue.Number, "error", cerr)
+		}
 	}
 
 	repaired, changed, err := taskmeta.Repair(p.Issue.Body)
