@@ -18,32 +18,44 @@ package models
 
 import "time"
 
-// Skill is the resolved shape that flows from the `skills` table to the
-// architect input, the tech-lead input, the runner pull endpoint, and the
-// console. Mirrors the row schema 1:1 plus a few derived fields.
+// Skill is the resolved shape that flows from the `org-skills` repo to the
+// architect input, the tech-lead input, and the console. Mirrors the stored
+// SKILL.md 1:1 plus a few derived fields. (The coding runner no longer receives
+// this shape over the wire — it clones `org-skills` and resolves applied skills
+// locally.)
 //
-// Lives in models (the shared value-type layer) so both the skills feature and
-// the task feature (which snapshots resolved skills per design version) can
-// reference it without crossing a feature boundary. The skills package keeps a
-// `type Skill = models.Skill` alias.
+// Lives in models (the shared value-type layer) so the skills feature and its
+// consumers can reference it without crossing a feature boundary. The skills
+// package keeps a `type Skill = models.Skill` alias.
 type Skill struct {
 	OrgID         string            `json:"orgId"`
 	Name          string            `json:"name"`
-	Kind          string            `json:"kind"` // builtin | custom | imported
+	Kind          string            `json:"kind"` // platform | org | custom | imported
 	Description   string            `json:"description"`
 	SkillMD       string            `json:"skillMd"`
 	References    map[string]string `json:"references"`
-	Version       int               `json:"version"`
 	ContentSHA    string            `json:"contentSha"`
 	License       string            `json:"license,omitempty"`
 	Compatibility string            `json:"compatibility,omitempty"`
 	UpdatedAt     time.Time         `json:"updatedAt"`
 }
 
-// MaterializedName / PrefixedID are the pure skill-naming helpers shared by the
-// skills feature and task's skill snapshotting.
-func MaterializedName(kind, name string) string { return kind + "-" + name }
-func PrefixedID(kind, name string) string       { return kind + "/" + name }
+// Skill kinds (docs/design/skills-unified-library-migration.md §3.2). A
+// SKILL.md declares its kind in frontmatter `metadata.aep.kind`; absent means
+// SkillKindOrg. platform + org are platform-shipped and reconciled from the
+// embedded library; custom + imported are user-owned and stamped on write.
+const (
+	// SkillKindPlatform — generation-flow guidance; hidden from the skills
+	// page and the updates badge (was kind "flow").
+	SkillKindPlatform = "platform"
+	// SkillKindOrg — the org-visible stack skills; read-only on the skills
+	// page, feeds coding-runner skillsApplied (was kind "builtin").
+	SkillKindOrg = "org"
+	// SkillKindCustom — user-authored via create/update; editable.
+	SkillKindCustom = "custom"
+	// SkillKindImported — imported from an AgentSkills tarball; editable.
+	SkillKindImported = "imported"
+)
 
 // SkillsRepoSentinelProjectID is the reserved git_repositories.project_id under
 // which the per-org skills repo row lives (so it is distinguishable from real

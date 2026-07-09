@@ -447,6 +447,112 @@ func TestGetBinding_ServerErrorPropagates(t *testing.T) {
 	}
 }
 
+// ---- PatchBindingEnvironmentConfigs --------------------------------------------
+
+// decodeEnvConfigs decodes a binding's resourceTypeEnvironmentConfigs raw JSON
+// into a string map for assertions.
+func decodeEnvConfigs(t *testing.T, raw json.RawMessage) map[string]string {
+	t.Helper()
+	if len(raw) == 0 {
+		return map[string]string{}
+	}
+	m := map[string]string{}
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("decode env configs: %v", err)
+	}
+	return m
+}
+
+// The patch reads the binding, overlays the given keys onto the existing
+// env-config map (unrelated keys survive), and re-applies via EnsureBinding.
+func TestPatchBindingEnvironmentConfigs_MergePreservesOtherKeys(t *testing.T) {
+	const name = "proj-auth-development"
+	var gotWriteBody ResourceReleaseBinding
+	wrote := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/namespaces/wc-abc/resourcereleasebindings/"+name:
+			existing := ResourceReleaseBinding{
+				Metadata: OCObjectMeta{Name: name},
+				Spec: ResourceReleaseBindingSpec{
+					Environment:                    "development",
+					ResourceRelease:                "rel-1",
+					ResourceTypeEnvironmentConfigs: json.RawMessage(`{"keepMe":"stay","redirectUris":"http://old/callback"}`),
+				},
+				Status: &ResourceReleaseBindingStatus{Conditions: []OCCondition{{Type: "Ready", Status: "True"}}},
+			}
+			writeJSON(t, w, http.StatusOK, existing)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/namespaces/wc-abc/resourcereleasebindings":
+			wrote = true
+			_ = json.NewDecoder(r.Body).Decode(&gotWriteBody)
+			writeJSON(t, w, http.StatusCreated, gotWriteBody)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestResourceClient(t, srv)
+	if err := c.PatchBindingEnvironmentConfigs(context.Background(), "wc-abc", name,
+		map[string]string{"redirectUris": "http://new/callback"}); err != nil {
+		t.Fatalf("PatchBindingEnvironmentConfigs: %v", err)
+	}
+	if !wrote {
+		t.Fatalf("expected EnsureBinding to be invoked when a value changed")
+	}
+	got := decodeEnvConfigs(t, gotWriteBody.Spec.ResourceTypeEnvironmentConfigs)
+	if got["redirectUris"] != "http://new/callback" {
+		t.Errorf("redirectUris = %q; want the patched value", got["redirectUris"])
+	}
+	if got["keepMe"] != "stay" {
+		t.Errorf("merge dropped an unrelated key: %v", got)
+	}
+	// The pin + environment carry through the re-apply untouched.
+	if gotWriteBody.Spec.ResourceRelease != "rel-1" || gotWriteBody.Spec.Environment != "development" {
+		t.Errorf("re-apply mutated spec pin/env: %+v", gotWriteBody.Spec)
+	}
+}
+
+// An idempotent re-patch carrying identical values is a no-op: EnsureBinding is
+// never called, so a per-cascade re-run does not churn the CR.
+func TestPatchBindingEnvironmentConfigs_IdempotentNoOp(t *testing.T) {
+	const name = "proj-auth-development"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("EnsureBinding must NOT run when values are unchanged; got %s %s", r.Method, r.URL.Path)
+		}
+		writeJSON(t, w, http.StatusOK, ResourceReleaseBinding{
+			Metadata: OCObjectMeta{Name: name},
+			Spec: ResourceReleaseBindingSpec{
+				ResourceTypeEnvironmentConfigs: json.RawMessage(`{"redirectUris":"http://web/callback"}`),
+			},
+		})
+	}))
+	defer srv.Close()
+
+	c := newTestResourceClient(t, srv)
+	if err := c.PatchBindingEnvironmentConfigs(context.Background(), "wc-abc", name,
+		map[string]string{"redirectUris": "http://web/callback"}); err != nil {
+		t.Fatalf("PatchBindingEnvironmentConfigs: %v", err)
+	}
+}
+
+// A missing binding (the provisioner authors it first) is a hard error so the
+// caller defers.
+func TestPatchBindingEnvironmentConfigs_BindingNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, http.StatusNotFound, map[string]string{"error": "not found"})
+	}))
+	defer srv.Close()
+
+	c := newTestResourceClient(t, srv)
+	err := c.PatchBindingEnvironmentConfigs(context.Background(), "wc-abc", "missing",
+		map[string]string{"redirectUris": "http://web/callback"})
+	if err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("want a not-found error; got %v", err)
+	}
+}
+
 // ---- DeleteBinding / DeleteResource (404-tolerant) -----------------------------
 
 func TestDeleteBinding_SuccessAnd404Tolerant(t *testing.T) {

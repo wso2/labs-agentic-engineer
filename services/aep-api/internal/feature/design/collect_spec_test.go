@@ -40,16 +40,20 @@ paths:
           description: ok
 `
 
-// fakeCommitter records the Files commit and answers CAS reads: the component's
-// design.json exists (returns a stable sha), the spec file does not yet.
+// fakeCommitter records the Files commit and answers CAS reads: the
+// component's design.json and the root design.md both exist (return a stable
+// sha), the spec file does not yet. `writes` holds the LAST commit's batch
+// (the single-commit tests' shorthand); `commitLog` keeps every batch in
+// commit order for multi-commit composition tests.
 type fakeCommitter struct {
 	writes    []DesignFileWrite
+	commitLog [][]DesignFileWrite
 	commitErr error
 	commits   int
 }
 
 func (f *fakeCommitter) ReadFile(_ context.Context, _, _, path string) (content, sha string, ok bool, err error) {
-	if strings.HasSuffix(path, "design.json") {
+	if strings.HasSuffix(path, "design.json") || strings.HasSuffix(path, "design.md") {
 		return "{}", "sha-design", true, nil
 	}
 	return "", "", false, nil // spec file is new
@@ -61,6 +65,7 @@ func (f *fakeCommitter) Commit(_ context.Context, _, _ string, writes []DesignFi
 		return f.commitErr
 	}
 	f.writes = writes
+	f.commitLog = append(f.commitLog, writes)
 	return nil
 }
 

@@ -85,6 +85,17 @@ type ResourceClient interface {
 	// provision watcher hasn't run); callers treat that as "not yet created".
 	GetBinding(ctx context.Context, namespace, name string) (*ResourceReleaseBinding, error)
 
+	// PatchBindingEnvironmentConfigs merges the given keys into an existing
+	// binding's spec.resourceTypeEnvironmentConfigs and re-applies it
+	// (EnsureBinding semantics: PUT on 409). Read-merge-write — it GETs the
+	// binding, overlays `configs` onto the existing env-config map (keys not in
+	// `configs` are preserved), and re-applies ONLY when a value actually
+	// changed. An idempotent re-patch carrying identical values is a no-op (no
+	// EnsureBinding call), so a caller that re-runs on every deploy cascade does
+	// not churn the CR / trigger a needless re-render. Errors when the binding
+	// does not exist yet (the provisioner authors it first).
+	PatchBindingEnvironmentConfigs(ctx context.Context, orgID, bindingName string, configs map[string]string) error
+
 	// DeleteBinding removes a per-env binding. Step 1 of a 2-step
 	// dependency delete (bindings cascade their DP objects via
 	// retainPolicy: Delete). 404-tolerant (idempotent).
@@ -144,10 +155,15 @@ const (
 )
 
 // OCObjectMeta is the slice of k8s metadata the BFF sets on Resource-model CRs.
+// Annotations is read-only here: the BFF never sets it on Resource-model CRs it
+// authors, but ListClusterResourceTypes decodes it off PE-authored
+// ClusterResourceTypes, which carry the `aep.wso2.com/*` markers (see the
+// `resources` package's markers.go) alongside Labels' `aep.wso2.com/role`.
 type OCObjectMeta struct {
-	Name      string            `json:"name"`
-	Namespace string            `json:"namespace,omitempty"`
-	Labels    map[string]string `json:"labels,omitempty"`
+	Name        string            `json:"name"`
+	Namespace   string            `json:"namespace,omitempty"`
+	Labels      map[string]string `json:"labels,omitempty"`
+	Annotations map[string]string `json:"annotations,omitempty"`
 }
 
 // OCKeyRef is a {name,key} reference into a Secret/ConfigMap (both CEL-templatable).
@@ -540,6 +556,50 @@ func (c *resourceClient) GetBinding(ctx context.Context, namespace, name string)
 		return nil, fmt.Errorf("get binding %q: %w", name, err)
 	}
 	return out, nil
+}
+
+func (c *resourceClient) PatchBindingEnvironmentConfigs(ctx context.Context, orgID, bindingName string, configs map[string]string) error {
+	existing, err := c.GetBinding(ctx, orgID, bindingName)
+	if err != nil {
+		return fmt.Errorf("patch binding env configs %q: get: %w", bindingName, err)
+	}
+	if existing == nil {
+		// The provisioner authors the binding first; a missing one means the
+		// dependency isn't provisioned yet. Surface it so the caller defers.
+		return fmt.Errorf("patch binding env configs %q: binding not found", bindingName)
+	}
+
+	// Decode the existing env-config map so unrelated keys survive the merge.
+	merged := map[string]any{}
+	if len(existing.Spec.ResourceTypeEnvironmentConfigs) > 0 {
+		if err := json.Unmarshal(existing.Spec.ResourceTypeEnvironmentConfigs, &merged); err != nil {
+			return fmt.Errorf("patch binding env configs %q: decode existing: %w", bindingName, err)
+		}
+	}
+
+	changed := false
+	for k, v := range configs {
+		if cur, ok := merged[k]; !ok || cur != any(v) {
+			merged[k] = v
+			changed = true
+		}
+	}
+	if !changed {
+		// Binding already carries exactly these values — no-op (idempotent), so
+		// a per-cascade re-patch never re-applies the CR.
+		return nil
+	}
+
+	raw, err := json.Marshal(merged)
+	if err != nil {
+		return fmt.Errorf("patch binding env configs %q: marshal: %w", bindingName, err)
+	}
+	existing.Spec.ResourceTypeEnvironmentConfigs = json.RawMessage(raw)
+	existing.Status = nil // write path is spec-only; never echo status back.
+	if _, err := c.EnsureBinding(ctx, orgID, existing); err != nil {
+		return fmt.Errorf("patch binding env configs %q: apply: %w", bindingName, err)
+	}
+	return nil
 }
 
 func (c *resourceClient) DeleteBinding(ctx context.Context, namespace, name string) error {

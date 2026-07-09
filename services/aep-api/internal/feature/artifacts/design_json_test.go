@@ -24,9 +24,9 @@ import (
 )
 
 // fullComponentDesignJSON is a canonical `components/checkout/design.json`
-// exercising all four dependency kinds and both platform-owned blocks. It is
-// authored to be byte-identical to marshalComponentDesignJSON's output so the
-// round-trip assertion is exact.
+// exercising all four dependency kinds and the platform-owned exposesAPI
+// block. It is authored to be byte-identical to marshalComponentDesignJSON's
+// output so the round-trip assertion is exact.
 const fullComponentDesignJSON = `{
   "name": "checkout",
   "type": "service",
@@ -74,9 +74,6 @@ const fullComponentDesignJSON = `{
     "auth": "service-required",
     "orgPublished": true
   },
-  "callerIdentity": {
-    "mode": "service-account"
-  },
   "componentAgentInstructions": "prefer stdlib net/http"
 }
 `
@@ -102,9 +99,6 @@ func TestParseComponentDesignJSON_AllKinds(t *testing.T) {
 	}
 	if comp.ExposesAPI == nil || comp.ExposesAPI.Auth != "service-required" || !comp.ExposesAPI.OrgPublished {
 		t.Fatalf("exposesAPI drifted: %+v", comp.ExposesAPI)
-	}
-	if comp.CallerIdentity == nil || comp.CallerIdentity.Mode != "service-account" {
-		t.Fatalf("callerIdentity drifted: %+v", comp.CallerIdentity)
 	}
 
 	if len(comp.Dependencies) != 4 {
@@ -182,6 +176,23 @@ func TestParseComponentDesignJSON_UnknownTopLevelKeyRejected(t *testing.T) {
 	raw := `{"name":"checkout","type":"service","dependencies":[],"connections":[]}`
 	if _, err := parseComponentDesignJSON("checkout", raw); err == nil {
 		t.Fatalf("expected unknown top-level key (connections) to be rejected")
+	}
+}
+
+// TestParseComponentDesignJSON_RetiredCallerIdentityKeyRejected documents the
+// deletion's actual on-disk consequence: this decoder calls
+// DisallowUnknownFields, so a design.json still carrying the retired
+// caller-identity field (e.g. one written before the thunder-app dependency
+// replaced it) is now REJECTED as an unknown top-level key — not silently
+// tolerated.
+func TestParseComponentDesignJSON_RetiredCallerIdentityKeyRejected(t *testing.T) {
+	raw := `{"name":"checkout","type":"service","dependencies":[],"callerIdentity":{"mode":"end-user"}}`
+	_, err := parseComponentDesignJSON("checkout", raw)
+	if err == nil {
+		t.Fatalf("expected the retired caller-identity key to be rejected as an unknown top-level key")
+	}
+	if !strings.Contains(err.Error(), "callerIdentity") {
+		t.Fatalf("expected error to name the unknown key, got: %v", err)
 	}
 }
 
@@ -312,6 +323,42 @@ func TestParseComponentDesignJSON_NeedsSpecComputesUnresolved(t *testing.T) {
 	}
 	if comp2.Dependencies[0].Status != "" || comp2.Dependencies[0].Reason != "" {
 		t.Fatalf("component dep must not get a computed status: %+v", comp2.Dependencies[0])
+	}
+}
+
+// TestParseComponentDesignJSON_TypePassesThroughVerbatim pins the codec's
+// type handling: NO normalization, NO shims. The vocabulary is OpenChoreo's
+// own terms (models.ComponentTypeService / ComponentTypeWebApplication) used
+// end-to-end, so the codec maps `type` verbatim in both directions. Older
+// spellings ("webapp", "web-app") also pass through untouched — they are
+// simply NOT web applications; stored designs carrying them must be migrated
+// (a one-line design.json edit).
+func TestParseComponentDesignJSON_TypePassesThroughVerbatim(t *testing.T) {
+	cases := []string{
+		"web-application", // canonical (OC's deployment/web-application)
+		"service",         // canonical (OC's deployment/service)
+		"webapp",          // retired spelling: verbatim, not a web application
+		"web-app",         // retired spelling: verbatim, not a web application
+		"scheduled-task",  // unknown kind: verbatim
+	}
+	for _, diskType := range cases {
+		t.Run(diskType, func(t *testing.T) {
+			raw := `{"name":"checkout","type":"` + diskType + `","dependencies":[]}`
+			comp, err := parseComponentDesignJSON("checkout", raw)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if comp.ComponentType != diskType {
+				t.Fatalf("ComponentType = %q, want verbatim %q", comp.ComponentType, diskType)
+			}
+			out, err := marshalComponentDesignJSON("checkout", comp)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if !strings.Contains(string(out), `"type": "`+diskType+`"`) {
+				t.Fatalf("re-save must persist the type verbatim (%q):\n%s", diskType, out)
+			}
+		})
 	}
 }
 

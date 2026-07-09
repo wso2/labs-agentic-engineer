@@ -19,8 +19,13 @@
 import { projectKeys } from "../../projects/api/keys";
 
 // Extends the project cache tree so project-level invalidation reaches the
-// spec bundle too.
+// spec reads too.
 export const specKeys = {
-  bundle: (projectName: string) =>
-    [...projectKeys.detail(projectName), "spec"] as const,
+  files: (projectName: string) =>
+    [...projectKeys.detail(projectName), "spec", "files"] as const,
+  // Content is immutable per (path, sha): a sha change from the list poll
+  // makes a new key, so stale content is never shown and unchanged files
+  // never refetch (#113 decision 4).
+  file: (projectName: string, path: string, sha: string) =>
+    [...projectKeys.detail(projectName), "spec", "file", path, sha] as const,
 };

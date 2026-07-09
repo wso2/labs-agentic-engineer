@@ -67,7 +67,13 @@ var featureEdgeAllowlist = map[string][]string{
 	// external-resource repo, secret writer, design reader) is a consumer-side
 	// port wired at the composition root, keeping the feature edge surface minimal.
 	"dependencies": {"dependencies/resources"},
-	"design":       {"artifacts"},
+	// design imports dependencies/resources for the CRT metadata vocabulary
+	// (resources.TypeMarkers + the marker catalog port): design-save keys
+	// end-user-auth derivation on the PE-authored role marker instead of a
+	// hardcoded resourceType name (thunder-app generalization). This mirrors the
+	// runtimeconfig edge below — both features read the same single source of
+	// truth for CRT markers rather than re-deriving the vocabulary.
+	"design": {"artifacts", "dependencies/resources"},
 	// execution is the platform-owned half of the Task/Execution split: it reads
 	// GitHub Task facts (gitrepo) and re-verifies against the design at HEAD
 	// (artifacts). It NEVER imports feature/task — the §1 split is a package
@@ -83,17 +89,21 @@ var featureEdgeAllowlist = map[string][]string{
 	// services. These two edges ARE the feature — it assembles GET /config and runs
 	// the atomic multi-section PATCH across both services — so the concrete edges
 	// are the deliberate design, not incidental coupling.
-	"orgconfig":    {"idp", "orgcreds"},
-	"orgcreds":     {"gitrepo"},
-	"project":      {"artifacts", "gitrepo"},
+	"orgconfig": {"idp", "orgcreds"},
+	"orgcreds":  {"gitrepo"},
+	"project":   {"artifacts", "gitrepo"},
 	// provisioning is the dependency-provisioning coordinator (dependency-management
 	// §3.6): it drives the provisioner cores (dependencies/resources) and GitHub gate
 	// issues (gitrepo). Every other collaborator — the executions store, the funnel
 	// Reevaluate hook, the design reader, the repo locator — is a consumer-side port
 	// wired at the composition root, so it holds only these two feature edges.
-	"provisioning":  {"dependencies/resources", "gitrepo"},
-	"requirements":  {"artifacts"},
-	"runtimeconfig": {"artifacts"},
+	"provisioning": {"dependencies/resources", "gitrepo"},
+	"requirements": {"artifacts"},
+	// runtimeconfig reads the thunder-app dependency's binding outputs (OIDC
+	// config) and patches its redirect URIs declaratively; it reuses the
+	// resources package's single source of truth for the per-env binding name
+	// (ExternalResourceBindingName) rather than re-deriving the convention.
+	"runtimeconfig": {"artifacts", "dependencies/resources"},
 	"skills":        {"artifacts", "gitrepo"},
 	// task is the GitHub-facing half: it never imports feature/execution (the §1
 	// split) — the funnel is reached through the task.Dispatcher consumer port.

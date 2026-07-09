@@ -58,6 +58,10 @@ type collabValidateOutput struct {
 	Body struct {
 		Name  string `json:"name"`
 		Email string `json:"email"`
+		// ProjectName is the room's project, resolved by this oracle from
+		// `spec-<org>-<project>` — the collab service can't split the room ID
+		// itself (it doesn't know the org) and needs this for the seed read (#114).
+		ProjectName string `json:"projectName"`
 	}
 }
 
@@ -133,6 +137,7 @@ func RegisterCollab(api huma.API, repos repoOracle) {
 		out := &collabValidateOutput{}
 		out.Body.Name = name
 		out.Body.Email = email
+		out.Body.ProjectName = project
 		return out, nil
 	})
 }

@@ -16,33 +16,45 @@
  * under the License.
  */
 
-// Thin client for the two BFF calls this service makes. The BFF is the only
-// authority: room access (validate-collab-access) and spec content
-// (get-project-spec). Git, credentials, and tenancy all stay its monopoly.
+// Thin client for the BFF calls this service makes. The BFF is the only
+// authority: room access (validate-collab-access) and spec content (the
+// Files API, #114). Git, credentials, and tenancy all stay its monopoly.
 
 export interface CollabIdentity {
   name: string;
   email: string;
   /**
    * Project resolved from the room ID by the oracle — only the BFF can split
-   * `spec-<org>-<project>` (it knows the caller's org). Phase 2 of #86 adds
-   * this field to the validate-collab-access response; the mock BFF already
-   * serves it.
+   * `spec-<org>-<project>` (it knows the caller's org).
    */
   projectName: string;
 }
 
+/**
+ * One spec file ready for seeding. `path` is the ROOM KEY — the repo path
+ * with the `specs/` prefix stripped (e.g. requirements/prd.md), matching what
+ * the console looks up (#113 decision 2). The strip happens here, at the
+ * Files API boundary, and nowhere else.
+ */
 export interface SpecFile {
   path: string;
-  group: string;
   content: string;
+}
+
+/** The Files API serves repo-relative paths; rooms key by the remainder. */
+export const SPECS_PREFIX = "specs/";
+
+export function toRoomPath(repoPath: string): string | null {
+  return repoPath.startsWith(SPECS_PREFIX)
+    ? repoPath.slice(SPECS_PREFIX.length)
+    : null;
 }
 
 export interface BffClient {
   /** Resolves to the caller's display identity, or throws on deny. */
   validateAccess(token: string, roomId: string): Promise<CollabIdentity>;
-  /** Spec bundle for seeding, read as the connecting user. */
-  fetchSpecBundle(token: string, projectName: string): Promise<SpecFile[]>;
+  /** Spec files for seeding, read via the Files API as the connecting user. */
+  fetchSpecFiles(token: string, projectName: string): Promise<SpecFile[]>;
 }
 
 export class BffAccessDeniedError extends Error {
@@ -73,18 +85,45 @@ export function createBffClient(
       };
     },
 
-    async fetchSpecBundle(token, projectName) {
-      const res = await fetchImpl(
-        `${base}/projects/${encodeURIComponent(projectName)}/spec`,
-        { headers: { Authorization: `Bearer ${token}` } },
-      );
-      if (!res.ok) {
+    async fetchSpecFiles(token, projectName) {
+      const project = encodeURIComponent(projectName);
+      const headers = { Authorization: `Bearer ${token}` };
+
+      const listRes = await fetchImpl(`${base}/projects/${project}/files`, {
+        headers,
+      });
+      if (!listRes.ok) {
         throw new Error(
-          `Failed to fetch spec bundle for ${projectName} (${res.status})`,
+          `Failed to list spec files for ${projectName} (${listRes.status})`,
         );
       }
-      const body = (await res.json()) as { files: SpecFile[] };
-      return body.files;
+      const metas = ((await listRes.json()) ?? []) as { path: string }[];
+
+      return Promise.all(
+        metas.flatMap((meta) => {
+          const roomPath = toRoomPath(meta.path);
+          if (roomPath === null) return [];
+          const encoded = meta.path
+            .split("/")
+            .map(encodeURIComponent)
+            .join("/");
+          return [
+            (async (): Promise<SpecFile> => {
+              const res = await fetchImpl(
+                `${base}/projects/${project}/files/${encoded}`,
+                { headers },
+              );
+              if (!res.ok) {
+                throw new Error(
+                  `Failed to read ${meta.path} for ${projectName} (${res.status})`,
+                );
+              }
+              const body = (await res.json()) as { content: string };
+              return { path: roomPath, content: body.content };
+            })(),
+          ];
+        }),
+      );
     },
   };
 }

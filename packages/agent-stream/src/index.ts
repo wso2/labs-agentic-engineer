@@ -58,7 +58,6 @@ export type {
   ConfigKey,
   DependencyCandidate,
   ExposesAPI,
-  CallerIdentity,
 } from "./contracts/component-design.js";
 
 // --- Task-plan tool contract (tasks-github-native §9.3/§10.3) ----------------

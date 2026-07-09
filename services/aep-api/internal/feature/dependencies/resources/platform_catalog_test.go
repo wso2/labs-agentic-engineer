@@ -84,3 +84,111 @@ func TestResourceTypeCatalog_ListError(t *testing.T) {
 		t.Fatal("want the client error surfaced")
 	}
 }
+
+func TestResourceTypeCatalog_List_ProjectsMarkers(t *testing.T) {
+	t.Parallel()
+
+	rc := &ocmocks.ResourceClientMock{
+		ListClusterResourceTypesFunc: func(_ context.Context) ([]openchoreo.ResourceType, error) {
+			return []openchoreo.ResourceType{
+				{
+					// Carries every marker.
+					Metadata: openchoreo.OCObjectMeta{
+						Name:   "thunder-app",
+						Labels: map[string]string{LabelRole: RoleEndUserAuth},
+						Annotations: map[string]string{
+							AnnotationConsumerURLEnvConfig: "redirectUris",
+							AnnotationConsumerURLPath:      "/oauth2/callback",
+							AnnotationSkill:                "thunder-authentication",
+							AnnotationDescription:          "End-user sign-in for this project's apps.",
+						},
+					},
+				},
+				{
+					// Carries no markers at all.
+					Metadata: openchoreo.OCObjectMeta{Name: "postgres-cnpg"},
+				},
+			}, nil
+		},
+	}
+
+	got, err := NewResourceTypeCatalog(rc).List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 types, got %d", len(got))
+	}
+	// Sorted by name: postgres-cnpg first, thunder-app second.
+	if got[0].Name != "postgres-cnpg" || got[0].Markers != (TypeMarkers{}) {
+		t.Fatalf("postgres-cnpg: want zero-value Markers, got %+v", got[0].Markers)
+	}
+	// A type without the description annotation projects an empty (and thus
+	// omitted-from-JSON) Description.
+	if got[0].Description != "" {
+		t.Fatalf("postgres-cnpg: Description = %q, want empty", got[0].Description)
+	}
+	wantMarkers := TypeMarkers{
+		EndUserAuth:          true,
+		ConsumerURLEnvConfig: "redirectUris",
+		ConsumerURLPath:      "/oauth2/callback",
+		Skill:                "thunder-authentication",
+		Description:          "End-user sign-in for this project's apps.",
+	}
+	if got[1].Name != "thunder-app" || got[1].Markers != wantMarkers {
+		t.Fatalf("thunder-app: Markers = %+v, want %+v", got[1].Markers, wantMarkers)
+	}
+	// Description is ALSO projected onto the serialized top-level field —
+	// the architect-facing MCP payload carries it (unlike Markers, json:"-").
+	if got[1].Description != wantMarkers.Description {
+		t.Fatalf("thunder-app: Description = %q, want %q", got[1].Description, wantMarkers.Description)
+	}
+}
+
+func TestResourceTypeCatalog_MarkersByName(t *testing.T) {
+	t.Parallel()
+
+	rc := &ocmocks.ResourceClientMock{
+		ListClusterResourceTypesFunc: func(_ context.Context) ([]openchoreo.ResourceType, error) {
+			return []openchoreo.ResourceType{
+				{
+					Metadata: openchoreo.OCObjectMeta{
+						Name:   "thunder-app",
+						Labels: map[string]string{LabelRole: RoleEndUserAuth},
+						Annotations: map[string]string{
+							AnnotationConsumerURLEnvConfig: "redirectUris",
+						},
+					},
+				},
+				{Metadata: openchoreo.OCObjectMeta{Name: "postgres-cnpg"}},
+			}, nil
+		},
+	}
+
+	got, err := NewResourceTypeCatalog(rc).MarkersByName(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 entries, got %d: %+v", len(got), got)
+	}
+	if m := got["thunder-app"]; !m.EndUserAuth || m.ConsumerURLEnvConfig != "redirectUris" || m.ConsumerURLPath != DefaultConsumerURLPath {
+		t.Fatalf("thunder-app markers = %+v, want role+env-config+default path", m)
+	}
+	if m := got["postgres-cnpg"]; m != (TypeMarkers{}) {
+		t.Fatalf("postgres-cnpg markers = %+v, want zero value", m)
+	}
+}
+
+func TestResourceTypeCatalog_MarkersByNameError(t *testing.T) {
+	t.Parallel()
+
+	rc := &ocmocks.ResourceClientMock{
+		ListClusterResourceTypesFunc: func(_ context.Context) ([]openchoreo.ResourceType, error) {
+			return nil, errors.New("OC down")
+		},
+	}
+	if _, err := NewResourceTypeCatalog(rc).MarkersByName(context.Background()); err == nil {
+		t.Fatal("want the client error surfaced")
+	}
+}

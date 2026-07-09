@@ -1,0 +1,47 @@
+# RBAC for OpenChoreo to render the thunder-app ClusterResourceType.
+#
+# OC's RenderedRelease controller applies a ResourceType's rendered resources[]
+# into the consuming project's data-plane namespace (`dp-<...>`) — but it does so
+# as the DATA-PLANE agent SA `cluster-agent-dataplane` (namespace
+# `openchoreo-data-plane`), NOT the control-plane controller-manager. For
+# thunder-app the rendered object is an `aep.wso2.com/v1alpha1 ThunderApplication`,
+# a CRD neither of that agent's roles
+# (`cluster-agent-dataplane-openchoreo-data-plane`, `wso2-api-platform-gateway-module`)
+# covers. Without this grant provisioning fails with:
+#   thunderapplications.aep.wso2.com "<name>" is forbidden: User
+#   "system:serviceaccount:openchoreo-data-plane:cluster-agent-dataplane"
+#   cannot patch resource "thunderapplications" in API group "aep.wso2.com" ...
+#
+# Least privilege: only the ThunderApplication lifecycle verbs the data-plane
+# applier needs (create/patch/update to apply, get/list/watch to copy the live
+# status into applied.<id>.status — which the ResourceType's readyWhen gates on
+# (`status.ready`) — delete for retainPolicy: Delete). The client_id output is
+# resolved from the CR's `status.clientId` (a CEL value output); the operator's
+# `<cr-name>-oauth` ConfigMap remains a k8s-native artifact readable via the
+# agent's EXISTING core-group configmaps grant, so configmaps are intentionally
+# NOT re-granted here.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: openchoreo-dataplane-thunder-app
+  labels:
+    app.kubernetes.io/part-of: wso2-agentic-engineer
+rules:
+  - apiGroups: ["aep.wso2.com"]
+    resources: ["thunderapplications"]
+    verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: openchoreo-dataplane-thunder-app
+  labels:
+    app.kubernetes.io/part-of: wso2-agentic-engineer
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: openchoreo-dataplane-thunder-app
+subjects:
+  - kind: ServiceAccount
+    name: cluster-agent-dataplane
+    namespace: openchoreo-data-plane

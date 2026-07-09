@@ -19,7 +19,7 @@ compile error, not a runtime surprise.
 | `services/` | long-lived deployables (Go + TS) | yes |
 | `runners/` | one-shot / job images | as jobs |
 | `packages/` | shared libraries (`contracts`, `core`, `ui`, `clients`, `agent`) | no |
-| `deployments/` | canonical local setup (k3d + docker-compose) | n/a |
+| `deployments/` | canonical local setup (k3d + docker-compose); resource types that ship a reference operator keep it under `resource-types/<type>/operator/` (e.g. `thunder-app-operator`) | n/a (operator subdirs: yes, in-cluster) |
 
 ## Data & contract ownership
 

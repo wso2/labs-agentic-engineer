@@ -19,6 +19,7 @@ package execution
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/contracts/taskmeta"
@@ -206,5 +207,50 @@ func TestFunnel_ExecuteOnProvisionIssue_NoOp(t *testing.T) {
 	// The stray label is consumed.
 	if got := issues.removed[1]; len(got) == 0 || got[0] != taskmeta.LabelExecute {
 		t.Errorf("expected aep:execute consumed on the provision issue, got %v", got)
+	}
+	// A one-time guidance comment is posted, pointing at the design page.
+	if got := issues.comments[1]; len(got) != 1 {
+		t.Fatalf("expected exactly one provision-gate notice comment, got %d: %v", len(got), got)
+	} else if !strings.Contains(got[0], "dependency panel") {
+		t.Errorf("notice comment does not point at the dependency panel: %q", got[0])
+	}
+	// ...and the one-time marker is stamped so a repeat stamp stays quiet.
+	if got := issues.added[1]; len(got) != 1 || got[0] != taskmeta.LabelProvisionNoted {
+		t.Errorf("expected aep:provision-noted stamped, got %v", got)
+	}
+}
+
+// TestFunnel_ExecuteOnProvisionIssue_NoDuplicateNotice pins the one-time
+// guarantee: a provision gate already carrying aep:provision-noted (a prior
+// Execute stamp already explained it) does not get a second comment — the label
+// is still consumed and no row is admitted.
+func TestFunnel_ExecuteOnProvisionIssue_NoDuplicateNotice(t *testing.T) {
+	store := newFakeStore()
+	issues := newFakeIssues([]gitrepo.IssueInfo{
+		provisionIssue(1, "stripe", taskmeta.GateConfigCollection, "open"),
+	})
+	// A repeated stray aep:execute on a gate that was already explained once.
+	issues.list[0].Labels = append(issues.list[0].Labels, taskmeta.LabelExecute, taskmeta.LabelProvisionNoted)
+	exec := &fakeExecutor{store: store, startOK: true}
+	f := newTestFunnelP(store, issues, map[string]bool{}, nil, exec)
+
+	if err := f.OnExecuteIntent(context.Background(), "o/r", 1); err != nil {
+		t.Fatalf("OnExecuteIntent: %v", err)
+	}
+	if len(exec.got) != 0 {
+		t.Fatalf("aep:execute on a provision issue must not dispatch, got %d", len(exec.got))
+	}
+	// No duplicate comment on the already-noted gate.
+	if got := issues.comments[1]; len(got) != 0 {
+		t.Errorf("expected no duplicate notice on an already-noted gate, got %v", got)
+	}
+	// The stray label is still consumed.
+	if got := issues.removed[1]; len(got) == 0 || got[0] != taskmeta.LabelExecute {
+		t.Errorf("expected aep:execute consumed, got %v", got)
+	}
+	// No execution row admitted.
+	rows, _ := store.ListByIssue(context.Background(), "o/r", 1)
+	if len(rows) != 0 {
+		t.Fatalf("no execution row must be admitted, got %d", len(rows))
 	}
 }

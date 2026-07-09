@@ -23,6 +23,7 @@ import (
 
 	"github.com/wso2/aep/aep-api/internal/feature/artifacts"
 	"github.com/wso2/aep/aep-api/internal/feature/artifacts/artifactstest"
+	"github.com/wso2/aep/aep-api/internal/feature/dependencies/resources"
 	"github.com/wso2/aep/aep-api/models"
 )
 
@@ -172,6 +173,9 @@ func TestSaveAndProceed_GateIgnoresValuesAndPlatformResource(t *testing.T) {
 	svc := newService(fake)
 	reg := &recordingRegistrar{}
 	svc.SetExternalResourceRegistry(reg)
+	// A platform-resource dep is present, so the save fetches CRT markers; the
+	// postgres type carries no end-user-auth role, so nothing is stamped.
+	svc.resourceCatalog = &fakeMarkerCatalog{markers: map[string]resources.TypeMarkers{}}
 
 	got, err := svc.SaveAndProceed(context.Background(), "acme", "web", "")
 	if err != nil {

@@ -57,12 +57,6 @@ func (f *fakeThunder) DeletePublisherApp(context.Context, string) (bool, error) 
 func (f *fakeThunder) OUExists(context.Context, string) (bool, error) {
 	panic("fakeThunder: OUExists unexpected")
 }
-func (f *fakeThunder) EnsureRedirectURIs(context.Context, string, []string) (bool, error) {
-	panic("fakeThunder: EnsureRedirectURIs unexpected")
-}
-func (f *fakeThunder) EnsureProjectOAuthClient(context.Context, string, []string) (string, bool, error) {
-	panic("fakeThunder: EnsureProjectOAuthClient unexpected")
-}
 
 // --- connect-sessions (App-mode OAuth start) --------------------------------
 

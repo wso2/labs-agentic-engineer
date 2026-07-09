@@ -22,6 +22,7 @@ package skills
 // table). See docs/design/skills-repo-storage.md.
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -48,7 +49,6 @@ func newSkillValue(orgID, kind, name, skillMD string, refs References, fm skillF
 		Description:   strings.TrimSpace(fm.Description),
 		SkillMD:       skillMD,
 		References:    map[string]string(refs),
-		Version:       versionFromMetadata(fm),
 		ContentSHA:    contentSHA(skillMD, refs),
 		License:       fm.License,
 		Compatibility: fm.Compatibility,
@@ -70,7 +70,6 @@ type Skill = models.Skill
 type SkillSummary struct {
 	Name        string `json:"name"`
 	Kind        string `json:"kind"`
-	Version     int    `json:"version"`
 	Description string `json:"description"`
 	ContentSHA  string `json:"contentSha"`
 	Editable    bool   `json:"editable"`
@@ -79,15 +78,42 @@ type SkillSummary struct {
 // ---- frontmatter parsing ----------------------------------------------------
 
 // skillFrontmatter is the YAML frontmatter shape accepted on SKILL.md.
-// Spec-clean AgentSkills: name, description, optional license,
-// compatibility, allowed-tools. Platform extensions under metadata.aep.*
+// Spec-clean AgentSkills: name, description, optional license, compatibility,
+// allowed-tools — plus the platform's `metadata.aep` extension carrying the
+// skill kind (metadata is the AgentSkills spec's sanctioned extension point).
 type skillFrontmatter struct {
-	Name          string                 `yaml:"name"`
-	Description   string                 `yaml:"description"`
-	License       string                 `yaml:"license,omitempty"`
-	Compatibility string                 `yaml:"compatibility,omitempty"`
-	AllowedTools  any                    `yaml:"allowed-tools,omitempty"`
-	Metadata      map[string]interface{} `yaml:"metadata,omitempty"`
+	Name          string        `yaml:"name"`
+	Description   string        `yaml:"description"`
+	License       string        `yaml:"license,omitempty"`
+	Compatibility string        `yaml:"compatibility,omitempty"`
+	AllowedTools  any           `yaml:"allowed-tools,omitempty"`
+	Metadata      skillMetadata `yaml:"metadata,omitempty"`
+}
+
+// skillMetadata is the `metadata:` frontmatter map; only the `aep` namespace
+// is decoded — other keys stay untouched in the stored bytes.
+type skillMetadata struct {
+	Aep skillAepMetadata `yaml:"aep,omitempty"`
+}
+
+// skillAepMetadata is the platform namespace inside `metadata`. `kind` names
+// the skill kind: platform | org | custom | imported.
+type skillAepMetadata struct {
+	Kind string `yaml:"kind,omitempty"`
+}
+
+// frontmatterKind derives a skill's kind from its frontmatter: the trimmed
+// `metadata.aep.kind` when it names a known kind, else "org" — an unmarked
+// SKILL.md is an org skill (platform-shipped, page-visible, read-only). The
+// service stamps custom/imported into the files it writes, so only the four
+// known values ever appear. docs/design/skills-unified-library-migration.md §3.2.
+func frontmatterKind(fm skillFrontmatter) string {
+	switch k := strings.TrimSpace(fm.Metadata.Aep.Kind); k {
+	case models.SkillKindPlatform, models.SkillKindOrg, models.SkillKindCustom, models.SkillKindImported:
+		return k
+	default:
+		return models.SkillKindOrg
+	}
 }
 
 // parseSkillMD splits frontmatter from body and decodes it. Returns the
@@ -113,53 +139,81 @@ func parseSkillMD(content string) (skillFrontmatter, string, error) {
 	return s, body, nil
 }
 
-// versionFromMetadata pulls metadata.aep.version out of frontmatter
-// (stored as a string-as-int by the spec) and returns the integer
-// version. Defaults to 1 when absent.
-func versionFromMetadata(s skillFrontmatter) int {
-	if s.Metadata == nil {
-		return 1
+// stampFrontmatterKind returns skillMD with `metadata.aep.kind: <kind>` set
+// in its frontmatter — the flat repo layout has no kind directories, so every
+// user-owned file must be self-describing (an unstamped SKILL.md reads back
+// as kind org: read-only, and reconcile-purged as "retired"). The body is
+// preserved byte-for-byte; sibling frontmatter keys survive the yaml.Node
+// round-trip (order and comments kept; scalar quoting may normalize). When
+// the exact kind is already stamped the input is returned unchanged, so
+// repeated saves are byte-stable.
+func stampFrontmatterKind(skillMD, kind string) (string, error) {
+	fm, _, err := parseSkillMD(skillMD)
+	if err != nil {
+		return "", fmt.Errorf("stamp kind: %w", err)
 	}
-	// Flat dotted-key form — the documented AgentSkills string→string
-	// representation: `metadata: { "aep.version": "2" }`.
-	if v, ok := s.Metadata["aep.version"]; ok {
-		return coerceVersion(v)
+	if strings.TrimSpace(fm.Metadata.Aep.Kind) == kind {
+		return skillMD, nil
 	}
-	// Nested form — `metadata: { aep: { version: "2" } }`.
-	if aepAny, ok := s.Metadata["aep"]; ok {
-		if aepMap, ok := aepAny.(map[string]interface{}); ok {
-			if verAny, ok := aepMap["version"]; ok {
-				return coerceVersion(verAny)
-			}
-		}
+	raw, body, err := artifacts.SplitFrontmatter(skillMD)
+	if err != nil {
+		return "", fmt.Errorf("stamp kind: %w", err)
 	}
-	return 1
+	var doc yaml.Node
+	if err := yaml.Unmarshal([]byte(raw), &doc); err != nil {
+		return "", fmt.Errorf("stamp kind: decode frontmatter: %w", err)
+	}
+	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
+		return "", fmt.Errorf("stamp kind: frontmatter is not a mapping")
+	}
+	root := doc.Content[0]
+	meta := ensureMappingChild(root, "metadata")
+	aep := ensureMappingChild(meta, "aep")
+	setMappingScalar(aep, "kind", kind)
+
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(&doc); err != nil {
+		return "", fmt.Errorf("stamp kind: encode frontmatter: %w", err)
+	}
+	if err := enc.Close(); err != nil {
+		return "", fmt.Errorf("stamp kind: encode frontmatter: %w", err)
+	}
+	// SplitFrontmatter strips the closing fence plus ONE newline; reassembling
+	// with "---\n" + body restores the original spacing.
+	return "---\n" + buf.String() + "---\n" + body, nil
 }
 
-// coerceVersion maps an int/float/string YAML scalar to a positive version
-// integer, defaulting to 1.
-func coerceVersion(v any) int {
-	switch t := v.(type) {
-	case int:
-		if t > 0 {
-			return t
-		}
-	case int64:
-		if t > 0 {
-			return int(t)
-		}
-	case float64:
-		if t > 0 {
-			return int(t)
-		}
-	case string:
-		var n int
-		_, _ = fmt.Sscanf(t, "%d", &n)
-		if n > 0 {
-			return n
+// ensureMappingChild returns the mapping value for `key` in mapping node m,
+// creating (or replacing a non-mapping value with) an empty mapping.
+func ensureMappingChild(m *yaml.Node, key string) *yaml.Node {
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			if m.Content[i+1].Kind != yaml.MappingNode {
+				m.Content[i+1] = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+			}
+			return m.Content[i+1]
 		}
 	}
-	return 1
+	k := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}
+	v := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	m.Content = append(m.Content, k, v)
+	return v
+}
+
+// setMappingScalar sets `key: value` in mapping node m, replacing an existing
+// value node or appending the pair.
+func setMappingScalar(m *yaml.Node, key, value string) {
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			m.Content[i+1] = &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value}
+			return
+		}
+	}
+	m.Content = append(m.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key},
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value})
 }
 
 // contentSHA computes a deterministic hash over the canonical concat of

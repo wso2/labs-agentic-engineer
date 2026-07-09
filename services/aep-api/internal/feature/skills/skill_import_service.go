@@ -25,6 +25,8 @@ import (
 	"log/slog"
 	"path"
 	"strings"
+
+	"github.com/wso2/aep/aep-api/models"
 )
 
 // importMaxBytes caps the total decompressed payload we read from a
@@ -82,9 +84,9 @@ func (s *SkillImportService) Import(ctx context.Context, orgID, actor string, r 
 			fmt.Sprintf("frontmatter name %q must equal the tarball's top-level directory %q", fm.Name, name), "name")
 	}
 
-	// resolveFresh, not Resolve: the collision check must also see flow-kind
-	// skills (their names are reserved) and must surface a read failure rather
-	// than proceed on a phantom "no collision".
+	// resolveFresh, not Resolve: the collision check must also see
+	// platform-kind skills (their names are reserved) and must surface a read
+	// failure rather than proceed on a phantom "no collision".
 	existing, err := s.skills.resolveFresh(ctx, orgID, name)
 	if err != nil {
 		return nil, fmt.Errorf("collision check: %w", err)
@@ -95,15 +97,23 @@ func (s *SkillImportService) Import(ctx context.Context, orgID, actor string, r 
 
 	warnings := importWarnings(fm)
 
+	// Stamp the kind into the stored file — the flat layout has no kind dirs,
+	// so the imported file must self-describe as user-owned (editable, never
+	// reconcile-purged).
+	stamped, err := stampFrontmatterKind(skillMD, models.SkillKindImported)
+	if err != nil {
+		return nil, validationErr("FRONTMATTER_INVALID", err.Error(), "skillMd")
+	}
+
 	msg := fmt.Sprintf("feat(skills): import skill %q\n\nby %s", name, actor)
-	if err := s.skills.writeSkillFiles(ctx, orgID, "imported", name, skillMD, normalizeRefs(refs), msg, false); err != nil {
+	if err := s.skills.writeSkillFiles(ctx, orgID, name, stamped, normalizeRefs(refs), msg, false); err != nil {
 		return nil, fmt.Errorf("commit imported skill %q: %w", name, err)
 	}
 	slog.InfoContext(ctx, "skill imported", "orgID", orgID, "name", name, "actor", actor, "warnings", len(warnings))
 
 	return &ImportResult{
 		Name:          name,
-		Kind:          "imported",
+		Kind:          models.SkillKindImported,
 		License:       fm.License,
 		Compatibility: fm.Compatibility,
 		Warnings:      warnings,

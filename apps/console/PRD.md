@@ -38,6 +38,16 @@ BFF, which is its only backend.
    **autonomously** — there is no human code-review gate. Humans intervene
    on failure, not by default.
 
+## Spec versioning
+
+The whole spec — requirements, design, and validation files under the repo's
+`specs/` tree — is versioned as **one incrementing `v<N>` git tag sequence**,
+cut when the user approves/publishes. There are no per-artifact version
+trails (the earlier `v<N>-<M>` design-revision tags are legacy). The console
+reads this via `GET /projects/{p}/tags` (`latest` + `specDirty`): the
+"vN published" chip is the latest tag, and "draft changes" means `specs/`
+moved on GitHub after that tag.
+
 ## Personas
 
 - **Developer/User** — gives requirements *and* owns the design gate: reviews and
@@ -77,6 +87,13 @@ that's a stalled feature — investigate, don't ignore.
   [#80](https://github.com/wso2/labs-agentic-engineer/issues/80) (BE
   handshake: [#81](https://github.com/wso2/labs-agentic-engineer/issues/81),
   ADR-0007)
+- Console on the proposed contract (#111) — spec view reads via `list-files` +
+  lazy `read-file` (supersedes #99); overview Build card from `list-tasks`
+  (`/board` is gone); version chips from `/tags` `latest`/`specDirty` —
+  [#113](https://github.com/wso2/labs-agentic-engineer/issues/113) (BE
+  handshake: [#117](https://github.com/wso2/labs-agentic-engineer/issues/117),
+  collab seeding follow-up:
+  [#114](https://github.com/wso2/labs-agentic-engineer/issues/114))
 - Project overview page — spec/build/deployment status cards (versioned),
   components list, project-view tab shell —
   [#77](https://github.com/wso2/labs-agentic-engineer/issues/77) (BE

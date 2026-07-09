@@ -162,7 +162,7 @@ func sampleHandler() (http.Handler, *fakeResourceReader, *fakeEndpointLister) {
 		{Project: "crm", Component: "leads-api", Name: "grpc", Type: "gRPC"}, // not published cross-project
 	}}
 	rt := &fakeTypeLister{items: []resources.PlatformResourceType{
-		{Name: "postgres", Outputs: []string{"host", "port"}},
+		{Name: "postgres", Description: "A dedicated PostgreSQL database cluster.", Outputs: []string{"host", "port"}},
 	}}
 	return NewMCPHandler(er, ep, rt), er, ep
 }
@@ -418,6 +418,15 @@ func TestMCP_ListPlatformResourceTypes(t *testing.T) {
 	}
 	if len(payload.ResourceTypes) != 1 || payload.ResourceTypes[0].Name != "postgres" {
 		t.Errorf("unexpected payload: %+v", payload)
+	}
+	// The self-description flows through to the architect-facing payload —
+	// assert on the raw JSON text so a `json:"-"` regression cannot pass.
+	if !strings.Contains(text, `"description":"A dedicated PostgreSQL database cluster."`) {
+		t.Errorf("payload missing serialized description: %s", text)
+	}
+	// Markers stay internal (json:"-") — no marker leakage into the payload.
+	if strings.Contains(text, "Markers") || strings.Contains(text, "EndUserAuth") {
+		t.Errorf("payload leaks internal Markers: %s", text)
 	}
 }
 

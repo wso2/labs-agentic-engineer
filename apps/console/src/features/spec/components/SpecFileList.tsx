@@ -27,10 +27,7 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import { FileText, Plus } from "@wso2/oxygen-ui-icons-react";
-import type { components } from "../../../generated/aep-api";
-
-type SpecFile = components["schemas"]["SpecFile"];
-type SpecGroup = SpecFile["group"];
+import type { SpecFileEntry, SpecGroup } from "../api/mapping";
 
 const GROUPS: { id: SpecGroup; title: string }[] = [
   { id: "requirements", title: "Requirements" },
@@ -50,7 +47,7 @@ export function SpecFileList({
   deriving,
   failed,
 }: {
-  files: SpecFile[];
+  files: SpecFileEntry[];
   selectedPath: string | null;
   onSelect: (path: string) => void;
   onAddArtifact: () => void;

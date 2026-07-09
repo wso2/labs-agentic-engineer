@@ -106,12 +106,11 @@ async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
 // Types
 // ----------------------------------------------------------------------------
 
-export type SkillKind = 'builtin' | 'custom' | 'imported';
+export type SkillKind = 'org' | 'platform' | 'custom' | 'imported';
 
 export interface SkillSummary {
   name: string;
   kind: SkillKind;
-  version: number;
   description: string;
   contentSha: string;
   editable: boolean;
@@ -124,7 +123,6 @@ export interface SkillDetail {
   description: string;
   skillMd: string;
   references: Record<string, string>;
-  version: number;
   contentSha: string;
   license?: string;
   compatibility?: string;
@@ -140,12 +138,9 @@ export interface SkillImportResult {
   warnings: string[];
 }
 
-/** One built-in whose embedded (platform) version is newer than the repo copy. */
+/** One built-in whose embedded (platform) content differs from the repo copy. */
 export interface SkillUpdate {
   name: string;
-  /** -1 when the built-in is absent from the org's repo. */
-  repoVersion: number;
-  embeddedVersion: number;
 }
 
 export interface SkillUpdatesResponse {
@@ -210,7 +205,7 @@ export const orgSkillsApi = {
   },
 
   /**
-   * List built-ins whose embedded version is newer than (or missing from) the
+   * List built-ins whose embedded content differs from (or is missing from) the
    * org's skills repo — drives the "updates available" badge. §6.3.
    */
   async checkUpdates(): Promise<SkillUpdatesResponse> {
@@ -218,7 +213,7 @@ export const orgSkillsApi = {
     return { updates: raw.updates ?? [], count: raw.count ?? 0 };
   },
 
-  /** Reconcile (sync) built-in skills to the embedded versions. Admin action. §6.3. */
+  /** Reconcile (sync) built-in skills to the embedded content. Admin action. §6.3. */
   async syncBuiltins(): Promise<SkillSyncResponse> {
     return fetchJSON<SkillSyncResponse>(`${orgSkills()}/sync`, { method: 'POST' });
   },

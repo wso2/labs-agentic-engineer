@@ -325,7 +325,7 @@ func TestPlan_InProgress_409(t *testing.T) {
 	bt := &blockingTurn{started: make(chan struct{}), release: make(chan struct{})}
 	fx := workspacetest.New(t, map[string]string{"specs/design/design.md": "# d"})
 	skillsOrigin := gittest.NewRemote(t, gittest.WithSeed(map[string]string{
-		"skills/flow/task-planning/SKILL.md": "---\nname: task-planning\n---\nbody",
+		"skills/task-planning/SKILL.md": "---\nname: task-planning\nmetadata:\n  aep:\n    kind: platform\n---\nbody",
 	}, "seed"))
 	repoRow := &models.GitRepository{OrgID: org, ProjectID: proj, RepoURL: fx.Origin.URL(),
 		DefaultBranch: "main", RepoSlug: workspacetest.DefaultSlug, Status: "ready"}

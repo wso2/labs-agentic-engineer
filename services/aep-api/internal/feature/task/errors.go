@@ -51,4 +51,13 @@ var (
 	// ErrNoAnthropicKey is returned pre-stream when the org has no Anthropic key.
 	// Mapped to 400.
 	ErrNoAnthropicKey = errors.New("organization has no Anthropic API key configured")
+	// ErrSkillsRepoUnavailable means the org's _skills repo (the plan turn's
+	// SkillsRef source) could not be resolved — its row is missing or
+	// unprovisionable, or the backing repo is gone/unreachable (live incident:
+	// the GitHub repo was deleted externally while its git_repositories row
+	// lingered). Mapped to a LOGGED 503 with a clear message instead of an
+	// opaque 500. Recovery is a manual operator action today: delete the stale
+	// `_skills` git_repositories row — the next resolve re-provisions and
+	// re-seeds the repo.
+	ErrSkillsRepoUnavailable = errors.New("org skills repository unavailable")
 )

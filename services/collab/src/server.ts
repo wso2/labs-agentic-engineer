@@ -25,7 +25,7 @@ import type { CollabConfig } from "./env.js";
 import type { BffClient } from "./bff.js";
 import { isSpecRoom } from "./room.js";
 import { seedDocument } from "./seed.js";
-import { devSpecBundle } from "./fixtures.js";
+import { devSeedFiles } from "./fixtures.js";
 
 // Connection context established by onAuthenticate and consumed by later
 // hooks. The token is retained for the seed read (performed as the first
@@ -84,12 +84,12 @@ export function buildLoadDocumentHook(config: CollabConfig, deps: CollabDeps) {
     const { document, documentName, context } = data;
 
     if (config.devMode) {
-      seedDocument(document, devSpecBundle);
+      seedDocument(document, devSeedFiles);
       deps.log?.(`seeded ${documentName} from dev fixtures`);
       return document;
     }
 
-    // Real path: read the spec bundle as the first joiner (the oracle
+    // Real path: read the spec files as the first joiner (the oracle
     // resolved the room into context.projectName).
     if (!deps.bff || !context.token || !context.projectName) {
       deps.log?.(
@@ -101,7 +101,7 @@ export function buildLoadDocumentHook(config: CollabConfig, deps: CollabDeps) {
     // by the oracle, and an unseeded-but-live doc beats a dead connection
     // (transient BFF errors would otherwise hard-fail every join).
     try {
-      const files = await deps.bff.fetchSpecBundle(
+      const files = await deps.bff.fetchSpecFiles(
         context.token,
         context.projectName,
       );

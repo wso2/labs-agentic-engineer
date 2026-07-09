@@ -1,10 +1,14 @@
 import { http, HttpResponse, type JsonBodyType } from "msw";
 import {
-  projectBoards,
   projectComponents,
   projectSectionError,
-  projectSpecs,
+  projectSpecFiles,
   projectStatuses,
+  projectTags,
+  projectTasks,
+  specFileContent,
+  specFileMetas,
+  specFileNotFound,
   type ProjectScenario,
 } from "../fixtures/project";
 
@@ -37,10 +41,34 @@ export const projectHandlers = [
   http.get("*/api/v1/projects/:projectName/components", () =>
     respond((s) => projectComponents[s]),
   ),
-  http.get("*/api/v1/projects/:projectName/board", () =>
-    respond((s) => projectBoards[s]),
+  http.get("*/api/v1/projects/:projectName/tasks", () =>
+    respond((s) => projectTasks[s]),
   ),
-  http.get("*/api/v1/projects/:projectName/spec", () =>
-    respond((s) => projectSpecs[s]),
+  http.get("*/api/v1/projects/:projectName/tags", () =>
+    respond((s) => projectTags[s]),
   ),
+  // Files API (#113): list-files metadata + per-file content reads, exactly
+  // as aep-api serves them (repo-relative specs/ paths).
+  http.get("*/api/v1/projects/:projectName/files", () =>
+    respond((s) => specFileMetas(projectSpecFiles[s])),
+  ),
+  http.get("*/api/v1/projects/:projectName/files/*", ({ request }) => {
+    const s = scenario();
+    if (s === "error") {
+      return HttpResponse.json(projectSectionError, {
+        status: 500,
+        headers: { "Content-Type": "application/problem+json" },
+      });
+    }
+    const pathname = new URL(request.url).pathname;
+    const path = decodeURIComponent(pathname.replace(/^.*\/files\//, ""));
+    const file = specFileContent(projectSpecFiles[s], path);
+    if (!file) {
+      return HttpResponse.json(specFileNotFound(path), {
+        status: 404,
+        headers: { "Content-Type": "application/problem+json" },
+      });
+    }
+    return HttpResponse.json(file);
+  }),
 ];

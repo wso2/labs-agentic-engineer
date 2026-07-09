@@ -29,7 +29,7 @@
       },
       {
         "name": "orders-web",
-        "componentType": "webapp",
+        "componentType": "web-application",
         "language": "TypeScript",
         "dependsOn": ["orders-api"]
       }

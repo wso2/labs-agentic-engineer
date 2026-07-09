@@ -185,36 +185,61 @@ export class SnapshotSkillSource implements SkillSource {
 }
 
 /**
- * Scan `<snapshotDir>/skills/<kind>/<name>/SKILL.md` — every kind (builtin |
- * custom | imported | flow) — into catalog rows. Deterministic order: kinds
- * sorted, then skill dirs sorted within each kind; a duplicate skill NAME keeps
- * its first (sorted-order) occurrence. A dir without a readable SKILL.md is
- * simply not a skill; a snapshot without `skills/` yields an empty catalog.
+ * The RETIRED kind path-segments of the pre-flat org-skills layout
+ * (`skills/<kindDir>/<name>/`). Old per-SHA snapshots keep this shape forever,
+ * so the scan tolerates it alongside the current flat layout.
+ */
+const LEGACY_KIND_DIRS = new Set(["builtin", "flow", "custom", "imported"]);
+
+/**
+ * Scan the snapshot's skill catalog into rows. The current shape is FLAT —
+ * `<snapshotDir>/skills/<name>/SKILL.md` with the kind in frontmatter
+ * (`metadata.aep.kind`; irrelevant to this scan) — and the legacy nested shape
+ * `skills/<kindDir>/<name>/SKILL.md` is tolerated for old snapshots.
+ * Deterministic order: flat dirs sorted first, then legacy kind dirs sorted
+ * with skill dirs sorted within each; a duplicate skill NAME keeps its first
+ * occurrence (so a flat copy wins over a legacy one). A dir without a readable
+ * SKILL.md is simply not a skill; a snapshot without `skills/` yields an empty
+ * catalog.
  */
 function scanCatalog(snapshotDir: string): CatalogRow[] {
   const skillsRoot = join(snapshotDir, "skills");
   if (!existsSync(skillsRoot)) return [];
   const rows: CatalogRow[] = [];
   const seen = new Set<string>();
-  for (const kind of listDirs(skillsRoot)) {
+  const addSkillDir = (dir: string, id: string): void => {
+    let raw: string;
+    try {
+      raw = readFileSync(join(dir, "SKILL.md"), "utf8");
+    } catch {
+      return;
+    }
+    const parsed = parseSkillMd(raw);
+    const name = parsed.name ?? id; // fallback: the dir name IS the skill id
+    if (seen.has(name)) return;
+    seen.add(name);
+    rows.push({
+      name,
+      description: parsed.description,
+      hasReferences: listReferences(dir).length > 0,
+      dir,
+    });
+  };
+
+  // Flat layout first (a dir holding SKILL.md directly IS a skill — even one
+  // named like a kind word; those names are reserved server-side).
+  const legacyKindDirs: string[] = [];
+  for (const entry of listDirs(skillsRoot)) {
+    const dir = join(skillsRoot, entry);
+    if (existsSync(join(dir, "SKILL.md"))) {
+      addSkillDir(dir, entry);
+    } else if (LEGACY_KIND_DIRS.has(entry)) {
+      legacyKindDirs.push(entry);
+    }
+  }
+  for (const kind of legacyKindDirs) {
     for (const id of listDirs(join(skillsRoot, kind))) {
-      const dir = join(skillsRoot, kind, id);
-      let raw: string;
-      try {
-        raw = readFileSync(join(dir, "SKILL.md"), "utf8");
-      } catch {
-        continue;
-      }
-      const parsed = parseSkillMd(raw);
-      const name = parsed.name ?? id; // fallback: the dir name IS the skill id
-      if (seen.has(name)) continue;
-      seen.add(name);
-      rows.push({
-        name,
-        description: parsed.description,
-        hasReferences: listReferences(dir).length > 0,
-        dir,
-      });
+      addSkillDir(join(skillsRoot, kind, id), id);
     }
   }
   return rows;

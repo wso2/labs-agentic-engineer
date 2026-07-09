@@ -118,15 +118,32 @@ export function useProjectComponents(projectName: string) {
   );
 }
 
-export function useProjectBoard(projectName: string) {
+export function useProjectTasks(projectName: string) {
   return useProjectResource(
-    projectKeys.board(projectName),
+    projectKeys.tasks(projectName),
     () =>
-      client.GET("/projects/{projectName}/board", {
+      client.GET("/projects/{projectName}/tasks", {
         params: { path: { projectName } },
       }),
-    "build board",
+    "tasks",
   );
+}
+
+// Spec version tags (#117). The BE hasn't implemented /tags yet, so a failed
+// read degrades to "no tags" instead of an error card — the version chips
+// simply don't render until the endpoint lands.
+export function useProjectTags(projectName: string) {
+  return useQuery({
+    queryKey: projectKeys.tags(projectName),
+    queryFn: async () => {
+      const { data, error } = await client.GET("/projects/{projectName}/tags", {
+        params: { path: { projectName } },
+      });
+      if (error || data === undefined) return null;
+      return data;
+    },
+    refetchInterval: OVERVIEW_POLL_MS,
+  });
 }
 
 export function useCreateProject() {

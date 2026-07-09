@@ -2,33 +2,29 @@
   "skills": [
     {
       "name": "api-management",
-      "kind": "builtin",
-      "version": 1,
+      "kind": "org",
       "description": "How the platform's API gateway validates JWTs, injects X-User-Id from the sub claim, attaches CORS, and how to design + write services and consumers that match. Apply to any service with exposesAPI.auth set, and to any consumer (sibling component OR external dependentApi) that calls a protected API.",
       "contentSha": "9e0758b3e4995a5dcc8fd7f0603c1312b9f23fad995adbff92393731434c43df",
       "editable": false
     },
     {
       "name": "go",
-      "kind": "builtin",
-      "version": 1,
+      "kind": "org",
       "description": "How to build a Go service on the platform — pinned golang:1.25-alpine builder (the build pod runs with GOTOOLCHAIN=local), pure-Go modernc.org/sqlite driver (CGO times out under the build pod's CPU throttle), suggested layout, port 9090, GET /health liveness, multi-stage Dockerfile → slim runtime, embedded SQLite for per-user data inside the owning service. Apply to every Go component.",
       "contentSha": "7c12ece37fcd43f52619594ef372357b8680d0fc298e85b253d8683515f58760",
       "editable": false
     },
     {
       "name": "react-webapp",
-      "kind": "builtin",
-      "version": 1,
+      "kind": "org",
       "description": "How to build a React SPA on the platform — Vite project layout, multi-stage Dockerfile → nginx:alpine runtime, synchronous /env-config.js load before the bundle, the authoritative window._env_ key set, throw-on-missing-key rule, and stock static-only nginx config (no envsubst, no proxy). Apply to every web-app component.",
       "contentSha": "e73aae05df0223206aec051f3ea41def889967f6bcaa06dffcfb414d3eafa37e",
       "editable": false
     },
     {
       "name": "thunder-authentication",
-      "kind": "builtin",
-      "version": 1,
-      "description": "How the platform's Thunder IDP is wired into SPAs that sign users in. Covers the callerIdentity.mode design field, the per-project Thunder OAuth client (BFF-owned — agent never sees client_id), the window._env_.THUNDER_* key set, and OIDC client wiring with oidc-client-ts. Pairs with react-webapp when the SPA wiring patterns apply. Apply on any project whose spec implies users sign in.",
+      "kind": "org",
+      "description": "How the platform's Thunder IDP is wired into SPAs that sign users in. Covers the end-user-auth platform-resource dependency that triggers auth, the per-dependency Thunder OAuth client (platform-owned — agent never sees client_id), the generic window._env_.<DEP>_* runtime keys derived from YOUR dependency name, and OIDC client wiring with oidc-client-ts. Pairs with react-webapp when the SPA wiring patterns apply. Apply on any project whose spec implies users sign in.",
       "contentSha": "d8f8ccc491f493f02e396a2d39fc8c1924913884aa86476474e1a51968bd946b",
       "editable": false
     }

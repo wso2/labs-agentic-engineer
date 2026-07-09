@@ -241,17 +241,10 @@ func orgServiceURLEnv(name string) string {
 }
 
 // envVarName builds a valid C_IDENTIFIER env-var name from a dep name + output
-// name (every char outside [A-Za-z0-9_] → '_', upper-cased). Mirrors the upstream
-// builder: "orders-db" + "host" → "ORDERS_DB_HOST".
+// name. Delegates to resources.EnvVarName — the single source of truth shared
+// with runtimeconfig's window._env_ keys, so the pod env var and the SPA config
+// key for the same dep+output are byte-identical. "orders-db" + "host" →
+// "ORDERS_DB_HOST".
 func envVarName(depName, outName string) string {
-	joined := depName + "_" + outName
-	mapped := strings.Map(func(r rune) rune {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_':
-			return r
-		default:
-			return '_'
-		}
-	}, joined)
-	return strings.ToUpper(mapped)
+	return resources.EnvVarName(depName, outName)
 }

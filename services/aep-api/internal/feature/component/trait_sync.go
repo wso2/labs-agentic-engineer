@@ -300,7 +300,7 @@ func (s *TraitSyncService) SyncProjectAPITraits(ctx context.Context, orgID, proj
 		return nil
 	}
 	for _, c := range design.Components {
-		if c.ComponentType != "service" {
+		if c.ComponentType != models.ComponentTypeService {
 			continue
 		}
 		if !models.ResolveAPISecurityEnabled(c) {
@@ -339,7 +339,7 @@ func (s *TraitSyncService) siblingSPAOrigins(ctx context.Context, orgID, project
 	origins := make([]string, 0, len(design.Components))
 	seen := make(map[string]struct{}, len(design.Components))
 	for _, c := range design.Components {
-		if c.ComponentType != "web-app" {
+		if c.ComponentType != models.ComponentTypeWebApplication {
 			continue
 		}
 		k8sName := k8sname.ToK8sName(c.Name)

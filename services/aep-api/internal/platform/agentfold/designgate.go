@@ -55,7 +55,7 @@ var (
 		"name": true, "type": true, "version": true, "language": true,
 		"buildpack": true, "appPath": true, "entrypoint": true,
 		"exposure": true, "dependencies": true, "description": true,
-		"exposesAPI": true, "callerIdentity": true, "componentAgentInstructions": true,
+		"exposesAPI": true, "componentAgentInstructions": true,
 	}
 )
 
@@ -66,7 +66,7 @@ var (
 // strict as the TS zod gate (which the FileBundle runs first), so a zod-passing
 // write always folds here: the top-level shape + each dependency's kind/name and
 // strict-key set are enforced; the optional platform-owned blocks (exposesAPI /
-// callerIdentity / componentAgentInstructions) are type-checked only.
+// componentAgentInstructions) are type-checked only.
 func validateComponentDesign(content, dirName string) *designProblem {
 	var parsed any
 	if err := json.Unmarshal([]byte(content), &parsed); err != nil {

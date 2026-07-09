@@ -36,8 +36,12 @@ import {
 import { ArrowLeft, Hammer } from "@wso2/oxygen-ui-icons-react";
 import { useNavigate } from "@tanstack/react-router";
 import type { components } from "../../../generated/aep-api";
-import { useProject, useProjectStatus } from "../../projects/api/queries";
-import { useProjectSpec } from "../api/queries";
+import {
+  useProject,
+  useProjectStatus,
+  useProjectTags,
+} from "../../projects/api/queries";
+import { useSpecFileContent, useSpecFiles } from "../api/queries";
 import { useCollabSpec } from "../collab/useCollabSpec";
 import { CollabTextArea } from "../collab/CollabTextArea";
 import { SpecMdEditor } from "../collab/SpecMdEditor";
@@ -75,7 +79,8 @@ export function SpecView({ projectName }: { projectName: string }) {
   const { actions } = useAppShell();
   const project = useProject(projectName);
   const status = useProjectStatus(projectName);
-  const spec = useProjectSpec(projectName);
+  const tags = useProjectTags(projectName);
+  const spec = useSpecFiles(projectName);
   const { user, orgHandle } = useSession();
   // Rooms are org-scoped (`spec-<org>-<project>`); without an org claim fall
   // back to the collab mock BFF's default org so mock mode keeps working.
@@ -91,13 +96,27 @@ export function SpecView({ projectName }: { projectName: string }) {
     };
   }, [actions]);
 
-  const files = spec.data?.files ?? [];
+  const files = spec.data ?? [];
   // Default selection: the first requirements file (the seeded PRD).
   const selected =
     files.find((f) => f.path === selectedPath) ??
     files.find((f) => f.group === "requirements") ??
     files[0] ??
     null;
+
+  // Collab supplies live content when connected; the REST read (lazy, per
+  // selected file) is only the solo fallback, so it stays disabled while a
+  // collab doc backs the selection.
+  const selectedIsMd = selected?.path.endsWith(".md") ?? false;
+  const fragment =
+    selected && selectedIsMd ? collab.getFileFragment(selected.path) : null;
+  const ytext =
+    selected && !selectedIsMd ? collab.getFileText(selected.path) : null;
+  const usesCollab = Boolean((fragment && collab.provider) || ytext);
+  const content = useSpecFileContent(
+    projectName,
+    selected && !usesCollab ? selected : null,
+  );
 
   const specStatus = status.data?.specStatus;
   const deriving =
@@ -183,15 +202,17 @@ export function SpecView({ projectName }: { projectName: string }) {
             </Tooltip>
           )}
 
-          {status.data?.specVersion && (
+          {/* Version chips from the tag resource (#117): latest user tag +
+              whether specs/ moved on GitHub since. */}
+          {tags.data?.latest && (
             <Chip
               size="small"
               variant="outlined"
               color="success"
-              label={`${status.data.specVersion} published`}
+              label={`${tags.data.latest} published`}
             />
           )}
-          {status.data?.specDirty && (
+          {tags.data?.specDirty && (
             <Chip size="small" color="warning" label="draft changes" />
           )}
           {chip && <Chip size="small" color={chip.color} label={chip.label} />}
@@ -282,51 +303,66 @@ export function SpecView({ projectName }: { projectName: string }) {
                 // each its own feature). Collaborative when the collab
                 // service is reachable (#86 phase 5); solo-and-unsaved
                 // otherwise (#86 decision 10).
-                (() => {
-                  const isMd = selected.path.endsWith(".md");
-                  const fragment = isMd
-                    ? collab.getFileFragment(selected.path)
-                    : null;
-                  if (fragment && collab.provider) {
-                    // Markdown gets the Tiptap editor on the file's
-                    // Y.XmlFragment (#86 phase 6).
-                    return (
-                      <SpecMdEditor
-                        key={`${selected.path}:md`}
-                        fragment={fragment}
-                        path={selected.path}
-                        provider={collab.provider}
-                        self={collab.self}
-                      />
-                    );
-                  }
-                  const ytext = isMd
-                    ? null
-                    : collab.getFileText(selected.path);
-                  return ytext ? (
-                    <CollabTextArea
-                      key={`${selected.path}:collab`}
-                      ytext={ytext}
-                      path={selected.path}
-                      isLocalTransaction={collab.isLocalTransaction}
+                fragment && collab.provider ? (
+                  // Markdown gets the Tiptap editor on the file's
+                  // Y.XmlFragment (#86 phase 6).
+                  <SpecMdEditor
+                    key={`${selected.path}:md`}
+                    fragment={fragment}
+                    path={selected.path}
+                    provider={collab.provider}
+                    self={collab.self}
+                  />
+                ) : ytext ? (
+                  <CollabTextArea
+                    key={`${selected.path}:collab`}
+                    ytext={ytext}
+                    path={selected.path}
+                    isLocalTransaction={collab.isLocalTransaction}
+                  />
+                ) : content.data ? (
+                  <TextField
+                    key={`${selected.path}:${content.data.sha}`}
+                    fullWidth
+                    multiline
+                    minRows={20}
+                    defaultValue={content.data.content}
+                    aria-label={`Content of ${selected.path}`}
+                    helperText={`${selected.path} — edits aren't saved yet; editing lands with the file editors.`}
+                    slotProps={{
+                      input: {
+                        sx: { fontFamily: "monospace", fontSize: "0.875rem" },
+                      },
+                    }}
+                  />
+                ) : content.isError ? (
+                  <Alert
+                    severity="error"
+                    action={
+                      <Button onClick={() => void content.refetch()}>
+                        Retry
+                      </Button>
+                    }
+                  >
+                    Failed to load {selected.path}
+                    {content.error instanceof Error && content.error.message
+                      ? `: ${content.error.message}`
+                      : ""}
+                  </Alert>
+                ) : (
+                  <Box
+                    sx={{
+                      height: "100%",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <CircularProgress
+                      aria-label={`Loading ${selected.path}`}
                     />
-                  ) : (
-                    <TextField
-                      key={selected.path}
-                      fullWidth
-                      multiline
-                      minRows={20}
-                      defaultValue={selected.content}
-                      aria-label={`Content of ${selected.path}`}
-                      helperText={`${selected.path} — edits aren't saved yet; editing lands with the file editors.`}
-                      slotProps={{
-                        input: {
-                          sx: { fontFamily: "monospace", fontSize: "0.875rem" },
-                        },
-                      }}
-                    />
-                  );
-                })()
+                  </Box>
+                )
               ) : (
                 <Typography variant="body2" color="text.secondary">
                   {deriving

@@ -32,7 +32,7 @@ import (
 // `ComponentDesign` (services/agents/src/contracts/component-design.ts); the
 // on-disk structs below mirror that contract, extended with the unified
 // `dependencies[]` (models.Dependency) in place of her `connections[]` and the
-// platform-owned blocks aep-api carries (exposesAPI / callerIdentity /
+// platform-owned blocks aep-api carries (exposesAPI /
 // componentAgentInstructions). The codec is strict (sachiniSam's strictObject
 // philosophy): unknown top-level keys and unknown keys inside `dependencies[]`
 // entries are rejected. `status`/`reason` are read-time computed values and are
@@ -53,11 +53,19 @@ import (
 //	description                ↔ Description    (the single-responsibility prose / former design.md body)
 //	dependencies               ↔ Dependencies  (unified kind-discriminated union; replaces connections[])
 //	exposesAPI                 ↔ ExposesAPI     (platform-owned; {managed, auth, userContext, orgPublished})
-//	callerIdentity             ↔ CallerIdentity (platform-owned; {mode})
 //	componentAgentInstructions ↔ ComponentAgentInstructions (platform-owned; optional)
 //
 // OpenAPISpec is NOT a design.json key: it stays in the sibling
 // `components/<name>/openapi.yaml` file, assembled/split separately.
+//
+// The retired caller-identity field (formerly `callerIdentity`, superseded by
+// the explicit `thunder-app` platform-resource dependency) is no longer part
+// of this struct. Because the decoder above calls DisallowUnknownFields, this
+// is NOT silently tolerated: a design.json still carrying a `callerIdentity`
+// key (e.g. written by an old agent build) now fails to parse with `json:
+// unknown field "callerIdentity"`, consistent with this codec's existing
+// strict-unknown-key philosophy. Such files must be hand-edited to drop the
+// key before they can be read again.
 
 // componentDesignName validates the kebab-case name rule shared by read+write.
 var componentDesignName = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
@@ -75,9 +83,8 @@ type componentDesignJSON struct {
 	Description  string           `json:"description,omitempty"`
 	Dependencies []dependencyJSON `json:"dependencies"`
 	// Platform-owned blocks (absent = zero value).
-	ExposesAPI                 *exposesAPIJSON     `json:"exposesAPI,omitempty"`
-	CallerIdentity             *callerIdentityJSON `json:"callerIdentity,omitempty"`
-	ComponentAgentInstructions string              `json:"componentAgentInstructions,omitempty"`
+	ExposesAPI                 *exposesAPIJSON `json:"exposesAPI,omitempty"`
+	ComponentAgentInstructions string          `json:"componentAgentInstructions,omitempty"`
 }
 
 // dependencyJSON is the on-disk shape for one unified dependency entry. It
@@ -117,11 +124,6 @@ type exposesAPIJSON struct {
 	Auth         string `json:"auth,omitempty"`
 	UserContext  string `json:"userContext,omitempty"`
 	OrgPublished bool   `json:"orgPublished,omitempty"`
-}
-
-// callerIdentityJSON mirrors models.CallerIdentity.
-type callerIdentityJSON struct {
-	Mode string `json:"mode,omitempty"`
 }
 
 // parseComponentDesignJSON decodes a `components/<name>/design.json` body into a
@@ -169,7 +171,6 @@ func parseComponentDesignJSON(dir, raw string) (models.DesignComponent, error) {
 		Description:                dj.Description,
 		ComponentAgentInstructions: dj.ComponentAgentInstructions,
 		ExposesAPI:                 toModelExposesAPI(dj.ExposesAPI),
-		CallerIdentity:             toModelCallerIdentity(dj.CallerIdentity),
 	}, nil
 }
 
@@ -275,7 +276,6 @@ func marshalComponentDesignJSON(dir string, comp models.DesignComponent) ([]byte
 		Description:                comp.Description,
 		Dependencies:               toJSONDeps(comp.Dependencies),
 		ExposesAPI:                 toJSONExposesAPI(comp.ExposesAPI),
-		CallerIdentity:             toJSONCallerIdentity(comp.CallerIdentity),
 		ComponentAgentInstructions: comp.ComponentAgentInstructions,
 	}
 
@@ -392,18 +392,4 @@ func toJSONExposesAPI(in *models.ExposesAPI) *exposesAPIJSON {
 		UserContext:  in.UserContext,
 		OrgPublished: in.OrgPublished,
 	}
-}
-
-func toModelCallerIdentity(in *callerIdentityJSON) *models.CallerIdentity {
-	if in == nil || in.Mode == "" {
-		return nil
-	}
-	return &models.CallerIdentity{Mode: in.Mode}
-}
-
-func toJSONCallerIdentity(in *models.CallerIdentity) *callerIdentityJSON {
-	if in == nil || in.Mode == "" {
-		return nil
-	}
-	return &callerIdentityJSON{Mode: in.Mode}
 }

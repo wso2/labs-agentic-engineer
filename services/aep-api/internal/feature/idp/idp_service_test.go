@@ -42,10 +42,10 @@ import (
 // --- shared fake Thunder admin client ---------------------------------------
 //
 // idpService only ever calls three of thundersvc.Client's methods
-// (EnsurePublisherApp, DeletePublisherApp, RegenerateClientSecret); the other
-// four are irrelevant to this feature, so a call to one is a test bug — they
-// panic (moq-style). Each fake is built per-test and driven by a single
-// synchronous httptest request, so no mutex is needed for the capture slices.
+// (EnsurePublisherApp, DeletePublisherApp, RegenerateClientSecret); OUExists is
+// irrelevant to this feature, so a call to it is a test bug — it panics
+// (moq-style). Each fake is built per-test and driven by a single synchronous
+// httptest request, so no mutex is needed for the capture slices.
 type fakeThunder struct {
 	ensureFn func(ctx context.Context, orgHandle, orgOUID string) (string, string, bool, error)
 	deleteFn func(ctx context.Context, orgHandle string) (bool, error)
@@ -86,12 +86,6 @@ func (f *fakeThunder) RegenerateClientSecret(ctx context.Context, orgHandle stri
 
 func (f *fakeThunder) OUExists(context.Context, string) (bool, error) {
 	panic("fakeThunder: OUExists is not part of the idp feature")
-}
-func (f *fakeThunder) EnsureRedirectURIs(context.Context, string, []string) (bool, error) {
-	panic("fakeThunder: EnsureRedirectURIs is not part of the idp feature")
-}
-func (f *fakeThunder) EnsureProjectOAuthClient(context.Context, string, []string) (string, bool, error) {
-	panic("fakeThunder: EnsureProjectOAuthClient is not part of the idp feature")
 }
 
 // --- coalesceActor ----------------------------------------------------------

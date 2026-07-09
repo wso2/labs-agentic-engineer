@@ -1,0 +1,10 @@
+apiVersion: v2
+name: thunder-app-operator
+description: >
+  Kubernetes operator that reconciles aep.wso2.com/v1alpha1 ThunderApplication
+  custom resources into OAuth2 clients on the platform Thunder IdP, publishing
+  each assigned client_id back into the cluster as a ConfigMap. Single-replica,
+  leader election off.
+type: application
+version: 0.0.0-dev
+appVersion: 0.0.0-dev

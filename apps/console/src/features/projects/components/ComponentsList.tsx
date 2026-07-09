@@ -29,7 +29,8 @@ import { env } from "../../../config/env";
 
 type Component = components["schemas"]["Component"];
 
-const isWebApp = (c: Component) => c.type === "webapp" || c.type === "web-app";
+// The component type is OpenChoreo's own ComponentType name, end-to-end.
+const isWebApp = (c: Component) => c.type === "web-application";
 
 function componentLink(projectName: string, c: Component) {
   if (isWebApp(c)) {

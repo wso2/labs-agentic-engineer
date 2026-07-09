@@ -20,7 +20,7 @@
  * The committed-truth turn client — the console's entry points to the BFF's
  * resumable generation endpoints (shared-volume-clone D13/D16/D18):
  *
- *   - `startTurn`   POST …/conversations/{id}/turns {useCase, instruction,
+ *   - `startTurn`   POST …/agents/{id}/messages {useCase, instruction,
  *                   target?} → 202 {turnId}. No file content ever leaves the
  *                   browser — the backend snapshots HEAD itself.
  *   - `attachTurnStream`  GET …/turns/{id}/stream?from=N — replay + live tail
@@ -143,7 +143,7 @@ export async function getConversation(
   conversationId: string,
 ): Promise<ConversationMessage[]> {
   const res = await fetch(
-    `${API_V1}/projects/${encodeURIComponent(projectName)}/conversations/${encodeURIComponent(conversationId)}`,
+    `${API_V1}/projects/${encodeURIComponent(projectName)}/agents/${encodeURIComponent(conversationId)}/messages`,
     { cache: 'no-store', headers: await authHeaders() },
   );
   if (!res.ok) return [];
@@ -163,7 +163,7 @@ export async function startTurn(
   body: StartTurnBody,
 ): Promise<StartTurnResult> {
   const res = await fetch(
-    `${API_V1}/projects/${encodeURIComponent(projectName)}/conversations/${encodeURIComponent(conversationId)}/turns`,
+    `${API_V1}/projects/${encodeURIComponent(projectName)}/agents/${encodeURIComponent(conversationId)}/messages`,
     {
       method: 'POST',
       headers: await authHeaders(),

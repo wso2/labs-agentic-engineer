@@ -91,8 +91,9 @@ func mcpTools() []mcpTool {
 			Name: "list_platform_resource_types",
 			Description: "List the platform-provisioned resource types (databases, caches, queues) installed " +
 				"on the cluster. Each entry is a resourceType you can reference in a platform-resource " +
-				"dependency, with its provisioning parameters and the outputs it exposes. Read-only — you " +
-				"never author these.",
+				"dependency, with a `description` of what the type provides and when to depend on it, its " +
+				"provisioning parameters, and the outputs it exposes. Pick the type whose description " +
+				"matches the need. Read-only — you never author these.",
 			InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
 		},
 	}

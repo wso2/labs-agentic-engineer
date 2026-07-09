@@ -23,12 +23,15 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
+
+	"github.com/wso2/aep/aep-api/models"
 )
 
 // Skill mutation sentinels — controllers map these to HTTP status codes.
 var (
-	// ErrSkillNotEditable is returned for PUT/DELETE against a builtin.
-	ErrSkillNotEditable = errors.New("skill is read-only (builtin)")
+	// ErrSkillNotEditable is returned for PUT/DELETE against a platform-shipped
+	// (org-kind) skill.
+	ErrSkillNotEditable = errors.New("skill is read-only")
 	// ErrSkillNotFound is returned when a name maps to no editable row.
 	ErrSkillNotFound = errors.New("skill not found")
 	// ErrSkillNameCollision is returned when a create reuses a visible name.
@@ -39,13 +42,20 @@ var (
 // design's 400 KB ceiling.
 const maxSkillBytes = 400 * 1024
 
-// reservedSkillNames cannot be used by custom/imported skills — `aep` is
-// the base plugin's name.
-var reservedSkillNames = map[string]bool{"aep": true}
+// reservedSkillNames cannot be used by custom/imported skills — `aep` is the
+// base plugin's name; the kind words keep the flat-vs-legacy repo layout
+// parser unambiguous while legacy trees still exist
+// (docs/design/skills-unified-library-migration.md §3.3).
+var reservedSkillNames = map[string]bool{
+	"aep":      true,
+	"platform": true, "org": true, "custom": true, "imported": true,
+	"builtin": true, "flow": true,
+}
 
-// reservedSkillPrefixes are used at materialisation time; custom/imported
-// names must not collide with them.
-var reservedSkillPrefixes = []string{"builtin-", "custom-", "imported-"}
+// reservedSkillPrefixes are used at materialisation time (`<kind>-<name>`);
+// custom/imported names must not collide with them. builtin- stays reserved
+// so legacy materialisations can never be spoofed.
+var reservedSkillPrefixes = []string{"platform-", "org-", "builtin-", "custom-", "imported-"}
 
 // skillNameRE is the AgentSkills kebab rule: lowercase alphanumeric
 // segments joined by single hyphens; no leading/trailing/consecutive
@@ -84,17 +94,20 @@ func validationErr(code, message, path string) *SkillValidationError {
 	return &SkillValidationError{Issues: []SkillValidationIssue{{Code: code, Message: message, Path: path}}}
 }
 
-// CreateSkillInput is the POST body for a custom skill.
+// CreateSkillInput is the POST body for a custom skill. References is
+// OPTIONAL — a skill without reference files is legitimate, and the console's
+// create dialog sends only {name, skillMd} (absent ≡ {}).
 type CreateSkillInput struct {
 	Name       string            `json:"name"`
 	SkillMD    string            `json:"skillMd"`
-	References map[string]string `json:"references"`
+	References map[string]string `json:"references,omitempty"`
 }
 
-// UpdateSkillInput is the PUT body for a custom skill.
+// UpdateSkillInput is the PUT body for a custom skill. References is OPTIONAL
+// (absent ≡ {}); an update without it prunes any existing reference files.
 type UpdateSkillInput struct {
 	SkillMD    string            `json:"skillMd"`
-	References map[string]string `json:"references"`
+	References map[string]string `json:"references,omitempty"`
 }
 
 // SkillMutationService owns the org-editable write surface: create/update/
@@ -140,15 +153,23 @@ func (m *SkillMutationService) Create(ctx context.Context, orgID, actor string, 
 		return nil, ErrSkillNameCollision
 	}
 
+	// Stamp the kind into the stored file — the flat layout has no kind dirs,
+	// so an unstamped SKILL.md would read back as org (read-only) and be
+	// reconcile-purged. Stamping also defeats a spoofed platform/org marker.
+	stamped, err := stampFrontmatterKind(in.SkillMD, models.SkillKindCustom)
+	if err != nil {
+		return nil, validationErr("FRONTMATTER_INVALID", err.Error(), "skillMd")
+	}
+
 	refs := normalizeRefs(in.References)
 	msg := fmt.Sprintf("feat(skills): add custom skill %q\n\nby %s", name, actor)
-	if err := m.skills.writeSkillFiles(ctx, orgID, "custom", name, in.SkillMD, refs, msg, false); err != nil {
+	if err := m.skills.writeSkillFiles(ctx, orgID, name, stamped, refs, msg, false); err != nil {
 		return nil, fmt.Errorf("commit custom skill %q: %w", name, err)
 	}
 	slog.InfoContext(ctx, "skill created", "orgID", orgID, "name", name, "actor", actor)
 	// Return the just-written skill from validated input — no read-back (a
 	// transient post-commit read could nil-panic the handler on a real success).
-	return newSkillValue(orgID, "custom", name, in.SkillMD, refs, fm), nil
+	return newSkillValue(orgID, models.SkillKindCustom, name, stamped, refs, fm), nil
 }
 
 // Update rewrites an existing kind=custom skill. Returns ErrSkillNotEditable
@@ -164,10 +185,10 @@ func (m *SkillMutationService) Update(ctx context.Context, orgID, actor, name st
 	if existing == nil {
 		return nil, ErrSkillNotFound
 	}
-	if existing.Kind == "builtin" {
-		return nil, ErrSkillNotEditable
+	if !isUserKind(existing.Kind) {
+		return nil, ErrSkillNotEditable // org + platform are reconcile-managed
 	}
-	if existing.Kind != "custom" {
+	if existing.Kind != models.SkillKindCustom {
 		// imported skills are replaced via re-import, not PUT.
 		return nil, ErrSkillNotFound
 	}
@@ -181,14 +202,19 @@ func (m *SkillMutationService) Update(ctx context.Context, orgID, actor, name st
 			"cannot rename a skill via update; frontmatter name must match the existing name", "name")
 	}
 
+	stamped, err := stampFrontmatterKind(in.SkillMD, models.SkillKindCustom)
+	if err != nil {
+		return nil, validationErr("FRONTMATTER_INVALID", err.Error(), "skillMd")
+	}
+
 	refs := normalizeRefs(in.References)
 	msg := fmt.Sprintf("chore(skills): update custom skill %q\n\nby %s", name, actor)
 	// pruneStaleRefs=true: an update may have removed reference files.
-	if err := m.skills.writeSkillFiles(ctx, orgID, "custom", name, in.SkillMD, refs, msg, true); err != nil {
+	if err := m.skills.writeSkillFiles(ctx, orgID, name, stamped, refs, msg, true); err != nil {
 		return nil, fmt.Errorf("commit update for %q: %w", name, err)
 	}
 	slog.InfoContext(ctx, "skill updated", "orgID", orgID, "name", name, "actor", actor)
-	return newSkillValue(orgID, "custom", name, in.SkillMD, refs, fm), nil
+	return newSkillValue(orgID, models.SkillKindCustom, name, stamped, refs, fm), nil
 }
 
 // Delete removes a custom or imported skill (deletes the skill's directory and
@@ -207,12 +233,12 @@ func (m *SkillMutationService) Delete(ctx context.Context, orgID, actor, name st
 	if existing == nil {
 		return ErrSkillNotFound
 	}
-	if existing.Kind == "builtin" {
-		return ErrSkillNotEditable
+	if !isUserKind(existing.Kind) {
+		return ErrSkillNotEditable // org + platform are reconcile-managed
 	}
 
 	msg := fmt.Sprintf("chore(skills): delete %s skill %q\n\nby %s", existing.Kind, name, actor)
-	if err := m.skills.deleteSkillDir(ctx, orgID, existing.Kind, name, msg); err != nil {
+	if err := m.skills.deleteSkillDir(ctx, orgID, name, msg); err != nil {
 		return fmt.Errorf("delete skill %q: %w", name, err)
 	}
 	slog.InfoContext(ctx, "skill deleted", "orgID", orgID, "name", name, "actor", actor)

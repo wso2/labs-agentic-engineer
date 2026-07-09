@@ -35,7 +35,7 @@ import { FRONTMATTER_RE, lf } from "@aep/agent-stream";
 
 /**
  * One resolved repo skill — the eval-side shape `materializeSkills` renders into
- * a fixture `_skills` snapshot (`skills/flow/<name>/SKILL.md` + references).
+ * a fixture `_skills` snapshot (flat `skills/<name>/SKILL.md` + references).
  */
 export interface RepoSkill {
   /** Stable id; the snapshot dir name and what the catalog lists. */

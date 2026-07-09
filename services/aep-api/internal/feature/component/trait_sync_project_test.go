@@ -100,8 +100,10 @@ func plainServiceMd(name string) string {
 	return traitServiceJSON(name, "")
 }
 
+// webAppMd renders a web-application component design.json (canonical type:
+// models.ComponentTypeWebApplication — OpenChoreo's own term).
 func webAppMd(name string) string {
-	return "{\n  \"name\": \"" + name + "\",\n  \"type\": \"web-app\",\n  \"description\": \"SPA.\",\n  \"dependencies\": []\n}\n"
+	return "{\n  \"name\": \"" + name + "\",\n  \"type\": \"web-application\",\n  \"description\": \"SPA.\",\n  \"dependencies\": []\n}\n"
 }
 
 // traitServiceJSON renders a service component design.json with an optional

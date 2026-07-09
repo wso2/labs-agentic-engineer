@@ -25,9 +25,10 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import {
-  useProjectBoard,
   useProjectComponents,
   useProjectStatus,
+  useProjectTags,
+  useProjectTasks,
 } from "../api/queries";
 import { ComponentsList } from "./ComponentsList";
 import { StatusCards } from "./StatusCards";
@@ -53,7 +54,8 @@ function SectionError({
 // components list each degrade independently (issue #77).
 export function ProjectOverview({ projectName }: { projectName: string }) {
   const status = useProjectStatus(projectName);
-  const board = useProjectBoard(projectName);
+  const tasks = useProjectTasks(projectName);
+  const tags = useProjectTags(projectName);
   const componentsQuery = useProjectComponents(projectName);
 
   return (
@@ -69,7 +71,8 @@ export function ProjectOverview({ projectName }: { projectName: string }) {
           <StatusCards
             projectName={projectName}
             status={status.data}
-            board={board.data}
+            tasks={tasks.data ?? undefined}
+            tags={tags.data}
           />
         </Grid>
       )}

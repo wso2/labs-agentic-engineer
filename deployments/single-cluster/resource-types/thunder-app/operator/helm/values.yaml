@@ -1,0 +1,45 @@
+# Default values for the thunder-app-operator chart.
+
+image:
+  # Container image for the operator manager. The local stack builds and imports
+  # `thunder-app-operator:local` (see deployments/scripts/setup-aep.sh) and
+  # overrides repository/tag/pullPolicy on install.
+  repository: thunder-app-operator
+  tag: local
+  # Never: local dev imports the image into the k3d nodes directly, so the
+  # kubelet must not try to pull from a registry. Real clusters set IfNotPresent
+  # or Always against a published image.
+  pullPolicy: IfNotPresent
+
+# Number of manager replicas. Keep at 1 — the manager runs with leader election
+# OFF (see main.go), so more than one replica would double-reconcile.
+replicaCount: 1
+
+thunder:
+  # In-cluster admin API base URL for the platform Thunder. Matches the compose
+  # stack's Thunder service address.
+  adminURL: "http://thunder-service.thunder.svc.cluster.local:8090"
+
+  # System OAuth2 client the operator authenticates as (client_credentials,
+  # scope=system) to manage applications on Thunder's admin API.
+  #
+  # LOCAL DEV DEFAULTS ONLY. These match the `aep-system-client` credentials the
+  # local Thunder bootstrap registers (deployments/single-cluster/
+  # values-thunder.yaml → 59-aep-oauth-apps.sh, bound to Administrator by
+  # 60-aep-system-role.sh). REAL CLUSTERS MUST OVERRIDE these — never ship these
+  # defaults to a shared/production Thunder.
+  systemClientID: "aep-system-client"
+  systemClientSecret: "aep-system-client-secret"
+
+  # existingSecret: when set, the deployment sources THUNDER_SYSTEM_CLIENT_ID /
+  # THUNDER_SYSTEM_CLIENT_SECRET from this pre-existing Secret instead of the
+  # chart-managed one above. Keys must be `client-id` and `client-secret`.
+  existingSecret: ""
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi

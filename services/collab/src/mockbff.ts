@@ -29,18 +29,19 @@
 //     like a JWT, else a fixed mock identity — plus `projectName` resolved
 //     from the room ID. The real BFF splits `spec-<org>-<project>` using the
 //     caller's org; the mock uses its configured org ("acme" by default).
-// - GET /api/v1/projects/{project}/spec
-//     200 with the fixture bundle. Like the console's MSW layer, every
-//     project gets the same demo bundle unless `projects` overrides it —
-//     the mock oracle is org-permissive, so the bundle must be too.
+// - GET /api/v1/projects/{project}/files            → FileMeta list
+// - GET /api/v1/projects/{project}/files/{path...}  → FileContent (404 unknown)
+//     Mirror the real Files API (#114): repo-relative specs/ paths. Like the
+//     console's MSW layer, every project gets the same demo files unless
+//     `projects` overrides it — the mock oracle is org-permissive, so the
+//     files must be too.
 
 import http from "node:http";
-import type { SpecFile } from "./bff.js";
-import { devSpecBundle } from "./fixtures.js";
+import { devSpecFiles, type RepoSpecFile } from "./fixtures.js";
 
 export interface MockBffOptions {
-  /** Per-project bundle overrides; unlisted projects get the dev bundle. */
-  projects?: Record<string, SpecFile[]>;
+  /** Per-project file overrides; unlisted projects get the dev files. */
+  projects?: Record<string, RepoSpecFile[]>;
   /** The org used to split room IDs, like the real oracle does. */
   org?: string;
 }
@@ -72,10 +73,21 @@ function json(res: http.ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
-const SPEC_PATH = /^\/api\/v1\/projects\/([^/]+)\/spec$/;
+const FILES_LIST_PATH = /^\/api\/v1\/projects\/([^/]+)\/files$/;
+const FILE_READ_PATH = /^\/api\/v1\/projects\/([^/]+)\/files\/(.+)$/;
+
+// Deterministic stand-in for the git blob sha (unused by the seeder, present
+// for shape fidelity with the real FileMeta/FileContent).
+function mockSha(input: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    hash = ((hash ^ input.charCodeAt(i)) * 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
 
 export function createMockBff(options: MockBffOptions = {}): http.Server {
-  const projects = options.projects ?? { "demo-shop": devSpecBundle };
+  const projects = options.projects ?? { "demo-shop": devSpecFiles };
   const org = options.org ?? "acme";
 
   return http.createServer((req, res) => {
@@ -97,12 +109,37 @@ export function createMockBff(options: MockBffOptions = {}): http.Server {
       });
     }
 
-    const specMatch = req.method === "GET" && url.pathname.match(SPEC_PATH);
-    if (specMatch) {
+    const listMatch =
+      req.method === "GET" && url.pathname.match(FILES_LIST_PATH);
+    if (listMatch) {
       if (!token) return json(res, 401, { title: "Unauthorized" });
-      const project = decodeURIComponent(specMatch[1] ?? "");
-      const files = projects[project] ?? devSpecBundle;
-      return json(res, 200, { files });
+      const project = decodeURIComponent(listMatch[1] ?? "");
+      const files = projects[project] ?? devSpecFiles;
+      return json(
+        res,
+        200,
+        files.map((f) => ({
+          path: f.path,
+          sha: mockSha(f.path + f.content),
+          size: f.content.length,
+        })),
+      );
+    }
+
+    const readMatch =
+      req.method === "GET" && url.pathname.match(FILE_READ_PATH);
+    if (readMatch) {
+      if (!token) return json(res, 401, { title: "Unauthorized" });
+      const project = decodeURIComponent(readMatch[1] ?? "");
+      const path = decodeURIComponent(readMatch[2] ?? "");
+      const files = projects[project] ?? devSpecFiles;
+      const file = files.find((f) => f.path === path);
+      if (!file) return json(res, 404, { title: "not found" });
+      return json(res, 200, {
+        path: file.path,
+        content: file.content,
+        sha: mockSha(file.path + file.content),
+      });
     }
 
     return json(res, 404, { title: "not found" });

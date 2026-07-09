@@ -51,12 +51,12 @@ func NewComponentStore(t *testing.T) *ComponentStore {
 	return &ComponentStore{Svc: svc, host: host}
 }
 
-// DowngradeBuiltin rewrites a built-in's SKILL.md directly on the org's ORIGIN
+// DriftOrg rewrites an org-kind skill's SKILL.md directly on the org's ORIGIN
 // (advancing main), so a subsequent read/UpdatesAvailable sees a repo copy
-// BEHIND the embedded version — the state that drives the "updates available"
+// whose content differs from the embedded copy — the state that drives the "updates available"
 // badge. Reads address the branch tip, so the change is visible immediately
 // (no cache to evict). The repo row already exists after the first read, so
 // this write is not re-reconciled away.
-func (c *ComponentStore) DowngradeBuiltin(orgID, name, skillMD string) {
-	c.host.writeAtHead(orgID, skillRepoPath("builtin", name), skillMD)
+func (c *ComponentStore) DriftOrg(orgID, name, skillMD string) {
+	c.host.writeAtHead(orgID, skillRepoPath(name), skillMD)
 }

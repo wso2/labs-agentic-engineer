@@ -41,11 +41,11 @@ function designJson(name: string, type: string, connections: { to: string; type:
       name,
       type,
       version: "0.1.0",
-      language: type === "webapp" ? "TypeScript" : "Go",
+      language: type === "web-application" ? "TypeScript" : "Go",
       buildpack: "docker",
       appPath: name,
-      entrypoint: type === "webapp" ? "deployment/webapp" : "deployment/service",
-      exposure: type === "webapp" ? "internet" : "intranet",
+      entrypoint: type === "web-application" ? "deployment/web-application" : "deployment/service",
+      exposure: type === "web-application" ? "internet" : "intranet",
       connections,
       description: `The ${name} ${type}.`,
     },
@@ -67,7 +67,7 @@ A small order-management system: shoppers browse a catalog and place orders.
 
 - user-service (service) — accounts and authentication.
 - order-service (service) — places and tracks orders.
-- order-webapp (webapp) — the shopper-facing UI.
+- order-webapp (web-application) — the shopper-facing UI.
 
 ## Interactions
 
@@ -85,7 +85,7 @@ export const FRESH_SEED: Record<string, string> = {
     { to: "user-service", type: "http" },
     { to: "postgres", type: "datastore" },
   ]),
-  "specs/design/components/order-webapp/design.json": designJson("order-webapp", "webapp", [{ to: "order-service", type: "http" }]),
+  "specs/design/components/order-webapp/design.json": designJson("order-webapp", "web-application", [{ to: "order-service", type: "http" }]),
 };
 
 function existingTask(issueNumber: number, component: string, title: string, dependsOn: string[]): string {
@@ -106,8 +106,8 @@ function existingTask(issueNumber: number, component: string, title: string, dep
 export const INCREMENTAL_SEED: Record<string, string> = {
   ...FRESH_SEED,
   "specs/design/design.md": DESIGN_MD.replace(
-    "- order-webapp (webapp) — the shopper-facing UI.",
-    "- order-webapp (webapp) — the shopper-facing UI.\n- notification-service (service) — emails order confirmations.",
+    "- order-webapp (web-application) — the shopper-facing UI.",
+    "- order-webapp (web-application) — the shopper-facing UI.\n- notification-service (service) — emails order confirmations.",
   ).replace(
     "- order-webapp → order-service (place and view orders).",
     "- order-webapp → order-service (place and view orders).\n- notification-service → user-service (look up the recipient).",

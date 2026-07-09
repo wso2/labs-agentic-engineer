@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/feature/artifacts"
+	"github.com/wso2/aep/aep-api/internal/feature/dependencies/resources"
 	"github.com/wso2/aep/aep-api/models"
 )
 
@@ -43,6 +44,25 @@ var ErrSpecNotApproved = errors.New("spec must be saved (tagged) before generati
 // proceed-gated here — they are dispatch-gated in Phase 6. The tag-cut is the
 // only path that checks this; committed-truth has no autosave to gate.
 var ErrUnresolvedDependency = errors.New("design has unresolved dependencies — resolve them before saving")
+
+// ErrEndUserAuthConflict is the design-domain sentinel surfaced (as 409 by the
+// controller, mirroring ErrUnresolvedDependency) when the tag-cut is attempted
+// on a design where a service component declares a platform-resource dependency
+// whose type carries the end-user-auth role marker (auth-as-platform-resource)
+// AND explicitly sets exposesAPI.auth to service-required. The dependency
+// requires end-user-required; the platform derives it automatically, so this
+// only fires on a genuine, explicit contradiction — see deriveEndUserAuth.
+var ErrEndUserAuthConflict = errors.New("service component declares an end-user-auth platform-resource dependency but explicitly sets a conflicting exposesAPI.auth")
+
+// ErrResourceCatalogUnavailable is the fail-closed sentinel surfaced (as 503 by
+// the controller) when a design declares at least one platform-resource
+// dependency but the OC ClusterResourceType catalog cannot be read — so the
+// platform cannot tell whether any of those dependencies' types carries the
+// end-user-auth role. Rather than silently skip the derivation (which could
+// leave an API that must sit behind end-user login exposed — the silent-open
+// risk), the save fails with this retryable error. Auth-free saves (no
+// platform-resource dependency) never fetch the catalog and so never hit this.
+var ErrResourceCatalogUnavailable = errors.New("resource-type catalog unavailable — retry the save")
 
 // Spec-collection sentinels (dependency-management — the collect-dependency-spec
 // route). The HTTP layer maps each to a status: ErrDependencyNotFound→404,
@@ -115,6 +135,7 @@ type designService struct {
 	externalResourceReg externalResourceRegistrar // for SaveAndProceed external-resource registration; may be nil
 	provisionMinter     provisionIssueMinter      // for SaveAndProceed aep:provision gate minting; may be nil
 	fileCommitter       designFileCommitter       // for CollectSpec's committed-truth spec write; may be nil
+	resourceCatalog     resourceMarkerCatalog     // for SaveAndProceed end-user-auth derivation; may be nil (fails closed when platform-resource deps exist)
 }
 
 // DesignFileWrite is one file in a CollectSpec atomic commit. Path is the full
@@ -139,6 +160,18 @@ type designFileCommitter interface {
 	// Commit atomically writes every file (per-file BaseSHA CAS) in one commit to
 	// main. A stale BaseSHA surfaces as ErrSpecCommitConflict.
 	Commit(ctx context.Context, orgID, projectID string, writes []DesignFileWrite, message string) error
+}
+
+// resourceMarkerCatalog is design_service's narrow consumer port over the
+// dependencies/resources catalog: it returns the PE-authored CRT marker map
+// (resources.TypeMarkers keyed by resourceType name) that design-save keys the
+// end-user-auth derivation on — replacing the deleted hardcoded thunder-app
+// resourceType name. *resources.ResourceTypeCatalog satisfies it structurally. Wired via
+// SetResourceCatalog at the composition root; a nil catalog fails the save
+// closed (ErrResourceCatalogUnavailable) whenever the design declares a
+// platform-resource dependency, so the derivation is never silently skipped.
+type resourceMarkerCatalog interface {
+	MarkersByName(ctx context.Context) (map[string]resources.TypeMarkers, error)
 }
 
 // provisionIssueMinter is design_service's narrow consumer port for the
@@ -201,6 +234,14 @@ func (s *designService) SetProvisionIssueMinter(m provisionIssueMinter) {
 // committer makes CollectSpec fail (the route then returns 503).
 func (s *designService) SetFileCommitter(c designFileCommitter) {
 	s.fileCommitter = c
+}
+
+// SetResourceCatalog wires the CRT marker lookup SaveAndProceed uses to decide
+// which platform-resource dependencies stamp end-user auth. A nil catalog makes
+// the save fail closed (ErrResourceCatalogUnavailable) whenever the design
+// declares a platform-resource dependency; auth-free saves are unaffected.
+func (s *designService) SetResourceCatalog(c resourceMarkerCatalog) {
+	s.resourceCatalog = c
 }
 
 // registerExternalResources best-effort upserts every distinct `external`
@@ -635,6 +676,64 @@ func (s *designService) SaveAndProceed(ctx context.Context, orgID, projectID, co
 		designFile, err = s.store.ReadDesign(ctx, orgID, projectID)
 		if err != nil {
 			return nil, fmt.Errorf("re-read design after auto-fetch: %w", err)
+		}
+		if designFile == nil {
+			return nil, artifacts.ErrDesignNotFound
+		}
+	}
+
+	// Derive exposesAPI.auth from an end-user-auth platform-resource dependency
+	// (auth-as-platform-resource): a service component that declares a
+	// platform-resource dependency whose CRT carries the end-user-auth role
+	// marker gets exposesAPI.auth stamped end-user-required, persisted to its
+	// design.json BEFORE the tag-cut so the derived value is already on disk the
+	// next time the design is read (EnsureComponent's create-time trait
+	// derivation, component.TraitSyncService, the Explorer) — same
+	// re-read-after-commit convention as auto-fetch-on-save above. The CRT
+	// marker map is fetched ONCE, and only when the design declares a
+	// platform-resource dependency (auth-free saves never touch the catalog);
+	// when it declares one but the catalog is unreachable, the save fails closed
+	// with ErrResourceCatalogUnavailable rather than silently skipping the
+	// derivation. An explicit conflicting service-required is rejected as
+	// ErrEndUserAuthConflict and the save is blocked, mirroring the
+	// unresolved-dependency proceed-gate immediately below. This SAME marker
+	// map is also the one the skill-attach step below keys on (Task G4) — one
+	// catalog fetch serves both consumers in this pass.
+	markers, mErr := s.resourceMarkersForAuthDerivation(ctx, designFile)
+	if mErr != nil {
+		return nil, mErr
+	}
+	derivedCommit, derr := s.persistEndUserAuthDerivation(ctx, orgID, projectID, designFile, markers)
+	if derr != nil {
+		return nil, derr
+	}
+	if derivedCommit {
+		commitSHA = ""
+		designFile, err = s.store.ReadDesign(ctx, orgID, projectID)
+		if err != nil {
+			return nil, fmt.Errorf("re-read design after auth derivation: %w", err)
+		}
+		if designFile == nil {
+			return nil, artifacts.ErrDesignNotFound
+		}
+	}
+
+	// Generic conditional skill attachment (Task G4 — attach_skills.go): every
+	// platform-resource dependency whose CRT carries the `aep.wso2.com/skill`
+	// annotation gets that skill name ensured in the design's skillsApplied,
+	// append-only, persisted to root design.md BEFORE the tag-cut. Reuses the
+	// SAME marker map fetched above for the auth derivation — no second catalog
+	// call, no behavior change when there is no platform-resource dependency or
+	// none of its types carry the annotation.
+	skillsCommit, skErr := s.persistSkillsApplied(ctx, orgID, projectID, designFile, markers)
+	if skErr != nil {
+		return nil, skErr
+	}
+	if skillsCommit {
+		commitSHA = ""
+		designFile, err = s.store.ReadDesign(ctx, orgID, projectID)
+		if err != nil {
+			return nil, fmt.Errorf("re-read design after skill attach: %w", err)
 		}
 		if designFile == nil {
 			return nil, artifacts.ErrDesignNotFound

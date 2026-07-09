@@ -100,15 +100,7 @@ func TestSweep_PRReconcile_SettledTaskNoAPICall(t *testing.T) {
 }
 
 // --- aep:attention clearing authority ----------------------------------------
-
-func containsLabel(labels []string, want string) bool {
-	for _, l := range labels {
-		if l == want {
-			return true
-		}
-	}
-	return false
-}
+// (containsLabel now lives in funnel.go — the sweep tests share it.)
 
 func attnSweep(t *testing.T, store *fakeStore, issues *fakeIssues) *Sweep {
 	t.Helper()

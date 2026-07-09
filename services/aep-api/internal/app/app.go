@@ -61,6 +61,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/feature/project"
 	"github.com/wso2/aep/aep-api/internal/feature/provisioning"
 	"github.com/wso2/aep/aep-api/internal/feature/requirements"
+	"github.com/wso2/aep/aep-api/internal/feature/runtimeconfig"
 	"github.com/wso2/aep/aep-api/internal/feature/skills"
 	"github.com/wso2/aep/aep-api/internal/feature/task"
 	"github.com/wso2/aep/aep-api/internal/feature/webhook"
@@ -481,10 +482,17 @@ func Build(cfg config.Config, db *gorm.DB) (*App, error) {
 	// Eagerly provision each org's skills repo on project creation.
 	projectService.SetSkillsProvisioner(skillSvc)
 
-	// Runner skills S2S (re-keyed to execution, §9.2) + the unified progress
-	// endpoint. execSkillsSvc backs GET /internal/v1/executions/{id}/skills.
-	execSkillsSvc := execution.NewSkillsService(executionRepo, artifactStore, skillSvc)
+	// The unified per-execution progress endpoint. (The runner skills-pull S2S
+	// endpoint is retired — the runner now clones `org-skills` and resolves
+	// applied skills locally, stamped via AEP_SKILLS_REPO_URL above.)
 	execProgressSvc := execution.NewProgressService(executionRepo, componentClient)
+	// Coding-execution activity feed: live-tail the ca-… pod log while running,
+	// serve the captured coding_agent_logs snapshot once terminal. Wired only on
+	// the proxy dispatch path (cgwClient present); otherwise coding executions
+	// report terminal-ness only.
+	if cgwClient != nil {
+		execProgressSvc.WithCodingProgress(codingagent.NewAgentProgressReader(cgwClient, db))
+	}
 
 	// trait_sync is the single shared emitter that reconciles the
 	// `api-configuration` ClusterTrait on a Component CR + per-environment
@@ -594,6 +602,10 @@ func Build(cfg config.Config, db *gorm.DB) (*App, error) {
 		componentClient, repoService, identities{cred: credService},
 		anthropicProvisioner{svc: anthropicCredService}, taskTokens, executionRepo,
 		cfg.AgentPlatformURL, cfg.AgentPlatformURL)
+	// Stamp AEP_SKILLS_REPO_URL so the runner clones `org-skills` and resolves
+	// applied skills locally (the same EnsureProvisioned+GetRepo closure the
+	// genai + task-plan turns use for their SkillsRef).
+	codingExecutor.WithSkillsRepo(skillsRepoForTurns)
 	// The cluster-gateway-proxy dispatch path (the `ca-…` Jobs the local plane
 	// uses): per-org NS + per-run ExternalSecrets + a K8s Job via the proxy.
 	// Publisher-cc is provisioned through idpService (skipped for an http
@@ -649,9 +661,12 @@ func Build(cfg config.Config, db *gorm.DB) (*App, error) {
 	// NOTE: the trait_sync drift watcher enumerated (org,project,component) from
 	// the component_tasks table to periodically reconcile the api-configuration
 	// ClusterTrait. That table is gone (tasks are GitHub issues), so the periodic
-	// watcher is dropped; dispatch-time trait sync (traitSyncService, wired into
-	// componentService/idpService) still runs. A component-enumerating reconcile
-	// backstop can be re-added over the OC component list if drift reappears.
+	// watcher is dropped. The per-env traitEnvironmentConfigs (jwtAuth/CORS) are
+	// instead re-emitted on the ExecWatcher deploy path via traitDeployObserver
+	// (wired into the MultiDeployObserver fan-out below), which fires once a
+	// protected component — or a sibling SPA — deploys and its ReleaseBinding
+	// exists to carry the config. A component-enumerating reconcile backstop can
+	// be re-added over the OC component list if drift reappears.
 
 	// Inbound JWT verifier — Thunder publishes the User JWT and Service JWT
 	// signing keys at JWKSURL. Lazy fetch on first request avoids compose
@@ -693,7 +708,6 @@ func Build(cfg config.Config, db *gorm.DB) (*App, error) {
 		// connect-callback + webhook controllers remain raw handlers. Every other
 		// feature registers code-first via params.HumaDeps below.
 		InternalDeps: api.InternalDeps{
-			ExecSkills:   execSkillsSvc,
 			CredsRefresh: credRefreshService,
 		},
 		WebhookController:   webhookCtrl,
@@ -749,6 +763,7 @@ func Build(cfg config.Config, db *gorm.DB) (*App, error) {
 		SkillMutationSvc:  skillMutationSvc,
 		SkillImportSvc:    skillImportSvc,
 		FilesSvc:          filesSvc,
+		ArtifactSvc:       artifactSvcGit,
 		GenAISvc:          genaiSvc,
 		GitHubAppSlug:     cfg.GitHubAppSlug,
 		BFFPublicURL:      cfg.BFFPublicURL,
@@ -767,7 +782,14 @@ func Build(cfg config.Config, db *gorm.DB) (*App, error) {
 	externalResourceRepo := repositories.NewExternalResourceRepository(db)
 	params.MCPExternalResources = externalResourceRepo
 	params.MCPOrgEndpoints = orgEndpointCatalog
-	params.MCPResourceTypes = resources.NewResourceTypeCatalog(resourceClient)
+	resourceTypeCatalog := resources.NewResourceTypeCatalog(resourceClient)
+	params.MCPResourceTypes = resourceTypeCatalog
+	// design-save keys end-user-auth derivation on the CRT role marker read from
+	// this catalog (thunder-app generalization); wired consumer-side so design
+	// holds only a narrow MarkersByName port. When the design declares a
+	// platform-resource dependency and this catalog is unreachable, the save
+	// fails closed (ErrResourceCatalogUnavailable → 503).
+	designService.SetResourceCatalog(resourceTypeCatalog)
 
 	// Read-time org-service dependency resolution (dependency-management Phase 5):
 	// the same endpoint catalog that backs the MCP list_org_endpoints tool marks
@@ -838,8 +860,38 @@ func Build(cfg config.Config, db *gorm.DB) (*App, error) {
 	// Mount the component's external-resource secrets into the coding runner so
 	// the agent can integration-test against the live service.
 	codingExecutor.WithRunnerSecrets(runnerSecretResolver{svc: provisioningSvc})
-	// Grant pending cross-project access when a provider component deploys.
-	execWatcher.WithDeployObserver(provisioningSvc)
+
+	// Runtime-config (env-config.js) emission — the SPA's `window._env_` (API URLs
+	// + generic <DEP>_<OUTPUT> keys for its platform-resource deps) is materialised
+	// onto each web-app ReleaseBinding.
+	// Two triggers, mirroring the retired dispatch cascade:
+	//   - ensure-time: at the coding-dispatch pre-flight, emit for the just-ensured
+	//     component (self-no-ops for non-web-apps);
+	//   - deploy-time: when ANY component deploys, re-emit across every SPA in the
+	//     project (a backend's deploy can resolve a SPA's dep URL).
+	runtimeConfigSvc := runtimeconfig.NewRuntimeConfigService(componentClient, resourceClient, artifactStore)
+	// A web-app's platform-resource dependency outputs go into window._env_ as
+	// generic <DEP>_<OUTPUT> keys; deps whose CRT carries the consumer-URL-env-config
+	// marker also get the SPA's callback URL patched into their binding. Both key
+	// off the same CRT marker catalog design-save uses — wired consumer-side so
+	// runtimeconfig holds only a narrow MarkersByName port. Unlike design-save
+	// this fails OPEN (defer + retry) when the catalog is unreachable: emission is
+	// a retried cascade hook, not a user-facing save gate.
+	runtimeConfigSvc.SetResourceCatalog(resourceTypeCatalog)
+	codingExecutor.WithComponentRuntimeConfig(runtimeConfigSvc)
+	// Fan the build-success deploy event out to both the cross-project access grant
+	// AND env-config.js re-emission. Best-effort + error-isolated: one observer
+	// failing never stops the other (matching the old cascade's warn-and-continue).
+	execWatcher.WithDeployObserver(codingagent.NewMultiDeployObserver(
+		provisioningSvc,
+		spaDeployObserver{svc: runtimeConfigSvc},
+		// api-configuration trait re-emit: land the jwtAuth/CORS
+		// traitEnvironmentConfigs on each protected API's ReleaseBinding once it
+		// (or a sibling SPA) deploys. EnsureComponent sets only the CR trait
+		// shape at create; this deploy-time PATCH is what makes the gateway
+		// enforce end-user auth (docs/design/api-platform-integration.md §6).
+		traitDeployObserver{svc: traitSyncService},
+	))
 
 	slog.Info("OpenChoreo API", "baseURL", cfg.PlatformAPI.BaseURL)
 

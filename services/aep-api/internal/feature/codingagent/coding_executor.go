@@ -80,7 +80,24 @@ type CodingExecutor struct {
 	// runnerSecrets resolves the component's external-resource secret bundles so
 	// the proxy dispatch mounts them into the runner (nil → none). Best-effort.
 	runnerSecrets RunnerSecretResolver
+
+	// skillsRepo resolves (provisioning if needed) the org's `org-skills` repo
+	// row so its clone URL can be stamped as AEP_SKILLS_REPO_URL — the runner
+	// clones it to resolve the design's applied skills locally (nil → the URL
+	// is not stamped and the runner degrades to the base plugin). Best-effort.
+	skillsRepo SkillsRepoResolver
+
+	// runtimeConfig emits env-config.js onto a web-app's ReleaseBindings at the
+	// component-ensure pre-flight (nil → skipped). Best-effort — a failure warns
+	// but never fails the dispatch. The web-app gate lives in the emitter, so a
+	// call for a non-web-app component is a self-no-op.
+	runtimeConfig ComponentRuntimeConfigEmitter
 }
+
+// SkillsRepoResolver ensures the org's skills repo exists and returns its row.
+// Satisfied at the composition root by the same EnsureProvisioned+GetRepo
+// closure the genai + task-plan turns use, so this feature grows no skills edge.
+type SkillsRepoResolver func(ctx context.Context, orgID string) (*models.GitRepository, error)
 
 // NewCodingExecutor wires the ClusterWorkflow-path executor. anthropic may be
 // nil. Call WithProxy to enable the cluster-gateway-proxy dispatch path.
@@ -147,6 +164,40 @@ func (e *CodingExecutor) WithRunnerSecrets(r RunnerSecretResolver) *CodingExecut
 	return e
 }
 
+// WithSkillsRepo enables stamping AEP_SKILLS_REPO_URL onto the coding dispatch
+// so the runner clones the org's `org-skills` repo to resolve applied skills
+// locally (nil → not stamped; the runner degrades to the base plugin). Returns
+// the receiver for chained construction.
+func (e *CodingExecutor) WithSkillsRepo(r SkillsRepoResolver) *CodingExecutor {
+	e.skillsRepo = r
+	return e
+}
+
+// resolveSkillsRepoURL returns the org's `org-skills` clone URL, provisioning
+// the repo on first touch. Best-effort: any failure (no resolver wired,
+// provisioning error, missing row) yields "" — the dispatch proceeds without
+// the skills URL and the runner degrades to the base plugin rather than failing
+// the coding run over a skills-guidance gap.
+func (e *CodingExecutor) resolveSkillsRepoURL(ctx context.Context, orgID string) string {
+	if e.skillsRepo == nil {
+		return ""
+	}
+	repo, err := e.skillsRepo(ctx, orgID)
+	if err != nil || repo == nil {
+		slog.WarnContext(ctx, "coding executor: resolve skills repo failed — dispatching without AEP_SKILLS_REPO_URL", "org", orgID, "error", err)
+		return ""
+	}
+	return repo.RepoURL
+}
+
+// WithComponentRuntimeConfig enables best-effort env-config.js emission at the
+// component-ensure pre-flight (nil → skipped). Returns the receiver for chained
+// construction.
+func (e *CodingExecutor) WithComponentRuntimeConfig(r ComponentRuntimeConfigEmitter) *CodingExecutor {
+	e.runtimeConfig = r
+	return e
+}
+
 // AuthRetryBudget reports the configured git-clone-auth build retry budget
 // (default when unset). The ExecWatcher reads it to bound its retry loop.
 func (e *CodingExecutor) AuthRetryBudget() int {
@@ -184,6 +235,17 @@ func (e *CodingExecutor) runCoding(ctx context.Context, req execution.DispatchRe
 			return fmt.Errorf("ensure component pre-flight: %w", err)
 		}
 	}
+	// Web-apps only: emit env-config.js so the SPA's `window._env_` is populated
+	// at request time (parity with the legacy dispatch service's ensureOCComponent
+	// hook). The emitter self-no-ops for non-web-app components, so this is safe to
+	// call unconditionally — the design/type read lives inside the emitter, keeping
+	// this feature free of an artifacts import. Best-effort: an emit failure warns
+	// but must never fail the coding dispatch (the deploy cascade re-fires it).
+	if e.runtimeConfig != nil {
+		if rcErr := e.runtimeConfig.EmitForComponent(ctx, t.OrgID, t.ProjectID, t.Component); rcErr != nil {
+			slog.WarnContext(ctx, "coding executor: env-config.js emit failed (best-effort)", "component", t.Component, "error", rcErr)
+		}
+	}
 	repo, err := e.repos.GetRepo(ctx, t.OrgID, t.ProjectID)
 	if err != nil || repo == nil {
 		return fmt.Errorf("resolve project repo: %w", err)
@@ -196,6 +258,10 @@ func (e *CodingExecutor) runCoding(ctx context.Context, req execution.DispatchRe
 	if err != nil {
 		return fmt.Errorf("mint runner bearer: %w", err)
 	}
+	// Resolve the org's skills repo URL (provisioning on first touch) so the
+	// runner can clone it and resolve applied skills locally. Best-effort — ""
+	// on any failure, the runner then degrades to the base plugin.
+	skillsRepoURL := e.resolveSkillsRepoURL(ctx, t.OrgID)
 	prompt := buildPrompt(t.IssueURL, t.IssueNumber)
 
 	// ADR-0004 declarative wiring: post the "Platform-resolved dependencies"
@@ -211,7 +277,7 @@ func (e *CodingExecutor) runCoding(ctx context.Context, req execution.DispatchRe
 
 	// Proxy path first (what local uses). Falls back to ClusterWorkflow when the
 	// proxy dispatcher / SM-API triplets are not fully configured.
-	used, runName, perr := e.dispatchViaProxy(ctx, req, repo, prompt, name, email, login, bearer)
+	used, runName, perr := e.dispatchViaProxy(ctx, req, repo, prompt, name, email, login, bearer, skillsRepoURL)
 	if perr != nil {
 		return perr
 	}
@@ -246,6 +312,7 @@ func (e *CodingExecutor) runCoding(ctx context.Context, req execution.DispatchRe
 		IdentityEmail:      email,
 		IdentityLogin:      login,
 		Bearer:             bearer,
+		SkillsRepoURL:      skillsRepoURL,
 		GitServiceURL:      e.gitServiceURL,
 		PlatformURL:        e.platformURL,
 		AnthropicSecretRef: anthropicRef,
@@ -263,7 +330,7 @@ func (e *CodingExecutor) runCoding(ctx context.Context, req execution.DispatchRe
 // configured for the proxy path (fall back). The runner env AEP_TASK_ID carries
 // the EXECUTION id (JobInputs.TaskID) and the bearer's task claim is the
 // execution id — the re-keyed runner contract (§9.2).
-func (e *CodingExecutor) dispatchViaProxy(ctx context.Context, req execution.DispatchRequest, repo *models.GitRepository, prompt, name, email, login, bearer string) (bool, string, error) {
+func (e *CodingExecutor) dispatchViaProxy(ctx context.Context, req execution.DispatchRequest, repo *models.GitRepository, prompt, name, email, login, bearer, skillsRepoURL string) (bool, string, error) {
 	t := req.Task
 	if e.proxy == nil || e.db == nil || e.runnerImage == "" || e.clusterSecretStore == "" {
 		return false, "", nil
@@ -339,6 +406,7 @@ func (e *CodingExecutor) dispatchViaProxy(ctx context.Context, req execution.Dis
 		GitServiceURL:     e.gitServiceURL,
 		CallbackURL:       e.platformURL,
 		Bearer:            bearer,
+		SkillsRepoURL:     skillsRepoURL,
 		PublisherTokenURL: publisherTokenURL,
 	}
 	// Resolve the component's external-resource secret bundles so the dispatcher

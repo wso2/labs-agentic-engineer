@@ -25,26 +25,40 @@
 //     .claude-plugin/
 //       plugin.json                                 # {"name":"aep-task-skills","version":"1.0"}
 //     skills/
-//       builtin-api-management/
-//         SKILL.md                                  # rewritten name: builtin-api-management
+//       org-api-management/
+//         SKILL.md                                  # rewritten name: org-api-management
 //         references/<file>.md                      # optional
-//       builtin-go/
+//       org-go/
 //         SKILL.md
 //       custom-payments-pci-handling/
 //         SKILL.md
 //
 // All kinds land in one plugin directory. The materialisation prefix
-// (`builtin-`, `custom-`, `imported-`) is applied to both the directory
+// (`org-`, `custom-`, `imported-`) is applied to both the directory
 // name AND the `name:` frontmatter field; the original name is preserved
 // under metadata.aep.canonical-name.
 
 import fs from "node:fs";
 import path from "node:path";
-import type { SkillResolution } from "./skills_pull.js";
+
+// SkillKind mirrors the platform's frontmatter `metadata.aep.kind` vocabulary
+// (docs/design/skills-unified-library-migration.md §3.2); absent → "org".
+export type SkillKind = "platform" | "org" | "custom" | "imported";
+
+// SkillResolution is one applied skill resolved from the org-skills clone,
+// ready to materialize into the AgentSkills plugin tree. Built locally by
+// skills_resolver.ts (the retired S2S skills-pull returned the same shape over
+// the wire).
+export interface SkillResolution {
+  materializedName: string; // e.g. "org-api-management" — kind-prefixed dir + `name:`
+  kind: SkillKind; // frontmatter metadata.aep.kind (absent → "org")
+  skillMd: string; // the SKILL.md body, verbatim
+  references: Record<string, string>; // references/<file>.md → content
+}
 
 export interface MaterializeResult {
   pluginDir: string;
-  builtinNames: string[]; // for the SDK `skills:` preload array
+  preloadNames: string[]; // platform-shipped (org-kind) skills for the SDK `skills:` preload array
 }
 
 export async function materializeSkills(
@@ -67,7 +81,7 @@ export async function materializeSkills(
     { mode: 0o644 },
   );
 
-  const builtinNames: string[] = [];
+  const preloadNames: string[] = [];
 
   for (const sk of skills) {
     const skillDir = path.join(skillsDir, sk.materializedName);
@@ -86,12 +100,14 @@ export async function materializeSkills(
       }
     }
 
-    if (sk.kind === "builtin") {
-      builtinNames.push(sk.materializedName);
+    // Platform-shipped stack skills (kind "org") are preloaded into the
+    // session; the other kinds are available on-demand only.
+    if (sk.kind === "org") {
+      preloadNames.push(sk.materializedName);
     }
   }
 
-  return { pluginDir, builtinNames };
+  return { pluginDir, preloadNames };
 }
 
 // Rewrite the `name:` field in the SKILL.md frontmatter to the

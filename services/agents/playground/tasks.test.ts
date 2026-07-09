@@ -23,7 +23,7 @@ import type { Skill } from "../src/contracts/sse-events.js";
 
 const DESIGN_JSON = JSON.stringify({
   name: "webapp",
-  type: "webapp",
+  type: "web-application",
   version: "1",
   language: "typescript",
   buildpack: "nodejs",

@@ -79,7 +79,53 @@ test("filterTurnSnapshot mirrors the walk's rules over an in-memory map", () => 
 const SKILL_MD = (name: string, description: string, body: string): string =>
   `---\nname: ${name}\ndescription: ${description}\n---\n\n${body}\n`;
 
-test("skills snapshot: catalog across kinds (incl. flow), lazy bodies, references", () => {
+test("skills snapshot: FLAT layout (skills/<name>/) with kind in frontmatter", () => {
+  const root = makeTree({
+    // The current org-skills repo shape: no kind dirs; kind lives in
+    // metadata.aep.kind (and is irrelevant to the catalog scan).
+    "skills/go/SKILL.md": SKILL_MD("go", "Go conventions", "Write idiomatic Go."),
+    "skills/high-level-architecture/SKILL.md":
+      "---\nname: high-level-architecture\ndescription: derive components\nmetadata:\n  aep:\n    kind: platform\n---\n\nComponents live under specs/design.\n",
+    "skills/org-style/SKILL.md": SKILL_MD("org-style", "house style", "Use our tone."),
+    "skills/org-style/references/tone.md": "REF BODY — tone guide",
+    // A dir without SKILL.md that is NOT a legacy kind dir is not a skill:
+    "skills/broken/readme.md": "no SKILL.md here",
+  });
+  try {
+    const source = loadSkillsFromSnapshot(root);
+    assert.deepEqual(
+      source.catalog().map((e) => e.name),
+      ["go", "high-level-architecture", "org-style"],
+    );
+    assert.equal(source.load("go")?.content, "Write idiomatic Go.");
+    assert.equal(source.load("high-level-architecture")?.content, "Components live under specs/design.");
+    assert.equal(source.loadReference("org-style", "references/tone.md"), "REF BODY — tone guide");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("skills snapshot: mixed flat + legacy — flat wins a duplicate name", () => {
+  const root = makeTree({
+    "skills/go/SKILL.md": SKILL_MD("go", "flat copy", "FLAT BODY"),
+    "skills/builtin/go/SKILL.md": SKILL_MD("go", "legacy copy", "LEGACY BODY"),
+    "skills/flow/task-planning/SKILL.md": SKILL_MD("task-planning", "plan tasks", "PLAN BODY"),
+  });
+  try {
+    const source = loadSkillsFromSnapshot(root);
+    assert.deepEqual(
+      source.catalog().map((e) => e.name),
+      ["go", "task-planning"],
+    );
+    assert.equal(source.catalog()[0]?.description, "flat copy");
+    assert.equal(source.load("go")?.content, "FLAT BODY");
+    assert.equal(source.load("task-planning")?.content, "PLAN BODY");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("skills snapshot: LEGACY nested layout still scans (old snapshots), lazy bodies, references", () => {
   const root = makeTree({
     "skills/builtin/go/SKILL.md": SKILL_MD("go", "Go conventions", "Write idiomatic Go."),
     "skills/flow/high-level-architecture/SKILL.md": SKILL_MD(

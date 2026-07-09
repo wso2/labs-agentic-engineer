@@ -16,15 +16,21 @@
  * under the License.
  */
 
-import type { SpecFile } from "./bff.js";
+import { toRoomPath, type SpecFile } from "./bff.js";
 
 // Dev-mode seed content. Mirrors the console mock layer's demo-shop project
 // (apps/console/src/mocks/fixtures/project.ts) so `make dev` shows the same
 // spec in both the mocked REST reads and the live collab doc.
-export const devSpecBundle: SpecFile[] = [
+
+/** A spec file as the Files API serves it: repo-relative path under specs/. */
+export interface RepoSpecFile {
+  path: string;
+  content: string;
+}
+
+export const devSpecFiles: RepoSpecFile[] = [
   {
-    path: "requirements/prd.md",
-    group: "requirements",
+    path: "specs/requirements/prd.md",
     content: `# Demo Shop — PRD
 
 ## Goal
@@ -41,8 +47,7 @@ to a cart, and check out.
 `,
   },
   {
-    path: "requirements/user-stories.md",
-    group: "requirements",
+    path: "specs/requirements/user-stories.md",
     content: `# Demo Shop — User stories
 
 - As a shopper, I can search the catalog so that I find products quickly.
@@ -52,8 +57,7 @@ to a cart, and check out.
 `,
   },
   {
-    path: "design/architecture.md",
-    group: "designs",
+    path: "specs/design/architecture.md",
     content: `# Demo Shop — Component architecture
 
 Three components behind the project cell:
@@ -68,8 +72,7 @@ The storefront talks to both services; services share nothing.
 `,
   },
   {
-    path: "validation/validation-plan.md",
-    group: "validation",
+    path: "specs/validation/validation-plan.md",
     content: `# Demo Shop — Validation plan
 
 - Catalog search returns seeded products by name and category.
@@ -79,3 +82,9 @@ The storefront talks to both services; services share nothing.
 `,
   },
 ];
+
+/** The same files keyed for seeding (specs/ stripped — the room key scheme). */
+export const devSeedFiles: SpecFile[] = devSpecFiles.flatMap((f) => {
+  const path = toRoomPath(f.path);
+  return path === null ? [] : [{ path, content: f.content }];
+});

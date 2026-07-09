@@ -119,6 +119,51 @@ func TestRunCoding_ReDispatch_PreflightRunsEachTime(t *testing.T) {
 	}
 }
 
+func TestRunCoding_EmitsRuntimeConfig_AtEnsurePreflight(t *testing.T) {
+	// The ensure pre-flight fires env-config.js emission best-effort. The web-app
+	// gate lives inside the emitter (which self-no-ops for non-web-apps), so the
+	// executor calls it unconditionally with the dispatched component's name.
+	ensurer := &fakeEnsurer{}
+	rc := &fakeRuntimeConfig{}
+	oc := &ocmocks.ComponentClientMock{
+		TriggerCodingAgentFunc: func(_ context.Context, _ openchoreo.CodingAgentParams) (*models.WorkflowRun, error) {
+			return &models.WorkflowRun{Name: "ca-1"}, nil
+		},
+	}
+	row := codingRow("c1")
+	e := codingExecutorFor(t, ensurer, oc, row).WithComponentRuntimeConfig(rc)
+
+	if err := e.Run(context.Background(), codingDispatch(row)); err != nil {
+		t.Fatalf("Run(coding): %v", err)
+	}
+	if got := rc.calls(); len(got) != 1 || got[0] != [3]string{"acme", "widgets", "order-service"} {
+		t.Fatalf("EmitForComponent must be called once with (org,project,component), got %v", got)
+	}
+}
+
+func TestRunCoding_RuntimeConfigEmitError_DoesNotFailDispatch(t *testing.T) {
+	// Emission is best-effort: an emit failure warns but the coding run still
+	// dispatches (the deploy cascade re-fires the emit later).
+	ensurer := &fakeEnsurer{}
+	rc := &fakeRuntimeConfig{err: errors.New("OC transient")}
+	triggered := false
+	oc := &ocmocks.ComponentClientMock{
+		TriggerCodingAgentFunc: func(_ context.Context, _ openchoreo.CodingAgentParams) (*models.WorkflowRun, error) {
+			triggered = true
+			return &models.WorkflowRun{Name: "ca-1"}, nil
+		},
+	}
+	row := codingRow("c1")
+	e := codingExecutorFor(t, ensurer, oc, row).WithComponentRuntimeConfig(rc)
+
+	if err := e.Run(context.Background(), codingDispatch(row)); err != nil {
+		t.Fatalf("an emit failure must not fail the dispatch, got %v", err)
+	}
+	if !triggered {
+		t.Fatal("coding run must still be triggered after a best-effort emit failure")
+	}
+}
+
 func TestRunBuild_ComponentMissing_ActionableError(t *testing.T) {
 	// The build path does NOT upsert; a missing Component surfaces a clear,
 	// actionable error wrapping openchoreo.ErrNotFound.

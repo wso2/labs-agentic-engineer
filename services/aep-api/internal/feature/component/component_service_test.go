@@ -368,15 +368,15 @@ func TestComponentService_GetComponentOpenAPI_NotFoundPaths(t *testing.T) {
 
 func TestComponentService_GetComponentOpenAPI_NotServiceReturnsTypedBody(t *testing.T) {
 	t.Parallel()
-	// A web-app component (non-service) returns ErrComponentNotService PLUS a
-	// body carrying the type so the UI renders a typed empty state — the huma op
-	// maps this pair to a 409 that still ships componentType.
-	svc := openAPISvc(t, designFiles("web-ui", "web-app", ""), nil)
+	// A web-application component (non-service) returns ErrComponentNotService
+	// PLUS a body carrying the type so the UI renders a typed empty state — the
+	// huma op maps this pair to a 409 that still ships componentType.
+	svc := openAPISvc(t, designFiles("web-ui", "web-application", ""), nil)
 	spec, err := svc.GetComponentOpenAPI(context.Background(), "acme", "web", "web-ui")
 	if !errors.Is(err, ErrComponentNotService) {
 		t.Fatalf("want ErrComponentNotService, got %v", err)
 	}
-	if spec == nil || spec.ComponentType != "web-app" || spec.ComponentName != "web-ui" || spec.Spec != "" {
+	if spec == nil || spec.ComponentType != "web-application" || spec.ComponentName != "web-ui" || spec.Spec != "" {
 		t.Fatalf("not-service body must carry the type with no spec: %+v", spec)
 	}
 }
@@ -460,5 +460,33 @@ func TestComponentService_CreateComponent_PassthroughAndError(t *testing.T) {
 	}
 	if _, err := NewComponentService(ocErr, nil, nil, nil, nil).CreateComponent(context.Background(), "acme", "web", &models.CreateComponentRequest{Name: "svc-a"}); !errors.Is(err, openchoreo.ErrConflict) {
 		t.Fatalf("create error must propagate the OC sentinel verbatim, got %v", err)
+	}
+}
+
+// TestOcEntrypoint_CanonicalWebAppKind guards against the vocabulary drift
+// bug: the canonical kind is "web-application" — OpenChoreo's own term
+// (models.ComponentTypeWebApplication) — and ocEntrypoint merely re-attaches
+// OC's `deployment/` prefix. Retired spellings ("webapp", "web-app") are NOT
+// understood anywhere; designs carrying them must be migrated. Unknown kinds
+// keep falling back to deployment/service.
+func TestOcEntrypoint_CanonicalWebAppKind(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name          string
+		componentType string
+		want          string
+	}{
+		{"canonical web-application", "web-application", "deployment/web-application"},
+		{"retired webapp spelling is not a web application", "webapp", "deployment/service"},
+		{"retired web-app spelling is not a web application", "web-app", "deployment/service"},
+		{"service", "service", "deployment/service"},
+		{"empty", "", "deployment/service"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ocEntrypoint(tc.componentType); got != tc.want {
+				t.Errorf("ocEntrypoint(%q) = %q, want %q", tc.componentType, got, tc.want)
+			}
+		})
 	}
 }

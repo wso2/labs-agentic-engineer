@@ -40,6 +40,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -409,5 +411,44 @@ func TestReqComponent_CollabValidate_MissingRoom(t *testing.T) {
 	resp := h.AsOrg("acme").Get("/api/v1/collab/validate")
 	if resp.Code != 400 {
 		t.Fatalf("collab-validate no room: want 400, got %d body=%s", resp.Code, resp.Body.String())
+	}
+}
+
+// TestReqComponent_CollabValidate_ReturnsProjectName pins the success path:
+// the oracle resolves `spec-<org>-<project>` and the response carries the
+// projectName the collab service needs for its seed read (#114). Uses a raw
+// request via ClaimsHeader because the Req builder can't set X-Room-Id.
+func TestReqComponent_CollabValidate_ReturnsProjectName(t *testing.T) {
+	t.Parallel()
+	repos := &fakeCollabRepos{
+		GetRepoFunc: func(_ context.Context, orgID, projectID string) (*models.GitRepository, error) {
+			if orgID != "acme" || projectID != "demo-shop" {
+				return nil, nil
+			}
+			return &models.GitRepository{Status: "ready"}, nil
+		},
+	}
+	h := newReqHarness(t, &artifactstest.FakeArtifactService{}, repos)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/collab/validate", nil)
+	key, value := componenttest.ClaimsHeader(t, "acme")
+	req.Header.Set(key, value)
+	req.Header.Set("X-Room-Id", "spec-acme-demo-shop")
+	rec := httptest.NewRecorder()
+	h.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != 200 {
+		t.Fatalf("collab-validate: want 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Name        string `json:"name"`
+		Email       string `json:"email"`
+		ProjectName string `json:"projectName"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("collab-validate: unmarshal: %v body=%s", err, rec.Body.String())
+	}
+	if body.ProjectName != "demo-shop" {
+		t.Fatalf("collab-validate: want projectName demo-shop, got %q body=%s", body.ProjectName, rec.Body.String())
 	}
 }

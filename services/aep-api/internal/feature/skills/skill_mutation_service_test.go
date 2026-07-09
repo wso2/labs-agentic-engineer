@@ -118,32 +118,6 @@ func TestParseAndValidateSkillMD(t *testing.T) {
 	})
 }
 
-func TestVersionFromMetadata(t *testing.T) {
-	cases := []struct {
-		name string
-		md   string
-		want int
-	}{
-		{"flat dotted key string", "metadata:\n  aep.version: \"2\"\n", 2},
-		{"flat dotted key int", "metadata:\n  aep.version: 3\n", 3},
-		{"nested form", "metadata:\n  aep:\n    version: \"4\"\n", 4},
-		{"absent defaults to 1", "metadata:\n  other: x\n", 1},
-		{"no metadata defaults to 1", "", 1},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			full := "---\nname: x\ndescription: d\n" + tc.md + "---\n\n# X\n"
-			fm, _, err := parseSkillMD(full)
-			if err != nil {
-				t.Fatalf("parse: %v", err)
-			}
-			if got := versionFromMetadata(fm); got != tc.want {
-				t.Fatalf("version = %d, want %d", got, tc.want)
-			}
-		})
-	}
-}
-
 func TestImportWarnings(t *testing.T) {
 	t.Run("unsupported runtime", func(t *testing.T) {
 		w := importWarnings(skillFrontmatter{Compatibility: "python>=3.11"})

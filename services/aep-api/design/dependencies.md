@@ -14,7 +14,7 @@ Resource model: ResourceType → Resource → ResourceReleaseBinding).
 - `resources/` — external-resource registry + per-project value collection
   (secrets go to SM-API/OpenBao, never the DB) and the two provisioners
   (external: value-backed ResourceType per org; platform: catalog
-  ClusterResourceTypes such as `postgres-cnpg`), both pinning
+  ClusterResourceTypes such as `postgres-cnpg` and `thunder-app`), both pinning
   ResourceReleaseBindings to controller-cut releases.
 
 Task lifecycle is event-driven through `internal/contracts` (the Projector is

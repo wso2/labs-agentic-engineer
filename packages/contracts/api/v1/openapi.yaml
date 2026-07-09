@@ -249,9 +249,13 @@ components:
           type: string
         name:
           type: string
+        projectName:
+          description: The room's project, resolved by the oracle from `spec-<org>-<project>`; the collab service uses it for the seed read (#114).
+          type: string
       required:
         - name
         - email
+        - projectName
       type: object
     CollectSpecInputBody:
       additionalProperties: false
@@ -318,6 +322,11 @@ components:
         status:
           type: string
         type:
+          description: >-
+            Component kind in AEP's design vocabulary — "web-application" or
+            "service" (matching design.json's componentType). OpenChoreo's
+            prefixed ComponentType names (deployment/*) never appear on this
+            API.
           type: string
         uid:
           type: string
@@ -569,7 +578,6 @@ components:
       required:
         - name
         - skillMd
-        - references
       type: object
     DeleteOp:
       additionalProperties: false
@@ -1163,6 +1171,50 @@ components:
       required:
         - items
       type: object
+    ProjectStatus:
+      additionalProperties: false
+      description: Computed SDLC phase and artifact states.
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - /api/v1/ProjectStatus.json
+          format: uri
+          readOnly: true
+          type: string
+        designStatus:
+          description: '"", draft, approved'
+          type: string
+        hasDesign:
+          type: boolean
+        hasSpec:
+          type: boolean
+        hasTasks:
+          type: boolean
+        phase:
+          description: no-repo, repo-cloning, repo-error, prompt, spec, architecture, tasks, components
+          type: string
+        repoErrorMessage:
+          description: Set when phase is repo-error.
+          type: string
+        repoStatus:
+          description: '"", pending, cloning, ready, error'
+          type: string
+        repoUrl:
+          type: string
+        specStatus:
+          description: '"", draft, approved'
+          type: string
+      required:
+        - phase
+        - repoStatus
+        - repoUrl
+        - hasSpec
+        - hasDesign
+        - hasTasks
+        - specStatus
+        - designStatus
+      type: object
     ProvisionBody:
       additionalProperties: false
       properties:
@@ -1241,9 +1293,6 @@ components:
         updatedAt:
           format: date-time
           type: string
-        version:
-          format: int64
-          type: integer
       required:
         - editable
         - orgId
@@ -1252,7 +1301,6 @@ components:
         - description
         - skillMd
         - references
-        - version
         - contentSha
         - updatedAt
       type: object
@@ -1449,6 +1497,12 @@ components:
           format: uri
           readOnly: true
           type: string
+        latest:
+          description: Newest user-tagged spec version (e.g. v3); absent when nothing is tagged. Proposed frontend-first (#117).
+          type: string
+        specDirty:
+          description: True when specs/ changed on GitHub after `latest` was tagged. Proposed frontend-first (#117).
+          type: boolean
         tags:
           items:
             type: string
@@ -1662,7 +1716,6 @@ components:
           type: string
       required:
         - skillMd
-        - references
       type: object
     Warning:
       additionalProperties: false
@@ -3033,6 +3086,35 @@ paths:
       summary: Get the collaboration session descriptor for the spec workspace
       tags:
         - Collaboration
+  /projects/{projectName}/status:
+    get:
+      operationId: get-project-status
+      parameters:
+        - description: Project name (DNS-label slug)
+          in: path
+          name: projectName
+          required: true
+          schema:
+            description: Project name (DNS-label slug)
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectStatus"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      security:
+        - userJWT: []
+      summary: Get a project's SDLC status
+      tags:
+        - Projects
   /projects/{projectName}/tags:
     get:
       operationId: list-project-tags
@@ -3059,7 +3141,7 @@ paths:
           description: Error
       security:
         - userJWT: []
-      summary: List project build tags
+      summary: List spec version tags
       tags:
         - Projects
   /projects/{projectName}/tasks:

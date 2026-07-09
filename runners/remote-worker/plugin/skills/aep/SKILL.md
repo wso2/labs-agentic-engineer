@@ -32,7 +32,7 @@ project):
 
 - `go` — Dockerfile base image pin, `modernc.org/sqlite` driver, layout, port.
 - `react-webapp` — Vite + nginx layout, `/env-config.js` + `window._env_`.
-- `thunder-authentication` — OIDC + PKCE, `THUNDER_*` runtime keys.
+- `thunder-authentication` — OIDC + PKCE, generic `<DEP>_<OUTPUT>` runtime keys.
 - `api-management` — gateway JWT validation, `X-User-Id` header, CORS.
 
 When the issue body's Scope section says something like "Wire upstream

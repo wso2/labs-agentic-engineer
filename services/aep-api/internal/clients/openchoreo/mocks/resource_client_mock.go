@@ -47,6 +47,9 @@ var _ openchoreo.ResourceClient = &ResourceClientMock{}
 //			ListWorkloadEndpointsFunc: func(ctx context.Context, orgHandle string) ([]openchoreo.WorkloadEndpointInfo, error) {
 //				panic("mock out the ListWorkloadEndpoints method")
 //			},
+//			PatchBindingEnvironmentConfigsFunc: func(ctx context.Context, orgID string, bindingName string, configs map[string]string) error {
+//				panic("mock out the PatchBindingEnvironmentConfigs method")
+//			},
 //		}
 //
 //		// use mockedResourceClient in code that requires openchoreo.ResourceClient
@@ -80,6 +83,9 @@ type ResourceClientMock struct {
 
 	// ListWorkloadEndpointsFunc mocks the ListWorkloadEndpoints method.
 	ListWorkloadEndpointsFunc func(ctx context.Context, orgHandle string) ([]openchoreo.WorkloadEndpointInfo, error)
+
+	// PatchBindingEnvironmentConfigsFunc mocks the PatchBindingEnvironmentConfigs method.
+	PatchBindingEnvironmentConfigsFunc func(ctx context.Context, orgID string, bindingName string, configs map[string]string) error
 
 	// calls tracks calls to the methods.
 	calls struct {
@@ -158,16 +164,28 @@ type ResourceClientMock struct {
 			// OrgHandle is the orgHandle argument value.
 			OrgHandle string
 		}
+		// PatchBindingEnvironmentConfigs holds details about calls to the PatchBindingEnvironmentConfigs method.
+		PatchBindingEnvironmentConfigs []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// OrgID is the orgID argument value.
+			OrgID string
+			// BindingName is the bindingName argument value.
+			BindingName string
+			// Configs is the configs argument value.
+			Configs map[string]string
+		}
 	}
-	lockApplyResource            sync.RWMutex
-	lockDeleteBinding            sync.RWMutex
-	lockDeleteResource           sync.RWMutex
-	lockEnsureBinding            sync.RWMutex
-	lockEnsureResourceType       sync.RWMutex
-	lockGetBinding               sync.RWMutex
-	lockGetResource              sync.RWMutex
-	lockListClusterResourceTypes sync.RWMutex
-	lockListWorkloadEndpoints    sync.RWMutex
+	lockApplyResource                  sync.RWMutex
+	lockDeleteBinding                  sync.RWMutex
+	lockDeleteResource                 sync.RWMutex
+	lockEnsureBinding                  sync.RWMutex
+	lockEnsureResourceType             sync.RWMutex
+	lockGetBinding                     sync.RWMutex
+	lockGetResource                    sync.RWMutex
+	lockListClusterResourceTypes       sync.RWMutex
+	lockListWorkloadEndpoints          sync.RWMutex
+	lockPatchBindingEnvironmentConfigs sync.RWMutex
 }
 
 // ApplyResource calls ApplyResourceFunc.
@@ -515,5 +533,49 @@ func (mock *ResourceClientMock) ListWorkloadEndpointsCalls() []struct {
 	mock.lockListWorkloadEndpoints.RLock()
 	calls = mock.calls.ListWorkloadEndpoints
 	mock.lockListWorkloadEndpoints.RUnlock()
+	return calls
+}
+
+// PatchBindingEnvironmentConfigs calls PatchBindingEnvironmentConfigsFunc.
+func (mock *ResourceClientMock) PatchBindingEnvironmentConfigs(ctx context.Context, orgID string, bindingName string, configs map[string]string) error {
+	if mock.PatchBindingEnvironmentConfigsFunc == nil {
+		panic("ResourceClientMock.PatchBindingEnvironmentConfigsFunc: method is nil but ResourceClient.PatchBindingEnvironmentConfigs was just called")
+	}
+	callInfo := struct {
+		Ctx         context.Context
+		OrgID       string
+		BindingName string
+		Configs     map[string]string
+	}{
+		Ctx:         ctx,
+		OrgID:       orgID,
+		BindingName: bindingName,
+		Configs:     configs,
+	}
+	mock.lockPatchBindingEnvironmentConfigs.Lock()
+	mock.calls.PatchBindingEnvironmentConfigs = append(mock.calls.PatchBindingEnvironmentConfigs, callInfo)
+	mock.lockPatchBindingEnvironmentConfigs.Unlock()
+	return mock.PatchBindingEnvironmentConfigsFunc(ctx, orgID, bindingName, configs)
+}
+
+// PatchBindingEnvironmentConfigsCalls gets all the calls that were made to PatchBindingEnvironmentConfigs.
+// Check the length with:
+//
+//	len(mockedResourceClient.PatchBindingEnvironmentConfigsCalls())
+func (mock *ResourceClientMock) PatchBindingEnvironmentConfigsCalls() []struct {
+	Ctx         context.Context
+	OrgID       string
+	BindingName string
+	Configs     map[string]string
+} {
+	var calls []struct {
+		Ctx         context.Context
+		OrgID       string
+		BindingName string
+		Configs     map[string]string
+	}
+	mock.lockPatchBindingEnvironmentConfigs.RLock()
+	calls = mock.calls.PatchBindingEnvironmentConfigs
+	mock.lockPatchBindingEnvironmentConfigs.RUnlock()
 	return calls
 }

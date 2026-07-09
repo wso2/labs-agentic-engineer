@@ -162,7 +162,7 @@ export function defaultComponentDesignMd(opts: {
 }): string {
   const { name, type, language } = opts;
   const entrypoint =
-    type === 'web-app' ? 'deployment/web-application' : 'deployment/service';
+    type === 'web-application' ? 'deployment/web-application' : 'deployment/service';
   return `---
 type: ${type}
 language: ${language}

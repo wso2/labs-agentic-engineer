@@ -388,11 +388,39 @@ services:
       - "8091:3000"
     depends_on:
       - aep-api
+      - collab-server
     environment:
       AEP_API_PROXY_URL: "http://aep-api:9090"
       VITE_THUNDER_URL: "${PUBLIC_THUNDER_URL}"
       VITE_THUNDER_CLIENT_ID: "${VITE_THUNDER_CLIENT_ID:-aep-console-client}"
       VITE_THUNDER_SCOPES: "${VITE_THUNDER_SCOPES:-openid profile email}"
+    networks:
+      - aep
+
+  # ---------------------------------------------------------------------------
+  # collab-server — Yjs/Hocuspocus collaboration rooms for the spec workspace
+  # (#86 / #114). The browser reaches it same-origin through the new console's
+  # nginx /collab proxy (its default upstream is exactly `collab-server:3400`,
+  # so the console needs no COLLAB_WS_URL/COLLAB_SERVER_URL overrides). Room
+  # auth + seeding go to aep-api with the joining user's token: the oracle
+  # (validate-collab-access) resolves the room's project, then the seeder
+  # reads the spec via the Files API.
+  # ---------------------------------------------------------------------------
+  collab-server:
+    build:
+      # Repo root — @aep/collab is a root-pnpm-workspace member.
+      context: ..
+      dockerfile: services/collab/Dockerfile
+    container_name: aep-collab
+    ports:
+      # Host mapping is for direct debugging only; the browser path is the
+      # console's /collab proxy.
+      - "3400:3400"
+    depends_on:
+      - aep-api
+    environment:
+      COLLAB_PORT: "3400"
+      AEP_API_BASE: "http://aep-api:9090/api/v1"
     networks:
       - aep
 

@@ -267,7 +267,7 @@ func TestAssembleDesign_ComponentFromDesignJSON(t *testing.T) {
 			`{"kind":"external","name":"stripe"}` +
 			`],"description":"Task CRUD API"}`,
 		"components/task-api/openapi.yaml": "openapi: 3.0.0\n",
-		"components/web-ui/design.json": `{"name":"web-ui","type":"web-app","version":"1.0.0",` +
+		"components/web-ui/design.json": `{"name":"web-ui","type":"web-application","version":"1.0.0",` +
 			`"language":"ts","buildpack":"node","appPath":"web-ui","entrypoint":"index.ts",` +
 			`"exposure":"internet","dependencies":[],"description":"UI"}`,
 	})

@@ -18,11 +18,11 @@ package genai
 
 // genai_huma.go — the committed-truth turn HTTP edge (design §6 API delta):
 //
-//	POST …/conversations/{id}/turns {useCase,instruction,target?} → 202 {turnId}
+//	POST …/agents/{id}/messages {useCase,instruction,target?}    → 202 {turnId}
 //	GET  …/turns/{turnId}                                         → status
 //	GET  …/turns/active                                           → status | 204
 //	GET  …/turns/{turnId}/stream?from=N (SSE, Last-Event-ID)      → replay + tail
-//	GET  …/conversations/{id}                                     → rehydrate
+//	GET  …/agents/{id}/messages                                   → rehydrate
 //
 // The stream events are the raw agents StreamParts plus ONE aep-api terminal
 // event (turn-committed / turn-failed), each stamped with `id: <index>`; the
@@ -34,6 +34,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -121,7 +122,7 @@ func RegisterGenAI(api huma.API, svc GenAIService) {
 	huma.Register(api, huma.Operation{
 		OperationID:   "create-turn",
 		Method:        http.MethodPost,
-		Path:          "/projects/{projectName}/conversations/{conversationId}/turns",
+		Path:          "/projects/{projectName}/agents/{conversationId}/messages",
 		Summary:       "Start a generation/chat turn (202 — runs detached; attach via the turn stream)",
 		Tags:          []string{"GenAI"},
 		Security:      humakit.SecurityUserJWT,
@@ -135,7 +136,7 @@ func RegisterGenAI(api huma.API, svc GenAIService) {
 			Target:         in.Body.Target,
 		})
 		if err != nil {
-			return nil, mapTurnError(err)
+			return nil, mapTurnError(ctx, err)
 		}
 		out := &turnOutput{}
 		out.Body.TurnID = turnID
@@ -152,7 +153,7 @@ func RegisterGenAI(api huma.API, svc GenAIService) {
 	}, func(ctx context.Context, in *turnStatusInput) (*turnStatusOutput, error) {
 		st, err := svc.TurnStatus(ctx, in.OrgHandle, in.ProjectName, in.TurnID)
 		if err != nil {
-			return nil, mapTurnError(err)
+			return nil, mapTurnError(ctx, err)
 		}
 		return &turnStatusOutput{Body: st}, nil
 	})
@@ -167,7 +168,7 @@ func RegisterGenAI(api huma.API, svc GenAIService) {
 	}, func(ctx context.Context, in *activeTurnInput) (*huma.StreamResponse, error) {
 		st, err := svc.ActiveTurn(ctx, in.OrgHandle, in.ProjectName)
 		if err != nil {
-			return nil, mapTurnError(err)
+			return nil, mapTurnError(ctx, err)
 		}
 		// Manual body write: 200 with the status JSON, or a bodyless 204 —
 		// a typed output cannot express the 204-no-body arm.
@@ -203,7 +204,7 @@ func RegisterGenAI(api huma.API, svc GenAIService) {
 		}
 		sub, err := svc.AttachTurn(ctx, in.OrgHandle, in.ProjectName, in.TurnID, from)
 		if err != nil {
-			return nil, mapTurnError(err) // pre-stream 404 / 409
+			return nil, mapTurnError(ctx, err) // pre-stream 404 / 409
 		}
 		return &huma.StreamResponse{Body: humakit.SSEBody(func(w io.Writer, flush func()) {
 			defer sub.Cancel()
@@ -214,7 +215,7 @@ func RegisterGenAI(api huma.API, svc GenAIService) {
 	huma.Register(api, huma.Operation{
 		OperationID: "get-conversation",
 		Method:      http.MethodGet,
-		Path:        "/projects/{projectName}/conversations/{conversationId}",
+		Path:        "/projects/{projectName}/agents/{conversationId}/messages",
 		Summary:     "Rehydrate a chat conversation (messages only)",
 		Tags:        []string{"GenAI"},
 		Security:    humakit.SecurityUserJWT,
@@ -284,7 +285,7 @@ func streamSubscription(ctx context.Context, w io.Writer, flush func(), sub *Tur
 // bodies are the pinned {"code": …} shapes; upstream statuses map per the
 // shared edge policy (dispatch happens post-202 now, so upstream errors here
 // are limited to rehydrate-like paths).
-func mapTurnError(err error) error {
+func mapTurnError(ctx context.Context, err error) error {
 	var inProgress *TurnInProgressError
 	if errors.As(err, &inProgress) {
 		return &turnConflictError{Code: "turn_in_progress", ActiveTurnID: inProgress.ActiveTurnID}
@@ -309,12 +310,23 @@ func mapTurnError(err error) error {
 		return &turnConflictError{Code: "requirements_not_approved"}
 	case errors.Is(err, ErrTurnBufferTruncated):
 		return huma.Error409Conflict(ErrTurnBufferTruncated.Error())
+	case errors.Is(err, ErrSkillsRepoUnavailable):
+		// The org's _skills repo is unusable (row missing/unprovisionable or
+		// backing repo gone — e.g. deleted externally under a lingering row).
+		// A platform-side failure, not a client error: 503 with a clear
+		// message, cause in the logs. Recovery is a manual operator action
+		// today (drop the stale `_skills` row; the next resolve re-provisions).
+		slog.ErrorContext(ctx, "genai turn: org skills repository unavailable", "error", err)
+		return huma.Error503ServiceUnavailable("org skills repository unavailable — contact your platform admin")
 	default:
-		return huma.Error500InternalServerError("internal error")
+		return internalError(ctx, "genai turn", err)
 	}
 }
 
 func mapRehydrateError(err error) error {
+	// The rehydrate handler does not thread its request ctx into the mapper;
+	// the internal-error log carries the cause, which is what matters here.
+	ctx := context.Background()
 	switch {
 	case errors.Is(err, ErrConversationNotFound):
 		return huma.Error404NotFound("conversation not found")
@@ -326,6 +338,15 @@ func mapRehydrateError(err error) error {
 		if mapped, ok := humakit.MapAgentsUpstreamError(err, nil); ok {
 			return mapped
 		}
-		return huma.Error500InternalServerError("internal error")
+		return internalError(ctx, "genai rehydrate", err)
 	}
+}
+
+// internalError is the single opaque-500 exit for the genai edge: it logs the
+// underlying cause (nothing else in the default branch does — the client sees
+// only "internal error") and returns the pinned 500. Every default-500 path
+// routes through here so a swallowed cause can never reach production again.
+func internalError(ctx context.Context, scope string, err error) error {
+	slog.ErrorContext(ctx, "genai: unmapped internal error", "scope", scope, "error", err)
+	return huma.Error500InternalServerError("internal error")
 }

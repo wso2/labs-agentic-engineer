@@ -318,12 +318,12 @@ func TestComponentComponent_OpenAPINotServiceReturns409WithType(t *testing.T) {
 	t.Parallel()
 	// A non-service component → 409 whose body still carries the componentType so
 	// the UI renders a typed empty state.
-	h := newHarness(t, compFakes{store: storeReturning(designFilesFor("web-ui", "web-app", ""))})
+	h := newHarness(t, compFakes{store: storeReturning(designFilesFor("web-ui", "web-application", ""))})
 	resp := h.AsOrg("acme").Get(compProjectPrefix + "/web-ui/openapi")
 	if resp.Code != 409 {
 		t.Fatalf("openapi non-service: want 409, got %d body=%s", resp.Code, resp.Body.String())
 	}
-	if !strings.Contains(resp.Body.String(), `"componentType":"web-app"`) {
+	if !strings.Contains(resp.Body.String(), `"componentType":"web-application"`) {
 		t.Fatalf("409 body must carry the component type: %s", resp.Body.String())
 	}
 }

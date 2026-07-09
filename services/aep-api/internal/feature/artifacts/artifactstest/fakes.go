@@ -43,6 +43,7 @@ type FakeArtifactService struct {
 	DiscardDesignFunc            func(ctx context.Context, orgID, projectID string) (map[string]string, error)
 	ListRequirementsVersionsFunc func(ctx context.Context, orgID, projectID string) ([]artifacts.RequirementsVersionInfo, error)
 	ListDesignVersionsFunc       func(ctx context.Context, orgID, projectID string) ([]artifacts.DesignVersionInfo, error)
+	ListSpecVersionTagsFunc      func(ctx context.Context, orgID, projectID string) (*artifacts.TagList, error)
 	LatestDesignTagFunc          func(ctx context.Context, orgID, projectID string) string
 	GetRequirementsAtTagFunc     func(ctx context.Context, orgID, projectID, tag string) (map[string]string, error)
 	GetDesignAtTagFunc           func(ctx context.Context, orgID, projectID, tag string) (map[string]string, error)
@@ -105,6 +106,13 @@ func (f *FakeArtifactService) ListDesignVersions(ctx context.Context, orgID, pro
 		panic("artifactstest: ListDesignVersions called but ListDesignVersionsFunc is not set")
 	}
 	return f.ListDesignVersionsFunc(ctx, orgID, projectID)
+}
+
+func (f *FakeArtifactService) ListSpecVersionTags(ctx context.Context, orgID, projectID string) (*artifacts.TagList, error) {
+	if f.ListSpecVersionTagsFunc == nil {
+		panic("artifactstest: ListSpecVersionTags called but ListSpecVersionTagsFunc is not set")
+	}
+	return f.ListSpecVersionTagsFunc(ctx, orgID, projectID)
 }
 
 func (f *FakeArtifactService) LatestDesignTag(ctx context.Context, orgID, projectID string) string {

@@ -72,10 +72,16 @@ func (f *Funnel) OnExecuteIntent(ctx context.Context, repoFullName string, issue
 		return nil
 	}
 	if facts.Class == taskmeta.ClassProvision {
-		// aep:provision gate issues are driven by the drawer action + the
-		// readiness watcher (dependency-management §3.6), never by aep:execute.
-		// Consume a stray execute label so it does not linger; do not admit a row.
+		// aep:provision gate issues are fulfilled from the design page's
+		// dependency panel + the readiness watcher (dependency-management §3.6),
+		// never by aep:execute. Consume the stray execute label (so it does not
+		// linger), tell the user where to go — ONCE — and admit no row. Without
+		// this feedback a user clicking Execute (or "Execute all") on a provision
+		// gate got silence.
 		f.consumeExecute(ctx, orgID, projectID, issueNumber)
+		slog.InfoContext(ctx, "funnel: aep:execute consumed on a provision gate — provision gates are fulfilled from the design page's dependency panel",
+			"org", orgID, "project", projectID, "issue", issueNumber)
+		f.noteProvisionExecute(ctx, facts, view)
 		return nil
 	}
 
@@ -343,6 +349,41 @@ func (f *Funnel) depDeployed(ctx context.Context, view *projectView, key string)
 	return deriveStatus(depTask, execs) == taskmeta.StatusDeployed
 }
 
+// provisionExecuteNotice is the one-time comment posted when a user stamps
+// aep:execute on a provisioning gate — telling them where provisioning is
+// actually driven from (the design page's dependency panel), since the funnel
+// deliberately admits no execution row for a provision gate.
+const provisionExecuteNotice = "ℹ️ **`aep:execute` doesn't apply to a provisioning gate.** " +
+	"Provisioning is fulfilled from the design page's dependency panel (provide the required values / provision the resource there); " +
+	"the platform's readiness watcher then closes this gate automatically. The Execute button has no effect here, so nothing was dispatched."
+
+// noteProvisionExecute posts the one-time provisioning-gate guidance comment and
+// stamps aep:provision-noted so it is never re-posted on a repeated Execute
+// stamp. Best-effort: if the comment fails the marker is NOT stamped, so a later
+// stamp retries the notice rather than silently swallowing it again.
+func (f *Funnel) noteProvisionExecute(ctx context.Context, facts TaskFacts, view *projectView) {
+	if view.provisionNoted[facts.IssueNumber] {
+		return // already informed once — don't spam
+	}
+	if err := f.issues.CommentIssue(ctx, facts.OrgID, facts.ProjectID, facts.IssueNumber, provisionExecuteNotice); err != nil {
+		slog.WarnContext(ctx, "funnel: provision-gate execute notice failed", "issue", facts.IssueNumber, "error", err)
+		return
+	}
+	if err := f.issues.AddLabels(ctx, facts.OrgID, facts.ProjectID, facts.IssueNumber, []string{taskmeta.LabelProvisionNoted}); err != nil {
+		slog.WarnContext(ctx, "funnel: stamp aep:provision-noted failed", "issue", facts.IssueNumber, "error", err)
+	}
+}
+
+// containsLabel reports whether labels contains want.
+func containsLabel(labels []string, want string) bool {
+	for _, l := range labels {
+		if l == want {
+			return true
+		}
+	}
+	return false
+}
+
 // consumeExecute removes the edge-triggered aep:execute label (best-effort).
 func (f *Funnel) consumeExecute(ctx context.Context, orgID, projectID string, number int) {
 	if err := f.issues.RemoveLabel(ctx, orgID, projectID, number, taskmeta.LabelExecute); err != nil {
@@ -375,6 +416,9 @@ type projectView struct {
 	latestByComponent        map[string]TaskFacts
 	provisionByDep           map[string]TaskFacts
 	provisionDepsByComponent map[string][]string
+	// provisionNoted marks issues already carrying aep:provision-noted — the
+	// one-time-comment guard for a stray aep:execute on a provision gate.
+	provisionNoted map[int]bool
 }
 
 // TaskFactsFor resolves one Task's live facts by repo full name + issue number
@@ -404,6 +448,7 @@ func (f *Funnel) loadProject(ctx context.Context, orgID, projectID, repoFullName
 		byNumber:          map[int]TaskFacts{},
 		latestByComponent: map[string]TaskFacts{},
 		provisionByDep:    map[string]TaskFacts{},
+		provisionNoted:    map[int]bool{},
 	}
 	for _, issue := range issues {
 		facts, _, ok := factsFromIssue(issue, orgID, projectID, repoFullName)
@@ -411,6 +456,9 @@ func (f *Funnel) loadProject(ctx context.Context, orgID, projectID, repoFullName
 			continue
 		}
 		v.byNumber[facts.IssueNumber] = facts
+		if containsLabel(issue.Labels, taskmeta.LabelProvisionNoted) {
+			v.provisionNoted[facts.IssueNumber] = true
+		}
 		key := strings.ToLower(facts.Component)
 		if key == "" {
 			continue

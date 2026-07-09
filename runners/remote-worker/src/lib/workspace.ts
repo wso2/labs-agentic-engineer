@@ -92,19 +92,25 @@ export function computeLayout(orgId: string, projectId: string, taskId: string):
   };
 }
 
-// resolvePATForClone calls the path-scoped credentials/refresh endpoint using
-// the task bearer to obtain the GitHub PAT.  Used during workspace
-// provisioning to embed credentials in the clone URL — avoids the
-// GIT_ASKPASS protocol mismatch where credhelper.sh outputs two-line
+// GitTokenRequest is the minimal shape refreshGitToken needs — satisfied by
+// both ProvisionRequest and the oneshot DispatchRequest.
+export interface GitTokenRequest {
+  taskId: string;
+  gitServiceUrl: string;
+  refreshUrl?: string;
+  correlationId?: string;
+}
+
+// refreshGitToken POSTs to the path-scoped credentials/refresh endpoint with
+// the given runner bearer and returns the GitHub PAT. The endpoint returns an
+// org/installation-wide token, so the SAME PAT clones both the project repo
+// (workspace provisioning) and the org-skills repo (per-task skills clone).
+// Used during workspace provisioning to embed credentials in the clone URL —
+// avoids the GIT_ASKPASS protocol mismatch where credhelper.sh outputs two-line
 // key=value format but GIT_ASKPASS reads only one line per call.
-async function resolvePATForClone(
-  bearerFile: string,
-  _helperScript: string,
-  req: ProvisionRequest,
-): Promise<string> {
-  const bearer = await fs.promises.readFile(bearerFile, "utf-8");
+export async function refreshGitToken(req: GitTokenRequest, bearer: string): Promise<string> {
   if (!bearer.trim()) {
-    throw new Error("bearer file is empty");
+    throw new Error("bearer is empty");
   }
 
   // WS2.6 — refreshUrl (set by oneshot.ts) is the path-scoped endpoint. The
@@ -129,8 +135,7 @@ async function resolvePATForClone(
 
   // Pick the transport by URL scheme: in cloud the BFF/git endpoint is https
   // (gateway), locally it's http. Node's http.request rejects https URLs with
-  // "Protocol \"https:\" not supported", so this must branch on the scheme
-  // (mirrors skills_pull.ts).
+  // "Protocol \"https:\" not supported", so this must branch on the scheme.
   const lib = url.protocol === "https:" ? https : http;
 
   return new Promise((resolve, reject) => {
@@ -161,6 +166,20 @@ async function resolvePATForClone(
     hReq.write("{}");
     hReq.end();
   });
+}
+
+// resolvePATForClone reads the staged bearer file and refreshes the GitHub PAT
+// used to embed credentials in the workspace clone URL.
+async function resolvePATForClone(
+  bearerFile: string,
+  _helperScript: string,
+  req: ProvisionRequest,
+): Promise<string> {
+  const bearer = await fs.promises.readFile(bearerFile, "utf-8");
+  if (!bearer.trim()) {
+    throw new Error("bearer file is empty");
+  }
+  return refreshGitToken(req, bearer);
 }
 // provisionWorkspace clones the feature branch and writes credentials.
 // Idempotent: it removes any existing workspace first (§12.1 step 5
@@ -263,7 +282,7 @@ export async function provisionWorkspace(req: ProvisionRequest): Promise<Workspa
   return layout;
 }
 
-function shellQuote(s: string): string {
+export function shellQuote(s: string): string {
   // Single-quote and escape any embedded single-quote.
   return `'${s.replaceAll("'", "'\\''")}'`;
 }

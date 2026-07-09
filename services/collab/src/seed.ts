@@ -23,6 +23,11 @@ import { isMarkdownPath, markdownToFragment } from "./markdown.js";
 // Doc model (#86 decision 2 + phase 6): one Y.Doc per project. Markdown
 // files are Y.XmlFragments keyed by path (Tiptap's collaboration binding
 // needs rich structure); everything else is a Y.Text in Y.Map('files').
+//
+// KEY SCHEME INVARIANT (#113 decision 2 / #114): doc keys are the repo path
+// with the `specs/` prefix stripped (requirements/prd.md). The console's spec
+// feature strips identically at its API boundary; any future peer that writes
+// to rooms (agents, #86) must too. The strip lives in bff.ts (toRoomPath).
 export const FILES_MAP = "files";
 
 export function filesMap(doc: Y.Doc): Y.Map<Y.Text> {

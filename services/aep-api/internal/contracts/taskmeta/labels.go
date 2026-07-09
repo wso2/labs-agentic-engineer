@@ -57,6 +57,14 @@ const (
 	// stale-vs-design, refused op, no executor).
 	LabelStatusPrefix = "aep:status/"
 	LabelAttention    = "aep:attention"
+
+	// LabelProvisionNoted is a platform-written marker stamped on an aep:provision
+	// gate issue the first (and only) time a stray aep:execute is consumed on it,
+	// so the funnel's one-time "use the design page's dependency panel" comment is
+	// not re-posted on every repeated Execute stamp. It is deliberately NOT in the
+	// Classify vocabulary (it classifies as KindOther) so the status-projection
+	// reconciler never strips it.
+	LabelProvisionNoted = "aep:provision-noted"
 )
 
 // ExecutorClass is the single routing dimension (§3): coding tasks are

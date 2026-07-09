@@ -2,9 +2,7 @@
   "count": 1,
   "updates": [
     {
-      "name": "go",
-      "repoVersion": 1,
-      "embeddedVersion": 2
+      "name": "go"
     }
   ]
 }

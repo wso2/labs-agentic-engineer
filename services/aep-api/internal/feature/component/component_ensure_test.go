@@ -106,6 +106,49 @@ func TestEnsureComponent_ProvisionsOCComponentFromDesign(t *testing.T) {
 	}
 }
 
+// TestEnsureComponent_WebAppKind_UsesWebApplicationEntrypoint is the
+// consumer-level regression for the component-kind vocabulary drift bug: a
+// design.json carrying the canonical "web-application" type (OpenChoreo's own
+// term, models.ComponentTypeWebApplication) must provision an OC Component
+// with the deployment/web-application entrypoint, not silently fall back to a
+// plain service (which caused shared-host routing and a missing runtime
+// config for the deployed SPA).
+func TestEnsureComponent_WebAppKind_UsesWebApplicationEntrypoint(t *testing.T) {
+	var captured *models.CreateComponentRequest
+	oc := &ocmocks.ComponentClientMock{
+		CreateComponentFunc: func(_ context.Context, _, _ string, req *models.CreateComponentRequest) (*models.Component, error) {
+			captured = req
+			return &models.Component{Name: req.Name}, nil
+		},
+	}
+	files := map[string]string{
+		artifacts.DesignRootFile: "# Overview\n",
+		"components/web-ui/design.json": "{\n" +
+			"  \"name\": \"web-ui\",\n" +
+			"  \"type\": \"web-application\",\n" +
+			"  \"description\": \"body\",\n" +
+			"  \"dependencies\": []\n" +
+			"}\n",
+	}
+	store := artifacts.NewArtifactStore(&artifactstest.FakeArtifactService{
+		ListDesignFilesFunc: func(context.Context, string, string) (map[string]string, error) {
+			return files, nil
+		},
+	})
+	repo := &models.GitRepository{RepoURL: "https://github.com/acme/widgets", DefaultBranch: "main"}
+	svc := NewComponentService(oc, nil, store, ensureRepoSvc{repo: repo}, nil)
+
+	if err := svc.EnsureComponent(context.Background(), "acme", "widgets", "web-ui"); err != nil {
+		t.Fatalf("EnsureComponent: %v", err)
+	}
+	if captured == nil {
+		t.Fatal("EnsureComponent must call CreateComponent")
+	}
+	if captured.Type != "deployment/web-application" {
+		t.Errorf("component type = %q, want deployment/web-application for a %q-typed design component", captured.Type, "web-application")
+	}
+}
+
 func TestEnsureComponent_DesignMissingComponent_Errors(t *testing.T) {
 	oc := &ocmocks.ComponentClientMock{
 		CreateComponentFunc: func(context.Context, string, string, *models.CreateComponentRequest) (*models.Component, error) {

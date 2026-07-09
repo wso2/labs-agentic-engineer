@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: thunder-app-operator
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "thunder-app-operator.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "thunder-app-operator.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "thunder-app-operator.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: thunder-app-operator
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: manager
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: THUNDER_ADMIN_URL
+              value: {{ .Values.thunder.adminURL | quote }}
+            - name: THUNDER_SYSTEM_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "thunder-app-operator.credentialsSecret" . }}
+                  key: client-id
+            - name: THUNDER_SYSTEM_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "thunder-app-operator.credentialsSecret" . }}
+                  key: client-secret
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}

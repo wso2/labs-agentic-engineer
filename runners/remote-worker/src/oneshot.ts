@@ -32,13 +32,15 @@
 // watcher picks up via the WorkflowRun terminal status.
 
 import { randomUUID } from "node:crypto";
-import { provisionWorkspace } from "./lib/workspace.js";
+import os from "node:os";
+import path from "node:path";
+import { provisionWorkspace, refreshGitToken } from "./lib/workspace.js";
 import { runClaudeQuery } from "./lib/runner.js";
 import { openTaskLog } from "./lib/logger.js";
 import { isUUID, isSlug } from "./lib/uuid.js";
 import type { DispatchRequest } from "./lib/types.js";
 import { emit, primeScrubber } from "./lib/progress/emitter.js";
-import { pullTaskSkillsWithRetry } from "./lib/skills_pull.js";
+import { resolveTaskSkills } from "./lib/skills_resolver.js";
 import { materializeSkills } from "./lib/skills_materializer.js";
 import { ClientCredentialsTokenProvider } from "./lib/oauth.js";
 
@@ -167,31 +169,34 @@ async function main(): Promise<number> {
 
   emit({ kind: "phase", phase: "workspace_ready" });
 
-  // Per-task skills — pull snapshotted SKILL.md bodies from the BFF,
-  // materialise into the AgentSkills plugin tree under .aep/skills-plugin/.
-  // The pull is bounded-retried (cold-start network races the host bridge);
-  // only after all attempts fail do we log LOUDLY and continue without the
-  // per-task plugin (runner falls back to the base aep plugin only).
-  // See docs/design/skills-system.md > "Coding agent".
-  let preloadBuiltinNames: string[] = [];
+  // Per-task skills — clone the org's org-skills repo (URL stamped by the BFF
+  // as AEP_SKILLS_REPO_URL), resolve the design's applied skills locally, and
+  // materialise them into the AgentSkills plugin tree under .aep/skills-plugin/.
+  // On any failure we log LOUDLY and continue without the per-task plugin
+  // (runner falls back to the base aep plugin only).
+  // See docs/design/coding-runner-skills-clone.md.
+  let preloadSkillNames: string[] = [];
   let skillsPluginDir: string | undefined;
-  if (platformURL) {
+  const skillsRepoURL = process.env.AEP_SKILLS_REPO_URL ?? "";
+  if (skillsRepoURL) {
     try {
       const skillsBearer = ccProvider ? await ccProvider.getToken() : req.bearer;
-      const skills = await pullTaskSkillsWithRetry({
-        platformURL,
-        // req.taskId is AEP_TASK_ID, which the BFF now stamps with the coding
-        // Execution's id; the skills endpoint is execution-keyed (§9.2).
-        taskId: req.taskId,
-        bearer: skillsBearer,
-        correlationId: req.correlationId,
+      const pat = await refreshGitToken(req, skillsBearer);
+      const resolutions = await resolveTaskSkills({
+        workspace: layout.workspace,
+        skillsRepoURL,
+        pat,
+        // Clone OUTSIDE the work tree so its nested .git never enters the
+        // agent's git status / commits.
+        scratchDir: path.join(os.tmpdir(), "aep-skills", req.taskId),
+        log: (l) => console.log(l),
       });
-      const result = await materializeSkills(layout.workspace, skills.skills);
+      const result = await materializeSkills(layout.workspace, resolutions);
       if (result) {
         skillsPluginDir = result.pluginDir;
-        preloadBuiltinNames = result.builtinNames;
+        preloadSkillNames = result.preloadNames;
         console.log(
-          `[oneshot] materialised ${skills.skills.length} skill(s); preload=${preloadBuiltinNames.length} builtin(s)`,
+          `[oneshot] materialised ${resolutions.length} skill(s); preload=${preloadSkillNames.length} org skill(s)`,
         );
       } else {
         console.log("[oneshot] no per-task skills to materialise");
@@ -199,17 +204,17 @@ async function main(): Promise<number> {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(
-        `[oneshot] ⚠️  SKILLS UNAVAILABLE after retries — coding agent proceeding WITHOUT its per-task skill plugin (guidance degraded; if this project has skills the output may be wrong): ${msg}`,
+        `[oneshot] ⚠️  SKILLS UNAVAILABLE — coding agent proceeding WITHOUT its per-task skill plugin (guidance degraded; if this project has skills the output may be wrong): ${msg}`,
       );
     }
   } else {
-    console.log("[oneshot] AEP_PLATFORM_URL not set — skipping per-task skills pull");
+    console.log("[oneshot] AEP_SKILLS_REPO_URL not set — skipping per-task skills");
   }
 
   const log = openTaskLog(layout.workspace);
   const { completion } = runClaudeQuery(req, layout, log, {
     skillsPluginDir,
-    preloadBuiltinNames,
+    preloadSkillNames,
   });
   const result = await completion;
   return result.exitCode;

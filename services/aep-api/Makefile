@@ -1,4 +1,4 @@
-.PHONY: build test test-db cover check-no-legacy-creds gen-oc-client gen-oc-client-check gen-mocks openapi openapi-check
+.PHONY: build test test-db cover check-no-legacy-creds gen-oc-client gen-oc-client-check gen-mocks openapi openapi-check vendor-skills vendor-skills-check
 
 build:
 	go build ./...
@@ -106,6 +106,31 @@ gen-oc-client-check: gen-oc-client
 		echo ""; \
 		echo "internal/clients/openchoreo/gen/*.gen.go is out of sync with $(OC_SPEC_VERSION)."; \
 		echo "Run 'make gen-oc-client' locally and commit the changes."; \
+		exit 1; \
+	fi
+
+# The skill library embedded into the binary (skills/embedded/) is a
+# `go generate` VENDOR of the repo-root skills/ directory — the single source of
+# truth, which go:embed cannot reach across the module boundary. Author skills
+# ONLY in repo-root skills/; re-vendor with this target.
+vendor-skills:
+	@go generate ./skills/
+	@echo "Vendored repo-root skills/ into skills/embedded/"
+
+# CI sync check: re-vendor, then fail if skills/embedded/ drifted from the
+# repo-root skills/ source. Same posture as gen-oc-client-check (fix direction:
+# source → vendor) but uses `git status --porcelain` rather than `git diff` so
+# it also catches ADDED-but-not-vendored skills — the exact drift that had
+# shipped a stale high-level-architecture and dropped task-breakdown from every
+# org.
+vendor-skills-check: vendor-skills
+	@if [ -n "$$(git status --porcelain -- skills/embedded)" ]; then \
+		git status --short -- skills/embedded; \
+		git diff --color -- skills/embedded | cat; \
+		echo ""; \
+		echo "services/aep-api/skills/embedded/ drifted from the repo-root skills/ source"; \
+		echo "(a skill was edited or added but not re-vendored + committed)."; \
+		echo "Run 'make vendor-skills' and commit skills/embedded/."; \
 		exit 1; \
 	fi
 

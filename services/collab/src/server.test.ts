@@ -24,7 +24,7 @@ import type { BffClient } from "./bff.js";
 import { BffAccessDeniedError } from "./bff.js";
 import { buildAuthenticateHook, buildLoadDocumentHook } from "./server.js";
 import { filesMap } from "./seed.js";
-import { devSpecBundle } from "./fixtures.js";
+import { devSeedFiles } from "./fixtures.js";
 import type { Document } from "@hocuspocus/server";
 
 const prodConfig: CollabConfig = {
@@ -49,8 +49,8 @@ function fakeBff(overrides: Partial<BffClient> = {}): BffClient {
       email: "jo@example.com",
       projectName: "shop",
     }),
-    fetchSpecBundle: async () => [
-      { path: "requirements/prd.md", group: "requirements", content: "# P\n" },
+    fetchSpecFiles: async () => [
+      { path: "requirements/prd.md", content: "# P\n" },
     ],
     ...overrides,
   };
@@ -135,7 +135,7 @@ test("load seeds from fixtures in dev mode (md files become fragments)", async (
     documentName: "spec-acme-shop",
     context: { user: { name: "d", email: "d", kind: "dev" }, token: null, projectName: null },
   });
-  for (const file of devSpecBundle) {
+  for (const file of devSeedFiles) {
     if (file.path.endsWith(".md")) {
       assert.ok(
         doc.getXmlFragment(file.path).length > 0,
@@ -147,15 +147,13 @@ test("load seeds from fixtures in dev mode (md files become fragments)", async (
   }
 });
 
-test("load seeds from the BFF bundle with the joiner's token", async () => {
+test("load seeds from the BFF's Files API with the joiner's token", async () => {
   const calls: string[] = [];
   const load = buildLoadDocumentHook(prodConfig, {
     bff: fakeBff({
-      fetchSpecBundle: async (token, project) => {
+      fetchSpecFiles: async (token, project) => {
         calls.push(token, project);
-        return [
-          { path: "requirements/prd.md", group: "requirements", content: "hi" },
-        ];
+        return [{ path: "requirements/prd.md", content: "hi" }];
       },
     }),
   });
@@ -173,11 +171,11 @@ test("load seeds from the BFF bundle with the joiner's token", async () => {
   assert.match(doc.getXmlFragment("requirements/prd.md").toString(), /hi/);
 });
 
-test("load opens an unseeded doc when the bundle fetch fails (room must survive)", async () => {
+test("load opens an unseeded doc when the files fetch fails (room must survive)", async () => {
   const load = buildLoadDocumentHook(prodConfig, {
     bff: fakeBff({
-      fetchSpecBundle: async () => {
-        throw new Error("bundle fetch exploded (404)");
+      fetchSpecFiles: async () => {
+        throw new Error("files fetch exploded (404)");
       },
     }),
   });

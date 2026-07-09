@@ -16,11 +16,11 @@
 
 // UNIT tier: the pure SKILL.md helpers in skill_service.go and the RFC-9457
 // status mapper in skill_huma.go — no git, no HTTP, no cache. These pin the
-// parse/version/hash primitives every higher tier composes with, and the
+// parse/hash primitives every higher tier composes with, and the
 // mapSkillError status table exhaustively (the component tier only reaches the
 // reachable subset). Complements skill_mutation_service_test.go, which covers
 // parseAndValidateSkillMD (the validating wrapper); this file pins parseSkillMD
-// (the raw splitter) and coerceVersion/contentSHA directly.
+// (the raw splitter) and contentSHA directly.
 package skills
 
 import (
@@ -74,49 +74,6 @@ func TestParseSkillMD_Table(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tc.wantSub) {
 				t.Fatalf("error %q does not contain %q", err.Error(), tc.wantSub)
-			}
-		})
-	}
-
-	t.Run("nested metadata form parses", func(t *testing.T) {
-		t.Parallel()
-		fm, _, err := parseSkillMD("---\nname: go\ndescription: d\nmetadata:\n  aep:\n    version: \"4\"\n---\n\nbody\n")
-		if err != nil {
-			t.Fatalf("nested metadata: %v", err)
-		}
-		if got := versionFromMetadata(fm); got != 4 {
-			t.Fatalf("nested version = %d, want 4", got)
-		}
-	})
-}
-
-// TestCoerceVersion pins the scalar→version coercion the frontmatter parser
-// relies on, including the every-non-positive-and-garbage-defaults-to-1 rule
-// (versionFromMetadata's happy cases live in skill_mutation_service_test.go).
-func TestCoerceVersion(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name string
-		in   any
-		want int
-	}{
-		{"int", 3, 3},
-		{"int64", int64(5), 5},
-		{"float64", float64(7), 7},
-		{"numeric string", "9", 9},
-		{"zero int", 0, 1},
-		{"negative int", -2, 1},
-		{"zero float", float64(0), 1},
-		{"garbage string", "not-a-number", 1},
-		{"empty string", "", 1},
-		{"bool (unhandled type)", true, 1},
-		{"nil", nil, 1},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			if got := coerceVersion(tc.in); got != tc.want {
-				t.Fatalf("coerceVersion(%#v) = %d, want %d", tc.in, got, tc.want)
 			}
 		})
 	}
@@ -208,6 +165,39 @@ func TestMapSkillError(t *testing.T) {
 			}
 			if tc.noLeakOf != "" && strings.Contains(se.Error(), tc.noLeakOf) {
 				t.Fatalf("error body leaks internals %q: %s", tc.noLeakOf, se.Error())
+			}
+		})
+	}
+}
+
+// frontmatterKind derivation: metadata.aep.kind names the skill's kind; absent,
+// empty, or unparseable metadata defaults to "org" (the platform-shipped,
+// page-visible kind). docs/design/skills-unified-library-migration.md §3.2.
+func TestFrontmatterKind(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		fm   string
+		want string
+	}{
+		{"platform", "---\nname: s\ndescription: d.\nmetadata:\n  aep:\n    kind: platform\n---\nbody", "platform"},
+		{"org explicit", "---\nname: s\ndescription: d.\nmetadata:\n  aep:\n    kind: org\n---\nbody", "org"},
+		{"custom stamped", "---\nname: s\ndescription: d.\nmetadata:\n  aep:\n    kind: custom\n---\nbody", "custom"},
+		{"imported stamped", "---\nname: s\ndescription: d.\nmetadata:\n  aep:\n    kind: imported\n---\nbody", "imported"},
+		{"absent metadata", "---\nname: s\ndescription: d.\n---\nbody", "org"},
+		{"empty kind", "---\nname: s\ndescription: d.\nmetadata:\n  aep:\n    kind: \"\"\n---\nbody", "org"},
+		{"unknown kind", "---\nname: s\ndescription: d.\nmetadata:\n  aep:\n    kind: wat\n---\nbody", "org"},
+		{"whitespace kind", "---\nname: s\ndescription: d.\nmetadata:\n  aep:\n    kind: '  platform  '\n---\nbody", "platform"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fm, _, err := parseSkillMD(tc.fm)
+			if err != nil {
+				t.Fatalf("parseSkillMD: %v", err)
+			}
+			if got := frontmatterKind(fm); got != tc.want {
+				t.Fatalf("frontmatterKind = %q, want %q", got, tc.want)
 			}
 		})
 	}

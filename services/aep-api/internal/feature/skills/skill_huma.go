@@ -227,7 +227,7 @@ func RegisterSkill(
 		if sk == nil {
 			return nil, huma.Error404NotFound("skill not found")
 		}
-		return &skillDetailOutput{Body: skillDetailBody{Skill: *sk, Editable: sk.Kind != "builtin"}}, nil
+		return &skillDetailOutput{Body: skillDetailBody{Skill: *sk, Editable: isUserKind(sk.Kind)}}, nil
 	})
 
 	huma.Register(api, huma.Operation{

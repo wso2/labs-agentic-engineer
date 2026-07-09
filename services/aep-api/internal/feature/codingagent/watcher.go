@@ -28,7 +28,6 @@ import (
 
 	"github.com/wso2/aep/aep-api/internal/clients/clustergatewayproxy"
 	"github.com/wso2/aep/aep-api/internal/contracts/taskmeta"
-	"github.com/wso2/aep/aep-api/internal/platform/tenant"
 	"github.com/wso2/aep/aep-api/models"
 	"github.com/wso2/aep/aep-api/repositories"
 )
@@ -190,18 +189,5 @@ func (w *JobWatcher) captureFinalLog(ctx context.Context, row *models.Execution,
 }
 
 func (w *JobWatcher) resolveNS(ctx context.Context, orgID string) (string, bool) {
-	var org models.Organization
-	if err := w.db.WithContext(ctx).Where("name = ?", orgID).First(&org).Error; err != nil {
-		return "", false
-	}
-	var uid string
-	if org.ThunderOrgUUID != nil && *org.ThunderOrgUUID != uuid.Nil {
-		uid = org.ThunderOrgUUID.String()
-	} else {
-		uid = org.UUID.String()
-	}
-	if uid == "" || uid == "00000000-0000-0000-0000-000000000000" {
-		return "", false
-	}
-	return tenant.RemoteWorkerNamespace(uid), true
+	return resolveRemoteWorkerNS(ctx, w.db, orgID)
 }

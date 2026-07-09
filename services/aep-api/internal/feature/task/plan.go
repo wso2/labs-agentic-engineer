@@ -169,14 +169,18 @@ func (s *PlanService) startPlanLocked(ctx context.Context, orgID, projectID stri
 	if err != nil {
 		return nil, fmt.Errorf("resolve base ref: %w", err)
 	}
+	// Skills resolve failures are typed: both arms mean the org's _skills repo
+	// is unusable right now (row missing/unprovisionable, or the backing repo
+	// gone/unreachable — e.g. deleted externally under a lingering row). The
+	// edge maps this to a logged 503 rather than an opaque 500.
 	skillsRow, err := s.skillsRepo(ctx, orgID)
 	if err != nil {
-		return nil, fmt.Errorf("resolve skills repo: %w", err)
+		return nil, fmt.Errorf("%w: resolve repo row: %w", ErrSkillsRepoUnavailable, err)
 	}
 	skillsRepoRef := gitrepo.WorkspaceRefFor(orgID, skillsRow, ref.Cred)
 	skillsRef, err := ws.Head(ctx, skillsRepoRef, "")
 	if err != nil {
-		return nil, fmt.Errorf("resolve skills ref: %w", err)
+		return nil, fmt.Errorf("%w: resolve head: %w", ErrSkillsRepoUnavailable, err)
 	}
 	if err := s.snapshots.Ensure(ctx, ref, baseRef); err != nil {
 		return nil, fmt.Errorf("ensure repo snapshot: %w", err)

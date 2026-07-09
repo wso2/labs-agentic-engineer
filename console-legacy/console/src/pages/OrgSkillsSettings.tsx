@@ -47,7 +47,12 @@ import SkillEditor from '../components/skills/SkillEditor';
 import SkillImportDialog from '../components/skills/SkillImportDialog';
 
 const GROUP_ORDER: { kind: SkillKind; heading: string; blurb: string }[] = [
-  { kind: 'builtin', heading: 'Built-in', blurb: 'Shipped with the platform. Read-only — view to inspect the body.' },
+  { kind: 'org', heading: 'Org', blurb: 'Shipped with the platform. Read-only — view to inspect the body.' },
+  {
+    kind: 'platform',
+    heading: 'Platform',
+    blurb: 'Generation-flow guidance the platform agents follow (design, tasks, wireframes). Read-only.',
+  },
   { kind: 'custom', heading: 'Custom (org-authored)', blurb: 'Authored from scratch by your organization.' },
   { kind: 'imported', heading: 'Imported', blurb: 'Uploaded AgentSkills directories from the ecosystem.' },
 ];
@@ -76,7 +81,7 @@ export default function OrgSkillsSettings() {
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: orgSkillsQueryKey(orgId) });
 
-  // "Updates available" — built-ins whose embedded version is newer than the
+  // "Updates available" — built-ins whose embedded content differs from the
   // org's repo copy. Drives the badge + the per-built-in chip. §6.3.
   const { data: updatesData, refetch: refetchUpdates } = useQuery({
     queryKey: ['orgSkillUpdates', orgId],
@@ -100,7 +105,7 @@ export default function OrgSkillsSettings() {
       const res = await orgSkillsApi.syncBuiltins();
       setSyncMsg(
         res.updated > 0
-          ? `Synced ${res.updated} built-in skill${res.updated === 1 ? '' : 's'} to the latest version.`
+          ? `Synced ${res.updated} built-in skill${res.updated === 1 ? '' : 's'} to the latest content.`
           : 'Built-in skills are already up to date.',
       );
       invalidate();
@@ -116,7 +121,7 @@ export default function OrgSkillsSettings() {
     const q = filter.trim().toLowerCase();
     const match = (s: SkillSummary) =>
       !q || s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q);
-    const out: Record<SkillKind, SkillSummary[]> = { builtin: [], custom: [], imported: [] };
+    const out: Record<SkillKind, SkillSummary[]> = { org: [], platform: [], custom: [], imported: [] };
     for (const s of skills ?? []) {
       if (match(s)) out[s.kind].push(s);
     }
@@ -265,13 +270,8 @@ export default function OrgSkillsSettings() {
                                   {s.name}
                                 </Typography>
                                 <Chip size="small" color={kindChipColor(s.kind)} label={kindLabel(s.kind)} />
-                                <Chip size="small" variant="outlined" label={`v${s.version}`} />
-                                {s.kind === 'builtin' && updateByName.has(s.name) && (
-                                  <Chip
-                                    size="small"
-                                    color="warning"
-                                    label={`update → v${updateByName.get(s.name)?.embeddedVersion}`}
-                                  />
+                                {(s.kind === 'org' || s.kind === 'platform') && updateByName.has(s.name) && (
+                                  <Chip size="small" color="warning" label="update available" />
                                 )}
                                 {!s.editable && <Chip size="small" variant="outlined" label="read-only" />}
                               </Stack>

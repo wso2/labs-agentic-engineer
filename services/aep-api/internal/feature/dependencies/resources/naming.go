@@ -16,6 +16,29 @@
 
 package resources
 
+import "strings"
+
+// EnvVarName builds a valid C_IDENTIFIER env-var name from a dependency name +
+// output name (join with "_", map every char outside [A-Za-z0-9_] to '_',
+// upper-case). It is the SINGLE source of truth for the platform-resource
+// output naming convention: the provisioning wiring (pod env-var injection in
+// wiring.go) and the SPA runtime config (window._env_ keys in runtimeconfig)
+// both derive their keys through it, so the coding agent and the browser see
+// byte-identical names. e.g. "orders-db" + "host" → "ORDERS_DB_HOST";
+// "user-auth" + "client_id" → "USER_AUTH_CLIENT_ID".
+func EnvVarName(depName, outName string) string {
+	joined := depName + "_" + outName
+	mapped := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_':
+			return r
+		default:
+			return '_'
+		}
+	}, joined)
+	return strings.ToUpper(mapped)
+}
+
 // ExternalResourceName is the per-project OC Resource name (== the Workload
 // dependency `ref`) for a project's external resource. metadata.name is
 // namespace-unique — owner.projectName does NOT scope it — so the project

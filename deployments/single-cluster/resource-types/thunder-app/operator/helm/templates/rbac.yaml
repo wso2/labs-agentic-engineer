@@ -1,0 +1,45 @@
+# Cluster-scoped RBAC: the operator watches ThunderApplications in ALL
+# namespaces and manages the ConfigMaps it publishes there, so a ClusterRole
+# (not a namespaced Role) is required.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: thunder-app-operator
+  labels:
+    {{- include "thunder-app-operator.labels" . | nindent 4 }}
+rules:
+  # The CRD this operator owns — full lifecycle across all namespaces.
+  - apiGroups: ["aep.wso2.com"]
+    resources: ["thunderapplications"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Status subresource — the reconciler gates readiness via status.
+  - apiGroups: ["aep.wso2.com"]
+    resources: ["thunderapplications/status"]
+    verbs: ["get", "update", "patch"]
+  # Finalizers — the reconciler adds/removes a finalizer for ordered deletes.
+  - apiGroups: ["aep.wso2.com"]
+    resources: ["thunderapplications/finalizers"]
+    verbs: ["update"]
+  # Published <cr-name>-oauth ConfigMaps carrying the assigned client_id.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Events — controller-runtime records reconcile events.
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: thunder-app-operator
+  labels:
+    {{- include "thunder-app-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: thunder-app-operator
+subjects:
+  - kind: ServiceAccount
+    name: thunder-app-operator
+    namespace: {{ .Release.Namespace }}

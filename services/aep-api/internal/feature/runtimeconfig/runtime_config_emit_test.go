@@ -20,75 +20,41 @@
 // so there is deliberately NO component tier and NO dbtest here — the correct
 // exception per ADR-0003 §9, not a coverage gap.
 //
-// The three out-of-process seams are doubled exactly at the process boundary:
+// The out-of-process seams are doubled exactly at the process boundary:
 //   - openchoreo.ComponentClient → the generated moq (ListDeployments to read a
 //     component's resolved external URL; UpdateComponentWorkflowFiles to emit
 //     env-config.js onto the ReleaseBindings — we CAPTURE that payload and
 //     assert its window._env_ shape).
-//   - thundersvc.Client → hand fake (only EnsureProjectOAuthClient is on this
-//     feature's path; the other six panic, so a stray call is a test bug).
+//   - openchoreo.ResourceClient → the generated moq (PatchBindingEnvironmentConfigs
+//     for the annotation-driven consumer-URL patch; GetBinding to read a
+//     platform-resource dependency's resolved outputs). The <DEP>_<OUTPUT> keys
+//     are emitted purely from these binding outputs — there is no BFF→upstream
+//     call on this path, and NO resource-type name is hardcoded.
+//   - the CRT marker catalog (resourceMarkerCatalog port) → a hand fake keyed by
+//     resourceType name; the consumer-URL patch keys on its markers.
 //   - artifacts.ArtifactStore → the REAL artifacts.NewArtifactStore decorator
 //     over artifactstest.FakeArtifactService, fed a valid design working-tree
 //     map. The frontmatter → models.DesignComponent parse (componentType,
-//     dependsOn, callerIdentity.mode) is therefore the real one, not a stub.
-//
-// (runtime_config_service_test.go, external_url_test.go) and untouched here.
+//     dependencies) is therefore the real one, not a stub.
 package runtimeconfig
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"sort"
 	"strings"
 	"testing"
 
+	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	ocmocks "github.com/wso2/aep/aep-api/internal/clients/openchoreo/mocks"
-	"github.com/wso2/aep/aep-api/internal/clients/thundersvc"
 	"github.com/wso2/aep/aep-api/internal/feature/artifacts"
 	"github.com/wso2/aep/aep-api/internal/feature/artifacts/artifactstest"
+	"github.com/wso2/aep/aep-api/internal/feature/dependencies/resources"
 	"github.com/wso2/aep/aep-api/models"
 )
 
 // --- test doubles ------------------------------------------------------------
-
-// fakeThunder hand-fakes thundersvc.Client. runtimeconfig only ever calls
-// EnsureProjectOAuthClient; the other six methods are not on this feature's
-// path, so a call to one is a test bug — they panic (moq convention). Each
-// fake is built per-test and driven synchronously, so no mutex is needed.
-type fakeThunder struct {
-	ensureFn    func(ctx context.Context, projectName string, redirectURIs []string) (string, bool, error)
-	ensureCalls []ensureProjectCall
-}
-
-type ensureProjectCall struct {
-	projectName  string
-	redirectURIs []string
-}
-
-var _ thundersvc.Client = (*fakeThunder)(nil)
-
-func (f *fakeThunder) EnsureProjectOAuthClient(ctx context.Context, projectName string, redirectURIs []string) (string, bool, error) {
-	f.ensureCalls = append(f.ensureCalls, ensureProjectCall{projectName: projectName, redirectURIs: redirectURIs})
-	if f.ensureFn == nil {
-		return "cid-" + projectName, true, nil
-	}
-	return f.ensureFn(ctx, projectName, redirectURIs)
-}
-
-func (f *fakeThunder) EnsurePublisherApp(context.Context, string, string) (string, string, bool, error) {
-	panic("fakeThunder: EnsurePublisherApp is not part of the runtimeconfig feature")
-}
-func (f *fakeThunder) OUExists(context.Context, string) (bool, error) {
-	panic("fakeThunder: OUExists is not part of the runtimeconfig feature")
-}
-func (f *fakeThunder) DeletePublisherApp(context.Context, string) (bool, error) {
-	panic("fakeThunder: DeletePublisherApp is not part of the runtimeconfig feature")
-}
-func (f *fakeThunder) RegenerateClientSecret(context.Context, string) (string, error) {
-	panic("fakeThunder: RegenerateClientSecret is not part of the runtimeconfig feature")
-}
-func (f *fakeThunder) EnsureRedirectURIs(context.Context, string, []string) (bool, error) {
-	panic("fakeThunder: EnsureRedirectURIs is not part of the runtimeconfig feature")
-}
 
 // storeWith wraps the REAL artifacts.NewArtifactStore decorator over a fake
 // artifact service that serves the given design working-tree map. ReadDesign's
@@ -112,6 +78,89 @@ func ocResolving(urlsByComponent map[string]string) *ocmocks.ComponentClientMock
 			}
 			return &models.DeploymentList{}, nil
 		},
+	}
+}
+
+// rcOutputs builds a ResourceClient moq that returns the same status.outputs for
+// EVERY binding (single-dep tests), recording patch calls. patchErr is returned
+// by PatchBindingEnvironmentConfigs. A nil outputs map yields a binding with NO
+// status (not ready yet).
+func rcOutputs(outputs map[string]string, patchErr error) *ocmocks.ResourceClientMock {
+	return rcBindings(map[string]map[string]string{"*": outputs}, patchErr)
+}
+
+// rcBindings builds a ResourceClient moq that returns per-binding status.outputs
+// (keyed by binding name; the "*" key is a catch-all). A binding absent from the
+// map (and with no "*" fallback) yields NO status (not ready). patchErr is
+// returned by every PatchBindingEnvironmentConfigs call.
+func rcBindings(byBinding map[string]map[string]string, patchErr error) *ocmocks.ResourceClientMock {
+	return &ocmocks.ResourceClientMock{
+		PatchBindingEnvironmentConfigsFunc: func(context.Context, string, string, map[string]string) error {
+			return patchErr
+		},
+		GetBindingFunc: func(_ context.Context, _, bindingName string) (*openchoreo.ResourceReleaseBinding, error) {
+			outputs, ok := byBinding[bindingName]
+			if !ok {
+				outputs, ok = byBinding["*"]
+			}
+			if !ok || outputs == nil {
+				return &openchoreo.ResourceReleaseBinding{}, nil // no status → not ready
+			}
+			outs := make([]openchoreo.ResolvedOutput, 0, len(outputs))
+			for _, k := range sortedStrs(outputs) {
+				outs = append(outs, openchoreo.ResolvedOutput{Name: k, Value: outputs[k]})
+			}
+			return &openchoreo.ResourceReleaseBinding{
+				Status: &openchoreo.ResourceReleaseBindingStatus{Outputs: outs},
+			}, nil
+		},
+	}
+}
+
+func sortedStrs(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// fakeCatalog is a hand double of the resourceMarkerCatalog port. markers is
+// keyed by resourceType name; err (when set) simulates an unreachable OC
+// catalog. calls counts the reads so tests can assert the "once per pass" fetch.
+type fakeCatalog struct {
+	markers map[string]resources.TypeMarkers
+	err     error
+	calls   int
+}
+
+func (f *fakeCatalog) MarkersByName(context.Context) (map[string]resources.TypeMarkers, error) {
+	f.calls++
+	return f.markers, f.err
+}
+
+// authMarkers is the marker set a PE authors on an end-user-auth CRT: the
+// consumer-URL patch annotation (env-config key + defaulted /callback path).
+// Built through the REAL resources.MarkersFrom so the /callback default is
+// exercised, not hand-stamped.
+func authMarkers(resourceType string) map[string]resources.TypeMarkers {
+	return map[string]resources.TypeMarkers{
+		resourceType: resources.MarkersFrom(nil, map[string]string{
+			resources.AnnotationConsumerURLEnvConfig: "redirectUris",
+		}),
+	}
+}
+
+// authOutputs is the full resolved-output set a ready end-user-auth binding
+// carries. ALL outputs arrive as literal values (the CRT emits client_id via a
+// CEL value OC resolves from the upstream's live status).
+func authOutputs() map[string]string {
+	return map[string]string{
+		"client_id": "web-cid",
+		"issuer":    "http://thunder.local",
+		"jwks_url":  "http://thunder.local/jwks",
+		"scopes":    "openid profile email",
 	}
 }
 
@@ -140,6 +189,24 @@ func componentNamed(t *testing.T, d *artifacts.DesignFile, name string) *models.
 	return nil
 }
 
+// svcWithCatalog builds a service and wires the catalog port (nil catalog left
+// unwired to exercise the defer-when-unwired path).
+func svcWithCatalog(oc openchoreo.ComponentClient, rc openchoreo.ResourceClient, store *artifacts.ArtifactStore, cat resourceMarkerCatalog) *RuntimeConfigService {
+	s := NewRuntimeConfigService(oc, rc, store)
+	if cat != nil {
+		s.SetResourceCatalog(cat)
+	}
+	return s
+}
+
+func keySet(m map[string]interface{}) map[string]bool {
+	out := make(map[string]bool, len(m))
+	for k := range m {
+		out[k] = true
+	}
+	return out
+}
+
 // --- design fixtures ---------------------------------------------------------
 
 func rootDesignMd() string {
@@ -147,122 +214,331 @@ func rootDesignMd() string {
 }
 
 func serviceComponentMd() string {
-	return componentDesignJSONFixture("api", "service", nil, false)
+	return buildComponentJSON("api", "service", nil, nil)
 }
 
-// webappMd renders a web-app component's design.json. deps become component-kind
-// dependencies; oidc=true adds callerIdentity.mode=end-user.
-func webappMd(name string, oidc bool, deps ...string) string {
-	return componentDesignJSONFixture(name, "web-app", deps, oidc)
+// prDep is a platform-resource dependency spec for the fixtures.
+type prDep struct{ name, resourceType string }
+
+// webappMd renders a web-application component with only component-kind
+// dependencies (canonical type: models.ComponentTypeWebApplication —
+// OpenChoreo's own term).
+func webappMd(name string, deps ...string) string {
+	return buildComponentJSON(name, "web-application", deps, nil)
 }
 
-// componentDesignJSONFixture builds a `components/<name>/design.json` body:
-// component-kind dependencies from deps, optional end-user callerIdentity.
-func componentDesignJSONFixture(name, typ string, deps []string, oidc bool) string {
-	var b strings.Builder
-	b.WriteString("{\n")
-	b.WriteString("  \"name\": \"" + name + "\",\n")
-	b.WriteString("  \"type\": \"" + typ + "\",\n")
+// webappWithPR renders a web-application that declares the given
+// platform-resource dependencies, plus optional component-kind deps.
+func webappWithPR(name string, prDeps []prDep, deps ...string) string {
+	return buildComponentJSON(name, "web-application", deps, prDeps)
+}
+
+// buildComponentJSON assembles a `components/<name>/design.json` body:
+// component-kind dependencies from deps, plus a platform-resource dependency per
+// prDeps entry.
+func buildComponentJSON(name, typ string, deps []string, prDeps []prDep) string {
+	m := map[string]any{"name": name, "type": typ}
 	if typ == "service" {
-		b.WriteString("  \"language\": \"Go\",\n")
+		m["language"] = "Go"
 	}
-	if len(deps) > 0 {
-		b.WriteString("  \"dependencies\": [\n")
-		for i, d := range deps {
-			comma := ","
-			if i == len(deps)-1 {
-				comma = ""
-			}
-			b.WriteString("    {\n      \"kind\": \"component\",\n      \"name\": \"" + d + "\"\n    }" + comma + "\n")
-		}
-		b.WriteString("  ]")
-	} else {
-		b.WriteString("  \"dependencies\": []")
+	dependencies := make([]map[string]any, 0, len(deps)+len(prDeps))
+	for _, d := range deps {
+		dependencies = append(dependencies, map[string]any{"kind": "component", "name": d})
 	}
-	if oidc {
-		b.WriteString(",\n  \"callerIdentity\": {\n    \"mode\": \"end-user\"\n  }")
+	for _, p := range prDeps {
+		dependencies = append(dependencies, map[string]any{
+			"kind":         "platform-resource",
+			"name":         p.name,
+			"resourceType": p.resourceType,
+		})
 	}
-	b.WriteString("\n}\n")
-	return b.String()
+	m["dependencies"] = dependencies
+	b, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		panic(err)
+	}
+	return string(b) + "\n"
 }
 
-// --- buildEnvValues ----------------------------------------------------------
+// --- platformResourceDeps ----------------------------------------------------
 
-func Test_buildEnvValues(t *testing.T) {
+func Test_platformResourceDeps(t *testing.T) {
+	t.Parallel()
+	auth := models.Dependency{Kind: models.DependencyKindPlatformResource, Name: "user-auth", ResourceType: "thunder-app"}
+	db := models.Dependency{Kind: models.DependencyKindPlatformResource, Name: "orders-db", ResourceType: "postgres-cnpg"}
+	comp := models.Dependency{Kind: models.DependencyKindComponent, Name: "api"}
+
+	cases := []struct {
+		name  string
+		in    *models.DesignComponent
+		wantN []string // dep names, in order
+	}{
+		{"nil component", nil, nil},
+		{"web-application no deps", &models.DesignComponent{ComponentType: models.ComponentTypeWebApplication}, nil},
+		{"service with a PR dep is not a web application", &models.DesignComponent{ComponentType: models.ComponentTypeService, Dependencies: []models.Dependency{auth}}, nil},
+		{"web-application with only component deps", &models.DesignComponent{ComponentType: models.ComponentTypeWebApplication, Dependencies: []models.Dependency{comp}}, nil},
+		{"web-application with two PR deps, in order", &models.DesignComponent{ComponentType: models.ComponentTypeWebApplication, Dependencies: []models.Dependency{comp, auth, db}}, []string{"user-auth", "orders-db"}},
+		// Retired spellings are not understood anywhere — no shims, no
+		// normalization. Designs carrying them must be migrated.
+		{"retired webapp spelling does not match", &models.DesignComponent{ComponentType: "webapp", Dependencies: []models.Dependency{auth}}, nil},
+		{"retired web-app spelling does not match", &models.DesignComponent{ComponentType: "web-app", Dependencies: []models.Dependency{auth}}, nil},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			got := platformResourceDeps(c.in)
+			if len(got) != len(c.wantN) {
+				t.Fatalf("platformResourceDeps = %d deps; want %d (%v)", len(got), len(c.wantN), c.wantN)
+			}
+			for i, want := range c.wantN {
+				if got[i].Name != want {
+					t.Errorf("dep[%d] = %q; want %q", i, got[i].Name, want)
+				}
+			}
+		})
+	}
+}
+
+// --- naming consistency ------------------------------------------------------
+
+// Test_outputKeyNaming_matchesWiringConvention pins the window._env_ key naming
+// to the SAME helper wiring.go injects pod env vars with (resources.EnvVarName —
+// the single source of truth). A guarding white-box test lives beside wiring.go
+// (provisioning) asserting its envVarName delegates to this same helper.
+func Test_outputKeyNaming_matchesWiringConvention(t *testing.T) {
+	t.Parallel()
+	cases := []struct{ dep, out, want string }{
+		{"user-auth", "client_id", "USER_AUTH_CLIENT_ID"},
+		{"user-auth", "issuer", "USER_AUTH_ISSUER"},
+		{"user-auth", "jwks_url", "USER_AUTH_JWKS_URL"},
+		{"user-auth", "scopes", "USER_AUTH_SCOPES"},
+		{"orders-db", "host", "ORDERS_DB_HOST"},
+		{"orders-db", "port", "ORDERS_DB_PORT"},
+	}
+	for _, c := range cases {
+		if got := resources.EnvVarName(c.dep, c.out); got != c.want {
+			t.Errorf("EnvVarName(%q,%q) = %q; want %q", c.dep, c.out, got, c.want)
+		}
+	}
+}
+
+// --- buildEnvValues: generic emission ---------------------------------------
+
+func Test_buildEnvValues_genericEmission(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	t.Run("resolved service dep, oidc off: ready + sibling URL keys, no THUNDER", func(t *testing.T) {
+	t.Run("single auth dep: exact USER_AUTH_* key set, no THUNDER_*, patch once", func(t *testing.T) {
 		t.Parallel()
 		files := map[string]string{
 			artifacts.DesignRootFile:     rootDesignMd(),
-			"components/web/design.json": webappMd("web", false, "api"),
+			"components/web/design.json": webappWithPR("web", []prDep{{"user-auth", "thunder-app"}}),
+		}
+		design := readDesign(t, files)
+		web := componentNamed(t, design, "web")
+
+		oc := ocResolving(map[string]string{"web": "http://web.local/"})
+		rc := rcOutputs(authOutputs(), nil)
+		cat := &fakeCatalog{markers: authMarkers("thunder-app")}
+		svc := svcWithCatalog(oc, rc, nil, cat)
+
+		out, ready := svc.buildEnvValues(ctx, "acme", "proj", web, design)
+		if !ready {
+			t.Fatalf("want ready=true; got false (out=%v)", out)
+		}
+		want := map[string]interface{}{
+			"USER_AUTH_CLIENT_ID": "web-cid",
+			"USER_AUTH_ISSUER":    "http://thunder.local",
+			"USER_AUTH_JWKS_URL":  "http://thunder.local/jwks",
+			"USER_AUTH_SCOPES":    "openid profile email",
+		}
+		if got := keySet(out); len(got) != len(want) {
+			t.Fatalf("emitted key set = %v; want exactly %v", got, want)
+		}
+		for k, v := range want {
+			if out[k] != v {
+				t.Errorf("out[%q] = %v; want %v", k, out[k], v)
+			}
+		}
+		for k := range out {
+			if strings.HasPrefix(k, "THUNDER_") {
+				t.Errorf("no legacy THUNDER_* key must be emitted; got %q", k)
+			}
+		}
+		if cat.calls != 1 {
+			t.Errorf("catalog must be read exactly once per pass; got %d", cat.calls)
+		}
+		calls := rc.PatchBindingEnvironmentConfigsCalls()
+		if len(calls) != 1 {
+			t.Fatalf("want exactly 1 consumer-URL patch; got %d", len(calls))
+		}
+		if got := calls[0].Configs["redirectUris"]; got != "http://web.local/callback" {
+			t.Errorf("patched redirectUris = %q; want http://web.local/callback (default path)", got)
+		}
+		if calls[0].BindingName != "proj-user-auth-development" {
+			t.Errorf("patched binding = %q; want proj-user-auth-development", calls[0].BindingName)
+		}
+	})
+
+	t.Run("two PR deps: both output prefixes emitted; patch only the annotated dep", func(t *testing.T) {
+		t.Parallel()
+		files := map[string]string{
+			artifacts.DesignRootFile:     rootDesignMd(),
+			"components/web/design.json": webappWithPR("web", []prDep{{"user-auth", "thunder-app"}, {"orders-db", "postgres-cnpg"}}),
+		}
+		design := readDesign(t, files)
+		web := componentNamed(t, design, "web")
+
+		oc := ocResolving(map[string]string{"web": "http://web.local"})
+		rc := rcBindings(map[string]map[string]string{
+			"proj-user-auth-development": authOutputs(),
+			"proj-orders-db-development": {"host": "db.local", "port": "5432"},
+		}, nil)
+		// thunder-app carries the consumer-URL marker; postgres-cnpg carries none.
+		cat := &fakeCatalog{markers: authMarkers("thunder-app")}
+		svc := svcWithCatalog(oc, rc, nil, cat)
+
+		out, ready := svc.buildEnvValues(ctx, "acme", "proj", web, design)
+		if !ready {
+			t.Fatalf("want ready=true; got false (out=%v)", out)
+		}
+		want := map[string]interface{}{
+			"USER_AUTH_CLIENT_ID": "web-cid",
+			"USER_AUTH_ISSUER":    "http://thunder.local",
+			"USER_AUTH_JWKS_URL":  "http://thunder.local/jwks",
+			"USER_AUTH_SCOPES":    "openid profile email",
+			"ORDERS_DB_HOST":      "db.local",
+			"ORDERS_DB_PORT":      "5432",
+		}
+		if got := keySet(out); len(got) != len(want) {
+			t.Fatalf("emitted key set = %v; want exactly %v", got, want)
+		}
+		for k, v := range want {
+			if out[k] != v {
+				t.Errorf("out[%q] = %v; want %v", k, out[k], v)
+			}
+		}
+		// Only the annotated (thunder-app) dep is patched; postgres has no marker.
+		calls := rc.PatchBindingEnvironmentConfigsCalls()
+		if len(calls) != 1 {
+			t.Fatalf("want exactly 1 patch (annotated dep only); got %d", len(calls))
+		}
+		if calls[0].BindingName != "proj-user-auth-development" {
+			t.Errorf("patched binding = %q; want proj-user-auth-development", calls[0].BindingName)
+		}
+	})
+
+	t.Run("custom consumer-url-path patches origin+path", func(t *testing.T) {
+		t.Parallel()
+		files := map[string]string{
+			artifacts.DesignRootFile:     rootDesignMd(),
+			"components/web/design.json": webappWithPR("web", []prDep{{"user-auth", "thunder-app"}}),
+		}
+		design := readDesign(t, files)
+		web := componentNamed(t, design, "web")
+
+		oc := ocResolving(map[string]string{"web": "http://web.local"})
+		rc := rcOutputs(authOutputs(), nil)
+		cat := &fakeCatalog{markers: map[string]resources.TypeMarkers{
+			"thunder-app": resources.MarkersFrom(nil, map[string]string{
+				resources.AnnotationConsumerURLEnvConfig: "redirectUris",
+				resources.AnnotationConsumerURLPath:      "/oauth/callback",
+			}),
+		}}
+		svc := svcWithCatalog(oc, rc, nil, cat)
+
+		_, ready := svc.buildEnvValues(ctx, "acme", "proj", web, design)
+		if !ready {
+			t.Fatalf("want ready=true")
+		}
+		calls := rc.PatchBindingEnvironmentConfigsCalls()
+		if len(calls) != 1 || calls[0].Configs["redirectUris"] != "http://web.local/oauth/callback" {
+			t.Fatalf("want patch redirectUris=http://web.local/oauth/callback; got %v", calls)
+		}
+	})
+
+	t.Run("absent annotation: outputs emitted, NO patch call", func(t *testing.T) {
+		t.Parallel()
+		files := map[string]string{
+			artifacts.DesignRootFile:     rootDesignMd(),
+			"components/web/design.json": webappWithPR("web", []prDep{{"orders-db", "postgres-cnpg"}}),
+		}
+		design := readDesign(t, files)
+		web := componentNamed(t, design, "web")
+
+		oc := ocResolving(map[string]string{"web": "http://web.local"})
+		rc := rcOutputs(map[string]string{"host": "db.local", "port": "5432"}, nil)
+		cat := &fakeCatalog{markers: map[string]resources.TypeMarkers{}} // no markers for postgres
+		svc := svcWithCatalog(oc, rc, nil, cat)
+
+		out, ready := svc.buildEnvValues(ctx, "acme", "proj", web, design)
+		if !ready {
+			t.Fatalf("want ready=true; got false (out=%v)", out)
+		}
+		if out["ORDERS_DB_HOST"] != "db.local" || out["ORDERS_DB_PORT"] != "5432" {
+			t.Errorf("want ORDERS_DB_* outputs emitted; got %v", out)
+		}
+		if n := len(rc.PatchBindingEnvironmentConfigsCalls()); n != 0 {
+			t.Errorf("no consumer-URL patch expected without the annotation; got %d", n)
+		}
+	})
+
+	t.Run("web-app with only component deps: no catalog read, no resource client touch", func(t *testing.T) {
+		t.Parallel()
+		files := map[string]string{
+			artifacts.DesignRootFile:     rootDesignMd(),
+			"components/web/design.json": webappMd("web", "api"),
 			"components/api/design.json": serviceComponentMd(),
 		}
 		design := readDesign(t, files)
 		web := componentNamed(t, design, "web")
 
-		oc := ocResolving(map[string]string{"api": "http://api.local/todo/"}) // trailing slash trimmed
-		svc := NewRuntimeConfigService(oc, nil)
+		oc := ocResolving(map[string]string{"api": "http://api.local"})
+		rc := rcOutputs(authOutputs(), nil) // wired but must never be touched
+		cat := &fakeCatalog{markers: authMarkers("thunder-app")}
+		svc := svcWithCatalog(oc, rc, nil, cat)
 
 		out, ready := svc.buildEnvValues(ctx, "acme", "proj", web, design)
 		if !ready {
-			t.Fatalf("want ready=true when the only service dep resolved; got false (out=%v)", out)
-		}
-		if out["API_BASE_URL"] != "http://api.local/todo" {
-			t.Errorf("API_BASE_URL = %v; want http://api.local/todo (first service dep, trailing slash trimmed)", out["API_BASE_URL"])
-		}
-		if out["API_URL"] != "http://api.local/todo" {
-			t.Errorf("API_URL = %v; want the per-dep keyed URL", out["API_URL"])
-		}
-		for k := range out {
-			if strings.HasPrefix(k, "THUNDER_") {
-				t.Errorf("THUNDER_* must not appear when callerIdentity.mode != end-user; got key %q", k)
-			}
-		}
-	})
-
-	t.Run("multiple service deps: API_BASE_URL is the first declared service", func(t *testing.T) {
-		t.Parallel()
-		files := map[string]string{
-			artifacts.DesignRootFile:          rootDesignMd(),
-			"components/web/design.json":      webappMd("web", false, "api", "auth-svc"),
-			"components/api/design.json":      serviceComponentMd(),
-			"components/auth-svc/design.json": componentDesignJSONFixture("auth-svc", "service", nil, false),
-		}
-		design := readDesign(t, files)
-		web := componentNamed(t, design, "web")
-
-		oc := ocResolving(map[string]string{
-			"api":      "http://api.local",
-			"auth-svc": "http://auth.local",
-		})
-		out, ready := NewRuntimeConfigService(oc, nil).buildEnvValues(ctx, "acme", "proj", web, design)
-		if !ready {
 			t.Fatalf("want ready=true; got false (out=%v)", out)
 		}
-		if out["API_BASE_URL"] != "http://api.local" {
-			t.Errorf("API_BASE_URL = %v; want the first dependsOn service (api)", out["API_BASE_URL"])
+		if out["API_BASE_URL"] != "http://api.local" || out["API_URL"] != "http://api.local" {
+			t.Errorf("service-URL keys drifted: %v", out)
 		}
-		if out["API_URL"] != "http://api.local" || out["AUTH_SVC_URL"] != "http://auth.local" {
-			t.Errorf("per-dep keys drifted: API_URL=%v AUTH_SVC_URL=%v", out["API_URL"], out["AUTH_SVC_URL"])
+		if cat.calls != 0 {
+			t.Errorf("catalog must NOT be read when there is no platform-resource dep; got %d", cat.calls)
+		}
+		if n := len(rc.GetBindingCalls()); n != 0 {
+			t.Errorf("no binding read expected; got %d", n)
 		}
 	})
+}
+
+// --- buildEnvValues: defer semantics ----------------------------------------
+
+func Test_buildEnvValues_defers(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	authWebFiles := map[string]string{
+		artifacts.DesignRootFile:     rootDesignMd(),
+		"components/web/design.json": webappWithPR("web", []prDep{{"user-auth", "thunder-app"}}, "api"),
+		"components/api/design.json": serviceComponentMd(),
+	}
 
 	t.Run("unresolved service dep gates emission (ready=false)", func(t *testing.T) {
 		t.Parallel()
 		files := map[string]string{
 			artifacts.DesignRootFile:     rootDesignMd(),
-			"components/web/design.json": webappMd("web", false, "api"),
+			"components/web/design.json": webappMd("web", "api"),
 			"components/api/design.json": serviceComponentMd(),
 		}
 		design := readDesign(t, files)
 		web := componentNamed(t, design, "web")
 
-		// api maps to nothing → ocResolving returns an empty deployment list →
-		// no URL yet → the required dep is not resolvable → not ready.
 		oc := ocResolving(map[string]string{})
-		out, ready := NewRuntimeConfigService(oc, nil).buildEnvValues(ctx, "acme", "proj", web, design)
+		out, ready := NewRuntimeConfigService(oc, nil, nil).buildEnvValues(ctx, "acme", "proj", web, design)
 		if ready {
 			t.Fatalf("want ready=false when a required service dep has no resolved URL; got true (out=%v)", out)
 		}
@@ -271,11 +547,11 @@ func Test_buildEnvValues(t *testing.T) {
 		}
 	})
 
-	t.Run("ListDeployments error on a dep gates emission", func(t *testing.T) {
+	t.Run("ListDeployments error on a service dep gates emission", func(t *testing.T) {
 		t.Parallel()
 		files := map[string]string{
 			artifacts.DesignRootFile:     rootDesignMd(),
-			"components/web/design.json": webappMd("web", false, "api"),
+			"components/web/design.json": webappMd("web", "api"),
 			"components/api/design.json": serviceComponentMd(),
 		}
 		design := readDesign(t, files)
@@ -286,49 +562,24 @@ func Test_buildEnvValues(t *testing.T) {
 				return nil, errors.New("oc: transient")
 			},
 		}
-		_, ready := NewRuntimeConfigService(oc, nil).buildEnvValues(ctx, "acme", "proj", web, design)
+		_, ready := NewRuntimeConfigService(oc, nil, nil).buildEnvValues(ctx, "acme", "proj", web, design)
 		if ready {
 			t.Fatalf("want ready=false on a transient OC error for a required dep; got true")
 		}
 	})
 
-	t.Run("nil deployment list on a dep gates emission", func(t *testing.T) {
+	t.Run("non-service component dep is skipped, not gated", func(t *testing.T) {
 		t.Parallel()
-		files := map[string]string{
-			artifacts.DesignRootFile:     rootDesignMd(),
-			"components/web/design.json": webappMd("web", false, "api"),
-			"components/api/design.json": serviceComponentMd(),
-		}
-		design := readDesign(t, files)
-		web := componentNamed(t, design, "web")
-
-		oc := &ocmocks.ComponentClientMock{
-			ListDeploymentsFunc: func(context.Context, string, string, string) (*models.DeploymentList, error) {
-				return nil, nil // no error, but nil list → not resolvable yet
-			},
-		}
-		_, ready := NewRuntimeConfigService(oc, nil).buildEnvValues(ctx, "acme", "proj", web, design)
-		if ready {
-			t.Fatalf("want ready=false when the dep's deployment list is nil; got true")
-		}
-	})
-
-	t.Run("non-service dep is skipped, not gated", func(t *testing.T) {
-		t.Parallel()
-		// web depends on a peer web-app (not a service) → skipped over HTTP;
-		// no URL contributed, but readiness is NOT withheld.
 		files := map[string]string{
 			artifacts.DesignRootFile:      rootDesignMd(),
-			"components/web/design.json":  webappMd("web", false, "peer"),
-			"components/peer/design.json": webappMd("peer", false),
+			"components/web/design.json":  webappMd("web", "peer"),
+			"components/peer/design.json": webappMd("peer"),
 		}
 		design := readDesign(t, files)
 		web := componentNamed(t, design, "web")
 
-		// ListDeployments must NOT be called for a non-service dep — leave it
-		// unset so a stray call panics.
 		oc := &ocmocks.ComponentClientMock{}
-		out, ready := NewRuntimeConfigService(oc, nil).buildEnvValues(ctx, "acme", "proj", web, design)
+		out, ready := NewRuntimeConfigService(oc, nil, nil).buildEnvValues(ctx, "acme", "proj", web, design)
 		if !ready {
 			t.Fatalf("want ready=true; a non-service dep is skipped, not deferred")
 		}
@@ -340,260 +591,147 @@ func Test_buildEnvValues(t *testing.T) {
 		}
 	})
 
-	t.Run("dangling dependsOn (unknown sibling) is skipped, not gated", func(t *testing.T) {
+	t.Run("resourceClient not wired defers with no partial keys", func(t *testing.T) {
 		t.Parallel()
-		files := map[string]string{
-			artifacts.DesignRootFile:     rootDesignMd(),
-			"components/web/design.json": webappMd("web", false, "ghost"),
-		}
-		design := readDesign(t, files)
+		design := readDesign(t, authWebFiles)
 		web := componentNamed(t, design, "web")
 
-		oc := &ocmocks.ComponentClientMock{} // must not be called
-		out, ready := NewRuntimeConfigService(oc, nil).buildEnvValues(ctx, "acme", "proj", web, design)
-		if !ready {
-			t.Fatalf("want ready=true; an unresolvable sibling name is skipped, not deferred")
+		oc := ocResolving(map[string]string{"api": "http://api.local", "web": "http://web.local"})
+		cat := &fakeCatalog{markers: authMarkers("thunder-app")}
+		out, ready := svcWithCatalog(oc, nil, nil, cat).buildEnvValues(ctx, "acme", "proj", web, design)
+		if ready {
+			t.Fatalf("want ready=false when the resource client is unwired")
 		}
-		if len(out) != 0 {
-			t.Errorf("want empty env map; got %v", out)
+		if _, ok := out["USER_AUTH_CLIENT_ID"]; ok {
+			t.Errorf("no partial output keys on defer; out=%v", out)
 		}
 	})
 
-	t.Run("oidc on + everything resolved: ready with THUNDER_* layered", func(t *testing.T) {
+	t.Run("catalog UNWIRED defers (fail-open-with-retry, not an error)", func(t *testing.T) {
 		t.Parallel()
-		files := map[string]string{
-			artifacts.DesignRootFile:     rootDesignMd(),
-			"components/web/design.json": webappMd("web", true, "api"),
-			"components/api/design.json": serviceComponentMd(),
-		}
-		design := readDesign(t, files)
+		design := readDesign(t, authWebFiles)
 		web := componentNamed(t, design, "web")
 
-		oc := ocResolving(map[string]string{
-			"api": "http://api.local",
-			"web": "http://web.local/",
-		})
-		th := &fakeThunder{}
-		svc := NewRuntimeConfigService(oc, nil)
-		svc.SetPlatformIDP("http://thunder.local", "")
-		svc.SetThunderAdmin(th)
-
-		out, ready := svc.buildEnvValues(ctx, "acme", "proj", web, design)
-		if !ready {
-			t.Fatalf("want ready=true; got false (out=%v)", out)
+		oc := ocResolving(map[string]string{"api": "http://api.local", "web": "http://web.local"})
+		rc := rcOutputs(authOutputs(), nil)
+		// No SetResourceCatalog → nil catalog.
+		out, ready := NewRuntimeConfigService(oc, rc, nil).buildEnvValues(ctx, "acme", "proj", web, design)
+		if ready {
+			t.Fatalf("want ready=false when the catalog is unwired")
 		}
-		if out["THUNDER_CLIENT_ID"] != "cid-proj" || out["THUNDER_URL"] != "http://thunder.local" {
-			t.Errorf("THUNDER_* not layered: %v", out)
+		if _, ok := out["USER_AUTH_CLIENT_ID"]; ok {
+			t.Errorf("no partial output keys on defer; out=%v", out)
 		}
 	})
 
-	t.Run("oidc on but SPA URL unresolved gates emission", func(t *testing.T) {
+	t.Run("catalog FETCH FAILURE defers (does not surface as an error)", func(t *testing.T) {
 		t.Parallel()
-		files := map[string]string{
-			artifacts.DesignRootFile:     rootDesignMd(),
-			"components/web/design.json": webappMd("web", true, "api"),
-			"components/api/design.json": serviceComponentMd(),
-		}
-		design := readDesign(t, files)
+		design := readDesign(t, authWebFiles)
 		web := componentNamed(t, design, "web")
 
-		// api resolves, but the SPA's own URL (web) does not → layerThunderKeys
-		// returns false → overall not ready.
+		oc := ocResolving(map[string]string{"api": "http://api.local", "web": "http://web.local"})
+		rc := rcOutputs(authOutputs(), nil)
+		cat := &fakeCatalog{err: errors.New("oc: catalog unreachable")}
+		out, ready := svcWithCatalog(oc, rc, nil, cat).buildEnvValues(ctx, "acme", "proj", web, design)
+		if ready {
+			t.Fatalf("want ready=false when the catalog fetch fails")
+		}
+		for k := range out {
+			if strings.HasPrefix(k, "USER_AUTH_") {
+				t.Errorf("no platform-resource output keys on a catalog-fetch defer; got %q", k)
+			}
+		}
+	})
+
+	t.Run("outputs not ready (no status) defers, no partial keys", func(t *testing.T) {
+		t.Parallel()
+		design := readDesign(t, authWebFiles)
+		web := componentNamed(t, design, "web")
+
+		oc := ocResolving(map[string]string{"api": "http://api.local", "web": "http://web.local"})
+		rc := rcOutputs(nil, nil) // binding has no status yet
+		cat := &fakeCatalog{markers: authMarkers("thunder-app")}
+		out, ready := svcWithCatalog(oc, rc, nil, cat).buildEnvValues(ctx, "acme", "proj", web, design)
+		if ready {
+			t.Fatalf("want ready=false when the binding outputs are not ready")
+		}
+		for k := range out {
+			if strings.HasPrefix(k, "USER_AUTH_") {
+				t.Errorf("no partial output keys on defer; got %q", k)
+			}
+		}
+	})
+
+	t.Run("empty outputs defers", func(t *testing.T) {
+		t.Parallel()
+		design := readDesign(t, authWebFiles)
+		web := componentNamed(t, design, "web")
+
+		oc := ocResolving(map[string]string{"api": "http://api.local", "web": "http://web.local"})
+		rc := rcOutputs(map[string]string{}, nil) // status present, zero outputs
+		cat := &fakeCatalog{markers: authMarkers("thunder-app")}
+		_, ready := svcWithCatalog(oc, rc, nil, cat).buildEnvValues(ctx, "acme", "proj", web, design)
+		if ready {
+			t.Fatalf("want ready=false when the binding has zero outputs")
+		}
+	})
+
+	t.Run("consumer-URL patch failure defers before the read", func(t *testing.T) {
+		t.Parallel()
+		design := readDesign(t, authWebFiles)
+		web := componentNamed(t, design, "web")
+
+		oc := ocResolving(map[string]string{"api": "http://api.local", "web": "http://web.local"})
+		rc := rcOutputs(authOutputs(), errors.New("oc: patch failed"))
+		cat := &fakeCatalog{markers: authMarkers("thunder-app")}
+		out, ready := svcWithCatalog(oc, rc, nil, cat).buildEnvValues(ctx, "acme", "proj", web, design)
+		if ready {
+			t.Fatalf("want ready=false when the consumer-URL patch fails")
+		}
+		for k := range out {
+			if strings.HasPrefix(k, "USER_AUTH_") {
+				t.Errorf("no output keys when the patch failed; got %q", k)
+			}
+		}
+		if n := len(rc.GetBindingCalls()); n != 0 {
+			t.Errorf("GetBinding must not run after a patch failure; got %d", n)
+		}
+	})
+
+	t.Run("SPA URL unresolved defers the annotated dep before any patch", func(t *testing.T) {
+		t.Parallel()
+		design := readDesign(t, authWebFiles)
+		web := componentNamed(t, design, "web")
+
+		// api resolves, but the SPA's own URL (web) does not → defer before patch.
 		oc := ocResolving(map[string]string{"api": "http://api.local"})
-		th := &fakeThunder{}
-		svc := NewRuntimeConfigService(oc, nil)
-		svc.SetPlatformIDP("http://thunder.local", "")
-		svc.SetThunderAdmin(th)
-
-		_, ready := svc.buildEnvValues(ctx, "acme", "proj", web, design)
+		rc := rcOutputs(authOutputs(), nil)
+		cat := &fakeCatalog{markers: authMarkers("thunder-app")}
+		_, ready := svcWithCatalog(oc, rc, nil, cat).buildEnvValues(ctx, "acme", "proj", web, design)
 		if ready {
 			t.Fatalf("want ready=false when the SPA external URL is not yet resolved")
 		}
-		if len(th.ensureCalls) != 0 {
-			t.Errorf("thunder must not be called before the SPA URL resolves; got %d calls", len(th.ensureCalls))
+		if n := len(rc.PatchBindingEnvironmentConfigsCalls()); n != 0 {
+			t.Errorf("the binding must not be patched before the SPA URL resolves; got %d", n)
 		}
 	})
-}
 
-// --- layerThunderKeys --------------------------------------------------------
-
-func Test_layerThunderKeys(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-
-	webapp := &models.DesignComponent{
-		Name:           "web",
-		ComponentType:  "web-app",
-		CallerIdentity: &models.CallerIdentity{Mode: "end-user"},
-	}
-
-	t.Run("happy: all five THUNDER_* keys + correct redirect URI", func(t *testing.T) {
+	t.Run("GetBinding error defers", func(t *testing.T) {
 		t.Parallel()
-		oc := ocResolving(map[string]string{"web": "http://web.local/"})
-		th := &fakeThunder{ensureFn: func(_ context.Context, _ string, _ []string) (string, bool, error) {
-			return "web-cid", true, nil
-		}}
-		svc := NewRuntimeConfigService(oc, nil)
-		svc.SetPlatformIDP("http://thunder.local", "") // empty scopes keeps the ctor default
+		design := readDesign(t, authWebFiles)
+		web := componentNamed(t, design, "web")
 
-		svc.SetThunderAdmin(th)
-
-		out := map[string]interface{}{}
-		if ok := svc.layerThunderKeys(ctx, "acme", "proj", webapp, out); !ok {
-			t.Fatalf("layerThunderKeys returned false on the happy path")
+		oc := ocResolving(map[string]string{"api": "http://api.local", "web": "http://web.local"})
+		rc := rcOutputs(authOutputs(), nil)
+		rc.GetBindingFunc = func(context.Context, string, string) (*openchoreo.ResourceReleaseBinding, error) {
+			return nil, errors.New("oc down")
 		}
-		want := map[string]interface{}{
-			"THUNDER_URL":               "http://thunder.local",
-			"THUNDER_CLIENT_ID":         "web-cid",
-			"THUNDER_REDIRECT_URI":      "http://web.local/callback",
-			"THUNDER_SCOPES":            "openid profile email",
-			"THUNDER_AFTER_SIGN_IN_URL": "http://web.local",
-		}
-		for k, v := range want {
-			if out[k] != v {
-				t.Errorf("out[%q] = %v; want %v", k, out[k], v)
-			}
-		}
-		if len(th.ensureCalls) != 1 {
-			t.Fatalf("want 1 EnsureProjectOAuthClient call; got %d", len(th.ensureCalls))
-		}
-		call := th.ensureCalls[0]
-		if call.projectName != "proj" {
-			t.Errorf("EnsureProjectOAuthClient projectName = %q; want proj", call.projectName)
-		}
-		if len(call.redirectURIs) != 1 || call.redirectURIs[0] != "http://web.local/callback" {
-			t.Errorf("redirectURIs = %v; want [http://web.local/callback]", call.redirectURIs)
+		cat := &fakeCatalog{markers: authMarkers("thunder-app")}
+		_, ready := svcWithCatalog(oc, rc, nil, cat).buildEnvValues(ctx, "acme", "proj", web, design)
+		if ready {
+			t.Fatalf("want ready=false when GetBinding errors")
 		}
 	})
-
-	t.Run("issuer not configured → false, no keys, no downstream calls", func(t *testing.T) {
-		t.Parallel()
-		// Leave ListDeployments unset: if layerThunderKeys got past the issuer
-		// check to componentExternalURL, the mock would panic.
-		oc := &ocmocks.ComponentClientMock{}
-		th := &fakeThunder{}
-		svc := NewRuntimeConfigService(oc, nil) // platformIDPIssuer == ""
-		svc.SetThunderAdmin(th)
-
-		out := map[string]interface{}{}
-		if ok := svc.layerThunderKeys(ctx, "acme", "proj", webapp, out); ok {
-			t.Fatalf("want false when platformIDPIssuer is empty")
-		}
-		if len(out) != 0 {
-			t.Errorf("no keys expected; got %v", out)
-		}
-	})
-
-	t.Run("SPA URL not resolved → false, thunder not called", func(t *testing.T) {
-		t.Parallel()
-		oc := ocResolving(map[string]string{}) // web → empty list
-		th := &fakeThunder{}
-		svc := NewRuntimeConfigService(oc, nil)
-		svc.SetPlatformIDP("http://thunder.local", "")
-		svc.SetThunderAdmin(th)
-
-		out := map[string]interface{}{}
-		if ok := svc.layerThunderKeys(ctx, "acme", "proj", webapp, out); ok {
-			t.Fatalf("want false when the SPA external URL is unresolved")
-		}
-		if len(th.ensureCalls) != 0 {
-			t.Errorf("thunder must not be called before the SPA URL resolves; got %d", len(th.ensureCalls))
-		}
-	})
-
-	t.Run("thunderAdmin not wired → false", func(t *testing.T) {
-		t.Parallel()
-		oc := ocResolving(map[string]string{"web": "http://web.local"})
-		svc := NewRuntimeConfigService(oc, nil)
-		svc.SetPlatformIDP("http://thunder.local", "")
-		// no SetThunderAdmin
-
-		out := map[string]interface{}{}
-		if ok := svc.layerThunderKeys(ctx, "acme", "proj", webapp, out); ok {
-			t.Fatalf("want false when thunderAdmin is nil")
-		}
-		if len(out) != 0 {
-			t.Errorf("no keys expected; got %v", out)
-		}
-	})
-
-	t.Run("EnsureProjectOAuthClient error → false", func(t *testing.T) {
-		t.Parallel()
-		oc := ocResolving(map[string]string{"web": "http://web.local"})
-		th := &fakeThunder{ensureFn: func(context.Context, string, []string) (string, bool, error) {
-			return "", false, errors.New("thunder down")
-		}}
-		svc := NewRuntimeConfigService(oc, nil)
-		svc.SetPlatformIDP("http://thunder.local", "")
-		svc.SetThunderAdmin(th)
-
-		out := map[string]interface{}{}
-		if ok := svc.layerThunderKeys(ctx, "acme", "proj", webapp, out); ok {
-			t.Fatalf("want false when EnsureProjectOAuthClient errors")
-		}
-		if len(out) != 0 {
-			t.Errorf("no keys expected on error; got %v", out)
-		}
-	})
-
-	t.Run("EnsureProjectOAuthClient empty clientID → false", func(t *testing.T) {
-		t.Parallel()
-		oc := ocResolving(map[string]string{"web": "http://web.local"})
-		th := &fakeThunder{ensureFn: func(context.Context, string, []string) (string, bool, error) {
-			return "", false, nil // no error, but no clientID
-		}}
-		svc := NewRuntimeConfigService(oc, nil)
-		svc.SetPlatformIDP("http://thunder.local", "")
-		svc.SetThunderAdmin(th)
-
-		out := map[string]interface{}{}
-		if ok := svc.layerThunderKeys(ctx, "acme", "proj", webapp, out); ok {
-			t.Fatalf("want false when EnsureProjectOAuthClient returns an empty clientID")
-		}
-	})
-
-	t.Run("SetPlatformIDP custom scopes flow through", func(t *testing.T) {
-		t.Parallel()
-		oc := ocResolving(map[string]string{"web": "http://web.local"})
-		th := &fakeThunder{}
-		svc := NewRuntimeConfigService(oc, nil)
-		svc.SetPlatformIDP("http://thunder.local", "openid custom")
-		svc.SetThunderAdmin(th)
-
-		out := map[string]interface{}{}
-		if ok := svc.layerThunderKeys(ctx, "acme", "proj", webapp, out); !ok {
-			t.Fatalf("layerThunderKeys returned false")
-		}
-		if out["THUNDER_SCOPES"] != "openid custom" {
-			t.Errorf("THUNDER_SCOPES = %v; want the overridden scope string", out["THUNDER_SCOPES"])
-		}
-	})
-}
-
-// --- oidcSPAEnabled ----------------------------------------------------------
-
-func Test_oidcSPAEnabled(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name string
-		in   *models.DesignComponent
-		want bool
-	}{
-		{"nil component", nil, false},
-		{"service with end-user identity is not an SPA", &models.DesignComponent{ComponentType: "service", CallerIdentity: &models.CallerIdentity{Mode: "end-user"}}, false},
-		{"web-app without callerIdentity", &models.DesignComponent{ComponentType: "web-app"}, false},
-		{"web-app service-account mode", &models.DesignComponent{ComponentType: "web-app", CallerIdentity: &models.CallerIdentity{Mode: "service-account"}}, false},
-		{"web-app end-user mode", &models.DesignComponent{ComponentType: "web-app", CallerIdentity: &models.CallerIdentity{Mode: "end-user"}}, true},
-	}
-	for _, c := range cases {
-		c := c
-		t.Run(c.name, func(t *testing.T) {
-			t.Parallel()
-			if got := oidcSPAEnabled(c.in); got != c.want {
-				t.Errorf("oidcSPAEnabled(%s) = %v; want %v", c.name, got, c.want)
-			}
-		})
-	}
 }
 
 // --- componentExternalURL ----------------------------------------------------
@@ -604,7 +742,7 @@ func Test_componentExternalURL(t *testing.T) {
 
 	t.Run("nil componentClient → empty", func(t *testing.T) {
 		t.Parallel()
-		svc := NewRuntimeConfigService(nil, nil)
+		svc := NewRuntimeConfigService(nil, nil, nil)
 		if got := svc.componentExternalURL(ctx, "acme", "proj", "web"); got != "" {
 			t.Errorf("want empty when componentClient is nil; got %q", got)
 		}
@@ -615,18 +753,8 @@ func Test_componentExternalURL(t *testing.T) {
 		oc := &ocmocks.ComponentClientMock{ListDeploymentsFunc: func(context.Context, string, string, string) (*models.DeploymentList, error) {
 			return nil, errors.New("boom")
 		}}
-		if got := NewRuntimeConfigService(oc, nil).componentExternalURL(ctx, "acme", "proj", "web"); got != "" {
+		if got := NewRuntimeConfigService(oc, nil, nil).componentExternalURL(ctx, "acme", "proj", "web"); got != "" {
 			t.Errorf("want empty on error; got %q", got)
-		}
-	})
-
-	t.Run("nil list → empty", func(t *testing.T) {
-		t.Parallel()
-		oc := &ocmocks.ComponentClientMock{ListDeploymentsFunc: func(context.Context, string, string, string) (*models.DeploymentList, error) {
-			return nil, nil
-		}}
-		if got := NewRuntimeConfigService(oc, nil).componentExternalURL(ctx, "acme", "proj", "web"); got != "" {
-			t.Errorf("want empty on nil list; got %q", got)
 		}
 	})
 
@@ -638,7 +766,7 @@ func Test_componentExternalURL(t *testing.T) {
 				{EndpointURL: "http://web.local/"}, // returned untrimmed
 			}}, nil
 		}}
-		if got := NewRuntimeConfigService(oc, nil).componentExternalURL(ctx, "acme", "proj", "web"); got != "http://web.local/" {
+		if got := NewRuntimeConfigService(oc, nil, nil).componentExternalURL(ctx, "acme", "proj", "web"); got != "http://web.local/" {
 			t.Errorf("componentExternalURL = %q; want the first non-empty URL verbatim", got)
 		}
 	})
@@ -650,10 +778,16 @@ func Test_EmitForComponent(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	webAndAPI := func(oidc bool) map[string]string {
+	// webAndAPI: a web-app depending on the `api` service, optionally declaring a
+	// `user-auth` platform-resource dep of the given resourceType ("" ⇒ none).
+	webAndAPI := func(resourceType string) map[string]string {
+		var pr []prDep
+		if resourceType != "" {
+			pr = []prDep{{"user-auth", resourceType}}
+		}
 		return map[string]string{
 			artifacts.DesignRootFile:     rootDesignMd(),
-			"components/web/design.json": webappMd("web", oidc, "api"),
+			"components/web/design.json": webappWithPR("web", pr, "api"),
 			"components/api/design.json": serviceComponentMd(),
 		}
 	}
@@ -667,12 +801,9 @@ func Test_EmitForComponent(t *testing.T) {
 		oc.UpdateComponentWorkflowFilesFunc = func(context.Context, string, string, string, []models.WorkflowFileVar) error {
 			return nil
 		}
-		th := &fakeThunder{ensureFn: func(context.Context, string, []string) (string, bool, error) {
-			return "web-cid", true, nil
-		}}
-		svc := NewRuntimeConfigService(oc, storeWith(webAndAPI(true)))
-		svc.SetPlatformIDP("http://thunder.local", "")
-		svc.SetThunderAdmin(th)
+		rc := rcOutputs(authOutputs(), nil)
+		cat := &fakeCatalog{markers: authMarkers("thunder-app")}
+		svc := svcWithCatalog(oc, rc, storeWith(webAndAPI("thunder-app")), cat)
 
 		if err := svc.EmitForComponent(ctx, "acme", "proj", "web"); err != nil {
 			t.Fatalf("EmitForComponent: %v", err)
@@ -696,27 +827,56 @@ func Test_EmitForComponent(t *testing.T) {
 			"window._env_ = {",
 			`API_BASE_URL: "http://api.local/todo"`,
 			`API_URL: "http://api.local/todo"`,
-			`THUNDER_URL: "http://thunder.local"`,
-			`THUNDER_CLIENT_ID: "web-cid"`,
-			`THUNDER_REDIRECT_URI: "http://web.local/callback"`,
-			`THUNDER_SCOPES: "openid profile email"`,
-			`THUNDER_AFTER_SIGN_IN_URL: "http://web.local"`,
+			`USER_AUTH_CLIENT_ID: "web-cid"`,
+			`USER_AUTH_ISSUER: "http://thunder.local"`,
+			`USER_AUTH_JWKS_URL: "http://thunder.local/jwks"`,
+			`USER_AUTH_SCOPES: "openid profile email"`,
 		} {
 			if !strings.Contains(f.Value, want) {
 				t.Errorf("emitted env-config.js missing %q\ngot:\n%s", want, f.Value)
 			}
 		}
+		if strings.Contains(f.Value, "THUNDER_") {
+			t.Errorf("no legacy THUNDER_* key must appear in env-config.js:\n%s", f.Value)
+		}
 	})
 
-	t.Run("not-ready (unresolved dep) defers the write", func(t *testing.T) {
+	t.Run("retired type spellings are not web applications: no emit", func(t *testing.T) {
+		// Regression for the vocabulary-drift bug, inverted for the final
+		// vocabulary: only the canonical "web-application" (OC's own term)
+		// emits. The retired "webapp"/"web-app" spellings pass the codec
+		// verbatim and are simply not web applications — designs carrying
+		// them must be migrated.
 		t.Parallel()
-		// OIDC off so only the service-dep gate is in play; api unresolved.
+		for _, retired := range []string{"webapp", "web-app"} {
+			files := map[string]string{
+				artifacts.DesignRootFile:     rootDesignMd(),
+				"components/web/design.json": buildComponentJSON("web", retired, []string{"api"}, nil),
+				"components/api/design.json": serviceComponentMd(),
+			}
+			oc := ocResolving(map[string]string{"api": "http://api.local/todo"})
+			oc.UpdateComponentWorkflowFilesFunc = func(context.Context, string, string, string, []models.WorkflowFileVar) error {
+				return nil
+			}
+			svc := NewRuntimeConfigService(oc, nil, storeWith(files))
+
+			if err := svc.EmitForComponent(ctx, "acme", "proj", "web"); err != nil {
+				t.Fatalf("EmitForComponent(%q): %v", retired, err)
+			}
+			if n := len(oc.UpdateComponentWorkflowFilesCalls()); n != 0 {
+				t.Fatalf("retired spelling %q must not emit env-config.js; got %d emits", retired, n)
+			}
+		}
+	})
+
+	t.Run("not-ready (unresolved service dep) defers the write", func(t *testing.T) {
+		t.Parallel()
 		oc := ocResolving(map[string]string{})
 		oc.UpdateComponentWorkflowFilesFunc = func(context.Context, string, string, string, []models.WorkflowFileVar) error {
 			t.Errorf("UpdateComponentWorkflowFiles must NOT be called when not ready")
 			return nil
 		}
-		svc := NewRuntimeConfigService(oc, storeWith(webAndAPI(false)))
+		svc := NewRuntimeConfigService(oc, nil, storeWith(webAndAPI("")))
 
 		if err := svc.EmitForComponent(ctx, "acme", "proj", "web"); err != nil {
 			t.Fatalf("EmitForComponent should be a soft no-op when not ready; got %v", err)
@@ -726,18 +886,16 @@ func Test_EmitForComponent(t *testing.T) {
 		}
 	})
 
-	t.Run("not-ready (oidc SPA URL unresolved) defers the write", func(t *testing.T) {
+	t.Run("not-ready (auth outputs unresolved) defers the write", func(t *testing.T) {
 		t.Parallel()
-		// api resolves; the SPA's own URL does not → THUNDER layer defers.
-		oc := ocResolving(map[string]string{"api": "http://api.local"})
+		oc := ocResolving(map[string]string{"api": "http://api.local", "web": "http://web.local"})
 		oc.UpdateComponentWorkflowFilesFunc = func(context.Context, string, string, string, []models.WorkflowFileVar) error {
-			t.Errorf("UpdateComponentWorkflowFiles must NOT be called when the SPA URL is unresolved")
+			t.Errorf("UpdateComponentWorkflowFiles must NOT be called when outputs are unresolved")
 			return nil
 		}
-		th := &fakeThunder{}
-		svc := NewRuntimeConfigService(oc, storeWith(webAndAPI(true)))
-		svc.SetPlatformIDP("http://thunder.local", "")
-		svc.SetThunderAdmin(th)
+		rc := rcOutputs(nil, nil) // binding has no status yet
+		cat := &fakeCatalog{markers: authMarkers("thunder-app")}
+		svc := svcWithCatalog(oc, rc, storeWith(webAndAPI("thunder-app")), cat)
 
 		if err := svc.EmitForComponent(ctx, "acme", "proj", "web"); err != nil {
 			t.Fatalf("EmitForComponent: %v", err)
@@ -749,10 +907,8 @@ func Test_EmitForComponent(t *testing.T) {
 
 	t.Run("non-web-app component is a no-op", func(t *testing.T) {
 		t.Parallel()
-		// api is a service. Leave ListDeployments + Update unset so any attempt
-		// to build/emit panics — proving the early web-app guard short-circuits.
 		oc := &ocmocks.ComponentClientMock{}
-		svc := NewRuntimeConfigService(oc, storeWith(webAndAPI(false)))
+		svc := NewRuntimeConfigService(oc, nil, storeWith(webAndAPI("")))
 
 		if err := svc.EmitForComponent(ctx, "acme", "proj", "api"); err != nil {
 			t.Fatalf("EmitForComponent on a service should be nil; got %v", err)
@@ -765,7 +921,7 @@ func Test_EmitForComponent(t *testing.T) {
 	t.Run("unknown component name is a no-op", func(t *testing.T) {
 		t.Parallel()
 		oc := &ocmocks.ComponentClientMock{}
-		svc := NewRuntimeConfigService(oc, storeWith(webAndAPI(false)))
+		svc := NewRuntimeConfigService(oc, nil, storeWith(webAndAPI("")))
 		if err := svc.EmitForComponent(ctx, "acme", "proj", "ghost"); err != nil {
 			t.Fatalf("EmitForComponent on a missing component should be nil; got %v", err)
 		}
@@ -777,7 +933,7 @@ func Test_EmitForComponent(t *testing.T) {
 	t.Run("design absent (empty tree) is a no-op", func(t *testing.T) {
 		t.Parallel()
 		oc := &ocmocks.ComponentClientMock{}
-		svc := NewRuntimeConfigService(oc, storeWith(map[string]string{}))
+		svc := NewRuntimeConfigService(oc, nil, storeWith(map[string]string{}))
 		if err := svc.EmitForComponent(ctx, "acme", "proj", "web"); err != nil {
 			t.Fatalf("want nil when there is no design yet; got %v", err)
 		}
@@ -791,7 +947,7 @@ func Test_EmitForComponent(t *testing.T) {
 			},
 		})
 		oc := &ocmocks.ComponentClientMock{}
-		svc := NewRuntimeConfigService(oc, store)
+		svc := NewRuntimeConfigService(oc, nil, store)
 		if err := svc.EmitForComponent(ctx, "acme", "proj", "web"); err != nil {
 			t.Fatalf("ErrArtifactNotFound must be swallowed; got %v", err)
 		}
@@ -799,7 +955,7 @@ func Test_EmitForComponent(t *testing.T) {
 
 	t.Run("empty identifiers error", func(t *testing.T) {
 		t.Parallel()
-		svc := NewRuntimeConfigService(&ocmocks.ComponentClientMock{}, storeWith(webAndAPI(false)))
+		svc := NewRuntimeConfigService(&ocmocks.ComponentClientMock{}, nil, storeWith(webAndAPI("")))
 		for _, tc := range []struct{ org, proj, comp string }{
 			{"", "proj", "web"},
 			{"acme", "", "web"},
@@ -813,11 +969,11 @@ func Test_EmitForComponent(t *testing.T) {
 
 	t.Run("UpdateComponentWorkflowFiles error propagates", func(t *testing.T) {
 		t.Parallel()
-		oc := ocResolving(map[string]string{"api": "http://api.local"}) // OIDC off → ready
+		oc := ocResolving(map[string]string{"api": "http://api.local"}) // no PR dep → ready
 		oc.UpdateComponentWorkflowFilesFunc = func(context.Context, string, string, string, []models.WorkflowFileVar) error {
 			return errors.New("oc write failed")
 		}
-		svc := NewRuntimeConfigService(oc, storeWith(webAndAPI(false)))
+		svc := NewRuntimeConfigService(oc, nil, storeWith(webAndAPI("")))
 		err := svc.EmitForComponent(ctx, "acme", "proj", "web")
 		if err == nil {
 			t.Fatalf("want the OC write error to propagate")
@@ -844,8 +1000,8 @@ func Test_EmitForProjectSPAs(t *testing.T) {
 
 	twoSPAsOneService := map[string]string{
 		artifacts.DesignRootFile:      rootDesignMd(),
-		"components/web1/design.json": webappMd("web1", false, "api"),
-		"components/web2/design.json": webappMd("web2", false, "api"),
+		"components/web1/design.json": webappMd("web1", "api"),
+		"components/web2/design.json": webappMd("web2", "api"),
 		"components/api/design.json":  serviceComponentMd(),
 	}
 
@@ -855,7 +1011,7 @@ func Test_EmitForProjectSPAs(t *testing.T) {
 		oc.UpdateComponentWorkflowFilesFunc = func(context.Context, string, string, string, []models.WorkflowFileVar) error {
 			return nil
 		}
-		svc := NewRuntimeConfigService(oc, storeWith(twoSPAsOneService))
+		svc := NewRuntimeConfigService(oc, nil, storeWith(twoSPAsOneService))
 
 		if err := svc.EmitForProjectSPAs(ctx, "acme", "proj"); err != nil {
 			t.Fatalf("EmitForProjectSPAs: %v", err)
@@ -883,7 +1039,7 @@ func Test_EmitForProjectSPAs(t *testing.T) {
 			"components/api/design.json": serviceComponentMd(),
 		}
 		oc := &ocmocks.ComponentClientMock{} // must never be touched
-		svc := NewRuntimeConfigService(oc, storeWith(files))
+		svc := NewRuntimeConfigService(oc, nil, storeWith(files))
 		if err := svc.EmitForProjectSPAs(ctx, "acme", "proj"); err != nil {
 			t.Fatalf("want nil with no web-apps; got %v", err)
 		}
@@ -901,12 +1057,11 @@ func Test_EmitForProjectSPAs(t *testing.T) {
 			}
 			return nil
 		}
-		svc := NewRuntimeConfigService(oc, storeWith(twoSPAsOneService))
+		svc := NewRuntimeConfigService(oc, nil, storeWith(twoSPAsOneService))
 
 		if err := svc.EmitForProjectSPAs(ctx, "acme", "proj"); err != nil {
 			t.Fatalf("EmitForProjectSPAs must swallow per-component errors; got %v", err)
 		}
-		// Both SPAs were attempted even though web1 errored.
 		if n := len(oc.UpdateComponentWorkflowFilesCalls()); n != 2 {
 			t.Errorf("want both SPAs attempted (2 write calls); got %d", n)
 		}
@@ -914,21 +1069,12 @@ func Test_EmitForProjectSPAs(t *testing.T) {
 
 	t.Run("empty identifiers error", func(t *testing.T) {
 		t.Parallel()
-		svc := NewRuntimeConfigService(&ocmocks.ComponentClientMock{}, storeWith(twoSPAsOneService))
+		svc := NewRuntimeConfigService(&ocmocks.ComponentClientMock{}, nil, storeWith(twoSPAsOneService))
 		if err := svc.EmitForProjectSPAs(ctx, "", "proj"); err == nil {
 			t.Errorf("empty orgID should error")
 		}
 		if err := svc.EmitForProjectSPAs(ctx, "acme", ""); err == nil {
 			t.Errorf("empty projectID should error")
-		}
-	})
-
-	t.Run("design absent is a no-op", func(t *testing.T) {
-		t.Parallel()
-		oc := &ocmocks.ComponentClientMock{}
-		svc := NewRuntimeConfigService(oc, storeWith(map[string]string{}))
-		if err := svc.EmitForProjectSPAs(ctx, "acme", "proj"); err != nil {
-			t.Fatalf("want nil when there is no design yet; got %v", err)
 		}
 	})
 

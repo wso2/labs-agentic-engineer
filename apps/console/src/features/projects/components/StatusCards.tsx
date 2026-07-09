@@ -31,9 +31,11 @@ import {
 import { FileText, Hammer, Rocket } from "@wso2/oxygen-ui-icons-react";
 import { useNavigate } from "@tanstack/react-router";
 import type { components } from "../../../generated/aep-api";
+import { bucketTasks } from "../api/taskBuckets";
 
 type ProjectStatus = components["schemas"]["ProjectStatus"];
-type ProjectBoard = components["schemas"]["ProjectBoard"];
+type TaskView = components["schemas"]["TaskView"];
+type TagList = components["schemas"]["TagList"];
 
 type Tone = "default" | "info" | "success" | "warning" | "error";
 
@@ -48,17 +50,22 @@ interface CardState {
 // The three pipeline cards always render — a fresh project shows the whole
 // journey with the Spec card as the call-to-action (issue #77 decision).
 
-function specCardState(status: ProjectStatus): CardState {
-  if (status.specVersion) {
-    return status.specDirty
+function specCardState(
+  status: ProjectStatus,
+  tags: TagList | null | undefined,
+): CardState {
+  // Version + dirty state come from the tag resource (#117): latest = newest
+  // user-tagged spec version, specDirty = specs/ changed on GitHub since.
+  if (tags?.latest) {
+    return tags.specDirty
       ? {
-          headline: `${status.specVersion} published`,
+          headline: `${tags.latest} published`,
           detail: "The spec has changed since — a new draft is in progress.",
           tone: "warning",
           chip: "draft changes",
         }
       : {
-          headline: `${status.specVersion} published`,
+          headline: `${tags.latest} published`,
           detail: "Spec and design are agreed and versioned.",
           tone: "success",
         };
@@ -101,31 +108,20 @@ function specCardState(status: ProjectStatus): CardState {
 
 function buildCardState(
   status: ProjectStatus,
-  board: ProjectBoard | undefined,
+  tasks: TaskView[] | undefined,
 ): CardState {
-  if (!status.hasTasks || !board) {
+  if (!status.hasTasks || !tasks) {
     return {
       headline: "Waiting on spec",
       detail: "Agents start building once the spec is published.",
       tone: "default",
     };
   }
-  const failed = board.failed ?? [];
-  const inProgress = board.inProgress ?? [];
-  const counts = {
-    todo: (board.todo ?? []).length,
-    inProgress: inProgress.length,
-    failed: failed.length,
-    done: (board.done ?? []).length,
-  };
-  const total = counts.todo + counts.inProgress + counts.failed + counts.done;
+  const { counts, total, firstFailed, firstInProgress } = bucketTasks(tasks);
   if (counts.failed > 0) {
     return {
       headline: `${counts.failed} task${counts.failed > 1 ? "s" : ""} failed`,
-      detail:
-        failed[0]?.errorMessage ??
-        failed[0]?.title ??
-        "A coding task needs attention.",
+      detail: firstFailed?.title ?? "A coding task needs attention.",
       tone: "error",
       chip: `${counts.done}/${total} done`,
     };
@@ -133,7 +129,7 @@ function buildCardState(
   if (counts.inProgress > 0) {
     return {
       headline: `${counts.inProgress} in progress`,
-      detail: inProgress[0]?.title ?? "Agents are coding.",
+      detail: firstInProgress?.title ?? "Agents are coding.",
       tone: "info",
       chip: `${counts.done}/${total} done`,
     };
@@ -152,39 +148,21 @@ function buildCardState(
   };
 }
 
+// Deployment state has no project-level source in the proposed contract
+// (only per-component /deployments) — the card holds a placeholder until a
+// deployments slice aggregates it (#113 rework decision).
 function deployCardState(status: ProjectStatus): CardState {
-  switch (status.deployStatus) {
-    case "succeeded":
-      return {
-        headline: `${status.deployedVersion ?? "Latest"} deployed`,
-        detail: "The dev environment is running this version.",
-        tone: "success",
+  return status.hasTasks
+    ? {
+        headline: "Nothing deployed yet",
+        detail: "Finished builds deploy to dev automatically.",
+        tone: "default",
+      }
+    : {
+        headline: "Waiting on build",
+        detail: "Published builds deploy to dev automatically.",
+        tone: "default",
       };
-    case "failed":
-      return {
-        headline: "Deploy failed",
-        detail: "The last dev deployment did not complete.",
-        tone: "error",
-      };
-    case "in_progress":
-      return {
-        headline: "Deploying…",
-        detail: "A new version is rolling out to dev.",
-        tone: "info",
-      };
-    default:
-      return status.hasTasks
-        ? {
-            headline: "Nothing deployed yet",
-            detail: "Finished builds deploy to dev automatically.",
-            tone: "default",
-          }
-        : {
-            headline: "Waiting on build",
-            detail: "Published builds deploy to dev automatically.",
-            tone: "default",
-          };
-  }
 }
 
 function StatusCard({
@@ -260,11 +238,13 @@ function LoadingCard({ title }: { title: string }) {
 export function StatusCards({
   projectName,
   status,
-  board,
+  tasks,
+  tags,
 }: {
   projectName: string;
   status: ProjectStatus | undefined;
-  board: ProjectBoard | undefined;
+  tasks: TaskView[] | undefined;
+  tags: TagList | null | undefined;
 }) {
   const cards = status
     ? [
@@ -274,7 +254,7 @@ export function StatusCards({
             <StatusCard
               icon={<FileText size={18} />}
               title="Spec"
-              state={specCardState(status)}
+              state={specCardState(status, tags)}
               to="spec"
               projectName={projectName}
             />
@@ -286,7 +266,7 @@ export function StatusCards({
             <StatusCard
               icon={<Hammer size={18} />}
               title="Build"
-              state={buildCardState(status, board)}
+              state={buildCardState(status, tasks)}
               to="builds"
               projectName={projectName}
             />

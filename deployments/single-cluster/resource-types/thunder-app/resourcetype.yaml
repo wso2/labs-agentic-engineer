@@ -1,0 +1,151 @@
+# thunder-app — sample platform-resource ClusterResourceType (P5).
+#
+# Installed by the local deployments/ scripts (acting as the cluster PE would);
+# app-factory's BFF only DISCOVERS and REFERENCES this type — it never authors a
+# ClusterResourceType (see p5-constraints "app-factory authors only the Resource +
+# binding"). This is the concrete `resourceType` an architect's platform-resource
+# dependency names (resourceType == ClusterResourceType.metadata.name == "thunder-app").
+#
+# It renders a `ThunderApplication` (aep.wso2.com/v1alpha1) — a namespaced CR the
+# thunder-app-operator reconciles into a real OAuth app on the platform Thunder
+# IdP. On success the operator sets `status.ready=true` + `status.clientId` (the
+# client_id output below reads the latter) and additionally writes a ConfigMap
+# `<cr-name>-oauth` with key `client_id`. The Resource model resolves
+# `${metadata.name}` to a hashed render name (e.g. `r-<binding>-<hash>`).
+#
+# CEL context (per OC 1.1.1 ResourceType CRD docs): readyWhen/outputs are evaluated
+# against metadata.*, parameters.*, environmentConfigs.*, dataplane.*, and — once the
+# manifest is applied — applied.<id>.status.* (the rendered object's live status).
+#
+# ── Marker vocabulary (metadata labels/annotations) ────────────────────────────
+# The labels/annotations below are how the PE (the type author) TELLS AEP which
+# consumption behaviors this resource type needs. AEP keys its behavior ONLY on
+# these markers — it has NO hardcoded type names, so "thunder-app" is just data.
+# Adding a new auth flavor (or any new type) is a cluster install + a skill, never
+# an app-factory release. The markers AEP understands:
+#
+#   aep.wso2.com/description: <prose>
+#     Human prose describing what the type provides and when to depend on it.
+#     Surfaced to the architect via the list_platform_resource_types MCP tool
+#     (the architect picks the type whose description matches the need) and to
+#     users in the console dependency drawer.
+#
+#   aep.wso2.com/role: end-user-auth
+#     A service declaring a dependency of this type gets
+#     `exposesAPI.auth: end-user-required` stamped at design save (an explicit
+#     conflicting `service-required` is a validation error).
+#
+#   aep.wso2.com/consumer-url-env-config: redirectUris
+#     Once the consuming web-app's public URL resolves, the platform patches
+#     `<spaOrigin><consumer-url-path>` into this env-config key on the dep's
+#     dev binding — here that fills `environmentConfigs.redirectUris` below.
+#
+#   aep.wso2.com/consumer-url-path: <path>   (OMITTED here on purpose)
+#     Path appended to the consumer origin for the patch above. Absent, the
+#     platform defaults to `/callback`, which is exactly what this type wants,
+#     so we leave it off and let the default apply.
+#
+#   aep.wso2.com/skill: thunder-authentication
+#     Design save ensures this skill is present in the design's `skillsApplied`
+#     whenever a dependency of this type exists — the per-type teaching lives in
+#     the skill, not in platform code.
+---
+apiVersion: openchoreo.dev/v1alpha1
+kind: ClusterResourceType
+metadata:
+  name: thunder-app
+  labels:
+    # role → design-save stamps end-user-required auth on services that depend on this type.
+    aep.wso2.com/role: end-user-auth
+  annotations:
+    # description → the type's prose self-description; surfaced to the architect
+    # via list_platform_resource_types (it picks the type whose description
+    # matches the need) and to users in the console dependency drawer.
+    aep.wso2.com/description: >-
+      End-user sign-in for this project's apps: provisions an OAuth (PKCE)
+      client on the platform IdP. Declare on both the web app that signs
+      users in and the service whose API it protects.
+    # consumer-url-env-config → platform patches <spaOrigin><path> into this env-config key.
+    aep.wso2.com/consumer-url-env-config: redirectUris
+    # consumer-url-path omitted → defaults to /callback (the path this OAuth app expects).
+    # skill → design-save appends this skill to the design's skillsApplied when this dep is present.
+    aep.wso2.com/skill: thunder-authentication
+spec:
+  retainPolicy: Delete
+  parameters:
+    openAPIV3Schema:
+      type: object
+      properties:
+        displayName:
+          type: string
+          default: ""
+        scopes:
+          type: string
+          # Space-separated OAuth scopes (the operator forwards them verbatim to
+          # Thunder). Defaults to the standard OIDC set.
+          default: "openid profile email"
+  environmentConfigs:
+    openAPIV3Schema:
+      type: object
+      properties:
+        redirectUris:
+          type: string
+          # Comma-separated allowed redirect URIs; platform-managed (the BFF fills
+          # this per environment). Defaults to empty so an unset env config renders
+          # a bare "" rather than erroring on the ${environmentConfigs.redirectUris}
+          # substitution.
+          default: ""
+  resources:
+    - id: app
+      # readyWhen gates the binding's ResourcesReady/Ready on the operator having
+      # actually minted the OAuth app on Thunder — not merely on a successful
+      # apply. OC 1.1.1's getUnknownResourceHealth returns `Healthy`
+      # UNCONDITIONALLY for unknown Kinds (a foreign CRD like ThunderApplication),
+      # so WITHOUT this gate the binding flips Ready=True at APPLY time — before
+      # the client_id exists — and a consumer would bind against an OAuth app that
+      # is not yet registered.
+      #
+      # OC 1.1.1 copies the foreign CRD's live `status` into `applied.<id>.status`
+      # every reconcile, so `applied.app.status.ready` is available once the
+      # operator writes it. The `has()` chain makes both the pre-APPLY window (the
+      # `applied.app` key does not exist yet) and the pre-READY window (status
+      # object exists but `.ready` not yet written) evaluate to `false` cleanly —
+      # fail-closed until the operator reports ready.
+      readyWhen: '${has(applied.app) && has(applied.app.status) && has(applied.app.status.ready) && applied.app.status.ready}'
+      template:
+        apiVersion: aep.wso2.com/v1alpha1
+        kind: ThunderApplication
+        metadata:
+          name: ${metadata.name}
+          namespace: ${metadata.namespace}
+          labels: ${metadata.labels}
+        spec:
+          displayName: ${parameters.displayName}
+          scopes: ${parameters.scopes}
+          redirectUris: ${environmentConfigs.redirectUris}
+  outputs:
+    # client_id is read straight off the applied CR's live status (the operator
+    # writes `status.clientId` alongside `status.ready`). Emitting it as a CEL
+    # `value` makes OC deliver a LITERAL string in the binding's status.outputs
+    # — which the aep-api runtimeconfig env-config.js path requires (it reads
+    # `output.value` only; a configMapKeyRef-shaped output carries no value in
+    # binding status, leaving the client_id output unresolvable). Verified
+    # empirically on OC 1.1.1: outputs share readyWhen's CEL context, including
+    # `applied.<id>.status.*`. The readyWhen gate above means outputs are only
+    # surfaced once `status.ready=true`, and the operator sets `clientId`
+    # together with `ready`, so this never resolves empty on a Ready binding.
+    #
+    # The operator ALSO publishes client_id in the `<cr-name>-oauth` ConfigMap;
+    # that stays useful as a k8s-native artifact and for generic valueFrom-style
+    # env injection — but the authoritative binding output is the CR status.
+    - name: client_id
+      value: ${applied.app.status.clientId}
+    # Plain coordinates — exposed as values (the BFF surfaces them un-masked). The
+    # issuer/jwks_url are the browser-reachable Thunder addresses (they match the
+    # compose PLATFORM_IDP_ISSUER host thunder.openchoreo.localhost:8080).
+    - name: issuer
+      value: http://thunder.openchoreo.localhost:8080
+    - name: jwks_url
+      value: http://thunder.openchoreo.localhost:8080/oauth2/jwks
+    - name: scopes
+      value: ${parameters.scopes}

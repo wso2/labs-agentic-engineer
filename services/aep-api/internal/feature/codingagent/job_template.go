@@ -97,7 +97,13 @@ type JobInputs struct {
 	PublisherTokenURL string
 
 	// Dispatch payload — passed verbatim into the runner via AEP_* env vars.
-	RepoURL       string
+	RepoURL string
+	// SkillsRepoURL is the org's `org-skills` repo clone URL (the `_skills`
+	// sentinel row). The runner clones it to resolve the design's applied
+	// skills locally (replacing the retired S2S skills-pull). Optional: empty
+	// (unprovisioned org / lookup failure) is stamped as no env var, and the
+	// runner degrades to the base `aep` plugin only.
+	SkillsRepoURL string
 	Prompt        string
 	IdentityName  string
 	IdentityEmail string
@@ -146,6 +152,13 @@ func Build(in JobInputs) (map[string]any, error) {
 	if in.Bearer != "" {
 		envVars = append(envVars, map[string]any{
 			"name": "AEP_BEARER", "value": in.Bearer,
+		})
+	}
+	// Optional: only stamped when the org's skills repo resolved. Absent → the
+	// runner skips the per-task skills clone and degrades to the base plugin.
+	if in.SkillsRepoURL != "" {
+		envVars = append(envVars, map[string]any{
+			"name": "AEP_SKILLS_REPO_URL", "value": in.SkillsRepoURL,
 		})
 	}
 

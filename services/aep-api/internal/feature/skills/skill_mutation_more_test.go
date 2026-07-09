@@ -15,10 +15,10 @@
 // under the License.
 
 // UNIT tier: the read/write-surface branches repo_store_test.go leaves open —
-// ResolveMany (order + missing), the SkillMutationService.Update paths beyond
-// the component tier's 403/404 (happy round-trip, NAME_IMMUTABLE, imported ⇒
-// not-found), and the read degrade path (an origin outage serves empty and
-// never fails the run, §12). The commit CAS retry/exhaustion behaviour now
+// the SkillMutationService.Update paths beyond the component tier's 403/404
+// (happy round-trip, NAME_IMMUTABLE, imported ⇒ not-found), and the read
+// degrade path (an origin outage serves empty and never fails the run, §12).
+// The commit CAS retry/exhaustion behaviour now
 // lives in Workspace.Mutate and is pinned at the gitfs tier (plus the
 // end-to-end concurrent-commit test in repo_store_test.go), so the old
 // fault-injecting git-host fakes are gone with the REST path.
@@ -31,24 +31,6 @@ import (
 	"os"
 	"testing"
 )
-
-func TestResolveMany_PreservesOrderAndOmitsMissing(t *testing.T) {
-	t.Parallel()
-	svc, _ := newTestStore(t)
-	ctx := context.Background()
-	if _, err := svc.List(ctx, "org1"); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-
-	got, err := svc.ResolveMany(ctx, "org1", []string{"react-webapp", "does-not-exist", "go"})
-	if err != nil {
-		t.Fatalf("ResolveMany: %v", err)
-	}
-	// Order preserved, the missing name dropped (caller compares lengths).
-	if len(got) != 2 || got[0].Name != "react-webapp" || got[1].Name != "go" {
-		t.Fatalf("ResolveMany = %v, want [react-webapp go]", namesOf(got))
-	}
-}
 
 func TestUpdate_HappyAndGuards(t *testing.T) {
 	t.Parallel()
@@ -70,12 +52,12 @@ func TestUpdate_HappyAndGuards(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Update: %v", err)
 		}
-		if sk == nil || sk.Version != 2 || sk.Kind != "custom" {
-			t.Fatalf("updated skill = %+v, want version 2 custom", sk)
+		if sk == nil || sk.Kind != "custom" || sk.Description != "revised." {
+			t.Fatalf("updated skill = %+v, want the revised custom content", sk)
 		}
 		got, _ := svc.Resolve(ctx, "org1", "my-skill")
-		if got == nil || got.Version != 2 {
-			t.Fatalf("read-back after update = %+v, want version 2", got)
+		if got == nil || got.Description != "revised." {
+			t.Fatalf("read-back after update = %+v, want the revised content", got)
 		}
 	})
 

@@ -89,7 +89,6 @@ export default function SkillViewer({ name, open, onClose }: SkillViewerProps) {
           {detail && (
             <>
               <Chip size="small" color={kindChipColor(detail.kind)} label={kindLabel(detail.kind)} />
-              <Chip size="small" variant="outlined" label={`v${detail.version}`} />
               {!detail.editable && <Chip size="small" variant="outlined" label="read-only" />}
             </>
           )}
@@ -104,11 +103,18 @@ export default function SkillViewer({ name, open, onClose }: SkillViewerProps) {
         {error && <Alert severity="error">{error}</Alert>}
         {detail && (
           <Stack gap={2}>
-            {detail.kind === 'builtin' && (
+            {detail.kind === 'org' && (
               <Alert severity="info" icon={<Info size={18} />}>
                 This skill ships with the platform and is read-only in v1. To layer
                 org-specific rules on top, create a Custom skill and attach it alongside
                 this one on your project.
+              </Alert>
+            )}
+            {detail.kind === 'platform' && (
+              <Alert severity="info" icon={<Info size={18} />}>
+                Generation-flow guidance the platform agents follow when producing
+                requirements, designs, and task plans. Read-only — shown here for
+                inspection.
               </Alert>
             )}
             <Box>

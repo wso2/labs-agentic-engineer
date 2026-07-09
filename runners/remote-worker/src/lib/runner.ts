@@ -47,16 +47,17 @@ export interface StartedRun {
 //
 // `skillsPluginDir` is the absolute path to .aep/skills-plugin/. If
 // set, runner.ts adds a second `{type:"local"}` plugin entry pointing
-// at it. `preloadBuiltinNames` lists the materialised names of every
-// `kind: builtin` skill in that plugin, which we push into the SDK's
-// `skills:` array so their full bodies inject at startup. Custom and
-// imported skills sit in the same plugin and surface via the SDK's
-// standard skill listing (description in context, body on invoke) —
-// they are NOT in the preload array. See the design doc's
-// "Why skills: <built-in names> and not skills: 'all'" rationale.
+// at it. `preloadSkillNames` lists the materialised names of every
+// platform-shipped (`kind: org`) skill in that plugin, which we push
+// into the SDK's `skills:` array so their full bodies inject at
+// startup. Custom and imported skills sit in the same plugin and
+// surface via the SDK's standard skill listing (description in
+// context, body on invoke) — they are NOT in the preload array. See
+// the design doc's "Why skills: <built-in names> and not skills:
+// 'all'" rationale.
 export interface PerTaskSkills {
   skillsPluginDir?: string;
-  preloadBuiltinNames: string[];
+  preloadSkillNames: string[];
 }
 
 export function runClaudeQuery(
@@ -88,7 +89,7 @@ export function runClaudeQuery(
   // Two-tier plugin list: the base `aep` plugin (workflow + base
   // conventions) is always loaded; the per-task `aep-task-skills`
   // plugin (project-attached skills) is loaded conditionally when
-  // workspace.ts materialised it. Per-task built-ins land in the
+  // workspace.ts materialised it. Per-task org skills land in the
   // `skills:` preload so the SDK injects their full bodies at startup;
   // custom + imported sit in the same plugin and surface via the SDK's
   // standard discovery (description in context, body on invoke).
@@ -98,7 +99,7 @@ export function runClaudeQuery(
   const skillPreload: string[] = ["aep:aep"];
   if (perTaskSkills?.skillsPluginDir) {
     plugins.push({ type: "local", path: perTaskSkills.skillsPluginDir });
-    for (const name of perTaskSkills.preloadBuiltinNames) {
+    for (const name of perTaskSkills.preloadSkillNames) {
       skillPreload.push(`aep-task-skills:${name}`);
     }
   }

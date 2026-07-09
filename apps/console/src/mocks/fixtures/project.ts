@@ -2,8 +2,10 @@ import type { components } from "../../generated/aep-api";
 
 type ProjectStatus = components["schemas"]["ProjectStatus"];
 type ComponentList = components["schemas"]["ComponentList"];
-type ProjectBoard = components["schemas"]["ProjectBoard"];
-type SpecBundle = components["schemas"]["SpecBundle"];
+type TaskView = components["schemas"]["TaskView"];
+type TagList = components["schemas"]["TagList"];
+type FileMeta = components["schemas"]["FileMeta"];
+type FileContent = components["schemas"]["FileContent"];
 type ErrorModel = components["schemas"]["ErrorModel"];
 
 // Scenario switch for the project overview (#77) and spec view (#80).
@@ -71,10 +73,8 @@ export const projectStatuses: Record<
     hasTasks: true,
     specStatus: "approved",
     designStatus: "approved",
-    specVersion: "v1",
-    specDirty: false,
   },
-  // v1 deployed to dev successfully; spec has drifted since.
+  // v1 deployed to dev; spec has drifted since (see projectTags).
   deployed: {
     phase: "components",
     repoStatus: "ready",
@@ -84,10 +84,6 @@ export const projectStatuses: Record<
     hasTasks: true,
     specStatus: "approved",
     designStatus: "approved",
-    specVersion: "v1",
-    specDirty: true,
-    deployedVersion: "v1",
-    deployStatus: "succeeded",
   },
   // v1 build done but the dev deployment failed.
   "deploy-failed": {
@@ -99,9 +95,6 @@ export const projectStatuses: Record<
     hasTasks: true,
     specStatus: "approved",
     designStatus: "approved",
-    specVersion: "v1",
-    specDirty: false,
-    deployStatus: "failed",
   },
   // Repo bootstrap went sideways before any spec work.
   "repo-error": {
@@ -125,7 +118,7 @@ const builtComponents: ComponentList = {
       name: "storefront",
       displayName: "Storefront",
       description: "Customer-facing web app",
-      type: "webapp",
+      type: "web-application",
       status: "active",
     },
     {
@@ -147,7 +140,7 @@ const builtComponents: ComponentList = {
 
 const deployedComponents: ComponentList = {
   items: (builtComponents.items ?? []).map((c) =>
-    c.type === "webapp"
+    c.type === "web-application"
       ? { ...c, endpointUrl: "https://storefront.dev.acme-aep.io" }
       : c,
   ),
@@ -166,83 +159,70 @@ export const projectComponents: Record<
   "repo-error": emptyComponents,
 };
 
-const emptyBoard: ProjectBoard = {
-  url: BOARD_URL,
-  todo: [],
-  inProgress: [],
-  onHold: [],
-  done: [],
-  failed: [],
-};
+// Tasks backing the Build card (list-tasks; the card buckets derivedStatus
+// client-side — see features/projects/api/taskBuckets.ts).
+function task(
+  issueNumber: number,
+  title: string,
+  derivedStatus: string,
+  component?: string,
+): TaskView {
+  return {
+    issueNumber,
+    title,
+    derivedStatus,
+    issueUrl: `${BOARD_URL}/${issueNumber}`,
+    ...(component !== undefined && { component }),
+    attention: null,
+    dependsOn: null,
+    executions: {},
+    hold: false,
+    lineage: { specTag: "v1" },
+  };
+}
 
-const buildingBoard: ProjectBoard = {
-  url: BOARD_URL,
-  todo: [
-    {
-      id: "12",
-      title: "Checkout flow with cart persistence",
-      url: `${BOARD_URL}/12`,
-      componentName: "storefront",
-      status: "todo",
-    },
-  ],
-  inProgress: [
-    {
-      id: "10",
-      title: "Product catalog CRUD endpoints",
-      url: `${BOARD_URL}/10`,
-      componentName: "catalog-api",
-      status: "in_progress",
-      assignee: "coding-agent",
-    },
-  ],
-  onHold: [],
-  done: [
-    {
-      id: "9",
-      title: "Scaffold storefront app shell",
-      url: `${BOARD_URL}/9`,
-      componentName: "storefront",
-      status: "done",
-    },
-  ],
-  failed: [
-    {
-      id: "11",
-      title: "Orders service payment integration",
-      url: `${BOARD_URL}/11`,
-      componentName: "orders-api",
-      status: "failed",
-      errorMessage: "Build failed: missing PAYMENT_GATEWAY_URL config",
-    },
-  ],
-};
+const buildingTasks: TaskView[] = [
+  task(12, "Checkout flow with cart persistence", "pending", "storefront"),
+  task(10, "Product catalog CRUD endpoints", "in_progress", "catalog-api"),
+  task(9, "Scaffold storefront app shell", "merged", "storefront"),
+  task(11, "Orders service payment integration", "failed", "orders-api"),
+];
 
-const doneBoard: ProjectBoard = {
-  url: BOARD_URL,
-  todo: [],
-  inProgress: [],
-  onHold: [],
-  done: [
-    ...(buildingBoard.inProgress ?? []),
-    ...(buildingBoard.todo ?? []),
-    ...(buildingBoard.failed ?? []),
-    ...(buildingBoard.done ?? []),
-  ].map((t) => ({ ...t, status: "done" })),
-  failed: [],
-};
+const doneTasks: TaskView[] = buildingTasks.map((t) => ({
+  ...t,
+  derivedStatus: "deployed",
+}));
 
-export const projectBoards: Record<
+export const projectTasks: Record<
   Exclude<ProjectScenario, "error">,
-  ProjectBoard
+  TaskView[]
 > = {
-  fresh: emptyBoard,
-  spec: emptyBoard,
-  "spec-failed": emptyBoard,
-  building: buildingBoard,
-  deployed: doneBoard,
-  "deploy-failed": doneBoard,
-  "repo-error": emptyBoard,
+  fresh: [],
+  spec: [],
+  "spec-failed": [],
+  building: buildingTasks,
+  deployed: doneTasks,
+  "deploy-failed": doneTasks,
+  "repo-error": [],
+};
+
+// Spec version tags (#117): latest = newest user tag; specDirty = specs/
+// moved on GitHub since. The 'deployed' scenario drifts to exercise the
+// "draft changes" chip.
+const noTags: TagList = { tags: [] };
+const v1Tags: TagList = { tags: ["v1"], latest: "v1", specDirty: false };
+
+export const projectTags: Record<
+  Exclude<ProjectScenario, "error">,
+  TagList
+> = {
+  fresh: noTags,
+  spec: noTags,
+  "spec-failed": noTags,
+  building: v1Tags,
+  deployed: { ...v1Tags, specDirty: true },
+  "deploy-failed": v1Tags,
+  "repo-error": noTags,
 };
 
 // Spec bundle backing the spec view (#80). The backend seeds a PRD at repo
@@ -277,7 +257,7 @@ Three components behind the project cell:
 
 | Component | Type | Responsibility |
 |---|---|---|
-| storefront | webapp | Customer-facing UI |
+| storefront | web-application | Customer-facing UI |
 | catalog-api | service | Product catalog CRUD + search |
 | orders-api | service | Cart, checkout, order history |
 
@@ -287,7 +267,7 @@ The storefront talks to both services; services share nothing.
 const architectureDiagram = `{
   "type": "excalidraw-dsl",
   "components": [
-    { "id": "storefront", "kind": "webapp" },
+    { "id": "storefront", "kind": "web-application" },
     { "id": "catalog-api", "kind": "service" },
     { "id": "orders-api", "kind": "service" }
   ],
@@ -305,54 +285,82 @@ const validationPlan = `# Demo Shop — Validation plan
 - Each service exposes /healthz returning 200.
 `;
 
-const prdOnlySpec: SpecBundle = {
-  files: [{ path: "requirements/prd.md", group: "requirements", content: seededPrd }],
-};
+// Spec files as the Files API serves them (#113): repo-relative paths under
+// specs/, metadata (list-files) split from content (read-file).
+interface MockSpecFile {
+  path: string;
+  content: string;
+}
 
-const collaborationSpec: SpecBundle = {
-  files: [
-    { path: "requirements/prd.md", group: "requirements", content: seededPrd },
-    {
-      path: "requirements/user-stories.md",
-      group: "requirements",
-      content: userStories,
-    },
-    {
-      path: "design/architecture.md",
-      group: "designs",
-      content: architectureMd,
-    },
-  ],
-};
+const prdOnlyFiles: MockSpecFile[] = [
+  { path: "specs/requirements/prd.md", content: seededPrd },
+];
 
-const fullSpec: SpecBundle = {
-  files: [
-    ...collaborationSpec.files,
-    {
-      path: "design/architecture.excalidraw",
-      group: "designs",
-      content: architectureDiagram,
-    },
-    {
-      path: "validation/validation-plan.md",
-      group: "validation",
-      content: validationPlan,
-    },
-  ],
-};
+const collaborationFiles: MockSpecFile[] = [
+  ...prdOnlyFiles,
+  { path: "specs/requirements/user-stories.md", content: userStories },
+  { path: "specs/design/architecture.md", content: architectureMd },
+];
 
-export const projectSpecs: Record<
+const fullFiles: MockSpecFile[] = [
+  ...collaborationFiles,
+  { path: "specs/design/architecture.excalidraw", content: architectureDiagram },
+  { path: "specs/validation/validation-plan.md", content: validationPlan },
+];
+
+export const projectSpecFiles: Record<
   Exclude<ProjectScenario, "error">,
-  SpecBundle
+  MockSpecFile[]
 > = {
-  fresh: prdOnlySpec,
-  spec: collaborationSpec,
-  "spec-failed": prdOnlySpec,
-  building: fullSpec,
-  deployed: fullSpec,
-  "deploy-failed": fullSpec,
-  "repo-error": prdOnlySpec,
+  fresh: prdOnlyFiles,
+  spec: collaborationFiles,
+  "spec-failed": prdOnlyFiles,
+  building: fullFiles,
+  deployed: fullFiles,
+  "deploy-failed": fullFiles,
+  "repo-error": prdOnlyFiles,
 };
+
+// Deterministic stand-in for the git blob sha: stable per content revision,
+// so the console's (path, sha) content caching behaves like it does live.
+function mockSha(input: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0").repeat(5);
+}
+
+export function specFileMetas(files: MockSpecFile[]): FileMeta[] {
+  return files
+    .map((f) => ({
+      path: f.path,
+      sha: mockSha(f.path + f.content),
+      size: f.content.length,
+    }))
+    .sort((a, b) => a.path.localeCompare(b.path));
+}
+
+export function specFileContent(
+  files: MockSpecFile[],
+  path: string,
+): FileContent | null {
+  const file = files.find((f) => f.path === path);
+  if (!file) return null;
+  return {
+    path: file.path,
+    content: file.content,
+    sha: mockSha(file.path + file.content),
+  };
+}
+
+export const specFileNotFound = (path: string): ErrorModel => ({
+  type: "about:blank",
+  status: 404,
+  title: "Not Found",
+  detail: `no spec file at ${path}`,
+});
 
 export const projectSectionError: ErrorModel = {
   type: "about:blank",

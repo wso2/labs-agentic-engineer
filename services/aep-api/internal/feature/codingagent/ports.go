@@ -118,6 +118,18 @@ type ComponentEnsurer interface {
 	EnsureComponent(ctx context.Context, orgID, projectID, component string) error
 }
 
+// ComponentRuntimeConfigEmitter writes the per-web-app `env-config.js` file onto
+// the component's ReleaseBindings so the SPA's `window._env_` is populated at
+// request time. Called best-effort at OC-component-ensure time (coding dispatch
+// pre-flight), mirroring the legacy dispatch service's ensureOCComponent hook.
+// The web-app gate lives inside the emitter (it self-no-ops for non-web-app
+// components), so this feature holds no design/artifacts import and passes only
+// the component name. Wired at the composition root from
+// runtimeconfig.RuntimeConfigService; nil → skipped.
+type ComponentRuntimeConfigEmitter interface {
+	EmitForComponent(ctx context.Context, orgID, projectID, componentName string) error
+}
+
 // BuildSecretStager pre-stages the org's build git credential on the workflow
 // plane and returns the secretRef the build WorkflowRun consumes so its
 // checkout-source step can clone a PRIVATE repo (the local plane sets

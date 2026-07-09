@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/clients/observability"
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
@@ -200,9 +199,13 @@ func (s *componentService) EnsureComponent(ctx context.Context, orgName, project
 	return nil
 }
 
-// ocEntrypoint maps a design component type to its OC Component entrypoint type.
+// ocEntrypoint maps a design component type to its OC Component entrypoint
+// type. AEP's component types ARE OpenChoreo's (minus the `deployment/`
+// prefix — see models.ComponentTypeWebApplication), so this is a prefix
+// re-attachment, not a translation. Unknown kinds deliberately fall back to
+// deployment/service.
 func ocEntrypoint(componentType string) string {
-	if strings.EqualFold(componentType, "web-app") {
+	if componentType == models.ComponentTypeWebApplication {
 		return "deployment/web-application"
 	}
 	return "deployment/service"
@@ -248,7 +251,7 @@ func (s *componentService) GetComponentOpenAPI(ctx context.Context, orgName, pro
 		if k8sname.ToK8sName(c.Name) != componentName {
 			continue
 		}
-		if c.ComponentType != "service" {
+		if c.ComponentType != models.ComponentTypeService {
 			return &models.ComponentOpenAPI{
 				ComponentName: componentName,
 				ComponentType: c.ComponentType,

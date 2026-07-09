@@ -197,10 +197,9 @@ test("kind-specific fields are lenient: resourceType on an external dep is accep
 
 // --- platform-owned passthrough blocks (Go-written, agent-visible) ----------
 
-test("platform blocks exposesAPI/callerIdentity/componentAgentInstructions are accepted", () => {
+test("platform blocks exposesAPI/componentAgentInstructions are accepted", () => {
   const doc = baseDoc();
   doc.exposesAPI = { managed: true, auth: "end-user-required", userContext: "X-User-Id", orgPublished: true };
-  doc.callerIdentity = { mode: "end-user" };
   doc.componentAgentInstructions = "Prefer the v2 endpoints.";
   assert.equal(check(doc), null);
 });
@@ -214,6 +213,15 @@ test("empty exposesAPI block is accepted (Go emits all-optional fields)", () => 
 test("unknown key inside exposesAPI -> SCHEMA_VIOLATION", () => {
   const doc = baseDoc();
   doc.exposesAPI = { managed: true, bogus: 1 };
+  assert.equal(check(doc)?.code, "SCHEMA_VIOLATION");
+});
+
+// The retired caller-identity field is gone from the schema, so it is now an
+// unknown top-level key like any other — a design.json authored before the
+// thunder-app dependency replaced it is rejected, not silently tolerated.
+test("retired callerIdentity block -> SCHEMA_VIOLATION", () => {
+  const doc = baseDoc();
+  doc.callerIdentity = { mode: "end-user" };
   assert.equal(check(doc)?.code, "SCHEMA_VIOLATION");
 });
 

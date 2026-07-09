@@ -23,12 +23,8 @@ import { seedDocument, filesMap } from "./seed.js";
 import { fragmentToMarkdown } from "./markdown.js";
 
 const bundle = [
-  { path: "requirements/prd.md", group: "requirements", content: "# PRD\n" },
-  {
-    path: "design/arch.excalidraw",
-    group: "designs",
-    content: '{"type":"excalidraw-dsl"}',
-  },
+  { path: "requirements/prd.md", content: "# PRD\n" },
+  { path: "design/arch.excalidraw", content: '{"type":"excalidraw-dsl"}' },
 ];
 
 test("seeds md files as Y.XmlFragments, others as Y.Text entries", () => {

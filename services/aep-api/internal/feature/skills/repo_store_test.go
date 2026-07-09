@@ -180,18 +180,15 @@ func TestList_SeedsBuiltinsOnFirstRead(t *testing.T) {
 	for _, want := range []string{"go", "api-management", "react-webapp", "thunder-authentication"} {
 		sk, ok := by[want]
 		if !ok {
-			t.Fatalf("expected builtin %q to be seeded; got %v", want, keysOf(by))
+			t.Fatalf("expected org skill %q to be seeded; got %v", want, keysOf(by))
 		}
-		if sk.Kind != "builtin" {
-			t.Fatalf("skill %q: kind = %q, want builtin", want, sk.Kind)
-		}
-		if sk.Version < 1 {
-			t.Fatalf("skill %q: version = %d, want >= 1", want, sk.Version)
+		if sk.Kind != models.SkillKindOrg {
+			t.Fatalf("skill %q: kind = %q, want org", want, sk.Kind)
 		}
 	}
 }
 
-func TestFreshOrgProvisioning_SeedsBuiltinsAndFlow(t *testing.T) {
+func TestFreshOrgProvisioning_SeedsEmbeddedLibrary(t *testing.T) {
 	t.Parallel()
 	svc, host := newTestStore(t)
 	ctx := context.Background()
@@ -209,32 +206,36 @@ func TestFreshOrgProvisioning_SeedsBuiltinsAndFlow(t *testing.T) {
 	if _, ok := byName["go"]; !ok {
 		t.Fatalf("fresh org must list built-ins, got %v", summaries)
 	}
-	// Flow skills are seeded but NEVER surface on the skills page.
-	for _, flowName := range []string{"high-level-architecture", "excalidraw-wireframes", "openapi-conventions", "task-planning"} {
-		if _, ok := byName[flowName]; ok {
-			t.Fatalf("flow skill %q leaked into the user-facing list", flowName)
+	// Platform skills are seeded and list READ-ONLY on the skills page.
+	for _, platformName := range []string{"high-level-architecture", "excalidraw-wireframes", "openapi-conventions", "task-planning"} {
+		sum, ok := byName[platformName]
+		if !ok {
+			t.Fatalf("platform skill %q missing from the user-facing list", platformName)
+		}
+		if sum.Kind != models.SkillKindPlatform || sum.Editable {
+			t.Fatalf("platform skill %q must list read-only, got %+v", platformName, sum)
 		}
 	}
 
-	// The internal catalog carries them as kind=flow, references included.
+	// The internal catalog carries them as kind=platform, references included.
 	all, _ := svc.List(ctx, "org1")
 	by := nameSet(all)
 	hla, ok := by["high-level-architecture"]
-	if !ok || hla.Kind != "flow" {
-		t.Fatalf("internal catalog must carry flow skills; got %+v", hla)
+	if !ok || hla.Kind != models.SkillKindPlatform {
+		t.Fatalf("internal catalog must carry platform skills; got %+v", hla)
 	}
 	oapi := by["openapi-conventions"]
 	if oapi.References["references/wso2-rest-api-design-guidelines.md"] == "" {
-		t.Fatalf("flow skill references not seeded: %v", keysOfStr(oapi.References))
+		t.Fatalf("platform skill references not seeded: %v", keysOfStr(oapi.References))
 	}
 
-	// And they are genuinely IN the repo tree on origin under skills/flow/.
+	// And they are genuinely IN the repo tree on origin under flat skills/.
 	origin := host.origin("org1")
-	if got := origin.FileAt(t, "main", "skills/flow/high-level-architecture/SKILL.md"); !strings.Contains(got, "name: high-level-architecture") {
-		t.Fatalf("flow SKILL.md not committed to origin:\n%s", got)
+	if got := origin.FileAt(t, "main", "skills/high-level-architecture/SKILL.md"); !strings.Contains(got, "name: high-level-architecture") {
+		t.Fatalf("platform SKILL.md not committed to origin:\n%s", got)
 	}
-	if got := origin.FileAt(t, "main", "skills/flow/excalidraw-wireframes/references/wireframes-dsl-example.md"); got == "" {
-		t.Fatal("flow reference file not committed to origin")
+	if got := origin.FileAt(t, "main", "skills/excalidraw-wireframes/references/wireframes-dsl-example.md"); got == "" {
+		t.Fatal("platform reference file not committed to origin")
 	}
 }
 
@@ -246,7 +247,7 @@ func TestReconcile_RewritesMissingBuiltin(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	// Simulate the `go` built-in being deleted from the repo.
-	host.removeAtHead("org1", skillRepoPath("builtin", "go"))
+	host.removeAtHead("org1", skillRepoPath("go"))
 
 	n, err := svc.Reconcile(ctx, "org1")
 	if err != nil {
@@ -268,11 +269,11 @@ func TestReconcile_ReseedsMissingFlowSkillAndPrunesStaleRefs(t *testing.T) {
 	if _, err := svc.List(ctx, "org1"); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	// Plant a stale reference under a flow skill, then delete its SKILL.md —
+	// Plant a stale reference under a platform skill, then delete its SKILL.md —
 	// the reconcile must re-seed the skill AND replace the whole dir, so the
 	// stale reference does not linger.
-	host.writeAtHead("org1", "skills/flow/task-planning/references/stale.md", "stale")
-	host.removeAtHead("org1", skillRepoPath("flow", "task-planning"))
+	host.writeAtHead("org1", "skills/task-planning/references/stale.md", "stale")
+	host.removeAtHead("org1", skillRepoPath("task-planning"))
 
 	n, err := svc.Reconcile(ctx, "org1")
 	if err != nil {
@@ -283,8 +284,8 @@ func TestReconcile_ReseedsMissingFlowSkillAndPrunesStaleRefs(t *testing.T) {
 	}
 	got, _ := svc.List(ctx, "org1")
 	tp, ok := nameSet(got)["task-planning"]
-	if !ok || tp.Kind != "flow" {
-		t.Fatalf("task-planning should be restored as flow, got %+v", tp)
+	if !ok || tp.Kind != models.SkillKindPlatform {
+		t.Fatalf("task-planning should be restored as platform, got %+v", tp)
 	}
 	if _, lingers := tp.References["references/stale.md"]; lingers {
 		t.Fatalf("stale reference survived the dir-replacing re-seed: %v", keysOfStr(tp.References))
@@ -381,7 +382,7 @@ func TestDeleteBuiltinIsForbidden(t *testing.T) {
 	}
 }
 
-func TestFlowSkillInvisibleButNameReserved(t *testing.T) {
+func TestPlatformSkillReadOnlyAndNameReserved(t *testing.T) {
 	t.Parallel()
 	svc, _ := newTestStore(t)
 	mut := NewSkillMutationService(svc)
@@ -390,26 +391,28 @@ func TestFlowSkillInvisibleButNameReserved(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	// Flow skills are invisible to the by-name user surface…
-	if sk, _ := svc.Resolve(ctx, "org1", "task-planning"); sk != nil {
-		t.Fatalf("Resolve must not surface flow skills, got %+v", sk)
+	// Platform skills resolve read-only on the by-name user surface…
+	sk, _ := svc.Resolve(ctx, "org1", "task-planning")
+	if sk == nil || sk.Kind != models.SkillKindPlatform {
+		t.Fatalf("Resolve must surface platform skills read-only, got %+v", sk)
 	}
-	if _, err := mut.Update(ctx, "org1", "tester", "task-planning", UpdateSkillInput{SkillMD: skillMDNamed("task-planning", "")}); !errors.Is(err, ErrSkillNotFound) {
-		t.Fatalf("update flow err = %v, want ErrSkillNotFound", err)
+	// …but never mutate: reconcile owns them.
+	if _, err := mut.Update(ctx, "org1", "tester", "task-planning", UpdateSkillInput{SkillMD: skillMDNamed("task-planning", "")}); !errors.Is(err, ErrSkillNotEditable) {
+		t.Fatalf("update platform err = %v, want ErrSkillNotEditable", err)
 	}
-	if err := mut.Delete(ctx, "org1", "tester", "task-planning"); !errors.Is(err, ErrSkillNotFound) {
-		t.Fatalf("delete flow err = %v, want ErrSkillNotFound", err)
+	if err := mut.Delete(ctx, "org1", "tester", "task-planning"); !errors.Is(err, ErrSkillNotEditable) {
+		t.Fatalf("delete platform err = %v, want ErrSkillNotEditable", err)
 	}
 
-	// …but their names stay reserved: creating a same-named custom skill would
-	// shadow the flow skill in the catalog and duplicate it in Phase-4
-	// snapshots, so the collision check sees flow kinds.
+	// Their names stay reserved: creating a same-named custom skill would
+	// shadow the platform skill in the catalog and duplicate it in snapshots,
+	// so the collision check sees platform kinds.
 	_, err := mut.Create(ctx, "org1", "tester", CreateSkillInput{
 		Name:    "task-planning",
 		SkillMD: skillMDNamed("task-planning", ""),
 	})
 	if !errors.Is(err, ErrSkillNameCollision) {
-		t.Fatalf("create over flow name err = %v, want ErrSkillNameCollision", err)
+		t.Fatalf("create over platform name err = %v, want ErrSkillNameCollision", err)
 	}
 }
 
@@ -425,14 +428,17 @@ func TestRead_SeesExternalOriginCommitImmediately(t *testing.T) {
 		t.Fatalf("List: %v", err)
 	}
 
-	host.writeAtHead("org1", skillRepoPath("custom", "external-skill"), skillMDNamed("external-skill", ""))
+	// An external writer commits a flat, custom-stamped skill (the layout the
+	// service itself writes).
+	external := mkSkillMD("external-skill", "custom", "external body")
+	host.writeAtHead("org1", skillRepoPath("external-skill"), external)
 
 	got, err := svc.List(ctx, "org1")
 	if err != nil {
 		t.Fatalf("List 2: %v", err)
 	}
 	sk, ok := nameSet(got)["external-skill"]
-	if !ok || sk.Kind != "custom" {
+	if !ok || sk.Kind != models.SkillKindCustom {
 		t.Fatalf("externally committed skill not visible on next read: %v", keysOf(nameSet(got)))
 	}
 }
@@ -487,7 +493,7 @@ func TestCommitFiles_ConcurrentCommitsSerialize(t *testing.T) {
 	for i, name := range names {
 		go func(i int, name string) {
 			defer wg.Done()
-			writes := map[string][]byte{skillRepoPath("custom", name): []byte(skillMDNamed(name, ""))}
+			writes := map[string][]byte{skillRepoPath(name): []byte(skillMDNamed(name, ""))}
 			_, errs[i] = svc.commitFiles(ctx, "org1", repo, "add "+name, writes, nil)
 		}(i, name)
 	}

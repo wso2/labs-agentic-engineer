@@ -16,6 +16,16 @@
 
 package models
 
+// Component type vocabulary. AEP uses OpenChoreo's OWN terms end-to-end —
+// these are OC's ComponentType names minus the `deployment/` prefix (OC:
+// `deployment/service`, `deployment/web-application`), so no translation
+// layer exists anywhere: the agent contract emits these values, design.json
+// stores them verbatim, and platform code compares them directly.
+const (
+	ComponentTypeService        = "service"
+	ComponentTypeWebApplication = "web-application"
+)
+
 // DesignComponent describes a single component within a design.
 // This matches the structured output schema from the AI Agent SDK.
 type DesignComponent struct {
@@ -35,11 +45,10 @@ type DesignComponent struct {
 	// Description is the single-responsibility prose (what the component does /
 	// does NOT do) — the design.json `description` key. This is the successor to
 	// the per-component design.md markdown body.
-	Description                string          `json:"description,omitempty"`
-	OpenAPISpec                string          `json:"openAPISpec"`
-	ComponentAgentInstructions string          `json:"componentAgentInstructions"`
-	CallerIdentity             *CallerIdentity `json:"callerIdentity,omitempty"`
-	ExposesAPI                 *ExposesAPI     `json:"exposesAPI,omitempty"`
+	Description                string      `json:"description,omitempty"`
+	OpenAPISpec                string      `json:"openAPISpec"`
+	ComponentAgentInstructions string      `json:"componentAgentInstructions"`
+	ExposesAPI                 *ExposesAPI `json:"exposesAPI,omitempty"`
 }
 
 // DependencyKind discriminates the unified Dependency entry.
@@ -193,14 +202,6 @@ type ExposesAPI struct {
 	// catalog lists it as a cross-project `org-service` target. Deliberate +
 	// source-of-truth: the provider owns this; the platform never patches it.
 	OrgPublished bool `json:"orgPublished,omitempty"`
-}
-
-// CallerIdentity declares the caller-identity intent for a web-app
-// component. `Mode: "end-user"` ⇒ the SPA performs OIDC Authorization
-// Code + PKCE against the platform IDP and the BFF declares the
-// per-project OAuth client lazily on first dispatch.
-type CallerIdentity struct {
-	Mode string `json:"mode,omitempty"` // "end-user" | "service-account" | "none"
 }
 
 // DesignComponents is a slice of DesignComponent.

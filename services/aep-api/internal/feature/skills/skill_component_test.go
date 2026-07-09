@@ -61,7 +61,7 @@ const (
 
 // newHarness assembles the real chain around the REAL skills services (all
 // three) over one engine-backed store, and returns the store so a test can
-// drive repo state (e.g. DowngradeBuiltin for the updates badge).
+// drive repo state (e.g. DriftBuiltin for the updates badge).
 func newHarness(t *testing.T) (*componenttest.Harness, *skills.ComponentStore) {
 	t.Helper()
 	store := skills.NewComponentStore(t)
@@ -165,7 +165,7 @@ func TestSkillsComponent_List_MatchesGolden(t *testing.T) {
 	for _, s := range obj.Skills {
 		if s["name"] == "go" {
 			sawGo = true
-			if s["kind"] != "builtin" || s["editable"] != false {
+			if s["kind"] != "org" || s["editable"] != false {
 				t.Fatalf("go summary: %v", s)
 			}
 		}
@@ -175,15 +175,15 @@ func TestSkillsComponent_List_MatchesGolden(t *testing.T) {
 	}
 }
 
-// TestSkillsComponent_FlowSkillsHiddenFromSurface: flow-kind skills are seeded
-// into the org's _skills repo at provisioning (shared-volume-clone §17.8) but
-// the skills-page surface is unchanged — they never list, resolve, or mutate;
-// their names are still reserved against user creation.
-func TestSkillsComponent_FlowSkillsHiddenFromSurface(t *testing.T) {
+// TestSkillsComponent_PlatformSkillsReadOnlySurface: platform-kind skills
+// (generation-flow guidance) list and resolve READ-ONLY on the skills page —
+// org admins can inspect the guidance the generation agents run with — but
+// never mutate; their names stay reserved against user creation.
+func TestSkillsComponent_PlatformSkillsReadOnlySurface(t *testing.T) {
 	t.Parallel()
 	h, _ := newHarness(t)
 
-	// Not in the list…
+	// Listed, editable=false, all five present.
 	resp := h.AsOrg("acme").Get(base)
 	if resp.Code != 200 {
 		t.Fatalf("list: want 200, got %d body=%s", resp.Code, resp.Body.String())
@@ -194,24 +194,41 @@ func TestSkillsComponent_FlowSkillsHiddenFromSurface(t *testing.T) {
 	if err := json.Unmarshal(resp.Body.Bytes(), &obj); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
+	platform := 0
 	for _, s := range obj.Skills {
-		if s["kind"] == "flow" {
-			t.Fatalf("flow skill leaked into the list: %v", s)
+		if s["kind"] == "platform" {
+			platform++
+			if s["editable"] != false {
+				t.Fatalf("platform skill must be read-only: %v", s)
+			}
 		}
 	}
-
-	// …not resolvable, not deletable…
-	if resp := h.AsOrg("acme").Get(base + "/high-level-architecture"); resp.Code != 404 {
-		t.Fatalf("get flow: want 404, got %d body=%s", resp.Code, resp.Body.String())
-	}
-	if resp := h.AsOrg("acme").Delete(base + "/task-planning"); resp.Code != 404 {
-		t.Fatalf("delete flow: want 404, got %d body=%s", resp.Code, resp.Body.String())
+	if platform != 5 {
+		t.Fatalf("want 5 platform skills in the list, got %d: %s", platform, resp.Body.String())
 	}
 
-	// …but the name is reserved: creating a same-named custom skill conflicts.
+	// Resolvable read-only…
+	resp = h.AsOrg("acme").Get(base + "/high-level-architecture")
+	if resp.Code != 200 {
+		t.Fatalf("get platform: want 200, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	if m := decodeObject(t, resp.Body.Bytes()); m["kind"] != "platform" || m["editable"] != false {
+		t.Fatalf("platform get-one projection: %v", m)
+	}
+
+	// …but never mutable.
+	if resp := h.AsOrg("acme").Delete(base + "/task-planning"); resp.Code != 403 {
+		t.Fatalf("delete platform: want 403, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	upd := `{"skillMd":` + jsonString(skillMD("task-planning", "")) + `}`
+	if resp := h.AsOrg("acme").Put(base+"/task-planning", upd); resp.Code != 403 {
+		t.Fatalf("update platform: want 403, got %d body=%s", resp.Code, resp.Body.String())
+	}
+
+	// The name stays reserved: creating a same-named custom skill conflicts.
 	body := `{"name":"task-planning","skillMd":` + jsonString(skillMD("task-planning", "")) + `,"references":{}}`
 	if resp := h.AsOrg("acme").Post(base, body); resp.Code != 409 {
-		t.Fatalf("create over flow name: want 409, got %d body=%s", resp.Code, resp.Body.String())
+		t.Fatalf("create over platform name: want 409, got %d body=%s", resp.Code, resp.Body.String())
 	}
 }
 
@@ -229,7 +246,7 @@ func TestSkillsComponent_GetOne_MatchesGolden(t *testing.T) {
 	if err := json.Unmarshal(resp.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if got["name"] != "go" || got["kind"] != "builtin" || got["editable"] != false {
+	if got["name"] != "go" || got["kind"] != "org" || got["editable"] != false {
 		t.Fatalf("get-one semantics drifted: %s", resp.Body.String())
 	}
 }
@@ -278,7 +295,7 @@ func TestSkillsComponent_Updates_MatchesGolden(t *testing.T) {
 
 	// Plant a stale built-in so the badge reports one update, then assert the
 	// element field set against the golden's updates[0].
-	store.DowngradeBuiltin("acme", "go", skillMD("go", ""))
+	store.DriftOrg("acme", "go", skillMD("go", ""))
 	resp = h.AsOrg("acme").Get(base + "/updates")
 	if resp.Code != 200 {
 		t.Fatalf("updates (stale): want 200, got %d body=%s", resp.Code, resp.Body.String())
@@ -336,6 +353,23 @@ func TestSkillsComponent_Create_HappyThenGet(t *testing.T) {
 	}
 	if m := decodeObject(t, resp.Body.Bytes()); m["name"] != "cool-skill" || m["kind"] != "custom" || m["editable"] != true {
 		t.Fatalf("read-back projection: %v", m)
+	}
+}
+
+func TestSkillsComponent_Create_WithoutReferences_201(t *testing.T) {
+	t.Parallel()
+	h, _ := newHarness(t)
+
+	// The console's create dialog only sends {name, skillMd} — a skill without
+	// references is legitimate, so the field must be OPTIONAL in the schema
+	// (this pinned a live 422 found by the 2026-07-08 e2e).
+	body := `{"name":"no-refs-skill","skillMd":` + jsonString(skillMD("no-refs-skill", "")) + `}`
+	resp := h.AsOrg("acme").Post(base, body)
+	if resp.Code != 201 {
+		t.Fatalf("create without references: want 201, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	if m := decodeObject(t, resp.Body.Bytes()); m["kind"] != "custom" || m["editable"] != true {
+		t.Fatalf("created projection: %v", m)
 	}
 }
 

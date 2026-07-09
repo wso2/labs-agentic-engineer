@@ -161,6 +161,9 @@ type ArtifactService interface {
 	// the task stale-design attention flag. Never returns an error: an
 	// unavailable repo/mirror degrades to "".
 	LatestDesignTag(ctx context.Context, orgID, projectID string) string
+	// ListSpecVersionTags lists the `v<N>` spec version tags (newest first)
+	// with the latest tag and whether specs/ moved since it (#117).
+	ListSpecVersionTags(ctx context.Context, orgID, projectID string) (*TagList, error)
 	GetRequirementsAtTag(ctx context.Context, orgID, projectID, tag string) (map[string]string, error)
 	GetDesignAtTag(ctx context.Context, orgID, projectID, tag string) (map[string]string, error)
 	// GetDesignAtCommit reads the design bundle at an exact commit — the publish

@@ -94,6 +94,8 @@ spec:
             value: ${parameters.task.correlationId}
           - name: repo-url
             value: ${parameters.repository.url}
+          - name: skills-repo-url
+            value: ${parameters.repository.skillsUrl}
           - name: identity-name
             value: ${parameters.repository.identity.name}
           - name: identity-email
@@ -132,7 +134,7 @@ spec:
             # counts against the registry's pull rate limits). When stabilising
             # for a long-lived dev/stage, pin to an immutable SHA tag and switch
             # to `imagePullPolicy: IfNotPresent`.
-            image: docker.io/xlight05/aep-coding-agent-runner:v5
+            image: docker.io/xlight05/aep-coding-agent-runner:v7
             imagePullPolicy: Always
             # Explicit command/args is the OC convention — every ClusterWorkflow
             # in this directory and Agent-Manager's amp-monitor-evaluation set
@@ -153,6 +155,8 @@ spec:
                 value: '{{workflow.parameters.component-name}}'
               - name: AEP_REPO_URL
                 value: '{{workflow.parameters.repo-url}}'
+              - name: AEP_SKILLS_REPO_URL
+                value: '{{workflow.parameters.skills-repo-url}}'
               - name: AEP_IDENTITY_NAME
                 value: '{{workflow.parameters.identity-name}}'
               - name: AEP_IDENTITY_EMAIL

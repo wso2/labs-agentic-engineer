@@ -64,9 +64,10 @@ export class EvalWorkspace {
   }
 
   /**
-   * Materialize the skill library once (repo-root skills are flow-kind in
-   * production — the genai flow skills are vendored from `skills/`). Returns
-   * the snapshot "sha". Called lazily by `workspaceRef`.
+   * Materialize the skill library once into the FLAT snapshot layout
+   * (`skills/<name>/SKILL.md` — the shape reconcile writes to every
+   * org-skills repo). Returns the snapshot "sha". Called lazily by
+   * `workspaceRef`.
    */
   materializeSkills(skills: readonly RepoSkill[]): string {
     if (this.skillsSha !== undefined) return this.skillsSha;
@@ -77,9 +78,9 @@ export class EvalWorkspace {
       const mirror = new DiskMirror(dir);
       for (const skill of skills) {
         const front = stringifyYaml({ name: skill.name, description: skill.description }).replace(/\n+$/, "");
-        mirror.write(`skills/flow/${skill.name}/SKILL.md`, `---\n${front}\n---\n\n${skill.content}\n`);
+        mirror.write(`skills/${skill.name}/SKILL.md`, `---\n${front}\n---\n\n${skill.content}\n`);
         for (const [refPath, body] of Object.entries(skill.references ?? {})) {
-          mirror.write(`skills/flow/${skill.name}/${refPath}`, body);
+          mirror.write(`skills/${skill.name}/${refPath}`, body);
         }
       }
     }

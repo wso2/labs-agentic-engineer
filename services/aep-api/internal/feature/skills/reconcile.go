@@ -16,16 +16,20 @@
 
 package skills
 
-// Provisioning + embedded-skill reconciliation. Two embedded kinds ship in the
-// BFF container (the shipping vehicle) and are seeded + version-reconciled into
-// each org's skills repo (the live store): built-ins (builtin/, coding-agent
-// skills on the skills page) and flow skills (flow/, generation flow skills,
-// hidden from the page — shared-volume-clone-architecture §17.8 decision (a)).
-// docs/design/skills-repo-storage.md §6 (reconcile) and §10 (provisioning).
-// User-modification protection is deferred (§6.4) — reconcile is purely
-// version-based: absent → seed; embed.version > repo.version → overwrite
-// (replacing the whole skill dir, so stale references never linger); else
-// leave. Retired names the embed no longer ships are purged.
+// Provisioning + embedded-skill reconciliation. The embedded library ships in
+// the BFF container (the shipping vehicle; platform + org kinds, kind in
+// frontmatter) and is seeded + reconciled into each org's skills repo (the
+// live store) under the FLAT layout skills/<name>/
+// (docs/design/skills-unified-library-migration.md; skills-repo-storage.md §6
+// reconcile, §10 provisioning). Reconcile is content-hash based: absent →
+// seed; embedded content SHA ≠ repo content SHA → overwrite (replacing the
+// whole skill dir, so stale references never linger); else leave. A name owned
+// by a user kind (custom/imported) is SKIPPED — the user copy wins. Retired
+// names the embed no longer ships are purged. Reconcile also MIGRATES
+// legacy-layout repos (skills/<kindDir>/<name>/) in the same single commit:
+// user skills move to their flat dir with the kind stamped into frontmatter,
+// embedded skills are rewritten flat, and the retired kind dirs are removed
+// (§4).
 
 import (
 	"context"
@@ -41,12 +45,10 @@ import (
 	embedskills "github.com/wso2/aep/aep-api/skills"
 )
 
-// SkillUpdate is one row of the "updates available" badge: a built-in whose
-// embedded version is newer than (or absent from) the org's repo. §6.3.
+// SkillUpdate is one row of the "updates available" badge: an org-kind skill
+// whose embedded content differs from (or is absent from) the org's repo. §6.3.
 type SkillUpdate struct {
-	Name            string `json:"name"`
-	RepoVersion     int    `json:"repoVersion"` // -1 when the skill is absent in the repo
-	EmbeddedVersion int    `json:"embeddedVersion"`
+	Name string `json:"name"`
 }
 
 // ensureSkillsRepo idempotently provisions the org's skills repo, seeding
@@ -78,7 +80,7 @@ func (s *SkillService) ensureSkillsRepo(ctx context.Context, orgID string) (*mod
 	if err != nil {
 		return nil, err
 	}
-	if n, serr := s.reconcileAllEmbedded(ctx, orgID, repo); serr != nil {
+	if n, serr := s.reconcileEmbedded(ctx, orgID, repo); serr != nil {
 		slog.WarnContext(ctx, "skills: seed embedded skills failed (repo provisioned)", "org", orgID, "error", serr)
 	} else {
 		slog.InfoContext(ctx, "skills: seeded embedded skills into new repo", "org", orgID, "count", n)
@@ -96,171 +98,180 @@ func (s *SkillService) EnsureProvisioned(ctx context.Context, orgID string) erro
 	return err
 }
 
-// Reconcile version-reconciles the embedded skills (built-ins + flow) for an
-// org (seed/overwrite/purge/skip). Used by project creation and the admin
-// "Sync built-in skills" action. §6.
+// Reconcile content-reconciles the embedded library for an org
+// (seed/overwrite/purge/skip + legacy-layout migration). Used by project
+// creation and the admin "Sync built-in skills" action. §6.
 func (s *SkillService) Reconcile(ctx context.Context, orgID string) (int, error) {
 	repo, err := s.ensureSkillsRepo(ctx, orgID)
 	if err != nil {
 		return 0, err
 	}
-	return s.reconcileAllEmbedded(ctx, orgID, repo)
+	return s.reconcileEmbedded(ctx, orgID, repo)
 }
 
-// reconcileAllEmbedded reconciles both embedded kinds, returning the total
-// number of skills written/purged.
-func (s *SkillService) reconcileAllEmbedded(ctx context.Context, orgID string, repo *models.GitRepository) (int, error) {
-	nb, err := s.reconcileBuiltins(ctx, orgID, repo)
+// isUserKind reports whether a kind is user-owned (never touched by reconcile).
+func isUserKind(kind string) bool {
+	return kind == models.SkillKindCustom || kind == models.SkillKindImported
+}
+
+// reconcileEmbedded drives the whole repo to the desired flat state in ONE
+// commit:
+//
+//   - every embedded skill absent from the repo, content-drifted, or still in
+//     a legacy dir is (re)written flat — unless a user kind owns the name
+//     (the user copy wins, the embedded skill is skipped);
+//   - user skills found in legacy dirs are moved to their flat dir with the
+//     kind stamped into frontmatter (§4);
+//   - platform/org-kind skills the embed no longer ships are purged (without
+//     this a retired skill would linger in every org repo forever and keep
+//     getting inlined into agent prompts);
+//   - the retired legacy kind dirs are removed wholesale (writes land at flat
+//     paths, so the staged prefix deletes only ever remove old copies).
+//
+// A rewritten skill's flat directory is replaced wholesale (delete staged
+// before the writes) so references removed by the new content never linger.
+// Returns the number of skills written + migrated + purged. §6.2.
+func (s *SkillService) reconcileEmbedded(ctx context.Context, orgID string, repo *models.GitRepository) (int, error) {
+	embedded, err := loadEmbeddedLibrary()
 	if err != nil {
-		return nb, err
+		return 0, err
 	}
-	nf, err := s.reconcileFlow(ctx, orgID, repo)
-	return nb + nf, err
-}
-
-// reconcileBuiltins reconciles the embedded built-ins (kind "builtin"). §6.2.
-func (s *SkillService) reconcileBuiltins(ctx context.Context, orgID string, repo *models.GitRepository) (int, error) {
-	embedded, err := loadEmbeddedBuiltins()
+	entries, err := s.loadCatalogEntries(ctx, orgID, repo)
 	if err != nil {
 		return 0, err
 	}
-	return s.reconcileEmbedded(ctx, orgID, repo, "builtin", "built-ins", embedded)
-}
-
-// reconcileFlow reconciles the embedded generation flow skills (kind "flow")
-// into skills/flow/<name>/ — same version-bump semantics as built-ins, so a
-// bumped flow skill re-seeds on the next reconcile. §17.8.
-func (s *SkillService) reconcileFlow(ctx context.Context, orgID string, repo *models.GitRepository) (int, error) {
-	embedded, err := loadEmbeddedFlow()
-	if err != nil {
-		return 0, err
-	}
-	return s.reconcileEmbedded(ctx, orgID, repo, "flow", "flow skills", embedded)
-}
-
-// reconcileEmbedded writes every embedded skill of one kind that is absent
-// from the repo or whose embedded version is newer, and purges skills of that
-// kind the platform embed no longer ships, in a single commit. A rewritten
-// skill's directory is replaced wholesale (delete staged before the writes) so
-// references removed by the new version never linger. Returns the number of
-// skills written + purged. §6.2.
-func (s *SkillService) reconcileEmbedded(ctx context.Context, orgID string, repo *models.GitRepository, kind, label string, embedded []Skill) (int, error) {
-	current, err := s.repoVersionsByKind(ctx, orgID, repo, kind)
-	if err != nil {
-		return 0, err
+	current := map[string]catalogEntry{}
+	hasLegacy := false
+	for _, e := range entries {
+		current[e.Name] = e
+		if e.legacyDir != "" {
+			hasLegacy = true
+		}
 	}
 
 	embeddedNames := make(map[string]bool, len(embedded))
 	writes := map[string][]byte{}
 	var deletes []string
-	written := 0
+	written, migrated, purged := 0, 0, 0
+
+	stageWrite := func(name, skillMD string, refs map[string]string) {
+		writes[skillRepoPath(name)] = []byte(skillMD)
+		for refKey, content := range refs {
+			writes[skillRefPath(name, refKey)] = []byte(content)
+		}
+	}
+
 	for _, b := range embedded {
 		embeddedNames[b.Name] = true
 		cur, ok := current[b.Name]
-		if ok && b.Version <= cur {
+		if ok && isUserKind(cur.Kind) {
+			continue // the user copy owns this name — never overwrite it
+		}
+		if ok && cur.legacyDir == "" && cur.ContentSHA == b.ContentSHA {
 			continue
 		}
 		written++
-		// Replace the whole dir: the delete is staged first, the new files win.
-		deletes = append(deletes, skillRepoDir(kind, b.Name))
-		writes[skillRepoPath(kind, b.Name)] = []byte(b.SkillMD)
-		for refKey, content := range b.References {
-			writes[skillRefPath(kind, b.Name, refKey)] = []byte(content)
-		}
+		// Replace the whole flat dir: the delete is staged first, the new
+		// files win (legacy copies fall to the wholesale prefix deletes below).
+		deletes = append(deletes, skillRepoDir(b.Name))
+		stageWrite(b.Name, b.SkillMD, b.References)
 	}
-	// Purge skills of this kind the platform embed no longer ships. Without it
-	// a retired skill would linger in every org repo forever and keep getting
-	// inlined into agent prompts. §6.2.
-	purged := 0
-	for name := range current {
+
+	for name, cur := range current {
+		if isUserKind(cur.Kind) {
+			if cur.legacyDir != "" {
+				// Migrate: move to the flat dir with the kind stamped so the
+				// file stays self-describing under the flat layout. Content
+				// that already round-tripped the parser cannot realistically
+				// fail the stamp; if it somehow does, move it unstamped (it
+				// would read as org) rather than lose it.
+				migrated++
+				stamped, serr := stampFrontmatterKind(cur.SkillMD, cur.Kind)
+				if serr != nil {
+					slog.WarnContext(ctx, "skills: migrate stamp failed — moving unstamped", "org", orgID, "name", name, "error", serr)
+					stamped = cur.SkillMD
+				}
+				stageWrite(name, stamped, cur.References)
+			}
+			continue
+		}
 		if !embeddedNames[name] {
 			purged++
-			deletes = append(deletes, skillRepoDir(kind, name))
+			if cur.legacyDir == "" {
+				deletes = append(deletes, skillRepoDir(name))
+			} // legacy copies fall to the wholesale prefix deletes below
 		}
 	}
 
-	changed := written + purged
+	if hasLegacy {
+		// Remove the retired kind dirs wholesale — every preserved skill was
+		// rewritten at its flat path in this same commit.
+		for dir := range legacyKindDirs {
+			deletes = append(deletes, skillsRootDir+"/"+dir)
+		}
+	}
+
+	changed := written + migrated + purged
 	if changed == 0 {
 		return 0, nil
 	}
-	msg := fmt.Sprintf("chore(skills): reconcile %s (%d written, %d retired)", label, written, purged)
+	msg := fmt.Sprintf("chore(skills): reconcile embedded library (%d written, %d migrated, %d retired)", written, migrated, purged)
 	if _, err := s.commitFiles(ctx, orgID, repo, msg, writes, deletes); err != nil {
 		return 0, err
 	}
-	slog.InfoContext(ctx, "skills: reconciled embedded skills", "org", orgID, "kind", kind, "written", written, "purged", purged)
+	slog.InfoContext(ctx, "skills: reconciled embedded skills", "org", orgID, "written", written, "migrated", migrated, "purged", purged)
 	return changed, nil
 }
 
-// UpdatesAvailable returns the built-ins whose embedded version is newer than
-// (or missing from) the org's repo — the data behind the badge. Flow skills
-// never surface here: the badge belongs to the skills page, which hides them
-// (they still re-reconcile via Reconcile). §6.3.
+// UpdatesAvailable returns the embedded skills (org + platform — both list on
+// the skills page now) whose embedded content differs from (or is missing
+// from) the org's repo — the data behind the badge. Names owned by a user
+// kind are skipped — reconcile will never overwrite them, so a badge entry
+// would be permanently stuck. §6.3.
 func (s *SkillService) UpdatesAvailable(ctx context.Context, orgID string) ([]SkillUpdate, error) {
 	repo, err := s.ensureSkillsRepo(ctx, orgID)
 	if err != nil {
 		return nil, err
 	}
-	embedded, err := loadEmbeddedBuiltins()
+	embedded, err := loadEmbeddedLibrary()
 	if err != nil {
 		return nil, err
 	}
-	current, err := s.repoVersionsByKind(ctx, orgID, repo, "builtin")
+	entries, err := s.loadCatalogEntries(ctx, orgID, repo)
 	if err != nil {
 		return nil, err
+	}
+	current := map[string]catalogEntry{}
+	for _, e := range entries {
+		current[e.Name] = e
 	}
 	var out []SkillUpdate
 	for _, b := range embedded {
 		cur, ok := current[b.Name]
-		switch {
-		case !ok:
-			out = append(out, SkillUpdate{Name: b.Name, RepoVersion: -1, EmbeddedVersion: b.Version})
-		case b.Version > cur:
-			out = append(out, SkillUpdate{Name: b.Name, RepoVersion: cur, EmbeddedVersion: b.Version})
+		if ok && isUserKind(cur.Kind) {
+			continue
+		}
+		if !ok || cur.ContentSHA != b.ContentSHA {
+			out = append(out, SkillUpdate{Name: b.Name})
 		}
 	}
 	return out, nil
 }
 
-// repoVersionsByKind reads the current name→version map for one kind from the
-// repo at the branch tip. A skill shadowed in the deduped catalog by a
-// same-named higher-precedence kind reads as "absent" and just triggers a
-// no-op rewrite (the tree is unchanged, so Mutate commits nothing).
-func (s *SkillService) repoVersionsByKind(ctx context.Context, orgID string, repo *models.GitRepository, kind string) (map[string]int, error) {
-	skills, err := s.loadCatalog(ctx, orgID, repo)
-	if err != nil {
-		return nil, err
-	}
-	out := map[string]int{}
-	for _, sk := range skills {
-		if sk.Kind == kind {
-			out[sk.Name] = sk.Version
-		}
-	}
-	return out, nil
-}
-
-// loadEmbeddedBuiltins reads the bundled builtin/<name>/SKILL.md files from the
-// embedded FS into the canonical Skill shape. The embed is the platform's
-// shipping vehicle for built-ins; the repo is the live store.
-func loadEmbeddedBuiltins() ([]Skill, error) {
-	return loadEmbeddedKind(embedskills.BuiltinFS, "builtin", "builtin")
-}
-
-// loadEmbeddedFlow reads the bundled flow/<name>/{SKILL.md,references/*.md}
-// trees (vendored from the repo-root skills/ source of truth — see
-// skills/embed.go) into the canonical Skill shape with kind "flow".
-func loadEmbeddedFlow() ([]Skill, error) {
-	return loadEmbeddedKind(embedskills.FlowFS, "flow", "flow")
-}
-
-// loadEmbeddedKind walks <root>/<name>/SKILL.md (+ optional references/*.md)
-// in an embedded FS. Entries without a parseable SKILL.md whose frontmatter
-// name matches the directory are skipped with a warning — a bad bundled file
-// must never break provisioning.
-func loadEmbeddedKind(fsys fs.FS, root, kind string) ([]Skill, error) {
+// loadEmbeddedLibrary reads the whole vendored skill library
+// (embedded/<name>/SKILL.md + optional references/*.md — see skills/embed.go)
+// into the canonical Skill shape. Each skill's kind comes from its frontmatter
+// (`metadata.aep.kind`; absent → org); the embedded source may only carry the
+// platform-shipped kinds — anything else is coerced to org with a warning.
+// Entries without a parseable SKILL.md whose frontmatter name matches the
+// directory are skipped with a warning — a bad bundled file must never break
+// provisioning.
+func loadEmbeddedLibrary() ([]Skill, error) {
+	const root = "embedded"
+	fsys := fs.FS(embedskills.LibraryFS)
 	entries, err := fs.ReadDir(fsys, root)
 	if err != nil {
-		return nil, fmt.Errorf("read embedded %s dir: %w", root, err)
+		return nil, fmt.Errorf("read embedded skills dir: %w", err)
 	}
 	out := make([]Skill, 0, len(entries))
 	for _, e := range entries {
@@ -270,17 +281,22 @@ func loadEmbeddedKind(fsys fs.FS, root, kind string) ([]Skill, error) {
 		name := e.Name()
 		raw, err := fs.ReadFile(fsys, path.Join(root, name, skillFileName))
 		if err != nil {
-			slog.Warn("skills: embedded skill read failed", "kind", kind, "name", name, "error", err)
+			slog.Warn("skills: embedded skill read failed", "name", name, "error", err)
 			continue
 		}
 		fm, _, err := parseSkillMD(string(raw))
 		if err != nil {
-			slog.Warn("skills: embedded skill parse failed", "kind", kind, "name", name, "error", err)
+			slog.Warn("skills: embedded skill parse failed", "name", name, "error", err)
 			continue
 		}
 		if fm.Name != name {
-			slog.Warn("skills: embedded skill name mismatch", "kind", kind, "dir", name, "frontmatter", fm.Name)
+			slog.Warn("skills: embedded skill name mismatch", "dir", name, "frontmatter", fm.Name)
 			continue
+		}
+		kind := frontmatterKind(fm)
+		if kind != models.SkillKindPlatform && kind != models.SkillKindOrg {
+			slog.Warn("skills: embedded skill carries a user kind — coerced to org", "name", name, "kind", kind)
+			kind = models.SkillKindOrg
 		}
 		refs := map[string]string{}
 		refDir := path.Join(root, name, "references")
@@ -291,7 +307,7 @@ func loadEmbeddedKind(fsys fs.FS, root, kind string) ([]Skill, error) {
 				}
 				data, err := fs.ReadFile(fsys, path.Join(refDir, r.Name()))
 				if err != nil {
-					slog.Warn("skills: embedded reference read failed", "kind", kind, "name", name, "ref", r.Name(), "error", err)
+					slog.Warn("skills: embedded reference read failed", "name", name, "ref", r.Name(), "error", err)
 					continue
 				}
 				refs[refsPrefix+r.Name()] = string(data)
@@ -303,7 +319,6 @@ func loadEmbeddedKind(fsys fs.FS, root, kind string) ([]Skill, error) {
 			Description: strings.TrimSpace(fm.Description),
 			SkillMD:     string(raw),
 			References:  refs,
-			Version:     versionFromMetadata(fm),
 			ContentSHA:  contentSHA(string(raw), refs),
 		})
 	}

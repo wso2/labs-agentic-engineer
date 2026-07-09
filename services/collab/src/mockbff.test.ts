@@ -22,7 +22,7 @@ import type { AddressInfo } from "node:net";
 import type http from "node:http";
 import { startMockBff } from "./mockbff.js";
 import { createBffClient, BffAccessDeniedError } from "./bff.js";
-import { devSpecBundle } from "./fixtures.js";
+import { devSpecFiles } from "./fixtures.js";
 
 let server: http.Server;
 let base: string;
@@ -82,15 +82,17 @@ test("validate: rooms outside the caller's org are denied", async () => {
   );
 });
 
-test("spec bundle: served for known projects through the real client", async () => {
+test("spec files: list + per-file reads through the real client, keys stripped of specs/", async () => {
   const bff = createBffClient(base);
-  const files = await bff.fetchSpecBundle("opaque-token", "demo-shop");
-  assert.equal(files.length, devSpecBundle.length);
-  assert.equal(files[0]?.path, "requirements/prd.md");
+  const files = await bff.fetchSpecFiles("opaque-token", "demo-shop");
+  assert.equal(files.length, devSpecFiles.length);
+  const prd = files.find((f) => f.path === "requirements/prd.md");
+  assert.ok(prd, "room key is the repo path without specs/");
+  assert.match(prd.content, /Demo Shop — PRD/);
 });
 
-test("spec bundle: unlisted projects get the dev bundle (org-permissive, like the console mocks)", async () => {
+test("spec files: unlisted projects get the dev files (org-permissive, like the console mocks)", async () => {
   const bff = createBffClient(base);
-  const files = await bff.fetchSpecBundle("opaque-token", "any-other-project");
-  assert.equal(files.length, devSpecBundle.length);
+  const files = await bff.fetchSpecFiles("opaque-token", "any-other-project");
+  assert.equal(files.length, devSpecFiles.length);
 });

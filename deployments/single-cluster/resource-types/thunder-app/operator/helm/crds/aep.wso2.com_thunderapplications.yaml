@@ -1,0 +1,85 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: thunderapplications.aep.wso2.com
+spec:
+  group: aep.wso2.com
+  names:
+    kind: ThunderApplication
+    listKind: ThunderApplicationList
+    plural: thunderapplications
+    singular: thunderapplication
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: ThunderApplication is the Schema for the thunderapplications
+          API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: ThunderApplicationSpec — desired OAuth application on the
+              platform Thunder.
+            properties:
+              displayName:
+                description: DisplayName shown in the Thunder console. Defaults to
+                  the CR name.
+                type: string
+              redirectUris:
+                description: |-
+                  RedirectURIs is a comma-separated list of allowed OAuth redirect URIs.
+                  Platform-managed: aep-api patches it via binding environmentConfigs once
+                  the consuming SPA's public URL resolves. May be empty at creation.
+                type: string
+              scopes:
+                description: Scopes is the space-separated OIDC scope set (e.g. "openid
+                  profile email").
+                type: string
+            type: object
+          status:
+            description: ThunderApplicationStatus reports the observed state of a
+              ThunderApplication.
+            properties:
+              clientId:
+                description: ClientID is the OAuth client_id assigned by Thunder.
+                type: string
+              message:
+                description: Message carries a human-readable status/error detail.
+                type: string
+              observedGeneration:
+                description: ObservedGeneration is the most recent generation observed
+                  by the controller.
+                format: int64
+                type: integer
+              ready:
+                description: Ready is the readyWhen gate the ClusterResourceType CEL
+                  reads.
+                type: boolean
+            required:
+            - ready
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

@@ -32,16 +32,26 @@ func TestGenerateInternalOpenAPIYAML(t *testing.T) {
 	yaml := string(out)
 
 	for _, want := range []string{
-		"runner-skills",
 		"runner-refresh-credentials",
 		// Runner S2S re-keyed from task to execution (tasks-github-native §9.2).
-		"/internal/v1/executions/{executionId}/skills",
 		"/internal/v1/executions/{executionId}/credentials/refresh",
 		"taskJWT",
 		"publisherCC",
 	} {
 		if !strings.Contains(yaml, want) {
 			t.Errorf("internal spec missing %q", want)
+		}
+	}
+
+	// The runner skills-pull S2S endpoint is retired — the runner clones
+	// `org-skills` and resolves applied skills locally. Its route/op must not
+	// reappear in the internal surface.
+	for _, gone := range []string{
+		"runner-skills",
+		"/internal/v1/executions/{executionId}/skills",
+	} {
+		if strings.Contains(yaml, gone) {
+			t.Errorf("internal spec must not describe retired skills endpoint %q", gone)
 		}
 	}
 
