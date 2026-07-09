@@ -63,6 +63,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/feature/orgcreds"
 	"github.com/wso2/aep/aep-api/internal/feature/project"
 	"github.com/wso2/aep/aep-api/internal/feature/provisioning"
+	"github.com/wso2/aep/aep-api/internal/feature/rcaagent"
 	"github.com/wso2/aep/aep-api/internal/feature/requirements"
 	"github.com/wso2/aep/aep-api/internal/feature/runtimeconfig"
 	"github.com/wso2/aep/aep-api/internal/feature/skills"
@@ -826,6 +827,12 @@ func Build(cfg config.Config, db *gorm.DB) (*App, error) {
 	)
 	externalResourceRepo := repositories.NewExternalResourceRepository(db)
 	params.MCPExternalResources = externalResourceRepo
+	// Alerts (console issues #154, #155, BE handshake #156): org-scoped store
+	// for RCA-agent reports the console's notification bell and Alerts
+	// list/stepper read. Write side is a plain userJWT-secured endpoint (no
+	// separate service-auth scheme yet) — see rcaagent_huma.go.
+	rcaAgentReportRepo := repositories.NewRcaAgentReportRepository(db)
+	params.HumaDeps.RcaAgentReportSvc = rcaagent.NewRcaAgentReportService(rcaAgentReportRepo)
 	params.MCPOrgEndpoints = orgEndpointCatalog
 	resourceTypeCatalog := resources.NewResourceTypeCatalog(resourceClient)
 	params.MCPResourceTypes = resourceTypeCatalog

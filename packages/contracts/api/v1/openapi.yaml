@@ -569,6 +569,53 @@ components:
       required:
         - name
       type: object
+    CreateRcaAgentReportRequest:
+      additionalProperties: false
+      description: Write-side request for a new RCA-agent alert report (issue #156). Server assigns id and createdAt.
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - /api/v1/CreateRcaAgentReportRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        classification:
+          description: "code-level, config-level, mixed, or none — set by the handoff agent"
+          type: string
+        component:
+          type: string
+        deployed:
+          type: boolean
+        deployedAt:
+          type: string
+        diagnosis:
+          description: Full RCA diagnosis + remediation content (markdown)
+          type: string
+        dispatched:
+          type: boolean
+        issueExcerpt:
+          type: string
+        issueNumber:
+          format: int64
+          type: integer
+        issueTitle:
+          type: string
+        issueUrl:
+          type: string
+        project:
+          type: string
+        summary:
+          type: string
+        title:
+          type: string
+      required:
+        - project
+        - title
+        - summary
+        - classification
+        - diagnosis
+      type: object
     CreateSkillInput:
       additionalProperties: false
       properties:
@@ -3454,6 +3501,32 @@ paths:
       security:
         - userJWT: []
       summary: List RCA-agent alert reports across the caller's org, newest first
+      tags:
+        - RcaAgentReports
+    post:
+      operationId: create-rca-agent-report
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRcaAgentReportRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RcaAgentReport"
+          description: Created
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      security:
+        - userJWT: []
+      summary: Record a new RCA-agent alert report (internal/service-authenticated writer; issue #156)
       tags:
         - RcaAgentReports
   /rca-agent/reports/{reportId}:

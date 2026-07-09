@@ -104,6 +104,11 @@ func RunAll(ctx context.Context, db *gorm.DB, deploymentTier string) error {
 		// `tasks_github_native` (cascade-drops any legacy component_tasks-keyed
 		// table). Supersedes the guarded phase3_coding_agent_logs no-op above.
 		ctxStep("coding_agent_logs", RunCodingAgentLogs),
+		// rca_agent_reports (models.RcaAgentReport): the store backing the
+		// console's Alerts notification bell and Alerts list/stepper
+		// (issues #154, #155, BE handshake #156). One idempotent CREATE TABLE
+		// + its (org_id, created_at) list index.
+		ctxStep("phase10_rca_agent_reports", RunPhase10RcaAgentReports),
 	}
 
 	for _, s := range steps {

@@ -45,6 +45,8 @@ func TestHumaRegistration_NoDupAndComplete(t *testing.T) {
 		"get-config", "update-config", "list-skills",
 		// Single-tag build surface (the contract's build-project/get-project-build).
 		"build-project", "get-project-build", "list-project-tags",
+		// Alerts (console issues #154, #155, BE handshake #156).
+		"list-rca-agent-reports", "create-rca-agent-report", "get-rca-agent-report",
 	}
 	for _, op := range wantOps {
 		if !strings.Contains(s, op) {
