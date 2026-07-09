@@ -126,6 +126,14 @@ observer:
   # to it via in-cluster DNS instead of the chart default
   # (api.openchoreo.localhost, which only resolves on the host).
   controlPlaneApiUrl: "http://openchoreo-api.openchoreo-control-plane.svc.cluster.local:8080"
+  # Required for the alert->RCA pipeline (see sre-handoff-runbook.md §2.3) —
+  # without it rules sync as Ready but log-based alerts are never evaluated.
+  # Set here (not via a manual `kubectl patch`) so Helm's server-side apply
+  # owns the field; a kubectl-owned field of the same name causes every
+  # subsequent `helm upgrade` to fail with a Server-Side Apply field-manager
+  # conflict on observer-config's .data.LOGS_ADAPTER_ENABLED.
+  logsAdapter:
+    enabled: true
 security:
   enabled: true
   oidc:

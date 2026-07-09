@@ -1399,6 +1399,9 @@ components:
         updatedAt:
           format: date-time
           type: string
+        version:
+          format: int64
+          type: integer
       required:
         - editable
         - orgId
@@ -1409,6 +1412,7 @@ components:
         - references
         - contentSha
         - updatedAt
+        - version
       type: object
     SkillSummary:
       additionalProperties: false

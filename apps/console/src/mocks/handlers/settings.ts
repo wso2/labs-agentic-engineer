@@ -324,7 +324,7 @@ export const settingsHandlers = [
       editable: true,
       description: extractDescription(body.skillMd),
       skillMd: body.skillMd,
-      references: body.references,
+      references: body.references ?? {},
       version: 1,
       contentSha: `sha-${body.name}-1`,
       updatedAt: new Date().toISOString(),
@@ -366,7 +366,7 @@ export const settingsHandlers = [
     }
     const body = (await request.json()) as UpdateSkillInput;
     skill.skillMd = body.skillMd;
-    skill.references = body.references;
+    skill.references = body.references ?? {};
     skill.description = extractDescription(body.skillMd);
     skill.version += 1;
     skill.updatedAt = new Date().toISOString();
