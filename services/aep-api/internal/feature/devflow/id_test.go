@@ -18,14 +18,42 @@ package devflow
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
 
 func TestDevWorkflowID_Format(t *testing.T) {
-	require.Equal(t, "devflow-acme-shop-v3", DevWorkflowID("acme", "shop", "v3"))
+	// With a run suffix — each re-run gets its own workflow id / timeline.
+	require.Equal(t, "devflow-acme-shop-v3-abc", DevWorkflowID("acme", "shop", "v3", "abc"))
+}
+
+func TestDevWorkflowID_NoSuffix(t *testing.T) {
+	// Empty suffix keeps the legacy format (no trailing dash).
+	require.Equal(t, "devflow-acme-shop-v3", DevWorkflowID("acme", "shop", "v3", ""))
 }
 
 func TestTaskWorkflowID_Format(t *testing.T) {
-	require.Equal(t, "taskflow-acme-shop-v3-7", taskWorkflowID("acme", "shop", "v3", 7))
+	// The child inherits the parent's run suffix so a dev run and its tasks
+	// share one lineage: devflow-…-v3-abc → taskflow-…-v3-7-abc.
+	require.Equal(t, "taskflow-acme-shop-v3-7-abc", taskWorkflowID("acme", "shop", "v3", 7, "abc"))
+}
+
+func TestTaskWorkflowID_NoSuffix(t *testing.T) {
+	require.Equal(t, "taskflow-acme-shop-v3-7", taskWorkflowID("acme", "shop", "v3", 7, ""))
+}
+
+func TestNewRunSuffix_Base36(t *testing.T) {
+	// base36 of the epoch-millis: [0-9a-z], compact, Temporal/DNS-safe.
+	require.Equal(t, "0", newRunSuffix(time.UnixMilli(0)))
+	require.Equal(t, "z", newRunSuffix(time.UnixMilli(35)))  // 35 → 'z'
+	require.Equal(t, "10", newRunSuffix(time.UnixMilli(36))) // 36 → '10'
+}
+
+func TestNewRunSuffix_MonotonicDistinct(t *testing.T) {
+	// Distinct instants yield distinct suffixes (millisecond resolution).
+	a := newRunSuffix(time.UnixMilli(1783587000000))
+	b := newRunSuffix(time.UnixMilli(1783587000001))
+	require.NotEqual(t, a, b)
+	require.NotEmpty(t, a)
 }

@@ -20,6 +20,8 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	enumspb "go.temporal.io/api/enums/v1"
@@ -177,7 +179,11 @@ func (s *HumaService) start(ctx context.Context, in *startInput) (*startOutput, 
 		}
 	}
 
-	workflowID := DevWorkflowID(in.OrgHandle, in.ProjectName, tag)
+	// One run suffix per start: it distinguishes each re-run of the same tag
+	// (own workflow id + timeline) and is threaded to task children so the dev
+	// run and its tasks share one lineage.
+	suffix := newRunSuffix(time.Now())
+	workflowID := DevWorkflowID(in.OrgHandle, in.ProjectName, tag, suffix)
 	run, err := c.ExecuteWorkflow(ctx, client.StartWorkflowOptions{
 		ID:                    workflowID,
 		TaskQueue:             s.rt.TaskQueue(),
@@ -188,6 +194,7 @@ func (s *HumaService) start(ctx context.Context, in *startInput) (*startOutput, 
 		Repo:      repo,
 		Tag:       tag,
 		Gates:     in.Body.Gates,
+		RunSuffix: suffix,
 	})
 	if err != nil {
 		return nil, huma.Error500InternalServerError("start workflow: " + err.Error())
@@ -276,10 +283,24 @@ func (s *HumaService) temporal() (client.Client, error) {
 	return c, nil
 }
 
-// DevWorkflowID builds the dev workflow id devflow-<org>-<project>-<tag>.
-// The tag (the spec version) makes it unique per build; concurrent builds for
-// a project are blocked at the API layer, and a completed version re-runs
-// under the same id (WorkflowIDReusePolicy AllowDuplicate).
-func DevWorkflowID(orgID, projectID, tag string) string {
-	return fmt.Sprintf("devflow-%s-%s-%s", orgID, projectID, tag)
+// DevWorkflowID builds the dev workflow id devflow-<org>-<project>-<tag>[-<suffix>].
+// The tag (the spec version) scopes it per build; the run suffix (base36 epoch,
+// see newRunSuffix) gives each re-run of the same tag its own distinct id and
+// Temporal timeline. An empty suffix keeps the legacy format. The suffix is
+// threaded to task children (DevFlowInput.RunSuffix) so a dev run and its tasks
+// share one lineage.
+func DevWorkflowID(orgID, projectID, tag, suffix string) string {
+	if suffix == "" {
+		return fmt.Sprintf("devflow-%s-%s-%s", orgID, projectID, tag)
+	}
+	return fmt.Sprintf("devflow-%s-%s-%s-%s", orgID, projectID, tag, suffix)
+}
+
+// newRunSuffix returns a compact, unique-per-run id: the base36 encoding of the
+// instant's epoch-millis. Charset [0-9a-z] is Temporal- and DNS-label-safe.
+// Millisecond resolution makes a collision between two re-runs of the same
+// (org, project, tag) effectively impossible. Computed in the API handler (never
+// inside workflow code, which must stay deterministic) and passed down as input.
+func newRunSuffix(t time.Time) string {
+	return strconv.FormatInt(t.UnixMilli(), 36)
 }

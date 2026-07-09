@@ -42,6 +42,10 @@ type DevFlowInput struct {
 	Repo  string     `json:"repo"`
 	Tag   string     `json:"tag"`
 	Gates GateConfig `json:"gates"`
+	// RunSuffix is the per-run id (base36 epoch, set by the API handler). It is
+	// carried into each task child's workflow id so a dev run and its tasks share
+	// one lineage. Empty on legacy runs — the id builders keep the old format.
+	RunSuffix string `json:"runSuffix,omitempty"`
 }
 
 // DevFlowStatus is the QueryStatus result for a dev workflow.
@@ -263,7 +267,7 @@ func scheduleTasks(ctx workflow.Context, in DevFlowInput, tag string, tasks []Pl
 			if !depsSatisfied(t, succeeded, present) {
 				continue
 			}
-			wid := taskWorkflowID(in.OrgID, in.ProjectID, tag, t.Issue)
+			wid := taskWorkflowID(in.OrgID, in.ProjectID, tag, t.Issue, in.RunSuffix)
 			cctx := workflow.WithChildOptions(ctx, workflow.ChildWorkflowOptions{
 				WorkflowID:        wid,
 				ParentClosePolicy: enumsParentClosePolicyTerminate(),
@@ -375,7 +379,12 @@ func planActivityOpts(ctx workflow.Context) workflow.Context {
 }
 
 // taskWorkflowID builds the deterministic child workflow id
-// (taskflow-<org>-<project>-<tag>-<issueNumber>).
-func taskWorkflowID(orgID, projectID, tag string, issue int) string {
-	return fmt.Sprintf("taskflow-%s-%s-%s-%d", orgID, projectID, tag, issue)
+// (taskflow-<org>-<project>-<tag>-<issueNumber>[-<suffix>]). The suffix is the
+// parent dev run's RunSuffix, so re-running a tag yields fresh task ids too.
+// Deterministic given its inputs — safe to call from workflow code.
+func taskWorkflowID(orgID, projectID, tag string, issue int, suffix string) string {
+	if suffix == "" {
+		return fmt.Sprintf("taskflow-%s-%s-%s-%d", orgID, projectID, tag, issue)
+	}
+	return fmt.Sprintf("taskflow-%s-%s-%s-%d-%s", orgID, projectID, tag, issue, suffix)
 }
