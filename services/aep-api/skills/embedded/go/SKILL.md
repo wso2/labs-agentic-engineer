@@ -200,6 +200,10 @@ WORKDIR /src
 COPY go.mod ./
 RUN go mod download
 COPY . .
+# Build the main package: `./` (the module root, where main.go lives) or
+# `./cmd/<name>`. A real `-o` target takes exactly ONE package — with main +
+# internal/* present, `go build -o /out/app ./...` fails "cannot write multiple
+# packages to non-directory". (`./...` is for the `-o /dev/null` verify only.)
 RUN CGO_ENABLED=0 go build -ldflags='-s -w' -o /out/app ./
 
 FROM alpine:3.20
@@ -264,6 +268,7 @@ absence. Only when you DO have external dependencies must the committed
 
 | Symptom | Cause | Fix |
 |---|---|---|
+| Build fails `go: cannot write multiple packages to non-directory /out/app` | Dockerfile used `go build -o /out/app ./...` on a multi-package module | Build the main package only: `go build -o /out/app ./` (or `./cmd/<name>`). `./...` is valid only with `-o /dev/null` for verification. |
 | Build fails with `go.mod requires go >= 1.25` | Dockerfile pinned older Go | Use `FROM golang:1.25-alpine AS builder`. |
 | Build times out at the `mattn/go-sqlite3` step | CGO compilation under throttle | Switch to `modernc.org/sqlite`. |
 | `sql.Open` returns `unknown driver "sqlite3"` | Used `mattn` driver name with `modernc` import | Use `sql.Open("sqlite", ...)`. |
