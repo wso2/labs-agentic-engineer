@@ -65,7 +65,9 @@ instead of deriving it from YOUR dependency name) produces a
   and `ouId`/`ouName`/`ouHandle` (their organization), beside standard
   `profile`/`email`. The platform requests the `group`/`ou` scopes by default,
   so a role-aware SPA reads roles from `user.profile.groups` — it never decodes
-  the access token for them.
+  the access token for them. The protected backend reads the SAME `groups`
+  from the gateway-injected `X-User-Groups` header (see `api-management`), so
+  the SPA and API resolve the caller's role identically.
 - Default Thunder admin user (dev clusters): `admin` / `admin` in the
   `Administrators` group. Real orgs add their own users via Thunder's
   admin console / SCIM.
