@@ -19,7 +19,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { components } from "../../../generated/aep-api";
 import { client } from "../../../api/client";
-import { configKeys, skillsKeys } from "./keys";
+import { configKeys, platformResourceKeys, skillsKeys } from "./keys";
 
 type ConfigProjection = components["schemas"]["ConfigProjection"];
 type CreateSkillInput = components["schemas"]["CreateSkillInput"];
@@ -273,5 +273,27 @@ export function useSyncSkills() {
       void queryClient.invalidateQueries({ queryKey: skillsKeys.lists() });
       void queryClient.invalidateQueries({ queryKey: skillsKeys.updates() });
     },
+  });
+}
+
+// Platform resource types — the read-only catalog of ClusterResourceTypes a
+// component can declare a `platform-resource` dependency on. The list is
+// cluster-global and small (a PE installs them out-of-band), so a plain query
+// with a modest staleTime is enough — no list/detail key split.
+export function usePlatformResourceTypes() {
+  return useQuery({
+    queryKey: platformResourceKeys.all,
+    queryFn: async () => {
+      const { data, error } = await client.GET(
+        "/dependencies/platform-resource-types",
+      );
+      if (error) {
+        throw new Error(
+          errorMessage(error, "Failed to load platform resources"),
+        );
+      }
+      return data ?? [];
+    },
+    staleTime: 30_000,
   });
 }

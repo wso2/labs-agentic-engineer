@@ -28,13 +28,18 @@ import {
   useMediaQuery,
   useTheme,
 } from "@wso2/oxygen-ui";
-import { KeyRound, Sparkles } from "@wso2/oxygen-ui-icons-react";
+import { Database, KeyRound, Sparkles } from "@wso2/oxygen-ui-icons-react";
 
 // Each section is its own route (issue #143): deep-linkable and back/forward
 // correct, matching the legacy console's settings/<section> URLs.
 const SECTIONS = [
   { path: "/settings/credentials", label: "Credentials", Icon: KeyRound },
   { path: "/settings/skills", label: "Skills", Icon: Sparkles },
+  {
+    path: "/settings/platform-resources",
+    label: "Platform Resources",
+    Icon: Database,
+  },
 ] as const;
 
 // v1 note (issue #96): no role gate here — any authenticated org member who

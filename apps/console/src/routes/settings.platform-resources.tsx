@@ -16,18 +16,9 @@
  * under the License.
  */
 
-export const configKeys = {
-  all: ["config"] as const,
-};
+import { createFileRoute } from "@tanstack/react-router";
+import { PlatformResourcesSection } from "../features/settings/components/PlatformResourcesSection";
 
-export const skillsKeys = {
-  all: ["skills"] as const,
-  lists: () => [...skillsKeys.all, "list"] as const,
-  updates: () => [...skillsKeys.all, "updates"] as const,
-  details: () => [...skillsKeys.all, "detail"] as const,
-  detail: (name: string) => [...skillsKeys.details(), name] as const,
-};
-
-export const platformResourceKeys = {
-  all: ["platform-resource-types"] as const,
-};
+export const Route = createFileRoute("/settings/platform-resources")({
+  component: PlatformResourcesSection,
+});
