@@ -19,6 +19,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { PlatformResourcesSection } from "../features/settings/components/PlatformResourcesSection";
 
-export const Route = createFileRoute("/settings/platform-resources")({
+export const Route = createFileRoute("/settings/resources")({
   component: PlatformResourcesSection,
 });

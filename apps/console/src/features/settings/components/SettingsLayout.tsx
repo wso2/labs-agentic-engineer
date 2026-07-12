@@ -35,11 +35,7 @@ import { Database, KeyRound, Sparkles } from "@wso2/oxygen-ui-icons-react";
 const SECTIONS = [
   { path: "/settings/credentials", label: "Credentials", Icon: KeyRound },
   { path: "/settings/skills", label: "Skills", Icon: Sparkles },
-  {
-    path: "/settings/platform-resources",
-    label: "Platform Resources",
-    Icon: Database,
-  },
+  { path: "/settings/resources", label: "Resources", Icon: Database },
 ] as const;
 
 // v1 note (issue #96): no role gate here — any authenticated org member who
@@ -59,7 +55,8 @@ export function SettingsLayout() {
       <PageTitle>
         <PageTitle.Header>Settings</PageTitle.Header>
         <PageTitle.SubHeader>
-          Org-level GitHub and Anthropic credentials, and the skills catalogue
+          Org-level GitHub and Anthropic credentials, the skills catalogue, and
+          available platform resources
         </PageTitle.SubHeader>
       </PageTitle>
 

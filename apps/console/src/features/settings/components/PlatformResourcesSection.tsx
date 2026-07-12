@@ -21,12 +21,11 @@ import {
   Alert,
   Box,
   Button,
-  Card,
-  CardContent,
   Chip,
   CircularProgress,
   Collapse,
   IconButton,
+  ListingTable,
   Tooltip,
   Typography,
 } from "@wso2/oxygen-ui";
@@ -56,6 +55,21 @@ function paramMeta(value: unknown): { type?: string; description?: string } {
   return meta;
 }
 
+function EmptyState() {
+  return (
+    <Box sx={{ textAlign: "center", py: 8 }}>
+      <Database size={48} style={{ opacity: 0.3, marginBottom: 16 }} />
+      <Typography variant="h6" gutterBottom>
+        No resources available
+      </Typography>
+      <Typography variant="body2" color="text.secondary">
+        No resource types are installed in this organization yet. A platform
+        engineer installs them on the cluster.
+      </Typography>
+    </Box>
+  );
+}
+
 export function PlatformResourcesSection() {
   const { data, isLoading, isError, error, refetch } =
     usePlatformResourceTypes();
@@ -65,10 +79,7 @@ export function PlatformResourcesSection() {
   const copy = (text: string) => {
     void navigator.clipboard?.writeText(text).then(() => {
       setCopied(text);
-      window.setTimeout(
-        () => setCopied((c) => (c === text ? null : c)),
-        1200,
-      );
+      window.setTimeout(() => setCopied((c) => (c === text ? null : c)), 1200);
     });
   };
 
@@ -94,51 +105,44 @@ export function PlatformResourcesSection() {
         severity="error"
         action={<Button onClick={() => void refetch()}>Retry</Button>}
       >
-        {error?.message ?? "Failed to load platform resources"}
+        {error?.message ?? "Failed to load resources"}
       </Alert>
-    );
-  }
-
-  if (data.length === 0) {
-    return (
-      <Box sx={{ textAlign: "center", py: 8 }}>
-        <Database size={48} style={{ opacity: 0.3, marginBottom: 16 }} />
-        <Typography variant="h6" gutterBottom>
-          No platform resources available
-        </Typography>
-        <Typography variant="body2" color="text.secondary">
-          No platform resource types are installed in this organization yet. A
-          platform engineer installs them on the cluster.
-        </Typography>
-      </Box>
     );
   }
 
   return (
     <Box>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        Platform-provisioned resource types available in this organization.
-        Declare one as a <code>platform-resource</code> dependency on a component
-        to have the platform provision it.
+        Resource types the platform can provision for a component. Declare one as
+        a <code>platform-resource</code> dependency and the platform provisions
+        it on deploy.
       </Typography>
 
-      <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-        {data.map((rt) => (
-          <ResourceTypeCard
-            key={rt.name}
-            rt={rt}
-            open={expanded.has(rt.name)}
-            onToggle={() => toggle(rt.name)}
-            copied={copied}
-            onCopy={copy}
-          />
-        ))}
-      </Box>
+      {data.length === 0 ? (
+        <EmptyState />
+      ) : (
+        <ListingTable.Container sx={{ width: "100%" }} disablePaper>
+          <ListingTable variant="card" density="standard">
+            <ListingTable.Body>
+              {data.map((rt) => (
+                <ResourceRow
+                  key={rt.name}
+                  rt={rt}
+                  open={expanded.has(rt.name)}
+                  onToggle={() => toggle(rt.name)}
+                  copied={copied}
+                  onCopy={copy}
+                />
+              ))}
+            </ListingTable.Body>
+          </ListingTable>
+        </ListingTable.Container>
+      )}
     </Box>
   );
 }
 
-function ResourceTypeCard({
+function ResourceRow({
   rt,
   open,
   onToggle,
@@ -156,15 +160,12 @@ function ResourceTypeCard({
   const hasParams = paramEntries.length > 0;
 
   return (
-    <Card variant="outlined">
-      <CardContent>
-        <Box
-          sx={{ display: "flex", alignItems: "center", gap: 0.5, mb: 0.5 }}
-        >
+    <ListingTable.Row variant="card">
+      <ListingTable.Cell>
+        <Box display="flex" alignItems="center" gap={0.5}>
           <Typography
-            variant="body1"
-            fontWeight={600}
-            sx={{ fontFamily: "monospace" }}
+            variant="subtitle1"
+            sx={{ fontWeight: 700, fontFamily: "monospace" }}
           >
             {rt.name}
           </Typography>
@@ -179,7 +180,7 @@ function ResourceTypeCard({
           </Tooltip>
         </Box>
 
-        <Typography variant="body2" color="text.secondary">
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
           {rt.description || "No description provided."}
         </Typography>
 
@@ -196,9 +197,7 @@ function ResourceTypeCard({
                     size="small"
                     variant="outlined"
                     onClick={() => onCopy(o)}
-                    icon={
-                      copied === o ? <Check size={12} /> : <Copy size={12} />
-                    }
+                    icon={copied === o ? <Check size={12} /> : <Copy size={12} />}
                   />
                 </Tooltip>
               ))}
@@ -221,12 +220,7 @@ function ResourceTypeCard({
             </Button>
             <Collapse in={open} unmountOnExit>
               <Box
-                sx={{
-                  mt: 1,
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 1,
-                }}
+                sx={{ mt: 1, display: "flex", flexDirection: "column", gap: 1 }}
               >
                 {paramEntries.map(([key, value]) => {
                   const { type, description } = paramMeta(value);
@@ -260,7 +254,7 @@ function ResourceTypeCard({
             </Collapse>
           </Box>
         )}
-      </CardContent>
-    </Card>
+      </ListingTable.Cell>
+    </ListingTable.Row>
   );
 }
