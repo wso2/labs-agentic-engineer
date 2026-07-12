@@ -194,6 +194,15 @@ Performance is comparable to `mattn` for typical CRUD workloads; the
 only loss is FTS3/FTS5 which the platform's todo-shaped services don't
 need.
 
+**A nil slice binds as SQL `NULL`, not an empty array.** A list field the
+client omitted from the JSON body stays a nil slice, and `database/sql` (incl.
+`pq.StringArray`) binds nil as `NULL`. Inserting that into a `NOT NULL`
+collection column — e.g. `tags TEXT[] NOT NULL DEFAULT '{}'` — fails at
+runtime (a 500), not at compile time. Normalize before the insert
+(`if in.Tags == nil { in.Tags = []string{} }`), or leave the column out of the
+`INSERT` so its `DEFAULT` fills it. A `DEFAULT` never fires for a column you
+list explicitly with a `NULL` value.
+
 `/health` handler (no auth, no DB ping required — keep it cheap):
 
 ```go
@@ -307,3 +316,4 @@ absence. Only when you DO have external dependencies must the committed
 | `checksum mismatch ... SECURITY ERROR` at build | `go.sum` is stale or hand-edited | `go mod tidy` locally; commit the result. |
 | Build fails `COPY go.mod go.sum ./ ... go.sum: no such file or directory` | Dockerfile names `go.sum` but a stdlib-only service has none | Use the Dockerfile above (`COPY go.mod ./` only); `COPY . .` brings `go.sum` when it exists. |
 | Pod won't start; logs show "panic: listen tcp :8080" | Used wrong port | Use port 9090. |
+| Create/POST 500s only when an optional list field is omitted (present, even `[]`, works) | A nil Go slice binds as SQL `NULL` (not `[]`), violating a `NOT NULL` array column; the column's `DEFAULT` is skipped because the INSERT lists it explicitly | Normalize nil→empty before the insert (`if s == nil { s = []T{} }`), or omit the column so its `DEFAULT '{}'` applies. |
