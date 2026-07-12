@@ -857,6 +857,7 @@ func Build(cfg config.Config, db *gorm.DB) (*App, error) {
 	params.MCPOrgEndpoints = orgEndpointCatalog
 	resourceTypeCatalog := resources.NewResourceTypeCatalog(resourceClient)
 	params.MCPResourceTypes = resourceTypeCatalog
+	params.HumaDeps.ResourceTypeCatalog = resourceTypeCatalog
 	// Endpoint spec discovery: the read-only remote-git reader an agent uses to
 	// read a provider's OpenAPI file from its own repo (Contents + Code Search,
 	// no clone). It resolves the org's credential (token + owner) from

@@ -1304,6 +1304,25 @@ components:
         - name
         - createdAt
       type: object
+    PlatformResourceTypeDTO:
+      additionalProperties: false
+      properties:
+        description:
+          type: string
+        name:
+          type: string
+        outputs:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        parameters:
+          additionalProperties: {}
+          type: object
+      required:
+        - name
+      type: object
     PreflightItem:
       additionalProperties: false
       properties:
@@ -2558,6 +2577,31 @@ paths:
       security:
         - userJWT: []
       summary: Delete an external-resource catalog entry (409 if in use)
+      tags:
+        - Dependencies
+  /dependencies/platform-resource-types:
+    get:
+      operationId: list-platform-resource-types
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/PlatformResourceTypeDTO"
+                type:
+                  - array
+                  - "null"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      security:
+        - userJWT: []
+      summary: List the platform-provisioned resource types available on the cluster
       tags:
         - Dependencies
   /organizations:

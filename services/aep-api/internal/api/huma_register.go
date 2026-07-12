@@ -27,6 +27,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/feature/artifacts"
 	"github.com/wso2/aep/aep-api/internal/feature/build"
 	"github.com/wso2/aep/aep-api/internal/feature/component"
+	"github.com/wso2/aep/aep-api/internal/feature/dependencies"
 	"github.com/wso2/aep/aep-api/internal/feature/execution"
 	"github.com/wso2/aep/aep-api/internal/feature/files"
 	"github.com/wso2/aep/aep-api/internal/feature/genai"
@@ -55,7 +56,8 @@ type HumaDeps struct {
 	ConfigSvc         component.ConfigService
 	CollabRepo        gitrepo.RepoService
 	IssueSvc          gitrepo.IssueService
-	ProvisioningSvc   *provisioning.Service
+	ProvisioningSvc     *provisioning.Service
+	ResourceTypeCatalog dependencies.ResourceTypeLister
 	TaskReads         *task.Reads
 	TaskCommands      *task.Commands
 	TaskPlan          *task.PlanService
@@ -93,6 +95,7 @@ func RegisterAllHuma(api huma.API, d HumaDeps) {
 	requirements.RegisterCollab(api, d.CollabRepo)
 	gitrepo.RegisterIssue(api, d.IssueSvc)
 	provisioning.RegisterResources(api, d.ProvisioningSvc)
+	dependencies.RegisterResourceTypes(api, d.ResourceTypeCatalog)
 	task.RegisterTask(api, d.TaskReads, d.TaskCommands, d.TaskPlan)
 	execution.RegisterTaskStream(api, d.TaskStream)
 	orgconfig.RegisterConfig(api, d.OrgConfigSvc)
