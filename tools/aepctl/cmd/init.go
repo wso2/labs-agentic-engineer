@@ -86,10 +86,16 @@ func init() {
 	initCmd.Flags().StringVar(&initRegistryService, "registry-service", "registry", "Name of the build-plane image registry Service (the coding-agent build pushes/pulls here)")
 	initCmd.Flags().StringVar(&initOCNamespace, "oc-namespace", "openchoreo-system", "Namespace where OpenChoreo control-plane is installed")
 	initCmd.Flags().BoolVar(&initSkipOCVersionCheck, "skip-oc-version-check", false, "Skip the OpenChoreo minimum version check (not recommended)")
-	initCmd.Flags().String("oc-api-url", "", "In-cluster URL of the OpenChoreo platform API (overrides config file)")
+	initCmd.Flags().String("oc-api-url", "", "In-cluster URL of the OpenChoreo platform API")
 	_ = viper.BindPFlag("oc.api_url", initCmd.Flags().Lookup("oc-api-url"))
-	initCmd.Flags().String("server", "", "AEP server gRPC URL (overrides config file)")
+	initCmd.Flags().String("server", "", "AEP server gRPC URL")
 	_ = viper.BindPFlag("server", initCmd.Flags().Lookup("server"))
+	initCmd.Flags().String("webhook-delivery-url", "", "Public URL registered on each repo's webhook (e.g. https://webhook.example.com/api/v1/webhooks/github)")
+	_ = viper.BindPFlag("webhook.delivery_url", initCmd.Flags().Lookup("webhook-delivery-url"))
+	initCmd.Flags().String("cluster-gateway-proxy-url", "", "URL of the managed cluster-gateway-proxy service (production; omit to deploy the local stub)")
+	_ = viper.BindPFlag("codingagent.cluster_gateway_proxy.url", initCmd.Flags().Lookup("cluster-gateway-proxy-url"))
+	initCmd.Flags().String("secret-manager-api-url", "", "URL of the managed secret-manager API service (production; omit to deploy the local stub)")
+	_ = viper.BindPFlag("codingagent.secret_manager_api.url", initCmd.Flags().Lookup("secret-manager-api-url"))
 	registerThunderFlags(initCmd)
 }
 
@@ -273,26 +279,8 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 // thunder.admin_client_secret) are intentionally excluded — they are read at
 // runtime from the ESO-synced aep-thunder-secrets Secret.
 func writeClusterConfig(ctx context.Context, client *kubernetes.Clientset, namespace string) error {
-	keys := []string{
-		"server",
-		"thunder.namespace",
-		"thunder.url",
-		"thunder.config_map",
-		"thunder.deployment",
-		"thunder.admin_client_id",
-		"thunder.public_url",
-		"oc.api_url",
-		"oc.org_namespace",
-		"oc.local_org_provisioning.enabled",
-		"platform.workspaces.access_mode",
-		"codingagent.local_stubs.enabled",
-		"codingagent.cluster_gateway_proxy.url",
-		"codingagent.secret_manager_api.url",
-		"webhook.delivery_url",
-		"webhook.local_smee.enabled",
-	}
-	data := make(map[string]string, len(keys))
-	for _, k := range keys {
+	data := make(map[string]string, len(config.ConfigMapKeys))
+	for _, k := range config.ConfigMapKeys {
 		data[k] = viper.GetString(k)
 	}
 

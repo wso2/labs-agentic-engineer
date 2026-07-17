@@ -30,6 +30,28 @@ import (
 // all subsequent commands. It lives in the AEP platform namespace (wso2-aep).
 const ConfigMapName = "aep-cli-config"
 
+// ConfigMapKeys is the canonical list of non-sensitive viper keys stored in
+// ConfigMapName. thunder.admin_client_secret is intentionally absent — it is
+// managed by OpenBao/ESO and read from the aep-thunder-secrets Secret instead.
+var ConfigMapKeys = []string{
+	"server",
+	"thunder.namespace",
+	"thunder.url",
+	"thunder.config_map",
+	"thunder.deployment",
+	"thunder.admin_client_id",
+	"thunder.public_url",
+	"oc.api_url",
+	"oc.org_namespace",
+	"oc.local_org_provisioning.enabled",
+	"platform.workspaces.access_mode",
+	"codingagent.local_stubs.enabled",
+	"codingagent.cluster_gateway_proxy.url",
+	"codingagent.secret_manager_api.url",
+	"webhook.delivery_url",
+	"webhook.local_smee.enabled",
+}
+
 // Init sets viper defaults and env-var bindings. Config is no longer read from
 // a local file — it is loaded from the cluster ConfigMap by LoadFromCluster,
 // called in root's PersistentPreRunE for every command except `aep init`.
