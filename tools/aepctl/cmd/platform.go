@@ -18,11 +18,13 @@ package cmd
 
 import "github.com/spf13/cobra"
 
-var updateCmd = &cobra.Command{
-	Use:   "update",
-	Short: "Update AEP resources",
+var platformCmd = &cobra.Command{
+	Use:   "platform",
+	Short: "Manage the AEP platform installation",
+	Long: `Commands for installing, configuring, updating, and removing the AEP
+platform on a Kubernetes cluster.`,
 }
 
 func init() {
-	platformCmd.AddCommand(updateCmd)
+	rootCmd.AddCommand(platformCmd)
 }

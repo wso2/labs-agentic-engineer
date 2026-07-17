@@ -47,7 +47,7 @@ and deletes the AEP namespace. This is destructive and irreversible.`,
 }
 
 func init() {
-	rootCmd.AddCommand(uninstallCmd)
+	platformCmd.AddCommand(uninstallCmd)
 	uninstallCmd.Flags().StringVar(&uninstallNamespace, "namespace", "wso2-aep", "Kubernetes namespace where AEP is installed")
 	uninstallCmd.Flags().StringVar(&uninstallBootstrapRelease, "bootstrap-release", "aep", "Helm release name of the bootstrap chart")
 	uninstallCmd.Flags().StringVar(&uninstallPlatformRelease, "platform-release", "aep-platform", "Helm release name of the platform chart")
@@ -70,7 +70,7 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 	}
 
 	ctx := context.Background()
-	client, err := k8s.NewClient("")
+	client, err := k8s.NewClient(kubeconfig)
 	if err != nil {
 		return fmt.Errorf("connect to cluster: %w", err)
 	}

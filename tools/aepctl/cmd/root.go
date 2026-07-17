@@ -33,9 +33,9 @@ var rootCmd = &cobra.Command{
 	Short: "AEP CLI — deployment and operations tooling for the AEP platform",
 	Long:  `aep manages the lifecycle of an AEP platform installation on a Kubernetes cluster.`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		// aep init bootstraps the cluster from scratch — the ConfigMap doesn't
-		// exist yet, so skip the cluster config load for that command only.
-		if cmd.Name() == "init" {
+		// aep platform install bootstraps the cluster from scratch — the
+		// ConfigMap doesn't exist yet, so skip the cluster config load.
+		if cmd.Annotations["skipClusterConfig"] == "true" {
 			return nil
 		}
 		ctx := context.Background()

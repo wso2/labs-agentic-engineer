@@ -57,9 +57,9 @@ var (
 )
 
 var initCmd = &cobra.Command{
-	Use:   "init",
+	Use:   "install",
 	Short: "Provision OpenBao, install the platform, and configure Thunder",
-	Long: `Full AEP initialisation in one command:
+	Long: `Full AEP platform installation in one command:
   1. Waits for the OpenBao pod to be ready
   2. Provisions OpenBao and generates all secrets
   3. Installs the platform Helm chart
@@ -68,12 +68,14 @@ var initCmd = &cobra.Command{
   6. Writes cluster config to the aep-cli-config ConfigMap
 
 Pass the server URL via the --server flag:
-  aep init --server http://aep-server.openchoreo.localhost:8080 [flags]`,
-	RunE: runAEPInit,
+  aep platform install --server http://aep-server.openchoreo.localhost:8080 [flags]`,
+	// skipClusterConfig: the ConfigMap does not exist before this command runs.
+	Annotations: map[string]string{"skipClusterConfig": "true"},
+	RunE:        runAEPInit,
 }
 
 func init() {
-	rootCmd.AddCommand(initCmd)
+	platformCmd.AddCommand(initCmd)
 	initCmd.Flags().StringVar(&initPlatformChart, "platform-chart", "", "Local path to the platform Helm chart (for local/dev installs; takes precedence over --platform-version)")
 	initCmd.Flags().StringVar(&initPlatformVersion, "platform-version", "latest", "Platform version to pull from GHCR (ignored when --platform-chart is set)")
 	initCmd.Flags().StringVar(&initPlatformRelease, "platform-release", "aep-platform", "Helm release name for the platform chart")

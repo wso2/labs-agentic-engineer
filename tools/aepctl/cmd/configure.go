@@ -83,7 +83,7 @@ Example config file (~/.aep/config.yaml):
 }
 
 func init() {
-	rootCmd.AddCommand(configureCmd)
+	platformCmd.AddCommand(configureCmd)
 	configureCmd.Flags().StringVar(&configureFile, "config", "", "path to local config YAML file (required)")
 	_ = configureCmd.MarkFlagRequired("config")
 }
