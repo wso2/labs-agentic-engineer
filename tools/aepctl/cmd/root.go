@@ -17,19 +17,38 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
 	"github.com/wso2/aep/aepctl/internal/config"
+	k8s "github.com/wso2/aep/aepctl/internal/kubernetes"
 )
 
-var cfgFile string
+var kubeconfig string
 
 var rootCmd = &cobra.Command{
 	Use:   "aep",
-	Short: "AEP CLI — dev and deployment tooling for the AEP platform",
-	Long:  `aep is a CLI tool to help with the development cycle and deployment of the AEP platform.`,
+	Short: "AEP CLI — deployment and operations tooling for the AEP platform",
+	Long:  `aep manages the lifecycle of an AEP platform installation on a Kubernetes cluster.`,
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		// aep init bootstraps the cluster from scratch — the ConfigMap doesn't
+		// exist yet, so skip the cluster config load for that command only.
+		if cmd.Name() == "init" {
+			return nil
+		}
+		ctx := context.Background()
+		client, err := k8s.NewClient(kubeconfig)
+		if err != nil {
+			return fmt.Errorf("connect to cluster: %w", err)
+		}
+		const aepNamespace = "wso2-aep"
+		if err := config.LoadFromCluster(ctx, client, aepNamespace); err != nil {
+			return err
+		}
+		return config.LoadThunderSecretFromCluster(ctx, client, aepNamespace)
+	},
 }
 
 func Execute() {
@@ -41,5 +60,5 @@ func Execute() {
 
 func init() {
 	cobra.OnInitialize(config.Init)
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default: $HOME/.aep/config.yaml)")
+	rootCmd.PersistentFlags().StringVar(&kubeconfig, "kubeconfig", "", "path to kubeconfig file (default: $HOME/.kube/config)")
 }

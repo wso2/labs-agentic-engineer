@@ -18,7 +18,7 @@ go build -o aep-server ./cmd/aep-server  # build server
 
 | Package | Purpose |
 |---------|---------|
-| `cmd/` | Cobra commands for the CLI (connect, init, uninstall, thunder-setup, openbao-unseal) |
+| `cmd/` | Cobra commands for the CLI (init, sre, uninstall) |
 | `cmd/aep-server/` | gRPC server binary (Init, ThunderSetup, OpenbaoUnseal handlers) |
 | `internal/adminpb/` | Generated gRPC stubs from `proto/admin.proto` |
 | `internal/openbao/` | HTTP client for OpenBao API |
@@ -37,5 +37,9 @@ buf generate   # or: protoc with protoc-gen-go + protoc-gen-go-grpc
 
 ## Config
 
-CLI reads `~/.aep/config.yaml`. Set via `aep connect --server <url>` or flag overrides.
+CLI has no local config file. After `aep init` runs, it writes non-sensitive config to the
+`aep-cli-config` ConfigMap in `wso2-aep`. All subsequent commands read from it automatically
+via `PersistentPreRunE`. Sensitive values (Thunder admin secret) come from the ESO-synced
+`aep-thunder-secrets` Secret. CLI flags and `AEP_*` env vars always override the ConfigMap.
+
 Server reads env vars injected by the bootstrap Helm chart.

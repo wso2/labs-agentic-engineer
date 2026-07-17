@@ -30,11 +30,13 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"golang.org/x/term"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/wso2/aep/aepctl/internal/adminpb"
+	"github.com/wso2/aep/aepctl/internal/config"
 	k8s "github.com/wso2/aep/aepctl/internal/kubernetes"
 )
 
@@ -63,9 +65,10 @@ var initCmd = &cobra.Command{
   3. Installs the platform Helm chart
   4. Waits for all platform pods to be ready
   5. Registers AEP OAuth clients in Thunder
+  6. Writes cluster config to the aep-cli-config ConfigMap
 
-Configure the server URL first:
-  aep connect --server http://aep-server.openchoreo.localhost:8080`,
+Pass the server URL via the --server flag:
+  aep init --server http://aep-server.openchoreo.localhost:8080 [flags]`,
 	RunE: runAEPInit,
 }
 
@@ -203,7 +206,7 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 	// Coding-agent dispatch: deploy the local cluster-gateway-proxy stub (reads
 	// pod logs/job status for live streaming + JobWatcher) unless disabled. Prod
 	// installs set codingagent.local_stubs.enabled=false and supply the real
-	// endpoint URLs — see ~/.aep/config.yaml.
+	// endpoint URLs instead (set them via flags or AEP_* env vars).
 	helmArgs = append(helmArgs, "--set",
 		fmt.Sprintf("codingAgentDispatch.localStubs.enabled=%t", viper.GetBool("codingagent.local_stubs.enabled")))
 	if u := viper.GetString("codingagent.cluster_gateway_proxy.url"); u != "" {
@@ -255,8 +258,63 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// 7. Persist non-sensitive config into the in-cluster ConfigMap so
+	// subsequent aep commands can load it without any local config file.
+	if err := writeClusterConfig(ctx, k8sClient, initPlatformNamespace); err != nil {
+		return fmt.Errorf("write cluster config: %w", err)
+	}
+
 	_, _ = fmt.Fprintln(os.Stdout, "\nAEP is ready. Open the console to get started.")
 	return nil
+}
+
+// writeClusterConfig creates or updates the aep-cli-config ConfigMap with the
+// non-sensitive viper values set during this init run. Sensitive values (e.g.
+// thunder.admin_client_secret) are intentionally excluded — they are read at
+// runtime from the ESO-synced aep-thunder-secrets Secret.
+func writeClusterConfig(ctx context.Context, client *kubernetes.Clientset, namespace string) error {
+	keys := []string{
+		"server",
+		"thunder.namespace",
+		"thunder.url",
+		"thunder.config_map",
+		"thunder.deployment",
+		"thunder.admin_client_id",
+		"thunder.public_url",
+		"oc.api_url",
+		"oc.org_namespace",
+		"oc.local_org_provisioning.enabled",
+		"platform.workspaces.access_mode",
+		"codingagent.local_stubs.enabled",
+		"codingagent.cluster_gateway_proxy.url",
+		"codingagent.secret_manager_api.url",
+		"webhook.delivery_url",
+		"webhook.local_smee.enabled",
+	}
+	data := make(map[string]string, len(keys))
+	for _, k := range keys {
+		data[k] = viper.GetString(k)
+	}
+
+	existing, err := client.CoreV1().ConfigMaps(namespace).Get(ctx, config.ConfigMapName, metav1.GetOptions{})
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("get %s: %w", config.ConfigMapName, err)
+		}
+		_, err = client.CoreV1().ConfigMaps(namespace).Create(ctx, &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      config.ConfigMapName,
+				Namespace: namespace,
+				Labels:    map[string]string{"app.kubernetes.io/managed-by": "aepctl"},
+			},
+			Data: data,
+		}, metav1.CreateOptions{})
+		return err
+	}
+
+	existing.Data = data
+	_, err = client.CoreV1().ConfigMaps(namespace).Update(ctx, existing, metav1.UpdateOptions{})
+	return err
 }
 
 // checkOCVersion fails fast when the installed OpenChoreo version is below the

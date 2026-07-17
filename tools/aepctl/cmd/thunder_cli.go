@@ -35,7 +35,7 @@ import (
 )
 
 // registerThunderFlags adds Thunder connection flags to cmd and binds each one
-// to its corresponding Viper key. Precedence: flag > ~/.aep/config.yaml > default.
+// to its corresponding Viper key. Precedence: flag > AEP_* env var > cluster ConfigMap > default.
 func registerThunderFlags(cmd *cobra.Command) {
 	f := cmd.Flags()
 	f.String("thunder-namespace", "", "Kubernetes namespace where Thunder is installed")
