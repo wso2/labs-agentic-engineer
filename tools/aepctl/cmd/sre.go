@@ -127,11 +127,11 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("helm is required but was not found in PATH\nInstall it from https://helm.sh/docs/intro/install/ and try again")
 	}
 
-	client, err := k8s.NewClient("")
+	client, err := k8s.NewClient(kubeconfig)
 	if err != nil {
 		return fmt.Errorf("connect to cluster: %w", err)
 	}
-	applier, err := k8s.NewApplier("")
+	applier, err := k8s.NewApplier(kubeconfig)
 	if err != nil {
 		return fmt.Errorf("build applier: %w", err)
 	}
