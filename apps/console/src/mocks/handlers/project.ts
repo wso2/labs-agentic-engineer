@@ -20,6 +20,7 @@ import {
   streamFrames,
   taskDetailOf,
 } from "../fixtures/task-log";
+import { estimateFor, projectUsage } from "../fixtures/usage";
 
 function scenario(): ProjectScenario {
   return (
@@ -77,6 +78,15 @@ export const projectHandlers = [
   http.get("*/api/v1/projects/:projectName/builds", () =>
     respond((s) => projectBuilds[s]),
   ),
+  // Cost visibility (#245): per-project usage rollups…
+  http.get("*/api/v1/projects/:projectName/usage", () =>
+    respond((s) => projectUsage[s]),
+  ),
+  // …and the pre-action historical-average estimate (null on cold start).
+  http.get("*/api/v1/projects/:projectName/estimates", ({ request }) => {
+    const action = new URL(request.url).searchParams.get("action");
+    return respond((s) => estimateFor(s, action));
+  }),
   // Task page (#173): one task with its execution history…
   http.get("*/api/v1/projects/:projectName/tasks/:issueNumber", ({ params }) => {
     const s = scenario();

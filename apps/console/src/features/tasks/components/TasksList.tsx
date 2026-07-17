@@ -30,6 +30,8 @@ import {
 import { GitHub } from "@wso2/oxygen-ui-icons-react";
 import { useNavigate } from "@tanstack/react-router";
 import { useAllTasks } from "../api/queries";
+import { UsageBreakdown } from "../../usage/components/UsageBreakdown";
+import { formatTokens, formatUsd, totalTokens } from "../../usage/lib/format";
 import { TaskStatusChip } from "./TaskStatusChip";
 
 // The flat task list (#173): one row per task, status chip inline — the user
@@ -93,6 +95,7 @@ export function TasksList({
               Component
             </ListingTable.Cell>
             <ListingTable.Cell sx={{ maxWidth: 120 }}>Status</ListingTable.Cell>
+            <ListingTable.Cell sx={{ maxWidth: 110 }}>Cost</ListingTable.Cell>
             <ListingTable.Cell sx={{ maxWidth: 64 }} aria-label="Links" />
           </ListingTable.Row>
         </ListingTable.Head>
@@ -153,6 +156,27 @@ export function TasksList({
                   </Tooltip>
                 ) : (
                   <TaskStatusChip derivedStatus={t.derivedStatus} />
+                )}
+              </ListingTable.Cell>
+              <ListingTable.Cell sx={{ maxWidth: 110 }}>
+                {/* Per-task actual cost (#245 decision 5): folded USD (tokens-
+                    only when pricing is unavailable), breakdown on hover; "—"
+                    while no execution has run or for pre-capture tasks. */}
+                {t.usage && totalTokens(t.usage) > 0 ? (
+                  <Tooltip title={<UsageBreakdown usage={t.usage} />}>
+                    <Typography
+                      variant="body2"
+                      sx={{ fontVariantNumeric: "tabular-nums" }}
+                    >
+                      {t.usage.costUsd !== null
+                        ? formatUsd(t.usage.costUsd)
+                        : `${formatTokens(totalTokens(t.usage))} tok`}
+                    </Typography>
+                  </Tooltip>
+                ) : (
+                  <Typography variant="caption" color="text.secondary">
+                    —
+                  </Typography>
                 )}
               </ListingTable.Cell>
               <ListingTable.Cell sx={{ maxWidth: 64 }}>

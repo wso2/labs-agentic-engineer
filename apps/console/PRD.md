@@ -83,6 +83,11 @@ Features currently being built. One line each; **must be emptied on ship**
 (the line moves to the inventory below). If a line sits here for weeks,
 that's a stalled feature — investigate, don't ignore.
 
+- Cost visibility — actual token/USD usage per turn/task/build/project + inline
+  historical-average estimates for design/build, with a model cost comparator
+  (naive re-pricing + disclaimer); tokens stored, USD derived at read (ADR-0011) —
+  [#245](https://github.com/wso2/labs-agentic-engineer/issues/245)
+  (BE handshake: [#249](https://github.com/wso2/labs-agentic-engineer/issues/249))
 - Deployments page — two-column board (Development / Production): one card
   per component × binding with status chip, release, endpoint URL,
   deployed-at; unbound components show greyed "Not deployed" cards in dev;

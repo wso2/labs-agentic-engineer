@@ -366,6 +366,9 @@ components:
         tasks:
           $ref: "#/components/schemas/BuildTally"
           description: The run's own frozen task tally, written by the workflow — not a live task recount.
+        usage:
+          $ref: "#/components/schemas/Usage"
+          description: Aggregate actual usage of the run's coding executions (#245); absent for runs that predate usage capture.
       required:
         - tag
         - status
@@ -1282,6 +1285,56 @@ components:
         specTag:
           type: string
       type: object
+    ModelPricing:
+      additionalProperties: false
+      description: Per-model Anthropic rates in USD per million tokens (#245). Source is aep-api's checked-in defaults, overridable via deployment config — never editable at runtime.
+      properties:
+        cacheReadPerMTok:
+          format: double
+          type: number
+        cacheWritePerMTok:
+          format: double
+          type: number
+        displayName:
+          type: string
+        inputPerMTok:
+          format: double
+          type: number
+        model:
+          description: Model id, e.g. claude-fable-5.
+          type: string
+        outputPerMTok:
+          format: double
+          type: number
+      required:
+        - model
+        - displayName
+        - inputPerMTok
+        - outputPerMTok
+        - cacheReadPerMTok
+        - cacheWritePerMTok
+      type: object
+    ModelPricingList:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - /api/v1/ModelPricingList.json
+          format: uri
+          readOnly: true
+          type: string
+        defaultModel:
+          description: The model id agent work currently runs on — the comparator's primary column.
+          type: string
+        models:
+          items:
+            $ref: "#/components/schemas/ModelPricing"
+          type: array
+      required:
+        - models
+        - defaultModel
+      type: object
     OrganizationList:
       additionalProperties: false
       properties:
@@ -1518,6 +1571,9 @@ components:
         specStatus:
           description: '"", draft, approved'
           type: string
+        usage:
+          $ref: "#/components/schemas/Usage"
+          description: Project-lifetime usage total (#245) on the overview's status poll (ADR-0006 aggregate convention); phase/version detail lives on get-project-usage.
       required:
         - phase
         - repoStatus
@@ -1530,6 +1586,46 @@ components:
         - spec
         - build
         - deploy
+      type: object
+    ProjectUsage:
+      additionalProperties: false
+      description: Per-project actual usage rollups (#245). All figures derive from persisted per-run token records (ADR-0011); costUsd is computed at read time from the pricing catalog.
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - /api/v1/ProjectUsage.json
+          format: uri
+          readOnly: true
+          type: string
+        build:
+          $ref: "#/components/schemas/Usage"
+          description: All coding/build executions.
+        draftCycle:
+          $ref: "#/components/schemas/Usage"
+          description: Spec/design agent turns since the last published spec tag — the Spec view chip.
+        spec:
+          $ref: "#/components/schemas/Usage"
+          description: All spec/design agent turns (project lifetime).
+        total:
+          $ref: "#/components/schemas/Usage"
+          description: Project lifetime total across phases.
+        validation:
+          $ref: "#/components/schemas/Usage"
+          description: All validation executions.
+        versions:
+          description: Per published spec version, newest first — build + validation spend attributed to that tag.
+          items:
+            $ref: "#/components/schemas/VersionUsage"
+          type:
+            - array
+            - "null"
+      required:
+        - spec
+        - build
+        - validation
+        - draftCycle
+        - total
       type: object
     ProvisionBody:
       additionalProperties: false
@@ -2054,6 +2150,9 @@ components:
           type: string
         title:
           type: string
+        usage:
+          $ref: "#/components/schemas/Usage"
+          description: Aggregate actual usage across the task's executions (#245); absent for tasks that predate usage capture.
       required:
         - issueNumber
         - title
@@ -2256,6 +2355,110 @@ components:
           type: string
       required:
         - skillMd
+      type: object
+    Usage:
+      additionalProperties: false
+      description: Actual token usage for one unit of agent work or an aggregate (#245). Tokens + model are the persisted truth; costUsd is derived at read time from the pricing catalog (ADR-0011) and null when the model has no catalog entry.
+      properties:
+        cacheCreationTokens:
+          format: int64
+          type: integer
+        cacheReadTokens:
+          format: int64
+          type: integer
+        costUsd:
+          description: Catalog-derived USD; null when pricing is unavailable for the model.
+          format: double
+          type:
+            - number
+            - "null"
+        inputTokens:
+          format: int64
+          type: integer
+        model:
+          description: Model id the work ran on; "" on mixed-model aggregates.
+          type: string
+        outputTokens:
+          format: int64
+          type: integer
+      required:
+        - inputTokens
+        - outputTokens
+        - cacheReadTokens
+        - cacheCreationTokens
+        - model
+        - costUsd
+      type: object
+    UsageEstimate:
+      additionalProperties: false
+      description: Historical-average range for a pre-action estimate (#245). Ranges come from persisted actuals (per-project when samples suffice, platform-wide fallback); never fabricated.
+      properties:
+        average:
+          $ref: "#/components/schemas/Usage"
+          description: The mean historical run's token mix — what the model comparator re-prices.
+        costUsdMax:
+          format: double
+          type: number
+        costUsdMin:
+          format: double
+          type: number
+        model:
+          description: Model the estimate is priced for (the current default model).
+          type: string
+        sampleSize:
+          description: Number of historical runs behind the range.
+          format: int64
+          type: integer
+        tokensMax:
+          format: int64
+          type: integer
+        tokensMin:
+          format: int64
+          type: integer
+      required:
+        - tokensMin
+        - tokensMax
+        - costUsdMin
+        - costUsdMax
+        - model
+        - sampleSize
+        - average
+      type: object
+    UsageEstimateOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - /api/v1/UsageEstimateOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        action:
+          enum:
+            - design
+            - build
+          type: string
+        estimate:
+          anyOf:
+            - $ref: "#/components/schemas/UsageEstimate"
+            - type: "null"
+          description: Null on cold start — no historical data yet; the console shows "no estimate yet".
+      required:
+        - action
+        - estimate
+      type: object
+    VersionUsage:
+      additionalProperties: false
+      properties:
+        tag:
+          description: Published spec version tag (v<N>).
+          type: string
+        usage:
+          $ref: "#/components/schemas/Usage"
+      required:
+        - tag
+        - usage
       type: object
     Warning:
       additionalProperties: false
@@ -2622,6 +2825,28 @@ paths:
       summary: List the platform-provisioned resource types available on the cluster
       tags:
         - Dependencies
+  /models/pricing:
+    get:
+      description: Model pricing catalog (#245) — checked-in defaults in aep-api, overridable via deployment config. Read-only; there is no runtime editing surface (cost policies are out of scope).
+      operationId: get-model-pricing
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelPricingList"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      security:
+        - userJWT: []
+      summary: Get model pricing catalog
+      tags:
+        - Models
   /organizations:
     get:
       operationId: list-organizations
@@ -3514,6 +3739,45 @@ paths:
       summary: Collect an external dependency's values and provision it
       tags:
         - Dependencies
+  /projects/{projectName}/estimates:
+    get:
+      description: Pre-action usage estimate (#245) — a historical-average range (per-project stats when samples suffice, platform-wide fallback). estimate is null on cold start; the console never shows a fabricated number.
+      operationId: get-project-estimate
+      parameters:
+        - description: Project name (DNS-label slug)
+          in: path
+          name: projectName
+          required: true
+          schema:
+            description: Project name (DNS-label slug)
+            type: string
+        - description: The action being estimated.
+          in: query
+          name: action
+          required: true
+          schema:
+            enum:
+              - design
+              - build
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UsageEstimateOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      security:
+        - userJWT: []
+      summary: Get pre-action usage estimate
+      tags:
+        - Projects
   /projects/{projectName}/files:
     get:
       operationId: list-files
@@ -3964,6 +4228,36 @@ paths:
       summary: Attach to a turn's event stream (SSE replay + live tail)
       tags:
         - GenAI
+  /projects/{projectName}/usage:
+    get:
+      description: Per-project actual usage rollups (#245) — per phase, current drafting cycle, per published version, and lifetime total. USD derived at read time from the pricing catalog (ADR-0011).
+      operationId: get-project-usage
+      parameters:
+        - description: Project name (DNS-label slug)
+          in: path
+          name: projectName
+          required: true
+          schema:
+            description: Project name (DNS-label slug)
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectUsage"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      security:
+        - userJWT: []
+      summary: Get project usage rollups
+      tags:
+        - Projects
   /rca-agent/reports:
     get:
       operationId: list-rca-agent-reports

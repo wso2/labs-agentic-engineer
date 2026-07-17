@@ -85,6 +85,18 @@ vi.mock("../../projects/api/queries", () => ({
   useBuildPreflight: () => ({ refetch: mockPreflightRefetch }),
 }));
 
+// Cost visibility (#245): stubbed like the other data hooks — no spend, no
+// estimate — so the chips render nothing and Build routing stays the subject.
+vi.mock("../../usage/api/queries", () => ({
+  useProjectUsage: () => ({ data: undefined, isPending: true, isError: false }),
+  useProjectEstimate: () => ({
+    data: undefined,
+    isPending: true,
+    isError: false,
+  }),
+  useModelPricing: () => ({ data: undefined, isPending: true, isError: false }),
+}));
+
 vi.mock("../api/queries", () => ({
   useSpecFiles: () => ({
     data: [{ path: "specs/design/overview.md", sha: "abc", group: "designs" }],

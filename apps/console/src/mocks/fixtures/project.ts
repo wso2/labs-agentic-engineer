@@ -1,4 +1,5 @@
 import type { components } from "../../generated/aep-api";
+import { buildUsageByScenario, projectUsage, taskUsage } from "./usage";
 
 type ProjectStatus = components["schemas"]["ProjectStatus"];
 type ComponentList = components["schemas"]["ComponentList"];
@@ -80,6 +81,7 @@ export const projectStatuses: Record<
     spec: { exists: true, version: "", dirty: false, design: true },
     build: idleBuild,
     deploy: noDeploy,
+    usage: projectUsage.spec.total,
   },
   // Spec derivation hit a problem; the seeded PRD is still there.
   "spec-failed": {
@@ -94,6 +96,7 @@ export const projectStatuses: Record<
     spec: { exists: true, version: "", dirty: false, design: false },
     build: idleBuild,
     deploy: noDeploy,
+    usage: projectUsage["spec-failed"].total,
   },
   // v1 published, agents building, nothing deployed yet. Task counts mirror
   // buildingTasks below (1 failed, 3 still moving).
@@ -113,6 +116,7 @@ export const projectStatuses: Record<
       tasks: { total: 4, done: 0, failed: 1, active: 3 },
     },
     deploy: noDeploy,
+    usage: projectUsage.building.total,
   },
   // v1 built, dev rollout in progress (1 of 3 components ready).
   deploying: {
@@ -136,6 +140,7 @@ export const projectStatuses: Record<
       components: { total: 3, ready: 1 },
       validation: "none",
     },
+    usage: projectUsage.deploying.total,
   },
   // v1 deployed to dev; spec has drifted since (dirty → rendered v1+).
   deployed: {
@@ -160,6 +165,7 @@ export const projectStatuses: Record<
       validation: "completed",
       validationUrl: `${REPO_URL}/pull/42`,
     },
+    usage: projectUsage.deployed.total,
   },
   // v1 build done but the dev deployment failed.
   "deploy-failed": {
@@ -183,6 +189,7 @@ export const projectStatuses: Record<
       components: { total: 3, ready: 1 },
       validation: "none",
     },
+    usage: projectUsage["deploy-failed"].total,
   },
   // Repo bootstrap went sideways before any spec work.
   "repo-error": {
@@ -413,12 +420,15 @@ function task(
   derivedStatus: string,
   component?: string,
 ): TaskView {
+  const usage = taskUsage[issueNumber];
   return {
     issueNumber,
     title,
     derivedStatus,
     issueUrl: `${BOARD_URL}/${issueNumber}`,
     ...(component !== undefined && { component }),
+    // Pending tasks (no execution yet) carry no usage — exercises the "—" cell (#245).
+    ...(usage !== undefined && { usage }),
     attention: null,
     dependsOn: null,
     executions: {},
@@ -481,6 +491,8 @@ const runningV1Build: BuildList = {
       status: "in_progress",
       tasks: { total: 4, done: 0, failed: 1, active: 3 },
       startedAt: "2026-07-10T09:12:00Z",
+      // Mid-build the aggregate is the cost so far — it accrues on the poll (#245).
+      usage: buildUsageByScenario.running,
     },
   ],
 };
@@ -492,6 +504,7 @@ const completedV1Build: BuildList = {
       tasks: { total: 4, done: 4, failed: 0, active: 0 },
       startedAt: "2026-07-10T09:12:00Z",
       completedAt: "2026-07-10T10:03:00Z",
+      usage: buildUsageByScenario.completed,
     },
   ],
 };
