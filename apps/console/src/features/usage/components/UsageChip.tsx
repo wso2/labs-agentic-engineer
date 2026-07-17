@@ -23,9 +23,10 @@ import { formatTokens, formatUsd, totalTokens, type Usage } from "../lib/format"
 import { ModelComparisonPopover } from "./ModelComparisonPopover";
 import { UsageBreakdown } from "./UsageBreakdown";
 
-// The folded cost figure (#245): one USD number + total tokens, breakdown on
-// hover, model comparator on click. costUsd null (no catalog entry) degrades
-// to tokens-only. Renders nothing for an all-zero aggregate.
+// The folded cost figure (#245): USD is the ONLY primary value — tokens are a
+// technical detail that lives in the hover breakdown, never in the chip label.
+// costUsd null (no catalog entry) degrades to tokens-only, the one exception.
+// Breakdown on hover, model comparator on click; renders nothing at zero.
 export function UsageChip({
   usage,
   label,
@@ -39,7 +40,7 @@ export function UsageChip({
 
   const figures =
     usage.costUsd !== null
-      ? `${formatUsd(usage.costUsd)} · ${formatTokens(tokens)} tok`
+      ? formatUsd(usage.costUsd)
       : `${formatTokens(tokens)} tok`;
 
   return (

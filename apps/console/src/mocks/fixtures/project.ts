@@ -1,5 +1,5 @@
 import type { components } from "../../generated/aep-api";
-import { buildUsageByScenario, projectUsage, taskUsage } from "./usage";
+import { buildUsageByScenario, taskUsage } from "./usage";
 
 type ProjectStatus = components["schemas"]["ProjectStatus"];
 type ComponentList = components["schemas"]["ComponentList"];
@@ -81,7 +81,6 @@ export const projectStatuses: Record<
     spec: { exists: true, version: "", dirty: false, design: true },
     build: idleBuild,
     deploy: noDeploy,
-    usage: projectUsage.spec.total,
   },
   // Spec derivation hit a problem; the seeded PRD is still there.
   "spec-failed": {
@@ -96,7 +95,6 @@ export const projectStatuses: Record<
     spec: { exists: true, version: "", dirty: false, design: false },
     build: idleBuild,
     deploy: noDeploy,
-    usage: projectUsage["spec-failed"].total,
   },
   // v1 published, agents building, nothing deployed yet. Task counts mirror
   // buildingTasks below (1 failed, 3 still moving).
@@ -116,7 +114,6 @@ export const projectStatuses: Record<
       tasks: { total: 4, done: 0, failed: 1, active: 3 },
     },
     deploy: noDeploy,
-    usage: projectUsage.building.total,
   },
   // v1 built, dev rollout in progress (1 of 3 components ready).
   deploying: {
@@ -140,7 +137,6 @@ export const projectStatuses: Record<
       components: { total: 3, ready: 1 },
       validation: "none",
     },
-    usage: projectUsage.deploying.total,
   },
   // v1 deployed to dev; spec has drifted since (dirty → rendered v1+).
   deployed: {
@@ -165,7 +161,6 @@ export const projectStatuses: Record<
       validation: "completed",
       validationUrl: `${REPO_URL}/pull/42`,
     },
-    usage: projectUsage.deployed.total,
   },
   // v1 build done but the dev deployment failed.
   "deploy-failed": {
@@ -189,7 +184,6 @@ export const projectStatuses: Record<
       components: { total: 3, ready: 1 },
       validation: "none",
     },
-    usage: projectUsage["deploy-failed"].total,
   },
   // Repo bootstrap went sideways before any spec work.
   "repo-error": {

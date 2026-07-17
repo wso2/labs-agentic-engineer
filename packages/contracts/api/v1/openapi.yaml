@@ -1571,9 +1571,6 @@ components:
         specStatus:
           description: '"", draft, approved'
           type: string
-        usage:
-          $ref: "#/components/schemas/Usage"
-          description: Project-lifetime usage total (#245) on the overview's status poll (ADR-0006 aggregate convention); phase/version detail lives on get-project-usage.
       required:
         - phase
         - repoStatus

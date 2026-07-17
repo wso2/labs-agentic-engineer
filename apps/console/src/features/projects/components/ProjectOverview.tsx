@@ -25,9 +25,6 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import { useProjectComponents, useProjectStatus } from "../api/queries";
-import { useProjectUsage } from "../../usage/api/queries";
-import { totalTokens } from "../../usage/lib/format";
-import { UsageChip } from "../../usage/components/UsageChip";
 import { ComponentsList } from "./ComponentsList";
 import { OverviewPipeline } from "./OverviewPipeline";
 
@@ -55,7 +52,6 @@ function SectionError({
 export function ProjectOverview({ projectName }: { projectName: string }) {
   const status = useProjectStatus(projectName);
   const componentsQuery = useProjectComponents(projectName);
-  const usageQ = useProjectUsage(projectName);
 
   const buildState = status.data?.build.status;
   const deployState = status.data?.deploy.status;
@@ -83,37 +79,6 @@ export function ProjectOverview({ projectName }: { projectName: string }) {
       ) : (
         <OverviewPipeline projectName={projectName} status={status.data} />
       )}
-
-      {/* Agent spend (#245): per-phase + per-version rollups; the section only
-          renders once any usage exists (a fresh project shows nothing). A load
-          failure gets the same section-error treatment as its siblings. */}
-      {usageQ.isError ? (
-        <SectionError
-          what="agent spend"
-          message={usageQ.error instanceof Error ? usageQ.error.message : undefined}
-          onRetry={() => void usageQ.refetch()}
-        />
-      ) : usageQ.data && totalTokens(usageQ.data.total) > 0 ? (
-        <div>
-          <Typography variant="h6" gutterBottom>
-            Agent spend
-          </Typography>
-          <Stack
-            direction="row"
-            spacing={1}
-            useFlexGap
-            sx={{ flexWrap: "wrap", alignItems: "center" }}
-          >
-            <UsageChip usage={usageQ.data.total} label="total" />
-            <UsageChip usage={usageQ.data.spec} label="spec" />
-            <UsageChip usage={usageQ.data.build} label="build" />
-            <UsageChip usage={usageQ.data.validation} label="validation" />
-            {usageQ.data.versions?.map((v) => (
-              <UsageChip key={v.tag} usage={v.usage} label={v.tag} />
-            ))}
-          </Stack>
-        </div>
-      ) : null}
 
       <div>
         <Typography variant="h6" gutterBottom>

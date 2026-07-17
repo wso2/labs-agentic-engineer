@@ -95,7 +95,6 @@ export function TasksList({
               Component
             </ListingTable.Cell>
             <ListingTable.Cell sx={{ maxWidth: 120 }}>Status</ListingTable.Cell>
-            <ListingTable.Cell sx={{ maxWidth: 110 }}>Cost</ListingTable.Cell>
             <ListingTable.Cell sx={{ maxWidth: 64 }} aria-label="Links" />
           </ListingTable.Row>
         </ListingTable.Head>
@@ -135,6 +134,26 @@ export function TasksList({
                     </Typography>
                   }
                   primary={t.title}
+                  // Per-task cost (#245): deliberately quiet — a small caption
+                  // under the title, never a column of highlighted figures.
+                  // USD only (tokens live in the hover breakdown); absent
+                  // until an execution has run.
+                  secondary={
+                    t.usage && totalTokens(t.usage) > 0 ? (
+                      <Tooltip title={<UsageBreakdown usage={t.usage} />}>
+                        <Typography
+                          component="span"
+                          variant="caption"
+                          color="text.secondary"
+                          sx={{ fontVariantNumeric: "tabular-nums" }}
+                        >
+                          {t.usage.costUsd !== null
+                            ? formatUsd(t.usage.costUsd)
+                            : `${formatTokens(totalTokens(t.usage))} tok`}
+                        </Typography>
+                      </Tooltip>
+                    ) : undefined
+                  }
                 />
               </ListingTable.Cell>
               <ListingTable.Cell sx={{ maxWidth: 160 }}>
@@ -156,27 +175,6 @@ export function TasksList({
                   </Tooltip>
                 ) : (
                   <TaskStatusChip derivedStatus={t.derivedStatus} />
-                )}
-              </ListingTable.Cell>
-              <ListingTable.Cell sx={{ maxWidth: 110 }}>
-                {/* Per-task actual cost (#245 decision 5): folded USD (tokens-
-                    only when pricing is unavailable), breakdown on hover; "—"
-                    while no execution has run or for pre-capture tasks. */}
-                {t.usage && totalTokens(t.usage) > 0 ? (
-                  <Tooltip title={<UsageBreakdown usage={t.usage} />}>
-                    <Typography
-                      variant="body2"
-                      sx={{ fontVariantNumeric: "tabular-nums" }}
-                    >
-                      {t.usage.costUsd !== null
-                        ? formatUsd(t.usage.costUsd)
-                        : `${formatTokens(totalTokens(t.usage))} tok`}
-                    </Typography>
-                  </Tooltip>
-                ) : (
-                  <Typography variant="caption" color="text.secondary">
-                    —
-                  </Typography>
                 )}
               </ListingTable.Cell>
               <ListingTable.Cell sx={{ maxWidth: 64 }}>
