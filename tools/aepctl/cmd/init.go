@@ -108,7 +108,7 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("helm is required but was not found in PATH\nInstall it from https://helm.sh/docs/intro/install/ and try again")
 	}
 
-	k8sClient, err := k8s.NewClient("")
+	k8sClient, err := k8s.NewClient(kubeconfig)
 	if err != nil {
 		return fmt.Errorf("connect to cluster: %w", err)
 	}
