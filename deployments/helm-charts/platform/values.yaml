@@ -101,7 +101,7 @@ console:
 codingAgentRunner:
   # Docker image for the coding-agent runner Job. Dispatched directly as a
   # K8s Job in the org's data-plane remote-worker namespace.
-  image: "docker.io/xlight05/aep-coding-agent-runner:v7"
+  image: "ghcr.io/wso2/aep/remote-worker:latest"
 
 validationRunner:
   # Docker image for the validation-task runner Job (Playwright + baked

@@ -147,6 +147,19 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("an Anthropic API key is required")
 	}
 
+	// Prompt for Thunder admin client secret unless already supplied via the
+	// AEP_THUNDER_ADMIN_CLIENT_SECRET env var (CI / non-interactive installs).
+	// Press Enter to use the Thunder default (openchoreo-system-app-secret).
+	if os.Getenv("AEP_THUNDER_ADMIN_CLIENT_SECRET") == "" {
+		thunderSecret, err := readMaskedInput("Thunder admin client secret (Enter = use Thunder default)")
+		if err != nil {
+			return fmt.Errorf("read Thunder admin client secret: %w", err)
+		}
+		if thunderSecret != "" {
+			viper.Set("thunder.admin_client_secret", thunderSecret)
+		}
+	}
+
 	// 3. Provision OpenBao via the management server.
 	client, ctx, closeConn, err := dialServer(ctx)
 	if err != nil {

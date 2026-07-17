@@ -32,20 +32,25 @@ import (
 	k8s "github.com/wso2/aep/aepctl/internal/kubernetes"
 )
 
-var configureFile string
+var configCmd = &cobra.Command{
+	Use:   "config",
+	Short: "Manage the in-cluster AEP configuration",
+}
 
-var configureCmd = &cobra.Command{
-	Use:   "configure",
+var configImportFile string
+
+var configImportCmd = &cobra.Command{
+	Use:   "import",
 	Short: "Apply a local config file to the in-cluster aep-cli-config ConfigMap",
 	Long: `Reads a local YAML config file and upserts the aep-cli-config ConfigMap
 in the wso2-aep namespace. Use this to set or update AEP configuration
-without re-running aep init.
+without re-running aep platform install.
 
 Only keys present in the file are written; existing keys not in the file
 are left untouched. thunder.admin_client_secret is intentionally ignored
 — it is managed by OpenBao/ESO and never stored in the ConfigMap.
 
-Example config file (~/.aep/config.yaml):
+Example config file:
 
   server: http://aep-server.openchoreo.localhost:8080
 
@@ -79,24 +84,25 @@ Example config file (~/.aep/config.yaml):
     delivery_url: https://webhook.example.com
     local_smee:
       enabled: false`,
-	RunE: runConfigure,
+	RunE: runConfigImport,
 }
 
 func init() {
-	platformCmd.AddCommand(configureCmd)
-	configureCmd.Flags().StringVar(&configureFile, "config", "", "path to local config YAML file (required)")
-	_ = configureCmd.MarkFlagRequired("config")
+	platformCmd.AddCommand(configCmd)
+	configCmd.AddCommand(configImportCmd)
+	configImportCmd.Flags().StringVar(&configImportFile, "config", "", "path to local config YAML file (required)")
+	_ = configImportCmd.MarkFlagRequired("config")
 }
 
-func runConfigure(cmd *cobra.Command, args []string) error {
+func runConfigImport(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
 	// Read the local file into a standalone viper instance so it does not
 	// interfere with the global viper used by the rest of the CLI.
 	fv := viper.New()
-	fv.SetConfigFile(configureFile)
+	fv.SetConfigFile(configImportFile)
 	if err := fv.ReadInConfig(); err != nil {
-		return fmt.Errorf("read config file %s: %w", configureFile, err)
+		return fmt.Errorf("read config file %s: %w", configImportFile, err)
 	}
 
 	if fv.IsSet("thunder.admin_client_secret") {
@@ -111,7 +117,7 @@ func runConfigure(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if len(data) == 0 {
-		return fmt.Errorf("no recognised config keys found in %s", configureFile)
+		return fmt.Errorf("no recognised config keys found in %s", configImportFile)
 	}
 
 	client, err := k8s.NewClient(kubeconfig)

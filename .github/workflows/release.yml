@@ -145,6 +145,7 @@ jobs:
           yq -i '.console.image.tag = "${{ inputs.version }}"' /tmp/platform/values.yaml
           yq -i '.console.image.pullPolicy = "IfNotPresent"' /tmp/platform/values.yaml
           yq -i '.codingAgentDispatch.clusterGatewayProxy.image = "${{ env.IMAGE_PREFIX }}/cluster-gateway-proxy:${{ inputs.version }}"' /tmp/platform/values.yaml
+          yq -i '.codingAgentRunner.image = "${{ env.IMAGE_PREFIX }}/remote-worker:${{ inputs.version }}"' /tmp/platform/values.yaml
           yq -i '.validationRunner.image = "${{ env.IMAGE_PREFIX }}/remote-worker-validation:${{ inputs.version }}"' /tmp/platform/values.yaml
 
           helm package /tmp/platform --destination /tmp/charts
@@ -180,8 +181,9 @@ jobs:
           helm install aep oci://ghcr.io/wso2/aep/charts/bootstrap \\
             --version ${{ inputs.version }} -n wso2-aep --create-namespace
 
-          aep connect --server http://aep-server.openchoreo.localhost:8080
-          aep init --platform-version ${{ inputs.version }}
+          aep platform install \\
+            --server http://aep-server.openchoreo.localhost:8080 \\
+            --platform-version ${{ inputs.version }}
           \`\`\`
 
           ### Images
