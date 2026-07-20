@@ -1,3 +1,10 @@
+localSecrets:
+  # LOCAL DEV ONLY. When true, ESO ExternalSecrets and SecretStore are not
+  # deployed — the chart expects plain K8s Secrets with the right names to
+  # already exist (created by deployments/scripts/setup-local-secrets.sh).
+  # In production (false), ESO syncs secrets from OpenBao as normal.
+  enabled: false
+
 aepApi:
   replicas: 1
   image:

@@ -23,6 +23,10 @@ spec:
         # Shared workspaces PVC is handed to the pod's fsGroup so the
         # non-root runtime user (uid 1000) can write it.
         fsGroup: 1000
+      initContainers:
+        - name: wait-for-postgres
+          image: busybox:1.36
+          command: ['sh', '-c', 'until nc -z postgres.{{ .Release.Namespace }}.svc.cluster.local 5432; do sleep 2; done']
       containers:
         - name: aep-api
           image: "{{ .Values.aepApi.image.repository }}:{{ .Values.aepApi.image.tag }}"
@@ -165,7 +169,7 @@ spec:
                   name: postgres-secrets
                   key: POSTGRES_PASSWORD
             - name: DATABASE_URL
-              value: "postgresql://{{ .Values.postgres.user }}:$(POSTGRES_PASSWORD)@postgres.{{ .Release.Namespace }}.svc.cluster.local:5432/{{ .Values.postgres.database }}"
+              value: "postgresql://{{ .Values.postgres.user }}:$(POSTGRES_PASSWORD)@postgres.{{ .Release.Namespace }}.svc.cluster.local:5432/{{ .Values.postgres.database }}?sslmode=disable"
             {{- if .Values.temporal.enabled }}
             # Temporal (devflow workflows). Points the in-process worker at the
             # in-cluster temporal-frontend Service. Plain host:port — CoreDNS

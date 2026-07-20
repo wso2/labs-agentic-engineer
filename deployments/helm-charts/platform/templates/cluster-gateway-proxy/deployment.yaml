@@ -24,7 +24,7 @@ spec:
       containers:
         - name: cluster-gateway-proxy
           image: {{ .Values.codingAgentDispatch.clusterGatewayProxy.image | quote }}
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: {{ .Values.codingAgentDispatch.clusterGatewayProxy.port }}
               name: http

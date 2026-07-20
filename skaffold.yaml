@@ -1,0 +1,112 @@
+# Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+#
+# WSO2 LLC. licenses this file to you under the Apache License,
+# Version 2.0 (the "License"); you may not use this file except
+# in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# Local dev inner loop: build → load into k3d → deploy via Helm → watch.
+#
+# Prerequisites (run once per cluster):
+#   ./deployments/scripts/setup-k3d.sh   # k3d + OpenChoreo
+#   make setup-local                      # secrets + Thunder clients
+#
+# Usage:
+#   make dev-cluster      # skaffold dev (watch + rebuild on change)
+#   make deploy-local     # skaffold run (one-shot build + deploy)
+
+apiVersion: skaffold/v4beta11
+kind: Config
+metadata:
+  name: aep
+
+build:
+  local:
+    # k3d is detected automatically — Skaffold loads images via `k3d image import`
+    # instead of pushing to a registry. TS service images use this path.
+    push: false
+  artifacts:
+    # aep-api requires a BuildKit named context for the skills/ directory.
+    # A custom builder passes --build-context so the existing Dockerfile is
+    # unchanged and production CI is unaffected.
+    - image: ghcr.io/wso2/aep/aep-api
+      custom:
+        buildCommand: |
+          docker build \
+            --build-context skills=./skills \
+            -f services/aep-api/Dockerfile \
+            -t "$IMAGE" \
+            ./services/aep-api
+          if [ "${PUSH_IMAGE}" = "false" ]; then
+            k3d image import "$IMAGE" --cluster openchoreo
+          fi
+        dependencies:
+          paths:
+            - services/aep-api/**
+            - skills/**
+          ignore:
+            - services/aep-api/bin/**
+
+    - image: ghcr.io/wso2/aep/agents
+      context: .
+      docker:
+        dockerfile: services/agents/Dockerfile
+
+    - image: ghcr.io/wso2/aep/collab
+      context: .
+      docker:
+        dockerfile: services/collab/Dockerfile
+
+    - image: ghcr.io/wso2/aep/aep-mcp-server
+      context: .
+      docker:
+        dockerfile: services/aep-mcp-server/Dockerfile
+
+    - image: ghcr.io/wso2/aep/console
+      context: .
+      docker:
+        dockerfile: apps/console/Dockerfile
+
+    - image: ghcr.io/wso2/aep/cluster-gateway-proxy
+      context: deployments/local-cluster-gateway-proxy
+      docker:
+        dockerfile: Dockerfile
+
+deploy:
+  helm:
+    releases:
+      - name: aep-platform
+        namespace: wso2-aep
+        createNamespace: false  # namespace + secrets created by setup-local-secrets.sh
+        chartPath: deployments/helm-charts/platform
+        valuesFiles:
+          - deployments/helm-charts/platform/values.yaml
+          - deployments/helm-charts/platform/values.local.yaml
+        setValueTemplates:
+          aepApi.image.repository: "{{.IMAGE_REPO_ghcr_io_wso2_aep_aep_api}}"
+          aepApi.image.tag: "{{.IMAGE_TAG_ghcr_io_wso2_aep_aep_api}}"
+          aepAgents.image.repository: "{{.IMAGE_REPO_ghcr_io_wso2_aep_agents}}"
+          aepAgents.image.tag: "{{.IMAGE_TAG_ghcr_io_wso2_aep_agents}}"
+          collab.image.repository: "{{.IMAGE_REPO_ghcr_io_wso2_aep_collab}}"
+          collab.image.tag: "{{.IMAGE_TAG_ghcr_io_wso2_aep_collab}}"
+          aepMcpServer.image.repository: "{{.IMAGE_REPO_ghcr_io_wso2_aep_aep_mcp_server}}"
+          aepMcpServer.image.tag: "{{.IMAGE_TAG_ghcr_io_wso2_aep_aep_mcp_server}}"
+          console.image.repository: "{{.IMAGE_REPO_ghcr_io_wso2_aep_console}}"
+          console.image.tag: "{{.IMAGE_TAG_ghcr_io_wso2_aep_console}}"
+          codingAgentDispatch.clusterGatewayProxy.image: "{{.IMAGE_REPO_ghcr_io_wso2_aep_cluster_gateway_proxy}}:{{.IMAGE_TAG_ghcr_io_wso2_aep_cluster_gateway_proxy}}"
+
+portForward:
+  - resourceType: service
+    resourceName: aep-api
+    namespace: wso2-aep
+    port: 9090
+    localPort: 9090

@@ -46,7 +46,7 @@ LICENSE_HEADER := .github/license-header.txt
 LICENSE_MATCH = grep -E '\.(go|ts|tsx|sh)$$|(^|/)Dockerfile$$' | \
 	grep -vE '\.gen\.(go|ts)$$|_mock\.go$$|/mocks/|/node_modules/|/dist/|/generated/|(^|/)\.(agents|claude)/'
 
-.PHONY: install gen build dev test lint typecheck license license-check tools clean eval cover build-validation-runner
+.PHONY: install gen build dev test lint typecheck license license-check tools clean eval cover build-validation-runner setup-local dev-cluster deploy-local
 
 install:
 	$(PNPM) install
@@ -106,6 +106,23 @@ tools:
 # rebuild after changing Dockerfile.validation — `make build-validation-runner FORCE=1`.
 build-validation-runner:
 	FORCE=$(FORCE) bash deployments/scripts/build-validation-runner.sh
+
+# ── Local in-cluster dev (Skaffold + k3d) ────────────────────────────────────
+# Run once per cluster after setup-k3d.sh. Creates K8s Secrets and registers
+# AEP OAuth clients in Thunder. Idempotent.
+#   Requires: ANTHROPIC_API_KEY env var
+setup-local:
+	bash deployments/scripts/setup-local-secrets.sh
+
+# Inner dev loop: build images, load into k3d, deploy via Helm, watch for changes.
+# Console: http://console.openchoreo.localhost:8080
+# aep-api: http://localhost:9090 (port-forwarded by Skaffold)
+dev-cluster:
+	skaffold dev --kube-context k3d-openchoreo -f skaffold.yaml
+
+# One-shot build + deploy (no watch). Useful for CI smoke tests or resetting state.
+deploy-local:
+	skaffold run --kube-context k3d-openchoreo -f skaffold.yaml
 
 clean:
 	$(TURBO) run build --force >/dev/null 2>&1 || true

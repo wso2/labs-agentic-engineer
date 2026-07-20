@@ -28,6 +28,10 @@ spec:
         app: temporal-frontend
         app.kubernetes.io/part-of: wso2-aep
     spec:
+      initContainers:
+        - name: wait-for-postgres
+          image: busybox:1.36
+          command: ['sh', '-c', 'until nc -z postgres.{{ .Release.Namespace }}.svc.cluster.local 5432; do sleep 2; done']
       containers:
         - name: temporal
           image: "{{ .Values.temporal.image }}"
