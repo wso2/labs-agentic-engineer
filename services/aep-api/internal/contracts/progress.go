@@ -57,6 +57,10 @@ type ProgressEvent struct {
 	StartedAt   string `json:"startedAt,omitempty"`
 	CompletedAt string `json:"completedAt,omitempty"`
 	Message     string `json:"message,omitempty"`
+
+	// result: the run's token usage (#249), present once the runner captures
+	// it from the SDK terminal message.
+	Usage *TokenUsage `json:"usage,omitempty"`
 }
 
 // ProgressResponse is the envelope the progress reader returns per execution.

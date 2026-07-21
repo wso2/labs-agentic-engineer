@@ -47,6 +47,7 @@ export type {
   McpConfig,
   CollabConfig,
   ManifestPart,
+  TurnUsage,
   Toolset,
   AgentSseEventType,
 } from "./contracts/sse-events.js";

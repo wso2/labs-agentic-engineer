@@ -24,6 +24,8 @@ import (
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+
+	"github.com/wso2/aep/aep-api/internal/contracts"
 )
 
 // The agent_turns store was extracted out of the genai turn engine (now internal/spec) during the
@@ -61,6 +63,9 @@ type TurnTerminal struct {
 	Paths     []string
 	NoChanges bool
 	Message   string
+	// Usage is the turn's token usage off the terminal manifest (#249); nil
+	// when the stream carried none (failed turns, pre-capture agents).
+	Usage *contracts.TokenUsage
 }
 
 // TurnRepository is the agent_turns row store (design D17/D18): the durable
@@ -95,6 +100,11 @@ type TurnRepository interface {
 	// (reason stream-died, message "replica crashed or hung") and returns the
 	// swept rows so the caller can emit broker terminals.
 	SweepStale(ctx context.Context, olderThan time.Time) ([]AgentTurn, error)
+
+	// SumUsage aggregates captured token usage over a project's turns (#245);
+	// a non-nil since bounds it to turns created after that instant — the
+	// draft-cycle read (spend since the last published tag).
+	SumUsage(ctx context.Context, orgID, projectID string, since *time.Time) (contracts.TokenUsage, error)
 }
 
 type turnRepository struct {
@@ -142,17 +152,25 @@ func (r *turnRepository) Heartbeat(ctx context.Context, id string) error {
 }
 
 func (r *turnRepository) Finish(ctx context.Context, id string, terminal TurnTerminal) (bool, error) {
+	updates := map[string]any{
+		"status":     terminal.Status,
+		"commit_sha": terminal.CommitSHA,
+		"reason":     terminal.Reason,
+		"paths":      encodePaths(terminal.Paths),
+		"no_changes": terminal.NoChanges,
+		"message":    terminal.Message,
+	}
+	if u := terminal.Usage; u != nil {
+		updates["input_tokens"] = u.InputTokens
+		updates["output_tokens"] = u.OutputTokens
+		updates["cache_read_tokens"] = u.CacheReadTokens
+		updates["cache_creation_tokens"] = u.CacheCreationTokens
+		updates["model_id"] = u.Model
+	}
 	res := r.db.WithContext(ctx).
 		Model(&AgentTurn{}).
 		Where("id = ? AND status = ?", id, turnStatusRunning).
-		Updates(map[string]any{
-			"status":     terminal.Status,
-			"commit_sha": terminal.CommitSHA,
-			"reason":     terminal.Reason,
-			"paths":      encodePaths(terminal.Paths),
-			"no_changes": terminal.NoChanges,
-			"message":    terminal.Message,
-		})
+		Updates(updates)
 	if res.Error != nil {
 		return false, res.Error
 	}
@@ -231,6 +249,42 @@ func encodePaths(paths []string) string {
 		return ""
 	}
 	return string(b)
+}
+
+func (r *turnRepository) SumUsage(ctx context.Context, orgID, projectID string, since *time.Time) (contracts.TokenUsage, error) {
+	q := r.db.WithContext(ctx).
+		Model(&AgentTurn{}).
+		Select("COALESCE(SUM(input_tokens),0) AS input_tokens, "+
+			"COALESCE(SUM(output_tokens),0) AS output_tokens, "+
+			"COALESCE(SUM(cache_read_tokens),0) AS cache_read_tokens, "+
+			"COALESCE(SUM(cache_creation_tokens),0) AS cache_creation_tokens, "+
+			"COUNT(DISTINCT model_id) FILTER (WHERE model_id <> '') AS models, "+
+			"COALESCE(MAX(model_id) FILTER (WHERE model_id <> ''), '') AS max_model").
+		Where("org_id = ? AND project_id = ?", orgID, projectID)
+	if since != nil {
+		q = q.Where("created_at > ?", *since)
+	}
+	var row struct {
+		InputTokens         int64
+		OutputTokens        int64
+		CacheReadTokens     int64
+		CacheCreationTokens int64
+		Models              int64
+		MaxModel            string
+	}
+	if err := q.Scan(&row).Error; err != nil {
+		return contracts.TokenUsage{}, err
+	}
+	u := contracts.TokenUsage{
+		InputTokens:         row.InputTokens,
+		OutputTokens:        row.OutputTokens,
+		CacheReadTokens:     row.CacheReadTokens,
+		CacheCreationTokens: row.CacheCreationTokens,
+	}
+	if row.Models == 1 {
+		u.Model = row.MaxModel
+	}
+	return u, nil
 }
 
 // decodePaths reads the JSON array back (nil for empty/invalid).

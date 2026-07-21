@@ -32,6 +32,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wso2/aep/aep-api/internal/contracts"
 	"github.com/wso2/aep/aep-api/internal/delivery"
 
 	"github.com/wso2/aep/aep-api/internal/gen"
@@ -156,6 +157,18 @@ func (f *fakeExecs) ListByIssueScoped(context.Context, string, string, int) ([]d
 	return nil, nil
 }
 func (f *fakeExecs) ListActive(context.Context) ([]delivery.Execution, error) { return nil, nil }
+func (f *fakeExecs) RecordUsage(context.Context, string, contracts.TokenUsage) error {
+	return nil
+}
+func (f *fakeExecs) SumUsageByKind(context.Context, string, string) (map[string]contracts.TokenUsage, error) {
+	return nil, nil
+}
+func (f *fakeExecs) SumUsageByIssue(context.Context, string, string) (map[int]contracts.TokenUsage, error) {
+	return nil, nil
+}
+func (f *fakeExecs) SumUsageBySpecTag(context.Context, string, string) (map[string]contracts.TokenUsage, error) {
+	return nil, nil
+}
 
 type fakeSkillsProvisioner struct{ called chan string }
 

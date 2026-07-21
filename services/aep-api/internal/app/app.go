@@ -65,6 +65,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/auth/jwtassertion"
 	"github.com/wso2/aep/aep-api/internal/platform/gitfs"
 	"github.com/wso2/aep/aep-api/internal/platform/gitfs/reaper"
+	"github.com/wso2/aep/aep-api/internal/platform/modelcost"
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 	"github.com/wso2/aep/aep-api/internal/projects"
 	projectshttpapi "github.com/wso2/aep/aep-api/internal/projects/httpapi"
@@ -116,6 +117,14 @@ func Assemble(cfg config.Config, in Infra) (*App, error) {
 
 	// Repositories
 	executionRepo := delivery.NewExecutionRepository(db)
+	// Read-time USD derivation for every usage surface (#245, ADR-0011).
+	pricer := modelcost.New(modelcost.Rates{
+		ModelID:              cfg.ModelPricing.ModelID,
+		InputUSDPerMTok:      cfg.ModelPricing.InputUSDPerMTok,
+		OutputUSDPerMTok:     cfg.ModelPricing.OutputUSDPerMTok,
+		CacheReadUSDPerMTok:  cfg.ModelPricing.CacheReadUSDPerMTok,
+		CacheWriteUSDPerMTok: cfg.ModelPricing.CacheWriteUSDPerMTok,
+	})
 	configRepo := projects.NewConfigRepository(db)
 	repoRepo := sourcecontrol.NewRepoRepository(db)
 	workflowRunRepo := delivery.NewWorkflowRunRepository(db)
@@ -410,7 +419,7 @@ func Assemble(cfg config.Config, in Infra) (*App, error) {
 	// half (funnel, coding executor, watchers) is wired below, after
 	// asServiceIdentity. repoService/artifactStore/artifactSvcGit/gitOpsService
 	// satisfy the task consumer ports directly.
-	taskReads := task.NewReads(issueService, repoService, executionRepo, artifactSvcGit, designComponents{store: artifactStore})
+	taskReads := task.NewReads(issueService, repoService, executionRepo, artifactSvcGit, designComponents{store: artifactStore}, pricer)
 	taskPlan := task.NewPlanService(repoService, artifactSvcGit, gitOpsService,
 		anthropicKeyForGenAI, agentsvcClient, issueService, workspaceEngine, task.SkillsRepoResolver(skillsRepoForTurns))
 
@@ -805,6 +814,9 @@ func Assemble(cfg config.Config, in Infra) (*App, error) {
 		ProjectSvc:   projectService,
 		ComponentSvc: componentService,
 		ConfigSvc:    configService,
+		TurnUsage:    spec.NewUsageReader(turnRepo, repoRepo, gitOpsService),
+		ExecUsage:    executionRepo,
+		Pricer:       pricer,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("assemble projects domain: %w", err)
@@ -869,6 +881,8 @@ func Assemble(cfg config.Config, in Infra) (*App, error) {
 		Store:  workflowRunRepo,
 		Repos:  repoFullNameLookup{repos: repoRepo},
 		Tagger: buildSpecTagger{art: artifactSvcGit},
+		Usage:  executionRepo,
+		Pricer: pricer,
 		Tasks:  taskReads,
 		Coord: build.NewInputsCoordinator(
 			designService,                        // SpecCollector (CollectSpec)

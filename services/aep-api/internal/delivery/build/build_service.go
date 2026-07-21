@@ -32,6 +32,7 @@ import (
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/gen"
+	"github.com/wso2/aep/aep-api/internal/platform/modelcost"
 
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 	"github.com/wso2/aep/aep-api/internal/spec"
@@ -64,6 +65,8 @@ type Service struct {
 	tagger SpecTagger
 	tasks  TaskReader
 	coord  *InputsCoordinator
+	usage  UsageReader
+	pricer *modelcost.Pricer
 }
 
 // Deps carries the service's ports.
@@ -77,11 +80,15 @@ type Deps struct {
 	// Nil-safe: a build with no coordinator (and no inputs) behaves exactly as
 	// before this feature.
 	Coord *InputsCoordinator
+	// Usage + Pricer attach each build summary's captured spend (#245,
+	// ADR-0011). Nil-safe: without them the list simply carries no usage.
+	Usage  UsageReader
+	Pricer *modelcost.Pricer
 }
 
 // NewService wires the build service.
 func NewService(d Deps) *Service {
-	return &Service{runner: d.Runner, store: d.Store, repos: d.Repos, tagger: d.Tagger, tasks: d.Tasks, coord: d.Coord}
+	return &Service{runner: d.Runner, store: d.Store, repos: d.Repos, tagger: d.Tagger, tasks: d.Tasks, coord: d.Coord, usage: d.Usage, pricer: d.Pricer}
 }
 
 // --- wire shapes (names drive the generated schema names — keep them exactly
@@ -177,6 +184,9 @@ type BuildSummary struct {
 	Tasks       BuildTally `json:"tasks"`
 	StartedAt   time.Time  `json:"startedAt"`
 	CompletedAt *time.Time `json:"completedAt,omitempty"`
+	// Usage is the tag lineage's captured execution spend (#245), accruing
+	// while the build runs; absent when nothing was captured.
+	Usage *delivery.UsageView `json:"usage,omitempty"`
 }
 
 // BuildList is the list-project-builds response, newest build first.

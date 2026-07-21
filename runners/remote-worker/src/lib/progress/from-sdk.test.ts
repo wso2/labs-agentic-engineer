@@ -46,6 +46,85 @@ test("from-sdk: result error → failure result with errors joined", () => {
   });
 });
 
+test("from-sdk: result with modelUsage → usage summed, model = dominant entry (#249)", () => {
+  const events = progressFromSdkMessage({
+    type: "result",
+    subtype: "success",
+    total_cost_usd: 0.42, // must NOT appear on the wire (ADR-0011)
+    modelUsage: {
+      "claude-haiku-4-5": { inputTokens: 10, outputTokens: 5, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, costUSD: 0.01 },
+      "claude-sonnet-4-5": { inputTokens: 1200, outputTokens: 300, cacheReadInputTokens: 5000, cacheCreationInputTokens: 800, costUSD: 0.41 },
+    },
+  });
+  assert.equal(events.length, 1);
+  assert.deepEqual(events[0], {
+    kind: "result",
+    status: "success",
+    usage: {
+      inputTokens: 1210,
+      outputTokens: 305,
+      cacheReadTokens: 5000,
+      cacheCreationTokens: 800,
+      model: "claude-sonnet-4-5",
+    },
+  });
+});
+
+test("from-sdk: result without modelUsage falls back to the snake_case usage field (#249)", () => {
+  const events = progressFromSdkMessage({
+    type: "result",
+    subtype: "success",
+    usage: {
+      input_tokens: 100,
+      output_tokens: 40,
+      cache_read_input_tokens: 900,
+      cache_creation_input_tokens: 60,
+    },
+  });
+  assert.equal(events.length, 1);
+  assert.deepEqual(events[0], {
+    kind: "result",
+    status: "success",
+    usage: {
+      inputTokens: 100,
+      outputTokens: 40,
+      cacheReadTokens: 900,
+      cacheCreationTokens: 60,
+      model: "",
+    },
+  });
+});
+
+test("from-sdk: failure result still carries usage when present (#249)", () => {
+  const events = progressFromSdkMessage({
+    type: "result",
+    subtype: "error_max_turns",
+    errors: [],
+    modelUsage: {
+      "claude-sonnet-4-5": { inputTokens: 7, outputTokens: 3, cacheReadInputTokens: 2, cacheCreationInputTokens: 1, costUSD: 0.001 },
+    },
+  });
+  assert.equal(events.length, 1);
+  assert.deepEqual(events[0], {
+    kind: "result",
+    status: "failure",
+    error: "error_max_turns",
+    usage: {
+      inputTokens: 7,
+      outputTokens: 3,
+      cacheReadTokens: 2,
+      cacheCreationTokens: 1,
+      model: "claude-sonnet-4-5",
+    },
+  });
+});
+
+test("from-sdk: no modelUsage and no usage → result event without a usage field (#249)", () => {
+  const events = progressFromSdkMessage({ type: "result", subtype: "success", modelUsage: {} });
+  assert.equal(events.length, 1);
+  assert.deepEqual(events[0], { kind: "result", status: "success" });
+});
+
 test("from-sdk: assistant Bash git commit -m → git_commit event with message", () => {
   const events = progressFromSdkMessage({
     type: "assistant",

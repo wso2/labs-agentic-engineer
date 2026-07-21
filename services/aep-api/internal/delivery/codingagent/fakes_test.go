@@ -24,6 +24,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 
+	"github.com/wso2/aep/aep-api/internal/contracts"
 	"github.com/wso2/aep/aep-api/internal/contracts/taskmeta"
 )
 
@@ -256,5 +257,27 @@ func (f *fakeExecRepo) ListByIssueScoped(context.Context, string, string, int) (
 func (f *fakeExecRepo) DeleteByProject(context.Context, string, string) error { return nil }
 
 func (f *fakeExecRepo) DistinctDeployedProjects(context.Context) ([]delivery.DeployedProjectRef, error) {
+	return nil, nil
+}
+
+func (f *fakeExecRepo) RecordUsage(_ context.Context, id string, u contracts.TokenUsage) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if row, ok := f.rows[id]; ok {
+		row.InputTokens = u.InputTokens
+		row.OutputTokens = u.OutputTokens
+		row.CacheReadTokens = u.CacheReadTokens
+		row.CacheCreationTokens = u.CacheCreationTokens
+		row.ModelID = u.Model
+	}
+	return nil
+}
+func (f *fakeExecRepo) SumUsageByKind(context.Context, string, string) (map[string]contracts.TokenUsage, error) {
+	return nil, nil
+}
+func (f *fakeExecRepo) SumUsageByIssue(context.Context, string, string) (map[int]contracts.TokenUsage, error) {
+	return nil, nil
+}
+func (f *fakeExecRepo) SumUsageBySpecTag(context.Context, string, string) (map[string]contracts.TokenUsage, error) {
 	return nil, nil
 }

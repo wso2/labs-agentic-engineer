@@ -219,6 +219,13 @@ export function runClaudeQuery(
           emit(event);
         }
         if (message.type === "result") {
+          // #249: tokens on the result event are the wire truth; the SDK's own
+          // cost figure never rides it (USD is derived server-side from tokens
+          // + model, console ADR-0011). Log it to stderr as a reconciliation
+          // cross-check only — stdout stays the emitter's.
+          if (typeof message.total_cost_usd === "number") {
+            process.stderr.write(`usage cross-check: sdk total_cost_usd=${message.total_cost_usd}\n`);
+          }
           if (message.subtype === "success") {
             return { exitCode: 0 };
           }

@@ -16,6 +16,8 @@
  * under the License.
  */
 
+import type { TurnUsage } from "./contracts/sse-events.js";
+
 /**
  * The minimal structural shape of the stream parts the loop forwards (the seam
  * `runTurn`'s `onEvent`, `change.ts`, and the SSE route are typed against).
@@ -45,4 +47,6 @@ export interface StreamPart {
   files?: Record<string, string>;
   /** Manifest-part field: touched paths no longer present at turn end. */
   deleted?: string[];
+  /** Manifest-part field (#249): the turn's token usage + resolved model id. */
+  usage?: TurnUsage;
 }

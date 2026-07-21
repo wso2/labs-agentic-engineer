@@ -76,11 +76,25 @@ export interface LogEvent extends ProgressEnvelope {
   summary: string;
 }
 
+// Per-run token usage on the terminal result event (#249). Field names are the
+// pinned cross-runtime wire shape (shared with the spec-agent manifest's
+// `usage`); the Go observer parses exactly these, so they must not drift.
+// Tokens only — no cost field: USD is derived server-side from tokens + model
+// (console ADR-0011); the SDK's total_cost_usd goes to stderr as a cross-check.
+export interface ResultUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  model: string;
+}
+
 export interface ResultEvent extends ProgressEnvelope {
   kind: "result";
   status: "success" | "failure";
   summary?: string;
   error?: string;
+  usage?: ResultUsage;
 }
 
 export type ProgressEvent =
@@ -101,4 +115,4 @@ export type ProgressEventInput =
   | { kind: "git_push"; sha?: string; branch?: string; summary?: string }
   | { kind: "gh_action"; command: string; summary?: string }
   | { kind: "log"; level?: "info" | "warn" | "error"; summary: string }
-  | { kind: "result"; status: "success" | "failure"; summary?: string; error?: string };
+  | { kind: "result"; status: "success" | "failure"; summary?: string; error?: string; usage?: ResultUsage };

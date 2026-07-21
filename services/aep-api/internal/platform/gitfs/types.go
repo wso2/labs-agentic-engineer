@@ -195,6 +195,9 @@ type TagInfo struct {
 	Name       string `json:"name"`
 	CommitHash string `json:"commitHash"`
 	Message    string `json:"message,omitempty"`
+	// CreatedAt is the tag's creatordate (tagger date for annotated tags,
+	// commit date for lightweight ones). Zero when git reports none.
+	CreatedAt time.Time `json:"createdAt,omitempty"`
 }
 
 // GitIdentity is a git author/committer/tagger identity. Field names and

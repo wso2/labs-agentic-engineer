@@ -16,6 +16,13 @@
 
 package projects
 
+import (
+	"context"
+
+	"github.com/wso2/aep/aep-api/internal/contracts"
+	"github.com/wso2/aep/aep-api/internal/platform/modelcost"
+)
+
 // Deps is what this domain must be handed to exist: the concrete project
 // service plus the component/config service ports the slices call. Constructor
 // injection only.
@@ -32,4 +39,23 @@ type Deps struct {
 	ComponentSvc ComponentService
 	// ConfigSvc is the component env-var config service behind the two config ops.
 	ConfigSvc ConfigService
+	// TurnUsage + ExecUsage + Pricer back get-project-usage (#245): the two
+	// capture stores' rollups and the read-time USD derivation (ADR-0011).
+	// Nil-tolerant — unwired ports answer zero usage.
+	TurnUsage TurnUsageReader
+	ExecUsage ExecUsageReader
+	Pricer    *modelcost.Pricer
+}
+
+// TurnUsageReader is the spec phase's usage-rollup port (#245): lifetime
+// spec/design turn spend plus the current drafting cycle. Satisfied by
+// spec.UsageReader.
+type TurnUsageReader interface {
+	ProjectTurnUsage(ctx context.Context, orgID, projectID string) (all, draftCycle contracts.TokenUsage, err error)
+}
+
+// ExecUsageReader is the execution phases' usage-rollup port: captured usage
+// grouped by execution kind. Satisfied by delivery.ExecutionRepository.
+type ExecUsageReader interface {
+	SumUsageByKind(ctx context.Context, orgID, projectID string) (map[string]contracts.TokenUsage, error)
 }

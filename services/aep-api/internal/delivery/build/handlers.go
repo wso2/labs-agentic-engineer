@@ -217,6 +217,16 @@ func toBuildList(l BuildList) gen.BuildList {
 			},
 		}
 		s.CompletedAt = b.CompletedAt // nil while running — omitted on the wire
+		if b.Usage != nil {
+			s.Usage = gen.Usage{
+				InputTokens:         b.Usage.InputTokens,
+				OutputTokens:        b.Usage.OutputTokens,
+				CacheReadTokens:     b.Usage.CacheReadTokens,
+				CacheCreationTokens: b.Usage.CacheCreationTokens,
+				Model:               b.Usage.Model,
+				CostUsd:             b.Usage.CostUsd,
+			}
+		}
 		builds = append(builds, s)
 	}
 	return gen.BuildList{Builds: builds}

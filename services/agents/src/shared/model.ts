@@ -96,6 +96,15 @@ export interface LlmConfig {
 }
 
 /**
+ * The model id `createModel` resolves for `cfg`. Exported so the composition
+ * root can thread the SAME id it instantiates into the turn (usage attribution
+ * on the terminal manifest, #249) instead of re-deriving the default elsewhere.
+ */
+export function resolveModelId(cfg: Pick<LlmConfig, "model"> = {}): string {
+  return cfg.model ?? config.model;
+}
+
+/**
  * Build a Vercel AI SDK `LanguageModel` from resolved credentials. This is the
  * ONLY function that knows which provider SDK to instantiate.
  */
@@ -104,7 +113,7 @@ export function createModel(cfg: LlmConfig): LanguageModel {
     apiKey: cfg.apiKey,
     ...(cfg.baseURL ? { baseURL: cfg.baseURL } : {}),
   });
-  const model = provider(cfg.model ?? config.model);
+  const model = provider(resolveModelId(cfg));
   // AI SDK DevTools (AGENT_DEVTOOLS): wrap the model so every LLM call/step —
   // request, response, tool calls, token usage, timing — is captured to
   // `.devtools/generations.json` (and pushed to a running viewer on

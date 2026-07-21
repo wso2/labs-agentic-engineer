@@ -20,7 +20,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
+	"github.com/wso2/aep/aep-api/internal/contracts"
 	"github.com/wso2/aep/aep-api/internal/delivery"
 )
 
@@ -80,6 +82,7 @@ func (s *Service) List(ctx context.Context, orgID, projectID string) (BuildList,
 	if err != nil {
 		return BuildList{}, fmt.Errorf("list builds: %w", err)
 	}
+	usageByTag := s.usageByTag(ctx, orgID, projectID)
 	seen := make(map[string]bool, len(rows))
 	builds := make([]BuildSummary, 0, len(rows))
 	for _, row := range rows {
@@ -107,7 +110,26 @@ func (s *Service) List(ctx context.Context, orgID, projectID string) (BuildList,
 			completed := row.UpdatedAt
 			b.CompletedAt = &completed
 		}
+		// The tag lineage's captured spend (#245): accrues on this same read
+		// while the build runs; absent when nothing was captured.
+		if u, ok := usageByTag[row.Tag]; ok && !u.IsZero() {
+			b.Usage = delivery.NewUsageView(u, s.pricer.Cost(u))
+		}
 		builds = append(builds, b)
 	}
 	return BuildList{Builds: builds}, nil
+}
+
+// usageByTag fetches the project's per-spec-tag usage rollup; unwired deps or
+// a load failure degrade to no usage figures (never a failed list).
+func (s *Service) usageByTag(ctx context.Context, orgID, projectID string) map[string]contracts.TokenUsage {
+	if s.usage == nil || s.pricer == nil {
+		return nil
+	}
+	usage, err := s.usage.SumUsageBySpecTag(ctx, orgID, projectID)
+	if err != nil {
+		slog.WarnContext(ctx, "build: load usage rollup failed", "project", projectID, "error", err)
+		return nil
+	}
+	return usage
 }

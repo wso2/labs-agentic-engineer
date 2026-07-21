@@ -285,6 +285,51 @@ test("manifest: a rejected/noop op does not appear (touched = applied only)", as
   assert.deepEqual(manifest.deleted, []);
 });
 
+test("manifest: carries the turn's summed token usage and the injected model id (#249)", async () => {
+  const store = new InMemoryConversationStore();
+  const guard = new TurnGuard();
+  const { events, onEvent } = collector();
+
+  // editModel makes TWO model calls (tool step + text step); the mock emits
+  // 10 in / 5 out per call, so the whole-turn sum on the manifest is 20/10.
+  await runConversationTurn({
+    id: "u1",
+    instruction: "rename",
+    files: SEED_FILES,
+    model: editModel(),
+    modelId: "claude-test-model",
+    store,
+    guard,
+    onEvent,
+  });
+
+  const manifest = lastManifest(events);
+  assert.deepEqual(manifest.usage, {
+    inputTokens: 20,
+    outputTokens: 10,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    model: "claude-test-model",
+  });
+});
+
+test("manifest: a chat-only turn still reports usage; no injected modelId ⇒ model is \"\"", async () => {
+  const store = new InMemoryConversationStore();
+  const guard = new TurnGuard();
+  const { events, onEvent } = collector();
+
+  await runConversationTurn({ id: "u2", instruction: "just talk", files: SEED_FILES, model: textModel("hi"), store, guard, onEvent });
+
+  const manifest = lastManifest(events);
+  assert.deepEqual(manifest.usage, {
+    inputTokens: 10,
+    outputTokens: 5,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    model: "",
+  });
+});
+
 test("manifest: NOT emitted when the turn throws (severed/failed stream carries no manifest)", async () => {
   const guard = new TurnGuard();
   const { events, onEvent } = collector();

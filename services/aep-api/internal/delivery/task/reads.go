@@ -23,8 +23,10 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/wso2/aep/aep-api/internal/contracts"
 	"github.com/wso2/aep/aep-api/internal/contracts/taskmeta"
 	"github.com/wso2/aep/aep-api/internal/delivery"
+	"github.com/wso2/aep/aep-api/internal/platform/modelcost"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
@@ -40,14 +42,41 @@ type Reads struct {
 	execs    ExecutionReader
 	versions VersionReader // optional (stale-design attention)
 	design   DesignReader  // optional (dependency-gated on_hold reconciliation)
+	pricer   *modelcost.Pricer
 }
 
 // NewReads wires the read path. versions may be nil (then the stale-design
 // attention flag is not computed). design may be nil (then the dependency-gated
 // on_hold reconciliation degrades to component-dep gating only — provision /
-// org-service dep resolution is skipped).
-func NewReads(issues IssueClient, repos RepoResolver, execs ExecutionReader, versions VersionReader, design DesignReader) *Reads {
-	return &Reads{issues: issues, repos: repos, execs: execs, versions: versions, design: design}
+// org-service dep resolution is skipped). pricer derives each task's costUsd
+// from its captured tokens at read time (#245, ADR-0011); nil skips the usage
+// attach entirely.
+func NewReads(issues IssueClient, repos RepoResolver, execs ExecutionReader, versions VersionReader, design DesignReader, pricer *modelcost.Pricer) *Reads {
+	return &Reads{issues: issues, repos: repos, execs: execs, versions: versions, design: design, pricer: pricer}
+}
+
+// taskUsage fetches the repo's per-issue usage rollup; a load failure (or a
+// nil pricer) degrades to no usage captions, mirroring the executions load.
+func (r *Reads) taskUsage(ctx context.Context, orgID, repoFullName string) map[int]contracts.TokenUsage {
+	if r.pricer == nil {
+		return nil
+	}
+	usage, err := r.execs.SumUsageByIssue(ctx, orgID, repoFullName)
+	if err != nil {
+		slog.WarnContext(ctx, "reads: load task usage failed", "repo", repoFullName, "error", err)
+		return nil
+	}
+	return usage
+}
+
+// attachUsage stamps a task's aggregate usage onto its view (#245); zero
+// aggregates stay absent so pre-capture tasks render no caption.
+func (r *Reads) attachUsage(view *delivery.TaskView, usage map[int]contracts.TokenUsage) {
+	u, ok := usage[view.IssueNumber]
+	if !ok || u.IsZero() {
+		return
+	}
+	view.Usage = delivery.NewUsageView(u, r.pricer.Cost(u))
 }
 
 // List returns the project's implementation Tasks filtered by state ("open" |
@@ -93,6 +122,7 @@ func (r *Reads) ListByTag(ctx context.Context, orgID, projectID, state, tag stri
 		slog.WarnContext(ctx, "reads: load executions failed", "repo", repoFullName, "error", err)
 		execsByIssue = map[int]map[string]*delivery.Execution{}
 	}
+	usageByIssue := r.taskUsage(ctx, orgID, repoFullName)
 
 	out := make([]delivery.TaskView, 0, len(issues))
 	for _, issue := range issues {
@@ -110,6 +140,7 @@ func (r *Reads) ListByTag(ctx context.Context, orgID, projectID, state, tag stri
 		if tag != "" && view.Lineage.SpecTag != tag {
 			continue
 		}
+		r.attachUsage(&view, usageByIssue)
 		out = append(out, view)
 	}
 	// Second pass: reconcile dependency-gated coding Tasks to on_hold + BlockedBy.
@@ -314,6 +345,7 @@ func (r *Reads) Get(ctx context.Context, orgID, projectID string, issueNumber in
 	if view == nil {
 		return nil, ErrTaskNotFound
 	}
+	r.attachUsage(view, r.taskUsage(ctx, orgID, repoFullName))
 
 	history, err := r.execs.ListByIssueScoped(ctx, orgID, repoFullName, issueNumber)
 	if err != nil {

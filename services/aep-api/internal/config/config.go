@@ -105,6 +105,7 @@ type Config struct {
 
 	Observability ObservabilityConfig
 	AgentsSvc     AgentsSvcConfig
+	ModelPricing  ModelPricingConfig
 	ServiceAuth   ServiceAuthConfig
 	Workspace     WorkspaceConfig
 
@@ -297,6 +298,22 @@ type AgentsSvcConfig struct {
 	JWTSecret   string
 	JWTAudience string
 	JWTIssuer   string
+}
+
+// ModelPricingConfig holds the single active model's per-MTok USD rates
+// (#245/#249, ADR-0011): checked-in defaults, deployment-overridable via the
+// MODEL_RATE_* env vars. aep-api derives every displayed costUsd from these
+// at read time; the rates never leave the server. A usage record whose model
+// id differs from ModelID is not priced (the console degrades to tokens).
+type ModelPricingConfig struct {
+	// ModelID is the model agent work runs on (MODEL_PRICING_MODEL_ID).
+	ModelID string
+	// Rates in USD per million tokens
+	// (MODEL_RATE_{INPUT,OUTPUT,CACHE_READ,CACHE_WRITE}_PER_MTOK).
+	InputUSDPerMTok      float64
+	OutputUSDPerMTok     float64
+	CacheReadUSDPerMTok  float64
+	CacheWriteUSDPerMTok float64
 }
 
 // WorkspaceConfig holds the shared git-workspaces mount settings: the mount root

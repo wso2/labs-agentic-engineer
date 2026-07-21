@@ -16,7 +16,11 @@
 
 package delivery
 
-import "time"
+import (
+	"time"
+
+	"github.com/wso2/aep/aep-api/internal/contracts"
+)
 
 // The shared task/execution READ DTOs (§10.3.1): the projected shapes every
 // reader join produces. They live in the delivery ROOT rather than the taskflow
@@ -46,6 +50,30 @@ type ExecutionView struct {
 	EndedAt   *time.Time `json:"endedAt,omitempty"`
 }
 
+// UsageView is the Usage wire shape (#245) attached to task/build read
+// models: the persisted token counts plus the read-time-derived costUsd
+// (ADR-0011 — CostUsd nil when no rate is configured for the model).
+type UsageView struct {
+	InputTokens         int64    `json:"inputTokens"`
+	OutputTokens        int64    `json:"outputTokens"`
+	CacheReadTokens     int64    `json:"cacheReadTokens"`
+	CacheCreationTokens int64    `json:"cacheCreationTokens"`
+	Model               string   `json:"model"`
+	CostUsd             *float64 `json:"costUsd"`
+}
+
+// NewUsageView projects an aggregate + its derived cost onto the wire shape.
+func NewUsageView(u contracts.TokenUsage, costUSD *float64) *UsageView {
+	return &UsageView{
+		InputTokens:         u.InputTokens,
+		OutputTokens:        u.OutputTokens,
+		CacheReadTokens:     u.CacheReadTokens,
+		CacheCreationTokens: u.CacheCreationTokens,
+		Model:               u.Model,
+		CostUsd:             costUSD,
+	}
+}
+
 // TaskView is the list-item shape (§9.1): live GitHub facts fused with the
 // latest Execution per kind into a derived status.
 type TaskView struct {
@@ -72,6 +100,9 @@ type TaskView struct {
 	// follow-up). Empty/omitted when the Task is not dependency-gated — the board
 	// reads it to render "On hold — Waiting for X".
 	BlockedBy []string `json:"blockedBy,omitempty"`
+	// Usage is the task's aggregate captured usage across all its executions
+	// (#245); absent for tasks with none recorded.
+	Usage *UsageView `json:"usage,omitempty"`
 }
 
 // TaskDetail is the Get shape: a TaskView plus the full Execution history.

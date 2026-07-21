@@ -107,6 +107,7 @@ func (f *Funnel) OnExecuteIntent(ctx context.Context, repoFullName string, issue
 		Kind:        string(taskmeta.KindCoding),
 		Status:      string(taskmeta.ExecQueued),
 		DesignTag:   facts.DesignTag,
+		SpecTag:     facts.SpecTag,
 		Component:   facts.Component,
 	}
 	admitted, adRow, err := f.store.TryAdmit(ctx, row)
@@ -188,6 +189,7 @@ func (f *Funnel) retryBuild(ctx context.Context, facts delivery.TaskFacts, merge
 		Kind:        string(taskmeta.KindBuild),
 		Status:      string(taskmeta.ExecQueued),
 		DesignTag:   facts.DesignTag,
+		SpecTag:     facts.SpecTag,
 		Component:   facts.Component,
 		CommitSHA:   mergeSHA,
 	}

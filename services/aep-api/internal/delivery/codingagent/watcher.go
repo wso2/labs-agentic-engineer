@@ -227,6 +227,14 @@ func (w *JobWatcher) captureFinalLog(ctx context.Context, row *delivery.Executio
 		slog.WarnContext(ctx, "codingagent.JobWatcher: captureFinalLog: persist failed", "execution", row.ID, "run", row.RunName, "error", err)
 		return
 	}
+	// Token usage rides the runner's terminal NDJSON result (#249) — stamp it
+	// onto the execution row now that the log is in hand. Best-effort: a
+	// pre-capture runner simply carries none.
+	if u := usageFromLog(string(body)); u != nil {
+		if err := w.execRows.RecordUsage(ctx, row.ID, *u); err != nil {
+			slog.WarnContext(ctx, "codingagent.JobWatcher: record usage failed", "execution", row.ID, "error", err)
+		}
+	}
 	slog.InfoContext(ctx, "codingagent.JobWatcher: captured final log", "execution", row.ID, "run", row.RunName, "phase", phase, "bytes", len(body))
 }
 

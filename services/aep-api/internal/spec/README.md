@@ -42,6 +42,7 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
 | `resourceMarkerCatalog` (returns `CRTMarkers`) | needs | `dependencies` — the PE-authored CRT marker vocabulary, projected at the root |
 | `AnthropicKeyResolver` · git-token `Resolver` | needs | `platform/secrets` — per-org keys + sealed git tokens |
 | `ArtifactService` · `ArtifactStore` · `SplitFrontmatter` | offers | `delivery` / `projects` / `dependencies` — design reads, spec-save, status snapshots |
+| `UsageReader` (turn token rollups + drafting-cycle boundary, #245) | offers | `projects` — the get-project-usage spec-phase figures |
 | `CredentialsRefreshService`-adjacent turn/tag reads | offers | build/devflow (SpecTagger, validation criteria) |
 
 ## Owns

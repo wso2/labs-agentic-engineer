@@ -28,7 +28,7 @@
 
 import pg from "pg";
 import { createApp } from "./server.js";
-import { createModel } from "./shared/model.js";
+import { createModel, resolveModelId } from "./shared/model.js";
 import { intEnv } from "./shared/env.js";
 import { config } from "./shared/config.js";
 import type { AgentsAuthConfig } from "./shared/auth.js";
@@ -78,6 +78,7 @@ async function main(): Promise<void> {
   const app = createApp({
     store,
     buildModel: (apiKey) => createModel({ apiKey }), // built PER TURN from X-Anthropic-Key
+    modelId: resolveModelId(), // the id createModel resolves above (usage attribution, #249)
     auth: buildAuthConfig(), // throws here if neither JWKS nor secret is set (gate is always on)
   });
 

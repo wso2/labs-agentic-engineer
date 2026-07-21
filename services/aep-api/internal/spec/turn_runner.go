@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"github.com/wso2/aep/aep-api/internal/clients/agentsvc"
+	"github.com/wso2/aep/aep-api/internal/contracts"
 	"github.com/wso2/aep/aep-api/internal/platform/agentfold"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
@@ -301,7 +302,7 @@ func (s *Service) executeTurn(ctx context.Context, job turnJob) TurnTerminal {
 		}
 		// Edits live in the room's doc; git is untouched (persistence is the
 		// #86 phase-3 committer). The base sha stays the "content as of" pin.
-		return TurnTerminal{Status: turnStatusCompleted, CommitSHA: job.baseRef, NoChanges: true}
+		return withUsage(TurnTerminal{Status: turnStatusCompleted, CommitSHA: job.baseRef, NoChanges: true}, manifest)
 	}
 
 	switch {
@@ -333,12 +334,13 @@ func (s *Service) executeTurn(ctx context.Context, job turnJob) TurnTerminal {
 	if err := agentfold.Verify(fold, *manifest); err != nil {
 		slog.ErrorContext(ctx, "genai: FOLD PARITY FAILURE — turn rejected, main untouched",
 			"turn", job.turnID, "error", err)
-		return failedTerminal(turnReasonFoldParity, err.Error(), nil)
+		// The model DID run — a parity-rejected turn still burnt its tokens.
+		return withUsage(failedTerminal(turnReasonFoldParity, err.Error(), nil), manifest)
 	}
 	if manifest.IsEmpty() {
 		// A chat turn with no file ops: valid, completes with no commit. The
 		// terminal still carries the base sha as the "content as of" pin.
-		return TurnTerminal{Status: turnStatusCompleted, CommitSHA: job.baseRef, NoChanges: true}
+		return withUsage(TurnTerminal{Status: turnStatusCompleted, CommitSHA: job.baseRef, NoChanges: true}, manifest)
 	}
 	if job.useCase == useCaseGeneral {
 		// The generic turn (no useCase) is conversational/preview-only: its file
@@ -346,9 +348,25 @@ func (s *Service) executeTurn(ctx context.Context, job turnJob) TurnTerminal {
 		// committed to main. A non-empty fold is reported like a no-op completion
 		// (base sha pinned, noChanges), so a refetch on the terminal reconciles
 		// the live preview back to the unchanged tree.
-		return TurnTerminal{Status: turnStatusCompleted, CommitSHA: job.baseRef, NoChanges: true}
+		return withUsage(TurnTerminal{Status: turnStatusCompleted, CommitSHA: job.baseRef, NoChanges: true}, manifest)
 	}
-	return s.commitFold(ctx, job, fold)
+	return withUsage(s.commitFold(ctx, job, fold), manifest)
+}
+
+// withUsage stamps the manifest's token spend (#249) onto a terminal. A nil
+// manifest or a manifest without usage (pre-capture agents) leaves it unset.
+func withUsage(term TurnTerminal, m *agentfold.Manifest) TurnTerminal {
+	if m == nil || m.Usage == nil {
+		return term
+	}
+	term.Usage = &contracts.TokenUsage{
+		InputTokens:         m.Usage.InputTokens,
+		OutputTokens:        m.Usage.OutputTokens,
+		CacheReadTokens:     m.Usage.CacheReadTokens,
+		CacheCreationTokens: m.Usage.CacheCreationTokens,
+		Model:               m.Usage.Model,
+	}
+	return term
 }
 
 // commitFold lands the verified fold as one commit on main (D13/D15).

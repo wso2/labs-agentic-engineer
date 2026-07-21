@@ -49,6 +49,17 @@ type StreamPart struct {
 	// Manifest-part fields (type == "manifest", D14).
 	Files   map[string]string `json:"files,omitempty"`
 	Deleted []string          `json:"deleted,omitempty"`
+	Usage   *TurnUsage        `json:"usage,omitempty"`
+}
+
+// TurnUsage is the manifest part's token-usage payload (#249) — the turn's
+// spend as reported by the agents service. Field names match the wire.
+type TurnUsage struct {
+	InputTokens         int64  `json:"inputTokens"`
+	OutputTokens        int64  `json:"outputTokens"`
+	CacheReadTokens     int64  `json:"cacheReadTokens"`
+	CacheCreationTokens int64  `json:"cacheCreationTokens"`
+	Model               string `json:"model,omitempty"`
 }
 
 // SSEDone is the terminal sentinel payload: `data: [DONE]`.

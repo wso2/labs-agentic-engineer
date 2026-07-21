@@ -97,6 +97,16 @@ func Load() (Config, error) {
 			JWTAudience: r.readOptionalString("AGENTS_SVC_JWT_AUDIENCE", "agents-service"),
 			JWTIssuer:   r.readOptionalString("AGENTS_SVC_JWT_ISSUER", "aep-bff"),
 		},
+		// Defaults = Anthropic public pricing for the platform's model at the
+		// time of writing; a price change is an env override first and a
+		// default bump on the next release (#245 decision, ADR-0011).
+		ModelPricing: ModelPricingConfig{
+			ModelID:              r.readOptionalString("MODEL_PRICING_MODEL_ID", "claude-fable-5"),
+			InputUSDPerMTok:      r.readOptionalFloat64("MODEL_RATE_INPUT_PER_MTOK", 10),
+			OutputUSDPerMTok:     r.readOptionalFloat64("MODEL_RATE_OUTPUT_PER_MTOK", 50),
+			CacheReadUSDPerMTok:  r.readOptionalFloat64("MODEL_RATE_CACHE_READ_PER_MTOK", 1),
+			CacheWriteUSDPerMTok: r.readOptionalFloat64("MODEL_RATE_CACHE_WRITE_PER_MTOK", 12.5),
+		},
 		Workspace: WorkspaceConfig{
 			Root:           r.readOptionalString("AEP_WORKSPACE_ROOT", "/workspaces"),
 			ReapInterval:   r.readOptionalDuration("AEP_WORKSPACE_REAP_INTERVAL", 5*time.Minute),
@@ -262,6 +272,21 @@ func (r *configReader) readOptionalInt64(key string, defaultVal int64) int64 {
 		return defaultVal
 	}
 	return n
+}
+
+// readOptionalFloat64 parses decimal values (USD-per-MTok rates); falls back
+// to defaultVal on empty input, records an error on unparseable input.
+func (r *configReader) readOptionalFloat64(key string, defaultVal float64) float64 {
+	val := os.Getenv(key)
+	if val == "" {
+		return defaultVal
+	}
+	f, err := strconv.ParseFloat(val, 64)
+	if err != nil {
+		r.errors = append(r.errors, fmt.Errorf("%s must be a number: %w", key, err))
+		return defaultVal
+	}
+	return f
 }
 
 // readOptionalDuration parses time.ParseDuration values; falls back to

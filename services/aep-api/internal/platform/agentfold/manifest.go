@@ -41,6 +41,8 @@ type Manifest struct {
 	Files map[string]string
 	// Deleted lists the mutated paths absent at turn end.
 	Deleted []string
+	// Usage is the turn's token spend (#249); nil for pre-capture agents.
+	Usage *TurnUsage
 }
 
 // ManifestOf extracts the manifest from a parsed StreamPart. ok is false for
@@ -49,7 +51,7 @@ func ManifestOf(part StreamPart) (Manifest, bool) {
 	if part.Type != "manifest" {
 		return Manifest{}, false
 	}
-	m := Manifest{Files: part.Files, Deleted: part.Deleted}
+	m := Manifest{Files: part.Files, Deleted: part.Deleted, Usage: part.Usage}
 	if m.Files == nil {
 		m.Files = map[string]string{}
 	}

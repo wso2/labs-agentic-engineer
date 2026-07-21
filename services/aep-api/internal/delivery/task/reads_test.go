@@ -61,7 +61,7 @@ func TestListReads_ValidationTaskExcluded(t *testing.T) {
 	issues.seed(taggedIssue(10, "order-service", "v1"))
 	issues.seed(validationIssue(30, "v1"))
 
-	reads := NewReads(issues, fakeRepos{repo: defaultRepo()}, newFakeExecReader(), nil, nil)
+	reads := NewReads(issues, fakeRepos{repo: defaultRepo()}, newFakeExecReader(), nil, nil, nil)
 
 	views, err := reads.List(context.Background(), "org1", "proj1", "open")
 	if err != nil {
@@ -142,7 +142,7 @@ func TestReads_PRURLDerivation(t *testing.T) {
 			if tc.exec != nil {
 				execs.put(10, *tc.exec)
 			}
-			reads := NewReads(issues, fakeRepos{repo: defaultRepo()}, execs, nil, nil)
+			reads := NewReads(issues, fakeRepos{repo: defaultRepo()}, execs, nil, nil, nil)
 
 			views, err := reads.List(context.Background(), "org1", "proj1", "open")
 			if err != nil {
@@ -182,7 +182,7 @@ func TestReads_PRURLForValidationTask(t *testing.T) {
 		Status: string(taskmeta.ExecSucceeded),
 		Reason: taskmeta.ReasonPROpenPrefix + "7",
 	})
-	reads := NewReads(issues, fakeRepos{repo: defaultRepo()}, execs, nil, nil)
+	reads := NewReads(issues, fakeRepos{repo: defaultRepo()}, execs, nil, nil, nil)
 
 	detail, err := reads.Get(context.Background(), "org1", "proj1", 30)
 	if err != nil {
@@ -198,7 +198,7 @@ func TestReads_PRURLForValidationTask(t *testing.T) {
 // newReadsWithDesign wires a read path with a DesignReader so the second pass
 // resolves provision / org-service deps.
 func newReadsWithDesign(issues *fakeIssues, execs *fakeExecReader, design fakeDesign) *Reads {
-	return NewReads(issues, fakeRepos{repo: defaultRepo()}, execs, nil, design)
+	return NewReads(issues, fakeRepos{repo: defaultRepo()}, execs, nil, design, nil)
 }
 
 func viewsByNumber(t *testing.T, views []delivery.TaskView) map[int]delivery.TaskView {

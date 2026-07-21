@@ -21,6 +21,7 @@ import (
 	"io"
 
 	"github.com/wso2/aep/aep-api/internal/clients/agentsvc"
+	"github.com/wso2/aep/aep-api/internal/contracts"
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
@@ -98,6 +99,10 @@ type ExecutionReader interface {
 	LatestPerKindScoped(ctx context.Context, orgID, repo string, issueNumber int) (map[string]*delivery.Execution, error)
 	LatestPerKindForRepoScoped(ctx context.Context, orgID, repo string) (map[int]map[string]*delivery.Execution, error)
 	ListByIssueScoped(ctx context.Context, orgID, repo string, issueNumber int) ([]delivery.Execution, error)
+	// SumUsageByIssue is the batch per-task usage rollup (#245) behind the
+	// task list's cost captions — one repo-wide grouped query, like
+	// LatestPerKindForRepoScoped.
+	SumUsageByIssue(ctx context.Context, orgID, repo string) (map[int]contracts.TokenUsage, error)
 }
 
 // DesignReader exposes each component's declared dependencies from the design at

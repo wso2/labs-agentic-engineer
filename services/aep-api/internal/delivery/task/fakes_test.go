@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/wso2/aep/aep-api/internal/contracts"
 	"github.com/wso2/aep/aep-api/internal/contracts/taskmeta"
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
@@ -218,6 +219,18 @@ func (f *fakeExecReader) LatestPerKindScoped(_ context.Context, _, _ string, num
 
 func (f *fakeExecReader) LatestPerKindForRepoScoped(_ context.Context, _, _ string) (map[int]map[string]*delivery.Execution, error) {
 	return f.latest, nil
+}
+
+func (f *fakeExecReader) SumUsageByIssue(_ context.Context, _, _ string) (map[int]contracts.TokenUsage, error) {
+	out := map[int]contracts.TokenUsage{}
+	for number, rows := range f.history {
+		agg := contracts.TokenUsage{}
+		for _, e := range rows {
+			agg = agg.Add(e.Usage())
+		}
+		out[number] = agg
+	}
+	return out, nil
 }
 
 func (f *fakeExecReader) ListByIssueScoped(_ context.Context, _, _ string, number int) ([]delivery.Execution, error) {

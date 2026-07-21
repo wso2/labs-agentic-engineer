@@ -19,24 +19,72 @@ package projectusage
 import (
 	"context"
 
+	"github.com/wso2/aep/aep-api/internal/contracts"
+	"github.com/wso2/aep/aep-api/internal/contracts/taskmeta"
 	"github.com/wso2/aep/aep-api/internal/gen"
+	"github.com/wso2/aep/aep-api/internal/platform/apierr"
+	"github.com/wso2/aep/aep-api/internal/platform/modelcost"
+	"github.com/wso2/aep/aep-api/internal/platform/tenant"
+	"github.com/wso2/aep/aep-api/internal/projects"
 )
 
-// Handler serves get-project-usage. PLACEHOLDER until the #249 backend
-// (capture, persistence, per-phase aggregation, USD derivation per ADR-0011)
-// lands: no usage capture exists yet, so all-zero rollups are the truth —
-// the console hides zero-usage chips.
-type Handler struct{}
+// Handler serves get-project-usage (#245): per-phase actuals assembled from
+// the two capture stores, with costUsd derived at read time (ADR-0011).
+// Phase mapping: spec = agent turns; build = coding + build executions;
+// validation = ops executions (validation runs execute as ops; provision is
+// infra work that reports no usage).
+type Handler struct {
+	turns  projects.TurnUsageReader
+	execs  projects.ExecUsageReader
+	pricer *modelcost.Pricer
+}
 
-// New returns the slice's handler.
-func New() *Handler { return &Handler{} }
+// New returns the slice's handler. Unwired ports (nil) degrade to zero usage
+// — the component-test harness contract; the real edge always wires both.
+func New(turns projects.TurnUsageReader, execs projects.ExecUsageReader, pricer *modelcost.Pricer) *Handler {
+	return &Handler{turns: turns, execs: execs, pricer: pricer}
+}
 
-func (h *Handler) GetProjectUsage(_ context.Context, _ gen.GetProjectUsageRequestObject) (gen.GetProjectUsageResponseObject, error) {
-	zero := gen.Usage{} // zero tokens, "" model, null costUsd — nothing captured yet
+func (h *Handler) GetProjectUsage(ctx context.Context, request gen.GetProjectUsageRequestObject) (gen.GetProjectUsageResponseObject, error) {
+	org := tenant.BoundOrgFromContext(ctx)
+
+	var specAll, draft contracts.TokenUsage
+	if h.turns != nil {
+		var err error
+		specAll, draft, err = h.turns.ProjectTurnUsage(ctx, org, request.ProjectName)
+		if err != nil {
+			return nil, apierr.Internal("load turn usage")
+		}
+	}
+	var byKind map[string]contracts.TokenUsage
+	if h.execs != nil {
+		var err error
+		byKind, err = h.execs.SumUsageByKind(ctx, org, request.ProjectName)
+		if err != nil {
+			return nil, apierr.Internal("load execution usage")
+		}
+	}
+	build := byKind[string(taskmeta.KindCoding)].Add(byKind[string(taskmeta.KindBuild)])
+	validation := byKind[string(taskmeta.KindOps)]
+
 	return gen.GetProjectUsage200JSONResponse(gen.ProjectUsage{
-		Spec:       zero,
-		Build:      zero,
-		Validation: zero,
-		DraftCycle: zero,
+		Spec:       h.genUsage(specAll),
+		Build:      h.genUsage(build),
+		Validation: h.genUsage(validation),
+		DraftCycle: h.genUsage(draft),
 	}), nil
+}
+
+func (h *Handler) genUsage(u contracts.TokenUsage) gen.Usage {
+	out := gen.Usage{
+		InputTokens:         u.InputTokens,
+		OutputTokens:        u.OutputTokens,
+		CacheReadTokens:     u.CacheReadTokens,
+		CacheCreationTokens: u.CacheCreationTokens,
+		Model:               u.Model,
+	}
+	if h.pricer != nil {
+		out.CostUsd = h.pricer.Cost(u)
+	}
+	return out
 }

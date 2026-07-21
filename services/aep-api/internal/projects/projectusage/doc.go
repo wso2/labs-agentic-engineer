@@ -18,7 +18,7 @@
 // cost-visibility surfaces (#245).
 //
 // Triggers: get-project-usage.
-// Ports:    none yet — the op answers all-zero usage until the #249 capture
-// and aggregation backend lands (zero spend IS the truth today: nothing is
-// captured, and the console hides zero-usage chips).
+// Ports:    TurnUsageReader (spec.UsageReader — turn rollups + drafting-cycle
+// boundary) and ExecUsageReader (delivery.ExecutionRepository — per-kind
+// execution rollups); costUsd derived at read time via modelcost (ADR-0011).
 package projectusage

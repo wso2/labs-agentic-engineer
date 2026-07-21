@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/wso2/aep/aep-api/internal/contracts"
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
@@ -73,6 +74,12 @@ type RunStore interface {
 	// ListByProject enumerates a project's run rows newest-first, optionally
 	// filtered to one kind — the builds-history read behind list-project-builds.
 	ListByProject(ctx context.Context, orgID, projectID, kind string) ([]delivery.DevflowRun, error)
+}
+
+// UsageReader is the per-spec-tag execution-usage rollup (#245) behind the build
+// summaries' cost figures. Satisfied by delivery.ExecutionRepository.
+type UsageReader interface {
+	SumUsageBySpecTag(ctx context.Context, orgID, projectID string) (map[string]contracts.TokenUsage, error)
 }
 
 // RepoLookup resolves a project's "owner/name" repo full name. Satisfied by

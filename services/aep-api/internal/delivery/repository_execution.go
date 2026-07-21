@@ -24,6 +24,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"github.com/wso2/aep/aep-api/internal/contracts"
 	"github.com/wso2/aep/aep-api/internal/contracts/taskmeta"
 )
 
@@ -113,6 +114,27 @@ type ExecutionRepository interface {
 	// deployed to configure. Intentionally NOT org-scoped: the runtime-config
 	// convergence sweep spans all orgs, like ListActive.
 	DistinctDeployedProjects(ctx context.Context) ([]DeployedProjectRef, error)
+
+	// RecordUsage stamps the run's captured token usage onto the row (#249).
+	// Unguarded by status — usage arrives from the final-log capture, which
+	// can land before or after the row goes terminal (coding successes end via
+	// the PR webhook). Last write wins; the capture is idempotent upstream.
+	RecordUsage(ctx context.Context, id string, u contracts.TokenUsage) error
+
+	// SumUsageByKind aggregates captured usage over a project's executions,
+	// grouped by kind — the per-phase rollup read (#245). Zero-usage rows
+	// contribute nothing.
+	SumUsageByKind(ctx context.Context, orgID, projectID string) (map[string]contracts.TokenUsage, error)
+
+	// SumUsageByIssue aggregates captured usage per Task across every
+	// execution of a repo — one query for the task list's cost captions.
+	SumUsageByIssue(ctx context.Context, orgID, repo string) (map[int]contracts.TokenUsage, error)
+
+	// SumUsageBySpecTag aggregates captured usage per spec-version tag (v<N>)
+	// across a project's executions — the build-summary rollup (a build
+	// summary is the newest run per tag, so its usage is the tag's lineage
+	// total, accruing while the build runs).
+	SumUsageBySpecTag(ctx context.Context, orgID, projectID string) (map[string]contracts.TokenUsage, error)
 }
 
 type executionRepository struct {
@@ -362,4 +384,106 @@ func (r *executionRepository) getByID(ctx context.Context, id string) (*Executio
 		return nil, err
 	}
 	return &e, nil
+}
+
+func (r *executionRepository) RecordUsage(ctx context.Context, id string, u contracts.TokenUsage) error {
+	return r.db.WithContext(ctx).
+		Model(&Execution{}).
+		Where("id = ?", id).
+		Updates(map[string]any{
+			"input_tokens":          u.InputTokens,
+			"output_tokens":         u.OutputTokens,
+			"cache_read_tokens":     u.CacheReadTokens,
+			"cache_creation_tokens": u.CacheCreationTokens,
+			"model_id":              u.Model,
+		}).Error
+}
+
+// usageSumRow is the scan target for the grouped usage aggregations. Models
+// carries the count of DISTINCT non-empty model ids in the group: exactly one
+// → MaxModel is the group's model; more → mixed, reported as "".
+type usageSumRow struct {
+	Key                 string
+	IssueNumber         int
+	InputTokens         int64
+	OutputTokens        int64
+	CacheReadTokens     int64
+	CacheCreationTokens int64
+	Models              int64
+	MaxModel            string
+}
+
+func (row usageSumRow) usage() contracts.TokenUsage {
+	u := contracts.TokenUsage{
+		InputTokens:         row.InputTokens,
+		OutputTokens:        row.OutputTokens,
+		CacheReadTokens:     row.CacheReadTokens,
+		CacheCreationTokens: row.CacheCreationTokens,
+	}
+	if row.Models == 1 {
+		u.Model = row.MaxModel
+	}
+	return u
+}
+
+// usageSums is the shared SELECT list of the grouped aggregations.
+const usageSums = "COALESCE(SUM(input_tokens),0) AS input_tokens, " +
+	"COALESCE(SUM(output_tokens),0) AS output_tokens, " +
+	"COALESCE(SUM(cache_read_tokens),0) AS cache_read_tokens, " +
+	"COALESCE(SUM(cache_creation_tokens),0) AS cache_creation_tokens, " +
+	"COUNT(DISTINCT model_id) FILTER (WHERE model_id <> '') AS models, " +
+	"COALESCE(MAX(model_id) FILTER (WHERE model_id <> ''), '') AS max_model"
+
+func (r *executionRepository) SumUsageByKind(ctx context.Context, orgID, projectID string) (map[string]contracts.TokenUsage, error) {
+	var rows []usageSumRow
+	err := r.db.WithContext(ctx).
+		Model(&Execution{}).
+		Select("kind AS key, "+usageSums).
+		Where("org_id = ? AND project_id = ?", orgID, projectID).
+		Group("kind").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]contracts.TokenUsage, len(rows))
+	for _, row := range rows {
+		out[row.Key] = row.usage()
+	}
+	return out, nil
+}
+
+func (r *executionRepository) SumUsageByIssue(ctx context.Context, orgID, repo string) (map[int]contracts.TokenUsage, error) {
+	var rows []usageSumRow
+	err := r.db.WithContext(ctx).
+		Model(&Execution{}).
+		Select("issue_number, "+usageSums).
+		Where("org_id = ? AND repo = ?", orgID, repo).
+		Group("issue_number").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[int]contracts.TokenUsage, len(rows))
+	for _, row := range rows {
+		out[row.IssueNumber] = row.usage()
+	}
+	return out, nil
+}
+
+func (r *executionRepository) SumUsageBySpecTag(ctx context.Context, orgID, projectID string) (map[string]contracts.TokenUsage, error) {
+	var rows []usageSumRow
+	err := r.db.WithContext(ctx).
+		Model(&Execution{}).
+		Select("spec_tag AS key, "+usageSums).
+		Where("org_id = ? AND project_id = ? AND spec_tag <> ''", orgID, projectID).
+		Group("spec_tag").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]contracts.TokenUsage, len(rows))
+	for _, row := range rows {
+		out[row.Key] = row.usage()
+	}
+	return out, nil
 }

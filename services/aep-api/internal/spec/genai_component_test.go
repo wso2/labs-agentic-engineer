@@ -48,6 +48,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/gittest"
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
+	"github.com/wso2/aep/aep-api/internal/contracts"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
@@ -353,6 +354,28 @@ func (m *memTurnRepo) SweepStale(_ context.Context, olderThan time.Time) ([]spec
 		}
 	}
 	return swept, nil
+}
+
+func (m *memTurnRepo) SumUsage(_ context.Context, orgID, projectID string, since *time.Time) (contracts.TokenUsage, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	agg := contracts.TokenUsage{}
+	for _, t := range m.rows {
+		if t.OrgID != orgID || t.ProjectID != projectID {
+			continue
+		}
+		if since != nil && !t.CreatedAt.After(*since) {
+			continue
+		}
+		agg = agg.Add(contracts.TokenUsage{
+			InputTokens:         t.InputTokens,
+			OutputTokens:        t.OutputTokens,
+			CacheReadTokens:     t.CacheReadTokens,
+			CacheCreationTokens: t.CacheCreationTokens,
+			Model:               t.ModelID,
+		})
+	}
+	return agg, nil
 }
 
 func (m *memTurnRepo) row(t *testing.T, id string) spec.AgentTurn {

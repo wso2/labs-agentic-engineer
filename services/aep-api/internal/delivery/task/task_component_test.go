@@ -38,6 +38,7 @@ import (
 	"time"
 
 	"github.com/wso2/aep/aep-api/internal/clients/agentsvc"
+	"github.com/wso2/aep/aep-api/internal/contracts"
 	"github.com/wso2/aep/aep-api/internal/contracts/taskmeta"
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/delivery/execution"
@@ -134,6 +135,10 @@ func (f fakeExecs) LatestPerKindForRepoScoped(_ context.Context, _, _ string) (m
 	}
 	return map[int]map[string]*delivery.Execution{}, nil
 }
+func (f fakeExecs) SumUsageByIssue(_ context.Context, _, _ string) (map[int]contracts.TokenUsage, error) {
+	return nil, nil
+}
+
 func (f fakeExecs) ListByIssueScoped(_ context.Context, _, _ string, n int) ([]delivery.Execution, error) {
 	return f.history[n], nil
 }
@@ -180,7 +185,7 @@ func taskIssue(number int, component, state string, extra ...string) sourcecontr
 
 func newRig(t *testing.T, iss *fakeIssues, execs fakeExecs) *componenttest.Harness {
 	t.Helper()
-	reads := task.NewReads(iss, fakeRepos{}, execs, nil, nil)
+	reads := task.NewReads(iss, fakeRepos{}, execs, nil, nil, nil)
 	return componenttest.New(t, componenttest.Options{Deps: edge.Deps{
 		Delivery: mustDelivery(deliveryhttpapi.New(deliveryhttpapi.Deps{TaskReads: reads})),
 	}})

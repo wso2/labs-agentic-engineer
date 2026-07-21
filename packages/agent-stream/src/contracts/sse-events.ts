@@ -319,6 +319,22 @@ export function isToolset(v: unknown): v is Toolset {
 // --- The terminal manifest (shared-volume-clone-architecture D14) ------------
 
 /**
+ * Per-turn token usage carried on the terminal manifest (#249). Field names are
+ * the pinned cross-runtime wire shape — the coding-runner progress `result`
+ * event carries the identical object and the aep-api parses both against one
+ * definition, so they must not drift. Tokens only, no cost figure: USD is
+ * derived server-side from tokens + model (console ADR-0011).
+ */
+export interface TurnUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  /** The resolved model id the turn ran on (the server-side pricing key). */
+  model: string;
+}
+
+/**
  * The terminal manifest frame — ALWAYS emitted (possibly empty) after a turn
  * completes successfully, before `[DONE]`; a severed/failed stream carries NO
  * manifest, which is exactly what lets the consumer (the aep-api fold) treat
@@ -335,6 +351,12 @@ export interface ManifestPart {
   files: Record<string, string>;
   /** Paths mutated this turn that are no longer present at turn end. */
   deleted: string[];
+  /**
+   * The turn's token spend (#249). Present on every manifest the agents
+   * service emits today; optional so older producers/recorded streams stay
+   * valid. Manifest-only ⇒ a failed/severed turn carries no usage (v1).
+   */
+  usage?: TurnUsage;
 }
 
 // --- The emitted event catalog ----------------------------------------------

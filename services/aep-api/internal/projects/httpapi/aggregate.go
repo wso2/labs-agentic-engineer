@@ -49,13 +49,15 @@ type Handlers struct {
 //
 // projects is fail-LOUD: the pre-migration handlers had no nil guard, so an
 // unwired collaborator panics exactly as it did before (the edge assigns each
-// dep directly, no OrEmpty helper).
+// dep directly, no OrEmpty helper). The one exception is projectusage, whose
+// ports are nil-tolerant by design (zero usage IS the truth for an unwired
+// capture store — the component-test harness contract).
 func New(d projects.Deps) (*Handlers, error) {
 	return &Handlers{
 		projectcrudHandler:     projectcrud.New(d.ProjectSvc),
 		componentreadHandler:   componentread.New(d.ComponentSvc),
 		componentbuildHandler:  componentbuild.New(d.ComponentSvc),
 		componentconfigHandler: componentconfig.New(d.ConfigSvc),
-		projectusageHandler:    projectusage.New(),
+		projectusageHandler:    projectusage.New(d.TurnUsage, d.ExecUsage, d.Pricer),
 	}, nil
 }

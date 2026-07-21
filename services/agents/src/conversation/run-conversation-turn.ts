@@ -40,7 +40,7 @@ import { buildTaskPlanTools } from "../agents/main/tools/task-plan.js";
 import { TaskPlan } from "../agents/main/task-plan-accumulator.js";
 import { buildInstructions, buildTaskPlanInstructions, buildPrompt } from "../agents/main/prompt.js";
 import type { SkillSource } from "../agents/main/skill-source.js";
-import { buildManifestPart } from "./manifest.js";
+import { buildManifestPart, toTurnUsage } from "./manifest.js";
 import { config } from "../shared/config.js";
 import { modelProviderOptions } from "../shared/model.js";
 import { loadMcpTools } from "../shared/mcp-client.js";
@@ -132,6 +132,13 @@ export interface RunConversationTurnInput {
   collabPeer?: RoomPeer;
   /** Injected at the composition root (createModel is called ONCE there, not per turn). */
   model: LanguageModel;
+  /**
+   * The resolved model id `model` was built with (`resolveModelId`, threaded
+   * from the composition root alongside the model — #249). Attributes the
+   * turn's token usage on the terminal manifest; absent (mock-model tests,
+   * evals) → the manifest usage carries `model: ""`.
+   */
+  modelId?: string;
   store: ConversationStore;
   guard: TurnGuard;
   onEvent: (p: StreamPart) => void;
@@ -228,7 +235,10 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
     // 5. set status (awaiting-human dormant while ask_question disabled)
     conv.status = endedAwaitingHuman(conv.messages.slice(startLen)) ? "awaiting-human" : "done";
 
-    // 6. observe per-turn spend (runTurn returns usage; today nothing keeps it)
+    // 6. per-turn spend (#249): project the whole-turn usage onto the pinned
+    //    wire shape; it rides the terminal manifest below so the aep-api fold
+    //    captures it alongside the file shas.
+    const usage = toTurnUsage(res.usage, input.modelId ?? "");
     if (config.logLevel === "debug") {
       process.stderr.write(
         `[turn ${conv.id}] finishReason=${res.finishReason} tokens in/out=` +
@@ -242,8 +252,9 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
     // 8. terminal manifest (D14) — emitted LAST, only on full success (any
     //    throw above skips it, so a severed/failed stream carries no manifest
     //    and the aep-api fold refuses to commit). Mutated-paths-only from the
-    //    turn's bundle; empty for chat-only and task-plan turns.
-    input.onEvent(buildManifestPart(bundle));
+    //    turn's bundle; empty for chat-only and task-plan turns. Carries the
+    //    turn's token usage (#249) — failed turns report none (v1).
+    input.onEvent(buildManifestPart(bundle, usage));
     return conv;
   } finally {
     // Drain the live-preview writer and undo any addFile body we streamed but that

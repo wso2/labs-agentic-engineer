@@ -23,8 +23,26 @@
  * stream is unambiguously "do not commit" to the aep-api fold.
  */
 
-import type { FileBundle, ManifestPart } from "@aep/agent-stream";
+import type { LanguageModelUsage } from "ai";
+import type { FileBundle, ManifestPart, TurnUsage } from "@aep/agent-stream";
 import { sha256Hex } from "../shared/hash.js";
+
+/**
+ * Project the AI SDK's whole-turn `LanguageModelUsage` onto the pinned
+ * cross-runtime wire shape (#249): cache reads/writes come from
+ * `inputTokenDetails`, absent counts collapse to 0 so every field is a
+ * required number, and `model` is the resolved id the turn ran on (threaded
+ * from the composition root — the SDK usage object does not carry it).
+ */
+export function toTurnUsage(usage: LanguageModelUsage, model: string): TurnUsage {
+  return {
+    inputTokens: usage.inputTokens ?? 0,
+    outputTokens: usage.outputTokens ?? 0,
+    cacheReadTokens: usage.inputTokenDetails?.cacheReadTokens ?? 0,
+    cacheCreationTokens: usage.inputTokenDetails?.cacheWriteTokens ?? 0,
+    model,
+  };
+}
 
 /**
  * Build the manifest from the turn's bundle. Covers ONLY paths mutated THIS
@@ -32,9 +50,11 @@ import { sha256Hex } from "../shared/hash.js";
  * rejected ops never appear): still-present paths map to the sha256 of their
  * final (LF-canonical) content, vanished paths land in `deleted`. Paths are
  * sorted for a deterministic wire encoding (cassette/golden friendly). No
- * bundle (chat-only or task-plan turn) → the empty manifest.
+ * bundle (chat-only or task-plan turn) → the empty manifest. `usage` (#249)
+ * rides the manifest because it is the one frame every successful turn emits;
+ * a failed turn emits no manifest and therefore reports no usage (v1).
  */
-export function buildManifestPart(bundle?: FileBundle): ManifestPart {
+export function buildManifestPart(bundle?: FileBundle, usage?: TurnUsage): ManifestPart {
   const files: Record<string, string> = {};
   const deleted: string[] = [];
   if (bundle) {
@@ -44,5 +64,5 @@ export function buildManifestPart(bundle?: FileBundle): ManifestPart {
       else files[path] = sha256Hex(content);
     }
   }
-  return { type: "manifest", files, deleted };
+  return { type: "manifest", files, deleted, ...(usage ? { usage } : {}) };
 }

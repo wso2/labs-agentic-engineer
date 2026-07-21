@@ -63,7 +63,7 @@ func TestComposePlannedIssue_RoundTrip(t *testing.T) {
 // ---- reads derive fusion ---------------------------------------------------
 
 func newReads(issues *fakeIssues, execs *fakeExecReader) *Reads {
-	return NewReads(issues, fakeRepos{repo: defaultRepo()}, execs, nil, nil)
+	return NewReads(issues, fakeRepos{repo: defaultRepo()}, execs, nil, nil, nil)
 }
 
 func TestReads_List_DerivesStatusFromExecutions(t *testing.T) {

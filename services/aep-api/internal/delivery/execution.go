@@ -16,7 +16,11 @@
 
 package delivery
 
-import "time"
+import (
+	"time"
+
+	"github.com/wso2/aep/aep-api/internal/contracts"
+)
 
 // Execution is one platform attempt at one kind of work for a Task (§7 of
 // docs/design/tasks-github-native.md). A Task itself is a GitHub issue and has
@@ -56,7 +60,10 @@ type Execution struct {
 	// dispatch time (§7). Reason holds a queued-gating reason or an error.
 	RunName   string `gorm:"type:text" json:"runName,omitempty"`
 	DesignTag string `gorm:"type:text" json:"designTag,omitempty"`
-	Reason    string `gorm:"type:text" json:"reason,omitempty"`
+	// SpecTag is the Task lineage's spec/build version (v<N>) — the key the
+	// per-build usage rollup groups on (#245). Empty on rows that predate it.
+	SpecTag string `gorm:"type:text" json:"specTag,omitempty"`
+	Reason  string `gorm:"type:text" json:"reason,omitempty"`
 
 	// CommitSHA pins a build Execution to the merge commit it builds (set when a
 	// merged PR spawns the build, §7). It is the one fact a git-auth build retry
@@ -65,9 +72,30 @@ type Execution struct {
 	// stored on the row rather than recovered from GitHub. Empty for coding/ops.
 	CommitSHA string `gorm:"type:text" json:"commitSha,omitempty"`
 
+	// Token usage captured from the runner's terminal NDJSON result (#249).
+	// ADR-0011: tokens + model are the stored truth; USD is derived at read
+	// time. All zero (and ModelID "") for runs that predate capture or whose
+	// final log carried no usage.
+	InputTokens         int64  `gorm:"not null;default:0" json:"-"`
+	OutputTokens        int64  `gorm:"not null;default:0" json:"-"`
+	CacheReadTokens     int64  `gorm:"not null;default:0" json:"-"`
+	CacheCreationTokens int64  `gorm:"not null;default:0" json:"-"`
+	ModelID             string `gorm:"type:text;not null;default:''" json:"-"`
+
 	CreatedAt time.Time  `json:"createdAt"`
 	StartedAt *time.Time `json:"startedAt,omitempty"`
 	EndedAt   *time.Time `json:"endedAt,omitempty"`
+}
+
+// Usage returns the row's captured token usage.
+func (e Execution) Usage() contracts.TokenUsage {
+	return contracts.TokenUsage{
+		InputTokens:         e.InputTokens,
+		OutputTokens:        e.OutputTokens,
+		CacheReadTokens:     e.CacheReadTokens,
+		CacheCreationTokens: e.CacheCreationTokens,
+		Model:               e.ModelID,
+	}
 }
 
 // TableName pins the table name (the default pluralization would already give

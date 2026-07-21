@@ -21,7 +21,7 @@
 // message often carries multiple tool_use content blocks). The caller
 // emits each returned event in order.
 
-import type { ProgressEventInput } from "./schema.js";
+import type { ProgressEventInput, ResultUsage } from "./schema.js";
 
 const MAX_SUMMARY = 200;
 
@@ -102,6 +102,54 @@ function assistantToolUseBlocks(message: unknown): Array<{ name: string; input: 
   return out;
 }
 
+function num(v: unknown): number {
+  return typeof v === "number" && Number.isFinite(v) ? v : 0;
+}
+
+// Token usage for the terminal result event (#249). Primary source: the SDK
+// result message's `modelUsage` (Record<modelId, ModelUsage>, camelCase) —
+// summed across entries, with `model` the id carrying the most tokens (there
+// is normally exactly one). Fallback when modelUsage is absent/empty: the
+// result's `usage` (NonNullableUsage — API snake_case), which names no model,
+// so `model` stays "". Neither present → undefined (no usage on the wire).
+function usageFromResult(m: Record<string, unknown>): ResultUsage | undefined {
+  const modelUsage = m.modelUsage;
+  if (modelUsage && typeof modelUsage === "object" && Object.keys(modelUsage).length > 0) {
+    const sum: ResultUsage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, model: "" };
+    let bestTotal = -1;
+    for (const [model, entry] of Object.entries(modelUsage as Record<string, unknown>)) {
+      if (!entry || typeof entry !== "object") continue;
+      const e = entry as Record<string, unknown>;
+      const input = num(e.inputTokens);
+      const output = num(e.outputTokens);
+      const cacheRead = num(e.cacheReadInputTokens);
+      const cacheCreation = num(e.cacheCreationInputTokens);
+      sum.inputTokens += input;
+      sum.outputTokens += output;
+      sum.cacheReadTokens += cacheRead;
+      sum.cacheCreationTokens += cacheCreation;
+      const total = input + output + cacheRead + cacheCreation;
+      if (total > bestTotal) {
+        bestTotal = total;
+        sum.model = model;
+      }
+    }
+    return sum;
+  }
+  const usage = m.usage;
+  if (usage && typeof usage === "object") {
+    const u = usage as Record<string, unknown>;
+    return {
+      inputTokens: num(u.input_tokens),
+      outputTokens: num(u.output_tokens),
+      cacheReadTokens: num(u.cache_read_input_tokens),
+      cacheCreationTokens: num(u.cache_creation_input_tokens),
+      model: "",
+    };
+  }
+  return undefined;
+}
+
 export function progressFromSdkMessage(message: unknown): ProgressEventInput[] {
   if (!message || typeof message !== "object") return [];
   const m = message as Record<string, unknown>;
@@ -136,14 +184,17 @@ export function progressFromSdkMessage(message: unknown): ProgressEventInput[] {
 
   if (type === "result") {
     const subtype = String(m.subtype ?? "");
+    // Usage rides success AND failure results — a failed run still spent tokens.
+    const usage = usageFromResult(m);
     if (subtype === "success") {
-      return [{ kind: "result", status: "success" }];
+      return [{ kind: "result", status: "success", ...(usage ? { usage } : {}) }];
     }
     const errors = Array.isArray(m.errors) ? (m.errors as string[]).join(", ") : "";
     return [{
       kind: "result",
       status: "failure",
       error: errors || subtype,
+      ...(usage ? { usage } : {}),
     }];
   }
 
