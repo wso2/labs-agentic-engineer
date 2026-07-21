@@ -83,6 +83,12 @@ Features currently being built. One line each; **must be emptied on ship**
 (the line moves to the inventory below). If a line sits here for weeks,
 that's a stalled feature — investigate, don't ignore.
 
+- Agent chat — structured question cards: dormant `ask_question` HITL tool
+  enabled with options + recommended answer, rendered as native Oxygen UI
+  cards in chat (answer returns as the next turn's plain text); grilling
+  skill as flagship consumer, auto-started on initial-project spec
+  generation; tool-call-as-UI convention in ADR-0012 —
+  [#270](https://github.com/wso2/labs-agentic-engineer/issues/270)
 - Deployments page — two-column board (Development / Production): one card
   per component × binding with status chip, release, endpoint URL,
   deployed-at; unbound components show greyed "Not deployed" cards in dev;
