@@ -36,7 +36,7 @@ export interface Conversation {
    * (the wire is raw StreamPart, runTurn is ModelMessage-native), append-only.
    */
   messages: ModelMessage[];
-  /** `awaiting-human` stays dormant while `ask_question` is disabled (§5). */
+  /** `awaiting-human`: a HITL (`files` toolset) turn ended on an `ask_question` call (ADR-0012). */
   status: "active" | "awaiting-human" | "done";
   /** Store-owned timestamps. */
   createdAt: Date;

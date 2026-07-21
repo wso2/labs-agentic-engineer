@@ -29,7 +29,14 @@
  * preserved across turns.
  */
 
-import { hasToolCall, isStepCount, type LanguageModel, type ModelMessage, type ToolSet } from "ai";
+import {
+  hasToolCall,
+  isStepCount,
+  type LanguageModel,
+  type ModelMessage,
+  type StopCondition,
+  type ToolSet,
+} from "ai";
 import { FileBundle, type McpConfig, type StreamPart, type Toolset } from "@aep/agent-stream";
 import { DocFileBundle } from "../collab/doc-bundle.js";
 import { StreamingDocWriter } from "../collab/streaming-add.js";
@@ -162,6 +169,11 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
     let bundle: FileBundle | undefined;
     let tools: ToolSet;
     let instructions: string;
+    // HITL is a property of the tool set that registers ask_question (only
+    // `files`), not of the generic runner: the stop condition and the
+    // awaiting-human status stay off for task-plan turns, so an MCP-discovered
+    // tool that happens to share the name can never stall a headless plan.
+    let hitl = false;
     if (toolset === "task-plan") {
       // Read-only context: `files` mutates nothing; the accumulator validates
       // planTask/updateTask against it (known components + existing Tasks).
@@ -173,6 +185,7 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
         : new FileBundle(input.files);
       tools = buildFileTools(bundle, skills);
       instructions = buildInstructions(skills);
+      hitl = true;
     }
 
     // 3b. MCP discovery (dependency-management migration Phase 5): best-effort —
@@ -213,24 +226,27 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
     //    divergence note ONLY when the FE flagged an external edit (append-only).
     const note = input.filesChangedExternally ? DIVERGENCE_NOTE : "";
     const startLen = conv.messages.length;
+    // hasToolCall ends the turn at the FIRST step containing an ask_question
+    // call (ADR-0012) — one question per turn is structural, not prompt
+    // discipline. Registered only for HITL-capable tool sets (see above).
+    const stopWhen: StopCondition<ToolSet>[] = [isStepCount(config.maxSteps)];
+    if (hitl) stopWhen.push(hasToolCall(ASK_QUESTION));
     const res = await runTurn({
       model: input.model,
       instructions,
       prompt: note + buildPrompt(input.files, input.instruction),
       messages: conv.messages, // appended in place by runTurn
       tools,
-      // hasToolCall ends the turn at the FIRST ask_question call (ADR-0012):
-      // one question per turn is structural, not prompt discipline. Harmless
-      // for the task-plan set, which doesn't register the tool.
-      stopWhen: [isStepCount(config.maxSteps), hasToolCall(ASK_QUESTION)],
+      stopWhen,
       maxOutputTokens: config.maxOutputTokens,
       providerOptions: modelProviderOptions(),
       onEvent,
       ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
     });
 
-    // 5. set status (awaiting-human when the turn ended on ask_question)
-    conv.status = endedAwaitingHuman(conv.messages.slice(startLen)) ? "awaiting-human" : "done";
+    // 5. set status (awaiting-human when a HITL turn ended on ask_question)
+    conv.status =
+      hitl && endedAwaitingHuman(conv.messages.slice(startLen)) ? "awaiting-human" : "done";
 
     // 6. observe per-turn spend (runTurn returns usage; today nothing keeps it)
     if (config.logLevel === "debug") {

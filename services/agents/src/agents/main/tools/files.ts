@@ -37,6 +37,7 @@ import type { Tool } from "ai";
 import { z } from "zod";
 import {
   FileBundle,
+  ASK_QUESTION_TOOL,
   type AddFileInput,
   type AskQuestionInput,
   type EditFileInput,
@@ -49,8 +50,8 @@ import type { SkillSource } from "../skill-source.js";
 export const ADD_FILE = "addFile" as const;
 export const EDIT_FILE = "editFile" as const;
 export const REMOVE_FILE = "removeFile" as const;
-/** The human-in-the-loop question tool (console ADR-0012 / #270). */
-export const ASK_QUESTION = "ask_question" as const;
+/** The human-in-the-loop question tool (console ADR-0012 / #270); name owned by the wire contract. */
+export const ASK_QUESTION = ASK_QUESTION_TOOL;
 
 // Re-export the shared skill-loader names so existing importers keep one entry point.
 export { LOAD_SKILL, LOAD_SKILL_REFERENCE } from "./skill-tools.js";
@@ -98,7 +99,7 @@ void _drift;
 // tool-call frame as a question card; the user's answer arrives as the NEXT
 // turn's plain user message (`Answer to "<question>": <label>[, <label>] — <note>`).
 
-export const askQuestionOptionSchema = z.object({
+const askQuestionOptionSchema = z.object({
   label: z.string().min(1).describe("Short display text for this option (a few words)."),
   description: z
     .string()
@@ -126,9 +127,15 @@ export const askQuestionInputSchema = z
   .refine((v) => v.options.filter((o) => o.recommended).length <= 1, {
     message: "at most one option may be marked recommended",
     path: ["options"],
+  })
+  // Labels are the option identity on the card AND in the serialized answer —
+  // duplicates would make a selection ambiguous on both sides.
+  .refine((v) => new Set(v.options.map((o) => o.label)).size === v.options.length, {
+    message: "option labels must be unique",
+    path: ["options"],
   });
 
-export const askQuestionTool: Tool = tool({
+const askQuestionTool: Tool = tool({
   description:
     "Ask the user ONE structured clarifying question — options with labels, descriptions, and your " +
     "recommended answer. Use it only when the instruction is ambiguous and you cannot proceed safely " +

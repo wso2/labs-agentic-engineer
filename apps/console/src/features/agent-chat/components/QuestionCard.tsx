@@ -22,7 +22,7 @@
 // serializes the choice into the next turn. Read-only once answered or
 // superseded (a typed composer reply is an equally valid answer path).
 
-import { useState } from "react";
+import { memo, useState } from "react";
 import {
   alpha,
   Box,
@@ -40,18 +40,21 @@ import type { ChatMessage } from "../chatStore";
 
 export type QuestionMessage = Extract<ChatMessage, { role: "question" }>;
 
-export function QuestionCard({
+// Memoized: the panel re-renders per streamed text-delta, but a card's props
+// only change when the log entry itself does — settled cards skip
+// reconciliation entirely (onAnswer is the hook's stable callback).
+export const QuestionCard = memo(function QuestionCard({
   msg,
   answerable,
   busy,
   onAnswer,
 }: {
   msg: QuestionMessage;
-  /** Derived from the log: unanswered AND not superseded by a later user message. */
+  /** Derived from the log: unanswered AND not superseded by a later delivered user message. */
   answerable: boolean;
   /** A turn is in flight — keep the card visible but hold submissions. */
   busy: boolean;
-  onAnswer: (selected: string[], freeText?: string) => void;
+  onAnswer: (msg: QuestionMessage, selected: string[], freeText?: string) => void;
 }) {
   const [selected, setSelected] = useState<string[]>([]);
   const [freeText, setFreeText] = useState("");
@@ -157,7 +160,7 @@ export function QuestionCard({
               onKeyDown={(e) => {
                 if (e.key === "Enter" && canSubmit) {
                   e.preventDefault();
-                  onAnswer(selected, freeText);
+                  onAnswer(msg, selected, freeText);
                 }
               }}
             />
@@ -165,7 +168,7 @@ export function QuestionCard({
               size="small"
               variant="contained"
               disabled={!canSubmit}
-              onClick={() => onAnswer(selected, freeText)}
+              onClick={() => onAnswer(msg, selected, freeText)}
             >
               Answer
             </Button>
@@ -174,4 +177,4 @@ export function QuestionCard({
       )}
     </Box>
   );
-}
+});

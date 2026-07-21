@@ -21,6 +21,7 @@
 // (text deltas), tool results (cards), errors, and the one aep-api terminal.
 
 import {
+  ASK_QUESTION_TOOL,
   parseSseStream,
   toChange,
   opForTool,
@@ -38,7 +39,6 @@ import { parseAskQuestionInput } from "./questionCards.js";
 import { getTurn, openTurnStream } from "./api/turns.js";
 
 const FILE_TOOLS = new Set(["addFile", "editFile", "removeFile"]);
-const ASK_QUESTION = "ask_question";
 
 /**
  * Attach to a running turn's stream and fold it to its terminal. Resolves
@@ -92,8 +92,8 @@ export async function attachAndFoldTurn(
         // ask_question (ADR-0012): the COMPLETE call renders as a question
         // card — no progressive render off partial input deltas. Malformed
         // input → no card (the agent's prose still carries the question).
-        if (part.toolName !== ASK_QUESTION) break;
-        const input = parseAskQuestionInput((part as { input?: unknown }).input);
+        if (part.toolName !== ASK_QUESTION_TOOL) break;
+        const input = parseAskQuestionInput(part.input);
         if (!input) break;
         upsertQuestionMessage(chatKey, {
           role: "question",

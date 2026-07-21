@@ -118,8 +118,35 @@ export interface RemoveFileInput {
 // `ask_question` tool. The payload rides the ordinary `tool-call` frame — no
 // dedicated event kind — and the console renders it as a native question card.
 // The turn ENDS at the call (`hasToolCall` stop condition); the user's answer
-// returns as the NEXT turn's plain-text instruction
-// (`Answer to "<question>": <label>[, <label>] — <note>`), never a new channel.
+// returns as the NEXT turn's plain-text instruction (`buildAnswerInstruction`),
+// never a new channel.
+
+/**
+ * The wire tool NAME — as much contract as the input shape: the agents service
+ * registers the tool under it and the console fold keys card rendering on it.
+ * One definition here so a rename cannot silently split the two sides.
+ */
+export const ASK_QUESTION_TOOL = "ask_question" as const;
+
+/** The answer instruction's leading marker (consumers may detect answers by it). */
+export const ANSWER_PREFIX = 'Answer to "' as const;
+
+/**
+ * Serialize a card answer into the next turn's plain-text instruction:
+ * `Answer to "<question>": <label>[, <label>] — <note>`. Selection and note
+ * combine; a free-text-only answer omits the labels. The agent reads it as an
+ * ordinary user message — no structured channel.
+ */
+export function buildAnswerInstruction(
+  question: string,
+  selected: string[],
+  freeText?: string,
+): string {
+  const labels = selected.join(", ");
+  const note = freeText?.trim() ?? "";
+  const body = labels && note ? `${labels} — ${note}` : labels || note;
+  return `${ANSWER_PREFIX}${question}": ${body}`;
+}
 
 /** One candidate answer on an `ask_question` card. */
 export interface AskQuestionOption {

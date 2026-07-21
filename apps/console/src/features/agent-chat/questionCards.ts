@@ -17,18 +17,21 @@
  */
 
 // The pure half of the question cards (ADR-0012 / #270): parsing the
-// ask_question tool-call payload off the wire, serializing the user's answer
-// into the next turn's instruction, and deciding whether a card is still
-// answerable. Kept free of React/store imports so it unit-tests standalone.
+// ask_question tool-call payload off the wire and deciding which cards are
+// still answerable. The wire tool name and the answer serialization live in
+// @aep/agent-stream (the contract); this module stays free of React/store
+// imports so it unit-tests standalone.
 
 import type { AskQuestionInput, AskQuestionOption } from "@aep/agent-stream";
 import type { ChatMessage } from "./chatStore";
 
 /**
  * Parse an `ask_question` tool-call `input` (object, or the provider's
- * stringified JSON) into the wire shape. Anything malformed → null — the fold
- * degrades to rendering nothing for the frame and the turn's text still shows
- * the question in prose.
+ * stringified JSON) into the wire shape. Anything malformed — including
+ * duplicate option labels, which would make a selection ambiguous — → null;
+ * the fold degrades to rendering nothing for the frame and the turn's text
+ * still shows the question in prose. Deliberately lenient beyond that (no
+ * option-count cap): rendering whatever the server accepted beats dropping it.
  */
 export function parseAskQuestionInput(input: unknown): AskQuestionInput | null {
   let value = input;
@@ -54,6 +57,7 @@ export function parseAskQuestionInput(input: unknown): AskQuestionInput | null {
       ...(o.recommended === true ? { recommended: true } : {}),
     });
   }
+  if (new Set(options.map((o) => o.label)).size !== options.length) return null;
   return {
     question: v.question,
     options,
@@ -62,34 +66,19 @@ export function parseAskQuestionInput(input: unknown): AskQuestionInput | null {
 }
 
 /**
- * The answer wire format (#270 decision 1): plain text, selection and free-text
- * note combined — `Answer to "<question>": <label>[, <label>] — <note>`. A
- * free-text-only answer omits the labels; the agent reads it as the response
- * either way.
+ * The ids of question cards that still accept input: unanswered via the card
+ * AND not superseded by any later user message that actually reached the
+ * server (a `failed` send supersedes nothing — the agent never saw it).
+ * Single backward pass, computed once per render; derived purely from the
+ * log, so reloads and second tabs converge.
  */
-export function serializeAnswer(
-  question: string,
-  selected: string[],
-  freeText?: string,
-): string {
-  const labels = selected.join(", ");
-  const note = freeText?.trim() ?? "";
-  const body = labels && note ? `${labels} — ${note}` : labels || note;
-  return `Answer to "${question}": ${body}`;
-}
-
-/**
- * A card accepts input only while it is the live end of the conversation:
- * unanswered via the card AND not superseded by any later user message (typing
- * in the composer is an equally valid answer path — the card then flips
- * read-only). Derived purely from the log, so reloads and second tabs converge.
- */
-export function isAnswerable(
-  messages: ChatMessage[],
-  msg: Extract<ChatMessage, { role: "question" }>,
-): boolean {
-  if (msg.answer) return false;
-  const idx = messages.findIndex((m) => m.id === msg.id);
-  if (idx < 0) return false;
-  return messages.slice(idx + 1).every((m) => m.role !== "user");
+export function answerableQuestionIds(messages: ChatMessage[]): Set<string> {
+  const ids = new Set<string>();
+  let superseded = false;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]!;
+    if (m.role === "user" && m.status !== "failed") superseded = true;
+    else if (m.role === "question" && !superseded && !m.answer) ids.add(m.id);
+  }
+  return ids;
 }

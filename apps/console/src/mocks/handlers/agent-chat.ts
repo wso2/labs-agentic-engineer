@@ -26,6 +26,8 @@
 // the normal generation flow.
 
 import { http, HttpResponse } from "msw";
+import { ANSWER_PREFIX } from "@aep/agent-stream";
+import { GRILLING_DIRECTIVE } from "@aep/contracts/prompts";
 
 let turnCounter = 0;
 const turnInstruction = new Map<string, string>();
@@ -78,9 +80,13 @@ export const agentChatHandlers = [
         { type: "turn-failed", message: "Mock turn failure (instruction contained 'fail')." },
       ]);
     }
+    // Grilling scenario detection keys on the SHARED contract strings — the
+    // seeded directive itself and the answer prefix — plus an explicit typed
+    // "grill me"; a mere mention of grilling in an edit instruction must not
+    // hijack the file-generation script.
     const grilling =
-      !instruction.startsWith('Answer to "') &&
-      (/\bgrill/i.test(instruction) || instruction.includes("interview me"));
+      !instruction.startsWith(ANSWER_PREFIX) &&
+      (instruction.includes(GRILLING_DIRECTIVE) || /\bgrill me\b/i.test(instruction));
     if (grilling) {
       const input = {
         question: "Who is the primary user of this app?",

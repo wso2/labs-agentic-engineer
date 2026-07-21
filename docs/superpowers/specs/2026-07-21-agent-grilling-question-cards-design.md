@@ -1,7 +1,7 @@
 # Agent Grilling Support via Structured Question Cards — Design
 
 **Date:** 2026-07-21
-**Status:** Approved design, pre-implementation
+**Status:** Implemented — [#270](https://github.com/wso2/labs-agentic-engineer/issues/270), console ADR-0012 (this document records the design rationale; the code and ADR are the current truth)
 **Scope:** Enable AEP's interactive spec agents to "grill" the user — a relentless,
 one-question-at-a-time interview with recommended answers — rendered as native
 Oxygen UI question cards in the console's agent chat.

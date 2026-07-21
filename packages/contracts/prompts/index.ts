@@ -30,33 +30,39 @@
  */
 
 /**
- * The grilling directive prepended to the initial spec generation (#270,
- * console ADR-0012): interview-first via the structured `ask_question` tool —
- * one question per turn, options + a recommended answer — with an explicit
- * skip valve (the user can always say "just generate"). Lives in the CLIENT
- * instruction (not the agent's system prompt) so autonomous/programmatic
- * dispatches are never interrupted.
+ * The grilling-interview directive (#270, console ADR-0012): interview-first
+ * via the structured `ask_question` tool — one question per turn, options + a
+ * recommended answer — with an explicit skip valve (the user can always say
+ * "just generate"). Deliberately NOT baked into the generation builders:
+ * an interactive client (the console's Generate-spec CTA) opts in with
+ * `withGrillingInterview`, so headless/programmatic dispatchers of the same
+ * builders (the playground CLI, evals) keep their one-shot, never-interrupted
+ * turns.
  */
-const GRILLING_DIRECTIVE =
+export const GRILLING_DIRECTIVE =
   "Before writing any files, interview me about this idea with the ask_question tool: " +
   "one question at a time, each with candidate options and the one you recommend, " +
   "working through the idea's ambiguities until the requirements are unambiguous. " +
   "If a grilling skill is available in your catalog, load it first and follow it. " +
   "If I ask you to skip ahead or just generate, stop interviewing and proceed on " +
-  "stated assumptions. When the interview is done, ";
+  "stated assumptions. When the interview is done, proceed with the following. ";
+
+/** Wrap a generation instruction with the interview-first directive (#270). */
+export function withGrillingInterview(instruction: string): string {
+  return GRILLING_DIRECTIVE + instruction;
+}
 
 /**
  * The instruction the "Generate spec" CTA sends into the room turn (#150): an
  * explicit generate command (not the raw idea, which the agent might treat as
- * a chat opener) wrapping the stored create prompt, preceded by the grilling
- * interview directive (#270). Falls back to a generic instruction when no
- * prompt was stored (older project / other browser / cleared storage) — the
- * CTA still works and the interview carries the discovery.
+ * a chat opener) wrapping the stored create prompt. Falls back to a generic
+ * instruction when no prompt was stored (older project / other browser /
+ * cleared storage) — the CTA still works and the agent can ask for detail.
+ * One-shot by itself; the console wraps it with `withGrillingInterview`.
  */
 export function buildSpecGenerationInstruction(prompt: string | null): string {
   const base =
-    GRILLING_DIRECTIVE +
-    "generate a complete requirements specification (requirements/requirements.md) for this project";
+    "Generate a complete requirements specification (requirements/requirements.md) for this project";
   return prompt && prompt.trim()
     ? `${base} based on the following idea:\n\n${prompt.trim()}`
     : `${base}.`;

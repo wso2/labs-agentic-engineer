@@ -34,7 +34,7 @@ canonical `FileBundle` ops to reconstruct file state — no second matcher.
 | **Raw `StreamPart` on the wire** (no envelope) | FE+BE ship together; `tool-result` already carries everything `toChange` needs |
 | **Full `files` snapshot every turn** | the service touches no repo/disk; the snapshot is the single source of file truth |
 | **Human-between-turns** (`stopWhen` only, no approval pause) | restart-safe, persistence-aligned, no long-lived per-human promises |
-| **`ask_question` Option B** (placeholder `execute()`, disabled) | fully-resolved transcript (no `MissingToolResultsError`), uniform resume |
+| **`ask_question` Option B** (placeholder `execute()`; registered in the `files` set, structured options payload, `hasToolCall` stop — #270) | fully-resolved transcript (no `MissingToolResultsError`), uniform resume; the answer arrives as the next turn's user message |
 | **Tool results carry no file content** (`OpOk` drops `newContent`) | echoing the file makes input scale file×edits (violates ADR-0001), and it is the only stale-able carrier |
 | **Append-only divergence note** (FE `filesChangedExternally`; no `reconcile`) | rewriting history breaks the prompt-cache prefix |
 | **SSE event types in `src/contracts/sse-events.ts`** | one shared definition for producer + playground, owned by the service; `OpResult` / tool-input types re-exported from the domain Zod schemas (no parallel copy) |

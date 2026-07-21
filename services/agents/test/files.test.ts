@@ -192,3 +192,11 @@ test("ask_question execute resolves the awaiting placeholder (replay-safe transc
   assert.equal(out.status, "awaiting_user_response");
   assert.equal(out.question, "q?");
 });
+
+test("askQuestionInputSchema rejects duplicate option labels (ambiguous selection identity)", () => {
+  const res = askQuestionInputSchema.safeParse({
+    question: "q",
+    options: [{ label: "same" }, { label: "same", description: "other" }],
+  });
+  assert.equal(res.success, false);
+});

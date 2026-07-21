@@ -17,7 +17,8 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { isAnswerable, parseAskQuestionInput, serializeAnswer } from "./questionCards";
+import { buildAnswerInstruction } from "@aep/agent-stream";
+import { answerableQuestionIds, parseAskQuestionInput } from "./questionCards";
 import type { ChatMessage } from "./chatStore";
 
 const INPUT = {
@@ -46,6 +47,10 @@ describe("parseAskQuestionInput", () => {
     ["missing question", { options: INPUT.options }],
     ["empty options", { question: "q", options: [] }],
     ["option without label", { question: "q", options: [{ description: "x" }] }],
+    [
+      "duplicate labels (ambiguous selection identity)",
+      { question: "q", options: [{ label: "a" }, { label: "a", description: "other" }] },
+    ],
     ["malformed JSON string", "{nope"],
     ["null", null],
   ])("rejects %s", (_name, value) => {
@@ -53,19 +58,23 @@ describe("parseAskQuestionInput", () => {
   });
 });
 
-describe("serializeAnswer", () => {
+describe("buildAnswerInstruction (wire contract)", () => {
   it("serializes a single selection", () => {
-    expect(serializeAnswer("Which auth flow?", ["OIDC"])).toBe('Answer to "Which auth flow?": OIDC');
+    expect(buildAnswerInstruction("Which auth flow?", ["OIDC"])).toBe(
+      'Answer to "Which auth flow?": OIDC',
+    );
   });
 
   it("combines multi-select labels and a free-text note", () => {
-    expect(serializeAnswer("Which?", ["A", "B"], "prefer A if forced")).toBe(
+    expect(buildAnswerInstruction("Which?", ["A", "B"], "prefer A if forced")).toBe(
       'Answer to "Which?": A, B — prefer A if forced',
     );
   });
 
   it("supports a free-text-only answer", () => {
-    expect(serializeAnswer("Which?", [], "something else")).toBe('Answer to "Which?": something else');
+    expect(buildAnswerInstruction("Which?", [], "something else")).toBe(
+      'Answer to "Which?": something else',
+    );
   });
 });
 
@@ -81,28 +90,36 @@ function question(id: string, answer?: { selected: string[] }): ChatMessage {
   };
 }
 
-describe("isAnswerable", () => {
-  const user: ChatMessage = { id: "u1", role: "user", content: "hi", status: "completed" };
+function user(id: string, status: "completed" | "failed" | "in_flight" = "completed"): ChatMessage {
+  return { id, role: "user", content: "text", status };
+}
 
-  it("is answerable while unanswered and last", () => {
-    const q = question("q1");
-    expect(isAnswerable([user, q], q as Extract<ChatMessage, { role: "question" }>)).toBe(true);
+describe("answerableQuestionIds", () => {
+  it("keeps an unanswered trailing question answerable", () => {
+    expect(answerableQuestionIds([user("u1"), question("q1")])).toEqual(new Set(["q1"]));
   });
 
-  it("is not answerable once the card recorded an answer", () => {
-    const q = question("q1", { selected: ["a"] });
-    expect(isAnswerable([q], q as Extract<ChatMessage, { role: "question" }>)).toBe(false);
+  it("excludes a question the card already answered", () => {
+    expect(answerableQuestionIds([question("q1", { selected: ["a"] })])).toEqual(new Set());
   });
 
-  it("is superseded by any later user message (typed replies count)", () => {
-    const q = question("q1");
-    const later: ChatMessage = { id: "u2", role: "user", content: "typed reply", status: "completed" };
-    expect(isAnswerable([q, later], q as Extract<ChatMessage, { role: "question" }>)).toBe(false);
+  it("is superseded by any later delivered user message (typed replies count)", () => {
+    expect(answerableQuestionIds([question("q1"), user("u2")])).toEqual(new Set());
+  });
+
+  it("is NOT superseded by a failed send — the agent never saw it", () => {
+    expect(answerableQuestionIds([question("q1"), user("u2", "failed")])).toEqual(
+      new Set(["q1"]),
+    );
   });
 
   it("stays answerable across later assistant narration", () => {
-    const q = question("q1");
     const narration: ChatMessage = { id: "a1", role: "assistant", turnId: "t1", content: "…" };
-    expect(isAnswerable([q, narration], q as Extract<ChatMessage, { role: "question" }>)).toBe(true);
+    expect(answerableQuestionIds([question("q1"), narration])).toEqual(new Set(["q1"]));
+  });
+
+  it("supersedes earlier questions but not later ones, in one pass", () => {
+    const log = [question("q1"), user("u1"), question("q2")];
+    expect(answerableQuestionIds(log)).toEqual(new Set(["q2"]));
   });
 });

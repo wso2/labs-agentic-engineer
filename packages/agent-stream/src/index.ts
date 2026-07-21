@@ -56,6 +56,9 @@ export {
   AGENT_SSE_EVENT_TYPES,
   SSE_DONE,
   TOOLSETS,
+  ASK_QUESTION_TOOL,
+  ANSWER_PREFIX,
+  buildAnswerInstruction,
   isToolset,
   isCollabConfig,
 } from "./contracts/sse-events.js";

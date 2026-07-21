@@ -576,3 +576,28 @@ test("the answer arrives as the next turn's plain user message and the turn comp
   const text = typeof lastUser.content === "string" ? lastUser.content : JSON.stringify(lastUser.content);
   assert.ok(text.includes(answer), "answer persisted as a user message");
 });
+
+test("HITL is scoped to the files toolset: a task-plan turn never ends awaiting-human", async () => {
+  const store = new InMemoryConversationStore();
+  const guard = new TurnGuard();
+  const { onEvent } = collector();
+
+  // A rogue call to a tool NAMED ask_question (e.g. an MCP-discovered
+  // homonym) on a task-plan turn: no stop condition fires and the status
+  // stays out of awaiting-human — the plan flow has no UI to answer it.
+  const conv = await runConversationTurn({
+    id: "plan-hitl",
+    instruction: "plan the work",
+    files: SEED_FILES,
+    toolset: "task-plan",
+    model: mockModel([
+      { kind: "toolCall", toolCallId: "x1", toolName: "ask_question", input: { question: "q?" } },
+      { kind: "text", text: "plan done" },
+    ]),
+    store,
+    guard,
+    onEvent,
+  });
+
+  assert.equal(conv.status, "done");
+});

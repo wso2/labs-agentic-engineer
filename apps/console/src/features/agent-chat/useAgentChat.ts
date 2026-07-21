@@ -17,8 +17,10 @@
  */
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { ASK_QUESTION_TOOL, buildAnswerInstruction } from "@aep/agent-stream";
 import {
   addMessage,
+  answerQuestion,
   chatKeyFor,
   conversationIdFor,
   dropTurnOutput,
@@ -28,6 +30,7 @@ import {
   subscribe,
   type ChatMessage,
 } from "./chatStore.js";
+import { parseAskQuestionInput } from "./questionCards.js";
 import {
   getActiveTurn,
   getConversationMessages,
@@ -44,6 +47,17 @@ export interface AgentChat {
   messages: ChatMessage[];
   isSending: boolean;
   send: (instruction: string) => void;
+  /**
+   * Answer a question card (ADR-0012): serializes the choice into the next
+   * turn's instruction. The answer is recorded on the card only once the turn
+   * actually STARTED — a failed or no-op send leaves the card answerable, so
+   * an answer can never be silently lost behind a read-only card.
+   */
+  answer: (
+    msg: Extract<ChatMessage, { role: "question" }>,
+    selected: string[],
+    freeText?: string,
+  ) => void;
 }
 
 export function useAgentChat(org: string, projectName: string): AgentChat {
@@ -88,8 +102,11 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
     };
   }, [chatKey, org, projectName]);
 
-  const send = useCallback(
-    (instruction: string) => {
+  // One turn dispatch, shared by send and answer. `onStarted` fires after
+  // startCollabTurn succeeds — the earliest point the instruction is durably
+  // on its way to the agent.
+  const dispatch = useCallback(
+    (instruction: string, onStarted?: () => void) => {
       const text = instruction.trim();
       if (!text || isSending) return;
       const convId = conversationIdFor(org, projectName, { create: true })!;
@@ -107,6 +124,7 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
           setIsSending(false);
           return;
         }
+        onStarted?.();
         addMessage(chatKey, {
           role: "user",
           content: text,
@@ -132,22 +150,60 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
     [chatKey, org, projectName, isSending],
   );
 
-  return { messages, isSending, send };
+  const send = useCallback((instruction: string) => dispatch(instruction), [dispatch]);
+
+  const answer = useCallback<AgentChat["answer"]>(
+    (msg, selected, freeText) => {
+      dispatch(buildAnswerInstruction(msg.question, selected, freeText), () =>
+        answerQuestion(chatKey, msg.id, {
+          selected,
+          ...(freeText?.trim() ? { freeText: freeText.trim() } : {}),
+        }),
+      );
+    },
+    [dispatch, chatKey],
+  );
+
+  return { messages, isSending, send, answer };
 }
 
-// Server history → display log: user/assistant text only (tool/system parts
-// don't reconstruct into cards — the doc already reflects them).
+// Server history → display log: user/assistant text, plus question cards
+// reconstructed from persisted ask_question tool-calls (ADR-0012) — without
+// them, a conversation that is awaiting-human rehydrates in a fresh browser
+// with the pending question invisible and unanswerable. File-tool parts stay
+// dropped (the doc already reflects them). Answered-ness derives from the
+// later user messages via answerableQuestionIds; the recorded selection
+// itself is local display state and does not survive a cross-browser move.
 function projectableHistory(
   history: { role: string; content: unknown }[],
 ): ChatMessage[] {
   const out: ChatMessage[] = [];
   for (const m of history) {
     const text = contentText(m.content);
-    if (!text) continue;
     if (m.role === "user") {
-      out.push({ id: "", role: "user", content: text, status: "completed" });
+      if (text) out.push({ id: "", role: "user", content: text, status: "completed" });
     } else if (m.role === "assistant") {
-      out.push({ id: "", role: "assistant", turnId: "history", content: text });
+      if (text) out.push({ id: "", role: "assistant", turnId: "history", content: text });
+      if (!Array.isArray(m.content)) continue;
+      for (const part of m.content) {
+        if (
+          typeof part !== "object" ||
+          part === null ||
+          (part as { type?: string }).type !== "tool-call" ||
+          (part as { toolName?: string }).toolName !== ASK_QUESTION_TOOL
+        ) {
+          continue;
+        }
+        const input = parseAskQuestionInput((part as { input?: unknown }).input);
+        if (!input) continue;
+        out.push({
+          id: "",
+          role: "question",
+          turnId: "history",
+          toolCallId: (part as { toolCallId?: string }).toolCallId ?? "",
+          ...input,
+        });
+      }
     }
   }
   return out;
