@@ -20,11 +20,13 @@ import { describe, expect, it } from "vitest";
 import { buildSpecGenerationInstruction } from "@aep/contracts/prompts";
 
 describe("buildSpecGenerationInstruction", () => {
-  it("wraps a stored prompt in an explicit generate command", () => {
+  it("leads with the grilling interview directive (#270), then the generate command", () => {
     const out = buildSpecGenerationInstruction(
       "An online store for handmade ceramics",
     );
-    expect(out).toMatch(/^Generate a complete requirements specification/);
+    expect(out).toMatch(/^Before writing any files, interview me/);
+    expect(out).toContain("ask_question");
+    expect(out).toContain("generate a complete requirements specification");
     expect(out).toContain("requirements/requirements.md");
     expect(out).toContain("An online store for handmade ceramics");
   });
@@ -32,7 +34,7 @@ describe("buildSpecGenerationInstruction", () => {
   it("falls back to a generic instruction when no prompt is stored", () => {
     for (const empty of [null, "", "   "]) {
       const out = buildSpecGenerationInstruction(empty);
-      expect(out).toMatch(/^Generate a complete requirements specification/);
+      expect(out).toMatch(/^Before writing any files, interview me/);
       expect(out).toContain("requirements/requirements.md");
       expect(out.endsWith(" for this project.")).toBe(true);
     }

@@ -19,7 +19,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { FileBundle, type LoadSkillResult, type LoadSkillReferenceResult } from "@aep/agent-stream";
-import { buildFileTools, LOAD_SKILL, LOAD_SKILL_REFERENCE } from "../src/agents/main/tools/files.js";
+import {
+  buildFileTools,
+  askQuestionInputSchema,
+  ASK_QUESTION,
+  LOAD_SKILL,
+  LOAD_SKILL_REFERENCE,
+} from "../src/agents/main/tools/files.js";
 import { testSkillSource, type TestSkill } from "./skill-source.js";
 
 const SKILL_LIST: TestSkill[] = [
@@ -47,8 +53,8 @@ const loadSkillExec = (skills: SkillSourceArg): LoadSkillExec =>
 test("buildFileTools omits loadSkill when no skills are supplied (skill-free = today)", () => {
   const tools = buildFileTools(new FileBundle({}));
   assert.equal(LOAD_SKILL in tools, false);
-  // The file-mutation tools are always present, in declaration order.
-  assert.deepEqual(Object.keys(tools), ["addFile", "editFile", "removeFile"]);
+  // The file-mutation tools + HITL are always present, in declaration order.
+  assert.deepEqual(Object.keys(tools), ["addFile", "editFile", "removeFile", "ask_question"]);
 });
 
 test("buildFileTools registers loadSkill when skills are supplied", () => {
@@ -131,4 +137,58 @@ test("loadSkillReference miss on unknown path lists that skill's reference paths
     assert.match(res.error, /unknown reference/);
     assert.deepEqual(res.available, ["references/schema.md"]);
   }
+});
+
+// --- ask_question (HITL, console ADR-0012 / #270) ----------------------------
+
+test("buildFileTools registers ask_question alongside the file tools", () => {
+  const tools = buildFileTools(new FileBundle({}));
+  assert.ok(tools[ASK_QUESTION]);
+});
+
+test("askQuestionInputSchema accepts a structured question with one recommended option", () => {
+  const res = askQuestionInputSchema.safeParse({
+    question: "Which auth flow should the app use?",
+    options: [
+      { label: "OIDC via Thunder", description: "Platform default", recommended: true },
+      { label: "API keys" },
+    ],
+    multiSelect: false,
+  });
+  assert.equal(res.success, true);
+});
+
+test("askQuestionInputSchema rejects an empty options list", () => {
+  const res = askQuestionInputSchema.safeParse({ question: "q", options: [] });
+  assert.equal(res.success, false);
+});
+
+test("askQuestionInputSchema rejects more than five options", () => {
+  const res = askQuestionInputSchema.safeParse({
+    question: "q",
+    options: Array.from({ length: 6 }, (_, i) => ({ label: `o${i}` })),
+  });
+  assert.equal(res.success, false);
+});
+
+test("askQuestionInputSchema rejects two recommended options", () => {
+  const res = askQuestionInputSchema.safeParse({
+    question: "q",
+    options: [
+      { label: "a", recommended: true },
+      { label: "b", recommended: true },
+    ],
+  });
+  assert.equal(res.success, false);
+});
+
+test("ask_question execute resolves the awaiting placeholder (replay-safe transcript)", async () => {
+  const tools = buildFileTools(new FileBundle({}));
+  const exec = tools[ASK_QUESTION]!.execute as unknown as (
+    i: unknown,
+    o: unknown,
+  ) => Promise<{ status: string; question: string }>;
+  const out = await exec({ question: "q?", options: [{ label: "a" }] }, {});
+  assert.equal(out.status, "awaiting_user_response");
+  assert.equal(out.question, "q?");
 });

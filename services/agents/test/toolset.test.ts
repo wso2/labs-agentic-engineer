@@ -35,12 +35,18 @@ const SKILLS = testSkillSource([{ name: "task-planning", description: "plan task
 const bundle = () => new FileBundle({});
 const plan = () => new TaskPlan({});
 
-test("files tool set (no skills) is exactly today's file tools", () => {
-  assert.deepEqual(Object.keys(buildFileTools(bundle())), ["addFile", "editFile", "removeFile"]);
+test("files tool set (no skills) is the file tools + ask_question (ADR-0012)", () => {
+  assert.deepEqual(Object.keys(buildFileTools(bundle())), ["addFile", "editFile", "removeFile", "ask_question"]);
 });
 
-test("files tool set with skills adds only the skill loader (byte-identical to today)", () => {
-  assert.deepEqual(Object.keys(buildFileTools(bundle(), SKILLS)), ["addFile", "editFile", "removeFile", "loadSkill"]);
+test("files tool set with skills adds only the skill loader", () => {
+  assert.deepEqual(Object.keys(buildFileTools(bundle(), SKILLS)), [
+    "addFile",
+    "editFile",
+    "removeFile",
+    "ask_question",
+    "loadSkill",
+  ]);
 });
 
 test("task-plan tool set registers planTask+updateTask and NO file tools", () => {

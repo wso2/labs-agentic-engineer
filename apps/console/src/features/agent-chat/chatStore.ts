@@ -16,6 +16,8 @@
  * under the License.
  */
 
+import type { AskQuestionOption } from "@aep/agent-stream";
+
 // Per-project chat log + conversation identity for the AI panel (#130).
 // Simplified from the legacy console's chatStore: localStorage-persisted,
 // capped, transient by design (quota errors drop silently). One conversation
@@ -43,6 +45,18 @@ export type ChatMessage =
       path: string;
       ok: boolean;
       errorText?: string;
+    }
+  | {
+      id: string;
+      role: "question";
+      turnId: string;
+      /** Correlates the card with its ask_question tool-call (replay-stable). */
+      toolCallId: string;
+      question: string;
+      options: AskQuestionOption[];
+      multiSelect?: boolean;
+      /** Set when answered via the card — renders read-only with the choice held. */
+      answer?: { selected: string[]; freeText?: string };
     }
   | { id: string; role: "error"; content: string };
 
@@ -134,6 +148,42 @@ export function upsertToolMessage(
     messages.push({ ...msg, id: nextId() } as ChatMessage);
   }
   persist(key, messages);
+}
+
+/**
+ * Add a question card, keyed by `toolCallId` — a replay-from-0 re-attach folds
+ * the same tool-call again, and the in-place hit keeps the card (and any
+ * recorded answer) instead of duplicating it. A blank toolCallId always appends.
+ */
+export function upsertQuestionMessage(
+  key: string,
+  msg: WithoutId<Extract<ChatMessage, { role: "question" }>>,
+): void {
+  const messages = [...load(key)];
+  const idx = msg.toolCallId
+    ? messages.findIndex((m) => m.role === "question" && m.toolCallId === msg.toolCallId)
+    : -1;
+  if (idx >= 0) {
+    const existing = messages[idx] as Extract<ChatMessage, { role: "question" }>;
+    messages[idx] = { ...existing, ...msg, ...(existing.answer ? { answer: existing.answer } : {}), id: existing.id };
+  } else {
+    messages.push({ ...msg, id: nextId() } as ChatMessage);
+  }
+  persist(key, messages);
+}
+
+/** Record the card's answer (ADR-0012) — the card flips read-only. */
+export function answerQuestion(
+  key: string,
+  toolCallId: string,
+  answer: { selected: string[]; freeText?: string },
+): void {
+  persist(
+    key,
+    load(key).map((m) =>
+      m.role === "question" && m.toolCallId === toolCallId ? { ...m, answer } : m,
+    ),
+  );
 }
 
 /** Streamed text accumulates into the turn's last assistant message. */

@@ -36,6 +36,8 @@ export type {
   AddFileInput,
   EditFileInput,
   RemoveFileInput,
+  AskQuestionInput,
+  AskQuestionOption,
   LoadSkillInput,
   LoadSkillResult,
   LoadedSkill,

@@ -480,3 +480,99 @@ test("mcp absent ⇒ no discovery fetch, no tool-set change (byte-identical to t
 
   assert.equal(events.some((e) => e.type === "tool-call" || e.type === "tool-result"), false);
 });
+
+// --- ask_question HITL (console ADR-0012 / #270) ------------------------------
+
+const ASK_INPUT = {
+  question: "Which persistence layer should the todo app use?",
+  options: [
+    { label: "Postgres", description: "Platform default", recommended: true },
+    { label: "SQLite", description: "Single-node only" },
+  ],
+};
+
+/** A model that asks, then — if wrongly given a second step — keeps going. */
+function askModel() {
+  return mockModel([
+    { kind: "toolCall", toolCallId: "q1", toolName: "ask_question", input: ASK_INPUT, text: "One question first." },
+    { kind: "text", text: "SECOND-STEP-MUST-NOT-RUN" },
+  ]);
+}
+
+test("ask_question ends the turn: awaiting-human, resolved transcript, terminal manifest", async () => {
+  const store = new InMemoryConversationStore();
+  const guard = new TurnGuard();
+  const { events, onEvent } = collector();
+
+  const conv = await runConversationTurn({
+    id: "hitl",
+    instruction: "build me a todo app",
+    files: SEED_FILES,
+    model: askModel(),
+    store,
+    guard,
+    onEvent,
+  });
+
+  // The hasToolCall stop condition ended the turn at the FIRST ask_question call.
+  assert.equal(conv.status, "awaiting-human");
+  const stored = (await store.get("hitl"))!;
+  assert.equal(stored.status, "awaiting-human");
+  assert.equal(
+    JSON.stringify(stored.messages).includes("SECOND-STEP-MUST-NOT-RUN"),
+    false,
+    "no step ran after the question",
+  );
+
+  // The wire carried the structured input on the ordinary tool-call frame.
+  const call = events.find((e) => e.type === "tool-call" && e.toolName === "ask_question") as
+    | { input?: unknown }
+    | undefined;
+  assert.ok(call, "ask_question tool-call streamed");
+  assert.deepEqual(call.input, ASK_INPUT);
+
+  // execute() resolved the placeholder — the transcript holds a tool result
+  // for the call (replay-safe, no dangling tool_use)...
+  const toolMsg = stored.messages.find((m) => m.role === "tool");
+  assert.ok(toolMsg, "resolved tool result persisted");
+  assert.match(JSON.stringify(toolMsg), /awaiting_user_response/);
+
+  // ...and the successful turn still ends with the (empty) terminal manifest.
+  const last = events[events.length - 1] as { type?: string; files?: unknown };
+  assert.equal(last.type, "manifest");
+  assert.deepEqual(last.files, {});
+});
+
+test("the answer arrives as the next turn's plain user message and the turn completes", async () => {
+  const store = new InMemoryConversationStore();
+  const guard = new TurnGuard();
+  const { onEvent } = collector();
+
+  await runConversationTurn({
+    id: "hitl2",
+    instruction: "build me a todo app",
+    files: SEED_FILES,
+    model: askModel(),
+    store,
+    guard,
+    onEvent,
+  });
+
+  const answer = 'Answer to "Which persistence layer should the todo app use?": Postgres';
+  const conv = await runConversationTurn({
+    id: "hitl2",
+    instruction: answer,
+    files: SEED_FILES,
+    model: textModel("Great — Postgres it is."),
+    store,
+    guard,
+    onEvent,
+  });
+
+  assert.equal(conv.status, "done", "an answered turn leaves awaiting-human");
+  const stored = (await store.get("hitl2"))!;
+  const users = stored.messages.filter((m) => m.role === "user");
+  const lastUser = users[users.length - 1]!;
+  const text = typeof lastUser.content === "string" ? lastUser.content : JSON.stringify(lastUser.content);
+  assert.ok(text.includes(answer), "answer persisted as a user message");
+});

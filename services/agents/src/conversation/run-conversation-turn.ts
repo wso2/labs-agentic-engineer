@@ -29,7 +29,7 @@
  * preserved across turns.
  */
 
-import { isStepCount, type LanguageModel, type ModelMessage, type ToolSet } from "ai";
+import { hasToolCall, isStepCount, type LanguageModel, type ModelMessage, type ToolSet } from "ai";
 import { FileBundle, type McpConfig, type StreamPart, type Toolset } from "@aep/agent-stream";
 import { DocFileBundle } from "../collab/doc-bundle.js";
 import { StreamingDocWriter } from "../collab/streaming-add.js";
@@ -82,8 +82,8 @@ function freshConversation(id: string): Conversation {
 }
 
 /**
- * True when the turn ended on an `ask_question` tool-call (HITL). Scans only the
- * messages appended THIS turn. Dormant while `ask_question` is disabled (§5).
+ * True when the turn ended on an `ask_question` tool-call (HITL, ADR-0012).
+ * Scans only the messages appended THIS turn.
  */
 function endedAwaitingHuman(appended: ModelMessage[]): boolean {
   for (const m of appended) {
@@ -154,8 +154,9 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
     // 3. select the tool set from `toolset` (default `files`). Both build a
     //    throwaway per-turn accumulator from the passed snapshot; the skill
     //    catalog + `loadSkill` are registered identically (only when skills were
-    //    supplied, ADR-0002); ask_question stays DISABLED. The FileBundle is
-    //    held by name: it is the source of the terminal manifest (D14).
+    //    supplied, ADR-0002); the files set includes the ask_question HITL
+    //    tool (ADR-0012). The FileBundle is held by name: it is the source of
+    //    the terminal manifest (D14).
     const toolset: Toolset = input.toolset ?? "files";
     const skills = input.skillSource;
     let bundle: FileBundle | undefined;
@@ -218,14 +219,17 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
       prompt: note + buildPrompt(input.files, input.instruction),
       messages: conv.messages, // appended in place by runTurn
       tools,
-      stopWhen: [isStepCount(config.maxSteps) /*, hasToolCall("ask_question") */],
+      // hasToolCall ends the turn at the FIRST ask_question call (ADR-0012):
+      // one question per turn is structural, not prompt discipline. Harmless
+      // for the task-plan set, which doesn't register the tool.
+      stopWhen: [isStepCount(config.maxSteps), hasToolCall(ASK_QUESTION)],
       maxOutputTokens: config.maxOutputTokens,
       providerOptions: modelProviderOptions(),
       onEvent,
       ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
     });
 
-    // 5. set status (awaiting-human dormant while ask_question disabled)
+    // 5. set status (awaiting-human when the turn ended on ask_question)
     conv.status = endedAwaitingHuman(conv.messages.slice(startLen)) ? "awaiting-human" : "done";
 
     // 6. observe per-turn spend (runTurn returns usage; today nothing keeps it)

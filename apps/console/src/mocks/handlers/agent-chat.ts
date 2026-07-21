@@ -19,7 +19,11 @@
 // Agent-chat turn endpoints (#130): start (202), rehydrate (empty), active
 // (204), and a scripted SSE stream — narration, one tool result, terminal —
 // so the panel is fully drivable in mock mode. Error scenario: instruction
-// containing "fail" streams a turn-failed terminal.
+// containing "fail" streams a turn-failed terminal. Grilling scenario (#270):
+// an instruction asking for an interview ("grill" / the seeded "interview me"
+// directive) streams an ask_question tool-call the panel renders as a
+// question card; the answer turn (instruction starting `Answer to "`) streams
+// the normal generation flow.
 
 import { http, HttpResponse } from "msw";
 
@@ -66,11 +70,42 @@ export const agentChatHandlers = [
 
   http.get("*/api/v1/projects/:projectName/turns/:turnId/stream", ({ params }) => {
     const turnId = String(params.turnId);
-    const failing = (turnInstruction.get(turnId) ?? "").includes("fail");
+    const instruction = turnInstruction.get(turnId) ?? "";
+    const failing = instruction.includes("fail");
     if (failing) {
       return sse([
         { type: "text-delta", delta: "Let me try that…" },
         { type: "turn-failed", message: "Mock turn failure (instruction contained 'fail')." },
+      ]);
+    }
+    const grilling =
+      !instruction.startsWith('Answer to "') &&
+      (/\bgrill/i.test(instruction) || instruction.includes("interview me"));
+    if (grilling) {
+      const input = {
+        question: "Who is the primary user of this app?",
+        options: [
+          {
+            label: "Individual consumers",
+            description: "Self-serve signup, personal workspaces",
+            recommended: true,
+          },
+          { label: "Internal teams", description: "SSO, org-managed access" },
+          { label: "Both from day one", description: "Two onboarding paths — more scope" },
+        ],
+        multiSelect: false,
+      };
+      return sse([
+        { type: "text-delta", delta: "Before I write anything, let me pin the idea down. " },
+        { type: "tool-call", toolCallId: "mock-q-1", toolName: "ask_question", input },
+        {
+          type: "tool-result",
+          toolName: "ask_question",
+          toolCallId: "mock-q-1",
+          input,
+          output: { status: "awaiting_user_response", question: input.question },
+        },
+        { type: "turn-committed", noChanges: true },
       ]);
     }
     return sse([

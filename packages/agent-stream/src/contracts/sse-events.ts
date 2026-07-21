@@ -112,6 +112,39 @@ export interface RemoveFileInput {
   path: string;
 }
 
+// --- ask_question (HITL, console ADR-0012 / #270) ----------------------------
+//
+// The structured human-in-the-loop question the main agent asks via the
+// `ask_question` tool. The payload rides the ordinary `tool-call` frame — no
+// dedicated event kind — and the console renders it as a native question card.
+// The turn ENDS at the call (`hasToolCall` stop condition); the user's answer
+// returns as the NEXT turn's plain-text instruction
+// (`Answer to "<question>": <label>[, <label>] — <note>`), never a new channel.
+
+/** One candidate answer on an `ask_question` card. */
+export interface AskQuestionOption {
+  /** Short display text (the value echoed back in the answer serialization). */
+  label: string;
+  /** What picking this means — trade-offs, implications. */
+  description?: string;
+  /** At most ONE option per question carries this — the agent's recommended answer. */
+  recommended?: boolean;
+}
+
+/**
+ * The `ask_question` tool input. WIRE source of truth; drift-guarded in the
+ * agents service `tools/files.ts`. `question` streams first (property order is
+ * load-bearing, cf. the file tools) though consumers render only on the
+ * complete `tool-call` frame.
+ */
+export interface AskQuestionInput {
+  question: string;
+  /** 1–5 options; the runtime schema rejects more than one `recommended`. */
+  options: AskQuestionOption[];
+  /** True → several options may be chosen together (checkboxes, not radios). */
+  multiSelect?: boolean;
+}
+
 // --- Skills (progressive disclosure, ADR-0002) ------------------------------
 //
 // Skills are GUIDANCE, not code, and they never travel on the wire: the turn's

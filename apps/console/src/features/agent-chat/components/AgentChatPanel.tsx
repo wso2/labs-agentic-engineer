@@ -41,8 +41,10 @@ import {
   X as XIcon,
 } from "@wso2/oxygen-ui-icons-react";
 import { useAgentChat } from "../useAgentChat";
-import type { ChatMessage } from "../chatStore";
+import { answerQuestion, chatKeyFor, type ChatMessage } from "../chatStore";
 import { groupChatItems, type ChatItem, type ToolMessage } from "../toolGrouping";
+import { isAnswerable, serializeAnswer } from "../questionCards";
+import { QuestionCard, type QuestionMessage } from "./QuestionCard";
 import {
   buildDesignGenerationInstruction,
   buildSpecGenerationInstruction,
@@ -398,6 +400,20 @@ export function AgentChatPanel({
     setDraft("");
   };
 
+  // ask_question cards (ADR-0012): a card is live only while unanswered and
+  // not superseded by a later user message; the composer stays an equally
+  // valid answer path, so `awaiting` only softens the placeholder.
+  const chatKey = chatKeyFor(org, projectName);
+  const answerable = (msg: QuestionMessage) => isAnswerable(messages, msg);
+  const awaiting = !isSending && messages.some((m) => m.role === "question" && answerable(m));
+  const answerCard = (msg: QuestionMessage) => (selected: string[], freeText?: string) => {
+    answerQuestion(chatKey, msg.toolCallId, {
+      selected,
+      ...(freeText?.trim() ? { freeText: freeText.trim() } : {}),
+    });
+    send(serializeAnswer(msg.question, selected, freeText));
+  };
+
   return (
     <Box
       sx={{
@@ -447,7 +463,17 @@ export function AgentChatPanel({
           <Stack spacing={1.5}>
             {groupChatItems(messages).map((item) =>
               item.kind === "message" ? (
-                <MessageRow key={item.message.id} msg={item.message} />
+                item.message.role === "question" ? (
+                  <QuestionCard
+                    key={item.message.id}
+                    msg={item.message}
+                    answerable={answerable(item.message)}
+                    busy={isSending}
+                    onAnswer={answerCard(item.message)}
+                  />
+                ) : (
+                  <MessageRow key={item.message.id} msg={item.message} />
+                )
               ) : (
                 <ToolGroup
                   key={item.id}
@@ -474,7 +500,11 @@ export function AgentChatPanel({
             multiline
             maxRows={5}
             size="small"
-            placeholder="Ask the agent to edit the spec…"
+            placeholder={
+              awaiting
+                ? "Answer the question above, or type a reply…"
+                : "Ask the agent to edit the spec…"
+            }
             value={draft}
             disabled={isSending}
             onChange={(e) => setDraft(e.target.value)}

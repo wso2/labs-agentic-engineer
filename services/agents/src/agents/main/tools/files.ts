@@ -38,6 +38,7 @@ import { z } from "zod";
 import {
   FileBundle,
   type AddFileInput,
+  type AskQuestionInput,
   type EditFileInput,
   type Equal,
   type RemoveFileInput,
@@ -48,7 +49,7 @@ import type { SkillSource } from "../skill-source.js";
 export const ADD_FILE = "addFile" as const;
 export const EDIT_FILE = "editFile" as const;
 export const REMOVE_FILE = "removeFile" as const;
-/** A tool for human-in-the-loop questions — implemented, but disabled. */
+/** The human-in-the-loop question tool (console ADR-0012 / #270). */
 export const ASK_QUESTION = "ask_question" as const;
 
 // Re-export the shared skill-loader names so existing importers keep one entry point.
@@ -84,25 +85,55 @@ const _drift: [
   Equal<z.infer<typeof addFileInputSchema>, AddFileInput>,
   Equal<z.infer<typeof editFileInputSchema>, EditFileInput>,
   Equal<z.infer<typeof removeFileInputSchema>, RemoveFileInput>,
-] = [true, true, true];
+  Equal<z.infer<typeof askQuestionInputSchema>, AskQuestionInput>,
+] = [true, true, true, true];
 void _drift;
 
-// --- ask_question (HITL, Option B) — implemented but NOT registered ----------
-// HAS an execute() returning a RESOLVED placeholder, so the transcript ends
-// fully-resolved (no dangling tool_use → no MissingToolResultsError on
-// persist/replay). Enabling HITL = uncomment the registration line in
-// buildFileTools AND the paired `hasToolCall("ask_question")` stop condition at
-// the call site. The user's answer arrives as the NEXT turn's plain user message.
-// No test covers this path while disabled (§5).
-export const askQuestionInputSchema = z.object({
-  question: z.string().describe("The clarifying question to ask the user."),
+// --- ask_question (HITL, console ADR-0012 / #270) ----------------------------
+// The structured human-in-the-loop question. execute() returns a RESOLVED
+// placeholder, so the transcript ends fully-resolved (no dangling tool_use →
+// no MissingToolResultsError on persist/replay); the paired
+// `hasToolCall(ASK_QUESTION)` stop condition at the call site ends the turn at
+// the FIRST call — one question per turn is structural. The console renders the
+// tool-call frame as a question card; the user's answer arrives as the NEXT
+// turn's plain user message (`Answer to "<question>": <label>[, <label>] — <note>`).
+
+export const askQuestionOptionSchema = z.object({
+  label: z.string().min(1).describe("Short display text for this option (a few words)."),
+  description: z
+    .string()
+    .optional()
+    .describe("What choosing this option means or implies — trade-offs, consequences."),
+  recommended: z
+    .boolean()
+    .optional()
+    .describe("Mark on AT MOST ONE option: the answer you recommend."),
 });
 
-/** @knipkeep Unwired HITL tool — enabled by uncommenting its registration in buildFileTools (see the note above). */
+export const askQuestionInputSchema = z
+  .object({
+    question: z.string().min(1).describe("The clarifying question to ask the user."),
+    options: z
+      .array(askQuestionOptionSchema)
+      .min(1)
+      .max(5)
+      .describe("1–5 candidate answers. Mark exactly one recommended when you have a view."),
+    multiSelect: z
+      .boolean()
+      .optional()
+      .describe("True when several options may sensibly be chosen together."),
+  })
+  .refine((v) => v.options.filter((o) => o.recommended).length <= 1, {
+    message: "at most one option may be marked recommended",
+    path: ["options"],
+  });
+
 export const askQuestionTool: Tool = tool({
   description:
-    "Ask the user a clarifying question when the instruction is ambiguous and you cannot proceed safely. " +
-    "Ends your turn; the user's answer arrives as the next message.",
+    "Ask the user ONE structured clarifying question — options with labels, descriptions, and your " +
+    "recommended answer. Use it only when the instruction is ambiguous and you cannot proceed safely " +
+    "(a loaded skill may direct otherwise). Ends your turn; the user's answer arrives as the next message. " +
+    "One question per call — never batch.",
   inputSchema: askQuestionInputSchema,
   execute: async ({ question }) => ({ status: "awaiting_user_response" as const, question }),
 });
@@ -141,10 +172,7 @@ export function buildFileTools(bundle: FileBundle, skills?: SkillSource): Record
       execute: async ({ path }) => bundle.removeFile(path),
     }),
 
-    // ask_question — human-in-the-loop follow-up. Implemented (Phase 5) but NOT
-    // registered: enabling HITL = uncomment the line below AND the paired
-    // hasToolCall("ask_question") stop condition at the call site. See §5/§10.
-    // [ASK_QUESTION]: askQuestionTool,
+    [ASK_QUESTION]: askQuestionTool,
   };
 
   return { ...tools, ...buildSkillTools(skills) };
