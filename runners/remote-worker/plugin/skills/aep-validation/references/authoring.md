@@ -1,9 +1,7 @@
----
-name: playwright-authoring
-description: Load when authoring Playwright e2e specs for an AEP validation task (invoked from the aep-validation skill's PLAN/GENERATE steps). Discipline for exploring the live app with playwright-cli, writing the test plan, and turning acceptance criteria into deterministic @playwright/test specs — UI criteria via the browser, API criteria via the request fixture. CLI command mechanics live in the `playwright-cli` skill; load that too.
----
-
 # Authoring validation specs
+
+**Binding authoring discipline for the aep-validation workflow (PLAN/GENERATE
+steps). Follow every rule here.**
 
 One rule above all: **the live app is the bar, not your reading of the
 code**. A spec only counts once it has passed **twice consecutively**
@@ -18,13 +16,13 @@ trustworthy source of truth:
 
 - the flow or locator is ambiguous from source + criteria alone;
 - a spec you authored fails and you need to see what the app actually
-  does (mandatory in healing triage — see `playwright-healing`);
+  does (mandatory in healing triage — see `healing.md`);
 - the app misbehaves: author the spec anyway so it fails honestly, and
   record what you observed in the test plan.
 
 For playwright-cli command mechanics (sessions, refs, eval, storage
 state), load the **`playwright-cli`** skill — especially its
-`references/test-generation.md`. This skill only adds the AEP
+`references/test-generation.md`. This doc only adds the AEP
 validation discipline on top.
 
 ## When exploring: collect code, don't transcribe
@@ -165,11 +163,12 @@ serve the same purpose — see the `playwright-cli` skill's
 Never hardcode credentials in specs or commit a `storageState` file
 (`.gitignore` it). If credentials are required but the env vars are
 absent, don't fake a login: author the specs, let them land as
-`not_run`/failing, and flag the blocker per the aep-validation skill.
+`not_run`/failing, and flag the blocker per the aep-validation workflow
+(SKILL.md).
 
 ## Flakes
 
 A spec that alternates pass/fail has not met the twice-consecutively
-bar — it is brittle. Fix it now (see `playwright-healing` for the
+bar — it is brittle. Fix it now (see `healing.md` for the
 brittleness taxonomy) rather than shipping a flake into the regression
 set.

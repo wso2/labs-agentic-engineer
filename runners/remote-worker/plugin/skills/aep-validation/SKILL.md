@@ -1,6 +1,6 @@
 ---
 name: aep-validation
-description: Load when working a VALIDATION task dispatched by WSO2 Labs Agentic Engineer (the prompt says "validation task"; the issue is labelled `aep` + `validation`). The cwd is a clone of the project's repo on its default branch. You validate the deployed system against specs/validation/validation-criteria.json by authoring and running Playwright e2e tests, then open a PR containing the tests plus a validation report. This workflow REPLACES the implementation workflow in the `aep` skill; the auth model, git/gh conventions, and deny-list there still apply. Companion skills — `playwright-authoring` (explore + write specs) and `playwright-healing` (repair brittle specs) — carry the phase-specific discipline.
+description: Load when working a VALIDATION task dispatched by WSO2 Labs Agentic Engineer (the prompt says "validation task"; the issue is labelled `aep` + `validation`). The cwd is a clone of the project's repo on its default branch. You validate the deployed system against specs/validation/validation-criteria.json by authoring and running Playwright e2e tests, then open a PR containing the tests plus a validation report. This workflow REPLACES the implementation workflow in the `aep` skill; the auth model, git/gh conventions, and deny-list there still apply. The phase-specific discipline lives in this skill's `references/authoring.md` (explore + write specs) and `references/healing.md` (repair brittle specs); the `playwright-cli` companion skill carries the CLI mechanics.
 ---
 
 # WSO2 Labs Agentic Engineer validation task
@@ -61,7 +61,7 @@ For each criterion:
   a spec (steps 5–6).
 - `method: e2e`, a committed spec already exists at
   `tests/e2e/specs/<AC-ID>.spec.ts` → **regression set**: do not
-  re-author it, just run it (heal only per `playwright-healing`).
+  re-author it, just run it (heal only per `references/healing.md`).
 - `method: manual` → no automation; the report renders these as a human
   checklist.
 - `method: scenario` → no automation in this run; the report lists them
@@ -159,13 +159,14 @@ tests/e2e/
 
 ### 6. PLAN, then GENERATE
 
-Before this step, load both companion skills with the Skill tool —
-do not proceed from memory:
+Before this step, pull in the phase discipline — do not proceed from
+memory:
 
-- `aep:playwright-authoring` — the authoring discipline (plan format,
-  collect-generated-code loop, assertion rules, criterion↔spec contract)
-- `aep:playwright-cli` — the CLI's own skill (commands, refs, eval,
-  storage state; vendored from @playwright/cli)
+- **Read `references/authoring.md` now and follow it as the binding
+  authoring discipline** (plan format, collect-generated-code loop,
+  assertion rules, criterion↔spec contract).
+- Load `aep:playwright-cli` with the Skill tool — the CLI's own skill
+  (commands, refs, eval, storage state; vendored from @playwright/cli).
 
 Then: write the test plan, author one spec per uncovered e2e criterion
 (source-informed where unambiguous; playwright-cli exploration when the
@@ -191,8 +192,8 @@ regression set — that's free regression coverage, not an accident.
 
 ### 8. HEAL (bounded)
 
-For failures, load **`aep:playwright-healing`** with the Skill tool
-before touching any spec. Then: triage each
+For failures, **Read `references/healing.md` now and follow it as the
+binding HEAL discipline** before touching any spec. Then: triage each
 one against the live app, repair only *brittleness* (locators, waits,
 setup), never weaken what a test asserts. Log each heal in
 `tests/e2e/heal-log.json`. When the budget is exhausted, finish with
@@ -224,7 +225,7 @@ means a contract violation: spec titles that don't map to criterion ids
 (fix titles, re-run tests from step 7), a spec file missing its
 `// spec:` header (add the header, regenerate — no test re-run needed),
 or a pre-existing spec modified without a heal-log entry (record the
-heal per `playwright-healing`). Commit the report and tests together.
+heal per `references/healing.md`). Commit the report and tests together.
 
 If `$AEP_PLATFORM_URL` is set, also push the report to the platform
 (best-effort — do not fail the task if this call fails):

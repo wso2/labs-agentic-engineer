@@ -18,8 +18,8 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { testSkillSource, type TestSkill } from "../../testing/skill-source.js";
-import { instructions, buildInstructions, buildSkillCatalog } from "./prompt.js";
+import { testSkillSource, type TestSkill } from "./skill-source.js";
+import { instructions, buildInstructions, buildSkillCatalog } from "../src/agents/main/prompt.js";
 
 const SKILL_LIST: TestSkill[] = [
   { name: "a-skill", description: "does A", content: "BODY A — secret guidance" },

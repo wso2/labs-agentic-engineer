@@ -23,7 +23,7 @@
  * always read skills through `SnapshotSkillSource` (§12).
  */
 
-import type { LoadedSkillBody, SkillCatalogEntry, SkillSource } from "../agents/main/skill-source.js";
+import type { LoadedSkillBody, SkillCatalogEntry, SkillSource } from "../src/agents/main/skill-source.js";
 
 /** One in-test skill: a resolved SKILL.md (body + optional reference files). */
 export interface TestSkill {

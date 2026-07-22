@@ -19,16 +19,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer, type ServerResponse } from "node:http";
-import { runConversationTurn, TurnGuard, ConcurrentTurnError } from "./run-conversation-turn.js";
-import { InMemoryConversationStore } from "../store/memory-store.js";
-import type { Conversation } from "../store/conversation-store.js";
-import type { RoomPeer } from "../collab/room-peer.js";
-import { SEED_FILES } from "../agents/main/prompt.js";
+import { runConversationTurn, TurnGuard, ConcurrentTurnError } from "../src/conversation/run-conversation-turn.js";
+import { InMemoryConversationStore } from "../src/store/memory-store.js";
+import type { Conversation } from "../src/store/conversation-store.js";
+import type { RoomPeer } from "../src/collab/room-peer.js";
+import { SEED_FILES } from "./seed-files.js";
 import type { StreamPart } from "@aep/agent-stream";
-import { sha256Hex } from "../shared/hash.js";
-import { mockModel, type MockStep } from "../shared/mock-model.js";
-import { testSkillSource } from "../testing/skill-source.js";
-import { listen0 } from "../shared/listen.js";
+import { sha256Hex } from "../src/shared/hash.js";
+import { mockModel, type MockStep } from "../src/shared/mock-model.js";
+import { testSkillSource } from "./skill-source.js";
+import { listen0 } from "../src/shared/listen.js";
 
 const OPENAPI = "specs/design/components/hello-api/openapi.yaml";
 

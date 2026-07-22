@@ -26,8 +26,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
 import { SignJWT } from "jose";
-import { createAuthMiddleware, type AgentsAuthConfig } from "./auth.js";
-import { listen0 } from "./listen.js";
+import { createAuthMiddleware, type AgentsAuthConfig } from "../src/shared/auth.js";
+import { listen0 } from "../src/shared/listen.js";
 
 const AUD = "agents-service";
 const SECRET = "unit-secret";

@@ -25,8 +25,8 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import type { Conversation } from "./conversation-store.js";
-import { PostgresConversationStore, type Queryable } from "./postgres-store.js";
+import type { Conversation } from "../src/store/conversation-store.js";
+import { PostgresConversationStore, type Queryable } from "../src/store/postgres-store.js";
 
 interface Row {
   id: string;

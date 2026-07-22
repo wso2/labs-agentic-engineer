@@ -19,8 +19,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { FileBundle, type LoadSkillResult, type LoadSkillReferenceResult } from "@aep/agent-stream";
-import { buildFileTools, LOAD_SKILL, LOAD_SKILL_REFERENCE } from "./files.js";
-import { testSkillSource, type TestSkill } from "../../../testing/skill-source.js";
+import { buildFileTools, LOAD_SKILL, LOAD_SKILL_REFERENCE } from "../src/agents/main/tools/files.js";
+import { testSkillSource, type TestSkill } from "./skill-source.js";
 
 const SKILL_LIST: TestSkill[] = [
   { name: "component-architecture", description: "deriving components", content: "Components live at specs/design/components/<name>/design.md." },

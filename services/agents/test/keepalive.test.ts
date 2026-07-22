@@ -18,7 +18,7 @@
 
 import { test, mock } from "node:test";
 import assert from "node:assert/strict";
-import { startKeepAlive, KEEP_ALIVE_FRAME } from "./keepalive.js";
+import { startKeepAlive, KEEP_ALIVE_FRAME } from "../src/shared/keepalive.js";
 
 test("emits a keep-alive frame every interval until stopped", () => {
   mock.timers.enable({ apis: ["setInterval"] });

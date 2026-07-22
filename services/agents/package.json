@@ -6,15 +6,20 @@
   "description": "Interactive spec agents (Vercel AI SDK). Seeded with the main file-mutation agent.",
   "exports": {
     "./server": "./src/server.ts",
-    "./store/*": "./src/store/*.ts",
-    "./shared/*": "./src/shared/*.ts",
-    "./conversation/*": "./src/conversation/*.ts"
+    "./store/conversation-store": "./src/store/conversation-store.ts",
+    "./shared/config": "./src/shared/config.ts",
+    "./shared/env": "./src/shared/env.ts",
+    "./shared/hash": "./src/shared/hash.ts",
+    "./shared/listen": "./src/shared/listen.ts",
+    "./shared/model": "./src/shared/model.ts",
+    "./shared/mock-model": "./src/shared/mock-model.ts",
+    "./conversation/load-workspace": "./src/conversation/load-workspace.ts"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
-    "test": "tsx --test \"src/**/*.test.ts\"",
+    "test": "tsx --test \"test/**/*.test.ts\"",
     "dev": "tsx watch src/main.ts",
     "start": "tsx src/main.ts"
   },

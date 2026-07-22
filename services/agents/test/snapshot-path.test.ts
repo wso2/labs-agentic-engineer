@@ -27,7 +27,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { join, sep } from "node:path";
 import { tmpdir } from "node:os";
-import { resolveWorkspace, WorkspaceRefError } from "./snapshot-path.js";
+import { resolveWorkspace, WorkspaceRefError } from "../src/shared/snapshot-path.js";
 
 const ORG = "org-1a2b";
 const PROJ = "proj-3c4d";

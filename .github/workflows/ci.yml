@@ -13,9 +13,13 @@ jobs:
   verify:
     name: build, test, lint
     runs-on: ubuntu-latest
+    # Normal runs are ~8 min; this ceiling catches a hung test instead of letting
+    # it run to the GitHub 6h limit (a past run burned 76 min this way).
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
+      # setup-go caches the Go module + build caches (keyed on go.sum) by default.
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.work
@@ -27,13 +31,57 @@ jobs:
       - name: Enable corepack (pnpm)
         run: corepack enable
 
-      - name: Add GOPATH/bin to PATH
-        run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      # Resolve paths consumed by the cache steps below (as step outputs so the
+      # workflow linter can see them), and put the Go tool bin on PATH.
+      - name: Resolve tool paths + PATH
+        id: paths
+        run: |
+          GOBIN="$(go env GOPATH)/bin"
+          echo "$GOBIN" >> "$GITHUB_PATH"
+          echo "go-bin=$GOBIN" >> "$GITHUB_OUTPUT"
+          echo "pnpm-store=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      # ── Caches ──────────────────────────────────────────────────────────────
+      # pnpm content-addressable store, keyed on the lockfile.
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.paths.outputs.pnpm-store }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+
+      # golangci-lint binary — lets us skip `make tools` (~1 min) on a hit. Keyed
+      # on the Makefile, which pins GOLANGCI_VERSION + GO_TOOLCHAIN.
+      - name: Cache golangci-lint binary
+        id: cache-golangci-bin
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.paths.outputs.go-bin }}/golangci-lint
+          key: golangci-bin-${{ runner.os }}-${{ hashFiles('Makefile') }}
+
+      # golangci-lint analysis cache — speeds the lint run itself.
+      - name: Cache golangci-lint analysis
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/golangci-lint
+          key: golangci-cache-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: golangci-cache-${{ runner.os }}-
+
+      # Turborepo cache — unchanged TS packages replay from cache instead of
+      # re-running typecheck/build/test/lint. github.sha keeps each run's cache
+      # fresh; restore-keys seeds it from the most recent prior run.
+      - name: Cache turbo
+        uses: actions/cache@v4
+        with:
+          path: .turbo
+          key: turbo-${{ runner.os }}-${{ github.sha }}
+          restore-keys: turbo-${{ runner.os }}-
 
       - name: Install dependencies
         run: make install
 
       - name: Install pinned Go tools (golangci-lint)
+        if: steps.cache-golangci-bin.outputs.cache-hit != 'true'
         run: make tools
 
       - name: go.sum consistency check
@@ -57,6 +105,9 @@ jobs:
 
       - name: Dead-code gate (aep-api)
         run: make -C services/aep-api deadcode-check
+
+      - name: Dead-code gate (TS — agents + playground)
+        run: make deadcode-ts-check
 
       - name: Lint
         run: make lint

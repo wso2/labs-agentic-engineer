@@ -17,12 +17,11 @@
  */
 
 /**
- * A self-contained spec-bundle fixture for this package's fold tests: free-form
- * prose, markdown-with-frontmatter, indentation-sensitive OpenAPI YAML, and a
- * schema-gated component `design.json` — the shapes `FileBundle` must handle.
- * The agents service keeps its own copy (`SEED_FILES` in `test/seed-files.ts`); this
- * package is fold-only and depends on nothing in the service, so its tests carry
- * their own corpus.
+ * TEST-ONLY fixture (never a production code path): the starting spec bundle the
+ * agent tests mutate. Mirrors the hello-api example in design.md — free-form
+ * prose, markdown-with-frontmatter, and indentation-sensitive OpenAPI YAML: the
+ * three shapes the file tools must handle. `@aep/agent-stream` keeps its own
+ * client-side copy for the fold tests.
  */
 export const SEED_FILES: Record<string, string> = {
   "specs/requirements/requirements.md": `# Overview
@@ -42,11 +41,7 @@ A simple API that responds with "Hello, World!" when called.
 - Requests work without requiring any parameters or authentication.
 `,
 
-  "specs/design/design.md": `---
-sourceSpec: v1
----
-
-A simple public API service that responds with "Hello, World!" in JSON format. Built as a single Go service exposing one endpoint, requiring no authentication.
+  "specs/design/design.md": `A simple public API service that responds with "Hello, World!" in JSON format. Built as a single Go service exposing one endpoint, requiring no authentication.
 `,
 
   "specs/design/components/hello-api/design.json": `{
@@ -58,8 +53,9 @@ A simple public API service that responds with "Hello, World!" in JSON format. B
   "appPath": "hello-api",
   "entrypoint": "deployment/service",
   "exposure": "internet",
-  "connections": [],
-  "description": "Implement a simple Go HTTP service on port 9090 using net/http. Expose GET /hello that returns {\\"message\\": \\"Hello, World!\\"} with Content-Type: application/json. Include GET /health returning 200 OK for liveness probes. This is a public API — no authentication required, no X-User-Id checks."
+  "dependencies": [],
+  "skillsApplied": ["go", "api-management"],
+  "description": "A simple public Go HTTP service (port 9090, net/http) that returns a hello-world JSON message. No authentication. Endpoints are specified in openapi.yaml."
 }
 `,
 

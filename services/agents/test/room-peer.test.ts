@@ -21,8 +21,8 @@ import assert from "node:assert/strict";
 import { Server } from "@hocuspocus/server";
 import type { Document } from "@hocuspocus/server";
 import { readDocFile, setDocFile } from "@aep/collab-doc";
-import { joinRoom, type RoomPeer } from "./room-peer.js";
-import { DocFileBundle } from "./doc-bundle.js";
+import { joinRoom, type RoomPeer } from "../src/collab/room-peer.js";
+import { DocFileBundle } from "../src/collab/doc-bundle.js";
 
 // A real Hocuspocus server (no auth hooks — auth is the collab service's
 // oracle, not this client's concern) with a seeded room, so the peer path is

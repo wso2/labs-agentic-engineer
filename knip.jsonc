@@ -1,0 +1,36 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  // Dead-code report for the agents runtime + the playground that consumes it.
+  // The TS counterpart of services/aep-api/scripts/deadcode.sh. Run via
+  // `--production` so *.test.ts never count as consumers (the Go "no -test").
+  //
+  // Scope: only these two workspaces for now; every other pnpm workspace is
+  // ignored. knip AUTO-DETECTS entries (agents via its package.json `exports`
+  // map, the playground via its `play: tsx src/cli.ts` script) — do NOT add a
+  // per-workspace `entry`/`project` override, it silently breaks detection.
+  "ignoreWorkspaces": [
+    "apps/*",
+    "packages/*",
+    "packages/ui/*",
+    "runners/*",
+    "services/aep-api",
+    "services/aep-mcp-server",
+    "services/collab"
+  ],
+  // Each package keeps tests + shared fixtures in its own `test/` dir (never in
+  // the shipped `src/` tree), which knip recognises as test-scope and strips
+  // under --production — so test-only code is excluded with no carve-out here.
+  // Root stray files are out of scope.
+  "ignore": ["deployments/**", "scripts/**"],
+  // An export used within its own file is not dead — this codebase deliberately
+  // exports internal helpers so unit tests can drive them directly. Only truly
+  // orphaned exports are reported.
+  "ignoreExportsUsedInFile": true,
+  // The `//deadcode:keep <reason>` analogue: an export carrying a `@knipkeep`
+  // JSDoc tag is intentionally retained (unwired infra / a deliberate seam) and
+  // is not reported. Keep the reason in the same doc comment.
+  "tags": ["-knipkeep"],
+  // `tsx` is a devDependency used only by dev/start scripts; --production drops
+  // devDeps, so knip flags it as an "unlisted binary". Not real dead code.
+  "ignoreBinaries": ["tsx"]
+}

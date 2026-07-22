@@ -32,12 +32,12 @@ import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import type { LanguageModel } from "ai";
 import { SignJWT } from "jose";
-import { createApp } from "./server.js";
-import { listen0 } from "./shared/listen.js";
-import { InMemoryConversationStore } from "./store/memory-store.js";
-import { SEED_FILES } from "./agents/main/prompt.js";
-import { sha256Hex } from "./shared/hash.js";
-import { mockModel } from "./shared/mock-model.js";
+import { createApp } from "../src/server.js";
+import { listen0 } from "../src/shared/listen.js";
+import { InMemoryConversationStore } from "../src/store/memory-store.js";
+import { SEED_FILES } from "./seed-files.js";
+import { sha256Hex } from "../src/shared/hash.js";
+import { mockModel } from "../src/shared/mock-model.js";
 
 const OPENAPI = "specs/design/components/hello-api/openapi.yaml";
 const REQUIREMENTS = "specs/requirements/requirements.md";

@@ -28,8 +28,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { loadMcpTools } from "./mcp-client.js";
-import { listen0 } from "./listen.js";
+import { loadMcpTools } from "../src/shared/mcp-client.js";
+import { listen0 } from "../src/shared/listen.js";
 
 type Handler = (req: IncomingMessage, res: ServerResponse, body: unknown) => void;
 

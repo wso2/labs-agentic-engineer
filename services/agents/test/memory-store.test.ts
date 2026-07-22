@@ -18,8 +18,8 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import type { Conversation } from "./conversation-store.js";
-import { InMemoryConversationStore } from "./memory-store.js";
+import type { Conversation } from "../src/store/conversation-store.js";
+import { InMemoryConversationStore } from "../src/store/memory-store.js";
 
 function fresh(id: string): Conversation {
   return {

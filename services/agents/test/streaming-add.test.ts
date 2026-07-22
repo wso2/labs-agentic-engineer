@@ -24,8 +24,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { FileBundle, type StreamPart } from "@aep/agent-stream";
-import type { RoomPeer } from "./room-peer.js";
-import { StreamingDocWriter } from "./streaming-add.js";
+import type { RoomPeer } from "../src/collab/room-peer.js";
+import { StreamingDocWriter } from "../src/collab/streaming-add.js";
 
 class FakePeer implements RoomPeer {
   sets: { path: string; content: string; mark: boolean }[] = [];

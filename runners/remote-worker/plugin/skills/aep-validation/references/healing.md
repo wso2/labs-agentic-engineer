@@ -1,9 +1,7 @@
----
-name: playwright-healing
-description: Load when e2e specs fail during an AEP validation run (invoked from the aep-validation skill's HEAL step). Discipline for triaging Playwright failures against the live app, repairing only brittleness (locators, waits, setup) within a bounded budget, and never healing a genuine failure into green.
----
-
 # Healing validation specs
+
+**Binding HEAL discipline for the aep-validation workflow. Follow every rule;
+items marked MUST are enforced by `generate-report.mjs` and fail the run.**
 
 **The rule, before anything else:** a heal may change *how the test
 drives the app* — never *what the test claims the app does*. If a fix

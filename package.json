@@ -14,11 +14,14 @@
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "gen": "turbo run gen",
-    "play": "pnpm --filter @aep/playground play"
+    "play": "pnpm --filter @aep/playground play",
+    "deadcode-ts": "knip --production --no-exit-code",
+    "deadcode-ts:check": "knip --production"
   },
   "devDependencies": {
     "@eslint/js": "^9.13.0",
     "eslint": "^9.13.0",
+    "knip": "^5.88.1",
     "openapi-typescript": "^7.4.2",
     "turbo": "^2.2.3",
     "typescript": "^5.6.3",

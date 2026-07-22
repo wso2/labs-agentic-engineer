@@ -43,7 +43,14 @@ DOCKERFILE="$WORKER_DIR/Dockerfile.validation"
 if [ "${FORCE:-0}" = "1" ] || ! docker image inspect "$IMAGE" &>/dev/null; then
     echo "🐳 Building validation runner image ($IMAGE)..."
     echo "   First build downloads Playwright + a baked chromium — expect a few minutes."
-    docker build -f "$DOCKERFILE" -t "$IMAGE" "$WORKER_DIR"
+    # --provenance=false --sbom=false: with the containerd image store (colima/
+    # Docker Desktop) buildx defaults to emitting an OCI image index with
+    # attestation manifests. `k3d image import` reports success on such an index
+    # but the k3d node's containerd can't resolve it to a runnable image, so the
+    # kubelet falls back to a registry pull of this local-only tag and the pod
+    # hangs in ImagePullBackOff. Emitting a plain single-manifest image keeps the
+    # local build importable.
+    docker build --provenance=false --sbom=false -f "$DOCKERFILE" -t "$IMAGE" "$WORKER_DIR"
     echo "✅ built $IMAGE"
 else
     echo "✅ validation runner image already present ($IMAGE) — skipping build (FORCE=1 to rebuild)"

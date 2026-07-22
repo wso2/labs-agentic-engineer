@@ -19,11 +19,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { ModelMessage } from "ai";
-import { runTurn } from "./run-turn.js";
-import { buildFileTools } from "./tools/files.js";
+import { runTurn } from "../src/agents/main/run-turn.js";
+import { buildFileTools } from "../src/agents/main/tools/files.js";
 import { FileBundle, type StreamPart } from "@aep/agent-stream";
-import { SEED_FILES } from "./prompt.js";
-import { mockModel } from "../../shared/mock-model.js";
+import { SEED_FILES } from "./seed-files.js";
+import { mockModel } from "../src/shared/mock-model.js";
 
 const OPENAPI = "specs/design/components/hello-api/openapi.yaml";
 

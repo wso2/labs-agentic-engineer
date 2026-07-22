@@ -13,9 +13,9 @@ cp -R package/skills/playwright-cli/* plugin/skills/playwright-cli/
 cp package/LICENSE plugin/skills/playwright-cli/LICENSE
 ```
 
-AEP-specific authoring/healing discipline lives in the sibling
-`playwright-authoring` and `playwright-healing` skills, which defer all
-CLI mechanics to this one.
+AEP-specific authoring/healing discipline lives in the `aep-validation`
+skill's `references/authoring.md` and `references/healing.md`, which
+defer all CLI mechanics to this one.
 
 ## Why vendored (interim)
 

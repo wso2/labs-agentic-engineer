@@ -98,6 +98,7 @@ export const askQuestionInputSchema = z.object({
   question: z.string().describe("The clarifying question to ask the user."),
 });
 
+/** @knipkeep Unwired HITL tool — enabled by uncommenting its registration in buildFileTools (see the note above). */
 export const askQuestionTool: Tool = tool({
   description:
     "Ask the user a clarifying question when the instruction is ambiguous and you cannot proceed safely. " +

@@ -19,6 +19,10 @@ SDLC platform built on OpenChoreo.
 - Focus on writing maintainable code, clean code. 
 - Keep files seperated based on responsibility.
 - Proper Fix alawys, no hacks or workarounds unless explicitly specified.
+- Dead code is gated. TS: `make deadcode-ts-check` (knip over `@aep/agents` +
+  `@aep/playground`; `make deadcode-ts` for a report). Retain unwired infra / a
+  deliberate test seam with a `@knipkeep <reason>` JSDoc tag; config + rationale
+  in `knip.jsonc`. Go is gated per-module (`services/aep-api`, `//deadcode:keep`).
 
 ## PR Guidelines
 - Make sure tests are enough to prove the change works as expected.

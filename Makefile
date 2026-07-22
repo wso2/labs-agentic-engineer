@@ -46,7 +46,7 @@ LICENSE_HEADER := .github/license-header.txt
 LICENSE_MATCH = grep -E '\.(go|ts|tsx|sh)$$|(^|/)Dockerfile$$' | \
 	grep -vE '\.gen\.(go|ts)$$|_mock\.go$$|/mocks/|/node_modules/|/dist/|/generated/|(^|/)\.(agents|claude)/'
 
-.PHONY: install gen build dev test lint typecheck license license-check tools clean cover build-validation-runner
+.PHONY: install gen build dev test lint typecheck license license-check tools clean cover build-validation-runner deadcode-ts deadcode-ts-check
 
 install:
 	$(PNPM) install
@@ -76,7 +76,7 @@ cover:
 	@$(MAKE) -C services/aep-api cover || true
 	@echo ""
 	@echo ">> TS coverage — @aep/agents (node:test --experimental-test-coverage)"
-	@$(PNPM) --filter @aep/agents exec node --experimental-test-coverage --import tsx --test "src/**/*.test.ts" 2>/dev/null \
+	@$(PNPM) --filter @aep/agents exec node --experimental-test-coverage --import tsx --test "test/**/*.test.ts" 2>/dev/null \
 		| grep -E '^# (tests|pass|fail|all files)' || echo "  (TS coverage unavailable — run 'pnpm --filter @aep/agents test' to debug)"
 
 lint:
@@ -95,6 +95,18 @@ license-check:
 
 tools:
 	GOTOOLCHAIN=$(GO_TOOLCHAIN) go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION)
+
+# TS dead-code gate (knip) — the counterpart of services/aep-api's Go
+# `deadcode-check`. Whole-program unused-export/file/dependency analysis over the
+# agents runtime + the playground that consumes it, run with --production so
+# *.test.ts never count as consumers. Config + rationale live in knip.jsonc.
+#   make deadcode-ts        human report (never fails)
+#   make deadcode-ts-check  CI gate (fails on any finding)
+deadcode-ts:
+	$(PNPM) run deadcode-ts
+
+deadcode-ts-check:
+	$(PNPM) run deadcode-ts:check
 
 # Local-dev helper (not a uniform verb): build + k3d-import the validation-task
 # runner image. setup-aep.sh runs this automatically at setup; use it to force a

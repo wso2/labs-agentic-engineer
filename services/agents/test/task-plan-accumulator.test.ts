@@ -18,7 +18,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { TaskPlan } from "./task-plan-accumulator.js";
+import { TaskPlan } from "../src/agents/main/task-plan-accumulator.js";
 
 /** A design snapshot with three components (no existing Tasks). */
 const DESIGN: Record<string, string> = {

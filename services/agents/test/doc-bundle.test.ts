@@ -26,8 +26,8 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import type { RoomPeer } from "./room-peer.js";
-import { DocFileBundle } from "./doc-bundle.js";
+import type { RoomPeer } from "../src/collab/room-peer.js";
+import { DocFileBundle } from "../src/collab/doc-bundle.js";
 
 class SpyPeer implements RoomPeer {
   sets: { path: string; content: string; mark: boolean }[] = [];

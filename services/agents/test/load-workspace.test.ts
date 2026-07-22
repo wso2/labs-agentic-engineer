@@ -21,8 +21,8 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { readSnapshot, filterTurnSnapshot, loadSkillsFromSnapshot } from "./load-workspace.js";
-import { buildSkillCatalog } from "../agents/main/prompt.js";
+import { readSnapshot, filterTurnSnapshot, loadSkillsFromSnapshot } from "../src/conversation/load-workspace.js";
+import { buildSkillCatalog } from "../src/agents/main/prompt.js";
 
 function makeTree(files: Record<string, string | Buffer>): string {
   const root = mkdtempSync(join(tmpdir(), "aep-snap-"));

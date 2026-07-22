@@ -67,7 +67,12 @@ off the stream. The plan tool contract (inputs, results, error codes, the
 
 ## Test
 
-- `test` — source unit tests (`src/**/*.test.ts`), no tokens.
+- `test` — unit tests (`test/**/*.test.ts`), no tokens. Tests and their shared
+  fixtures live in `test/` (never in the shipped `src/` tree), mirroring
+  `@aep/agent-stream` and `@aep/playground`. Fixtures/doubles are flat siblings:
+  `test/seed-files.ts` (the spec-bundle fixture), `test/skill-source.ts` (the
+  `SkillSource` double). Cross-package test-support that must be importable (the
+  `mock-model`) stays in `src/shared/` and is published via `exports`.
 
 The local-filesystem playground and the model-eval harness live in the root
 `@aep/playground` package (they drive this service over HTTP like any caller);
