@@ -138,8 +138,8 @@ func TestProvision_SeedsFlatLayout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if len(skills) != 11 {
-		t.Fatalf("seeded catalog size = %d, want 11", len(skills))
+	if len(skills) != 12 {
+		t.Fatalf("seeded catalog size = %d, want 12", len(skills))
 	}
 
 	paths := lsTree(t, c, "org1")
@@ -221,10 +221,10 @@ func TestReconcile_MigratesLegacyRepo(t *testing.T) {
 	for _, sk := range skills {
 		byName[sk.Name] = sk
 	}
-	// The full embedded library is back (11) plus the preserved custom skill,
+	// The full embedded library is back (12) plus the preserved custom skill,
 	// minus nothing — react-webapp is user-owned now. retired is purged.
-	if len(skills) != 12 {
-		t.Fatalf("catalog size after migration = %d, want 12: %+v", len(skills), skillKeysOf(byName))
+	if len(skills) != 13 {
+		t.Fatalf("catalog size after migration = %d, want 13: %+v", len(skills), skillKeysOf(byName))
 	}
 	if _, ok := byName["retired"]; ok {
 		t.Fatalf("retired legacy builtin must be purged")
