@@ -85,6 +85,16 @@ services:
       # flips imagePullPolicy to Always and forces a registry pull) to run a
       # locally-built runner instead.
       AGENT_RUNNER_IMAGE: "${AGENT_RUNNER_IMAGE:-}"
+      # Model pricing (#245/#249, ADR-0011): the single active model's USD-
+      # per-MTok rates behind every displayed costUsd. Unset = the checked-in
+      # defaults in internal/config; override in .env when the platform runs
+      # a different model (the model id must match or records go unpriced and
+      # the console degrades to token figures).
+      MODEL_PRICING_MODEL_ID: "${MODEL_PRICING_MODEL_ID:-}"
+      MODEL_RATE_INPUT_PER_MTOK: "${MODEL_RATE_INPUT_PER_MTOK:-}"
+      MODEL_RATE_OUTPUT_PER_MTOK: "${MODEL_RATE_OUTPUT_PER_MTOK:-}"
+      MODEL_RATE_CACHE_READ_PER_MTOK: "${MODEL_RATE_CACHE_READ_PER_MTOK:-}"
+      MODEL_RATE_CACHE_WRITE_PER_MTOK: "${MODEL_RATE_CACHE_WRITE_PER_MTOK:-}"
       DEPLOYMENT_TIER: "${DEPLOYMENT_TIER:-dev}"
       # Central per-route tenant gate (§6.1b). ENFORCE by default (404s
       # cross-org); set TENANT_GATE_MODE=log for the observe-only canary
