@@ -242,6 +242,30 @@ func problemJSON(w http.ResponseWriter, status int, title, detail string) {
 }
 ```
 
+Consuming another service — the platform injects the upstream's address into
+an env var (e.g. `SERVICE2_URL`) through an OpenChoreo connection (the `aep`
+skill covers the wiring). Build every request URL onto that address with
+`url.JoinPath`, which normalizes the slashes. The injected address can end with
+a `/` (the provider endpoint's `basePath` is `/`), and a bare `base + "/path"`
+on a slash-terminated address makes `//path` — see the pitfalls table for what
+that costs.
+
+```go
+base := os.Getenv("SERVICE2_URL") // may arrive as "http://…-service2…:9090/"
+if base == "" {
+    log.Fatal("SERVICE2_URL not set")
+}
+target, err := url.JoinPath(base, "simulated-work") // ".../simulated-work", never "//…"
+if err != nil {
+    log.Fatal(err)
+}
+resp, err := http.Post(target, "application/json", strings.NewReader(`{}`))
+if err != nil {
+    log.Fatal(err)
+}
+defer resp.Body.Close()
+```
+
 `Dockerfile` — multi-stage, pinned builder, slim runtime:
 
 ```dockerfile
@@ -318,6 +342,9 @@ absence. Only when you DO have external dependencies must the committed
   hashes cause `checksum mismatch ... SECURITY ERROR` at build time.
 - ❌ Use CGO. Set `CGO_ENABLED=0` explicitly or use the pure-Go driver
   to make sure you're not accidentally linking C code.
+- ❌ Concatenate a path onto an injected upstream address
+  (`base + "/path"`) — the address can end in `/`, so join with
+  `url.JoinPath(base, "path")` instead.
 
 ### Common pitfalls
 
@@ -330,4 +357,5 @@ absence. Only when you DO have external dependencies must the committed
 | `checksum mismatch ... SECURITY ERROR` at build | `go.sum` is stale or hand-edited | `go mod tidy` locally; commit the result. |
 | Build fails `COPY go.mod go.sum ./ ... go.sum: no such file or directory` | Dockerfile names `go.sum` but a stdlib-only service has none | Use the Dockerfile above (`COPY go.mod ./` only); `COPY . .` brings `go.sum` when it exists. |
 | Pod won't start; logs show "panic: listen tcp :8080" | Used wrong port | Use port 9090. |
+| `POST` to an injected upstream returns `405` (or a `301` then a `GET`) | The connection-injected address ended in `/`, so `base + "/path"` built `//path`; `net/http` `ServeMux` `301`-redirects to the clean path and the client re-issues the redirect as `GET`, which a `POST`-only route rejects with `405` | Join with `url.JoinPath(base, "path")` — it collapses the doubled slash. |
 | Create/POST 500s only when an optional list field is omitted (present, even `[]`, works) | A nil Go slice binds as SQL `NULL` (not `[]`), violating a `NOT NULL` array column; the column's `DEFAULT` is skipped because the INSERT lists it explicitly | Normalize nil→empty before the insert (`if s == nil { s = []T{} }`), or omit the column so its `DEFAULT '{}'` applies. |

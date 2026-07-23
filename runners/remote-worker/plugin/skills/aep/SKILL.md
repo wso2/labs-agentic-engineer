@@ -299,7 +299,10 @@ dependencies:
 ```
 
 Read each injected value from its env var at startup (no hardcoded
-fallback). If your issue has **no** "Platform-resolved dependencies"
+fallback). An injected `address` can end with a `/` (the provider
+endpoint's base path), so build request URLs by joining the path onto it
+rather than concatenating strings — a doubled slash (`//path`) misroutes
+the request. If your issue has **no** "Platform-resolved dependencies"
 comment, your component has no consumer-side dependencies — add no
 `dependencies:` block. The build's `generate-workload-cr` step propagates
 this block into the OpenChoreo `Workload` CR, and OpenChoreo resolves +
