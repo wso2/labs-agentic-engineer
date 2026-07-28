@@ -52,25 +52,31 @@ spec:
           maximum: 3
   resources:
     - id: cluster
-      # readyWhen gates the binding's ResourcesReady/Ready on the CNPG Cluster
-      # actually SERVING — not merely on a successful apply. This is load-bearing
-      # for P5's async-provisioning safety: OC 1.1.1's getUnknownResourceHealth
-      # returns `Healthy` UNCONDITIONALLY for unknown Kinds (a foreign CRD like the
-      # CNPG `Cluster`), so WITHOUT this gate the binding flips Ready=True at APPLY
-      # time — before Postgres serves — and the A5 watcher would mark the consumer
-      # task `deployed` against a non-serving DB.
+      # ─────────────────────────────────────────────────────────────────────────
+      # TEMPORARY WORKAROUND — readyWhen disabled. Tracking: openchoreo/openchoreo#4323
       #
-      # OC 1.1.1 DOES copy the foreign CRD's FULL live `status` into
-      # `applied.<id>.status` every reconcile, so `applied.cluster.status.phase` is
-      # available once CNPG writes it. The `has()` chain makes both the brief
-      # pre-APPLY window (the `applied.cluster` key does not exist yet) and the
-      # pre-PHASE window (status object exists but `.phase` not yet written)
-      # evaluate to `false` cleanly — fail-closed until the real CNPG healthy phase
-      # "Cluster in healthy state" appears. LIVE-VERIFIED 2026-06-30: the binding
-      # held Ready=False through "Setting up primary" / "Waiting for the instances
-      # to become active" and flipped Ready=True ONLY after phase reached "Cluster
-      # in healthy state" (gated transition, never an early flip).
-      readyWhen: '${has(applied.cluster) && has(applied.cluster.status) && has(applied.cluster.status.phase) && applied.cluster.status.phase == "Cluster in healthy state"}'
+      # OpenChoreo has no health check for foreign CRDs like the CNPG `Cluster`:
+      # getUnknownResourceHealth reports it `Healthy` the moment it is applied, so
+      # the RenderedRelease parks on the ~5-minute "stable" requeue instead of the
+      # 10s transitioning one. A readyWhen that reads applied.cluster.status.* is
+      # only re-evaluated when that status is re-observed, so the binding does not
+      # flip Ready until the next ~5-min requeue — even though Postgres is serving
+      # within ~30s (live-verified: DB healthy ~30s, binding Ready ~5m20s).
+      # Commenting out readyWhen lets the binding go Ready at apply time so local
+      # provisioning is fast (the outputs below are static / secretKeyRef and never
+      # read live status, so nothing else re-introduces the delay).
+      #
+      # TRADE-OFF: without this gate the binding reports Ready BEFORE Postgres is
+      # actually serving, so a consumer may connect to a not-yet-ready DB for the
+      # first ~30s. Restore the readyWhen line below once OpenChoreo adds foreign-CRD
+      # health checks or data-plane watch events (issue #4323). Unlike thunder-app,
+      # postgres has no deterministic ready signal to key off, so this stays a
+      # temporary measure rather than a redesign.
+      #
+      # Original gate (restore verbatim when #4323 lands): fail-closes through the
+      # pre-apply / pre-phase windows until the CNPG Cluster reaches phase
+      # "Cluster in healthy state".
+      # readyWhen: '${has(applied.cluster) && has(applied.cluster.status) && has(applied.cluster.status.phase) && applied.cluster.status.phase == "Cluster in healthy state"}'
       template:
         apiVersion: postgresql.cnpg.io/v1
         kind: Cluster

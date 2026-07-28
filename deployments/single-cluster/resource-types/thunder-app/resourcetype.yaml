@@ -101,21 +101,26 @@ spec:
           default: ""
   resources:
     - id: app
-      # readyWhen gates the binding's ResourcesReady/Ready on the operator having
-      # actually minted the OAuth app on Thunder — not merely on a successful
-      # apply. OC 1.1.1's getUnknownResourceHealth returns `Healthy`
-      # UNCONDITIONALLY for unknown Kinds (a foreign CRD like ThunderApplication),
-      # so WITHOUT this gate the binding flips Ready=True at APPLY time — before
-      # the client_id exists — and a consumer would bind against an OAuth app that
-      # is not yet registered.
+      # ─────────────────────────────────────────────────────────────────────────
+      # INSTANT PROVISIONING — readyWhen relaxed to ${true} on purpose.
       #
-      # OC 1.1.1 copies the foreign CRD's live `status` into `applied.<id>.status`
-      # every reconcile, so `applied.app.status.ready` is available once the
-      # operator writes it. The `has()` chain makes both the pre-APPLY window (the
-      # `applied.app` key does not exist yet) and the pre-READY window (status
-      # object exists but `.ready` not yet written) evaluate to `false` cleanly —
-      # fail-closed until the operator reports ready.
-      readyWhen: '${has(applied.app) && has(applied.app.status) && has(applied.app.status.ready) && applied.app.status.ready}'
+      # The OAuth app's client_id is DETERMINISTIC: the operator always registers
+      # it on Thunder as "aep-<cr-namespace>-<cr-name>" (see thunderAppName in the
+      # operator's thunderapplication_controller.go), and Thunder honours a
+      # caller-supplied client_id. So the client_id is fully known at render time
+      # and does NOT need to be read back from the CR's live status (see the
+      # client_id output below).
+      #
+      # Gating readyWhen on applied.app.status.ready would tie readiness to live CR
+      # status, which OpenChoreo only re-observes on its ~5-minute "stable" requeue
+      # (it has no health check for foreign CRDs like ThunderApplication —
+      # getUnknownResourceHealth reports them Healthy immediately), making the
+      # binding take ~5 min to go Ready. Tracking: openchoreo/openchoreo#4323.
+      #
+      # TRADE-OFF: with ${true} the binding reports Ready before Thunder finishes
+      # registering the app, so a login attempt in the first ~few seconds can fail
+      # and then self-heal. Acceptable for these local single-cluster dev types.
+      readyWhen: '${true}'
       template:
         apiVersion: aep.wso2.com/v1alpha1
         kind: ThunderApplication
@@ -128,22 +133,23 @@ spec:
           scopes: ${parameters.scopes}
           redirectUris: ${environmentConfigs.redirectUris}
   outputs:
-    # client_id is read straight off the applied CR's live status (the operator
-    # writes `status.clientId` alongside `status.ready`). Emitting it as a CEL
-    # `value` makes OC deliver a LITERAL string in the binding's status.outputs
-    # — which the aep-api runtimeconfig env-config.js path requires (it reads
+    # client_id is DETERMINISTIC — the operator registers the OAuth app on Thunder
+    # as "aep-<cr-namespace>-<cr-name>" (thunderAppName in the operator), and
+    # Thunder honours that caller-supplied id. So we emit it as a rendered literal
+    # instead of reading `applied.app.status.clientId`. This keeps the output
+    # resolvable at APPLY time — no dependency on live CR status, which OpenChoreo
+    # only re-observes every ~5 min (openchoreo/openchoreo#4323) — and it is the
+    # `value` shape the aep-api runtimeconfig env-config.js path requires (it reads
     # `output.value` only; a configMapKeyRef-shaped output carries no value in
-    # binding status, leaving the client_id output unresolvable). Verified
-    # empirically on OC 1.1.1: outputs share readyWhen's CEL context, including
-    # `applied.<id>.status.*`. The readyWhen gate above means outputs are only
-    # surfaced once `status.ready=true`, and the operator sets `clientId`
-    # together with `ready`, so this never resolves empty on a Ready binding.
+    # binding status). metadata.namespace / metadata.name here resolve to the same
+    # rendered CR namespace/name the operator derives thunderAppName from, so the
+    # literal matches the registered client_id exactly.
     #
     # The operator ALSO publishes client_id in the `<cr-name>-oauth` ConfigMap;
     # that stays useful as a k8s-native artifact and for generic valueFrom-style
-    # env injection — but the authoritative binding output is the CR status.
+    # env injection — but the authoritative binding output is this literal.
     - name: client_id
-      value: ${applied.app.status.clientId}
+      value: aep-${metadata.namespace}-${metadata.name}
     # Plain coordinates — exposed as values (the BFF surfaces them un-masked). The
     # issuer/jwks_url are the browser-reachable Thunder addresses (they match the
     # compose PLATFORM_IDP_ISSUER host thunder.openchoreo.localhost:8080).
