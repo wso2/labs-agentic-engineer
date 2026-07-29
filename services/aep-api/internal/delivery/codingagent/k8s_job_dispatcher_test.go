@@ -79,95 +79,37 @@ func (r *recordingK8sClient) record(verb string, obj client.Object) {
 	})
 }
 
-func validK8sJobInput() K8sJobInput {
-	return K8sJobInput{
-		RunName:                "ca-run1-0101010101",
-		OrgID:                  "acme",
-		OrgUUID:                "d3adbeef-1234-4321-abcd-c0ffee123456",
-		ProjectID:              "widgets",
-		Component:              "svc",
-		ExecutionID:            "exec-1",
-		RepoURL:                "https://github.com/acme/widgets",
-		Prompt:                 "do work",
-		IdentityName:           "bot",
-		IdentityEmail:          "bot@example.com",
-		IdentityLogin:          "bot",
-		Bearer:                 "bearer",
-		ClusterSecretStoreName: "default",
-		AnthropicSR: SecretRef{
-			SecretRefName: "acme-anthropic-secrets",
-			KVPath:        "user-app-secrets/wc-acme/acme-anthropic-secrets",
-			Property:      "api-key",
-		},
-		GitHubSR: SecretRef{
-			SecretRefName: "acme-github-pat-secrets",
-			KVPath:        "user-app-secrets/wc-acme/acme-github-pat-secrets",
-			Property:      "token",
-		},
-	}
-}
+func TestK8sJobDispatcher_Dispatch_ErrorsSecretDeliveryRemoved(t *testing.T) {
+	d := NewK8sJobDispatcher(newRecordingK8sClient(), "http://platform", "runner:1")
 
-func TestK8sJobDispatcher_Dispatch_RefsPresent_ExternalSecretsOnly(t *testing.T) {
-	rec := newRecordingK8sClient()
-	d := NewK8sJobDispatcher(rec, "http://platform", "runner:1", "default")
-
-	if _, err := d.Dispatch(context.Background(), validK8sJobInput()); err != nil {
-		t.Fatalf("Dispatch: %v", err)
-	}
-
-	var secrets, externalSecrets int
-	for _, op := range rec.ops {
-		if op.gvk == "v1/Secret" {
-			secrets++
-		}
-		if strings.Contains(op.gvk, "ExternalSecret") {
-			externalSecrets++
-		}
-	}
-	if secrets != 0 {
-		t.Fatalf("expected no plain Secret writes, got %d ops: %+v", secrets, rec.ops)
-	}
-	if externalSecrets < 2 {
-		t.Fatalf("expected anthropic + github ExternalSecrets, got %d ops: %+v", externalSecrets, rec.ops)
-	}
-}
-
-func TestK8sJobDispatcher_Dispatch_MissingAnthropicRef_NoSecretCreate(t *testing.T) {
-	rec := newRecordingK8sClient()
-	d := NewK8sJobDispatcher(rec, "http://platform", "runner:1", "default")
-	in := validK8sJobInput()
-	in.AnthropicSR = SecretRef{}
-
-	_, err := d.Dispatch(context.Background(), in)
+	_, err := d.Dispatch(context.Background(), K8sJobInput{
+		RunName:     "ca-run1-0101010101",
+		OrgID:       "acme",
+		OrgUUID:     "d3adbeef-1234-4321-abcd-c0ffee123456",
+		ProjectID:   "widgets",
+		Component:   "svc",
+		ExecutionID: "exec-1",
+	})
 	if err == nil {
-		t.Fatal("expected error for missing anthropic ref")
+		t.Fatal("expected Dispatch to error")
 	}
-	if !strings.Contains(err.Error(), "anthropic") || !strings.Contains(err.Error(), "sm_api") {
-		t.Fatalf("error must name the missing anthropic ref, got: %v", err)
+	if !strings.Contains(err.Error(), "plaintext secret delivery removed") {
+		t.Fatalf("error must say secret delivery was removed, got: %v", err)
 	}
-	for _, op := range rec.ops {
-		if strings.Contains(op.gvk, "Secret") {
-			t.Fatalf("must not create any Secret/ExternalSecret on missing ref, saw %+v", op)
-		}
+	if !strings.Contains(err.Error(), "cluster-gateway-proxy") {
+		t.Fatalf("error must point at proxy path, got: %v", err)
 	}
 }
 
-func TestK8sJobDispatcher_Dispatch_MissingGitHubRef_NoSecretCreate(t *testing.T) {
+func TestK8sJobDispatcher_Dispatch_NoSecretOrExternalSecretCreate(t *testing.T) {
 	rec := newRecordingK8sClient()
-	d := NewK8sJobDispatcher(rec, "http://platform", "runner:1", "default")
-	in := validK8sJobInput()
-	in.GitHubSR.Property = ""
+	d := NewK8sJobDispatcher(rec, "http://platform", "runner:1")
 
-	_, err := d.Dispatch(context.Background(), in)
+	_, err := d.Dispatch(context.Background(), K8sJobInput{OrgID: "acme", RunName: "ca-x"})
 	if err == nil {
-		t.Fatal("expected error for missing github ref")
+		t.Fatal("expected error")
 	}
-	if !strings.Contains(err.Error(), "github") {
-		t.Fatalf("error must name the missing github ref, got: %v", err)
-	}
-	for _, op := range rec.ops {
-		if strings.Contains(op.gvk, "Secret") {
-			t.Fatalf("must not create any Secret/ExternalSecret on missing ref, saw %+v", op)
-		}
+	if len(rec.ops) != 0 {
+		t.Fatalf("Dispatch must not write any k8s objects, saw ops: %+v", rec.ops)
 	}
 }

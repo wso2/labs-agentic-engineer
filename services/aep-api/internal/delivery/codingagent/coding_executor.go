@@ -45,7 +45,8 @@ import (
 //     K8s Job), used when the proxy dispatcher + the org's SM-API triplets are
 //     configured — this is what the cloud / local-proxy plane exercises (`ca-…` jobs);
 //   - the direct K8s Job fallback (K8sJobDispatcher) when the proxy path is not
-//     configured — per-run ExternalSecrets via the in-cluster client.
+//     configured — retained as a mechanism for phase 08, but Dispatch currently
+//     errors (refs-only secrets; no Secret/ExternalSecret writes on this path).
 type CodingExecutor struct {
 	oc            openchoreo.ComponentClient
 	repos         ProjectRepos
@@ -161,13 +162,11 @@ func (e *CodingExecutor) WithValidationImage(image string) *CodingExecutor {
 
 // WithK8sJobDispatch enables the direct K8s Job dispatch path. The org UUID
 // lookup (needed to derive the data-plane namespace) reads through the org
-// repository wired at construction. clusterSecretStore names the ESO CSS used
-// for per-run ExternalSecrets on this path.
-func (e *CodingExecutor) WithK8sJobDispatch(d *K8sJobDispatcher, clusterSecretStore string) *CodingExecutor {
+// repository wired at construction. Secrets delivery is not provided on this
+// path — Dispatch errors until phase 08 replaces it; use WithProxy for refs-only
+// ExternalSecrets.
+func (e *CodingExecutor) WithK8sJobDispatch(d *K8sJobDispatcher) *CodingExecutor {
 	e.k8sJob = d
-	if clusterSecretStore != "" {
-		e.clusterSecretStore = clusterSecretStore
-	}
 	return e
 }
 
@@ -365,35 +364,30 @@ func (e *CodingExecutor) runCoding(ctx context.Context, req delivery.DispatchReq
 		return fmt.Errorf("validation dispatch requires the cluster-gateway-proxy path and a VALIDATION_RUNNER_IMAGE; the direct K8s Job fallback does not support validation")
 	}
 
-	// Direct K8s Job path: creates the org's data-plane namespace, SA, per-run
-	// ExternalSecrets, and Job directly via the in-cluster client.
+	// Direct K8s Job path: retained as a mechanism (phase 08), but Dispatch
+	// refuses secret delivery — no Secret/ExternalSecret writes here. Missing
+	// refs on the proxy path already errored above; this branch only runs when
+	// the proxy path was not configured.
 	if e.k8sJob != nil {
-		anthropicSR, githubSR, refErr := e.resolveRunnerSecretRefs(ctx, t.OrgID)
-		if refErr != nil {
-			return refErr
-		}
 		orgUUID, uuidErr := e.lookupOrgUUID(ctx, t.OrgID)
 		if uuidErr != nil {
 			return fmt.Errorf("k8s-job dispatch: lookup org UUID for %q: %w", t.OrgID, uuidErr)
 		}
 		k8sRunName := codingAgentRunNameFor(req.Execution.ID)
 		rn, k8serr := e.k8sJob.Dispatch(ctx, K8sJobInput{
-			RunName:                k8sRunName,
-			OrgID:                  t.OrgID,
-			OrgUUID:                orgUUID,
-			ProjectID:              t.ProjectID,
-			Component:              t.Component,
-			ExecutionID:            req.Execution.ID,
-			RepoURL:                repo.RepoURL,
-			Prompt:                 disp.prompt,
-			IdentityName:           name,
-			IdentityEmail:          email,
-			IdentityLogin:          login,
-			Bearer:                 bearer,
-			SkillsRepoURL:          skillsRepoURL,
-			AnthropicSR:            anthropicSR,
-			GitHubSR:               githubSR,
-			ClusterSecretStoreName: e.clusterSecretStore,
+			RunName:       k8sRunName,
+			OrgID:         t.OrgID,
+			OrgUUID:       orgUUID,
+			ProjectID:     t.ProjectID,
+			Component:     t.Component,
+			ExecutionID:   req.Execution.ID,
+			RepoURL:       repo.RepoURL,
+			Prompt:        disp.prompt,
+			IdentityName:  name,
+			IdentityEmail: email,
+			IdentityLogin: login,
+			Bearer:        bearer,
+			SkillsRepoURL: skillsRepoURL,
 		})
 		if k8serr != nil {
 			return k8serr
@@ -627,9 +621,22 @@ func (e *CodingExecutor) resolveRunnerSecretRefs(ctx context.Context, orgID stri
 		Property:      derefStr(githubRow.SMAPIProperty),
 	}
 	if err := validateSecretRefTriplet("github", orgID, githubSR); err != nil {
-		return SecretRef{}, SecretRef{}, err
+		return SecretRef{}, SecretRef{}, fmt.Errorf("coding dispatch: %w", err)
 	}
 	return anthropicSR, githubSR, nil
+}
+
+func validateSecretRefTriplet(credential, orgID string, ref SecretRef) error {
+	if ref.SecretRefName == "" {
+		return fmt.Errorf("%s secret reference missing for org %q: sm_api_secret_ref_name not populated", credential, orgID)
+	}
+	if ref.KVPath == "" {
+		return fmt.Errorf("%s secret reference missing for org %q: sm_api_kv_path not populated", credential, orgID)
+	}
+	if ref.Property == "" {
+		return fmt.Errorf("%s secret reference missing for org %q: sm_api_property not populated", credential, orgID)
+	}
+	return nil
 }
 
 func (e *CodingExecutor) lookupOrgUUID(ctx context.Context, ocOrgID string) (string, error) {

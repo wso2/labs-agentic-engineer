@@ -114,7 +114,7 @@ func newCodingDispatchExecutor(anthropic *organization.OrgAnthropicCredential, g
 		e.proxy = &Dispatcher{}
 	}
 	if k8sJob != nil {
-		e.WithK8sJobDispatch(k8sJob, "default")
+		e.WithK8sJobDispatch(k8sJob)
 	}
 	return e
 }
@@ -154,18 +154,20 @@ func TestRunCoding_ProxyConfigured_MissingGitHubRef_ErrorsNoFallback(t *testing.
 	}
 }
 
-func TestRunCoding_K8sJobOnly_MissingAnthropicRef_Errors(t *testing.T) {
+func TestRunCoding_K8sJobOnly_ErrorsSecretDeliveryRemoved(t *testing.T) {
 	anthropic, github := fullSecretRefs()
-	anthropic.SMAPIProperty = strPtr("")
 	rec := newRecordingK8sClient()
-	k8s := NewK8sJobDispatcher(rec, "http://platform", "runner:1", "default")
+	k8s := NewK8sJobDispatcher(rec, "http://platform", "runner:1")
 	e := newCodingDispatchExecutor(anthropic, github, k8s, false)
 
 	err := e.Run(context.Background(), codingDispatchReq())
 	if err == nil {
-		t.Fatal("expected error when anthropic secret ref is missing on k8s-job path")
+		t.Fatal("expected error when only k8s-job path is configured")
+	}
+	if !strings.Contains(err.Error(), "plaintext secret delivery removed") {
+		t.Fatalf("error must refuse k8s-job secret delivery, got: %v", err)
 	}
 	if len(rec.ops) != 0 {
-		t.Fatalf("k8s-job dispatch must not run without refs, saw ops: %+v", rec.ops)
+		t.Fatalf("k8s-job dispatch must not write Secret/ExternalSecret, saw ops: %+v", rec.ops)
 	}
 }

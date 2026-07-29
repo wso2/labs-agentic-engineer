@@ -599,18 +599,18 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		slog.Info("coding executor: cluster-gateway-proxy dispatch path enabled (proxy + secrets delivery)",
 			"runnerImage", cfg.AgentRunnerImage, "clusterSecretStore", cfg.AgentClusterSecretStore)
 	}
-	// Direct K8s Job fallback: per-run ExternalSecrets via the in-cluster client.
-	// Enabled when the in-cluster client, runner image, platform URL, and ESO CSS are set.
-	if wpClient != nil && cfg.AgentRunnerImage != "" && cfg.AgentPlatformURL != "" && cfg.AgentClusterSecretStore != "" {
+	// Direct K8s Job fallback: retained as a mechanism (phase 08). Dispatch
+	// currently errors — secrets are refs-only via the proxy path. Enabled when
+	// the in-cluster client, runner image, and platform URL are all set (no CSS
+	// requirement; CSS is proxy-path only).
+	if wpClient != nil && cfg.AgentRunnerImage != "" && cfg.AgentPlatformURL != "" {
 		k8sJobDispatcher := codingagent.NewK8sJobDispatcher(
 			wpClient,
 			cfg.AgentPlatformURL,
 			cfg.AgentRunnerImage,
-			cfg.AgentClusterSecretStore,
 		)
-		codingExecutor.WithK8sJobDispatch(k8sJobDispatcher, cfg.AgentClusterSecretStore)
-		slog.Info("coding executor: direct k8s-job dispatch path enabled",
-			"runnerImage", cfg.AgentRunnerImage, "clusterSecretStore", cfg.AgentClusterSecretStore)
+		codingExecutor.WithK8sJobDispatch(k8sJobDispatcher)
+		slog.Info("coding executor: direct k8s-job dispatch path enabled", "runnerImage", cfg.AgentRunnerImage)
 	}
 	// Build-secret staging so the post-merge build clones a PRIVATE project repo
 	// (the local plane sets GITHUB_REPO_VISIBILITY=private). Reuses the same

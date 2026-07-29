@@ -53,10 +53,9 @@ type JobWatcher struct {
 
 	// cleanupExternalSecrets gates the per-run ExternalSecret teardown. Only the
 	// proxy DISPATCH path stages per-run ExternalSecrets (anthropic/github/
-	// publisher); the direct K8sJobDispatcher uses the same per-run
-	// ExternalSecret model via the in-cluster client.
-	// none, so with it the cleanup would only 403/404 on resources that never
-	// existed. Enabled from the composition root when proxy dispatch is active.
+	// publisher); the direct K8sJobDispatcher does not write secrets at all, so
+	// with it the cleanup would only 403/404 on resources that never existed.
+	// Enabled from the composition root when proxy dispatch is active.
 	cleanupExternalSecrets bool
 
 	// signaler feeds a coding-job failure to a waiting devflow TaskFlow
