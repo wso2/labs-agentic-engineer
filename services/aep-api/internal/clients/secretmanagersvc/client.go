@@ -218,19 +218,17 @@ func (c *secretManagementClient) CreateSecret(ctx context.Context, location Secr
 	if err != nil {
 		return "", fmt.Errorf("upsert secret: %w", err)
 	}
-	if !c.managesRefs() {
-		if err := c.requireOCClient(); err != nil {
-			return "", err
-		}
-		keys := make([]string, 0, len(data))
-		for k := range data {
-			keys = append(keys, k)
-		}
-		if _, err := c.upsertSecretReference(ctx, location, secretRef, keys); err != nil {
-			return "", err
-		}
+	if c.managesRefs() {
+		return secretRef, nil
 	}
-	return secretRef, nil
+	if err := c.requireOCClient(); err != nil {
+		return "", err
+	}
+	keys := make([]string, 0, len(data))
+	for k := range data {
+		keys = append(keys, k)
+	}
+	return c.upsertSecretReference(ctx, location, secretRef, keys)
 }
 
 func (c *secretManagementClient) PatchSecret(ctx context.Context, location SecretLocation, data map[string]string, keysToDelete []string) (string, error) {
@@ -250,19 +248,17 @@ func (c *secretManagementClient) PatchSecret(ctx context.Context, location Secre
 	if err != nil {
 		return "", fmt.Errorf("patch secret: %w", err)
 	}
-	if !c.managesRefs() {
-		if err := c.requireOCClient(); err != nil {
-			return "", err
-		}
-		info, err := c.lowLevelClient.GetSecret(ctx, location)
-		if err != nil {
-			return "", fmt.Errorf("get secret keys after patch: %w", err)
-		}
-		if _, err := c.upsertSecretReference(ctx, location, secretRef, info.Keys); err != nil {
-			return "", err
-		}
+	if c.managesRefs() {
+		return secretRef, nil
 	}
-	return secretRef, nil
+	if err := c.requireOCClient(); err != nil {
+		return "", err
+	}
+	info, err := c.lowLevelClient.GetSecret(ctx, location)
+	if err != nil {
+		return "", fmt.Errorf("get secret keys after patch: %w", err)
+	}
+	return c.upsertSecretReference(ctx, location, secretRef, info.Keys)
 }
 
 func (c *secretManagementClient) DeleteSecret(ctx context.Context, location SecretLocation, secretRefName string) error {

@@ -143,8 +143,9 @@ func TestCreateSecret_ManagesRefsFalse_AuthorsSRWithOrgBaseNamespace(t *testing.
 	if err != nil {
 		t.Fatalf("CreateSecret: %v", err)
 	}
-	if got != vaultPath {
-		t.Fatalf("got path %q, want %q", got, vaultPath)
+	wantRefName := loc.SecretRefName()
+	if got != wantRefName {
+		t.Fatalf("got SecretReference name %q, want %q", got, wantRefName)
 	}
 	if len(oc.creates) != 1 {
 		t.Fatalf("expected 1 CreateSecretReference, got %d (gets=%d updates=%d)", len(oc.creates), len(oc.gets), len(oc.updates))
@@ -231,8 +232,9 @@ func TestPatchSecret_ManagesRefsFalse_AuthorsSR(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PatchSecret: %v", err)
 	}
-	if got != vaultPath {
-		t.Fatalf("got path %q, want %q", got, vaultPath)
+	wantRefName := loc.SecretRefName()
+	if got != wantRefName {
+		t.Fatalf("got SecretReference name %q, want %q", got, wantRefName)
 	}
 	if len(oc.creates) != 1 {
 		t.Fatalf("expected 1 create, got %d", len(oc.creates))
