@@ -87,20 +87,18 @@ addition.
 - **Client library:** `agent-platform/agent-manager-service/secrets/`
   (the Go HTTP client that the BFF calls).
 
-App-factory runs SM API in **both** local and cloud (deliberate divergence
-from agent-platform, which only runs SM API in cloud — see
-[[adr-local-sm-api-stub]]):
-- **Cloud:** `secret-manager-api.openchoreo.dp.${cloud_base_domain}` on
-  `cloud-dp-oc-cp`.
-- **Local:** a SM-API-compatible stub in the local docker-compose stack,
-  backed by local OpenBao for KV storage and the local OC API for SR
-  creation. The local stub preserves the WriteOnly + ManagesSecretReferences
-  contract.
+AEP selects one secrets provider per process (no fallback chain):
+- **Cloud / overlay:** SM-API HTTP client (`ManagesSecretReferences()=true`) —
+  the server owns `SecretReference` CR creation.
+- **Local / OSS:** in-process OpenBao-direct provider when `OPENBAO_ADDR` (and
+  `OPENBAO_TOKEN`) are set. The provider writes KV only
+  (`ManagesSecretReferences()=false`); the high-level client authors
+  `SecretReference` CRs via OpenChoreo. See `services/aep-api/design/composition-seam.md`.
 
 ### `OpenBao`
-HashiCorp Vault fork. Used as the **local** secret backend (ReadWrite) in
-the lab dev stack, behind the same `secretmanagersvc` abstraction as SM API.
-Phase 0 of the OC refactor ports the AM `openbao` provider.
+HashiCorp Vault fork. Local/OSS secret KV backend behind the
+`secretsprovider` / `secretmanagersvc` abstraction (OpenBao-direct provider).
+Cloud overlay may use a different backend via SM-API.
 
 ### `effective-key`
 The internal git-service HTTP endpoint that returns the org's Anthropic key

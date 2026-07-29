@@ -79,6 +79,17 @@ func (r *recordingK8sClient) record(verb string, obj client.Object) {
 	})
 }
 
+func TestK8sJobDispatcher_Configured(t *testing.T) {
+	d := NewK8sJobDispatcher(newRecordingK8sClient(), "http://platform", "runner:1")
+	if !d.Configured() {
+		t.Fatal("expected Configured() true when client, platformURL, and runnerImage are set")
+	}
+	empty := &K8sJobDispatcher{}
+	if empty.Configured() {
+		t.Fatal("expected Configured() false for zero-value dispatcher")
+	}
+}
+
 func TestK8sJobDispatcher_Dispatch_ErrorsSecretDeliveryRemoved(t *testing.T) {
 	d := NewK8sJobDispatcher(newRecordingK8sClient(), "http://platform", "runner:1")
 

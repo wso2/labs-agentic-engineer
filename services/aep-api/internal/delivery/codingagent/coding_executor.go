@@ -45,8 +45,8 @@ import (
 //     K8s Job), used when the proxy dispatcher + the org's SM-API triplets are
 //     configured — this is what the cloud / local-proxy plane exercises (`ca-…` jobs);
 //   - the direct K8s Job fallback (K8sJobDispatcher) when the proxy path is not
-//     configured — retained as a mechanism for phase 08, but Dispatch currently
-//     errors (refs-only secrets; no Secret/ExternalSecret writes on this path).
+//     configured — constructible, but Dispatch fails closed (direct k8s-job
+//     secret delivery is disabled; configure cluster-gateway-proxy + secret refs).
 type CodingExecutor struct {
 	oc            openchoreo.ComponentClient
 	repos         ProjectRepos
@@ -160,11 +160,10 @@ func (e *CodingExecutor) WithValidationImage(image string) *CodingExecutor {
 	return e
 }
 
-// WithK8sJobDispatch enables the direct K8s Job dispatch path. The org UUID
+// WithK8sJobDispatch wires the direct K8s Job dispatch path. The org UUID
 // lookup (needed to derive the data-plane namespace) reads through the org
-// repository wired at construction. Secrets delivery is not provided on this
-// path — Dispatch errors until phase 08 replaces it; use WithProxy for refs-only
-// ExternalSecrets.
+// repository wired at construction. Direct k8s-job secret delivery is disabled
+// — Dispatch fails closed; use WithProxy for refs-only ExternalSecrets.
 func (e *CodingExecutor) WithK8sJobDispatch(d *K8sJobDispatcher) *CodingExecutor {
 	e.k8sJob = d
 	return e
@@ -364,10 +363,10 @@ func (e *CodingExecutor) runCoding(ctx context.Context, req delivery.DispatchReq
 		return fmt.Errorf("validation dispatch requires the cluster-gateway-proxy path and a VALIDATION_RUNNER_IMAGE; the direct K8s Job fallback does not support validation")
 	}
 
-	// Direct K8s Job path: retained as a mechanism (phase 08), but Dispatch
-	// refuses secret delivery — no Secret/ExternalSecret writes here. Missing
-	// refs on the proxy path already errored above; this branch only runs when
-	// the proxy path was not configured.
+	// Direct K8s Job path: Dispatch fails closed — secret delivery requires
+	// cluster-gateway-proxy + secret refs (no Secret/ExternalSecret writes
+	// here). Missing refs on the proxy path already errored above; this branch
+	// only runs when the proxy path was not configured.
 	if e.k8sJob != nil {
 		orgUUID, uuidErr := e.lookupOrgUUID(ctx, t.OrgID)
 		if uuidErr != nil {
