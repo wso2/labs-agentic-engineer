@@ -29,6 +29,7 @@ import (
 	intapp "github.com/wso2/aep/aep-api/internal/app"
 	"github.com/wso2/aep/aep-api/internal/clients/secretmanagersvc"
 	"github.com/wso2/aep/aep-api/internal/config"
+	"github.com/wso2/aep/aep-api/secretsprovider"
 	"github.com/wso2/aep/aep-api/internal/platform/async"
 	"github.com/wso2/aep/aep-api/internal/platform/obs"
 )
@@ -54,10 +55,7 @@ func Run(opts Options) error {
 		resolver = opts.ImpersonateOrgResolverBuilder(infra.DB)
 	}
 
-	secretsProvider, err := adaptSecretsProvider(opts.SecretsProvider)
-	if err != nil {
-		return err
-	}
+	secretsProvider := adaptSecretsProvider(opts.SecretsProvider)
 
 	application, err := intapp.Assemble(cfg, infra, intapp.Seam{
 		AuthProvider:           opts.AuthProvider,
@@ -114,15 +112,8 @@ func Run(opts Options) error {
 	return nil
 }
 
-func adaptSecretsProvider(v any) (secretmanagersvc.Provider, error) {
-	if v == nil {
-		return nil, nil
-	}
-	p, ok := v.(secretmanagersvc.Provider)
-	if !ok {
-		return nil, fmt.Errorf("Options.SecretsProvider does not implement secretmanagersvc.Provider")
-	}
-	return p, nil
+func adaptSecretsProvider(v secretsprovider.Provider) secretmanagersvc.Provider {
+	return v
 }
 
 func setupLogger(level string) {

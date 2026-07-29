@@ -22,6 +22,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/wso2/aep/aep-api/ocauth"
+	"github.com/wso2/aep/aep-api/secretsprovider"
 )
 
 // Options are the injectable composition-root seams for Run.
@@ -48,8 +49,5 @@ type Options struct {
 	// SecretsProvider, when non-nil, is used instead of constructing the
 	// default SM-API provider from SECRET_MANAGER_API_URL.
 	// Nil = today's default construction (SM-API when URL configured).
-	// Typed as any so the public Options surface does not name an internal
-	// package; the value must satisfy secretmanagersvc.Provider (NewClient /
-	// ValidateConfig / Capabilities). Run adapts before Assemble.
-	SecretsProvider any
+	SecretsProvider secretsprovider.Provider
 }
