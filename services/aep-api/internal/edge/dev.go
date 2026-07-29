@@ -41,7 +41,7 @@ func RegisterAllDev(mux *http.ServeMux, p AppParams) {
 	// Secret repair — re-pushes through the in-process SecretRefWriter; keeps an
 	// extra explicit opt-in (LOCAL_OPENBAO_REPAIR) on top of the dev gate.
 	if p.Config.LocalOpenBaoRepairEnabled {
-		mux.HandleFunc("POST /_dev/v1/sm-api-resync", devResyncHandler(p))
+		mux.HandleFunc("POST /_dev/v1/secret-ref-resync", devResyncHandler(p))
 	}
 }
 

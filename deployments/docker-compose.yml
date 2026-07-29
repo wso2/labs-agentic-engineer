@@ -91,8 +91,8 @@ services:
       # (emits [SHAKEOUT:would-deny] then passes through).
       TENANT_GATE_MODE: "${TENANT_GATE_MODE:-enforce}"
       TEST_MODE: "true"
-      # Gates the /_test/sm-api-resync endpoint, which emits decrypted
-      # per-org plaintext to repair OpenBao after a local cluster reseed.
+      # Gates POST /_dev/v1/secret-ref-resync — in-process SecretRefWriter
+      # resync after a local OpenBao reseed (status-only HTTP response).
       # Local-only by design — cloud release bindings never set this.
       # See deployments/scripts/repair-secrets.sh.
       LOCAL_OPENBAO_REPAIR: "true"

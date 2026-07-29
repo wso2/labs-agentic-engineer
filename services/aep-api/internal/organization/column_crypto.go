@@ -31,8 +31,9 @@ func sealPublisherSecret(cipher *secrets.ColumnCipher, plain string) (string, er
 	return cipher.Seal([]byte(plain))
 }
 
-// openPublisherSecret decrypts a stored publisher secret; plaintext is
-// accepted during the migration window (OpenTolerant).
+// openPublisherSecret decrypts a stored publisher secret. Plaintext is
+// tolerated only during the migration window (OpenTolerant); sealPublisherSecret
+// always seals on write.
 func openPublisherSecret(cipher *secrets.ColumnCipher, stored string) (string, error) {
 	if stored == "" {
 		return "", nil
@@ -65,8 +66,8 @@ func sealWebhookSecrets(cipher *secrets.ColumnCipher, list WebhookSecrets) (Webh
 	return out, nil
 }
 
-// openWebhookSecrets decrypts each entry; plaintext entries are tolerated
-// during the migration window.
+// openWebhookSecrets decrypts each entry. Plaintext is tolerated only during
+// the migration window (OpenTolerant); sealWebhookSecrets always seals on write.
 func openWebhookSecrets(cipher *secrets.ColumnCipher, list WebhookSecrets) (WebhookSecrets, error) {
 	if len(list) == 0 {
 		return list, nil

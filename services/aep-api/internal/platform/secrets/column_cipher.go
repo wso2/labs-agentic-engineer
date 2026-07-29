@@ -84,7 +84,8 @@ func (c *ColumnCipher) Open(encoded string) ([]byte, error) {
 
 // OpenTolerant decrypts sealed values; if Open fails, returns the stored
 // bytes as plaintext. Migration-window only — lets readers accept rows that
-// have not yet been rewritten by the encrypt-in-place migration.
+// have not yet been rewritten by the encrypt-in-place migration. All new
+// writes go through Seal; there is no permanent dual-format read API.
 func (c *ColumnCipher) OpenTolerant(stored string) ([]byte, error) {
 	if stored == "" {
 		return nil, nil

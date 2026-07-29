@@ -20,7 +20,7 @@
 # When the k3d cluster (or just the OpenBao volume) is torn down, the
 # secret-ref metadata rows on org_credentials + org_anthropic_credentials still
 # point at OpenBao paths that no longer exist. aep-api's
-# POST /_dev/v1/sm-api-resync re-reads from the encrypted credential store and
+# POST /_dev/v1/secret-ref-resync re-reads from the encrypted credential store and
 # re-pushes through the in-process secrets provider — no plaintext crosses
 # the HTTP boundary. This script is trigger-only.
 #
@@ -58,12 +58,12 @@ for i in $(seq 1 30); do
 done
 
 echo "🔐 Triggering in-process secret resync..."
-RESP="$(curl -sS -X POST -w '\n%{http_code}' "$BFF_URL/_dev/v1/sm-api-resync" 2>&1 || true)"
+RESP="$(curl -sS -X POST -w '\n%{http_code}' "$BFF_URL/_dev/v1/secret-ref-resync" 2>&1 || true)"
 HTTP_CODE="$(echo "$RESP" | tail -n1)"
 BODY="$(echo "$RESP" | sed '$d')"
 
 if [ "$HTTP_CODE" = "404" ]; then
-    echo "ℹ️  /_dev/v1/sm-api-resync not mounted — needs TEST_MODE=true AND LOCAL_OPENBAO_REPAIR=true on aep-api. Skipping."
+    echo "ℹ️  /_dev/v1/secret-ref-resync not mounted — needs TEST_MODE=true AND LOCAL_OPENBAO_REPAIR=true on aep-api. Skipping."
     exit 0
 fi
 if [ "$HTTP_CODE" != "200" ]; then
