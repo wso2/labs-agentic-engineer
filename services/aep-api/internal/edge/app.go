@@ -85,7 +85,7 @@ type AppParams struct {
 
 	// Runner-facing and agents-facing surfaces. Callers use the gitrepo +
 	// artifacts packages in-process. CredService + AnthropicCredService + DB
-	// also back the local-dev SM-API resync helper (testSMAPIResyncHandler).
+	// also back the local-dev in-process secret resync helper (devResyncHandler).
 	DB                   *gorm.DB
 	CredService          *organization.CredentialService
 	AnthropicCredService *organization.AnthropicCredentialService

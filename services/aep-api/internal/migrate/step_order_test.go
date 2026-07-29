@@ -65,13 +65,14 @@ var goldenStepOrder = []string{
 	"phase10_rca_agent_reports",
 	"model_rates_seed",
 	"phase11_secret_ref_columns",
+	"phase12_encrypt_credential_columns",
 }
 
 // TestStepOrderGolden pins the ordered list. Steps is a pure builder, so this
 // needs no database and runs in the fast lane — the point is that the order is
 // asserted on every commit, not only when someone runs the DB tier.
 func TestStepOrderGolden(t *testing.T) {
-	steps := Steps(nil, "dev") // nil *gorm.DB: nothing runs, we only read names
+	steps := Steps(nil, "dev", nil) // nil *gorm.DB / key: nothing runs, we only read names
 
 	var got []string
 	for _, s := range steps {
@@ -95,7 +96,7 @@ func TestStepOrderGolden(t *testing.T) {
 // offending step, which is useless if two steps share a name or one is blank.
 func TestStepsAreNamedAndUnique(t *testing.T) {
 	seen := map[string]bool{}
-	for i, s := range Steps(nil, "dev") {
+	for i, s := range Steps(nil, "dev", nil) {
 		if s.Name == "" {
 			t.Errorf("step %d has no name — database.Run reports failures by name", i)
 		}

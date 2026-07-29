@@ -72,9 +72,12 @@ func BaseModels() []any {
 // — nothing runs until database.Run applies the list — so TestStepOrderGolden
 // asserts the sequence without needing a database.
 //
+// credKey is the 32-byte AES-256 key for encrypt-in-place credential-column
+// migrations (phase12). Pass nil only for step-order tests that never Run.
+//
 // RunBootstrapGrants is NOT part of this list: it is a non-fatal self-grant the
 // caller runs before migrating.
-func Steps(db *gorm.DB, deploymentTier string) []database.Step {
+func Steps(db *gorm.DB, deploymentTier string, credKey []byte) []database.Step {
 	// dbStep: the migration takes only *gorm.DB and manages its own timeout.
 	dbStep := func(name string, fn func(*gorm.DB) error) database.Step {
 		return database.DBStep(name, db, fn)
@@ -147,6 +150,11 @@ func Steps(db *gorm.DB, deploymentTier string) []database.Step {
 		// EXPAND: provider-neutral secret_ref_* columns alongside sm_api_*
 		// (phase-03 item 14). CONTRACT (drop sm_api_*) waits for phase 09.
 		ctxStep("phase11_secret_ref_columns", RunPhase11SecretRefColumns),
+		// Encrypt publisher_client_secret + webhook_secrets in place
+		// (phase-03 items 15–16). Uses the same credential-encryption-key.
+		ctxStep("phase12_encrypt_credential_columns", func(ctx context.Context, db *gorm.DB) error {
+			return RunPhase12EncryptCredentialColumns(ctx, db, credKey)
+		}),
 	}
 }
 
@@ -154,7 +162,7 @@ func Steps(db *gorm.DB, deploymentTier string) []database.Step {
 // ordered list main used to inline as ~19 copy-pasted blocks (each with its own
 // context/os.Exit); the ordering constraints that lived in the comments between
 // those blocks are preserved on the steps in Steps. Fails fast on the first
-// error, naming the offending step.
-func RunAll(ctx context.Context, db *gorm.DB, deploymentTier string) error {
-	return database.Run(ctx, Steps(db, deploymentTier))
+// error, naming the offending step. credKey must be 32 bytes for phase12.
+func RunAll(ctx context.Context, db *gorm.DB, deploymentTier string, credKey []byte) error {
+	return database.Run(ctx, Steps(db, deploymentTier, credKey))
 }

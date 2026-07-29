@@ -92,7 +92,7 @@ const (
 	// per process), so a stale template can never outlive a run — this only
 	// needs to be stable within a run. Bump it when internal/migrate's step list
 	// or base-model set changes, purely as documentation of intent.
-	schemaVersion = "5"
+	schemaVersion = "6"
 )
 
 // container holds the process-wide testcontainers Postgres, started once by
@@ -218,7 +218,8 @@ func (runAllMigrator) Migrate(ctx context.Context, sqlDB *sql.DB, _ pgtestdb.Con
 		return fmt.Errorf("auto-migrate base models: %w", err)
 	}
 	_ = migrate.RunBootstrapGrants(ctx, db) // non-fatal self-heal, as in main
-	if err := migrate.RunAll(ctx, db, migrationTier); err != nil {
+	// Zero key matches config's default CREDENTIAL_ENCRYPTION_KEY (32 zero bytes).
+	if err := migrate.RunAll(ctx, db, migrationTier, make([]byte, 32)); err != nil {
 		return fmt.Errorf("run migrations: %w", err)
 	}
 	return nil

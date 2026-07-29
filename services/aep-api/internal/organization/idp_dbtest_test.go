@@ -69,7 +69,7 @@ var idpDBPlatform = organization.PlatformIDPConfig{
 func idpDBService(t *testing.T, thunder thundersvc.Client) (organization.IDPService, *gorm.DB) {
 	t.Helper()
 	db := dbtest.New(t)
-	return organization.NewIDPService(organization.NewIDPRepository(db), organization.NewOrganizationRepository(db), thunder, idpDBPlatform), db
+	return organization.NewIDPService(organization.NewIDPRepository(db, nil), organization.NewOrganizationRepository(db), thunder, idpDBPlatform), db
 }
 
 // wantSecretRefPath mirrors idp_service.go's unexported secretRefPath — a
@@ -208,7 +208,7 @@ func TestGetOrCreateProfile_SelfHealsPlatformFields_DB(t *testing.T) {
 	ctx := context.Background()
 
 	// Seed a profile with the OLD cluster config.
-	old := organization.NewIDPService(organization.NewIDPRepository(gormDB), organization.NewOrganizationRepository(gormDB), &idpDBFakeThunder{}, organization.PlatformIDPConfig{
+	old := organization.NewIDPService(organization.NewIDPRepository(gormDB, nil), organization.NewOrganizationRepository(gormDB), &idpDBFakeThunder{}, organization.PlatformIDPConfig{
 		Issuer:  "http://old-issuer:8080",
 		JWKSURL: "http://old-jwks:8090/oauth2/jwks",
 	})
@@ -218,7 +218,7 @@ func TestGetOrCreateProfile_SelfHealsPlatformFields_DB(t *testing.T) {
 
 	// A service running the NEW cluster config self-heals the cached fields on
 	// the next GetOrCreate (issuer/jwks are cluster config, not per-org data).
-	fresh := organization.NewIDPService(organization.NewIDPRepository(gormDB), organization.NewOrganizationRepository(gormDB), &idpDBFakeThunder{}, organization.PlatformIDPConfig{
+	fresh := organization.NewIDPService(organization.NewIDPRepository(gormDB, nil), organization.NewOrganizationRepository(gormDB), &idpDBFakeThunder{}, organization.PlatformIDPConfig{
 		Issuer:  "http://new-issuer:8080",
 		JWKSURL: "http://new-jwks:8090/oauth2/jwks",
 	})
@@ -700,7 +700,7 @@ func TestGetOrCreateProfile_SelfHealPreservesCustomIssuer_DB(t *testing.T) {
 
 	// Complementary: a platform-kind org whose cached fields drifted from the
 	// current cluster config still self-heals (the gate lets platform through).
-	seed := organization.NewIDPService(organization.NewIDPRepository(gormDB), organization.NewOrganizationRepository(gormDB), nil, organization.PlatformIDPConfig{
+	seed := organization.NewIDPService(organization.NewIDPRepository(gormDB, nil), organization.NewOrganizationRepository(gormDB), nil, organization.PlatformIDPConfig{
 		Issuer:  "http://old-issuer:8080",
 		JWKSURL: "http://old-jwks:8090/oauth2/jwks",
 	})

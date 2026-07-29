@@ -38,9 +38,9 @@ type OrganizationIDPProfile struct {
 	PublisherClientID   string `gorm:"column:publisher_client_id" json:"publisherClientId,omitempty"`
 	// PublisherClientSecret is the live secret used by the BFF when it
 	// needs to mint per-org publisher tokens or hand the secret out to
-	// user-app pods. Stored plaintext in PostgreSQL. The JSON `-` tag
-	// keeps it off the wire — callers must use a purpose-built endpoint
-	// to fetch it.
+	// user-app pods. Stored AES-256-GCM (credential-encryption-key) in
+	// PostgreSQL — same framing as org_secrets. The JSON `-` tag keeps it
+	// off the wire — callers must use a purpose-built endpoint to fetch it.
 	PublisherClientSecret string `gorm:"column:publisher_client_secret" json:"-"`
 	PublisherSecretRef    string `gorm:"column:publisher_secret_ref" json:"publisherSecretRef,omitempty"`
 	// Secret-ref triplet — populated by SecretRefWriter.WritePublisher after

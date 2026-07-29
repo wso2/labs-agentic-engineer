@@ -520,39 +520,37 @@ func (s *AnthropicCredentialService) DeleteAnthropicSecret(ctx context.Context, 
 // helpers
 // ----------------------------------------------------------------------------
 
-// PrepareSMAPISeed returns the OpenBao reseed bundle for the org's
-// Anthropic key. Returns (nil, nil) when the org has no active row, the
-// SM-API triplet isn't populated, or the cred-store value is missing —
-// all idempotent no-op cases.
-//
-// Drives the local-dev repair path. See CredentialService.PrepareSMAPISeed
-// and deployments/scripts/repair-secrets.sh for the full flow.
-func (s *AnthropicCredentialService) PrepareSMAPISeed(ctx context.Context, ocOrgID string) (*SMAPISeedBundle, error) {
+// ResyncSecretRef re-pushes the org's Anthropic key through the in-process
+// SecretRefWriter (local OpenBao repair). Returns (false, nil) when there is
+// nothing to push. ctx must carry an ouId claim (repair injects thunder_org_uuid).
+func (s *AnthropicCredentialService) ResyncSecretRef(ctx context.Context, ocOrgID string) (bool, error) {
+	if s.secretRefWriter == nil || !s.secretRefWriter.Enabled() {
+		return false, nil
+	}
 	row, err := s.fetchRow(ctx, ocOrgID)
 	if err != nil {
 		var nf *NotFoundError
 		if errors.As(err, &nf) {
-			return nil, nil
+			return false, nil
 		}
-		return nil, fmt.Errorf("anthropic seed: load row: %w", err)
+		return false, fmt.Errorf("anthropic resync: load row: %w", err)
 	}
 	if row.Status != "active" {
-		return nil, nil
+		return false, nil
 	}
 	kvPath := row.ResolvedSecretRefKVPath()
 	prop := row.ResolvedSecretRefProperty()
 	if kvPath == nil || prop == nil || *kvPath == "" || *prop == "" {
-		return nil, nil
+		return false, nil
 	}
 	key, err := s.store.Get(ctx, ocOrgID, "anthropic/key")
 	if err != nil || len(key) == 0 {
-		return nil, nil
+		return false, nil
 	}
-	return &SMAPISeedBundle{
-		KVPath:   *kvPath,
-		Property: *prop,
-		Value:    string(key),
-	}, nil
+	if _, err := s.secretRefWriter.WriteAnthropic(ctx, ocOrgID, string(key)); err != nil {
+		return false, fmt.Errorf("anthropic resync: write: %w", err)
+	}
+	return true, nil
 }
 
 func (s *AnthropicCredentialService) fetchRow(ctx context.Context, ocOrgID string) (*OrgAnthropicCredential, error) {

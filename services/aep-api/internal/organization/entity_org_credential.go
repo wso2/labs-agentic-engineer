@@ -113,7 +113,8 @@ func (l *JSONStringList) Scan(value any) error {
 
 // WebhookSecretEntry is one entry in the webhook_secrets JSONB list. The
 // list shape (rather than scalar) is what enables N-of-M rotation per
-// evolution-doc §7.6.
+// evolution-doc §7.6. Secret is AES-256-GCM sealed at rest (same framing
+// as org_secrets / publisher_client_secret).
 type WebhookSecretEntry struct {
 	Secret  string    `json:"secret"`
 	AddedAt time.Time `json:"added_at"`

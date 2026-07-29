@@ -44,6 +44,7 @@ import (
 type Infra struct {
 	DB              *gorm.DB
 	CredentialStore secrets.CredentialStore
+	ColumnCipher    *secrets.ColumnCipher // same key as CredentialStore; seals column values
 	Minter          *secrets.AppTokenMinter
 	AppClientSecret string        // GitHub App OAuth client_secret ("" ⇒ bind path disabled)
 	K8sClient       client.Client // in-cluster client; nil ⇒ mint-build skips Secret writes
@@ -63,13 +64,21 @@ type Infra struct {
 // touches the network, the clock, OpenBao, or the filesystem at boot — Assemble
 // is pure. Required infra errors; optional infra warns.
 func Resolve(ctx context.Context, cfg config.Config) (Infra, error) {
+	// Credential encryption key — needed for migrations (encrypt-in-place) and
+	// the CredentialStore / column cipher. Decoded once here.
+	credKey, err := base64.StdEncoding.DecodeString(cfg.CredentialEncryptionKey)
+	if err != nil || len(credKey) != 32 {
+		// config.Validate guarantees this decodes to 32 bytes; kept as defense.
+		return Infra{}, fmt.Errorf("CREDENTIAL_ENCRYPTION_KEY must be a base64-encoded 32-byte key: %w", err)
+	}
+
 	// Database + first-boot schema. Opened here (not in main) so main is just
 	// Resolve → Assemble → serve, and Assemble never touches the DB at build time.
 	db, err := database.Open(cfg.DatabaseURL, migrate.BaseModels()...)
 	if err != nil {
 		return Infra{}, fmt.Errorf("database init: %w", err)
 	}
-	if err := Bootstrap(ctx, db, cfg); err != nil {
+	if err := Bootstrap(ctx, db, cfg, credKey); err != nil {
 		return Infra{}, err
 	}
 
@@ -83,16 +92,14 @@ func Resolve(ctx context.Context, cfg config.Config) (Infra, error) {
 	}
 	rateStamper := modelcost.NewStamper(rateRows)
 
-	// Credential store (AES-256-GCM over Postgres). Pure to construct, but the
-	// OpenBao loads + dev seed below depend on it, so it is resolved here.
-	credKey, err := base64.StdEncoding.DecodeString(cfg.CredentialEncryptionKey)
-	if err != nil || len(credKey) != 32 {
-		// config.Validate guarantees this decodes to 32 bytes; kept as defense.
-		return Infra{}, fmt.Errorf("CREDENTIAL_ENCRYPTION_KEY must be a base64-encoded 32-byte key: %w", err)
-	}
+	// Credential store (AES-256-GCM over Postgres) + column cipher (same key).
 	credStore, err := secrets.NewDBStore(db, credKey)
 	if err != nil {
 		return Infra{}, fmt.Errorf("credential store init: %w", err)
+	}
+	columnCipher, err := secrets.NewColumnCipher(credKey)
+	if err != nil {
+		return Infra{}, fmt.Errorf("column cipher init: %w", err)
 	}
 	slog.Info("credential store: postgres (aes-256-gcm)")
 
@@ -173,6 +180,7 @@ func Resolve(ctx context.Context, cfg config.Config) (Infra, error) {
 	return Infra{
 		DB:              db,
 		CredentialStore: credStore,
+		ColumnCipher:    columnCipher,
 		Minter:          minter,
 		AppClientSecret: appClientSecret,
 		K8sClient:       wpClient,

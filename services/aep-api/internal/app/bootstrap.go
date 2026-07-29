@@ -36,13 +36,14 @@ import (
 //     (best-effort, non-fatal) so FK-creating migrations don't trip over a
 //     managed-DB REVOKE that stripped REFERENCES/TRIGGER from the owner role.
 //   - RunAll then applies every migration in dependency order (each
-//     context-taking step gets its own timeout internally).
-func Bootstrap(ctx context.Context, db *gorm.DB, cfg config.Config) error {
+//     context-taking step gets its own timeout internally). credKey is the
+//     32-byte AES key used by encrypt-in-place credential-column migrations.
+func Bootstrap(ctx context.Context, db *gorm.DB, cfg config.Config, credKey []byte) error {
 	grantCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	_ = migrate.RunBootstrapGrants(grantCtx, db)
 	cancel()
 
-	if err := migrate.RunAll(ctx, db, cfg.DeploymentTier); err != nil {
+	if err := migrate.RunAll(ctx, db, cfg.DeploymentTier, credKey); err != nil {
 		return fmt.Errorf("migrations: %w", err)
 	}
 	return nil

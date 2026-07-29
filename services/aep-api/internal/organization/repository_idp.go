@@ -19,8 +19,11 @@ package organization
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"gorm.io/gorm"
+
+	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
 // IDPRepository persists the idp feature's two tables: the per-org
@@ -50,12 +53,15 @@ type IDPRepository interface {
 }
 
 type idpRepository struct {
-	db *gorm.DB
+	db     *gorm.DB
+	cipher *secrets.ColumnCipher
 }
 
 // NewIDPRepository constructs the gorm-backed IDPRepository.
-func NewIDPRepository(db *gorm.DB) IDPRepository {
-	return &idpRepository{db: db}
+// cipher may be nil (passthrough) — production always passes the credential
+// column cipher so publisher_client_secret is AES-256-GCM at rest.
+func NewIDPRepository(db *gorm.DB, cipher *secrets.ColumnCipher) IDPRepository {
+	return &idpRepository{db: db, cipher: cipher}
 }
 
 func (r *idpRepository) GetProfileByOrgID(ctx context.Context, orgID string) (*OrganizationIDPProfile, error) {
@@ -67,14 +73,36 @@ func (r *idpRepository) GetProfileByOrgID(ctx context.Context, orgID string) (*O
 	if err != nil {
 		return nil, err
 	}
+	plain, err := openPublisherSecret(r.cipher, profile.PublisherClientSecret)
+	if err != nil {
+		return nil, fmt.Errorf("open publisher_client_secret: %w", err)
+	}
+	profile.PublisherClientSecret = plain
 	return &profile, nil
 }
 
 func (r *idpRepository) CreateProfile(ctx context.Context, profile *OrganizationIDPProfile) error {
+	if profile != nil && profile.PublisherClientSecret != "" {
+		sealed, err := sealPublisherSecret(r.cipher, profile.PublisherClientSecret)
+		if err != nil {
+			return fmt.Errorf("seal publisher_client_secret: %w", err)
+		}
+		cp := *profile
+		cp.PublisherClientSecret = sealed
+		return r.db.WithContext(ctx).Create(&cp).Error
+	}
 	return r.db.WithContext(ctx).Create(profile).Error
 }
 
 func (r *idpRepository) UpdateProfileColumns(ctx context.Context, profile *OrganizationIDPProfile, orgID string, updates map[string]interface{}) error {
+	if v, ok := updates["publisher_client_secret"]; ok {
+		plain, _ := v.(string)
+		sealed, err := sealPublisherSecret(r.cipher, plain)
+		if err != nil {
+			return fmt.Errorf("seal publisher_client_secret: %w", err)
+		}
+		updates["publisher_client_secret"] = sealed
+	}
 	return r.db.WithContext(ctx).
 		Model(profile).
 		Where("org_id = ?", orgID).

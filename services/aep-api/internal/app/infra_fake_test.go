@@ -31,11 +31,14 @@ import (
 // both pure to construct. app.Assemble(cfg, Fake(), Seam{}) thus builds the same real
 // handler + watchers as production without touching the network, clock, or disk.
 func Fake() Infra {
-	minter, _ := secrets.NewAppTokenMinter(nil)               // no-app mode, no I/O
-	credStore, _ := secrets.NewDBStore(nil, make([]byte, 32)) // AES cipher only, nil DB
+	key := make([]byte, 32)
+	minter, _ := secrets.NewAppTokenMinter(nil)        // no-app mode, no I/O
+	credStore, _ := secrets.NewDBStore(nil, key)       // AES cipher only, nil DB
+	columnCipher, _ := secrets.NewColumnCipher(key)
 	return Infra{
 		DB:              &gorm.DB{},
 		CredentialStore: credStore,
+		ColumnCipher:    columnCipher,
 		Minter:          minter,
 		AppClientSecret: "",
 		K8sClient:       nil,

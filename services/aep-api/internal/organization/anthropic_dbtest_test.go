@@ -324,21 +324,20 @@ func TestAnthropicApplyWPSecret_NilClientDegradedMode_DB(t *testing.T) {
 	}
 }
 
-func TestAnthropicPrepareSMAPISeed_NoopCases_DB(t *testing.T) {
+func TestAnthropicResyncSecretRef_NoopCases_DB(t *testing.T) {
 	t.Parallel()
 	svc, _ := anthropicDBService(t, http.StatusOK)
 	ctx := context.Background()
 
-	// No row → idempotent (nil, nil).
-	if b, err := svc.PrepareSMAPISeed(ctx, "acme"); b != nil || err != nil {
-		t.Fatalf("absent org: want (nil,nil), got (%+v,%v)", b, err)
+	// No row → idempotent (false, nil).
+	if wrote, err := svc.ResyncSecretRef(ctx, "acme"); wrote || err != nil {
+		t.Fatalf("absent org: want (false,nil), got (%v,%v)", wrote, err)
 	}
 
-	// Active row but the SM-API triplet was never populated (no SM-API writer
-	// wired) → still (nil, nil). The populated-triplet path needs SM-API and
-	// is not covered here.
+	// Active row but the secret-ref triplet was never populated (no writer
+	// wired) → still (false, nil).
 	anthropicMustConnect(t, svc, "acme", anthropicUnitKey)
-	if b, err := svc.PrepareSMAPISeed(ctx, "acme"); b != nil || err != nil {
-		t.Fatalf("no SM-API triplet: want (nil,nil), got (%+v,%v)", b, err)
+	if wrote, err := svc.ResyncSecretRef(ctx, "acme"); wrote || err != nil {
+		t.Fatalf("no triplet: want (false,nil), got (%v,%v)", wrote, err)
 	}
 }

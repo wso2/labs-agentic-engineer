@@ -23,7 +23,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/wso2/aep/aep-api/internal/organization"
+	"github.com/wso2/aep/aep-api/internal/platform/auth/jwtassertion"
 )
 
 // RegisterAllDev mounts the dev/test surface (/_dev/v1/*) — local-only tooling
@@ -38,32 +38,26 @@ func RegisterAllDev(mux *http.ServeMux, p AppParams) {
 	if !(p.Config.TestMode && p.Config.DeploymentTier == "dev") {
 		return // registration gate — the surface does not exist in real envs
 	}
-	// Secret repair — emits decrypted per-org plaintext, so it keeps an extra
-	// explicit opt-in (LOCAL_OPENBAO_REPAIR) on top of the dev gate; the calling
-	// script's kubectl-context check is the final net.
+	// Secret repair — re-pushes through the in-process SecretRefWriter; keeps an
+	// extra explicit opt-in (LOCAL_OPENBAO_REPAIR) on top of the dev gate.
 	if p.Config.LocalOpenBaoRepairEnabled {
 		mux.HandleFunc("POST /_dev/v1/sm-api-resync", devResyncHandler(p))
 	}
 }
 
-// devResyncHandler walks per-org credential rows and returns the
-// {kvPath, property, value} tuples deployments/scripts/repair-secrets.sh needs
-// to reseed OpenBao. Plaintext crosses the localhost boundary once per write —
-// the repair script then runs `vault kv put` via `kubectl exec` against the
-// in-cluster OpenBao to materialise the secret at the path the dispatcher will
-// read on the next ExternalSecret sync.
+// devResyncHandler walks per-org credential rows and re-pushes secrets through
+// the in-process SecretRefWriter / secrets provider. No decrypted plaintext
+// leaves the process — the HTTP response carries only status counts/errors.
 //
-// We don't call SM-API directly here because SM-API's auth requires a Thunder
-// JWT with an `ouId` claim — only mintable from a user session. For a no-user
-// repair flow the BFF would need a per-org impersonation token. The shell→vault
-// path bypasses that entirely and matches how setup-aep.sh seeds other local
-// secrets. Plaintext is never logged.
+// ouId claims are injected from organizations.thunder_org_uuid so
+// SecretRefWriter.resolveVaultKey can stamp paths without a user JWT (this
+// endpoint is unauthenticated by design).
 func devResyncHandler(params AppParams) http.HandlerFunc {
 	type orgResult struct {
-		OcOrgID        string                         `json:"ocOrgId"`
-		Writes         []organization.SMAPISeedBundle `json:"writes"`
-		AnthropicError string                         `json:"anthropicError,omitempty"`
-		GitHubPATError string                         `json:"githubPatError,omitempty"`
+		OcOrgID        string `json:"ocOrgId"`
+		Written        int    `json:"written"`
+		AnthropicError string `json:"anthropicError,omitempty"`
+		GitHubPATError string `json:"githubPatError,omitempty"`
 	}
 	type response struct {
 		Orgs []orgResult `json:"orgs"`
@@ -77,7 +71,7 @@ func devResyncHandler(params AppParams) http.HandlerFunc {
 
 		orgIDs, err := collectResyncOrgs(ctx, params.DB, r.URL.Query().Get("org"))
 		if err != nil {
-			slog.ErrorContext(ctx, "sm-api resync: org list failed", "error", err)
+			slog.ErrorContext(ctx, "secret resync: org list failed", "error", err)
 			writeErrorEnvelope(w, http.StatusInternalServerError, CodeInternal, "org list failed", nil)
 			return
 		}
@@ -85,27 +79,43 @@ func devResyncHandler(params AppParams) http.HandlerFunc {
 		out := response{Orgs: make([]orgResult, 0, len(orgIDs))}
 		for _, ocOrgID := range orgIDs {
 			res := orgResult{OcOrgID: ocOrgID}
-			if bundle, err := params.AnthropicCredService.PrepareSMAPISeed(ctx, ocOrgID); err != nil {
-				res.AnthropicError = err.Error()
-			} else if bundle != nil {
-				res.Writes = append(res.Writes, *bundle)
+			ouID, ouErr := lookupThunderOrgUUID(ctx, params.DB, ocOrgID)
+			if ouErr != nil {
+				res.AnthropicError = ouErr.Error()
+				res.GitHubPATError = ouErr.Error()
+				out.Orgs = append(out.Orgs, res)
+				continue
 			}
-			if bundle, err := params.CredService.PrepareSMAPISeed(ctx, ocOrgID); err != nil {
+			if ouID == "" {
+				msg := "no thunder_org_uuid for org — cannot derive vault path"
+				res.AnthropicError = msg
+				res.GitHubPATError = msg
+				out.Orgs = append(out.Orgs, res)
+				continue
+			}
+			orgCtx := jwtassertion.ContextWithTokenClaims(ctx, &jwtassertion.TokenClaims{OuId: ouID})
+
+			if wrote, err := params.AnthropicCredService.ResyncSecretRef(orgCtx, ocOrgID); err != nil {
+				res.AnthropicError = err.Error()
+			} else if wrote {
+				res.Written++
+			}
+			if wrote, err := params.CredService.ResyncSecretRef(orgCtx, ocOrgID); err != nil {
 				res.GitHubPATError = err.Error()
-			} else if bundle != nil {
-				res.Writes = append(res.Writes, *bundle)
+			} else if wrote {
+				res.Written++
 			}
 			out.Orgs = append(out.Orgs, res)
-			slog.InfoContext(ctx, "sm-api resync: org",
+			slog.InfoContext(ctx, "secret resync: org",
 				"ocOrgId", ocOrgID,
-				"writeCount", len(res.Writes))
+				"written", res.Written)
 		}
 		writeJSON(w, http.StatusOK, out)
 	}
 }
 
 // collectResyncOrgs returns the unique set of ocOrgIDs that have either an
-// org_credentials or org_anthropic_credentials row with the SM-API triplet
+// org_credentials or org_anthropic_credentials row with a secret-ref triplet
 // populated. When `only` is non-empty the set is filtered to that single id.
 func collectResyncOrgs(ctx context.Context, db *gorm.DB, only string) ([]string, error) {
 	seen := map[string]struct{}{}
@@ -138,4 +148,18 @@ func collectResyncOrgs(ctx context.Context, db *gorm.DB, only string) ([]string,
 		out = append(out, id)
 	}
 	return out, nil
+}
+
+func lookupThunderOrgUUID(ctx context.Context, db *gorm.DB, ocOrgID string) (string, error) {
+	var ouID *string
+	err := db.WithContext(ctx).Raw(
+		`SELECT thunder_org_uuid::text FROM organizations WHERE name = ?`, ocOrgID,
+	).Scan(&ouID).Error
+	if err != nil {
+		return "", err
+	}
+	if ouID == nil {
+		return "", nil
+	}
+	return *ouID, nil
 }

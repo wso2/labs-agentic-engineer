@@ -174,10 +174,10 @@ func newConfigHarnessOpts(t *testing.T, thunder thundersvc.Client, appClientID s
 	}
 
 	anthropicSvc := organization.NewAnthropicCredentialService(organization.NewOrgAnthropicRepository(db), store, nil).WithAnthropicAPIBase(anth.URL)
-	credSvc := organization.NewCredentialService(organization.NewOrgCredentialRepository(db), store, minter, configEnvSec, "", "", nil).WithGitHubAPIBase(gh.URL)
+	credSvc := organization.NewCredentialService(organization.NewOrgCredentialRepository(db, nil), store, minter, configEnvSec, "", "", nil).WithGitHubAPIBase(gh.URL)
 	disconnectSvc := organization.NewOrgDisconnectService(credSvc, nil)
 	bearerSvc := organization.NewBearerService("state-key", time.Minute)
-	idpSvc := organization.NewIDPService(organization.NewIDPRepository(db), organization.NewOrganizationRepository(db), thunder, organization.PlatformIDPConfig{Issuer: platformIss, JWKSURL: platformJWKS})
+	idpSvc := organization.NewIDPService(organization.NewIDPRepository(db, nil), organization.NewOrganizationRepository(db), thunder, organization.PlatformIDPConfig{Issuer: platformIss, JWKSURL: platformJWKS})
 
 	svc := organization.NewService(
 		anthropicSvc, credSvc, disconnectSvc, bearerSvc, idpSvc,

@@ -190,7 +190,6 @@ services:
       SERVICE_AUTH_HOST_HEADER: "thunder.openchoreo.localhost"
       SERVICE_AUTH_GIT_TOKEN_URL: "http://k3d-openchoreo-serverlb:8080/oauth2/token"
       SERVICE_AUTH_GIT_CLIENT_ID: "${SERVICE_AUTH_GIT_CLIENT_ID:-aep-bff-to-git-service}"
-      SERVICE_AUTH_GIT_CLIENT_SECRET: "${SERVICE_AUTH_GIT_CLIENT_SECRET:-aep-bff-to-git-service-secret}"
       SERVICE_AUTH_GIT_HOST_HEADER: "thunder.openchoreo.localhost"
 
       # ── Task JWT signing — RS256, PEM read from a bind-mounted file.

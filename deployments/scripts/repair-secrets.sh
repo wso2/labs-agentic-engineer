@@ -15,27 +15,17 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# Repair per-org secrets in OpenBao after a local cluster reseed.
+# Trigger in-process OpenBao secret repair after a local cluster reseed.
 #
 # When the k3d cluster (or just the OpenBao volume) is torn down, the
-# SM-API metadata rows on org_credentials + org_anthropic_credentials still
-# point at OpenBao paths that no longer exist. Every subsequent
-# coding-agent dispatch then produces ExternalSecrets that ESO can't sync;
-# the runner pod hangs in CreateContainerConfigError and the agent never
-# starts.
-#
-# Flow:
-#   1. POST aep-api /_dev/v1/sm-api-resync — the BFF returns the
-#      cred-store plaintext + the OpenBao path the dispatcher will read.
-#   2. For each write, `vault kv put -mount=secret <kvPath> <property>=<value>`
-#      via `kubectl exec openbao-0`.
+# secret-ref metadata rows on org_credentials + org_anthropic_credentials still
+# point at OpenBao paths that no longer exist. aep-api's
+# POST /_dev/v1/sm-api-resync re-reads from the encrypted credential store and
+# re-pushes through the in-process secrets provider — no plaintext crosses
+# the HTTP boundary. This script is trigger-only.
 #
 # The repair endpoint is TestMode-gated on the BFF (off in production) and
-# this script aborts unless kubectl is pointed at the local k3d cluster —
-# two layers of "you're really local" before plaintext crosses the
-# localhost boundary. Idempotent: rows without an SM-API triplet are
-# skipped, missing cred-store entries are skipped, and `vault kv put`
-# overwrites cleanly when the path already has a value.
+# this script aborts unless kubectl is pointed at the local k3d cluster.
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -43,20 +33,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/env.sh"
 
 BFF_URL="${BFF_URL:-http://localhost:9090}"
-OPENBAO_NS="openbao"
-OPENBAO_POD="openbao-0"
 
 # Local-only gate. CLUSTER_CONTEXT is exported by env.sh (k3d-openchoreo
 # for the canonical local setup). Bail out loudly otherwise.
 CURRENT_CTX="$(kubectl config current-context 2>/dev/null || true)"
 if [ -z "$CURRENT_CTX" ] || [ "$CURRENT_CTX" != "$CLUSTER_CONTEXT" ]; then
     echo "⚠️  repair-secrets: current kubectl context ($CURRENT_CTX) != $CLUSTER_CONTEXT — refusing to run."
-    echo "   This script writes plaintext secrets to OpenBao; it must only run locally."
+    echo "   This script must only run against the local k3d cluster."
     exit 1
-fi
-if ! command -v jq >/dev/null 2>&1; then
-    echo "ℹ️  repair-secrets: jq not installed — skipping (install with 'brew install jq' to enable)."
-    exit 0
 fi
 
 # Wait briefly for the BFF to come up after `docker compose up -d`. 30s
@@ -73,7 +57,7 @@ for i in $(seq 1 30); do
     sleep 1
 done
 
-echo "🔐 Fetching reseed bundles from aep-api..."
+echo "🔐 Triggering in-process secret resync..."
 RESP="$(curl -sS -X POST -w '\n%{http_code}' "$BFF_URL/_dev/v1/sm-api-resync" 2>&1 || true)"
 HTTP_CODE="$(echo "$RESP" | tail -n1)"
 BODY="$(echo "$RESP" | sed '$d')"
@@ -88,72 +72,27 @@ if [ "$HTTP_CODE" != "200" ]; then
     exit 0
 fi
 
-ORG_COUNT="$(echo "$BODY" | jq '.orgs | length')"
-WRITE_COUNT="$(echo "$BODY" | jq '[.orgs[].writes[]] | length')"
-if [ "$WRITE_COUNT" = "0" ]; then
-    echo "ℹ️  no orgs with populated SM-API triplets — nothing to reseed."
-    # Surface any per-org errors even when nothing was returned.
+# Status-only body (no secret material). Best-effort summary when jq is present.
+if command -v jq >/dev/null 2>&1; then
+    ORG_COUNT="$(echo "$BODY" | jq '.orgs | length')"
+    WRITE_COUNT="$(echo "$BODY" | jq '[.orgs[].written] | add // 0')"
+    echo "🔐 Resync complete: $WRITE_COUNT write(s) across $ORG_COUNT org(s)."
     ERRORS="$(echo "$BODY" | jq -r '.orgs[] | select(.anthropicError or .githubPatError) | "  - \(.ocOrgId): anthropic=\(.anthropicError // "-") github=\(.githubPatError // "-")"')"
-    [ -n "$ERRORS" ] && { echo "⚠️  errors:"; echo "$ERRORS"; }
-    exit 0
-fi
-
-# Dev-mode OpenBao (chart default in our local setup) uses a fixed root
-# token. Discover the configured value from the pod env so the script
-# keeps working if it ever rotates.
-OPENBAO_ROOT_TOKEN="$(kubectl exec -n "$OPENBAO_NS" "$OPENBAO_POD" -- sh -c 'printenv VAULT_DEV_ROOT_TOKEN_ID || printenv BAO_DEV_ROOT_TOKEN_ID' 2>/dev/null | tr -d '[:space:]')"
-if [ -z "$OPENBAO_ROOT_TOKEN" ]; then
-    echo "⚠️  $OPENBAO_NS/$OPENBAO_POD has no dev-root-token env — cluster isn't in dev mode; cannot reseed automatically."
-    exit 0
-fi
-
-WROTE=0
-FAILED=0
-while IFS= read -r WRITE; do
-    KV_PATH="$(echo "$WRITE" | jq -r '.kvPath')"
-    PROPERTY="$(echo "$WRITE" | jq -r '.property')"
-    VALUE="$(echo "$WRITE" | jq -r '.value')"
-    if [ -z "$KV_PATH" ] || [ -z "$PROPERTY" ] || [ -z "$VALUE" ]; then
-        continue
+    if [ -n "$ERRORS" ]; then
+        echo "⚠️  resync errors:"
+        echo "$ERRORS"
+        exit 1
     fi
-    # `vault kv put` is idempotent (overwrite). Plaintext + root token are
-    # both passed as positional args to the exec sh -c (no argv on the host
-    # side: kubectl exec runs the shell inside the openbao container).
-    if kubectl exec -n "$OPENBAO_NS" "$OPENBAO_POD" -- sh -c \
-        'export VAULT_ADDR=http://127.0.0.1:8200 \
-         && export VAULT_TOKEN="$1" \
-         && vault kv put -mount=secret '"$KV_PATH"' '"$PROPERTY"'="$2" >/dev/null' \
-        _ "$OPENBAO_ROOT_TOKEN" "$VALUE" 2>/dev/null; then
-        WROTE=$((WROTE + 1))
-        echo "  ✅ $KV_PATH ($PROPERTY)"
-    else
-        FAILED=$((FAILED + 1))
-        echo "  ❌ $KV_PATH ($PROPERTY) — vault kv put failed"
-    fi
-done < <(echo "$BODY" | jq -c '.orgs[].writes[]')
+else
+    echo "🔐 Resync triggered (install jq to see a summary)."
+fi
 
 # The workflow-plane registry push secret is platform-scoped (not per-org) and
-# also lives only in OpenBao — an OpenBao restart wipes it and every subsequent
-# build's publish step hangs on a SecretSyncedError ExternalSecret. The local
-# registry accepts anonymous pushes, so an empty-auth dockerconfigjson is the
-# correct value; re-seed it if absent (idempotent overwrite is harmless).
+# also lives only in OpenBao — an OpenBao restart wipes it. Empty-auth
+# dockerconfigjson is correct for the local anonymous registry.
 echo "🐳 Ensuring workflow-plane registry-push-secret..."
 kubectl -n openbao exec openbao-0 -- sh -c \
     'VAULT_ADDR=http://127.0.0.1:8200 vault kv put -mount=secret registry-push-secret value="{\"auths\":{}}"' >/dev/null \
     && echo "  ✅ registry-push-secret" || echo "  ⚠️  could not seed registry-push-secret (openbao-0 unreachable?)"
 
-echo "🔐 Reseed complete: $WROTE write(s) across $ORG_COUNT org(s)$( [ "$FAILED" -gt 0 ] && echo "; $FAILED failed" )."
-
-# Surface per-org errors from the BFF (cred-store misses, etc.).
-ERRORS="$(echo "$BODY" | jq -r '.orgs[] | select(.anthropicError or .githubPatError) | "  - \(.ocOrgId): anthropic=\(.anthropicError // "-") github=\(.githubPatError // "-")"')"
-if [ -n "$ERRORS" ]; then
-    echo "⚠️  bundle errors:"
-    echo "$ERRORS"
-fi
-
-# Exit non-zero only when something actually went wrong, so callers
-# (start.sh) don't warn on clean runs.
-if [ "$FAILED" -gt 0 ] || [ -n "$ERRORS" ]; then
-    exit 1
-fi
 exit 0

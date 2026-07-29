@@ -147,7 +147,7 @@ func TestResolveUserInstallations_FiltersByUserAccessAndOrgBinding_DB(t *testing
 			}, nil
 		},
 	}
-	svc := organization.NewCredentialService(organization.NewOrgCredentialRepository(db), nil, minter, "", "cid", "csecret", gh)
+	svc := organization.NewCredentialService(organization.NewOrgCredentialRepository(db, nil), nil, minter, "", "cid", "csecret", gh)
 
 	got, err := svc.ResolveUserInstallations(context.Background(), "acme", "code", "https://cb")
 	if err != nil {
