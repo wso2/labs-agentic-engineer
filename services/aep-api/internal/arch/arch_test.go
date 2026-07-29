@@ -312,13 +312,14 @@ func TestGormImportAllowlist(t *testing.T) {
 
 // TestInternalOnlyLayout asserts no Go source lives outside the sanctioned
 // top-level roots: internal/ (everything), cmd/ (mains), app/ (public
-// composition seam — Run(Options)), and ocauth/ (public OC auth contracts for
+// composition seam — Run(Options)), ocauth/ (public OC auth contracts for
+// overlay modules), and secretsprovider/ (public secrets-delivery port for
 // overlay modules). The flat models/ and repositories/ shared kernels are both
 // DISSOLVED — every entity lives in its owning <domain>/entity_*.go and each
 // repository in <domain>/repository_*.go.
 func TestInternalOnlyLayout(t *testing.T) {
 	allowedRoots := map[string]bool{
-		"internal": true, "cmd": true, "app": true, "ocauth": true,
+		"internal": true, "cmd": true, "app": true, "ocauth": true, "secretsprovider": true,
 	}
 	root := ".." + string(filepath.Separator) + ".." // module root from internal/arch
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -341,7 +342,7 @@ func TestInternalOnlyLayout(t *testing.T) {
 		}
 		top := strings.SplitN(filepath.ToSlash(rel), "/", 2)[0]
 		if !allowedRoots[top] {
-			t.Errorf("Go file outside the sanctioned roots: %s (allowed: internal/, cmd/, app/, ocauth/)", rel)
+			t.Errorf("Go file outside the sanctioned roots: %s (allowed: internal/, cmd/, app/, ocauth/, secretsprovider/)", rel)
 		}
 		return nil
 	})
