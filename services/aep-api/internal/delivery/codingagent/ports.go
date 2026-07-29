@@ -151,9 +151,3 @@ type ComponentRuntimeConfigEmitter interface {
 type BuildSecretStager interface {
 	StageBuildSecret(ctx context.Context, ocOrgID, repoSlug, workflowRunName string) (secretRef string, err error)
 }
-
-// AnthropicKeyReader reads the decrypted Anthropic API key for an org.
-// Wired from orgcreds.AnthropicCredentialService at the composition root.
-type AnthropicKeyReader interface {
-	AnthropicKeyFor(ctx context.Context, orgID string) (string, error)
-}

@@ -20,7 +20,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
@@ -338,23 +337,6 @@ func (a anthropicProvisioner) ApplyWPSecret(ctx context.Context, ocOrgID string)
 		return "", nil
 	}
 	return res.SecretRefName, nil
-}
-
-// anthropicKeyReaderAdapter projects organization.AnthropicCredentialService.EffectiveKey
-// onto the codingagent.AnthropicKeyReader port used by the K8s Job dispatcher.
-type anthropicKeyReaderAdapter struct {
-	svc *organization.AnthropicCredentialService
-}
-
-func (a anthropicKeyReaderAdapter) AnthropicKeyFor(ctx context.Context, orgID string) (string, error) {
-	resp, err := a.svc.EffectiveKey(ctx, orgID)
-	if err != nil {
-		return "", fmt.Errorf("anthropic key for %q: %w", orgID, err)
-	}
-	if resp == nil || resp.Key == "" {
-		return "", fmt.Errorf("no anthropic key configured for org %q", orgID)
-	}
-	return resp.Key, nil
 }
 
 // githubBotLogin returns the platform's GitHub App bot login used for webhook
