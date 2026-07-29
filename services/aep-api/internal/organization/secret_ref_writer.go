@@ -34,7 +34,7 @@ import (
 // "user-app-secrets" — see wso2cloud/backend/secret-manager-api/
 // internal/vault/eso.go::VaultPath). Hardcoded here because the BFF
 // must reconstruct the actual Vault path it stamps into the credential
-// row's sm_api_kv_path column (read by the dispatcher's ExternalSecret).
+// row's secret_ref_kv_path column (read by the dispatcher's ExternalSecret).
 // If SM-API's mount changes, both sides must change together.
 const vaultPathPrefix = "user-app-secrets"
 
@@ -115,11 +115,7 @@ func (w *SecretRefWriter) WriteAnthropic(ctx context.Context, ocOrgID string, ap
 		return secretRefName, fmt.Errorf("secret-ref writer: resolve anthropic vault key: %w", err)
 	}
 	prop := secretmanagersvc.SecretKeyAPIKey
-	if err := w.anthropicRepo.UpdateColumns(ctx, ocOrgID, map[string]any{
-		"sm_api_secret_ref_name": secretRefName,
-		"sm_api_kv_path":         vaultKey,
-		"sm_api_property":        prop,
-	}); err != nil {
+	if err := w.anthropicRepo.UpdateColumns(ctx, ocOrgID, stampSecretRefTriplet(secretRefName, vaultKey, prop)); err != nil {
 		return secretRefName, fmt.Errorf("secret-ref writer: stamp anthropic triplet: %w", err)
 	}
 	slog.InfoContext(ctx, "secret-ref writer: anthropic key uploaded",
@@ -159,12 +155,7 @@ func (w *SecretRefWriter) WriteGitHubPAT(ctx context.Context, ocOrgID string, pa
 	}
 	prop := secretmanagersvc.SecretKeyAPIKey
 	now := time.Now().UTC()
-	if err := w.orgCredRepo.UpdateColumns(ctx, ocOrgID, map[string]any{
-		"sm_api_secret_ref_name": secretRefName,
-		"sm_api_kv_path":         vaultKey,
-		"sm_api_property":        prop,
-		"sm_api_written_at":      now,
-	}); err != nil {
+	if err := w.orgCredRepo.UpdateColumns(ctx, ocOrgID, stampSecretRefTripletWithWrittenAt(secretRefName, vaultKey, prop, now)); err != nil {
 		return secretRefName, fmt.Errorf("secret-ref writer: stamp github-pat triplet: %w", err)
 	}
 	slog.InfoContext(ctx, "secret-ref writer: github-pat uploaded",
@@ -251,18 +242,11 @@ func (w *SecretRefWriter) DeleteAnthropic(ctx context.Context, ocOrgID string) e
 	if row == nil {
 		return nil
 	}
-	refName := ""
-	if row.SMAPISecretRefName != nil {
-		refName = *row.SMAPISecretRefName
-	}
+	refName := derefPreferString(row.SecretRefName, row.SMAPISecretRefName)
 	if err := w.client.DeleteSecret(ctx, loc, refName); err != nil {
 		return fmt.Errorf("secret-ref writer: delete anthropic secret: %w", err)
 	}
-	return w.anthropicRepo.UpdateColumns(ctx, ocOrgID, map[string]any{
-		"sm_api_secret_ref_name": nil,
-		"sm_api_kv_path":         nil,
-		"sm_api_property":        nil,
-	})
+	return w.anthropicRepo.UpdateColumns(ctx, ocOrgID, clearSecretRefTriplet())
 }
 
 // PublisherSecretFieldClientID and PublisherSecretFieldClientSecret are the
@@ -313,12 +297,7 @@ func (w *SecretRefWriter) WritePublisher(ctx context.Context, ocOrgID, clientID,
 		return secretRefName, fmt.Errorf("secret-ref writer: resolve publisher vault key: %w", err)
 	}
 	now := time.Now().UTC()
-	if err := w.idpRepo.UpdateProfileColumns(ctx, &OrganizationIDPProfile{}, ocOrgID, map[string]interface{}{
-		"sm_api_secret_ref_name": secretRefName,
-		"sm_api_kv_path":         vaultKey,
-		"sm_api_property":        "publisher",
-		"sm_api_written_at":      now,
-	}); err != nil {
+	if err := w.idpRepo.UpdateProfileColumns(ctx, &OrganizationIDPProfile{}, ocOrgID, stampSecretRefTripletWithWrittenAt(secretRefName, vaultKey, "publisher", now)); err != nil {
 		return secretRefName, fmt.Errorf("secret-ref writer: stamp publisher triplet: %w", err)
 	}
 	slog.InfoContext(ctx, "secret-ref writer: publisher creds uploaded",
@@ -346,19 +325,11 @@ func (w *SecretRefWriter) DeletePublisher(ctx context.Context, ocOrgID string) e
 	if row == nil {
 		return nil
 	}
-	refName := ""
-	if row.SMAPISecretRefName != nil {
-		refName = *row.SMAPISecretRefName
-	}
+	refName := derefPreferString(row.SecretRefName, row.SMAPISecretRefName)
 	if err := w.client.DeleteSecret(ctx, loc, refName); err != nil {
 		return fmt.Errorf("secret-ref writer: delete publisher secret: %w", err)
 	}
-	return w.idpRepo.UpdateProfileColumns(ctx, &OrganizationIDPProfile{}, ocOrgID, map[string]interface{}{
-		"sm_api_secret_ref_name": nil,
-		"sm_api_kv_path":         nil,
-		"sm_api_property":        nil,
-		"sm_api_written_at":      nil,
-	})
+	return w.idpRepo.UpdateProfileColumns(ctx, &OrganizationIDPProfile{}, ocOrgID, clearSecretRefTripletWithWrittenAt())
 }
 
 // DeleteGitHubPAT mirrors DeleteAnthropic on the GitHub side.
@@ -378,17 +349,9 @@ func (w *SecretRefWriter) DeleteGitHubPAT(ctx context.Context, ocOrgID string) e
 	if row == nil {
 		return nil
 	}
-	refName := ""
-	if row.SMAPISecretRefName != nil {
-		refName = *row.SMAPISecretRefName
-	}
+	refName := derefPreferString(row.SecretRefName, row.SMAPISecretRefName)
 	if err := w.client.DeleteSecret(ctx, loc, refName); err != nil {
 		return fmt.Errorf("secret-ref writer: delete github-pat secret: %w", err)
 	}
-	return w.orgCredRepo.UpdateColumns(ctx, ocOrgID, map[string]any{
-		"sm_api_secret_ref_name": nil,
-		"sm_api_kv_path":         nil,
-		"sm_api_property":        nil,
-		"sm_api_written_at":      nil,
-	})
+	return w.orgCredRepo.UpdateColumns(ctx, ocOrgID, clearSecretRefTripletWithWrittenAt())
 }

@@ -425,11 +425,11 @@ func (e *CodingExecutor) dispatchViaProxy(ctx context.Context, req delivery.Disp
 		}
 	}
 	if idpRow, err := e.idpProfiles.GetProfileByOrgID(ctx, t.OrgID); err == nil && idpRow != nil {
-		if idpRow.SMAPIKVPath != nil && idpRow.SMAPISecretRefName != nil {
+		if idpRow.ResolvedSecretRefKVPath() != nil && idpRow.ResolvedSecretRefName() != nil {
 			publisherSR = &SecretRef{
-				SecretRefName: derefStr(idpRow.SMAPISecretRefName),
-				KVPath:        derefStr(idpRow.SMAPIKVPath),
-				Property:      derefStr(idpRow.SMAPIProperty),
+				SecretRefName: derefStr(idpRow.ResolvedSecretRefName()),
+				KVPath:        derefStr(idpRow.ResolvedSecretRefKVPath()),
+				Property:      derefStr(idpRow.ResolvedSecretRefProperty()),
 			}
 			publisherTokenURL = deriveTokenURLFromJWKS(idpRow.JWKSURL)
 			if publisherTokenURL == "" {
@@ -599,9 +599,9 @@ func (e *CodingExecutor) resolveRunnerSecretRefs(ctx context.Context, orgID stri
 		return SecretRef{}, SecretRef{}, fmt.Errorf("coding dispatch: anthropic secret reference missing for org %q: org_anthropic_credentials row not found", orgID)
 	}
 	anthropicSR := SecretRef{
-		SecretRefName: derefStr(anthropicRow.SMAPISecretRefName),
-		KVPath:        derefStr(anthropicRow.SMAPIKVPath),
-		Property:      derefStr(anthropicRow.SMAPIProperty),
+		SecretRefName: derefStr(anthropicRow.ResolvedSecretRefName()),
+		KVPath:        derefStr(anthropicRow.ResolvedSecretRefKVPath()),
+		Property:      derefStr(anthropicRow.ResolvedSecretRefProperty()),
 	}
 	if err := validateSecretRefTriplet("anthropic", orgID, anthropicSR); err != nil {
 		return SecretRef{}, SecretRef{}, fmt.Errorf("coding dispatch: %w", err)
@@ -615,9 +615,9 @@ func (e *CodingExecutor) resolveRunnerSecretRefs(ctx context.Context, orgID stri
 		return SecretRef{}, SecretRef{}, fmt.Errorf("coding dispatch: github secret reference missing for org %q: org_credentials row not found", orgID)
 	}
 	githubSR := SecretRef{
-		SecretRefName: derefStr(githubRow.SMAPISecretRefName),
-		KVPath:        derefStr(githubRow.SMAPIKVPath),
-		Property:      derefStr(githubRow.SMAPIProperty),
+		SecretRefName: derefStr(githubRow.ResolvedSecretRefName()),
+		KVPath:        derefStr(githubRow.ResolvedSecretRefKVPath()),
+		Property:      derefStr(githubRow.ResolvedSecretRefProperty()),
 	}
 	if err := validateSecretRefTriplet("github", orgID, githubSR); err != nil {
 		return SecretRef{}, SecretRef{}, fmt.Errorf("coding dispatch: %w", err)
@@ -627,13 +627,13 @@ func (e *CodingExecutor) resolveRunnerSecretRefs(ctx context.Context, orgID stri
 
 func validateSecretRefTriplet(credential, orgID string, ref SecretRef) error {
 	if ref.SecretRefName == "" {
-		return fmt.Errorf("%s secret reference missing for org %q: sm_api_secret_ref_name not populated", credential, orgID)
+		return fmt.Errorf("%s secret reference missing for org %q: secret_ref_name not populated", credential, orgID)
 	}
 	if ref.KVPath == "" {
-		return fmt.Errorf("%s secret reference missing for org %q: sm_api_kv_path not populated", credential, orgID)
+		return fmt.Errorf("%s secret reference missing for org %q: secret_ref_kv_path not populated", credential, orgID)
 	}
 	if ref.Property == "" {
-		return fmt.Errorf("%s secret reference missing for org %q: sm_api_property not populated", credential, orgID)
+		return fmt.Errorf("%s secret reference missing for org %q: secret_ref_property not populated", credential, orgID)
 	}
 	return nil
 }

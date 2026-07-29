@@ -144,6 +144,9 @@ func Steps(db *gorm.DB, deploymentTier string) []database.Step {
 		// step inserts the claude-sonnet-5 row so write-time USD stamping has
 		// a price card to resolve against. Ops-managed thereafter.
 		ctxStep("model_rates_seed", RunModelRatesSeed),
+		// EXPAND: provider-neutral secret_ref_* columns alongside sm_api_*
+		// (phase-03 item 14). CONTRACT (drop sm_api_*) waits for phase 09.
+		ctxStep("phase11_secret_ref_columns", RunPhase11SecretRefColumns),
 	}
 }
 

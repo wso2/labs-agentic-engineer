@@ -234,7 +234,7 @@ func (s *AnthropicCredentialService) Connect(ctx context.Context, ocOrgID string
 			slog.WarnContext(ctx, "anthropic: SM-API mirror failed (legacy store still authoritative)",
 				"ocOrgId", ocOrgID, "error", err)
 		} else if s.pushEnabled() {
-			// The mirror just stamped a FRESH sm_api_kv_path/property onto the
+			// The mirror just stamped a FRESH secret_ref_kv_path/property onto the
 			// row (every WriteAnthropic call gets a brand-new random-suffixed
 			// vault path — never an in-place update of the previous one). Push
 			// an ExternalSecret pointing at that fresh path now, synchronously
@@ -264,8 +264,10 @@ func (s *AnthropicCredentialService) pushExternalSecret(ctx context.Context, ocO
 	if err != nil {
 		return fmt.Errorf("push external secret: reload row: %w", err)
 	}
-	if row.SMAPIKVPath == nil || row.SMAPIProperty == nil || *row.SMAPIKVPath == "" || *row.SMAPIProperty == "" {
-		return errors.New("push external secret: row has no SM-API triplet yet")
+	kvPath := row.ResolvedSecretRefKVPath()
+	prop := row.ResolvedSecretRefProperty()
+	if kvPath == nil || prop == nil || *kvPath == "" || *prop == "" {
+		return errors.New("push external secret: row has no secret-ref triplet yet")
 	}
 	manifest := map[string]any{
 		"apiVersion": "external-secrets.io/v1",
@@ -287,8 +289,8 @@ func (s *AnthropicCredentialService) pushExternalSecret(ctx context.Context, ocO
 				{
 					"secretKey": "RCA_LLM_API_KEY",
 					"remoteRef": map[string]any{
-						"key":      *row.SMAPIKVPath,
-						"property": *row.SMAPIProperty,
+						"key":      *kvPath,
+						"property": *prop,
 					},
 				},
 			},
@@ -537,8 +539,9 @@ func (s *AnthropicCredentialService) PrepareSMAPISeed(ctx context.Context, ocOrg
 	if row.Status != "active" {
 		return nil, nil
 	}
-	if row.SMAPIKVPath == nil || row.SMAPIProperty == nil ||
-		*row.SMAPIKVPath == "" || *row.SMAPIProperty == "" {
+	kvPath := row.ResolvedSecretRefKVPath()
+	prop := row.ResolvedSecretRefProperty()
+	if kvPath == nil || prop == nil || *kvPath == "" || *prop == "" {
 		return nil, nil
 	}
 	key, err := s.store.Get(ctx, ocOrgID, "anthropic/key")
@@ -546,8 +549,8 @@ func (s *AnthropicCredentialService) PrepareSMAPISeed(ctx context.Context, ocOrg
 		return nil, nil
 	}
 	return &SMAPISeedBundle{
-		KVPath:   *row.SMAPIKVPath,
-		Property: *row.SMAPIProperty,
+		KVPath:   *kvPath,
+		Property: *prop,
 		Value:    string(key),
 	}, nil
 }

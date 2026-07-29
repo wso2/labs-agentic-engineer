@@ -121,6 +121,13 @@ func GetTokenClaims(ctx context.Context) *TokenClaims {
 	return claims
 }
 
+// ContextWithTokenClaims injects claims into ctx. Used by tests (and any
+// in-process caller that already verified a JWT out-of-band) to satisfy the
+// Authenticator context contract without a full JWKS round-trip.
+func ContextWithTokenClaims(ctx context.Context, claims *TokenClaims) context.Context {
+	return context.WithValue(ctx, claimsKey, claims)
+}
+
 // GetJWTFromContext returns the raw bearer token, or "" if absent.
 func GetJWTFromContext(ctx context.Context) string {
 	tok, _ := ctx.Value(tokenKey).(string)

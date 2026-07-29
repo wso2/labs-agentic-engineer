@@ -135,7 +135,7 @@ func TestRunCoding_ProxyConfigured_MissingAnthropicRef_ErrorsNoFallback(t *testi
 	if err == nil {
 		t.Fatal("expected error when anthropic secret ref is missing")
 	}
-	if !strings.Contains(err.Error(), "anthropic") || !strings.Contains(err.Error(), "sm_api_kv_path") {
+	if !strings.Contains(err.Error(), "anthropic") || !strings.Contains(err.Error(), "secret_ref_kv_path") {
 		t.Fatalf("error must name missing anthropic ref, got: %v", err)
 	}
 }

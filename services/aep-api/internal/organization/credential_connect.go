@@ -281,8 +281,9 @@ func (s *CredentialService) PrepareSMAPISeed(ctx context.Context, ocOrgID string
 	if row.Kind != "user-pat" || row.Status != "active" {
 		return nil, nil
 	}
-	if row.SMAPIKVPath == nil || row.SMAPIProperty == nil ||
-		*row.SMAPIKVPath == "" || *row.SMAPIProperty == "" {
+	kvPath := row.ResolvedSecretRefKVPath()
+	prop := row.ResolvedSecretRefProperty()
+	if kvPath == nil || prop == nil || *kvPath == "" || *prop == "" {
 		return nil, nil
 	}
 	pat, err := s.store.Get(ctx, ocOrgID, "github/pat")
@@ -290,8 +291,8 @@ func (s *CredentialService) PrepareSMAPISeed(ctx context.Context, ocOrgID string
 		return nil, nil
 	}
 	return &SMAPISeedBundle{
-		KVPath:   *row.SMAPIKVPath,
-		Property: *row.SMAPIProperty,
+		KVPath:   *kvPath,
+		Property: *prop,
 		Value:    string(pat),
 	}, nil
 }
