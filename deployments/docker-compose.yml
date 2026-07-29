@@ -166,7 +166,11 @@ services:
       # values-thunder.yaml's 60-aep-system-role.sh bootstrap script.
       THUNDER_ADMIN_URL: "http://thunder.openchoreo.localhost:8080"
       THUNDER_SYSTEM_CLIENT_ID: "aep-system-client"
-      THUNDER_SYSTEM_CLIENT_SECRET: "aep-system-client-secret"
+      # After setup-local.sh, Thunder holds the random secret in
+      # aep-thunder-secrets/THUNDER_SYSTEM_CLIENT_SECRET — not the
+      # values-thunder.yaml bootstrap literal. Export from that K8s
+      # secret (or .env) before `compose up`, same as helm's secretKeyRef.
+      THUNDER_SYSTEM_CLIENT_SECRET: "${THUNDER_SYSTEM_CLIENT_SECRET:-aep-system-client-secret}"
       PLATFORM_IDP_ISSUER: "http://thunder.openchoreo.localhost:8080"
       PLATFORM_IDP_JWKS_URL: "http://thunder-service.thunder.svc.cluster.local:8090/oauth2/jwks"
 
@@ -186,7 +190,10 @@ services:
       # pod and authenticates back to git-service with a per-task Task JWT.
       SERVICE_AUTH_TOKEN_URL: "http://k3d-openchoreo-serverlb:8080/oauth2/token"
       SERVICE_AUTH_CLIENT_ID: "aep-api-client"
-      SERVICE_AUTH_CLIENT_SECRET: "aep-api-client-secret"
+      # Matches setup-local's aep-thunder-secrets/AEP_API_CLIENT_SECRET
+      # (helm already secretKeyRefs it). Hardcoded bootstrap literal
+      # fails with Thunder 401 invalid_client after setup-local.
+      SERVICE_AUTH_CLIENT_SECRET: "${AEP_API_CLIENT_SECRET:-aep-api-client-secret}"
       SERVICE_AUTH_HOST_HEADER: "thunder.openchoreo.localhost"
       SERVICE_AUTH_GIT_TOKEN_URL: "http://k3d-openchoreo-serverlb:8080/oauth2/token"
       SERVICE_AUTH_GIT_CLIENT_ID: "${SERVICE_AUTH_GIT_CLIENT_ID:-aep-bff-to-git-service}"

@@ -99,8 +99,12 @@ func (w *SecretRefWriter) WriteAnthropic(ctx context.Context, ocOrgID string, ap
 	if strings.TrimSpace(apiKey) == "" {
 		return "", errors.New("secret-ref writer: apiKey required")
 	}
+	orgUUID, err := orgUUIDForSecretLocation(ctx)
+	if err != nil {
+		return "", fmt.Errorf("secret-ref writer: anthropic upload: %w", err)
+	}
 	loc := secretmanagersvc.SecretLocation{
-		OrgName:    ocOrgID,
+		OrgName:    orgUUID,
 		EntityName: "anthropic",
 		SecretKey:  secretmanagersvc.SecretKeyAPIKey,
 	}
@@ -138,8 +142,12 @@ func (w *SecretRefWriter) WriteGitHubPAT(ctx context.Context, ocOrgID string, pa
 	if strings.TrimSpace(pat) == "" {
 		return "", errors.New("secret-ref writer: pat required")
 	}
+	orgUUID, err := orgUUIDForSecretLocation(ctx)
+	if err != nil {
+		return "", fmt.Errorf("secret-ref writer: github-pat upload: %w", err)
+	}
 	loc := secretmanagersvc.SecretLocation{
-		OrgName:    ocOrgID,
+		OrgName:    orgUUID,
 		EntityName: "github-pat",
 		SecretKey:  secretmanagersvc.SecretKeyAPIKey,
 	}
@@ -183,8 +191,12 @@ func (w *SecretRefWriter) WriteExternalResourceSecret(ctx context.Context, ocOrg
 	if len(data) == 0 {
 		return "", "", errors.New("secret-ref writer: no external-resource secret data to write")
 	}
+	orgUUID, err := orgUUIDForSecretLocation(ctx)
+	if err != nil {
+		return "", "", fmt.Errorf("secret-ref writer: external-resource secret upload (%s): %w", entityName, err)
+	}
 	loc := secretmanagersvc.SecretLocation{
-		OrgName:     ocOrgID,
+		OrgName:     orgUUID,
 		ProjectName: projectName,
 		EntityName:  entityName,
 	}
@@ -202,6 +214,19 @@ func (w *SecretRefWriter) WriteExternalResourceSecret(ctx context.Context, ocOrg
 	return vaultKey, secretRefName, nil
 }
 
+// orgUUIDForSecretLocation returns the Thunder ouId that must populate
+// SecretLocation.OrgName. OpenBao-direct and upsertSecretReference both
+// hash OrgName via tenant.OrgBaseNamespace; the OC org handle (ocOrgID,
+// e.g. "default") produces a different wc-* namespace than the ouId that
+// setup-aep.sh pre-creates and that resolveVaultKey stamps into the DB.
+func orgUUIDForSecretLocation(ctx context.Context) (string, error) {
+	claims := jwtassertion.GetTokenClaims(ctx)
+	if claims == nil || strings.TrimSpace(claims.OuId) == "" {
+		return "", errors.New("no ouId claim in JWT context")
+	}
+	return claims.OuId, nil
+}
+
 // resolveVaultKey reconstructs the actual Vault KV key from the
 // JWT's `ouId` claim — matches the shape SM-API derives server-side
 // via vault.VaultPath() and stamps onto the SecretReference CR's
@@ -214,11 +239,11 @@ func (w *SecretRefWriter) WriteExternalResourceSecret(ctx context.Context, ocOrg
 // local `organizations.uuid` is a random local PK and would diverge.
 // Connect always runs in a request context with a verified user JWT.
 func (w *SecretRefWriter) resolveVaultKey(ctx context.Context, secretRefName string) (string, error) {
-	claims := jwtassertion.GetTokenClaims(ctx)
-	if claims == nil || strings.TrimSpace(claims.OuId) == "" {
-		return "", errors.New("no ouId claim in JWT context")
+	orgUUID, err := orgUUIDForSecretLocation(ctx)
+	if err != nil {
+		return "", err
 	}
-	ns := tenant.OrgBaseNamespace(claims.OuId)
+	ns := tenant.OrgBaseNamespace(orgUUID)
 	vaultKey := vaultPathPrefix + "/" + ns + "/" + secretRefName
 	return vaultKey, nil
 }
@@ -230,17 +255,21 @@ func (w *SecretRefWriter) DeleteAnthropic(ctx context.Context, ocOrgID string) e
 	if !w.Enabled() {
 		return nil
 	}
-	loc := secretmanagersvc.SecretLocation{
-		OrgName:    ocOrgID,
-		EntityName: "anthropic",
-		SecretKey:  secretmanagersvc.SecretKeyAPIKey,
-	}
 	row, err := w.anthropicRepo.GetByOrg(ctx, ocOrgID)
 	if err != nil {
 		return fmt.Errorf("secret-ref writer: load anthropic row: %w", err)
 	}
 	if row == nil {
 		return nil
+	}
+	orgUUID, err := orgUUIDForSecretLocation(ctx)
+	if err != nil {
+		return fmt.Errorf("secret-ref writer: delete anthropic secret: %w", err)
+	}
+	loc := secretmanagersvc.SecretLocation{
+		OrgName:    orgUUID,
+		EntityName: "anthropic",
+		SecretKey:  secretmanagersvc.SecretKeyAPIKey,
 	}
 	refName := derefPreferString(row.SecretRefName, row.SMAPISecretRefName)
 	if err := w.client.DeleteSecret(ctx, loc, refName); err != nil {
@@ -281,8 +310,12 @@ func (w *SecretRefWriter) WritePublisher(ctx context.Context, ocOrgID, clientID,
 	if strings.TrimSpace(clientSecret) == "" {
 		return "", errors.New("secret-ref writer: clientSecret required")
 	}
+	orgUUID, err := orgUUIDForSecretLocation(ctx)
+	if err != nil {
+		return "", fmt.Errorf("secret-ref writer: publisher upload: %w", err)
+	}
 	loc := secretmanagersvc.SecretLocation{
-		OrgName:    ocOrgID,
+		OrgName:    orgUUID,
 		EntityName: "publisher",
 	}
 	secretRefName, err := w.client.CreateSecret(ctx, loc, map[string]string{
@@ -314,16 +347,20 @@ func (w *SecretRefWriter) DeletePublisher(ctx context.Context, ocOrgID string) e
 	if !w.Enabled() {
 		return nil
 	}
-	loc := secretmanagersvc.SecretLocation{
-		OrgName:    ocOrgID,
-		EntityName: "publisher",
-	}
 	row, err := w.idpRepo.GetProfileByOrgID(ctx, ocOrgID)
 	if err != nil {
 		return fmt.Errorf("secret-ref writer: load idp profile row: %w", err)
 	}
 	if row == nil {
 		return nil
+	}
+	orgUUID, err := orgUUIDForSecretLocation(ctx)
+	if err != nil {
+		return fmt.Errorf("secret-ref writer: delete publisher secret: %w", err)
+	}
+	loc := secretmanagersvc.SecretLocation{
+		OrgName:    orgUUID,
+		EntityName: "publisher",
 	}
 	refName := derefPreferString(row.SecretRefName, row.SMAPISecretRefName)
 	if err := w.client.DeleteSecret(ctx, loc, refName); err != nil {
@@ -337,17 +374,21 @@ func (w *SecretRefWriter) DeleteGitHubPAT(ctx context.Context, ocOrgID string) e
 	if !w.Enabled() {
 		return nil
 	}
-	loc := secretmanagersvc.SecretLocation{
-		OrgName:    ocOrgID,
-		EntityName: "github-pat",
-		SecretKey:  secretmanagersvc.SecretKeyAPIKey,
-	}
 	row, err := w.orgCredRepo.GetByOrg(ctx, ocOrgID)
 	if err != nil {
 		return fmt.Errorf("secret-ref writer: load github row: %w", err)
 	}
 	if row == nil {
 		return nil
+	}
+	orgUUID, err := orgUUIDForSecretLocation(ctx)
+	if err != nil {
+		return fmt.Errorf("secret-ref writer: delete github-pat secret: %w", err)
+	}
+	loc := secretmanagersvc.SecretLocation{
+		OrgName:    orgUUID,
+		EntityName: "github-pat",
+		SecretKey:  secretmanagersvc.SecretKeyAPIKey,
 	}
 	refName := derefPreferString(row.SecretRefName, row.SMAPISecretRefName)
 	if err := w.client.DeleteSecret(ctx, loc, refName); err != nil {
