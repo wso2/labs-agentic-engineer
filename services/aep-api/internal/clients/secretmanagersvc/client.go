@@ -37,6 +37,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+
+	"github.com/wso2/aep/aep-api/internal/platform/tenant"
 )
 
 const (
@@ -105,6 +107,7 @@ type SecretManagementClient interface {
 }
 
 type secretManagementClient struct {
+	provider        Provider
 	lowLevelClient  SecretsClient
 	managedBy       string
 	ocClient        OpenChoreoSecretReferenceClient
@@ -145,6 +148,7 @@ func NewSecretManagementClientWithConfig(cfg SecretManagementClientConfig) (Secr
 		return nil, fmt.Errorf("failed to create secrets client: %w", err)
 	}
 	return &secretManagementClient{
+		provider:        cfg.Provider,
 		lowLevelClient:  lowLevelClient,
 		managedBy:       DefaultManagedBy,
 		ocClient:        cfg.OCClient,
@@ -152,10 +156,29 @@ func NewSecretManagementClientWithConfig(cfg SecretManagementClientConfig) (Secr
 	}, nil
 }
 
+// managesRefs reports whether the underlying provider owns SecretReference
+// CRUD (e.g. SM-API). When true the high-level client must not call OC.
+func (c *secretManagementClient) managesRefs() bool {
+	if m, ok := c.provider.(SecretReferenceManager); ok && m.ManagesSecretReferences() {
+		return true
+	}
+	return false
+}
+
+func (c *secretManagementClient) requireOCClient() error {
+	if c.ocClient == nil {
+		return fmt.Errorf("OCClient required when provider does not manage SecretReferences")
+	}
+	return nil
+}
+
 func (c *secretManagementClient) upsertSecretReference(ctx context.Context, location SecretLocation, kvPath string, secretKeys []string) (string, error) {
+	// D-SR-namespace: OrgName is the org UUID; OC calls need the derived
+	// k8s base namespace (wc-<ouId8>-<sha256[:8]>), not the raw UUID.
+	orgNS := tenant.OrgBaseNamespace(location.OrgName)
 	name := location.SecretRefName()
 	req := CreateSecretReferenceRequest{
-		Namespace:       location.OrgName,
+		Namespace:       orgNS,
 		Name:            name,
 		ProjectName:     location.ProjectName,
 		ComponentName:   location.EntityName,
@@ -163,14 +186,14 @@ func (c *secretManagementClient) upsertSecretReference(ctx context.Context, loca
 		SecretKeys:      secretKeys,
 		RefreshInterval: c.refreshInterval,
 	}
-	_, getErr := c.ocClient.GetSecretReference(ctx, location.OrgName, name)
+	_, getErr := c.ocClient.GetSecretReference(ctx, orgNS, name)
 	if getErr != nil {
 		if !errors.Is(getErr, ErrNotFound) {
 			return "", fmt.Errorf("check SecretReference: %w", getErr)
 		}
-		if _, createErr := c.ocClient.CreateSecretReference(ctx, location.OrgName, req); createErr != nil {
+		if _, createErr := c.ocClient.CreateSecretReference(ctx, orgNS, req); createErr != nil {
 			if errors.Is(createErr, ErrConflict) {
-				if _, updateErr := c.ocClient.UpdateSecretReference(ctx, location.OrgName, name, req); updateErr != nil {
+				if _, updateErr := c.ocClient.UpdateSecretReference(ctx, orgNS, name, req); updateErr != nil {
 					return "", fmt.Errorf("update after create conflict: %w", updateErr)
 				}
 			} else {
@@ -178,7 +201,7 @@ func (c *secretManagementClient) upsertSecretReference(ctx context.Context, loca
 			}
 		}
 	} else {
-		if _, updateErr := c.ocClient.UpdateSecretReference(ctx, location.OrgName, name, req); updateErr != nil {
+		if _, updateErr := c.ocClient.UpdateSecretReference(ctx, orgNS, name, req); updateErr != nil {
 			return "", fmt.Errorf("update SecretReference: %w", updateErr)
 		}
 	}
@@ -195,12 +218,17 @@ func (c *secretManagementClient) CreateSecret(ctx context.Context, location Secr
 	if err != nil {
 		return "", fmt.Errorf("upsert secret: %w", err)
 	}
-	if c.ocClient != nil {
+	if !c.managesRefs() {
+		if err := c.requireOCClient(); err != nil {
+			return "", err
+		}
 		keys := make([]string, 0, len(data))
 		for k := range data {
 			keys = append(keys, k)
 		}
-		return c.upsertSecretReference(ctx, location, secretRef, keys)
+		if _, err := c.upsertSecretReference(ctx, location, secretRef, keys); err != nil {
+			return "", err
+		}
 	}
 	return secretRef, nil
 }
@@ -222,12 +250,17 @@ func (c *secretManagementClient) PatchSecret(ctx context.Context, location Secre
 	if err != nil {
 		return "", fmt.Errorf("patch secret: %w", err)
 	}
-	if c.ocClient != nil {
+	if !c.managesRefs() {
+		if err := c.requireOCClient(); err != nil {
+			return "", err
+		}
 		info, err := c.lowLevelClient.GetSecret(ctx, location)
 		if err != nil {
 			return "", fmt.Errorf("get secret keys after patch: %w", err)
 		}
-		return c.upsertSecretReference(ctx, location, secretRef, info.Keys)
+		if _, err := c.upsertSecretReference(ctx, location, secretRef, info.Keys); err != nil {
+			return "", err
+		}
 	}
 	return secretRef, nil
 }
@@ -237,8 +270,12 @@ func (c *secretManagementClient) DeleteSecret(ctx context.Context, location Secr
 	if err := c.lowLevelClient.DeleteSecret(ctx, location, metadata); err != nil {
 		return fmt.Errorf("delete secret: %w", err)
 	}
-	if c.ocClient != nil {
-		if err := c.ocClient.DeleteSecretReference(ctx, location.OrgName, secretRefName); err != nil {
+	if !c.managesRefs() {
+		if err := c.requireOCClient(); err != nil {
+			return err
+		}
+		orgNS := tenant.OrgBaseNamespace(location.OrgName)
+		if err := c.ocClient.DeleteSecretReference(ctx, orgNS, secretRefName); err != nil {
 			if !errors.Is(err, ErrNotFound) {
 				return fmt.Errorf("delete SecretReference: %w", err)
 			}
