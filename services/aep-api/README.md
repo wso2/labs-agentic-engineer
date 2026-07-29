@@ -85,20 +85,23 @@ exported.
 
 **Nil `Options` fields are feature off-switches** — they disable a capability
 cleanly, never panic, and never silently pick a different OpenChoreo credential
-path:
+path or secrets backend:
 
 | Field | Nil means |
 |---|---|
 | `AuthProvider` | no bearer on M2M OC calls |
 | `RequestAuthStrategy` | all-M2M / never pass-through (**direct-OC mode**) |
 | `ImpersonateOrgResolver` (+ optional late-bound builder) | no `X-Impersonate-Org` |
-| `SecretsProvider` | construct the default SM-API provider when its URL is configured |
+| `SecretsProvider` | secrets delivery off (no KV writes / SecretReference authoring) |
 
 **OSS `cmd/aep-api`** runs in **direct-OC mode**: M2M `AuthProvider` when service
-auth is configured, `DirectOCStrategy` (always M2M), and a nil impersonation
-resolver. An **overlay module** is a separate process entry that imports the
-same `app` package and injects different `Options` — typically a **PAS strategy**
-that chooses pass-through user JWT vs M2M + impersonation per request. Detail →
+auth is configured, `DirectOCStrategy` (always M2M), a nil impersonation
+resolver, and an OpenBao-direct `SecretsProvider` when `OPENBAO_ADDR` is set.
+An **overlay module** is a separate process entry that imports the same `app`
+package and injects different `Options` — typically a **PAS strategy** for auth
+and an sm-api-backed `SecretsProvider` for cloud delivery. The sm-api client
+lives in the overlay (outside OSS CI); that is an accepted trade-off — public
+coverage never exercised it either. Detail →
 [`design/composition-seam.md`](design/composition-seam.md).
 
 ## Conventions

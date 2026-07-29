@@ -60,7 +60,7 @@ type SMAPIWriter struct {
 }
 
 // NewSMAPIWriter returns a no-op writer when client is nil (matches the
-// composition-root behavior when SECRET_MANAGER_API_URL is unset).
+// composition-root behavior when SecretsProvider is nil).
 func NewSMAPIWriter(
 	client secretmanagersvc.SecretManagementClient,
 	orgCredRepo OrgCredentialRepository,

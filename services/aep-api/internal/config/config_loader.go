@@ -134,10 +134,8 @@ func Load() (Config, error) {
 		GitHubAppPrivateKeyPath:     r.readOptionalString("GITHUB_APP_PRIVATE_KEY_PATH", ""),
 		CredentialValidatorInterval: r.readOptionalDuration("CREDENTIAL_VALIDATOR_INTERVAL", 24*time.Hour),
 
-		// SM-API + cluster-gateway-proxy.
-		SecretManagerAPIURL:     r.readOptionalString("SECRET_MANAGER_API_URL", ""),
-		SecretManagerAPITimeout: r.readOptionalDuration("SECRET_MANAGER_API_TIMEOUT", 30*time.Second),
-		ClusterGatewayProxyURL:  r.readOptionalString("CLUSTER_GATEWAY_PROXY_URL", ""),
+		// cluster-gateway-proxy (secrets delivery is via Options.SecretsProvider).
+		ClusterGatewayProxyURL: r.readOptionalString("CLUSTER_GATEWAY_PROXY_URL", ""),
 
 		// Anthropic-key push target (see AnthropicCredentialService.pushExternalSecret).
 		// Both empty (the default) disables the push entirely — no consumer is

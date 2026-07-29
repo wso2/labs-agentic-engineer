@@ -57,9 +57,6 @@ jobs:
           - name: cluster-gateway-proxy
             dockerfile: deployments/local-cluster-gateway-proxy/Dockerfile
             context: deployments/local-cluster-gateway-proxy
-          - name: secret-manager-api
-            dockerfile: deployments/local-secret-manager-api/Dockerfile
-            context: deployments/local-secret-manager-api
 
     steps:
       - uses: actions/checkout@v4
@@ -148,7 +145,6 @@ jobs:
           yq -i '.console.image.tag = "${{ inputs.version }}"' /tmp/platform/values.yaml
           yq -i '.console.image.pullPolicy = "IfNotPresent"' /tmp/platform/values.yaml
           yq -i '.codingAgentDispatch.clusterGatewayProxy.image = "${{ env.IMAGE_PREFIX }}/cluster-gateway-proxy:${{ inputs.version }}"' /tmp/platform/values.yaml
-          yq -i '.codingAgentDispatch.secretManagerApi.image = "${{ env.IMAGE_PREFIX }}/secret-manager-api:${{ inputs.version }}"' /tmp/platform/values.yaml
           yq -i '.codingAgentRunner.image = "${{ env.IMAGE_PREFIX }}/remote-worker:${{ inputs.version }}"' /tmp/platform/values.yaml
           yq -i '.validationRunner.image = "${{ env.IMAGE_PREFIX }}/remote-worker-validation:${{ inputs.version }}"' /tmp/platform/values.yaml
 

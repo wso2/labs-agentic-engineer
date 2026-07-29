@@ -20,8 +20,10 @@ import (
 	"fmt"
 
 	"github.com/wso2/aep/aep-api/internal/clients/oauth"
+	"github.com/wso2/aep/aep-api/internal/clients/secretmanagersvc/providers/openbao"
 	"github.com/wso2/aep/aep-api/internal/config"
 	"github.com/wso2/aep/aep-api/ocauth"
+	"github.com/wso2/aep/aep-api/secretsprovider"
 )
 
 // NewM2MAuthProvider wraps oauth.NewTokenProvider as a public ocauth.AuthProvider
@@ -32,7 +34,8 @@ func NewM2MAuthProvider(tokenURL, clientID, clientSecret, hostHeader string) oca
 
 // NewOSSOptions loads and validates config, then returns Options for the OSS
 // direct-OC entry: M2M AuthProvider when service-auth env is set,
-// DirectOCStrategy, and a nil impersonation resolver.
+// DirectOCStrategy, a nil impersonation resolver, and an OpenBao-direct
+// SecretsProvider when OPENBAO_ADDR is configured (nil = delivery off).
 func NewOSSOptions() (Options, error) {
 	cfg, err := config.Load()
 	if err != nil {
@@ -49,9 +52,23 @@ func NewOSSOptions() (Options, error) {
 		)
 	}
 
+	var secretsProvider secretsprovider.Provider
+	if cfg.OpenBaoAddr != "" {
+		p, err := openbao.NewProvider(&secretsprovider.OpenBaoConfig{
+			Server: cfg.OpenBaoAddr,
+			Path:   "secret",
+			Auth:   &secretsprovider.OpenBaoAuth{Token: cfg.OpenBaoToken},
+		})
+		if err != nil {
+			return Options{}, fmt.Errorf("openbao secrets provider: %w", err)
+		}
+		secretsProvider = p
+	}
+
 	return Options{
 		AuthProvider:           authProvider,
 		RequestAuthStrategy:    DirectOCStrategy{},
 		ImpersonateOrgResolver: nil,
+		SecretsProvider:        secretsProvider,
 	}, nil
 }

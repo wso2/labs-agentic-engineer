@@ -126,14 +126,14 @@ spec:
             - name: CLUSTER_GATEWAY_PROXY_URL
               value: {{ .Values.codingAgentDispatch.clusterGatewayProxy.url | quote }}
             {{- end }}
-            # secret-manager-api: enables external-resource secret staging (StageSecrets).
-            # Local → in-cluster stub Service; prod → the real managed sm-api URL.
+            # OpenBao-direct secrets delivery (local-only). Cloud injects a
+            # different SecretsProvider via the overlay; OPENBAO_* must be
+            # absent there.
             {{- if .Values.codingAgentDispatch.localStubs.enabled }}
-            - name: SECRET_MANAGER_API_URL
-              value: "http://secret-manager-api.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.codingAgentDispatch.secretManagerApi.port }}"
-            {{- else if .Values.codingAgentDispatch.secretManagerApi.url }}
-            - name: SECRET_MANAGER_API_URL
-              value: {{ .Values.codingAgentDispatch.secretManagerApi.url | quote }}
+            - name: OPENBAO_ADDR
+              value: {{ .Values.openbao.addr | quote }}
+            - name: OPENBAO_TOKEN
+              value: "root"
             {{- end }}
             # GitHub webhook delivery URL registered on each repo. Local → smee.io
             # channel (forwarded in-cluster by the smee-client); prod → the real

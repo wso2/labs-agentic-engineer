@@ -81,11 +81,6 @@ build:
       docker:
         dockerfile: Dockerfile
 
-    - image: ghcr.io/wso2/aep/secret-manager-api
-      context: deployments/local-secret-manager-api
-      docker:
-        dockerfile: Dockerfile
-
 deploy:
   helm:
     releases:
@@ -114,7 +109,6 @@ deploy:
           console.image.repository: "{{.IMAGE_REPO_ghcr_io_wso2_aep_console}}"
           console.image.tag: "{{.IMAGE_TAG_ghcr_io_wso2_aep_console}}"
           codingAgentDispatch.clusterGatewayProxy.image: "{{.IMAGE_REPO_ghcr_io_wso2_aep_cluster_gateway_proxy}}:{{.IMAGE_TAG_ghcr_io_wso2_aep_cluster_gateway_proxy}}"
-          codingAgentDispatch.secretManagerApi.image: "{{.IMAGE_REPO_ghcr_io_wso2_aep_secret_manager_api}}:{{.IMAGE_TAG_ghcr_io_wso2_aep_secret_manager_api}}"
 
 portForward:
   - resourceType: service

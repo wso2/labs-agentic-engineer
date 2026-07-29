@@ -49,11 +49,7 @@ if [ ! -f "$DEPLOY_DIR/docker-compose.yml" ]; then
     echo "❌ docker-compose.yml missing at $DEPLOY_DIR/docker-compose.yml"
     exit 1
 fi
-if [ ! -f "$DEPLOY_DIR/local-secret-manager-api/main.go" ]; then
-    echo "❌ local-secret-manager-api stub missing at $DEPLOY_DIR/local-secret-manager-api/ (in-repo sm-api stub — no wso2cloud checkout needed)"
-    exit 1
-fi
-echo "✅ Pre-flight ok (docker + compose + buildx + docker-compose.yml + sm-api stub)"
+echo "✅ Pre-flight ok (docker + compose + buildx + docker-compose.yml)"
 
 # Load specific env keys needed before `docker compose up` runs envsubst.
 # We extract keys individually rather than blanket-sourcing because .env

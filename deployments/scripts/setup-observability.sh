@@ -492,12 +492,8 @@ echo "✅ auto-trigger + handoff wiring applied"
 # Connect() call (AnthropicCredentialService.pushExternalSecret, via the
 # same cluster-gateway-proxy ApplyExternalSecret the coding-agent dispatcher
 # uses for its own per-run secrets). That push is what keeps the
-# ExternalSecret's remoteRef pointed at the CURRENT OpenBao path: the SM-API
-# stub regenerates a brand-new random-suffixed path on every single
-# Connect() call (deployments/local-secret-manager-api/main.go
-# generateSecretRefName → randomHex12(), never an in-place update), so a
-# path fixed at setup time would go stale the moment anyone
-# reconnects/rotates the key. Pushing on every Connect() closes that gap for
+# ExternalSecret's remoteRef pointed at the CURRENT OpenBao path after
+# Connect() / rotation. Pushing on every Connect() closes that gap for
 # both the first-ever connect and every later rotation — no re-run needed.
 #
 # So THIS script no longer creates or discovers that ExternalSecret at all —

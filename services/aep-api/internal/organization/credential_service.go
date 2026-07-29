@@ -80,7 +80,7 @@ type CredentialService struct {
 
 	// smAPIWriter mirrors the PAT into SM-API on Connect and clears it on
 	// Disconnect. nil-safe — no-op when the writer isn't configured
-	// (composition-root behavior when SECRET_MANAGER_API_URL is unset).
+	// (composition-root behavior when SecretsProvider is nil).
 	smAPIWriter *SMAPIWriter
 
 	// envWebhookSecret is the platform-wide GITHUB_WEBHOOK_SECRET. The PAT

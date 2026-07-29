@@ -930,17 +930,16 @@ echo "✅ .env file generated at $(realpath "$ENV_FILE")"
 
 # ──────────────────────────────────────────────────────────────────────────
 # Local-only: pre-create the default org's base namespace `wc-<…>` that
-# SM-API writes SecretReference CRs into during Connect.
+# SecretReference CRs land in during Connect (OpenBao-direct provider writes
+# KV; the high-level client authors the SecretReference into this NS).
 #
 # On cloud, `ou-service` creates this NS at org-onboard time. Locally
-# there is no equivalent. Without this NS, Connect's SM-API mirror
-# returns 500 (`namespaces wc-… not found`) and the BFF falls back to
-# the legacy SSA path — silent on success, surprising during dispatch.
+# there is no equivalent. Without this NS, Connect's secrets-delivery
+# path fails (`namespaces wc-… not found`).
 #
 # Derives the NS deterministically from Thunder's ouId for the default
 # org (= `wc-<ouId8>-<sha256(ouId)[:8]>`), matching
-# `local-secret-manager-api/main.go::generateNamespaceName` (the in-repo
-# sm-api stub) and `services/codingagent/namespace.go::OrgBaseNamespace`.
+# `services/aep-api/internal/platform/tenant/namespace.go::OrgBaseNamespace`.
 echo ""
 echo "🪪 Pre-creating default org base namespace (local-only, ou-service equivalent)..."
 THUNDER_URL="${THUNDER_URL:-http://thunder.openchoreo.localhost:8080}"

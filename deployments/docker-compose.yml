@@ -213,9 +213,9 @@ services:
       GITHUB_CLIENT_SECRET: "${GITHUB_CLIENT_SECRET:-}"
       GITHUB_APP_PRIVATE_KEY_PATH: "${GITHUB_APP_PRIVATE_KEY_PATH:-/etc/github-app/private-key.pem}"
 
-      # ── Phase 1 — sm-api + cluster-gateway-proxy. Compose-only stubs
-      # of the cloud services; same client surface in both build configs.
-      SECRET_MANAGER_API_URL: "http://secret-manager-api:8082"
+      # ── Secrets delivery + cluster-gateway-proxy. OPENBAO_* drives the
+      # in-process OpenBao-direct provider (local-only). CLUSTER_GATEWAY_PROXY_URL
+      # points at the compose stub for streaming + JobWatcher.
       CLUSTER_GATEWAY_PROXY_URL: "http://local-cluster-gateway-proxy:8085"
       # Validation-runner image (Dockerfile.validation: Debian + Playwright
       # browsers). Defaults to the locally-built aep-validation-runner:dev, which
@@ -366,52 +366,8 @@ services:
       - aep
 
   # ---------------------------------------------------------------------------
-  # secret-manager-api (Phase 1 — WS1.1) — in-repo local STUB of the cloud
-  # sm-api, built from `./local-secret-manager-api` (no wso2cloud checkout
-  # needed). Reproduces the sm-api HTTP contract the aep-service client
-  # calls (POST /secrets, GET /secrets?labelSelector=, DELETE /secrets/{id}):
-  # writes user secrets to OpenBao KV-v2 under `secret/data/user-app-secrets/
-  # <ns>/<ref>` AND creates the OpenChoreo `SecretReference` CR — full parity
-  # with the real service. See deployments/local-secret-manager-api/main.go
-  # for the mirrored-contract notes and docs/superpowers/plans/
-  # 2026-06-09-sm-api-local-stub.md.
-  #
-  # Unlike the real binary (ESO vault provider + k8s-SA auth), the stub
-  # writes OpenBao over plain HTTP with the root token — same KV result, so
-  # the in-cluster per-run ExternalSecrets (created by the dispatcher in
-  # `wc-…-remote-worker`, referencing the `default` CSS) read the same data.
-  # ---------------------------------------------------------------------------
-  secret-manager-api:
-    build:
-      context: ./local-secret-manager-api
-    container_name: aep-secret-manager-api
-    ports:
-      - "8082:8082"
-    environment:
-      LISTEN_ADDR: ":8082"
-      LOG_LEVEL: "debug"
-      # OpenBao is reached host-side (k3d exposes the NodePort on host 8200);
-      # the stub authenticates with the root token rather than the k8s-SA
-      # flow the real ESO provider uses.
-      OPENBAO_ADDR: "${OPENBAO_ADDR:-http://host.docker.internal:8200}"
-      OPENBAO_TOKEN: "${OPENBAO_TOKEN:-root}"
-      VAULT_PATH_PREFIX: "user-app-secrets"
-      SECRET_REF_PREFIX: "cred-"
-      SECRET_REF_REFRESH_INTERVAL: "15s"
-      # SecretReference CRs are created via the mounted kubeconfig.
-      KUBECONFIG: "/app/.kube/config"
-    volumes:
-      - ./.kube/config:/app/.kube/config:ro
-    networks:
-      - aep
-      - k3d-openchoreo
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-      - "thunder.openchoreo.localhost:host-gateway"
-
-  # ---------------------------------------------------------------------------
-  # local-cluster-gateway-proxy (Phase 1 — WS1.2) — local stand-in for
-  # the cloud cluster-gateway-proxy. Serves `<verb>
+  # local-cluster-gateway-proxy — local stand-in for the cloud
+  # cluster-gateway-proxy. Serves `<verb>
   # /cloud-dp-cgw/<k8s path>` by forwarding to the local k3d k8s API
   # using the mounted kubeconfig. No mTLS to a remote cluster-gateway
   # (the cloud proxy bridges to a remote dataplane via the cluster-

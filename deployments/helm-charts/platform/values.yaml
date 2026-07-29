@@ -127,7 +127,8 @@ validationRunner:
 codingAgentDispatch:
   localStubs:
     # LOCAL DEV ONLY. Deploys the in-cluster cluster-gateway-proxy stub, which
-    # forwards arbitrary K8s API calls to the cluster with NO auth/allowlist.
+    # forwards arbitrary K8s API calls to the cluster with NO auth/allowlist,
+    # and sets OPENBAO_ADDR/TOKEN on aep-api for in-process secrets delivery.
     # NEVER set true in production — prod uses the real managed proxy; enabling
     # this in a shared cluster exposes the K8s API. aep init sets this true for
     # local installs; prod leaves it false and supplies the real URLs below.
@@ -140,14 +141,6 @@ codingAgentDispatch:
     # Stub image + port — only used when localStubs.enabled.
     image: "ghcr.io/wso2/aep/cluster-gateway-proxy:latest"
     port: 8085
-  secretManagerApi:
-    # Base URL aep-api uses to reach the secret-manager-api. When
-    # localStubs.enabled and this is empty, the chart wires the in-cluster stub
-    # Service DNS automatically. In prod, set this to the real sm-api endpoint.
-    url: ""
-    # Stub image + port — only used when localStubs.enabled.
-    image: "ghcr.io/wso2/aep/secret-manager-api:latest"
-    port: 8082
 
 # GitHub webhook delivery. GitHub delivers pull_request/push/issues events to
 # deliveryURL, which aep-api registers on each repo; the events drive task state

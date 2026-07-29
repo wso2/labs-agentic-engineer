@@ -46,8 +46,9 @@ type Options struct {
 	// infra. Ignored when ImpersonateOrgResolver is already set.
 	ImpersonateOrgResolverBuilder func(db *gorm.DB) func(context.Context, string) (string, error)
 
-	// SecretsProvider, when non-nil, is used instead of constructing the
-	// default SM-API provider from SECRET_MANAGER_API_URL.
-	// Nil = today's default construction (SM-API when URL configured).
+	// SecretsProvider is the write-only secrets delivery channel
+	// (KV → SecretReference → ESO). OSS NewOSSOptions injects OpenBao-direct
+	// when OPENBAO_ADDR is set; an overlay may inject its own provider.
+	// Nil = secrets delivery off (degrade cleanly; no plaintext substitute).
 	SecretsProvider secretsprovider.Provider
 }

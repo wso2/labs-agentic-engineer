@@ -144,10 +144,8 @@ spec:
 EOF
 echo "✅ ClusterSecretStore configured (default)"
 # NOTE: the former `default-from-compose` ClusterSecretStore was removed
-# when the cloud sm-api binary was replaced by the in-repo
-# `local-secret-manager-api` stub (which writes OpenBao directly over HTTP
-# and never resolves a CSS by name). The dispatcher's per-run
-# ExternalSecrets reference `default`.
+# when local secrets delivery moved in-process (OpenBao-direct provider).
+# The dispatcher's per-run ExternalSecrets reference `default`.
 
 echo ""
 echo "6️⃣  WSO2 API Platform operator"

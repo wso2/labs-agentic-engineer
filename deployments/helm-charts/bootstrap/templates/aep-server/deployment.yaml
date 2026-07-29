@@ -56,7 +56,8 @@ spec:
             - name: CONSOLE_URL
               value: {{ .Values.console.publicURL | quote }}
             # LOCAL DEV ONLY — when true, Init keeps the OpenBao root token so the
-            # in-cluster secret-manager-api stub (root-token auth) works. Never in prod.
+            # in-process OpenBao-direct secrets provider (root-token auth) works.
+            # Never in prod.
             - name: LOCAL_STUBS_ENABLED
               value: {{ .Values.localStubs.enabled | quote }}
           readinessProbe:
