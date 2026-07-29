@@ -35,7 +35,7 @@ func Fake() Infra {
 	credStore, _ := secrets.NewDBStore(nil, make([]byte, 32)) // AES cipher only, nil DB
 	return Infra{
 		DB:              &gorm.DB{},
-		CredStore:       credStore,
+		CredentialStore: credStore,
 		Minter:          minter,
 		AppClientSecret: "",
 		K8sClient:       nil,

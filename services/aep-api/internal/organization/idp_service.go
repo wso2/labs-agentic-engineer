@@ -110,11 +110,11 @@ type PlatformIDPConfig struct {
 }
 
 type idpService struct {
-	repo     IDPRepository
-	orgRepo  OrganizationRepository
-	thunder  thundersvc.Client
-	platform PlatformIDPConfig
-	smAPI    *SMAPIWriter
+	repo            IDPRepository
+	orgRepo         OrganizationRepository
+	thunder         thundersvc.Client
+	platform        PlatformIDPConfig
+	secretRefWriter *SecretRefWriter
 }
 
 // NewIDPService builds the service. `repo` persists the idp tables; `orgRepo`
@@ -123,19 +123,19 @@ type idpService struct {
 // rejects EnsureOrgPublisher / RevokeOrgPublisher / RegenerateClientSecret
 // with ErrIDPThunderUnavailable when so. Read methods (GetProfile,
 // GetOrCreateProfile) keep working. Returns the concrete type so
-// WithSMAPIWriter can chain at the composition root; the concrete value still
+// WithSecretRefWriter can chain at the composition root; the concrete value still
 // satisfies the IDPService interface for consumers that store it as such.
 func NewIDPService(repo IDPRepository, orgRepo OrganizationRepository, thunder thundersvc.Client, platform PlatformIDPConfig) *idpService {
 	return &idpService{repo: repo, orgRepo: orgRepo, thunder: thunder, platform: platform}
 }
 
-// WithSMAPIWriter attaches the SM-API writer so EnsureOrgPublisher /
+// WithSecretRefWriter attaches the SM-API writer so EnsureOrgPublisher /
 // RegenerateClientSecret mirror the publisher cc credentials to SM-API
 // (runner pods consume them via per-run ExternalSecret). nil writer or
 // one with Enabled()==false is a no-op; publisher provisioning still
 // works but dispatcher's runner-auth path stays disabled.
-func (s *idpService) WithSMAPIWriter(w *SMAPIWriter) *idpService {
-	s.smAPI = w
+func (s *idpService) WithSecretRefWriter(w *SecretRefWriter) *idpService {
+	s.secretRefWriter = w
 	return s
 }
 
@@ -286,8 +286,8 @@ func (s *idpService) EnsureOrgPublisher(ctx context.Context, orgID, actor string
 	// existing apps without SM-API mirroring recover via an explicit
 	// RegenerateClientSecret. Best-effort: SM-API outage doesn't fail
 	// publisher provisioning.
-	if created && clientSecret != "" && s.smAPI != nil && s.smAPI.Enabled() {
-		if _, smerr := s.smAPI.WritePublisher(ctx, orgID, clientID, clientSecret); smerr != nil {
+	if created && clientSecret != "" && s.secretRefWriter != nil && s.secretRefWriter.Enabled() {
+		if _, smerr := s.secretRefWriter.WritePublisher(ctx, orgID, clientID, clientSecret); smerr != nil {
 			slog.WarnContext(ctx, "idp_service: SM-API publisher write failed (continuing)",
 				"orgID", orgID, "error", smerr)
 		}
@@ -342,8 +342,8 @@ func (s *idpService) RevokeOrgPublisher(ctx context.Context, orgID, actor string
 
 	// Drop the SM-API publisher secret + clear the triplet. Best-effort
 	// so a missing SM-API doesn't strand the Thunder revoke.
-	if s.smAPI != nil && s.smAPI.Enabled() {
-		if smerr := s.smAPI.DeletePublisher(ctx, orgID); smerr != nil {
+	if s.secretRefWriter != nil && s.secretRefWriter.Enabled() {
+		if smerr := s.secretRefWriter.DeletePublisher(ctx, orgID); smerr != nil {
 			slog.WarnContext(ctx, "idp_service: SM-API publisher delete failed (continuing)",
 				"orgID", orgID, "error", smerr)
 		}
@@ -392,8 +392,8 @@ func (s *idpService) RegenerateClientSecret(ctx context.Context, orgID, actor st
 	// Mirror the rotated secret to SM-API; runner pods picking up from
 	// the next dispatch will receive the new secret via ExternalSecret
 	// refresh. Best-effort.
-	if s.smAPI != nil && s.smAPI.Enabled() {
-		if _, smerr := s.smAPI.WritePublisher(ctx, orgID, profile.PublisherClientID, newSecret); smerr != nil {
+	if s.secretRefWriter != nil && s.secretRefWriter.Enabled() {
+		if _, smerr := s.secretRefWriter.WritePublisher(ctx, orgID, profile.PublisherClientID, newSecret); smerr != nil {
 			slog.WarnContext(ctx, "idp_service: SM-API publisher rewrite failed (continuing)",
 				"orgID", orgID, "error", smerr)
 		}

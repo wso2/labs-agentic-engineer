@@ -43,7 +43,7 @@ import (
 // assembles deterministically in milliseconds.
 type Infra struct {
 	DB              *gorm.DB
-	CredStore       secrets.OpenBaoStore
+	CredentialStore secrets.CredentialStore
 	Minter          *secrets.AppTokenMinter
 	AppClientSecret string        // GitHub App OAuth client_secret ("" ⇒ bind path disabled)
 	K8sClient       client.Client // in-cluster client; nil ⇒ mint-build skips Secret writes
@@ -107,7 +107,7 @@ func Resolve(ctx context.Context, cfg config.Config) (Infra, error) {
 	// answers in no-app mode; the connect surface lights up the App path lazily on
 	// first use.
 	loadCtx, cancelLoad := context.WithTimeout(ctx, 10*time.Second)
-	appKey, err := secrets.LoadAppKeyFromOpenBao(loadCtx, credStore)
+	appKey, err := secrets.LoadAppKey(loadCtx, credStore)
 	cancelLoad()
 	if err != nil {
 		slog.Warn("app key load failed; App-mode credentials will return ErrAppNotConfigured", "error", err)
@@ -117,7 +117,7 @@ func Resolve(ctx context.Context, cfg config.Config) (Infra, error) {
 	if err != nil {
 		return Infra{}, fmt.Errorf("app token minter init: %w", err)
 	}
-	minter.WithOpenBao(credStore)
+	minter.WithCredentialStore(credStore)
 
 	// Dev-only app-platform seed (App private key + client_secret + webhook HMAC).
 	// No-op outside DEPLOYMENT_TIER=dev.
@@ -131,13 +131,13 @@ func Resolve(ctx context.Context, cfg config.Config) (Infra, error) {
 	}
 	if appKey == nil {
 		retryCtx, cancelRetry := context.WithTimeout(ctx, 10*time.Second)
-		if reloaded, rerr := secrets.LoadAppKeyFromOpenBao(retryCtx, credStore); rerr == nil && reloaded != nil {
+		if reloaded, rerr := secrets.LoadAppKey(retryCtx, credStore); rerr == nil && reloaded != nil {
 			cancelRetry()
 			minter, err = secrets.NewAppTokenMinter(reloaded)
 			if err != nil {
 				return Infra{}, fmt.Errorf("app token minter re-init: %w", err)
 			}
-			minter.WithOpenBao(credStore)
+			minter.WithCredentialStore(credStore)
 			slog.Info("github app loaded post-seed", "appId", reloaded.AppID)
 		} else {
 			cancelRetry()
@@ -172,7 +172,7 @@ func Resolve(ctx context.Context, cfg config.Config) (Infra, error) {
 
 	return Infra{
 		DB:              db,
-		CredStore:       credStore,
+		CredentialStore: credStore,
 		Minter:          minter,
 		AppClientSecret: appClientSecret,
 		K8sClient:       wpClient,

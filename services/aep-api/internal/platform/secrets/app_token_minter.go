@@ -63,15 +63,15 @@ type AppTokenMinter struct {
 	botIdentity Identity
 	identityMu  sync.RWMutex
 
-	// bao is set via WithOpenBao after construction. Post-startup platform
-	// reads (webhook secret list) go through this. The import-fence test
-	// enforces this is one of the only platformPath touchpoints.
-	bao OpenBaoStore
+	// store is set via WithCredentialStore after construction. Post-startup
+	// platform reads (webhook secret list) go through this when a backend
+	// exposes a platform namespace. The Postgres CredentialStore does not.
+	store CredentialStore
 }
 
-// AppKeyMaterial holds the raw bytes loaded from OpenBao's _platform path.
-// AppID is the App's numeric ID (also stored in OpenBao); private key is
-// the PEM-encoded RSA key issued by GitHub.
+// AppKeyMaterial holds the raw bytes for a GitHub App's appID + private key.
+// AppID is the App's numeric ID; private key is the PEM-encoded RSA key
+// issued by GitHub.
 type AppKeyMaterial struct {
 	AppID         int64
 	PrivateKeyPEM []byte
@@ -266,21 +266,20 @@ func truncateBody(body []byte) string {
 	return strings.ReplaceAll(s, "\n", " ")
 }
 
-// LoadAppWebhookSecrets reads the App-wide webhook secret list from
-// secret/aep/_platform/github/app/webhook_secret. Stored as a JSON list
-// of {secret, added_at} entries (phase2.md §7.6 rotation shape).
+// LoadAppWebhookSecrets reads the App-wide webhook secret list from the
+// credential store's platform namespace. Stored as a JSON list of
+// {secret, added_at} entries (phase2.md §7.6 rotation shape).
 //
 // Returned as raw byte secrets, current-first, suitable for HMAC compare.
 // Returns an empty slice with nil error if no row exists yet (the App may
 // be configured but webhooks not yet enabled — fresh-deploy state).
-//
-// One of three platformPath callers — the others are LoadAppKeyFromOpenBao
-// and LoadAppBotIdentity. The import-fence test gates this list.
+// Platform-namespace reads require a store backend that exposes _platform;
+// with Postgres CredentialStore this returns empty.
 func (m *AppTokenMinter) LoadAppWebhookSecrets(ctx context.Context) ([][]byte, error) {
-	if m.bao == nil {
+	if m.store == nil {
 		return nil, nil
 	}
-	raw, err := readPlatformValue(ctx, m.bao, "github/app/webhook_secret")
+	raw, err := readPlatformValue(ctx, m.store, "github/app/webhook_secret")
 	if err != nil {
 		return nil, err
 	}
@@ -305,20 +304,19 @@ func (m *AppTokenMinter) LoadAppWebhookSecrets(ctx context.Context) ([][]byte, e
 	return [][]byte{raw}, nil
 }
 
-// LoadAppClientSecret reads the App's OAuth client_secret from
-// secret/aep/_platform/github/app/client_secret (§6.4). Consumed by
+// LoadAppClientSecret reads the App's OAuth client_secret from the
+// credential store's platform namespace (§6.4). Consumed by
 // CredentialService.BindAppInstallation to exchange OAuth codes for user
 // tokens during the bind path.
 //
 // Returns "" + nil error if no row exists yet (deployment didn't seed it).
-// Callers gate the bind path on a non-empty value.
-//
-// One of the platformPath callers — gated by the import fence.
+// Callers gate the bind path on a non-empty value. With Postgres
+// CredentialStore this always returns "".
 func (m *AppTokenMinter) LoadAppClientSecret(ctx context.Context) (string, error) {
-	if m.bao == nil {
+	if m.store == nil {
 		return "", nil
 	}
-	raw, err := readPlatformValue(ctx, m.bao, "github/app/client_secret")
+	raw, err := readPlatformValue(ctx, m.store, "github/app/client_secret")
 	if err != nil {
 		return "", err
 	}
@@ -329,8 +327,6 @@ func (m *AppTokenMinter) LoadAppClientSecret(ctx context.Context) (string, error
 // been parsed, to fetch GET /app and cache the bot identity on the minter.
 // Best-effort — failure leaves botIdentity empty and the connect path
 // re-tries lazily on first App-mode connect.
-//
-// One of three platformPath callers (transitively, via SignAppJWT).
 func (m *AppTokenMinter) LoadAppBotIdentity(ctx context.Context, githubAPI string) error {
 	if m.privateKey == nil {
 		return ErrAppNotConfigured
@@ -373,83 +369,29 @@ func (m *AppTokenMinter) LoadAppBotIdentity(ctx context.Context, githubAPI strin
 	return nil
 }
 
-// readPlatformValue is the single helper that gates platformPath access
-// for the post-startup readers (webhook-secret list, future per-feature
-// platform reads). The AppTokenMinter's Bao reference is set at
-// construction time via WithOpenBao; the minter holds the only reference
-// outside the import fence (which the import_fence_test enforces).
-func readPlatformValue(ctx context.Context, store OpenBaoStore, key string) ([]byte, error) {
-	s, ok := store.(*openBaoStore)
-	if !ok {
-		return nil, nil
-	}
-	resp, err := s.client.Logical().ReadWithContext(ctx, s.platformPath(key))
-	if err != nil {
-		return nil, fmt.Errorf("openbao platform read: %w", err)
-	}
-	if resp == nil || resp.Data == nil {
-		return nil, nil
-	}
-	dataField, ok := resp.Data["data"].(map[string]interface{})
-	if !ok || dataField == nil {
-		return nil, nil
-	}
-	val, ok := dataField["value"].(string)
-	if !ok {
-		return nil, nil
-	}
-	return []byte(val), nil
+// readPlatformValue reads a platform-namespace value from the credential
+// store. The Postgres CredentialStore has no _platform path — returns
+// nil, nil (same as "not configured").
+func readPlatformValue(ctx context.Context, store CredentialStore, key string) ([]byte, error) {
+	_ = ctx
+	_ = store
+	_ = key
+	return nil, nil
 }
 
-// WithOpenBao caches the OpenBaoStore on the minter so post-startup
-// reads (webhook-secret list, etc.) can reach _platform/* without the
-// CredentialService importing the SDK directly.
-func (m *AppTokenMinter) WithOpenBao(store OpenBaoStore) {
-	m.bao = store
+// WithCredentialStore caches the CredentialStore on the minter so
+// post-startup platform reads (webhook-secret list, etc.) can reach a
+// platform namespace without CredentialService importing a backend SDK.
+func (m *AppTokenMinter) WithCredentialStore(store CredentialStore) {
+	m.store = store
 }
 
-// LoadAppKeyFromOpenBao reads the App's appID + private-key from the
-// _platform namespace at startup. The only call site referencing
-// platformPath. Returns nil + nil if no App is configured (the operator
-// runbook seeds these).
-//
-// IMPORTANT: this is one of three callers of platformPath. The other two
-// are LoadAppWebhookSecrets and LoadAppBotIdentity (transitively via
-// SignAppJWT). The import_fence_test.go enforces this.
-func LoadAppKeyFromOpenBao(ctx context.Context, store OpenBaoStore) (*AppKeyMaterial, error) {
-	s, ok := store.(*openBaoStore)
-	if !ok {
-		// Non-real store (placeholder) — same as "no App configured".
-		return nil, nil
-	}
-	pemBytes, err := s.client.Logical().ReadWithContext(ctx, s.platformPath("github/app/private_key"))
-	if err != nil {
-		return nil, fmt.Errorf("load app key: %w", err)
-	}
-	if pemBytes == nil || pemBytes.Data == nil {
-		return nil, nil // no App configured
-	}
-	dataField, ok := pemBytes.Data["data"].(map[string]interface{})
-	if !ok {
-		return nil, nil
-	}
-	pem, _ := dataField["value"].(string)
-	if pem == "" {
-		return nil, nil
-	}
-
-	idResp, err := s.client.Logical().ReadWithContext(ctx, s.platformPath("github/app/app_id"))
-	if err != nil {
-		return nil, fmt.Errorf("load app id: %w", err)
-	}
-	if idResp == nil || idResp.Data == nil {
-		return nil, errors.New("app key present but app_id missing")
-	}
-	idData, _ := idResp.Data["data"].(map[string]interface{})
-	idStr, _ := idData["value"].(string)
-	var appID int64
-	if _, err := fmt.Sscanf(idStr, "%d", &appID); err != nil || appID == 0 {
-		return nil, fmt.Errorf("invalid app_id: %q", idStr)
-	}
-	return &AppKeyMaterial{AppID: appID, PrivateKeyPEM: []byte(pem)}, nil
+// LoadAppKey reads the App's appID + private-key from the credential
+// store's platform namespace at startup. Returns nil, nil if no App is
+// configured. The Postgres CredentialStore has no platform namespace, so
+// this always returns nil, nil until a platform-capable backend exists.
+func LoadAppKey(ctx context.Context, store CredentialStore) (*AppKeyMaterial, error) {
+	_ = ctx
+	_ = store
+	return nil, nil
 }

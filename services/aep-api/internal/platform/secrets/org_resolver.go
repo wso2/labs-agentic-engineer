@@ -61,7 +61,7 @@ func (e *OrgNotFoundError) Error() string {
 // and never type-switch.
 type orgResolver struct {
 	db        *gorm.DB
-	store     OpenBaoStore
+	store     CredentialStore
 	minter    *AppTokenMinter
 	patFlight *singleflight.Group
 }
@@ -70,7 +70,7 @@ type orgResolver struct {
 // non-nil. The minter may be in "no app configured" mode (App private key
 // not in OpenBao), in which case any app-installation row resolution falls
 // through to ErrAppNotConfigured.
-func NewOrgResolver(db *gorm.DB, store OpenBaoStore, minter *AppTokenMinter) Resolver {
+func NewOrgResolver(db *gorm.DB, store CredentialStore, minter *AppTokenMinter) Resolver {
 	return &orgResolver{
 		db:        db,
 		store:     store,

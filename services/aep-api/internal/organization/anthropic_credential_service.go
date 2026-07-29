@@ -60,13 +60,13 @@ import (
 // AnthropicCredentialService — see package doc.
 type AnthropicCredentialService struct {
 	repo         OrgAnthropicRepository
-	store        secrets.OpenBaoStore
+	store        secrets.CredentialStore
 	wpClient     client.Client
 	anthropicAPI string // "https://api.anthropic.com" by default; overridden in tests
 	httpClient   *http.Client
 
-	// smAPIWriter mirrors the key into SM-API on Connect. nil-safe.
-	smAPIWriter *SMAPIWriter
+	// secretRefWriter mirrors the key into SM-API on Connect. nil-safe.
+	secretRefWriter *SecretRefWriter
 
 	// cgwClient + pushNamespace/pushSecretName: when all three are set,
 	// Connect() pushes a fresh ExternalSecret to pushNamespace every time an
@@ -81,10 +81,10 @@ type AnthropicCredentialService struct {
 	pushSecretName string
 }
 
-// WithSMAPIWriter injects the SM-API writer; chainable. nil disables
+// WithSecretRefWriter injects the SM-API writer; chainable. nil disables
 // the mirror — the org_secrets path remains authoritative.
-func (s *AnthropicCredentialService) WithSMAPIWriter(w *SMAPIWriter) *AnthropicCredentialService {
-	s.smAPIWriter = w
+func (s *AnthropicCredentialService) WithSecretRefWriter(w *SecretRefWriter) *AnthropicCredentialService {
+	s.secretRefWriter = w
 	return s
 }
 
@@ -118,7 +118,7 @@ func (s *AnthropicCredentialService) WithAnthropicAPIBase(base string) *Anthropi
 // BuildCredentialsService).
 func NewAnthropicCredentialService(
 	repo OrgAnthropicRepository,
-	store secrets.OpenBaoStore,
+	store secrets.CredentialStore,
 	wpClient client.Client,
 ) *AnthropicCredentialService {
 	return &AnthropicCredentialService{
@@ -229,8 +229,8 @@ func (s *AnthropicCredentialService) Connect(ctx context.Context, ocOrgID string
 	// CredentialService.mirrorPATToSMAPI: org_secrets stays authoritative
 	// when SM-API is unavailable; the row's SM-API triplet stays NULL
 	// until the next successful Connect.
-	if s.smAPIWriter != nil && s.smAPIWriter.Enabled() {
-		if _, err := s.smAPIWriter.WriteAnthropic(ctx, ocOrgID, key); err != nil {
+	if s.secretRefWriter != nil && s.secretRefWriter.Enabled() {
+		if _, err := s.secretRefWriter.WriteAnthropic(ctx, ocOrgID, key); err != nil {
 			slog.WarnContext(ctx, "anthropic: SM-API mirror failed (legacy store still authoritative)",
 				"ocOrgId", ocOrgID, "error", err)
 		} else if s.pushEnabled() {

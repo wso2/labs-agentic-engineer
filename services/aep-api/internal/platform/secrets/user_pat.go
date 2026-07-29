@@ -37,7 +37,7 @@ type userPATCred struct {
 	ocOrgID     string
 	githubLogin string
 	identity    Identity
-	store       OpenBaoStore
+	store       CredentialStore
 	flight      *singleflight.Group
 }
 

@@ -126,7 +126,7 @@ type Seam struct {
 func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	var err error
 	db := in.DB
-	credStore := in.CredStore
+	credStore := in.CredentialStore
 	minter := in.Minter
 	appClientSecret := in.AppClientSecret
 	wpClient := in.K8sClient
@@ -202,7 +202,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	var smClient secretmanagersvc.SecretManagementClient
 	if provider := seam.SecretsProvider; provider != nil {
 		cfgStore := &secretmanagersvc.StoreConfig{Provider: "injected"}
-		if ob := openBaoStoreConfigFromAppConfig(cfg); ob != nil {
+		if ob := deliveryOpenBaoConfigFromAppConfig(cfg); ob != nil {
 			cfgStore.OpenBao = ob
 		}
 		var ocSR secretmanagersvc.OpenChoreoSecretReferenceClient
@@ -225,12 +225,12 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	} else {
 		slog.Warn("secrets provider not injected — secrets delivery disabled")
 	}
-	_ = smClient // consumed via smWriter below.
+	_ = smClient // consumed via secretRefWriter below.
 
-	// SM-API mirror writer. Constructed ahead of the credential / IDP service
-	// constructors so all consumers can attach via WithSMAPIWriter (the no-op
+	// Secret-ref mirror writer. Constructed ahead of the credential / IDP service
+	// constructors so all consumers can attach via WithSecretRefWriter (the no-op
 	// case when smClient is nil is fine).
-	smWriter := organization.NewSMAPIWriter(smClient, orgCredRepo, orgAnthropicRepo, idpRepo)
+	secretRefWriter := organization.NewSecretRefWriter(smClient, orgCredRepo, orgAnthropicRepo, idpRepo)
 
 	// cluster-gateway-proxy client. Used for reading coding-agent pod logs +
 	// job status (streaming feed + JobWatcher) and, when secrets delivery is
@@ -322,10 +322,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		slog.Warn("BFF_TASK_SIGNING_KEY not set — task dispatch will fail")
 	}
 
-	// SM-API mirror writer wired into both credential services. nil-safe via
+	// Secret-ref mirror writer wired into both credential services. nil-safe via
 	// the Enabled() check.
-	credService.WithSMAPIWriter(smWriter)
-	anthropicCredService.WithSMAPIWriter(smWriter)
+	credService.WithSecretRefWriter(secretRefWriter)
+	anthropicCredService.WithSecretRefWriter(secretRefWriter)
 	// Push the org's Anthropic key to a consumer's ExternalSecret on every
 	// successful Connect (both first-time connect and later rotation) — see
 	// AnthropicCredentialService.pushExternalSecret. nil-safe: disabled
@@ -523,14 +523,14 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		organizationService.SetOUValidator(thunderAdminClient)
 		slog.Info("org OU validation wired — JWT ouId is validated against Thunder before the org→OU mapping is (over)written")
 	}
-	// WithSMAPIWriter mirrors per-org publisher client_secret to SM-API on
+	// WithSecretRefWriter mirrors per-org publisher client_secret to SM-API on
 	// EnsureOrgPublisher / RegenerateClientSecret so the dispatcher's
 	// PUBLISHER_CLIENT_SECRET ExternalSecret can materialise it into runner
 	// pods without the BFF holding the plaintext.
 	idpService := organization.NewIDPService(idpRepo, orgRepo, thunderAdminClient, organization.PlatformIDPConfig{
 		Issuer:  cfg.PlatformIDP.Issuer,
 		JWKSURL: cfg.PlatformIDP.JWKSURL,
-	}).WithSMAPIWriter(smWriter)
+	}).WithSecretRefWriter(secretRefWriter)
 	// Make idpService available to trait_sync so first-protected-deploy
 	// provisions the publisher app lazily.
 	traitSyncService.SetIDPService(idpService)
@@ -947,7 +947,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// wired into provisioningSvc below (Deps.Design) — ResolveRunnerSecrets
 	// classifies secret-vs-plain config keys from the project's committed
 	// design.json, never the org catalog (parity with the build path).
-	externalProvisioner := dependencies.NewExternalResourceProvisioner(designComponents{store: artifactStore}, resourceClient, smWriter)
+	externalProvisioner := dependencies.NewExternalResourceProvisioner(designComponents{store: artifactStore}, resourceClient, secretRefWriter)
 	// The public build surface: its InputsCoordinator runs the drawer inputs'
 	// pre-tag work (collect external specs, derive end-user auth) and stages
 	// external-config secrets to SM-API through externalProvisioner before the
@@ -1327,9 +1327,9 @@ func buildGitHost(cfg config.Config) (sourcecontrol.Host, error) {
 	}
 }
 
-// openBaoStoreConfigFromAppConfig maps local OPENBAO_* config onto the
+// deliveryOpenBaoConfigFromAppConfig maps local OPENBAO_* config onto the
 // provider-neutral StoreConfig.OpenBao shape. Nil when addr is unset.
-func openBaoStoreConfigFromAppConfig(cfg config.Config) *secretmanagersvc.OpenBaoConfig {
+func deliveryOpenBaoConfigFromAppConfig(cfg config.Config) *secretmanagersvc.OpenBaoConfig {
 	if cfg.OpenBaoAddr == "" {
 		return nil
 	}

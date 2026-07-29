@@ -54,8 +54,8 @@ const credAESKey = "0123456789abcdef0123456789abcdef"
 
 const envWebhookSecret = "platform-webhook-secret"
 
-// newCredStore builds the real DB-backed, AES-GCM credential store.
-func newCredStore(t testing.TB, db *gorm.DB) secrets.OpenBaoStore {
+// newCredentialStore builds the real DB-backed, AES-GCM credential store.
+func newCredentialStore(t testing.TB, db *gorm.DB) secrets.CredentialStore {
 	t.Helper()
 	store, err := secrets.NewDBStore(db, []byte(credAESKey))
 	if err != nil {
@@ -68,9 +68,9 @@ func newCredStore(t testing.TB, db *gorm.DB) secrets.OpenBaoStore {
 // GitHub. minter is no-app mode (nil material), which is correct for the
 // PAT paths; the OAuth bind path is disabled (nil githubClient, empty client
 // id/secret). Returns the store too so tests can inspect the sealed PAT.
-func newCredSvcDB(t testing.TB, db *gorm.DB, gh *stubGitHub) (*organization.CredentialService, secrets.OpenBaoStore) {
+func newCredSvcDB(t testing.TB, db *gorm.DB, gh *stubGitHub) (*organization.CredentialService, secrets.CredentialStore) {
 	t.Helper()
-	store := newCredStore(t, db)
+	store := newCredentialStore(t, db)
 	minter, err := secrets.NewAppTokenMinter(nil)
 	if err != nil {
 		t.Fatalf("NewAppTokenMinter: %v", err)

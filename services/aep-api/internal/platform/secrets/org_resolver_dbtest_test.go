@@ -21,7 +21,7 @@ package secrets_test
 // (dbtest.New). This is where the SQL-shaped dispatch behavior lives —
 // kind switch, status gating, and the distinct not-found/not-active/
 // unknown-kind error shapes. store and minter are test doubles: a fake
-// secrets.OpenBaoStore (Get/Put/Delete are not SQL-backed, so a fake is honest
+// secrets.CredentialStore (Get/Put/Delete are not SQL-backed, so a fake is honest
 // here) and a minter built with a throwaway RSA key (mint/network paths
 // are exercised in app_token_minter_test.go, not here).
 
@@ -45,10 +45,10 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
-// fakeOpenBaoStore is a minimal in-memory secrets.OpenBaoStore double. Get can be
+// fakeCredentialStore is a minimal in-memory secrets.CredentialStore double. Get can be
 // gated (via the gate channel) to force concurrent callers to overlap, and
 // counts calls so singleflight coalescing can be asserted.
-type fakeOpenBaoStore struct {
+type fakeCredentialStore struct {
 	mu    sync.Mutex
 	calls int32
 	value []byte
@@ -56,7 +56,7 @@ type fakeOpenBaoStore struct {
 	gate  chan struct{} // if non-nil, Get blocks on it before returning
 }
 
-func (f *fakeOpenBaoStore) Get(ctx context.Context, ocOrgID, key string) ([]byte, error) {
+func (f *fakeCredentialStore) Get(ctx context.Context, ocOrgID, key string) ([]byte, error) {
 	atomic.AddInt32(&f.calls, 1)
 	if f.gate != nil {
 		<-f.gate
@@ -66,12 +66,12 @@ func (f *fakeOpenBaoStore) Get(ctx context.Context, ocOrgID, key string) ([]byte
 	return f.value, f.err
 }
 
-func (f *fakeOpenBaoStore) Put(ctx context.Context, ocOrgID, key string, value []byte) error {
-	return errors.New("fakeOpenBaoStore: Put not implemented")
+func (f *fakeCredentialStore) Put(ctx context.Context, ocOrgID, key string, value []byte) error {
+	return errors.New("fakeCredentialStore: Put not implemented")
 }
 
-func (f *fakeOpenBaoStore) Delete(ctx context.Context, ocOrgID, key string) error {
-	return errors.New("fakeOpenBaoStore: Delete not implemented")
+func (f *fakeCredentialStore) Delete(ctx context.Context, ocOrgID, key string) error {
+	return errors.New("fakeCredentialStore: Delete not implemented")
 }
 
 // newTestMinter builds a secrets.AppTokenMinter with a throwaway RSA key so
@@ -135,7 +135,7 @@ func dropOrgCredentialsCheckConstraints(t *testing.T, db *gorm.DB) {
 func TestOrgResolver_Resolve_UserPAT_DB(t *testing.T) {
 	t.Parallel()
 	db := dbtest.New(t)
-	store := &fakeOpenBaoStore{value: []byte("ghp_secret")}
+	store := &fakeCredentialStore{value: []byte("ghp_secret")}
 	resolver := secrets.NewOrgResolver(db, store, newTestMinter(t))
 
 	insertOrgCredRow(t, db, organization.OrgCredential{
@@ -172,7 +172,7 @@ func TestOrgResolver_Resolve_UserPAT_DB(t *testing.T) {
 func TestOrgResolver_Resolve_AppInstallation_DB(t *testing.T) {
 	t.Parallel()
 	db := dbtest.New(t)
-	store := &fakeOpenBaoStore{}
+	store := &fakeCredentialStore{}
 	resolver := secrets.NewOrgResolver(db, store, newTestMinter(t))
 
 	installID := int64(4242)
@@ -208,7 +208,7 @@ func TestOrgResolver_Resolve_AppInstallation_DB(t *testing.T) {
 func TestOrgResolver_Resolve_EmptyOcOrgID_DB(t *testing.T) {
 	t.Parallel()
 	db := dbtest.New(t)
-	resolver := secrets.NewOrgResolver(db, &fakeOpenBaoStore{}, newTestMinter(t))
+	resolver := secrets.NewOrgResolver(db, &fakeCredentialStore{}, newTestMinter(t))
 
 	_, err := resolver.Resolve(context.Background(), "")
 	if !errors.Is(err, secrets.ErrEmptyOcOrgID) {
@@ -219,7 +219,7 @@ func TestOrgResolver_Resolve_EmptyOcOrgID_DB(t *testing.T) {
 func TestOrgResolver_Resolve_NoRow_DB(t *testing.T) {
 	t.Parallel()
 	db := dbtest.New(t)
-	resolver := secrets.NewOrgResolver(db, &fakeOpenBaoStore{}, newTestMinter(t))
+	resolver := secrets.NewOrgResolver(db, &fakeCredentialStore{}, newTestMinter(t))
 
 	_, err := resolver.Resolve(context.Background(), "ghost")
 	var nfe *secrets.OrgNotFoundError
@@ -234,7 +234,7 @@ func TestOrgResolver_Resolve_NoRow_DB(t *testing.T) {
 func TestOrgResolver_Resolve_NotActive_DB(t *testing.T) {
 	t.Parallel()
 	db := dbtest.New(t)
-	resolver := secrets.NewOrgResolver(db, &fakeOpenBaoStore{}, newTestMinter(t))
+	resolver := secrets.NewOrgResolver(db, &fakeCredentialStore{}, newTestMinter(t))
 
 	insertOrgCredRow(t, db, organization.OrgCredential{
 		OcOrgID:       "acme",
@@ -262,7 +262,7 @@ func TestOrgResolver_Resolve_NotActive_DB(t *testing.T) {
 func TestOrgResolver_Resolve_UnknownKind_DB(t *testing.T) {
 	t.Parallel()
 	db := dbtest.New(t)
-	resolver := secrets.NewOrgResolver(db, &fakeOpenBaoStore{}, newTestMinter(t))
+	resolver := secrets.NewOrgResolver(db, &fakeCredentialStore{}, newTestMinter(t))
 
 	// A bogus kind can't occur via normal writes — the "kind" CHECK
 	// constraint enum-gates INSERT/UPDATE. Drop the table's CHECK
@@ -293,7 +293,7 @@ func TestOrgResolver_Resolve_UnknownKind_DB(t *testing.T) {
 func TestOrgResolver_Resolve_AppInstallation_NilInstallationID_DB(t *testing.T) {
 	t.Parallel()
 	db := dbtest.New(t)
-	resolver := secrets.NewOrgResolver(db, &fakeOpenBaoStore{}, newTestMinter(t))
+	resolver := secrets.NewOrgResolver(db, &fakeCredentialStore{}, newTestMinter(t))
 
 	// The app_fields CHECK constraint normally requires installation_id
 	// NOT NULL for kind='app-installation'; drop it on this throwaway DB
@@ -324,7 +324,7 @@ func TestOrgResolver_Resolve_AppInstallation_NilInstallationID_DB(t *testing.T) 
 func TestOrgResolver_UserPATToken_Singleflight_DB(t *testing.T) {
 	t.Parallel()
 	db := dbtest.New(t)
-	store := &fakeOpenBaoStore{value: []byte("ghp_secret"), gate: make(chan struct{})}
+	store := &fakeCredentialStore{value: []byte("ghp_secret"), gate: make(chan struct{})}
 	resolver := secrets.NewOrgResolver(db, store, newTestMinter(t))
 
 	insertOrgCredRow(t, db, organization.OrgCredential{

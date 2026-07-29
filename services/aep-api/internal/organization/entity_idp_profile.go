@@ -43,7 +43,7 @@ type OrganizationIDPProfile struct {
 	// to fetch it.
 	PublisherClientSecret string `gorm:"column:publisher_client_secret" json:"-"`
 	PublisherSecretRef    string `gorm:"column:publisher_secret_ref" json:"publisherSecretRef,omitempty"`
-	// SM-API triplet — populated by SMAPIWriter.WritePublisher after
+	// SM-API triplet — populated by SecretRefWriter.WritePublisher after
 	// EnsureOrgPublisher provisions the Thunder cc app. The dispatcher
 	// short-circuits the per-run runner-auth ExternalSecret when missing.
 	SMAPISecretRefName *string    `gorm:"type:text;column:sm_api_secret_ref_name" json:"-"`

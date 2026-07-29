@@ -62,7 +62,7 @@ type OrganizationService interface {
 	// `thunderOrgUUID` is the authoritative org UUID from the JWT's `ouId`
 	// claim (empty for unauthenticated or non-user-JWT paths). When
 	// non-empty and missing/stale on the local row, it's persisted onto
-	// `thunder_org_uuid` so downstream callers (dispatcher / SMAPIWriter)
+	// `thunder_org_uuid` so downstream callers (dispatcher / SecretRefWriter)
 	// can compute the same per-org NS SM-API derives.
 	EnsureForOuHandle(ctx context.Context, ouHandle string, thunderOrgUUID string) error
 }

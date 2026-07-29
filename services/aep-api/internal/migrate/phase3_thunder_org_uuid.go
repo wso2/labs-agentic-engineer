@@ -25,7 +25,7 @@
 // This migration adds a nullable `thunder_org_uuid` column so the BFF
 // can persist Thunder's authoritative ouId alongside the local PK
 // without an FK-cascade migration. The orgensure middleware fills it
-// lazily on first authed request; SMAPIWriter reads it from the JWT
+// lazily on first authed request; SecretRefWriter reads it from the JWT
 // context directly; dispatcher reads it from the row.
 package migrate
 

@@ -242,10 +242,10 @@ func (s *CredentialService) ValidatePAT(ctx context.Context, pat, githubLogin st
 // SM-API is down, so the user-facing Connect doesn't 5xx. The SM-API row
 // is created/refreshed on the next successful Connect.
 func (s *CredentialService) mirrorPATToSMAPI(ctx context.Context, ocOrgID, pat string) {
-	if s.smAPIWriter == nil || !s.smAPIWriter.Enabled() {
+	if s.secretRefWriter == nil || !s.secretRefWriter.Enabled() {
 		return
 	}
-	if _, err := s.smAPIWriter.WriteGitHubPAT(ctx, ocOrgID, pat); err != nil {
+	if _, err := s.secretRefWriter.WriteGitHubPAT(ctx, ocOrgID, pat); err != nil {
 		slog.WarnContext(ctx, "credentials: SM-API mirror failed (legacy store still authoritative)",
 			"ocOrgId", ocOrgID, "error", err)
 	}

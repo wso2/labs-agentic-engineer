@@ -69,7 +69,7 @@ type AnthropicSecretCleaner interface {
 
 type CredentialService struct {
 	repo      OrgCredentialRepository
-	store     secrets.OpenBaoStore
+	store     secrets.CredentialStore
 	minter    *secrets.AppTokenMinter
 	githubAPI string // "https://api.github.com" by default; overridden in tests.
 
@@ -78,10 +78,10 @@ type CredentialService struct {
 	// row. nil is a graceful no-op (tests, off-cluster runs).
 	buildSecretCleaner BuildSecretCleaner
 
-	// smAPIWriter mirrors the PAT into SM-API on Connect and clears it on
+	// secretRefWriter mirrors the PAT into SM-API on Connect and clears it on
 	// Disconnect. nil-safe — no-op when the writer isn't configured
 	// (composition-root behavior when SecretsProvider is nil).
-	smAPIWriter *SMAPIWriter
+	secretRefWriter *SecretRefWriter
 
 	// envWebhookSecret is the platform-wide GITHUB_WEBHOOK_SECRET. The PAT
 	// connect path uses this value when seeding `webhook_secrets[0]` on a
@@ -117,7 +117,7 @@ type CredentialService struct {
 // ExchangeOAuthCode, GetUserInstallations); nil disables the bind path.
 func NewCredentialService(
 	repo OrgCredentialRepository,
-	store secrets.OpenBaoStore,
+	store secrets.CredentialStore,
 	minter *secrets.AppTokenMinter,
 	envWebhookSecret string,
 	appClientID, appClientSecret string,
@@ -241,11 +241,11 @@ func (s *CredentialService) WithBuildSecretCleaner(cleaner BuildSecretCleaner) *
 	return s
 }
 
-// WithSMAPIWriter injects the SM-API writer. When set, the PAT-mode
+// WithSecretRefWriter injects the SM-API writer. When set, the PAT-mode
 // Connect path uploads the PAT to SM-API after the local commit and
 // stamps the triplet onto the row. nil-safe.
-func (s *CredentialService) WithSMAPIWriter(w *SMAPIWriter) *CredentialService {
-	s.smAPIWriter = w
+func (s *CredentialService) WithSecretRefWriter(w *SecretRefWriter) *CredentialService {
+	s.secretRefWriter = w
 	return s
 }
 

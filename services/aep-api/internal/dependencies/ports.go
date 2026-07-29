@@ -28,8 +28,8 @@ import (
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
-// SecretWriter is the slice of the SM-API writer the provisioner needs.
-// Satisfied by *orgcreds.SMAPIWriter.
+// SecretWriter is the slice of the secret-ref writer the provisioner needs.
+// Satisfied by *organization.SecretRefWriter.
 type SecretWriter interface {
 	Enabled() bool
 	// WriteExternalResourceSecret uploads the secret fields for a

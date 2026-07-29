@@ -53,7 +53,7 @@ const anthropicDBKey2 = "sk-ant-api03-ZyXwVuTsRqPoNmLkJiHgFe-second-9876"
 
 // anthropicDBService wires the real service: per-test Postgres + the real
 // encrypted DBStore + a fake Anthropic API answering apiStatus; wpClient nil.
-func anthropicDBService(t *testing.T, apiStatus int) (*organization.AnthropicCredentialService, secrets.OpenBaoStore) {
+func anthropicDBService(t *testing.T, apiStatus int) (*organization.AnthropicCredentialService, secrets.CredentialStore) {
 	t.Helper()
 	db := dbtest.New(t)
 	store, err := secrets.NewDBStore(db, []byte(anthropicDBAESKey))

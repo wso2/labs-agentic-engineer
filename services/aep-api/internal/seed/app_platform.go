@@ -18,32 +18,27 @@ package seed
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/wso2/aep/aep-api/internal/config"
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
-// AppPlatformFromEnv writes the GitHub App's appID, clientID, private key,
-// and webhook secret into OpenBao at secret/aep/_platform/github/app/*
-// when DeploymentTier=dev and the env values are present.
+// AppPlatformFromEnv formerly wrote the GitHub App's appID, clientID,
+// private key, and webhook secret into an OpenBao _platform namespace when
+// DeploymentTier=dev. That OpenBao-backed store was deleted (issue #263);
+// the wired CredentialStore is Postgres and has no platform namespace.
 //
-// Idempotent: re-runs overwrite with the same values (KV v2 versions, but
-// the latest version is what readers see).
-//
-// Refuses outside dev — production seeds via the operational runbook
-// documented in docs/operations/github-app.md.
-//
-// Reaches into the platform namespace via OpenBaoStore.AsPlatformSeeder,
-// which is the narrow seam exported from pkg/credentials/ for exactly
-// this purpose. The wider OpenBaoStore interface deliberately omits
-// platform-write so per-org code can't escape into _platform/.
-func AppPlatformFromEnv(ctx context.Context, store secrets.OpenBaoStore, cfg config.Config) error {
+// Kept as a no-op so Resolve's call site stays stable. App-mode connect
+// remains unavailable until a platform-capable seed path exists. Validates
+// the env shape in-dev so operators still get early feedback on a bad PEM.
+func AppPlatformFromEnv(ctx context.Context, store secrets.CredentialStore, cfg config.Config) error {
+	_ = ctx
+	_ = store
+
 	if cfg.DeploymentTier != "dev" {
 		slog.Info("app-platform seed: skipped (DeploymentTier != dev)", "tier", cfg.DeploymentTier)
 		return nil
@@ -57,10 +52,6 @@ func AppPlatformFromEnv(ctx context.Context, store secrets.OpenBaoStore, cfg con
 
 	pemBytes, err := os.ReadFile(cfg.GitHubAppPrivateKeyPath)
 	if err != nil {
-		// Missing key file is a soft skip: the operator hasn't dropped the
-		// PEM yet. git-service stays in "no App configured" mode and
-		// PAT-mode flows still work. App-mode connect surfaces a clear
-		// "App not configured" error at the connect endpoint.
 		if os.IsNotExist(err) {
 			slog.Warn("app-platform seed: private key file not found; App-mode connect will be unavailable",
 				"path", cfg.GitHubAppPrivateKeyPath,
@@ -74,59 +65,18 @@ func AppPlatformFromEnv(ctx context.Context, store secrets.OpenBaoStore, cfg con
 		return nil
 	}
 	if !looksLikePEM(pemBytes) {
-		// File is non-empty but not a PEM — surface as a hard error so the
-		// operator notices they dropped the wrong file (vs. silently going
-		// into no-App mode and being confused later).
 		return fmt.Errorf("app-platform seed: %s is %d bytes but does not contain a PEM-encoded RSA key (drop the .pem you downloaded from GitHub App settings → 'Generate a private key')", cfg.GitHubAppPrivateKeyPath, len(pemBytes))
 	}
 
-	seeder, ok := secrets.AsPlatformSeeder(store)
-	if !ok {
-		slog.Warn("app-platform seed: store is not the real OpenBao implementation; skipping")
-		return nil
-	}
-
-	pairs := map[string]string{
-		"github/app/app_id":      cfg.GitHubAppID,
-		"github/app/private_key": string(pemBytes),
-	}
-	if cfg.GitHubAppClientID != "" {
-		pairs["github/app/client_id"] = cfg.GitHubAppClientID
-	}
-	// §6.4 — the OAuth bind path needs the client_secret
-	// to exchange the user's OAuth code for a user-token. Stored alongside
-	// the App's other platform secrets; only consumed by git-service's
-	// CredentialService.BindAppInstallation. Empty value disables the
-	// bind path (logged at startup; discover endpoint returns 503).
-	if cfg.GitHubAppClientSecret != "" {
-		pairs["github/app/client_secret"] = cfg.GitHubAppClientSecret
-	}
-	// Reuse GITHUB_WEBHOOK_SECRET for the App-mode webhook. Stored as a JSON
-	// list of {secret, added_at} entries so rotation has the same shape as
-	// PAT-mode webhook_secrets[].
-	if cfg.WebhookHMACSecret != "" {
-		entries := []map[string]any{
-			{"secret": cfg.WebhookHMACSecret, "added_at": time.Now().UTC().Format(time.RFC3339)},
-		}
-		buf, _ := json.Marshal(entries)
-		pairs["github/app/webhook_secret"] = string(buf)
-	}
-
-	for key, value := range pairs {
-		if err := seeder.SeedPlatformValue(ctx, key, value, "app-platform"); err != nil {
-			return fmt.Errorf("app-platform seed: write %s: %w", key, err)
-		}
-	}
-	slog.Info("app-platform seed: complete",
+	slog.Warn("app-platform seed: CredentialStore has no platform namespace; skipping write",
 		"appId", cfg.GitHubAppID,
-		"appSlug", cfg.GitHubAppSlug,
-		"wroteWebhookSecret", cfg.WebhookHMACSecret != "")
+		"hint", "Postgres CredentialStore cannot hold GitHub App platform material; App-mode remains unavailable")
 	return nil
 }
 
 // looksLikePEM does a cheap shape check on the file before we try to
-// write it into OpenBao. Catches the common "user copied wrong file"
-// mistake during the connect-flow operator runbook.
+// write it. Catches the common "user copied wrong file" mistake during
+// the connect-flow operator runbook.
 func looksLikePEM(b []byte) bool {
 	s := string(b)
 	return strings.Contains(s, "-----BEGIN") && strings.Contains(s, "PRIVATE KEY")

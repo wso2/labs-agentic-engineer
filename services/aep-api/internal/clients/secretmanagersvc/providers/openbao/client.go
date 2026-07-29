@@ -40,7 +40,7 @@ func vaultPath(location secretsprovider.SecretLocation) string {
 }
 
 // PushSecret writes the JSON object value to OpenBao and returns the full
-// vault path (stable with SMAPIWriter.resolveVaultKey).
+// vault path (stable with SecretRefWriter.resolveVaultKey).
 func (c *Client) PushSecret(ctx context.Context, location secretsprovider.SecretLocation, value []byte, _ *secretsprovider.SecretMetadata) (string, error) {
 	if location.OrgName == "" {
 		return "", fmt.Errorf("openbao: OrgName is required")

@@ -34,10 +34,10 @@ type dbStore struct {
 	gcm cipher.AEAD
 }
 
-// NewDBStore returns an OpenBaoStore backed by the git-service Postgres DB.
-// key must be exactly 32 bytes (AES-256). Values are encrypted with AES-256-GCM
-// before writing and decrypted on read. Generate a key with: openssl rand -base64 32
-func NewDBStore(db *gorm.DB, key []byte) (OpenBaoStore, error) {
+// NewDBStore returns a CredentialStore backed by Postgres. key must be exactly
+// 32 bytes (AES-256). Values are encrypted with AES-256-GCM before writing and
+// decrypted on read. Generate a key with: openssl rand -base64 32
+func NewDBStore(db *gorm.DB, key []byte) (CredentialStore, error) {
 	if len(key) != 32 {
 		return nil, fmt.Errorf("credential store: key must be 32 bytes, got %d", len(key))
 	}

@@ -18,7 +18,7 @@ flowchart LR
     CORE --> DB[("organizations · org_credentials · org_anthropic_credentials · organization_idp_profiles")]
   end
   CORE -->|AppInstallOps · IssueService| SC[[sourcecontrol]]
-  CORE -->|OpenBaoStore · Resolver| SEC[[platform/secrets]]
+  CORE -->|CredentialStore · Resolver| SEC[[platform/secrets]]
   CORE -->|publisher app · OU| THUNDER(["Thunder"])
 ```
 
@@ -37,8 +37,8 @@ services, the raw connect-callback controller, and the S2S credentials-refresh.*
 | Port | Dir | Peer · contract |
 |---|---|---|
 | `AppInstallOps` · `IssueService` | needs | `sourcecontrol` — App/PAT probes, disconnect issue cascade |
-| `OpenBaoStore` · `Resolver` · `AppTokenMinter` | needs | `platform/secrets` — sealed git-token/anthropic store, credential resolution |
-| `thundersvc` · `secretmanagersvc` · `clustergatewayproxy` | needs | publisher-app CRUD + OU check · SM-API mirror · ExternalSecret push |
+| `CredentialStore` · `Resolver` · `AppTokenMinter` | needs | `platform/secrets` — sealed git-token/anthropic store, credential resolution |
+| `thundersvc` · `secretmanagersvc` · `clustergatewayproxy` | needs | publisher-app CRUD + OU check · secret-ref mirror · ExternalSecret push |
 | `OrganizationService` · `CredentialService` · `AnthropicCredentialService` · `IDPService` | offers | `delivery` (coding identity/key/publisher) · `sourcecontrol` (credential resolution) |
 | `CredentialsRefreshService` | offers | the S2S runner-refresh op (edge projects it onto `igen.RefreshResponse`) |
 
