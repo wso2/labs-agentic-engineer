@@ -51,7 +51,7 @@ function buildAuthConfig(): AgentsAuthConfig {
 
 async function buildStore(): Promise<ConversationStore> {
   if (!config.database.url) {
-    process.stdout.write("@aep/agents: no DATABASE_URL — using the in-memory conversation store\n");
+    process.stdout.write("@aep/agents: no Postgres URL — using the in-memory conversation store\n");
     return new InMemoryConversationStore();
   }
   const pool = new pg.Pool({ connectionString: config.database.url });

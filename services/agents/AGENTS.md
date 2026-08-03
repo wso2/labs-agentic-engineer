@@ -69,8 +69,12 @@ off the stream. The plan tool contract (inputs, results, error codes, the
 - **M2M gate is always on**: set `AGENT_JWT_JWKS_URL` (RS256) **or**
   `AGENT_JWT_SECRET` (HS256) — the server refuses to boot with neither. `aud`
   defaults to `agents-service` (`AGENT_JWT_AUDIENCE`); `AGENT_JWT_ISSUER` optional.
-- **Store**: Postgres when `DATABASE_URL` is set (idempotent bootstrap + TTL
-  sweep, `CONVERSATIONS_TTL_MS` / `CONVERSATIONS_SWEEP_MS`), else in-memory.
+- **Store**: Postgres when a connection URL resolves — `DATABASE_URL` verbatim
+  (local dev) or discrete `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` /
+  `DB_NAME` (+ optional `DB_SSLMODE`) assembled like aep-api (platform
+  release-binding); `DATABASE_URL` wins when both are set. Incomplete discrete
+  fields → in-memory. Idempotent bootstrap + TTL sweep
+  (`CONVERSATIONS_TTL_MS` / `CONVERSATIONS_SWEEP_MS`).
 - Keep-alives every `AGENT_KEEPALIVE_MS` (default 15s) while a turn streams.
 - Callers (e.g. the `@aep/playground` CLI) read `ANTHROPIC_API_KEY` themselves and
   send it (plus an HS256 M2M token) as headers — the service holds no key.
