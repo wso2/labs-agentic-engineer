@@ -2,7 +2,7 @@
   "name": "aep",
   "version": "0.0.0",
   "private": true,
-  "description": "Agentic Engineer Platform — polyglot monorepo (root).",
+  "description": "Agentic Engineer Platform \u2014 polyglot monorepo (root).",
   "packageManager": "pnpm@10.12.1",
   "engines": {
     "node": ">=22"
@@ -29,7 +29,10 @@
   },
   "pnpm": {
     "overrides": {
-      "@tanstack/router-cli>chokidar": "^4.0.3"
+      "@tanstack/router-cli>chokidar": "^4.0.3",
+      "brace-expansion@^1.1.0": "1.1.18",
+      "brace-expansion@^2.0.0": "2.1.4",
+      "brace-expansion@^5.0.0": "5.0.9"
     },
     "onlyBuiltDependencies": [
       "better-sqlite3"
