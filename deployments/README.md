@@ -10,16 +10,16 @@ There are **two ways** to run the AEP services locally. Both share the same k3d
 cluster + OpenChoreo install (`scripts/setup.sh`); they differ only in how the
 long-lived AEP services (BFF, agents, console, collab, postgres, smee-client) run.
 
-| | **Skaffold + k3d** (recommended) | **Docker Compose** (legacy) |
+| | **Docker Compose** (default) | **Skaffold + k3d** |
 |---|---|---|
-| Where services run | in-cluster (Helm + Skaffold) | host containers (`docker compose`) |
-| Entry point | `make setup-local` → `make dev-cluster` | `bash scripts/start.sh` |
-| Inner loop | Skaffold rebuilds + redeploys on file change | rebuild + `docker compose up` |
-| Status | actively developed | maintained until everyone migrates |
+| Where services run | host containers (`docker compose`) | in-cluster (Helm + Skaffold) |
+| Entry point | `bash scripts/start.sh` | `make setup-local` → `make dev-cluster` |
+| Inner loop | rebuild + `docker compose up` | Skaffold rebuilds + redeploys on file change |
+| Console | http://localhost:8090 | http://console.openchoreo.localhost:8080 |
 
-> **Compose is being phased out** in favour of the in-cluster Skaffold flow. It
-> remains here so in-flight work keeps running; new work should prefer Skaffold.
-> Pick one — don't run both against the same cluster at once.
+> Compose is the documented path (see the root README) — the Skaffold flow is
+> here for in-cluster work. Pick one; don't run both against the same cluster at
+> once.
 
 Common to both: **coding-agent** runs as one-shot pods via the `aep-coding-agent`
 ClusterWorkflow (`manifests/aep-coding-agent.yaml`); **builds** use the
@@ -27,37 +27,43 @@ ClusterWorkflow (`manifests/aep-coding-agent.yaml`); **builds** use the
 whose `generate-workload-cr` step exchanges OAuth tokens at Thunder via the
 `openchoreo-workload-publisher-client` bootstrapped during setup.
 
-### Option A — Skaffold + k3d (recommended)
+### Option A — Docker Compose (default)
 
 ```bash
 # 1. One-shot bring-up — k3d cluster + prereqs + OpenChoreo + Thunder + AEP infra
 bash scripts/setup.sh
 
+# 2. Start the long-lived compose stack (stop: scripts/stop.sh)
+bash scripts/start.sh
+# → http://localhost:8090 (admin / admin)
+```
+
+No Anthropic key is needed to bring this up: the agents build their model per turn
+from the calling org's connected credential (`X-Anthropic-Key`), and there is no
+platform fallback. Set `ANTHROPIC_API_KEY` + `LOCAL_DEV_ADMIN_GITHUB_PAT` in
+`.env` only to have `start.sh` pre-connect them via `scripts/seed-dev.sh` and skip
+the Settings clickthrough. The observability plane's RCA agent is the one true
+consumer of a platform-level key from `.env`.
+
+### Option B — Skaffold + k3d (in-cluster)
+
+```bash
+# 1. One-shot bring-up (same as above)
+bash scripts/setup.sh
+
 # 2. Register secrets + Thunder clients + resource-type catalog (idempotent)
-ANTHROPIC_API_KEY=sk-... make setup-local
+make setup-local
 
 # 3. Inner dev loop — build images, load into k3d, deploy via Helm, watch
 make dev-cluster
 # Console: http://console.openchoreo.localhost:8080 · aep-api: http://localhost:9090
 ```
 
-To trigger component builds on PR merge, copy
+To trigger component builds on PR merge here, copy
 `helm-charts/platform/values.local.dev.yaml.example` to `values.local.dev.yaml`
 (git-ignored) and set a smee.io `webhook.deliveryURL` — see that file's comments.
-
-### Option B — Docker Compose (legacy)
-
-```bash
-# 1. One-shot bring-up (same as above)
-bash scripts/setup.sh
-
-# 2. Edit .env to set ANTHROPIC_API_KEY (and optional GITHUB_APP_* values)
-$EDITOR .env
-
-# 3. Start the long-lived compose stack
-bash scripts/start.sh
-# → http://localhost:8090 (admin / admin)
-```
+The Compose flow needs no equivalent: setup provisions a channel into `.env` and
+the stack runs the relay.
 
 ## Compose architecture (host-side compose ↔ in-cluster OC)
 
@@ -118,7 +124,7 @@ Key wiring:
 The Thunder default admin (`admin` / `admin`) is in the **Administrators** group. `setup-aep.sh` binds that group to the OC `admin` ClusterAuthzRole.
 
 For GitHub repo provisioning, connect a PAT (or GitHub App) at **Settings → GitHub Integration**.
-For AI generation, connect an Anthropic key at **Settings → Anthropic Integration** (or rely on the platform fallback `ANTHROPIC_API_KEY` from `.env`).
+For AI generation, connect an Anthropic key at **Settings → Anthropic Integration** — per-org, with no platform fallback.
 
 ## POC: API Platform + Thunder JWT (`poc-api-platform` branch)
 

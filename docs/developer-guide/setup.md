@@ -39,4 +39,7 @@ All driven from the root `Makefile` (the single entry point):
 
 ## Local stack
 
-The canonical local setup (k3d + docker-compose) lands in `deployments/`.
+Two steps, both in `deployments/`: `scripts/setup.sh` installs the k3d cluster and
+everything under it (OpenChoreo, Thunder, Temporal), and `scripts/start.sh` runs
+the AEP services as containers. The root README has the walkthrough; the
+`deployments/` README documents both this and the in-cluster Skaffold flow.

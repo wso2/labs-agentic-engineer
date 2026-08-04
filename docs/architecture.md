@@ -18,15 +18,22 @@ compile error, not a runtime surprise.
 | `apps/` | React webapps (Vite + Oxygen UI) | yes |
 | `services/` | long-lived deployables (Go + TS) | yes |
 | `runners/` | one-shot / job images | as jobs |
-| `packages/` | shared libraries (`contracts`, `core`, `ui`, `clients`, `agent`) | no |
+| `packages/` | shared libraries: `contracts`, `clients`, `ui`, `agent-stream`, `collab-doc`, `design-projection`, `excalidraw-dsl`, `progress-view`, `sse-cassette` | no |
+| `skills/` | the authored skill library, seeded and reconciled into each org's own repo | no — delivered as content |
+| `playground/` | local harness that runs the real agents against a plain directory (no cluster, no GitHub, no database) | no |
 | `evals/` | on-demand evaluation suites for the platform's agents (`spec-agents`: per-section + chained evals over the real agents service; see its README) | no — never in CI |
-| `deployments/` | canonical local setup (k3d + docker-compose); resource types that ship a reference operator keep it under `resource-types/<type>/operator/` (e.g. `thunder-app-operator`) | n/a (operator subdirs: yes, in-cluster) |
+| `deployments/` | canonical local setup (k3d + OpenChoreo; a legacy docker-compose path); resource types that ship a reference operator keep it under `resource-types/<type>/operator/` (e.g. `thunder-app-operator`) | n/a (operator subdirs: yes, in-cluster) |
 
 ## Data & contract ownership
 
-- Each service **owns** the OpenAPI it produces, stored under
-  `packages/contracts/<service>/openapi.yaml`.
-- Internal events are JSON Schema under `packages/contracts/events/`.
+- Contracts are hand-maintained and live in `packages/contracts`, one document per
+  audience rather than one per service:
+  - `api/v1/openapi.yaml` — the public BFF contract the console is generated from.
+  - `api/internal/v1/openapi.yaml` — the service-to-service surface.
+  - `workflows/v1/openapi.yaml` — the workflow/runner surface.
+- Artifacts the agents produce are JSON Schema under `packages/contracts/schemas/`
+  (`component-design`, `plan-task`, `update-task`), consumed by `@aep/agent-stream`
+  and the design views.
 - Generated clients/servers are never hand-edited. Whether they are committed
   differs by consumer: aep-api's contract codegen (`internal/gen/`, `internal/igen/`)
   and the OpenChoreo client are **committed**, with `make gen-api-check` as the CI
@@ -36,8 +43,8 @@ compile error, not a runtime surprise.
 ## Codegen pipeline
 
 ```
-openapi/*.yaml ──> openapi-typescript ──> TS client (generated/)
-              └──> oapi-codegen ────────> Go StrictServerInterface (*.gen.go)
+packages/contracts/**/openapi.yaml ──> openapi-typescript ──> TS client (generated/)
+                                   └──> oapi-codegen ───────> Go StrictServerInterface (*.gen.go)
 ```
 
 The build graph (`turbo` + `go.work`) wires every consumer's `build`/`typecheck`

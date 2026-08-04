@@ -1,7 +1,7 @@
 # AGENTS.md — tests/e2e
 
 End-to-end browser tests (Playwright) against the real local stack. Every test
-maps to a user scenario in `requirements/`.
+maps to a user-facing flow in [`apps/console/PRD.md`](../../apps/console/PRD.md).
 
 **Status:** nothing here yet.
 

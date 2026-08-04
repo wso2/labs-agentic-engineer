@@ -19,8 +19,10 @@
 # Thunder, and installs the PE resource-type catalog (postgres, postgres-cnpg, thunder-app).
 # Run once per cluster, after setup-k3d.sh. Idempotent — safe to re-run.
 #
-# Required env var:
-#   ANTHROPIC_API_KEY  — your Anthropic API key
+# No Anthropic key is needed here: agents resolve one per turn from the calling
+# org's connected credential (Settings → Anthropic Integration), so there is
+# nothing platform-wide to seed. The observability plane's RCA agent is the one
+# exception and reads its key from deployments/.env.
 #
 # Optional env vars (auto-generated if absent):
 #   GITHUB_WEBHOOK_SECRET  — HMAC secret for GitHub webhook validation
@@ -42,12 +44,6 @@ log_err() { echo "❌ $*" >&2; }
 step()    { echo; echo "── $* ──"; }
 
 # ── Preflight ────────────────────────────────────────────────────────────────
-if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-  log_err "ANTHROPIC_API_KEY is required"
-  echo "  export ANTHROPIC_API_KEY=sk-ant-..." >&2
-  exit 1
-fi
-
 if ! kubectl --context "${CLUSTER_CONTEXT}" cluster-info &>/dev/null; then
   log_err "Cannot reach cluster (context: ${CLUSTER_CONTEXT})"
   echo "  Run deployments/scripts/setup-k3d.sh first." >&2
@@ -142,7 +138,6 @@ ksecret() {
 }
 
 ksecret aep-agents-secrets \
-  --from-literal=ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" \
   --from-literal=AGENTS_JWT_SECRET="${AGENTS_JWT_SECRET}"
 
 ksecret aep-webhook-secrets \

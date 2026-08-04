@@ -61,7 +61,7 @@ const within = (root: string, p: string): boolean => p === root || p.startsWith(
 /**
  * The project-dir fence: returns an error message when `p` (absolute) is an
  * illegal project location, or null when it's fine. Inside the repo checkout
- * only the gitignored `playground/projects/` subtree is allowed.
+ * only the gitignored `playground/.projects/` subtree is allowed.
  */
 export function projectDirError(p: string): string | null {
   if (within(REPO_ROOT, p) && !(within(PROJECTS_HOME, p) && p !== PROJECTS_HOME)) {

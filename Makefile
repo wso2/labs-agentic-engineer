@@ -67,7 +67,7 @@ test: gen
 	$(TURBO) run test
 	@for d in $(GO_MODULE_DIRS); do echo ">> go test $$d"; ( cd "$$d" && go test ./... ); done
 
-# Local coverage summary (there is no CI). Go: the aep-api module's fast-lane
+# Local coverage summary — coverage is not gated in CI. Go: the aep-api module's fast-lane
 # cover target (-short, no Docker). TS: @aep/agents via node:test's
 # --experimental-test-coverage. Report-only — the TS side never fails the verb,
 # and spends no tokens. Extend module-by-module as other packages grow tests.
@@ -135,9 +135,12 @@ workflow-skill:
 	@cd runners/remote-worker && npx tsx src/compose_workflow.ts
 
 # ── Local in-cluster dev (Skaffold + k3d) ────────────────────────────────────
+# An alternative to the default docker-compose flow (deployments/scripts/start.sh),
+# which runs the AEP services in-cluster instead of as host containers.
+#
 # Run once per cluster after setup-k3d.sh. Creates K8s Secrets and registers
-# AEP OAuth clients in Thunder. Idempotent.
-#   Requires: ANTHROPIC_API_KEY env var
+# AEP OAuth clients in Thunder. Idempotent. No Anthropic key needed — orgs
+# connect their own from the console and there is no platform fallback.
 setup-local:
 	bash deployments/scripts/setup-local.sh
 

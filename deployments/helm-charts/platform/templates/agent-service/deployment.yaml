@@ -50,12 +50,11 @@ spec:
             - name: WORKSPACE_MOUNT_ROOT
               value: "/workspaces"
 
-            # secrets
-            - name: ANTHROPIC_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: aep-agents-secrets
-                  key: ANTHROPIC_API_KEY
+            # secrets — no Anthropic key here on purpose: the model is built per
+            # turn from the request's X-Anthropic-Key, which the BFF resolves
+            # from the calling org's connected credential. Orgs bring their own
+            # key and there is no platform fallback, so a boot-time key would be
+            # read by nothing.
             - name: AGENT_JWT_SECRET
               valueFrom:
                 secretKeyRef:

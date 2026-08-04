@@ -97,7 +97,7 @@ function printUsage(): void {
       "Tracing: AI SDK DevTools is on by default — run `npx @ai-sdk/devtools` (port 4983).",
       "",
       "Example:",
-      '  pnpm play .projects/expense-app requirements --idea "Expense claim tracking app"',
+      '  pnpm play playground/.projects/expense-app requirements --idea "Expense claim tracking app"',
       "",
     ].join("\n"),
   );
@@ -309,7 +309,7 @@ async function main(): Promise<number> {
 
   // paths.ts is the single fence: relative paths resolve against the user's
   // invocation dir (INIT_CWD — pnpm rewrites the process cwd to the package),
-  // and inside the repo only the gitignored playground/projects/ subtree is
+  // and inside the repo only the gitignored playground/.projects/ subtree is
   // a legal project home.
   let projectDir = dirArg ? expandProjectPath(dirArg) : null;
   let createdProject = false;
