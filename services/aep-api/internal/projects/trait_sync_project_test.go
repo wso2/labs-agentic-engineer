@@ -214,7 +214,7 @@ func traitCORSFor(t *testing.T, oc *mocks.ComponentClientMock, component string)
 	return nil
 }
 
-func TestSyncProjectAPITraits_PerComponentErrorDoesNotAbort(t *testing.T) {
+func TestSyncProjectAPITraits_PerComponentErrorContinuesThenSurfaces(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	files := map[string]string{
@@ -231,10 +231,20 @@ func TestSyncProjectAPITraits_PerComponentErrorDoesNotAbort(t *testing.T) {
 	}
 	svc := NewTraitSyncService(oc, traitStoreWith(files))
 
-	// api-a's SyncComponentTraits errors; the loop logs and continues, so
-	// api-b is still attempted and the project-level call returns nil.
-	if err := svc.SyncProjectAPITraits(ctx, "acme", "proj"); err != nil {
-		t.Fatalf("per-component failure must be best-effort; got %v", err)
+	// api-a's SyncComponentTraits errors; the loop continues so api-b still
+	// converges — but the failure is then RETURNED, not swallowed. That return
+	// is what fails the Temporal SyncAPITraits activity and gets the sweep
+	// retried; swallowing it left protected APIs serving unauthenticated
+	// traffic with nothing but a WARN to show for it.
+	err := svc.SyncProjectAPITraits(ctx, "acme", "proj")
+	if err == nil {
+		t.Fatal("a dropped trait write must surface to the caller, got nil")
+	}
+	if !strings.Contains(err.Error(), "api-a") {
+		t.Errorf("error should name the failing component: %v", err)
+	}
+	if strings.Contains(err.Error(), "api-b") {
+		t.Errorf("api-b succeeded and must not appear in the error: %v", err)
 	}
 	if n := len(oc.UpdateComponentTraitsCalls()); n != 2 {
 		t.Errorf("both enabled services must be attempted even after one errors; got %d", n)

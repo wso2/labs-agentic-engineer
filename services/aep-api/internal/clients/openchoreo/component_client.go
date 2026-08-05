@@ -600,38 +600,42 @@ func (c *componentClient) DeleteComponent(ctx context.Context, orgName, projectN
 // slice to clear traits.
 func (c *componentClient) UpdateComponentTraits(ctx context.Context, orgName, projectName, componentName string, traits []ComponentTrait) error {
 	scopedComp := ScopedComponentName(projectName, componentName)
-	getResp, err := c.oc.GetComponentWithResponse(ctx, orgName, scopedComp)
-	if err != nil {
-		return fmt.Errorf("failed to get component for traits update: %w", err)
-	}
-	if getResp.StatusCode() != http.StatusOK || getResp.JSON200 == nil {
-		return handleErrorResponse(getResp.StatusCode(), ErrorResponses{
-			JSON401: getResp.JSON401,
-			JSON403: getResp.JSON403,
-			JSON404: getResp.JSON404,
-			JSON500: getResp.JSON500,
-		})
-	}
-	comp := *getResp.JSON200
-	if comp.Spec == nil {
-		comp.Spec = &ocgen.ComponentSpec{}
-	}
-	comp.Spec.Traits = componentTraitsToGen(traits)
+	// GET and PUT both inside the retried closure: a retry has to re-read, or
+	// it replays the same stale resourceVersion. See stale_write.go.
+	return retryStaleWrite(ctx, "component/"+scopedComp+" spec.traits", func(ctx context.Context) error {
+		getResp, err := c.oc.GetComponentWithResponse(ctx, orgName, scopedComp)
+		if err != nil {
+			return fmt.Errorf("failed to get component for traits update: %w", err)
+		}
+		if getResp.StatusCode() != http.StatusOK || getResp.JSON200 == nil {
+			return handleErrorResponse(getResp.StatusCode(), ErrorResponses{
+				JSON401: getResp.JSON401,
+				JSON403: getResp.JSON403,
+				JSON404: getResp.JSON404,
+				JSON500: getResp.JSON500,
+			})
+		}
+		comp := *getResp.JSON200
+		if comp.Spec == nil {
+			comp.Spec = &ocgen.ComponentSpec{}
+		}
+		comp.Spec.Traits = componentTraitsToGen(traits)
 
-	updResp, err := c.oc.UpdateComponentWithResponse(ctx, orgName, ocgen.ComponentNameParam(scopedComp), ocgen.UpdateComponentJSONRequestBody(comp))
-	if err != nil {
-		return fmt.Errorf("failed to update component traits: %w", err)
-	}
-	if updResp.StatusCode() != http.StatusOK && updResp.StatusCode() != http.StatusCreated {
-		return handleErrorResponse(updResp.StatusCode(), ErrorResponses{
-			JSON400: updResp.JSON400,
-			JSON401: updResp.JSON401,
-			JSON403: updResp.JSON403,
-			JSON404: updResp.JSON404,
-			JSON500: updResp.JSON500,
-		})
-	}
-	return nil
+		updResp, err := c.oc.UpdateComponentWithResponse(ctx, orgName, ocgen.ComponentNameParam(scopedComp), ocgen.UpdateComponentJSONRequestBody(comp))
+		if err != nil {
+			return fmt.Errorf("failed to update component traits: %w", err)
+		}
+		if updResp.StatusCode() != http.StatusOK && updResp.StatusCode() != http.StatusCreated {
+			return handleErrorResponse(updResp.StatusCode(), ErrorResponses{
+				JSON400: updResp.JSON400,
+				JSON401: updResp.JSON401,
+				JSON403: updResp.JSON403,
+				JSON404: updResp.JSON404,
+				JSON500: updResp.JSON500,
+			})
+		}
+		return nil
+	})
 }
 
 // UpdateComponentTraitEnvironmentConfigs iterates the Component's
@@ -664,39 +668,69 @@ func (c *componentClient) UpdateComponentTraitEnvironmentConfigs(ctx context.Con
 		return nil
 	}
 
+	// The list supplies the RB NAMES only. Each write re-GETs its binding
+	// inside the retried closure, because OC's Component controller rewrites
+	// `spec.releaseName` on the very bindings we are patching — a trait change
+	// on the Component produces a new ComponentRelease, and that rewrite lands
+	// in the window between a list and a PUT. See stale_write.go.
 	for _, rb := range rbs {
-		if rb.Spec == nil {
-			rb.Spec = &ocgen.ReleaseBindingSpec{}
+		name := rb.Metadata.Name
+		if err := retryStaleWrite(ctx, "releasebinding/"+name+" spec.traitEnvironmentConfigs", func(ctx context.Context) error {
+			return c.putTraitEnvironmentConfigs(ctx, orgName, name, configs)
+		}); err != nil {
+			return err
 		}
-		// Merge: preserve any pre-existing instance keys we don't touch.
-		var merged map[string]interface{}
-		if rb.Spec.TraitEnvironmentConfigs != nil {
-			merged = *rb.Spec.TraitEnvironmentConfigs
-		} else {
-			merged = map[string]interface{}{}
-		}
-		for inst, params := range configs {
-			if len(params) == 0 {
-				delete(merged, inst)
-				continue
-			}
-			merged[inst] = cloneParameterMap(params)
-		}
-		rb.Spec.TraitEnvironmentConfigs = &merged
+	}
+	return nil
+}
 
-		updResp, uerr := c.oc.UpdateReleaseBindingWithResponse(ctx, orgName, ocgen.ReleaseBindingNameParam(rb.Metadata.Name), ocgen.UpdateReleaseBindingJSONRequestBody(rb))
-		if uerr != nil {
-			return fmt.Errorf("failed to update release binding %s trait env config: %w", rb.Metadata.Name, uerr)
+// putTraitEnvironmentConfigs is one read-modify-write attempt against a single
+// ReleaseBinding: re-read it, merge the desired trait-instance configs into
+// `spec.traitEnvironmentConfigs`, write it back. Instances absent from
+// `configs` are preserved; an instance mapped to an empty value is deleted.
+func (c *componentClient) putTraitEnvironmentConfigs(ctx context.Context, orgName, bindingName string, configs map[string]map[string]interface{}) error {
+	getResp, err := c.oc.GetReleaseBindingWithResponse(ctx, orgName, ocgen.ReleaseBindingNameParam(bindingName))
+	if err != nil {
+		return fmt.Errorf("failed to get release binding %s for trait env config update: %w", bindingName, err)
+	}
+	if getResp.StatusCode() != http.StatusOK || getResp.JSON200 == nil {
+		return handleErrorResponse(getResp.StatusCode(), ErrorResponses{
+			JSON401: getResp.JSON401,
+			JSON403: getResp.JSON403,
+			JSON404: getResp.JSON404,
+			JSON500: getResp.JSON500,
+		})
+	}
+	rb := *getResp.JSON200
+	if rb.Spec == nil {
+		rb.Spec = &ocgen.ReleaseBindingSpec{}
+	}
+	// Merge: preserve any pre-existing instance keys we don't touch.
+	merged := map[string]interface{}{}
+	if rb.Spec.TraitEnvironmentConfigs != nil {
+		merged = *rb.Spec.TraitEnvironmentConfigs
+	}
+	for inst, params := range configs {
+		if len(params) == 0 {
+			delete(merged, inst)
+			continue
 		}
-		if updResp.StatusCode() != http.StatusOK && updResp.StatusCode() != http.StatusCreated {
-			return handleErrorResponse(updResp.StatusCode(), ErrorResponses{
-				JSON400: updResp.JSON400,
-				JSON401: updResp.JSON401,
-				JSON403: updResp.JSON403,
-				JSON404: updResp.JSON404,
-				JSON500: updResp.JSON500,
-			})
-		}
+		merged[inst] = cloneParameterMap(params)
+	}
+	rb.Spec.TraitEnvironmentConfigs = &merged
+
+	updResp, uerr := c.oc.UpdateReleaseBindingWithResponse(ctx, orgName, ocgen.ReleaseBindingNameParam(bindingName), ocgen.UpdateReleaseBindingJSONRequestBody(rb))
+	if uerr != nil {
+		return fmt.Errorf("failed to update release binding %s trait env config: %w", bindingName, uerr)
+	}
+	if updResp.StatusCode() != http.StatusOK && updResp.StatusCode() != http.StatusCreated {
+		return handleErrorResponse(updResp.StatusCode(), ErrorResponses{
+			JSON400: updResp.JSON400,
+			JSON401: updResp.JSON401,
+			JSON403: updResp.JSON403,
+			JSON404: updResp.JSON404,
+			JSON500: updResp.JSON500,
+		})
 	}
 	return nil
 }
