@@ -18,6 +18,7 @@ package projects
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -56,6 +57,13 @@ type OrgPublisher interface {
 //     be written before then; UpdateComponentTraitEnvironmentConfigs soft
 //     no-ops when the binding is absent.
 //
+// Because the two halves land on different objects, the WRITE ORDER is part of
+// the contract: a trait attached without its per-environment config fails the
+// whole ReleaseBinding render. SyncComponentTraits therefore writes config
+// upserts → trait shape → config tombstones, and each write re-reads under
+// retry (openchoreo.retryStaleWrite) because OC's own controllers rewrite the
+// objects we patch. The full account of both hazards is at the two write sites.
+//
 // The trigger for (2) is `SyncProjectAPITraits`, called by the run
 // supervisor when a cycle's builds go green (`delivery/run`, activity
 // SyncAPITraits). That trigger is rail-coupled ON PURPOSE-FOR-NOW and it is
@@ -65,8 +73,10 @@ type OrgPublisher interface {
 // for that watcher to read. A missed write leaves a protected API's gateway
 // passing every request through unauthenticated, so a rail-agnostic reconcile
 // sweep over the component list is what should ultimately make the guarantee.
-// `traitDeployObserver` still routes the old ExecWatcher path here; it is
-// inert for anything the run loop builds.
+// Until then the failure is at least LOUD and retried: SyncProjectAPITraits
+// returns its per-component failures, so the activity fails and Temporal
+// re-runs the sweep. `traitDeployObserver` still routes the old ExecWatcher
+// path here; it is inert for anything the run loop builds.
 //
 // Concurrency: every call acquires a per-component mutex keyed by
 // `(orgID, projectID, componentName)`. We use a `sync.Map` of `*sync.Mutex`
@@ -244,6 +254,30 @@ func (s *TraitSyncService) SyncComponentTraits(ctx context.Context, orgID, proje
 		}
 	}
 
+	// Write order matters, because the two halves land on different objects and
+	// either write can fail on its own. A trait instance attached to the
+	// Component whose per-environment config is MISSING doesn't degrade
+	// gracefully — it fails the whole ReleaseBinding render, taking every other
+	// trait on that binding down with it. observability-alert-rule is the live
+	// example: its schema rejects a rule with no notification channel, and the
+	// channel is supplied by the env config, so trait-shape-first briefly (or,
+	// if the second write fails, permanently) leaves the binding unrenderable:
+	//
+	//	Failed to render resources: trait observability-alert-rule/…-auto-rca-error
+	//	validation failed: A notification channel is mandatory for alert rules
+	//
+	// So: never a trait without its config, and never a config stripped from
+	// under a still-attached trait. Upserts go first, the trait shape second,
+	// and removals last. Each phase is skipped when its set is empty, so the
+	// common enabled path is still two writes.
+	upserts, removals := splitTraitConfigs(configs)
+
+	if len(upserts) > 0 {
+		if err := s.componentClient.UpdateComponentTraitEnvironmentConfigs(ctx, orgID, projectID, componentName, upserts); err != nil {
+			return fmt.Errorf("trait_sync: update trait env configs: %w", err)
+		}
+	}
+
 	// Patch the Component CR's spec.traits. Skip when there's nothing to
 	// change — but the OC client's GET-then-PUT is harmless so we always
 	// fire to avoid bookkeeping drift between in-process state and OC.
@@ -251,13 +285,15 @@ func (s *TraitSyncService) SyncComponentTraits(ctx context.Context, orgID, proje
 		return fmt.Errorf("trait_sync: update component traits: %w", err)
 	}
 
-	// Patch every existing ReleaseBinding's traitEnvironmentConfigs. The
-	// OC client returns a soft no-op when none exist yet (first-deploy
-	// race) — that's expected and the dispatch path creates the RB with
-	// the right env config in place via the Component's autoDeploy
+	// Tombstones: the instance is off the Component now, so its stale env
+	// config can go. The OC client returns a soft no-op when no ReleaseBinding
+	// exists yet (first-deploy race) — expected, and the dispatch path creates
+	// the RB with the right env config in place via the Component's autoDeploy
 	// reconcile.
-	if err := s.componentClient.UpdateComponentTraitEnvironmentConfigs(ctx, orgID, projectID, componentName, configs); err != nil {
-		return fmt.Errorf("trait_sync: update trait env configs: %w", err)
+	if len(removals) > 0 {
+		if err := s.componentClient.UpdateComponentTraitEnvironmentConfigs(ctx, orgID, projectID, componentName, removals); err != nil {
+			return fmt.Errorf("trait_sync: clear trait env configs: %w", err)
+		}
 	}
 
 	slog.InfoContext(ctx, "trait_sync: reconciled",
@@ -327,9 +363,15 @@ func (s *TraitSyncService) DeleteComponentCascade(ctx context.Context, orgID, pr
 //     so a fresh deploy provisions the default error→RCA alert-rule trait
 //     immediately, instead of waiting for the next reconcile-watcher sweep.
 //
-// Idempotent + best-effort: a failure on one component logs and continues
-// to the next. Returns nil unless reading design itself fails (no design ⇒
-// nothing to reconcile, returns nil).
+// Idempotent: a failure on one component logs and continues to the next, so one
+// bad component can't stop the rest of the project from converging. The
+// failures are then JOINED and RETURNED — they are not swallowed. That matters
+// because this is the only trigger: the caller is the Temporal SyncAPITraits
+// activity, and returning the error is what makes Temporal retry the sweep. A
+// dropped write here leaves a protected API's gateway passing every request
+// through unauthenticated, which is not a "log it and move on" outcome.
+//
+// No design ⇒ nothing to reconcile, returns nil.
 func (s *TraitSyncService) SyncProjectAPITraits(ctx context.Context, orgID, projectID string) error {
 	if s == nil {
 		return nil
@@ -347,6 +389,7 @@ func (s *TraitSyncService) SyncProjectAPITraits(ctx context.Context, orgID, proj
 	if design == nil {
 		return nil
 	}
+	var failures []error
 	for _, c := range design.Components {
 		if c.ComponentType != spec.ComponentTypeService {
 			continue
@@ -368,9 +411,10 @@ func (s *TraitSyncService) SyncProjectAPITraits(ctx context.Context, orgID, proj
 				"componentName", k8sName,
 				"error", err,
 			)
+			failures = append(failures, fmt.Errorf("component %q: %w", k8sName, err))
 		}
 	}
-	return nil
+	return errors.Join(failures...)
 }
 
 // siblingSPAOrigins returns the external SPA origins for every web-app
@@ -454,6 +498,29 @@ func (s *TraitSyncService) lockFor(orgID, projectID, componentName string) *sync
 }
 
 // -- Pure helpers ------------------------------------------------------------
+
+// splitTraitConfigs partitions a desired trait-env-config map into the
+// instances being written (`upserts`) and the instances being tombstoned
+// (`removals` — the empty/nil values that mean "delete this key"). Callers use
+// the split to order the two writes around the Component's trait-shape write;
+// see SyncComponentTraits. Both maps are nil when their side is empty, so
+// `len(...) > 0` is the phase gate.
+func splitTraitConfigs(configs map[string]map[string]interface{}) (upserts, removals map[string]map[string]interface{}) {
+	for inst, params := range configs {
+		if len(params) == 0 {
+			if removals == nil {
+				removals = map[string]map[string]interface{}{}
+			}
+			removals[inst] = nil
+			continue
+		}
+		if upserts == nil {
+			upserts = map[string]map[string]interface{}{}
+		}
+		upserts[inst] = params
+	}
+	return upserts, removals
+}
 
 // APIConfigurationInstanceName returns the canonical trait instance name for
 // the component's managed endpoint. Mirrors the POC manifests' naming
