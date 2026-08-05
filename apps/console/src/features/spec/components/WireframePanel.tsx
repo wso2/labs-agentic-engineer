@@ -58,19 +58,24 @@ export function WireframePanel({
     return lastGoodLive.current;
   }, [dslPath, liveSource]);
 
-  const streaming = liveScene != null;
   const agentBusy = collab.peers.some((p) => p.kind === "agent");
+  // The doc is always the source while collab is up (rooms seeded with #86
+  // phase 4). Use live content whenever it exists, regardless of agent presence.
+  const hasLiveContent = liveScene != null;
+  // Streaming means the agent is ACTIVELY writing — show the "Drawing…" chip
+  // and update the scene in place. Seeded content alone doesn't count.
+  const streaming = hasLiveContent && agentBusy;
   // Committed fetch: the collab-less base path only (mirrors `usesCollab`
   // disabling the content query for markdown) — passing "" disables it. An
   // agent in the room also suppresses it: the doc WILL deliver the file, and
   // probing git for a not-yet-committed path just sprays retrying 404s.
   const { scene, isPending, isError } = useDerivedWireframe(
     projectName,
-    streaming || agentBusy ? "" : dslPath,
+    hasLiveContent || agentBusy ? "" : dslPath,
     sha,
   );
 
-  if (!streaming && agentBusy) {
+  if (!hasLiveContent && agentBusy) {
     // The committed fetch is suppressed while an agent is in the room (the
     // doc will deliver the file) — "drawing about to start", not a failure.
     return (
@@ -81,17 +86,17 @@ export function WireframePanel({
       </Box>
     );
   }
-  if (!streaming && isPending) {
+  if (!hasLiveContent && isPending) {
     return (
       <Box sx={{ flex: 1, minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
         <CircularProgress aria-label="Loading wireframe" />
       </Box>
     );
   }
-  if (!streaming && isError) {
+  if (!hasLiveContent && isError) {
     return <Alert severity="error">Failed to load {dslPath}.</Alert>;
   }
-  if (!streaming && !scene) {
+  if (!hasLiveContent && !scene) {
     return (
       <Typography variant="body2" color="text.secondary">
         This wireframe source could not be rendered.
@@ -105,10 +110,8 @@ export function WireframePanel({
   // (fillHeight) sets `flex: 1` on its own root inside the flex column.
   return (
     <Box sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-      {streaming && agentBusy && (
-        // The chip means "actively being generated", not "rendered from the
-        // live doc" — the doc is ALWAYS the source while collab is up (rooms
-        // are seeded), so gate the chip on the agent actually being in the room.
+      {streaming && (
+        // The chip means "actively being generated" — agent in room AND writing.
         <Box
           sx={{
             px: 1.5,
@@ -122,7 +125,7 @@ export function WireframePanel({
           <Chip size="small" color="primary" variant="outlined" label="Drawing…" />
         </Box>
       )}
-      {streaming ? (
+      {hasLiveContent ? (
         <ExcalidrawView scene={liveScene!} fillHeight />
       ) : (
         <ExcalidrawView key={sha} scene={scene!} fillHeight />
