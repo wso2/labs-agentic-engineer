@@ -69,8 +69,11 @@ export function WireframePanel({
     return lastGoodLive.current;
   }, [dslPath, liveSource]);
 
-  const streaming = liveScene != null;
   const agentBusy = collab.peers.some((p) => p.kind === "agent");
+  // Streaming means the agent is actively writing. Seeded collab content alone
+  // doesn't count — rooms are always seeded with committed files (#86 phase 4),
+  // so streaming must require BOTH live content AND an agent in the room.
+  const streaming = liveScene != null && agentBusy;
   // Committed fetch: the collab-less base path only (mirrors `usesCollab`
   // disabling the content query for markdown) — passing "" disables it. An
   // agent in the room also suppresses it: the doc WILL deliver the file, and
