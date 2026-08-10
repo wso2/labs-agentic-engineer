@@ -17,17 +17,55 @@
  */
 
 /**
- * The process wrapper: argv in, exit code out. Kept apart from `cli.ts` so the
- * CLI's behaviour is testable without a subprocess and without a module that
- * calls `process.exit` on import.
+ * The process wrapper: argv in, exit code out.
+ *
+ * Kept apart from `cli.ts` so the CLI's behaviour is testable without a
+ * subprocess and without a module that calls `process.exit` on import. This is
+ * ALSO the only module that reads the environment or touches a filesystem the
+ * caller did not name, which is what keeps every test in the suite hermetic: they
+ * drive `run()` with an injected cache and cannot accidentally read or write a
+ * developer's real `~/.cache`.
  */
 
+import { homedir, tmpdir } from "node:os";
+import { createDiskCache } from "./cache/disk.js";
+import { resolveCacheLocation } from "./cache/location.js";
+import { NULL_CACHE, type DocsCache } from "./cache/store.js";
 import { run } from "./cli.js";
 
-const code = await run(process.argv.slice(2), {
-  out: (text) => process.stdout.write(text),
-  errorOut: (text) => process.stderr.write(text),
-}).catch((cause: unknown) => {
+/**
+ * `homedir()` and `tmpdir()` read the environment and can throw on a container
+ * with no passwd entry, which is a shape a runner can genuinely have. Anything
+ * that goes wrong here means no cache, not no lookup.
+ */
+function safely(read: () => string): string {
+  try {
+    return read();
+  } catch {
+    return "";
+  }
+}
+
+function buildCache(): DocsCache {
+  const uid = typeof process.getuid === "function" ? process.getuid() : 0;
+  const location = resolveCacheLocation({
+    env: process.env,
+    homedir: safely(homedir),
+    tmpdir: safely(tmpdir),
+    uid,
+  });
+  if (location.kind === "disabled") return NULL_CACHE;
+  return createDiskCache({ root: location.root, mode: location.mode, uid });
+}
+
+const code = await run(
+  process.argv.slice(2),
+  {
+    out: (text) => process.stdout.write(text),
+    errorOut: (text) => process.stderr.write(text),
+  },
+  { cache: buildCache() },
+).catch((cause: unknown) => {
   // Nothing in the pipeline throws by design; if something does, it is a defect
   // in this package and the caller still needs a machine-readable line.
   const message = cause instanceof Error ? cause.message : String(cause);

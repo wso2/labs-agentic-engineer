@@ -359,94 +359,94 @@ type PayloadValidationError distinct (PayloadBindingError&error);
 
 # Producer acknowledgement type is 'all'. This will guarantee that the record will not be lost as long as at least one
 # in-sync replica is alive.
-const string ACKS_ALL = ""all"";
+const string ACKS_ALL = "all";
 
 # Producer acknowledgement type '0'. If the acknowledgement type set to this, the producer will not wait for any
 # acknowledgement from the server.
-const string ACKS_NONE = ""0"";
+const string ACKS_NONE = "0";
 
 # Producer acknowledgement type '1'. If the acknowledgement type set to this, the leader will write the record to its
 # A local log will respond without waiting FOR full acknowledgement from all the followers.
-const string ACKS_SINGLE = ""1"";
+const string ACKS_SINGLE = "1";
 
 # Kafka SASL_PLAIN authentication mechanism
-const string AUTH_SASL_PLAIN = ""PLAIN"";
+const string AUTH_SASL_PLAIN = "PLAIN";
 
 # Kafka SASL_SCRAM authentication mechanism
-const string AUTH_SASL_SCRAM_SHA_256 = ""SCRAM-SHA-256"";
+const string AUTH_SASL_SCRAM_SHA_256 = "SCRAM-SHA-256";
 
-const string AUTH_SASL_SCRAM_SHA_512 = ""SCRAM-SHA-512"";
+const string AUTH_SASL_SCRAM_SHA_512 = "SCRAM-SHA-512";
 
 # Kafka GZIP compression type.
-const string COMPRESSION_GZIP = ""gzip"";
+const string COMPRESSION_GZIP = "gzip";
 
 # Kafka LZ4 compression type.
-const string COMPRESSION_LZ4 = ""lz4"";
+const string COMPRESSION_LZ4 = "lz4";
 
 # No compression.
-const string COMPRESSION_NONE = ""none"";
+const string COMPRESSION_NONE = "none";
 
 # Kafka Snappy compression type.
-const string COMPRESSION_SNAPPY = ""snappy"";
+const string COMPRESSION_SNAPPY = "snappy";
 
 # Kafka ZSTD compression type.
-const string COMPRESSION_ZSTD = ""zstd"";
+const string COMPRESSION_ZSTD = "zstd";
 
 # The default server URL.
-const string DEFAULT_URL = ""localhost:9092"";
+const string DEFAULT_URL = "localhost:9092";
 
 # User-defined deserializer.
-const string DES_CUSTOM = ""CUSTOM"";
+const string DES_CUSTOM = "CUSTOM";
 
 # In-built Kafka float deserializer.
-const string DES_FLOAT = ""FLOAT"";
+const string DES_FLOAT = "FLOAT";
 
 # In-built Kafka int deserializer.
-const string DES_INT = ""INT"";
+const string DES_INT = "INT";
 
 # In-built Kafka byte array deserializer.
 # In-built Kafka string deserializer.
-const string DES_STRING = ""STRING"";
+const string DES_STRING = "STRING";
 
 # Configures the consumer to read the committed messages only in the transactional mode when poll() is called.
-const string ISOLATION_COMMITTED = ""read_committed"";
+const string ISOLATION_COMMITTED = "read_committed";
 
 # Configures the consumer to read all the messages including the aborted ones.
-const string ISOLATION_UNCOMMITTED = ""read_uncommitted"";
+const string ISOLATION_UNCOMMITTED = "read_uncommitted";
 
 # Automatically reset the consumer offset to the earliest offset
-const string OFFSET_RESET_EARLIEST = ""earliest"";
+const string OFFSET_RESET_EARLIEST = "earliest";
 
 # Automatically reset the consumer offset to the latest offset
-const string OFFSET_RESET_LATEST = ""latest"";
+const string OFFSET_RESET_LATEST = "latest";
 
 # If the `offsetReset` is set to `OFFSET_RESET_NONE`, the consumer will give an error if no previous offset is found
 # for the consumer group
-const string OFFSET_RESET_NONE = ""none"";
+const string OFFSET_RESET_NONE = "none";
 
 # Represents Kafka un-authenticated, non-encrypted channel
-const string PROTOCOL_PLAINTEXT = ""PLAINTEXT"";
+const string PROTOCOL_PLAINTEXT = "PLAINTEXT";
 
 # Represents Kafka authenticated, non-encrypted channel
-const string PROTOCOL_SASL_PLAINTEXT = ""SASL_PLAINTEXT"";
+const string PROTOCOL_SASL_PLAINTEXT = "SASL_PLAINTEXT";
 
 # Represents Kafka SASL authenticated, SSL channel
-const string PROTOCOL_SASL_SSL = ""SASL_SSL"";
+const string PROTOCOL_SASL_SSL = "SASL_SSL";
 
 # Represents Kafka SSL channel
-const string PROTOCOL_SSL = ""SSL"";
+const string PROTOCOL_SSL = "SSL";
 
 # User-defined serializer.
-const string SER_CUSTOM = ""CUSTOM"";
+const string SER_CUSTOM = "CUSTOM";
 
 # In-built Kafka float serializer.
-const string SER_FLOAT = ""FLOAT"";
+const string SER_FLOAT = "FLOAT";
 
 # In-built Kafka int serializer.
-const string SER_INT = ""INT"";
+const string SER_INT = "INT";
 
 # In-built Kafka string serializer.
-const string SER_STRING = ""STRING"";
+const string SER_STRING = "STRING";
 
 # Kafka in-built deserializer type.
 enum DeserializerType {

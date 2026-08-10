@@ -429,10 +429,10 @@ type FileGenericError distinct Error;
 type ValueEncodeError distinct Error;
 
 # Holds value for message type **text/html**.
-const string CONTENT_TYPE_TEXT_HTML = ""text/html"";
+const string CONTENT_TYPE_TEXT_HTML = "text/html";
 
 # Holds value for message type **text/plain**.
-const string CONTENT_TYPE_TEXT_PLAIN = ""text/plain"";
+const string CONTENT_TYPE_TEXT_PLAIN = "text/plain";
 
 # Data format for response.
 type Alt "json"|"media"|"proto";

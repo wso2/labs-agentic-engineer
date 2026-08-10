@@ -57,9 +57,26 @@ export function listFixtures(): string[] {
     .sort();
 }
 
+/**
+ * Fixtures are immutable on disk and the pipeline above them is pure, so a fixture
+ * is decoded and transformed once per test process.
+ *
+ * Not a micro-optimisation: `ballerinax/github` is 12.4MB of JSON, and the oracle
+ * tests ask for its library once per tree path. Re-deriving it each time took the
+ * suite from a few seconds to 106.
+ */
+const rawCache = new Map<string, unknown>();
+const libraryCache = new Map<string, Library>();
+
 /** The recorded payload, still unvalidated — parsing it is what a test asserts. */
 export function loadRawFixture(slug: string): unknown {
-  return JSON.parse(gunzipSync(readFileSync(join(FIXTURES_DIR, `${slug}.json.gz`))).toString("utf-8")) as unknown;
+  const cached = rawCache.get(slug);
+  if (cached !== undefined) return structuredClone(cached);
+  const parsed = JSON.parse(gunzipSync(readFileSync(join(FIXTURES_DIR, `${slug}.json.gz`))).toString("utf-8")) as unknown;
+  rawCache.set(slug, parsed);
+  // Cloned on the way out: several tests mutate the payload to build a negative
+  // case, and a shared object would let one test corrupt the next.
+  return structuredClone(parsed);
 }
 
 export function loadFixture(slug: string): CentralDocs {
@@ -81,10 +98,14 @@ export function qualifiedForSlug(slug: string): QualifiedName {
 
 /** The IR every view is rendered from — the pipeline up to but not including a document. */
 export function libraryFor(slug: string): Library {
+  const cached = libraryCache.get(slug);
+  if (cached !== undefined) return cached;
   const docs = loadFixture(slug);
   const module = selectModule(docs, qualifiedForSlug(slug));
   if (!module.ok) throw new Error(`fixture ${slug} has no module named after it: ${JSON.stringify(module.error)}`);
-  return applyPatches(fromCentral(module.value));
+  const library = applyPatches(fromCentral(module.value));
+  libraryCache.set(slug, library);
+  return library;
 }
 
 /**

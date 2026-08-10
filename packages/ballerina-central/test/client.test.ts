@@ -131,7 +131,7 @@ test("the newest version is the first entry Central returns", async () => {
   const scripted = scriptedFetch([() => json(["6.0.0", "5.4.1", "5.4.0"])]);
   const result = await resolveLatestVersion(GITHUB, { ...FAST, fetch: scripted.fetch });
   assert.equal(result.ok, true);
-  assert.equal(result.ok ? result.value : "", "6.0.0");
+  assert.deepEqual(result.ok ? result.value : undefined, { version: "6.0.0", stale: false });
 });
 
 test("Central's 400 for an unpublished name reads as 'no such package'", async () => {

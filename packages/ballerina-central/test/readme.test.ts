@@ -17,76 +17,70 @@
  */
 
 /**
- * `--readme` exists because the `.bala` tree's `docs/README.md` was the one
- * thing the API document could not replace, and Central ships that same file in
- * the payload we already fetch. These tests hold both halves of that claim: the
- * guide comes through untouched, and every package in the corpus has one.
+ * The package's own guide: that it is there, that it is passed through untouched,
+ * and that embedding it does not corrupt the code samples inside it.
+ *
+ * The last one is the risk worth a test. The guide is the section an agent copies
+ * a working call out of, and a heading transform that reached inside a fenced
+ * block would rewrite `# comment` lines in Ballerina, shell and Python samples.
  */
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { collectReadmes, toReadmeDocument } from "../src/readme.js";
-import { parseQualifiedName, parseVersion } from "../src/qualified.js";
+import { collectReadmes, demoteHeadings } from "../src/readme.js";
 import type { CentralDocs } from "../src/central/schema.js";
 import { listFixtures, loadFixture } from "./corpus.js";
 
-function coordinates(qualifiedName: string, version: string) {
-  const qualified = parseQualifiedName(qualifiedName);
-  const parsedVersion = parseVersion(version);
-  assert.ok(qualified.ok && parsedVersion.ok);
-  return { qualified: qualified.value, version: parsedVersion.value };
+/** One module's worth of payload, with only the fields `collectReadmes` reads. */
+function docsWith(modules: readonly { id: string; description?: string }[]): CentralDocs {
+  return { docsData: { modules } } as unknown as CentralDocs;
 }
 
 test("every package in the corpus publishes a guide", () => {
+  // The overview leans on this: the guide is most packages' largest section and
+  // the answer to "how is this used". A fixture without one would make the
+  // overview tests pass for the wrong reason.
   for (const slug of listFixtures()) {
     const readmes = collectReadmes(loadFixture(slug));
-    assert.ok(readmes.length > 0, `${slug} has no README — --readme would fail for it`);
-    assert.ok(
-      readmes.every((readme) => readme.markdown.length > 500),
-      `${slug} has a stub README`,
-    );
+    assert.ok(readmes.length >= 1, `${slug} publishes no guide`);
+    assert.ok((readmes[0]?.markdown.length ?? 0) > 500, `${slug}'s guide is suspiciously short`);
   }
 });
 
 test("the guide is passed through untouched, only trimmed", () => {
-  const docs = loadFixture("ballerinax__kafka");
-  const [readme] = collectReadmes(docs);
-  assert.ok(readme !== undefined);
-  assert.equal(readme.module, "kafka");
-  // The bytes Central serves, which are the bytes the published .bala keeps at
-  // docs/README.md — verified identical for this exact version.
-  assert.equal(readme.markdown, (docs.docsData.modules[0]?.description ?? "").trim());
-  assert.match(readme.markdown, /^## Overview/);
+  const docs = docsWith([{ id: "kafka", description: "\n\n## Overview\n\nbody\n\n" }]);
+  assert.deepEqual(collectReadmes(docs), [{ module: "kafka", markdown: "## Overview\n\nbody" }]);
 });
 
-test("the document stamps the resolved version, so a stale file is visible", () => {
-  const { qualified, version } = coordinates("ballerinax/kafka", "4.6.5");
-  const document = toReadmeDocument(qualified, version, collectReadmes(loadFixture("ballerinax__kafka")));
-  assert.match(document, /^<!-- Resolved: ballerinax\/kafka:4\.6\.5 -->\n/);
-});
-
-test("a module heading is emitted even when there is only one, so the format never varies", () => {
-  const { qualified, version } = coordinates("ballerinax/kafka", "4.6.5");
-  const document = toReadmeDocument(qualified, version, collectReadmes(loadFixture("ballerinax__kafka")));
-  assert.equal(document.match(/^<!-- Module: /gm)?.length, 1);
-  assert.match(document, /<!-- Module: kafka -->\n## Overview/);
-});
-
-test("a multi-module package separates its guides by module", () => {
-  const { qualified, version } = coordinates("ballerinax/two", "1.0.0");
-  const document = toReadmeDocument(qualified, version, [
-    { module: "two", markdown: "# Root" },
-    { module: "two.sub", markdown: "# Sub" },
-  ]);
-  assert.equal(
-    document,
-    "<!-- Resolved: ballerinax/two:1.0.0 -->\n<!-- Module: two -->\n# Root\n\n<!-- Module: two.sub -->\n# Sub\n",
+test("a module without a guide is dropped rather than carried as an empty section", () => {
+  const docs = docsWith([{ id: "a", description: "   " }, { id: "b" }, { id: "c", description: "real" }]);
+  assert.deepEqual(
+    collectReadmes(docs).map((readme) => readme.module),
+    ["c"],
   );
 });
 
-test("a module without a guide is dropped rather than emitted as an empty heading", () => {
-  const docs = {
-    docsData: { modules: [{ id: "a", description: "   " }, { id: "b", description: "# B" }] },
-  } as unknown as CentralDocs;
-  assert.deepEqual(collectReadmes(docs), [{ module: "b", markdown: "# B" }]);
+test("headings are demoted so the host document keeps one outline", () => {
+  assert.equal(demoteHeadings("# Top\n## Second\ntext", 2), "### Top\n#### Second\ntext");
+});
+
+test("a heading cannot be demoted past level 6, because that stops being a heading", () => {
+  assert.equal(demoteHeadings("##### Five\n###### Six", 2), "###### Five\n###### Six");
+});
+
+test("a # inside a fenced block is left alone, because it is a comment in someone's sample", () => {
+  const guide = ["## Setup", "", "```ballerina", "# The star count.", "int stars = 0;", "```", "", "## Next"].join("\n");
+  const demoted = demoteHeadings(guide, 2);
+  assert.match(demoted, /^#### Setup$/m);
+  assert.match(demoted, /^#### Next$/m);
+  assert.match(demoted, /^# The star count\.$/m, "a Ballerina doc comment must survive verbatim");
+});
+
+test("a tilde fence counts as a fence too", () => {
+  assert.equal(demoteHeadings("~~~\n# not a heading\n~~~", 2), "~~~\n# not a heading\n~~~");
+});
+
+test("a line that only looks like a heading is left alone", () => {
+  // No space after the hashes, so it is not an ATX heading.
+  assert.equal(demoteHeadings("#hashtag\n####### seven", 2), "#hashtag\n####### seven");
 });

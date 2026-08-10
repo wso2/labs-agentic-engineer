@@ -295,7 +295,7 @@ type InvalidRangeError distinct Error;
 # insufficient permissions, or an API-level rejection.
 type SpreadsheetError distinct Error;
 
-const string REFRESH_URL = ""https://accounts.google.com/o/oauth2/token"";
+const string REFRESH_URL = "https://accounts.google.com/o/oauth2/token";
 
 # Dimension
 enum Dimension {

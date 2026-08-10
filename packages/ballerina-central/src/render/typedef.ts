@@ -65,8 +65,23 @@ function renderUnion(typeDef: Extract<TypeDef, { kind: "union" }>): string {
   return `${description}type ${typeDef.name} ${typeDef.members.map((member) => member.name).join("|")};`;
 }
 
+/**
+ * A constant, with its value quoted exactly once.
+ *
+ * Central sends a string constant's value WITH its quotes — `"\"PLAIN\""` for
+ * `AUTH_SASL_PLAIN` — and adding another pair produced
+ * `const string AUTH_SASL_PLAIN = ""PLAIN"";`, which is not valid Ballerina. It
+ * affected all 108 string constants in the corpus, with zero counter-examples:
+ * every one arrives already quoted.
+ *
+ * The quotes are still added when they are absent rather than dropped outright,
+ * because "already quoted" is an observation about today's payload and an
+ * unquoted value would otherwise render as a bare identifier — a worse failure,
+ * since it would look like a reference to something rather than like a typo.
+ */
 function renderConstant(typeDef: Extract<TypeDef, { kind: "constant" }>): string {
-  const value = typeDef.varType.name === "string" ? `"${typeDef.value}"` : typeDef.value;
+  const needsQuotes = typeDef.varType.name === "string" && !/^".*"$/s.test(typeDef.value);
+  const value = needsQuotes ? `"${typeDef.value}"` : typeDef.value;
   return `${renderDescription(typeDef.description)}const ${typeDef.varType.name} ${typeDef.name} = ${value};`;
 }
 

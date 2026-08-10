@@ -17,23 +17,33 @@
  */
 
 /**
- * The whole capability, in two functions: resolve which version to read, then
- * read it.
+ * The whole capability in two steps: resolve which version to read, then read it
+ * once.
  *
  * They are separate because the resolution rule is the part with a cost. An
- * explicit version is free; a `Dependencies.toml` is a file read; asking
- * Central is a round trip. Callers that already know the version should never
- * pay for the ones that follow.
+ * explicit version is free; a `Dependencies.toml` is a file read; asking Central
+ * is a round trip. Callers that already know the version should never pay for the
+ * ones that follow.
+ *
+ * `loadPackage` is deliberately the only load: all four verbs read the same
+ * payload and differ only in which document they write from it, so a verb cannot
+ * be cheap because it skipped work another verb does.
  */
 
-import { fetchDocs, lockedVersion, resolveLatestVersion, type HttpOptions } from "./central/client.js";
+import {
+  fetchDocs,
+  lockedVersion,
+  resolveLatestVersion,
+  type HttpOptions,
+  type ResolvedVersion,
+  type Source,
+} from "./central/client.js";
 import { fromCentral, selectModule } from "./from-central.js";
-import { applyPatches } from "./patches.js";
-import { collectReadmes, toReadmeDocument, type ModuleReadme } from "./readme.js";
-import { toSyntaxString } from "./render/document.js";
-import { err, ok, type Result } from "./result.js";
-import { parseVersion, type QualifiedName, type Version } from "./qualified.js";
 import type { Library } from "./model.js";
+import { applyPatches } from "./patches.js";
+import { parseVersion, type QualifiedName, type Version } from "./qualified.js";
+import { collectReadmes, type ModuleReadme } from "./readme.js";
+import { ok, type Result } from "./result.js";
 
 export interface ResolveOptions extends HttpOptions {
   /** An explicit version wins over everything else. */
@@ -48,85 +58,72 @@ export interface ResolveOptions extends HttpOptions {
  * `Dependencies.toml` outranks Central's latest deliberately: once a build has
  * resolved the package, the locked version is the one the component will
  * actually compile against, and reading a newer one produces signatures that do
- * not exist for this caller.
+ * not exist for this caller. Both of the answers above Central also bypass the
+ * versions-list TTL entirely, so caching changes nothing about this precedence.
  */
 export async function resolveVersion(
   qualified: QualifiedName,
   options: ResolveOptions = {},
-): Promise<Result<Version>> {
-  if (options.version !== undefined) return parseVersion(options.version);
+): Promise<Result<ResolvedVersion>> {
+  const fixed = (input: string): Result<ResolvedVersion> => {
+    const parsed = parseVersion(input);
+    return parsed.ok ? ok({ version: parsed.value, stale: false }) : parsed;
+  };
+  if (options.version !== undefined) return fixed(options.version);
   if (options.projectDir !== undefined) {
     const locked = lockedVersion(options.projectDir, qualified);
-    if (locked !== undefined) return parseVersion(locked);
+    if (locked !== undefined) return fixed(locked);
   }
   return resolveLatestVersion(qualified, options);
 }
 
-/** The guides Central holds for one published version. */
-export async function loadReadmes(
-  qualified: QualifiedName,
-  version: Version,
-  options: HttpOptions = {},
-): Promise<Result<readonly ModuleReadme[]>> {
-  const docs = await fetchDocs(qualified, version, options);
-  if (!docs.ok) return docs;
-  const readmes = collectReadmes(docs.value);
-  if (readmes.length === 0) {
-    return err({
-      kind: "no-readme",
-      qualified: `${qualified.org}/${qualified.name}:${version}`,
-      suggestion: "The package publishes no guide. Read its API instead: drop --readme.",
-    });
-  }
-  return ok(readmes);
+/**
+ * One package, read once: its coordinates, its API as the IR, its guide, and
+ * where the bytes came from.
+ */
+export interface LoadedPackage {
+  readonly qualified: QualifiedName;
+  readonly version: Version;
+  readonly library: Library;
+  /** Every module of the payload that wrote a guide, in Central's order. */
+  readonly readmes: readonly ModuleReadme[];
+  /** The `Source` line every document carries — see `describeProvenance`. */
+  readonly provenance: string;
 }
 
-/** Central's docs for one published version, as the IR. */
-export async function loadLibrary(
+/**
+ * What the provenance header says, in the three states it can be in.
+ *
+ * It makes stdout run-order-dependent, which is a real if small change to the
+ * stdout-is-the-document discipline: the same command run twice prints `central`
+ * then `cache`. Snapshot tests therefore pin the body under a fixed header rather
+ * than pretending the line is deterministic. The alternative — omitting it — costs
+ * an operator the only way to tell a cache hit from a fetch, and costs an agent
+ * the only warning that a version was never verified.
+ */
+export function describeProvenance(source: Source, stale: boolean): string {
+  return stale ? "cache (stale: registry unreachable, version unverified)" : source;
+}
+
+export async function loadPackage(
   qualified: QualifiedName,
-  version: Version,
-  options: HttpOptions = {},
-): Promise<Result<Library>> {
+  options: ResolveOptions = {},
+): Promise<Result<LoadedPackage>> {
+  const resolved = await resolveVersion(qualified, options);
+  if (!resolved.ok) return resolved;
+  const { version, stale } = resolved.value;
+
   const docs = await fetchDocs(qualified, version, options);
   if (!docs.ok) return docs;
-  const module = selectModule(docs.value, qualified);
+
+  const module = selectModule(docs.value.docs, qualified);
   if (!module.ok) return module;
-  return ok(applyPatches(fromCentral(module.value)));
-}
 
-/**
- * The rendered document, with the resolved coordinates on the first line.
- *
- * That header is the reason this wrapper exists: without a version stamped into
- * the output, a file left over from a previous lookup is indistinguishable from
- * a fresh one, and an agent grepping it has no way to tell.
- */
-export async function renderLibrary(
-  qualified: QualifiedName,
-  options: ResolveOptions = {},
-): Promise<Result<string>> {
-  const version = await resolveVersion(qualified, options);
-  if (!version.ok) return version;
-  const library = await loadLibrary(qualified, version.value, options);
-  if (!library.ok) return library;
-  return ok(`// Resolved: ${qualified.org}/${qualified.name}:${version.value}\n${toSyntaxString(library.value)}`);
-}
-
-/**
- * The same package, read as its guide rather than its API.
- *
- * Version resolution is shared with `renderLibrary` on purpose: a guide that
- * describes a different version than the one the component compiles against is
- * worse than no guide, and `Dependencies.toml` outranking Central's latest is
- * exactly what prevents that.
- */
-export async function renderReadme(
-  qualified: QualifiedName,
-  options: ResolveOptions = {},
-): Promise<Result<string>> {
-  const version = await resolveVersion(qualified, options);
-  if (!version.ok) return version;
-  const readmes = await loadReadmes(qualified, version.value, options);
-  if (!readmes.ok) return readmes;
-  return ok(toReadmeDocument(qualified, version.value, readmes.value));
+  return ok({
+    qualified,
+    version,
+    library: applyPatches(fromCentral(module.value)),
+    readmes: collectReadmes(docs.value.docs),
+    provenance: describeProvenance(docs.value.source, stale),
+  });
 }

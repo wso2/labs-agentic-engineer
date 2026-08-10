@@ -19,117 +19,213 @@
 /**
  * `bal-library` — the command the ballerina skill drives.
  *
- * The stream discipline is the contract, and it is what lets the skill say
- * `bal-library ballerinax/github > /tmp/github-api.bal` and get a file holding
- * nothing but Ballerina:
+ * The stream discipline is the contract:
  *
- *   stdout   the requested document, and nothing else — no progress, no banner.
- *            Ballerina source, or Markdown under `--readme`
- *   stderr   on failure, one JSON object matching `Failure`
- *   exit 0   success
- *   exit 1   Central could not answer, or the package published no guide —
- *            retryable in principle, and never a licence to guess a signature
- *   exit 2   the arguments are wrong, or `--help`
+ *   stdout   the requested document, and nothing else — no progress, no banner
+ *   stderr   on failure, one JSON object matching `Failure`; or usage text
+ *   exit 0   success, and stdout is COMPLETE
+ *   exit 1   Central could not answer — retryable in principle, and never a
+ *            licence to guess a signature
+ *   exit 2   the arguments are wrong, `--help`, an unknown verb, an ambiguous
+ *            client, or a `type` name that does not resolve
+ *
+ * VERB-FIRST, not mode flags. Four distinct nouns should not be four modifiers on
+ * one command, and a LEADING verb is the form that is safe under version skew: a
+ * verb has no `/`, so a stale binary fails it against the qualified-name regex at
+ * exit 2. A verb placed after the package is the unsafe form — a stale binary
+ * reads it as a version and reports `package-not-found` at exit 1, which the skill
+ * teaches means "retry" — and that is why it stays rejected.
+ *
+ * Disambiguation, stated once: a first positional containing `/` is a package;
+ * otherwise it is a verb.
  */
 
+import { NULL_CACHE } from "./cache/store.js";
 import type { HttpOptions } from "./central/client.js";
-import { renderLibrary, renderReadme, type ResolveOptions } from "./library.js";
+import { loadPackage, type LoadedPackage, type ResolveOptions } from "./library.js";
 import { parseQualifiedName, type QualifiedName } from "./qualified.js";
+import { toSyntaxString } from "./render/document.js";
 import { describeFailure, err, exitCodeFor, ok, type Failure, type Result } from "./result.js";
+import { usage, VERBS, type Verb } from "./usage.js";
+import { renderOpsView } from "./views/ops.js";
+import { renderOverview } from "./views/overview.js";
+import { renderTypeView } from "./views/type.js";
 
-const USAGE = `Usage: bal-library <org/name> [version] [--readme] [--project-dir <dir>]
-
-Print a Ballerina package's whole public API — clients, resource and remote
-functions, records, enums, unions, services, annotations — as Ballerina source
-on stdout.
-
-  <org/name>            Package WITHOUT a version suffix, e.g. ballerinax/github
-  [version]             Optional. Omitted, the version is taken from
-                        --project-dir's Dependencies.toml when it locks the
-                        package, and from Central's latest otherwise.
-  --readme              Print the package's own guide as Markdown instead of its
-                        API. It leads with runnable usage samples, and answers
-                        "how is this used" where the API answers "what is it
-                        called".
-  --project-dir <dir>   A component directory a build has resolved.
-
-Redirect it to a file: the output is one file per package and runs to tens of
-thousands of lines, ordered types -> clients -> services, so paging it shows
-types and never the client.
-
-  bal-library ballerinax/github > /tmp/github-api.bal
-  grep -n 'client class' /tmp/github-api.bal
-  bal-library ballerinax/github --readme > /tmp/github-readme.md
-`;
+/** One verb plus exactly the options that verb takes. */
+export type Command =
+  | { readonly kind: "overview"; readonly client?: string }
+  | { readonly kind: "ops"; readonly path?: string; readonly client?: string; readonly sigs: boolean }
+  | { readonly kind: "type"; readonly names: readonly string[]; readonly deps: boolean }
+  | { readonly kind: "api" };
 
 export interface CliArgs {
   readonly qualified: QualifiedName;
+  readonly command: Command;
   readonly options: ResolveOptions;
-  /** Which of the package's two documents to print. */
-  readonly document: "api" | "readme";
+}
+
+function isVerb(token: string): token is Verb {
+  return (VERBS as readonly string[]).includes(token);
+}
+
+function validation(message: string, suggestion: string): Result<CliArgs> {
+  return err({ kind: "validation", message, suggestion });
 }
 
 /** `null` means "print usage and stop" — `--help`, or no arguments at all. */
 export function parseArgs(argv: readonly string[]): Result<CliArgs> | null {
   const positional: string[] = [];
+  let client: string | undefined;
   let projectDir: string | undefined;
-  let document: CliArgs["document"] = "api";
+  let sigs = false;
+  let deps = false;
+  let refresh = false;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
+    if (arg === undefined) continue;
     if (arg === "-h" || arg === "--help") return null;
-    if (arg === "--readme") {
-      document = "readme";
+    if (arg === "--sigs") {
+      sigs = true;
       continue;
     }
-    if (arg === "--project-dir") {
+    if (arg === "--deps") {
+      deps = true;
+      continue;
+    }
+    if (arg === "--refresh") {
+      refresh = true;
+      continue;
+    }
+    if (arg === "--client" || arg === "--project-dir") {
       const value = argv[++i];
-      if (value === undefined) {
-        return err({
-          kind: "validation",
-          message: "--project-dir needs a directory.",
-          suggestion: "Pass the component directory, e.g. --project-dir stars-api.",
-        });
+      if (value === undefined || value.startsWith("--")) {
+        return validation(
+          `${arg} needs a value.`,
+          arg === "--client"
+            ? "Pass a client name, e.g. --client Client."
+            : "Pass the component directory, e.g. --project-dir stars-api.",
+        );
       }
-      projectDir = value;
+      if (arg === "--client") client = value;
+      else projectDir = value;
       continue;
     }
-    // An unrecognised flag must never become the version. `--refresh` on a stale
-    // binary used to resolve as `ballerina/http:--refresh` and report
-    // `package-not-found` at exit 1 — which the skill teaches means "Central
-    // could not answer, run it once more", sending the agent into a retry of a
-    // command that cannot ever succeed.
-    if (arg !== undefined && arg.startsWith("--")) {
-      return err({
-        kind: "validation",
-        message: `Unknown flag '${arg}'.`,
-        suggestion: "Known flags are --readme and --project-dir. Run with --help for usage.",
-      });
+    // An unrecognised flag must never become a positional. Silently absorbing one
+    // is how `--refresh` used to resolve as the VERSION and report a Central
+    // failure at exit 1, which the skill teaches means "run it once more".
+    if (arg.startsWith("-") && arg !== "-") {
+      return validation(
+        `Unknown flag '${arg}'.`,
+        "Known flags are --client, --project-dir, --sigs, --deps and --refresh. Run with --help for usage.",
+      );
     }
-    if (arg !== undefined) positional.push(arg);
+    positional.push(arg);
   }
 
-  const [name, version, ...extra] = positional;
-  if (name === undefined) return null;
-  if (extra.length > 0) {
-    return err({
-      kind: "validation",
-      message: `Unexpected argument '${extra[0] ?? ""}'.`,
-      suggestion: "Pass at most 'org/name' and a version.",
-    });
-  }
+  const [first, ...rest] = positional;
+  if (first === undefined) return null;
 
+  // A package name has a slash and a verb does not. Anything else is a typo, and
+  // saying which four verbs exist is more useful than reporting it as a bad
+  // package name.
+  const leadsWithPackage = first.includes("/");
+  if (!leadsWithPackage && !isVerb(first)) {
+    return validation(
+      `'${first}' is neither a package name nor a verb.`,
+      `A package name contains a slash, e.g. ballerinax/github. The verbs are ${VERBS.join(", ")}.`,
+    );
+  }
+  const verb: Verb = leadsWithPackage || !isVerb(first) ? "overview" : first;
+  const args = leadsWithPackage ? positional : rest;
+
+  const [name, ...tail] = args;
+  if (name === undefined) {
+    return validation(`'${verb}' needs a package.`, `Pass 'org/name', e.g. bal-library ${verb} ballerinax/github.`);
+  }
   const qualified = parseQualifiedName(name);
   if (!qualified.ok) return qualified;
 
+  const command = buildCommand(verb, tail, {
+    sigs,
+    deps,
+    ...(client === undefined ? {} : { client }),
+  });
+  if (!command.ok) return command;
+
+  // A version positional exists only where it cannot be confused with something
+  // else. `ops` takes a path there and `type` takes declaration names, so those
+  // two pin a version through --project-dir, which is the form that matters after
+  // a build anyway.
+  const version = verb === "overview" ? tail[0] : undefined;
+
   return ok({
     qualified: qualified.value,
-    document,
+    command: command.value,
     options: {
       ...(version === undefined ? {} : { version }),
       ...(projectDir === undefined ? {} : { projectDir }),
+      ...(refresh ? { refresh: true } : {}),
     },
   });
+}
+
+function buildCommand(
+  verb: Verb,
+  tail: readonly string[],
+  flags: { client?: string; sigs: boolean; deps: boolean },
+): Result<Command> {
+  switch (verb) {
+    case "overview": {
+      if (tail.length > 1) {
+        return err({
+          kind: "validation",
+          message: `Unexpected argument '${tail[1] ?? ""}'.`,
+          suggestion: "overview takes at most 'org/name' and a version.",
+        });
+      }
+      return ok({ kind: "overview", ...(flags.client === undefined ? {} : { client: flags.client }) });
+    }
+    case "ops": {
+      if (tail.length > 1) {
+        return err({
+          kind: "validation",
+          message: `Unexpected argument '${tail[1] ?? ""}'.`,
+          suggestion: "ops takes one path. Quote it if it contains a wildcard: 'repos/*/*'.",
+        });
+      }
+      return ok({
+        kind: "ops",
+        sigs: flags.sigs,
+        ...(tail[0] === undefined ? {} : { path: tail[0] }),
+        ...(flags.client === undefined ? {} : { client: flags.client }),
+      });
+    }
+    case "type": {
+      if (tail.length === 0) {
+        return err({
+          kind: "validation",
+          message: "type needs at least one declaration name.",
+          suggestion: "Pass the name from a signature, e.g. bal-library type ballerinax/github FullRepository.",
+        });
+      }
+      return ok({ kind: "type", names: tail, deps: flags.deps });
+    }
+    case "api": {
+      if (tail.length > 0) {
+        return err({
+          kind: "validation",
+          message: `Unexpected argument '${tail[0] ?? ""}'.`,
+          suggestion: "api takes only 'org/name'. Pin a version with --project-dir.",
+        });
+      }
+      return ok({ kind: "api" });
+    }
+    default: {
+      const exhaustive: never = verb;
+      return exhaustive;
+    }
+  }
 }
 
 export interface CliStreams {
@@ -140,25 +236,56 @@ export interface CliStreams {
 /**
  * Runs one invocation and returns its exit code.
  *
- * Streams and HTTP are injected rather than reached for, which is what lets the
- * tests drive the real command — argument parsing, stream discipline and exit
- * codes together — against a recorded payload instead of Central.
+ * Streams, HTTP and the cache are injected rather than reached for, which is what
+ * lets the tests drive the real command — argument parsing, stream discipline and
+ * exit codes together — against a recorded payload and a temporary directory
+ * instead of Central and `$HOME`.
  */
 export async function run(argv: readonly string[], streams: CliStreams, http: HttpOptions = {}): Promise<number> {
   const parsed = parseArgs(argv);
   if (parsed === null) {
-    streams.errorOut(USAGE);
+    streams.errorOut(usage((http.cache ?? NULL_CACHE).describe()));
     return 2;
   }
   if (!parsed.ok) return fail(parsed.error, streams);
 
-  const { qualified, document, options } = parsed.value;
-  const render = document === "readme" ? renderReadme : renderLibrary;
-  const rendered = await render(qualified, { ...http, ...options });
-  if (!rendered.ok) return fail(rendered.error, streams);
+  const { qualified, command, options } = parsed.value;
+  const loaded = await loadPackage(qualified, { ...http, ...options });
+  if (!loaded.ok) return fail(loaded.error, streams);
 
-  streams.out(rendered.value);
+  const document = renderDocument(command, loaded.value);
+  if (!document.ok) return fail(document.error, streams);
+
+  streams.out(document.value);
   return 0;
+}
+
+function renderDocument(command: Command, loaded: LoadedPackage): Result<string> {
+  switch (command.kind) {
+    case "overview":
+      return ok(renderOverview(loaded, command.client === undefined ? {} : { client: command.client }));
+    case "ops":
+      return renderOpsView(loaded, {
+        sigs: command.sigs,
+        ...(command.path === undefined ? {} : { path: command.path }),
+        ...(command.client === undefined ? {} : { client: command.client }),
+      });
+    case "type":
+      return renderTypeView(loaded, { names: command.names, deps: command.deps });
+    case "api":
+      // Two provenance lines rather than one: `api` is the code register, where a
+      // comment is the only thing a Ballerina file can carry, and a document left
+      // over from an earlier lookup is otherwise indistinguishable from a fresh
+      // one.
+      return ok(
+        `// Resolved: ${loaded.qualified.org}/${loaded.qualified.name}:${loaded.version}\n` +
+          `// Source: ${loaded.provenance}\n${toSyntaxString(loaded.library)}`,
+      );
+    default: {
+      const exhaustive: never = command;
+      return exhaustive;
+    }
+  }
 }
 
 function fail(failure: Failure, streams: CliStreams): number {

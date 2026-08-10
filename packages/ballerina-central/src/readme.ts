@@ -17,20 +17,23 @@
  */
 
 /**
- * The other document a package can answer with: its own guide.
+ * The package's own guide, which answers the question a signature cannot: how is
+ * this used — auth, config, the shape of a call.
  *
- * `render.ts` turns the payload into Ballerina; this turns the same payload
- * into the Markdown the package's authors wrote. They are separate because they
- * answer different questions — a signature is looked up by name, a guide is
- * read from the top — and because the guide is prose we pass through untouched.
+ * Central serves it as `module.description`, byte-identical to the
+ * `docs/README.md` a published `.bala` carries — verified against
+ * `ballerinax/kafka@4.6.5`, 7,463 bytes, zero diff. Reading it here rather than
+ * off disk is what makes it available BEFORE a build has resolved the package,
+ * which is exactly when a connector nobody has written against is hardest to
+ * guess at.
  *
- * Central serves it as `module.description`, byte-identical to the `docs/README.md`
- * a published `.bala` carries. Reading it here rather than off disk is what makes
- * it available before a build has resolved the package at all.
+ * It is the largest part of the overview for most packages — `postgresql` is 23.6
+ * of 26KB, `graphql` 17.9 of 20.1 — and that is the right trade. It is the "how
+ * is this used" answer, and the reason the recorded traces never found it is that
+ * nothing put it in front of them.
  */
 
 import type { CentralDocs } from "./central/schema.js";
-import type { QualifiedName, Version } from "./qualified.js";
 
 /** One module's guide. A package publishes one document per module. */
 export interface ModuleReadme {
@@ -52,20 +55,32 @@ export function collectReadmes(docs: CentralDocs): readonly ModuleReadme[] {
 }
 
 /**
- * The document written to stdout.
+ * Push every ATX heading down by `levels`, so an embedded guide sits under the
+ * host document's outline instead of competing with it.
  *
- * Both stamps are HTML comments: they survive `grep`, and every Markdown reader
- * — including the one an agent pipes this into — renders them as nothing. The
- * version stamp exists for the reason `renderLibrary`'s does, that a file left
- * over from an earlier lookup is otherwise indistinguishable from a fresh one.
- * The module stamp is emitted even for the single-module packages that are the
- * common case, so the format never depends on the package.
+ * This is what lets `grep '^## '` on an overview return the overview's own
+ * sections rather than the readme's. Fenced blocks are skipped, because `#` at the
+ * start of a line inside a fence is a shell comment, a Ballerina doc comment or a
+ * Python comment — not a heading — and promoting one would corrupt a code sample
+ * the agent is about to copy.
+ *
+ * Level 6 is the floor: HTML has no `h7`, and a heading pushed past it would stop
+ * being a heading at all.
  */
-export function toReadmeDocument(
-  qualified: QualifiedName,
-  version: Version,
-  readmes: readonly ModuleReadme[],
-): string {
-  const header = `<!-- Resolved: ${qualified.org}/${qualified.name}:${version} -->\n`;
-  return header + readmes.map((readme) => `<!-- Module: ${readme.module} -->\n${readme.markdown}\n`).join("\n");
+export function demoteHeadings(markdown: string, levels: number): string {
+  let inFence = false;
+  return markdown
+    .split("\n")
+    .map((line) => {
+      if (/^\s*(```|~~~)/.test(line)) {
+        inFence = !inFence;
+        return line;
+      }
+      if (inFence) return line;
+      const heading = /^(#{1,6})(\s)/.exec(line);
+      if (!heading) return line;
+      const depth = Math.min(6, (heading[1] ?? "").length + levels);
+      return `${"#".repeat(depth)}${line.slice((heading[1] ?? "").length)}`;
+    })
+    .join("\n");
 }

@@ -2174,72 +2174,72 @@ type WritingOutboundResponseBodyError distinct OutboundResponseError;
 type WritingOutboundResponseHeadersError distinct OutboundResponseError;
 
 # HTTP header key `age`. Gives the current age of a cached HTTP response.
-const string AGE = ""age"";
+const string AGE = "age";
 
 # Represents the Authorization header name.
-const string AUTH_HEADER = ""Authorization"";
+const string AUTH_HEADER = "Authorization";
 
 # The prefix used to denote the Basic authentication scheme.
-const string AUTH_SCHEME_BASIC = ""Basic"";
+const string AUTH_SCHEME_BASIC = "Basic";
 
 # The prefix used to denote the Bearer authentication scheme.
-const string AUTH_SCHEME_BEARER = ""Bearer"";
+const string AUTH_SCHEME_BEARER = "Bearer";
 
 # HTTP header key `authorization`
-const string AUTHORIZATION = ""authorization"";
+const string AUTHORIZATION = "authorization";
 
 # HTTP header key `cache-control`. Specifies the cache control directives required for the function of HTTP caches.
-const string CACHE_CONTROL = ""cache-control"";
+const string CACHE_CONTROL = "cache-control";
 
 # This is a more restricted mode of RFC 7234. Setting this as the caching policy restricts caching to instances
 # where the `cache-control` header and either the `etag` or `last-modified` header are present.
-const string CACHE_CONTROL_AND_VALIDATORS = ""CACHE_CONTROL_AND_VALIDATORS"";
+const string CACHE_CONTROL_AND_VALIDATORS = "CACHE_CONTROL_AND_VALIDATORS";
 
 # Represents the closed state of the circuit. When the Circuit Breaker is in `CLOSED` state, all requests will be
 # allowed to go through to the upstream service. If the failures exceed the configured threhold values, the circuit
 # will trip and move to the `OPEN` state.
-const string CB_CLOSED_STATE = ""CLOSED"";
+const string CB_CLOSED_STATE = "CLOSED";
 
 # Represents the half-open state of the circuit. When the Circuit Breaker is in `HALF_OPEN` state, a trial request
 # will be sent to the upstream service. If it fails, the circuit will trip again and move to the `OPEN` state. If not,
 # it will move to the `CLOSED` state.
-const string CB_HALF_OPEN_STATE = ""HALF_OPEN"";
+const string CB_HALF_OPEN_STATE = "HALF_OPEN";
 
 # Represents the open state of the circuit. When the Circuit Breaker is in `OPEN` state, requests will fail
 # immediately.
-const string CB_OPEN_STATE = ""OPEN"";
+const string CB_OPEN_STATE = "OPEN";
 
 # Always set chunking header in the response.
-const string CHUNKING_ALWAYS = ""ALWAYS"";
+const string CHUNKING_ALWAYS = "ALWAYS";
 
 # If the payload is less than 8KB, content-length header is set in the outbound request/response,
 # otherwise chunking header is set in the outbound request/response.}
-const string CHUNKING_AUTO = ""AUTO"";
+const string CHUNKING_AUTO = "AUTO";
 
 # Never set the chunking header even if the payload is larger than 8KB in the outbound request/response.
-const string CHUNKING_NEVER = ""NEVER"";
+const string CHUNKING_NEVER = "NEVER";
 
 # Always set accept-encoding/content-encoding in outbound request/response.
-const string COMPRESSION_ALWAYS = ""ALWAYS"";
+const string COMPRESSION_ALWAYS = "ALWAYS";
 
 # When service behaves as a HTTP gateway inbound request/response accept-encoding option is set as the
 # outbound request/response accept-encoding/content-encoding option.
-const string COMPRESSION_AUTO = ""AUTO"";
+const string COMPRESSION_AUTO = "AUTO";
 
 # Never set accept-encoding/content-encoding header in outbound request/response.
-const string COMPRESSION_NEVER = ""NEVER"";
+const string COMPRESSION_NEVER = "NEVER";
 
 # HTTP header key `connection`. Allows the sender to specify options that are desired for that particular connection.
-const string CONNECTION = ""connection"";
+const string CONNECTION = "connection";
 
 # HTTP header key `content-length`. Specifies the size of the response body in bytes.
-const string CONTENT_LENGTH = ""content-length"";
+const string CONTENT_LENGTH = "content-length";
 
 # HTTP header key `content-type`. Specifies the type of the message payload.
-const string CONTENT_TYPE = ""content-type"";
+const string CONTENT_TYPE = "content-type";
 
 # HTTP header key `date`. The timestamp at the time the response was generated/received.
-const string DATE = ""date"";
+const string DATE = "date";
 
 # Constant for the default listener gracefulStop timeout in seconds
 const decimal DEFAULT_GRACEFULSTOP_TIMEOUT = 0;
@@ -2249,142 +2249,142 @@ const decimal DEFAULT_LISTENER_TIMEOUT = 60;
 
 # HTTP header key `etag`. A finger print for a resource which is used by HTTP caches to identify whether a
 # resource representation has changed.
-const string ETAG = ""etag"";
+const string ETAG = "etag";
 
 # HTTP header key `expect`. Specifies expectations to be fulfilled by the server.
-const string EXPECT = ""expect"";
+const string EXPECT = "expect";
 
 # HTTP header key `expires`. Specifies the time at which the response becomes stale.
-const string EXPIRES = ""expires"";
+const string EXPIRES = "expires";
 
 # Mutual SSL handshake has failed.
-const string FAILED = ""failed"";
+const string FAILED = "failed";
 
 # Constant for the HTTP DELETE method
-const string HTTP_DELETE = ""DELETE"";
+const string HTTP_DELETE = "DELETE";
 
 # Constant for the HTTP FORWARD method
-const string HTTP_FORWARD = ""FORWARD"";
+const string HTTP_FORWARD = "FORWARD";
 
 # Constant for the HTTP GET method
-const string HTTP_GET = ""GET"";
+const string HTTP_GET = "GET";
 
 # Constant for the HTTP HEAD method
-const string HTTP_HEAD = ""HEAD"";
+const string HTTP_HEAD = "HEAD";
 
 # Constant for the identify not an HTTP Operation
-const string HTTP_NONE = ""NONE"";
+const string HTTP_NONE = "NONE";
 
 # Constant for the HTTP OPTIONS method
-const string HTTP_OPTIONS = ""OPTIONS"";
+const string HTTP_OPTIONS = "OPTIONS";
 
 # Constant for the HTTP PATCH method
-const string HTTP_PATCH = ""PATCH"";
+const string HTTP_PATCH = "PATCH";
 
 # Constant for the HTTP POST method
-const string HTTP_POST = ""POST"";
+const string HTTP_POST = "POST";
 
 # Constant for the HTTP PUT method
-const string HTTP_PUT = ""PUT"";
+const string HTTP_PUT = "PUT";
 
 # constant for the HTTP SUBMIT method
-const string HTTP_SUBMIT = ""SUBMIT"";
+const string HTTP_SUBMIT = "SUBMIT";
 
 # HTTP header key `if-match`
-const string IF_MATCH = ""if-match"";
+const string IF_MATCH = "if-match";
 
 # HTTP header key `if-modified-since`. Used when validating (with the origin server) whether a cached response
 # is still valid. If the representation of the resource has modified since the timestamp in this field, a
 # 304 response is returned.
-const string IF_MODIFIED_SINCE = ""if-modified-since"";
+const string IF_MODIFIED_SINCE = "if-modified-since";
 
 # HTTP header key `if-none-match`. Used when validating (with the origin server) whether a cached response is
 # still valid. If the ETag provided in this field matches the representation of the requested resource, a
 # 304 response is returned.
-const string IF_NONE_MATCH = ""if-none-match"";
+const string IF_NONE_MATCH = "if-none-match";
 
 # HTTP header key `if-range`
-const string IF_RANGE = ""if-range"";
+const string IF_RANGE = "if-range";
 
 # HTTP header key `if-unmodified-since`
-const string IF_UNMODIFIED_SINCE = ""if-unmodified-since"";
+const string IF_UNMODIFIED_SINCE = "if-unmodified-since";
 
 # Constant to get the jwt information from the request context.
-const string JWT_INFORMATION = ""JWT_INFORMATION"";
+const string JWT_INFORMATION = "JWT_INFORMATION";
 
 # Keeps the connection alive irrespective of the `connection` header value }
-const string KEEPALIVE_ALWAYS = ""ALWAYS"";
+const string KEEPALIVE_ALWAYS = "ALWAYS";
 
 # Decides to keep the connection alive or not based on the `connection` header of the client request }
-const string KEEPALIVE_AUTO = ""AUTO"";
+const string KEEPALIVE_AUTO = "AUTO";
 
 # Closes the connection irrespective of the `connection` header value }
-const string KEEPALIVE_NEVER = ""NEVER"";
+const string KEEPALIVE_NEVER = "NEVER";
 
 # HTTP header key `last-modified`. The time at which the resource was last modified.
-const string LAST_MODIFIED = ""last-modified"";
+const string LAST_MODIFIED = "last-modified";
 
 # Header is placed before the payload of the request/response.
-const string LEADING = ""leading"";
+const string LEADING = "leading";
 
 # HTTP header key `location`. Indicates the URL to redirect a request to.
-const string LOCATION = ""location"";
+const string LOCATION = "location";
 
 # When used in requests, `max-age` implies that clients are not willing to accept responses whose age is greater
 # than `max-age`. When used in responses, the response is to be considered stale after the specified
 # number of seconds.
-const string MAX_AGE = ""max-age"";
+const string MAX_AGE = "max-age";
 
 # Indicates that the client is willing to accept responses which have exceeded their freshness lifetime by no more
 # than the specified number of seconds.
-const string MAX_STALE = ""max-stale"";
+const string MAX_STALE = "max-stale";
 
 # Setting this as the `max-stale` directives indicates that the `max-stale` directive does not specify a limit.
 const decimal MAX_STALE_ANY_AGE = 9223372036854775807;
 
 # Indicates that the client is only accepting responses whose freshness lifetime >= current age + min-fresh.
-const string MIN_FRESH = ""min-fresh"";
+const string MIN_FRESH = "min-fresh";
 
 # Represents multipart primary type
-const string MULTIPART_AS_PRIMARY_TYPE = ""multipart/"";
+const string MULTIPART_AS_PRIMARY_TYPE = "multipart/";
 
 # Indicates that once the response has become stale, it should not be reused for subsequent requests without
 # validating with the origin server.
-const string MUST_REVALIDATE = ""must-revalidate"";
+const string MUST_REVALIDATE = "must-revalidate";
 
 # Forces the cache to validate a cached response with the origin server before serving.
-const string NO_CACHE = ""no-cache"";
+const string NO_CACHE = "no-cache";
 
 # Instructs the cache to not store a response in non-volatile storage.
-const string NO_STORE = ""no-store"";
+const string NO_STORE = "no-store";
 
 # Instructs intermediaries not to transform the payload.
-const string NO_TRANSFORM = ""no-transform"";
+const string NO_TRANSFORM = "no-transform";
 
 # Not a mutual ssl connection.
 const record {} NONE = ();
 
 # Indicates that the client is only willing to accept a cached response. A cached response is served subject to
 # other constraints posed by the request.
-const string ONLY_IF_CACHED = ""only-if-cached"";
+const string ONLY_IF_CACHED = "only-if-cached";
 
 # Mutual SSL handshake is successful.
-const string PASSED = ""passed"";
+const string PASSED = "passed";
 
 # HTTP header key `pragma`. Used in dealing with HTTP 1.0 caches which do not understand the `cache-control` header.
-const string PRAGMA = ""pragma"";
+const string PRAGMA = "pragma";
 
 # Indicates that the response is intended for a single user and should not be stored by shared caches.
-const string PRIVATE = ""private"";
+const string PRIVATE = "private";
 
 # HTTP header key `proxy-authorization`. Contains the credentials to authenticate a user agent to a proxy serve.
-const string PROXY_AUTHORIZATION = ""proxy-authorization"";
+const string PROXY_AUTHORIZATION = "proxy-authorization";
 
 # Has the same semantics as `must-revalidate`, except that this does not apply to private caches.
-const string PROXY_REVALIDATE = ""proxy-revalidate"";
+const string PROXY_REVALIDATE = "proxy-revalidate";
 
 # Indicates that any cache may store the response.
-const string PUBLIC = ""public"";
+const string PUBLIC = "public";
 
 # Represents the HTTP redirect status code `302 - Found`.
 const int REDIRECT_FOUND_302 = 302;
@@ -2411,22 +2411,22 @@ const int REDIRECT_TEMPORARY_REDIRECT_307 = 307;
 const int REDIRECT_USE_PROXY_305 = 305;
 
 # Constant for the request method reference.
-const string REQUEST_METHOD = ""REQUEST_METHOD"";
+const string REQUEST_METHOD = "REQUEST_METHOD";
 
 # Constant for the resource name reference.
-const string RESOURCE_NAME = ""RESOURCE_NAME"";
+const string RESOURCE_NAME = "RESOURCE_NAME";
 
 # Caching behaviour is as specified by the RFC 7234 specification.
-const string RFC_7234 = ""RFC_7234"";
+const string RFC_7234 = "RFC_7234";
 
 # In shared caches, `s-maxage` overrides the `max-age` or `expires` header field.
-const string S_MAX_AGE = ""s-maxage"";
+const string S_MAX_AGE = "s-maxage";
 
 # HTTP header key `server`. Specifies the details of the origin server.
-const string SERVER = ""server"";
+const string SERVER = "server";
 
 # Constant for the service name reference.
-const string SERVICE_NAME = ""SERVICE_NAME"";
+const string SERVICE_NAME = "SERVICE_NAME";
 
 # The HTTP response status code: 202 Accepted
 const int STATUS_ACCEPTED = 202;
@@ -2612,17 +2612,17 @@ const int STATUS_USE_PROXY = 305;
 const int STATUS_VARIANT_ALSO_NEGOTIATES = 506;
 
 # Header is placed after the payload of the request/response.
-const string TRAILING = ""trailing"";
+const string TRAILING = "trailing";
 
 # HTTP header key `transfer-encoding`. Specifies what type of transformation has been applied to entity body.
-const string TRANSFER_ENCODING = ""transfer-encoding"";
+const string TRANSFER_ENCODING = "transfer-encoding";
 
 # HTTP header key `upgrade`. Allows the client to specify what additional communication protocols it supports and
 # would like to use, if the server finds it appropriate to switch protocols.
-const string UPGRADE = ""upgrade"";
+const string UPGRADE = "upgrade";
 
 # HTTP header key `warning`. Specifies warnings generated when serving stale responses from HTTP caches.
-const string WARNING = ""warning"";
+const string WARNING = "warning";
 
 # Represents certification validation type options.
 enum CertValidationType {

@@ -27,6 +27,8 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { NULL_CACHE, type DocsCache, type DocsKey, type PackageKey } from "../cache/store.js";
+import { coordinatesMatch } from "./coordinates.js";
 import { centralDocsSchema, type CentralDocs } from "./schema.js";
 import { formatQualifiedName, parseVersion, type QualifiedName, type Version } from "../qualified.js";
 import {
@@ -53,6 +55,16 @@ export interface HttpOptions {
   /** Wall clock across every attempt including backoff. */
   readonly budgetMs?: number;
   readonly baseDelayMs?: number;
+  /**
+   * Where already-fetched payloads live. Defaults to a store that does nothing,
+   * which is what keeps `src/` free of environment reads and every existing test
+   * hermetic: only `src/main.ts` constructs a real one.
+   */
+  readonly cache?: DocsCache;
+  /** Ignore any cached copy and rewrite it. */
+  readonly refresh?: boolean;
+  /** Injectable clock, so the versions-list TTL can be tested at its boundary. */
+  readonly now?: () => number;
 }
 
 const DEFAULTS = {
@@ -61,6 +73,31 @@ const DEFAULTS = {
   budgetMs: 300_000,
   baseDelayMs: 200,
 } as const;
+
+/**
+ * How long Central's answer to "what is the latest version" is believed.
+ *
+ * The measured lookup episode runs 70 to 260 seconds, so ten minutes spans a
+ * whole episode without a second registry round trip — they cost 1.0 to 1.5s
+ * each — while a package published mid-run is still picked up. It is the one
+ * mutable response this reader caches; a docs payload for a named version is
+ * immutable and never expires.
+ */
+export const LATEST_TTL_MS = 600_000;
+
+/** Where a document's bytes came from, for the provenance header. */
+export type Source = "central" | "cache";
+
+export interface FetchedDocs {
+  readonly docs: CentralDocs;
+  readonly source: Source;
+}
+
+export interface ResolvedVersion {
+  readonly version: Version;
+  /** The registry was unreachable and this came off disk unverified. */
+  readonly stale: boolean;
+}
 
 /**
  * Statuses worth trying again. A 404 is an answer — the package is not there —
@@ -203,7 +240,24 @@ function toFailure(attempt: Attempt, url: string, attempts: number, budgetMs: nu
 export async function resolveLatestVersion(
   qualified: QualifiedName,
   options: HttpOptions = {},
-): Promise<Result<Version>> {
+): Promise<Result<ResolvedVersion>> {
+  const cache = options.cache ?? NULL_CACHE;
+  const now = options.now ?? Date.now;
+  const key: PackageKey = { org: qualified.org, name: qualified.name };
+
+  // `--refresh` re-resolves unconditionally. An earlier draft made the
+  // re-download conditional on the version having changed, which made the flag a
+  // no-op in exactly the case its own error message recommends it for.
+  if (options.refresh !== true) {
+    const entry = cache.readLatest(key);
+    // The lower bound matters as much as the TTL: a clock that jumped backwards
+    // leaves a future-stamped entry looking fresh forever.
+    if (entry !== undefined && now() >= entry.atMs && now() - entry.atMs < LATEST_TTL_MS) {
+      const cached = parseVersion(entry.version);
+      if (cached.ok) return ok({ version: cached.value, stale: false });
+    }
+  }
+
   const url = `${CENTRAL_BASE_URL}registry/packages/${encodeURIComponent(qualified.org)}/${encodeURIComponent(qualified.name)}`;
   const response = await fetchJson(url, options);
   if (!response.ok) {
@@ -212,6 +266,8 @@ export async function resolveLatestVersion(
     // would send the caller looking at the network for a typo.
     const status = response.error.kind === "upstream" ? response.error.status : undefined;
     if (status === 400 || status === 404) return err(notFound(qualified));
+    const offline = offlineVersion(cache, key, now);
+    if (offline !== undefined) return ok({ version: offline, stale: true });
     return response;
   }
   const versions = response.value;
@@ -219,7 +275,35 @@ export async function resolveLatestVersion(
   if (typeof latest !== "string" || latest === "") return err(notFound(qualified));
   // Through the parser rather than branded by assertion: this is a string off the
   // network, and the cache turns it into a path segment.
-  return parseVersion(latest);
+  const parsed = parseVersion(latest);
+  if (!parsed.ok) return parsed;
+  cache.writeLatest(key, { version: parsed.value, atMs: now() });
+  return ok({ version: parsed.value, stale: false });
+}
+
+/**
+ * The best version answer available with the registry unreachable: an expired
+ * `latest` entry first, then the newest docs payload already on disk.
+ *
+ * Without this, a warm cached payload plus one registry blip is a hard failure
+ * that can burn the client's full 300s budget — four times over in the
+ * four-invocation episode this reader is designed around. `stale: true` is how
+ * the caller learns to say so on the provenance line rather than claiming a
+ * version it did not verify.
+ */
+function offlineVersion(cache: DocsCache, key: PackageKey, now: () => number): Version | undefined {
+  const expired = cache.readLatest(key);
+  if (expired !== undefined) {
+    const parsed = parseVersion(expired.version);
+    // Only trust a stamp that is not from the future; a bogus one is no better
+    // than the directory listing below it.
+    if (parsed.ok && now() >= expired.atMs) return parsed.value;
+  }
+  for (const candidate of cache.listVersions(key)) {
+    const parsed = parseVersion(candidate);
+    if (parsed.ok) return parsed.value;
+  }
+  return undefined;
 }
 
 function notFound(qualified: QualifiedName): Failure {
@@ -230,12 +314,43 @@ function notFound(qualified: QualifiedName): Failure {
   };
 }
 
-/** The API docs for one published version. */
+/**
+ * The API docs for one published version, from disk when they are already there.
+ *
+ * This is where the cache belongs: above the retry loop, so a hit costs no
+ * attempt, and below the schema, so what gets stored is not derived from our own
+ * code. It is also the reason the addressed verbs are affordable at all — at 4.9
+ * to 6.6 seconds and 12.4MB per invocation the CLI can only be asked once per
+ * package, which is what forces a 21,818-line document to be navigated by hand.
+ * Once re-opening a package costs about 250ms, four precise questions are
+ * cheaper than one big answer.
+ *
+ * ANY problem with a cached entry is a miss, never a failure: a missing file, an
+ * unreadable one, a truncated one, one that is not JSON, one the schema no longer
+ * accepts, one whose coordinates do not match its own path. Each of those drops
+ * the entry and uses the network, so a corrupt entry cannot produce a wrong
+ * document and heals on the next successful fetch.
+ */
 export async function fetchDocs(
   qualified: QualifiedName,
   version: Version,
   options: HttpOptions = {},
-): Promise<Result<CentralDocs>> {
+): Promise<Result<FetchedDocs>> {
+  const cache = options.cache ?? NULL_CACHE;
+  const key: DocsKey = { org: qualified.org, name: qualified.name, version };
+  const label = `${formatQualifiedName(qualified)}:${version}`;
+
+  if (options.refresh === true) {
+    cache.removeDocs(key);
+  } else {
+    const cached = cache.readDocs(key);
+    if (cached !== undefined) {
+      const parsed = coordinatesMatch(cached, qualified, version) ? parseCentralDocs(cached, label) : undefined;
+      if (parsed?.ok === true) return ok({ docs: parsed.value, source: "cache" });
+      cache.removeDocs(key);
+    }
+  }
+
   const url =
     `${CENTRAL_BASE_URL}docs/${encodeURIComponent(qualified.org)}` +
     `/${encodeURIComponent(qualified.name)}/${encodeURIComponent(version)}`;
@@ -245,13 +360,18 @@ export async function fetchDocs(
     if (response.error.kind === "upstream" && response.error.status === 404) {
       return err({
         kind: "package-not-found",
-        qualified: `${formatQualifiedName(qualified)}:${version}`,
+        qualified: label,
         suggestion: `Verify version '${version}' is published; omit the version to take the latest.`,
       });
     }
     return response;
   }
-  return parseCentralDocs(response.value, `${formatQualifiedName(qualified)}:${version}`);
+  const parsed = parseCentralDocs(response.value, label);
+  if (!parsed.ok) return parsed;
+  // Written only after it parses: a payload this reader cannot read is not worth
+  // storing, and storing it would make every later run pay the same drift.
+  cache.writeDocs(key, response.value);
+  return ok({ docs: parsed.value, source: "central" });
 }
 
 /** Validate a raw payload against the schema, reporting every mismatch at once. */

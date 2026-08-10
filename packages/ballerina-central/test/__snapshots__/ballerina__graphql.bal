@@ -516,20 +516,20 @@ type RequestError distinct ClientError;
 type ServerError distinct (ClientError&error);
 
 # The prefix used to denote the Basic authentication scheme.
-const string AUTH_SCHEME_BASIC = ""Basic"";
+const string AUTH_SCHEME_BASIC = "Basic";
 
 # The prefix used to denote the Bearer authentication scheme.
-const string AUTH_SCHEME_BEARER = ""Bearer"";
+const string AUTH_SCHEME_BEARER = "Bearer";
 
 # Always set accept-encoding/content-encoding in outbound request/response.
-const string COMPRESSION_ALWAYS = ""ALWAYS"";
+const string COMPRESSION_ALWAYS = "ALWAYS";
 
 # When service behaves as a HTTP gateway inbound request/response accept-encoding option is set as the
 # outbound request/response accept-encoding/content-encoding option.
-const string COMPRESSION_AUTO = ""AUTO"";
+const string COMPRESSION_AUTO = "AUTO";
 
 # Never set accept-encoding/content-encoding header in outbound request/response.
-const string COMPRESSION_NEVER = ""NEVER"";
+const string COMPRESSION_NEVER = "NEVER";
 
 # Represents a GraphQL type kind. This is used to represent the kind of a GraphQL type.
 enum __TypeKind {

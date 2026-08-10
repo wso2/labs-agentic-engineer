@@ -27,14 +27,22 @@
  */
 
 export { CENTRAL_BASE_URL, fetchDocs, fetchJson, parseCentralDocs, parseDependenciesToml } from "./central/client.js";
-export type { FetchLike, HttpOptions } from "./central/client.js";
+export type { FetchLike, FetchedDocs, HttpOptions, ResolvedVersion, Source } from "./central/client.js";
+export { coordinatesMatch } from "./central/coordinates.js";
+export { createDiskCache } from "./cache/disk.js";
+export { resolveCacheLocation } from "./cache/location.js";
+export { compareVersions, NULL_CACHE } from "./cache/store.js";
+export type { DocsCache, DocsKey, LatestEntry, PackageKey } from "./cache/store.js";
+export { renderOpsView } from "./views/ops.js";
+export { renderOverview } from "./views/overview.js";
+export { renderTypeView } from "./views/type.js";
 export { centralDocsSchema } from "./central/schema.js";
 export type { CentralDocs, CentralType } from "./central/schema.js";
-export { fromCentral } from "./from-central.js";
-export { loadLibrary, loadReadmes, renderLibrary, renderReadme, resolveVersion } from "./library.js";
-export type { ResolveOptions } from "./library.js";
+export { fromCentral, selectModule } from "./from-central.js";
+export { describeProvenance, loadPackage, resolveVersion } from "./library.js";
+export type { LoadedPackage, ResolveOptions } from "./library.js";
 export { applyPatches } from "./patches.js";
-export { collectReadmes, toReadmeDocument } from "./readme.js";
+export { collectReadmes, demoteHeadings } from "./readme.js";
 export type { ModuleReadme } from "./readme.js";
 export { renderTypeDef } from "./render/typedef.js";
 export { toSyntaxString } from "./render/document.js";
