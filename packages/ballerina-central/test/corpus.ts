@@ -39,7 +39,7 @@ import { fromCentral, selectModule } from "../src/from-central.js";
 import type { Library } from "../src/model.js";
 import { applyPatches } from "../src/patches.js";
 import { parseQualifiedName, type QualifiedName } from "../src/qualified.js";
-import { toSyntaxString } from "../src/render.js";
+import { toSyntaxString } from "../src/render/document.js";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 export const FIXTURES_DIR = join(testDir, "__fixtures__");

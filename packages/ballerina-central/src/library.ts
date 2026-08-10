@@ -30,7 +30,7 @@ import { fetchDocs, lockedVersion, resolveLatestVersion, type HttpOptions } from
 import { fromCentral, selectModule } from "./from-central.js";
 import { applyPatches } from "./patches.js";
 import { collectReadmes, toReadmeDocument, type ModuleReadme } from "./readme.js";
-import { toSyntaxString } from "./render.js";
+import { toSyntaxString } from "./render/document.js";
 import { err, ok, type Result } from "./result.js";
 import { parseVersion, type QualifiedName, type Version } from "./qualified.js";
 import type { Library } from "./model.js";

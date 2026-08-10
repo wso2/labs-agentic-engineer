@@ -26,13 +26,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Library, TypeDef } from "../src/model.js";
+import { toSyntaxString } from "../src/render/document.js";
 import {
   applyPrefixToTypeName,
   buildSpecialAgentNote,
   deriveModulePrefix,
-  renderTypeDef,
-  toSyntaxString,
-} from "../src/render.js";
+} from "../src/render/signature.js";
+import { renderTypeDef } from "../src/render/typedef.js";
 
 const EMPTY: Library = {
   name: "test/pkg",
