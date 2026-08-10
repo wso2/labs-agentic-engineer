@@ -89,8 +89,10 @@ const IMAGE_BAL_CLI_DIR = "/opt/ballerina-central";
  * Absent, both modes are left alone rather than patched: docker still has the
  * baked copy, and mounting a directory Docker would have to CREATE would hide
  * it behind an empty one. Host mode has no baked copy, so the command is simply
- * missing — which the `ballerina` skill treats as "fall through to the .bala
- * tree", the same branch a stale image produces.
+ * missing — which the `ballerina` skill treats the same way it treats any failed
+ * lookup: write from `code-rules.md` and let `bal build` name what is wrong. The
+ * pre-read is deliberately not a precondition, so a missing command costs
+ * accuracy rather than blocking the run.
  */
 export function localBalCliDir(): string | undefined {
   return existsSync(join(BAL_CLI_DIST, "bal-library")) ? BAL_CLI_DIST : undefined;
