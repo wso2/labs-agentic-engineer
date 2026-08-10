@@ -148,8 +148,17 @@ export function parseArgs(argv: readonly string[]): Result<CliArgs> | null {
       `A package name contains a slash, e.g. ballerinax/github. The verbs are ${VERBS.join(", ")}.`,
     );
   }
-  const verb: Verb = leadsWithPackage || !isVerb(first) ? "overview" : first;
+  // `isVerb(first)` is already established for the non-package branch by the guard
+  // above, so the default verb is decided by the slash alone.
+  const verb: Verb = leadsWithPackage ? "overview" : (first as Verb);
   const args = leadsWithPackage ? parsed.positionals : rest;
+
+  const misused = rejectForeignFlags(verb, {
+    sigs,
+    deps,
+    client: client !== undefined,
+  });
+  if (misused !== undefined) return misused;
 
   const [name, ...tail] = args;
   if (name === undefined) {
@@ -180,6 +189,46 @@ export function parseArgs(argv: readonly string[]): Result<CliArgs> | null {
       ...(refresh ? { refresh: true } : {}),
     },
   });
+}
+
+/**
+ * Which flags each verb takes. `--project-dir` and `--refresh` are global and are
+ * not listed.
+ *
+ * A flag a verb does not take must be a LOUD failure rather than a silently
+ * ignored argument. `bal-library overview <pkg> --deps` used to exit 0 with the
+ * flag dropped, which is the same silent class of mistake as an unknown flag
+ * resolving to a version: the caller believes it asked for something it did not
+ * get, and nothing in the output says otherwise. It is also exactly the
+ * version-skew shape to worry about, since a newer skill reaching an older binary
+ * differs from this only in which side is ahead.
+ */
+const VERB_FLAGS: Readonly<Record<Verb, readonly ("sigs" | "deps" | "client")[]>> = {
+  overview: ["client"],
+  ops: ["client", "sigs"],
+  type: ["deps"],
+  api: [],
+};
+
+/** Which verbs would have accepted a flag, for the suggestion. */
+function verbsTaking(flag: "sigs" | "deps" | "client"): readonly Verb[] {
+  return VERBS.filter((verb) => VERB_FLAGS[verb].includes(flag));
+}
+
+function rejectForeignFlags(
+  verb: Verb,
+  given: Readonly<Record<"sigs" | "deps" | "client", boolean>>,
+): Result<CliArgs> | undefined {
+  const allowed = VERB_FLAGS[verb];
+  for (const flag of ["sigs", "deps", "client"] as const) {
+    if (!given[flag] || allowed.includes(flag)) continue;
+    const takers = verbsTaking(flag);
+    return validation(
+      `'${verb}' does not take --${flag}.`,
+      `--${flag} belongs to ${takers.map((taker) => `'${taker}'`).join(" and ")}. Drop it, or use one of those verbs.`,
+    );
+  }
+  return undefined;
 }
 
 function buildCommand(

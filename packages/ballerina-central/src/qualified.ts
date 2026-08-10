@@ -45,6 +45,18 @@ export function formatQualifiedName(qualified: QualifiedName): string {
   return `${qualified.org}/${qualified.name}`;
 }
 
+/**
+ * `org/name:version` — the label every document and every failure identifies a
+ * lookup by.
+ *
+ * One function because it was hand-built at four sites, and a label that differs
+ * between a document header and the failure about that document is a label an agent
+ * cannot correlate.
+ */
+export function formatVersioned(qualified: QualifiedName, version: Version): string {
+  return `${formatQualifiedName(qualified)}:${version}`;
+}
+
 const QUALIFIED_NAME = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/;
 // Deliberately permissive: Central publishes versions this reader only ever
 // echoes back, so the check exists to reject an argument that is obviously a

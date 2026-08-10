@@ -171,6 +171,43 @@ test("each verb rejects a positional it has no meaning for", () => {
   assert.equal(parseArgs(["type", "ballerinax/github"])?.ok, false, "type needs at least one name");
 });
 
+test("a flag the verb does not take is rejected, not silently ignored", async () => {
+  // The regression this pins: `overview --deps` used to exit 0 with the flag
+  // dropped. That is the same silent class as an unknown flag resolving to a
+  // version — the caller believes it asked for something it did not get, and
+  // nothing in the output says otherwise. It is also the version-skew shape,
+  // differing only in which side is ahead.
+  const cases: [string[], RegExp][] = [
+    [["ballerinax/kafka", "--deps"], /--deps belongs to 'type'/],
+    [["overview", "ballerinax/kafka", "--sigs"], /--sigs belongs to 'ops'/],
+    [["type", "ballerinax/kafka", "Error", "--sigs"], /--sigs belongs to 'ops'/],
+    [["type", "ballerinax/kafka", "Error", "--client", "Foo"], /--client belongs to 'overview' and 'ops'/],
+    [["api", "ballerinax/kafka", "--client", "Foo"], /--client belongs to 'overview' and 'ops'/],
+    [["api", "ballerinax/kafka", "--deps"], /--deps belongs to 'type'/],
+    [["ops", "ballerinax/kafka", "--deps"], /--deps belongs to 'type'/],
+  ];
+  for (const [argv, expected] of cases) {
+    const streams = capture();
+    assert.equal(await run(argv, streams, { fetch: NEVER }), 2, argv.join(" "));
+    assert.equal(streams.stdout(), "", argv.join(" "));
+    const error = failure(streams);
+    assert.equal(error["kind"], "validation");
+    assert.match(String(error["suggestion"]), expected, argv.join(" "));
+  }
+});
+
+test("each verb still accepts the flags it does take", () => {
+  for (const argv of [
+    ["overview", "ballerinax/github", "--client", "Client"],
+    ["ops", "ballerinax/github", "repos", "--client", "Client", "--sigs"],
+    ["type", "ballerinax/github", "FullRepository", "--deps"],
+    // Global flags apply everywhere.
+    ["api", "ballerinax/github", "--refresh", "--project-dir", "x"],
+  ]) {
+    assert.equal(parseArgs(argv)?.ok, true, argv.join(" "));
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Verb dispatch
 // ---------------------------------------------------------------------------

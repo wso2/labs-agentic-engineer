@@ -35,25 +35,10 @@ import assert from "node:assert/strict";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { describeProvenance, type LoadedPackage } from "../src/library.js";
-import type { Version } from "../src/qualified.js";
-import { collectReadmes } from "../src/readme.js";
 import { operationsOf } from "../src/symbols.js";
 import { MAX_INLINE_OPERATIONS, MAX_INLINE_SIGNATURE_BYTES, renderOverview } from "../src/views/overview.js";
 import { renderOpsView } from "../src/views/ops.js";
-import { firstDifference, libraryFor, listFixtures, loadFixture, qualifiedForSlug, SNAPSHOTS_DIR } from "./corpus.js";
-
-const FIXED_VERSION = "0.0.0-fixture" as Version;
-
-function loaded(slug: string): LoadedPackage {
-  return {
-    qualified: qualifiedForSlug(slug),
-    version: FIXED_VERSION,
-    library: libraryFor(slug),
-    readmes: collectReadmes(loadFixture(slug)),
-    provenance: describeProvenance("central", false),
-  };
-}
+import { firstDifference, libraryFor, listFixtures, loadedFixture, SNAPSHOTS_DIR } from "./corpus.js";
 
 function viewSnapshotPath(slug: string, view: string): string {
   return join(SNAPSHOTS_DIR, `${slug}.${view}.md`);
@@ -80,14 +65,14 @@ const fixtures = listFixtures();
 
 for (const slug of fixtures) {
   test(`the overview of ${slug} is unchanged`, () => {
-    matchesSnapshot(slug, "overview", renderOverview(loaded(slug)));
+    matchesSnapshot(slug, "overview", renderOverview(loadedFixture(slug)));
   });
 }
 
 for (const slug of fixtures) {
   test(`the ops tree of ${slug} is unchanged`, () => {
     const client = firstOperationalClient(slug);
-    const view = renderOpsView(loaded(slug), { sigs: false, ...(client === undefined ? {} : { client }) });
+    const view = renderOpsView(loadedFixture(slug), { sigs: false, ...(client === undefined ? {} : { client }) });
     assert.ok(view.ok, `ops failed for ${slug}`);
     matchesSnapshot(slug, "ops", view.value);
   });
@@ -123,7 +108,7 @@ test("the listing rule fires exactly where the measurements say it should", () =
   ]);
 
   for (const [slug, tree] of expected) {
-    const document = renderOverview(loaded(slug));
+    const document = renderOverview(loadedFixture(slug));
     assert.equal(
       /\*\*Not listed here\*\*/.test(document),
       tree,
@@ -155,25 +140,25 @@ test("the largest overview in the corpus is ballerina/http, and --client narrows
   // Worth pinning because it is counter-intuitive: the listing rule is PER CLIENT and
   // http has eight, none of which individually exceeds either limit.
   const sizes = fixtures
-    .map((slug) => ({ slug, bytes: Buffer.byteLength(renderOverview(loaded(slug)), "utf-8") }))
+    .map((slug) => ({ slug, bytes: Buffer.byteLength(renderOverview(loadedFixture(slug)), "utf-8") }))
     .sort((a, b) => b.bytes - a.bytes);
   assert.equal(sizes[0]?.slug, "ballerina__http");
 
-  const narrowed = Buffer.byteLength(renderOverview(loaded("ballerina__http"), { client: "Client" }), "utf-8");
+  const narrowed = Buffer.byteLength(renderOverview(loadedFixture("ballerina__http"), { client: "Client" }), "utf-8");
   assert.ok(narrowed < (sizes[0]?.bytes ?? 0) / 1.5, "--client should roughly halve it");
 });
 
 test("a package with no clients is a normal case, not an error", () => {
   // An `io`-shaped package is all module-level functions. Nothing in the corpus has
   // zero clients, so this is asserted against a library with them removed.
-  const context = loaded("ballerina__http");
+  const context = loadedFixture("ballerina__http");
   const document = renderOverview({ ...context, library: { ...context.library, clients: [] } });
   assert.match(document, /\| Clients \| none — the callable surface is module-level functions \|/);
   assert.match(document, /^## Module-level functions — 7, call with `\.`$/m);
 });
 
 test("--client naming a client that does not exist says so instead of printing an empty document", () => {
-  const document = renderOverview(loaded("ballerina__http"), { client: "Nope" });
+  const document = renderOverview(loadedFixture("ballerina__http"), { client: "Nope" });
   assert.match(document, /\*\*No client named `Nope`\.\*\*/);
   assert.doesNotMatch(document, /^## Client /m);
 });
@@ -193,7 +178,7 @@ test("errors are listed, and only for the packages that declare any", () => {
   ]);
 
   for (const slug of fixtures) {
-    const document = renderOverview(loaded(slug));
+    const document = renderOverview(loadedFixture(slug));
     const expected = withErrors.get(slug);
     if (expected === undefined) {
       assert.doesNotMatch(document, /^## Errors/m, `${slug} declares none, so the section is omitted`);
@@ -205,7 +190,7 @@ test("errors are listed, and only for the packages that declare any", () => {
 });
 
 test("the subtype chain is what the Errors section is for", () => {
-  const document = renderOverview(loaded("ballerina__http"));
+  const document = renderOverview(loadedFixture("ballerina__http"));
   // Unlearnable before A1: all 56 rendered as `type X error;`.
   assert.match(document, /^type ClientRequestError distinct \(ApplicationResponseError&error<Detail>\);$/m);
   assert.match(document, /^type SslError distinct ClientError;$/m);
@@ -213,7 +198,7 @@ test("the subtype chain is what the Errors section is for", () => {
 });
 
 test("the guide goes last, demoted, so the overview's own outline survives", () => {
-  const document = renderOverview(loaded("ballerinax__postgresql"));
+  const document = renderOverview(loadedFixture("ballerinax__postgresql"));
   const guide = document.indexOf("\n## Guide\n");
   assert.ok(guide > 0);
   assert.ok(document.indexOf("\n## Client ") < guide, "the API half comes first");

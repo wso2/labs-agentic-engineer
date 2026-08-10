@@ -3,17 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Typed reader for the Ballerina Central docs API: renders a package's whole public API — clients, resource/remote functions, records, enums, unions, services, annotations — as one Ballerina syntax string. Ships as the `bal-library` command the ballerina skill drives.",
+  "description": "Reads a Ballerina package off the Central docs API and answers four addressed questions about it: an overview, a client's operations by path, one declaration with its dependencies, and the whole API document. Ships as the `bal-library` command the ballerina skill drives.",
   "bin": {
     "bal-library": "./dist/bal-library"
-  },
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
-    }
   },
   "files": [
     "dist"

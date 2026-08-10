@@ -56,7 +56,12 @@ handle, and a compress step on the write path, to save bytes nobody is paying fo
 `v1` is the on-disk format generation, bumped only when the stored bytes change
 meaning. Deliberately **not** a build identity.
 
-The root is a pure function of `{env, homedir, tmpdir, uid}`:
+The root comes from a pure function of `{env, homedir, tmpdir, uid}` that returns
+the CANDIDATES in preference order; `main.ts` takes the first that is actually
+usable. A list rather than one answer because "unusable" is not something a pure
+function can determine — an empty or relative `$HOME` it can see, a `$HOME` that
+exists and is read-only it cannot, and that second shape is one a container
+genuinely has. Rungs 1 and 2 are the caller being explicit and get no fallback.
 
 1. `BAL_LIBRARY_CACHE=off` → no cache
 2. `BAL_LIBRARY_CACHE_DIR=<dir>`
@@ -185,6 +190,12 @@ that can burn the full 300s budget — four times over in a four-verb episode.
   stdout-is-the-document discipline, and it is what buys an operator the ability to
   tell a hit from a fetch and an agent the warning that a version was never
   verified.
+- **Where the bytes came from and whether the version was verified are
+  INDEPENDENT**, and the header keeps them so — four states, not three. The
+  registry can be unreachable, so the version comes off disk unverified, while the
+  docs endpoint for that version answers perfectly well; collapsing on staleness
+  alone stamped `cache` on bytes that had just been downloaded, which is the one
+  thing this line exists to get right.
 - **One invariant to keep:** the cache key has **no identity dimension**. That is
   correct only while `fetchJson` sends no headers and only public Central data is
   reachable. If a Central token is ever threaded through `HttpOptions`, this cache

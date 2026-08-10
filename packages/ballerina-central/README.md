@@ -54,9 +54,18 @@ bal-library ops  <org/name> [path] [--client C] [--sigs]
 bal-library type <org/name> <Name>... [--deps]
 bal-library api  <org/name>
 
-  --client <Name> · --project-dir <dir> · --refresh · -h
+  --project-dir <dir> · --refresh · -h        every verb
+  --client <Name>                             overview, ops
+  --sigs                                      ops
+  --deps                                      type
   BAL_LIBRARY_CACHE=off · BAL_LIBRARY_CACHE_DIR=<dir>
 ```
+
+**A flag a verb does not take is exit 2, not a silently dropped argument.**
+`overview <pkg> --deps` names the verb that would have taken it. Silently ignoring
+it is the same class of mistake as an unknown flag resolving to a version: the
+caller believes it asked for something it did not get, and nothing in the output
+says otherwise.
 
 A first positional containing `/` is a package; otherwise it is a verb. Verbs
 **lead** for a reason: a verb has no slash, so a stale binary fails it against
@@ -129,10 +138,17 @@ is what makes four addressed questions cheaper than one big answer.
 | | |
 |---|---|
 | what | the payload as Central served it — not the IR, whose key would need a build identity |
-| where | `BAL_LIBRARY_CACHE_DIR`, then `$XDG_CACHE_HOME/bal-library`, then `~/.cache/bal-library`, then `<tmp>/bal-library-<uid>` |
+| where | `BAL_LIBRARY_CACHE_DIR`, then `$XDG_CACHE_HOME/bal-library`, then `~/.cache/bal-library`, falling through to `<tmp>/bal-library-<uid>` if that is not usable |
 | TTL | docs entries never expire (immutable coordinates); the versions list gets 10 minutes |
 | writes | temp file plus `rename()`, no locks — two runs that miss both fetch and both rename |
-| offline | registry unreachable plus a payload on disk answers anyway, stamped `cache (stale: … version unverified)` |
+| offline | registry unreachable plus a payload on disk answers anyway, stamped `… version unverified` |
+
+The location resolver returns the candidates in order and `main.ts` takes the
+first that works, because "unusable" is not something a pure function can see: an
+empty or relative `$HOME` it can, a `$HOME` that exists and is read-only — a shape
+a container genuinely has — it cannot. An **explicit** `BAL_LIBRARY_CACHE_DIR` gets
+no fallback, because caching somewhere other than the directory somebody named
+would be worse than not caching.
 
 **Every failure is silent.** An unusable directory, a foreign uid, a full disk, a
 truncated entry, an entry whose coordinates do not match its own path: all of them
@@ -171,7 +187,7 @@ pnpm --filter @aep/ballerina-central build   # ~2s; no image rebuild in either m
 
 ## Tests
 
-260 tests in about 3.4 seconds, so the whole thing is a per-PR gate.
+284 tests in about 3.5 seconds, so the whole thing is a per-PR gate.
 
 `test/views-agree.test.ts` is the one that matters, and a reviewer should refuse
 the addressed verbs without it. The risk the verbs introduce is not a document

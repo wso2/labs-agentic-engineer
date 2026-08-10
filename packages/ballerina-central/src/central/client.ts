@@ -30,7 +30,7 @@ import { join } from "node:path";
 import { NULL_CACHE, type DocsCache, type DocsKey, type PackageKey } from "../cache/store.js";
 import { coordinatesMatch } from "./coordinates.js";
 import { centralDocsSchema, type CentralDocs } from "./schema.js";
-import { formatQualifiedName, parseVersion, type QualifiedName, type Version } from "../qualified.js";
+import { formatQualifiedName, formatVersioned, parseVersion, type QualifiedName, type Version } from "../qualified.js";
 import {
   err,
   ok,
@@ -338,7 +338,7 @@ export async function fetchDocs(
 ): Promise<Result<FetchedDocs>> {
   const cache = options.cache ?? NULL_CACHE;
   const key: DocsKey = { org: qualified.org, name: qualified.name, version };
-  const label = `${formatQualifiedName(qualified)}:${version}`;
+  const label = formatVersioned(qualified, version);
 
   if (options.refresh === true) {
     cache.removeDocs(key);

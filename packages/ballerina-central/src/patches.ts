@@ -218,21 +218,29 @@ function genericService(library: Library, parameter: ListenerParam): Library {
   return { ...library, services: [service] };
 }
 
-const addHttpService: Patch = (library) =>
-  library.name === "ballerina/http" ? genericService(library, { name: "port", type: { name: "int" } }) : library;
+/**
+ * The packages written as services rather than called as clients, and the name
+ * each one's listener gives its port.
+ *
+ * A table rather than three near-identical patches: they differed only in the
+ * parameter name, and three copies of one line is three places to fix the next
+ * time the service form changes.
+ */
+const GENERIC_SERVICE_LISTENERS: Readonly<Record<string, string>> = {
+  "ballerina/http": "port",
+  "ballerina/graphql": "listenTo",
+  "ballerina/ai": "listenOn",
+};
 
-const addGraphQLService: Patch = (library) =>
-  library.name === "ballerina/graphql"
-    ? genericService(library, { name: "listenTo", type: { name: "int" } })
-    : library;
-
-const addAiService: Patch = (library) =>
-  library.name === "ballerina/ai" ? genericService(library, { name: "listenOn", type: { name: "int" } }) : library;
+const addGenericServices: Patch = (library) => {
+  const parameter = GENERIC_SERVICE_LISTENERS[library.name];
+  return parameter === undefined ? library : genericService(library, { name: parameter, type: { name: "int" } });
+};
 
 /**
- * Order matters in one place: `changeClientConfigName` and the service
- * injectors both key on `library.name`, so the rename runs after every patch
- * that could have matched the original name.
+ * Order matters in one place: `changeClientConfigName` and `addGenericServices`
+ * both key on `library.name`, so the rename runs after every patch that could
+ * have matched the original name.
  */
 const PATCHES: readonly Patch[] = [
   fixSheets2DArray,
@@ -241,9 +249,7 @@ const PATCHES: readonly Patch[] = [
   removeOkTrueDef,
   simplifyGraphQLErrorDetail,
   removeChatClient,
-  addHttpService,
-  addGraphQLService,
-  addAiService,
+  addGenericServices,
   changeClientConfigName,
 ];
 

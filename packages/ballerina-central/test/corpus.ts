@@ -38,7 +38,9 @@ import type { CentralDocs } from "../src/central/schema.js";
 import { fromCentral, selectModule } from "../src/from-central.js";
 import type { Library } from "../src/model.js";
 import { applyPatches } from "../src/patches.js";
-import { parseQualifiedName, type QualifiedName } from "../src/qualified.js";
+import { parseQualifiedName, type QualifiedName, type Version } from "../src/qualified.js";
+import { describeProvenance, type LoadedPackage } from "../src/library.js";
+import { collectReadmes } from "../src/readme.js";
 import { toSyntaxString } from "../src/render/document.js";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
@@ -106,6 +108,26 @@ export function libraryFor(slug: string): Library {
   const library = applyPatches(fromCentral(module.value));
   libraryCache.set(slug, library);
   return library;
+}
+
+/**
+ * A fixture as the views receive it, under a FIXED provenance and version.
+ *
+ * The real header is run-order-dependent — the same command prints `central` then
+ * `cache` — so a view snapshot that encoded the live value would fail on its second
+ * run rather than on a regression. Lives here rather than being re-spelled in each
+ * of the four test files that need it, so "what a view is given" has one definition.
+ */
+export const FIXTURE_VERSION = "0.0.0-fixture" as Version;
+
+export function loadedFixture(slug: string): LoadedPackage {
+  return {
+    qualified: qualifiedForSlug(slug),
+    version: FIXTURE_VERSION,
+    library: libraryFor(slug),
+    readmes: collectReadmes(loadFixture(slug)),
+    provenance: describeProvenance("central", false),
+  };
 }
 
 /**

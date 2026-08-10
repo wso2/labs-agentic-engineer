@@ -50,43 +50,57 @@ export type CacheLocation =
 export const CACHE_OFF = "off";
 
 /**
- * The precedence, in order:
+ * The candidates, in preference order, for the caller to try until one works.
+ *
+ * A LIST rather than one answer, because the precedence the design states has a
+ * fallback in it — "`<tmpdir>/bal-library-<uid>` when `$HOME` is unusable" — and
+ * "unusable" is not something a pure function can determine. An empty or relative
+ * `$HOME` it can see; a `$HOME` that exists and is read-only, which is a shape a
+ * container genuinely has, it cannot. Returning the ordered candidates keeps this
+ * function pure and testable with no filesystem while still letting `main.ts`
+ * reach `/tmp` in that case.
  *
  *   1. `BAL_LIBRARY_CACHE=off`         explicit opt-out
  *   2. `BAL_LIBRARY_CACHE_DIR=<dir>`   explicit location
  *   3. `$XDG_CACHE_HOME/bal-library`   when absolute, per the spec
  *   4. `<homedir>/.cache/bal-library`  the default
- *   5. `<tmpdir>/bal-library-<uid>`    when $HOME is unusable, mode 0700
+ *   5. `<tmpdir>/bal-library-<uid>`    when the above is unusable, mode 0700
  *   6. disabled
+ *
+ * Rungs 1 and 2 are the caller being EXPLICIT, so they get no fallback: silently
+ * caching somewhere other than the directory somebody named would be worse than
+ * not caching.
  *
  * The `/tmp` fallback is mode 0700 with the uid in the directory name because
  * `/tmp` is world-writable and shared with the agent's own scratch files; a
  * shared name there is a directory another uid can pre-create.
  */
-export function resolveCacheLocation(environment: Environment): CacheLocation {
+export function resolveCacheCandidates(environment: Environment): readonly CacheLocation[] {
   const { env, homedir, tmpdir, uid } = environment;
 
   if (env["BAL_LIBRARY_CACHE"] === CACHE_OFF) {
-    return { kind: "disabled", reason: "BAL_LIBRARY_CACHE=off" };
+    return [{ kind: "disabled", reason: "BAL_LIBRARY_CACHE=off" }];
   }
 
   const explicit = env["BAL_LIBRARY_CACHE_DIR"];
   if (explicit !== undefined && explicit.trim() !== "") {
-    return { kind: "directory", root: explicit, mode: 0o700 };
+    return [{ kind: "directory", root: explicit, mode: 0o700 }];
   }
 
+  const candidates: CacheLocation[] = [];
   const xdg = env["XDG_CACHE_HOME"];
   if (xdg !== undefined && xdg.trim() !== "" && isAbsolute(xdg)) {
-    return { kind: "directory", root: join(xdg, "bal-library"), mode: 0o700 };
-  }
-
-  if (homedir.trim() !== "" && isAbsolute(homedir)) {
-    return { kind: "directory", root: join(homedir, ".cache", "bal-library"), mode: 0o700 };
+    candidates.push({ kind: "directory", root: join(xdg, "bal-library"), mode: 0o700 });
+  } else if (homedir.trim() !== "" && isAbsolute(homedir)) {
+    candidates.push({ kind: "directory", root: join(homedir, ".cache", "bal-library"), mode: 0o700 });
   }
 
   if (tmpdir.trim() !== "" && isAbsolute(tmpdir)) {
-    return { kind: "directory", root: join(tmpdir, `bal-library-${uid}`), mode: 0o700 };
+    candidates.push({ kind: "directory", root: join(tmpdir, `bal-library-${uid}`), mode: 0o700 });
   }
 
-  return { kind: "disabled", reason: "no writable location: neither $HOME nor a temp directory is usable" };
+  if (candidates.length === 0) {
+    return [{ kind: "disabled", reason: "no writable location: neither $HOME nor a temp directory is usable" }];
+  }
+  return candidates;
 }

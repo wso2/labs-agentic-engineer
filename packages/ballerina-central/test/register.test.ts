@@ -30,26 +30,13 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { describeProvenance, type LoadedPackage } from "../src/library.js";
-import type { Version } from "../src/qualified.js";
-import { collectReadmes } from "../src/readme.js";
 import { toSyntaxString } from "../src/render/document.js";
 import { operationsOf } from "../src/symbols.js";
 import { renderOpsView } from "../src/views/ops.js";
 import { renderOverview } from "../src/views/overview.js";
 import { renderTypeView } from "../src/views/type.js";
 import { indexDeclarations } from "../src/symbols.js";
-import { libraryFor, listFixtures, loadFixture, qualifiedForSlug } from "./corpus.js";
-
-function loaded(slug: string): LoadedPackage {
-  return {
-    qualified: qualifiedForSlug(slug),
-    version: "0.0.0-fixture" as Version,
-    library: libraryFor(slug),
-    readmes: collectReadmes(loadFixture(slug)),
-    provenance: describeProvenance("central", false),
-  };
-}
+import { listFixtures, loadedFixture } from "./corpus.js";
 
 /**
  * Lines outside every fenced block.
@@ -90,7 +77,7 @@ function ownStructure(document: string): string {
 
 /** Every report document a fixture can produce, keyed by what produced it. */
 function reportDocuments(slug: string): [string, string][] {
-  const context = loaded(slug);
+  const context = loadedFixture(slug);
   const documents: [string, string][] = [["overview", renderOverview(context)]];
 
   for (const client of context.library.clients) {
@@ -164,7 +151,7 @@ for (const slug of fixtures) {
 test("the overview's own sections are what grep returns, not the readme's", () => {
   // The guide's headings are demoted two levels for exactly this reason: without it
   // `grep '^## '` returns the package author's outline mixed with ours.
-  const document = renderOverview(loaded("ballerinax__postgresql"));
+  const document = renderOverview(loadedFixture("ballerinax__postgresql"));
   const sections = unfencedLines(document).filter((line) => /^## /.test(line));
   assert.ok(sections.includes("## Guide"));
   assert.ok(sections.includes("## Next"));
@@ -179,7 +166,7 @@ test("the overview's own sections are what grep returns, not the readme's", () =
 
 for (const slug of fixtures) {
   test(`no code document for ${slug} carries report furniture`, () => {
-    const context = loaded(slug);
+    const context = loadedFixture(slug);
     const index = indexDeclarations(context.library.typeDefs);
     const first = index.names[0];
     assert.ok(first !== undefined);

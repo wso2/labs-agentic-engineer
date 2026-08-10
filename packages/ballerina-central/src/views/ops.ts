@@ -33,7 +33,7 @@
 import { code, columns, count, Report } from "../report.js";
 import type { LoadedPackage } from "../library.js";
 import type { ClientClass } from "../model.js";
-import { formatQualifiedName } from "../qualified.js";
+import { formatQualifiedName, formatVersioned } from "../qualified.js";
 import { renderMemberFunction } from "../render/signature.js";
 import { err, ok, type Result } from "../result.js";
 import {
@@ -78,7 +78,7 @@ function pathOf(segments: readonly string[]): string {
  */
 function resolveClient(loaded: LoadedPackage, requested: string | undefined): Result<ClientClass | undefined> {
   const clients = loaded.library.clients;
-  const label = `${formatQualifiedName(loaded.qualified)}:${loaded.version}`;
+  const label = formatVersioned(loaded.qualified, loaded.version);
 
   if (requested !== undefined) {
     const exact = clients.find((client) => client.name === requested);
@@ -125,10 +125,6 @@ export function renderOpsView(loaded: LoadedPackage, options: OpsOptions): Resul
   );
 }
 
-function header(report: Report, loaded: LoadedPackage, client: ClientClass, pkg: string): void {
-  report.heading(1, `Operations — ${pkg} ${code(client.name)}`);
-}
-
 /**
  * One level of the tree: what can be called here, and where to go next.
  *
@@ -146,7 +142,7 @@ function levelView(
 ): string {
   const descent = autoDescend(node, path);
   const report = new Report("ops");
-  header(report, loaded, client, pkg);
+  report.heading(1, `Operations — ${pkg} ${code(client.name)}`);
 
   const facts: [string, string][] = [["Source", loaded.provenance]];
   facts.push(
@@ -184,7 +180,7 @@ function levelView(
   }
   const under = operationsUnder(here);
   next.push(
-    `signatures: ${code(`bal-library ops ${pkg} '${pathOf(descent.path)}' --sigs`)} — ${count(under.length)} operation${under.length === 1 ? "" : "s"}, ${count(bytesOf(under))} bytes`,
+    `signatures: ${code(`bal-library ops ${pkg} '${pathOf(descent.path)}' --sigs`)} — ${count(under.length)} operation${under.length === 1 ? "" : "s"}, ${count(signatureBytes(under))} bytes`,
   );
   next.push(`a declaration named in a signature: ${code(`bal-library type ${pkg} <Name> [--deps]`)}`);
   report.bullets(next);
@@ -192,7 +188,8 @@ function levelView(
   return report.toString();
 }
 
-function bytesOf(operations: readonly Operation[]): number {
+/** How large a `--sigs` dump of these operations would be, newlines included. */
+function signatureBytes(operations: readonly Operation[]): number {
   return operations.reduce((sum, operation) => sum + Buffer.byteLength(signature(operation), "utf-8") + 1, 0);
 }
 
@@ -214,12 +211,12 @@ function signatureDump(
 ): string {
   const operations = operationsUnder(node);
   const report = new Report("ops");
-  header(report, loaded, client, pkg);
+  report.heading(1, `Operations — ${pkg} ${code(client.name)}`);
   report.facts([
     ["Source", loaded.provenance],
     ["Path", code(pathOf(path))],
     ["Operations", `${count(operations.length)} at or under this path`],
-    ["Size", `${count(bytesOf(operations))} bytes of signatures`],
+    ["Size", `${count(signatureBytes(operations))} bytes of signatures`],
   ]);
 
   if (operations.length === 0) {
@@ -253,7 +250,7 @@ function pathNotFound(
   available: readonly string[],
 ): string {
   const report = new Report("ops");
-  header(report, loaded, client, pkg);
+  report.heading(1, `Operations — ${pkg} ${code(client.name)}`);
   report.facts([
     ["Source", loaded.provenance],
     ["Requested", code(pathOf([...matched, token]))],

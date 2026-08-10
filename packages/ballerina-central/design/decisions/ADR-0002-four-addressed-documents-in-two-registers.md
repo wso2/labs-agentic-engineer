@@ -53,6 +53,13 @@ bal-library api  <pkg>                                 the whole API document
 
 **A first positional containing `/` is a package; otherwise it is a verb.**
 
+**Each flag is bound to the verbs that take it**, and one that does not belong is
+exit 2 naming the verb that would have. `--project-dir` and `--refresh` are global;
+`--client` belongs to `overview` and `ops`, `--sigs` to `ops`, `--deps` to `type`.
+Silently dropping a foreign flag is the same class of mistake as an unknown flag
+resolving to a version — the caller believes it asked for something it did not
+get — and it is the same shape as skew, differing only in which side is ahead.
+
 ### Why verbs, and why leading
 
 Four distinct nouns should not be four modifiers on one command. An earlier draft
@@ -242,7 +249,7 @@ carries the Errors listing.
 | A `--required` view of a config record | Central publishes no `defaultValue` on inclusion members and the transform drops `isOptional` for them, so `http:ClientConfiguration` computes as 18-of-19 required when almost all are optional. |
 | A `--json` output mode | The consumer writes Ballerina. The code register already has a byte-exact oracle and the report register is for reading. |
 | A CLI framework (commander, yargs, citty) | What one adds is help generation and its own error printing, and this command owns both: the usage text carries the resolved cache directory, and every failure must leave stderr holding exactly one `Failure`. `node:util`'s `parseArgs` covers the rest with no dependency in an image on the agent's critical path. |
-| Keeping `--readme` | The guide is the overview's last section, so a readme-only document would be a second way to ask one question. With unknown flags rejected, a stale `--readme` fails at exit 2 rather than resolving as a version. |
+| Keeping `--readme` | The guide is the overview's last section, so a readme-only document would be a second way to ask one question. With unknown flags rejected, a stale `--readme` fails at exit 2 rather than resolving as a version. The `no-readme` failure kind went with it: nothing could construct it, and a guide-less package is a section that says so rather than a failed lookup. |
 | A verb after the package | A stale bundle reads it as a version and reports `package-not-found` at exit 1, which the skill teaches means "retry". |
 
 ## Consequences

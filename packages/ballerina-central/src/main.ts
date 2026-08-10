@@ -28,8 +28,8 @@
  */
 
 import { homedir, tmpdir } from "node:os";
-import { createDiskCache } from "./cache/disk.js";
-import { resolveCacheLocation } from "./cache/location.js";
+import { createDiskCache, isUsableRoot } from "./cache/disk.js";
+import { resolveCacheCandidates } from "./cache/location.js";
 import { NULL_CACHE, type DocsCache } from "./cache/store.js";
 import { run } from "./cli.js";
 
@@ -46,16 +46,40 @@ function safely(read: () => string): string {
   }
 }
 
+/**
+ * The first candidate location that actually works.
+ *
+ * `resolveCacheCandidates` is pure and cannot tell whether a directory is
+ * writable, so trying them is this module's job — it is already the only one
+ * allowed to touch a filesystem the caller did not name. The case this exists for
+ * is a container whose `$HOME` exists and is read-only, which is a shape a runner
+ * genuinely has: without the retry, the default rung would be chosen, fail, and
+ * silently disable caching rather than reaching `/tmp`.
+ *
+ * If every candidate fails, the null store is the answer. Never a failure: cache
+ * trouble is not the caller's problem.
+ */
 function buildCache(): DocsCache {
   const uid = typeof process.getuid === "function" ? process.getuid() : 0;
-  const location = resolveCacheLocation({
+  const candidates = resolveCacheCandidates({
     env: process.env,
     homedir: safely(homedir),
     tmpdir: safely(tmpdir),
     uid,
   });
-  if (location.kind === "disabled") return NULL_CACHE;
-  return createDiskCache({ root: location.root, mode: location.mode, uid });
+
+  for (const candidate of candidates) {
+    if (candidate.kind === "disabled") return NULL_CACHE;
+    if (!isUsableRoot(candidate.root, candidate.mode, uid)) continue;
+    return createDiskCache({ root: candidate.root, mode: candidate.mode, uid });
+  }
+
+  // Nothing worked. `describe()` still has to name something for `--help`, so the
+  // last candidate is reported as the one that was tried.
+  const last = candidates[candidates.length - 1];
+  return last !== undefined && last.kind === "directory"
+    ? createDiskCache({ root: last.root, mode: last.mode, uid })
+    : NULL_CACHE;
 }
 
 const code = await run(

@@ -33,8 +33,8 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { createDiskCache } from "../src/cache/disk.js";
-import { resolveCacheLocation } from "../src/cache/location.js";
+import { createDiskCache, isUsableRoot } from "../src/cache/disk.js";
+import { resolveCacheCandidates } from "../src/cache/location.js";
 import { compareVersions, type DocsCache } from "../src/cache/store.js";
 import { LATEST_TTL_MS, type FetchLike } from "../src/central/client.js";
 import { run, type CliStreams } from "../src/cli.js";
@@ -76,6 +76,10 @@ function countingCentral(): { fetch: FetchLike; docs: () => number; versions: ()
     docs: () => docs,
     versions: () => versions,
   };
+}
+
+function uidOrZero(): number {
+  return typeof process.getuid === "function" ? process.getuid() : 0;
 }
 
 function freshRoot(): string {
@@ -340,6 +344,38 @@ test("with the registry unreachable and a payload on disk, the lookup still answ
   assert.match(offline.stdout(), /^\| Source \| cache \(stale: registry unreachable, version unverified\) \|$/m);
 });
 
+test("a version off disk plus a live docs fetch says central, not cache", async () => {
+  // The two facts are independent and the header has to keep them so: the registry
+  // can be unreachable — so the version is unverified — while the docs endpoint for
+  // that version answers perfectly well. Collapsing on staleness alone stamped
+  // `cache` on bytes that had just been downloaded.
+  const root = freshRoot();
+  const cache = cacheAt(root);
+  let now = 1_000_000;
+  await run([PKG], capture(), { fetch: countingCentral().fetch, cache, now: () => now });
+
+  // Expire the versions entry, then drop the docs entry so the payload MUST be
+  // fetched while the registry stays down.
+  now += LATEST_TTL_MS * 2;
+  const payload = loadRawFixture(SLUG);
+  cache.removeDocs({ org: "ballerinax", name: "kafka", version: VERSION });
+
+  const streams = capture();
+  const exitCode = await run([PKG], streams, {
+    cache,
+    now: () => now,
+    maxAttempts: 1,
+    baseDelayMs: 1,
+    fetch: (url) =>
+      url.includes("/docs/")
+        ? Promise.resolve(new Response(JSON.stringify(payload), { status: 200 }))
+        : Promise.resolve(new Response("", { status: 503 })),
+  });
+
+  assert.equal(exitCode, 0);
+  assert.match(streams.stdout(), /^\| Source \| central \(version unverified: registry unreachable\) \|$/m);
+});
+
 test("with the registry unreachable and nothing on disk, the failure is honest", async () => {
   const cache = cacheAt(freshRoot());
   const streams = capture();
@@ -381,35 +417,62 @@ test("version comparison is dotted-numeric with prereleases below their release"
 // Where it lives
 // ---------------------------------------------------------------------------
 
-test("the cache location is a pure function of the environment", () => {
-  const base = { homedir: "/home/aep", tmpdir: "/tmp", uid: 1000 };
+const BASE_ENV = { homedir: "/home/aep", tmpdir: "/tmp", uid: 1000 };
 
-  assert.deepEqual(resolveCacheLocation({ ...base, env: { BAL_LIBRARY_CACHE: "off" } }), {
-    kind: "disabled",
-    reason: "BAL_LIBRARY_CACHE=off",
-  });
-
-  assert.equal(
-    resolveCacheLocation({ ...base, env: { BAL_LIBRARY_CACHE_DIR: "/somewhere/else" } }).kind === "directory"
-      ? "/somewhere/else"
-      : "",
-    "/somewhere/else",
+/** The roots of the candidate list, for compact assertions. */
+function roots(environment: Parameters<typeof resolveCacheCandidates>[0]): string[] {
+  return resolveCacheCandidates(environment).flatMap((candidate) =>
+    candidate.kind === "directory" ? [candidate.root] : [],
   );
+}
 
-  const xdg = resolveCacheLocation({ ...base, env: { XDG_CACHE_HOME: "/xdg" } });
-  assert.equal(xdg.kind === "directory" ? xdg.root : "", "/xdg/bal-library");
+test("the cache location is a pure function of the environment", () => {
+  assert.deepEqual(resolveCacheCandidates({ ...BASE_ENV, env: { BAL_LIBRARY_CACHE: "off" } }), [
+    { kind: "disabled", reason: "BAL_LIBRARY_CACHE=off" },
+  ]);
+
+  const xdg = resolveCacheCandidates({ ...BASE_ENV, env: { XDG_CACHE_HOME: "/xdg" } })[0];
+  assert.equal(xdg?.kind === "directory" ? xdg.root : "", "/xdg/bal-library");
 
   // Relative XDG_CACHE_HOME is invalid per the spec, so it is ignored rather than
   // resolved against the working directory — which for a coding agent is a git
   // clone the platform commits.
-  const relative = resolveCacheLocation({ ...base, env: { XDG_CACHE_HOME: "relative/path" } });
-  assert.equal(relative.kind === "directory" ? relative.root : "", "/home/aep/.cache/bal-library");
+  assert.deepEqual(roots({ ...BASE_ENV, env: { XDG_CACHE_HOME: "relative/path" } }), [
+    "/home/aep/.cache/bal-library",
+    "/tmp/bal-library-1000",
+  ]);
 
-  const fallback = resolveCacheLocation({ ...base, homedir: "", env: {} });
-  assert.equal(fallback.kind === "directory" ? fallback.root : "", "/tmp/bal-library-1000");
+  assert.equal(resolveCacheCandidates({ env: {}, homedir: "", tmpdir: "", uid: 0 })[0]?.kind, "disabled");
+});
+
+test("an explicit location gets no fallback, because caching elsewhere silently would be worse", () => {
+  // Rungs 1 and 2 are the caller being explicit. Landing somewhere they did not
+  // name is worse than not caching at all.
+  assert.deepEqual(roots({ ...BASE_ENV, env: { BAL_LIBRARY_CACHE_DIR: "/somewhere/else" } }), ["/somewhere/else"]);
+});
+
+test("the default rung is followed by /tmp, so an unusable $HOME still gets a cache", () => {
+  // The case a pure function cannot see: a `$HOME` that exists and is read-only,
+  // which is a shape a container genuinely has. `main.ts` walks this list and takes
+  // the first root that is actually usable.
+  assert.deepEqual(roots({ ...BASE_ENV, env: {} }), ["/home/aep/.cache/bal-library", "/tmp/bal-library-1000"]);
+
+  const fallback = resolveCacheCandidates({ ...BASE_ENV, homedir: "", env: {} });
+  assert.deepEqual(roots({ ...BASE_ENV, homedir: "", env: {} }), ["/tmp/bal-library-1000"]);
   // Mode 0700 with the uid in the name, because /tmp is world-writable and shared
   // with the agent's own scratch files.
-  assert.equal(fallback.kind === "directory" ? fallback.mode : 0, 0o700);
+  assert.equal(fallback[0]?.kind === "directory" ? fallback[0].mode : 0, 0o700);
+});
 
-  assert.equal(resolveCacheLocation({ env: {}, homedir: "", tmpdir: "", uid: 0 }).kind, "disabled");
+test("main.ts picks the first usable root, which is what the /tmp rung is for", () => {
+  // Proven against the real probe rather than by inspection: a root whose parent is
+  // a regular file cannot be created for any uid, so the first candidate is skipped
+  // and the second wins.
+  const parent = join(freshRoot(), "regular-file");
+  writeFileSync(parent, "not a directory");
+  const unusable = join(parent, "cache");
+  const usable = join(freshRoot(), "second-choice");
+
+  assert.equal(isUsableRoot(unusable, 0o700, uidOrZero()), false);
+  assert.equal(isUsableRoot(usable, 0o700, uidOrZero()), true);
 });

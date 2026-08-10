@@ -18,7 +18,7 @@ bal new <project-name>   # scaffolds main.bal + Ballerina.toml
 cd <project-name>
 ```
 
-- Read project structure on project-structure practices [project-structure.md](references/project-structure.md)
+- Read [project-structure.md](references/project-structure.md) for how a Ballerina project is laid out.
 
 ## Writing Ballerina Code
 
@@ -42,7 +42,7 @@ bal-library <org/name>
 
 That is the overview: the package's own guide, every client's constructor and function signatures, its module-level functions, and its error declarations. About 7KB for a 903-operation connector. It is the answer to "how is this used" as well as "what is it called", and it is cheap because the payload is cached for the rest of the run.
 
-`code-rules.md` already names `http`, `sql`, `time`, `log`, `os` and the langlibs — those are in context and Central has nothing to add, so **do not look them up.** Local workspace packages and `generated/` submodules are not on Central at all.
+`code-rules.md` already names `http`, `sql`, `time`, `log` and `os`, and the langlibs are the language itself (see [langlib.md](references/langlib.md)) — none of them is a package Central has anything to add about, so **do not look them up.** Local workspace packages and `generated/` submodules are not on Central at all.
 
 If the client's operations were replaced by a path tree — which happens above 100 of them — navigate it:
 
@@ -64,7 +64,8 @@ Configurables are read at **runtime**, never at build time. Do not prefix `bal b
 
 | When the question is | Run |
 |---|---|
-| `http` resources or param binding · `sql` queries and return types · `time` · imports and `.driver` pairing · listeners and event services · configurables and `os:getEnv` · `log` · anything `lang.*` | **[code-rules.md](references/code-rules.md). Do not run `bal-library`.** |
+| `http` resources or param binding · `sql` queries and return types · `time` · imports and `.driver` pairing · listeners and event services · configurables · `log` | **[code-rules.md](references/code-rules.md). Do not run `bal-library`.** |
+| anything `lang.*` — a conversion, an array/string/map/number operation | **[langlib.md](references/langlib.md).** It is part of the language, not a package on Central. |
 | "what exactly is this declaration?" | `bal-library type <org/name> <Name>` |
 | "what does this type contain, all the way down?" | `bal-library type <org/name> <Name> --deps` |
 | "how do I branch on this error?" | `bal-library type <org/name> <ErrorName> --deps` |

@@ -96,11 +96,15 @@ function latestPath(root: string, key: PackageKey): string | undefined {
 /**
  * Is this root usable, and is it ours?
  *
+ * Exported because `main.ts` walks the candidate locations and needs to ask before
+ * committing to one; creating a store per candidate just to inspect it would mkdir
+ * every rung it tried.
+ *
  * `lstat` rather than `stat`: a root that is a symlink is refused outright,
  * because following one is how a writable-looking path becomes somebody else's
  * directory. A root owned by another uid is refused for the same reason.
  */
-function rootIsUsable(root: string, mode: number, uid: number): boolean {
+export function isUsableRoot(root: string, mode: number, uid: number): boolean {
   try {
     mkdirSync(root, { recursive: true, mode });
   } catch {
@@ -143,7 +147,7 @@ export function createDiskCache(options: DiskCacheOptions): DocsCache {
   const pid = options.pid ?? process.pid;
   const random = options.random ?? Math.random;
 
-  const usable = rootIsUsable(root, mode, uid);
+  const usable = isUsableRoot(root, mode, uid);
 
   const writeAtomically = (target: string, contents: string): void => {
     if (!usable) return;

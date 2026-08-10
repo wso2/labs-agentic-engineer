@@ -57,8 +57,6 @@ export type Failure =
       readonly issues: readonly SchemaIssue[];
       readonly suggestion: string;
     }
-  /** The package is fine, but no module of it carries a written guide. */
-  | { readonly kind: "no-readme"; readonly qualified: string; readonly suggestion: string }
   /**
    * The package parsed, but no declaration matched the name the caller asked
    * for. `candidates` is what the index does hold — either near-misses of the
@@ -126,7 +124,6 @@ export function exitCodeFor(failure: Failure): 1 | 2 {
     case "upstream":
     case "timeout":
     case "schema-drift":
-    case "no-readme":
       return 1;
     default: {
       const exhaustive: never = failure;

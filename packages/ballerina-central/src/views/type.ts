@@ -34,7 +34,7 @@
 import { matchName } from "../match.js";
 import type { LoadedPackage } from "../library.js";
 import type { TypeDef, TypeRef } from "../model.js";
-import { formatQualifiedName } from "../qualified.js";
+import { formatQualifiedName, formatVersioned } from "../qualified.js";
 import { renderTypeDef } from "../render/typedef.js";
 import { err, ok, type Result } from "../result.js";
 import { indexDeclarations } from "../symbols.js";
@@ -122,7 +122,7 @@ export interface TypeOptions {
  */
 export function renderTypeView(loaded: LoadedPackage, options: TypeOptions): Result<string> {
   const index = indexDeclarations(loaded.library.typeDefs);
-  const label = `${formatQualifiedName(loaded.qualified)}:${loaded.version}`;
+  const label = formatVersioned(loaded.qualified, loaded.version);
 
   const roots: string[] = [];
   const unresolved: string[] = [];

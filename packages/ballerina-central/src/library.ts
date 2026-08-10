@@ -92,7 +92,14 @@ export interface LoadedPackage {
 }
 
 /**
- * What the provenance header says, in the three states it can be in.
+ * What the provenance header says, in the four states it can be in.
+ *
+ * The two facts are INDEPENDENT and the header has to keep them so. Where the
+ * bytes came from and whether the version was verified are answered by different
+ * endpoints: the registry can be unreachable — so the version comes off disk
+ * unverified — while the docs endpoint for that version answers perfectly well.
+ * Collapsing on `stale` alone stamped `cache` on bytes that had just been
+ * downloaded, which is the one thing this line exists to get right.
  *
  * It makes stdout run-order-dependent, which is a real if small change to the
  * stdout-is-the-document discipline: the same command run twice prints `central`
@@ -102,7 +109,10 @@ export interface LoadedPackage {
  * the only warning that a version was never verified.
  */
 export function describeProvenance(source: Source, stale: boolean): string {
-  return stale ? "cache (stale: registry unreachable, version unverified)" : source;
+  if (!stale) return source;
+  return source === "cache"
+    ? "cache (stale: registry unreachable, version unverified)"
+    : "central (version unverified: registry unreachable)";
 }
 
 export async function loadPackage(

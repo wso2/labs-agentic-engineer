@@ -40,17 +40,14 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { describeProvenance, type LoadedPackage } from "../src/library.js";
 import { matchName } from "../src/match.js";
 import { renderTypeDef } from "../src/render/typedef.js";
 import { buildPathTree, indexDeclarations, operationsOf, resolvePath, splitPath } from "../src/symbols.js";
 import { renderOpsView } from "../src/views/ops.js";
 import { renderOverview } from "../src/views/overview.js";
 import { renderTypeView } from "../src/views/type.js";
-import { libraryFor, listFixtures, loadFixture, qualifiedForSlug, readSnapshot } from "./corpus.js";
+import { libraryFor, listFixtures, loadedFixture, readSnapshot } from "./corpus.js";
 import type { PathNode } from "../src/symbols.js";
-import { collectReadmes } from "../src/readme.js";
-import type { Version } from "../src/qualified.js";
 
 /**
  * The IR every view renders from, under a FIXED provenance so a snapshot is
@@ -58,16 +55,6 @@ import type { Version } from "../src/qualified.js";
  * `central` then `cache` — and pretending otherwise would make these tests fail on
  * a second run rather than on a regression.
  */
-function loaded(slug: string): LoadedPackage {
-  return {
-    qualified: qualifiedForSlug(slug),
-    version: "0.0.0-fixture" as Version,
-    library: libraryFor(slug),
-    readmes: collectReadmes(loadFixture(slug)),
-    provenance: describeProvenance("central", false),
-  };
-}
-
 /**
  * The document down to but not including its Guide.
  *
@@ -108,7 +95,7 @@ const fixtures = listFixtures();
 for (const slug of fixtures) {
   test(`every signature the overview prints is in ${slug}'s api snapshot, verbatim`, () => {
     const snapshot = new Set(readSnapshot(slug).split("\n").map((line) => line.trimStart()));
-    const quoted = fencedBallerina(beforeGuide(renderOverview(loaded(slug))));
+    const quoted = fencedBallerina(beforeGuide(renderOverview(loadedFixture(slug))));
     assert.ok(quoted.length > 0, "a fixture whose overview quotes nothing would pass vacuously");
     for (const line of quoted) {
       assert.ok(
@@ -126,7 +113,7 @@ for (const slug of fixtures) {
     let checked = 0;
     for (const client of library.clients) {
       if (operationsOf(client).length === 0) continue;
-      const view = renderOpsView(loaded(slug), { sigs: true, client: client.name });
+      const view = renderOpsView(loadedFixture(slug), { sigs: true, client: client.name });
       assert.ok(view.ok);
       for (const line of fencedBallerina(view.value)) {
         assert.ok(snapshot.has(line.trimStart()), `ops --sigs quotes a line api does not:\n  ${line}`);
@@ -139,13 +126,35 @@ for (const slug of fixtures) {
   });
 }
 
+for (const slug of fixtures) {
+  test(`every signature plain ops prints is in ${slug}'s api snapshot, verbatim`, () => {
+    // `levelView` fences signatures too, not just `--sigs`, so it needs the same
+    // oracle. Checked at every path in the tree rather than only the root, because
+    // the operations a level shows are the ones AT it and differ level by level.
+    const snapshot = new Set(readSnapshot(slug).split("\n").map((line) => line.trimStart()));
+    const context = loadedFixture(slug);
+    for (const client of context.library.clients) {
+      const operations = operationsOf(client);
+      if (operations.length === 0) continue;
+      const tree = buildPathTree(operations);
+      for (const path of [[], ...allPaths(tree)]) {
+        const view = renderOpsView(context, { sigs: false, path: path.join("/"), client: client.name });
+        assert.ok(view.ok);
+        for (const line of fencedBallerina(view.value)) {
+          assert.ok(snapshot.has(line.trimStart()), `ops ${path.join("/")} quotes a line api does not:\n  ${line}`);
+        }
+      }
+    }
+  });
+}
+
 // ---------------------------------------------------------------------------
 // 2 and 3. Declarations resolve by name, and print exactly
 // ---------------------------------------------------------------------------
 
 for (const slug of fixtures) {
   test(`every declaration in ${slug} resolves through type, and prints identically`, () => {
-    const context = loaded(slug);
+    const context = loadedFixture(slug);
     const index = indexDeclarations(context.library.typeDefs);
     assert.ok(index.names.length > 0);
 
@@ -166,7 +175,7 @@ for (const slug of fixtures) {
 
 for (const slug of fixtures) {
   test(`nothing outside ${slug}'s declaration index resolves through type`, () => {
-    const context = loaded(slug);
+    const context = loadedFixture(slug);
     const index = indexDeclarations(context.library.typeDefs);
     const held = new Set(index.names);
     // The other direction. Scoped to DECLARATIONS deliberately: operations are
@@ -194,7 +203,7 @@ test("a name that normalises onto several declarations is a failure, never a sil
 
   const first = collisions[0];
   assert.ok(first !== undefined);
-  const view = renderTypeView(loaded("ballerina__http"), { names: [first.toLowerCase()], deps: false });
+  const view = renderTypeView(loadedFixture("ballerina__http"), { names: [first.toLowerCase()], deps: false });
   assert.equal(view.ok, false);
   if (!view.ok && view.error.kind === "symbol-not-found") {
     assert.ok(view.error.candidates.length > 1, "every colliding name has to be listed");
@@ -218,7 +227,7 @@ for (const slug of fixtures) {
     // Hoisted: `renderOpsView` takes the loaded package, and building it inside the
     // per-path loop re-derived a 12.4MB fixture once for each of github's 900-odd
     // tree paths.
-    const context = loaded(slug);
+    const context = loadedFixture(slug);
     const library = context.library;
     for (const client of library.clients) {
       const operations = operationsOf(client);
@@ -231,6 +240,42 @@ for (const slug of fixtures) {
         assert.equal(resolution.kind, "found", `${client.name}: ${path.join("/")} is offered but unreachable`);
         const view = renderOpsView(context, { sigs: false, path: path.join("/"), client: client.name });
         assert.ok(view.ok, `${client.name}: ops could not render ${path.join("/")}`);
+      }
+    }
+  });
+}
+
+for (const slug of fixtures) {
+  test(`every path ops accepts for ${slug} is one the tree offers`, () => {
+    // The OTHER direction of the same property. Tree→ops proves no affordance
+    // dead-ends; ops→tree proves nothing is reachable that the tree never showed,
+    // which is what would make a path an agent could stumble into but never be
+    // told about.
+    const context = loadedFixture(slug);
+    for (const client of context.library.clients) {
+      const operations = operationsOf(client);
+      if (operations.length === 0) continue;
+      const tree = buildPathTree(operations);
+      const offered = new Set(allPaths(tree).map((path) => path.join("/")));
+
+      for (const path of allPaths(tree)) {
+        const resolution = resolvePath(tree, path);
+        assert.equal(resolution.kind, "found");
+        if (resolution.kind !== "found") continue;
+        // What `ops` reports as the path it landed on must be something the tree
+        // offers, wildcards and parameter spellings resolved back to display form.
+        assert.ok(offered.has(resolution.path.join("/")), `ops resolved to an unoffered path: ${resolution.path.join("/")}`);
+      }
+
+      // And a wildcard cannot reach anything the tree does not hold either.
+      for (const path of allPaths(tree)) {
+        const wildcarded = path.map((segment) => (segment.startsWith("{") ? "*" : segment));
+        const resolution = resolvePath(tree, wildcarded);
+        if (resolution.kind !== "found") continue;
+        assert.ok(
+          offered.has(resolution.path.join("/")),
+          `a wildcard reached an unoffered path: ${resolution.path.join("/")}`,
+        );
       }
     }
   });
@@ -264,7 +309,7 @@ test("a wildcard addresses a parameter level, and the anchored match is not a su
 
 for (const slug of fixtures) {
   test(`--deps closures terminate for every declaration in ${slug}`, () => {
-    const context = loaded(slug);
+    const context = loadedFixture(slug);
     const index = indexDeclarations(context.library.typeDefs);
     for (const name of index.names) {
       // A record whose field is an array of itself is ordinary, so this is a real
@@ -284,7 +329,7 @@ for (const slug of fixtures) {
 }
 
 test("--deps follows a chain in order and stops at the package boundary", () => {
-  const view = renderTypeView(loaded("ballerina__http"), { names: ["ClientRequestError"], deps: true });
+  const view = renderTypeView(loadedFixture("ballerina__http"), { names: ["ClientRequestError"], deps: true });
   assert.ok(view.ok);
   const order = [...view.value.matchAll(/^type ([A-Za-z0-9_]+) /gm)].map((match) => match[1]);
   assert.deepEqual(order.slice(0, 4), ["ClientRequestError", "ApplicationResponseError", "ClientError", "Error"]);
@@ -295,7 +340,7 @@ test("--deps names cross-package edges instead of fetching them", () => {
   // `http:ConnectionConfig` has a LOCAL closure of one and fifteen external edges;
   // crossing the boundary would hide a five-second cold fetch inside an answer the
   // caller expects to be warm.
-  const view = renderTypeView(loaded("ballerinax__github"), { names: ["ConnectionConfig"], deps: true });
+  const view = renderTypeView(loadedFixture("ballerinax__github"), { names: ["ConnectionConfig"], deps: true });
   assert.ok(view.ok);
   assert.match(view.value, /^\/\/ Declared in other packages, not included above:$/m);
   assert.match(view.value, /ballerina\/http/);
