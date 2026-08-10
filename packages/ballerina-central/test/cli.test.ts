@@ -104,7 +104,10 @@ test("an unrecognised flag is a usage error, not a version Central is asked abou
   const streams = capture();
   assert.equal(await run(["ballerina/http", "--nonesuch"], streams, { fetch: NEVER }), 2);
   assert.equal(streams.stdout(), "");
-  assert.match(String(failure(streams)["message"]), /Unknown flag '--nonesuch'/);
+  const error = failure(streams);
+  assert.equal(error["kind"], "validation");
+  assert.match(String(error["message"]), /Unknown option '--nonesuch'/);
+  assert.match(String(error["suggestion"]), /Known flags are/);
 });
 
 test("a first positional that is neither a package nor a verb names the four verbs", async () => {
@@ -130,10 +133,34 @@ test("--project-dir and --client without a value are usage errors", async () => 
   for (const argv of [
     ["ballerinax/github", "--project-dir"],
     ["ops", "ballerinax/github", "--client"],
+    // The value must not be silently taken from the next flag either.
+    ["ops", "ballerinax/github", "--client", "--sigs"],
   ]) {
     const streams = capture();
-    assert.equal(await run(argv, streams, { fetch: NEVER }), 2);
+    assert.equal(await run(argv, streams, { fetch: NEVER }), 2, argv.join(" "));
     assert.equal(failure(streams)["kind"], "validation");
+    assert.ok(String(failure(streams)["suggestion"]).length > 0);
+  }
+});
+
+test("--flag=value is accepted, because it is the form half the world types", async () => {
+  const streams = capture();
+  const exitCode = await run(["ops", "ballerina/http", "--client=FailoverClient"], streams, {
+    fetch: centralFor("ballerina__http", "2.16.6"),
+  });
+  assert.equal(exitCode, 0);
+  assert.match(streams.stdout(), /`FailoverClient`/);
+
+  const parsed = parseArgs(["ballerinax/github", "--project-dir=stars-api"]);
+  assert.equal(parsed?.ok, true);
+  if (parsed?.ok) assert.equal(parsed.value.options.projectDir, "stars-api");
+});
+
+test("-h is the short form of --help wherever it appears", async () => {
+  for (const argv of [["-h"], ["ops", "ballerinax/github", "-h"], ["type", "x/y", "Name", "-h"]]) {
+    const streams = capture();
+    assert.equal(await run(argv, streams, { fetch: NEVER }), 2, argv.join(" "));
+    assert.match(streams.stderr(), /^Usage: bal-library/);
   }
 });
 

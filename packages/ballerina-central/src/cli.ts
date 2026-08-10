@@ -40,6 +40,7 @@
  * otherwise it is a verb.
  */
 
+import { parseArgs as parseArgv } from "node:util";
 import { NULL_CACHE } from "./cache/store.js";
 import type { HttpOptions } from "./central/client.js";
 import { loadPackage, type LoadedPackage, type ResolveOptions } from "./library.js";
@@ -72,58 +73,69 @@ function validation(message: string, suggestion: string): Result<CliArgs> {
   return err({ kind: "validation", message, suggestion });
 }
 
+/**
+ * The flags, as `node:util`'s parser wants them.
+ *
+ * The standard library rather than a hand-rolled loop or a CLI dependency. It is
+ * strictly better than the loop it replaced on two counts — it accepts
+ * `--client=Client`, which the loop rejected as an unknown flag, and it catches
+ * `--client --sigs` as an ambiguous value instead of silently taking `--sigs` as
+ * the client name — and better than a dependency because this binary is baked into
+ * the runner image, where every edge on the agent's critical path is one worth not
+ * having. What a CLI framework would add is help generation and its own error
+ * printing, and both are things this command has to own: `usage.ts` carries the
+ * resolved cache directory, and every failure has to leave stderr holding exactly
+ * one `Failure` object.
+ */
+const FLAGS = {
+  client: { type: "string" },
+  "project-dir": { type: "string" },
+  sigs: { type: "boolean" },
+  deps: { type: "boolean" },
+  refresh: { type: "boolean" },
+  help: { type: "boolean", short: "h" },
+} as const;
+
+const KNOWN_FLAGS = "--client, --project-dir, --sigs, --deps and --refresh";
+
+/**
+ * `node:util`'s parse errors, as this command's contract.
+ *
+ * Every one of them is exit 2 with a `suggestion`, because the recovery is always
+ * an edit to the argument list. The thing that must NOT happen is an unrecognised
+ * flag becoming a positional: that is how `--refresh` used to resolve as the
+ * VERSION and report `package-not-found` at exit 1, which the skill teaches means
+ * "Central could not answer, run it once more".
+ */
+function describeParseError(cause: unknown): Result<CliArgs> {
+  const code = typeof cause === "object" && cause !== null && "code" in cause ? String(cause.code) : "";
+  const message = cause instanceof Error ? cause.message.split("\n")[0] ?? "" : String(cause);
+  if (code === "ERR_PARSE_ARGS_UNKNOWN_OPTION") {
+    return validation(message, `Known flags are ${KNOWN_FLAGS}. Run with --help for usage.`);
+  }
+  if (code === "ERR_PARSE_ARGS_INVALID_OPTION_VALUE") {
+    return validation(message, "Pass the value after the flag, or as --flag=value.");
+  }
+  return validation(message, `Run with --help for usage. Known flags are ${KNOWN_FLAGS}.`);
+}
+
 /** `null` means "print usage and stop" — `--help`, or no arguments at all. */
 export function parseArgs(argv: readonly string[]): Result<CliArgs> | null {
-  const positional: string[] = [];
-  let client: string | undefined;
-  let projectDir: string | undefined;
-  let sigs = false;
-  let deps = false;
-  let refresh = false;
-
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    if (arg === undefined) continue;
-    if (arg === "-h" || arg === "--help") return null;
-    if (arg === "--sigs") {
-      sigs = true;
-      continue;
-    }
-    if (arg === "--deps") {
-      deps = true;
-      continue;
-    }
-    if (arg === "--refresh") {
-      refresh = true;
-      continue;
-    }
-    if (arg === "--client" || arg === "--project-dir") {
-      const value = argv[++i];
-      if (value === undefined || value.startsWith("--")) {
-        return validation(
-          `${arg} needs a value.`,
-          arg === "--client"
-            ? "Pass a client name, e.g. --client Client."
-            : "Pass the component directory, e.g. --project-dir stars-api.",
-        );
-      }
-      if (arg === "--client") client = value;
-      else projectDir = value;
-      continue;
-    }
-    // An unrecognised flag must never become a positional. Silently absorbing one
-    // is how `--refresh` used to resolve as the VERSION and report a Central
-    // failure at exit 1, which the skill teaches means "run it once more".
-    if (arg.startsWith("-") && arg !== "-") {
-      return validation(
-        `Unknown flag '${arg}'.`,
-        "Known flags are --client, --project-dir, --sigs, --deps and --refresh. Run with --help for usage.",
-      );
-    }
-    positional.push(arg);
+  let parsed: ReturnType<typeof parseArgv<{ options: typeof FLAGS; allowPositionals: true; strict: true }>>;
+  try {
+    parsed = parseArgv({ args: [...argv], options: FLAGS, allowPositionals: true, strict: true });
+  } catch (cause) {
+    return describeParseError(cause);
   }
 
-  const [first, ...rest] = positional;
+  if (parsed.values.help === true) return null;
+  const client = parsed.values.client;
+  const projectDir = parsed.values["project-dir"];
+  const sigs = parsed.values.sigs === true;
+  const deps = parsed.values.deps === true;
+  const refresh = parsed.values.refresh === true;
+
+  const [first, ...rest] = parsed.positionals;
   if (first === undefined) return null;
 
   // A package name has a slash and a verb does not. Anything else is a typo, and
@@ -137,7 +149,7 @@ export function parseArgs(argv: readonly string[]): Result<CliArgs> | null {
     );
   }
   const verb: Verb = leadsWithPackage || !isVerb(first) ? "overview" : first;
-  const args = leadsWithPackage ? positional : rest;
+  const args = leadsWithPackage ? parsed.positionals : rest;
 
   const [name, ...tail] = args;
   if (name === undefined) {
