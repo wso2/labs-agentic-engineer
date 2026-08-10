@@ -53,7 +53,12 @@ jobs:
           - name: remote-worker
             dockerfile: runners/remote-worker/Dockerfile
             context: runners/remote-worker
-            buildContexts: skills=skills
+            # Two named contexts: the skill library, and the bundled
+            # `bal-library` command the ballerina skill drives. The second is a
+            # BUILD OUTPUT, so the step below has to produce it first.
+            buildContexts: |
+              skills=skills
+              balcli=packages/ballerina-central/dist
           - name: console
             dockerfile: apps/console/Dockerfile
             context: .
@@ -69,6 +74,19 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The runner image bakes @aep/ballerina-central's bundle, which is a build
+      # output rather than a checked-in file — nothing else in this matrix needs
+      # a node toolchain, so it is built only for that row.
+      - name: Build bal-library (remote-worker only)
+        if: ${{ matrix.name == 'remote-worker' }}
+        run: |
+          corepack enable
+          # A full install rather than a filtered one: a filtered install on a
+          # tree installed with a different scope prompts before purging
+          # node_modules, and there is no TTY here to answer it.
+          pnpm install --frozen-lockfile
+          pnpm --filter @aep/ballerina-central build
 
       - name: Build and push ${{ matrix.name }}
         uses: docker/build-push-action@v6

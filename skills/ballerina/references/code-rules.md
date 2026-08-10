@@ -1,6 +1,10 @@
 # Ballerina Code Rules
 
-## Structure
+How code is written inside a `.bal` file. For file layout, packages, workspaces,
+dependency management and `Config.toml`, see [project-structure.md](project-structure.md).
+For tests, see [tests.md](tests.md) — write them only when the user asks.
+
+## Module-Level Declarations
 
 - Define `configurable` variables for all external values (API keys, hosts, ports, credentials).
   - Allowed types: `string`, `int`, `decimal`, `boolean` only.
@@ -54,15 +58,13 @@
 
 ## HTTP Service Design
 
-When creating an HTTP service, define resource function signatures first with full return types:
+When creating an HTTP service, define resource function signatures with possible return types:
 
 ```ballerina
-resource function get users() returns UserList|http:NotFound|http:NotImplemented {
-    return http:NOT_IMPLEMENTED;
+resource function get users() returns UserList|http:NotFound {
+    return http:NOT_FOUND;
 }
 ```
-
-Use `http:NotImplemented` as a placeholder return type initially, then implement each resource function.
 
 Params bind from the signature, no annotation needed: a plain typed param is a query param (`?` or a default makes it optional), `@http:Header` binds a header. Escape a reserved word or a hyphen with a leading quote — `int 'limit = 20`, `@http:Header string x\-user\-id`.
 
@@ -89,26 +91,6 @@ resource function post items(@http:Header string x\-user\-id, ItemInput payload)
 
 `time:utcNow()` gives a `time:Utc`. `time:utcToString` / `time:utcFromString` are the RFC3339 round trip an OpenAPI `date-time` field needs. `time:utcToCivil` / `time:utcFromCivil` convert to and from `time:Civil` — there is no `civilToUtc`.
 
-## GraphQL Services
-
-If the user requests a GraphQL service and has not provided their own schema:
-- Write the proposed GraphQL schema first (before generating Ballerina code).
-- Use the same names from the GraphQL schema when defining Ballerina record types.
-
-## Workspace Projects
-
-When working with a Ballerina workspace (root `Ballerina.toml` with a `[workspace]` section):
-
-**Creating a new package:**
-1. Create the package directory with a `Ballerina.toml` containing the `[package]` section (`name`, `org`, `version`).
-2. Add the new package path to the `packages` array in the root workspace `Ballerina.toml`.
-3. Create initial `.bal` files in the new package.
-
-**Guidelines:**
-- Always prefer modifying existing packages over creating new ones.
-- The root workspace `Ballerina.toml` should only contain a `[workspace]` section.
-- Do not modify existing package `Ballerina.toml` files for dependency management.
-
 ## Environment Variables
 
 - Read a platform-injected environment variable (e.g. a dependency's `envBindings` in `design.json`) as a one-line `configurable` in `config.bal`, using `ballerina/os`:
@@ -118,12 +100,6 @@ When working with a Ballerina workspace (root `Ballerina.toml` with a `[workspac
   configurable string envVar = os:getEnv("MY_ENV_VAR");
   ```
 - One declaration per env var, all in `config.bal` — don't scatter `os:getEnv` calls across other files.
-
-## Config.toml
-
-- Never read `Config.toml` or `tests/Config.toml` directly — they may contain secrets.
-- Providing values to configurables is a runtime task. Only do it before running or testing.
-- If the user needs to supply values, list the configurable variable names in the summary.
 
 ## Logging & Observability
 
@@ -138,27 +114,219 @@ When working with a Ballerina workspace (root `Ballerina.toml` with a `[workspac
   Metrics (e.g. Prometheus) and traces (e.g. Jaeger) are then emitted automatically for services and clients.
 - Only add custom spans/metrics via the `ballerina/observe` module when the built-in instrumentation isn't enough.
 
-## File Organization
-
-- Split code by concern across multiple `.bal` files rather than cramming everything into `main.bal` — files in a package share one module, so splitting is free; use submodules or packages for larger separation.
-- Reuse a fitting existing file before adding a new one; name new files for their concern (`snake_case.bal`). Naming and granularity are your call, not a fixed scheme.
-- Do not create documentation markdown files.
-- **Never hand-edit `Dependencies.toml`** — it is auto-managed by the build tool. Do not create or hand-modify it to manage dependencies; deleting it to force a clean re-resolution (then rebuilding) is a valid troubleshooting step.
-- **Never edit `Ballerina.toml` to add dependencies** — add the `import` statement in the `.bal` file and run `bal build`; Ballerina resolves and downloads packages from Central automatically.
-
-## Tests
-
-- Only write tests if the user explicitly asks.
-- Use the `ballerina/test` module and any service-specific test libraries.
-- Follow the `instructions` field in `ballerina/test` library docs and the `testGenerationInstruction` field in the service library's API docs when writing tests.
-- Test an HTTP service through an `http:Client` against the running service — assert its public contract, not internals.
-- Override `configurable` values for tests in `tests/Config.toml` (not the package's `Config.toml`).
-- To mock a client or connector, wrap its construction in a small init function so `@test:Mock` can replace it.
-- Use `dependsOn` only when test ordering is the behavior under test — not to sequence otherwise-independent tests.
-
 ## Other Rules
 
 - No dynamic listener registrations.
 - No code that requires assigning values to function parameters.
 - Propagate errors with `check`, or handle them with a `do`/`on fail` block; never use `checkpanic` to silence an error return in real code.
 - `//` for single-line comments only. Keep comments minimal.
+
+# Ballerina Langlib Reference
+
+## Contents
+- [Type Conversion](#type-conversion)
+- [JSON Conversion](#json-conversion)
+- [Arrays](#arrays)
+- [Strings](#strings)
+- [Maps](#maps)
+- [Numbers](#numbers)
+- [Errors](#errors)
+- [Sleep](#sleep)
+- [Query Expressions](#query-expressions)
+- [XML](#xml)
+- [Regular Expressions](#regular-expressions)
+
+---
+
+## Type Conversion
+
+```ballerina
+int age = check int:fromString("25");
+float price = check float:fromString("19.99");
+decimal exact = check decimal:fromString("10.50");
+boolean flag = check boolean:fromString("true");
+xml bookXml = check xml:fromString("<book>Hamlet</book>");
+
+// Special float values
+float notANumber = check float:fromString("NaN");
+float infinity = check float:fromString("Infinity");
+```
+
+---
+
+## JSON Conversion
+
+```ballerina
+// Parse JSON string
+json data = check jsonText.fromJsonString();
+
+// JSON string → typed array
+int[] nums = check jsonArray.fromJsonStringWithType();
+
+// JSON string → record
+type Config record {| int port; int timeout; |};
+Config cfg = check configText.fromJsonStringWithType(Config);
+
+// Record → JSON
+json result = person.toJson();
+string jsonStr = person.toJsonString();
+
+// json → record (cloneWithType)
+json raw = {port: 8080};
+Config config = check raw.cloneWithType();
+
+// Validate field type (ensureType)
+json[] subjects = check student.subjects.ensureType();
+
+// Clone a value
+int[] copy = original.clone();
+```
+
+---
+
+## Arrays
+
+```ballerina
+numbers.length()        // count
+numbers.push(4)         // append
+numbers.pop()           // remove last, returns it
+numbers.unshift(0)      // prepend
+numbers.shift()         // remove first, returns it
+numbers.indexOf(30)     // int? — index or ()
+numbers.sort()          // ascending
+numbers.sort("descending")
+```
+
+---
+
+## Strings
+
+```ballerina
+text.length()
+text.substring(0, 5)
+text.indexOf("World")           // int? — index or ()
+text.includes("World")          // boolean
+text.includes("o", 5)           // search from index
+text.startsWith("Hello")
+text.endsWith("World")
+text.trim()
+text.toUpperAscii()
+text.toLowerAscii()
+text.toBytes()                  // byte[]
+string:fromBytes(data)          // check — byte[] → string
+string:'join(", ", "a", "b")    // "a, b"
+"Hello".concat(" ", "World")
+
+// Code points
+int code = string:toCodePointInt("A");           // 65
+string char = check string:fromCodePointInt(65); // "A"
+int[] codes = "Hello".toCodePointInts();
+string text = check string:fromCodePointInts([72, 101, 108, 108, 111]);
+int code = "Hello".getCodePoint(0);              // 72
+```
+
+---
+
+## Maps
+
+```ballerina
+scores.length()
+scores.get("Alice")             // panics if missing
+scores.hasKey("Alice")          // boolean
+scores.keys()                   // string[]
+scores.toArray()                // value[]
+scores.remove("Alice")          // returns value, panics if missing
+scores.removeIfHasKey("Carol")  // returns value? — safe remove
+scores.removeAll()
+```
+
+---
+
+## Numbers
+
+```ballerina
+(255).toHexString()             // "ff"
+int value = check int:fromHexString("ff"); // 255
+```
+
+---
+
+## Errors
+
+```ballerina
+err.message()                   // string
+err.detail()                    // map<value:Cloneable> & readonly
+err.cause()                     // error?
+```
+
+---
+
+## Sleep
+
+```ballerina
+import ballerina/lang.runtime;
+runtime:sleep(2); // pause for 2 seconds
+```
+
+---
+
+## Query Expressions
+
+```ballerina
+// Filter array
+int[] even = from int n in numbers where n % 2 == 0 select n;
+
+// Transform records
+string[] names = from var p in people where p.age > 23 select p.name;
+
+// Process stream
+int[] filtered = from int num in numberStream where num > 2 select num;
+```
+
+---
+
+## XML
+
+```ballerina
+xml element = xml `<book><title>Hamlet</title></book>`;
+xml books = xml `<book>Book1</book>` + xml `<book>Book2</book>`;
+xml combined = xml:concat(xml `<item>First</item>`, xml `<item>Second</item>`);
+xml parsed = check xml:fromString(xmlText);
+int count = items.length();
+
+// For XML ↔ record conversion, use ballerina/data.xmldata
+```
+
+---
+
+## Regular Expressions
+
+Must import: `import ballerina/lang.regexp;`
+
+```ballerina
+// Create pattern
+string:RegExp pattern = re `[0-9]+`;
+string:RegExp pattern = check regexp:fromString("[0-9]+");
+
+// Find
+regexp:Span? match = pattern.find("Hello123");
+regexp:Span[] all = re `[0-9]+`.findAll("a1b2c3");
+
+// Capture groups
+regexp:Groups? groups = re `([a-z]+)([0-9]+)`.findGroups("abc123");
+if groups is regexp:Groups {
+    string full = groups[0].substring();   // "abc123"
+    string letters = groups[1].substring(); // "abc"
+    string numbers = groups[2].substring(); // "123"
+}
+
+// Validate full match
+boolean valid = re `[0-9]+`.isFullMatch("123");
+
+// Replace
+string result = re `[0-9]+`.replace("a1b2", "X");      // "aXb2"
+string result = re `[0-9]+`.replaceAll("a1b2", "X");   // "aXbX"
+
+// Split
+string[] parts = re `,\s*`.split("a, b, c"); // ["a", "b", "c"]
+```

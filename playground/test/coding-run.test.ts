@@ -28,6 +28,7 @@ import {
   dockerInvocation,
   hostInvocation,
   isFailedSubagent,
+  localBalCliDir,
   renderMergedTimeline,
 } from "../src/engine/coding-run.js";
 import { formatLine } from "@aep/progress-view";
@@ -442,4 +443,28 @@ test("failed-subagent trigger: fires on a real stalled Agent result, and nothing
   assert.equal(isFailedSubagent({ ...stalled, ok: true, status: "completed" }), false);
   assert.equal(isFailedSubagent({ ...stalled, tool: "Bash", summary: "bal build" }), false);
   assert.equal(isFailedSubagent({ ...stalled, kind: "tool_use" }), false);
+});
+
+// `bal-library` (@aep/ballerina-central) is the one command the `ballerina`
+// skill calls by name, and the point of wiring it here is that a CLI edit
+// reaches the next run without an image rebuild. Both modes are asserted
+// against the SAME resolver so this holds whether or not the package happens to
+// be built in the environment running the tests — an unbuilt tree must leave
+// docker's baked copy alone rather than mount an empty directory over it.
+test("both run modes point at the working-tree bal-library build, or at neither", () => {
+  const dist = localBalCliDir();
+  const { env } = hostInvocation(invocationOpts, "/r");
+  const { args } = dockerInvocation(invocationOpts, "/r", "c1");
+  const mount = args.find((a) => a.endsWith(":/opt/ballerina-central:ro"));
+
+  if (dist === undefined) {
+    assert.equal(mount, undefined, "nothing may be mounted over the image's baked CLI");
+    assert.equal(env.PATH, process.env.PATH, "host PATH is left as the developer's own");
+    return;
+  }
+  assert.equal(mount, `${dist}:/opt/ballerina-central:ro`);
+  assert.ok(env.PATH?.startsWith(`${dist}:`), "the working-tree build must win on PATH");
+  // Prepended, not replaced: `bal`, `go` and `playwright-cli` still have to
+  // resolve from the developer's own toolchain.
+  assert.ok(env.PATH?.includes(process.env.PATH ?? ""), "the rest of PATH must survive");
 });

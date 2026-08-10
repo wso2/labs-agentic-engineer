@@ -48,7 +48,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { createWriteStream, mkdirSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { stdout as output } from "node:process";
 import {
@@ -70,6 +70,31 @@ const BUILD_RUNNER_SCRIPT = join(REPO_ROOT, "deployments", "scripts", "build-run
 // it into the project dir's .claude/skills/, standing in for the BFF's write.
 const IMAGE_LIBRARY_DIR = "/app/skills";
 const RUNNER_IMAGE = process.env.AGENT_RUNNER_IMAGE || "aep-runner:dev";
+// The bundled `bal-library` command (@aep/ballerina-central), which the
+// `ballerina` skill drives by name. The image bakes it at IMAGE_BAL_CLI_DIR and
+// puts that directory on PATH; both run modes point at the WORKING TREE build
+// instead — docker by mounting over the baked copy, host by prepending the same
+// directory to the child's PATH — so the tuning loop is
+// `pnpm --filter @aep/ballerina-central build` and never an image rebuild.
+//
+// This is the same trade the skill library makes one line above, for the same
+// reason: what is being iterated on here is what the agent reads, and a rebuild
+// between edit and run is what stops people iterating.
+const BAL_CLI_DIST = join(REPO_ROOT, "packages", "ballerina-central", "dist");
+const IMAGE_BAL_CLI_DIR = "/opt/ballerina-central";
+
+/**
+ * The working-tree CLI build, when there is one.
+ *
+ * Absent, both modes are left alone rather than patched: docker still has the
+ * baked copy, and mounting a directory Docker would have to CREATE would hide
+ * it behind an empty one. Host mode has no baked copy, so the command is simply
+ * missing — which the `ballerina` skill treats as "fall through to the .bala
+ * tree", the same branch a stale image produces.
+ */
+export function localBalCliDir(): string | undefined {
+  return existsSync(join(BAL_CLI_DIST, "bal-library")) ? BAL_CLI_DIST : undefined;
+}
 // The Agent SDK's project state inside the image, which is where a fanned-out
 // subagent's own transcript lives (`<slug>/<session>/subagents/agent-<taskId>.jsonl`).
 // That transcript is the ONLY record of what a subagent was doing beyond the
@@ -287,11 +312,17 @@ interface Invocation {
  * See ADR-0016 for the platform half.
  */
 export function hostInvocation(opts: CodingRunOptions, runDir: string): Invocation {
+  // Host mode has no image, so every command a skill names has to come off the
+  // developer's own PATH — which is exactly what --host already means for `bal`,
+  // `go` and `playwright-cli`. Prepending the package's build directory extends
+  // that to `bal-library` without asking anyone to install anything.
+  const balCli = localBalCliDir();
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     AEP_LOCAL_PROJECT_DIR: opts.projectDir,
     AEP_LOCAL_RUN_DIR: runDir,
     AEP_LOCAL_SKILLS_DIR: opts.skillsDir,
+    ...(balCli ? { PATH: `${balCli}:${process.env.PATH ?? ""}` } : {}),
   };
   const coding = opts.useApiKey ? codingCredential() : undefined;
   if (coding) {
@@ -373,6 +404,7 @@ export function dockerInvocation(opts: CodingRunOptions, runDir: string, contain
   // putting a secret somewhere it is never read.
   const coding = codingCredential();
   const credentialVar = coding?.envVar ?? "ANTHROPIC_API_KEY";
+  const balCli = localBalCliDir();
   const args = [
     "run",
     "--rm",
@@ -387,6 +419,7 @@ export function dockerInvocation(opts: CodingRunOptions, runDir: string, contain
     `${LOCAL_ENTRY}:/app/src/local.ts:ro`,
     "-v",
     `${opts.skillsDir}:${IMAGE_LIBRARY_DIR}:ro`,
+    ...(balCli ? ["-v", `${balCli}:${IMAGE_BAL_CLI_DIR}:ro`] : []),
     "-v",
     `${opts.projectDir}:/workspace/project`,
     "-v",

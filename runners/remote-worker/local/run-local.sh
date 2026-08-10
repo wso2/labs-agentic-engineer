@@ -106,7 +106,13 @@ if ! curl -sf "http://127.0.0.1:${STUB_PORT}/healthz" >/dev/null 2>&1; then
 fi
 
 echo ">> building runner image ${IMAGE_TAG} (${DOCKERFILE##*/})"
-docker build -f "$DOCKERFILE" -t "$IMAGE_TAG" "$WORKER_DIR"
+# The Dockerfile COPYs from two BuildKit named contexts that live outside its
+# build context — the skill library and the bundled bal-library command — so
+# every build path has to pass both or BuildKit fails to resolve them.
+docker build \
+  --build-context "skills=$WORKER_DIR/../../skills" \
+  --build-context "balcli=$WORKER_DIR/../../packages/ballerina-central/dist" \
+  -f "$DOCKERFILE" -t "$IMAGE_TAG" "$WORKER_DIR"
 
 mkdir -p "$SCRIPT_DIR/workspace"
 

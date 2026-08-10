@@ -181,6 +181,16 @@ into the runner pod at `/app/skills` for live skill edits (see
   playground has no library to mirror: `build-runner.sh`, `release.yml`'s matrix
   row, and `local/run-local.sh` all pass it. A dispatched run does not read it —
   its skills come from the clone — but `local.ts` does.
+- **`balcli` is a SECOND named context, and every build path passes both.**
+  `@aep/ballerina-central` bundles to the `bal-library` command the `ballerina`
+  skill drives by name; the image bakes it at `/opt/ballerina-central` and puts
+  that directory on `PATH`. Unlike `skills/`, it is a **build output** — `make
+  build` produces it, `build-runner.sh` builds it when missing, and the release
+  workflow gained a step for it. A missing named context is a BuildKit
+  resolution error, not a degraded image, so a new build path that forgets one
+  fails immediately. Tools a skill invokes by name belong here rather than in
+  the skill directory: nothing but prose then reaches an org's editable skills
+  repo. See that package's ADR-0001.
 - **One image**, `remote-worker/Dockerfile`, serves BOTH task kinds
   (`AEP_TASK_KIND=implementation` and `=validation`). It is Debian-based
   because Playwright's browsers are glibc-linked; do not reintroduce a second,

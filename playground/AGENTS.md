@@ -133,6 +133,22 @@ covers the coding run's own workflow skill and its local-mode overlay too: the
 library is mounted over the image's `/app/skills`, so `aep/SKILL.md` and
 `aep/overlays/local.md` are live-editable exactly like a stack skill.
 
+**`bal-library` is live-editable on the same terms**, in BOTH modes. The
+`ballerina` skill drives one command by name (`@aep/ballerina-central`), and a
+skill is only as good as what the command it names returns — so tuning the two
+together has to be one loop:
+
+```bash
+pnpm --filter @aep/ballerina-central build   # ~2s
+pnpm play <dir> code --host --yes --restore
+```
+
+Docker mode mounts the same `packages/ballerina-central/dist` over the image's
+`/opt/ballerina-central`, so it needs no rebuild either; the image's baked copy
+is what a cluster run gets. With the package unbuilt, host mode simply has no
+such command and the skill falls through to the on-disk `.bala` tree — the same
+branch a stale image produces, which is why the skill documents it.
+
 **AI SDK DevTools is always on** (`src/devtools-default.ts`): every
 engineering-agent LLM call — the composed prompt, tool calls, usage, timing —
 is captured to `playground/.devtools/generations.json` (gitignored). Inspect

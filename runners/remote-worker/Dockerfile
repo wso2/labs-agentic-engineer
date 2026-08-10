@@ -137,5 +137,24 @@ COPY --chown=aep:aep . .
 # never needs a rebuild.
 COPY --from=skills --chown=aep:aep . /app/skills
 
+# The Ballerina Central reader the `ballerina` skill drives by name.
+# `@aep/ballerina-central` bundles to ONE dependency-free `.mjs` plus a two-line
+# `sh` launcher, so this is a copy — no npm install, no second dependency tree
+# beside the runner's own, and nothing that could disagree with it about zod.
+#
+# Another BuildKit named build context
+# (`--build-context balcli=<repo>/packages/ballerina-central/dist`) for the same
+# reason as skills: the package is built outside this image's context. Every
+# build path has to pass it — `build-runner.sh`, `release.yml`'s matrix row and
+# `local/run-local.sh` — and `make build` is what produces the directory.
+#
+# On PATH rather than symlinked into /usr/local/bin: the playground bind-mounts
+# its working-tree build over this directory, which is what makes a CLI edit
+# apply to the next docker-mode run with no rebuild — exactly how /app/skills
+# above already works. A symlink would resolve through the mount's own path and
+# defeat the launcher's `dirname "$0"`.
+COPY --from=balcli --chown=aep:aep bal-library bal-library.mjs /opt/ballerina-central/
+ENV PATH="/opt/ballerina-central:${PATH}"
+
 USER aep
 ENTRYPOINT ["npx", "tsx", "src/oneshot.ts"]

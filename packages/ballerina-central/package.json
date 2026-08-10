@@ -1,0 +1,37 @@
+{
+  "name": "@aep/ballerina-central",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Typed reader for the Ballerina Central docs API: renders a package's whole public API — clients, resource/remote functions, records, enums, unions, services, annotations — as one Ballerina syntax string. Ships as the `bal-library` command the ballerina skill drives.",
+  "bin": {
+    "bal-library": "./dist/bal-library"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && tsx scripts/bundle.ts",
+    "typecheck": "tsc -p tsconfig.check.json",
+    "lint": "eslint .",
+    "test": "tsx --test \"test/**/*.test.ts\"",
+    "record-fixture": "tsx scripts/record-fixture.ts",
+    "dev": "echo \"@aep/ballerina-central: no dev server\""
+  },
+  "dependencies": {
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "esbuild": "^0.28.1",
+    "tsx": "^4.21.0"
+  }
+}

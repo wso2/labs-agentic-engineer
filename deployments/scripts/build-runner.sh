@@ -40,8 +40,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/env.sh"
 
 IMAGE="${AGENT_RUNNER_IMAGE:-aep-runner:dev}"
-WORKER_DIR="$SCRIPT_DIR/../../runners/remote-worker"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+WORKER_DIR="$REPO_ROOT/runners/remote-worker"
 DOCKERFILE="$WORKER_DIR/Dockerfile"
+# The bundled `bal-library` command (@aep/ballerina-central). A build output
+# rather than a checked-in file, so it has to exist before the image build can
+# copy it in — built here when missing so a fresh clone's first `make
+# build-runner` is not a confusing BuildKit context error.
+BAL_CLI_DIST="$REPO_ROOT/packages/ballerina-central/dist"
+
+if [ ! -f "$BAL_CLI_DIST/bal-library.mjs" ]; then
+    echo "🔧 building @aep/ballerina-central (bal-library) — the runner image bakes it..."
+    (cd "$REPO_ROOT" && pnpm --filter @aep/ballerina-central build) || {
+        echo "❌ could not build @aep/ballerina-central; run 'make build' first" >&2
+        exit 1
+    }
+fi
 
 if [ "${FORCE:-0}" = "1" ] || ! docker image inspect "$IMAGE" &>/dev/null; then
     echo "🐳 Building runner image ($IMAGE)..."
@@ -56,8 +70,11 @@ if [ "${FORCE:-0}" = "1" ] || ! docker image inspect "$IMAGE" &>/dev/null; then
     # --build-context skills=<repo>/skills: the authored skill library lives at
     # the repo root, outside this image's build context, and the runner bakes it
     # at /app/skills (see the Dockerfile). Same mechanism aep-api uses.
+    # --build-context balcli=...: likewise for the bundled bal-library command,
+    # baked at /opt/ballerina-central and put on PATH.
     docker build --provenance=false --sbom=false \
-        --build-context "skills=$SCRIPT_DIR/../../skills" \
+        --build-context "skills=$REPO_ROOT/skills" \
+        --build-context "balcli=$BAL_CLI_DIST" \
         -f "$DOCKERFILE" -t "$IMAGE" "$WORKER_DIR"
     echo "✅ built $IMAGE"
 else

@@ -18,19 +18,19 @@ bal new <project-name>   # scaffolds main.bal + Ballerina.toml
 cd <project-name>
 ```
 
-- For a workspace (multiple packages in one repo), see workspace rules in [code-rules.md](references/code-rules.md)
+- Read project structure on project-structure practices [project-structure.md](references/project-structure.md)
 
 ## Writing Ballerina Code
 
-**File layout.** New code belongs in the file that fits its concern — `.bal` files and `Ballerina.toml` show the existing layout (see [code-rules.md](references/code-rules.md)).
+**File layout.** New code belongs in the file that fits its concern — `.bal` files and `Ballerina.toml` show the existing layout (see [project-structure.md](references/project-structure.md)).
 
 **Finding an external connector or library.** For a package [code-rules.md](references/code-rules.md) already names, write the `import` and let `bal build` resolve it — `bal search` and `bal pull` are Central round-trips for something already decided. Reach for them only for a genuinely unknown connector. Where a `ballerinax/*` connector and a standalone `trigger.*` package cover the same events, use the connector — `trigger.*` is being superseded regardless of modified date.
 
 `ballerinax/postgresql` pulls `ballerinax/cdc` and its Debezium jars transitively at every version; the jar-conflict warning that follows is expected and not yours to fix.
 
-**Never fetch Ballerina documentation from the web.** `central.ballerina.io` and `lib.ballerina.io` spend a network round-trip on prose about a module whose README and exact source are already on this machine.
+**Use `bal-library` over web search.** 
 
-**Code rules.** [code-rules.md](references/code-rules.md) is the source of truth for how code is written and structured, including dependency management (`Dependencies.toml`/`Ballerina.toml` are auto-managed, never hand-edited) — check code against it as it's written.
+**Code rules.** [code-rules.md](references/code-rules.md) is the source of truth for how code is written — Make sure to load it before you write code or working with ballerina. [project-structure.md](references/project-structure.md) covers how the project is laid out and how packages and dependencies are managed (`Dependencies.toml`/`Ballerina.toml` are auto-managed, never hand-edited) — load it before adding files or packages, or touching a `.toml`. Write tests only when the user explicitly asks — then load [tests.md](references/tests.md).
 
 **Code first, then build, then look things up — in that order.**
 
@@ -45,10 +45,29 @@ Configurables are read at **runtime**, never at build time. Do not prefix `bal b
 When the build does name a symbol, in this order:
 
 1. [code-rules.md](references/code-rules.md) — `http` resources, `sql` queries, `time`.
-2. [langlib-reference.md](references/langlib-reference.md) — the `lang.*` libraries (string, array, map, json, regexp, query expressions).
-3. Only beyond those, the package itself — **`docs/README.md` before `modules/`**: the README is the package's own guide and leads with usage samples, the modules hold the exact signatures. A stub README — some are a paragraph — is a dead end; go straight to the module. Both sit under `$(bal home)/repo/bala/<org>/<name>/<version>/<any|java21>/` for `ballerina/*`; `ballerinax/*` lands under `~/.ballerina/repositories/central.ballerina.io/bala/` in the same layout — **but only once a `bal build` has resolved it.** Before that the tree does not exist at all, so `ls` fails rather than returning empty.
+3. Only beyond those, the package's own API. The `bal-library` command prints all of it — every client, function, type, service, and annotation — as one Ballerina syntax string:
 
-Derive the distribution root with `bal home`, never a hardcoded version; both roots are read-only. Grep for the declaration rather than paging the file — a `grep` that lands in a 31KB `types.bal` carries that much context for the rest of the run. An error still unresolved after several attempts is worth reporting with its file and line instead of guessing again.
+   ```bash
+   bal-library <org/name> [version] > /tmp/<name>-api.bal
+   ```
+
+   The version is optional — omitted, the latest published one is resolved; pass `--project-dir <component>` once a build has written `Dependencies.toml` and it reads the locked version instead. It answers whether or not a build has ever resolved the package.
+
+   **Redirect it to a file; never pipe it to `head`.** The output is one file per package, tens of thousands of lines, ordered types → clients → services — so the first screen is always types and never the client you came for. `grep -n 'client class'` and `grep -n` the call you need, then `sed -n` those line ranges.
+
+   A `// Special Agent Note:` at the end of a line names the package a type comes from — that is the `import` to add, and the `alias:Type` prefix on the line is how to write it.
+
+   Exit codes: `2` means the arguments are wrong — the usual cause is a `:version` suffix on the package name, so drop it and pass the version as a second argument. `1` means Central could not answer; check the org and package spelling and run it once more. Never improvise a signature because a lookup failed — report the JSON it wrote to stderr instead.
+
+4. **`--readme` when the question is "how is this used?" rather than "what is this called?"** — a wrong *shape* of call, an auth or config block you have no sample for, a connector you have never written against:
+
+   ```bash
+   bal-library <org/name> --readme > /tmp/<name>-readme.md
+   ```
+
+   This is the package's own guide and it leads with runnable samples — a couple of hundred lines against the API document's tens of thousands. It resolves the version exactly as step 3 does, so `--project-dir` applies here too, and it answers before any build has resolved the package.
+
+Redirect both documents to a file rather than reading them off the pipe — whatever you read stays in context for the rest of the run, and the API document is far too large to spend that way. An error still unresolved after several attempts is worth reporting with its file and line instead of guessing again.
 
 ## Working with OpenAPI Specs
 
