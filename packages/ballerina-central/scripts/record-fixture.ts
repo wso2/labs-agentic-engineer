@@ -85,6 +85,8 @@ if (!parsed.ok) {
 const slug = fixtureSlug(rawName);
 const fixturePath = join(packageDir, "test", "__fixtures__", `${slug}.json.gz`);
 writeFileSync(fixturePath, gzipSync(Buffer.from(JSON.stringify(raw.value)), { level: 9 }));
-writeSnapshot(slug, renderFixture(parsed.value));
+// Rendered from the slug, not from `parsed`: the fixture has to be on disk before
+// `renderFixture` can select its module the way the CLI does.
+writeSnapshot(slug, renderFixture(slug));
 
 process.stdout.write(`recorded ${rawName}:${version} -> ${slug}\n`);

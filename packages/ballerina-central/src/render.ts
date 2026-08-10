@@ -178,6 +178,31 @@ function renderConstant(typeDef: Extract<TypeDef, { kind: "constant" }>): string
   return `${renderDescription(typeDef.description)}const ${typeDef.varType.name} ${typeDef.name} = ${value};`;
 }
 
+/**
+ * An error declaration, as the four combinations of the two facts Central
+ * publishes about it:
+ *
+ *   distinct + base   `type SslError distinct ClientError;`
+ *   distinct only     `type Error distinct error;`
+ *   base only         `type X ClientError;`
+ *   neither           `type X error;`
+ *
+ * Every one of `ballerina/http`'s 56 errors used to render as the last line,
+ * which made the subtype hierarchy — and therefore `e is http:ClientRequestError`
+ * — unlearnable from the document. The absent-base default is `error` rather
+ * than nothing because an error at the top of its own hierarchy narrows the
+ * language's `error` and that is what its declaration says.
+ */
+function renderError(typeDef: Extract<TypeDef, { kind: "error" }>): string {
+  const links = collectExternalLinks(typeDef.base);
+  const base = typeDef.base === undefined ? "error" : applyPrefixToTypeName(typeDef.base.name, links);
+  const distinct = typeDef.isDistinct ? "distinct " : "";
+  return (
+    `${renderDescription(typeDef.description)}type ${typeDef.name} ${distinct}${base};` +
+    buildSpecialAgentNote(links)
+  );
+}
+
 export function renderTypeDef(typeDef: TypeDef): string {
   switch (typeDef.kind) {
     case "record":
@@ -191,7 +216,7 @@ export function renderTypeDef(typeDef: TypeDef): string {
     case "class":
       return `${renderDescription(typeDef.description)}class ${typeDef.name} {\n}`;
     case "error":
-      return `${renderDescription(typeDef.description)}type ${typeDef.name} error;`;
+      return renderError(typeDef);
     case "other":
       // Named but not rendered: the declaration exists and the caller may need
       // to reference it, so saying so beats omitting it silently.

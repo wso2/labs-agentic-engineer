@@ -349,13 +349,13 @@ type TopicPartition record {
 };
 
 # Defines the common error type for the module.
-type Error error;
+type Error distinct error;
 
 # Represents an error, which occurred due to payload binding.
-type PayloadBindingError error;
+type PayloadBindingError distinct (Error&error);
 
 # Represents an error, which occurred due to payload constraint validation.
-type PayloadValidationError error;
+type PayloadValidationError distinct (PayloadBindingError&error);
 
 # Producer acknowledgement type is 'all'. This will guarantee that the record will not be lost as long as at least one
 # in-sync replica is alive.

@@ -2006,172 +2006,172 @@ type VariantAlsoNegotiates record {
 };
 
 # Represents a client error that occurred due to all the load balance endpoint failure.
-type AllLoadBalanceEndpointsFailedError error;
+type AllLoadBalanceEndpointsFailedError distinct ResiliencyError;
 
 # Represents a client error that occurred due to all the the retry attempts failure.
-type AllRetryAttemptsFailed error;
+type AllRetryAttemptsFailed distinct ResiliencyError;
 
 # Represents both 4XX and 5XX application response client error.
-type ApplicationResponseError error;
+type ApplicationResponseError distinct (ClientError&error<Detail>);
 
 # Represents a client error that occurred due to circuit breaker configuration error.
-type CircuitBreakerConfigError error;
+type CircuitBreakerConfigError distinct ResiliencyError;
 
 # Defines the Auth error types that returned from client.
-type ClientAuthError error;
+type ClientAuthError distinct ClientError;
 
 # Represents a client connector error that occurred.
-type ClientConnectorError error;
+type ClientConnectorError distinct ClientError;
 
 # Defines the possible client error types.
-type ClientError error;
+type ClientError distinct Error;
 
 # Represents an error, which occurred due to bad syntax or incomplete info in the client request(4xx HTTP response).
-type ClientRequestError error;
+type ClientRequestError distinct (ApplicationResponseError&error<Detail>);
 
 # Represents a cookie error that occurred when using the cookies.
-type CookieHandlingError error;
+type CookieHandlingError distinct GenericClientError;
 
 # Defines the common error type for the module.
-type Error error;
+type Error distinct error;
 
 # Represents a client error that occurred due to failover action failure.
-type FailoverActionFailedError error;
+type FailoverActionFailedError distinct ResiliencyError;
 
 # Represents a client error that occurred due to all the failover endpoint failure.
-type FailoverAllEndpointsFailedError error;
+type FailoverAllEndpointsFailedError distinct ResiliencyError;
 
 # Represents a generic client error.
-type GenericClientError error;
+type GenericClientError distinct ClientError;
 
 # Represents a generic listener error.
-type GenericListenerError error;
+type GenericListenerError distinct ListenerError;
 
 # Represents an error, which occurred due to header binding.
-type HeaderBindingError error;
+type HeaderBindingError distinct Error;
 
 # Represents a header not found error when retrieving headers.
-type HeaderNotFoundError error;
+type HeaderNotFoundError distinct Error;
 
 # Represents an error, which occurred due to a header constraint validation.
-type HeaderValidationError error;
+type HeaderValidationError distinct HeaderBindingError;
 
 # Represents an HTTP/2 client generic error.
-type Http2ClientError error;
+type Http2ClientError distinct ClientError;
 
 # Represents the error that triggered upon a request/response idle timeout.
-type IdleTimeoutError error;
+type IdleTimeoutError distinct ResiliencyError;
 
 # Defines the listener error types that returned while receiving inbound request.
-type InboundRequestError error;
+type InboundRequestError distinct ListenerError;
 
 # Defines the client error types that returned while receiving inbound response.
-type InboundResponseError error;
+type InboundResponseError distinct ClientError;
 
 # Represents a listener error that occurred due to inbound request initialization failure.
-type InitializingInboundRequestError error;
+type InitializingInboundRequestError distinct InboundRequestError;
 
 # Represents a client error that occurred due to inbound response initialization failure.
-type InitializingInboundResponseError error;
+type InitializingInboundResponseError distinct InboundResponseError;
 
 # Represents a client error that occurred due to outbound request initialization failure.
-type InitializingOutboundRequestError error;
+type InitializingOutboundRequestError distinct OutboundRequestError;
 
 # Represents a listener error that occurred due to outbound response initialization failure.
-type InitializingOutboundResponseError error;
+type InitializingOutboundResponseError distinct OutboundResponseError;
 
 # Represents an error that occurred due to 100 continue response initialization failure.
-type Initiating100ContinueResponseError error;
+type Initiating100ContinueResponseError distinct OutboundResponseError;
 
 # Represents a cookie error that occurred when sending cookies in the response.
-type InvalidCookieError error;
+type InvalidCookieError distinct OutboundResponseError;
 
 # Defines the auth error types that returned from listener.
-type ListenerAuthError error;
+type ListenerAuthError distinct ListenerError;
 
 # Defines the possible listener error types.
-type ListenerError error;
+type ListenerError distinct Error;
 
 # Represents a client error that occurred exceeding maximum wait time.
-type MaximumWaitTimeExceededError error;
+type MaximumWaitTimeExceededError distinct GenericClientError;
 
 # Represents an error, which occurred due to media-type binding.
-type MediaTypeBindingError error;
+type MediaTypeBindingError distinct Error;
 
 # Represents an error, which occurred due to media type validation.
-type MediaTypeValidationError error;
+type MediaTypeValidationError distinct MediaTypeBindingError;
 
 # Represents an error, which occurred due to the absence of the payload.
-type NoContentError error;
+type NoContentError distinct ClientError;
 
 # Defines the client error types that returned while sending outbound request.
-type OutboundRequestError error;
+type OutboundRequestError distinct ClientError;
 
 # Defines the listener error types that returned while sending outbound response.
-type OutboundResponseError error;
+type OutboundResponseError distinct ListenerError;
 
 # Represents an error, which occurred due to payload binding.
-type PayloadBindingError error;
+type PayloadBindingError distinct Error;
 
 # Represents an error, which occurred due to payload constraint validation.
-type PayloadValidationError error;
+type PayloadValidationError distinct PayloadBindingError;
 
 # Represents an error, which occurred due to a query parameter constraint validation.
-type QueryParameterValidationError error;
+type QueryParameterValidationError distinct QueryParameterBindingError;
 
 # Represents a listener error that occurred while writing the inbound request entity body.
-type ReadingInboundRequestBodyError error;
+type ReadingInboundRequestBodyError distinct InboundRequestError;
 
 # Represents a listener error that occurred while reading inbound request headers.
-type ReadingInboundRequestHeadersError error;
+type ReadingInboundRequestHeadersError distinct InboundRequestError;
 
 # Represents a client error that occurred while reading inbound response entity body.
-type ReadingInboundResponseBodyError error;
+type ReadingInboundResponseBodyError distinct InboundResponseError;
 
 # Represents a client error that occurred while reading inbound response headers.
-type ReadingInboundResponseHeadersError error;
+type ReadingInboundResponseHeadersError distinct InboundResponseError;
 
 # Represents an error, which occurred due to a failure of the remote server(5xx HTTP response).
-type RemoteServerError error;
+type RemoteServerError distinct (ApplicationResponseError&error<Detail>);
 
 # Represents an error, which occurred during the request dispatching.
-type RequestDispatchingError error;
+type RequestDispatchingError distinct ListenerError;
 
 # Defines the resiliency error types that returned from client.
-type ResiliencyError error;
+type ResiliencyError distinct ClientError;
 
 # Represents an error, which occurred during the resource dispatching.
-type ResourceDispatchingError error;
+type ResourceDispatchingError distinct RequestDispatchingError;
 
 # Represents an error, which occurred during the service dispatching.
-type ServiceDispatchingError error;
+type ServiceDispatchingError distinct RequestDispatchingError;
 
 # Represents a client error that occurred due to SSL failure.
-type SslError error;
+type SslError distinct ClientError;
 
 # Represents the client status code response data binding error
-type StatusCodeResponseDataBindingError error;
+type StatusCodeResponseDataBindingError MediaTypeBindingStatusCodeClientError|PayloadBindingStatusCodeClientError|HeaderBindingStatusCodeClientError;
 
 # Represents a client error that occurred due to unsupported action invocation.
-type UnsupportedActionError error;
+type UnsupportedActionError distinct GenericClientError;
 
 # Represents a client error that occurred due to upstream service unavailability.
-type UpstreamServiceUnavailableError error;
+type UpstreamServiceUnavailableError distinct ResiliencyError;
 
 # Represents an error that occurred while writing 100 continue response.
-type Writing100ContinueResponseError error;
+type Writing100ContinueResponseError distinct OutboundResponseError;
 
 # Represents a client error that occurred while writing outbound request entity body.
-type WritingOutboundRequestBodyError error;
+type WritingOutboundRequestBodyError distinct OutboundRequestError;
 
 # Represents a client error that occurred while writing outbound request headers.
-type WritingOutboundRequestHeadersError error;
+type WritingOutboundRequestHeadersError distinct OutboundRequestError;
 
 # Represents a listener error that occurred while writing outbound response entity body.
-type WritingOutboundResponseBodyError error;
+type WritingOutboundResponseBodyError distinct OutboundResponseError;
 
 # Represents a listener error that occurred while writing outbound response headers.
-type WritingOutboundResponseHeadersError error;
+type WritingOutboundResponseHeadersError distinct OutboundResponseError;
 
 # HTTP header key `age`. Gives the current age of a cached HTTP response.
 const string AGE = ""age"";

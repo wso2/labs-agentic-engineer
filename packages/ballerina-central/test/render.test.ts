@@ -89,7 +89,7 @@ const ONE_OF_EACH: Readonly<Record<TypeDef["kind"], TypeDef>> = {
   union: { kind: "union", name: "Id", description: "", members: [{ name: "int" }, { name: "string" }] },
   constant: { kind: "constant", name: "NAME", description: "", value: "aep", varType: { name: "string" } },
   class: { kind: "class", name: "Engine", description: "" },
-  error: { kind: "error", name: "ClientError", description: "" },
+  error: { kind: "error", name: "ClientError", description: "", isDistinct: true, base: { name: "Error" } },
   other: { kind: "other", name: "Weird", description: "" },
 };
 
@@ -109,7 +109,7 @@ test("every type kind renders", () => {
   assert.equal(renderTypeDef(ONE_OF_EACH.union), "type Id int|string;");
   assert.equal(renderTypeDef(ONE_OF_EACH.constant), 'const string NAME = "aep";');
   assert.equal(renderTypeDef(ONE_OF_EACH.class), "class Engine {\n}");
-  assert.equal(renderTypeDef(ONE_OF_EACH.error), "type ClientError error;");
+  assert.equal(renderTypeDef(ONE_OF_EACH.error), "type ClientError distinct Error;");
   assert.equal(renderTypeDef(ONE_OF_EACH.other), "// Unknown type: Weird");
 });
 

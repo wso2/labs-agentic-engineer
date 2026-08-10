@@ -27,7 +27,7 @@
  */
 
 import { fetchDocs, lockedVersion, resolveLatestVersion, type HttpOptions } from "./central/client.js";
-import { fromCentral } from "./from-central.js";
+import { fromCentral, selectModule } from "./from-central.js";
 import { applyPatches } from "./patches.js";
 import { collectReadmes, toReadmeDocument, type ModuleReadme } from "./readme.js";
 import { toSyntaxString } from "./render.js";
@@ -89,7 +89,9 @@ export async function loadLibrary(
 ): Promise<Result<Library>> {
   const docs = await fetchDocs(qualified, version, options);
   if (!docs.ok) return docs;
-  return ok(applyPatches(fromCentral(docs.value)));
+  const module = selectModule(docs.value, qualified);
+  if (!module.ok) return module;
+  return ok(applyPatches(fromCentral(module.value)));
 }
 
 /**

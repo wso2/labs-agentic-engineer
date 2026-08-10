@@ -140,6 +140,25 @@ const namedSchema = z.object({
   description: z.string().optional(),
 });
 
+/**
+ * An error declaration, which carries two fields beyond a name.
+ *
+ * `isDistinct` is required under this module's usual rule — verified present on
+ * all 74 error declarations across the nine fixtures, so its absence means the
+ * payload changed shape rather than that a package is unusual.
+ *
+ * `detailType` is optional because six of the nine module roots genuinely
+ * publish none: an error at the top of its own hierarchy (`http:Error`,
+ * `kafka:Error`) narrows nothing. Despite the name it holds the distinct
+ * SUPERTYPE, and the reader calls it `base` from here on.
+ */
+const errorSchema = z.object({
+  name: z.string(),
+  description: z.string().optional(),
+  isDistinct: z.boolean(),
+  detailType: centralTypeSchema.optional(),
+});
+
 const recordSchema = z.object({
   name: z.string(),
   description: z.string().optional(),
@@ -215,7 +234,7 @@ const moduleSchema = z.object({
   booleanTypes: z.array(namedSchema),
   simpleNameReferenceTypes: z.array(namedSchema),
   arrayTypes: z.array(memberTypesSchema),
-  errors: z.array(namedSchema),
+  errors: z.array(errorSchema),
   constants: z.array(constantSchema),
   enums: z.array(enumSchema),
   classes: z.array(namedSchema),

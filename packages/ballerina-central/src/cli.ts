@@ -94,6 +94,18 @@ export function parseArgs(argv: readonly string[]): Result<CliArgs> | null {
       projectDir = value;
       continue;
     }
+    // An unrecognised flag must never become the version. `--refresh` on a stale
+    // binary used to resolve as `ballerina/http:--refresh` and report
+    // `package-not-found` at exit 1 — which the skill teaches means "Central
+    // could not answer, run it once more", sending the agent into a retry of a
+    // command that cannot ever succeed.
+    if (arg !== undefined && arg.startsWith("--")) {
+      return err({
+        kind: "validation",
+        message: `Unknown flag '${arg}'.`,
+        suggestion: "Known flags are --readme and --project-dir. Run with --help for usage.",
+      });
+    }
     if (arg !== undefined) positional.push(arg);
   }
 

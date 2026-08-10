@@ -65,18 +65,76 @@ const fixSheets2DArray: Patch = (library) => {
  * `ballerinax/sap` — two type names the module re-exports from `ballerina/http`
  * without Central listing them. Both appear in the client's signatures, so
  * without the declarations the output references names it never defines.
+ *
+ * `ClientError` is also in Central's `simpleNameReferenceTypes`, where it renders
+ * as `// Unknown type: ClientError`. Injecting without removing that left the
+ * document declaring the same name twice — an ambiguity any name-addressed
+ * lookup would have to arbitrate, in a document whose whole purpose is to be
+ * authoritative. The placeholder is what gets dropped, not the injection: the
+ * injection is the declaration that says what the name IS.
+ *
+ * `isDistinct: false` with no base is a deliberate claim of ignorance. The
+ * injection stands in for a re-export whose real distinctness Central never
+ * reported, and asserting `distinct` here would be an invention rather than a
+ * correction.
  */
 const addLibsToSap: Patch = (library) => {
   if (library.name !== "ballerinax/sap") return library;
   const injected: TypeDef[] = [
-    { kind: "error", name: "ClientError", description: "Defines the possible client error types." },
+    {
+      kind: "error",
+      name: "ClientError",
+      description: "Defines the possible client error types.",
+      isDistinct: false,
+    },
     {
       kind: "other",
       name: "RequestMessage",
       description: "The types of messages that are accepted by HTTP client when sending out the outbound request.",
     },
   ];
-  return { ...library, typeDefs: [...injected, ...library.typeDefs] };
+  const shadowed = new Set(injected.map((typeDef) => typeDef.name));
+  const surviving = library.typeDefs.filter((typeDef) => !(typeDef.kind === "other" && shadowed.has(typeDef.name)));
+  return { ...library, typeDefs: [...injected, ...surviving] };
+};
+
+/**
+ * `ballerina/http` — the error detail type Central drops on the way out.
+ *
+ * The real declaration is `distinct (ClientError & error<Detail>)`, and Central
+ * publishes the intersection while dropping the type ARGUMENT. Restoring it is
+ * what lets an agent reach `e.detail().statusCode`, which is the most-traced
+ * lookup in the recorded corpus.
+ *
+ * It is restored at the intersection member and nowhere else. Attaching `Detail`
+ * to the root `Error` is the intuitive reading and it would be wrong: roughly 50
+ * of http's 56 errors reach `Error` without ever carrying a detail record, and
+ * `type SslError distinct ClientError;` would then print an `int statusCode`
+ * that an `SslError` does not have. The intersection shape — a parenthesised
+ * `(Something&error)`, which is exactly what Central's
+ * `detailType.elementType.isIntersectionType` produces — holds for precisely
+ * three declarations: `ApplicationResponseError`, `ClientRequestError` and
+ * `RemoteServerError`, which are the three sites where `Detail` lived.
+ *
+ * This is a hand-maintained fact and it can rot, so `patches.test.ts` pins it in
+ * both directions. A test that only asserts a `Detail` record is reachable stays
+ * green while the output lies about 50 other errors.
+ */
+const INTERSECTION_WITH_BARE_ERROR = /^\(.+&error\)$/;
+
+const restoreHttpErrorDetail: Patch = (library) => {
+  if (library.name !== "ballerina/http") return library;
+  return {
+    ...library,
+    typeDefs: library.typeDefs.map((typeDef) => {
+      if (typeDef.kind !== "error" || typeDef.base === undefined) return typeDef;
+      if (!INTERSECTION_WITH_BARE_ERROR.test(typeDef.base.name)) return typeDef;
+      return {
+        ...typeDef,
+        base: { ...typeDef.base, name: typeDef.base.name.replace(/&error\)$/, "&error<Detail>)") },
+      };
+    }),
+  };
 };
 
 /**
@@ -179,6 +237,7 @@ const addAiService: Patch = (library) =>
 const PATCHES: readonly Patch[] = [
   fixSheets2DArray,
   addLibsToSap,
+  restoreHttpErrorDetail,
   removeOkTrueDef,
   simplifyGraphQLErrorDetail,
   removeChatClient,

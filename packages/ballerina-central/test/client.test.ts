@@ -150,6 +150,55 @@ test("an empty version list means the package does not exist", async () => {
   assert.equal(result.ok ? "" : result.error.kind, "package-not-found");
 });
 
+test("every failure the outside world can cause carries a suggestion", async () => {
+  // `result.ts` states that each failure says what to do about it, and three of
+  // them used to omit it — the three that fire during a Central outage, when the
+  // reader has nothing else to offer.
+  const timeout = await fetchJson("https://example.invalid/x", {
+    fetch: (_url, init) =>
+      new Promise((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(new Error("aborted")))),
+    timeoutMs: 5,
+    maxAttempts: 1,
+    baseDelayMs: 1,
+  });
+  assert.equal(timeout.ok, false);
+  if (!timeout.ok) {
+    assert.equal(timeout.error.kind, "timeout");
+    assert.ok("suggestion" in timeout.error && timeout.error.suggestion.length > 0);
+  }
+
+  const upstream = await fetchJson("https://example.invalid/x", {
+    fetch: () => Promise.resolve(new Response("nope", { status: 500 })),
+    maxAttempts: 1,
+    baseDelayMs: 1,
+  });
+  assert.equal(upstream.ok, false);
+  if (!upstream.ok) {
+    assert.equal(upstream.error.kind, "upstream");
+    assert.ok("suggestion" in upstream.error && upstream.error.suggestion.length > 0);
+  }
+
+  const drift = parseCentralDocs({ docsData: { modules: [] } }, "x/y:1.0.0");
+  assert.equal(drift.ok, false);
+  if (!drift.ok) {
+    assert.equal(drift.error.kind, "schema-drift");
+    // Addressed to a human on purpose: no argument the agent can change will make
+    // a payload this reader cannot parse parse.
+    assert.ok("suggestion" in drift.error && /Report the/.test(drift.error.suggestion));
+  }
+});
+
+test("the version Central reports goes through the parser rather than being asserted", async () => {
+  // It becomes a cache path segment, and `..` satisfies Central's own format.
+  const resolved = await resolveLatestVersion(GITHUB, {
+    fetch: () => Promise.resolve(new Response(JSON.stringify([".."]), { status: 200 })),
+    maxAttempts: 1,
+    baseDelayMs: 1,
+  });
+  assert.equal(resolved.ok, false);
+  if (!resolved.ok) assert.equal(resolved.error.kind, "validation");
+});
+
 test("a payload missing a field the reader reads is schema drift, with its path", () => {
   const docs = loadRawFixture("ballerinax__sap") as { docsData: { modules: Record<string, unknown>[] } };
   const module = docs.docsData.modules[0];

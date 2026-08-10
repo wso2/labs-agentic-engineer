@@ -51,9 +51,22 @@ const QUALIFIED_NAME = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/;
 // package name or a shell mishap, not to enforce semver.
 const VERSION = /^[A-Za-z0-9_.+-]+$/;
 
+/**
+ * `.` and `..` pass every pattern above and are legal path traversal.
+ *
+ * Nothing derived a filesystem path from these values until the docs cache did,
+ * and a cache keyed `<root>/v1/docs/<org>/<name>/<version>.json` turns a `..`
+ * that reaches a segment into a write outside its own root. The cache checks its
+ * segments again before joining them — this is the outer of two independent
+ * guards, kept here so the branded type itself cannot hold one.
+ */
+function isTraversal(segment: string): boolean {
+  return segment === "." || segment === "..";
+}
+
 export function parseQualifiedName(input: string): Result<QualifiedName> {
   const match = QUALIFIED_NAME.exec(input.trim());
-  if (!match) {
+  if (!match || match.slice(1).some(isTraversal)) {
     return err({
       kind: "validation",
       message: `Invalid package name '${input}'. Expected 'org/name' (no version suffix).`,
@@ -68,7 +81,7 @@ export function parseQualifiedName(input: string): Result<QualifiedName> {
 
 export function parseVersion(input: string): Result<Version> {
   const trimmed = input.trim();
-  if (!VERSION.test(trimmed)) {
+  if (!VERSION.test(trimmed) || isTraversal(trimmed)) {
     return err({
       kind: "validation",
       message: `Invalid version '${input}'.`,

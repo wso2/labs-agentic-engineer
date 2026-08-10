@@ -155,7 +155,22 @@ export type TypeDef =
       readonly varType: TypeRef;
     }
   | { readonly kind: "class"; readonly name: string; readonly description: string }
-  | { readonly kind: "error"; readonly name: string; readonly description: string }
+  /**
+   * An error declaration, with the two facts that make error handling learnable
+   * from the document instead of guessable.
+   *
+   * `base` is named for what it is — the supertype the declaration narrows.
+   * Central's key for it is `detailType`, which is a misnomer: it carries
+   * `ClientError` for `SslError`, never a detail record, and naming the field
+   * after the wire would invite exactly the wrong reading at every use site.
+   */
+  | {
+      readonly kind: "error";
+      readonly name: string;
+      readonly description: string;
+      readonly isDistinct: boolean;
+      readonly base?: TypeRef;
+    }
   | { readonly kind: "other"; readonly name: string; readonly description: string };
 
 /**

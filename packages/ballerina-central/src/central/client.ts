@@ -28,8 +28,17 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { centralDocsSchema, type CentralDocs } from "./schema.js";
-import { formatQualifiedName, type QualifiedName, type Version } from "../qualified.js";
-import { err, ok, type Failure, type Result, type SchemaIssue } from "../result.js";
+import { formatQualifiedName, parseVersion, type QualifiedName, type Version } from "../qualified.js";
+import {
+  err,
+  ok,
+  SCHEMA_DRIFT_SUGGESTION,
+  TIMEOUT_SUGGESTION,
+  UPSTREAM_SUGGESTION,
+  type Failure,
+  type Result,
+  type SchemaIssue,
+} from "../result.js";
 
 export const CENTRAL_BASE_URL = "https://api.central.ballerina.io/2.0/";
 
@@ -157,14 +166,29 @@ export async function fetchJson(url: string, options: HttpOptions = {}): Promise
   return err(
     last
       ? toFailure(last, url, maxAttempts, budgetMs)
-      : { kind: "upstream", url, attempts: maxAttempts, message: "no attempt was made" },
+      : {
+          kind: "upstream",
+          url,
+          attempts: maxAttempts,
+          message: "no attempt was made",
+          suggestion: UPSTREAM_SUGGESTION,
+        },
   );
 }
 
 function toFailure(attempt: Attempt, url: string, attempts: number, budgetMs: number): Failure {
-  if (attempt.failure.kind === "timeout") return { kind: "timeout", url, budgetMs };
+  if (attempt.failure.kind === "timeout") {
+    return { kind: "timeout", url, budgetMs, suggestion: TIMEOUT_SUGGESTION };
+  }
   const { message, status } = attempt.failure;
-  return { kind: "upstream", url, attempts, message, ...(status === undefined ? {} : { status }) };
+  return {
+    kind: "upstream",
+    url,
+    attempts,
+    message,
+    suggestion: UPSTREAM_SUGGESTION,
+    ...(status === undefined ? {} : { status }),
+  };
 }
 
 /**
@@ -193,7 +217,9 @@ export async function resolveLatestVersion(
   const versions = response.value;
   const latest = Array.isArray(versions) ? versions[0] : undefined;
   if (typeof latest !== "string" || latest === "") return err(notFound(qualified));
-  return ok(latest as Version);
+  // Through the parser rather than branded by assertion: this is a string off the
+  // network, and the cache turns it into a path segment.
+  return parseVersion(latest);
 }
 
 function notFound(qualified: QualifiedName): Failure {
@@ -236,7 +262,7 @@ export function parseCentralDocs(raw: unknown, qualified: string): Result<Centra
     path: issue.path.join("."),
     message: issue.message,
   }));
-  return err({ kind: "schema-drift", qualified, issues });
+  return err({ kind: "schema-drift", qualified, issues, suggestion: SCHEMA_DRIFT_SUGGESTION });
 }
 
 /**

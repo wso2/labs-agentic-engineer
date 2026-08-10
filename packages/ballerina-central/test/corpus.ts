@@ -35,8 +35,10 @@ import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
 import { parseCentralDocs } from "../src/central/client.js";
 import type { CentralDocs } from "../src/central/schema.js";
-import { fromCentral } from "../src/from-central.js";
+import { fromCentral, selectModule } from "../src/from-central.js";
+import type { Library } from "../src/model.js";
 import { applyPatches } from "../src/patches.js";
+import { parseQualifiedName, type QualifiedName } from "../src/qualified.js";
 import { toSyntaxString } from "../src/render.js";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
@@ -67,12 +69,31 @@ export function loadFixture(slug: string): CentralDocs {
 }
 
 /**
+ * `ballerinax__github` → the coordinates a caller would have typed. The reader
+ * now selects its module by requested name rather than taking `modules[0]`, so
+ * the corpus has to supply the same argument the CLI would.
+ */
+export function qualifiedForSlug(slug: string): QualifiedName {
+  const parsed = parseQualifiedName(slug.replace("__", "/"));
+  if (!parsed.ok) throw new Error(`fixture slug ${slug} is not a package name`);
+  return parsed.value;
+}
+
+/** The IR every view is rendered from — the pipeline up to but not including a document. */
+export function libraryFor(slug: string): Library {
+  const docs = loadFixture(slug);
+  const module = selectModule(docs, qualifiedForSlug(slug));
+  if (!module.ok) throw new Error(`fixture ${slug} has no module named after it: ${JSON.stringify(module.error)}`);
+  return applyPatches(fromCentral(module.value));
+}
+
+/**
  * The whole pipeline, in process. Deliberately not a subprocess: a rendering
  * regression should surface as a diff in a test, not as an exit code from a
  * command whose output nobody kept.
  */
-export function renderFixture(docs: CentralDocs): string {
-  return toSyntaxString(applyPatches(fromCentral(docs)));
+export function renderFixture(slug: string): string {
+  return toSyntaxString(libraryFor(slug));
 }
 
 /**

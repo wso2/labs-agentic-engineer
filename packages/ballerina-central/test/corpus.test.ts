@@ -26,7 +26,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { firstDifference, listFixtures, loadFixture, readSnapshot, renderFixture } from "./corpus.js";
+import { firstDifference, listFixtures, readSnapshot, renderFixture } from "./corpus.js";
 
 const fixtures = listFixtures();
 
@@ -37,7 +37,7 @@ test("the corpus is not empty", () => {
 
 for (const slug of fixtures) {
   test(`renders ${slug} exactly as snapshotted`, () => {
-    const difference = firstDifference(readSnapshot(slug), renderFixture(loadFixture(slug)));
+    const difference = firstDifference(readSnapshot(slug), renderFixture(slug));
     assert.equal(difference, undefined, `rendered output changed for ${slug}\n${difference ?? ""}`);
   });
 }

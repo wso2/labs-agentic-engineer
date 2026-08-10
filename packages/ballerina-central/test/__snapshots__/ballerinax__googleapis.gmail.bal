@@ -420,13 +420,13 @@ type ProxyConfig record {
 };
 
 # Defines the generic error type for the `gmail` module.
-type Error error;
+type Error distinct error;
 
 # Error that occurs when there is an issue with inline images or attachments. This could be due to issues like file not found, unsupported file type, etc.
-type FileGenericError error;
+type FileGenericError distinct Error;
 
 # Error that occurs when an invalid encoded value is provided for the `data` fields.
-type ValueEncodeError error;
+type ValueEncodeError distinct Error;
 
 # Holds value for message type **text/html**.
 const string CONTENT_TYPE_TEXT_HTML = ""text/html"";

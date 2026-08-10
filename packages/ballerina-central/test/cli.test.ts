@@ -98,6 +98,24 @@ test("an unknown package exits 1 and names itself, rather than printing nothing 
   assert.equal((JSON.parse(streams.stderr()) as { kind: string }).kind, "package-not-found");
 });
 
+test("an unrecognised flag is a usage error, not a version Central is asked about", async () => {
+  // The regression this pins: `--refresh` used to resolve as the VERSION, so a
+  // stale binary reported `package-not-found` at exit 1 — which the skill teaches
+  // means "Central could not answer, run it once more". The agent then retried a
+  // command that could never succeed.
+  const streams = capture();
+  const exitCode = await run(["ballerina/http", "--refresh"], streams, {
+    fetch: () => {
+      throw new Error("must not reach the network");
+    },
+  });
+  assert.equal(exitCode, 2);
+  assert.equal(streams.stdout(), "");
+  const failure = JSON.parse(streams.stderr()) as { kind: string; message: string };
+  assert.equal(failure.kind, "validation");
+  assert.match(failure.message, /Unknown flag '--refresh'/);
+});
+
 test("--project-dir without a directory is a usage error", async () => {
   const streams = capture();
   assert.equal(await run(["ballerinax/github", "--project-dir"], streams), 2);

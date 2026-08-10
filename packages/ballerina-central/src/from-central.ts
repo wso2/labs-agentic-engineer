@@ -59,6 +59,8 @@ import type {
   CentralRecordField,
   CentralType,
 } from "./central/schema.js";
+import { formatQualifiedName, type QualifiedName } from "./qualified.js";
+import { err, ok, SCHEMA_DRIFT_SUGGESTION, type Result } from "./result.js";
 
 /** The module a name belongs to, for deciding whether it needs a prefix. */
 interface Scope {
@@ -395,14 +397,41 @@ function buildAnnotations(module: CentralModule): AnnotationDef[] {
 // ---------------------------------------------------------------------------
 
 /**
- * The first module of the payload is the package's default module — the one an
- * `import org/name;` puts in scope, and the only one Central's docs endpoint
- * returns declarations for.
+ * The module of the payload that the caller actually asked for.
+ *
+ * Reading `modules[0]` instead — which is what this did — is untested by
+ * construction, because every fixture in the corpus is single-module: a
+ * multi-module package would render whichever module Central happened to put
+ * first, under the name the caller typed. It is also what makes the cache's
+ * coordinate check meaningful; verifying one module and then rendering another
+ * verifies nothing.
+ *
+ * `id === name` is the package's default module — the one `import org/name;`
+ * puts in scope. `id.startsWith(name + ".")` catches the submodule form
+ * (`googleapis.gmail` under `googleapis`), which Central names the same way.
  */
-export function fromCentral(docs: CentralDocs): Library {
-  const module = docs.docsData.modules[0];
-  // `.min(1)` on the schema guarantees this; the type system cannot see it.
-  if (!module) throw new Error("unreachable: centralDocsSchema guarantees a module");
+export function selectModule(docs: CentralDocs, qualified: QualifiedName): Result<CentralModule> {
+  const wanted = docs.docsData.modules.find(
+    (module) =>
+      module.orgName === qualified.org && (module.id === qualified.name || module.id.startsWith(`${qualified.name}.`)),
+  );
+  if (wanted) return ok(wanted);
+  return err({
+    kind: "schema-drift",
+    qualified: formatQualifiedName(qualified),
+    issues: [
+      {
+        path: "docsData.modules",
+        message: `no module matches; Central returned ${docs.docsData.modules
+          .map((module) => `${module.orgName}/${module.id}`)
+          .join(", ")}`,
+      },
+    ],
+    suggestion: SCHEMA_DRIFT_SUGGESTION,
+  });
+}
+
+export function fromCentral(module: CentralModule): Library {
   const scope: Scope = { moduleId: module.id, orgName: module.orgName };
 
   const typeDefs: TypeDef[] = [];
@@ -425,7 +454,15 @@ export function fromCentral(docs: CentralDocs): Library {
   for (const alias of module.integerTypes) typeDefs.push({ kind: "other", name: alias.name, description: describe(alias) });
   for (const alias of module.decimalTypes) typeDefs.push({ kind: "other", name: alias.name, description: describe(alias) });
   for (const alias of module.arrayTypes) typeDefs.push({ kind: "other", name: alias.name, description: describe(alias) });
-  for (const error of module.errors) typeDefs.push({ kind: "error", name: error.name, description: describe(error) });
+  for (const error of module.errors) {
+    typeDefs.push({
+      kind: "error",
+      name: error.name,
+      description: describe(error),
+      isDistinct: error.isDistinct,
+      ...(error.detailType === undefined ? {} : { base: transformType(error.detailType, scope) }),
+    });
+  }
 
   for (const constant of module.constants) {
     typeDefs.push({

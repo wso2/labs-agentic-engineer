@@ -14,8 +14,6 @@ type ClientError error;
 # The `sap` client return type for the HTTP client actions.
 type TargetType http:Response|anydata;
 
-// Unknown type: ClientError
-
 // Unknown type: CSRFTokenFetchFailure
 
 // --- Client ---

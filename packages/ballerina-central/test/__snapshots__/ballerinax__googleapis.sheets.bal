@@ -285,15 +285,15 @@ type ValuesRange record {
 };
 
 # Defines the generic error type for the `googleapis.sheets` module.
-type Error error;
+type Error distinct error;
 
 # Error that occurs when an invalid cell range is provided. This could be due to malformed A1 notation or a range
 # that falls outside the bounds of the sheet.
-type InvalidRangeError error;
+type InvalidRangeError distinct Error;
 
 # Error that occurs when a spreadsheet or sheet operation fails. This could be due to the resource not being found,
 # insufficient permissions, or an API-level rejection.
-type SpreadsheetError error;
+type SpreadsheetError distinct Error;
 
 const string REFRESH_URL = ""https://accounts.google.com/o/oauth2/token"";
 

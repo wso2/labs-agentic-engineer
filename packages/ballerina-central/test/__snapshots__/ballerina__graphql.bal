@@ -489,31 +489,31 @@ type Upload record {
 };
 
 # Represents the authentication error type.
-type AuthnError error;
+type AuthnError distinct Error;
 
 # Represents the authorization error type.
-type AuthzError error;
+type AuthzError distinct Error;
 
 # Represents GraphQL client related generic errors.
-type ClientError error;
+type ClientError distinct error;
 
 # Represents any error related to the Ballerina GraphQL module.
-type Error error;
+type Error distinct error;
 
 # Represents network level errors.
-type HttpError error;
+type HttpError distinct (RequestError&error);
 
 # Represents GraphQL errors due to request validation.
-type InvalidDocumentError error;
+type InvalidDocumentError distinct (RequestError&error);
 
 # Represents client side data binding error.
-type PayloadBindingError error;
+type PayloadBindingError distinct (ClientError&error);
 
 # Represents GraphQL client side or network level errors.
-type RequestError error;
+type RequestError distinct ClientError;
 
 # Represents GraphQL API response during GraphQL API server side errors.
-type ServerError error;
+type ServerError distinct (ClientError&error);
 
 # The prefix used to denote the Basic authentication scheme.
 const string AUTH_SCHEME_BASIC = ""Basic"";
