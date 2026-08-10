@@ -5,7 +5,7 @@ Test sources live in the package's `tests/` directory and follow the same rules 
 production code ([code-rules.md](code-rules.md)).
 
 - Use the `ballerina/test` module and any service-specific test libraries.
-- Follow the `instructions` field in `ballerina/test` library docs and the `testGenerationInstruction` field in the service library's API docs when writing tests.
+- Follow the `instructions` field in `ballerina/test` library docs when writing tests.
 - Test an HTTP service through an `http:Client` against the running service — assert its public contract, not internals.
 - Override `configurable` values for tests in `tests/Config.toml` (not the package's `Config.toml`, and never read either — see [project-structure.md](project-structure.md)).
 - To mock a client or connector, wrap its construction in a small init function so `@test:Mock` can replace it.

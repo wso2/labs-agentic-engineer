@@ -11,7 +11,7 @@ For tests, see [tests.md](tests.md) — write them only when the user asks.
   - Never assign hardcoded default values to configurables — reading an environment variable via `os:getEnv` (see Environment Variables below) is not a hardcoded default and is the expected pattern for platform-injected values.
 - Initialize clients at module level, before any function or service declarations.
 - Declare listeners with the `listener` keyword (`listener foo:Listener lsn = new (config);`), not a `final` variable — `service ... on lsn` attachment requires it; a `final foo:Listener` fails to compile.
-- An event/streaming listener (change-data-capture, message topic/queue, etc.) attaches its service to a vendor channel/topic string that sits **between the service type and `on`**: `service <pkg>:<ServiceType> "<channel>" on <listener>` — e.g. a Salesforce CDC service binds to a channel like `service salesforce:CdcService "/data/LeadChangeEvent" on lsn`. The channel goes on the **`service` declaration** (its attach path) — **not** as a listener constructor argument; the listener `new (...)` takes only its config. This string isn't in the library API — get it from the connector README/vendor docs (ask the `library` agent) and wire it in **before** writing the service. Without it the code usually still compiles but the service silently receives nothing — never ship an event service without its channel.
+- An event/streaming listener (change-data-capture, message topic/queue, etc.) attaches its service to a vendor channel/topic string that sits **between the service type and `on`**: `service <pkg>:<ServiceType> "<channel>" on <listener>` — e.g. a Salesforce CDC service binds to a channel like `service salesforce:CdcService "/data/LeadChangeEvent" on lsn`. The channel goes on the **`service` declaration** (its attach path) — **not** as a listener constructor argument; the listener `new (...)` takes only its config. This string isn't in the library API — get it from the connector's guide (`bal-library <org/name>` carries it) or the vendor docs, and wire it in **before** writing the service. If neither has it, **ask the user — never invent one**: without it the code usually still compiles and the service silently receives nothing. Never ship an event service without its channel.
 - Implement a `main` function OR a service — not both, unless the requirement explicitly needs both.
 
 ## Data
@@ -19,7 +19,7 @@ For tests, see [tests.md](tests.md) — write them only when the user asks.
 - Use records for all data structures. Never use `map<json>`, `map<anydata>`, or raw `json`.
 - Prefer closed records (`record {| ... |}`) for data shapes you own. Use an open record only when tolerating extra/unknown fields is deliberate (e.g. a loosely-specified inbound payload).
 - Never access or manipulate a `json` variable directly. Define a record, convert json to it (`cloneWithType()` or `fromJsonStringWithType()`), then use the record.
-- If a return typedesc is marked `<>` in API docs, define a custom record for the expected data shape.
+- If a return typedesc is marked `<>` in a signature (`bal-library` prints it as `typedesc<T> T = <>`), define a custom record for the expected data shape.
 - If a parameter type is `record {|anydata...;|}`, define or reuse an explicit named record — do not pass an anonymous literal.
 - If a return type is `record {|anydata...;|}`, decide the shape, declare a named record, and assign to it.
 - When accessing a field of a record, assign it to a new typed variable first, then use that variable in the next statement.
@@ -258,6 +258,21 @@ err.message()                   // string
 err.detail()                    // map<value:Cloneable> & readonly
 err.cause()                     // error?
 ```
+
+**Branching on an HTTP client error.** The most-looked-up thing in this whole skill, so it is here rather than behind a fetch. `http:Client` operations return `T|http:ClientError`, and the status code lives on the detail record of the three errors that carry one:
+
+```ballerina
+FullRepository|error result = github->/repos/[owner]/[repo];
+if result is http:ClientRequestError {
+    int status = result.detail().statusCode;   // 4xx
+} else if result is http:RemoteServerError {
+    int status = result.detail().statusCode;   // 5xx
+} else if result is error {
+    log:printError("call failed", result);
+}
+```
+
+The hierarchy is `ClientRequestError` and `RemoteServerError` under `ApplicationResponseError` under `ClientError` under `Error`, and **only those three carry `detail().statusCode`** — `http:SslError` and the rest reach `Error` without one, so `is` on the specific type is what makes `.detail()` legal. `bal-library type ballerina/http ClientRequestError --deps` prints the whole chain and the detail record.
 
 ---
 

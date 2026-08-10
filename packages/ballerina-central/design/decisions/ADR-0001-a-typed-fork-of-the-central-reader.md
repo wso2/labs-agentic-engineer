@@ -4,6 +4,13 @@
 `skills/ballerina/scripts/` tree and the `VENDORED.md` that documented the
 opposite decision.
 
+**Partly superseded** by [ADR-0002](ADR-0002-four-addressed-documents-in-two-registers.md)
+and [ADR-0003](ADR-0003-a-raw-payload-cache-keyed-by-coordinates.md). The fork,
+the delivery mechanism, the schema-first boundary and the equivalence oracle all
+stand. What no longer holds is the two-document framing (there are four) and this
+document's Consequences claim that reordering the output was "the obvious next
+change" — ADR-0002 rejects it and explains why.
+
 ## Context
 
 [`ballerina-platform/skills`](https://github.com/ballerina-platform/skills)
@@ -175,6 +182,11 @@ could not be confused, and it did its job.
   rather than a checked-in file.
 - Output size is unchanged: `ballerinax/github` still renders to 21,818 lines.
   The win is navigation, and it depends on the caller grepping rather than
-  paging, which is why the skill says so twice. Reordering the output so clients
-  precede types would fix that at the source and is the obvious next change;
-  it moves every snapshot, so it wants its own reviewed diff.
+  paging, which is why the skill says so twice.
+
+  **Superseded.** This paragraph went on to call reordering the output "the
+  obvious next change". It was the wrong next change: it moves every declaration
+  in all nine snapshots and does not solve the motivating case, since github's
+  client section is 2,715 lines on its own. The answer was to stop grepping —
+  see ADR-0002. This document is only 21,818 lines because it is now the
+  fallback (`api`) rather than the default.
