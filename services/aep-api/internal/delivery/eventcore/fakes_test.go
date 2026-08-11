@@ -196,13 +196,17 @@ type fakeIssues struct {
 	counts      map[int]*sourcecontrol.MilestoneIssueCounts
 	created     []sourcecontrol.CreateIssueRequest
 	assigned    []string
-	next        int
+	// labelled records the labels stamped on an existing issue, keyed by issue
+	// number — the write adoption makes to put an issue in the working set.
+	labelled map[int][]string
+	next     int
 }
 
 func newFakeIssues() *fakeIssues {
 	return &fakeIssues{
 		byMilestone: map[int][]sourcecontrol.IssueInfo{},
 		counts:      map[int]*sourcecontrol.MilestoneIssueCounts{},
+		labelled:    map[int][]string{},
 		next:        100,
 	}
 }
@@ -374,6 +378,20 @@ func (f *fakeIssues) SetIssueMilestone(_ context.Context, _, _ string, number, m
 	defer f.mu.Unlock()
 	f.assigned = append(f.assigned, fmt.Sprintf("%d->%d", number, milestoneNumber))
 	return nil
+}
+
+func (f *fakeIssues) AddLabels(_ context.Context, _, _ string, number int, labels []string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.labelled[number] = append(f.labelled[number], labels...)
+	return nil
+}
+
+// labelsOn reports the labels stamped on one issue after the fact.
+func (f *fakeIssues) labelsOn(number int) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.labelled[number]...)
 }
 
 func (f *fakeIssues) titles() []string {

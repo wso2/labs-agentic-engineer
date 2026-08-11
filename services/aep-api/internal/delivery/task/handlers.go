@@ -145,6 +145,11 @@ func mapTaskCommandError(err error) error {
 		return apierr.Conflict("issue is closed")
 	case errors.Is(err, ErrComponentNameRequired):
 		return apierr.BadRequest(ErrComponentNameRequired.Error())
+	case errors.Is(err, delivery.ErrNoAdoptableMilestone):
+		// Not a server fault: the project has nothing built to adopt into yet.
+		// It is mapped explicitly because it is the one refusal a caller can act
+		// on, and an opaque 500 here once dropped an SRE/RCA handoff silently.
+		return apierr.Conflict(delivery.ErrNoAdoptableMilestone.Error())
 	default:
 		return apierr.Internal("internal error")
 	}

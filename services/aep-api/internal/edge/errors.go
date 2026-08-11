@@ -72,6 +72,16 @@ func writeErrorEnvelope(w http.ResponseWriter, status int, code, msg string, det
 func writeResponseError(w http.ResponseWriter, r *http.Request, err error) {
 	var ae *apiError
 	if errors.As(err, &ae) {
+		// A CLASSIFIED 5xx is still a server fault, and its envelope is
+		// deliberately opaque — so without this line it reaches the caller
+		// leaving no trace at all on the server. That is not hypothetical: an
+		// unmapped adoption refusal became a bare 500 here and the failure was
+		// invisible across three services. 4xx stays unlogged: it is the
+		// caller's mistake, and logging it makes an error budget out of noise.
+		if ae.Status >= http.StatusInternalServerError {
+			slog.ErrorContext(r.Context(), "handler error", "path", r.URL.Path,
+				"status", ae.Status, "code", ae.Code, "err", err)
+		}
 		writeErrorEnvelope(w, ae.Status, ae.Code, ae.Message, ae.Details)
 		return
 	}

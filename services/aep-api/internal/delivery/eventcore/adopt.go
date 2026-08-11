@@ -18,18 +18,11 @@ package eventcore
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
 )
-
-// ErrNoDeployedMilestone is adoption's honest refusal: a bare issue joins the
-// DEPLOYED version's milestone, and a project that has never completed a build
-// has no such version. The message is written for a human because the console
-// dispatch path returns it to one verbatim.
-var ErrNoDeployedMilestone = errors.New("no milestone for the deployed version — trigger a build")
 
 // AdoptTarget is the issue being handed to the coding agent, plus the
 // milestone it already belongs to (0 when it is a bare issue). The webhook
@@ -49,40 +42,54 @@ type AdoptTarget struct {
 // The rules, in order:
 //
 //   - An issue that already has a milestone keeps it. The human put it there.
-//   - A bare issue joins the deployed version's milestone — the version it is
-//     an incident against. With no deployed version there is nothing to attach
-//     it to, and the caller gets ErrNoDeployedMilestone rather than a guess.
-//   - If a run is already live on that milestone, this is a no-op: the run
-//     re-reads its milestone at the next cycle boundary and picks the issue up
-//     there. Starting a second run on one milestone would put two agents on
-//     one branch.
+//   - A bare issue joins the milestone of the version it is an incident
+//     against: the deployed one, or — when nothing has been deployed yet — the
+//     spec build currently in flight. With neither, the caller gets
+//     delivery.ErrNoAdoptableMilestone rather than a guess.
+//   - Adoption STAMPS the agent-work label. See below.
+//   - If a run is already live on that milestone, no second run starts —
+//     that would put two agents on one branch. The live run is woken instead,
+//     because a run parked on an empty working set has no other way to learn
+//     that work arrived.
 //   - Otherwise an incident run starts over that milestone.
 //
-// Adoption does NOT stamp the agent-work label. The working set is read from
-// the milestone, and the labelling is the human's act of adoption — inventing
-// a second, platform-authored path to the same state would make "who adopted
-// this" unanswerable.
+// Adoption stamps delivery.LabelAgentWork because the working set is the
+// milestone's `aep`-labelled issues (MilestoneIssueCounts.OpenNonGateWork), so
+// an adopted issue without it is invisible to the dispatch predicate: the run
+// starts, finds nothing to work, and parks forever. Membership of the milestone
+// is NOT sufficient on its own — ledger issues live there too, which is the
+// distinction the label exists to draw.
+//
+// This does not blur who adopted the issue. `aep:codingagent` records the act
+// of adoption and survives untouched; `aep` records the consequence — that the
+// issue is now agent work. Two facts, two labels, and the second is the
+// platform's to write precisely because it is derived from the first.
 func (e *Events) AdoptIssue(ctx context.Context, orgID, projectID string, target AdoptTarget) error {
 	if target.Number == 0 || e.p.Runs == nil {
 		return nil
 	}
 	milestone := MilestoneRef{Number: target.MilestoneNumber, Title: target.MilestoneTitle}
 	if milestone.Number == 0 {
-		deployed, err := e.p.Runs.DeployedMilestoneRun(ctx, orgID, projectID)
+		resolved, err := e.adoptableMilestone(ctx, orgID, projectID)
 		if err != nil {
 			return err
 		}
-		if deployed == nil {
-			return ErrNoDeployedMilestone
-		}
-		milestone = MilestoneRef{Number: deployed.MilestoneNumber, Title: deployed.MilestoneTitle}
+		milestone = *resolved
 		if e.p.Issues != nil {
 			if err := e.p.Issues.SetIssueMilestone(ctx, orgID, projectID, target.Number, milestone.Number); err != nil {
 				return err
 			}
 		}
-		slog.InfoContext(ctx, "eventcore: adopted a bare issue into the deployed version's milestone",
+		slog.InfoContext(ctx, "eventcore: adopted a bare issue into a version's milestone",
 			"issue", target.Number, "milestone", milestone.Number, "version", milestone.Title)
+	}
+
+	// Before any run is started or woken: an issue that is not agent work would
+	// send it straight back to an empty working set.
+	if e.p.Issues != nil {
+		if err := e.p.Issues.AddLabels(ctx, orgID, projectID, target.Number, []string{delivery.LabelAgentWork}); err != nil {
+			return fmt.Errorf("adopt issue %d: mark as agent work: %w", target.Number, err)
+		}
 	}
 
 	live, err := e.p.Runs.LiveRunForMilestone(ctx, orgID, projectID, milestone.Number)
@@ -90,11 +97,51 @@ func (e *Events) AdoptIssue(ctx context.Context, orgID, projectID string, target
 		return err
 	}
 	if live != nil {
-		slog.DebugContext(ctx, "eventcore: adoption into a milestone with a live run — the next cycle picks it up",
+		slog.DebugContext(ctx, "eventcore: adoption into a milestone with a live run",
 			"issue", target.Number, "milestone", milestone.Number, "run", live.ID)
-		return nil
+		// A RUNNING run re-reads its milestone at the next cycle boundary. A
+		// WAITING one is parked and re-derives only when told to — and the label
+		// this call just wrote comes back as a suppressed echo, so the webhook
+		// path will not tell it.
+		return e.wakeIfWorkable(ctx, orgID, projectID, milestone.Number)
 	}
 	return e.startRun(ctx, orgID, projectID, milestone)
+}
+
+// adoptableMilestone is the version a bare issue belongs to: the deployed one
+// first, then a spec build still in flight.
+//
+// The in-flight fallback is what makes an incident filed DURING a project's
+// first build adoptable. That is not an edge case — it is the common one: the
+// SRE/RCA agent fires on an alert raised by the very deployment the build is
+// performing, so its handoff routinely lands minutes before the run that caused
+// it reaches `succeeded`. Refusing there dropped the handoff permanently, since
+// nothing retries it.
+//
+// Attaching to the in-flight run is also the same shape the platform already
+// uses for a red build inside a run: the fix issue joins that run's milestone
+// and the run works it in a later cycle.
+func (e *Events) adoptableMilestone(ctx context.Context, orgID, projectID string) (*MilestoneRef, error) {
+	deployed, err := e.p.Runs.DeployedMilestoneRun(ctx, orgID, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if deployed != nil {
+		return &MilestoneRef{Number: deployed.MilestoneNumber, Title: deployed.MilestoneTitle}, nil
+	}
+
+	live, err := e.p.Runs.LiveRunsForProject(ctx, orgID, projectID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range live {
+		if live[i].Origin == delivery.RunOriginSpecBuild {
+			slog.InfoContext(ctx, "eventcore: no deployed version — adopting into the spec build in flight",
+				"project", projectID, "milestone", live[i].MilestoneNumber, "run", live[i].ID)
+			return &MilestoneRef{Number: live[i].MilestoneNumber, Title: live[i].MilestoneTitle}, nil
+		}
+	}
+	return nil, delivery.ErrNoAdoptableMilestone
 }
 
 // startRun asks the supervisor for an incident run over a milestone. Every run

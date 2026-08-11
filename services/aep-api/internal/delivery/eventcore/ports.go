@@ -105,8 +105,13 @@ type IssueClient interface {
 	// MilestoneIssueCounts is the dispatch predicate's input, in one call.
 	MilestoneIssueCounts(ctx context.Context, orgID, projectID string, number int) (*sourcecontrol.MilestoneIssueCounts, error)
 	// SetIssueMilestone assigns an existing issue to a milestone by NUMBER —
-	// adoption of a bare issue into the deployed version's milestone.
+	// adoption of a bare issue into the milestone of the version it is an
+	// incident against.
 	SetIssueMilestone(ctx context.Context, orgID, projectID string, number, milestoneNumber int) error
+	// AddLabels stamps labels on an existing issue. Adoption uses it to mark an
+	// adopted issue as agent work, which is what puts it in the run's working
+	// set; adding a label an issue already carries is a no-op on the host.
+	AddLabels(ctx context.Context, orgID, projectID string, number int, labels []string) error
 }
 
 // PRReader reads a pull request's live state (the ground-truth check before

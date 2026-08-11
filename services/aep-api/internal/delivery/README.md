@@ -83,7 +83,7 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
 ## Ports
 | Port | Dir | Peer · contract |
 |---|---|---|
-| `Adopter` (`AdoptIssue`) | needs | `task` → the event plane. The handoff's dispatch leg: file a bare issue under the deployed version's milestone and start an incident run over it |
+| `Adopter` (`AdoptIssue`) | needs | `task` → the event plane. The handoff's dispatch leg: file a bare issue under the milestone of the deployed version (or, with none deployed yet, the spec build in flight), mark it agent work, and start an incident run over it |
 | `MilestoneResolver` (`MilestoneNumberForTag`) | needs | `task` → the root run repository. A `?tag=` query is milestone membership, resolved through the platform's own rows |
 | `SpecTagger` (`*spec.SpecSaveResult`) · `SpecCollector` · `AuthDeriver` | needs | `spec` — the whole-spec gate + tag cut + design reads |
 | `RepoLookup` (`owner/name`) | needs | `sourcecontrol` — repo full-name resolution |
@@ -193,6 +193,21 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   (for incidents and adoption) by the deployed version's run — and returns having written nothing when
   there is none. That gate is what keeps the plane's authority scoped to work the platform started, and
   what lets it share the `pull_request` and `issues` routing keys with other handlers without racing them.
+- **Adoption makes an issue agent work — milestone membership alone does not.** The working set is the
+  milestone's `aep`-labelled issues (`OpenNonGateWork`), and a milestone holds ledger issues too, so an
+  adopted issue without the label is invisible to the dispatch predicate: the run starts, finds nothing,
+  and parks forever. `AdoptIssue` therefore stamps `aep` on BOTH routes — the `aep:codingagent` webhook
+  and the handoff's promote leg. The two labels record two different facts and neither replaces the
+  other: `aep:codingagent` is the act of adoption, `aep` is its consequence.
+- **A bare issue adopts into the version in flight when none is deployed.** An incident is raised by a
+  deployment, so the SRE/RCA handoff routinely lands while the run that caused it is still short of
+  `succeeded` — refusing there dropped the handoff permanently, because nothing retries it. The deployed
+  version still wins when there is one; with neither, the caller gets `ErrNoAdoptableMilestone`, which
+  the HTTP edge maps to a 409 rather than letting an actionable refusal leave as an opaque 500.
+- **Adoption wakes a parked run; it does not rely on the webhook to do it.** The `aep` label adoption
+  writes comes back as a suppressed echo, so a run parked on an empty working set would never hear about
+  the work now sitting in front of it. `wakeIfWorkable` is the one definition of "this milestone can now
+  be worked", shared by the `issues` webhook and adoption so the two cannot drift.
 - **The event plane imports no workflow engine.** It detects, mints and signals; the supervisor decides.
   The dependency direction is enforced as a package boundary — the supervisor is reachable only through
   the `RunSignaler`/`RunStarter` ports, so no loop decision can be smuggled into a webhook handler.
