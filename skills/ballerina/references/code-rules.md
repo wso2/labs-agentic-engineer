@@ -11,7 +11,9 @@ For tests, see [tests.md](tests.md) — write them only when the user asks.
   - Never assign hardcoded default values to configurables — reading an environment variable via `os:getEnv` (see Environment Variables below) is not a hardcoded default and is the expected pattern for platform-injected values.
 - Initialize clients at module level, before any function or service declarations.
 - Declare listeners with the `listener` keyword (`listener foo:Listener lsn = new (config);`), not a `final` variable — `service ... on lsn` attachment requires it; a `final foo:Listener` fails to compile.
-- An event/streaming listener (change-data-capture, message topic/queue, etc.) attaches its service to a vendor channel/topic string that sits **between the service type and `on`**: `service <pkg>:<ServiceType> "<channel>" on <listener>` — e.g. a Salesforce CDC service binds to a channel like `service salesforce:CdcService "/data/LeadChangeEvent" on lsn`. The channel goes on the **`service` declaration** (its attach path) — **not** as a listener constructor argument; the listener `new (...)` takes only its config. This string isn't in the library API — get it from the connector's guide (`bal-library <org/name>` carries it) or the vendor docs, and wire it in **before** writing the service. If neither has it, **ask the user — never invent one**: without it the code usually still compiles and the service silently receives nothing. Never ship an event service without its channel.
+- An event/streaming listener (change-data-capture, message topic/queue, etc.) attaches its service to a vendor channel/topic string that sits **between the service type and `on`**: `service <pkg>:<ServiceType> "<channel>" on <listener>` — e.g. a Salesforce CDC service binds to a channel like `service salesforce:CdcService "/data/LeadChangeEvent" on lsn`. The channel goes on the **`service` declaration** (its attach path) — **not** as a listener constructor argument; the listener `new (...)` takes only its config. This string isn't in the library API — get it from the connector's guide (`bal library overview <org/name>` carries it) or the vendor docs, and wire it in **before** writing the service. If neither has it, **ask the user — never invent one**: without it the code usually still compiles and the service silently receives nothing. Never ship an event service without its channel.
+- Only some of a package's `service object` types are attachable to its listener, and `bal library api` tells you which: the `// --- Service ---` section prints a `service X on new Listener(...)` template for the attachable one and lists the rest under a note saying it cannot confirm the listener accepts them. **Never write `on new Listener(...)` for a type in that note.** An interceptor is the common case — it reaches the runtime as a `createInterceptors()` return from an interceptable service, not as an attachment.
+- A template with an empty body is a skeleton, not a complete service. The comment inside it says when the method contract is unpublished, and several listeners reject an empty body — a GraphQL service needs at least one `resource function get`, a Kafka service needs `remote function onConsumerRecord`. Take the required methods from the package's guide.
 - Implement a `main` function OR a service — not both, unless the requirement explicitly needs both.
 
 ## Data
@@ -19,7 +21,7 @@ For tests, see [tests.md](tests.md) — write them only when the user asks.
 - Use records for all data structures. Never use `map<json>`, `map<anydata>`, or raw `json`.
 - Prefer closed records (`record {| ... |}`) for data shapes you own. Use an open record only when tolerating extra/unknown fields is deliberate (e.g. a loosely-specified inbound payload).
 - Never access or manipulate a `json` variable directly. Define a record, convert json to it (`cloneWithType()` or `fromJsonStringWithType()`), then use the record.
-- If a return typedesc is marked `<>` in a signature (`bal-library` prints it as `typedesc<T> T = <>`), define a custom record for the expected data shape.
+- If a return typedesc is marked `<>` in a signature (`bal library` prints it as `typedesc<T> T = <>`), define a custom record for the expected data shape.
 - If a parameter type is `record {|anydata...;|}`, define or reuse an explicit named record — do not pass an anonymous literal.
 - If a return type is `record {|anydata...;|}`, decide the shape, declare a named record, and assign to it.
 - When accessing a field of a record, assign it to a new typed variable first, then use that variable in the next statement.
@@ -46,7 +48,7 @@ For tests, see [tests.md](tests.md) — write them only when the user asks.
 
 - Each `.bal` file must have its own import statements.
 - Import only packages your code actually references — `bal build` errors on unused imports. Don't pre-import a connector's dependency module (e.g. `ballerina/sql` behind a database client) unless your code names a type from it.
-- Do not import auto-imported langlibs: `lang.string`, `lang.boolean`, `lang.float`, `lang.decimal`, `lang.int`, `lang.map`.
+- Do not import a langlib whose name is a basic type — the type keyword itself puts the prefix in scope, so the import is an error. That is `lang.boolean`, `lang.decimal`, `lang.error`, `lang.float`, `lang.function`, `lang.future`, `lang.int`, `lang.map`, `lang.object`, `lang.stream`, `lang.string`, `lang.table`, `lang.typedesc` and `lang.xml`. The rule is the keyword, not the `lang.` prefix: **`lang.value`, `lang.array` and `lang.regexp` DO need importing** — `import ballerina/lang.value;`, and `undefined module` if you leave it out. Measured against the compiler, one module per line.
 - Packages with dots in names use aliases: `import org/package.one as one;`
 - Submodules in `generated/<moduleName>/`: import as `import <packageName>.<moduleName>;` — the import should contain only the package name and submodule name, no path components.
 - For SQL databases, import the matching `.driver` package alongside the client so the JDBC driver is on the runtime classpath (also required for GraalVM native builds):
@@ -123,9 +125,227 @@ resource function post items(@http:Header string x\-user\-id, ItemInput payload)
 
 ---
 
-## Langlib
+# Ballerina Langlib Reference
 
-The calls above cover what most code needs. For the full surface — every type
-conversion, and the array, string, map and number operations — load
-[langlib.md](langlib.md). Do not run `bal-library` for a `lang.*` module: it is
-part of the language rather than a package on Central.
+## Contents
+- [Type Conversion](#type-conversion)
+- [JSON Conversion](#json-conversion)
+- [Arrays](#arrays)
+- [Strings](#strings)
+- [Maps](#maps)
+- [Numbers](#numbers)
+- [Errors](#errors)
+- [Sleep](#sleep)
+- [Query Expressions](#query-expressions)
+- [XML](#xml)
+- [Regular Expressions](#regular-expressions)
+
+---
+
+## Type Conversion
+
+```ballerina
+int age = check int:fromString("25");
+float price = check float:fromString("19.99");
+decimal exact = check decimal:fromString("10.50");
+boolean flag = check boolean:fromString("true");
+xml bookXml = check xml:fromString("<book>Hamlet</book>");
+
+// Special float values
+float notANumber = check float:fromString("NaN");
+float infinity = check float:fromString("Infinity");
+```
+
+---
+
+## JSON Conversion
+
+```ballerina
+// Parse JSON string
+json data = check jsonText.fromJsonString();
+
+// JSON string → typed array
+int[] nums = check jsonArray.fromJsonStringWithType();
+
+// JSON string → record
+type Config record {| int port; int timeout; |};
+Config cfg = check configText.fromJsonStringWithType(Config);
+
+// Record → JSON
+json result = person.toJson();
+string jsonStr = person.toJsonString();
+
+// json → record (cloneWithType)
+json raw = {port: 8080};
+Config config = check raw.cloneWithType();
+
+// Validate field type (ensureType)
+json[] subjects = check student.subjects.ensureType();
+
+// Clone a value
+int[] copy = original.clone();
+```
+
+---
+
+## Arrays
+
+```ballerina
+numbers.length()        // count
+numbers.push(4)         // append
+numbers.pop()           // remove last, returns it
+numbers.unshift(0)      // prepend
+numbers.shift()         // remove first, returns it
+numbers.indexOf(30)     // int? — index or ()
+numbers.sort()          // ascending
+numbers.sort("descending")
+```
+
+---
+
+## Strings
+
+```ballerina
+text.length()
+text.substring(0, 5)
+text.indexOf("World")           // int? — index or ()
+text.includes("World")          // boolean
+text.includes("o", 5)           // search from index
+text.startsWith("Hello")
+text.endsWith("World")
+text.trim()
+text.toUpperAscii()
+text.toLowerAscii()
+text.toBytes()                  // byte[]
+string:fromBytes(data)          // check — byte[] → string
+string:'join(", ", "a", "b")    // "a, b"
+"Hello".concat(" ", "World")
+
+// Code points
+int code = string:toCodePointInt("A");           // 65
+string char = check string:fromCodePointInt(65); // "A"
+int[] codes = "Hello".toCodePointInts();
+string text = check string:fromCodePointInts([72, 101, 108, 108, 111]);
+int code = "Hello".getCodePoint(0);              // 72
+```
+
+---
+
+## Maps
+
+```ballerina
+scores.length()
+scores.get("Alice")             // panics if missing
+scores.hasKey("Alice")          // boolean
+scores.keys()                   // string[]
+scores.toArray()                // value[]
+scores.remove("Alice")          // returns value, panics if missing
+scores.removeIfHasKey("Carol")  // returns value? — safe remove
+scores.removeAll()
+```
+
+---
+
+## Numbers
+
+```ballerina
+(255).toHexString()             // "ff"
+int value = check int:fromHexString("ff"); // 255
+```
+
+---
+
+## Errors
+
+```ballerina
+err.message()                   // string
+err.detail()                    // map<value:Cloneable> & readonly
+err.cause()                     // error?
+```
+
+**Branching on an HTTP client error.** The most-looked-up thing in this whole skill, so it is here rather than behind a fetch. `http:Client` operations return `T|http:ClientError`, and the status code lives on the detail record of the three errors that carry one:
+
+```ballerina
+FullRepository|error result = github->/repos/[owner]/[repo];
+if result is http:ClientRequestError {
+    int status = result.detail().statusCode;   // 4xx
+} else if result is http:RemoteServerError {
+    int status = result.detail().statusCode;   // 5xx
+} else if result is error {
+    log:printError("call failed", result);
+}
+```
+
+The hierarchy is `ClientRequestError` and `RemoteServerError` under `ApplicationResponseError` under `ClientError` under `Error`, and **only those three carry `detail().statusCode`** — `http:SslError` and the rest reach `Error` without one, so `is` on the specific type is what makes `.detail()` legal. `bal library type ballerina/http ClientRequestError --deps` prints the whole chain and the detail record.
+
+---
+
+## Sleep
+
+```ballerina
+import ballerina/lang.runtime;
+runtime:sleep(2); // pause for 2 seconds
+```
+
+---
+
+## Query Expressions
+
+```ballerina
+// Filter array
+int[] even = from int n in numbers where n % 2 == 0 select n;
+
+// Transform records
+string[] names = from var p in people where p.age > 23 select p.name;
+
+// Process stream
+int[] filtered = from int num in numberStream where num > 2 select num;
+```
+
+---
+
+## XML
+
+```ballerina
+xml element = xml `<book><title>Hamlet</title></book>`;
+xml books = xml `<book>Book1</book>` + xml `<book>Book2</book>`;
+xml combined = xml:concat(xml `<item>First</item>`, xml `<item>Second</item>`);
+xml parsed = check xml:fromString(xmlText);
+int count = items.length();
+
+// For XML ↔ record conversion, use ballerina/data.xmldata
+```
+
+---
+
+## Regular Expressions
+
+Must import: `import ballerina/lang.regexp;`
+
+```ballerina
+// Create pattern
+string:RegExp pattern = re `[0-9]+`;
+string:RegExp pattern = check regexp:fromString("[0-9]+");
+
+// Find
+regexp:Span? match = pattern.find("Hello123");
+regexp:Span[] all = re `[0-9]+`.findAll("a1b2c3");
+
+// Capture groups
+regexp:Groups? groups = re `([a-z]+)([0-9]+)`.findGroups("abc123");
+if groups is regexp:Groups {
+    string full = groups[0].substring();   // "abc123"
+    string letters = groups[1].substring(); // "abc"
+    string numbers = groups[2].substring(); // "123"
+}
+
+// Validate full match
+boolean valid = re `[0-9]+`.isFullMatch("123");
+
+// Replace
+string result = re `[0-9]+`.replace("a1b2", "X");      // "aXb2"
+string result = re `[0-9]+`.replaceAll("a1b2", "X");   // "aXbX"
+
+// Split
+string[] parts = re `,\s*`.split("a, b, c"); // ["a", "b", "c"]
+```

@@ -1,6 +1,6 @@
 ---
 name: ballerina
-description: How to build a Ballerina service on the platform — network-native service composition with a built-in `http:Listener`, OpenAPI-first codegen (`bal openapi`), and Ballerina Central for connectors/libraries. Apply when a component's `language` is Ballerina. For a Go service, use `go` instead.
+description: Everything related to working with ballerina langauge.
 metadata:
   aep:
     kind: org
@@ -9,7 +9,11 @@ metadata:
 
 # Ballerina
 
-## Creating a New Project
+**Load [code-rules.md](references/code-rules.md) before writing any `.bal` code.** This contains best practices, syntaxes and common patterns for Ballerina code.
+
+## Development workflow
+
+### Creating a New Project
 
 When the user asks to create a new project, service, or program from scratch:
 
@@ -17,91 +21,74 @@ When the user asks to create a new project, service, or program from scratch:
 bal new <project-name>   # scaffolds main.bal + Ballerina.toml
 cd <project-name>
 ```
-
 - Read [project-structure.md](references/project-structure.md) for how a Ballerina project is laid out.
 
-## Writing Ballerina Code
+Write tests only when the user asks — then load [tests.md](references/tests.md).
 
-**File layout.** New code belongs in the file that fits its concern — `.bal` files and `Ballerina.toml` show the existing layout (see [project-structure.md](references/project-structure.md)).
+### bal library
 
-**Finding an external connector or library.** For a package [code-rules.md](references/code-rules.md) already names, write the `import` and let `bal build` resolve it — `bal search` and `bal pull` are Central round-trips for something already decided. Reach for them only for a genuinely unknown connector. Where a `ballerinax/*` connector and a standalone `trigger.*` package cover the same events, use the connector — `trigger.*` is being superseded regardless of modified date.
+Reads a package's real API off Central. It is the source for a signature; web search is not.
+Ask it a question by name or path — never `grep` or `sed` its output.
 
-`ballerinax/postgresql` pulls `ballerinax/cdc` and its Debezium jars transitively at every version; the jar-conflict warning that follows is expected and not yours to fix.
-
-**Use `bal-library` over web search.** It reads the package off Ballerina Central and answers four different questions; the grammar and the ladder are below.
-
-**Code rules.** [code-rules.md](references/code-rules.md) is the source of truth for how code is written — Make sure to load it before you write code or working with ballerina. [project-structure.md](references/project-structure.md) covers how the project is laid out and how packages and dependencies are managed (`Dependencies.toml`/`Ballerina.toml` are auto-managed, never hand-edited) — load it before adding files or packages, or touching a `.toml`. Write tests only when the user explicitly asks — then load [tests.md](references/tests.md).
-
-### Read the package before you call it
-
-**Once, up front, for each third-party connector `code-rules.md` does not name:**
+One chain, in order — each output names the argument for the next:
 
 ```bash
-bal-library <org/name>
+bal library overview ballerinax/github                     # Markdown: clients + every signature, module functions, errors, then the guide
+bal library ops ballerinax/github repos                    # Markdown: the signatures callable at `repos`, and its child segments with counts
+bal library ops ballerinax/github 'repos/*/*' --sigs       # Markdown: every signature at or under a path; `*` is a wildcard segment
+bal library type ballerinax/github FullRepository          # Ballerina: the return type off that signature, whole
+bal library type ballerinax/sap Client                     # Ballerina: the client class itself, when the constructor is the question
+bal library type ballerina/http ClientRequestError --deps  # Ballerina: + the distinct chain and Detail record — how to branch on an error
+bal library api ballerinax/github                          # Ballerina: every declaration — large, last resort, and say why
 ```
 
-That is the overview: the package's own guide, every client's constructor and function signatures, its module-level functions, and its error declarations. About 7KB for a 903-operation connector. It is the answer to "how is this used" as well as "what is it called", and it is cheap because the payload is cached for the rest of the run.
+Every lookup names its verb: `overview` is the one to start with, and a bare `bal library
+ballerinax/github` is exit 2 rather than a guess at which document you meant.
 
-`code-rules.md` already names `http`, `sql`, `time`, `log` and `os`, and the langlibs are the language itself (see [langlib.md](references/langlib.md)) — none of them is a package Central has anything to add about, so **do not look them up.** Local workspace packages and `generated/` submodules are not on Central at all.
+Above 100 operations the overview prints a path tree instead of the signatures (`repos 421   orgs 200   user 93 …`), and that tree is what supplies `ops` its path. `type` takes several names at once.
 
-If the client's operations were replaced by a path tree — which happens above 100 of them — navigate it:
+- `--client <Name>` — pick a client; `ops` requires it when a package declares more than one.
+- `--version <version>` — read that version rather than Central's latest. Works on every verb that reads a package.
+- `--project-dir <component>` — pin the version `Dependencies.toml` resolved instead of Central's latest; pass it on every lookup after a build.
+
+Notes:
+
+- Take a type's name from a **signature**, never from the guide — `github`'s readme returns `Repository` where the operation returns `FullRepository`. The overview says so explicitly when it can: a guide naming something the package does not declare is flagged above the guide, with the closest declared names.
+- The overview's `## Configurables` section is what a **deployment** sets in `Config.toml`; those names are module-private, so a signature default naming one is set there, never passed as an argument.
+- The payload is cached on disk and outlives the run, so four addressed questions cost less than one `api`. Add `--refresh` only when a name should exist and does not — a package published since the copy was taken.
+- A trailing `// Special Agent Note:` names the **module** a type comes from: that clause **is** the import — write `import ` and the module exactly as printed, apostrophes included (`ballerinax/'client.config` is a real one; a segment that is a Ballerina keyword has to be quoted) — then use the `alias:Type` prefix it shows. **No note means no import.** A prefixed name with no note is pre-declared (`int:Signed32`, `xml:Element`, `string:Char`); importing it is a compiler error, not a precaution.
+- `--deps` ends with the cross-package edges and, for each, the exact follow-up **including its version** — run that line rather than composing a coordinate. It is the only way to reach a module that is not its own package: `ballerinax/aws.auth` has no registry entry, so `bal library type ballerinax/aws.auth AuthConfig --version 1.0.1` works and the versionless form is exit 1.
+- `*` matches one branch and the header names the ones it did not take (`| Also matched | … (4), not included here |`). If that row is present, the answer is short by that many — ask for the named path too before concluding an operation does not exist.
+- Exit 2 means the arguments are wrong (`:version` suffix, a flag the verb does not take, unresolved name, ambiguous client); exit 1 means Central could not answer — run it once more.
+- Every failure writes one JSON object with a `suggestion` to stderr; report that JSON rather than improvising a signature.
+- A failed lookup is not a blocker: write from `code-rules.md` and let `bal build` name what is wrong.
+- Prefer a `ballerinax/*` connector over a `trigger.*` package covering the same events.
+- An `import` plus `bal build` resolves a package; `bal library search <keywords...>` is what names a genuinely unknown connector, with each hit's pull count beside it.
+
+### bal build
+
+- `target/` is the incremental cache — leave it in place; "no work to do" confirms the last build holds.
+- Configurables are read at runtime, so env variables or Config.toml is not needed to build.
+
+### bal openapi
 
 ```bash
-bal-library ops <org/name> <path>
+bal tool pull openapi                          # once per environment
+bal openapi -i oas.yaml --mode service         # generate service from openapi spec
+bal openapi -i oas.yaml --mode client          # generate client from openapi spec
 ```
 
-**The pre-read is not a precondition.** If it fails — the package is not on Central, the registry is having a bad minute — write the code from `code-rules.md` and let `bal build` name what you got wrong. The ban on guessing applies to a signature you were shown a failure for, not to starting work.
+- The stub is the starting point: fill every empty resource body with Edit — an unfilled body is a compile error.
+- Change the generated `new (9090, config = {host: "localhost"})` to `new (9090)` — localhost binding leaves the deployed container unreachable while it looks healthy.
+- Delete the `bal new` scaffold's `main.bal` once the service exists.
 
-### Then write, build, and look up what the build names
-
-1. **Write the component.** Generate stubs (e.g. openapi) when needed.
-2. **`bal build`.** Fix every compilation error and repeat until clean.
-3. **Look up only what the build named**, using the table below.
-
-`bal build` is incremental and `target/` is its cache — **never delete `target/` to force a rebuild.** A build reporting no work to do is confirmation the last one still holds, not a failure to re-run.
-
-Configurables are read at **runtime**, never at build time. Do not prefix `bal build` with a component's env vars, and do not re-run a build to check it works without them.
-
-| When the question is | Run |
-|---|---|
-| `http` resources or param binding · `sql` queries and return types · `time` · imports and `.driver` pairing · listeners and event services · configurables · `log` | **[code-rules.md](references/code-rules.md). Do not run `bal-library`.** |
-| anything `lang.*` — a conversion, an array/string/map/number operation | **[langlib.md](references/langlib.md).** It is part of the language, not a package on Central. |
-| "what exactly is this declaration?" | `bal-library type <org/name> <Name>` |
-| "what does this type contain, all the way down?" | `bal-library type <org/name> <Name> --deps` |
-| "how do I branch on this error?" | `bal-library type <org/name> <ErrorName> --deps` |
-| "what operations are under this path?" | `bal-library ops <org/name> <path>` |
-| "what is the exact signature of everything under this path?" | `bal-library ops <org/name> '<path>' --sigs` |
-| nothing above answered | `bal-library api <org/name> > /tmp/<name>-api.bal`, and say why |
-
-**Pass `--project-dir <component>` on every post-build lookup.** Once a build has written `Dependencies.toml`, that is the version the component actually compiles against — without it you get Central's latest and may write a field that does not exist, with nothing in the output to say why.
-
-**Take a type's name from a signature, never from the guide.** `github`'s own readme example returns `Repository` while the operation returns `FullRepository`, and eleven records in that package carry a `stargazersCount` — four of them optional. Reading a field off the wrong record compiles into a nil-handling bug.
-
-A `// Special Agent Note:` at the end of a line names the package a type comes from — that is the `import` to add, and the `alias:Type` prefix on the line is how to write it.
-
-Exit codes: `2` means the arguments are wrong — a `:version` suffix on the package name, an unknown flag, a declaration name that does not resolve (the failure lists candidates), or a package with more than one client where `ops` needs `--client`. `1` means Central could not answer; run it once more. Every failure writes one JSON object to stderr with a `suggestion`. **Never improvise a signature because a lookup failed** — report that JSON instead.
-
-`ops` and `type` print a few hundred bytes to a few KB and are meant to be read directly. Only `api` needs redirecting to a file: it is tens of thousands of lines and whatever you read stays in context for the rest of the run. An error still unresolved after several attempts is worth reporting with its file and line instead of guessing again.
-
-## Working with OpenAPI Specs
-
-- Pull the tool once per environment: `bal tool pull openapi`
-- Generate a service stub from a spec: `bal openapi -i oas.yaml --mode service`
-- Generate a client from a spec: `bal openapi -i oas.yaml --mode client`
-
-**The generated stub is the starting point — fill it using Edit, never delete it.** Three things it always needs:
-
-- Resource bodies come out empty, You need to fill the implementation. Failing to fill will result a compiler error.
-- The listener is generated as `new (9090, config = {host: "localhost"})` — **drop the config, leave `new (9090)`**. A container bound to localhost answers from inside and refuses every request from outside, so the deployed service is unreachable while looking healthy.
-- Delete the `bal new` scaffold's `main.bal` once the service exists — a package implements a `main` OR a service, not both.
-
-## Dockerfile
+### Dockerfile
 
 ```dockerfile
-FROM ballerina/ballerina:2201.13.5 
+FROM ballerina/ballerina:2201.13.5
 WORKDIR /src
 COPY --chown=ballerina:troupe . .
 ENTRYPOINT ["bal", "run"]
 ```
 
-`--chown` is required, not stylistic: `COPY` always lands files as `root:root` regardless of the base image's `USER` directive, but the container runs as the non-root `ballerina` user. Without it, `bal run` fails writing `target/`/`Dependencies.toml` and the pod crash-loops.
+`--chown` is required: `COPY` lands files as `root:root`, the container runs as `ballerina`, and without it `bal run` cannot write `target/` and the pod crash-loops.
