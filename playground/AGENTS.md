@@ -149,11 +149,12 @@ a cluster run gets. Every run that overlays it says so, naming the jar.
 
 Host mode cannot overlay anything: `bal library` is a `bal` tool, resolved out of
 **your own** `~/.ballerina`, so the loop there is the tool's `install-local.sh`.
-Rather than write into your home behind your back, a host run compares the
-installed jar with your working-tree build by bytes and tells you when they
-differ — or when the tool is absent, in which case the skill falls through to
-`code-rules.md`, the same branch a stale image produces and the reason the skill
-documents it.
+Rather than write into your home behind your back, a host run tells you when your
+working-tree jar was built after the installed one landed — by mtime, because a
+gradle jar is not byte-reproducible and a content comparison would call every
+unchanged rebuild stale — or when the tool is absent, in which case the skill
+falls through to `code-rules.md`, the same branch a stale image produces and the
+reason the skill documents it.
 
 **AI SDK DevTools is always on** (`src/devtools-default.ts`): every
 engineering-agent LLM call — the composed prompt, tool calls, usage, timing —

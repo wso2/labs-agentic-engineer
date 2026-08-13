@@ -61,9 +61,13 @@ image, with the playground mounting the working-tree jar over it.**
   command it names returns, so tuning the two has to be one loop.
 - **Host mode reports instead of repairing.** There, `bal` resolves the tool out
   of the developer's own `~/.ballerina`, so there is nothing to overlay. The
-  harness compares the installed jar against the working-tree build **by bytes**
-  and names the gap; it does not write into someone's home, and it does not
-  block the run.
+  harness asks whether the working-tree jar was **built after** the installed one
+  was put there, and names the gap; it does not write into someone's home, and it
+  does not block the run. Deliberately mtime and **not** a byte comparison: a
+  gradle jar is not byte-reproducible (the zip carries entry timestamps), so
+  comparing content calls an unchanged rebuild stale and the advice becomes noise
+  nobody reads. `install-local.sh` copies without `-p`, so the installed copy is
+  stamped when it landed, which is the ordering this needs.
 
 ## Consequences
 
