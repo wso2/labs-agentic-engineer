@@ -28,9 +28,11 @@ import {
   dockerInvocation,
   hostInvocation,
   isFailedSubagent,
-  localBalCliDir,
   renderMergedTimeline,
+  toolJarOverlay,
+  workingTreeToolJar,
 } from "../src/engine/coding-run.js";
+import { REPO_ROOT } from "../src/paths.js";
 import { formatLine } from "@aep/progress-view";
 
 // The playground renders through the SAME formatter the console does, so these
@@ -445,26 +447,58 @@ test("failed-subagent trigger: fires on a real stalled Agent result, and nothing
   assert.equal(isFailedSubagent({ ...stalled, kind: "tool_use" }), false);
 });
 
-// `bal-library` (@aep/ballerina-central) is the one command the `ballerina`
-// skill calls by name, and the point of wiring it here is that a CLI edit
-// reaches the next run without an image rebuild. Both modes are asserted
-// against the SAME resolver so this holds whether or not the package happens to
-// be built in the environment running the tests — an unbuilt tree must leave
-// docker's baked copy alone rather than mount an empty directory over it.
-test("both run modes point at the working-tree bal-library build, or at neither", () => {
-  const dist = localBalCliDir();
-  const { env } = hostInvocation(invocationOpts, "/r");
+// `bal library` is the one tool the `ballerina` skill calls by name, and the
+// point of wiring it here is that an edit to it reaches the next docker run
+// without an image rebuild. Asserted against the same resolver the invocation
+// uses, so it holds whether or not the tool's repository happens to be checked
+// out and built in the environment running the tests — with no jar to send, the
+// image's own install must be left alone rather than shadowed.
+test("docker mode mounts the working-tree bal library jar, or leaves the install alone", () => {
+  const overlay = toolJarOverlay();
   const { args } = dockerInvocation(invocationOpts, "/r", "c1");
-  const mount = args.find((a) => a.endsWith(":/opt/ballerina-central:ro"));
+  const mount = args.find((a) => a.includes("/tool/libs/") && a.endsWith(":ro"));
 
-  if (dist === undefined) {
-    assert.equal(mount, undefined, "nothing may be mounted over the image's baked CLI");
-    assert.equal(env.PATH, process.env.PATH, "host PATH is left as the developer's own");
+  if (overlay === undefined) {
+    assert.equal(mount, undefined, "nothing may be mounted over the image's installed tool");
     return;
   }
-  assert.equal(mount, `${dist}:/opt/ballerina-central:ro`);
-  assert.ok(env.PATH?.startsWith(`${dist}:`), "the working-tree build must win on PATH");
-  // Prepended, not replaced: `bal`, `go` and `playwright-cli` still have to
-  // resolve from the developer's own toolchain.
-  assert.ok(env.PATH?.includes(process.env.PATH ?? ""), "the rest of PATH must survive");
+  assert.equal(mount, `${overlay.hostJar}:${overlay.imageJar}:ro`);
+  assert.equal(overlay.hostJar, workingTreeToolJar());
+});
+
+// Host mode has no image and no PATH entry to point anywhere: `bal library` is a
+// `bal` tool resolved out of the developer's own ~/.ballerina. So the environment
+// must come through untouched — the failure this guards is a well-meant PATH or
+// HOME edit that makes a host run read a different tool than a bare `bal library`
+// in the same shell would.
+test("host mode leaves the developer's own environment alone", () => {
+  const { env } = hostInvocation(invocationOpts, "/r");
+  assert.equal(env.PATH, process.env.PATH);
+  assert.equal(env.HOME, process.env.HOME);
+});
+
+// The vendored distribution is what the image installs, and it is CHECKED IN —
+// the tool is in its own repository and not on Ballerina Central, so a fresh
+// clone can neither build nor pull it. A partial refresh therefore fails here
+// rather than 300 layers into a docker build, and the coordinates the container
+// path is composed from are held to the payload's own metadata.
+test("the vendored bal library distribution is complete and matches its coordinates", () => {
+  const vendor = join(REPO_ROOT, "runners", "remote-worker", "vendor", "bal-library-tool");
+  const version = readFileSync(join(vendor, "VERSION"), "utf8").trim();
+  assert.ok(version.length > 0, "VERSION names the version install.sh will register");
+  assert.ok(existsSync(join(vendor, "install.sh")), "the tool's own offline installer");
+  assert.ok(existsSync(join(vendor, `native-${version}.jar`)), "the jar VERSION names");
+
+  // install.sh derives the bala path from these, and coding-run.ts composes the
+  // mount target from the same three values.
+  const toml = readFileSync(join(vendor, "Ballerina.toml"), "utf8");
+  assert.match(toml, /^org = "ballerinax"$/m);
+  assert.match(toml, /^name = "tool_library"$/m);
+  const overlay = toolJarOverlay();
+  if (overlay) {
+    assert.ok(
+      overlay.imageJar.endsWith(`/ballerinax/tool_library/${version}/any/tool/libs/native-${version}.jar`),
+      `the mount target must be the path install.sh wrote: ${overlay.imageJar}`,
+    );
+  }
 });
