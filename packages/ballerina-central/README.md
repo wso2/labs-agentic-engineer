@@ -1,5 +1,18 @@
 # @aep/ballerina-central
 
+> **Superseded. Kept as the fixture oracle, not as a second implementation.**
+> This reader has been ported to Java and ships as the `bal library` Ballerina
+> CLI tool from its own repository. Nothing delivers `bal-library` any more: the
+> `ballerina` skill drives `bal library <verb>`, and the runner image installs
+> the tool from `runners/remote-worker/vendor/bal-library-tool` (see that
+> Dockerfile and `remote-worker/design/decisions/ADR-0006`). What stays valuable
+> here is `test/__fixtures__/` and `test/__snapshots__/` — the corpus the port is
+> held byte-for-byte against — and re-recording fixtures still happens here. It
+> is not to gain features: two live implementations of one contract will drift,
+> and the whole argument for the port is that a signature comes from one place.
+> Everything below describes this package as it was, including delivery paths
+> that no longer exist.
+
 Reads a Ballerina package's public API off [Ballerina
 Central](https://central.ballerina.io) and answers four different questions about
 it — addressed by name and by path, not grepped.
@@ -170,20 +183,20 @@ Central token is ever threaded through `HttpOptions`, this cache must be disable
 or keyed by a token fingerprint — `$HOME` outlives the per-task workspace scrub,
 and mode 0600 buys nothing against the same uid.
 
-## Delivery
+## Delivery — none of this is wired any more
 
-The bundle is one dependency-free `.mjs` plus a two-line `sh` launcher, so
-installing it is a copy and a `PATH` entry:
+The bundle was one dependency-free `.mjs` plus a two-line `sh` launcher, so
+installing it was a copy and a `PATH` entry: `--build-context balcli=…/dist` into
+the runner image at `/opt/ballerina-central`, the same `dist/` bind-mounted over
+it for playground docker runs, and prepended to the coding child's `PATH` in host
+mode. **All three were removed with the port.** `bal library` is a Ballerina CLI
+tool, so it is installed into a local bala repository rather than put on `PATH`;
+the equivalents now live in `runners/remote-worker/Dockerfile` and
+`playground/src/engine/coding-run.ts`.
 
-| where | how |
-|---|---|
-| runner image | `--build-context balcli=…/dist` → `/opt/ballerina-central`, on `PATH` |
-| playground, docker mode | the same `dist/` bind-mounted over it — edit, rebuild the package, run |
-| playground, host mode | `dist/` prepended to the coding child's `PATH` |
-
-```bash
-pnpm --filter @aep/ballerina-central build   # ~2s; no image rebuild in either mode
-```
+`pnpm --filter @aep/ballerina-central build` still produces the bundle, and
+running it is how the parity check in the tool's README compares the two readers
+byte-for-byte. Nothing else consumes it.
 
 ## Tests
 

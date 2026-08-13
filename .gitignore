@@ -66,6 +66,13 @@ playground/.projects/
 # Draft design notes (scratch, not part of the committed design record)
 docs/design/draft/
 
+# A sibling clone of the `bal library` tool's OWN repository, which the vendor
+# script defaults to reading (deployments/scripts/vendor-bal-library-tool.sh).
+# It is another git repo, so committing it would make an accidental gitlink; what
+# this repo tracks is the distribution it produces, under
+# runners/remote-worker/vendor/. See that directory's ADR-0006.
+packages/bal-library-tool/
+
 # Per-developer local chart overrides (copy from values.local.dev.yaml.example)
 deployments/helm-charts/platform/values.local.dev.yaml
 

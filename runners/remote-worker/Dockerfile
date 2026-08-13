@@ -137,24 +137,40 @@ COPY --chown=aep:aep . .
 # never needs a rebuild.
 COPY --from=skills --chown=aep:aep . /app/skills
 
-# The Ballerina Central reader the `ballerina` skill drives by name.
-# `@aep/ballerina-central` bundles to ONE dependency-free `.mjs` plus a two-line
-# `sh` launcher, so this is a copy — no npm install, no second dependency tree
-# beside the runner's own, and nothing that could disagree with it about zod.
+# The Ballerina Central reader the `ballerina` skill drives by name — `bal
+# library overview <org/name>` and its four sibling verbs.
 #
-# Another BuildKit named build context
-# (`--build-context balcli=<repo>/packages/ballerina-central/dist`) for the same
-# reason as skills: the package is built outside this image's context. Every
-# build path has to pass it — `build-runner.sh`, `release.yml`'s matrix row and
-# `local/run-local.sh` — and `make build` is what produces the directory.
+# NOT a command on PATH: it is a Ballerina CLI tool, so it installs into the
+# local bala repository under the user's home, registers itself in
+# `~/.ballerina/.config/bal-tools.toml`, and `bal` dispatches `library` to it.
+# No directory joins PATH here and no launcher script is involved.
 #
-# On PATH rather than symlinked into /usr/local/bin: the playground bind-mounts
-# its working-tree build over this directory, which is what makes a CLI edit
-# apply to the next docker-mode run with no rebuild — exactly how /app/skills
-# above already works. A symlink would resolve through the mount's own path and
-# defeat the launcher's `dirname "$0"`.
-COPY --from=balcli --chown=aep:aep bal-library bal-library.mjs /opt/ballerina-central/
-ENV PATH="/opt/ballerina-central:${PATH}"
-
+# `vendor/bal-library-tool` is a CHECKED-IN copy of the tool's distribution
+# rather than a build output — the opposite of the bundled reader it replaces,
+# and why this layer needs no named build context. The tool lives in its own
+# repository and is not published to Ballerina Central, so a fresh clone of this
+# repo has nothing to build and the image has nothing to pull.
+# `make vendor-bal-library-tool` refreshes the copy; see
+# design/decisions/ADR-0006-the-bal-library-tool-is-vendored.md.
+#
+# Installed by RUNNING the tool's own offline installer — the same script a
+# released zip carries — rather than by copying a prebuilt bala tree in. The
+# installer stamps the bala's `package.json` with the distribution the `bal`
+# beside it reports, and `bal` REFUSES a tool stamped newer than the
+# distribution running it, so the install has to happen where the tool will run.
+# That is also what ties the tool to this image's pinned Ballerina.
+#
+# As `aep` rather than as root: the tool resolves out of that user's own home,
+# and `bal` keeps writing there at task time — its central cache, and `bal tool
+# pull openapi` appending to the very `bal-tools.toml` this install writes. A
+# root install would leave the whole tree needing a recursive chown to keep both
+# of those working.
+#
+# Last in the file, so refreshing the vendored tool rebuilds two small layers
+# instead of invalidating `npm ci`.
 USER aep
+COPY --chown=aep:aep vendor/bal-library-tool /tmp/bal-library-tool
+RUN HOME=/home/aep bash /tmp/bal-library-tool/install.sh \
+    && rm -rf /tmp/bal-library-tool
+
 ENTRYPOINT ["npx", "tsx", "src/oneshot.ts"]

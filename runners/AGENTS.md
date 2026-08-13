@@ -181,16 +181,23 @@ into the runner pod at `/app/skills` for live skill edits (see
   playground has no library to mirror: `build-runner.sh`, `release.yml`'s matrix
   row, and `local/run-local.sh` all pass it. A dispatched run does not read it —
   its skills come from the clone — but `local.ts` does.
-- **`balcli` is a SECOND named context, and every build path passes both.**
-  `@aep/ballerina-central` bundles to the `bal-library` command the `ballerina`
-  skill drives by name; the image bakes it at `/opt/ballerina-central` and puts
-  that directory on `PATH`. Unlike `skills/`, it is a **build output** — `make
-  build` produces it, `build-runner.sh` builds it when missing, and the release
-  workflow gained a step for it. A missing named context is a BuildKit
-  resolution error, not a degraded image, so a new build path that forgets one
-  fails immediately. Tools a skill invokes by name belong here rather than in
-  the skill directory: nothing but prose then reaches an org's editable skills
-  repo. See that package's ADR-0001.
+- **The `bal library` tool is VENDORED and installed, not bundled onto `PATH`.**
+  It is what the `ballerina` skill drives by name (`bal library overview
+  <org/name>`), and it is a Ballerina CLI tool: the image installs it into the
+  `aep` user's local bala repository and `bal` dispatches `library` to it, so
+  there is no command and no `PATH` entry. `vendor/bal-library-tool` is a
+  **checked-in copy** of its distribution — the tool lives in its own repository
+  and is not on Ballerina Central, so a fresh clone has nothing to build and the
+  image has nothing to pull. `make vendor-bal-library-tool` refreshes it; follow
+  it with `make build-runner FORCE=1`, because a dispatched run reads the baked
+  install. Being vendored INSIDE this directory, it needs no named build context:
+  `skills` is now the only one, and the release workflow lost the node step that
+  existed to produce the old bundle. The install runs the tool's OWN installer so
+  the bala is stamped with this image's pinned distribution — `bal` rejects a
+  tool stamped newer than the distribution running it. Tools a skill invokes by
+  name belong here rather than in the skill directory: nothing but prose then
+  reaches an org's editable skills repo. See
+  `remote-worker/design/decisions/ADR-0006-the-bal-library-tool-is-vendored.md`.
 - **One image**, `remote-worker/Dockerfile`, serves BOTH task kinds
   (`AEP_TASK_KIND=implementation` and `=validation`). It is Debian-based
   because Playwright's browsers are glibc-linked; do not reintroduce a second,
