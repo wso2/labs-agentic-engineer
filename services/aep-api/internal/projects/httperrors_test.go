@@ -18,6 +18,7 @@ package projects
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -56,6 +57,7 @@ func TestMapComponentError(t *testing.T) {
 		{openchoreo.ErrNotFound, http.StatusNotFound},
 		{openchoreo.ErrConflict, http.StatusConflict},
 		{openchoreo.ErrBadRequest, http.StatusBadRequest},
+		{openchoreo.ErrPaymentRequired, http.StatusPaymentRequired},
 	}
 	for _, tc := range ocCases {
 		err := MapComponentError(tc.err, "failed to do thing")
@@ -75,5 +77,21 @@ func TestMapComponentError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "failed to list components") {
 		t.Fatalf("500 must carry the supplied internal message: %v", err)
+	}
+}
+
+func TestMapProjectError_PaymentRequiredForwardsPlatformMessage(t *testing.T) {
+	t.Parallel()
+	platform := "Quota limit reached for projects. Upgrade your subscription to continue."
+	err := MapProjectError(fmt.Errorf("%w: %s", openchoreo.ErrPaymentRequired, platform))
+	var ae *apierr.Error
+	if !errors.As(err, &ae) {
+		t.Fatalf("want *apierr.Error, got %T (%v)", err, err)
+	}
+	if ae.Status != http.StatusPaymentRequired || ae.Code != apierr.CodePaymentRequired {
+		t.Fatalf("got status=%d code=%q, want 402 payment_required", ae.Status, ae.Code)
+	}
+	if ae.Message != platform {
+		t.Fatalf("message = %q, want the platform sentence", ae.Message)
 	}
 }

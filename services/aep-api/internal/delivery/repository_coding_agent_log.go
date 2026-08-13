@@ -24,22 +24,15 @@ import (
 	"gorm.io/gorm"
 )
 
-// CodingAgentLogRepository is the coding_agent_logs store: the JobWatcher
-// captures a terminal agent pod's stdout once, keyed by (execution id, run
-// name), and the AgentProgressReader reads that snapshot back for the log
-// stream's final page. Extracted out of internal/delivery/codingagent during the
-// delivery fold (P6) so the domain lands gorm-free — the ORM stays fenced to
-// repositories/ (the gorm-into-<domain>/repository.go move defers to P9 with the
-// entity, as every domain's did). Lookups miss with (nil, nil), matching the
-// house convention.
+// CodingAgentLogRepository is the read-only coding_agent_logs store for legacy
+// execution-keyed rows written before milestone cycles moved log reading onto
+// OpenChoreo + the observability plane. Nothing writes this table any more —
+// AgentProgressReader.GetByRun is the only consumer. Lookups miss with
+// (nil, nil), matching the house convention.
 type CodingAgentLogRepository interface {
-	// GetByRun returns the captured log for (executionID, runName), or (nil,
-	// nil) when none has been persisted yet — the pre-capture live-tail window.
+	// GetByRun returns a previously captured log for (executionID, runName), or
+	// (nil, nil) when no row exists.
 	GetByRun(ctx context.Context, executionID uuid.UUID, runName string) (*CodingAgentLog, error)
-
-	// Create persists the final captured log. Idempotency on (task_id, run_name)
-	// is the caller's GetByRun-first guard, mirroring the extracted code.
-	Create(ctx context.Context, row *CodingAgentLog) error
 }
 
 type codingAgentLogRepository struct {
@@ -63,8 +56,4 @@ func (r *codingAgentLogRepository) GetByRun(ctx context.Context, executionID uui
 		return nil, err
 	}
 	return &row, nil
-}
-
-func (r *codingAgentLogRepository) Create(ctx context.Context, row *CodingAgentLog) error {
-	return r.db.WithContext(ctx).Create(row).Error
 }

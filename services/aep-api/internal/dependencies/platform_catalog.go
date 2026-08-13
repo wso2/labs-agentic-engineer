@@ -50,18 +50,27 @@ type PlatformResourceType struct {
 
 // ResourceTypeCatalog lists installed cluster-scoped ClusterResourceTypes
 // (read-only). AEP NEVER authors these — it only discovers them (the cluster
-// PE installs them out-of-band).
-type ResourceTypeCatalog struct{ rc openchoreo.ResourceClient }
+// PE installs them out-of-band). When enabled is false, List returns an empty
+// slice without calling OpenChoreo (deployments with no platform-resource catalog).
+type ResourceTypeCatalog struct {
+	rc      openchoreo.ResourceClient
+	enabled bool
+}
 
 // NewResourceTypeCatalog wires the read-only discovery over the OC client.
-func NewResourceTypeCatalog(rc openchoreo.ResourceClient) *ResourceTypeCatalog {
-	return &ResourceTypeCatalog{rc: rc}
+// Pass enabled=false to disable catalog discovery (empty list, no OC call).
+func NewResourceTypeCatalog(rc openchoreo.ResourceClient, enabled bool) *ResourceTypeCatalog {
+	return &ResourceTypeCatalog{rc: rc, enabled: enabled}
 }
 
 // List returns the installed ClusterResourceTypes sorted by name, projecting
 // each to its architect-facing slice (name, description, parameter
-// properties, output names).
+// properties, output names). When the catalog is disabled, returns an empty
+// slice without calling OpenChoreo.
 func (c *ResourceTypeCatalog) List(ctx context.Context) ([]PlatformResourceType, error) {
+	if !c.enabled {
+		return []PlatformResourceType{}, nil
+	}
 	cts, err := c.rc.ListClusterResourceTypes(ctx)
 	if err != nil {
 		return nil, err

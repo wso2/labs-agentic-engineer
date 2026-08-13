@@ -17,6 +17,9 @@
 package run
 
 import (
+	"errors"
+
+	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
@@ -43,6 +46,10 @@ const (
 	cycleAgentDead
 	// cycleCancelled — a human abandoned the increment mid-cycle.
 	cycleCancelled
+	// cycleQuotaBlocked — the org has no agent-concurrency slot, so the cycle
+	// never launched. Not a failure and not a spent budget: the run settles
+	// blocked with an actionable message.
+	cycleQuotaBlocked
 )
 
 // landing is how one dispatch attempt ended.
@@ -149,6 +156,12 @@ func (l *loop) dispatchUntilLanded(ctx workflow.Context, kind string, anchorIssu
 		l.st.CycleAttempt++
 		jobRef, derr := l.dispatch(ctx, kind, anchorIssue, cycleID)
 		if derr != nil {
+			// A quota refusal is the one launch failure that is NOT agent
+			// death: re-attempting cannot free a slot, so the loop stops here
+			// instead of burning the rest of the budget on the same answer.
+			if isAgentQuotaBlocked(derr) {
+				return false, cycleQuotaBlocked, nil
+			}
 			continue
 		}
 		if err := l.noteDispatch(ctx, cycleID, jobRef); err != nil {
@@ -328,4 +341,16 @@ func (l *loop) pollBuilds(ctx workflow.Context) (CycleBuildState, error) {
 		OrgID: l.in.OrgID, ProjectID: l.in.ProjectID, PRNumber: l.prNumber, MergeSHA: l.mergeSHA,
 	}).Get(ctx, &state)
 	return state, err
+}
+
+// isAgentQuotaBlocked reports whether a dispatch failed because the org is at
+// its agent-concurrency cap. It matches on the ApplicationError TYPE the
+// dispatch activity stamps, because Temporal round-trips errors as data and a
+// sentinel does not survive the boundary.
+func isAgentQuotaBlocked(err error) bool {
+	var appErr *temporal.ApplicationError
+	if errors.As(err, &appErr) {
+		return appErr.Type() == delivery.ErrTypeAgentQuotaBlocked
+	}
+	return false
 }

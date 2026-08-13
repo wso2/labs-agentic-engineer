@@ -32,7 +32,7 @@ type Client struct {
 }
 
 // vaultPath builds user-app-secrets/{OrgBaseNamespace(orgUUID)}/{SecretRefName}.
-// location.OrgName is the org UUID today (D-SR-namespace).
+// location.OrgName is the org UUID (vault path only; CR namespace is ControlPlaneNamespace).
 func vaultPath(location secretsprovider.SecretLocation) string {
 	ns := tenant.OrgBaseNamespace(location.OrgName)
 	name := location.SecretRefName()

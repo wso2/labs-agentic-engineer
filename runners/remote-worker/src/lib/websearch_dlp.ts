@@ -64,7 +64,7 @@ const MIN_SECRET_VALUE_LEN = 8;
 // OPENWEATHER_API_KEY) as a candidate.
 const SAFE_ENV_KEYS: ReadonlySet<string> = new Set<string>([
   // Runner/K8s plumbing — see runner.ts childEnv and
-  // oneshot.ts readDispatchFromEnv / job_template.go envVars.
+  // oneshot.ts readDispatchFromEnv / coding_agent_component_type.go env stamping.
   "AEP_TASK_ID",
   "AEP_ORG_ID",
   "AEP_PROJECT_ID",

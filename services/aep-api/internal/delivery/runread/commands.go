@@ -19,6 +19,7 @@ package runread
 import (
 	"context"
 	"fmt"
+	"log/slog"
 )
 
 // Commands is the run surface's two writes: cancel a run, and ask a version's
@@ -28,12 +29,22 @@ type Commands struct {
 	runs       RunReader
 	cancel     RunCanceller
 	revalidate Revalidator
+	// reaper stops the cancelled cycle's agent pod by deleting its Component.
+	// nil → the run still settles, nothing is reaped.
+	reaper CycleReaper
 }
 
 // NewCommands wires the command service. A nil collaborator leaves its own
 // command answering "not configured" rather than panicking.
 func NewCommands(runs RunReader, cancel RunCanceller, revalidate Revalidator) *Commands {
 	return &Commands{runs: runs, cancel: cancel, revalidate: revalidate}
+}
+
+// WithCycleReaper enables reaping the cancelled run's agent Component. Returns
+// the receiver for chained construction.
+func (c *Commands) WithCycleReaper(r CycleReaper) *Commands {
+	c.reaper = r
+	return c
 }
 
 // Cancel abandons an increment — the only expiry the run's unbounded wait state
@@ -55,7 +66,25 @@ func (c *Commands) Cancel(ctx context.Context, orgID, projectID, runID string) e
 	if row == nil || row.ProjectID != projectID {
 		return ErrRunNotFound
 	}
-	return c.cancel.CancelRun(ctx, row)
+	if err := c.cancel.CancelRun(ctx, row); err != nil {
+		return err
+	}
+	// The signal settles the RUN; this stops the POD. Ordered after the signal
+	// deliberately: if the signal failed nothing was cancelled and the caller
+	// retries, so killing the agent first would abandon a run that is about to
+	// carry on.
+	//
+	// A failed reap does NOT fail the cancel: the run is already stopping, and
+	// the only cost is a component that keeps holding a billing slot until it
+	// is swept — answering "cancel failed" would invite a retry that changes
+	// nothing.
+	if c.reaper != nil {
+		if err := c.reaper.ReapRunCycle(ctx, orgID, row.ProjectID, row.ID); err != nil {
+			slog.WarnContext(ctx, "cancel: could not delete the cycle's agent component; the run is still cancelled",
+				"org", orgID, "project", row.ProjectID, "run", row.ID, "error", err)
+		}
+	}
+	return nil
 }
 
 // Revalidate asks a version's acceptance criteria again, against the system

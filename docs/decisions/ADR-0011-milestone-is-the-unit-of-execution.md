@@ -123,6 +123,10 @@ A fake answers whatever the test authored: it is evidence of parsing, never of
 semantics. Where a query's *meaning* is load-bearing, confirm it against the
 real host once and record the answer next to the query.
 
+The mechanism a cycle is dispatched by — one ephemeral `coding-agent` job
+Component per cycle — is documented in
+[`codingagent/design/oc-job-dispatch.md`](../../services/aep-api/internal/delivery/codingagent/design/oc-job-dispatch.md).
+
 [delivery]: ../../services/aep-api/internal/delivery/README.md
 [adr8]: ADR-0008-architecture-in-readme-ladder.md
 [console-adr]: ../../apps/console/design/decisions/ADR-0013-version-run-surface.md

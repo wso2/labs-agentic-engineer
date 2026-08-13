@@ -59,6 +59,56 @@ func NewBuildRunName(projectName, componentName string) string {
 	return fmt.Sprintf("%s-%d", head, time.Now().UnixMilli())
 }
 
+// ocJobNameHashLen is the width of the hash OpenChoreo appends when it names a
+// dataplane Job from a ComponentReleaseBinding:
+// `{component.metadata.name}-{environment}-{hash8}`. That string is copied into
+// the Job's pod-template labels, so it is bound by MaxLabelValueLen — not by
+// the 253-char resource-name limit.
+const ocJobNameHashLen = 8
+
+// CodingAgentComponentNameBudget is how long a coding-agent Component's
+// metadata.name (the SCOPED form CreateComponent writes) may be. OpenChoreo
+// then appends `-{DevEnvironmentName}-{hash8}` for the Job / pod-selector
+// label; overflowing that composed string is accepted at Component create and
+// then fails ResourceApplyFailed with no runner pod — the console's
+// "Waiting for a runner to be scheduled…" dark zone.
+//
+// Coding-agent cycles always bind into DevEnvironmentName, so the decoration
+// width is fixed here rather than parameterised.
+const CodingAgentComponentNameBudget = k8sname.MaxLabelValueLen - (1 + len(DevEnvironmentName) + 1 + ocJobNameHashLen) // 42
+
+// minCodingAgentRunNameLen is "ca-" + an 8-char digest — the shortest Bounded
+// output that still carries the ca- watcher discriminator.
+const minCodingAgentRunNameLen = 3 + ocJobNameHashLen // "ca-" + digest
+
+// NewCodingAgentRunName produces the FRIENDLY coding-agent Component name
+// (`ca-…`) for one cycle. CreateComponent scopes it with the project; the
+// SCOPED name is composed to fit CodingAgentComponentNameBudget so OC's Job
+// decoration still clears MaxLabelValueLen.
+//
+// Stable across retries: Bounded digests the untruncated (project, cycle)
+// identity, so a Temporal retry after a crash recreates the same name and
+// CreateComponent's 409 path re-reads instead of minting a second billed
+// Component. Callers that need the ca- prefix for watcher discrimination get
+// it by construction whenever the project leaves room; an overlong project
+// is refused at CreateComponent (see the coding-agent name guard there).
+func NewCodingAgentRunName(projectName, cycleID string) string {
+	// Length must match ScopedComponentName(projectName, runName) byte-for-byte —
+	// CreateComponent scopes with the raw project id, not a re-sanitized form.
+	room := CodingAgentComponentNameBudget - len(projectName) - 1
+	if room < minCodingAgentRunNameLen {
+		// Still emit a ca-… JobRef so watchers recognise it; CreateComponent
+		// refuses before OC can accept a Component whose Job label cannot
+		// render.
+		room = minCodingAgentRunNameLen
+	}
+	clean := strings.ReplaceAll(cycleID, "-", "")
+	return k8sname.Bounded(room,
+		k8sname.Whole("ca"),
+		k8sname.Capped(clean, 20),
+	)
+}
+
 // ScopedComponentName is the k8s metadata name OC uses for a component.
 // Delegates to ocname.ScopedComponentName — the shared source of truth, because
 // spec stamps this same name into design.json at design save (see

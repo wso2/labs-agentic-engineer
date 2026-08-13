@@ -16,21 +16,25 @@
 
 package codingagent
 
-// Coding-agent activity feed for the unified progress endpoint. The runner
-// emits typed NDJSON progress events (kind:phase/tool_use/git_commit/…; schema
-// at remote-worker/src/lib/progress/schema.ts) to its stdout; the JobWatcher
-// captures the final tail into coding_agent_logs on terminal Job state
-// (captureFinalLog). This reader surfaces that activity to the console:
+// Coding-agent activity feed for the console's progress surfaces.
 //
-//   - while the ca-… Job runs, it live-tails the pod's stdout via the
-//     cluster-gateway-proxy (`pods/log?timestamps=true&tailLines=200`);
-//   - once terminal, it serves the captured coding_agent_logs snapshot.
+// The runner emits typed NDJSON progress events (kind:phase/tool_use/… ; schema
+// at remote-worker/src/lib/progress/schema.ts) on stdout, and this reader turns
+// that stream into progress events from whichever source can still see it:
 //
-// Recovered from the pre-cutover codingagent progress_service (retired in the
-// tasks-github-native migration, which ported only the build-progress path) and
-// re-keyed from ComponentTask to Execution. feature/execution's ProgressService
-// consumes it through the CodingProgress port; this package holds the proxy + DB
-// edge so execution grows none.
+//   - while the cycle's Component exists, the pod's live log through the
+//     OpenChoreo API (LiveLogSource);
+//   - once the pod is reaped but the Component is retained, the observability
+//     plane's archive (ArchiveLogSource);
+//   - when neither can answer, a single synthetic "logs unavailable" line.
+//
+// That last case is deliberate. An empty stream and a lost log look identical
+// to a reader, and they mean opposite things about the agent — so the reader
+// never lets "gone" render as "silent".
+//
+// Nothing here writes: agent logs are not stored by this platform. The legacy
+// coding_agent_logs snapshot is still READ for execution rows that predate the
+// milestone model, and nothing writes new ones.
 
 import (
 	"bufio"
@@ -42,15 +46,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wso2/aep/aep-api/internal/delivery"
-	"github.com/wso2/aep/aep-api/internal/organization"
-
 	"github.com/google/uuid"
 
-	"github.com/wso2/aep/aep-api/internal/clients/clustergatewayproxy"
+	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/contracts"
 	"github.com/wso2/aep/aep-api/internal/contracts/taskmeta"
-	"github.com/wso2/aep/aep-api/internal/platform/tenant"
+	"github.com/wso2/aep/aep-api/internal/delivery"
 )
 
 const (
@@ -59,27 +60,7 @@ const (
 	// defaultProgressLimit caps events surfaced per poll (matches the retired
 	// pre-cutover reader).
 	defaultProgressLimit = 200
-	// logPageLines bounds the live-tail window read per poll — the LAST N lines
-	// of pod stdout, so old lines scroll off and the console gets fresh content.
-	// Matches defaultProgressLimit: textToProgressEvents keeps only that many
-	// events anyway, so a wider read would be parsed and then thrown away.
-	logPageLines = defaultProgressLimit
 )
-
-// livePodLogOptions is the ONE definition of the live-tail window. It bounds by
-// LINES, never bytes.
-//
-// K8s `pods/log?limitBytes=N` stops reading N bytes into the selected range and
-// the range is anchored at the START of the log unless tailLines/sinceSeconds
-// narrows it. Byte-bounding a live tail therefore pins the console to the head
-// of the log: once stdout passes N, every poll re-serves the same opening N
-// bytes forever, and the cut lands mid-line so the last event is an unparseable
-// envelope fragment. Pairing the two does not help either — limitBytes trims the
-// FRONT of the tail window, silently dropping the newest lines, which is the
-// opposite of what a live tail owes the reader.
-func livePodLogOptions() clustergatewayproxy.PodLogOptions {
-	return clustergatewayproxy.PodLogOptions{Timestamps: true, TailLines: logPageLines}
-}
 
 // Bootstrap seqs identify the synthetic "dark zone" progress lines the reader
 // emits BEFORE the runner writes its first NDJSON line — the stretch (pod
@@ -95,11 +76,12 @@ func livePodLogOptions() clustergatewayproxy.PodLogOptions {
 // untimestamped events, and lastEventMillis ignores them, so the cursor never
 // advances past a synthetic line).
 const (
-	seqBootScheduling = -10 // Job applied, pod not scheduled / created yet
-	seqBootPulling    = -11 // ContainerCreating / PodInitializing (image pull + setup)
-	seqBootBackoff    = -12 // ImagePullBackOff / ErrImagePull (pull retrying)
-	seqBootConfig     = -13 // CreateContainerConfigError / secrets not yet materialised
-	seqBootStarting   = -14 // container Running, agent has not emitted its first line
+	seqBootScheduling    = -10 // Job applied, pod not scheduled / created yet
+	seqBootPulling       = -11 // ContainerCreating / PodInitializing (image pull + setup)
+	seqBootBackoff       = -12 // ImagePullBackOff / ErrImagePull (pull retrying)
+	seqBootConfig        = -13 // CreateContainerConfigError / secrets not yet materialised
+	seqBootStarting      = -14 // container Running, agent has not emitted its first line
+	seqBootUnschedulable = -15 // PodScheduled=False (cluster capacity / Too many pods)
 
 	// seqHeadDropped marks the "earlier output omitted" row; seqScanTruncated the
 	// "line over the size cap" one. Same stable-negative contract as the bootstrap
@@ -109,13 +91,57 @@ const (
 	seqScanTruncated = -21
 )
 
+// seqLogsUnavailable is the stable seq of the "logs are gone" line. It sits in
+// the same negative space as the dark-zone markers and for the same reason: the
+// console dedups by (id, seq), so re-deriving this state every poll collapses
+// to one row instead of repeating forever.
+const seqLogsUnavailable = -20
+
+// seqLogsTruncated is the stable seq of the "newest window only" banner when a
+// finished cycle's archive exceeds defaultProgressLimit. Same negative-space
+// reason as seqLogsUnavailable.
+const seqLogsTruncated = -21
+
+// logsUnavailableEvent is the console's empty state for a cycle whose log no
+// longer exists anywhere — the component was reclaimed, or this deployment has
+// no observability plane to have archived it.
+func logsUnavailableEvent(reason string) contracts.ProgressEvent {
+	summary := "Logs for this cycle are no longer available."
+	if reason != "" {
+		summary += " (" + reason + ")"
+	}
+	return contracts.ProgressEvent{
+		SchemaVersion: progressSchemaVersion,
+		Seq:           seqLogsUnavailable,
+		Kind:          "phase",
+		Phase:         "logs_unavailable",
+		Summary:       summary,
+	}
+}
+
+// logsTruncatedEvent tells the console the finished cycle had more output than
+// one progress page can carry — we kept the newest window, not the whole run.
+func logsTruncatedEvent() contracts.ProgressEvent {
+	return contracts.ProgressEvent{
+		SchemaVersion: progressSchemaVersion,
+		Seq:           seqLogsTruncated,
+		Kind:          "phase",
+		Phase:         "logs_truncated",
+		Summary: fmt.Sprintf(
+			"Showing the newest %d lines of this cycle's output.",
+			defaultProgressLimit,
+		),
+	}
+}
+
 // bootstrapEvent maps a pre-stdout runner state to the synthetic progress line
 // the console renders during the dark zone. podFound=false means the Job exists
-// but no pod object does yet; otherwise phase/waitingReason come from the pod's
-// status (waitingReason is the first waiting container's reason, "" once the
+// but no pod object does yet; otherwise phase/waitingReason/message come from
+// the pod's status (waitingReason is the first waiting container's reason, or
+// PodScheduled's Unschedulable when the pod never got a node; "" once the
 // container is running). Phase names are stable ids the console maps to friendly
 // labels; Summary is the human fallback when it doesn't.
-func bootstrapEvent(podFound bool, phase, waitingReason string) contracts.ProgressEvent {
+func bootstrapEvent(podFound bool, phase, waitingReason, message string) contracts.ProgressEvent {
 	mk := func(seq int64, name, summary string) contracts.ProgressEvent {
 		return contracts.ProgressEvent{
 			SchemaVersion: progressSchemaVersion,
@@ -136,6 +162,15 @@ func bootstrapEvent(podFound bool, phase, waitingReason string) contracts.Progre
 		return mk(seqBootConfig, "runner_config_error", "Runner is waiting on its configuration and secrets…")
 	case "ContainerCreating", "PodInitializing":
 		return mk(seqBootPulling, "runner_pulling_image", "Pulling the agent image and preparing the container…")
+	case "Unschedulable", "SchedulerError":
+		// Cluster has no room (Too many pods / Insufficient cpu/memory). Do not
+		// reuse runner_scheduling — that reads as "still queuing" when the truth
+		// is capacity. Prefer the scheduler's first-line message when present.
+		summary := "No capacity to schedule the runner on the cluster…"
+		if detail := firstLine(message); detail != "" {
+			summary = "No capacity to schedule the runner: " + detail
+		}
+		return mk(seqBootUnschedulable, "runner_unschedulable", summary)
 	case "":
 		// No waiting reason: a Running pod is booting the agent; anything else
 		// (Pending with no container status yet) is still being scheduled.
@@ -150,48 +185,40 @@ func bootstrapEvent(podFound bool, phase, waitingReason string) contracts.Progre
 	}
 }
 
-// AgentProgressReader serves coding-execution activity from the ca-… pod log:
-// the live tail while the Job runs, the captured coding_agent_logs snapshot once
-// terminal. Wired from the cluster-gateway-proxy client + DB at the composition
-// root; nil-safe consumers skip it (the endpoint then reports terminal-ness
-// only, the pre-reconnect behaviour).
+// firstLine returns the first non-empty line of s, trimmed — kubelet / scheduler
+// messages are often multi-line and the console only wants one sentence.
+func firstLine(s string) string {
+	s = strings.TrimSpace(strings.SplitN(s, "\n", 2)[0])
+	return s
+}
+
+// AgentProgressReader serves a cycle's (or a legacy execution's) agent activity
+// from the live pod log, the archive, or an explicit unavailable state.
 type AgentProgressReader struct {
-	proxy *clustergatewayproxy.Client
-	logs  delivery.CodingAgentLogRepository
-	orgs  organization.OrganizationRepository
+	live    LiveLogSource
+	archive ArchiveLogSource
 
-	// cycleLogs is the milestone-run half's snapshot store (run_cycle_logs).
-	// Nil → CycleProgress live-tails only.
-	cycleLogs delivery.RunCycleLogRepository
+	// logs is the LEGACY execution-keyed snapshot store. Read-only: the
+	// milestone model mints no execution rows, so this serves history that
+	// predates it and nothing writes to it any more.
+	logs delivery.CodingAgentLogRepository
 }
 
-// NewAgentProgressReader wires the reader. proxy/logs may be nil in degraded
-// boot (AgentProgress then returns an empty, non-final response).
-func NewAgentProgressReader(proxy *clustergatewayproxy.Client, logs delivery.CodingAgentLogRepository, orgs organization.OrganizationRepository) *AgentProgressReader {
-	return &AgentProgressReader{proxy: proxy, logs: logs, orgs: orgs}
+// NewAgentProgressReader wires the reader. live may be nil in a degraded boot
+// (every read then reports unavailable rather than erroring).
+func NewAgentProgressReader(live LiveLogSource, logs delivery.CodingAgentLogRepository) *AgentProgressReader {
+	return &AgentProgressReader{live: live, logs: logs}
 }
 
-// WithCycleLogs enables the milestone-run snapshot read (run_cycle_logs), the
-// source CycleProgress prefers once a cycle's Job has been captured. Optional —
-// without it a finished cycle's log dies with its pod. Returns the receiver.
-func (r *AgentProgressReader) WithCycleLogs(logs delivery.RunCycleLogRepository) *AgentProgressReader {
-	r.cycleLogs = logs
+// WithArchive attaches the post-terminal source. Optional — without it, a cycle
+// whose pod is gone reports unavailable. Returns the receiver.
+func (r *AgentProgressReader) WithArchive(a ArchiveLogSource) *AgentProgressReader {
+	r.archive = a
 	return r
 }
 
 // CycleProgress returns one run CYCLE's agent activity, filtered to events
 // strictly newer than sinceMillis.
-//
-// It is the milestone-run twin of AgentProgress and reads the same two sources
-// in the same order — the captured snapshot first (Final=true: the complete log,
-// still readable long after the pod is gone), else a live tail of the pod. The
-// keys differ, and that is the whole point: a cycle has no execution row, so its
-// snapshot is keyed by the CYCLE id in run_cycle_logs rather than by an
-// execution id in coding_agent_logs.
-//
-// A cycle whose Job never launched, an unresolvable namespace, or a pod that has
-// not produced output yet all return an empty non-final response rather than an
-// error — the caller keeps polling.
 func (r *AgentProgressReader) CycleProgress(ctx context.Context, cycle *delivery.RunCycle, sinceMillis int64) (*contracts.ProgressResponse, error) {
 	resp := &contracts.ProgressResponse{
 		SchemaVersion: progressSchemaVersion,
@@ -202,19 +229,161 @@ func (r *AgentProgressReader) CycleProgress(ctx context.Context, cycle *delivery
 	if r == nil || cycle == nil || cycle.JobRef == "" {
 		return resp, nil
 	}
-	cycleUUID, err := uuid.Parse(cycle.ID)
-	if err != nil {
-		return nil, fmt.Errorf("parse cycle id: %w", err)
+	closed := cycle.EndedAt != nil
+
+	if r.live != nil {
+		tail, err := r.live.Tail(ctx, cycle.OrgID, cycle.ProjectID, cycle.JobRef, logPageBytes)
+		switch {
+		case err == nil:
+			// Real OCLogSource.Tail returns success + empty text when the
+			// Component is retained but the pod has nothing to say — not
+			// ErrComponentGone. Empty live falls through to the archive when
+			// the cycle is closed, the pod is terminal, or the archive already
+			// holds lines (pod reaped while the cycle is still open awaiting
+			// its PR webhook). Otherwise empty live is still scheduling / boot.
+			if strings.TrimSpace(tail.Text) != "" {
+				return r.fromText(resp, tail.Text, sinceMillis, !closed, closed, tail.Pod), nil
+			}
+			if closed || terminalPod(tail.Pod) {
+				break
+			}
+			if text, aerr := r.readArchive(ctx, cycle); aerr == nil && strings.TrimSpace(text) != "" {
+				return r.fromText(resp, text, sinceMillis, false, false, openchoreo.RuntimePod{}), nil
+			}
+			return r.fromText(resp, tail.Text, sinceMillis, !closed, closed, tail.Pod), nil
+		case !errors.Is(err, ErrComponentGone):
+			// A transport failure is not an answer about the cycle: surface it so
+			// the caller degrades this poll and tries again.
+			return nil, fmt.Errorf("tail cycle pod log: %w", err)
+		}
 	}
 
-	// Snapshot path: the watcher captured the terminal pod's whole log.
-	if r.cycleLogs != nil {
-		snap, serr := r.cycleLogs.GetByRun(ctx, cycleUUID, cycle.JobRef)
-		if serr != nil {
-			return nil, fmt.Errorf("read run_cycle_logs: %w", serr)
+	// The Component is gone, live was empty on a closed cycle, or there is no
+	// live source: the archive is the only remaining reader. It only answers
+	// while the Component is retained — so this is also where "the component
+	// was reclaimed" surfaces.
+	text, err := r.readArchive(ctx, cycle)
+	if err != nil {
+		resp.Lines = []contracts.ProgressEvent{logsUnavailableEvent(unavailableReason(err))}
+		// A CLOSED cycle will never gain a new source, so its unavailability is
+		// settled. An open one may still be mid-render or mid-observer-hiccup.
+		resp.Final = closed
+		return resp, nil
+	}
+	if strings.TrimSpace(text) == "" && closed {
+		resp.Lines = []contracts.ProgressEvent{logsUnavailableEvent("no archived output")}
+		resp.Final = true
+		return resp, nil
+	}
+	return r.fromText(resp, text, sinceMillis, false, closed, openchoreo.RuntimePod{}), nil
+}
+
+// readArchive asks the observability plane for the cycle's window. The window
+// is the cycle's own lifetime, padded either side: the dispatch write and the
+// first pod line are seconds apart, and a closed cycle's last lines land after
+// the merge webhook that closed it.
+func (r *AgentProgressReader) readArchive(ctx context.Context, cycle *delivery.RunCycle) (string, error) {
+	if r.archive == nil {
+		return "", fmt.Errorf("%w: no archive configured", ErrArchiveUnavailable)
+	}
+	from := cycle.CreatedAt.UTC().Add(-5 * time.Minute)
+	to := time.Now().UTC()
+	if cycle.EndedAt != nil {
+		to = cycle.EndedAt.UTC().Add(10 * time.Minute)
+	}
+	return r.archive.CycleArchive(ctx, ArchiveScope{
+		OrgName:       cycle.OrgID,
+		ProjectName:   cycle.ProjectID,
+		ComponentName: cycle.JobRef,
+		From:          from,
+		To:            to,
+	})
+}
+
+// fromText pages raw log text into the response, narrating the dark zone when
+// the pod has said nothing yet and the attempt is still live. final marks a
+// settled answer (closed cycle / terminal execution) so consumers stop polling.
+func (r *AgentProgressReader) fromText(resp *contracts.ProgressResponse, text string, sinceMillis int64, live bool, final bool, pod openchoreo.RuntimePod) *contracts.ProgressResponse {
+	lines, truncated, hadOutput := pageEvents(text, sinceMillis)
+	if !hadOutput {
+		// Only a source that has said NOTHING is still booting. A page that
+		// holds output the caller has already seen means the agent is
+		// mid-thought, and narrating there would pin a bootstrap line into the
+		// middle of a running stream.
+		if live {
+			resp.Lines = []contracts.ProgressEvent{bootstrapEvent(pod.Found, pod.Phase, pod.WaitingReason, pod.Message)}
+		}
+		resp.Final = final
+		return resp
+	}
+	resp.Lines, resp.Truncated = lines, truncated
+	if truncated && final {
+		// A settled cycle whose archive exceeded one page: lead with an honest
+		// banner so the console never looks like the whole run was this short.
+		resp.Lines = append([]contracts.ProgressEvent{logsTruncatedEvent()}, resp.Lines...)
+	}
+	if cur := lastEventMillis(resp.Lines); cur > resp.CursorMillis {
+		resp.CursorMillis = cur
+	}
+	resp.Final = final
+	return resp
+}
+
+// unavailableReason renders why nothing could be read, in words a user can act
+// on rather than an error chain.
+func unavailableReason(err error) string {
+	switch {
+	case errors.Is(err, ErrComponentGone):
+		return "the runner's workload has been reclaimed"
+	case errors.Is(err, ErrArchiveUnavailable):
+		return "the observability plane is not available"
+	default:
+		return ""
+	}
+}
+
+// terminalPod is true when the live source saw a Job pod that has already
+// finished — empty live then means "try the archive", not "still scheduling".
+func terminalPod(pod openchoreo.RuntimePod) bool {
+	if !pod.Found {
+		return false
+	}
+	switch pod.Phase {
+	case "Succeeded", "Failed":
+		return true
+	default:
+		return false
+	}
+}
+
+// AgentProgress returns a legacy coding EXECUTION's activity. It prefers the
+// persisted coding_agent_logs snapshot — rows written before the milestone
+// model, which mints no execution rows and writes no new ones — and otherwise
+// reads the same live pod source cycles use.
+func (r *AgentProgressReader) AgentProgress(ctx context.Context, row *delivery.Execution, sinceMillis int64) (*contracts.ProgressResponse, error) {
+	resp := &contracts.ProgressResponse{
+		SchemaVersion: progressSchemaVersion,
+		Lines:         []contracts.ProgressEvent{},
+		CursorMillis:  sinceMillis,
+		Final:         false,
+	}
+	if r == nil || row == nil || row.RunName == "" {
+		return resp, nil
+	}
+	if r.logs != nil {
+		execUUID, err := uuid.Parse(row.ID)
+		if err != nil {
+			return nil, fmt.Errorf("parse execution id: %w", err)
+		}
+		snap, err := r.logs.GetByRun(ctx, execUUID, row.RunName)
+		if err != nil {
+			return nil, fmt.Errorf("read coding_agent_logs: %w", err)
 		}
 		if snap != nil {
 			resp.Lines, resp.Truncated, _ = pageEvents(snap.LogText, sinceMillis)
+			if resp.Truncated {
+				resp.Lines = append([]contracts.ProgressEvent{logsTruncatedEvent()}, resp.Lines...)
+			}
 			if cur := lastEventMillis(resp.Lines); cur > resp.CursorMillis {
 				resp.CursorMillis = cur
 			}
@@ -225,156 +394,22 @@ func (r *AgentProgressReader) CycleProgress(ctx context.Context, cycle *delivery
 			return resp, nil
 		}
 	}
-	if r.proxy == nil {
+	if r.live == nil {
 		return resp, nil
 	}
-
-	// Live tail: the Job is still running, or the watcher has not captured yet.
-	// A CLOSED cycle narrates nothing — its stream is settled by the run's state,
-	// and the bootstrap lines below only mean something while a Job is pending.
-	live := cycle.EndedAt == nil
-	ns, ok := resolveRemoteWorkerNS(ctx, r.orgs, cycle.OrgID)
-	if !ok {
-		return resp, nil
-	}
-	pod, err := r.proxy.GetJobPod(ctx, ns, cycle.JobRef)
-	if err != nil {
-		if errors.Is(err, clustergatewayproxy.ErrNotFound) {
-			if live {
-				resp.Lines = []contracts.ProgressEvent{bootstrapEvent(false, "", "")}
-			}
-			return resp, nil
-		}
-		return nil, fmt.Errorf("get cycle job pod: %w", err)
-	}
-	body, err := r.proxy.TailPodLog(ctx, ns, pod.Name, livePodLogOptions())
-	if err != nil {
-		if errors.Is(err, clustergatewayproxy.ErrNotFound) || errors.Is(err, clustergatewayproxy.ErrPodNotReady) {
-			if live {
-				resp.Lines = []contracts.ProgressEvent{bootstrapEvent(true, pod.Phase, pod.WaitingReason)}
-			}
-			return resp, nil
-		}
-		return nil, fmt.Errorf("tail cycle pod log: %w", err)
-	}
-	lines, truncated, hadOutput := pageEvents(string(body), sinceMillis)
-	resp.Lines, resp.Truncated = lines, truncated
-	// Only a pod that has said NOTHING is still booting. A tail that holds output
-	// the caller has already seen means the agent is mid-thought, and narrating
-	// the dark zone there would inject "Starting the agent…" into the middle of a
-	// running stream — where the console's stable-seq dedup then pins it forever.
-	if !hadOutput && live {
-		resp.Lines = []contracts.ProgressEvent{bootstrapEvent(true, "Running", "")}
-		return resp, nil
-	}
-	if cur := lastEventMillis(resp.Lines); cur > resp.CursorMillis {
-		resp.CursorMillis = cur
-	}
-	return resp, nil
-}
-
-// AgentProgress returns the coding execution's activity, filtered to events
-// strictly newer than sinceMillis (the console's cursor). It prefers the
-// persisted coding_agent_logs snapshot (Final=true — the complete captured log);
-// absent that, it live-tails the pod (Final=false). "Not ready yet" states (no
-// run name, pod not scheduled, container starting, NS unresolved) return an
-// empty, non-final response so the console keeps polling rather than flashing an
-// error. Genuine read/tail failures return an error for the caller to degrade.
-func (r *AgentProgressReader) AgentProgress(ctx context.Context, row *delivery.Execution, sinceMillis int64) (*contracts.ProgressResponse, error) {
-	resp := &contracts.ProgressResponse{
-		SchemaVersion: progressSchemaVersion,
-		Lines:         []contracts.ProgressEvent{},
-		CursorMillis:  sinceMillis,
-		Final:         false,
-	}
-	if r == nil || r.proxy == nil || r.logs == nil || row == nil || row.RunName == "" {
-		return resp, nil
-	}
-	execUUID, err := uuid.Parse(row.ID)
-	if err != nil {
-		return nil, fmt.Errorf("parse execution id: %w", err)
-	}
-
-	// Snapshot path: prefer the persisted sidecar row when present (the watcher
-	// wrote it on terminal Job state — the complete final log).
-	snap, err := r.logs.GetByRun(ctx, execUUID, row.RunName)
-	switch {
-	case err == nil && snap != nil:
-		resp.Lines, resp.Truncated, _ = pageEvents(snap.LogText, sinceMillis)
-		if cur := lastEventMillis(resp.Lines); cur > resp.CursorMillis {
-			resp.CursorMillis = cur
-		}
-		// Advance to captured_at when the snapshot is fully consumed, so a
-		// second poll's sinceMillis is at/past captured_at and the cursor never
-		// slides backwards.
-		if capturedMs := snap.CapturedAt.UnixMilli(); capturedMs > resp.CursorMillis {
-			resp.CursorMillis = capturedMs
-		}
-		resp.Final = true
-		return resp, nil
-	case err == nil && snap == nil:
-		// fall through to the live tail
-	default:
-		return nil, fmt.Errorf("read coding_agent_logs: %w", err)
-	}
-
-	// Live tail path: the watcher hasn't captured yet (Job still active).
-	ns, ok := resolveRemoteWorkerNS(ctx, r.orgs, row.OrgID)
-	if !ok {
-		// Org row missing / no Thunder UUID yet — keep polling non-final; the
-		// watcher captures on terminal state regardless.
-		return resp, nil
-	}
-
-	// Once the row is terminal but the snapshot hasn't landed (a brief
-	// watcher-tick race), don't narrate the pod — the status settles the stream.
-	// The synthetic bootstrap lines below are only meaningful while the attempt
-	// is still queued/running.
 	live := !taskmeta.ExecutionStatus(row.Status).IsTerminal()
-
-	pod, err := r.proxy.GetJobPod(ctx, ns, row.RunName)
+	tail, err := r.live.Tail(ctx, row.OrgID, row.ProjectID, row.RunName, logPageBytes)
 	if err != nil {
-		if errors.Is(err, clustergatewayproxy.ErrNotFound) {
-			// Job applied, pod not scheduled/created yet (or GC'd past TTL with no
-			// snapshot). Narrate "scheduling" so the console shows motion instead
-			// of a dead "waiting…" during the dark zone.
-			if live {
-				resp.Lines = []contracts.ProgressEvent{bootstrapEvent(false, "", "")}
-			}
-			return resp, nil
-		}
-		return nil, fmt.Errorf("get job pod: %w", err)
-	}
-	body, err := r.proxy.TailPodLog(ctx, ns, pod.Name, livePodLogOptions())
-	if err != nil {
-		// ErrNotFound: pod GC'd / not scheduled. ErrPodNotReady: container still
-		// starting (image pull / ContainerCreating / config). Both mean "no logs
-		// yet" — narrate the pod state from its status instead of a dead wait.
-		if errors.Is(err, clustergatewayproxy.ErrNotFound) ||
-			errors.Is(err, clustergatewayproxy.ErrPodNotReady) {
-			if live {
-				resp.Lines = []contracts.ProgressEvent{bootstrapEvent(true, pod.Phase, pod.WaitingReason)}
+		if errors.Is(err, ErrComponentGone) {
+			if !live {
+				resp.Lines = []contracts.ProgressEvent{logsUnavailableEvent(unavailableReason(err))}
+				resp.Final = true
 			}
 			return resp, nil
 		}
 		return nil, fmt.Errorf("tail pod log: %w", err)
 	}
-	lines, truncated, hadOutput := pageEvents(string(body), sinceMillis)
-	if !hadOutput {
-		// Container is up but the runner hasn't emitted its first line yet (token
-		// mint / node boot). Name the wait rather than showing nothing.
-		if live {
-			resp.Lines = []contracts.ProgressEvent{bootstrapEvent(true, "Running", "")}
-		}
-		return resp, nil
-	}
-	resp.Lines, resp.Truncated = lines, truncated
-	// Advance the cursor only as far as actually-emitted content reaches (NOT
-	// now()), so the next poll's window never skips late-arriving lines.
-	if cur := lastEventMillis(resp.Lines); cur > resp.CursorMillis {
-		resp.CursorMillis = cur
-	}
-	return resp, nil
+	return r.fromText(resp, tail.Text, sinceMillis, live, !live, tail.Pod), nil
 }
 
 // pageEvents parses a raw pod-log page into events newer than sinceMillis,
@@ -394,26 +429,6 @@ func pageEvents(text string, sinceMillis int64) (lines []contracts.ProgressEvent
 		truncated = true
 	}
 	return newer, truncated, len(all) > 0
-}
-
-// resolveRemoteWorkerNS maps an OC org handle to its remote-worker namespace
-// (the ca-… Job namespace). Shared by the JobWatcher (log capture) and the
-// AgentProgressReader (live tail).
-func resolveRemoteWorkerNS(ctx context.Context, orgs organization.OrganizationRepository, orgID string) (string, bool) {
-	org, err := orgs.GetByName(ctx, orgID)
-	if err != nil || org == nil {
-		return "", false
-	}
-	var uid string
-	if org.ThunderOrgUUID != nil && *org.ThunderOrgUUID != uuid.Nil {
-		uid = org.ThunderOrgUUID.String()
-	} else {
-		uid = org.UUID.String()
-	}
-	if uid == "" || uid == "00000000-0000-0000-0000-000000000000" {
-		return "", false
-	}
-	return tenant.RemoteWorkerNamespace(uid), true
 }
 
 // textToProgressEvents splits raw pod stdout/stderr into progress events. Each

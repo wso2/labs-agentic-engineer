@@ -85,6 +85,16 @@ const (
 	RunStateSucceeded = "succeeded"
 	RunStateFailed    = "failed"
 	RunStateCancelled = "cancelled"
+	// RunStateBlocked is terminal and is NOT a failure: the org has no agent
+	// concurrency slot left, so the cycle was never launched. It is its own
+	// state rather than a failure reason because the distinction is what the
+	// user acts on — "wait or stop a run" versus "something went wrong" — and
+	// because a failed run reads as the platform's fault.
+	//
+	// Terminal, so the run row releases the spec-run mutex and the user can
+	// start the version again once a slot frees; the run is never resurrected
+	// in place.
+	RunStateBlocked = "blocked"
 
 	// Terminal reasons. Each names exactly ONE failure class so the reason a run
 	// stopped is never ambiguous. Empty while the run is non-terminal, and empty
@@ -111,6 +121,10 @@ const (
 	// the row it armed. Without it a failed plan would wedge the project behind
 	// its own mutex until a human cancelled.
 	RunReasonPlanFailed = "plan-failed"
+	// RunReasonAgentQuotaBlocked explains RunStateBlocked: the entitlement gate
+	// refused the cycle's component create (HTTP 402). The actionable text the
+	// console shows is AgentQuotaBlockedMessage (agent_quota.go).
+	RunReasonAgentQuotaBlocked = "agent-quota-blocked"
 
 	// Validation verdicts — what the run learned about the deployed system. Empty
 	// until the validation cycle settles.
@@ -382,7 +396,7 @@ func RunValidates(origin string) bool {
 // non-terminal rows.
 func IsTerminalRunState(state string) bool {
 	switch state {
-	case RunStateSucceeded, RunStateFailed, RunStateCancelled:
+	case RunStateSucceeded, RunStateFailed, RunStateCancelled, RunStateBlocked:
 		return true
 	default:
 		return false

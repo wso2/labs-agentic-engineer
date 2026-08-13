@@ -53,6 +53,8 @@ func Load() (Config, error) {
 		LocalOpenBaoRepairEnabled: r.readOptionalBool("LOCAL_OPENBAO_REPAIR", false),
 		DeploymentTier:            r.readOptionalString("DEPLOYMENT_TIER", "dev"),
 		PlaygroundTokenEnabled:    r.readOptionalBool("PLAYGROUND_TOKEN_ENABLED", false),
+		// Default true: core capability, opt-out (unlike other booleans here which are opt-in extras).
+		PlatformResourcesEnabled: r.readOptionalBool("PLATFORM_RESOURCES_ENABLED", true),
 		AutoMergeCodingPRs:        r.readOptionalBool("AUTO_MERGE_CODING_PRS", false),
 		TenantGateMode:            r.readOptionalString("TENANT_GATE_MODE", "enforce"),
 		OAuthStateSigningKey:      r.readOptionalString("OAUTH_STATE_SIGNING_KEY", ""),
@@ -124,16 +126,6 @@ func Load() (Config, error) {
 		GitHubAppPrivateKeyPath:     r.readOptionalString("GITHUB_APP_PRIVATE_KEY_PATH", ""),
 		CredentialValidatorInterval: r.readOptionalDuration("CREDENTIAL_VALIDATOR_INTERVAL", 24*time.Hour),
 
-		// cluster-gateway-proxy (secrets delivery is via Options.SecretsProvider).
-		ClusterGatewayProxyURL: r.readOptionalString("CLUSTER_GATEWAY_PROXY_URL", ""),
-
-		// Anthropic-key push target (see AnthropicCredentialService.pushExternalSecret).
-		// Both empty (the default) disables the push entirely — no consumer is
-		// assumed by default; set explicitly for the deployment that reads a
-		// live-synced Anthropic key (e.g. the OpenChoreo SRE/RCA agent).
-		RCAAgentAnthropicPushNamespace:  r.readOptionalString("RCA_AGENT_ANTHROPIC_PUSH_NAMESPACE", ""),
-		RCAAgentAnthropicPushSecretName: r.readOptionalString("RCA_AGENT_ANTHROPIC_PUSH_SECRET_NAME", ""),
-
 		// Temporal (devflow workflows). Enabled iff TEMPORAL_HOSTPORT is set.
 		Temporal: TemporalConfig{
 			HostPort:  r.readOptionalString("TEMPORAL_HOSTPORT", ""),
@@ -147,8 +139,11 @@ func Load() (Config, error) {
 		// so a BFF release and the runner image that serves its /internal/v1
 		// callbacks deploy as a matched pair. Empty disables dispatch, which
 		// fails loudly, rather than silently running an unpinned image.
-		AgentRunnerImage:        r.readOptionalString("AGENT_RUNNER_IMAGE", ""),
-		AgentClusterSecretStore: r.readOptionalString("AGENT_CLUSTER_SECRET_STORE", "default"),
+		AgentRunnerImage: r.readOptionalString("AGENT_RUNNER_IMAGE", ""),
+		// Finished cycle Components stay queryable via the observer until
+		// pruned. Default 10 matches codingagent.DefaultCodingAgentComponentRetention;
+		// local compose lowers this (often to 2) to make LRU prune observable.
+		CodingAgentComponentRetention: r.readOptionalInt("CODING_AGENT_COMPONENT_RETENTION", 10),
 	}
 
 	if len(r.errors) > 0 {

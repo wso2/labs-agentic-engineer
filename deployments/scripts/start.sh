@@ -211,10 +211,9 @@ if [ ! -f "$OC_GEN_DIR/types.gen.go" ] || [ ! -f "$OC_GEN_DIR/client.gen.go" ]; 
     make -C "$ROOT_DIR/services/aep-api" gen-oc-client
 fi
 
-# 7. Bring up the compose stack. The coding-agent runner is no longer a
-#    long-lived service — it's dispatched as a one-shot pod via the
-#    `aep-coding-agent` ClusterWorkflow in the cluster (installed
-#    by setup-aep.sh). No host-mode toggle here.
+# 7. Bring up the compose stack. Coding-agent runners are OpenChoreo Job
+#    Components created by aep-api (AGENT_RUNNER_IMAGE); no long-lived
+#    remote-worker service and no ClusterWorkflow for coding.
 cd "$DEPLOY_DIR"
 echo ""
 echo "🐳 Starting Docker services..."
@@ -285,29 +284,6 @@ if kubectl cluster-info --context "${CLUSTER_CONTEXT}" --request-timeout=5s &>/d
         echo "ℹ️  ai-rca-agent not installed — run scripts/setup-observability.sh to"
         echo "    enable the alert→RCA→coding-agent pipeline."
     fi
-
-    # 7d. Runner-image drift check. Coding agents dispatch via TWO paths with
-    #     independent image pins: the proxy path (aep-api env AGENT_RUNNER_IMAGE,
-    #     docker-compose.yml) and the legacy ClusterWorkflow path
-    #     (manifests/aep-coding-agent.yaml, used when per-org SM-API secrets are
-    #     absent — e.g. right after a fresh setup). If they drift, dispatches
-    #     behave differently depending on which path fires (this is exactly how
-    #     the related-issues skill silently went missing on one path).
-    COMPOSE_RUNNER=$(docker compose -f "$DEPLOY_DIR/docker-compose.yml" config 2>/dev/null \
-        | grep -m1 'AGENT_RUNNER_IMAGE:' | awk '{print $2}')
-    CW_RUNNER=$(kubectl --context "${CLUSTER_CONTEXT}" get clusterworkflows.openchoreo.dev aep-coding-agent \
-        -o jsonpath='{.spec.runTemplate.spec.templates[0].container.image}' 2>/dev/null)
-    if [ -n "$COMPOSE_RUNNER" ] && [ -n "$CW_RUNNER" ]; then
-        if [ "$COMPOSE_RUNNER" = "$CW_RUNNER" ]; then
-            echo "✅ runner image consistent on both dispatch paths: $CW_RUNNER"
-        else
-            echo "⚠️  runner-image DRIFT between dispatch paths:"
-            echo "      proxy path (compose AGENT_RUNNER_IMAGE): $COMPOSE_RUNNER"
-            echo "      legacy path (ClusterWorkflow):           $CW_RUNNER"
-            echo "    Align docker-compose.yml and manifests/aep-coding-agent.yaml"
-            echo "    (re-run scripts/setup-aep.sh to re-apply the manifest)."
-        fi
-    fi
 fi
 
 # 8. Repair per-org secrets in OpenBao. When the local cluster (or just the
@@ -352,9 +328,8 @@ echo "  SRE-handoff MCP:  http://localhost:3401 (alert → AI-RCA → issue → 
 echo "                    see docs/developer-guide/sre-handoff-runbook.md)"
 echo "  Temporal Web UI:  http://localhost:8233   (devflow workflow dashboard)"
 echo ""
-echo "  Coding-agent:     dispatched as a one-shot pod via the"
-echo "                    'aep-coding-agent' ClusterWorkflow"
-echo "                    (Workflow Plane namespace 'workflows-default')."
+echo "  Coding-agent:     OpenChoreo Job Component in the project dataplane"
+echo "                    (image from AGENT_RUNNER_IMAGE / aep-runner:dev)."
 echo ""
 echo "  Login: admin / admin (default Thunder admin, in the 'Administrators' group)"
 echo ""

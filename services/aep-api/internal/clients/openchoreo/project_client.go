@@ -105,6 +105,13 @@ func (c *projectClient) CreateProject(ctx context.Context, orgName string, body 
 	if err != nil {
 		return nil, fmt.Errorf("failed to create project: %w", err)
 	}
+	if resp.StatusCode() == http.StatusPaymentRequired {
+		// Entitlement gate (inactive subscription / project quota). Parse the
+		// platform body so the console shows the real sentence instead of a
+		// generic 500 — gen has no typed JSON402 on this endpoint.
+		msg := humanErrorMessage(resp.Body, "Quota limit reached. Upgrade your subscription to continue.")
+		return nil, fmt.Errorf("%w: %s", ErrPaymentRequired, msg)
+	}
 	// OC's POST returns 201 on success; tolerate 200 in case a future build flips to it.
 	if (resp.StatusCode() != http.StatusCreated && resp.StatusCode() != http.StatusOK) || resp.JSON201 == nil {
 		return nil, handleErrorResponse(resp.StatusCode(), ErrorResponses{

@@ -196,7 +196,7 @@ func newConfigHarnessOpts(t *testing.T, thunder thundersvc.Client, appClientID s
 		t.Fatalf("NewAppTokenMinter: %v", err)
 	}
 
-	anthropicSvc := organization.NewAnthropicCredentialService(organization.NewOrgAnthropicRepository(db), store, nil).WithAnthropicAPIBase(anth.URL)
+	anthropicSvc := organization.NewAnthropicCredentialService(organization.NewOrgAnthropicRepository(db), store).WithAnthropicAPIBase(anth.URL)
 	credSvc := organization.NewCredentialService(organization.NewOrgCredentialRepository(db, nil), store, minter, configEnvSec, "", "", nil).WithGitHubAPIBase(gh.URL)
 	disconnectSvc := organization.NewOrgDisconnectService(credSvc, nil)
 	bearerSvc := organization.NewBearerService("state-key", time.Minute)

@@ -173,7 +173,7 @@ func TestSecretRefWriter_WriteAnthropic(t *testing.T) {
 			t.Fatalf("want exactly 1 CreateSecret call, got %d", len(fake.createCalls))
 		}
 		call := fake.createCalls[0]
-		wantLoc := secretmanagersvc.SecretLocation{OrgName: "ou-acme-uuid", EntityName: "anthropic", SecretKey: secretmanagersvc.SecretKeyAPIKey}
+		wantLoc := secretmanagersvc.SecretLocation{OrgName: "ou-acme-uuid", ControlPlaneNamespace: "acme", EntityName: "anthropic", SecretKey: secretmanagersvc.SecretKeyAPIKey}
 		if call.loc != wantLoc {
 			t.Fatalf("SecretLocation = %+v; want %+v", call.loc, wantLoc)
 		}
@@ -272,7 +272,7 @@ func TestSecretRefWriter_WriteExternalResourceSecret(t *testing.T) {
 			t.Fatalf("want exactly 1 CreateSecret call, got %d", len(fake.createCalls))
 		}
 		call := fake.createCalls[0]
-		wantLoc := secretmanagersvc.SecretLocation{OrgName: "ou-acme-uuid", ProjectName: "weatherproj", EntityName: "extres-openweather-development"}
+		wantLoc := secretmanagersvc.SecretLocation{OrgName: "ou-acme-uuid", ControlPlaneNamespace: "acme", ProjectName: "weatherproj", EntityName: "extres-openweather-development"}
 		if call.loc != wantLoc {
 			t.Fatalf("SecretLocation = %+v; want %+v", call.loc, wantLoc)
 		}
@@ -350,7 +350,7 @@ func TestSecretRefWriter_WriteGitHubPAT(t *testing.T) {
 			t.Fatalf("want exactly 1 CreateSecret call, got %d", len(fake.createCalls))
 		}
 		call := fake.createCalls[0]
-		wantLoc := secretmanagersvc.SecretLocation{OrgName: "ou-acme-uuid", EntityName: "github-pat", SecretKey: secretmanagersvc.SecretKeyAPIKey}
+		wantLoc := secretmanagersvc.SecretLocation{OrgName: "ou-acme-uuid", ControlPlaneNamespace: "acme", EntityName: "github-pat", SecretKey: secretmanagersvc.SecretKeyAPIKey}
 		if call.loc != wantLoc {
 			t.Fatalf("SecretLocation = %+v; want %+v", call.loc, wantLoc)
 		}
@@ -425,7 +425,7 @@ func TestSecretRefWriter_WritePublisher(t *testing.T) {
 			t.Fatalf("want exactly 1 CreateSecret call, got %d", len(fake.createCalls))
 		}
 		call := fake.createCalls[0]
-		wantLoc := secretmanagersvc.SecretLocation{OrgName: "ou-acme-uuid", EntityName: "publisher"}
+		wantLoc := secretmanagersvc.SecretLocation{OrgName: "ou-acme-uuid", ControlPlaneNamespace: "acme", EntityName: "publisher"}
 		if call.loc != wantLoc {
 			t.Fatalf("SecretLocation = %+v; want %+v", call.loc, wantLoc)
 		}
@@ -538,7 +538,7 @@ func TestSecretRefWriter_DeleteAnthropic_DB(t *testing.T) {
 			t.Fatalf("want 1 DeleteSecret call, got %d", len(fake.deleteCalls))
 		}
 		call := fake.deleteCalls[0]
-		wantLoc := secretmanagersvc.SecretLocation{OrgName: "ou-acme-uuid", EntityName: "anthropic", SecretKey: secretmanagersvc.SecretKeyAPIKey}
+		wantLoc := secretmanagersvc.SecretLocation{OrgName: "ou-acme-uuid", ControlPlaneNamespace: "acme", EntityName: "anthropic", SecretKey: secretmanagersvc.SecretKeyAPIKey}
 		if call.loc != wantLoc || call.secretRefName != "acme-anthropic-secrets" {
 			t.Fatalf("DeleteSecret called with loc=%+v ref=%q; want loc=%+v ref=%q", call.loc, call.secretRefName, wantLoc, "acme-anthropic-secrets")
 		}
@@ -650,7 +650,7 @@ func TestSecretRefWriter_DeletePublisher_DB(t *testing.T) {
 		}
 		call := fake.deleteCalls[0]
 		// Publisher location has no SecretKey (whole record addressed).
-		wantLoc := secretmanagersvc.SecretLocation{OrgName: "ou-acme-uuid", EntityName: "publisher"}
+		wantLoc := secretmanagersvc.SecretLocation{OrgName: "ou-acme-uuid", ControlPlaneNamespace: "acme", EntityName: "publisher"}
 		if call.loc != wantLoc || call.secretRefName != "acme-publisher-secrets" {
 			t.Fatalf("DeleteSecret called with loc=%+v ref=%q; want loc=%+v ref=%q", call.loc, call.secretRefName, wantLoc, "acme-publisher-secrets")
 		}
@@ -765,7 +765,7 @@ func TestSecretRefWriter_DeleteGitHubPAT_DB(t *testing.T) {
 			t.Fatalf("want 1 DeleteSecret call, got %d", len(fake.deleteCalls))
 		}
 		call := fake.deleteCalls[0]
-		wantLoc := secretmanagersvc.SecretLocation{OrgName: "ou-acme-uuid", EntityName: "github-pat", SecretKey: secretmanagersvc.SecretKeyAPIKey}
+		wantLoc := secretmanagersvc.SecretLocation{OrgName: "ou-acme-uuid", ControlPlaneNamespace: "acme", EntityName: "github-pat", SecretKey: secretmanagersvc.SecretKeyAPIKey}
 		if call.loc != wantLoc || call.secretRefName != "acme-github-pat-secrets" {
 			t.Fatalf("DeleteSecret called with loc=%+v ref=%q; want loc=%+v ref=%q", call.loc, call.secretRefName, wantLoc, "acme-github-pat-secrets")
 		}

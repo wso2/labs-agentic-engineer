@@ -23,7 +23,7 @@ import type { components } from "../../../generated/aep-api";
 import type { RunProgressCycle, RunProgressPhase } from "../hooks/useRunProgress";
 import { formatLine } from "../../tasks/lib/timeline";
 import { aheadSentence, glanceHeadline, type RunGlance } from "../lib/runGlance";
-import { AgentLogLines, LogSurface } from "./AgentLogLines";
+import { AgentLogPanel, agentLogEmptyNote } from "./AgentLogLines";
 import { IssueChips } from "./IssueChips";
 
 type TaskView = components["schemas"]["TaskView"];
@@ -171,9 +171,7 @@ function AgentLogDrawer({
     ? "Not attached — open to replay this run's log."
     : newest
       ? formatLine(newest).text
-      : phase === "ended"
-        ? "No output was recorded."
-        : "Waiting for the agent's first line…";
+      : agentLogEmptyNote(phase);
 
   return (
     <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, overflow: "hidden" }}>
@@ -218,9 +216,7 @@ function AgentLogDrawer({
 
       <Collapse in={open} unmountOnExit>
         <Box sx={{ px: 1.5, pb: 1.5 }}>
-          <LogSurface maxHeight={320}>
-            <AgentLogLines lines={lines} />
-          </LogSurface>
+          <AgentLogPanel lines={lines} phase={phase} maxHeight={320} />
         </Box>
       </Collapse>
     </Box>

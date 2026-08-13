@@ -47,10 +47,10 @@ type OCProgress interface {
 }
 
 // CodingProgress serves a coding execution's live activity — the ca-… pod-log
-// tail while the Job runs, or the captured coding_agent_logs snapshot once
-// terminal — as progress events. Wired from codingagent at the composition root
-// (it owns the cluster-gateway-proxy + DB edge); nil leaves the coding branch
-// reporting terminal-ness only.
+// tail while the agent runs, then the observer archive (or a legacy
+// coding_agent_logs snapshot for pre-milestone execution rows) — as progress
+// events. Wired from codingagent at the composition root; nil leaves the coding
+// branch reporting terminal-ness only.
 type CodingProgress interface {
 	AgentProgress(ctx context.Context, row *delivery.Execution, sinceMillis int64) (*contracts.ProgressResponse, error)
 }
@@ -58,11 +58,11 @@ type CodingProgress interface {
 // ProgressService derives one execution's progress lines keyed by execution id:
 // the kind selects the source — build reads the WorkflowRun's step deltas;
 // coding surfaces the runner's activity via the CodingProgress source (live
-// pod-log tail while running, captured coding_agent_logs snapshot once
-// terminal). A nil codingProgress degrades the coding branch to terminal-ness
-// only. It is the per-execution line source the task-log SSE stream
-// (task_stream.go) walks across every attempt — no longer an HTTP handler of
-// its own (the cursor-poll endpoint it once backed is retired).
+// OC pod-log tail, then observer archive / legacy snapshot). A nil
+// codingProgress degrades the coding branch to terminal-ness only. It is the
+// per-execution line source the task-log SSE stream (task_stream.go) walks
+// across every attempt — no longer an HTTP handler of its own (the cursor-poll
+// endpoint it once backed is retired).
 type ProgressService struct {
 	execs          ExecutionLookup
 	oc             OCProgress
@@ -74,8 +74,8 @@ func NewProgressService(execs ExecutionLookup, oc OCProgress) *ProgressService {
 	return &ProgressService{execs: execs, oc: oc}
 }
 
-// WithCodingProgress attaches the coding-activity source (the ca-… pod-log tail
-// + coding_agent_logs snapshot reader). nil-safe: an unset source leaves coding
+// WithCodingProgress attaches the coding-activity source (live OC / archive /
+// legacy coding_agent_logs reader). nil-safe: an unset source leaves coding
 // executions reporting terminal-ness only. Returns the receiver for chaining.
 func (s *ProgressService) WithCodingProgress(cp CodingProgress) *ProgressService {
 	s.codingProgress = cp

@@ -23,11 +23,10 @@ export interface DispatchIdentity {
 }
 
 // DispatchRequest is the input to a one-shot pod run. The values come from
-// AEP_* env vars assembled by the Argo Workflow from the WorkflowRun's
-// parameters (see aep-coding-agent.yaml). No `branchName` field —
-// the workspace clones the project's default branch and the agent itself
-// creates the feature branch and opens the PR with `Closes #<issueNumber>`
-// so the BFF webhook can link the PR back to the task.
+// AEP_* env vars assembled by the BFF onto the coding-agent Workload.
+// No `branchName` field — the workspace clones the project's default branch
+// and the agent itself creates the feature branch and opens the PR with
+// `Closes #<issueNumber>` so the BFF webhook can link the PR back to the task.
 export interface DispatchRequest {
   taskId: string;
   orgId: string;

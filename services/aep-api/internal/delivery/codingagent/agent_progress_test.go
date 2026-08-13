@@ -17,10 +17,16 @@
 package codingagent
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
+	"github.com/wso2/aep/aep-api/internal/delivery"
 )
 
 // TestParseProgressLine covers the runner NDJSON → event decode and the
@@ -287,23 +293,27 @@ func TestBootstrapEvent(t *testing.T) {
 		podFound      bool
 		phase         string
 		waitingReason string
+		message       string
 		wantSeq       int64
 		wantPhase     string
+		wantInSummary string
 	}{
-		{"no pod yet", false, "", "", seqBootScheduling, "runner_scheduling"},
-		{"container creating", true, "Pending", "ContainerCreating", seqBootPulling, "runner_pulling_image"},
-		{"pod initializing", true, "Pending", "PodInitializing", seqBootPulling, "runner_pulling_image"},
-		{"image pull backoff", true, "Pending", "ImagePullBackOff", seqBootBackoff, "runner_image_pull_backoff"},
-		{"err image pull", true, "Pending", "ErrImagePull", seqBootBackoff, "runner_image_pull_backoff"},
-		{"config error", true, "Pending", "CreateContainerConfigError", seqBootConfig, "runner_config_error"},
-		{"invalid image name", true, "Pending", "InvalidImageName", seqBootConfig, "runner_config_error"},
-		{"running no output", true, "Running", "", seqBootStarting, "runner_starting"},
-		{"pending no reason", true, "Pending", "", seqBootScheduling, "runner_scheduling"},
-		{"unknown reason", true, "Pending", "SomethingWeird", seqBootPulling, "runner_pulling_image"},
+		{"no pod yet", false, "", "", "", seqBootScheduling, "runner_scheduling", ""},
+		{"container creating", true, "Pending", "ContainerCreating", "", seqBootPulling, "runner_pulling_image", ""},
+		{"pod initializing", true, "Pending", "PodInitializing", "", seqBootPulling, "runner_pulling_image", ""},
+		{"image pull backoff", true, "Pending", "ImagePullBackOff", "", seqBootBackoff, "runner_image_pull_backoff", ""},
+		{"err image pull", true, "Pending", "ErrImagePull", "", seqBootBackoff, "runner_image_pull_backoff", ""},
+		{"config error", true, "Pending", "CreateContainerConfigError", "", seqBootConfig, "runner_config_error", ""},
+		{"invalid image name", true, "Pending", "InvalidImageName", "", seqBootConfig, "runner_config_error", ""},
+		{"unschedulable capacity", true, "Pending", "Unschedulable", "0/5 nodes are available: 5 Too many pods.", seqBootUnschedulable, "runner_unschedulable", "Too many pods"},
+		{"scheduler error", true, "Pending", "SchedulerError", "", seqBootUnschedulable, "runner_unschedulable", "No capacity"},
+		{"running no output", true, "Running", "", "", seqBootStarting, "runner_starting", ""},
+		{"pending no reason", true, "Pending", "", "", seqBootScheduling, "runner_scheduling", ""},
+		{"unknown reason", true, "Pending", "SomethingWeird", "", seqBootPulling, "runner_pulling_image", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			ev := bootstrapEvent(tc.podFound, tc.phase, tc.waitingReason)
+			ev := bootstrapEvent(tc.podFound, tc.phase, tc.waitingReason, tc.message)
 			if ev.Kind != "phase" {
 				t.Errorf("kind = %q, want phase", ev.Kind)
 			}
@@ -322,11 +332,14 @@ func TestBootstrapEvent(t *testing.T) {
 			if ev.Summary == "" {
 				t.Error("summary must be a non-empty human fallback")
 			}
+			if tc.wantInSummary != "" && !strings.Contains(ev.Summary, tc.wantInSummary) {
+				t.Errorf("summary = %q, want it to contain %q", ev.Summary, tc.wantInSummary)
+			}
 		})
 	}
 
 	// An unrecognised reason is surfaced verbatim so nothing hides.
-	if ev := bootstrapEvent(true, "Pending", "SomethingWeird"); !strings.Contains(ev.Summary, "SomethingWeird") {
+	if ev := bootstrapEvent(true, "Pending", "SomethingWeird", ""); !strings.Contains(ev.Summary, "SomethingWeird") {
 		t.Errorf("unknown reason summary = %q, want it to contain the raw reason", ev.Summary)
 	}
 
@@ -334,9 +347,9 @@ func TestBootstrapEvent(t *testing.T) {
 	// different transitions into one row).
 	seqs := map[int64]bool{
 		seqBootScheduling: true, seqBootPulling: true, seqBootBackoff: true,
-		seqBootConfig: true, seqBootStarting: true,
+		seqBootConfig: true, seqBootStarting: true, seqBootUnschedulable: true,
 	}
-	if len(seqs) != 5 {
+	if len(seqs) != 6 {
 		t.Errorf("bootstrap seqs collide: %v", seqs)
 	}
 }
@@ -385,28 +398,293 @@ func TestPageEventsHadOutput(t *testing.T) {
 	}
 }
 
-// TestLivePodLogOptionsBoundsByLines pins the live-tail window to a LINE bound.
-//
-// This is the regression guard for the frozen-console bug: bounding with
-// LimitBytes anchored every poll at the log's first 64KiB, so once the agent
-// wrote past that the console stopped advancing and the final line arrived as a
-// mid-envelope fragment. See livePodLogOptions for the K8s semantics.
-func TestLivePodLogOptionsBoundsByLines(t *testing.T) {
-	t.Parallel()
+func liveCycle(id string) *delivery.RunCycle {
+	return &delivery.RunCycle{
+		ID: id, OrgID: "acme", ProjectID: "shop", RunID: "run-1",
+		Kind: delivery.CycleKindCoding, JobRef: "ca-" + id + "-2608061000",
+		CreatedAt: time.Now().UTC().Add(-10 * time.Minute),
+	}
+}
 
-	opts := livePodLogOptions()
-	if opts.LimitBytes != 0 {
-		t.Errorf("live tail must not byte-bound the read (it reads the log's HEAD), got LimitBytes=%d", opts.LimitBytes)
+type stubLive struct {
+	tail LiveTail
+	err  error
+}
+
+func (s *stubLive) Tail(context.Context, string, string, string, int) (LiveTail, error) {
+	return s.tail, s.err
+}
+
+type stubArchive struct {
+	text string
+	err  error
+}
+
+func (s *stubArchive) CycleArchive(context.Context, ArchiveScope) (string, error) {
+	return s.text, s.err
+}
+
+func TestCycleProgress_LiveTailIsServedWhileTheComponentExists(t *testing.T) {
+	live := &stubLive{tail: LiveTail{
+		Text: "2026-08-06T10:00:01Z hello\n",
+		Pod:  openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Running"},
+	}}
+
+	resp, err := NewAgentProgressReader(live, nil).CycleProgress(context.Background(), liveCycle("c1"), 0)
+	if err != nil {
+		t.Fatalf("CycleProgress: %v", err)
 	}
-	if opts.TailLines != logPageLines {
-		t.Errorf("TailLines = %d, want %d", opts.TailLines, logPageLines)
+	if len(resp.Lines) != 1 || resp.Lines[0].Summary != "hello" {
+		t.Fatalf("unexpected lines: %+v", resp.Lines)
 	}
-	if !opts.Timestamps {
-		t.Error("Timestamps must stay on — it is the event ts for non-envelope lines")
+	if resp.Final {
+		t.Error("a live tail is never final")
 	}
-	// A wider read than the parser keeps would be parsed and then discarded.
-	if logPageLines != defaultProgressLimit {
-		t.Errorf("logPageLines = %d, want defaultProgressLimit (%d)", logPageLines, defaultProgressLimit)
+}
+
+func TestCycleProgress_UnscheduledPodNarratesTheDarkZone(t *testing.T) {
+	live := &stubLive{tail: LiveTail{Pod: openchoreo.RuntimePod{}}}
+
+	resp, err := NewAgentProgressReader(live, nil).CycleProgress(context.Background(), liveCycle("c2"), 0)
+	if err != nil {
+		t.Fatalf("CycleProgress: %v", err)
+	}
+	if len(resp.Lines) != 1 || resp.Lines[0].Phase != "runner_scheduling" {
+		t.Fatalf("unexpected lines: %+v", resp.Lines)
+	}
+}
+
+func TestCycleProgress_PendingPodNarratesItsWaitingReason(t *testing.T) {
+	live := &stubLive{tail: LiveTail{Pod: openchoreo.RuntimePod{
+		Found: true, Name: "p1", Phase: "Pending", WaitingReason: "ImagePullBackOff",
+	}}}
+
+	resp, err := NewAgentProgressReader(live, nil).CycleProgress(context.Background(), liveCycle("c3"), 0)
+	if err != nil {
+		t.Fatalf("CycleProgress: %v", err)
+	}
+	if len(resp.Lines) != 1 || resp.Lines[0].Phase != "runner_image_pull_backoff" {
+		t.Fatalf("unexpected lines: %+v", resp.Lines)
+	}
+}
+
+// The component is gone but the archive still has the log: that is the whole
+// point of retaining components after a cycle ends.
+func TestCycleProgress_FallsBackToTheArchiveWhenThePodIsGone(t *testing.T) {
+	live := &stubLive{err: fmt.Errorf("%w: ca-c4", ErrComponentGone)}
+	archive := &stubArchive{text: "2026-08-06T10:00:01Z archived line\n"}
+	cycle := liveCycle("c4")
+	ended := time.Now().UTC()
+	cycle.EndedAt = &ended
+
+	resp, err := NewAgentProgressReader(live, nil).WithArchive(archive).
+		CycleProgress(context.Background(), cycle, 0)
+	if err != nil {
+		t.Fatalf("CycleProgress: %v", err)
+	}
+	if len(resp.Lines) != 1 || resp.Lines[0].Summary != "archived line" {
+		t.Fatalf("unexpected lines: %+v", resp.Lines)
+	}
+	if !resp.Final {
+		t.Error("a closed cycle served from the archive is final")
+	}
+}
+
+// A finished cycle whose archive exceeds one progress page leads with an honest
+// banner so the console never looks like the whole run was this short.
+func TestCycleProgress_ClosedArchiveOverCapLeadsWithTruncatedBanner(t *testing.T) {
+	var b strings.Builder
+	for i := 0; i < defaultProgressLimit+25; i++ {
+		fmt.Fprintf(&b, "{\"schemaVersion\":1,\"kind\":\"log\",\"summary\":\"line-%d\",\"ts\":\"2026-08-06T10:00:00.%09dZ\"}\n", i, i)
+	}
+	live := &stubLive{err: fmt.Errorf("%w: ca-trunc", ErrComponentGone)}
+	archive := &stubArchive{text: b.String()}
+	cycle := liveCycle("trunc")
+	ended := time.Now().UTC()
+	cycle.EndedAt = &ended
+
+	resp, err := NewAgentProgressReader(live, nil).WithArchive(archive).
+		CycleProgress(context.Background(), cycle, 0)
+	if err != nil {
+		t.Fatalf("CycleProgress: %v", err)
+	}
+	if len(resp.Lines) < 2 || resp.Lines[0].Phase != "logs_truncated" {
+		t.Fatalf("want leading logs_truncated banner, got %+v", resp.Lines)
+	}
+	if resp.Lines[0].Seq != seqLogsTruncated {
+		t.Fatalf("Seq = %d, want %d", resp.Lines[0].Seq, seqLogsTruncated)
+	}
+	if !resp.Truncated || !resp.Final {
+		t.Fatalf("Truncated=%v Final=%v, want both true", resp.Truncated, resp.Final)
+	}
+	if got := len(resp.Lines) - 1; got != defaultProgressLimit {
+		t.Fatalf("content lines = %d, want %d", got, defaultProgressLimit)
+	}
+}
+
+// Nothing left to read must SAY so. An empty stream reads like an agent that
+// never spoke, which is a different and much more alarming thing.
+func TestCycleProgress_UnavailableWhenComponentAndArchiveAreBothGone(t *testing.T) {
+	live := &stubLive{err: fmt.Errorf("%w: ca-c5", ErrComponentGone)}
+	archive := &stubArchive{err: fmt.Errorf("%w: ca-c5", ErrComponentGone)}
+	cycle := liveCycle("c5")
+	ended := time.Now().UTC()
+	cycle.EndedAt = &ended
+
+	resp, err := NewAgentProgressReader(live, nil).WithArchive(archive).
+		CycleProgress(context.Background(), cycle, 0)
+	if err != nil {
+		t.Fatalf("CycleProgress: %v", err)
+	}
+	if len(resp.Lines) != 1 || resp.Lines[0].Phase != "logs_unavailable" {
+		t.Fatalf("unexpected lines: %+v", resp.Lines)
+	}
+	if resp.Lines[0].Seq != seqLogsUnavailable {
+		t.Fatalf("Seq = %d, want the stable %d", resp.Lines[0].Seq, seqLogsUnavailable)
+	}
+	if !resp.Final {
+		t.Error("an unavailable log is a settled answer")
+	}
+}
+
+// A deployment with no observability plane must degrade to the same honest
+// empty state rather than erroring the page.
+func TestCycleProgress_UnavailableWithNoObserverConfigured(t *testing.T) {
+	live := &stubLive{err: fmt.Errorf("%w: ca-c6", ErrComponentGone)}
+	cycle := liveCycle("c6")
+	ended := time.Now().UTC()
+	cycle.EndedAt = &ended
+
+	resp, err := NewAgentProgressReader(live, nil).CycleProgress(context.Background(), cycle, 0)
+	if err != nil {
+		t.Fatalf("CycleProgress: %v", err)
+	}
+	if len(resp.Lines) != 1 || resp.Lines[0].Phase != "logs_unavailable" {
+		t.Fatalf("unexpected lines: %+v", resp.Lines)
+	}
+}
+
+// An observer having a bad minute is not an answer: keep the stream open and
+// let the next poll try again.
+func TestCycleProgress_ArchiveErrorOnAnOpenCycleStaysNonFinal(t *testing.T) {
+	live := &stubLive{err: fmt.Errorf("%w: ca-c7", ErrComponentGone)}
+	archive := &stubArchive{err: fmt.Errorf("%w: 503", ErrArchiveUnavailable)}
+
+	resp, err := NewAgentProgressReader(live, nil).WithArchive(archive).
+		CycleProgress(context.Background(), liveCycle("c7"), 0)
+	if err != nil {
+		t.Fatalf("CycleProgress: %v", err)
+	}
+	if resp.Final {
+		t.Error("an open cycle whose archive hiccuped must keep polling")
+	}
+	if len(resp.Lines) != 1 || resp.Lines[0].Phase != "logs_unavailable" {
+		t.Fatalf("unexpected lines: %+v", resp.Lines)
+	}
+}
+
+func TestCycleProgress_ATransportFailureIsAnError(t *testing.T) {
+	live := &stubLive{err: errors.New("dial tcp: connection refused")}
+
+	if _, err := NewAgentProgressReader(live, nil).CycleProgress(context.Background(), liveCycle("c8"), 0); err == nil {
+		t.Fatal("a transport failure must surface so the caller can degrade")
+	}
+}
+
+// Closed cycle + live empty success (Component retained, pod gone — not
+// ErrComponentGone) must fall through to the archive.
+func TestCycleProgress_ClosedEmptyLiveFallsThroughToArchive(t *testing.T) {
+	live := &stubLive{tail: LiveTail{Pod: openchoreo.RuntimePod{Found: false}}}
+	archive := &stubArchive{text: "2026-08-06T10:00:01Z archived after empty live\n"}
+	cycle := liveCycle("c9")
+	ended := time.Now().UTC()
+	cycle.EndedAt = &ended
+
+	resp, err := NewAgentProgressReader(live, nil).WithArchive(archive).
+		CycleProgress(context.Background(), cycle, 0)
+	if err != nil {
+		t.Fatalf("CycleProgress: %v", err)
+	}
+	if len(resp.Lines) != 1 || resp.Lines[0].Summary != "archived after empty live" {
+		t.Fatalf("unexpected lines: %+v", resp.Lines)
+	}
+	if !resp.Final {
+		t.Error("closed cycle served from archive after empty live must be final")
+	}
+}
+
+// Closed cycle + live empty success + no archive → settled unavailable.
+func TestCycleProgress_ClosedEmptyLiveWithNoArchiveIsUnavailable(t *testing.T) {
+	live := &stubLive{tail: LiveTail{Text: "", Pod: openchoreo.RuntimePod{Found: true, Phase: "Succeeded"}}}
+	cycle := liveCycle("c10")
+	ended := time.Now().UTC()
+	cycle.EndedAt = &ended
+
+	resp, err := NewAgentProgressReader(live, nil).CycleProgress(context.Background(), cycle, 0)
+	if err != nil {
+		t.Fatalf("CycleProgress: %v", err)
+	}
+	if len(resp.Lines) != 1 || resp.Lines[0].Phase != "logs_unavailable" {
+		t.Fatalf("unexpected lines: %+v", resp.Lines)
+	}
+	if !resp.Final {
+		t.Error("closed cycle with nowhere to read must be final")
+	}
+}
+
+// Open cycle + live empty success with no archive lines is still the dark
+// zone — the attempt may still be scheduling. An archive that already has
+// lines means the pod finished and was reaped while the cycle stays open
+// (PR webhook pending); that falls through in
+// TestCycleProgress_OpenEmptyLiveFallsThroughToArchiveWhenArchiveHasLines.
+func TestCycleProgress_OpenEmptyLiveStaysOnDarkZone(t *testing.T) {
+	live := &stubLive{tail: LiveTail{Pod: openchoreo.RuntimePod{}}}
+	archive := &stubArchive{text: ""}
+
+	resp, err := NewAgentProgressReader(live, nil).WithArchive(archive).
+		CycleProgress(context.Background(), liveCycle("c11"), 0)
+	if err != nil {
+		t.Fatalf("CycleProgress: %v", err)
+	}
+	if len(resp.Lines) != 1 || resp.Lines[0].Phase != "runner_scheduling" {
+		t.Fatalf("unexpected lines: %+v", resp.Lines)
+	}
+	if resp.Final {
+		t.Error("open cycle empty live must keep polling")
+	}
+	if resp.Lines[0].Phase == "logs_unavailable" {
+		t.Fatal("open empty live must not report unavailable")
+	}
+}
+
+func TestCycleProgress_OpenEmptyLiveFallsThroughToArchiveWhenArchiveHasLines(t *testing.T) {
+	live := &stubLive{tail: LiveTail{Pod: openchoreo.RuntimePod{}}}
+	archive := &stubArchive{text: "2026-08-06T10:00:01Z archived while cycle still open\n"}
+
+	resp, err := NewAgentProgressReader(live, nil).WithArchive(archive).
+		CycleProgress(context.Background(), liveCycle("c12"), 0)
+	if err != nil {
+		t.Fatalf("CycleProgress: %v", err)
+	}
+	if len(resp.Lines) != 1 || resp.Lines[0].Summary != "archived while cycle still open" {
+		t.Fatalf("unexpected lines: %+v", resp.Lines)
+	}
+	if resp.Final {
+		t.Error("open cycle served from archive must keep polling until the run settles")
+	}
+}
+
+func TestCycleProgress_OpenEmptyLiveOnTerminalPodFallsThroughToArchive(t *testing.T) {
+	live := &stubLive{tail: LiveTail{Pod: openchoreo.RuntimePod{Found: true, Phase: "Succeeded"}}}
+	archive := &stubArchive{text: "2026-08-06T10:00:01Z archived after succeeded pod\n"}
+
+	resp, err := NewAgentProgressReader(live, nil).WithArchive(archive).
+		CycleProgress(context.Background(), liveCycle("c13"), 0)
+	if err != nil {
+		t.Fatalf("CycleProgress: %v", err)
+	}
+	if len(resp.Lines) != 1 || resp.Lines[0].Summary != "archived after succeeded pod" {
+		t.Fatalf("unexpected lines: %+v", resp.Lines)
 	}
 }
 

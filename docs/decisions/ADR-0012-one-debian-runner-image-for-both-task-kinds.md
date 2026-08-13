@@ -61,4 +61,7 @@ personal registry.
 - **+** Removed a supply-chain edge as part of the same collapse:
   `AGENT_RUNNER_IMAGE` no longer defaults to a personal Docker Hub image.
 
-Related: ADR-0011 (no in-pod container build gate, and why).
+Related: ADR-0011 (no in-pod container build gate, and why), and
+[`codingagent/design/oc-job-dispatch.md`](../../services/aep-api/internal/delivery/codingagent/design/oc-job-dispatch.md),
+which records where `AGENT_RUNNER_IMAGE` is read and how `AEP_TASK_KIND` and the
+deadline differ between the two kinds on one image.

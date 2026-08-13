@@ -62,12 +62,6 @@ type BuildSecretCleaner interface {
 	DeleteBuildSecretsForOrg(ctx context.Context, ocOrgID string) error
 }
 
-// AnthropicSecretCleaner mirrors BuildSecretCleaner for the per-org
-// Anthropic-credentials Secret. Implemented by AnthropicCredentialService.
-type AnthropicSecretCleaner interface {
-	DeleteAnthropicSecret(ctx context.Context, ocOrgID string) error
-}
-
 type CredentialService struct {
 	repo      OrgCredentialRepository
 	store     secrets.CredentialStore

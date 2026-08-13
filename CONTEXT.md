@@ -193,14 +193,32 @@ issue exists, regardless of who created it. GitHub is the sole owner of Task sta
 _Avoid_: component task, ticket, work item, issue-row.
 
 **Execution**:
-One platform attempt at a single kind of work for a Task — coding (dispatch →
-agent run → pull request), build (merge → build → deploy), or ops (a platform
-operation). Owned by the platform, referencing the Task by issue number. A retry
-is a new Execution, never a mutation of an old one or of the Task. The platform
-projects Execution progress onto the Task (labels/comments); never the reverse.
-No Execution spans a human gate: merging a pull request ends nothing — it *spawns*
-the build Execution.
-_Avoid_: run (collides with OpenChoreo WorkflowRun), attempt, job.
+One platform attempt at a single kind of **non-agent** work for a Task — build
+(merge → build → deploy), ops (a platform operation), or provisioning. Owned by
+the platform, referencing the Task by issue number. A retry is a new Execution,
+never a mutation of an old one or of the Task. The platform projects Execution
+progress onto the Task (labels/comments); never the reverse. **Agent work mints
+no Execution**: a coding, conflict, fix or validation dispatch is a run cycle
+(below), and the cycle record is the platform's bookkeeping for it.
+_Avoid_: attempt, job; calling anything a coding agent does an Execution.
+
+**Milestone run**:
+One supervised pass over one milestone — the platform's single dispatch door, and
+a first-class domain term (`milestone_runs`, `MilestoneRunWorkflow`). A milestone
+sees sequential runs across its life, and a run dispatches its cycles one at a
+time.
+_Avoid_: execution (a run is not one), pipeline, build (the console's "build" is
+the click that starts a run, not the run).
+
+**Run cycle**:
+One dispatch within a run — `coding | conflict | fix | validation` — and the unit
+the coding agent actually runs as: one ephemeral OpenChoreo `coding-agent` job
+Component in the milestone's own project, per cycle, never reused. The cycle
+record carries branch, pull-request number and merge SHA, all learned from
+webhooks. Its live progress is the pod's log; its history is an observer query
+that lasts only as long as the Component is retained.
+_Avoid_: execution component (the retired term — a cycle is milestone-scoped, not
+task-scoped), task job, run (that is the supervising pass above).
 
 **Executor class**:
 The single dimension that routes a Task to its executor: `coding` (fulfilled by a
@@ -316,3 +334,11 @@ what keeps the two write paths from racing (only one writer to committed truth w
 a room is open).
 _Avoid_: dry-run, preview turn (a room-mode turn's edits are real, just landed by the
 committer rather than the turn).
+
+## Secrets
+
+**SecretReference**:
+An OpenChoreo CR that names a vault path for a secret. It lives in the same
+control-plane namespace as the Workload that consumes it. The vault path's
+`wc-…` segment (`OrgBaseNamespace`) is a storage key, not that namespace.
+_Avoid_: treating OrgBaseNamespace as the SecretReference CR namespace.

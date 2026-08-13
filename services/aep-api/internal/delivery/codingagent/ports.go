@@ -19,19 +19,22 @@
 // It has ONE dispatch entry point — delivery.MilestoneDispatcher: one cycle of
 // a milestone run, one agent pod — and writes no platform state on that path,
 // because the cycle record is the run supervisor's bookkeeping. What state it
-// does write belongs to the two watchers it owns: the JobWatcher (Job phase and
-// the captured agent log) and the ExecWatcher (OpenChoreo WorkflowRun outcomes,
-// including the git-clone-auth build retry).
+// does write belongs to the two watchers it owns: the cycle watcher (pod-truth
+// phase and the captured agent log) and the ExecWatcher (OpenChoreo WorkflowRun
+// outcomes, including the git-clone-auth build retry).
 //
-// Two dispatch paths: the cluster-gateway-proxy path (per-org namespace,
-// per-run ExternalSecrets, a Job through the proxy) when the proxy and SM-API
-// are both configured, and the direct in-cluster K8s Job otherwise.
+// One dispatch path: an ephemeral OpenChoreo Component per run cycle, created
+// through the OC API in the milestone's own project. OpenChoreo renders the
+// batch/v1 Job into that project's dataplane namespace and materialises the
+// cycle's secrets from the org's secret store — this package holds no
+// Kubernetes client and writes no secret material.
 package codingagent
 
 import (
 	"context"
 	"time"
 
+	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
@@ -52,13 +55,33 @@ type DeployObserver interface {
 	OnComponentDeployed(ctx context.Context, orgID, projectID, component string) error
 }
 
+// SecretRef is one org credential's refs-only SM-API triplet.
+type SecretRef struct {
+	SecretRefName string
+	KVPath        string
+	Property      string
+
+	// EnvVar is the env var name the runner reads this secret under. Empty
+	// means the caller supplies its own fixed name (e.g. GITHUB_TOKEN); the
+	// Anthropic credential sets this from organization.SecretRefTriplet.EnvVar
+	// because exactly which of ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN
+	// applies is the organization domain's decision, not dispatch's.
+	EnvVar string
+}
+
+// ExternalResourceSecretInputs is one external resource's per-env secret bundle
+// (vault path + secret keys) referenced by the cycle Workload.
+type ExternalResourceSecretInputs struct {
+	KVPath string
+	Keys   []string
+}
+
 // RunnerSecretResolver resolves the coding runner's per-run external-resource
-// secret bundles for a component (SM-API vault path + secret keys) — the
-// dispatcher materialises each into a per-run ExternalSecret so the agent can
-// integration-test against the live external service. Wired from the
-// provisioning feature at the composition root; nil → the runner gets no
-// external-resource secrets. Returns the codingagent input type so this feature
-// holds no provisioning/resources import.
+// secret bundles for a component (SM-API vault path + secret keys) so the cycle
+// Workload can reference them. Wired from the provisioning feature at the
+// composition root; nil → the runner gets no external-resource secrets.
+// Returns the codingagent input type so this feature holds no
+// provisioning/resources import.
 type RunnerSecretResolver interface {
 	ResolveRunnerSecrets(ctx context.Context, orgID, projectID, component, env string) ([]ExternalResourceSecretInputs, error)
 }
@@ -91,13 +114,6 @@ type SkillMirror interface {
 	SyncProjectSkills(ctx context.Context, orgID, projectID string) error
 }
 
-// AnthropicProvisioner materializes the per-org Anthropic key Secret on the
-// workflow plane and returns its ref. Best-effort at dispatch. Wired from
-// orgcreds.AnthropicCredentialService.
-type AnthropicProvisioner interface {
-	ApplyWPSecret(ctx context.Context, ocOrgID string) (secretRef string, err error)
-}
-
 // CodingKeyResolver answers which Anthropic credential this run must bill: the
 // org's coding-agent key when it configured one, its default key otherwise. The
 // choice is the organization domain's to make — dispatch only mounts what it is
@@ -127,13 +143,6 @@ type ProjectRepos interface {
 	GetRepo(ctx context.Context, orgID, projectID string) (*sourcecontrol.GitRepository, error)
 }
 
-// OrgPublisherProvisioner get-or-creates the org's Thunder publisher OAuth
-// client (for the proxy-dispatched runner's cc auth through the cloud gateway).
-// Optional — nil / a local http platform URL skips it. Wired from idp.IDPService.
-type OrgPublisherProvisioner interface {
-	EnsureOrgPublisher(ctx context.Context, orgID, actor string) (clientID, clientSecret string, created bool, err error)
-}
-
 // BuildSecretStager pre-stages the org's build git credential on the workflow
 // plane and returns the secretRef the build WorkflowRun consumes so its
 // checkout-source step can clone a PRIVATE repo (the local plane sets
@@ -146,4 +155,38 @@ type OrgPublisherProvisioner interface {
 // uses), so this feature holds no orgcreds import. Optional — nil skips staging.
 type BuildSecretStager interface {
 	StageBuildSecret(ctx context.Context, ocOrgID, repoSlug, workflowRunName string) (secretRef string, err error)
+}
+
+// LiveTail is one read of a cycle pod's log, plus the pod state that read it.
+// The pod travels with the text because "no output yet" and "no pod yet" are
+// different things to the console, and only the pod says which one happened.
+type LiveTail struct {
+	Text string
+	Pod  openchoreo.RuntimePod
+}
+
+// LiveLogSource is the running agent's log, read while its Component still
+// exists. Satisfied by *OCLogSource. A wrapped ErrComponentGone means the
+// Component has been deleted — the archive's turn, or an unavailable state.
+type LiveLogSource interface {
+	Tail(ctx context.Context, orgName, projectName, componentName string, maxBytes int) (LiveTail, error)
+}
+
+// ArchiveScope names one cycle's archived log: its component, and the window
+// the cycle ran in. The window matters — the observer has no cursor, so the
+// only way to bound a read is to ask for the time the work happened.
+type ArchiveScope struct {
+	OrgName       string
+	ProjectName   string
+	ComponentName string
+	From          time.Time
+	To            time.Time
+}
+
+// ArchiveLogSource is a finished cycle's log, read from the observability plane
+// while its Component is still retained. Satisfied by *ObserverArchive; nil at
+// the composition root when no observer is configured, which the reader
+// reports to the console as "unavailable" rather than as an empty log.
+type ArchiveLogSource interface {
+	CycleArchive(ctx context.Context, scope ArchiveScope) (string, error)
 }

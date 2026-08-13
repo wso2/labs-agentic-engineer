@@ -21,6 +21,8 @@ import (
 	"errors"
 	"log/slog"
 
+	"go.temporal.io/sdk/temporal"
+
 	"github.com/wso2/aep/aep-api/internal/delivery"
 )
 
@@ -42,7 +44,6 @@ type Activities struct {
 	builds     BuildReader
 	validation ValidationCoordinator
 	dispatcher delivery.MilestoneDispatcher
-	stopper    delivery.MilestoneAgentStopper
 	apiTraits  APITraitSyncer
 }
 
@@ -57,12 +58,7 @@ type Deps struct {
 	Builds     BuildReader
 	Validation ValidationCoordinator
 	Dispatcher delivery.MilestoneDispatcher
-	// Stopper kills a cancelled cycle's agent. Optional: unwired means a cancel
-	// settles the run and leaves the agent to its own deadline, which is exactly
-	// the behaviour this port was added to end — so a degraded boot is the only
-	// place that should ever see it nil.
-	Stopper   delivery.MilestoneAgentStopper
-	APITraits APITraitSyncer
+	APITraits  APITraitSyncer
 }
 
 // NewActivities wires the activity adapters.
@@ -76,7 +72,6 @@ func NewActivities(d Deps) *Activities {
 		builds:     d.Builds,
 		validation: d.Validation,
 		dispatcher: d.Dispatcher,
-		stopper:    d.Stopper,
 		apiTraits:  d.APITraits,
 	}
 }
@@ -104,14 +99,6 @@ type SettleRunInput struct {
 	RunID  string `json:"runId"`
 	State  string `json:"state"`
 	Reason string `json:"reason,omitempty"`
-}
-
-// StopCycleAgentInput names the run whose in-flight agent should be stopped. The
-// CYCLE is resolved from it rather than passed, because the Job ref is learned at
-// dispatch and lives on the cycle row.
-type StopCycleAgentInput struct {
-	OrgID string `json:"orgId"`
-	RunID string `json:"runId"`
 }
 
 // SettleRun writes the run's outcome. Guarded in the repository on the run not
@@ -494,35 +481,23 @@ func (a *Activities) MintValidationRepairIssues(ctx context.Context, in MintVali
 
 // DispatchAgent launches the cycle's agent run and returns the Job reference.
 //
-// It is the ONE activity whose failure is not retried by Temporal: a launch
-// that did not happen is agent death, which the cycle's own re-dispatch budget
-// already answers. Letting Temporal retry it as well would spend that budget
-// invisibly.
-// StopCycleAgent stops the agent the run's latest cycle dispatched.
-//
-// It reads the cycle rather than taking a Job ref from the workflow because the
-// ref is learned at dispatch and lives on the row — the loop holds the cycle id,
-// which is the durable key. The LATEST cycle is the right one by construction:
-// only one cycle of a run is ever in flight.
-//
-// Best-effort by contract. Every caller is on a path that is already ending the
-// run, and a run that cannot be settled because its agent could not be reached
-// would be a worse failure than an agent that outlives its run — the outcome the
-// platform records must not depend on the cluster answering.
-func (a *Activities) StopCycleAgent(ctx context.Context, in StopCycleAgentInput) error {
-	if a.stopper == nil || a.cycles == nil {
-		return nil
-	}
-	cycle, err := a.cycles.Latest(ctx, in.OrgID, in.RunID)
-	if err != nil || cycle == nil || cycle.JobRef == "" {
-		return err
-	}
-	return a.stopper.StopAgent(ctx, in.OrgID, cycle.ID, cycle.JobRef)
-}
-
+// Two non-retryable failure classes are stamped here (Temporal must not retry
+// either): agent death — a launch that did not happen, answered by the cycle's
+// re-dispatch budget — and quota blocked — entitlement refused, not death.
+// Letting Temporal retry agent death would spend that budget invisibly; quota
+// blocked cannot be cleared by retry.
 func (a *Activities) DispatchAgent(ctx context.Context, in delivery.MilestoneDispatch) (string, error) {
 	if a.dispatcher == nil {
 		return "", errNotConfigured
 	}
-	return a.dispatcher.Dispatch(ctx, in)
+	jobRef, err := a.dispatcher.Dispatch(ctx, in)
+	if errors.Is(err, delivery.ErrAgentQuotaExceeded) {
+		// A sentinel does not survive the activity boundary — Temporal
+		// round-trips errors as data — so the refusal is re-expressed as a
+		// TYPED, non-retryable ApplicationError the workflow can branch on.
+		// Non-retryable because no retry can free a billing slot.
+		return "", temporal.NewNonRetryableApplicationError(
+			err.Error(), delivery.ErrTypeAgentQuotaBlocked, err)
+	}
+	return jobRef, err
 }

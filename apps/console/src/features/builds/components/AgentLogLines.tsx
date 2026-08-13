@@ -28,7 +28,7 @@ import {
 } from "@aep/progress-view";
 import type { components } from "../../../generated/aep-api";
 import { formatLine, formatOutcome } from "../../tasks/lib/timeline";
-import { runLineKey } from "../hooks/useRunProgress";
+import { runLineKey, type RunProgressPhase } from "../hooks/useRunProgress";
 
 type RunProgressLine = components["schemas"]["RunProgressLine"];
 
@@ -104,6 +104,54 @@ export function LogNote({ children }: { children: React.ReactNode }) {
     <Typography component="div" sx={{ font: "inherit", color: "grey.500" }}>
       {children}
     </Typography>
+  );
+}
+
+/**
+ * Empty-state copy for the agent log panel. Distinguishes attaching to a
+ * finished run's archive from a live agent that has not spoken yet, and from a
+ * settled run that truly had nothing to say.
+ */
+export function agentLogEmptyNote(
+  phase: RunProgressPhase,
+  opts: { agentRunning?: boolean } = {},
+): string {
+  switch (phase) {
+    case "connecting":
+      return "Loading agent output…";
+    case "reconnecting":
+      return "Reconnecting…";
+    case "live":
+      return opts.agentRunning
+        ? "Waiting for the agent's first line…"
+        : "Loading agent output…";
+    case "ended":
+      return "No output was recorded.";
+    default:
+      return "No output from this cycle yet.";
+  }
+}
+
+/** Log surface with subtle loading / empty copy when the stream has no lines. */
+export function AgentLogPanel({
+  lines,
+  phase,
+  agentRunning = false,
+  maxHeight = 420,
+}: {
+  lines: RunProgressLine[];
+  phase: RunProgressPhase;
+  agentRunning?: boolean;
+  maxHeight?: number;
+}) {
+  return (
+    <LogSurface maxHeight={maxHeight}>
+      {lines.length === 0 ? (
+        <LogNote>{agentLogEmptyNote(phase, { agentRunning })}</LogNote>
+      ) : (
+        <AgentLogLines lines={lines} />
+      )}
+    </LogSurface>
   );
 }
 

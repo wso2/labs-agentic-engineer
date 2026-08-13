@@ -427,6 +427,65 @@ describe("ValidationPage lifecycle", () => {
     ).toBeInTheDocument();
   });
 
+  // The drift this page carried: the chip and the tile were both derived from the
+  // run's stored verdict, which is a COLUMN with no lifecycle in it, so a run
+  // mid-self-heal read "Validation failed … the milestone stays open for the fix"
+  // here while the deployments board beside it correctly read "awaiting fix". The
+  // tile's sentence was the worse half — the run had not stopped, it had filed the
+  // failures as work and dispatched a coding cycle.
+  it("reads as a repair in flight, not a stopped run, while the loop is healing", () => {
+    mockValidation = "awaiting-fix";
+    mockRun = {
+      ...run({
+        validation: { verdict: "failed", reportPath: "tests/validation/report.json" },
+        cycles: [validationCycle, { ...validationCycle, id: "cycle-3", kind: "coding" }],
+      }),
+      state: "running",
+    };
+    mockCriteria.data = { content: CRITERIA };
+    mockReport.data = { content: REPORT };
+    renderPage(undefined);
+
+    // Chip AND tile headline, both from the shared mapper.
+    expect(screen.getAllByText("Awaiting fix").length).toBe(2);
+    expect(screen.queryByText("Validation failed")).not.toBeInTheDocument();
+    expect(screen.queryByText(/the milestone stays open for the fix/)).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/The run filed each failure as an issue on this version/),
+    ).toBeInTheDocument();
+    // The failed report stays — it is the evidence of WHAT is being fixed, and the
+    // coding cycle in flight has no validation log to show in its place.
+    expect(screen.queryByTestId("run-feed")).not.toBeInTheDocument();
+    expect(screen.getByText("Shoppers can search the catalog.")).toBeInTheDocument();
+    expect(screen.getByText(/category option never appeared/)).toBeInTheDocument();
+  });
+
+  // A repeat attempt has to read like the first one. This was unreachable while the
+  // page had no lifecycle input: a second attempt runs with a verdict already on the
+  // row, so the page opened on the PREVIOUS attempt's report under a tile claiming
+  // the run had stopped.
+  it("shows the live log, not the last attempt's report, while a repeat attempt runs", () => {
+    mockValidation = "running";
+    mockRun = {
+      ...run({
+        validation: { verdict: "failed", reportPath: "tests/validation/report.json" },
+        cycles: [validationCycle],
+      }),
+      state: "running",
+    };
+    mockCriteria.data = { content: CRITERIA };
+    mockReport.data = { content: REPORT };
+    renderPage(undefined);
+
+    expect(screen.getByTestId("run-feed")).toHaveTextContent("validation");
+    // Chip and tile headline both, as with every other state.
+    expect(screen.getAllByText("Validating").length).toBe(2);
+    expect(screen.queryByText("Validation failed")).not.toBeInTheDocument();
+    // The tile rides over the log — the last attempt's finding is still true — but
+    // ends on the attempt in flight rather than on a run that stopped.
+    expect(screen.getByText(/A new validation attempt is running/)).toBeInTheDocument();
+  });
+
   it("says so, and shows nothing else, when the run SKIPPED validation", () => {
     mockRun = run({ validation: { verdict: "skipped" } });
     renderPage(undefined);

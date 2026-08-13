@@ -33,19 +33,18 @@ I rewrote the v1 setup to mirror agent-manager's docker-compose pattern (`/Users
 | File | Change |
 |---|---|
 | `deployments/docker-compose.yml` | Rewritten: removed `collab-server`, long-lived `remote-worker`. Updated env vars to match current code. Mounts the host kubeconfig + Task signing PEM into git-service / aep-api. |
-| `deployments/scripts/setup-aep.sh` | Installs `dockerfile-builder` + **new** `aep-coding-agent` ClusterWorkflow. Creates `workflows-default` namespace. Binds Thunder's `Administrators` group → OC `admin` role. Generates a leaner `.env`. |
+| `deployments/scripts/setup-aep.sh` | Installs `dockerfile-builder` ClusterWorkflow. Seeds namespaced `service`/`web-application` ComponentTypes. Creates `workflows-default` namespace. Binds Thunder's `Administrators` group → OC `admin` role. Generates a leaner `.env`. |
 | `deployments/scripts/start.sh` | Removed REMOTE_WORKER_MODE branching. Seeds `deployments/.kube/config` from `k3d kubeconfig get … --internal`. |
 | `deployments/scripts/utils.sh` | `patch_coredns_host_k3d_internal` now uses the docker bridge gateway IP — fixes pod → host port reachability for git-service / aep-api. |
 | `deployments/scripts/stop.sh` | Removed remote-worker host-mode kill. |
 | `deployments/single-cluster/values-thunder.yaml` | Added Thunder bootstrap scripts: `50-platform-users.sh`, **`58-openchoreo-workload-publisher.sh`**. Added `ou*` claims to console app's userAttributes. |
-| `deployments/manifests/aep-coding-agent.yaml` | **New** — copied verbatim from `deployments-v2/wso2cloud-deployment/.../cluster-workflows/aep-coding-agent.yaml`. |
 | `deployments/README.md` | **New** — quick-start + architecture diagram + file inventory. |
 | `aep-service/config/config_loader.go` | Added `BFF_TASK_SIGNING_KEY_PATH` fallback for the Task JWT signing key (compose env-var substitution doesn't preserve newlines cleanly; mount the PEM instead). |
 | `AGENTS.md` / `CLAUDE.md` | Updated the deployments/ line: from "DEPRECATED" to "ALTERNATIVE local setup". |
 
 ## Departures from the original v1
 
-- **Coding-agent**: no long-lived container; one-shot OC ClusterWorkflow pod.
+- **Coding-agent**: no long-lived container; one-shot OpenChoreo Job Component (`coding-agent` ComponentType).
 - **collab-server**: removed (deferred per CLAUDE.md).
 - **Login**: `admin` / `admin` (Thunder's built-in admin user, in `Administrators` group → bound to OC `admin` role).
 - **OAuth apps**: in addition to v1's existing ones, we now bootstrap `openchoreo-workload-publisher-client` (OC v1 chart doesn't create it; v2 wso2cloud-deployment does — without it the build pipeline's `generate-workload-cr` step fails on the OAuth token request).

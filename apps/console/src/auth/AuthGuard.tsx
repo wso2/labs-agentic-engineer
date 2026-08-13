@@ -23,6 +23,7 @@ import { getUserManager } from "./userManager";
 import { decodeJwtClaims, identityFromClaims, type TokenClaims } from "./claims";
 import { MOCK_ORG, MOCK_USER } from "./mockSession";
 import { AuthScreen } from "./AuthScreen";
+import { BillingActivation } from "./BillingActivation";
 import { SessionContext, type Session } from "./SessionContext";
 
 const MOCK_SESSION: Session = {
@@ -39,6 +40,7 @@ export function AuthGuard({ children }: PropsWithChildren) {
   if (env.authMode === "mock") {
     return (
       <SessionContext.Provider value={MOCK_SESSION}>
+        <BillingActivation />
         {children}
       </SessionContext.Provider>
     );
@@ -123,6 +125,7 @@ function OidcGuard({ children }: PropsWithChildren) {
   }
   return (
     <SessionContext.Provider value={session}>
+      <BillingActivation />
       {children}
     </SessionContext.Provider>
   );

@@ -80,11 +80,6 @@ build:
       docker:
         dockerfile: apps/console/Dockerfile
 
-    - image: ghcr.io/wso2/aep/cluster-gateway-proxy
-      context: deployments/local-cluster-gateway-proxy
-      docker:
-        dockerfile: Dockerfile
-
 deploy:
   helm:
     releases:
@@ -112,7 +107,6 @@ deploy:
           aepMcpServer.image.tag: "{{.IMAGE_TAG_ghcr_io_wso2_aep_aep_mcp_server}}"
           console.image.repository: "{{.IMAGE_REPO_ghcr_io_wso2_aep_console}}"
           console.image.tag: "{{.IMAGE_TAG_ghcr_io_wso2_aep_console}}"
-          codingAgentDispatch.clusterGatewayProxy.image: "{{.IMAGE_REPO_ghcr_io_wso2_aep_cluster_gateway_proxy}}:{{.IMAGE_TAG_ghcr_io_wso2_aep_cluster_gateway_proxy}}"
 
 portForward:
   - resourceType: service

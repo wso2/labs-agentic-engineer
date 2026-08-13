@@ -34,7 +34,7 @@ import (
 func milestoneExecutor(execRows *fakeExecRepo) *CodingExecutor {
 	return NewCodingExecutor(&ocmocks.ComponentClientMock{},
 		fakeRepos{repo: &sourcecontrol.GitRepository{RepoURL: "https://github.com/acme/widgets.git"}},
-		fakeIdentities{}, nil, fakeTokens{}, execRows, "http://git", "http://platform", nil, nil, nil, nil)
+		fakeIdentities{}, fakeTokens{}, execRows, "http://git", "http://platform", nil, nil, nil, nil)
 }
 
 func milestoneDispatch(kind string) delivery.MilestoneDispatch {

@@ -533,6 +533,7 @@ describe("RunSpine", () => {
     const live = cycle({ id: "c1" });
     renderSpine(run([live]));
     expect(screen.getByText(/attaching to the run feed/)).toBeInTheDocument();
+    expect(screen.getByText(/Loading agent output/)).toBeInTheDocument();
   });
 
   it("says so when the run has not dispatched a build session yet", () => {

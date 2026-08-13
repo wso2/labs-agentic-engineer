@@ -139,6 +139,14 @@ type RunCycle struct {
 	// MergeReason is the verdict's own words, for a reader. Never parsed.
 	MergeReason string `gorm:"type:text" json:"mergeReason,omitempty"`
 
+	// AgentReason is why the CYCLE'S AGENT stopped without landing a pull
+	// request, as the pod-truth watcher classified it: `timed_out`,
+	// `agent_failed[:<pod reason>]`, `startup_failed:<reason>: <message>` or
+	// `job_not_found`. Empty on every cycle whose agent produced a pull request
+	// — the ordinary path, where the outcome is the pull request's and this
+	// column would only be a second, weaker opinion.
+	AgentReason string `gorm:"type:text" json:"agentReason,omitempty"`
+
 	// Token usage captured from the runner's terminal NDJSON result (#249/#291).
 	// A cycle IS one agent run, so this is where delivery's agent spend lives:
 	// after the issue-driven flip every token-burning dispatch is a cycle

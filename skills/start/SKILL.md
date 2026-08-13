@@ -1,6 +1,6 @@
 ---
 name: start
-description: Use when kicking off a project from its idea — the /start flow that interviews the user in a single round of questions and writes the PRD at specs/requirements/prd.md; also the flow for re-running /start on a project that already has a PRD.
+description: Use when kicking off a project from its idea, or re-running /start on a project that already has a PRD.
 metadata:
   aep:
     kind: platform
@@ -55,8 +55,7 @@ is their document.
 - **The bar, not the budget.** Ask only what changes the PRD. Three questions
   is a good form; padding one out to the cap is an interrogation.
 - **More questions than a form holds** → ask those whose answers change the
-  document most, and treat every one left behind exactly as the skip valve
-  does: your recommended answer, tagged `*assumed*`.
+  document most, and send every one left behind through the skip valve.
 
 Depth is opt-in: after generating, the user can go deeper in chat on any
 feature.
@@ -67,6 +66,10 @@ At any point the user may say "just generate" / "skip". Stop asking
 immediately: fill every remaining decision with your recommended answer and tag
 each one `*assumed*` where it lands in the PRD. An assumption the user can see
 is a decision they can overturn; a silent one is an invention.
+
+The valve answers an **ask** — the user's own words, whichever ones they choose.
+An unanswered form keeps its questions live: when anything else arrives while
+one stands, re-present that form and wait for the answer it is owed.
 
 ## Write the PRD
 

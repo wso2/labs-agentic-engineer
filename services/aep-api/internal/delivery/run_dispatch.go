@@ -72,22 +72,3 @@ type MilestoneDispatch struct {
 type MilestoneDispatcher interface {
 	Dispatch(ctx context.Context, req MilestoneDispatch) (jobRef string, err error)
 }
-
-// MilestoneAgentStopper stops the agent a cycle dispatched — the counterpart to
-// Dispatch, and the difference between cancelling a run and stopping the work.
-//
-// Cancel is a signal: it settles the run row and closes the cycle on the
-// ordinary code path. That was the whole of it, so a cancelled run reported
-// `cancelled` within a second while its agent kept running to the Job's own
-// deadline — an hour for a coding cycle, two for a validation — still spending
-// the org's model budget. This port is what makes the button mean what it says.
-//
-// Implementations must snapshot the cycle's log BEFORE deleting anything: the
-// delete propagates to the pods, and that log is the only record of what the
-// agent did before it was stopped.
-//
-// jobRef is the cycle's own (RunCycle.JobRef); empty means the dispatch never
-// launched, and stopping is then a no-op rather than an error.
-type MilestoneAgentStopper interface {
-	StopAgent(ctx context.Context, orgID, cycleID, jobRef string) error
-}

@@ -136,10 +136,10 @@ func Steps(db *gorm.DB, deploymentTier string, credKey []byte) []database.Step {
 		// no-op; it stays in the ordered list because the list is frozen and
 		// because an existing deployment's abandoned table keeps its index.
 		ctxStep("workflow_runs", RunWorkflowRuns),
-		// coding_agent_logs (GitHub-native): create the JobWatcher's final-log
-		// sidecar keyed to executions(id). Runs after `executions` (FK target) and
-		// `tasks_github_native` (cascade-drops any legacy component_tasks-keyed
-		// table). Supersedes the guarded phase3_coding_agent_logs no-op above.
+		// coding_agent_logs (GitHub-native): legacy CREATE TABLE for execution-
+		// keyed agent-log rows. New cycle logs are read from OpenChoreo + the
+		// observer; nothing writes this table. Runs after `executions` (FK) and
+		// `tasks_github_native`. Supersedes the phase3_coding_agent_logs no-op.
 		ctxStep("coding_agent_logs", RunCodingAgentLogs),
 		// rca_agent_reports (ops.RcaAgentReport): the store backing the
 		// console's Alerts notification bell and Alerts list/stepper
@@ -151,9 +151,9 @@ func Steps(db *gorm.DB, deploymentTier string, credKey []byte) []database.Step {
 		// (org, project). Fresh schema — nothing to backfill from the legacy
 		// executions/workflow_runs tables.
 		ctxStep("milestone_runs", RunMilestoneRuns),
-		// run_cycle_logs: the cycle-keyed agent-log sidecar the run progress
-		// stream reads once the Job's pod is reaped. FK'd to run_cycles(id), so it
-		// follows milestone_runs.
+		// run_cycle_logs: RETIRED tombstone. Writers deleted (grill Q2); step
+		// kept for frozen order and no longer creates the table (see
+		// run_cycle_logs.go).
 		ctxStep("run_cycle_logs", RunRunCycleLogs),
 		// agent_usage_ledger: the spend record that outlives the project. Its
 		// upsert arbiter index, plus the one-time backfill from the dispatch rows

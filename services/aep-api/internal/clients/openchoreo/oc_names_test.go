@@ -56,6 +56,87 @@ func TestNewBuildRunNameFitsLabelBudget(t *testing.T) {
 	}
 }
 
+// TestNewCodingAgentRunNameFitsOCJobLabelBudget is the coding-agent counterpart
+// of TestNewBuildRunNameFitsLabelBudget. OpenChoreo names the dataplane Job
+// `{scopedComponent}-{development}-{hash8}` and stamps that into pod-template
+// labels; overflowing 63 is ResourceApplyFailed with no runner pod.
+func TestNewCodingAgentRunNameFitsOCJobLabelBudget(t *testing.T) {
+	cycle := "08d05715-b1aa-444e-88e9-0875ff58d5c0"
+	cases := []struct {
+		name, project string
+		mustFit       bool
+	}{
+		{"the project that overflowed in local e2e", "hello-world-api-4", true},
+		{"short project", "shop", true},
+		{"18-char project head", "invoicing-freelance", true},
+		// Project alone leaves no room for ca-+digest under the Job budget —
+		// CreateComponent refuses these; the generator still returns a name.
+		{"absurd project", strings.Repeat("p", 500), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			friendly := NewCodingAgentRunName(tc.project, cycle)
+			scoped := ScopedComponentName(tc.project, friendly)
+			if !tc.mustFit {
+				return
+			}
+			if !strings.HasPrefix(friendly, "ca-") {
+				t.Errorf("NewCodingAgentRunName = %q, want ca- prefix", friendly)
+			}
+			if len(scoped) > CodingAgentComponentNameBudget {
+				t.Errorf("scoped name %q is %d chars, over CodingAgentComponentNameBudget=%d",
+					scoped, len(scoped), CodingAgentComponentNameBudget)
+			}
+			jobLabel := scoped + "-" + DevEnvironmentName + "-" + strings.Repeat("a", ocJobNameHashLen)
+			if len(jobLabel) > k8sname.MaxLabelValueLen {
+				t.Errorf("OC Job label %q is %d chars, over MaxLabelValueLen=%d",
+					jobLabel, len(jobLabel), k8sname.MaxLabelValueLen)
+			}
+		})
+	}
+}
+
+// TestNewCodingAgentRunNameIsStableAcrossRetries: a Temporal retry after a
+// crash must recreate the same Component name so CreateComponent's 409 path
+// re-reads instead of minting a second billed Component.
+func TestNewCodingAgentRunNameIsStableAcrossRetries(t *testing.T) {
+	a := NewCodingAgentRunName("hello-world-api-4", "08d05715-b1aa-444e-88e9-0875ff58d5c0")
+	b := NewCodingAgentRunName("hello-world-api-4", "08d05715-b1aa-444e-88e9-0875ff58d5c0")
+	if a != b {
+		t.Fatalf("unstable run name: %q then %q", a, b)
+	}
+	if a == NewCodingAgentRunName("hello-world-api-4", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee") {
+		t.Fatal("distinct cycle ids must not share a run name")
+	}
+}
+
+// TestCreateComponentRejectsOverlongCodingAgentName pins the choke-point guard:
+// an over-budget coding-agent Component must never be POSTed to OpenChoreo.
+func TestCreateComponentRejectsOverlongCodingAgentName(t *testing.T) {
+	var called atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called.Add(1)
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer srv.Close()
+
+	c := NewComponentClient(Config{BaseURL: srv.URL}).(*componentClient)
+	overlong := strings.Repeat("x", CodingAgentComponentNameBudget) // friendly alone fills the scoped budget once project is prefixed
+	_, err := c.CreateComponent(context.Background(), "default", "hello-world-api-4", &CreateComponentRequest{
+		Name: overlong,
+		Type: CodingAgentComponentTypeRef,
+	})
+	if err == nil {
+		t.Fatal("CreateComponent accepted an over-budget coding-agent name")
+	}
+	if !strings.Contains(err.Error(), "coding-agent name") {
+		t.Errorf("error = %q, want it to name the coding-agent budget", err)
+	}
+	if n := called.Load(); n != 0 {
+		t.Errorf("server was called %d times, want 0", n)
+	}
+}
+
 // TestCreateWorkflowRunRejectsOverlongName pins the guard at the choke point
 // every WorkflowRun create passes through.
 //

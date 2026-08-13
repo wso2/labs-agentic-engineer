@@ -37,16 +37,35 @@ import (
 //
 // Deploy chain: with AutoDeploy=true set on the Component (see
 // dispatch_service.ensureOCComponent), OC's Component controller owns the
-// Workload → ComponentRelease → ReleaseBinding fan-out. The build
-// workflow's `generate-workload-cr` step POSTs the Workload; the
-// controller picks it up, hashes the spec, creates a ComponentRelease,
-// and binds it into the project's first environment. The BFF only reads
-// the result back via ListDeployments. Wrappers for the write side of
-// that chain are deliberately absent — no caller needs them yet.
+// Workload → ComponentRelease → ReleaseBinding fan-out for USER components.
+// Ephemeral platform components (coding-agent) have no build WorkflowRun —
+// the BFF drives EnsureWorkload / EnsureRelease / EnsureReleaseBinding
+// explicitly instead.
 type ComponentClient interface {
 	ListComponents(ctx context.Context, orgName, projectName string, limit int, cursor string) (*gen.ComponentList, error)
 	GetComponent(ctx context.Context, orgName, projectName, componentName string) (*gen.Component, error)
 	CreateComponent(ctx context.Context, orgName, projectName string, req *CreateComponentRequest) (*gen.Component, error)
+
+	// EnsureComponentType get-or-creates a namespaced ComponentType. Idempotent
+	// on (orgName, metadata.name): HTTP 409 GETs the existing type and succeeds.
+	// body is the raw CR map (e.g. CodingAgentComponentType()) posted via the
+	// gen client's WithBody path — no typed converter.
+	EnsureComponentType(ctx context.Context, orgName string, body map[string]any) error
+
+	// ListInternalComponents returns the project's aep-internal coding-agent
+	// Components — the ONLY read that can see what ListComponents filters out.
+	// Drives the retention reaper.
+	ListInternalComponents(ctx context.Context, orgName, projectName string) ([]InternalComponent, error)
+
+	// The explicit deploy chain for the platform's own ephemeral components:
+	// Workload → ComponentRelease → ReleaseBinding. User components ride
+	// AutoDeploy instead (see the interface header); an agent cycle has no
+	// build to post a Workload, so the BFF drives all three writes. Every one
+	// treats 409 as success so a crashed dispatch resumes.
+	EnsureWorkload(ctx context.Context, orgName, projectName string, in WorkloadInput) error
+	EnsureRelease(ctx context.Context, orgName, projectName, componentName, releaseName string) (releaseNameOut string, err error)
+	EnsureReleaseBinding(ctx context.Context, orgName, projectName, componentName, environment, releaseName string) error
+
 	// UpdateComponentWorkflowEnvVars writes per-component env vars onto each
 	// of the component's ReleaseBindings at
 	// `spec.workloadOverrides.container.env`. Per-env (one RB per
@@ -123,12 +142,6 @@ type ComponentClient interface {
 	// agent-manager-service/clients/openchoreosvc/client/builds.go:71-85.
 	// See TriggerBuild for the `runName` + `secretRef` contracts.
 	TriggerBuildAtCommit(ctx context.Context, orgName, projectName, componentName, commitSHA, secretRef, runName string) (*gen.WorkflowRun, error)
-	// TriggerCodingAgent creates a WorkflowRun of ClusterWorkflow
-	// `aep-coding-agent` for the per-task ephemeral pod that runs the
-	// Claude Agent SDK against the task's feature branch. The label
-	// `aep.openchoreo.dev/coding-agent-task` carries the taskId so
-	// the BFF watcher can correlate runs back to the task.
-	TriggerCodingAgent(ctx context.Context, params CodingAgentParams) (*gen.WorkflowRun, error)
 	ListWorkflowRuns(ctx context.Context, orgName, projectName, componentName string, limit int, cursor string) (*gen.WorkflowRunList, error)
 	// ListProjectWorkflowRuns is the same read widened to every component in
 	// the project — one call instead of one per component. The run read uses it
@@ -136,36 +149,6 @@ type ComponentClient interface {
 	// learn which components the merge touched.
 	ListProjectWorkflowRuns(ctx context.Context, orgName, projectName string, limit int, cursor string) (*gen.WorkflowRunList, error)
 	GetWorkflowRun(ctx context.Context, orgName, runName string) (*gen.WorkflowRun, error)
-}
-
-// CodingAgentParams is the input to TriggerCodingAgent. Mirrors the schema
-// of `aep-coding-agent` ClusterWorkflow. All fields are required.
-// The agent itself creates the feature branch and opens the PR (with
-// `Closes #<issueNumber>` so the BFF webhook can link it back to the
-// task), so no branch is plumbed through here.
-type CodingAgentParams struct {
-	OrgName       string
-	ProjectName   string
-	ComponentName string
-	TaskID        string
-	Prompt        string
-	RepoURL       string
-	IdentityName  string
-	IdentityEmail string
-	IdentityLogin string
-	Bearer        string
-	GitServiceURL string
-	// PlatformURL is the BFF base URL the runner pod uses for its callbacks
-	// (credentials refresh). Passed through to the ClusterWorkflow parameter
-	// `bff.platformUrl` → env var AEP_PLATFORM_URL in the pod.
-	PlatformURL string
-	// AnthropicSecretRef is the name of the per-org K8s Secret in
-	// workflows-<OrgName> carrying ANTHROPIC_API_KEY. Materialised by
-	// AnthropicCredentialService.ApplyWPSecret in the dispatch pre-flight.
-	// The ClusterWorkflow wires
-	// it into the pod via `parameters.anthropic.secretRef` →
-	// `secretKeyRef.name`.
-	AnthropicSecretRef string
 }
 
 type componentClient struct {
@@ -343,6 +326,15 @@ func formatEndpointURL(u *ocgen.EndpointURL) string {
 
 // -- Component CRUD ----------------------------------------------------------
 
+const annotationInternal = "aep.wso2.com/internal"
+
+func isInternalComponent(annotations, labels map[string]string) bool {
+	if annotations[annotationInternal] == "true" {
+		return true
+	}
+	return labels[annotationInternal] == "true"
+}
+
 func (c *componentClient) ListComponents(ctx context.Context, orgName, projectName string, limit int, cursor string) (*gen.ComponentList, error) {
 	params := &ocgen.ListComponentsParams{}
 	sel := ocgen.LabelSelectorParam(fmt.Sprintf("%s=%s", string(LabelKeyProject), projectName))
@@ -369,11 +361,111 @@ func (c *componentClient) ListComponents(ctx context.Context, orgName, projectNa
 		})
 	}
 
-	items := make([]gen.Component, len(resp.JSON200.Items))
-	for i, comp := range resp.JSON200.Items {
-		items[i] = componentToModel(comp)
+	items := make([]gen.Component, 0, len(resp.JSON200.Items))
+	for _, comp := range resp.JSON200.Items {
+		var ann, lbls map[string]string
+		if comp.Metadata.Annotations != nil {
+			ann = *comp.Metadata.Annotations
+		}
+		if comp.Metadata.Labels != nil {
+			lbls = *comp.Metadata.Labels
+		}
+		if isInternalComponent(ann, lbls) {
+			continue
+		}
+		items = append(items, componentToModel(comp))
 	}
 	return &gen.ComponentList{Items: items}, nil
+}
+
+// internalComponentFrom lifts the reaper's view off the CR. The project is read
+// from spec.owner (authoritative) and the identity from the marker labels.
+func internalComponentFrom(c ocgen.Component) InternalComponent {
+	var projectName, typeName string
+	if c.Spec != nil {
+		projectName = c.Spec.Owner.ProjectName
+		typeName = c.Spec.ComponentType.Name
+	}
+	var created time.Time
+	if c.Metadata.CreationTimestamp != nil {
+		created = c.Metadata.CreationTimestamp.UTC()
+	}
+	return InternalComponent{
+		Name:      FriendlyComponentName(c.Metadata.Name, projectName),
+		TypeName:  typeName,
+		CycleID:   label(c.Metadata.Labels, string(LabelKeyAepCycle)),
+		RunName:   label(c.Metadata.Labels, string(LabelKeyAepRunName)),
+		CreatedAt: created,
+	}
+}
+
+// IsCodingAgentTypeName reports whether typeName is a coding-agent ComponentType
+// reference. OC may surface either the bare name (`coding-agent`) or the
+// workload-qualified form (`job/coding-agent`). Shared by the internal lister
+// and retention so a surface that returns one form cannot be silently pruned
+// by a check that only accepts the other.
+func IsCodingAgentTypeName(typeName string) bool {
+	return typeName == CodingAgentComponentTypeRef || typeName == CodingAgentComponentTypeName
+}
+
+// ListInternalComponents returns the project's aep-internal coding-agent
+// Components, following pagination. It selects on the internal MARKER (not on
+// the project label) and matches ownership client-side against
+// spec.owner.projectName, for the reason ListProjectReleaseBindings does:
+// ownership is the authoritative fact, and a label OC did or did not copy onto
+// the CR is not.
+//
+// This is the deliberate counterpart to ListComponents' filter: one method hides
+// internal components from users, the other is the only way the platform's own
+// machinery can see them. Only coding-agent typed internals are returned — the
+// retention reaper must not touch other future internal kinds.
+func (c *componentClient) ListInternalComponents(ctx context.Context, orgName, projectName string) ([]InternalComponent, error) {
+	sel := ocgen.LabelSelectorParam(string(LabelKeyAepInternal) + "=" + LabelValueAepInternal)
+	params := &ocgen.ListComponentsParams{LabelSelector: &sel}
+	var out []InternalComponent
+	for {
+		resp, err := c.oc.ListComponentsWithResponse(ctx, orgName, params)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list internal components: %w", err)
+		}
+		if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil {
+			return nil, handleErrorResponse(resp.StatusCode(), ErrorResponses{
+				JSON400: resp.JSON400,
+				JSON401: resp.JSON401,
+				JSON403: resp.JSON403,
+				JSON500: resp.JSON500,
+			})
+		}
+		for _, comp := range resp.JSON200.Items {
+			var ann, lbls map[string]string
+			if comp.Metadata.Annotations != nil {
+				ann = *comp.Metadata.Annotations
+			}
+			if comp.Metadata.Labels != nil {
+				lbls = *comp.Metadata.Labels
+			}
+			if !isInternalComponent(ann, lbls) {
+				continue
+			}
+			if comp.Spec == nil || comp.Spec.Owner.ProjectName != projectName {
+				continue
+			}
+			if !IsCodingAgentTypeName(comp.Spec.ComponentType.Name) {
+				continue
+			}
+			out = append(out, internalComponentFrom(comp))
+		}
+		next := resp.JSON200.Pagination.NextCursor
+		if next == nil || *next == "" {
+			return out, nil
+		}
+		// A non-advancing cursor would spin this loop forever — fail instead.
+		if params.Cursor != nil && *next == string(*params.Cursor) {
+			return nil, fmt.Errorf("list internal components: pagination did not advance (cursor %q)", *next)
+		}
+		cur := ocgen.CursorParam(*next)
+		params.Cursor = &cur
+	}
 }
 
 func (c *componentClient) GetComponent(ctx context.Context, orgName, projectName, componentName string) (*gen.Component, error) {
@@ -395,12 +487,33 @@ func (c *componentClient) GetComponent(ctx context.Context, orgName, projectName
 }
 
 func (c *componentClient) CreateComponent(ctx context.Context, orgName, projectName string, req *CreateComponentRequest) (*gen.Component, error) {
+	// Refuse a coding-agent Component whose SCOPED name leaves OpenChoreo no
+	// room for `-{env}-{hash8}` inside the Kubernetes label-value limit. Same
+	// failure class as an overlong WorkflowRun name: OC accepts the parent CR,
+	// then ResourceApplyFailed on the Job, then no runner pod — only the Job
+	// path surfaces on the ReleaseBinding, which the console's progress dark
+	// zone does not read. Catch it here, where the cause is still known.
+	if req != nil && req.Type == CodingAgentComponentTypeRef {
+		scoped := ScopedComponentName(projectName, req.Name)
+		if len(scoped) > CodingAgentComponentNameBudget {
+			return nil, fmt.Errorf(
+				"create component: coding-agent name %q is %d chars after project scoping, over the %d-char budget "+
+					"(OpenChoreo appends -%s-<hash8> into a pod label, so this Component would be accepted and then never schedule a runner)",
+				scoped, len(scoped), CodingAgentComponentNameBudget, DevEnvironmentName)
+		}
+	}
+
 	resp, err := c.oc.CreateComponentWithResponse(ctx, orgName, buildCreateComponentBody(projectName, req))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create component: %w", err)
 	}
 
 	switch {
+	case resp.StatusCode() == http.StatusPaymentRequired:
+		// Org is at its agent-concurrency cap. Own sentinel so the dispatcher
+		// can map this to blocked-not-failed (never a retryable create failure).
+		return nil, fmt.Errorf("%w: create component %q: %s",
+			ErrPaymentRequired, req.Name, strings.TrimSpace(string(resp.Body)))
 	case resp.StatusCode() == http.StatusCreated && resp.JSON201 != nil:
 		comp := componentToModel(*resp.JSON201)
 		return &comp, nil
@@ -784,6 +897,18 @@ func buildCreateComponentBody(projectName string, req *CreateComponentRequest) o
 		},
 	}
 
+	if len(req.Labels) > 0 {
+		labels := make(map[string]string, len(req.Labels))
+		for k, v := range req.Labels {
+			labels[k] = v
+		}
+		body.Metadata.Labels = &labels
+	}
+	if len(req.Parameters) > 0 {
+		params := cloneParameterMap(req.Parameters)
+		body.Spec.Parameters = &params
+	}
+
 	if req.Workflow != nil {
 		wfKind := ocgen.ComponentWorkflowConfigKindClusterWorkflow
 		if req.Workflow.Kind != "" {
@@ -1147,94 +1272,9 @@ func cloneParameterMap(in map[string]interface{}) map[string]interface{} {
 	return out
 }
 
-// TriggerCodingAgent creates a WorkflowRun of ClusterWorkflow
-// `aep-coding-agent`. Each call creates a fresh run; idempotency is
-// the caller's responsibility (see DispatchService.dispatchOne which gates
-// on task.LastCodingAgentRunName + DispatchedAt).
-//
-// NOTE: deliberately NOT setting `openchoreo.dev/component` /
-// `openchoreo.dev/project` labels. OC validates the
-// ClusterWorkflow ↔ ClusterComponentType allowed-workflow pair when a
-// WorkflowRun carries the `openchoreo.dev/component` label, which would
-// reject `aep-coding-agent` because the user's component is
-// `deployment/service` (allowed only the builder ClusterWorkflows). The
-// agent pod has no need to be tied to the user's Component for OC's
-// purposes — the project + component identifiers flow in via the
-// `parameters.task.*` fields that the runner reads. The `aep.*`
-// label catalog carries them for the BFF watcher instead.
-func (c *componentClient) TriggerCodingAgent(ctx context.Context, params CodingAgentParams) (*gen.WorkflowRun, error) {
-	scopedComp := ScopedComponentName(params.ProjectName, params.ComponentName)
-
-	// Run name shape: coding-agent-<short-task>-<unixMs>. K8s names must be
-	// ≤63 chars and start with a letter. Truncate the taskID to 8 to stay
-	// safely inside the budget. The unixMs suffix makes re-dispatch unique.
-	shortTask := params.TaskID
-	if len(shortTask) > 8 {
-		shortTask = shortTask[:8]
-	}
-	runName := fmt.Sprintf("coding-agent-%s-%d", shortTask, time.Now().UnixMilli())
-
-	labels := map[string]string{
-		string(LabelKeyAepCodingAgentTask): params.TaskID,
-		string(LabelKeyAepProject):         params.ProjectName,
-		string(LabelKeyAepComponent):       scopedComp,
-	}
-
-	wfKind := ocgen.WorkflowRunConfigKindClusterWorkflow
-	parameters := codingAgentParameters(params)
-	body := ocgen.CreateWorkflowRunJSONRequestBody{
-		Metadata: ocgen.ObjectMeta{
-			Name:   runName,
-			Labels: &labels,
-		},
-		Spec: &ocgen.WorkflowRunSpec{
-			Workflow: ocgen.WorkflowRunConfig{
-				Kind:       &wfKind,
-				Name:       "aep-coding-agent",
-				Parameters: &parameters,
-			},
-		},
-	}
-
-	return c.createWorkflowRun(ctx, params.OrgName, body, "trigger coding-agent")
-}
-
-// codingAgentParameters builds the `parameters.*` map that the
-// aep-coding-agent ClusterWorkflow's openAPIV3Schema expects. The
-// runner image reads AEP_* env vars substituted from these keys.
-func codingAgentParameters(p CodingAgentParams) map[string]interface{} {
-	return map[string]interface{}{
-		"task": map[string]interface{}{
-			"id":            p.TaskID,
-			"orgId":         p.OrgName,
-			"projectId":     p.ProjectName,
-			"componentName": p.ComponentName,
-			"prompt":        p.Prompt,
-		},
-		"repository": map[string]interface{}{
-			"url":       p.RepoURL,
-			"identity": map[string]interface{}{
-				"name":  p.IdentityName,
-				"email": p.IdentityEmail,
-				"login": p.IdentityLogin,
-			},
-		},
-		"bff": map[string]interface{}{
-			"bearer":      p.Bearer,
-			"platformUrl": p.PlatformURL,
-		},
-		"gitService": map[string]interface{}{
-			"url": p.GitServiceURL,
-		},
-		"anthropic": map[string]interface{}{
-			"secretRef": p.AnthropicSecretRef,
-		},
-	}
-}
-
-// createWorkflowRun is the shared POST path for both trigger flows. opName
+// createWorkflowRun is the shared POST path for WorkflowRun creates. opName
 // goes into the network-error wrap to keep slog logs distinguishable
-// (trigger build / trigger coding-agent).
+// (e.g. trigger build).
 func (c *componentClient) createWorkflowRun(ctx context.Context, orgName string, body ocgen.CreateWorkflowRunJSONRequestBody, opName string) (*gen.WorkflowRun, error) {
 	// Refuse a name OpenChoreo would accept and then never build. This is the
 	// one choke point every WorkflowRun create passes through, and the check is

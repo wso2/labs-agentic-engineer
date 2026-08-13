@@ -109,35 +109,23 @@ console:
 codingAgentRunner:
   # Docker image for the runner Job — ONE image for both task kinds
   # (implementation and validation; it bakes Playwright + chromium).
-  # Dispatched as a K8s Job in the org's data-plane remote-worker namespace.
+  # OpenChoreo renders the Job into the project's `dp-…` dataplane namespace
+  # from the per-org `coding-agent` ComponentType.
   # The release pipeline pins this to ghcr.io/wso2/aep/remote-worker:<version>;
   # empty disables coding dispatch (it fails loudly).
   image: "ghcr.io/wso2/aep/remote-worker:latest"
 
-# Coding-agent dispatch + live-streaming wiring.
+# Coding-agent dispatch wiring.
 #
-# The coding-agent runner writes NDJSON progress to its pod stdout; aep-api
-# surfaces the live activity feed + drives the JobWatcher by READING that pod's
-# logs through the cluster-gateway-proxy. In cloud/prod that proxy is a real
-# managed service; locally we run an in-cluster stub of it (reads only), while
-# dispatch stays on the direct K8s Job path.
+# A run cycle is an ephemeral OpenChoreo Component created through the OC API;
+# aep-api reads its pod logs and resource tree through that same API. The only
+# switch left here is the local-dev stub toggle below.
 codingAgentDispatch:
   localStubs:
-    # LOCAL DEV ONLY. Deploys the in-cluster cluster-gateway-proxy stub, which
-    # forwards arbitrary K8s API calls to the cluster with NO auth/allowlist,
-    # and sets OPENBAO_ADDR/TOKEN on aep-api for in-process secrets delivery.
-    # NEVER set true in production — prod uses the real managed proxy; enabling
-    # this in a shared cluster exposes the K8s API. aep init sets this true for
-    # local installs; prod leaves it false and supplies the real URLs below.
+    # LOCAL DEV ONLY. Sets OPENBAO_ADDR/TOKEN on aep-api for in-process secrets
+    # delivery. NEVER set true in production — prod injects a real
+    # SecretsProvider. `aep init` sets this true for local installs.
     enabled: false
-  clusterGatewayProxy:
-    # Base URL aep-api uses to reach the cluster-gateway-proxy. When
-    # localStubs.enabled and this is empty, the chart wires the in-cluster stub
-    # Service DNS automatically. In prod, set this to the real proxy endpoint.
-    url: ""
-    # Stub image + port — only used when localStubs.enabled.
-    image: "ghcr.io/wso2/aep/cluster-gateway-proxy:latest"
-    port: 8085
 
 # GitHub webhook delivery. GitHub delivers pull_request/push/issues events to
 # deliveryURL, which aep-api registers on each repo; the events drive task state

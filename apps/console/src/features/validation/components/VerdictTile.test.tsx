@@ -73,6 +73,51 @@ describe("verdictSentence", () => {
     );
   });
 
+  // The consequence clause is the half that goes STALE mid-loop: a fatal verdict on
+  // a live run is not the run's answer, and "the run stopped here" would tell a
+  // reader the version was abandoned while the platform is repairing it. The
+  // evidence half — what the report found — is unchanged, because that much is
+  // still true.
+  it("failed keeps its evidence but not its ending while a repair is in flight", () => {
+    const t = tally(40, { fail: 2, pass: 38 });
+    const s = verdictSentence("failed", t, "awaiting-fix");
+    expect(s).toContain("2 of 40 criteria failed");
+    expect(s).not.toContain("The run stopped here");
+    expect(s).toContain("validates again once the fix is deployed");
+    // The run is the subject here as it is in every other run sentence a reader
+    // meets — a second actor would read as a second thing acting.
+    expect(s).toContain("The run filed each failure as an issue");
+  });
+
+  it("failed says a repeat attempt is running while one is", () => {
+    const s = verdictSentence("failed", tally(40, { fail: 2, pass: 38 }), "running");
+    expect(s).toContain("2 of 40 criteria failed");
+    expect(s).not.toContain("The run stopped here");
+    expect(s).toContain("A new validation attempt is running");
+  });
+
+  // `unreported` gets its OWN mid-loop sentence rather than the failed one's ending:
+  // the platform files nothing for it (there is no failing criterion to turn into
+  // work), so promising a fix would name work that does not exist.
+  it("unreported promises a retry, never a fix, while the loop repeats it", () => {
+    const s = verdictSentence("unreported", undefined, "awaiting-fix");
+    expect(s).toContain("the run is validating again");
+    expect(s).not.toContain("fix");
+    expect(s).not.toContain("there are no results to show for this run");
+  });
+
+  // A state is only honoured for the two verdicts the loop repeats. Everything else
+  // is final the moment it is written, so its copy must not acquire a mid-loop
+  // ending from a lifecycle value that could only be stale.
+  it("leaves a final verdict's sentence alone whatever state it is given", () => {
+    for (const v of ["passed", "partial", "inconclusive"]) {
+      const t = tally(40, { pass: 35, manual: 5 });
+      expect(verdictSentence(v, t, "awaiting-fix"), `${v} changed mid-loop`).toBe(
+        verdictSentence(v, t),
+      );
+    }
+  });
+
   it("inconclusive asks for manual validation", () => {
     expect(verdictSentence("inconclusive", tally(12, { manual: 12 }))).toBe(
       "None of the 12 validation criteria could be automated — please validate them manually.",
@@ -164,6 +209,40 @@ describe("VerdictTile", () => {
     render(<VerdictTile verdict="failed" />);
     expect(screen.getByText("Validation failed")).toBeInTheDocument();
     expect(screen.getByText(/At least one criterion failed/)).toBeInTheDocument();
+  });
+
+  // The headline comes from `state` and the copy from `verdict`, because they answer
+  // different questions mid-repair: what the platform is DOING, and what the last
+  // attempt FOUND. Leading with the verdict is what made this tile announce a
+  // terminal failure over a version the loop was actively repairing.
+  it("leads with the loop's state, keeps the verdict's evidence, mid-repair", () => {
+    render(
+      <VerdictTile
+        verdict="failed"
+        state="awaiting-fix"
+        tally={tally(40, { fail: 2, pass: 38 })}
+      />,
+    );
+    expect(screen.getByText("Awaiting fix")).toBeInTheDocument();
+    expect(screen.queryByText("Validation failed")).not.toBeInTheDocument();
+    expect(screen.getByText(/2 of 40 criteria failed/)).toBeInTheDocument();
+    // The counts stay: they are the evidence of what is being fixed.
+    expect(screen.getByText("2 failed · 38 passed")).toBeInTheDocument();
+  });
+
+  // Warning, not error. The verdict is real but not final, and `error` here would
+  // read as terminal — the same reason the shared mapper tones `awaiting-fix` this
+  // way for the deployments board.
+  it("tones a repair in flight as a warning, not an error", () => {
+    render(<VerdictTile verdict="failed" state="awaiting-fix" />);
+    expect(screen.getByRole("alert").className).toMatch(/Warning/);
+  });
+
+  // The tile still needs an ATTEMPT to speak for: `running` with no verdict yet has
+  // no evidence to put a tile above, and the page shows the live log instead.
+  it("renders nothing for a lifecycle state with no verdict behind it", () => {
+    const { container } = render(<VerdictTile verdict="" state="awaiting-fix" />);
+    expect(container.firstChild).toBeNull();
   });
 
   // skipped has its own empty state on the page — there is no report and no

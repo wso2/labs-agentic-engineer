@@ -43,7 +43,11 @@ import { useProjectStatus } from "../../projects/api/queries";
 import { useBuildRuns, useCancelRun } from "../../builds/api/queries";
 import { RunFeed } from "../../builds/components/RunFeed";
 import { isTerminalRun } from "../../builds/lib/runView";
-import { validationView, type StageTone } from "../../projects/lib/pipeline";
+import {
+  validationState,
+  validationView,
+  type StageTone,
+} from "../../projects/lib/pipeline";
 import { useValidationCriteria, useValidationReport } from "../api/queries";
 import { VerdictTile } from "./VerdictTile";
 
@@ -80,23 +84,19 @@ const TONE_TO_STATUS: Record<StageTone, StatusTone> = {
   error: "error",
 };
 
-// Header chip for the run's verdict, falling back to the coarse lifecycle state
-// while no verdict exists yet. DERIVED from the shared mapper rather than
-// restating its cases, so this page's chip cannot drift from the deployments
-// board's — the drift that left `partial`, `inconclusive` and `unreported`
-// chipless here while the board named them correctly.
-function headerChip(
-  verdict: ReturnType<typeof validationView>,
-  running: boolean,
-): PageHeaderStatus | undefined {
-  if (verdict) {
-    return {
-      // The shared labels are lowercase for mid-sentence use; the chip leads.
-      label: verdict.label.charAt(0).toUpperCase() + verdict.label.slice(1),
-      tone: TONE_TO_STATUS[verdict.tone],
-    };
-  }
-  return running ? { label: "Validating", tone: "info" } : undefined;
+// Header chip for the version's validation state. DERIVED from the shared mapper
+// rather than restating its cases, so this page's chip cannot drift from the
+// deployments board's — the drift that left `partial`, `inconclusive` and
+// `unreported` chipless here while the board named them correctly, and later left
+// this page reading "Validation failed" while the board correctly read "awaiting
+// fix" for the same run.
+function headerChip(view: ReturnType<typeof validationView>): PageHeaderStatus | undefined {
+  if (!view) return undefined;
+  return {
+    // The shared labels are lowercase for mid-sentence use; the chip leads.
+    label: view.label.charAt(0).toUpperCase() + view.label.slice(1),
+    tone: TONE_TO_STATUS[view.tone],
+  };
 }
 
 // The oracle joined with the run's report, as counts. Parsed here rather than
@@ -133,7 +133,6 @@ export function ValidationPage({
 }) {
   const status = useProjectStatus(projectName);
   const deploy = status.data?.deploy;
-  const running = deploy?.validation === "running";
 
   // The version this page is about is the NEWEST run's — the same run
   // `deploy.validation` (the chip) describes.
@@ -173,8 +172,15 @@ export function ValidationPage({
   // rendered label instead (as this page used to) breaks silently the moment the
   // copy changes — and swapping in the shared mapper changes its casing.
   const rawVerdict = run?.validation?.verdict ?? "";
-  const verdict = validationView(rawVerdict);
   const reportPath = run?.validation?.reportPath ?? "";
+  // What to SAY, which is not the same as what the run last concluded. A fatal
+  // verdict on a live run is mid-loop: the platform files the failures as work and
+  // validates again, so the column alone would announce a terminal failure over a
+  // version the platform is repairing. The lifecycle half of that lives only on
+  // deploy.validation, and joining the two is the shared mapper's job so this page
+  // and the deployments board cannot disagree about the same run.
+  const state = validationState(deploy?.validation ?? "", rawVerdict);
+  const verdict = validationView(state);
   // Every run that actually produced an attempt, OLDEST first — the version's
   // chronology. Separate from `run` above because a run can own the question
   // without having answered it yet (a revalidation mid-flight), and because the
@@ -237,17 +243,28 @@ export function ValidationPage({
   const cancelling =
     cancel.isPending || (cancelRequestedFor === liveRun?.id && !cancel.isError);
 
-  // Body rule: the log shows while there is no report to show (running, failed
-  // mechanically, nothing settled yet) OR the user toggled ?view=logs.
-  const showLogs = !settled || view === "logs";
+  // Body rule: the log shows while there is no report worth showing — nothing
+  // settled yet, or an attempt IN FLIGHT, whose report does not exist yet and whose
+  // predecessor's is about to be replaced — OR the user toggled ?view=logs.
+  //
+  // The in-flight arm is what makes a repeat attempt read like the first one. It was
+  // unreachable while the page had no lifecycle input: a second attempt runs with a
+  // verdict already on the row, so `settled` was true and the page opened on the
+  // previous attempt's report under a chip announcing that validation was running.
+  //
+  // `awaiting-fix` deliberately does NOT show the log: the cycle in flight then is a
+  // coding one, and this feed is filtered to validation cycles, so it would be a
+  // stale log where the reader wants the report naming what is being fixed.
+  const showLogs = !settled || state === "running" || view === "logs";
 
   // The verdict tile stays visible in BOTH bodies — a verdict does not stop being
-  // true because the reader switched to the log.
+  // true because the reader switched to the log. `state` is what it leads with, so
+  // a repair in flight reads as one instead of as a run that stopped.
   const tile = settled ? (
-    <VerdictTile verdict={rawVerdict} {...(tally ? { tally } : {})} />
+    <VerdictTile verdict={rawVerdict} state={state} {...(tally ? { tally } : {})} />
   ) : null;
 
-  const chip = headerChip(verdict, running);
+  const chip = headerChip(verdict);
   const header = (
     <PageHeader
       title="Validation"
@@ -371,7 +388,12 @@ export function ValidationPage({
   }
 
   // Nothing to show: no deployed version, or its run never reached validation.
-  if (!run || (!validationCycle && !verdict)) {
+  //
+  // Keyed on the RAW verdict rather than the rendered state, which now carries the
+  // lifecycle: `running` can arrive from the status poll an interval before the cycle
+  // record reaches the run story, and counting that as "something to show" would
+  // render an empty body under a "Validating" chip instead of this.
+  if (!run || (!validationCycle && !validationView(rawVerdict))) {
     return (
       <>
         {headerWithCancelError}

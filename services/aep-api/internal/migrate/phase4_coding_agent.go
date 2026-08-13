@@ -26,8 +26,8 @@ import (
 // RunPhase4CodingAgent adds the `last_coding_agent_run_name` column to
 // component_tasks plus the partial indices that back the watchers'
 // 10s-cadence sweep queries. Mirrors the existing LastBuildRunName column
-// but tracks the per-task WorkflowRun of ClusterWorkflow
-// `aep-coding-agent` (the ephemeral-pod coding-agent path).
+// but tracks the coding-agent run name (today: ephemeral OpenChoreo Job
+// Component `ca-*`, historically a ClusterWorkflow WorkflowRun).
 //
 // Both watcher queries are non-sargable on the empty-string predicate:
 //

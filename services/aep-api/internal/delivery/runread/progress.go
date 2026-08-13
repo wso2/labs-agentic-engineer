@@ -50,8 +50,8 @@ import (
 
 const (
 	// runStreamTick re-derives the run row, its cycles and their new log lines.
-	// Everything it touches is DB or the cluster proxy — never GitHub — so it can
-	// be fast without spending rate.
+	// Everything it touches is DB or OpenChoreo / the observer — never GitHub —
+	// so it can be fast without spending rate.
 	runStreamTick = 2 * time.Second
 	// runStreamKeepAlive paces `: keep-alive` comments so proxies keep an idle
 	// stream open and a dead client is noticed. A run parked in `waiting` emits
@@ -82,9 +82,9 @@ type ProgressService struct {
 	keepAlive time.Duration
 }
 
-// NewProgressService wires the stream service. logs may be nil (a boot without
-// the cluster-gateway-proxy has no log source): the stream then carries cycle
-// frames and settles normally, just with no lines.
+// NewProgressService wires the stream service. logs may be nil (no progress
+// reader wired): the stream then carries cycle frames and settles normally,
+// just with no lines.
 func NewProgressService(runs RunReader, cycles CycleReader, logs CycleLogReader) *ProgressService {
 	return &ProgressService{runs: runs, cycles: cycles, logs: logs, tick: runStreamTick, keepAlive: runStreamKeepAlive}
 }

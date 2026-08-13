@@ -19,6 +19,7 @@ package projects
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/platform/apierr"
@@ -64,11 +65,35 @@ func MapProjectError(err error) error {
 		return apierr.Forbidden("insufficient permissions to perform this action")
 	case sourcecontrol.IsRepoNameConflict(err):
 		return apierr.Conflict("a repository with this name already exists — choose another repository name")
+	case errors.Is(err, openchoreo.ErrPaymentRequired):
+		// Prefer the platform sentence (quota / inactive subscription) over the
+		// bare sentinel — the console already renders Error.message in an Alert.
+		return apierr.PaymentRequired(paymentRequiredMessage(err))
 	}
 	if status, ok := ocerr.Status(err); ok {
 		return errFromStatus(status, err.Error())
 	}
 	return apierr.Internal("internal error")
+}
+
+// paymentRequiredMessage strips the "payment required: " sentinel prefix so the
+// console Alert shows the platform sentence alone.
+func paymentRequiredMessage(err error) string {
+	const fallback = "Quota limit reached. Upgrade your subscription to continue."
+	if err == nil {
+		return fallback
+	}
+	msg := err.Error()
+	prefix := openchoreo.ErrPaymentRequired.Error() + ": "
+	if strings.HasPrefix(msg, prefix) {
+		if trimmed := strings.TrimSpace(strings.TrimPrefix(msg, prefix)); trimmed != "" {
+			return trimmed
+		}
+	}
+	if msg == openchoreo.ErrPaymentRequired.Error() {
+		return fallback
+	}
+	return msg
 }
 
 // MapComponentError translates an OpenChoreo sentinel that reached
@@ -100,6 +125,8 @@ func errFromStatus(status int, msg string) error {
 		return apierr.NotFound(msg)
 	case http.StatusConflict:
 		return apierr.Conflict(msg)
+	case http.StatusPaymentRequired:
+		return apierr.PaymentRequired(msg)
 	default:
 		return apierr.Internal(msg)
 	}

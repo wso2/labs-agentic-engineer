@@ -68,11 +68,19 @@ const CLONE_MAX_BUFFER = 16 * 1024 * 1024;
  * How a clone authenticates. Both fields empty means an unauthenticated origin
  * (file:// in tests), which configures no helper at all so a genuinely missing
  * credential surfaces as git's own error rather than an empty password.
+ *
+ * `helperPath` is either:
+ *   - an absolute path to the AEP credhelper script (reads AEP_BEARER_FILE), or
+ *   - a git `!` shell helper, e.g. `!/usr/bin/gh auth git-credential` when a
+ *     GITHUB_TOKEN/GH_TOKEN is mounted (see gh_git_auth.ts).
  */
 export interface CloneAuth {
-  /** Absolute path to the credential helper script (see credhelper.ts). */
+  /** Credential helper value for `credential.<scope>.helper`. */
   helperPath: string;
-  /** Absolute path to the platform bearer the helper exchanges for a token. */
+  /**
+   * Absolute path to the platform bearer the AEP helper exchanges for a token.
+   * Empty when using the gh shell helper (token comes from GITHUB_TOKEN/GH_TOKEN).
+   */
   bearerFile: string;
 }
 
@@ -137,11 +145,12 @@ export function buildCloneInvocation(
     ...(opts.baseEnv ?? process.env),
     GIT_TERMINAL_PROMPT: "0",
   };
-  // The helper reads the bearer from this path. It is a PATH, not a secret, and
-  // it is set on a per-child env object rather than process.env: runner.ts
+  // AEP credhelper reads the bearer from this path. It is a PATH, not a secret,
+  // and it is set on a per-child env object rather than process.env: runner.ts
   // spreads process.env into the agent's child env, and provisioning's staged
-  // bearer is gone by the time the agent starts.
-  if (authed && opts.bearerFile !== "") {
+  // bearer is gone by the time the agent starts. The gh shell helper does not
+  // use it — GITHUB_TOKEN/GH_TOKEN is already in the inherited env.
+  if (authed && opts.bearerFile !== "" && !opts.helperPath.startsWith("!")) {
     env.AEP_BEARER_FILE = opts.bearerFile;
   }
   return { cmd, env };

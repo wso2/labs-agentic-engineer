@@ -21,12 +21,9 @@ package organization_test
 // with the REAL AES-256-GCM secrets.NewDBStore — the SQL-shaped behavior
 // under pin: Connect's advisory-lock + ON CONFLICT upsert, the org_secrets
 // write, Status/fetchRow org scoping, Disconnect's delete + best-effort GC,
-// EffectiveKey resolution, and ApplyWPSecret's nil-wpClient degraded mode.
-// The Anthropic probe is faked at the HTTP boundary (anthropicFakeAPI,
-// duplicated in dbtest_helpers_test.go — the unit tier's copy stays in
-// package organization). wpClient stays nil, so the K8s SSA apply/delete
-// paths are NOT covered here (they need a cluster — integration-owned); only
-// their documented degraded-mode contract is.
+// EffectiveKey resolution and the Connect/Disconnect cascade. The service
+// writes nothing into any cluster: the runner reads the org key through an
+// ExternalSecret rendered against the SM-API-mirrored path.
 //
 // External test package: anthropic_service_test.go (unit tier, package
 // organization) imports dbtest, which imports migrate, which imports
@@ -42,7 +39,6 @@ import (
 	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/platform/dbtest"
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
-	"github.com/wso2/aep/aep-api/internal/platform/tenant"
 )
 
 // anthropicDBAESKey is the 32-byte AES-256 key for the real DBStore.
@@ -52,7 +48,7 @@ const anthropicDBAESKey = "0123456789abcdef0123456789abcdef"
 const anthropicDBKey2 = "sk-ant-api03-ZyXwVuTsRqPoNmLkJiHgFe-second-9876"
 
 // anthropicDBService wires the real service: per-test Postgres + the real
-// encrypted DBStore + a fake Anthropic API answering apiStatus; wpClient nil.
+// encrypted DBStore + a fake Anthropic API answering apiStatus.
 func anthropicDBService(t *testing.T, apiStatus int) (*organization.AnthropicCredentialService, secrets.CredentialStore) {
 	t.Helper()
 	db := dbtest.New(t)
@@ -61,7 +57,7 @@ func anthropicDBService(t *testing.T, apiStatus int) (*organization.AnthropicCre
 		t.Fatalf("real DBStore: %v", err)
 	}
 	base, _ := anthropicFakeAPI(t, apiStatus)
-	return organization.NewAnthropicCredentialService(organization.NewOrgAnthropicRepository(db), store, nil).WithAnthropicAPIBase(base), store
+	return organization.NewAnthropicCredentialService(organization.NewOrgAnthropicRepository(db), store).WithAnthropicAPIBase(base), store
 }
 
 // anthropicMustConnect connects key for org or fails the test.
@@ -292,37 +288,26 @@ func TestAnthropicOrgIsolation_DB(t *testing.T) {
 	}
 }
 
-func TestAnthropicApplyWPSecret_NilClientDegradedMode_DB(t *testing.T) {
+func TestAnthropicDisconnect_NoWorkflowPlaneSecret_DB(t *testing.T) {
 	t.Parallel()
 	svc, store := anthropicDBService(t, http.StatusOK)
 	ctx := context.Background()
 
-	// No row → the dispatch-path sentinel (mapped to 422 at that edge).
-	if _, err := svc.ApplyWPSecret(ctx, "acme"); !errors.Is(err, organization.ErrAnthropicKeyRequired) {
-		t.Fatalf("absent org: want organization.ErrAnthropicKeyRequired, got %v", err)
+	if _, err := svc.Connect(ctx, "acme", organization.AnthropicRoleDefault, organization.AnthropicConnectRequest{APIKey: anthropicUnitKey}); err != nil {
+		t.Fatalf("Connect = %v", err)
 	}
-
-	// Connected + nil wpClient → success with the fixed secret name; the SSA
-	// write itself is SKIPPED (degraded mode). The real K8s apply needs a
-	// cluster and is integration-owned — this pins only the nil-client
-	// contract.
-	anthropicMustConnect(t, svc, "acme", anthropicUnitKey)
-	res, err := svc.ApplyWPSecret(ctx, "acme")
-	if err != nil {
-		t.Fatalf("apply with nil wpClient must degrade cleanly: %v", err)
+	if err := svc.Disconnect(ctx, "acme", organization.AnthropicRoleDefault); err != nil {
+		t.Fatalf("Disconnect = %v", err)
 	}
-	if res.SecretRefName != tenant.AnthropicSecretName {
-		t.Fatalf("secretRefName: got %q, want %q", res.SecretRefName, tenant.AnthropicSecretName)
+	if _, err := svc.Status(ctx, "acme", organization.AnthropicRoleDefault); err == nil {
+		t.Fatal("Status after Disconnect must report the row is gone")
 	}
-
-	// Row active but bytes missing → a hard error (NOT the 422 sentinel):
-	// the service refuses to dispatch on a half-present credential.
-	if err := store.Delete(ctx, "acme", "anthropic/key"); err != nil {
-		t.Fatalf("store delete: %v", err)
+	if b, err := store.Get(ctx, "acme", "anthropic/key"); err == nil && len(b) > 0 {
+		t.Fatal("Disconnect left the encrypted key bytes behind")
 	}
-	_, err = svc.ApplyWPSecret(ctx, "acme")
-	if err == nil || errors.Is(err, organization.ErrAnthropicKeyRequired) || !errors.Is(err, secrets.ErrSecretNotFound) {
-		t.Fatalf("active row without bytes: want a wrapped ErrSecretNotFound, got %v", err)
+	// Idempotent: a second Disconnect is a no-op, not an error.
+	if err := svc.Disconnect(ctx, "acme", organization.AnthropicRoleDefault); err != nil {
+		t.Fatalf("second Disconnect = %v, want nil", err)
 	}
 }
 

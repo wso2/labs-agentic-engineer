@@ -158,11 +158,10 @@ func TestExecWatcher_BuildSuccess_FinishesSucceeded(t *testing.T) {
 	}
 }
 
-// TestExecWatcher_SkipsProxyJobRuns proves the ExecWatcher ignores
-// proxy-dispatched coding-agent Jobs (`ca-…`, owned by the JobWatcher) and polls
-// only OpenChoreo WorkflowRuns (`wf-…`) — otherwise it spams "WorkflowRun not
-// found" every tick for the Job rows.
-func TestExecWatcher_SkipsProxyJobRuns(t *testing.T) {
+// TestExecWatcher_ClosesLegacyCodingAgentExecutions: ca- KindCoding rows are
+// not WorkflowRuns. Skipping them forever left pre-migration executions
+// `running`; the watcher now Finishes them failed so the issue mutex releases.
+func TestExecWatcher_ClosesLegacyCodingAgentExecutions(t *testing.T) {
 	caRow := &delivery.Execution{ID: "j1", OrgID: "acme", Repo: "acme/widgets", IssueNumber: 7,
 		Kind: string(taskmeta.KindCoding), Status: string(taskmeta.ExecRunning), RunName: "ca-abc12345-2601011200"}
 	wfRow := &delivery.Execution{ID: "w1", OrgID: "acme", Repo: "acme/widgets", IssueNumber: 8,
@@ -182,13 +181,19 @@ func TestExecWatcher_SkipsProxyJobRuns(t *testing.T) {
 		t.Fatalf("Sweep: %v", err)
 	}
 	if len(polled) != 1 || polled[0] != "wf-xyz" {
-		t.Fatalf("ExecWatcher must skip ca- rows and poll only wf-, polled=%v", polled)
+		t.Fatalf("ExecWatcher must not poll ca- as WorkflowRuns, polled=%v", polled)
+	}
+	if got := repo.get("j1"); got.Status != string(taskmeta.ExecFailed) || got.Reason != legacyCodingExecutionReason {
+		t.Fatalf("legacy ca- row = status %q reason %q, want failed/%s", got.Status, got.Reason, legacyCodingExecutionReason)
+	}
+	if got := repo.get("w1"); got.Status != string(taskmeta.ExecRunning) {
+		t.Fatalf("wf- coding row must stay running until WorkflowRun completes, got %q", got.Status)
 	}
 }
 
 func TestExecWatcher_CodingFailure_FinishesFailed_SuccessRidesPRWebhook(t *testing.T) {
-	// A ClusterWorkflow (`wf-…`) coding run — the ExecWatcher's domain; proxy
-	// `ca-…` runs are the JobWatcher's and are skipped here.
+	// A ClusterWorkflow (`wf-…`) coding run — the ExecWatcher's domain;
+	// `ca-…` coding-agent runs are the JobWatcher's and are skipped here.
 	coding := &delivery.Execution{ID: "c1", OrgID: "acme", Repo: "acme/widgets", IssueNumber: 7,
 		Kind: string(taskmeta.KindCoding), Status: string(taskmeta.ExecRunning), RunName: "wf-1"}
 	repo := newFakeExecRepo(coding)
@@ -394,33 +399,5 @@ func TestExecWatcher_BuildAuthBudgetExhausted_FinishErrorSkipsObserver(t *testin
 	}
 	if got := repo.get("b1"); got.Status != string(taskmeta.ExecRunning) {
 		t.Fatalf("row must stay running after Finish error, got %q", got.Status)
-	}
-}
-
-// TestJobWatcher_FinishFailed_LoserSkipsNotify: finishFailed twice on the same
-// row — the second Finish loses and must not Notify the task-stream hub.
-func TestJobWatcher_FinishFailed_LoserSkipsNotify(t *testing.T) {
-	row := &delivery.Execution{
-		ID: "c1", Repo: "acme/widgets", IssueNumber: 7,
-		Kind: string(taskmeta.KindCoding), Status: string(taskmeta.ExecRunning),
-	}
-	repo := newFakeExecRepo(row)
-	hub := delivery.NewTaskStreamHub()
-	ch, cancel := hub.Subscribe(row.Repo, row.IssueNumber)
-	defer cancel()
-	w := &JobWatcher{execRows: repo, notifier: hub}
-
-	ctx := context.Background()
-	w.finishFailed(ctx, row, "job_failed")
-	select {
-	case <-ch:
-	default:
-		t.Fatal("winner must Notify")
-	}
-	w.finishFailed(ctx, row, "job_failed")
-	select {
-	case <-ch:
-		t.Fatal("Finish loser must not Notify")
-	default:
 	}
 }

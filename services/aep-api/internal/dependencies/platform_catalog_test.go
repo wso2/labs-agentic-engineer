@@ -46,7 +46,7 @@ func TestResourceTypeCatalog_List(t *testing.T) {
 		},
 	}
 
-	got, err := NewResourceTypeCatalog(rc).List(context.Background())
+	got, err := NewResourceTypeCatalog(rc, true).List(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestResourceTypeCatalog_ListError(t *testing.T) {
 			return nil, errors.New("OC down")
 		},
 	}
-	if _, err := NewResourceTypeCatalog(rc).List(context.Background()); err == nil {
+	if _, err := NewResourceTypeCatalog(rc, true).List(context.Background()); err == nil {
 		t.Fatal("want the client error surfaced")
 	}
 }
@@ -112,7 +112,7 @@ func TestResourceTypeCatalog_List_ProjectsMarkers(t *testing.T) {
 		},
 	}
 
-	got, err := NewResourceTypeCatalog(rc).List(context.Background())
+	got, err := NewResourceTypeCatalog(rc, true).List(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,7 @@ func TestResourceTypeCatalog_MarkersByName(t *testing.T) {
 		},
 	}
 
-	got, err := NewResourceTypeCatalog(rc).MarkersByName(context.Background())
+	got, err := NewResourceTypeCatalog(rc, true).MarkersByName(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,52 @@ func TestResourceTypeCatalog_MarkersByNameError(t *testing.T) {
 			return nil, errors.New("OC down")
 		},
 	}
-	if _, err := NewResourceTypeCatalog(rc).MarkersByName(context.Background()); err == nil {
+	if _, err := NewResourceTypeCatalog(rc, true).MarkersByName(context.Background()); err == nil {
 		t.Fatal("want the client error surfaced")
+	}
+}
+
+func TestResourceTypeCatalog_List_FlagOff_NoOCCall(t *testing.T) {
+	t.Parallel()
+
+	rc := &ocmocks.ResourceClientMock{
+		ListClusterResourceTypesFunc: func(_ context.Context) ([]openchoreo.ResourceType, error) {
+			t.Fatal("ListClusterResourceTypes must not be called when platform resources are disabled")
+			return nil, nil
+		},
+	}
+
+	got, err := NewResourceTypeCatalog(rc, false).List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("want empty catalog when disabled, got %+v", got)
+	}
+	if n := len(rc.ListClusterResourceTypesCalls()); n != 0 {
+		t.Fatalf("want 0 OC calls, got %d", n)
+	}
+}
+
+func TestResourceTypeCatalog_List_FlagOn_Unchanged(t *testing.T) {
+	t.Parallel()
+
+	rc := &ocmocks.ResourceClientMock{
+		ListClusterResourceTypesFunc: func(_ context.Context) ([]openchoreo.ResourceType, error) {
+			return []openchoreo.ResourceType{
+				{Metadata: openchoreo.OCObjectMeta{Name: "postgres-cnpg"}},
+			}, nil
+		},
+	}
+
+	got, err := NewResourceTypeCatalog(rc, true).List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Name != "postgres-cnpg" {
+		t.Fatalf("want postgres-cnpg, got %+v", got)
+	}
+	if n := len(rc.ListClusterResourceTypesCalls()); n != 1 {
+		t.Fatalf("want 1 OC call, got %d", n)
 	}
 }

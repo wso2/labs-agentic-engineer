@@ -94,8 +94,6 @@ func init() {
 	_ = viper.BindPFlag("server", initCmd.Flags().Lookup("server"))
 	initCmd.Flags().String("webhook-delivery-url", "", "Public URL registered on each repo's webhook (e.g. https://webhook.example.com/api/v1/webhooks/github)")
 	_ = viper.BindPFlag("webhook.delivery_url", initCmd.Flags().Lookup("webhook-delivery-url"))
-	initCmd.Flags().String("cluster-gateway-proxy-url", "", "URL of the managed cluster-gateway-proxy service (production; omit to deploy the local stub)")
-	_ = viper.BindPFlag("codingagent.cluster_gateway_proxy.url", initCmd.Flags().Lookup("cluster-gateway-proxy-url"))
 	initCmd.Flags().String("secret-manager-api-url", "", "URL of the managed secret-manager API service (production; omit to deploy the local stub)")
 	_ = viper.BindPFlag("codingagent.secret_manager_api.url", initCmd.Flags().Lookup("secret-manager-api-url"))
 	registerThunderFlags(initCmd)
@@ -232,15 +230,12 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 	if mode := viper.GetString("platform.workspaces.access_mode"); mode != "" {
 		helmArgs = append(helmArgs, "--set", "workspaces.accessMode="+mode)
 	}
-	// Coding-agent dispatch: deploy the local cluster-gateway-proxy stub (reads
-	// pod logs/job status for live streaming + JobWatcher) unless disabled. Prod
-	// installs set codingagent.local_stubs.enabled=false and supply the real
+	// Coding-agent dispatch: local installs wire in-process secrets delivery
+	// (OPENBAO_* on aep-api). Prod installs set
+	// codingagent.local_stubs.enabled=false and supply the real managed
 	// endpoint URLs instead (set them via flags or AEP_* env vars).
 	helmArgs = append(helmArgs, "--set",
 		fmt.Sprintf("codingAgentDispatch.localStubs.enabled=%t", viper.GetBool("codingagent.local_stubs.enabled")))
-	if u := viper.GetString("codingagent.cluster_gateway_proxy.url"); u != "" {
-		helmArgs = append(helmArgs, "--set", "codingAgentDispatch.clusterGatewayProxy.url="+u)
-	}
 	if u := viper.GetString("codingagent.secret_manager_api.url"); u != "" {
 		helmArgs = append(helmArgs, "--set", "codingAgentDispatch.secretManagerApi.url="+u)
 	}

@@ -44,8 +44,8 @@ func NewSecretReferenceClient(cfg Config) secretmanagersvc.OpenChoreoSecretRefer
 	return &secretReferenceClient{oc: oc}
 }
 
-func (c *secretReferenceClient) GetSecretReference(ctx context.Context, orgNS, name string) (*secretmanagersvc.SecretReference, error) {
-	resp, err := c.oc.GetSecretReferenceWithResponse(ctx, orgNS, name)
+func (c *secretReferenceClient) GetSecretReference(ctx context.Context, cpNS, name string) (*secretmanagersvc.SecretReference, error) {
+	resp, err := c.oc.GetSecretReferenceWithResponse(ctx, cpNS, name)
 	if err != nil {
 		return nil, fmt.Errorf("get secret reference: %w", err)
 	}
@@ -60,9 +60,9 @@ func (c *secretReferenceClient) GetSecretReference(ctx context.Context, orgNS, n
 	return secretReferenceToModel(resp.JSON200), nil
 }
 
-func (c *secretReferenceClient) CreateSecretReference(ctx context.Context, orgNS string, req secretmanagersvc.CreateSecretReferenceRequest) (*secretmanagersvc.SecretReference, error) {
+func (c *secretReferenceClient) CreateSecretReference(ctx context.Context, cpNS string, req secretmanagersvc.CreateSecretReferenceRequest) (*secretmanagersvc.SecretReference, error) {
 	body := buildSecretReferenceBody(req)
-	resp, err := c.oc.CreateSecretReferenceWithResponse(ctx, orgNS, body)
+	resp, err := c.oc.CreateSecretReferenceWithResponse(ctx, cpNS, body)
 	if err != nil {
 		return nil, fmt.Errorf("create secret reference: %w", err)
 	}
@@ -78,9 +78,9 @@ func (c *secretReferenceClient) CreateSecretReference(ctx context.Context, orgNS
 	return secretReferenceToModel(resp.JSON201), nil
 }
 
-func (c *secretReferenceClient) UpdateSecretReference(ctx context.Context, orgNS, name string, req secretmanagersvc.CreateSecretReferenceRequest) (*secretmanagersvc.SecretReference, error) {
+func (c *secretReferenceClient) UpdateSecretReference(ctx context.Context, cpNS, name string, req secretmanagersvc.CreateSecretReferenceRequest) (*secretmanagersvc.SecretReference, error) {
 	body := buildSecretReferenceBody(req)
-	resp, err := c.oc.UpdateSecretReferenceWithResponse(ctx, orgNS, name, body)
+	resp, err := c.oc.UpdateSecretReferenceWithResponse(ctx, cpNS, name, body)
 	if err != nil {
 		return nil, fmt.Errorf("update secret reference: %w", err)
 	}
@@ -96,8 +96,8 @@ func (c *secretReferenceClient) UpdateSecretReference(ctx context.Context, orgNS
 	return secretReferenceToModel(resp.JSON200), nil
 }
 
-func (c *secretReferenceClient) DeleteSecretReference(ctx context.Context, orgNS, name string) error {
-	resp, err := c.oc.DeleteSecretReferenceWithResponse(ctx, orgNS, name)
+func (c *secretReferenceClient) DeleteSecretReference(ctx context.Context, cpNS, name string) error {
+	resp, err := c.oc.DeleteSecretReferenceWithResponse(ctx, cpNS, name)
 	if err != nil {
 		return fmt.Errorf("delete secret reference: %w", err)
 	}

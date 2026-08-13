@@ -384,15 +384,17 @@ func applyFlatArtifactFields(status *gen.ProjectStatus, snap *spec.StatusSnapsho
 	status.Phase = "tasks"
 }
 
-// buildStageStatus maps a milestone run'"'"'s state onto the BuildStage enum. A
-// version'"'"'s delivery IS its run: it is running while the run is (waiting between
+// buildStageStatus maps a milestone run's state onto the BuildStage enum. A
+// version's delivery IS its run: it is running while the run is (waiting between
 // cycles included — the version is still being delivered), and it succeeds or
-// fails exactly when the run settles.
+// fails exactly when the run settles. A cancelled or BLOCKED run reads as not
+// delivered: the version did not ship, and the run row's terminal reason is
+// where the difference (abandoned versus out of agent slots) is explained.
 func buildStageStatus(state string) string {
 	switch state {
 	case delivery.RunStateSucceeded:
 		return buildSucceeded
-	case delivery.RunStateFailed, delivery.RunStateCancelled:
+	case delivery.RunStateFailed, delivery.RunStateCancelled, delivery.RunStateBlocked:
 		return buildFailed
 	default: // waiting | running
 		return buildRunning

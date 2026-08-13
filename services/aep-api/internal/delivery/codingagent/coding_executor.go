@@ -26,8 +26,6 @@ import (
 	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 
-	"github.com/google/uuid"
-
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
@@ -40,43 +38,34 @@ import (
 // (RetryAuthFailedBuild), which is why it still holds the build-secret stager
 // and the executions repository.
 //
-// Two dispatch paths:
-//   - the cluster-gateway-proxy path (per-org NS + per-run ExternalSecrets + a
-//     K8s Job), used when the proxy dispatcher + the org's SM-API triplets are
-//     configured — this is what the cloud / local-proxy plane exercises (`ca-…` jobs);
-//   - the direct K8s Job fallback (K8sJobDispatcher) when the proxy path is not
-//     configured — constructible, but Dispatch fails closed (direct k8s-job
-//     secret delivery is disabled; configure cluster-gateway-proxy + secret refs).
+// One dispatch path: the cycle becomes an ephemeral OpenChoreo Component in the
+// milestone's own project, and OpenChoreo renders the batch/v1 Job into that
+// project's dataplane namespace. The executor holds no Kubernetes client and
+// writes no secret material — the ComponentType's template renders the cycle's
+// ExternalSecrets from the org's secret store.
 type CodingExecutor struct {
 	oc            openchoreo.ComponentClient
 	repos         ProjectRepos
 	identities    Identities
-	anthropic     AnthropicProvisioner
 	tokens        TokenIssuer
 	execRows      delivery.ExecutionRepository
 	gitServiceURL string
 	platformURL   string
 
-	// Proxy dispatch (nil → fall through to the direct k8sJob path).
-	proxy *Dispatcher
+	// ocJobs is the OpenChoreo Component dispatch path — one Component per run
+	// cycle in the milestone's own project.
+	ocJobs *OCDispatcher
 
 	// Org-scoped reads, always wired at the composition root: the per-org
-	// GitHub SM-API triplet + IDP publisher profile for the proxy dispatch, and
-	// the org lookup for the data-plane UUID. The Anthropic side goes through a
-	// resolver rather than a repository because WHICH of the org's two possible
-	// keys a run bills is a domain decision, not a row lookup.
+	// GitHub SM-API triplet + IDP publisher profile the Workload's secret-env
+	// refs are built from, and the org lookup for the data-plane UUID. The
+	// Anthropic side goes through a resolver rather than a repository because
+	// WHICH of the org's two possible keys a run bills is a domain decision,
+	// not a row lookup.
 	orgs         organization.OrganizationRepository
 	anthropicKey CodingKeyResolver
 	githubCreds  organization.OrgCredentialRepository
 	idpProfiles  organization.IDPRepository
-
-	// k8sJob is the direct K8s Job dispatch path — the sole fallback when the
-	// proxy path is not configured (nil → no fallback; dispatch errors out).
-	// Requires the org repository to be set (for org UUID lookup).
-	k8sJob             *K8sJobDispatcher
-	idp                OrgPublisherProvisioner
-	runnerImage        string
-	clusterSecretStore string
 
 	// Build-secret staging (nil → unauthenticated clone, correct for public
 	// repos). buildSecrets pre-stages the org's build git credential so a build's
@@ -86,7 +75,7 @@ type CodingExecutor struct {
 	authRetryBudget int
 
 	// runnerSecrets resolves the component's external-resource secret bundles so
-	// the proxy dispatch mounts them into the runner (nil → none). Best-effort.
+	// the cycle's Workload references them (nil → none). Best-effort.
 	runnerSecrets RunnerSecretResolver
 
 	// wiring publishes the platform-resolved `endpoints:` block onto the working
@@ -95,13 +84,12 @@ type CodingExecutor struct {
 	skillMirror SkillMirror
 }
 
-// NewCodingExecutor wires the base coding executor. anthropic may be nil. Call
-// WithProxy and/or WithK8sJobDispatch to enable a dispatch path.
+// NewCodingExecutor wires the coding executor. Every dispatch goes through the
+// OpenChoreo component path; there is no alternative path to enable.
 func NewCodingExecutor(
 	oc openchoreo.ComponentClient,
 	repos ProjectRepos,
 	identities Identities,
-	anthropic AnthropicProvisioner,
 	tokens TokenIssuer,
 	execRows delivery.ExecutionRepository,
 	gitServiceURL, platformURL string,
@@ -111,31 +99,16 @@ func NewCodingExecutor(
 	idpProfiles organization.IDPRepository,
 ) *CodingExecutor {
 	return &CodingExecutor{
-		oc: oc, repos: repos, identities: identities, anthropic: anthropic,
+		oc: oc, repos: repos, identities: identities,
 		tokens: tokens, execRows: execRows, gitServiceURL: gitServiceURL, platformURL: platformURL,
 		orgs: orgs, anthropicKey: anthropicKey, githubCreds: githubCreds, idpProfiles: idpProfiles,
 	}
 }
 
-// WithProxy enables the cluster-gateway-proxy coding-agent dispatch path (the
-// `ca-…` Job path the local plane uses). runnerImage is THE runner image — one
-// image serves both task kinds (it bakes Playwright + chromium), so nothing
-// swaps it per kind. idp may be nil (publisher-cc skipped — required only on
-// the cloud gateway, i.e. an https platform URL).
-func (e *CodingExecutor) WithProxy(proxy *Dispatcher, idp OrgPublisherProvisioner, runnerImage, clusterSecretStore string) *CodingExecutor {
-	e.proxy = proxy
-	e.idp = idp
-	e.runnerImage = runnerImage
-	e.clusterSecretStore = clusterSecretStore
-	return e
-}
-
-// WithK8sJobDispatch wires the direct K8s Job dispatch path. The org UUID
-// lookup (needed to derive the data-plane namespace) reads through the org
-// repository wired at construction. Direct k8s-job secret delivery is disabled
-// — Dispatch fails closed; use WithProxy for refs-only ExternalSecrets.
-func (e *CodingExecutor) WithK8sJobDispatch(d *K8sJobDispatcher) *CodingExecutor {
-	e.k8sJob = d
+// WithOCDispatch enables the OpenChoreo Component dispatch path (phase 08).
+// Returns the receiver for chained construction.
+func (e *CodingExecutor) WithOCDispatch(d *OCDispatcher) *CodingExecutor {
+	e.ocJobs = d
 	return e
 }
 
@@ -191,19 +164,23 @@ func (e *CodingExecutor) AuthRetryBudget() int {
 // prompt shape differ.
 //
 // It performs NO state write: a cycle dispatch mints no execution row, because
-// the cycle record is the run supervisor'"'"'s own bookkeeping.
+// the cycle record is the run supervisor's own bookkeeping.
 type agentLaunch struct {
 	orgID     string
 	projectID string
 
 	// correlationID is the platform id the pod carries: it is stamped as
 	// AEP_TASK_ID, seeds the `ca-…` run name, and is the subject of the runner
-	// bearer. It is the dispatching CYCLE'"'"'s id.
+	// bearer. It is the dispatching CYCLE's id.
 	correlationID string
+
+	// runID is the milestone run the cycle belongs to. Carried for the created
+	// Component's description only — nothing resolves state through it.
+	runID string
 
 	shape dispatchShape
 
-	// secretComponent, when non-empty, mounts that component'"'"'s external-resource
+	// secretComponent, when non-empty, mounts that component's external-resource
 	// secrets into the runner. It is always empty today: a cycle spans the whole
 	// milestone rather than one component, so there is no single component whose
 	// secrets to mount.
@@ -244,159 +221,71 @@ func (e *CodingExecutor) launchAgent(ctx context.Context, in agentLaunch) (strin
 	if err != nil {
 		return "", fmt.Errorf("mint MCP token: %w", err)
 	}
-	// Proxy path (cloud / local-proxy plane): per-org NS + per-run ExternalSecrets
-	// + K8s Job via the cluster-gateway-proxy. Falls back to the direct K8s Job
-	// path below when the proxy / SM-API is not configured.
-	used, runName, perr := e.dispatchViaProxy(ctx, in, repo, name, email, login, bearer, mcpToken)
-	if perr != nil {
-		return "", perr
+	// OpenChoreo Component dispatch: the only agent path. One Component per run
+	// cycle in the milestone's own project.
+	if e.ocJobs == nil {
+		return "", fmt.Errorf("no coding-agent dispatch path configured: set AGENT_RUNNER_IMAGE")
 	}
-	if used {
-		return runName, nil
-	}
-
-	// Validation has no non-proxy fallback. The image is no longer the reason
-	// (one image serves both kinds); K8sJobInput is: it carries no TaskKind and
-	// no deadline override, so the direct path would launch a runner that never
-	// preloads the `aep-validation` skill and dies at the 1h default. Fail
-	// loudly rather than launch a run that cannot do the job.
-	if in.shape.taskKind != "" || in.shape.deadline != 0 {
-		return "", fmt.Errorf("dispatch kind %q requires the cluster-gateway-proxy path; the direct K8s Job fallback carries no AEP_TASK_KIND or deadline override", in.shape.taskKind)
-	}
-
-	// Direct K8s Job path: Dispatch fails closed — secret delivery requires
-	// cluster-gateway-proxy + secret refs (no Secret/ExternalSecret writes
-	// here). Missing refs on the proxy path already errored above; this branch
-	// only runs when the proxy path was not configured.
-	if e.k8sJob != nil {
-		orgUUID, uuidErr := e.lookupOrgUUID(ctx, in.orgID)
-		if uuidErr != nil {
-			return "", fmt.Errorf("k8s-job dispatch: lookup org UUID for %q: %w", in.orgID, uuidErr)
-		}
-		rn, k8serr := e.k8sJob.Dispatch(ctx, K8sJobInput{
-			RunName:       codingAgentRunNameFor(in.correlationID),
-			OrgID:         in.orgID,
-			OrgUUID:       orgUUID,
-			ProjectID:     in.projectID,
-			Component:     in.shape.componentName,
-			ExecutionID:   in.correlationID,
-			RepoURL:       repo.RepoURL,
-			Prompt:        in.shape.prompt,
-			IdentityName:  name,
-			IdentityEmail: email,
-			IdentityLogin: login,
-			Bearer:        bearer,
-		})
-		if k8serr != nil {
-			return "", k8serr
-		}
-		return rn, nil
-	}
-
-	return "", fmt.Errorf("no coding-agent dispatch path configured: set CLUSTER_GATEWAY_PROXY_URL or ensure in-cluster client + AGENT_RUNNER_IMAGE + AGENT_PLATFORM_URL are set")
+	return e.dispatchViaOC(ctx, in, repo, name, email, login, bearer, mcpToken)
 }
 
-// dispatchViaProxy runs the cluster-gateway-proxy apply-chain for one agent
-// launch — the same recipe as the legacy dispatch service's tryDispatchViaProxy.
-// used=false ⇒ not configured for the proxy path (fall back). The runner env
-// AEP_TASK_ID carries the launch's correlation id (JobInputs.TaskID) and so does
-// the bearer's task claim — the re-keyed runner contract (§9.2).
-func (e *CodingExecutor) dispatchViaProxy(ctx context.Context, in agentLaunch, repo *sourcecontrol.GitRepository, name, email, login, bearer string, mcpToken string) (bool, string, error) {
-	disp := in.shape
-	if e.proxy == nil || e.runnerImage == "" || e.clusterSecretStore == "" {
-		return false, "", nil
-	}
+// dispatchViaOC launches one cycle through the OpenChoreo Component chain.
+//
+// The executor's job here is credential and identity resolution — the org's
+// refs-only secret triplets, the runner bearer, the MCP token — and the
+// dispatcher's job is the OC chain. The run name is derived from the CYCLE id,
+// deterministically within a dispatch attempt, so a crashed dispatch resumes
+// over the same Component instead of orphaning it.
+//
+// Credentials reach the pod through the ComponentType's ExternalSecret /
+// Workload secretEnv (refs only).
+func (e *CodingExecutor) dispatchViaOC(ctx context.Context, in agentLaunch, repo *sourcecontrol.GitRepository,
+	name, email, login, bearer, mcpToken string) (string, error) {
 	anthropicSR, githubSR, err := e.resolveRunnerSecretRefs(ctx, in.orgID)
 	if err != nil {
-		return false, "", err
+		return "", err
 	}
-
-	// Publisher cc (cloud gateway only). Best-effort provision + SM-API triplet.
-	var (
-		publisherSR       *SecretRef
-		publisherTokenURL string
-	)
-	if e.idp != nil {
-		if _, _, _, perr := e.idp.EnsureOrgPublisher(ctx, in.orgID, "dispatch"); perr != nil {
-			slog.ErrorContext(ctx, "proxy dispatch: EnsureOrgPublisher failed — runner cc may be invalid", "org", in.orgID, "error", perr)
-		}
+	disp := in.shape
+	platform := strings.TrimRight(e.platformURL, "/")
+	env := map[string]string{
+		"AEP_TASK_ID":         in.correlationID,
+		"AEP_ORG_ID":          in.orgID,
+		"AEP_PROJECT_ID":      in.projectID,
+		"AEP_COMPONENT_NAME":  disp.componentName,
+		"AEP_REPO_URL":        repo.RepoURL,
+		"AEP_PROMPT":          disp.prompt,
+		"AEP_GIT_SERVICE_URL": e.gitServiceURL,
+		"AEP_PLATFORM_URL":    e.platformURL,
+		"AEP_MCP_URL":         platform + "/internal/v1/mcp",
+		"AEP_IDENTITY_NAME":   name,
+		"AEP_IDENTITY_EMAIL":  email,
+		"AEP_IDENTITY_LOGIN":  login,
+		"AEP_CORRELATION_ID":  in.correlationID,
+		"AEP_TASK_KIND":       taskKindOrDefault(disp.taskKind),
+		"WORKSPACE_BASE_PATH": codingAgentWorkspacePath,
 	}
-	if idpRow, err := e.idpProfiles.GetProfileByOrgID(ctx, in.orgID); err == nil && idpRow != nil {
-		if idpRow.ResolvedSecretRefKVPath() != nil && idpRow.ResolvedSecretRefName() != nil {
-			publisherSR = &SecretRef{
-				SecretRefName: derefStr(idpRow.ResolvedSecretRefName()),
-				KVPath:        derefStr(idpRow.ResolvedSecretRefKVPath()),
-				Property:      derefStr(idpRow.ResolvedSecretRefProperty()),
-			}
-			publisherTokenURL = deriveTokenURLFromJWKS(idpRow.JWKSURL)
-			if publisherTokenURL == "" {
-				publisherSR = nil
-			}
-		}
+	if bearer != "" {
+		env["AEP_BEARER"] = bearer
 	}
-	// On the cloud gateway (https) a per-task JWT is rejected — publisher cc is
-	// mandatory. Local k3d (http) keeps the bearer fallback.
-	if publisherSR == nil && isGatewayPlatformURL(e.platformURL) {
-		return false, "", fmt.Errorf("publisher cc not provisioned for org %q: the coding-agent runner cannot authenticate through the gateway", in.orgID)
+	if mcpToken != "" {
+		env["AEP_MCP_TOKEN"] = mcpToken
 	}
-
-	orgUUID, err := e.lookupOrgUUID(ctx, in.orgID)
-	if err != nil {
-		slog.InfoContext(ctx, "proxy dispatch: org UUID not found; falling back", "org", in.orgID, "error", err)
-		return false, "", nil
-	}
-	runName := codingAgentRunNameFor(in.correlationID)
-	job := JobInputs{
-		RunName: runName,
-		// NAMING DEBT: JobInputs.TaskID → the Job's AEP_TASK_ID env carries the
-		// launch's CORRELATION id (an execution id on the funnel path, a cycle id
-		// on the milestone-run path), never a Task id. Un-renamed to avoid a
-		// cluster-workflow + runner rename.
-		TaskID:                in.correlationID,
+	return e.ocJobs.Dispatch(ctx, OCDispatchInputs{
 		OrgID:                 in.orgID,
 		ProjectID:             in.projectID,
-		ComponentName:         disp.componentName,
-		RunnerImage:           e.runnerImage,
-		TaskKind:              disp.taskKind,
-		ActiveDeadlineSeconds: disp.deadline,
-		RepoURL:               repo.RepoURL,
-		Prompt:                disp.prompt,
-		IdentityName:          name,
-		IdentityEmail:         email,
-		IdentityLogin:         login,
-		GitServiceURL:         e.gitServiceURL,
-		CallbackURL:           e.platformURL,
-		Bearer:                bearer,
-		MCPToken:              mcpToken,
-		PublisherTokenURL:     publisherTokenURL,
-	}
-	// Resolve the component's external-resource secret bundles so the dispatcher
-	// materialises each into a per-run ExternalSecret the runner mounts (the agent
-	// integration-tests against the live service). Best-effort: on failure the run
-	// dispatches without them (identical to no secret-bearing external deps).
-	// Component launches only — a validation task and a milestone cycle are
-	// project-scoped (no single component, no component-bound external resources).
-	var extResSRs []ExternalResourceSecretInputs
-	if e.runnerSecrets != nil && in.secretComponent != "" {
-		if srs, rerr := e.runnerSecrets.ResolveRunnerSecrets(ctx, in.orgID, in.projectID, in.secretComponent, openchoreo.DevEnvironmentName); rerr != nil {
-			slog.WarnContext(ctx, "coding executor: resolve external-resource runner secrets failed — dispatching without", "component", in.secretComponent, "error", rerr)
-		} else {
-			extResSRs = srs
-		}
-	}
-	rn, err := e.proxy.Dispatch(ctx, Inputs{
-		OrgUUID:                orgUUID,
-		Job:                    job,
-		AnthropicSR:            anthropicSR,
-		GitHubSR:               githubSR,
-		PublisherSR:            publisherSR,
-		ExternalResourceSRs:    extResSRs,
-		ClusterSecretStoreName: e.clusterSecretStore,
+		CycleID:               in.correlationID,
+		RunID:                 in.runID,
+		MilestoneNumber:       disp.milestoneNumber,
+		MilestoneTitle:        disp.milestoneTitle,
+		Kind:                  disp.taskKind,
+		RunName:               codingAgentRunNameFor(in.projectID, in.correlationID),
+		ActiveDeadlineSeconds: int(disp.deadline),
+		Env:                   env,
+		SecretEnv: []SecretEnvRef{
+			{Key: anthropicEnvVarOrDefault(anthropicSR.EnvVar), SecretName: anthropicSR.SecretRefName, SecretKey: anthropicSR.Property},
+			{Key: envGitHubToken, SecretName: githubSR.SecretRefName, SecretKey: githubSR.Property},
+		},
 	})
-	if err != nil {
-		return false, "", err
-	}
-	return true, rn, nil
 }
 
 // stageBuildSecret pre-stages the org's build git credential and returns the
@@ -495,6 +384,17 @@ func (e *CodingExecutor) resolveRunnerSecretRefs(ctx context.Context, orgID stri
 	return anthropicSR, githubSR, nil
 }
 
+// anthropicEnvVarOrDefault names the Job's Anthropic SecretEnv entry from
+// organization.SecretRefTriplet.EnvVar (ANTHROPIC_API_KEY or
+// CLAUDE_CODE_OAUTH_TOKEN — ADR-0016), falling back to the runner's default
+// only if a resolver ever returns the zero value.
+func anthropicEnvVarOrDefault(envVar string) string {
+	if envVar == "" {
+		return envAnthropicAPIKey
+	}
+	return envVar
+}
+
 func validateSecretRefTriplet(credential, orgID string, ref SecretRef) error {
 	if ref.SecretRefName == "" {
 		return fmt.Errorf("%s secret reference missing for org %q: secret_ref_name not populated", credential, orgID)
@@ -508,50 +408,26 @@ func validateSecretRefTriplet(credential, orgID string, ref SecretRef) error {
 	return nil
 }
 
-func (e *CodingExecutor) lookupOrgUUID(ctx context.Context, ocOrgID string) (string, error) {
-	org, err := e.orgs.GetByName(ctx, ocOrgID)
-	if err != nil {
-		return "", err
-	}
-	if org == nil {
-		return "", fmt.Errorf("organization %s not found", ocOrgID)
-	}
-	if org.ThunderOrgUUID != nil && *org.ThunderOrgUUID != uuid.Nil {
-		return org.ThunderOrgUUID.String(), nil
-	}
-	if org.UUID == uuid.Nil {
-		return "", fmt.Errorf("organization %s has no UUID", ocOrgID)
-	}
-	return org.UUID.String(), nil
+// codingAgentRunPrefix marks a run name as a coding-agent cycle run (owned by
+// the cycle watcher) rather than an OpenChoreo build WorkflowRun. It is the ONE
+// discriminator both watchers key on so they never poll each other's runs.
+const codingAgentRunPrefix = "ca-"
+
+// isCodingAgentRun reports whether runName is a coding-agent cycle run (vs a
+// build WorkflowRun). Shared by the ExecWatcher (skips) and the cycle watcher
+// (claims).
+func isCodingAgentRun(runName string) bool {
+	return strings.HasPrefix(runName, codingAgentRunPrefix)
 }
 
-// proxyJobRunPrefix marks a run name as a cluster-gateway-proxy coding-agent Job
-// (a K8s Job owned by the JobWatcher) rather than an OpenChoreo WorkflowRun. It
-// is the ONE discriminator both watchers key on so they never poll each other's
-// runs: the JobWatcher processes ONLY these, the ExecWatcher skips them.
-const proxyJobRunPrefix = "ca-"
-
-// isProxyJobRun reports whether runName is a proxy-dispatched coding-agent Job
-// (vs an OpenChoreo WorkflowRun). Shared by the ExecWatcher (skips) and the
-// JobWatcher (claims).
-func isProxyJobRun(runName string) bool {
-	return strings.HasPrefix(runName, proxyJobRunPrefix)
-}
-
-// codingAgentRunNameFor derives a deterministic `ca-…` run name from an id + a
-// UTC minute bucket (same shape as the legacy codingAgentRunName; a re-dispatch
-// within the minute reuses the name and the immutable Job is DELETE+POST'd).
-func codingAgentRunNameFor(id string) string {
-	minute := time.Now().UTC().Format("0601021504")
-	shortID := id
-	if len(shortID) > 8 {
-		shortID = shortID[:8]
-	}
-	name := fmt.Sprintf("%s%s-%s", proxyJobRunPrefix, shortID, minute)
-	if len(name) > 63 {
-		name = name[:63]
-	}
-	return name
+// codingAgentRunNameFor derives a stable `ca-…` Component / JobRef name from
+// the project + cycle id. Delegates to openchoreo.NewCodingAgentRunName so the
+// SCOPED Component name leaves room for OpenChoreo's Job label decoration
+// (see CodingAgentComponentNameBudget). Stability matters: CreateComponent
+// treats 409 as success and re-reads, so a Temporal retry after a crash must
+// hit the same name — a wall-clock suffix would mint a second billed Component.
+func codingAgentRunNameFor(projectID, cycleID string) string {
+	return openchoreo.NewCodingAgentRunName(projectID, cycleID)
 }
 
 func derefStr(s *string) string {
@@ -559,23 +435,6 @@ func derefStr(s *string) string {
 		return ""
 	}
 	return *s
-}
-
-// isGatewayPlatformURL reports whether the runner reaches the BFF through the
-// IdP-authed cloud gateway (https) rather than an internal http URL (local k3d).
-func isGatewayPlatformURL(u string) bool {
-	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(u)), "https://")
-}
-
-// deriveTokenURLFromJWKS swaps a trailing `/oauth2/jwks` for `/oauth2/token`
-// (same Thunder host). Returns "" on unrecognized shapes.
-func deriveTokenURLFromJWKS(jwksURL string) string {
-	const suffix = "/oauth2/jwks"
-	j := strings.TrimSpace(jwksURL)
-	if !strings.HasSuffix(j, suffix) {
-		return ""
-	}
-	return strings.TrimSuffix(j, suffix) + "/oauth2/token"
 }
 
 // buildPrompt is the coding-agent directive (§9): a MILESTONE REFERENCE and
@@ -601,14 +460,28 @@ const validationTaskKind = "validation"
 // exploration + authoring/healing e2e specs is longer than a coding run.
 const validationDeadlineSeconds int64 = 7200
 
-// dispatchShape carries the per-class knobs runCoding hands to the proxy
-// dispatch: the coding class and the validation class share the executor, the
-// proxy plumbing AND the runner image, differing only in these values.
+// taskKindOrDefault normalizes the runner's AEP_TASK_KIND: empty → the coding
+// default so existing (implementation) dispatch is unchanged.
+func taskKindOrDefault(kind string) string {
+	if kind == "" {
+		return "implementation"
+	}
+	return kind
+}
+
+// dispatchShape carries the per-class knobs the milestone dispatch hands to the
+// OpenChoreo path: coding and validation share the executor, differing only in
+// these values.
 type dispatchShape struct {
 	prompt        string
 	componentName string
 	taskKind      string // "" (coding) | "validation"
-	deadline      int64  // 0 → job_template's 1h default
+	deadline      int64  // 0 → the ComponentType's 1h default
+	// The milestone the cycle works, carried for the human-facing display name
+	// on the created Component. A cycle spans a milestone's whole working set,
+	// so the milestone (and the cycle kind) is what names it — not an issue.
+	milestoneNumber int
+	milestoneTitle  string
 }
 
 // buildValidationPrompt is the validation-runner directive: it points at the

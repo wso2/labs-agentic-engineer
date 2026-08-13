@@ -332,23 +332,6 @@ func (a identities) IdentityFor(ctx context.Context, ocOrgID string) (name, emai
 	return id.Name, id.Email, login, nil
 }
 
-// anthropicProvisioner projects organization.AnthropicCredentialService.ApplyWPSecret
-// onto the codingagent.AnthropicProvisioner port.
-type anthropicProvisioner struct {
-	svc *organization.AnthropicCredentialService
-}
-
-func (a anthropicProvisioner) ApplyWPSecret(ctx context.Context, ocOrgID string) (string, error) {
-	res, err := a.svc.ApplyWPSecret(ctx, ocOrgID)
-	if err != nil {
-		return "", err
-	}
-	if res == nil {
-		return "", nil
-	}
-	return res.SecretRefName, nil
-}
-
 // githubBotLogin returns the platform's GitHub App bot login used for webhook
 // echo suppression (§9.2). App-authored actions arrive with sender.login =
 // "<slug>[bot]". Empty slug (dev/PAT mode) disables suppression — idempotency

@@ -23,24 +23,25 @@ import (
 	"strings"
 )
 
-// OrgBaseNamespace returns the org's base namespace name matching
+// OrgBaseNamespace returns the vault path segment matching
 // wso2cloud's `ou.util.GenerateNamespaceName` (= the same shape
 // secret-manager-api derives server-side from the JWT's orgUUID claim):
 //
 //	wc-<first-8-chars-of-cleaned-uuid>-<8-char-sha256-hex>
 //
-// SM-API uses this as the namespace it writes SecretReference CRs into;
-// the BFF must compute the same value when reconstructing the Vault
-// path for ExternalSecret.spec.data[].remoteRef.key (Vault path shape:
-// `<vaultPathPrefix>/<orgNS>/<secretRefName>`). Deterministic — same
-// orgUUID always produces the same name.
+// Used only as the middle segment of
+// `<vaultPathPrefix>/<orgNS>/<secretRefName>` (ExternalSecret remoteRef.key).
+// It is not the OpenChoreo SecretReference CR namespace on the OpenBao-direct
+// path — those CRs must live in the Workload/ReleaseBinding control-plane
+// namespace (`SecretLocation.ControlPlaneNamespace`). Cloud SM-API overlay
+// may still author CRs into this name; OSS must not.
 //
 // Home rationale (§4.0/§6.10c): this `wc-` derivation is a pure, gorm-free
-// tenancy primitive consumed by both credentials (orgcreds SM-API writer)
-// and codingagent (dispatch + watcher). It lives here in platform/tenant so
-// neither feature has to import the other for it — the only genuine parallel
-// implementation is the external cloud SM-API + the local stub, reconciled by
-// a byte-parity contract test (§8), not a shared import.
+// tenancy primitive consumed by the credentials domain (vault-path builders). It
+// lives here in platform/tenant so no feature has to import another for it —
+// the only genuine parallel implementation is the external cloud SM-API + the
+// local stub, reconciled by a byte-parity contract test (§8), not a shared
+// import.
 func OrgBaseNamespace(orgUUID string) string {
 	clean := strings.ReplaceAll(orgUUID, "-", "")
 	prefix := clean
@@ -50,16 +51,4 @@ func OrgBaseNamespace(orgUUID string) string {
 	hash := sha256.Sum256([]byte(orgUUID))
 	salt := hex.EncodeToString(hash[:])[:8]
 	return fmt.Sprintf("wc-%s-%s", strings.ToLower(prefix), salt)
-}
-
-// RemoteWorkerNamespace returns the per-org remote-worker namespace
-// name = OrgBaseNamespace(orgUUID) + "-remote-worker".
-//
-// The `-remote-worker` suffix is the aep fork — wso2cloud's existing
-// shapes all use `-development`, `-staging`, `-production`. The
-// env-less name is intentional: a coding-agent task isn't bound to a
-// user-facing env (per ADR-0001). When wso2cloud-deployement-main
-// pushes a renamed shape we follow.
-func RemoteWorkerNamespace(orgUUID string) string {
-	return OrgBaseNamespace(orgUUID) + "-remote-worker"
 }

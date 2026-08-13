@@ -84,6 +84,20 @@ export interface CollabSpec {
 // git op before the build is blocked on a hung reply.
 const FLUSH_TIMEOUT_MS = 30_000;
 
+// Settle time before rebuilding the room after a post-sync drop (see
+// `scheduleRebuild`). The fresh provider retries on its own backoff from
+// there; this only stops a server that accepts-then-drops from spinning a
+// full resync per round-trip.
+const REBUILD_DELAY_MS = 1_000;
+// …and the ceiling once that delay doubles per consecutive rebuild. A rebuild
+// costs the SERVER a room load and a git seed, so a crash-looping collab pod
+// must not be held at one per second by every open tab.
+const REBUILD_MAX_DELAY_MS = 30_000;
+// A session that stayed synced this long was healthy, so the next drop starts
+// the backoff over. Without it, a server that syncs before each drop would
+// reset the count every round and never back off at all.
+const REBUILD_RESET_MS = 30_000;
+
 const PEER_COLORS = [
   "#e57373", "#64b5f6", "#81c784", "#ffb74d",
   "#ba68c8", "#4dd0e1", "#f06292", "#aed581",
@@ -109,8 +123,19 @@ export function useCollabSpec(
   const [peers, setPeers] = useState<CollabPeer[]>([]);
   const [version, setVersion] = useState(0);
   const [flushError, setFlushError] = useState<string | null>(null);
+  // Bumped to rebuild the Y.Doc + provider after a post-sync drop; it is an
+  // effect dependency, so a bump tears the old room down and joins fresh.
+  const [epoch, setEpoch] = useState(0);
   const docRef = useRef<Y.Doc | null>(null);
   const providerRef = useRef<HocuspocusProvider | null>(null);
+  // True once this doc has taken server state. Only a drop AFTER that point
+  // needs a rebuild — see `scheduleRebuild`.
+  const syncedRef = useRef(false);
+  const rebuildTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Consecutive rebuilds with no healthy session between them, and when the
+  // live one last synced — together they set the backoff (see `scheduleRebuild`).
+  const rebuildAttemptsRef = useRef(0);
+  const syncedAtRef = useRef(0);
   // Last-seen file-path set (serialized) so we re-render the list only when a
   // file is added/removed/created — not on every keystroke within a file.
   const pathKeyRef = useRef("");
@@ -123,20 +148,88 @@ export function useCollabSpec(
   useEffect(() => {
     const doc = new Y.Doc();
     docRef.current = doc;
+    syncedRef.current = false;
+    pathKeyRef.current = "";
     setDocReady(true);
+    setStatus("connecting");
     // Stable across this effect — captured so the cleanup doesn't read a ref
     // that could have moved (react-hooks/exhaustive-deps).
     const flushes = pendingFlushes.current;
+
+    // A doc must never outlive the connection that filled it. The server
+    // treats git as the durable truth: it unloads a room on last-leave and
+    // RESEEDS a brand-new Y.Doc from HEAD on the next join. Markdown files are
+    // top-level Y.XmlFragments, which have no key to converge on — so a
+    // reconnect that carried this doc's already-seeded fragments back would
+    // merge them with the fresh seed's independent items and the file would
+    // come back DOUBLED (non-md files hide the bug: they are Y.Map entries,
+    // where a colliding key resolves last-writer-wins).
+    //
+    // So on a drop that happens after we synced, throw the doc away and rejoin
+    // from scratch — the server's copy is authoritative. Unsynced local edits
+    // are lost, which is the same content the server already discarded when it
+    // unloaded the room. Before the first sync the doc is still empty and can
+    // carry nothing back, so the provider's own retry is left to do its job.
+    //
+    // A rejected bearer is the one drop this must NOT answer: the rebuild would
+    // present the same token and be rejected again, so `authFailed` latches for
+    // the life of this provider.
+    let authFailed = false;
+    const scheduleRebuild = () => {
+      if (authFailed || !syncedRef.current || rebuildTimerRef.current) return;
+      syncedRef.current = false;
+      // Silence the OLD provider's own retry first. Its websocket re-arms a
+      // reconnect from `onClose` on the same 1s delay as ours, so a socket that
+      // reopens before React commits the teardown would carry this doc's
+      // already-seeded fragments into the room the server just reseeded — the
+      // exact doubling the rebuild exists to prevent. The doc is being thrown
+      // away regardless, so there is nothing to lose by closing it now.
+      provider.disconnect();
+      // Back off while drops keep coming, and start over once a session has
+      // held long enough to count as healthy.
+      const attempt =
+        Date.now() - syncedAtRef.current >= REBUILD_RESET_MS
+          ? 0
+          : rebuildAttemptsRef.current;
+      rebuildAttemptsRef.current = attempt + 1;
+      rebuildTimerRef.current = setTimeout(
+        () => {
+          rebuildTimerRef.current = null;
+          setEpoch((e) => e + 1);
+        },
+        Math.min(REBUILD_DELAY_MS * 2 ** attempt, REBUILD_MAX_DELAY_MS),
+      );
+    };
+
     const provider = new HocuspocusProvider({
       url: collabWsUrl(),
       name: `spec-${orgHandle}-${projectName}`,
       document: doc,
       token: async () => (await getAccessToken()) ?? "",
-      onSynced: () => setStatus("connected"),
-      onStatus: ({ status: s }) => {
-        if (s === "disconnected") setStatus("offline");
+      onSynced: () => {
+        syncedRef.current = true;
+        syncedAtRef.current = Date.now();
+        setStatus("connected");
       },
-      onAuthenticationFailed: () => setStatus("offline"),
+      onStatus: ({ status: s }) => {
+        if (s === "disconnected") {
+          setStatus("offline");
+          scheduleRebuild();
+        }
+      },
+      // Terminal: a rejected bearer will be rejected again on a rebuild. The
+      // server closes the socket right after rejecting, and the provider emits
+      // the rejection and the close in either order, so this both latches the
+      // flag and cancels a bump the close already queued. The room stays
+      // offline until something else remounts the hook.
+      onAuthenticationFailed: () => {
+        authFailed = true;
+        if (rebuildTimerRef.current) {
+          clearTimeout(rebuildTimerRef.current);
+          rebuildTimerRef.current = null;
+        }
+        setStatus("offline");
+      },
     });
     providerRef.current = provider;
 
@@ -242,6 +335,13 @@ export function useCollabSpec(
 
     provider.attach();
     return () => {
+      // A rebuild already consumed its timer; this covers unmount and a
+      // project/org switch, where a pending bump must not resurrect the room.
+      if (rebuildTimerRef.current) {
+        clearTimeout(rebuildTimerRef.current);
+        rebuildTimerRef.current = null;
+      }
+      syncedRef.current = false;
       unsubscribeToken();
       doc.off("afterAllTransactions", onDocChange);
       awareness?.off("change", onAwareness);
@@ -255,7 +355,7 @@ export function useCollabSpec(
       docRef.current = null;
       providerRef.current = null;
     };
-  }, [projectName, user.name, user.email, orgHandle]);
+  }, [projectName, user.name, user.email, orgHandle, epoch]);
 
   return useMemo(
     () => ({
@@ -310,6 +410,9 @@ export function useCollabSpec(
           provider.sendStateless(JSON.stringify({ type: "flush", id }));
         }),
     }),
+    // A rebuild always moves `status` (offline → connecting → connected), so
+    // the refs are re-read and consumers holding a fragment from the discarded
+    // doc are handed the new one. No `epoch` dependency is needed for that.
     [status, peers, version, user.name, docReady, flushError],
   );
 }

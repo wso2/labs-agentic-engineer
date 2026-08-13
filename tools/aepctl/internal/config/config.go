@@ -47,7 +47,6 @@ var ConfigMapKeys = []string{
 	"oc.local_org_provisioning.enabled",
 	"platform.workspaces.access_mode",
 	"codingagent.local_stubs.enabled",
-	"codingagent.cluster_gateway_proxy.url",
 	"codingagent.secret_manager_api.url",
 	"webhook.delivery_url",
 	"webhook.local_smee.enabled",
@@ -75,12 +74,11 @@ func Init() {
 	viper.SetDefault("oc.local_org_provisioning.enabled", false)
 	viper.SetDefault("oc.org_namespace", "default")
 
-	// Coding-agent dispatch + live streaming.
-	// codingagent.local_stubs.enabled: deploys the in-cluster cluster-gateway-proxy
-	// stub. Off by default in production; set cluster_gateway_proxy.url and
-	// secret_manager_api.url to the real managed service URLs instead.
+	// Coding-agent dispatch.
+	// codingagent.local_stubs.enabled: wires the local in-process secrets
+	// delivery (OPENBAO_* on aep-api). Off by default in production; set
+	// secret_manager_api.url to the real managed service URL instead.
 	viper.SetDefault("codingagent.local_stubs.enabled", false)
-	viper.SetDefault("codingagent.cluster_gateway_proxy.url", "")
 	viper.SetDefault("codingagent.secret_manager_api.url", "")
 
 	// GitHub webhook delivery.

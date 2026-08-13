@@ -196,7 +196,7 @@ export interface McpQueryOptions {
 // without constructing a full query(). Both mcpUrl and mcpToken must be
 // present — the BFF's coding-agent Job template stamps AEP_MCP_URL
 // unconditionally but only stamps AEP_MCP_TOKEN when minting succeeded
-// (see job_template.go), so a URL-without-token dispatch must still omit
+// (see coding_agent_component_type.go env stamping), so a URL-without-token dispatch must still omit
 // the server rather than register it unauthenticated.
 export function buildMcpOptions(mcpUrl: string | undefined, mcpToken: string | undefined): McpQueryOptions {
   if (!mcpUrl || !mcpToken) {

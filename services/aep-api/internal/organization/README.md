@@ -38,7 +38,7 @@ services, the raw connect-callback controller, and the S2S credentials-refresh.*
 |---|---|---|
 | `AppInstallOps` · `IssueService` | needs | `sourcecontrol` — App/PAT probes, disconnect issue cascade |
 | `CredentialStore` · `Resolver` · `AppTokenMinter` | needs | `platform/secrets` — sealed git-token/anthropic store, credential resolution |
-| `thundersvc` · `secretmanagersvc` · `clustergatewayproxy` | needs | publisher-app CRUD + OU check · secret-ref mirror · ExternalSecret push |
+| `thundersvc` · `secretmanagersvc` | needs | publisher-app CRUD + OU check · secret-ref mirror |
 | `OrganizationService` · `CredentialService` · `AnthropicCredentialService` · `IDPService` | offers | `delivery` (coding identity/key/publisher) · `sourcecontrol` (credential resolution) |
 | `CredentialsRefreshService` | offers | the S2S runner-refresh op (edge projects it onto `igen.RefreshResponse`) |
 

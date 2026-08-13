@@ -41,7 +41,6 @@ func Fake() Infra {
 		ColumnCipher:    columnCipher,
 		Minter:          minter,
 		AppClientSecret: "",
-		K8sClient:       nil,
 		Workspace:       nil,
 	}
 }

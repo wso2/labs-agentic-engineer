@@ -593,3 +593,64 @@ func TestRunCycleRepository_SetValidationVerdictIsWriteOnceAfterClose(t *testing
 		t.Fatal("SetValidationVerdict accepted an unknown verdict")
 	}
 }
+
+// TestRunCycleRepository_ListRecentDispatched pins the JobWatcher's claim set: it
+// must include a cycle that has already CLOSED. The agent Job exits the instant
+// it opens its pull request and the auto-merge closes the cycle seconds later —
+// long before the next 30s tick — so an open-cycles-only query would miss nearly
+// every terminal usage capture.
+func TestRunCycleRepository_ListRecentDispatched(t *testing.T) {
+	t.Parallel()
+	db := dbtest.New(t)
+	runs := delivery.NewMilestoneRunRepository(db)
+	cycles := delivery.NewRunCycleRepository(db, nil)
+	ctx := context.Background()
+
+	run := admitRun(t, runs, "orgc", "proj", 4, "v4")
+	open := appendCycle(t, cycles, run, delivery.CycleKindCoding, "ca-open")
+	closed := appendCycle(t, cycles, run, delivery.CycleKindFix, "ca-closed")
+	if _, err := cycles.Finish(ctx, closed.ID, "sha1"); err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+	// A cycle that never launched a Job has no pod to read.
+	undispatched := appendCycle(t, cycles, run, delivery.CycleKindConflict, "")
+
+	got, err := cycles.ListRecentDispatched(ctx, time.Now().UTC().Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("ListRecentDispatched: %v", err)
+	}
+	seen := map[string]bool{}
+	for i := range got {
+		seen[got[i].ID] = true
+	}
+	if !seen[open.ID] {
+		t.Error("an open dispatched cycle must be claimed")
+	}
+	if !seen[closed.ID] {
+		t.Error("a recently closed cycle must still be claimed — usage capture outlives the cycle close")
+	}
+	if seen[undispatched.ID] {
+		t.Error("a cycle with no Job must not be claimed")
+	}
+
+	// A window that starts after the close excludes it again.
+	later, err := cycles.ListRecentDispatched(ctx, time.Now().UTC().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("ListRecentDispatched(future): %v", err)
+	}
+	for i := range later {
+		if later[i].ID == closed.ID {
+			t.Error("a cycle closed before the window must be excluded")
+		}
+	}
+	// …but the still-open one is always in scope.
+	found := false
+	for i := range later {
+		if later[i].ID == open.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("an open cycle is in scope regardless of the window")
+	}
+}

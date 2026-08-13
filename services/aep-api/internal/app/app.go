@@ -34,7 +34,6 @@ import (
 	"time"
 
 	"github.com/wso2/aep/aep-api/internal/clients/agentsvc"
-	"github.com/wso2/aep/aep-api/internal/clients/clustergatewayproxy"
 	"github.com/wso2/aep/aep-api/internal/clients/observability"
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/clients/secretmanagersvc"
@@ -130,7 +129,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	credStore := in.CredentialStore
 	minter := in.Minter
 	appClientSecret := in.AppClientSecret
-	wpClient := in.K8sClient
 	workspaceEngine := in.Workspace
 
 	// Skills are repo-backed now (one private org-skills repo per org —
@@ -153,7 +151,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	orgAnthropicRepo := organization.NewOrgAnthropicRepository(db)
 	idpRepo := organization.NewIDPRepository(db, in.ColumnCipher)
 	codingAgentLogRepo := delivery.NewCodingAgentLogRepository(db)
-	runCycleLogRepo := delivery.NewRunCycleLogRepository(db)
 	activityRepo := projects.NewActivityEventRepository(db)
 	activityHub := projects.NewActivityHub()
 	activitySvc := projects.NewActivityService(activityRepo, activityHub)
@@ -193,6 +190,11 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// plane (via OC → OpenBao → SecretReference). Used by BuildCredentialsService
 	// for both cloud (CP/WP split) and local k3d — one unified path.
 	gitSecretClient := openchoreo.NewGitSecretClient(ocConfig)
+	// The runtime reader: a release binding's rendered pods, their logs and
+	// their events. It is what makes a coding cycle observable without a
+	// Kubernetes client — status from the pod, live logs from the pod, and
+	// (through the observer below) history for as long as the component lives.
+	runtimeClient := openchoreo.NewRuntimeClient(ocConfig)
 
 	// Observability client (optional — build logs disabled when URL not set)
 	var observClient observability.Client
@@ -236,28 +238,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// constructors so all consumers can attach via WithSecretRefWriter (the no-op
 	// case when smClient is nil is fine).
 	secretRefWriter := organization.NewSecretRefWriter(smClient, orgCredRepo, orgAnthropicRepo, idpRepo)
-
-	// cluster-gateway-proxy client. Used for reading coding-agent pod logs +
-	// job status (streaming feed + JobWatcher) and, when secrets delivery is
-	// also configured, for the full proxy DISPATCH path. When CLUSTER_GATEWAY_PROXY_URL
-	// is empty none of those are wired and dispatch uses the direct
-	// K8sJobDispatcher with no live streaming. In a local install this points at
-	// the in-cluster cluster-gateway-proxy stub (reads only).
-	var cgwClient *clustergatewayproxy.Client
-	if cfg.ClusterGatewayProxyURL != "" {
-		cgwCfg := clustergatewayproxy.Config{BaseURL: cfg.ClusterGatewayProxyURL}
-		// ocauth.AuthProvider is a Token()+Invalidate() superset of the
-		// proxy's Token()-only AuthProvider; bridge via dynamic type assert.
-		if seam.AuthProvider != nil {
-			if ap, ok := seam.AuthProvider.(clustergatewayproxy.AuthProvider); ok {
-				cgwCfg.AuthProvider = ap
-			}
-		}
-		cgwClient = clustergatewayproxy.New(cgwCfg)
-		slog.Info("cluster-gateway-proxy client", "baseURL", cfg.ClusterGatewayProxyURL, "authenticated", cgwCfg.AuthProvider != nil)
-	} else {
-		slog.Warn("CLUSTER_GATEWAY_PROXY_URL not set — coding-agent live streaming + JobWatcher + proxy dispatch disabled; direct k8s-job secret delivery is disabled (configure cluster-gateway-proxy + secret refs)")
-	}
 
 	// Credentials + git-service services and controllers. The credential store,
 	// the App-token minter (post OpenBao key-load / dev seed / bot-identity load),
@@ -303,7 +283,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	credService := organization.NewCredentialService(orgCredRepo, credStore, minter, cfg.WebhookHMACSecret, cfg.GitHubAppClientID, appClientSecret, gitHost)
 	buildCredService := organization.NewBuildCredentialsService(repoRepo, credResolver, gitSecretClient)
 	credService.WithBuildSecretCleaner(buildCredService)
-	anthropicCredService := organization.NewAnthropicCredentialService(orgAnthropicRepo, credStore, wpClient)
+	anthropicCredService := organization.NewAnthropicCredentialService(orgAnthropicRepo, credStore)
 
 	// Task JWT manager — RS256, 24h TTL. The public key is published on the
 	// JWKS endpoint (/auth/external/jwks.json) and verified by both the runner
@@ -331,11 +311,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// the Enabled() check.
 	credService.WithSecretRefWriter(secretRefWriter)
 	anthropicCredService.WithSecretRefWriter(secretRefWriter)
-	// Push the org's Anthropic key to a consumer's ExternalSecret on every
-	// successful Connect (both first-time connect and later rotation) — see
-	// AnthropicCredentialService.pushExternalSecret. nil-safe: disabled
-	// unless both env vars are set (no consumer assumed by default).
-	anthropicCredService.WithRCAAgentPush(cgwClient, cfg.RCAAgentAnthropicPushNamespace, cfg.RCAAgentAnthropicPushSecretName)
 	validatorProbes := organization.NewValidatorProbes(credService, gitHost, credResolver, minter)
 	credValidator := secrets.NewValidator(db, validatorProbes, nil, cfg.CredentialValidatorInterval)
 
@@ -465,20 +440,15 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// S2S endpoint is retired — the runner now clones `org-skills` and resolves
 	// applied skills locally, stamped via AEP_SKILLS_REPO_URL above.)
 	execProgressSvc := execution.NewProgressService(executionRepo, componentClient)
-	// Coding-execution activity feed: live-tail the ca-… pod log while running,
-	// serve the captured coding_agent_logs snapshot once terminal. Keyed on the
-	// proxy client alone (NOT on the dispatch path): a local install dispatches
-	// via the direct K8sJobDispatcher but still reads pod logs through the
-	// proxy stub, so streaming works regardless of which dispatcher ran.
-	// The SAME reader serves the milestone run's per-cycle stream through
-	// runread.CycleLogReader — one pod-log edge, two callers — so it is built
-	// once here and held for both. Nil outside the proxy-configured plane.
-	var agentProgressReader *codingagent.AgentProgressReader
-	if cgwClient != nil {
-		agentProgressReader = codingagent.NewAgentProgressReader(cgwClient, codingAgentLogRepo, orgRepo).
-			WithCycleLogs(runCycleLogRepo)
-		execProgressSvc.WithCodingProgress(agentProgressReader)
-	}
+	// One agent-log edge, two callers: the task-level progress endpoint and the
+	// milestone run's per-cycle stream both read through this reader. Live logs
+	// come from OpenChoreo; a finished cycle's come from the observability
+	// plane while its component is retained; when neither can answer the reader
+	// says so rather than serving an empty stream.
+	agentProgressReader := codingagent.NewAgentProgressReader(
+		codingagent.NewOCLogSource(runtimeClient), codingAgentLogRepo).
+		WithArchive(codingagent.NewObserverArchive(observClient, runtimeClient))
+	execProgressSvc.WithCodingProgress(agentProgressReader)
 	// The task-log SSE stream: one connection per open task-detail page carries
 	// the Task's whole live state (status + executions + unified timeline across
 	// attempts). The hub is the in-proc change bus the PR webhook + job/exec
@@ -592,34 +562,32 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// re-try the exec watcher asks for.
 	codingExecutor := codingagent.NewCodingExecutor(
 		componentClient, repoService, identities{cred: credService},
-		anthropicProvisioner{svc: anthropicCredService}, taskTokens, executionRepo,
+		taskTokens, executionRepo,
 		cfg.AgentPlatformURL, cfg.AgentPlatformURL,
 		orgRepo, anthropicCredService, orgCredRepo, idpRepo)
-	// The cluster-gateway-proxy DISPATCH path (per-org NS + per-run
-	// ExternalSecrets + a K8s Job via the proxy) requires secrets delivery:
-	// the per-run ExternalSecrets source their values from SecretReferences
-	// authored via the injected provider. Gated on BOTH the proxy AND a
-	// secrets client — cloud/prod posture. Locally the proxy stub is present
-	// for reads (streaming + JobWatcher) even when delivery is off; then
-	// dispatch falls through to the direct K8sJobDispatcher.
-	if cgwClient != nil && smClient != nil {
-		codingExecutor.WithProxy(codingagent.New(cgwClient), idpService, cfg.AgentRunnerImage, cfg.AgentClusterSecretStore)
-		slog.Info("coding executor: cluster-gateway-proxy dispatch path enabled (proxy + secrets delivery)",
-			"runnerImage", cfg.AgentRunnerImage, "clusterSecretStore", cfg.AgentClusterSecretStore)
-	}
-	// Direct K8s Job dispatcher remains constructible for a future Job path,
-	// but is not reported as an available coding capability: secret delivery
-	// requires cluster-gateway-proxy + secret refs. Wire only so fail-closed
-	// Dispatch surfaces a clear error when the proxy path is absent.
-	if wpClient != nil && cfg.AgentRunnerImage != "" && cfg.AgentPlatformURL != "" {
-		k8sJobDispatcher := codingagent.NewK8sJobDispatcher(
-			wpClient,
-			cfg.AgentPlatformURL,
-			cfg.AgentRunnerImage,
-		)
-		codingExecutor.WithK8sJobDispatch(k8sJobDispatcher)
-		slog.Info("coding executor: direct k8s-job dispatcher wired (secret delivery unavailable; configure cluster-gateway-proxy + secret refs)",
-			"runnerImage", cfg.AgentRunnerImage, "configured", k8sJobDispatcher.Configured())
+	// The OpenChoreo Component dispatch path (phase 08): one Component per run
+	// cycle in the milestone's own project, rendered by OC into the project's
+	// dataplane namespace. It needs only the OC client and the runner image —
+	// no proxy, no in-cluster Kubernetes client, no per-env branch — and it is
+	// the only coding-agent dispatch path.
+	//
+	// Retention shares the same OC client: before each create it deletes the
+	// project's oldest RETIRED agent components (liveness read from the cycle
+	// rows), because a finished component still holds a billing concurrency
+	// slot.
+	if cfg.AgentRunnerImage != "" {
+		retentionLimit := cfg.CodingAgentComponentRetention
+		if retentionLimit <= 0 {
+			retentionLimit = codingagent.DefaultCodingAgentComponentRetention
+		}
+		ocDispatcher := codingagent.NewOCDispatcher(componentClient).
+			WithImage(cfg.AgentRunnerImage).
+			WithRetention(codingagent.NewComponentRetention(
+				componentClient, runCycleRepo, retentionLimit))
+		codingExecutor.WithOCDispatch(ocDispatcher)
+		slog.Info("coding executor: OpenChoreo component dispatch path enabled",
+			"runnerImage", cfg.AgentRunnerImage,
+			"componentRetention", retentionLimit)
 	}
 	// Build-secret staging so the post-merge build clones a PRIVATE project repo
 	// (the local plane sets GITHUB_REPO_VISIBILITY=private). Reuses the same
@@ -953,7 +921,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	}
 	params.Deps.Ops = opsHandlers
 	params.MCPOrgEndpoints = orgEndpointCatalog
-	resourceTypeCatalog := dependencies.NewResourceTypeCatalog(resourceClient)
+	resourceTypeCatalog := dependencies.NewResourceTypeCatalog(resourceClient, cfg.PlatformResourcesEnabled)
 	params.MCPResourceTypes = resourceTypeCatalog
 	// params.Deps.Dependencies (the strict ListPlatformResourceTypes + provisioning
 	// ops) is assembled below, after provisioningSvc exists.
@@ -1058,14 +1026,9 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// constructed just above).
 	// The milestone run READ surface. Both readers are the root repositories
 	// (this is a read model — it writes nothing), and the log source is the same
-	// pod-log reader the task-log stream uses; a boot without the
-	// cluster-gateway-proxy leaves it nil and the stream carries cycles only.
+	// OC/archive reader the task-log stream uses.
 	runReads := runread.NewReads(milestoneRunRepo, runCycleRepo)
-	var runCycleLogs runread.CycleLogReader
-	if agentProgressReader != nil {
-		runCycleLogs = agentProgressReader
-	}
-	runProgress := runread.NewProgressService(milestoneRunRepo, runCycleRepo, runCycleLogs)
+	runProgress := runread.NewProgressService(milestoneRunRepo, runCycleRepo, agentProgressReader)
 	// A cycle's builds are DERIVED from OpenChoreo on read, never stored, so
 	// this read is the one part of the run surface that touches the cluster —
 	// which is why it is its own endpoint rather than a field on the run read.
@@ -1073,15 +1036,19 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		runreadProjectBuilds{oc: componentClient})
 
 	deliveryHandlers, err := deliveryhttpapi.New(deliveryhttpapi.Deps{
-		BuildSvc:       buildSvc,
-		PreflightSvc:   preflightSvc,
-		BuildActivity:  buildActivityRecorder{svc: activitySvc},
-		TaskReads:      taskReads,
-		TaskCommands:   taskCommands,
-		TaskStream:     taskStreamSvc,
-		RunReads:       runReads,
-		RunProgress:    runProgress,
-		RunCommands:    runread.NewCommands(milestoneRunRepo, runSupervisor, eventcoreRevalidator{events: eventPlane}),
+		BuildSvc:      buildSvc,
+		PreflightSvc:  preflightSvc,
+		BuildActivity: buildActivityRecorder{svc: activitySvc},
+		TaskReads:     taskReads,
+		TaskCommands:  taskCommands,
+		TaskStream:    taskStreamSvc,
+		RunReads:      runReads,
+		RunProgress:   runProgress,
+		// Cancel signals the supervisor AND deletes the cycle's agent
+		// Component, which is what actually stops the pod and frees the org's
+		// billing concurrency slot. Revalidate is the event plane's.
+		RunCommands: runread.NewCommands(milestoneRunRepo, runSupervisor, eventcoreRevalidator{events: eventPlane}).
+			WithCycleReaper(codingagent.NewCycleReaper(componentClient, runCycleRepo)),
 		RunCycleBuilds: runCycleBuilds,
 	})
 	if err != nil {
@@ -1251,34 +1218,13 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	if workspaceReaper != nil {
 		watchers = append(watchers, workspaceReaper)
 	}
-	// JobWatcher polls the `ca-…` coding-agent Jobs and Finishes the coding
-	// execution FAILED on Job failure (success rides the PR webhook), capturing
-	// the pod's final log. Keyed on the proxy client alone: both dispatch paths
-	// (proxy and direct K8sJobDispatcher) emit `ca-…` run names, so the watcher
-	// reads job status + logs through the proxy stub regardless of dispatcher.
-	//
-	// It doubles as the run supervisor's agent STOPPER (wired below): stopping a
-	// cancelled cycle's agent is mostly a log-capture problem — the delete takes
-	// the pod with it — and the capture already lives on this watcher.
-	var agentStopper delivery.MilestoneAgentStopper
-	if cgwClient != nil {
-		jobWatcher := codingagent.NewJobWatcher(codingAgentLogRepo, orgRepo, cgwClient, executionRepo).
-			WithTaskNotifier(taskStreamHub).
-			// The milestone-run half: capture a run cycle's agent log when its Job
-			// goes terminal, so the run progress stream can serve history after the
-			// pod's TTL reaps it. Capture only — a cycle's outcome is the
-			// supervisor's, and it learns it from webhooks.
-			WithCycleLogCapture(runCycleRepo, runCycleLogRepo)
-		// Per-run ExternalSecret teardown applies only to the proxy dispatch
-		// path (which stages them); the direct K8s-Job path creates none.
-		if smClient != nil {
-			jobWatcher.WithExternalSecretCleanup()
-		}
-		agentStopper = jobWatcher
-		watchers = append(watchers, jobWatcher)
-		slog.Info("codingagent.JobWatcher: enabled (cluster-gateway-proxy configured)",
-			"externalSecretCleanup", smClient != nil)
-	}
+	// The pod-truth watcher: it classifies each dispatched cycle from the Pod
+	// OpenChoreo rendered for it, records a terminal agent reason when the agent
+	// died without a pull request, and banks the run's token spend. It writes no
+	// logs and deletes no components — history is the observability plane's and
+	// deletion is retention's. Always on (no longer gated on cluster-gateway-proxy).
+	watchers = append(watchers, codingagent.NewJobWatcher(runtimeClient, runCycleRepo, asServiceIdentity))
+	slog.Info("codingagent.JobWatcher: enabled (OpenChoreo resource tree)")
 	// The milestone run supervisor's Temporal worker. Registered only when
 	// Temporal is configured (TEMPORAL_HOSTPORT set). The watcher dials in a
 	// retry loop, so a Temporal server that is down at boot is not fatal — the
@@ -1296,11 +1242,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 			// its Job ref. It mints no execution row — the cycle record is the
 			// supervisor's own bookkeeping.
 			Dispatcher: codingExecutor,
-			// …and its counterpart: a cancelled run's agent is stopped rather than
-			// left to bill the org until the Job's own deadline. Nil without the
-			// cluster-gateway-proxy, which is the degraded boot that also has no
-			// dispatcher.
-			Stopper: agentStopper,
 			// Managed-API gateway policy, converged at builds-green. This rail is
 			// where the trait sync has to hang now: it took over building from the
 			// ExecWatcher deploy path (which reached the same emitter through
@@ -1315,7 +1256,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	return &App{
 		Handler:      handler,
 		Watchers:     watchers,
-		degradations: computeDegradations(cfg, in, smClient != nil),
+		degradations: computeDegradations(cfg, smClient != nil),
 	}, nil
 }
 
@@ -1325,7 +1266,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 // Assemble, and one assembly test enumerates the whole degraded-mode matrix off
 // Degradations() — no capability/Profile abstraction.
 type Degradation struct {
-	Capability string // stable slug (e.g. "build-logs", "coding-dispatch-any")
+	Capability string // stable slug (e.g. "build-logs", "coding-dispatch-oc")
 	Reason     string // which config is missing and what it turns off
 }
 
@@ -1334,7 +1275,7 @@ type Degradation struct {
 // config.Validate boot-fails on it, so it can never be a degradation here.
 func (a *App) Degradations() []Degradation { return a.degradations }
 
-func computeDegradations(cfg config.Config, in Infra, secretsDelivery bool) []Degradation {
+func computeDegradations(cfg config.Config, secretsDelivery bool) []Degradation {
 	var d []Degradation
 	off := func(capability, reason string) { d = append(d, Degradation{capability, reason}) }
 
@@ -1343,12 +1284,10 @@ func computeDegradations(cfg config.Config, in Infra, secretsDelivery bool) []De
 	}
 	if cfg.Observability.BaseURL == "" {
 		off("build-logs", "OBSERVABILITY_API_URL not set — build logs disabled")
+		off("cycle-log-archive", "OBSERVER_URL not set — a finished cycle's agent log cannot be read back")
 	}
 	if !secretsDelivery {
 		off("secrets-delivery", "SecretsProvider not injected — secret writes + external-secret cleanup disabled")
-	}
-	if cfg.ClusterGatewayProxyURL == "" {
-		off("cluster-gateway-proxy", "CLUSTER_GATEWAY_PROXY_URL not set — coding-agent live streaming + JobWatcher disabled")
 	}
 	if cfg.AEPInternalBaseURL == "" {
 		off("mcp-discovery", "AEP_INTERNAL_BASE_URL not set — design-turn MCP discovery omitted")
@@ -1363,24 +1302,12 @@ func computeDegradations(cfg config.Config, in Infra, secretsDelivery bool) []De
 	if cfg.OAuthStateSigningKey == "" {
 		off("connect-oauth-state", "OAUTH_STATE_SIGNING_KEY not set — GitHub App connect-state JWTs will fail to mint")
 	}
-	// Working dispatch requires cluster-gateway-proxy + secrets delivery
-	// (refs-only ExternalSecrets). Direct k8s-job secret delivery is disabled
-	// even when the in-cluster client / runner image / platform URL are set.
-	proxyDispatch := cfg.ClusterGatewayProxyURL != "" && secretsDelivery
-	k8sWired := in.K8sClient != nil && cfg.AgentRunnerImage != "" && cfg.AgentPlatformURL != ""
-	if !proxyDispatch {
-		off("coding-dispatch-proxy", "cluster-gateway-proxy + secrets delivery not both set — cloud proxy dispatch path off")
-	}
-	if !k8sWired {
-		off("coding-dispatch-k8s", "in-cluster k8s client / AGENT_RUNNER_IMAGE / AGENT_PLATFORM_URL not all set — direct K8s-Job dispatcher not wired")
-	} else {
-		off("coding-dispatch-k8s", "direct k8s-job secret delivery is disabled; configure cluster-gateway-proxy + secret refs")
-	}
-	if !proxyDispatch {
-		off("coding-dispatch-any", "NO working dispatch path — coding/validation runs require cluster-gateway-proxy + secret refs")
-	}
-	if cfg.RCAAgentAnthropicPushNamespace == "" || cfg.RCAAgentAnthropicPushSecretName == "" {
-		off("rca-agent-key-push", "RCA_AGENT_ANTHROPIC_PUSH_* not set — org Anthropic key not pushed to a consumer ExternalSecret")
+	// Working dispatch is the OpenChoreo component path: the BFF creates the run
+	// cycle's Component through platform-api-service and OC renders the Job. It
+	// still needs secrets delivery, because the cycle's ExternalSecrets resolve
+	// against the org's secret store — the BFF writes no secret material itself.
+	if !secretsDelivery {
+		off("coding-dispatch-oc", "secrets delivery not configured — the OpenChoreo coding-agent dispatch path cannot resolve its cycle secret refs")
 	}
 	if !cfg.Temporal.Enabled() {
 		off("run-temporal", "TEMPORAL_HOSTPORT not set — milestone run worker watcher not registered")

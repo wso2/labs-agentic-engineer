@@ -41,6 +41,7 @@ func TestStatus(t *testing.T) {
 		{"forbidden", openchoreo.ErrForbidden, http.StatusForbidden},
 		{"not found", openchoreo.ErrNotFound, http.StatusNotFound},
 		{"conflict", openchoreo.ErrConflict, http.StatusConflict},
+		{"payment required", openchoreo.ErrPaymentRequired, http.StatusPaymentRequired},
 		{"internal", openchoreo.ErrInternalServerError, http.StatusInternalServerError},
 		{"wrapped not found still classifies", fmt.Errorf("get: %w", openchoreo.ErrNotFound), http.StatusNotFound},
 	}

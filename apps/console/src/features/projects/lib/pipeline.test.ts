@@ -22,6 +22,7 @@ import {
   buildStageView,
   deployStageView,
   specStageView,
+  validationState,
   validationView,
 } from "./pipeline";
 
@@ -299,5 +300,49 @@ describe("validationView", () => {
     ]) {
       expect(validationView(v), `no mapping for ${v}`).not.toBeNull();
     }
+  });
+});
+
+// The join the Validation page was missing. `RunValidation.verdict` is a COLUMN —
+// six verdicts, no lifecycle — so a surface reading it alone renders `failed` as
+// terminal while the platform is repairing it and about to validate again, which is
+// exactly what the page did while the deployments board beside it read "awaiting
+// fix" for the same run.
+describe("validationState", () => {
+  // The two values that exist ONLY on deploy.validation. Nothing else can supply
+  // them: no run row and no cycle record ever carries either.
+  it("takes the lifecycle from deploy.validation over a repeatable verdict", () => {
+    expect(validationState("awaiting-fix", "failed")).toBe("awaiting-fix");
+    expect(validationState("awaiting-fix", "unreported")).toBe("awaiting-fix");
+    expect(validationState("running", "failed")).toBe("running");
+  });
+
+  it("takes the lifecycle when no verdict exists yet — the first attempt", () => {
+    expect(validationState("running", "")).toBe("running");
+  });
+
+  // The verdict itself always comes from the run row, which the page scopes more
+  // precisely than the status read does (deploy.validation answers for the newest
+  // validating run on the DEPLOY version's milestone).
+  it("keeps the run's verdict for every settled state", () => {
+    for (const v of ["passed", "partial", "inconclusive", "failed", "unreported", "skipped"]) {
+      expect(validationState(v, v), `${v} should pass straight through`).toBe(v);
+    }
+  });
+
+  // The two are separate polls, so they can disagree by one interval. A lifecycle
+  // value only means anything over a verdict the loop actually repeats — pairing a
+  // stale `awaiting-fix` with the newer poll's green verdict would announce a repair
+  // of something that passed.
+  it("ignores a stale lifecycle over a verdict the loop never repeats", () => {
+    expect(validationState("awaiting-fix", "passed")).toBe("passed");
+    expect(validationState("running", "partial")).toBe("partial");
+    expect(validationState("running", "inconclusive")).toBe("inconclusive");
+    expect(validationState("awaiting-fix", "skipped")).toBe("skipped");
+  });
+
+  it("has nothing to say with neither half", () => {
+    expect(validationState("none", "")).toBe("");
+    expect(validationState("", "")).toBe("");
   });
 });

@@ -70,6 +70,17 @@ type RunCycleRepository interface {
 	// so the first close wins.
 	Finish(ctx context.Context, id, mergeSHA string) (*RunCycle, error)
 
+	// FinishAgentFailed closes a cycle whose agent died without landing a pull
+	// request, recording why. It is the pod-truth watcher's ONE write.
+	//
+	// It is fenced twice — the cycle must be OPEN and must carry NO pull request
+	// — and the second fence is the important one: a pull request means the side
+	// effects landed, so a pod that exits badly afterwards is not evidence
+	// against it. Closing such a cycle here would fence out the very
+	// pull_request webhook that completes the run. Returns (nil, nil) when
+	// either fence rejects, which is the ordinary outcome of a re-tick.
+	FinishAgentFailed(ctx context.Context, id, reason string) (*RunCycle, error)
+
 	// SetValidationVerdict records what one validation ATTEMPT concluded, and the
 	// issue it was dispatched at.
 	//
@@ -101,18 +112,27 @@ type RunCycleRepository interface {
 	ListByRun(ctx context.Context, orgID, runID string) ([]RunCycle, error)
 
 	// ListRecentDispatched returns every cycle that has launched a Job and is
-	// either still open or closed no earlier than `since` — the watcher's claim
-	// set for capturing agent logs.
+	// either still open or closed no earlier than `since` — the JobWatcher's
+	// claim set for pod-truth reads and terminal usage capture.
 	//
 	// It is deliberately NOT "open cycles only": the agent Job exits the moment
 	// it opens its pull request, and the auto-merge that CLOSES the cycle follows
 	// within seconds, so a watcher restricted to open cycles would routinely
-	// arrive after the cycle had closed and capture nothing. The window instead
-	// tracks how long the Job's pod survives (its TTL), which is what actually
-	// bounds the capture.
+	// arrive after the cycle had closed and miss the usage stamp. The window
+	// instead tracks how long the Job's pod survives (its TTL), which is what
+	// actually bounds the pass.
 	//
 	// Unscoped by org on purpose: it drives a platform watcher, not an HTTP read.
 	ListRecentDispatched(ctx context.Context, since time.Time) ([]RunCycle, error)
+
+	// ListOpenCycleIDs returns the ids of the project's cycles that have not
+	// ended — the LIVE set. The agent-component reaper reads it to decide what
+	// it may delete: OpenChoreo registers no health check for a `batch/v1 Job`,
+	// so a Component's own status cannot say whether its pod is still running,
+	// while a cycle row with no ended_at can.
+	//
+	// Org-scoped because it is derived from an already-org-resolved dispatch.
+	ListOpenCycleIDs(ctx context.Context, orgID, projectID string) ([]string, error)
 
 	// DeleteByProject purges a project's cycle records — the project-delete
 	// cascade, paired with MilestoneRunRepository.DeleteByProject so a recreated
@@ -198,6 +218,23 @@ func (r *runCycleRepository) Finish(ctx context.Context, id, mergeSHA string) (*
 	})
 }
 
+func (r *runCycleRepository) FinishAgentFailed(ctx context.Context, id, reason string) (*RunCycle, error) {
+	res := r.db.WithContext(ctx).
+		Model(&RunCycle{}).
+		Where("id = ? AND ended_at IS NULL AND pr_number = 0", id).
+		Updates(map[string]any{
+			"agent_reason": reason,
+			"ended_at":     time.Now().UTC(),
+		})
+	if res.Error != nil {
+		return nil, res.Error
+	}
+	if res.RowsAffected == 0 {
+		return nil, nil
+	}
+	return r.getByID(ctx, id)
+}
+
 func (r *runCycleRepository) SetValidationVerdict(ctx context.Context, id, verdict string, issue int) (*RunCycle, error) {
 	if !ValidationVerdicts[verdict] {
 		return nil, fmt.Errorf("run cycle: unknown validation verdict %q", verdict)
@@ -274,6 +311,19 @@ func (r *runCycleRepository) ListRecentDispatched(ctx context.Context, since tim
 		return nil, err
 	}
 	return rows, nil
+}
+
+func (r *runCycleRepository) ListOpenCycleIDs(ctx context.Context, orgID, projectID string) ([]string, error) {
+	var ids []string
+	err := r.db.WithContext(ctx).
+		Model(&RunCycle{}).
+		Where("org_id = ? AND project_id = ? AND ended_at IS NULL", orgID, projectID).
+		Order("created_at ASC").
+		Pluck("id", &ids).Error
+	if err != nil {
+		return nil, err
+	}
+	return ids, nil
 }
 
 func (r *runCycleRepository) DeleteByProject(ctx context.Context, orgID, projectID string) error {

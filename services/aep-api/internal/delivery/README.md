@@ -39,7 +39,7 @@ flowchart LR
     RUN -.->|ValidationCoordinator| VAL
   end
   EXEC --> EXECS[("executions")]
-  EVENT --> RUNS[("milestone_runs · run_cycles · run_cycle_logs")]
+  EVENT --> RUNS[("milestone_runs · run_cycles")]
   RREAD --> RUNS
   BUILD --> RUNS
   TASK --> RUNS
@@ -71,8 +71,8 @@ it), and every former feature→feature edge becomes a legal slice→root type r
 | `execution` | the executions READ surface: the per-Task progress endpoint, the task-log SSE stream, `OpsExecutionReader`. It writes nothing and dispatches nothing — the only execution rows left are the provisioning gates' | `TaskStreamHub`, the executions kernel |
 | `eventcore` | the event plane of the milestone-run loop: the auto-merge policy seam, the merged-PR path-diff build fan-out + per-`(component, SHA)` re-trigger budget, fix/conflict/red-main issue minting, milestone-matched predicate re-evaluation, adoption, the reconcile sweep, and the build sweep that observes those builds reaching terminal | the milestone model (labels, `MilestoneRun`/`RunCycle`, run signals), `DiffComponents`/`BuildRunName` and `BuildTerminalObserver`; **no Temporal** — it reaches the supervisor only through the `RunSignaler`/`RunStarter` ports |
 | `run` | the milestone run SUPERVISOR: the wait state + dispatch predicate, the cycle loop, the four budgets + no-progress + ceiling, the validation cycle, settle, and cancel. Plus the `Supervisor` handle the event plane and the build click signal and start runs through | `Runtime`, the milestone model, `RunStatus`/`MilestoneRunWorkflowID`, `MilestoneDispatch`, `DiffComponents`/`BuildRunNamePrefix`; **no GitHub client, no gorm** |
-| `runread` | the run READ surface: a version's runs + their cycles, ONE SSE stream stitching the per-cycle agent logs, and the two writes beside them — cancel, and revalidate. Owns no state and decides nothing: both writes resolve their target through the org-scoped read, then hand off | the run/cycle entities and `IsTerminalRunState`; reaches the pod log through `CycleLogReader`, the supervisor through `RunCanceller` and the event plane through `Revalidator`, so it drags in neither a cluster client, a workflow engine nor GitHub |
-| `codingagent` | the CodingExecutor (ONE dispatch entry point: launch a cycle's agent Job), the build-auth retry, the job watchers and the Job templates | `MilestoneDispatch`/`MilestoneDispatcher`, `TaskStreamHub`, `BuildTerminalObserver` |
+| `runread` | the run READ surface: a version's runs + their cycles, ONE SSE stream stitching the per-cycle agent logs, and the two writes beside them — cancel, and revalidate. Owns no state and decides nothing: both writes resolve their target through the org-scoped read, then hand off | the run/cycle entities and `IsTerminalRunState`; reaches the pod log through `CycleLogReader` (OC API while the Component lives, observer archive while retained), the supervisor through `RunCanceller` and the event plane through `Revalidator`, so it drags in neither a cluster client, a workflow engine nor GitHub |
+| `codingagent` | the CodingExecutor (ONE dispatch entry point: dispatch a run cycle as an ephemeral OpenChoreo `coding-agent` job Component), the build-auth retry, the pod-truth watcher, retention/LRU and the cancel-time delete. Design: [`codingagent/design/oc-job-dispatch.md`](codingagent/design/oc-job-dispatch.md) | `MilestoneDispatch`/`MilestoneDispatcher`, `TaskStreamHub`, `BuildTerminalObserver` |
 | `validation` | the two S2S validation runner callbacks (context / test-credentials), the per-version validation issue, and the report → verdict rule | — (no cross-edges; least entangled) |
 | `httpapi` | the aggregator: embeds build/task/execution/runread handlers; **holds `Deps`** (see below) | imports the sub-packages (the exempt aggregator) |
 
@@ -93,7 +93,7 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
 | `BuildTerminalObserver` (root) | offers | the OpenChoreo watcher → the event plane: a settled build reported outwards, so watcher and event plane stay peer sub-packages |
 | `MilestoneDispatcher` (root, over `MilestoneDispatch`) | offers | the coding agent → the supervisor: launch one agent run at a milestone and answer with its Job ref. The dispatch prompt is a milestone reference; the runner discovers its own working set. Satisfied by `*codingagent.CodingExecutor`, which writes no execution row — the cycle record is the supervisor's bookkeeping |
 | `ComponentEnsurer` | needs | `eventcore` → the projects component service + the runtime-config emitter. Provision a component's OpenChoreo CR immediately before its first build; see the invariant below |
-| `RunReader` · `CycleReader` · `CycleLogReader` · `RunCanceller` · `Revalidator` | needs | `runread` → the root run/cycle repositories, `codingagent`'s pod-log reader, `*run.Supervisor` and the event plane. Four reads and two writes, which is the whole dependency surface of the read model. `Revalidator` is a port for the same reason `RunCanceller` is: deciding a revalidation needs GitHub (is there open work?) and the project repo (is there an oracle?), and this surface must stay free-to-poll |
+| `RunReader` · `CycleReader` · `CycleLogReader` · `RunCanceller` · `Revalidator` | needs | `runread` → the root run/cycle repositories, `codingagent`'s cycle-log reader (the pod's log through the OC API while it lives, the observer's archive while the Component is retained), `*run.Supervisor` and the event plane. Four reads and two writes, which is the whole dependency surface of the read model. `Revalidator` is a port for the same reason `RunCanceller` is: deciding a revalidation needs GitHub (is there open work?) and the project repo (is there an oracle?), and this surface must stay free-to-poll |
 | `RunSignaler` · `RunStarter` | needs | `eventcore` and `build` → the run supervisor. Signal a run, start one. Interfaces, which is what keeps both the event plane and the build click free of a workflow engine; both are declared over the root `StartRunRequest`, and `*run.Supervisor` satisfies both |
 | `RunStore` · `CycleStore` · `MilestoneReader` · `PRReader` · `DesignReader` · `BuildReader` · `ValidationCoordinator` | needs | `run` → the root repositories, `sourcecontrol`, the design reader, `clients/openchoreo` and `delivery/validation`. Every I/O the loop performs, named once; `BuildReader` is read-ONLY because the supervisor never triggers a build |
 | `MilestoneClient` (mint · list a milestone's issues · close issue · close milestone) | needs | `build` → `sourcecontrol`. The plan path's whole GitHub surface: create `v<N>` idempotently, and supersede `v<N-1>` |
@@ -135,11 +135,12 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   nothing else: it detects no event and writes no issue.
 - **Persistence**: every gorm in this domain sits at the ROOT (the fence `TestGormFencedToDomainRepository`
   draws), as single write-authority — `repository_execution.go` · `repository_coding_agent_log.go` ·
-  `repository_run.go` · `repository_cycle.go` · `repository_run_cycle_log.go` · `repository_usage_ledger.go`
-  over the `execution.go` / `coding_agent_log.go` / `milestone_run.go` / `run_cycle.go` / `run_cycle_log.go`
-  / `usage_ledger.go` entities. Their tables are `executions` · `coding_agent_logs` · `milestone_runs` ·
-  `run_cycles` · `run_cycle_logs` · `agent_usage_ledger`. `usage_rollup.go` is a plain function over the
-  ledger rather than a third store.
+  `repository_run.go` · `repository_cycle.go` · `repository_usage_ledger.go` over the `execution.go` /
+  `coding_agent_log.go` / `milestone_run.go` / `run_cycle.go` / `usage_ledger.go` entities. Their tables
+  are `executions` · `coding_agent_logs` · `milestone_runs` · `run_cycles` · `agent_usage_ledger`.
+  `run_cycle_logs` is retired (migration step is a tombstone; cycle logs are read from OpenChoreo /
+  the observer, not Postgres). `usage_rollup.go` is a plain function over the ledger rather than a
+  third store.
 
 ## Invariants — don't break
 - **`task ⊥ run`.** The GitHub-facing Task surface and the run supervisor are peer sub-packages that never
@@ -259,14 +260,11 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   one queue with disjoint registrations would fail whichever tasks each picked up by accident.
 - **Cancel is a signal, not a Temporal cancellation.** A cancelled context could not run the activities
   that record the outcome, so the run settles its own row and closes its own cycle on the ordinary path.
-  That live context is also what lets it **stop the agent**: settle deletes the in-flight cycle's Job
-  (`MilestoneAgentStopper`) on the cancel path and only there. Without it, cancel settled the row in a
-  second and left the agent working — and billing the org's model budget — until the Job's own
-  `activeDeadlineSeconds` expired an hour or two later, which is not what the button says. The log is
-  SNAPSHOTTED before the delete: deletion propagates to the pods, and that log is the only record of what
-  the agent did before it was stopped. No other terminal path deletes a Job — the agent has already
-  exited there, and a delete would race the watcher's own capture (it snapshots seconds after a Job
-  exits) and destroy the log the run is being settled to explain.
+  Stopping the agent is the HTTP cancel surface's job: `runread.Commands.Cancel` signals the supervisor
+  and then best-effort reaps the cycle's OpenChoreo Component via `CycleReaper` (immediate
+  `DeleteComponent`, no retention — phase-08 Cancel B1). A failed reap does not fail the cancel; a BFF
+  crash mid-cancel can leave the pod until the retention sweep. Natural finishes are NOT reaped on that
+  path — retention/LRU owns those.
 - **Echo suppression is `issues.*`-only.** Every label, comment and milestone assignment the platform
   writes fires an `issues.*` delivery straight back, so those handlers drop self-sender deliveries. It is
   deliberately NOT applied to `pull_request.*`: in App mode the coding runner opens its PR as the same
@@ -302,13 +300,15 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   A live run — including one parked in `waiting` — holds the stream open indefinitely; a terminal run
   streams its history, sends `done` + `[DONE]`, and the server closes. The server keeps no cursor; the
   client dedups by cycle id and `(cycleId, seq)`.
-- **A cycle's agent log is keyed by the CYCLE, not by an execution.** `coding_agent_logs` is FK'd to
-  `executions(id)` and a milestone run mints no execution row, so the milestone loop has its own sidecar,
-  `run_cycle_logs`, keyed `(cycle_id, run_name)` — one row per attempt, since a re-dispatch keeps the
-  cycle and takes a new Job. The `JobWatcher` captures it when the cycle's Job goes terminal and does
-  NOTHING else on that pass: a Job that exited zero says nothing about whether the cycle landed, and the
-  cycle's outcome is the supervisor's, learned from webhooks. Without the capture a finished run would
-  have no history at all — the Job's TTL reaps the pod long before anyone opens an old version's page.
+- **Agent logs are read, never stored.** Three sources answer, in order: live OpenChoreo pod logs while
+  the Component exists, the observability archive while the Component is retained, and a synthetic
+  `logs_unavailable` line when the Component is gone or no observability plane is configured. An empty
+  stream and a lost log look identical to a reader and mean opposite things about the agent, so the
+  platform never lets "gone" render as "silent". `CycleLogReader` serves the run-progress stream;
+  `codingagent` owns the read path and writes no log text to Postgres. The one thing taken from a
+  terminal pod's log is the runner's token-usage line, stamped onto the cycle row — accounting, not
+  logging. `coding_agent_logs` remains for legacy execution rows; milestone cycles never used it.
+  (`run_cycle_logs` is retired — do not revive a Postgres sidecar for cycle logs.)
 - **A project delete purges the WORK and retires the SPEND.** `runs` and `run_cycles` are working state and
   go, so a recreated same-named project cannot inherit a timeline its repo never had; the
   `agent_usage_ledger` is not purged by anything — `RetireByProject` stamps its live entries instead, and

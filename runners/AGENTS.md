@@ -20,18 +20,16 @@ into the runner pod at `/app/skills` for live skill edits (see
   messages (which the BFF forwards to the console build log), into `ps`, and into
   `.git/config`. Rationale inline in `git_clone.ts`; the BFF keeps a shape-based
   second line of defense in `delivery/codingagent/redact.go`.
-- **ONE credential mechanism: the git credential helper in `lib/credhelper.ts`.**
-  Every authenticated git operation in a run goes through it, the provisioning
-  clone included — the clone wires it in with `git -c credential.<origin>.helper`
-  because `.git/config` doesn't exist yet, and `workspace.ts` installs the same
-  script durably afterwards. No GIT_ASKPASS, no token in argv or env, and the
-  runner process never holds a GitHub token. Don't add a second path: the last
-  one shipped a script serving two protocols that dispatched on `[ -n "$1" ]`,
-  which is true for both, so the clone worked and every agent operation failed
-  its auth silently. Putting the helper on the clone is what makes a break a
-  provisioning failure instead. Any change to the generated scripts must keep
-  `credhelper.test.ts` green — it drives them with real `git`, which is the only
-  thing that would have caught that.
+- **Git credentials — two modes, one helper value in `.git/config`.**
+  When `GITHUB_TOKEN` / `GH_TOKEN` is set (cloud Jobs mount the org PAT),
+  `workspace.ts` installs `gh auth git-credential` (the same helper
+  `gh auth setup-git` uses), pinned to the **real** `gh` absolute path so the
+  `.aep/gh` wrapper cannot intercept. Clone and push share that path; they do
+  **not** call `credentials/refresh`. When those env vars are absent, every
+  authenticated git op goes through `lib/credhelper.ts` → refresh (clone via
+  `git -c`, then the same script installed durably). No GIT_ASKPASS, no token
+  in argv or URL. Don't add a third path. Changes to the generated refresh
+  scripts must keep `credhelper.test.ts` green — it drives them with real `git`.
 - Runner `console.*` is a **user-facing** channel, and it shares the file
   descriptor the NDJSON progress feed writes to. `installConsoleScrubber()` at
   each entry point converts every call into a scrubbed `log` progress event, so

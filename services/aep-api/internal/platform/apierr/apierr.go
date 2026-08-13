@@ -45,6 +45,7 @@ const (
 	CodeForbidden          = "forbidden"
 	CodeNotFound           = "not_found"
 	CodeConflict           = "conflict"
+	CodePaymentRequired    = "payment_required"
 	CodeInternal           = "internal_error"
 	CodeBadGateway         = "bad_gateway"
 	CodeServiceUnavailable = "service_unavailable"
@@ -86,6 +87,13 @@ func NotFound(msg string) error {
 
 func Conflict(msg string) error {
 	return &Error{Status: http.StatusConflict, Code: CodeConflict, Message: msg}
+}
+
+// PaymentRequired is HTTP 402 — entitlement/subscription gate (project quota,
+// inactive subscription, agent concurrency). The message is meant for the
+// console: pass through the platform's sentence when we have one.
+func PaymentRequired(msg string) error {
+	return &Error{Status: http.StatusPaymentRequired, Code: CodePaymentRequired, Message: msg}
 }
 
 func Internal(msg string) error {

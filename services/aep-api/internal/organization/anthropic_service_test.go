@@ -207,7 +207,7 @@ func TestAnthropicValidateKey_StatusBranches(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			base, rec := anthropicFakeAPI(t, tc.status)
-			svc := NewAnthropicCredentialService(nil, nil, nil).WithAnthropicAPIBase(base)
+			svc := NewAnthropicCredentialService(nil, nil).WithAnthropicAPIBase(base)
 			err := svc.validateAnthropicKey(context.Background(), AnthropicCredentialAPIKey, anthropicUnitKey)
 			if tc.wantCode == "" {
 				if err != nil {
@@ -234,7 +234,7 @@ func TestAnthropicValidateKey_UpstreamServerErrorIs502(t *testing.T) {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			t.Parallel()
 			base, _ := anthropicFakeAPI(t, status)
-			svc := NewAnthropicCredentialService(nil, nil, nil).WithAnthropicAPIBase(base)
+			svc := NewAnthropicCredentialService(nil, nil).WithAnthropicAPIBase(base)
 			err := svc.validateAnthropicKey(context.Background(), AnthropicCredentialAPIKey, anthropicUnitKey)
 			var ue *UpstreamError
 			if !errors.As(err, &ue) {
@@ -251,7 +251,7 @@ func TestAnthropicValidateKey_UpstreamServerErrorIs502(t *testing.T) {
 func TestAnthropicValidateKey_ProbeShape(t *testing.T) {
 	t.Parallel()
 	base, rec := anthropicFakeAPI(t, http.StatusOK)
-	svc := NewAnthropicCredentialService(nil, nil, nil).WithAnthropicAPIBase(base)
+	svc := NewAnthropicCredentialService(nil, nil).WithAnthropicAPIBase(base)
 	if err := svc.validateAnthropicKey(context.Background(), AnthropicCredentialAPIKey, anthropicUnitKey); err != nil {
 		t.Fatalf("validate: %v", err)
 	}
@@ -273,7 +273,7 @@ func TestAnthropicValidateKey_NetworkFailureIsUnreachable(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.NotFoundHandler())
 	srv.Close() // dead endpoint → connection refused
-	svc := NewAnthropicCredentialService(nil, nil, nil).WithAnthropicAPIBase(srv.URL)
+	svc := NewAnthropicCredentialService(nil, nil).WithAnthropicAPIBase(srv.URL)
 	err := svc.validateAnthropicKey(context.Background(), AnthropicCredentialAPIKey, anthropicUnitKey)
 	if got := anthropicValidationCode(t, err); got != "anthropic_unreachable" {
 		t.Fatalf("code: got %q, want anthropic_unreachable (err %v)", got, err)
@@ -287,7 +287,7 @@ func TestAnthropicConnect_ShapeGuardsRejectBeforeAnyIO(t *testing.T) {
 	// db, store AND the API base are all unusable (nil / real anthropic.com is
 	// never dialed because the guards fire first) — reaching any of them would
 	// panic or hang, so a clean ValidationError proves the ordering.
-	svc := NewAnthropicCredentialService(nil, nil, nil).WithAnthropicAPIBase("http://127.0.0.1:0")
+	svc := NewAnthropicCredentialService(nil, nil).WithAnthropicAPIBase("http://127.0.0.1:0")
 	cases := []struct {
 		name     string
 		key      string
@@ -314,7 +314,7 @@ func TestAnthropicConnect_UpstreamRejectionShortCircuitsPersistence(t *testing.T
 	base, _ := anthropicFakeAPI(t, http.StatusUnauthorized)
 	// nil db/store: any persistence attempt would panic — passing proves the
 	// upstream 401 fails Connect BEFORE the transaction begins.
-	svc := NewAnthropicCredentialService(nil, nil, nil).WithAnthropicAPIBase(base)
+	svc := NewAnthropicCredentialService(nil, nil).WithAnthropicAPIBase(base)
 	_, err := svc.Connect(context.Background(), "acme", AnthropicRoleDefault, AnthropicConnectRequest{APIKey: anthropicUnitKey})
 	if got := anthropicValidationCode(t, err); got != "anthropic_key_invalid" {
 		t.Fatalf("code: got %q, want anthropic_key_invalid (err %v)", got, err)

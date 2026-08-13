@@ -20,11 +20,11 @@ import { useState } from "react";
 import { Box, Button, Stack, Typography } from "@wso2/oxygen-ui";
 import type { components } from "../../../generated/aep-api";
 import { useCycleBuilds } from "../api/queries";
-import { useRunProgress, type RunProgressCycle } from "../hooks/useRunProgress";
+import { useRunProgress, type RunProgressCycle, type RunProgressPhase } from "../hooks/useRunProgress";
 import { provisioningStage } from "../lib/provisioning";
 import { BUILD_CYCLE_KINDS, buildSessionLabel, isTerminalRun } from "../lib/runView";
 import { SESSION_STAGE_COUNT, sessionIssues, sessionStages } from "../lib/sessionSpine";
-import { AgentLogLines, LogSurface } from "./AgentLogLines";
+import { AgentLogPanel } from "./AgentLogLines";
 import { CycleBuilds } from "./CycleBuilds";
 import { DeploymentStage } from "./DeploymentStage";
 import { IssueChips } from "./IssueChips";
@@ -68,6 +68,7 @@ function SessionStages({
   index,
   work,
   lines,
+  logPhase,
   /** This session's first stage number in the run's one flow. */
   stepFrom,
   /** Show the "Build session N" boundary above the first stage. */
@@ -83,6 +84,7 @@ function SessionStages({
   index: number;
   work: TaskView[];
   lines: RunProgressCycle["lines"];
+  logPhase: RunProgressPhase;
   stepFrom: number;
   labelled: boolean;
   last: boolean;
@@ -121,9 +123,12 @@ function SessionStages({
                     it runs, shorter once it has exited — but never gone, because
                     that log is the record of how the code got written. */}
                 {showLog ? (
-                  <LogSurface maxHeight={agentRunning ? 420 : 260}>
-                    <AgentLogLines lines={lines} />
-                  </LogSurface>
+                  <AgentLogPanel
+                    lines={lines}
+                    phase={logPhase}
+                    agentRunning={agentRunning}
+                    maxHeight={agentRunning ? 420 : 260}
+                  />
                 ) : (
                   // The one thing still behind a click. Attaching to the feed
                   // replays every session's history, which is not worth doing to
@@ -250,6 +255,7 @@ export function RunSpine({
           index={i}
           work={work}
           lines={linesByCycle.get(cycle.id) ?? []}
+          logPhase={progress.phase}
           stepFrom={firstSessionStep + i * SESSION_STAGE_COUNT}
           // The first session is the flow; a LATER one is a re-entry, and that
           // is what needs announcing.

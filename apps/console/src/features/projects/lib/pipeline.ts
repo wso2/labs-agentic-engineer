@@ -110,6 +110,43 @@ export function deployStageView(status: ProjectStatus): StageView {
   }
 }
 
+// The two deploy.validation values that mean the LOOP is still working, so a
+// verdict beside them is the last attempt's rather than the run's answer. Neither
+// is ever a stored verdict, which is why they can only come from deploy.validation.
+const VALIDATION_IN_FLIGHT = new Set(["running", "awaiting-fix"]);
+
+// The verdicts the loop repeats — delivery.ValidationVerdictFailsRun in the
+// console's terms. Every other verdict is final the moment it is written, so a
+// lifecycle value cannot legitimately sit over one.
+const VALIDATION_REPEATED = new Set(["failed", "unreported"]);
+
+/**
+ * The validation state to RENDER, from the two facts the console holds separately:
+ * `deploy.validation` (the loop's position, the only source of `running` and
+ * `awaiting-fix`) and the run row's stored verdict (the last attempt's answer).
+ *
+ * Both are needed because neither is sufficient. `RunValidation.verdict` is a
+ * COLUMN — six verdicts, no lifecycle — so a page reading it alone renders a fatal
+ * verdict as terminal while the platform is repairing it and about to validate
+ * again. deploy.validation carries the lifecycle but is scoped to the newest
+ * validating run on the deploy version's milestone, so the run story a page keyed
+ * itself on is the better source for the verdict itself.
+ *
+ * They are also two separate polls, so they can disagree by one interval. A
+ * lifecycle value is therefore honoured only over a verdict the loop actually
+ * repeats: a stale `awaiting-fix` beside a green verdict from the newer poll reads
+ * as the verdict, not as a repair of something that passed.
+ */
+export function validationState(deployValidation: string, verdict: string): string {
+  if (
+    VALIDATION_IN_FLIGHT.has(deployValidation) &&
+    (verdict === "" || VALIDATION_REPEATED.has(verdict))
+  ) {
+    return deployValidation;
+  }
+  return verdict;
+}
+
 // validationView maps deploy.validation to a label + tone, shared by the overview
 // deploy line (suffix) and the deployments board chip. null = nothing to show yet.
 //

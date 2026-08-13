@@ -83,6 +83,10 @@ services:
       # registry pull). Override to a published ghcr.io/wso2/aep/remote-worker
       # tag in cloud release bindings.
       AGENT_RUNNER_IMAGE: "${AGENT_RUNNER_IMAGE:-aep-runner:dev}"
+      # Finished cycle Components are retained so their observer archive stays
+      # queryable, then pruned oldest-first past this cap (code default 10).
+      # Lowered locally only to make the prune observable in three cycles.
+      CODING_AGENT_COMPONENT_RETENTION: "${CODING_AGENT_COMPONENT_RETENTION:-}"
       DEPLOYMENT_TIER: "${DEPLOYMENT_TIER:-dev}"
       # Central per-route tenant gate (§6.1b). ENFORCE by default (404s
       # cross-org); set TENANT_GATE_MODE=log for the observe-only canary
@@ -190,7 +194,7 @@ services:
       # ── Outbound Service JWTs — one client_credentials principal per
       # target audience (git-service). The agents service is reached with a
       # plain HS256 M2M bearer (AGENTS_SVC_* above), not a Thunder client. The
-      # remote-worker audience is gone — coding-agent runs as a ClusterWorkflow
+      # remote-worker audience is gone — coding-agent runs as an OC Job Component
       # pod and authenticates back to git-service with a per-task Task JWT.
       SERVICE_AUTH_TOKEN_URL: "http://k3d-openchoreo-serverlb:8080/oauth2/token"
       SERVICE_AUTH_CLIENT_ID: "aep-api-client"
@@ -222,25 +226,6 @@ services:
       GITHUB_APP_ID: "${GITHUB_APP_ID:-}"
       GITHUB_CLIENT_SECRET: "${GITHUB_CLIENT_SECRET:-}"
       GITHUB_APP_PRIVATE_KEY_PATH: "${GITHUB_APP_PRIVATE_KEY_PATH:-/etc/github-app/private-key.pem}"
-
-      # ── Secrets delivery + cluster-gateway-proxy. OPENBAO_* drives the
-      # in-process OpenBao-direct provider (local-only). CLUSTER_GATEWAY_PROXY_URL
-      # points at the compose stub for streaming + JobWatcher.
-      CLUSTER_GATEWAY_PROXY_URL: "http://local-cluster-gateway-proxy:8085"
-      # Push target for AnthropicCredentialService.pushExternalSecret: on every
-      # successful Connect (first-time connect AND rotation), aep-api applies
-      # an ExternalSecret here via the proxy above, pointed at the freshly
-      # mirrored SM-API/OpenBao path. Closes the gap where a console-side key
-      # change would otherwise sit unused until something re-discovers it.
-      # Both empty disables the push (no consumer assumed) — set here because
-      # this local demo's only consumer is the OC SRE/RCA agent.
-      RCA_AGENT_ANTHROPIC_PUSH_NAMESPACE: "openchoreo-observability-plane"
-      RCA_AGENT_ANTHROPIC_PUSH_SECRET_NAME: "rca-agent-anthropic-secret"
-      # Required for mint-build (per-org build Secret SSA into
-      # workflows-<orgID>) and apply-wp-secret (per-org Anthropic Secret
-      # SSA). Without it the binary degrades: builds fail at clone,
-      # coding-agent dispatch fails on the pre-flight.
-      KUBECONFIG: "/app/.kube/config"
 
       # ── Temporal (devflow workflows). aep-api runs the worker in-process and
       # dials the k3d-hosted Temporal frontend via the k3d docker network.
@@ -274,7 +259,6 @@ services:
     volumes:
       - ./keys/task-signing.pem:/app/keys/task-signing.pem:ro
       - ./github-app-private-key.pem:/etc/github-app/private-key.pem:ro
-      - ./.kube/config:/app/.kube/config:ro
       - aep-workspaces:/workspaces
     networks:
       - aep
@@ -367,31 +351,6 @@ services:
       - aep-api
     networks:
       - aep
-
-  # ---------------------------------------------------------------------------
-  # local-cluster-gateway-proxy — local stand-in for the cloud
-  # cluster-gateway-proxy. Serves `<verb>
-  # /cloud-dp-cgw/<k8s path>` by forwarding to the local k3d k8s API
-  # using the mounted kubeconfig. No mTLS to a remote cluster-gateway
-  # (the cloud proxy bridges to a remote dataplane via the cluster-
-  # agent tunnel); this version exists only so aep-api's dispatch
-  # path can speak the same HTTP shape in local + cloud.
-  # ---------------------------------------------------------------------------
-  local-cluster-gateway-proxy:
-    build:
-      context: ./local-cluster-gateway-proxy
-    container_name: aep-local-cluster-gateway-proxy
-    ports:
-      - "8085:8085"
-    environment:
-      LISTEN_ADDR: ":8085"
-      LOG_LEVEL: "debug"
-      KUBECONFIG: "/app/.kube/config"
-    volumes:
-      - ./.kube/config:/app/.kube/config:ro
-    networks:
-      - aep
-      - k3d-openchoreo
 
   # ---------------------------------------------------------------------------
   # smee-client — forwards GitHub webhook events from the public smee.io

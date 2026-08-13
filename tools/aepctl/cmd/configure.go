@@ -75,8 +75,6 @@ Example config file:
   codingagent:
     local_stubs:
       enabled: false
-    cluster_gateway_proxy:
-      url: https://cgp.example.com
     secret_manager_api:
       url: https://sma.example.com
 

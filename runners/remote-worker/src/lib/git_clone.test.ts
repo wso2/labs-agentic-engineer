@@ -102,6 +102,24 @@ test("buildCloneInvocation: --depth 1 when requested", () => {
   assert.match(cmd, /clone --depth 1 'https:\/\/github\.com\/acme\/org-skills\.git' '\/tmp\/skills'$/);
 });
 
+test("buildCloneInvocation: gh shell helper carries no AEP_BEARER_FILE", () => {
+  const helper = "!/usr/bin/gh auth git-credential";
+  const { cmd, env } = buildCloneInvocation({
+    repoUrl: "https://github.com/o/r.git",
+    destDir: "/tmp/dest",
+    helperPath: helper,
+    bearerFile: "",
+    baseEnv: { GITHUB_TOKEN: "ghs_test" },
+  });
+  assert.equal(
+    cmd,
+    `git -c credential.helper= -c 'credential.https://github.com.helper=${helper}' ` +
+      "clone 'https://github.com/o/r.git' '/tmp/dest'",
+  );
+  assert.equal(env.AEP_BEARER_FILE, undefined);
+  assert.equal(env.GITHUB_TOKEN, "ghs_test");
+});
+
 test("buildCloneInvocation: no helperPath configures no helper at all", () => {
   // So a genuinely missing credential surfaces as git's own error rather than as
   // a helper that answers with nothing.

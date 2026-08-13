@@ -22,9 +22,8 @@
 localSecrets:
   enabled: true
 
-# Deploy the in-cluster cluster-gateway-proxy stub (reads pod logs for live
-# coding-agent streaming) and OPENBAO_* for in-process secrets delivery.
-# NEVER enable in production.
+# OPENBAO_* on aep-api for in-process secrets delivery. NEVER enable in
+# production.
 codingAgentDispatch:
   localStubs:
     enabled: true

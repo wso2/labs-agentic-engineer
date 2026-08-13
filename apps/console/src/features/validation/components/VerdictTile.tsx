@@ -49,9 +49,42 @@ const SEVERITY: Record<StageTone, "success" | "info" | "warning" | "error"> = {
   error: "error",
 };
 
+// What a FATAL verdict did to the run, which depends on where the loop is and not
+// on what the report said. A fatal verdict on a live run is not the run's answer:
+// each failure becomes an ordinary issue, a build session works it, and validation
+// asks again — so the settled clause below would tell a reader the version was
+// abandoned while it is actively being repaired.
+//
+// THE RUN is the subject of all three, because it is the subject of every other
+// sentence a reader meets on the way here (builds/lib/runView's terminal reasons,
+// and the settled clause this replaces). A second actor would read as a second
+// thing acting.
+function runConsequence(state: string): string {
+  switch (state) {
+    case "awaiting-fix":
+      // "an issue on this version" rather than a build session: the issues are what
+      // the reader can go and open, and the cycle that works them is machinery they
+      // did not ask about. Deployed, not merged — validation runs against the
+      // deployed system, so a merged fix is not yet a re-checked one.
+      return "The run filed each failure as an issue on this version and validates again once the fix is deployed.";
+    case "running":
+      // A repeat attempt, in flight: the numbers above it are the previous one's.
+      return "A new validation attempt is running.";
+    default:
+      return "The run stopped here, so the milestone stays open for the fix.";
+  }
+}
+
 /**
  * The sentence under the headline: what the verdict means, and for the two fatal
  * ones what it did to the run. Pure, so the copy is testable without a DOM.
+ *
+ * `state` is the loop's position (projects/lib/pipeline validationState), which the
+ * verdict alone cannot carry: `failed` and `unreported` are only the run's answer
+ * once its validation attempts are spent, and while attempts remain the same two
+ * values mean "this attempt lost, and the platform is going again". Only those two
+ * verdicts can pair with a lifecycle state, so it is read in their cases alone; it
+ * defaults to the verdict, which means final.
  *
  * Every verdict has a count-free fallback — the tile renders before the report
  * loads, and `unreported` has no report to count at all — and the numbered forms
@@ -61,6 +94,7 @@ const SEVERITY: Record<StageTone, "success" | "info" | "warning" | "error"> = {
 export function verdictSentence(
   verdict: string,
   tally: CriterionTally | undefined,
+  state: string = verdict,
 ): string {
   const total = tally?.total ?? 0;
   const counted = total > 1;
@@ -85,9 +119,11 @@ export function verdictSentence(
     case "failed": {
       const failed = tally ? countOf(tally, "fail") : 0;
       const marked = failed === 1 ? "it is marked below" : "they are marked below";
-      return counted && failed > 0
-        ? `${failed} of ${total} criteria failed — ${marked}. The run stopped here, so the milestone stays open for the fix.`
-        : "At least one criterion failed — the failing criteria are marked below. The run stopped here, so the milestone stays open for the fix.";
+      const evidence =
+        counted && failed > 0
+          ? `${failed} of ${total} criteria failed — ${marked}.`
+          : "At least one criterion failed — the failing criteria are marked below.";
+      return `${evidence} ${runConsequence(state)}`;
     }
     case "inconclusive":
       return counted
@@ -97,7 +133,14 @@ export function verdictSentence(
       // A reporting failure, not a test outcome: no criterion produced one. The
       // terminal reason (`validation-unreported`) is deliberately NOT quoted —
       // a wire value is not something to hand a reader.
-      return "Something went wrong while generating the validation report, so there are no results to show for this run.";
+      //
+      // Mid-loop it gets its own sentence rather than runConsequence's, because
+      // NOTHING is filed for it: there is no failing criterion to turn into work, so
+      // the empty working set sends the run straight back to validate again. A
+      // promise of a fix would name work that does not exist.
+      return state === "awaiting-fix" || state === "running"
+        ? "Something went wrong while generating the validation report, so this attempt produced no results — the run is validating again."
+        : "Something went wrong while generating the validation report, so there are no results to show for this run.";
     default:
       return "";
   }
@@ -126,15 +169,27 @@ export function verdictCounts(tally: CriterionTally | undefined): string {
  * never restated — so the tile and the header chip cannot drift apart. Only the
  * sentence is local copy. There are no Pass/Fail controls: nothing about a verdict
  * waits on a person.
+ *
+ * The headline comes from `state` and the copy from `verdict`, because they answer
+ * different questions: mid-repair the tile has to lead with what the platform is
+ * DOING ("Awaiting fix") while still explaining what the last attempt FOUND. Whether
+ * the tile appears at all stays keyed on the verdict — there is no evidence to put a
+ * tile above until an attempt has produced one.
  */
 export function VerdictTile({
   verdict,
+  state = verdict,
   tally,
 }: {
   verdict: string;
+  /**
+   * The loop's position, from projects/lib/pipeline validationState. Defaults to the
+   * verdict, which is what "this verdict is the run's answer" looks like.
+   */
+  state?: string;
   tally?: CriterionTally;
 }) {
-  const view = validationView(verdict);
+  const view = validationView(state);
   if (!view || !TILE_VERDICTS.has(verdict)) return null;
 
   const counts = verdictCounts(tally);
@@ -147,7 +202,7 @@ export function VerdictTile({
       <AlertTitle>
         {view.label.charAt(0).toUpperCase() + view.label.slice(1)}
       </AlertTitle>
-      <Typography variant="body2">{verdictSentence(verdict, tally)}</Typography>
+      <Typography variant="body2">{verdictSentence(verdict, tally, state)}</Typography>
       {counts && (
         <Typography variant="body2" sx={{ mt: 0.5, fontWeight: 500 }}>
           {counts}

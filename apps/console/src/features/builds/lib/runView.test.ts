@@ -60,10 +60,11 @@ const run = (over: Partial<MilestoneRunView> = {}): MilestoneRunView => ({
 });
 
 describe("isTerminalRun / versionIsLive", () => {
-  it("names the three terminal states and nothing else", () => {
+  it("names the terminal states and nothing else", () => {
     expect(isTerminalRun("succeeded")).toBe(true);
     expect(isTerminalRun("failed")).toBe(true);
     expect(isTerminalRun("cancelled")).toBe(true);
+    expect(isTerminalRun("blocked")).toBe(true);
     expect(isTerminalRun("waiting")).toBe(false);
     expect(isTerminalRun("running")).toBe(false);
   });
@@ -132,6 +133,13 @@ describe("runStateChip", () => {
   it("gives waiting its own warning tone — that is when cancel matters", () => {
     expect(runStateChip(run({ state: "waiting" }))).toEqual({
       label: "Waiting",
+      tone: "warning",
+    });
+  });
+
+  it("gives blocked a warning tone — quota, not a platform fault", () => {
+    expect(runStateChip(run({ state: "blocked" }))).toEqual({
+      label: "Blocked",
       tone: "warning",
     });
   });
@@ -290,6 +298,8 @@ describe("terminalReasonText", () => {
   it("spells both of the validating phase's reasons", () => {
     expect(terminalReasonText("validation-failed")).toMatch(/validation criteria/);
     expect(terminalReasonText("validation-unreported")).toMatch(/without committing a report/);
+    expect(terminalReasonText("agent-quota-blocked")).toMatch(/maximum number of agent runs/);
+    expect(terminalReasonText("agent-quota-blocked")).toMatch(/Wait for one to finish/);
   });
 
   it("passes an unmapped reason through so it still reaches the user", () => {

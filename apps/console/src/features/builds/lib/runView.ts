@@ -40,8 +40,14 @@ type CycleBuild = components["schemas"]["CycleBuild"];
  */
 export const BUILD_CYCLE_KINDS = ["coding", "fix", "conflict"] as const;
 
-/** Terminal run states: the loop is over and nothing will move again. */
-const TERMINAL_RUN_STATES = new Set(["succeeded", "failed", "cancelled"]);
+/** Terminal run states: the loop is over and nothing will move again.
+ *  `blocked` is terminal and is NOT a failure — the org has no agent slot left. */
+const TERMINAL_RUN_STATES = new Set([
+  "succeeded",
+  "failed",
+  "cancelled",
+  "blocked",
+]);
 
 /** The run's build sessions in order — the validation cycle filtered out,
  *  because the deployment is what gets validated and its verdict renders on
@@ -111,6 +117,9 @@ export function runStateChip(run: MilestoneRunView): {
       return { label: "Failed", tone: "error" };
     case "cancelled":
       return { label: "Cancelled", tone: "neutral" };
+    case "blocked":
+      // Quota, not a platform fault — warning, not error.
+      return { label: "Blocked", tone: "warning" };
     default:
       // An unknown state renders raw and red rather than hiding.
       return { label: run.state, tone: "error" };
@@ -242,6 +251,9 @@ const TERMINAL_REASONS: Record<string, string> = {
   // rather than an outcome the criteria produced.
   "validation-unreported":
     "The validation agent finished without committing a report, so the run has no results.",
+  "agent-quota-blocked":
+    "This organization is already running the maximum number of agent runs allowed by its plan. " +
+    "Wait for one to finish, or stop a running run, then start this one again.",
 };
 
 /** A sentence for the run's terminal reason; the raw value when unmapped, so

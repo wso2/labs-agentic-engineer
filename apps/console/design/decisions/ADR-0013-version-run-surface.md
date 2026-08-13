@@ -101,7 +101,13 @@ is no ledger list in between.
    what is being validated.** The Validation page keeps its role — the authored
    criteria joined with the runner's committed report — but re-keys to the run's
    **verdict**, read from `/builds/{tag}/runs`; there is no validation endpoint.
-   Its live log is the run feed filtered to the validation cycle. The
+   *(The verdict alone is not what either surface renders: `RunValidation.verdict`
+   is a column with no lifecycle in it, and since validation repeats on failure a
+   fatal verdict can sit on a live run that is repairing and about to try again.
+   Both the page and the board render `validationState(deploy.validation,
+   verdict)` — the lifecycle from the status read, the verdict from the run row —
+   so neither can announce a terminal failure over a version the platform is
+   still working.)* Its live log is the run feed filtered to the validation cycle. The
    deployments board's entry chip now names the outcome ("validation passed")
    instead of naming the artifact, because the verdict is finally a fact the
    platform holds. The validation issue never appears in the issue list.

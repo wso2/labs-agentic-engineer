@@ -31,6 +31,9 @@ THUNDER_URL="${VITE_THUNDER_URL:-}"
 THUNDER_CLIENT_ID="${VITE_THUNDER_CLIENT_ID:-aep-console-client}"
 THUNDER_SCOPES="${VITE_THUNDER_SCOPES:-openid profile email}"
 COLLAB_WS_URL="${COLLAB_WS_URL:-}"
+# WSO2 Cloud only — set by the ReleaseBinding. Empty locally so the SPA skips
+# the first-login billing activation call.
+BILLING_API_BASE_URL_VAL="${BILLING_API_BASE_URL:-}"
 
 # env-config.js is generated at start so the SPA can read runtime config.
 # The heredoc is unquoted so the values above expand.
@@ -45,6 +48,7 @@ window._env_ = {
   VITE_THUNDER_CLIENT_ID: "${THUNDER_CLIENT_ID}",
   VITE_THUNDER_SCOPES: "${THUNDER_SCOPES}",
   collabWsUrl: "${COLLAB_WS_URL}",
+  BILLING_API_BASE_URL: "${BILLING_API_BASE_URL_VAL}",
 };
 EOF_INNER
 
@@ -88,6 +92,7 @@ echo "Configuration summary:"
 echo "  API Proxy:     /aep-api-service/ -> ${AEP_API_PROXY_URL}/"
 echo "  Thunder URL:   ${THUNDER_URL:-[NOT SET]}"
 echo "  Client ID:     ${THUNDER_CLIENT_ID}"
+echo "  Billing API:   ${BILLING_API_BASE_URL_VAL:-[NOT SET — activation skipped]}"
 echo "  Collab Server: ${COLLAB_SERVER_URL:-[default: collab-server:3400 via lazy DNS — 502s if upstream missing]}"
 
 echo "Starting nginx on port 3000..."

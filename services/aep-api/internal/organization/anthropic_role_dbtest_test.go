@@ -64,7 +64,7 @@ func anthropicRoleService(t *testing.T, apiStatus int) (*organization.AnthropicC
 	}
 	base, _ := anthropicFakeAPI(t, apiStatus)
 	repo := organization.NewOrgAnthropicRepository(db)
-	svc := organization.NewAnthropicCredentialService(repo, store, nil).WithAnthropicAPIBase(base)
+	svc := organization.NewAnthropicCredentialService(repo, store).WithAnthropicAPIBase(base)
 	return svc, store, repo
 }
 

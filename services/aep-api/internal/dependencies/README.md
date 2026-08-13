@@ -102,4 +102,9 @@ slices.
 - **The wire quirks the contract-first cutover pinned stay pinned**: wrong-kind → 400, not-found/
   not-registered → 404, in-use → 409, provision-failure → 502; get-dependency-status and list-access-requests
   return their empty-but-present shapes; a nil service 503s (the surface exists with the feature unwired).
+- **Platform-resource catalog may be disabled.** When `PLATFORM_RESOURCES_ENABLED=false`,
+  `ResourceTypeCatalog.List` returns an empty slice without calling OpenChoreo. HTTP
+  `GET .../platform-resource-types`, MCP `list_platform_resource_types`, and design-save
+  marker/wiring stamping all degrade off that empty catalog (no separate API signal).
+  Any future entry point that discovers platform resource types must honor the same flag.
 - Platform-wide rules (tenant gate, secrets fence, feature-free domains) → [../../README.md](../../README.md).

@@ -23,16 +23,17 @@ import (
 	"gorm.io/gorm"
 )
 
-// coding_agent_logs.go — the GitHub-native coding_agent_logs table.
+// coding_agent_logs.go — legacy CREATE TABLE for execution-keyed agent-log rows.
 //
 // SUPERSEDES phase3_coding_agent_logs (which keyed the table to component_tasks
 // and guarded on that table existing). In the GitHub-native model a coding run
 // is an Execution, and component_tasks is DROPPED (tasks_github_native) — so the
-// legacy migration never creates the table and the JobWatcher's final-log
-// persist failed with 42P01. This creates the table keyed to the Execution id
-// (delivery.CodingAgentLog.TaskID = executions.id — the column keeps the historic
-// `task_id` name), FK-cascading on the execution. Runs AFTER `executions` (the
-// FK target) and `tasks_github_native` (which cascade-drops any legacy table).
+// legacy migration never creates the table. This creates the table keyed to the
+// Execution id (delivery.CodingAgentLog.TaskID = executions.id — the column
+// keeps the historic `task_id` name), FK-cascading on the execution. Nothing
+// writes the table any more; GetByRun still serves pre-existing rows for old
+// execution progress. Runs AFTER `executions` (the FK target) and
+// `tasks_github_native` (which cascade-drops any legacy table).
 func RunCodingAgentLogs(ctx context.Context, db *gorm.DB) error {
 	stmt := `
 		CREATE TABLE IF NOT EXISTS coding_agent_logs (

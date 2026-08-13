@@ -144,17 +144,6 @@ spec:
             # The one runner image, used by both task kinds.
             - name: AGENT_RUNNER_IMAGE
               value: {{ .Values.codingAgentRunner.image | quote }}
-            # cluster-gateway-proxy: enables coding-agent live streaming +
-            # JobWatcher (reads pod logs/job status). Local → in-cluster stub
-            # Service; prod → the real managed proxy URL. Unset → no streaming,
-            # dispatch via the direct K8s Job path.
-            {{- if .Values.codingAgentDispatch.localStubs.enabled }}
-            - name: CLUSTER_GATEWAY_PROXY_URL
-              value: "http://cluster-gateway-proxy.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.codingAgentDispatch.clusterGatewayProxy.port }}"
-            {{- else if .Values.codingAgentDispatch.clusterGatewayProxy.url }}
-            - name: CLUSTER_GATEWAY_PROXY_URL
-              value: {{ .Values.codingAgentDispatch.clusterGatewayProxy.url | quote }}
-            {{- end }}
             # OpenBao-direct secrets delivery (local-only). Cloud injects a
             # different SecretsProvider via the overlay; OPENBAO_* must be
             # absent there.

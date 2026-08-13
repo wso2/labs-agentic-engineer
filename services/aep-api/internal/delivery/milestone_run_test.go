@@ -33,6 +33,7 @@ func TestIsTerminalRunState(t *testing.T) {
 		delivery.RunStateSucceeded,
 		delivery.RunStateFailed,
 		delivery.RunStateCancelled,
+		delivery.RunStateBlocked,
 	}
 	for _, s := range terminal {
 		if !delivery.IsTerminalRunState(s) {

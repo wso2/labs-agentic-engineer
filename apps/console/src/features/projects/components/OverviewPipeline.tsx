@@ -36,6 +36,8 @@ import {
 } from "@wso2/oxygen-ui-icons-react";
 import { useNavigate } from "@tanstack/react-router";
 import type { components } from "../../../generated/aep-api";
+import { useSession } from "../../../auth/SessionContext";
+import { useAgentEngaged } from "../../agent-chat/useAgentEngaged";
 import {
   buildStageView,
   CHIP_COLOR,
@@ -112,10 +114,31 @@ function StageCard({
   );
 }
 
-// Spec stage when no spec exists yet (#150 behavior preserved): the stage is
-// the call-to-action — Generate spec opens the Spec view and auto-sends the
-// first requirements turn seeded from the stored create prompt.
-function GenerateSpecStage({ projectName }: { projectName: string }) {
+// The spec stage as a call-to-action: when no spec exists yet (#150 behavior
+// preserved) Generate spec opens the Spec view and auto-sends the first
+// requirements turn, and when the agent is mid-exchange the same stage offers
+// the way back into it.
+//
+// "Continue spec" NEVER carries `?generate`. Injecting a second `/start` into
+// an open exchange is the whole bug: landing on an unanswered question form, it
+// reads to the start skill as the user's skip valve, so the interview is
+// silently replaced by the agent's own answers (see `agentEngaged`). Dropping
+// the param also keeps AppLayout from auto-opening the chat panel, so the
+// pending question form owns the spec body on arrival — which is the thing the
+// user actually came back for.
+//
+// One button, two labels, one destination: "Edit spec" would be the wrong third
+// word, since a spec the user could edit is exactly what an open exchange has
+// not produced yet.
+function SpecActionStage({
+  projectName,
+  view,
+  engaged,
+}: {
+  projectName: string;
+  view: StageView;
+  engaged: boolean;
+}) {
   const navigate = useNavigate();
   return (
     <Card
@@ -128,7 +151,34 @@ function GenerateSpecStage({ projectName }: { projectName: string }) {
           <Typography variant="subtitle2" color="text.secondary">
             Spec
           </Typography>
+          {/* An amendment runs against a spec that already has a version —
+              keep its chip, so continuing doesn't look like starting over. */}
+          {view.version && (
+            <>
+              <Box sx={{ flexGrow: 1 }} />
+              <Chip
+                size="small"
+                label={view.version}
+                color={CHIP_COLOR[view.tone]}
+                variant="filled"
+              />
+            </>
+          )}
         </Stack>
+        {/* The state line the plain stage card would have shown. An amendment
+            replaces that card, and the spec's status ("published", "draft
+            changes") is true throughout — losing it would make an open
+            exchange look like a project with no spec at all. Empty on the
+            cold-start CTA, where there is no spec to have a status. */}
+        {view.line && (
+          <Typography
+            variant="body2"
+            color={view.tone === "error" ? "error.main" : "text.secondary"}
+            sx={{ mb: 1.5 }}
+          >
+            {view.line}
+          </Typography>
+        )}
         <Button
           variant="contained"
           size="small"
@@ -137,11 +187,11 @@ function GenerateSpecStage({ projectName }: { projectName: string }) {
             void navigate({
               to: "/projects/$projectName/spec",
               params: { projectName },
-              search: { generate: "requirements" },
+              ...(engaged ? {} : { search: { generate: "requirements" as const } }),
             })
           }
         >
-          Generate spec
+          {engaged ? "Continue spec" : "Generate spec"}
         </Button>
       </CardContent>
     </Card>
@@ -160,6 +210,12 @@ export function OverviewPipeline({
   const spec = specStageView(status);
   const build = buildStageView(status);
   const deploy = deployStageView(status);
+  // An open exchange turns the spec stage back into an action, whether or not a
+  // spec exists: `/start` on an existing PRD is an amendment interview, which
+  // asks questions the same way and is skipped by a stray start the same way —
+  // and the overview otherwise gives no sign one is open.
+  const { orgHandle } = useSession();
+  const engaged = useAgentEngaged(orgHandle ?? "default", projectName);
 
   return (
     <Stack
@@ -167,8 +223,8 @@ export function OverviewPipeline({
       spacing={1}
       sx={{ alignItems: { xs: "stretch", md: "center" } }}
     >
-      {spec.cta ? (
-        <GenerateSpecStage projectName={projectName} />
+      {spec.cta || engaged ? (
+        <SpecActionStage projectName={projectName} view={spec} engaged={engaged} />
       ) : (
         <StageCard
           icon={<FileText size={18} />}

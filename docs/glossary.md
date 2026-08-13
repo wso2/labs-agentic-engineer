@@ -14,9 +14,11 @@
 The OpenChoreo control-plane namespace minted **once per organization** when
 the org subscribes to a product. Created by wso2cloud's `ou` service
 (`backend/core/internal/ou/util/namespace.go::GenerateNamespaceName`) via the
-OC CP API. All OC CRs the platform authors for an org (Project, Component,
-Workload, ReleaseBinding, SecretReference) live here, on cluster
-`cloud-dp-oc-cp`.
+OC CP API. Project, Component, Workload, and ReleaseBinding CRs live here on
+cluster `cloud-dp-oc-cp`. Local OSS uses the OC org handle (`default`) as
+this CP namespace. The `wc-…` string is *also* the vault path segment
+(`OrgBaseNamespace`); that is not automatically the SecretReference CR
+namespace — see SecretReference.
 
 ### `org-env NS` (DP) — `wc-<orgUUID8>-<orgHash8>-<env>`
 The data-plane namespace minted **once per (org, env)** by wso2cloud's `ou`
@@ -24,27 +26,21 @@ service, iterating over every `Environment` CR present in the bootstrap CP
 directory. Today the only env is `development`. Holds user-app runtime
 workloads on cluster `cloud-dp-oc-dp`.
 
-### `remote-worker NS` (DP, new) — `wc-<orgUUID8>-<orgHash8>-remote-worker`
-The DP-cluster namespace **per organization** where aep's
-**coding-agent** WorkflowRun pods run (LLM-driven source-editing work — a
-different category of workload from user-component image builds, which stay
-on WP). Lives on `cloud-dp-oc-dp` (the same cluster as user-app workloads),
-not on the WP cluster. Parallel slot to `-development` but env-less by
-intent: coding-agent is not bound to an app env. Provisioned by wso2cloud's
-`ou` bootstrap (new YAML template alongside `03-development_environment.yaml`).
-Holds the per-org Anthropic key + GitHub PAT materialized via ESO from
-`SecretReference`s. See [[adr-coding-agent-off-workflow-plane]].
-
 ### `workflows NS` (WP) — `workflows-wc-<orgUUID8>-<orgHash8>`
-The workflow-plane namespace on `cloud-dp-oc-ci`. **Continues to host
-aep's `dockerfile-builder` WorkflowRuns** (image builds — exactly
-WP's purpose). Coding-agent runs are migrating off this NS to the new
-remote-worker NS on DP, but builds stay.
+The workflow-plane namespace on `cloud-dp-oc-ci`. **Hosts aep's
+`dockerfile-builder` WorkflowRuns** (image builds — exactly WP's purpose).
+Coding-agent work never runs here and no longer runs as a WorkflowRun at all: a
+run cycle is an OpenChoreo Component, and its Job renders into the project's
+release NS on the DP.
 
 ### `release NS` (DP) — `dp-<orgPrefix>-<projectPrefix>-<env>-<hash>`
 The component-release sub-namespace minted by OC's `renderedrelease-controller`
-per `ReleaseBinding`. Holds the rendered user app pods. App-factory does not
-write here.
+per `ReleaseBinding`. Holds the rendered user app pods **and** the rendered
+coding-agent cycle Jobs: a cycle's ephemeral `coding-agent` Component binds to
+the project's `development` environment, so OC renders its `batch/v1 Job` and
+the ExternalSecrets it needs here, beside the project's own workloads.
+App-factory writes nothing into this namespace directly — every create and
+delete goes through the OC API on the CP.
 
 ---
 
@@ -53,7 +49,7 @@ write here.
 ### `OC Project`
 A logical grouping inside the **org NS** (CP), identified by labels on
 Component/Workload CRs. **Not a Kubernetes namespace.** Multiple OC Projects
-share the same org NS and the same org-env / remote-worker NS — credential
+share the same org NS and the same org-env NS — credential
 isolation is per-org, not per-project.
 
 ### `aep Project` (Postgres)
@@ -66,10 +62,17 @@ handle).
 ## Secrets
 
 ### `SecretReference`
-An OpenChoreo CR (`openchoreo.dev/v1alpha1`) authored in the **org NS** (CP)
-that points at a KV path in the central secret backend. ESO materializes it
-into a K8s `Secret` in the consuming-plane NS. Only the reference (KV path)
-crosses plane boundaries; the value never does. See [[adr-tenant-secret-flow]].
+An OpenChoreo CR (`openchoreo.dev/v1alpha1`) that points at a KV path in the
+central secret backend. It **must live in the same control-plane namespace
+as the Workload/ReleaseBinding that `secretKeyRef`s it** — OpenChoreo
+ReleaseBinding collect looks up the CR in `releaseBinding.Namespace`, not
+in the vault path. On local OSS that CP namespace is the OC org handle
+(`default`); on cloud it is the org NS. `OrgBaseNamespace` (`wc-…`) is
+only the vault path segment (`user-app-secrets/<wc-…>/<name>`). Do not
+author the CR into `wc-…` unless that is also the Workload's CP
+namespace. ESO materializes the reference into a K8s `Secret` in the
+consuming-plane NS. Only the reference (KV path) crosses plane boundaries;
+the value never does.
 
 ### `GitSecret`
 An OpenChoreo CR for build credentials, bound to `ClusterWorkflowPlane/default`
@@ -93,7 +96,9 @@ AEP selects one secrets provider per process (no fallback chain):
 - **Local / OSS:** in-process OpenBao-direct provider when `OPENBAO_ADDR` (and
   `OPENBAO_TOKEN`) are set. The provider writes KV only
   (`ManagesSecretReferences()=false`); the high-level client authors
-  `SecretReference` CRs via OpenChoreo. See `services/aep-api/design/composition-seam.md`.
+  `SecretReference` CRs via OpenChoreo into the Workload control-plane
+  namespace (not the vault `wc-…` segment). See
+  `services/aep-api/design/composition-seam.md`.
 
 ### `OpenBao`
 HashiCorp Vault fork. Local/OSS secret KV backend behind the
@@ -105,7 +110,7 @@ The internal git-service HTTP endpoint that returns the org's Anthropic key
 as plaintext JSON. Read by `agents-service` for interactive spec agents
 (can't be replaced by ESO-mounted secrets while agents-service runs outside
 OC). Stays in place for the **local read path** even after SM API is in use
-because SM API is WriteOnly. See [[adr-effective-key-survives-sm-api]].
+because SM API is WriteOnly.
 
 ---
 
@@ -113,8 +118,25 @@ because SM API is WriteOnly. See [[adr-effective-key-survives-sm-api]].
 
 ### `ClusterWorkflow`
 An OC cluster-scoped CR that defines a reusable workflow template. App-factory
-authors two: `aep-coding-agent` (one-shot remote-worker pod per task)
-and `dockerfile-builder` (image build).
+authors one: `dockerfile-builder` (image build). Coding-agent work is **not** a
+ClusterWorkflow — it uses the per-org job ComponentType defined below.
+
+### `coding-agent` ComponentType
+The **namespaced, per-org** OC ComponentType (`workloadType: job`) the BFF seeds
+into the org NS and lazily re-seeds at dispatch, so a pre-rollout org works on
+first use. Every run cycle — `coding | conflict | fix | validation` — is one
+ephemeral Component of this type in the **milestone's own project**, so OC
+renders the cycle's `batch/v1 Job` into the project's release NS and materialises
+its ExternalSecrets from the org's secret store (refs only; the BFF writes no
+secret material). The type pins the cost envelope: `backoffLimit: 0`,
+`activeDeadlineSeconds` (1h default, 2h for a validation cycle),
+`ttlSecondsAfterFinished`, and schema-bounded CPU/memory requests and limits.
+The type name is also the key wso2cloud's entitlement gate reads
+(`job/coding-agent`, `coding-agent`): a create over the org's cap answers `402`,
+which the platform reports as a **blocked** run, never a failed one. Not a
+`ClusterComponentType`, and never seeded through wso2cloud's
+org-default-resources bootstrap. Design:
+`services/aep-api/internal/delivery/codingagent/design/oc-job-dispatch.md`.
 
 ### `WorkflowRun`
 An OC CR that instantiates a `ClusterWorkflow`. The OC `workflowrun-controller`
@@ -123,17 +145,16 @@ bridge.
 
 ### `ClusterWorkflowPlane`
 The OC primitive that tells the `workflowrun-controller` **which cluster** to
-project a WorkflowRun onto. Today points at the CI cluster
-(`cloud-dp-oc-ci`); needs to be reconfigured / a new instance authored to
-project aep's runs onto the DP cluster's remote-worker NS.
+project a WorkflowRun onto. Points at the CI cluster (`cloud-dp-oc-ci`), which is
+where aep's image builds belong. Nothing about coding-agent dispatch depends on
+it any more.
 
 ### `spec.resources` (on ClusterWorkflow)
-The template block for per-run resources (`ExternalSecret` for credentials)
-that OC projects alongside the workflow. Verified working on dev cloud for
-agent-platform. **No longer relevant for aep's coding-agent** —
-coding-agent moves off OC WorkflowRun entirely (see
-[[adr-coding-agent-via-cluster-gateway-proxy]]); the BFF authors the
-ExternalSecret directly via cluster-gateway-proxy.
+The template block for per-run resources (`ExternalSecret` for credentials) that
+OC projects alongside the workflow. Verified working on dev cloud for
+agent-platform. **Not relevant for aep's coding-agent** — a run cycle is a job
+Component, and its ExternalSecrets are rendered by the `coding-agent`
+ComponentType from the org's secret store.
 
 ### `cluster-gateway-proxy`
 A wso2cloud-team-owned HTTP→DP-cluster reverse proxy
@@ -147,21 +168,22 @@ cluster-agent WebSocket tunnel. Allowlist-gated by
 is dead config. Network-level isolation (in-cluster service URL +
 HTTPRoute) is the actual protection.
 
-The wso2cloud `ou` service is the existing caller — it dispatches per-org
-bootstrap to DP **without any `Authorization` header**, only
-`X-Correlation-ID` (`wso2cloud/backend/core/internal/ou/repository/cpapi.go`).
-App-factory's BFF (also on `cloud-dp-oc-cp`) follows the same pattern to
-dispatch coding-agent Jobs — see
-[[adr-coding-agent-via-cluster-gateway-proxy]].
+The wso2cloud `ou` service is its caller — it dispatches per-org bootstrap to DP
+**without any `Authorization` header**, only `X-Correlation-ID`
+(`wso2cloud/backend/core/internal/ou/repository/cpapi.go`). **App-factory is not
+a caller.** Its BFF reaches no cluster directly: cycle Jobs are OC Components
+created and deleted through the OC API, their status comes from the OC resource
+tree, and their live logs come from the OC resource-logs endpoint. aep-api holds
+no Kubernetes client and no `CLUSTER_GATEWAY_PROXY_URL`.
 
 ### `AEP_BFF_TO_REMOTE_WORKER` — **legacy, unused**
 Pre-provisioned Thunder OAuth2 M2M client (client_credentials grant) in
 cloud's platform-idp, secret in Vault as
 `aep-bff-to-remote-worker-client-secret`. **Provisioned for the
-now-removed long-lived `remote-worker` service component**; not used by
-the new Job-based dispatch (the proxy is un-authed; see
-`cluster-gateway-proxy` term). Kept in the deployment configs as
-historical bookkeeping; consider for cleanup later.
+now-removed long-lived `remote-worker` service component**; not used by the OC
+job-Component dispatch that replaced it — a cycle pod authenticates to aep-api
+with a per-cycle bearer subject, and app-factory calls no proxy. Kept in the
+deployment configs as historical bookkeeping; consider for cleanup later.
 
 ---
 
@@ -203,10 +225,12 @@ service auth (e.g. `AEP_BFF_TO_PLATFORM_API`,
 sourced from Vault on cloud; a literal env var locally.
 
 ### `Task JWT`
-The short-lived bearer the BFF mints per coding-agent dispatch (`AEP_BEARER`
-in the WorkflowRun param today). M1 plan replaces this with **AMP's eval-job
-pattern**: per-org OAuth client-secret + per-run ExternalSecret +
-`client_credentials` exchange at runner startup. See [[adr-runner-auth-amp-pattern]].
+The short-lived RS256 bearer the BFF mints once per cycle at dispatch, with
+the cycle id as subject. Injected as `AEP_BEARER` on the ephemeral
+`coding-agent` job Component; the runner pod presents it back to aep-api for
+platform callbacks (credential refresh, MCP). Verifiers fetch the BFF's public
+key from `/auth/external/jwks.json`. Distinct from Thunder user/M2M tokens and
+from the retired `AEP_BFF_TO_REMOTE_WORKER` client.
 
 ---
 
@@ -249,7 +273,7 @@ A PE-authored label or annotation (the `aep.wso2.com/` prefix) on a
 env-config key), `skill` (auto-attach a named skill to the design). aep-api
 keys behavior ONLY on markers, never on a `resourceType` name — adding a new
 type, including a new auth flavor, is a cluster install plus a skill, never
-an app-factory code change. See [[adr-metadata-driven-resource-consumption]].
+an app-factory code change. See [ADR-0007](decisions/ADR-0007-metadata-driven-resource-consumption.md).
 _Avoid_: reserved name, well-known type name (no `resourceType` value carries
 platform-level meaning; see ADR-0007's rejected alternatives).
 
@@ -282,11 +306,14 @@ resolves number-through-run-rows and never matches a title.
 ### Milestone run
 One supervised pass over one milestone — the platform's single dispatch door.
 Origin is `spec-build` or `incident-adoption`; state is
-`planning | waiting | running | succeeded | failed | cancelled`. `planning` is
-the fill window — the row is admitted (arming the mutex) before its milestone
-is written, so it names work the platform is doing; `waiting` is the unbounded
-wait, where something outside the platform is needed. A milestone sees
-**sequential** runs across its life, so the workflow id is reused.
+`planning | waiting | running | succeeded | failed | cancelled | blocked`.
+`planning` is the fill window — the row is admitted (arming the mutex) before its
+milestone is written, so it names work the platform is doing; `waiting` is the
+unbounded wait, where something outside the platform is needed; `blocked` is
+terminal and is not a failure — the org has no agent concurrency slot left.
+A milestone sees **sequential** runs across its life, so the workflow id is reused.
+A run dispatches its cycles **one at a time**, so an org's concurrent-agent
+entitlement counts in-flight milestone runs rather than tasks.
 
 ### Cycle
 One dispatch within a run: `coding | conflict | fix | validation`. The cycle
@@ -295,6 +322,18 @@ webhooks** — the agent derives its own branch identity, so the platform is
 never told at dispatch. The run's loop POSITION is read from its latest cycle;
 it is never stored as a phase enum, because fix and conflict cycles re-enter
 earlier phases.
+
+A cycle is also the **unit the coding agent runs as**: each one dispatches
+exactly one ephemeral `coding-agent` job Component into the milestone's project,
+never reused across cycles. While its pod lives, progress is the pod's own log
+read through the OC API; once the pod is gone, the cycle's log is an observer
+query, which is answerable only while the Component is retained. A finished
+cycle's Component is **retained** and later **pruned oldest-first** past the
+retention cap; a **cancelled** cycle's Component is deleted at once, because that
+is what stops the pod and frees the org's entitlement slot — and with it the
+cycle's agent log (cancelled runs keep no progress history). A cycle whose
+Component has been pruned reports its log as unavailable — the platform keeps no
+second copy.
 
 The console calls one of these a **build session** — the same object, under a
 name that reads as a unit of work rather than as loop machinery. The rename is
@@ -400,4 +439,3 @@ from this array is rejected outright when invoked, so the runner lists the whole
 mirror, not just the pins. Membership grants a name and a description in the
 model's catalog — **not** the body, which arrives on invocation. This is why a
 pin additionally appends its body to the system prompt.
-remote-worker ADR-0003.

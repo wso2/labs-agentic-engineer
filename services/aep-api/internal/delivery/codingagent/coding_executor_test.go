@@ -63,7 +63,7 @@ func buildRow(id string) *delivery.Execution {
 }
 
 func newBuildExecutor(oc openchoreo.ComponentClient, repo *sourcecontrol.GitRepository, execRows *fakeExecRepo) *CodingExecutor {
-	return NewCodingExecutor(oc, fakeRepos{repo: repo}, nil, nil, nil, execRows, "http://git", "http://platform", nil, nil, nil, nil)
+	return NewCodingExecutor(oc, fakeRepos{repo: repo}, nil, nil, execRows, "http://git", "http://platform", nil, nil, nil, nil)
 }
 
 // The build path that survives the flip is the exec watcher's git-clone-auth

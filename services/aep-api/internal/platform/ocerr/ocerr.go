@@ -51,6 +51,8 @@ func Status(err error) (status int, ok bool) {
 		return http.StatusNotFound, true
 	case errors.Is(err, openchoreo.ErrConflict):
 		return http.StatusConflict, true
+	case errors.Is(err, openchoreo.ErrPaymentRequired):
+		return http.StatusPaymentRequired, true
 	case errors.Is(err, openchoreo.ErrInternalServerError):
 		return http.StatusInternalServerError, true
 	}

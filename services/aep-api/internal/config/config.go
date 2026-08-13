@@ -58,6 +58,15 @@ type Config struct {
 	// local dev. Read from PLAYGROUND_TOKEN_ENABLED.
 	PlaygroundTokenEnabled bool
 
+	// PlatformResourcesEnabled gates discovery of cluster-scoped platform
+	// resource types (ResourceTypeCatalog.List → OC ListClusterResourceTypes).
+	// Defaults TRUE: platform resources are a core capability; deployments that
+	// offer no platform-resource catalog must opt out explicitly
+	// (PLATFORM_RESOURCES_ENABLED=false). Unlike PlaygroundTokenEnabled /
+	// AutoMergeCodingPRs (opt-in extras that default false), this is an
+	// opt-out. Read from PLATFORM_RESOURCES_ENABLED.
+	PlatformResourcesEnabled bool
+
 	// AutoMergeCodingPRs gates auto-merge of coding-agent pull requests: when
 	// true, a coding-agent PR is squash-merged the moment it opens, removing the
 	// human review gate and letting the path-based build fan-out deploy the fix
@@ -125,10 +134,10 @@ type Config struct {
 	SkillsDir string
 
 	// AgentPlatformURL is the URL the coding-agent runner pod uses to call
-	// back to the BFF (every former git-service endpoint is served by the
-	// merged aep-api now) for credentials refresh + skills pull. Reachable
-	// from the WorkflowPlane namespace (`workflows-<ouHandle>`) via
-	// cross-namespace FQDN.
+	// back to the BFF (credentials refresh, MCP, skills). In cloud this is the
+	// public/internal gateway route to app-factory-api — runner pods live in
+	// the dataplane and cannot reach the control-plane ClusterIP. Locally it
+	// is typically http://host.k3d.internal:9090.
 	AgentPlatformURL string
 
 	// AEPInternalBaseURL is the BFF's own base URL as reached by peer
@@ -186,21 +195,6 @@ type Config struct {
 	// sweep interval. Default 24h.
 	CredentialValidatorInterval time.Duration
 
-	// Cluster-gateway-proxy URL the BFF POSTs Job + ExternalSecret manifests
-	// to on dispatch (ou-service shape; un-authed today). Empty disables the
-	// proxy dispatch path; the BFF still boots and serves the spec/design
-	// endpoints.
-	ClusterGatewayProxyURL string
-
-	// RCAAgentAnthropicPushNamespace/SecretName: when both are non-empty,
-	// AnthropicCredentialService pushes an ExternalSecret to this namespace
-	// (via the cluster-gateway-proxy) every time an org's Anthropic key is
-	// connected or rotated — closing the gap where a console-side key change
-	// would otherwise sit unused until something re-discovers it. Empty
-	// (the default) disables the push; no consumer is assumed.
-	RCAAgentAnthropicPushNamespace  string
-	RCAAgentAnthropicPushSecretName string
-
 	// AgentRunnerImage is the docker image the runner Job uses — ONE image
 	// for BOTH task kinds (implementation and validation; it bakes
 	// Playwright + chromium). Pinned at deploy time, no built-in default;
@@ -208,20 +202,17 @@ type Config struct {
 	// a digest. Empty ⇒ dispatch is off and fails loudly.
 	AgentRunnerImage string
 
+	// CodingAgentComponentRetention is how many finished coding-agent
+	// Components a project may keep (LRU reap before each create). Defaults
+	// to codingagent.DefaultCodingAgentComponentRetention (10). Override via
+	// CODING_AGENT_COMPONENT_RETENTION so local E2E can observe prune without
+	// eleven cycles; cloud keeps the code default unless explicitly set.
+	CodingAgentComponentRetention int
+
 	// Temporal holds the workflow-engine connection settings for the devflow
 	// feature. Enabled iff HostPort is set — unset leaves aep-api fully
 	// functional with the workflow endpoints answering 503.
 	Temporal TemporalConfig
-
-	// AgentClusterSecretStore is the ESO ClusterSecretStore that backs
-	// per-run ExternalSecret reads in the remote-worker NS on DP.
-	// On cloud-dp-oc-dp this MUST be `application-secrets-read` (Vault
-	// AppRole `approle-creds-application-read-permission` — covers
-	// `user-app-secrets/*`). `secretstore-read` on the same cluster only
-	// covers platform-component paths (CA bundles, observability creds)
-	// and will silently no-op our reads. Local k3d reuses the existing
-	// `default` CSS.
-	AgentClusterSecretStore string
 }
 
 // Validate checks format/consistency invariants the per-field env readers

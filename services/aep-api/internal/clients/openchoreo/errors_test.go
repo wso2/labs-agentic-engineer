@@ -85,6 +85,7 @@ func TestHandleErrorResponse_BareStatusFallThrough(t *testing.T) {
 		{401, ErrUnauthorized},
 		{403, ErrForbidden},
 		{404, ErrNotFound},
+		{402, ErrPaymentRequired},
 		{409, ErrConflict},
 		{500, ErrInternalServerError},
 	}
@@ -111,5 +112,19 @@ func TestHandleErrorResponse_UnexpectedStatusIsUnclassified(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "418") {
 		t.Errorf("unexpected-status error should name the code; got %q", err.Error())
+	}
+}
+
+func TestHumanErrorMessage_PlatformEnvelope(t *testing.T) {
+	t.Parallel()
+	got := humanErrorMessage(
+		[]byte(`{"success":false,"error":"Quota limit reached for projects. Upgrade your subscription to continue.","correlationId":"x"}`),
+		"fallback",
+	)
+	if got != "Quota limit reached for projects. Upgrade your subscription to continue." {
+		t.Fatalf("got %q", got)
+	}
+	if got := humanErrorMessage(nil, "fallback"); got != "fallback" {
+		t.Fatalf("empty body = %q, want fallback", got)
 	}
 }

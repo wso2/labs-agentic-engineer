@@ -78,11 +78,11 @@ type ProjectBuildLister interface {
 	ListProjectBuildRuns(ctx context.Context, orgID, projectID string) ([]delivery.MergeBuild, error)
 }
 
-// CycleLogReader is one cycle's agent activity — the captured snapshot once the
-// cycle's Job is terminal, the live pod tail before that. Satisfied by
+// CycleLogReader is one cycle's agent activity — live OpenChoreo pod logs while
+// the Component exists, then the observability archive while it is retained, or
+// a synthetic unavailable line when neither can answer. Satisfied by
 // codingagent.AgentProgressReader, reached as a port because that is a sibling
-// slice and because a boot without the cluster-gateway-proxy has no log source
-// at all (nil → the stream carries cycles and no lines).
+// slice. nil → the stream carries cycles and no lines.
 type CycleLogReader interface {
 	CycleProgress(ctx context.Context, cycle *delivery.RunCycle, sinceMillis int64) (*contracts.ProgressResponse, error)
 }
@@ -96,6 +96,17 @@ type CycleLogReader interface {
 // cancelled and the caller may retry.
 type RunCanceller interface {
 	CancelRun(ctx context.Context, row *delivery.MilestoneRun) error
+}
+
+// CycleReaper deletes the cancelled run's in-flight agent Component. Satisfied
+// by codingagent.CycleReaper, reached as a port because dispatch and its
+// cleanup belong to that slice.
+//
+// Optional: a boot without the OpenChoreo client cancels without reaping (the
+// run still settles; the leaked component is swept). Cancel never fails on a
+// reap error — see Commands.Cancel.
+type CycleReaper interface {
+	ReapRunCycle(ctx context.Context, orgID, projectID, runID string) error
 }
 
 // RevalidateTarget is the version to re-judge, already resolved to the platform

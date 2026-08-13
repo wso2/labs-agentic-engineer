@@ -147,10 +147,13 @@ func (w *ExecWatcher) Sweep(ctx context.Context) error {
 		if row.Status != string(taskmeta.ExecRunning) || row.RunName == "" {
 			continue
 		}
-		// Proxy-dispatched coding-agent Jobs (`ca-…`) are K8s Jobs owned by the
-		// JobWatcher, NOT OpenChoreo WorkflowRuns. Skip them or GetWorkflowRun
-		// spams "WorkflowRun not found" every tick until the row terminates.
-		if isProxyJobRun(row.RunName) {
+		// Coding-agent Job Components (`ca-…`) are owned by the cycle
+		// JobWatcher, not by WorkflowRuns. Any still-running KindCoding
+		// execution row with a ca- run name is a pre-migration leftover: no
+		// watcher will ever Finish it via GetWorkflowRun. Close it here so it
+		// cannot sit `running` forever and hold the issue mutex.
+		if isCodingAgentRun(row.RunName) {
+			w.finishLegacyCodingExecution(ctx, row)
 			continue
 		}
 		run, gerr := w.oc.GetWorkflowRun(ctx, row.OrgID, row.RunName)
@@ -164,6 +167,27 @@ func (w *ExecWatcher) Sweep(ctx context.Context) error {
 		w.reconcile(ctx, row, run)
 	}
 	return nil
+}
+
+// legacyCodingExecutionReason is stamped onto KindCoding execution rows whose
+// RunName is a coding-agent JobRef (`ca-…`). Those Jobs are owned by the cycle
+// JobWatcher; the ExecWatcher must not poll them as WorkflowRuns, and must not
+// leave them `running` forever after the migration.
+const legacyCodingExecutionReason = "legacy-coding-execution-retired"
+
+func (w *ExecWatcher) finishLegacyCodingExecution(ctx context.Context, row *delivery.Execution) {
+	exec, err := w.execRows.Finish(ctx, row.ID, string(taskmeta.ExecFailed), legacyCodingExecutionReason)
+	if err != nil {
+		slog.WarnContext(ctx, "exec watcher: finish legacy coding execution failed",
+			"execution", row.ID, "run", row.RunName, "error", err)
+		return
+	}
+	if exec == nil {
+		return // lost the race — another replica already finished
+	}
+	slog.InfoContext(ctx, "exec watcher: closed legacy ca- coding execution",
+		"execution", row.ID, "run", row.RunName)
+	w.notifier.Notify(row.Repo, row.IssueNumber)
 }
 
 func (w *ExecWatcher) reconcile(ctx context.Context, row *delivery.Execution, run *gen.WorkflowRun) {

@@ -102,6 +102,7 @@ func (e *CodingExecutor) Dispatch(ctx context.Context, req delivery.MilestoneDis
 		orgID:         req.OrgID,
 		projectID:     req.ProjectID,
 		correlationID: req.CycleID,
+		runID:         req.RunID,
 		shape:         shape,
 		repo:          repo,
 		// No secretComponent: a cycle spans the milestone, not one component.
@@ -122,18 +123,22 @@ func milestoneDispatchShape(req delivery.MilestoneDispatch, repoURL string) (dis
 			return dispatchShape{}, fmt.Errorf("milestone dispatch: a validation cycle must name its issue")
 		}
 		return dispatchShape{
-			prompt:        buildValidationPrompt(issueURL(repoURL, req.IssueNumber), req.IssueNumber),
-			componentName: validationComponentSentinel,
-			taskKind:      validationTaskKind,
-			deadline:      validationDeadlineSeconds,
+			prompt:          buildValidationPrompt(issueURL(repoURL, req.IssueNumber), req.IssueNumber),
+			componentName:   validationComponentSentinel,
+			taskKind:        validationTaskKind,
+			deadline:        validationDeadlineSeconds,
+			milestoneNumber: req.MilestoneNumber,
+			milestoneTitle:  req.MilestoneTitle,
 		}, nil
 	}
 	if req.MilestoneNumber <= 0 {
 		return dispatchShape{}, fmt.Errorf("milestone dispatch: cycle kind %q requires a milestone reference", req.Kind)
 	}
 	return dispatchShape{
-		prompt:        buildPrompt(req.MilestoneNumber, req.MilestoneTitle),
-		componentName: milestoneComponentSentinel,
+		prompt:          buildPrompt(req.MilestoneNumber, req.MilestoneTitle),
+		componentName:   milestoneComponentSentinel,
+		milestoneNumber: req.MilestoneNumber,
+		milestoneTitle:  req.MilestoneTitle,
 	}, nil
 }
 

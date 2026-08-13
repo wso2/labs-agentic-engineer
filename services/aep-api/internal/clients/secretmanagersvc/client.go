@@ -54,23 +54,25 @@ const (
 )
 
 // ErrNotFound is returned by OpenChoreoSecretReferenceClient lookups when
-// no SecretReference exists for (orgNS, name). Distinct from
+// no SecretReference exists for (cpNS, name). Distinct from
 // ErrSecretNotFound (which is about the KV value itself).
 var ErrNotFound = errors.New("not found")
 
 // ErrConflict is returned by Create when a SecretReference with the same
-// (orgNS, name) already exists, signalling a race with another writer.
+// (cpNS, name) already exists, signalling a race with another writer.
 var ErrConflict = errors.New("conflict")
 
 // OpenChoreoSecretReferenceClient is the small slice of the OC client
 // that this package needs. It covers SecretReference CRUD only; the
 // GitSecret CRUD lives elsewhere. Implementations are expected to map
 // ErrNotFound / ErrConflict on the namespaced errors they return.
+// cpNS is the Workload/ReleaseBinding control-plane namespace, not the
+// vault OrgBaseNamespace.
 type OpenChoreoSecretReferenceClient interface {
-	GetSecretReference(ctx context.Context, orgNS, name string) (*SecretReference, error)
-	CreateSecretReference(ctx context.Context, orgNS string, req CreateSecretReferenceRequest) (*SecretReference, error)
-	UpdateSecretReference(ctx context.Context, orgNS, name string, req CreateSecretReferenceRequest) (*SecretReference, error)
-	DeleteSecretReference(ctx context.Context, orgNS, name string) error
+	GetSecretReference(ctx context.Context, cpNS, name string) (*SecretReference, error)
+	CreateSecretReference(ctx context.Context, cpNS string, req CreateSecretReferenceRequest) (*SecretReference, error)
+	UpdateSecretReference(ctx context.Context, cpNS, name string, req CreateSecretReferenceRequest) (*SecretReference, error)
+	DeleteSecretReference(ctx context.Context, cpNS, name string) error
 }
 
 // CreateSecretReferenceRequest mirrors the field set the cluster-gateway
@@ -163,12 +165,13 @@ func (c *secretManagementClient) requireOCClient() error {
 }
 
 func (c *secretManagementClient) upsertSecretReference(ctx context.Context, location SecretLocation, kvPath string, secretKeys []string) (string, error) {
-	// D-SR-namespace: OrgName is the org UUID; OC calls need the derived
-	// k8s base namespace (wc-<ouId8>-<sha256[:8]>), not the raw UUID.
-	orgNS := tenant.OrgBaseNamespace(location.OrgName)
+	cpNS, err := location.CPNamespace()
+	if err != nil {
+		return "", err
+	}
 	name := location.SecretRefName()
 	req := CreateSecretReferenceRequest{
-		Namespace:       orgNS,
+		Namespace:       cpNS,
 		Name:            name,
 		ProjectName:     location.ProjectName,
 		ComponentName:   location.EntityName,
@@ -176,14 +179,14 @@ func (c *secretManagementClient) upsertSecretReference(ctx context.Context, loca
 		SecretKeys:      secretKeys,
 		RefreshInterval: c.refreshInterval,
 	}
-	_, getErr := c.ocClient.GetSecretReference(ctx, orgNS, name)
+	_, getErr := c.ocClient.GetSecretReference(ctx, cpNS, name)
 	if getErr != nil {
 		if !errors.Is(getErr, ErrNotFound) {
 			return "", fmt.Errorf("check SecretReference: %w", getErr)
 		}
-		if _, createErr := c.ocClient.CreateSecretReference(ctx, orgNS, req); createErr != nil {
+		if _, createErr := c.ocClient.CreateSecretReference(ctx, cpNS, req); createErr != nil {
 			if errors.Is(createErr, ErrConflict) {
-				if _, updateErr := c.ocClient.UpdateSecretReference(ctx, orgNS, name, req); updateErr != nil {
+				if _, updateErr := c.ocClient.UpdateSecretReference(ctx, cpNS, name, req); updateErr != nil {
 					return "", fmt.Errorf("update after create conflict: %w", updateErr)
 				}
 			} else {
@@ -191,14 +194,27 @@ func (c *secretManagementClient) upsertSecretReference(ctx context.Context, loca
 			}
 		}
 	} else {
-		if _, updateErr := c.ocClient.UpdateSecretReference(ctx, orgNS, name, req); updateErr != nil {
+		if _, updateErr := c.ocClient.UpdateSecretReference(ctx, cpNS, name, req); updateErr != nil {
 			return "", fmt.Errorf("update SecretReference: %w", updateErr)
 		}
 	}
 	return name, nil
 }
 
+func (c *secretManagementClient) requireOpenBaoDirectRefs(location SecretLocation) error {
+	if err := c.requireOCClient(); err != nil {
+		return err
+	}
+	_, err := location.CPNamespace()
+	return err
+}
+
 func (c *secretManagementClient) CreateSecret(ctx context.Context, location SecretLocation, data map[string]string) (string, error) {
+	if !c.managesRefs() {
+		if err := c.requireOpenBaoDirectRefs(location); err != nil {
+			return "", err
+		}
+	}
 	raw, err := json.Marshal(data)
 	if err != nil {
 		return "", fmt.Errorf("marshal secret data: %w", err)
@@ -211,9 +227,6 @@ func (c *secretManagementClient) CreateSecret(ctx context.Context, location Secr
 	if c.managesRefs() {
 		return secretRef, nil
 	}
-	if err := c.requireOCClient(); err != nil {
-		return "", err
-	}
 	keys := make([]string, 0, len(data))
 	for k := range data {
 		keys = append(keys, k)
@@ -222,6 +235,11 @@ func (c *secretManagementClient) CreateSecret(ctx context.Context, location Secr
 }
 
 func (c *secretManagementClient) PatchSecret(ctx context.Context, location SecretLocation, data map[string]string, keysToDelete []string) (string, error) {
+	if !c.managesRefs() {
+		if err := c.requireOpenBaoDirectRefs(location); err != nil {
+			return "", err
+		}
+	}
 	patch := make(map[string]any, len(data)+len(keysToDelete))
 	for k, v := range data {
 		patch[k] = v
@@ -241,9 +259,6 @@ func (c *secretManagementClient) PatchSecret(ctx context.Context, location Secre
 	if c.managesRefs() {
 		return secretRef, nil
 	}
-	if err := c.requireOCClient(); err != nil {
-		return "", err
-	}
 	info, err := c.lowLevelClient.GetSecret(ctx, location)
 	if err != nil {
 		return "", fmt.Errorf("get secret keys after patch: %w", err)
@@ -252,20 +267,37 @@ func (c *secretManagementClient) PatchSecret(ctx context.Context, location Secre
 }
 
 func (c *secretManagementClient) DeleteSecret(ctx context.Context, location SecretLocation, secretRefName string) error {
+	if !c.managesRefs() {
+		if err := c.requireOpenBaoDirectRefs(location); err != nil {
+			return err
+		}
+	}
 	metadata := &SecretMetadata{ManagedBy: c.managedBy}
 	if err := c.lowLevelClient.DeleteSecret(ctx, location, metadata); err != nil {
 		return fmt.Errorf("delete secret: %w", err)
 	}
 	if !c.managesRefs() {
-		if err := c.requireOCClient(); err != nil {
+		cpNS, err := location.CPNamespace()
+		if err != nil {
 			return err
 		}
-		orgNS := tenant.OrgBaseNamespace(location.OrgName)
-		if err := c.ocClient.DeleteSecretReference(ctx, orgNS, secretRefName); err != nil {
-			if !errors.Is(err, ErrNotFound) {
-				return fmt.Errorf("delete SecretReference: %w", err)
+		if err := c.deleteSecretReference(ctx, cpNS, secretRefName); err != nil {
+			return fmt.Errorf("delete SecretReference: %w", err)
+		}
+		// Pre-fix OpenBao-direct authored CRs into OrgBaseNamespace.
+		// Best-effort sweep so disconnect does not leave an inert CR.
+		if oldNS := tenant.OrgBaseNamespace(location.OrgName); oldNS != "" && oldNS != cpNS {
+			if err := c.deleteSecretReference(ctx, oldNS, secretRefName); err != nil {
+				return fmt.Errorf("delete leftover SecretReference: %w", err)
 			}
 		}
+	}
+	return nil
+}
+
+func (c *secretManagementClient) deleteSecretReference(ctx context.Context, ns, name string) error {
+	if err := c.ocClient.DeleteSecretReference(ctx, ns, name); err != nil && !errors.Is(err, ErrNotFound) {
+		return err
 	}
 	return nil
 }

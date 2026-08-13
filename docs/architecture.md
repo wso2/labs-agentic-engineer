@@ -58,8 +58,8 @@ behind `gen`, and CI runs `gen` + `git diff --exit-code` to catch staleness. See
 - `agents` — TS interactive spec agents (Vercel AI SDK).
 - `collab` — TS Yjs collaboration server.
 - `aep-mcp-server` — MCP surface for the SRE/RCA handoff.
-- `remote-worker` (runner) — TS Claude Agent SDK one-shot pod; one image serves
-  both task kinds.
+- `runners/` (job image) — TS Claude Agent SDK one-shot pod; one Debian image serves
+  both task kinds (ADR-0012).
 - `console` (app) — React frontend.
 
 ## How a version gets built

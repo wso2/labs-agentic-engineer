@@ -16,12 +16,11 @@
 
 // coding_agent_logs sidecar table.
 //
-// Captures the final pod-log tail for cluster-gateway-proxy coding-agent
-// dispatches when the Job hits terminal state. Read by
-// `progress_service.GetAgentProgress` once the Job is past TTL so the
-// console can still surface diagnostics. The dispatch NS
-// (`wc-…-remote-worker`) doesn't match Observer's hardcoded
-// `workflows-<…>` filter, so the BFF tails `pods/log` itself.
+// Captures the final pod-log tail for a coding-agent dispatch when its Job hits
+// terminal state, read back by the progress service once the pod is past its TTL
+// so the console can still surface diagnostics. The log is pulled through the
+// OpenChoreo API rather than queried from the observer: observer indexing is
+// scoped to a live CR, which an ephemeral per-cycle Component does not outlive.
 //
 // Sidecar rather than a column on `component_tasks`: the parent table
 // holds only small hot fields and is read on every list / status /

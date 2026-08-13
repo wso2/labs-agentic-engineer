@@ -17,9 +17,12 @@
 package openchoreo
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo/gen"
 )
@@ -32,11 +35,15 @@ import (
 // the openchoreo package here because the OC client is the only producer.
 // If a second client adopts the same scheme, hoist them to a shared package.
 var (
-	ErrBadRequest          = errors.New("bad request")
-	ErrUnauthorized        = errors.New("unauthorized")
-	ErrForbidden           = errors.New("forbidden")
-	ErrNotFound            = errors.New("not found")
-	ErrConflict            = errors.New("conflict")
+	ErrBadRequest   = errors.New("bad request")
+	ErrUnauthorized = errors.New("unauthorized")
+	ErrForbidden    = errors.New("forbidden")
+	ErrNotFound     = errors.New("not found")
+	ErrConflict     = errors.New("conflict")
+	// ErrPaymentRequired is the entitlement gate's HTTP 402 — project quota,
+	// inactive subscription, or agent concurrency. Coding-agent dispatch maps
+	// it to blocked-not-failed; project create forwards the platform message.
+	ErrPaymentRequired     = errors.New("payment required")
 	ErrInternalServerError = errors.New("internal server error")
 )
 
@@ -87,6 +94,33 @@ func handleErrorResponse(statusCode int, errs ErrorResponses) error {
 	return fmt.Errorf("openchoreo: unexpected status %d", statusCode)
 }
 
+// humanErrorMessage extracts a human sentence from an OC / platform error body.
+// Platform writeError uses {"success":false,"error":"…"}; typed OC errors use
+// the same `error` field. Falls back to a trimmed body, then fallback.
+func humanErrorMessage(body []byte, fallback string) string {
+	body = bytes.TrimSpace(body)
+	if len(body) == 0 {
+		return fallback
+	}
+	var envelope struct {
+		Error   string `json:"error"`
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(body, &envelope) == nil {
+		if m := strings.TrimSpace(envelope.Error); m != "" {
+			return m
+		}
+		if m := strings.TrimSpace(envelope.Message); m != "" {
+			return m
+		}
+	}
+	s := string(body)
+	if len(s) > 300 {
+		s = s[:300]
+	}
+	return s
+}
+
 // sentinelForStatus maps an HTTP status code to its matching sentinel error,
 // or nil for codes with no sentinel (e.g. 418). Shared by handleErrorResponse
 // (typed gen responses) and any hand-rolled REST client in this package that
@@ -103,6 +137,8 @@ func sentinelForStatus(statusCode int) error {
 		return ErrForbidden
 	case 404:
 		return ErrNotFound
+	case 402:
+		return ErrPaymentRequired
 	case 409:
 		return ErrConflict
 	case 500:

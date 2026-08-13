@@ -21,8 +21,8 @@ long-lived AEP services (BFF, agents, console, collab, postgres, smee-client) ru
 > here for in-cluster work. Pick one; don't run both against the same cluster at
 > once.
 
-Common to both: **coding-agent** runs as one-shot pods via the `aep-coding-agent`
-ClusterWorkflow (`manifests/aep-coding-agent.yaml`); **builds** use the
+Common to both: **coding-agent** runs as an ephemeral OpenChoreo Job Component
+in the project's dataplane (image from `AGENT_RUNNER_IMAGE`); **builds** use the
 `dockerfile-builder` ClusterWorkflow (`manifests/docker-build-workflow.yaml`),
 whose `generate-workload-cr` step exchanges OAuth tokens at Thunder via the
 `openchoreo-workload-publisher-client` bootstrapped during setup.
@@ -80,7 +80,7 @@ the stack runs the relay.
 │ OC Control / Data / Workflow planes                           │
 │ Thunder IDP   OpenBao   ESO   kgateway                        │
 │                                                               │
-│ ClusterWorkflow: aep-coding-agent  ← BFF dispatches   │
+│ Coding agent: OC Job Component (AGENT_RUNNER_IMAGE) ← BFF  │
 │ ClusterWorkflow: dockerfile-builder        ← BFF dispatches   │
 └───────────────────────────────────────────────────────────────┘
 ```
@@ -96,7 +96,8 @@ Key wiring:
 ## What was removed from the previous v1
 
 - `collab-server` — collaborative editing is deferred.
-- Long-lived `remote-worker` container — coding agent is now a one-shot pod via `ClusterWorkflow: aep-coding-agent`.
+- Long-lived `remote-worker` container — coding agent is now an ephemeral
+  OpenChoreo Job Component (`AGENT_RUNNER_IMAGE`), not a ClusterWorkflow.
 
 ## Files
 
@@ -106,7 +107,7 @@ Key wiring:
 | `scripts/setup-k3d.sh` | k3d cluster + CoreDNS |
 | `scripts/setup-prerequisites.sh` | cert-manager + ESO + kgateway + OpenBao |
 | `scripts/setup-openchoreo.sh` | Control Plane + Data Plane + Workflow Plane + Thunder |
-| `scripts/setup-aep.sh` | ClusterWorkflows + ClusterComponentTypes + Environment + AuthzRoleBindings + `.env` |
+| `scripts/setup-aep.sh` | Build ClusterWorkflow + ComponentTypes + Environment + AuthzRoleBindings + `.env` + runner image |
 | `scripts/setup-local.sh` | **(Skaffold)** K8s Secrets + Thunder clients + resource-type catalog + thunder-app operator (`make setup-local`) |
 | `../skaffold.yaml` | **(Skaffold)** in-cluster build/deploy for `make dev-cluster` |
 | `helm-charts/platform/values.local.dev.yaml.example` | **(Skaffold)** per-developer override template (webhook/smee, etc.) |
@@ -114,7 +115,6 @@ Key wiring:
 | `scripts/stop.sh` | **(Compose, legacy)** `docker compose down` (cluster stays) |
 | `docker-compose.yml` | **(Compose, legacy)** long-lived host services |
 | `manifests/docker-build-workflow.yaml` | `dockerfile-builder` ClusterWorkflow (Argo CWTs) |
-| `manifests/aep-coding-agent.yaml` | Coding-agent one-shot pod template (mirrors v2 exactly) |
 | `single-cluster/values-thunder.yaml` | Thunder helm values + bootstrap scripts (users, OAuth apps) |
 | `single-cluster/values-cp.yaml` | OC Control Plane helm values |
 | `single-cluster/values-dp.yaml` | OC Data Plane helm values |

@@ -167,6 +167,7 @@ func CycleView(c *delivery.RunCycle) gen.RunCycleView {
 		MergeSha:     c.MergeSHA,
 		MergeVerdict: gen.RunCycleViewMergeVerdict(c.MergeVerdict),
 		MergeReason:  c.MergeReason,
+		AgentReason:  c.AgentReason,
 		// Set on validation cycles only. A run may validate more than once, so the
 		// run's single verdict is the LATEST attempt's — this is how the timeline
 		// shows that an earlier attempt failed and the next one passed.

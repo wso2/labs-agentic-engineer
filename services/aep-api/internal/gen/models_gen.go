@@ -126,6 +126,7 @@ func (e MilestoneRunViewOrigin) Valid() bool {
 
 // Defines values for MilestoneRunViewState.
 const (
+	MilestoneRunViewStateBlocked   MilestoneRunViewState = "blocked"
 	MilestoneRunViewStateCancelled MilestoneRunViewState = "cancelled"
 	MilestoneRunViewStateFailed    MilestoneRunViewState = "failed"
 	MilestoneRunViewStatePlanning  MilestoneRunViewState = "planning"
@@ -137,6 +138,8 @@ const (
 // Valid indicates whether the value is a known member of the MilestoneRunViewState enum.
 func (e MilestoneRunViewState) Valid() bool {
 	switch e {
+	case MilestoneRunViewStateBlocked:
+		return true
 	case MilestoneRunViewStateCancelled:
 		return true
 	case MilestoneRunViewStateFailed:
@@ -1039,10 +1042,10 @@ type MilestoneRunView struct {
 	Origin    MilestoneRunViewOrigin `json:"origin"`
 	StartedAt *time.Time             `json:"startedAt,omitempty"`
 
-	// State planning is the fill window — the version's milestone is still being written (gates minted, then issues planned in). waiting is the unbounded wait between cycles, where something outside the platform is needed.
+	// State planning is the fill window — the version's milestone is still being written (gates minted, then issues planned in). waiting is the unbounded wait between cycles, where something outside the platform is needed. blocked is terminal and is NOT a failure — the org has no agent concurrency slot left, so the cycle was never launched (see terminalReason agent-quota-blocked).
 	State MilestoneRunViewState `json:"state"`
 
-	// TerminalReason Why a non-succeeded run stopped. Each value names exactly one failure class; empty while the run is non-terminal and on a succeeded run.
+	// TerminalReason Why a non-succeeded run stopped. Each value names exactly one failure class; empty while the run is non-terminal and on a succeeded run. agent-quota-blocked explains state=blocked.
 	TerminalReason string `json:"terminalReason,omitempty"`
 
 	// Validation The run's validation outcome. The verdict is a RUN property, not a per-issue one, and this is where the deployment surface reads it.
@@ -1052,7 +1055,7 @@ type MilestoneRunView struct {
 // MilestoneRunViewOrigin Why this run was started. `revalidate` asks a version's criteria again against the already-deployed system; it enters the loop at validation rather than at the working set, and is deliberately outside the one-active-spec-run mutex so it never holds up the next build.
 type MilestoneRunViewOrigin string
 
-// MilestoneRunViewState planning is the fill window — the version's milestone is still being written (gates minted, then issues planned in). waiting is the unbounded wait between cycles, where something outside the platform is needed.
+// MilestoneRunViewState planning is the fill window — the version's milestone is still being written (gates minted, then issues planned in). waiting is the unbounded wait between cycles, where something outside the platform is needed. blocked is terminal and is NOT a failure — the org has no agent concurrency slot left, so the cycle was never launched (see terminalReason agent-quota-blocked).
 type MilestoneRunViewState string
 
 // OrganizationList defines model for OrganizationList.
@@ -1329,6 +1332,9 @@ type RunBudgets struct {
 
 // RunCycleView One dispatch within a run. Branch, pull request (number and URL) and merge SHA are LEARNED FROM WEBHOOKS — the agent derives its own branch identity — so they stay empty on a cycle whose agent died before opening a pull request.
 type RunCycleView struct {
+	// AgentReason Why this cycle's agent stopped without opening a pull request, as the platform's pod-truth watcher classified it — `timed_out` (the run deadline), `agent_failed[:<reason>]` (a non-zero exit or a killed container), `startup_failed:<reason>: <message>` (the runner never started: image pull, scheduling, or a secret that had not materialised) or `job_not_found` (the runner's workload disappeared). Absent on every cycle that opened a pull request: there the pull request is the outcome.
+	AgentReason string `json:"agentReason,omitempty"`
+
 	// Attempts Dispatches of THIS cycle (the per-cycle re-dispatch budget, which resets at every cycle boundary).
 	Attempts  int64      `json:"attempts"`
 	Branch    string     `json:"branch,omitempty"`
@@ -1459,13 +1465,13 @@ type RunValidation struct {
 
 	// Verdict What the run learned about the deployed system. Empty until the validation cycle settles.
 	// passed (every criterion was automated and passed), partial (some passed, none failed, and some were never covered — so `passed` would claim a result for criteria nobody checked), failed (a criterion asserted and lost), inconclusive (no test results at all), unreported (no usable report at the cycle's merge commit), skipped (no acceptance criteria, and incident runs, which get no validation cycle at all).
-	// `failed` and `unreported` fail the run, under terminal reasons validation-failed and validation-unreported respectively. The rest settle succeeded.
+	// `failed` and `unreported` fail the run ONCE ITS VALIDATION ATTEMPTS ARE SPENT, under terminal reasons validation-failed and validation-unreported respectively; while attempts remain the run repairs and validates again, so this field can hold a fatal verdict on a run that is still live and about to try once more. A client rendering it as the run's answer therefore needs the lifecycle too — that is DeployStage.validation, which reports awaiting-fix for exactly that state. The rest settle succeeded.
 	Verdict RunValidationVerdict `json:"verdict,omitempty"`
 }
 
 // RunValidationVerdict What the run learned about the deployed system. Empty until the validation cycle settles.
 // passed (every criterion was automated and passed), partial (some passed, none failed, and some were never covered — so `passed` would claim a result for criteria nobody checked), failed (a criterion asserted and lost), inconclusive (no test results at all), unreported (no usable report at the cycle's merge commit), skipped (no acceptance criteria, and incident runs, which get no validation cycle at all).
-// `failed` and `unreported` fail the run, under terminal reasons validation-failed and validation-unreported respectively. The rest settle succeeded.
+// `failed` and `unreported` fail the run ONCE ITS VALIDATION ATTEMPTS ARE SPENT, under terminal reasons validation-failed and validation-unreported respectively; while attempts remain the run repairs and validates again, so this field can hold a fatal verdict on a run that is still live and about to try once more. A client rendering it as the run's answer therefore needs the lifecycle too — that is DeployStage.validation, which reports awaiting-fix for exactly that state. The rest settle succeeded.
 type RunValidationVerdict string
 
 // SaveValuesBody defines model for SaveValuesBody.

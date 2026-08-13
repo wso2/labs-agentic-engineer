@@ -69,6 +69,26 @@ func TestProviderInterfaces_CompileAssert(t *testing.T) {
 	var _ secretsprovider.SecretsClient = stubClient{}
 }
 
+func TestSecretLocation_CPNamespace(t *testing.T) {
+	loc := secretsprovider.SecretLocation{
+		OrgName:               "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+		ControlPlaneNamespace: "default",
+		EntityName:            "anthropic",
+	}
+	got, err := loc.CPNamespace()
+	if err != nil {
+		t.Fatalf("CPNamespace: %v", err)
+	}
+	if got != "default" {
+		t.Fatalf("got %q, want default", got)
+	}
+
+	empty := secretsprovider.SecretLocation{OrgName: loc.OrgName, EntityName: loc.EntityName}
+	if _, err := empty.CPNamespace(); err == nil {
+		t.Fatal("expected error when ControlPlaneNamespace is empty")
+	}
+}
+
 func TestSecretLocation_KVPath(t *testing.T) {
 	loc := secretsprovider.SecretLocation{
 		OrgName:    "acme",

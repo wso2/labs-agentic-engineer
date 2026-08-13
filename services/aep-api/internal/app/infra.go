@@ -25,9 +25,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	k8sclient "github.com/wso2/aep/aep-api/internal/clients/k8s"
 	"github.com/wso2/aep/aep-api/internal/config"
 	"github.com/wso2/aep/aep-api/internal/migrate"
 	"github.com/wso2/aep/aep-api/internal/platform/database"
@@ -48,7 +46,6 @@ type Infra struct {
 	ColumnCipher    *secrets.ColumnCipher // same key as CredentialStore; seals column values
 	Minter          *secrets.AppTokenMinter
 	AppClientSecret string        // GitHub App OAuth client_secret ("" ⇒ bind path disabled)
-	K8sClient       client.Client // in-cluster client; nil ⇒ mint-build skips Secret writes
 	Workspace       *gitfs.Engine
 	// RateStamper prices captured agent usage at write time (#291), loaded once
 	// from model_rates after migration. Assemble threads it into the turn +
@@ -60,8 +57,7 @@ type Infra struct {
 // opens the database and runs first-boot migrations (Bootstrap), builds the
 // credential store, best-effort loads the GitHub App key / bot identity / OAuth
 // client_secret from OpenBao (each with its own short timeout), runs the dev-only
-// app-platform seed (fatal), initialises the in-cluster k8s client (optional),
-// and fsck's the workspace root (fatal). This is the ONLY place in the graph that
+// app-platform seed (fatal), and fsck's the workspace root (fatal). This is the ONLY place in the graph that
 // touches the network, the clock, OpenBao, or the filesystem at boot — Assemble
 // is pure. Required infra errors; optional infra warns.
 func Resolve(ctx context.Context, cfg config.Config) (Infra, error) {
@@ -103,13 +99,6 @@ func Resolve(ctx context.Context, cfg config.Config) (Infra, error) {
 		return Infra{}, fmt.Errorf("column cipher init: %w", err)
 	}
 	slog.Info("credential store: postgres (aes-256-gcm)")
-
-	// In-cluster k8s client (optional — mint-build skips Secret writes when nil).
-	wpClient, err := k8sclient.NewInClusterClient()
-	if err != nil {
-		slog.Warn("k8s client init failed — mint-build will skip Secret writes; builds will fail at checkout", "error", err)
-		wpClient = nil
-	}
 
 	// App-token minter — best-effort App-key load. With no App key the minter
 	// answers in no-app mode; the connect surface lights up the App path lazily on
@@ -191,7 +180,6 @@ func Resolve(ctx context.Context, cfg config.Config) (Infra, error) {
 		ColumnCipher:    columnCipher,
 		Minter:          minter,
 		AppClientSecret: appClientSecret,
-		K8sClient:       wpClient,
 		Workspace:       workspaceEngine,
 		RateStamper:     rateStamper,
 	}, nil

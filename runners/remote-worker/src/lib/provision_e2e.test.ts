@@ -34,7 +34,7 @@
 // neutered, a developer running this gets keychain prompts and git's post-success
 // `store` writes the test token into their real keychain.
 
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -50,12 +50,30 @@ const GH_TOKEN = "ghs_TESTONLYabcdefghijklmnopqrstuv01";
 const BEARER = "test-platform-bearer";
 const EXPECTED_BASIC = Buffer.from(`x-access-token:${GH_TOKEN}`).toString("base64");
 
+function restoreEnvVar(name: string, previous: string | undefined): void {
+  if (previous === undefined) delete process.env[name];
+  else process.env[name] = previous;
+}
+
 // Neuter host git config BEFORE anything imports or runs git. buildCloneInvocation
 // spreads process.env into the clone child, so setting it here covers that too.
 process.env.GIT_CONFIG_GLOBAL = "/dev/null";
 process.env.GIT_CONFIG_SYSTEM = "/dev/null";
 process.env.GIT_CONFIG_NOSYSTEM = "1";
 process.env.GIT_TERMINAL_PROMPT = "0";
+// This suite exercises the AEP credhelper → refresh path. A developer machine
+// with GITHUB_TOKEN/GH_TOKEN set would take the gh-token provision branch and
+// skip the helper under test. Capture both before deleting so suite cleanup
+// can restore the host environment.
+const suitePrevGithubToken = process.env.GITHUB_TOKEN;
+const suitePrevGhToken = process.env.GH_TOKEN;
+delete process.env.GITHUB_TOKEN;
+delete process.env.GH_TOKEN;
+
+after(() => {
+  restoreEnvVar("GITHUB_TOKEN", suitePrevGithubToken);
+  restoreEnvVar("GH_TOKEN", suitePrevGhToken);
+});
 
 // config.workspaceBasePath is captured at module load and defaults to the
 // developer's homedir, so it must be set before workspace.js is imported —
@@ -293,7 +311,117 @@ test(
       await gitServer.close();
       await stub.close();
       await fs.promises.rm(root, { recursive: true, force: true });
-      await fs.promises.rm(WORKSPACE_ROOT, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "provisioning e2e (GITHUB_TOKEN): clone and push use gh auth git-credential, not refresh",
+  {
+    skip: HAS_HTTP_BACKEND ? false : "git-http-backend not available",
+    timeout: 90_000,
+  },
+  async () => {
+    const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "aep-e2e-gh-"));
+    const binDir = path.join(root, "bin");
+    await fs.promises.mkdir(binDir, { recursive: true });
+    // Minimal `gh` that implements the credential-helper protocol git expects
+    // from `gh auth git-credential` — same shape setup-git installs.
+    await fs.promises.writeFile(
+      path.join(binDir, "gh"),
+      `#!/usr/bin/env bash
+set -e
+if [ "$1" = "auth" ] && [ "$2" = "git-credential" ]; then
+  cat >/dev/null || true
+  echo "username=x-access-token"
+  echo "password=\${GITHUB_TOKEN}"
+  exit 0
+fi
+echo "fake-gh: unexpected args: $*" >&2
+exit 1
+`,
+      { mode: 0o755 },
+    );
+
+    const serveRoot = path.join(root, "serve");
+    const origin = path.join(serveRoot, "store.git");
+    await fs.promises.mkdir(serveRoot, { recursive: true });
+    await execAsync(`git init --bare -q "${origin}"`);
+    await execAsync(`git -C "${origin}" symbolic-ref HEAD refs/heads/main`);
+    await execAsync(`git -C "${origin}" config http.receivepack true`);
+
+    const seed = path.join(root, "seed");
+    await execAsync(`git init -q "${seed}"`);
+    await fs.promises.writeFile(path.join(seed, "README.md"), "seed\n");
+    await execAsync(`git -C "${seed}" add .`);
+    await execAsync(`git -C "${seed}" -c user.name=T -c user.email=t@e.com commit -qm seed`);
+    await execAsync(`git -C "${seed}" push -q "${origin}" HEAD:refs/heads/main`);
+
+    const gitServer = await startGitServer(serveRoot);
+    const stub = await startRefreshStub(TASK_ID);
+
+    const prevPath = process.env.PATH;
+    const prevGithubToken = process.env.GITHUB_TOKEN;
+    const prevGhToken = process.env.GH_TOKEN;
+    process.env.PATH = `${binDir}:${prevPath ?? ""}`;
+    process.env.GITHUB_TOKEN = GH_TOKEN;
+    delete process.env.GH_TOKEN;
+
+    try {
+      const layout = await provisionWorkspace({
+        orgId: "default",
+        projectId: "store-gh",
+        taskId: TASK_ID,
+        repoUrl: `http://127.0.0.1:${gitServer.port}/store.git`,
+        bearer: BEARER,
+        identity: { name: "Token User", email: "u@e.com", login: "token-user" },
+        gitServiceUrl: `http://127.0.0.1:${gitServer.port}`,
+        refreshUrl: stub.url,
+        correlationId: "e2e-gh-1",
+      });
+
+      assert.ok(fs.existsSync(path.join(layout.workspace, "README.md")), "clone should check out");
+      assert.ok(gitServer.rejected() > 0, "origin must demand auth");
+      assert.equal(stub.calls(), 0, "credentials/refresh must not be called when GITHUB_TOKEN is set");
+      assert.ok(!fs.existsSync(layout.helperBin), "credhelper.sh must not be installed in gh-token mode");
+
+      const cfg = await fs.promises.readFile(path.join(layout.workspace, ".git", "config"), "utf-8");
+      assert.ok(cfg.includes("auth git-credential"), `durable helper must be gh:\n${cfg}`);
+      assert.ok(!cfg.includes("credhelper"), `must not wire AEP credhelper:\n${cfg}`);
+      assert.ok(!cfg.includes(GH_TOKEN), "no credential at rest in .git/config");
+
+      const wrapper = await fs.promises.readFile(layout.ghWrapper, "utf-8");
+      assert.match(wrapper, /Env-token mode/);
+      assert.ok(!wrapper.includes("credhelper.sh"), wrapper);
+
+      const agentEnv = {
+        PATH: `${layout.aepDir}:${binDir}:${prevPath ?? ""}`,
+        HOME: root,
+        GH_CONFIG_DIR: layout.ghConfigDir,
+        GITHUB_TOKEN: GH_TOKEN,
+        GIT_TERMINAL_PROMPT: "0",
+        GIT_CONFIG_GLOBAL: "/dev/null",
+        GIT_CONFIG_SYSTEM: "/dev/null",
+        GIT_CONFIG_NOSYSTEM: "1",
+      };
+      const g = (cmd: string) => execAsync(`git -C "${layout.workspace}" ${cmd}`, { env: agentEnv });
+
+      await g("checkout -q -b aep/m1-c1");
+      await fs.promises.writeFile(path.join(layout.workspace, "feature.txt"), "work\n");
+      await g("add feature.txt");
+      await g('commit -qm "feat: add feature (#1)"');
+      await g("push -q -u origin HEAD");
+
+      assert.equal(stub.calls(), 0, "push must not call credentials/refresh");
+      const refs = await execAsync(`git -C "${origin}" for-each-ref --format='%(refname)'`);
+      assert.match(refs.stdout, /refs\/heads\/aep\/m1-c1/);
+    } finally {
+      process.env.PATH = prevPath;
+      restoreEnvVar("GITHUB_TOKEN", prevGithubToken);
+      restoreEnvVar("GH_TOKEN", prevGhToken);
+      await gitServer.close();
+      await stub.close();
+      await fs.promises.rm(root, { recursive: true, force: true });
     }
   },
 );

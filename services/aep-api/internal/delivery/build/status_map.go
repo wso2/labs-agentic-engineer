@@ -28,7 +28,8 @@ const (
 // statusFromRunState maps a milestone run's state onto the version-ledger enum.
 // A version's story is its run's story: while the run is waiting or running the
 // version is in progress, and it completes or fails exactly when the run
-// settles. A cancelled run reads as failed — the version did not finish.
+// settles. A cancelled or blocked run reads as failed — the version did not
+// finish; the run row's terminal reason explains which.
 //
 // The contract's "started" value never occurs here: it belonged to the retired
 // live workflow query, and a ledger read has none.
@@ -36,7 +37,7 @@ func statusFromRunState(state string) string {
 	switch state {
 	case delivery.RunStateSucceeded:
 		return statusCompleted
-	case delivery.RunStateFailed, delivery.RunStateCancelled:
+	case delivery.RunStateFailed, delivery.RunStateCancelled, delivery.RunStateBlocked:
 		return statusFailed
 	default: // waiting | running
 		return statusInProgress

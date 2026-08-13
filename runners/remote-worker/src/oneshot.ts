@@ -16,9 +16,9 @@
  * under the License.
  */
 
-// One-shot entrypoint for the per-task coding-agent pod.
+// One-shot entrypoint for the per-cycle coding-agent pod.
 //
-// The Argo Workflow renders a pod from aep-coding-agent ClusterWorkflow,
+// OpenChoreo renders a batch/v1 Job from the coding-agent ComponentType,
 // passing the dispatch payload via AEP_* env vars (no HTTP, no token in body).
 // We reuse the same provisionWorkspace + runClaudeQuery code that the legacy
 // HTTP server used; only the wrapper changes shape.
@@ -28,8 +28,8 @@
 //   1 — agent reported failure (commit/push/PR-ready issue, etc.)
 //   2 — provisioning or unexpected error before the agent ran
 //
-// Argo treats any non-zero exit as a Failed step, which the BFF coding-agent
-// watcher picks up via the WorkflowRun terminal status.
+// The BFF cycle watcher classifies the Job's pod truth (exit, timeout,
+// startup failure) and settles the run cycle from it.
 
 import { randomUUID } from "node:crypto";
 import { provisionWorkspace } from "./lib/workspace.js";

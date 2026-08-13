@@ -76,6 +76,7 @@ export interface FormattedLine {
 // nothing hides.
 const PHASE_LABELS: Record<string, string> = {
   runner_scheduling: "Waiting for a runner to be scheduled…",
+  runner_unschedulable: "No capacity to schedule the runner on the cluster…",
   runner_pulling_image: "Pulling the agent image…",
   runner_image_pull_backoff: "Still pulling the agent image (retrying)…",
   runner_config_error: "Waiting on runner configuration and secrets…",
@@ -210,7 +211,9 @@ export function formatSubagentStatus(r: SubagentReport): string {
 export function formatLine(e: ProgressLineView): FormattedLine {
   switch (e.kind) {
     case "phase": {
-      const label = (e.phase && PHASE_LABELS[e.phase]) ?? e.summary ?? e.phase ?? e.message ?? "phase";
+      // Prefer the BFF/runner summary when present — bootstrap narration (esp.
+      // unschedulable capacity detail) is more specific than the phase id label.
+      const label = e.summary ?? (e.phase && PHASE_LABELS[e.phase]) ?? e.phase ?? e.message ?? "phase";
       return { text: `▸ ${label}`, tone: "info" };
     }
     case "tool_use": {

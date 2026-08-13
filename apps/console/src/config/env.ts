@@ -23,6 +23,8 @@ interface RuntimeEnv {
   VITE_THUNDER_URL?: string;
   VITE_THUNDER_CLIENT_ID?: string;
   VITE_THUNDER_SCOPES?: string;
+  /** WSO2 Cloud billing-user-api base; empty/absent disables first-login activation. */
+  BILLING_API_BASE_URL?: string;
 }
 
 declare global {
@@ -57,4 +59,7 @@ export const env = {
   thunderUrl: getEnv("VITE_THUNDER_URL") || "http://localhost:8097",
   thunderClientId: getEnv("VITE_THUNDER_CLIENT_ID") || "aep-console-client",
   thunderScopes: getEnv("VITE_THUNDER_SCOPES") || "openid profile email",
+  // Empty outside WSO2 Cloud — presence of this URL is the gate for the
+  // first-login billing activation call (GET …/organization?product=…).
+  billingApiBaseUrl: getEnv("BILLING_API_BASE_URL") || "",
 } as const;

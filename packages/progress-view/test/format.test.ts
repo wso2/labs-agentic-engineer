@@ -133,6 +133,15 @@ test("tones are semantic, never a theme token — a TUI imports this too", () =>
 test("phase ids render through the friendly-label map, with a raw-id fallback", () => {
   assert.equal(formatLine({ kind: "phase", phase: "workspace_ready" }).text, "▸ Workspace ready");
   assert.equal(formatLine({ kind: "phase", phase: "agent_started" }).text, "▸ agent_started");
+  // BFF bootstrap summaries (capacity detail) beat the phase-id label.
+  assert.equal(
+    formatLine({
+      kind: "phase",
+      phase: "runner_unschedulable",
+      summary: "No capacity to schedule the runner: 0/5 nodes are available: 5 Too many pods.",
+    }).text,
+    "▸ No capacity to schedule the runner: 0/5 nodes are available: 5 Too many pods.",
+  );
 });
 
 test("grouping: interleaved subagents each get ONE section, placed where they first spoke", () => {
