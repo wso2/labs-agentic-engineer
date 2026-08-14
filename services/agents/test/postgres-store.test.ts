@@ -31,6 +31,7 @@ import { PostgresConversationStore, type Queryable } from "../src/store/postgres
 interface Row {
   id: string;
   messages: unknown;
+  turns: unknown;
   status: string;
   created_at: Date;
   updated_at: Date;
@@ -51,6 +52,7 @@ class FakePg implements Queryable {
     return {
       id: row.id,
       messages: JSON.parse(JSON.stringify(row.messages)),
+      turns: JSON.parse(JSON.stringify(row.turns)),
       status: row.status,
       created_at: new Date(row.created_at),
       updated_at: new Date(row.updated_at),
@@ -61,6 +63,7 @@ class FakePg implements Queryable {
     const verb = text.trimStart().split(/\s+/)[0]?.toUpperCase();
     switch (verb) {
       case "CREATE":
+      case "ALTER":
         return Promise.resolve({ rows: [] });
       case "SELECT": {
         const row = this.rows.get(String(params[0]));
@@ -72,7 +75,8 @@ class FakePg implements Queryable {
         this.rows.set(id, {
           id,
           messages: JSON.parse(String(params[1])),
-          status: String(params[2]),
+          turns: JSON.parse(String(params[2])),
+          status: String(params[3]),
           created_at: existing?.created_at ?? this.now(), // preserved on conflict
           updated_at: this.now(),
         });
@@ -105,6 +109,7 @@ function fresh(id: string): Conversation {
   return {
     id,
     messages: [{ role: "user", content: "hi" }],
+    turns: [],
     status: "active",
     createdAt: new Date("2020-01-01T00:00:00Z"), // ignored: the store owns timestamps
     updatedAt: new Date("2020-01-01T00:00:00Z"),

@@ -94,7 +94,6 @@ test("plan scope marks each story COVERED or NEEDS TASKS", () => {
   const out = composeInstruction({
     kind: "plan",
     scope: {
-      phase: 2,
       tag: "spec-v3",
       stories: [
         { number: 1, title: "Sign in", covered: true },
@@ -102,20 +101,16 @@ test("plan scope marks each story COVERED or NEEDS TASKS", () => {
       ],
     },
   });
-  assert.match(out, /## Milestone scope — Phase 2 \(spec spec-v3\)/);
+  assert.match(out, /## Milestone scope \(spec spec-v3\)/);
   assert.match(out, /- Story 1: Sign in — COVERED/);
   assert.match(out, /- Story 4 — NEEDS TASKS/, "a story with no title still gets a row");
 });
 
-test("an empty or phase-0 scope renders nothing", () => {
+test("an empty scope renders nothing", () => {
   // The base directive mentions a "Milestone scope" section, so match the
   // HEADING — the thing the block actually emits.
   assert.doesNotMatch(
-    composeInstruction({ kind: "plan", scope: { phase: 0, tag: "t", stories: [{ number: 1, covered: false }] } }),
-    /## Milestone scope/,
-  );
-  assert.doesNotMatch(
-    composeInstruction({ kind: "plan", scope: { phase: 3, tag: "t", stories: [] } }),
+    composeInstruction({ kind: "plan", scope: { tag: "t", stories: [] } }),
     /## Milestone scope/,
   );
 });

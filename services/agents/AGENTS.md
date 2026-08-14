@@ -91,6 +91,14 @@ off the stream. The plan tool contract (inputs, results, error codes, the
   `mcp: { url, token }` bundle on the turn (aep-api in production; the playground in
   local dev). Absent → no discovery tools (byte-identical to today); malformed → a
   clean pre-stream 400.
+- **Turn journal** (optional, #463): the caller pushes
+  `journal: { text, author?: { id, displayName } }` — the raw client-sent
+  instruction + acting user, stored beside the transcript (never woven into
+  the prompt). `GET /conversations/:id` serves a DISPLAY projection, not the
+  raw transcript: user rows carry the journal text + author (a journal-less
+  turn falls back to its raw stored message); assistant/tool rows pass through.
+  The read is org-fenced like the turn POST (`X-Org-Id` must match the id's
+  org segment). Absent → no entry; malformed → a clean pre-stream 400.
 
 ## Test
 

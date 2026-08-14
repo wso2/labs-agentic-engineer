@@ -11,13 +11,16 @@ metadata:
 # Cell design (design.cell)
 
 `specs/design/design.cell` is the PRIMARY design source: a small project-level
-text file describing the architecture as a **cell**, carrying the design
-version's `phase` and every component's story citations. The console renders
+text file describing the architecture as a **cell**. The console renders
 it live as you write it, so it is the FIRST design artifact you emit — and the
 platform derives from it: when the cell is saved, a design.json skeleton is
-scaffolded for every deployable component that has none, born with the cell's
-story citations. The component ids here MUST match the
-`components/<name>/design.json` names.
+scaffolded for every deployable component that has none. The component ids
+here MUST match the `components/<name>/design.json` names.
+
+The cell carries structure only. Which PRD stories a component serves is
+recorded in that component's `design.json` `stories` list during enrichment —
+the build gate checks that every PRD story is claimed by some component, so
+claim each story where it is actually served, never in the diagram.
 
 ## Cell-based architecture in AEP
 
@@ -63,12 +66,6 @@ south west`.
 
 **Title** — `title <text>` (rest of line).
 
-**Phase** — `phase <N>` (a positive integer): the PRD phase this design
-version details. Every design.cell carries exactly one phase statement, near
-the top. The product ships in a single phase, so this is `phase 1` and the
-cell details the WHOLE architecture — every component the PRD's stories call
-for, each one fully designed. There are no later-phase stubs to leave out.
-
 **Component** (inside the cell) — `component <id> [as <label>] [type]`
 - The optional `type` is the LAST bare token. **There is no `:` before it.**
 - Without `as`, everything after the id is the type. With `as`, one trailing
@@ -76,11 +73,10 @@ for, each one fully designed. There are no later-phase stubs to leave out.
   rest is the label.
 - `component ceramics-api` → id only.
 - `component ceramics-api service` → id + type `service`.
-- A component cites the PRD stories it serves with a trailing
-  `[stories: <n>, <n>, …]` suffix (positive integers, the PRD's story
-  numbers): `component ceramics-api service [stories: 1, 2, 4]`. Cite every
-  story the component serves — the platform's coverage check reads these.
 - `component ceramics-api as "Ceramics API" service` → id, label, type.
+
+The cell details the WHOLE architecture — every component the PRD's stories
+call for, each one fully designed.
 
 **External** (on a boundary) — `<direction> <id> [as <label>] [type]` where
 direction is `north|east|south|west`. Same label/type rule as component. The

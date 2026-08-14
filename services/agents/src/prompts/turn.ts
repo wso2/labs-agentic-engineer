@@ -188,7 +188,7 @@ function target(raw: string | undefined): string {
  * rather than a re-plan.
  */
 function scopeBlock(scope: PlanScope | undefined): string {
-  if (!scope || scope.phase === 0 || scope.stories.length === 0) return "";
+  if (!scope || scope.stories.length === 0) return "";
   const rows = scope.stories
     .map((s) => {
       const status = s.covered ? "COVERED" : "NEEDS TASKS";
@@ -196,7 +196,7 @@ function scopeBlock(scope: PlanScope | undefined): string {
     })
     .join("\n");
   return (
-    `\n\n## Milestone scope — Phase ${scope.phase} (spec ${scope.tag})\n\n` +
+    `\n\n## Milestone scope (spec ${scope.tag})\n\n` +
     "Plan Tasks so every story marked NEEDS TASKS below is covered. COVERED stories already have Tasks — leave them alone.\n\n" +
     rows +
     "\n"

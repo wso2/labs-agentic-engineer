@@ -162,7 +162,7 @@ API -- DB`);
       },
       {
         severity: "error",
-        message: "Unknown statement. Expected title, version, phase, component, or dependency arrow.",
+        message: "Unknown statement. Expected title, version, component, or dependency arrow.",
         line: 4,
         column: 1
       }
@@ -532,49 +532,17 @@ api -> inv : reserve stock`);
   });
 });
 
-describe("phase header and story citations (spec-agent redesign #371)", () => {
-  it("parses the phase statement onto the document", () => {
-    const { document, diagnostics } = parseCellDsl("phase 2\ncomponent api service");
-    expect(diagnostics).toHaveLength(0);
-    expect(document.phase).toBe(2);
+// PRD phasing and story citations left the cell grammar: both retired forms
+// must read as visible errors, never silently parse into something else.
+describe("removed phase/stories syntax", () => {
+  it("rejects a phase statement as unknown", () => {
+    const { diagnostics } = parseCellDsl("phase 1\ncomponent api service");
+    expect(diagnostics.some((d) => d.severity === "error" && d.line === 1)).toBe(true);
   });
 
-  it("rejects a non-positive or non-numeric phase", () => {
-    for (const src of ["phase 0", "phase one", "phase"]) {
-      const { document, diagnostics } = parseCellDsl(src);
-      expect(document.phase).toBeUndefined();
-      expect(diagnostics.some((d) => d.severity === "error")).toBe(true);
-    }
-  });
-
-  it("parses a stories suffix on a component, with label and type intact", () => {
-    const { document, diagnostics } = parseCellDsl(
-      'component order-api as "Order API" service [stories: 1, 2, 4]'
-    );
-    expect(diagnostics).toHaveLength(0);
-    expect(document.components[0]).toMatchObject({
-      id: "order-api",
-      label: "Order API",
-      type: "service",
-      stories: [1, 2, 4]
-    });
-  });
-
-  it("parses a stories suffix on a bare component", () => {
-    const { document } = parseCellDsl("component web [stories: 7]");
-    expect(document.components[0]).toMatchObject({ id: "web", stories: [7] });
-    expect(document.components[0].type).toBeUndefined();
-  });
-
-  it("rejects malformed story lists", () => {
-    for (const src of ["component api service [stories: a,b]", "component api [stories: ]"]) {
-      const { diagnostics } = parseCellDsl(src);
-      expect(diagnostics.some((d) => d.severity === "error")).toBe(true);
-    }
-  });
-
-  it("leaves components without a suffix unchanged", () => {
-    const { document } = parseCellDsl("component api service");
-    expect(document.components[0].stories).toBeUndefined();
+  it("rejects a component story-citation suffix", () => {
+    const { document, diagnostics } = parseCellDsl("component api service [stories: 1, 2]");
+    expect(diagnostics.some((d) => d.severity === "error" && /design\.json/.test(d.message))).toBe(true);
+    expect(document.components).toHaveLength(0);
   });
 });

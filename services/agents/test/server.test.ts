@@ -171,20 +171,32 @@ test("POST streams raw StreamPart frames + [DONE], runs execute, persists", asyn
   }
 });
 
-test("GET rehydrates the aggregate; 404 for an unknown id", async () => {
+test("GET rehydrates the aggregate; org-fenced; 404 for an unknown id", async () => {
   const root = makeMountRoot({ [REQUIREMENTS]: "# Req\n" });
   const { baseUrl, close } = await boot(mockModel([{ kind: "text", text: "ok" }]), root);
   try {
     const token = await mintToken();
     await (await fetch(`${baseUrl}/conversations/${WS_CONV}/turns`, turnPost(wsBody(), { token, org: WS_ORG }))).text();
 
-    const got = await fetch(`${baseUrl}/conversations/${WS_CONV}`, { headers: { Authorization: `Bearer ${token}` } });
+    const headers = { Authorization: `Bearer ${token}`, "X-Org-Id": WS_ORG };
+    const got = await fetch(`${baseUrl}/conversations/${WS_CONV}`, { headers });
     assert.equal(got.status, 200);
     const body = (await got.json()) as { status: string; messages: unknown[] };
     assert.equal(body.status, "done");
     assert.ok(Array.isArray(body.messages) && body.messages.length >= 2);
 
-    const missing = await fetch(`${baseUrl}/conversations/does-not-exist`, { headers: { Authorization: `Bearer ${token}` } });
+    // The read carries the same cross-tenant fence as the turn POST (#463):
+    // the shared M2M token alone must not read another org's thread.
+    const noOrg = await fetch(`${baseUrl}/conversations/${WS_CONV}`, { headers: { Authorization: `Bearer ${token}` } });
+    assert.equal(noOrg.status, 403);
+    const wrongOrg = await fetch(`${baseUrl}/conversations/${WS_CONV}`, {
+      headers: { Authorization: `Bearer ${token}`, "X-Org-Id": "other-org" },
+    });
+    assert.equal(wrongOrg.status, 403);
+    const malformed = await fetch(`${baseUrl}/conversations/does-not-exist`, { headers });
+    assert.equal(malformed.status, 400);
+
+    const missing = await fetch(`${baseUrl}/conversations/${WS_CONV.replace(/conv1$/, "conv9")}`, { headers });
     assert.equal(missing.status, 404);
   } finally {
     await close();

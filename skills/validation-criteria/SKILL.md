@@ -25,8 +25,8 @@ with `specs/requirements/features/<slug>.md` for depth. **Do not read
 `design.md`, `openapi.yaml`, or any source code** to derive criteria — the
 oracle must be independent of the work it will grade. Base every criterion
 only on what the PRD says or necessarily implies, and cite each requirement's
-story numbers so coverage is checkable: every story of the phase being
-designed appears in some entry's `stories`.
+story numbers so coverage is checkable: every story the PRD defines
+appears in some entry's `stories`.
 
 ## Output — write exactly one file
 

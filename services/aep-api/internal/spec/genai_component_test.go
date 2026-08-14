@@ -709,6 +709,11 @@ func Test202Flow_PreviewOnlyAndStreamReplays(t *testing.T) {
 	if sent.req.Turn.Kind != agentsvc.TurnKindChat || sent.req.Turn.Text != "tidy the requirements" {
 		t.Errorf("turn = %+v, want the user's text as a chat turn", sent.req.Turn)
 	}
+	// The journal (#463) carries the raw client-sent text — what the sender's
+	// UI rendered as the user bubble — so rehydrate shows the same thing.
+	if sent.req.Journal == nil || sent.req.Journal.Text != "tidy the requirements" {
+		t.Errorf("journal = %+v, want the raw instruction", sent.req.Journal)
+	}
 
 	// Stream replay: every non-manifest part + terminal + [DONE], id-stamped.
 	events, done, code := r.streamEvents(t, turnID, "", nil)

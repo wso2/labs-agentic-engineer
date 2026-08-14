@@ -417,9 +417,20 @@ export const TURN_KINDS = ["chat", "flow", "start", "plan"] as const;
 
 export type TurnKind = (typeof TURN_KINDS)[number];
 
+/**
+ * A turn's display record (#463): the raw client-sent instruction and the
+ * acting user. `author` mirrors the console's live author shape
+ * (`{id: email, displayName}`) so a rehydrated row is attributable — and
+ * self-vs-teammate distinguishable — exactly like a live one; it is omitted
+ * for M2M callers with no human identity.
+ */
+export interface TurnJournal {
+  text: string;
+  author?: { id: string; displayName: string };
+}
+
 /** The milestone a plan turn is scoped to, and which of its stories already have Tasks. */
 export interface PlanScope {
-  phase: number;
   /** The spec tag the milestone is pinned to. */
   tag: string;
   stories: { number: number; title?: string; covered: boolean }[];
@@ -476,6 +487,15 @@ export interface TurnRequest {
    * no fetch, no discovery tools (byte-identical to an mcp-free turn).
    */
   mcp?: McpConfig;
+  /**
+   * The turn's display record (#463): the raw client-sent instruction (exactly
+   * what the sender's UI rendered as the user bubble) plus a best-effort acting
+   * user. Journaled beside the transcript and served for user rows on the
+   * get-conversation read — never woven into the model prompt. Omitted (older
+   * callers, evals) → no journal entry; the read falls back to the raw stored
+   * message for that turn.
+   */
+  journal?: TurnJournal;
   /**
    * Room-scoped turn (#86 phase 4): join this collab room as a live Yjs peer,
    * read files from the doc, apply ops to the doc, commit nothing. Omitted →
@@ -541,7 +561,7 @@ function isPlanScopeOrAbsent(v: unknown): boolean {
   if (v === undefined) return true;
   if (v === null || typeof v !== "object") return false;
   const s = v as Record<string, unknown>;
-  if (typeof s.phase !== "number" || typeof s.tag !== "string") return false;
+  if (typeof s.tag !== "string") return false;
   if (!Array.isArray(s.stories)) return false;
   return s.stories.every((row) => {
     if (row === null || typeof row !== "object") return false;

@@ -520,26 +520,22 @@ func requestsTo(stub *gittest.Stub, method, path string) []gittest.RecordedReque
 	return out
 }
 
-// TestClaimVersion_MilestoneIsTitledAfterTheVersion pins SINGLE-PHASE MODE: a
-// claim names its milestone after the TAG even when the scope declares a phase,
-// and the previous VERSION's milestone is superseded. The declared phase still
-// rides the scope — it drives the gate and the plan — it just does not name the
-// milestone. Delete this when per-phase milestones come back.
+// TestClaimVersion_MilestoneIsTitledAfterTheVersion pins milestone identity:
+// a claim names its milestone after the TAG, and the previous version's
+// milestone is superseded.
 func TestClaimVersion_MilestoneIsTitledAfterTheVersion(t *testing.T) {
 	h := newPlanHarness(t)
 	h.stub.OnFunc(http.MethodGet, "/repos/acme/widgets/milestones", jsonPage(`[]`))
 	h.stub.On(http.MethodPost, "/repos/acme/widgets/milestones", http.StatusCreated, `{"number":4,"title":"v3"}`)
 	h.stub.OnFunc(http.MethodGet, "/repos/acme/widgets/issues", jsonPage(`[]`))
 	h.stub.On(http.MethodPatch, "/repos/acme/widgets/milestones/2", http.StatusOK, `{}`)
-	// The previous version ran the same PHASE. Under phase-titled milestones
-	// this claim would top milestone 2 up; under single-phase mode v3 is its own
-	// version and supersedes v2.
+	// v3 is its own version and supersedes v2's milestone.
 	h.runs.rows = []delivery.MilestoneRun{{
 		OrgID: "acme", ProjectID: "shop", MilestoneNumber: 2,
 		MilestoneTitle: "v2", Tag: "v2", Origin: delivery.RunOriginSpecBuild,
 	}}
 
-	run, err := h.svc.claimVersion(context.Background(), "acme", "shop", spec.BuildScope{Tag: "v3", Phase: 1})
+	run, err := h.svc.claimVersion(context.Background(), "acme", "shop", spec.BuildScope{Tag: "v3"})
 	if err != nil {
 		t.Fatalf("claimVersion: %v", err)
 	}

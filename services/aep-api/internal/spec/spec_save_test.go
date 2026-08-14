@@ -27,14 +27,14 @@ import (
 	"testing"
 )
 
-// validSpecSeed is a buildable spec: a PRD with a parseable Phasing section,
-// a design.cell declaring the phase + story citations, and a valid design
-// bundle (root + one enriched component with its type artifact) — everything
-// the layout gates AND the phase gate (#370/#371) demand.
+// validSpecSeed is a buildable spec: a PRD with a User Stories section, a
+// design.cell declaring the components, and a valid design bundle (root + one
+// enriched component claiming the story, with its type artifact) — everything
+// the layout gates AND the build gate (#369) demand.
 func validSpecSeed() map[string]string {
 	return map[string]string{
-		"specs/requirements/prd.md":                "# PRD\n\n## User Stories\n\n1. As a user, I want the thing, so that value.\n\n## Phasing\n\n- **Phase 1 — slice**: everything. Stories: 1.\n",
-		"specs/design/design.cell":                 "phase 1\ncomponent svc service [stories: 1]\n",
+		"specs/requirements/prd.md":                "# PRD\n\n## User Stories\n\n1. As a user, I want the thing, so that value.\n",
+		"specs/design/design.cell":                 "component svc service\n",
 		"specs/design/design.md":                   "# System\n",
 		"specs/design/components/svc/design.md":    "---\ntype: service\n---\n# svc\n",
 		"specs/design/components/svc/design.json":  validComponentDesignJSON("svc"),
@@ -204,7 +204,7 @@ func TestSaveSpec_LegacyDesignTagsExcluded(t *testing.T) {
 	r.tag("v1", "spec v1")
 	r.tag("v1-1", "legacy design rev")
 	r.tag("v1-2", "legacy design rev")
-	r.seed(map[string]string{"specs/requirements/prd.md": "# PRD v2\n\n## User Stories\n\n1. As a user, I want the thing, so that value.\n\n## Phasing\n\n- **Phase 1 — slice**: moved on. Stories: 1.\n"}, "spec edit")
+	r.seed(map[string]string{"specs/requirements/prd.md": "# PRD v2\n\n## User Stories\n\n1. As a user, I want the thing, so that value.\n"}, "spec edit")
 
 	res, err := r.svc.SaveSpec(context.Background(), r.org, r.proj, SaveRequest{})
 	if err != nil {
@@ -284,8 +284,16 @@ func TestLatestSpecTag(t *testing.T) {
 func TestBuildScopeAtTag(t *testing.T) {
 	t.Parallel()
 	seed := validSpecSeed()
-	seed["specs/requirements/prd.md"] = "# PRD\n\n## User Stories\n\n1. As a user, I want A, so that a.\n2. As a user, I want B, so that b.\n7. As a user, I want S, so that s.\n\n## Phasing\n\n- **Phase 1 — slice**: core. Stories: 1, 2.\n- **Phase 2 — later**: Stories: 7.\n"
-	seed["specs/design/design.cell"] = "phase 1\ncomponent svc service [stories: 1, 2]\ncomponent later-svc service [stories: 7]\n"
+	seed["specs/requirements/prd.md"] = "# PRD\n\n## User Stories\n\n1. As a user, I want A, so that a.\n2. As a user, I want B, so that b.\n7. As a user, I want S, so that s.\n"
+	seed["specs/design/design.cell"] = "component svc service\ncomponent notify-svc service\n"
+	// svc claims stories 1, 2 and a junk number the PRD never defines;
+	// notify-svc claims 7. The scope reads the claims from each design.json.
+	seed["specs/design/components/svc/design.json"] = `{"name":"svc","type":"service","version":"1.0.0","language":"go",` +
+		`"buildpack":"go","appPath":".","entrypoint":"main.go","exposure":"internet",` +
+		`"stories":[1,2,9],"dependencies":[],"description":"a service"}`
+	seed["specs/design/components/notify-svc/design.json"] = `{"name":"notify-svc","type":"service","version":"1.0.0","language":"go",` +
+		`"buildpack":"go","appPath":".","entrypoint":"main.go","exposure":"internet",` +
+		`"stories":[7],"dependencies":[],"description":"a service"}`
 	r := newRig(t, seed)
 	if _, err := r.svc.SaveRequirements(context.Background(), r.org, r.proj, SaveRequest{}); err != nil {
 		t.Fatalf("save: %v", err)
@@ -295,21 +303,21 @@ func TestBuildScopeAtTag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildScopeAtTag: %v", err)
 	}
-	if scope.Phase != 1 || scope.Tag != "v1" {
+	if scope.Tag != "v1" {
 		t.Fatalf("scope identity = %+v", scope)
 	}
-	// Single-phase mode: the milestone a scope claims is named after the
-	// VERSION, not the phase, even though the phase is declared and scoped.
+	// The milestone a scope claims is named after the version.
 	if scope.MilestoneTitle() != "v1" {
 		t.Errorf("MilestoneTitle() = %q, want the tag", scope.MilestoneTitle())
 	}
-	if fmt.Sprint(scope.InScope) != "[1 2]" {
+	if fmt.Sprint(scope.InScope) != "[1 2 7]" {
 		t.Errorf("inScope = %v", scope.InScope)
 	}
-	if scope.StoryTitles[1] == "" || scope.StoryTitles[7] != "" {
+	if scope.StoryTitles[1] == "" || scope.StoryTitles[7] == "" {
 		t.Errorf("story titles = %v", scope.StoryTitles)
 	}
-	if fmt.Sprint(scope.ComponentStories["svc"]) != "[1 2]" || scope.ComponentStories["later-svc"] != nil {
+	// Claims are filtered to PRD stories (the junk 9 is dropped).
+	if fmt.Sprint(scope.ComponentStories["svc"]) != "[1 2]" || fmt.Sprint(scope.ComponentStories["notify-svc"]) != "[7]" {
 		t.Errorf("componentStories = %v", scope.ComponentStories)
 	}
 }

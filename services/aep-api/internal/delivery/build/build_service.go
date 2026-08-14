@@ -269,15 +269,15 @@ func (s *Service) Run(ctx context.Context, orgID, projectID string, inputs []Bui
 	// supersede the previous milestone, mint `v<N>`, admit the run row that IS
 	// the spec-run mutex — and its detached half plans the Tasks into it.
 	if s.plan != nil {
-		// The tag's PHASE scope (#370) decides the milestone's identity: one
-		// milestone per phase, reused by a same-phase re-tag. A scope read
+		// The tag's story scope (#369) decides the milestone's identity: one
+		// milestone per version. A scope read
 		// failure degrades to the legacy tag-titled milestone rather than
 		// failing a build the gate already validated.
 		scope := spec.BuildScope{Tag: res.Tag}
 		if sc, serr := s.tagger.BuildScopeAtTag(ctx, orgID, projectID, res.Tag); serr == nil {
 			scope = sc
 		} else {
-			slog.WarnContext(ctx, "build: phase scope read failed — using tag-scoped milestone",
+			slog.WarnContext(ctx, "build: story scope read failed — using tag-scoped milestone",
 				"project", projectID, "tag", res.Tag, "error", serr)
 		}
 		run, cerr := s.claimVersion(ctx, orgID, projectID, scope)

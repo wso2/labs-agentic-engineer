@@ -57,7 +57,7 @@ import {
 } from "../shared/model.js";
 import { loadMcpTools } from "../shared/mcp-client.js";
 import { turnTelemetry } from "../shared/telemetry.js";
-import type { Conversation, ConversationStore } from "../store/conversation-store.js";
+import type { Conversation, ConversationStore, TurnJournalEntry } from "../store/conversation-store.js";
 
 /** Thrown when a second turn starts for an id whose turn is still in flight (→ HTTP 409). */
 export class ConcurrentTurnError extends Error {
@@ -91,7 +91,7 @@ const DIVERGENCE_NOTE =
 
 function freshConversation(id: string): Conversation {
   const now = new Date(); // store re-stamps on save; this is the lazy-create placeholder
-  return { id, messages: [], status: "active", createdAt: now, updatedAt: now };
+  return { id, messages: [], turns: [], status: "active", createdAt: now, updatedAt: now };
 }
 
 /**
@@ -175,6 +175,13 @@ export interface RunConversationTurnInput {
    * evals) → the manifest usage carries `model: ""`.
    */
   modelId?: string;
+  /**
+   * The turn's journal entry (#463): the raw client-sent instruction + acting
+   * user, appended to `conv.turns` alongside the transcript in the same save —
+   * the display source the get-conversation read serves for user rows. Absent
+   * (older callers, evals) → no entry; the read falls back to the raw message.
+   */
+  journal?: Omit<TurnJournalEntry, "messageIndex" | "createdAt">;
   store: ConversationStore;
   guard: TurnGuard;
   onEvent: (p: StreamPart) => void;
@@ -318,7 +325,15 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
       );
     }
 
-    // 7. persist the whole aggregate (history is append-only)
+    // 7. persist the whole aggregate (history is append-only). The journal
+    //    entry (#463) commits in the same save as the transcript it describes,
+    //    stamped with the INDEX of the user message this turn appended
+    //    (startLen — runTurn appends the prompt first): the display read pairs
+    //    entry↔message by that stated fact, so an un-journaled turn anywhere
+    //    in the history can never shift another turn's pairing.
+    if (input.journal) {
+      conv.turns = [...(conv.turns ?? []), { ...input.journal, messageIndex: startLen, createdAt: new Date() }];
+    }
     await input.store.save(conv);
 
     // 8. terminal manifest (D14) — emitted LAST, only on full success (any

@@ -37,6 +37,8 @@ import type { Conversation, ConversationStore } from "@aep/agents/store/conversa
 interface StoredConversation {
   id: string;
   messages: Conversation["messages"];
+  /** Turn journal (#463); absent in files written before it existed. */
+  turns?: Conversation["turns"];
   status: Conversation["status"];
   createdAt: string;
   updatedAt: string;
@@ -72,6 +74,9 @@ export class FileConversationStore implements ConversationStore {
     return {
       id: raw.id,
       messages: raw.messages,
+      // Nested dates need the same revival as the top-level ones — JSON hands
+      // back ISO strings where the type says Date.
+      turns: (raw.turns ?? []).map((t) => ({ ...t, createdAt: new Date(t.createdAt) })),
       // A persisted "active" is always stale here (see module doc).
       status: raw.status === "active" ? "done" : raw.status,
       createdAt: new Date(raw.createdAt),
@@ -84,6 +89,7 @@ export class FileConversationStore implements ConversationStore {
     const stored: StoredConversation = {
       id: c.id,
       messages: c.messages,
+      turns: c.turns,
       status: c.status,
       createdAt: c.createdAt.toISOString(),
       updatedAt: c.updatedAt.toISOString(),

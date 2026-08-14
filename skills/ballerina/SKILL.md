@@ -82,13 +82,23 @@ bal openapi -i oas.yaml --mode client          # generate client from openapi sp
 - Change the generated `new (9090, config = {host: "localhost"})` to `new (9090)` — localhost binding leaves the deployed container unreachable while it looks healthy.
 - Delete the `bal new` scaffold's `main.bal` once the service exists.
 
-### Dockerfile
+## Dockerfile
+
+`Dockerfile` — multi-stage, pinned Ballerina builder, JRE runtime:
 
 ```dockerfile
-FROM ballerina/ballerina:2201.13.5
+FROM ballerina/ballerina:2201.13.5 AS builder
 WORKDIR /src
 COPY --chown=ballerina:troupe . .
-ENTRYPOINT ["bal", "run"]
+RUN bal build && mv target/bin/*.jar /tmp/service.jar
+
+FROM eclipse-temurin:21-jre
+WORKDIR /app
+COPY --from=builder /tmp/service.jar /app/service.jar
+EXPOSE 9090
+ENTRYPOINT ["java", "-jar", "/app/service.jar"]
 ```
 
-`--chown` is required: `COPY` lands files as `root:root`, the container runs as `ballerina`, and without it `bal run` cannot write `target/` and the pod crash-loops.
+`--chown` is required, not stylistic: `COPY` always lands files as `root:root` regardless of the base image's `USER` directive, but the builder runs as the non-root `ballerina` user. Without it, `bal build` cannot write `target/`.
+
+The dataplane root filesystem is read-only. `bal run` writes `/.ballerina` and `target/` at start, which crash-loops the pod (`FileSystemException: /.ballerina: Read-only file system`). The runtime entrypoint is the jar the builder produced. The jar is moved to `/tmp/service.jar` so the runtime `COPY` has a stable path regardless of the package name.

@@ -32,9 +32,8 @@ Walk the PRD's own sections, in its own order:
 2. **Actors** — who uses the system, at product altitude.
 3. **Journey & stories** — what each actor does, end to end.
 4. **Product decisions** — policy choices: sign-in, notifications, integrations.
-5. **Phasing** — a single Phase 1 holding every story; anything that should
-   not ship in it belongs in Out of scope, not in a later phase.
-6. **Out of scope** — what this project is explicitly not.
+5. **Out of scope** — what this project is explicitly not; anything that should
+   not ship now belongs here, not in the story list.
 
 The walk is **planning, not turns**: you take it silently, in full, before the
 user sees a single question. For each section:

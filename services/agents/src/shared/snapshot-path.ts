@@ -96,6 +96,16 @@ export interface ResolvedWorkspace {
 }
 
 /**
+ * The org segment of a namespaced conversation id — the get-conversation
+ * read's cross-tenant fence (#463): the same parse the turn POST fences with,
+ * so the two routes can never disagree on an id's org. Throws
+ * `WorkspaceRefError` (400) on a malformed id.
+ */
+export function conversationOrgId(id: string): string {
+  return parseConversationId(id).orgId;
+}
+
+/**
  * Parse a namespaced conversation id into its four segments, defensively.
  * Splitting on `--` FIRST guarantees no segment can smuggle a `--` through the
  * (dash-admitting) per-segment charsets.

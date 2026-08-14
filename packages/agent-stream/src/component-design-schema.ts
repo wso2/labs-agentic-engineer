@@ -206,9 +206,9 @@ export const componentDesignSchema = z.strictObject({
   endpoint: endpointSchema.optional(),
   exposesAPI: exposesAPISchema.optional(),
   componentAgentInstructions: z.string().optional(),
-  // Platform-recomputed from the cell's story citations (accepted so a
-  // snapshot round-trip never rejects; authored values are overwritten on
-  // save, like a dependency's wiring).
+  // Agent-authored during enrichment (#369): the PRD stories this component
+  // serves. The build gate's coverage check reads it — every PRD story must
+  // be claimed by some component's list before a version can be cut.
   stories: z.array(z.number().int().positive()).optional(),
   skillsPinned: z.array(z.string()).optional(),
 });
