@@ -22,12 +22,24 @@
 # bridge (host.docker.internal:7233).
 #
 # Labs profile: a SINGLE-POD Temporal dev server (`temporal server start-dev`,
-# from the temporalio/admin-tools image). It uses an in-memory store, so there
-# is NO Cassandra, NO schema job, and NO PVC — the whole thing is one
-# Deployment + one Service, which is fast and reliable on a resource-tight k3d.
-# The dev server auto-creates the `default` namespace and serves the Web UI on
-# :8233. Not a production topology — a demo-scale durable-execution backend
-# (workflow state is lost if the pod restarts, which is fine for local demos).
+# from the temporalio/admin-tools image) persisting to a SQLite file on a PVC.
+# There is NO Cassandra and NO schema job — one Deployment + one Service + one
+# PVC, which is fast and reliable on a resource-tight k3d. The dev server
+# auto-creates the `default` namespace and serves the Web UI on :8233.
+#
+# The PVC is what makes this usable rather than merely fast. start-dev's DEFAULT
+# store is in-memory, and a restart then erases every workflow — which is not a
+# tolerable local-demo tradeoff, because the loss is silent and unrecoverable:
+# `milestone_runs` in Postgres still reads `state=running`, no workflow exists to
+# drive it, nothing reconciles the two, and the console shows a run "preparing
+# the coding agent" forever. Observed live: the k3d node container restarted, and
+# every in-flight run across every project was orphaned with no terminal reason
+# and no way back except clearing rows by hand.
+#
+# Scope of the durability: the SQLite file survives pod restarts, node-container
+# restarts and `stop.sh`/`start.sh`. It does NOT survive `k3d cluster delete`
+# (teardown.sh), which removes the node's local-path storage with the cluster.
+# Still not a production topology — a demo-scale durable-execution backend.
 #
 # We deliberately do NOT use the temporalio/temporal Helm chart: it bundles only
 # a multi-node Cassandra + separate schema jobs, which are heavy and flaky on a
@@ -70,6 +82,19 @@ kind: Namespace
 metadata:
   name: ${NS}
 ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: temporal-state
+  namespace: ${NS}
+  labels: { app: temporal-frontend }
+spec:
+  # k3d's default StorageClass (local-path) binds on first use, so no
+  # storageClassName is pinned here.
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: { storage: 2Gi }
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -78,12 +103,24 @@ metadata:
   labels: { app: temporal-frontend }
 spec:
   replicas: 1
+  # Recreate, not RollingUpdate: the PVC is ReadWriteOnce, so a rolling update
+  # deadlocks — the new pod cannot mount the volume the old pod still holds.
+  strategy:
+    type: Recreate
   selector:
     matchLabels: { app: temporal-frontend }
   template:
     metadata:
       labels: { app: temporal-frontend }
     spec:
+      # The image runs as uid/gid 1000 (temporal). fsGroup makes the
+      # freshly-provisioned volume group-writable, without which start-dev
+      # cannot create its SQLite file and the pod crash-loops.
+      securityContext:
+        fsGroup: 1000
+      volumes:
+        - name: state
+          persistentVolumeClaim: { claimName: temporal-state }
       containers:
         - name: temporal
           image: ${TEMPORAL_IMAGE}
@@ -97,8 +134,14 @@ spec:
             - 0.0.0.0
             - --namespace
             - default
+            # Persist to the PVC. Without this, start-dev keeps state in memory
+            # and every restart silently orphans all in-flight runs.
+            - --db-filename
+            - /data/temporal.db
             - --log-level
             - warn
+          volumeMounts:
+            - { name: state, mountPath: /data }
           ports:
             - { name: grpc, containerPort: 7233 }
             - { name: ui, containerPort: 8233 }
