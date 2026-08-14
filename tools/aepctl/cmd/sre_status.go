@@ -25,6 +25,7 @@ import (
 	"github.com/spf13/cobra"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 
 	k8s "github.com/wso2/aep/aepctl/internal/kubernetes"
 )
@@ -95,7 +96,12 @@ func runSreStatus(cmd *cobra.Command, args []string) error {
 
 	// ── ESO secrets ──────────────────────────────────────────────────────────
 	fmt.Println("ESO secrets")
-	esoSecrets := []string{"opensearch-admin-credentials", "rca-agent-secret", "observer-secret"}
+	esoSecrets := []string{
+		"opensearch-admin-credentials",
+		"rca-agent-secret",
+		"rca-agent-anthropic-secret",
+		"observer-secret",
+	}
 	for _, name := range esoSecrets {
 		_, err := client.CoreV1().Secrets(sreStatusObsNamespace).Get(ctx, name, metav1.GetOptions{})
 		switch {
@@ -106,6 +112,28 @@ func runSreStatus(cmd *cobra.Command, args []string) error {
 		default:
 			fmt.Printf("  %-36s (error: %v)\n", name, err)
 		}
+	}
+	fmt.Println()
+
+	// ── RCA LLM key ──────────────────────────────────────────────────────────
+	// Secret presence above says nothing about whether the RCA agent can reach an
+	// LLM. Both sources may hold an EMPTY RCA_LLM_API_KEY — an empty string is a
+	// legal Secret value, and rca-agent-secret is created unconditionally even
+	// when deployments/.env carries no key — so "present" reads identically for a
+	// working install and a broken one. Report the source the agent will actually
+	// resolve instead: src/clients/llm.py:resolve_api_key prefers the mounted file
+	// (rca-agent-anthropic-secret) and falls back to the envFrom variable
+	// (rca-agent-secret).
+	fmt.Println("RCA LLM key")
+	switch {
+	case secretKeyNonEmpty(ctx, client, sreStatusObsNamespace, "rca-agent-anthropic-secret", "RCA_LLM_API_KEY"):
+		fmt.Printf("  %-36s org's console-connected key\n", "rca-agent-anthropic-secret")
+	case secretKeyNonEmpty(ctx, client, sreStatusObsNamespace, "rca-agent-secret", "RCA_LLM_API_KEY"):
+		fmt.Printf("  %-36s static key from deployments/.env\n", "rca-agent-secret")
+	default:
+		fmt.Printf("  %-36s NONE — analyses will fail\n", "(unresolved)")
+		fmt.Println("  Connect a key at Settings → Anthropic Integration, or set")
+		fmt.Println("  ANTHROPIC_API_KEY in deployments/.env and re-run setup-observability.sh.")
 	}
 	fmt.Println()
 
@@ -135,4 +163,19 @@ func runSreStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// secretKeyNonEmpty reports whether ns/name carries a non-empty value at key.
+//
+// A missing Secret, a missing key, and a present-but-empty value all collapse to
+// false on purpose: for credential wiring they are the same outcome, and it is
+// the empty value specifically that a plain existence check reports as healthy.
+// Any API error is likewise false — an unreadable Secret is not evidence of a
+// usable key.
+func secretKeyNonEmpty(ctx context.Context, client *kubernetes.Clientset, ns, name, key string) bool {
+	s, err := client.CoreV1().Secrets(ns).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return false
+	}
+	return len(s.Data[key]) > 0
 }

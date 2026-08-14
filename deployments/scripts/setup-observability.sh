@@ -206,9 +206,11 @@ echo "✅ ExternalSecrets applied"
 # and (c) makes the handoff MCP path configurable (AE_MCP_PATH, default /mcp) so
 # the boot MCP test reaches the standalone aep-mcp-server on :3401.
 # The agent reads its LLM key + OAuth client secret from the rca-agent-secret
-# Secret (envFrom). RCA_LLM_API_KEY comes from ANTHROPIC_API_KEY in deployments/.env;
-# OAUTH_CLIENT_SECRET must equal the openchoreo-rca-agent client secret registered
-# by the Thunder bootstrap (values-thunder.yaml CONFIDENTIAL_APPS).
+# Secret (envFrom). RCA_LLM_API_KEY comes from ANTHROPIC_API_KEY in deployments/.env
+# and is the FALLBACK source only — step 3c wires the org's console-connected key,
+# which the agent prefers (src/clients/llm.py:resolve_api_key). OAUTH_CLIENT_SECRET
+# must equal the openchoreo-rca-agent client secret registered by the Thunder
+# bootstrap (values-thunder.yaml CONFIDENTIAL_APPS).
 echo ""
 echo "1️⃣b RCA agent image + secret"
 # Preferred tag `handoff-v16` (= RCA_IMAGE_TAG default below) carries the
@@ -283,8 +285,13 @@ else
 fi
 ANTHROPIC_API_KEY="$(grep -E '^ANTHROPIC_API_KEY=' "$SCRIPT_DIR/../.env" 2>/dev/null | head -1 | cut -d= -f2-)"
 if [ -z "$ANTHROPIC_API_KEY" ]; then
-    echo "⚠️  ANTHROPIC_API_KEY not set in deployments/.env — RCA agent will fail its"
-    echo "    LLM connection test. Set it (or switch rca.llm.modelName to an OpenAI model)."
+    # Not an error: since step 3c the agent's primary key source is the org's
+    # console-connected credential, and this static one is only the fallback for
+    # deployments without that ExternalSecret wiring.
+    echo "ℹ️  ANTHROPIC_API_KEY not set in deployments/.env — that's fine."
+    echo "    The RCA agent prefers the org's console-connected key (Settings →"
+    echo "    Anthropic Integration), synced by the ExternalSecret in step 3c."
+    echo "    Set it here only to pre-seed a key without the console clickthrough."
 fi
 kubectl --context "$CLUSTER_CONTEXT" -n "$NS" create secret generic rca-agent-secret \
     --from-literal=RCA_LLM_API_KEY="$ANTHROPIC_API_KEY" \
@@ -491,16 +498,53 @@ echo "✅ auto-trigger + handoff wiring applied"
 # against the org's Anthropic KV path with a refreshInterval that re-syncs it
 # after a connect or a rotation.
 #
-# So THIS script neither creates nor discovers that ExternalSecret — it only
-# ensures the one-time STRUCTURAL piece exists: the volume + mount + env var
-# wiring below, which the ExternalSecret (whenever the RCA agent's own manifest
-# declares one) feeds into. If no key has been synced, `optional: true` on the
-# volume's secret source means the mount is just an empty dir rather than
-# blocking the pod in ContainerCreating — resolve_api_key() falls back to the
-# static RCA_LLM_API_KEY exactly as before, and main.py's boot-time LLM test
-# skips (warns, doesn't crash) when neither source has a key.
+# This script owns BOTH halves: the ExternalSecret that pulls the key, and the
+# volume + mount + env var wiring it feeds. If no key has been connected yet,
+# `optional: true` on the volume's secret source means the mount is just an empty
+# dir rather than blocking the pod in ContainerCreating — resolve_api_key() falls
+# back to the static RCA_LLM_API_KEY, and main.py's boot-time LLM test skips
+# (warns, doesn't crash) when neither source has a key.
+#
+# The ExternalSecret matches on a PATH PATTERN rather than a fixed remoteRef.key.
+# The per-org vault path is
+#   user-app-secrets/wc-<8 of org uuid>-<8 of sha256(org uuid)>/anthropic-secrets
+# and that org UUID does not exist at install time — organizations.thunder_org_uuid
+# is populated from the JWT's ouId claim, i.e. only once a user has authenticated
+# (see services/aep-api/internal/migrate/phase3_thunder_org_uuid.go). A fixed key
+# could therefore never be written by this script; `find` sidesteps the org UUID
+# entirely and starts resolving the moment a key is connected.
+#
+# SINGLE-ORG by construction: two connected orgs would both match, and the range
+# in the template would concatenate their keys into one invalid value. Revisit if
+# the observability plane ever serves more than one org.
 echo ""
-echo "3️⃣c Dynamic Anthropic key (volume wiring; the ExternalSecret is owned by the RCA agent's own manifest)"
+echo "3️⃣c Dynamic Anthropic key (ExternalSecret + volume wiring)"
+kubectl --context "$CLUSTER_CONTEXT" apply -f - <<EOF
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: rca-agent-anthropic-secret
+  namespace: $NS
+spec:
+  # 15s matches the per-org secrets ESO already syncs for the coding agent.
+  # observer-secret's 1h would leave RCA broken for up to an hour after a connect.
+  refreshInterval: 15s
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: default
+  target:
+    name: rca-agent-anthropic-secret
+    template:
+      engineVersion: v2
+      data:
+        RCA_LLM_API_KEY: '{{ range \$k, \$v := . }}{{ index (\$v | fromJson) "api-key" }}{{ end }}'
+  dataFrom:
+    - find:
+        path: user-app-secrets/
+        name:
+          regexp: "anthropic-secrets"
+EOF
+echo "✅ rca-agent-anthropic-secret ExternalSecret applied"
 # Patched onto the Deployment (not chart values) for the same "survives a
 # helm re-run" reason as step 3b's ConfigMap patches. A podSpec change here
 # triggers K8s's normal rolling update on its own — no explicit restart needed.
@@ -525,8 +569,9 @@ spec:
               value: /etc/rca-agent/anthropic/RCA_LLM_API_KEY
 '
 echo "✅ ai-rca-agent volume/env wired for the dynamic Anthropic key"
-echo "   The RCA agent's own ExternalSecret (against the org's Anthropic KV path) fills this mount."
-echo "   Until one exists it falls back to the static RCA_LLM_API_KEY from step 1b."
+echo "   Connect a key at Settings → Anthropic Integration; ESO fills this mount"
+echo "   within ~15s and the agent re-reads it per analysis (no pod restart)."
+echo "   Until then it falls back to the static RCA_LLM_API_KEY from step 1b."
 
 # ── 3d. AEP-owned handoff skill (issue-fix) — deploy-time mount ───────────
 # The handoff sub-agent loads the 'issue-fix' skill (classify config-vs-code,

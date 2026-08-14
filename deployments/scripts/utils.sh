@@ -325,6 +325,29 @@ fix_node_dns() {
     echo "✅ Node DNS configured"
 }
 
+# k3d nodes inherit the container runtime VM's fs.inotify.max_user_instances,
+# which defaults to 128. kubelet consumes one inotify instance per active
+# `kubectl logs -f`, and a full AEP + observability stack already sits at ~116 of
+# them, so log-following starts failing once the cluster is loaded.
+#
+# The failure is badly disguised: kubectl emits
+# "failed to create fsnotify watcher: too many open files" on STDOUT (not
+# stderr), then exits 0 after replaying the backlog. Through a pipe it reads as
+# ordinary application output, so `kubectl logs -f ... | grep ...` looks like it
+# streamed and stopped rather than like it died — and `2>/dev/null` does not
+# suppress it.
+#
+# Re-applied on every run, not just at cluster creation: the sysctl lives in the
+# node container and resets whenever that container restarts.
+raise_node_inotify_limits() {
+    echo "🔧 Raising k3d node inotify limits..."
+    for node in $(docker ps --filter "name=k3d-${CLUSTER_NAME}" --format '{{.Names}}'); do
+        docker exec --privileged "$node" \
+            sysctl -w fs.inotify.max_user_instances=1024 >/dev/null 2>&1 || true
+    done
+    echo "✅ Node inotify limits raised (kubectl logs -f)"
+}
+
 # _cluster_dns_resolves runs a throwaway pod that resolves a public name through
 # cluster DNS (10.43.0.10). Non-zero means resolution failed.
 _cluster_dns_resolves() {
