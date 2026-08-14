@@ -39,6 +39,22 @@ const autoRCALogQuery = "error"
 // "default" is a placeholder the observer accepts when no real channel exists.
 const autoRCADefaultChannel = "default"
 
+// autoRCAEvaluationInterval is how often the adapter evaluates the rule, and so
+// the floor on the gap between two RCA runs for one component. It is sized to
+// the downstream repair loop: alert → RCA → GitHub issue → coding-agent → PR
+// takes ~30m, and re-firing inside that window analyses a failure that is
+// already being fixed.
+//
+// autoRCAEvaluationWindow is the lookback each evaluation aggregates over, and
+// is held EQUAL to the interval so consecutive evaluations tile the timeline.
+// A window shorter than the interval leaves an unobserved gap between runs
+// (a 30m interval over a 5m window would miss errors logged in the other 25m);
+// a longer one re-counts lines an earlier evaluation already alerted on.
+const (
+	autoRCAEvaluationWindow   = "30m"
+	autoRCAEvaluationInterval = "30m"
+)
+
 // DesiredObservabilityAlertRuleTraits returns the default "error → RCA"
 // observability-alert-rule trait instance (+ its per-environment config) for a
 // component. componentName is the k8s-shaped name; the instance is named
@@ -65,8 +81,8 @@ func DesiredObservabilityAlertRuleTraits(componentName string) (traits []opencho
 				"query": autoRCALogQuery,
 			},
 			"condition": map[string]interface{}{
-				"window":    "5m",
-				"interval":  "1m",
+				"window":    autoRCAEvaluationWindow,
+				"interval":  autoRCAEvaluationInterval,
 				"operator":  "gte",
 				"threshold": 1,
 			},

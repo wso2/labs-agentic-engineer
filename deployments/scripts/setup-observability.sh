@@ -537,12 +537,19 @@ spec:
     template:
       engineVersion: v2
       data:
-        RCA_LLM_API_KEY: '{{ range \$k, \$v := . }}{{ index (\$v | fromJson) "api-key" }}{{ end }}'
+        # hasKey rather than a bare index: Go templates render a missing key as
+        # the literal string "<no value>", which would mount a syntactically
+        # valid but garbage API key that only fails at analysis time.
+        RCA_LLM_API_KEY: '{{ range \$k, \$v := . }}{{ \$d := \$v | fromJson }}{{ if hasKey \$d "api-key" }}{{ index \$d "api-key" }}{{ end }}{{ end }}'
   dataFrom:
     - find:
         path: user-app-secrets/
         name:
-          regexp: "anthropic-secrets"
+          # Anchored: SecretRefName() also mints task-scoped names of the form
+          # <task>-<entity>-secrets, and an unanchored "anthropic-secrets" would
+          # match those too, concatenating a second key into the value. The
+          # coding role's "anthropic-coding-secrets" does not match either way.
+          regexp: "(^|/)anthropic-secrets$"
 EOF
 echo "✅ rca-agent-anthropic-secret ExternalSecret applied"
 # Patched onto the Deployment (not chart values) for the same "survives a
@@ -569,8 +576,10 @@ spec:
               value: /etc/rca-agent/anthropic/RCA_LLM_API_KEY
 '
 echo "✅ ai-rca-agent volume/env wired for the dynamic Anthropic key"
-echo "   Connect a key at Settings → Anthropic Integration; ESO fills this mount"
-echo "   within ~15s and the agent re-reads it per analysis (no pod restart)."
+echo "   Connect a key at Settings → Anthropic Integration. ESO resyncs within ~15s;"
+echo "   the kubelet then refreshes the mounted volume on its own period, so allow"
+echo "   a minute or two end to end. The agent re-reads the file per analysis, so"
+echo "   no pod restart is needed."
 echo "   Until then it falls back to the static RCA_LLM_API_KEY from step 1b."
 
 # ── 3d. AEP-owned handoff skill (issue-fix) — deploy-time mount ───────────

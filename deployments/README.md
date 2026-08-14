@@ -42,8 +42,14 @@ No Anthropic key is needed to bring this up: the agents build their model per tu
 from the calling org's connected credential (`X-Anthropic-Key`), and there is no
 platform fallback. Set `ANTHROPIC_API_KEY` + `LOCAL_DEV_ADMIN_GITHUB_PAT` in
 `.env` only to have `start.sh` pre-connect them via `scripts/seed-dev.sh` and skip
-the Settings clickthrough. The observability plane's RCA agent is the one true
-consumer of a platform-level key from `.env`.
+the Settings clickthrough.
+
+The observability plane's RCA agent reads the same org credential, by a different
+route: `setup-observability.sh` step 3c declares an ExternalSecret that syncs it
+from OpenBao into a file the agent mounts, and the agent re-reads that file per
+analysis — so connecting or rotating a key in **Settings → Anthropic Integration**
+takes effect without a restart. `ANTHROPIC_API_KEY` in `.env` is only its fallback,
+used when no key has been connected yet.
 
 ### Option B — Skaffold + k3d (in-cluster)
 

@@ -339,13 +339,27 @@ fix_node_dns() {
 #
 # Re-applied on every run, not just at cluster creation: the sysctl lives in the
 # node container and resets whenever that container restarts.
+# Reports per node rather than announcing a blanket success: the symptom this
+# guards against is itself silent (kubectl prints the fsnotify error to stdout
+# and exits 0), so a false ✅ here would hide exactly the failure it prevents.
+# The serverlb node ships no sysctl binary and is expected to be skipped.
 raise_node_inotify_limits() {
     echo "🔧 Raising k3d node inotify limits..."
+    local raised=0
     for node in $(docker ps --filter "name=k3d-${CLUSTER_NAME}" --format '{{.Names}}'); do
-        docker exec --privileged "$node" \
-            sysctl -w fs.inotify.max_user_instances=1024 >/dev/null 2>&1 || true
+        if docker exec --privileged "$node" \
+               sysctl -w fs.inotify.max_user_instances=1024 >/dev/null 2>&1; then
+            raised=$((raised + 1))
+        else
+            echo "   ⏭️  $node — sysctl not applied (no sysctl binary, or not privileged)"
+        fi
     done
-    echo "✅ Node inotify limits raised (kubectl logs -f)"
+    if [ "$raised" -gt 0 ]; then
+        echo "✅ Node inotify limits raised on $raised node(s) (kubectl logs -f)"
+    else
+        echo "⚠️  inotify limit NOT raised on any node — 'kubectl logs -f' may"
+        echo "    truncate with 'failed to create fsnotify watcher: too many open files'."
+    fi
 }
 
 # _cluster_dns_resolves runs a throwaway pod that resolves a public name through

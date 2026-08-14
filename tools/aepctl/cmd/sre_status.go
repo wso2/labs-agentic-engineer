@@ -172,7 +172,7 @@ func runSreStatus(cmd *cobra.Command, args []string) error {
 // the empty value specifically that a plain existence check reports as healthy.
 // Any API error is likewise false — an unreadable Secret is not evidence of a
 // usable key.
-func secretKeyNonEmpty(ctx context.Context, client *kubernetes.Clientset, ns, name, key string) bool {
+func secretKeyNonEmpty(ctx context.Context, client kubernetes.Interface, ns, name, key string) bool {
 	s, err := client.CoreV1().Secrets(ns).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return false

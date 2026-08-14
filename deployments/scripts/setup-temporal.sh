@@ -72,7 +72,13 @@ kubectl cluster-info --context "$CLUSTER_CONTEXT" &>/dev/null || {
 if helm status temporal -n "$NS" --kube-context "$CLUSTER_CONTEXT" &>/dev/null; then
     echo "🧹 Removing the retired Temporal Helm release (moving to the dev server)..."
     helm uninstall temporal -n "$NS" --kube-context "$CLUSTER_CONTEXT" >/dev/null 2>&1 || true
-    kubectl --context "$CLUSTER_CONTEXT" -n "$NS" delete pvc --all >/dev/null 2>&1 || true
+    # Scoped to the chart's own PVCs (Cassandra). `--all` would also delete
+    # temporal-state, the PVC this script now owns — silently discarding the
+    # workflow history the dev server persists there, which is the one thing
+    # this file exists to protect. Only reachable while a stale `temporal`
+    # release record survives, but a failed `helm uninstall` leaves exactly that.
+    kubectl --context "$CLUSTER_CONTEXT" -n "$NS" delete pvc \
+        -l app.kubernetes.io/instance=temporal >/dev/null 2>&1 || true
 fi
 
 echo "📦 Applying the Temporal dev-server Deployment + Service..."

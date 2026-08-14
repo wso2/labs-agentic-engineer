@@ -83,6 +83,11 @@ echo ""
 echo "🔧 Refreshing k3d node DNS..."
 if kubectl cluster-info --context "${CLUSTER_CONTEXT}" --request-timeout=5s &>/dev/null; then
     fix_node_dns
+    # Same restart-scoped reset as the DNS above: the inotify sysctl lives in
+    # the node container, so a Docker/Colima restart reverts it to 128 and
+    # `kubectl logs -f` starts dying again. start.sh is the day-to-day path
+    # after such a restart; setup-k3d.sh alone would only cover full setups.
+    raise_node_inotify_limits
     ensure_cluster_dns_healthy || exit 1
 else
     echo "⚠️  k3d cluster not accessible — skipping DNS refresh (run setup.sh if cluster is missing)"
