@@ -92,6 +92,13 @@ image, with the playground mounting the working-tree jar over it.**
   jar it is mounting on every run rather than letting that pass silently, and a
   playground test holds the org/name/version the path is composed from to the
   vendored payload's own metadata.
+- **The skill no longer describes the tool.** Vendored artefact and mirrored
+  skill ship on different clocks, so a copy of the tool's contract in
+  `skills/ballerina/SKILL.md` had nothing keeping it honest and had already gone
+  wrong. `bal library --help` now carries the verbs, the chain and how to read a
+  document; the skill runs it. The tool's own
+  `design/decisions/ADR-0011-the-help-text-is-the-whole-agent-contract.md` has
+  the argument.
 - **The image is one layer heavier and two lighter.** It gained the install
   (~250KB plus the bala metadata) and lost `/opt/ballerina-central` and its
   `PATH` entry. The tool install sits last in the Dockerfile so refreshing it

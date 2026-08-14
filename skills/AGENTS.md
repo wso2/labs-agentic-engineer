@@ -85,6 +85,14 @@ one was `go`'s, and it was invisible for as long as `go` was preloaded regardles
   outright while `go` required it for an unmanaged service). A cross-stack
   *practice* ("read config in one place at startup") is the contract's; **which
   file it lands in** is the stack skill's.
+- **A tool documents itself; a skill points at it.** Where a stack skill drives a
+  tool the platform ships, the verbs, flags and output rules belong in that tool's
+  `--help`, and the skill says to run it. Same argument as above and a sharper
+  version of it: the two ship on different clocks — a vendored tool rides a runner
+  image, a skill rides the org's library — so a copy here goes stale with nothing
+  to catch it. `ballerina` is the worked example: `bal library --help` carries the
+  chain and how to read a document, the skill carries only what surrounds the tool
+  (`packages/bal-library-tool/design/decisions/ADR-0011-…`).
 - Inside `aep`, the tie-break: a rule naming `git`/`gh`/an issue/a PR belongs to
   `SKILL.md`; one naming a path, a file or an env var belongs to the component
   contract. The contract is stated as information rather than a build procedure,
