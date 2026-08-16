@@ -136,7 +136,7 @@ export function renderTranscript(
     lines.push(`## Turn ${r.turn} (${(r.ms / 1000).toFixed(1)}s${r.usage ? `, ${r.usage.inputTokens}in/${r.usage.outputTokens}out tokens` : ""})`, "");
     lines.push("### User → agent", "", "```", r.instruction, "```", "");
     if (r.agentText.trim()) lines.push("### Agent said", "", r.agentText.trim(), "");
-    if (r.session) lines.push(`### Grilling session round`, "", renderSessionLine(r.session), "");
+    if (r.session) lines.push("### Grilling session round", "", renderSessionLine(r.session), "");
     if (r.toolCalls.length) {
       lines.push("### Tool calls", "");
       for (const t of r.toolCalls) lines.push(`- \`${t.toolName}\` ${JSON.stringify(t.input)?.slice(0, 400) ?? ""}`);

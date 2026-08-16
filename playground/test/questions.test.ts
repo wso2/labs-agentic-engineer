@@ -115,7 +115,7 @@ test("renderSessionHeader: every area shows, marked by state", () => {
   assert.match(out, /Grilling session — Voting & nominations/);
   assert.match(out, /✔ Eligibility/);
   assert.match(out, /▸ Quorum/);
-  assert.match(out, /· Nominee limits/);
+  assert.match(out, /○ Nominee limits/);
 });
 
 test("renderSessionHeader: a titleless session still announces itself", () => {

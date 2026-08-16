@@ -42,7 +42,7 @@ const bold = color("1");
 const cyan = color("36");
 
 /** The console's done-ticked / now-highlighted / todo-outlined chips, in text. */
-const AREA_MARK: Record<string, string> = { done: "✔", now: "▸", todo: "·" };
+const AREA_MARK: Record<string, string> = { done: "✔", now: "▸", todo: "○" };
 
 /**
  * Render a grilling-session round's area checklist above its questions (#486) —
@@ -56,7 +56,7 @@ export function renderSessionHeader(session: QuestionSessionInfo): string {
   if (session.areas.length === 0) return head;
   const areas = session.areas
     .map((a) => {
-      const mark = AREA_MARK[a.state] ?? "·";
+      const mark = AREA_MARK[a.state] ?? "○";
       const name = a.state === "now" ? bold(a.name) : a.state === "done" ? dim(a.name) : a.name;
       return `${mark} ${name}`;
     })
