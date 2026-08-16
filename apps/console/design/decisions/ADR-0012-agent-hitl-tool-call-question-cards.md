@@ -60,10 +60,40 @@ question can take, one convention:
 
 ## Delivery
 
-Front-end (this PR): the wire contract additions in `@aep/agent-stream`, the
+Front-end (#270): the wire contract additions in `@aep/agent-stream`, the
 `withGrillingInterview` opt-in in `@aep/contracts/prompts` (since retired —
 `/start` carries the interview flow and the server owns expansion), and the
 console rendering — mock-verified. The agents-service tool registration + stop
 condition, and the platform grilling skill, land via the backend handshake
 (#271); until then real-mode cards don't render (the agent never calls the
 tools) and the FE is mock-complete by design.
+
+## Amendment — grilling sessions (2026-08-16, #486)
+
+Multi-round grilling sessions ([#477](https://github.com/wso2/labs-agentic-engineer/issues/477))
+run as a sequence of ordinary question forms, so points 1–5 hold unchanged.
+The only contract growth is an optional `session` input on `ask_questions`: a
+short `title` plus the full area checklist (`{ name, state: done | now |
+todo }`), restated every round with moved states and stable names.
+
+- **Session chrome is decoration, never a gate.** The console parses `session`
+  separately from the questions (`parseSessionInfo`), so a malformed checklist
+  costs the header and never the form. One-form interviews omit the field and
+  render exactly as before.
+- **`session` precedes `questions` in the schema** so the streaming extractor
+  (`extractStreamingSession`) paints the session's scope before the first
+  question object closes.
+- **The finish valve replaces the blanket skip text.** "Finish — use
+  recommendations" serializes through `buildFinishInstruction`: answers
+  already given ride as decisions quoted per question, unanswered questions
+  are listed for recommended answers tagged `*assumed*`. That split is the
+  decision-to-question link the closing summary's "N asked · M assumed"
+  derives from — still plain text on the next turn (point 5), still no new
+  channel, and a partially answered round loses nothing.
+- **Park/resume needs no new machinery.** A round is the shared room entry
+  (#430 D5), so navigating away parks it and returning re-renders the same
+  entry with co-edited answers intact; a re-mirror computed before the session
+  parsed never strips the checklist.
+- **The summary card is a prose convention, not a frame.** A closing message
+  leading with the `Session summary` marker renders as a bordered card;
+  without the marker it is ordinary narration.

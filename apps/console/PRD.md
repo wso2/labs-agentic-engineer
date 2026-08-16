@@ -99,6 +99,16 @@ that's a stalled feature — investigate, don't ignore.
   route. `@aep/excalidraw-dsl`'s `tryDslToPrototype` compiles per-screen
   scenes client-side (no BE handshake, no contract change; ADR-0008) —
   [#348](https://github.com/wso2/labs-agentic-engineer/issues/348)
+- Agent chat — multi-round grilling sessions: a session round's question form
+  carries the session title and an **area checklist** header (settled · asking
+  now · still ahead), "Skip questions" becomes the **finish valve** ("Finish —
+  use recommendations" — answers already given stay decisions, the rest get
+  recommended answers tagged `*assumed*`), and the agent's closing
+  `Session summary — N asked · M assumed` message renders as a card that
+  doubles as the next deep-dive offer. Parking (navigate away) and resuming is
+  the existing shared room entry; the wire growth is one optional `session`
+  field on `ask_questions` (ADR-0012 amendment) —
+  [#486](https://github.com/wso2/labs-agentic-engineer/issues/486)
 - Agent chat — structured question cards: `ask_question` (single) +
   `ask_questions` (batch form) tool-calls rendered as native Oxygen UI cards
   in the activity stream (answer returns as the next turn's plain text);
