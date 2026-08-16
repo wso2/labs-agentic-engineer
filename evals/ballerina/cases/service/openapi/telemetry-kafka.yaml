@@ -1,0 +1,107 @@
+openapi: 3.0.3
+info:
+  title: Telemetry Ingest API
+  version: 1.0.0
+paths:
+  /readings:
+    post:
+      operationId: publishReading
+      summary: Accept one device reading
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Reading"
+      responses:
+        "202":
+          description: Accepted for publication
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Accepted"
+        "400":
+          description: The reading was rejected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /readings/batch:
+    post:
+      operationId: publishReadingBatch
+      summary: Accept a batch of readings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: "#/components/schemas/Reading"
+      responses:
+        "202":
+          description: Accepted for publication
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatchAccepted"
+  /health:
+    get:
+      operationId: health
+      summary: Liveness of the ingest path
+      responses:
+        "200":
+          description: Ingest status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+components:
+  schemas:
+    Reading:
+      type: object
+      required: [deviceId, metric, value, unit, observedAt]
+      properties:
+        deviceId:
+          type: string
+        metric:
+          type: string
+          enum: [temperature, humidity, pressure, battery]
+        value:
+          type: number
+          format: double
+        unit:
+          type: string
+        observedAt:
+          type: string
+    Accepted:
+      type: object
+      required: [readingId, topic]
+      properties:
+        readingId:
+          type: string
+        topic:
+          type: string
+    BatchAccepted:
+      type: object
+      required: [accepted, topic]
+      properties:
+        accepted:
+          type: integer
+          format: int64
+        topic:
+          type: string
+    Health:
+      type: object
+      required: [status, broker]
+      properties:
+        status:
+          type: string
+        broker:
+          type: string
+    ErrorMessage:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string

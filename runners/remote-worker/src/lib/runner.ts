@@ -18,7 +18,13 @@
 
 import path from "node:path";
 import { query, type McpServerConfig, type Query } from "@anthropic-ai/claude-agent-sdk";
-import { openDebugSinks, type DebugSinks, type TaskLog } from "./logger.js";
+import { debugQueryOptions, openDebugSinks, type DebugSinks, type TaskLog } from "./logger.js";
+// Re-exported from where they now live: `debugQueryOptions` is entirely about
+// the sinks, so it sits beside them in `logger.ts`. Still exported here because
+// this is the module every existing caller and test imports it from, and
+// because a consumer that only wants the options should not have to pull in
+// this module's whole dependency graph to get them.
+export { debugQueryOptions, type DebugQueryOptions } from "./logger.js";
 import type { DispatchRequest } from "./types.js";
 import type { WorkspaceLayout } from "./workspace.js";
 import { emit } from "./progress/emitter.js";
@@ -292,34 +298,6 @@ export interface PerTaskSkills {
  */
 export function alwaysOnSkills(taskKind: DispatchRequest["taskKind"]): string[] {
   return taskKind === "validation" ? ["aep", "aep-validation"] : ["aep"];
-}
-
-/**
- * The SDK options that exist only to be read by a developer afterwards.
- *
- * Split out as a pure function so the boundary is testable: the expensive,
- * prompt-bearing options must be provably absent from a run that did not ask
- * for them, and "absent" is not something an integration test of a live session
- * can assert.
- *
- * `includePartialMessages` is in here for volume, not secrecy — it multiplies
- * the message count by roughly the token count, and the run loop drops every
- * frame it produces on the floor after the watchdog has seen it. The other two
- * are in here for both reasons.
- */
-export interface DebugQueryOptions {
-  includePartialMessages?: true;
-  debugFile?: string;
-  stderr?: (data: string) => void;
-}
-
-export function debugQueryOptions(sinks: DebugSinks | undefined): DebugQueryOptions {
-  if (!sinks) return {};
-  return {
-    includePartialMessages: true,
-    debugFile: sinks.debugFilePath,
-    stderr: (data: string) => sinks.onStderr(data),
-  };
 }
 
 export function runClaudeQuery(

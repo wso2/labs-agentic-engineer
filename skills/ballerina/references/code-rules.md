@@ -33,7 +33,7 @@ For tests, see [tests.md](tests.md) — write them only when the user asks.
 
 ## Function Calls
 
-- Dot notation (`.`) for normal functions. Arrow notation (`->`) for remote and resource functions.
+- Dot notation (`.`) for normal functions. Arrow notation (`->`) for remote and resource functions (Only works inside a function body).
 - Resource function invocation: `clientVar->/path/["param"].get(key="value")`
 - Always use **named arguments**: `client->post("/path", message = payload)` — never positional.
 
@@ -48,7 +48,7 @@ For tests, see [tests.md](tests.md) — write them only when the user asks.
 
 - Each `.bal` file must have its own import statements.
 - Import only packages your code actually references — `bal build` errors on unused imports. Don't pre-import a connector's dependency module (e.g. `ballerina/sql` behind a database client) unless your code names a type from it.
-- Do not import a langlib whose name is a basic type — the type keyword itself puts the prefix in scope, so the import is an error. That is `lang.boolean`, `lang.decimal`, `lang.error`, `lang.float`, `lang.function`, `lang.future`, `lang.int`, `lang.map`, `lang.object`, `lang.stream`, `lang.string`, `lang.table`, `lang.typedesc` and `lang.xml`. The rule is the keyword, not the `lang.` prefix: **`lang.value`, `lang.array` and `lang.regexp` DO need importing** — `import ballerina/lang.value;`, and `undefined module` if you leave it out. Measured against the compiler, one module per line.
+- Do not import a langlib whose name is a basic type — the type keyword itself puts the prefix in scope, so the import is an error. That is `lang.boolean`, `lang.decimal`, `lang.error`, `lang.float`, `lang.function`, `lang.future`, `lang.int`, `lang.map`, `lang.object`, `lang.stream`, `lang.string`, `lang.table`, `lang.typedesc` and `lang.xml`. The rule is the keyword, not the `lang.` prefix: **`lang.value`, `lang.array` and `lang.regexp` DO need importing** — `import ballerina/lang.value;`, and `undefined module` if you leave it out. Measured against the compiler, one module per line. For `lang.regexp` that means when you name a `regexp:` symbol; the bare `re` literal needs nothing — see Regular Expressions.
 - Packages with dots in names use aliases: `import org/package.one as one;`
 - Submodules in `generated/<moduleName>/`: import as `import <packageName>.<moduleName>;` — the import should contain only the package name and submodule name, no path components.
 - For SQL databases, import the matching `.driver` package alongside the client so the JDBC driver is on the runtime classpath (also required for GraalVM native builds):
@@ -320,9 +320,19 @@ int count = items.length();
 
 ## Regular Expressions
 
-Must import: `import ballerina/lang.regexp;`
+Import `ballerina/lang.regexp` only when your code NAMES a `regexp:` symbol —
+`regexp:Span`, `regexp:Groups`, `regexp:fromString`, `regexp:Flags`. The `re` literal
+is syntax and its methods are on `string:RegExp`, so
+`re \`,\`.split(line)`, `.replaceAll(...)`, `.isFullMatch(...)` and `.findAll(...)`
+need no import at all — adding one there is `unused module prefix 'regexp'` and a
+failed build. (Measured twice: it was the only compile error in a whole
+maintenance-service run, and the only one in the eval case that reproduces it.)
 
 ```ballerina
+// No import needed — `re` is a literal, the methods are on string:RegExp
+string[] fields = re `,`.split("a,b,c");
+string cleaned = re `[0-9]+`.replaceAll("a1b2", "X");
+
 // Create pattern
 string:RegExp pattern = re `[0-9]+`;
 string:RegExp pattern = check regexp:fromString("[0-9]+");

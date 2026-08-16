@@ -1,0 +1,142 @@
+openapi: 3.0.3
+info:
+  title: Field Report Intake API
+  version: 1.0.0
+paths:
+  /reports:
+    post:
+      operationId: fileReport
+      summary: File a report and fan it out to every destination
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewReport"
+      responses:
+        "202":
+          description: The report as recorded, with each destination's outcome
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Report"
+        "400":
+          description: The report was rejected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /reports/{reportId}:
+    get:
+      operationId: getReport
+      summary: Fetch a filed report and where it landed
+      parameters:
+        - name: reportId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Report"
+        "404":
+          description: No such report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /reports/{reportId}/escalate:
+    post:
+      operationId: escalateReport
+      summary: Comment on the issue and post a follow-up to the channel
+      parameters:
+        - name: reportId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Escalation"
+      responses:
+        "200":
+          description: The escalation outcome per destination
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Delivery"
+        "404":
+          description: No such report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+components:
+  schemas:
+    NewReport:
+      type: object
+      required: [title, detail, severity, reporter]
+      properties:
+        title:
+          type: string
+        detail:
+          type: string
+        severity:
+          type: string
+          enum: [low, high, urgent]
+        reporter:
+          type: string
+    Delivery:
+      type: object
+      required: [destination, delivered]
+      properties:
+        destination:
+          type: string
+          enum: [sheet, github, slack]
+        delivered:
+          type: boolean
+        reference:
+          type: string
+        failure:
+          type: string
+    Report:
+      type: object
+      required: [reportId, title, detail, severity, reporter, filedAt, deliveries]
+      properties:
+        reportId:
+          type: string
+        title:
+          type: string
+        detail:
+          type: string
+        severity:
+          type: string
+        reporter:
+          type: string
+        filedAt:
+          type: string
+        deliveries:
+          type: array
+          items:
+            $ref: "#/components/schemas/Delivery"
+    Escalation:
+      type: object
+      required: [note]
+      properties:
+        note:
+          type: string
+    ErrorMessage:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string

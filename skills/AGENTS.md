@@ -21,6 +21,16 @@ and writes the mirror itself (`local_skill_mirror.ts`), applying the same rule.
 The library is bind-mounted from the working tree in dev (`setup-k3d.sh` for the
 cluster, `pnpm play` for the playground), so **a skill edit needs no rebuild**.
 
+A **tool** a skill names by command is the exception — it is installed, not
+mounted, so a change to one is NOT live until it is. `evals/ballerina/AGENTS.md`
+has the per-mode table and the loop for measuring whether a change to the
+`ballerina` skill did anything.
+
+One result from that loop worth knowing before writing any skill: an instruction
+about *how a command is invoked in a shell* does not land — 19/19 lookups stayed
+piped across a skill edit saying otherwise, and no thinking block ever mentioned
+piping. An instruction about *which command to run* does.
+
 ## Kinds — `metadata.aep.kind` in frontmatter
 
 An absent kind means `org`, which is a real decision, not a default to lean on:

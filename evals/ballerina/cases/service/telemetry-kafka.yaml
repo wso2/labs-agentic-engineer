@@ -1,0 +1,15 @@
+prompt: |
+  An HTTP ingest service that publishes device readings to a Kafka topic,
+  keyed by device id. Health reports the broker it is configured against.
+
+  Generate the service from `openapi.yaml`. Broker and topic stay configurable.
+  No tests.
+
+fixtures:
+  openapi.yaml: openapi/telemetry-kafka.yaml
+
+expect:
+  builds: true
+  imports:
+    - ballerina/http
+    - ballerinax/kafka

@@ -1,0 +1,19 @@
+prompt: |
+  An HTTP intake service for field reports. Each report is appended as a row to a
+  Google Sheet, opened as a GitHub issue and announced in a Slack channel, and
+  whichever destinations succeed are recorded against it. Escalating one comments
+  on the issue and posts a follow-up to the channel. Reports are kept in memory.
+
+  Generate the service from `openapi.yaml`. Credentials, the spreadsheet, the
+  repository and the channel stay configurable. No tests.
+
+fixtures:
+  openapi.yaml: openapi/intake-fanout.yaml
+
+expect:
+  builds: true
+  imports:
+    - ballerina/http
+    - ballerinax/googleapis.sheets
+    - ballerinax/github
+    - ballerinax/slack

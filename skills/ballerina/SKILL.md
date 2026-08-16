@@ -1,6 +1,6 @@
 ---
 name: ballerina
-description: Everything related to working with ballerina langauge.
+description: Use this whenever you are working with ballerina code or editing .bal files.
 metadata:
   aep:
     kind: org
@@ -27,30 +27,21 @@ Write tests only when the user asks — then load [tests.md](references/tests.md
 
 ### bal library
 
-Reads a package's real API off Central, and is where a signature comes from. **Never write against
-a remembered API or a web search.** Never guess an import.
+**Run `bal library --help` before your first lookup, and follow the flow it describes.** It reads a
+package off Central so you write signatures that exist rather than remembered ones.
 
-```bash
-bal library --help          # the verbs, the flags, and how to read the output
-bal library <verb> --help   # one verb's own flags
-```
-
-Run `--help` before the first lookup in a session and follow what it says — it is the tool's
-contract, it is current, and this skill deliberately does not repeat it. Everything below is
-about the surrounding work, not the tool.
-
-- Pass `--project-dir <component>` on every lookup once the component has been built: the version
-  the code compiles against is `Dependencies.toml`'s, not Central's latest.
+- Run `bal library` unpiped. The CLI is designed to filter and give you the information you need
+  with fewer calls. Narrow with flags only. Instructions and workflow is there in the
+  `bal library --help` output.
 - A failed lookup is not a blocker: write from `code-rules.md` and let `bal build` name what is
   wrong. Report the failure's JSON rather than improvising a signature.
 - When `bal build` rejects something a connector's guide told you to write, go back to the
   signature — the guide is prose and drifts, the signature is generated. That is the usual cause.
 - Prefer a `ballerinax/*` connector over a `trigger.*` package covering the same events.
-- An `import` plus `bal build` resolves a known package; `bal library search` is for the one you
-  cannot name.
 
 ### bal build
 
+- An `import` plus `bal build` resolves a package — no manual `Dependencies.toml` edit.
 - `target/` is the incremental cache — leave it in place; "no work to do" confirms the last build holds.
 - Configurables are read at runtime, so env variables or Config.toml is not needed to build.
 

@@ -1,0 +1,16 @@
+prompt: |
+  In this Ballerina package, write `s3_client.bal` containing:
+
+  - a configurable `accessKeyId`, `secretAccessKey` and `region` (string each),
+  - an `ballerinax/aws.s3` client initialised with those static credentials,
+  - `public function uploadPhoto(string key, byte[] content) returns error?`
+    which puts the object into a configurable bucket as `image/jpeg`,
+  - `public function photoUrl(string key) returns string|error` which returns a
+    presigned GET url valid for 15 minutes.
+
+  Then run `bal build` until it is clean. Do not write tests.
+
+expect:
+  builds: true
+  imports:
+    - ballerinax/aws.s3

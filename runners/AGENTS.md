@@ -55,13 +55,19 @@ into the runner pod at `/app/skills` for live skill edits (see
   can ride it into a console build log), and overload is load-dependent so a flag
   would be off during every incident. **A retry must never reach
   `watchdog.observe`** — it is the absence of progress, and resetting the idle
-  clock hides the stall it explains. `debugFile`, `stderr` and
-  `includePartialMessages` are the opposite call: on for every playground run,
-  off in a pod unless `AEP_RUNNER_DEBUG=1`, and they write files beside
-  `claude.log` rather than to the feed — nothing collects a pod's files and the
+  clock hides the stall it explains. `debugFile`, `stderr`,
+  `includePartialMessages` and the reasoning pair (`thinking` +
+  `forwardSubagentText`) are the opposite call: on for every playground run,
+  off in a pod unless `AEP_RUNNER_DEBUG=1`, and they land in files beside
+  `claude.log` rather than on the feed — nothing collects a pod's files and the
   debug log holds prompt text. Streaming frames reach neither the feed nor
-  `claude.log`. ADR-0002 decisions 14–15 have the measurements, including why
-  stderr is *not* where retry detail lives.
+  `claude.log`. **The reasoning pair only works as a pair**: without a
+  `thinking` display the blocks arrive signed and empty, and without
+  `forwardSubagentText` the subagents forward none at all — which is why a
+  transcript could show 120 subagent tool calls and not one word of why. Adding
+  either alone re-creates a log that says reasoning happened without saying what
+  it was. ADR-0002 decisions 14–16 have the measurements, including why stderr
+  is *not* where retry detail lives.
 - **Fan-out runs in the foreground.** A `PreToolUse` hook
   (`lib/fanout_foreground.ts`) forces `run_in_background: false` on every
   `Agent`/`Task` call that did not already say so. Backgrounding does not add

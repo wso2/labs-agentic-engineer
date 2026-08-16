@@ -157,7 +157,10 @@ Four further gaps, all verified rather than assumed:
    happened and where 65% of the work happens. Instead the `aep` skill requires
    a one-line `echo` naming the reason before discarding existing work. Tool
    calls are the only channel that survives the forwarding boundary, so the
-   reason has to *be* a tool call to be recorded at all.
+   reason has to *be* a tool call to be recorded at all. **Superseded in part by
+   decision 16** — the forwarding boundary was the SDK's default, not a fixed
+   property of it. The `echo` rule stays: it is what puts a reason on the *feed*,
+   which is a different audience from the transcript.
 
 7. **Silence reports what it is waiting on.** The watchdog distinguishes the two
    faults a silent feed can mean — a tool in flight (that call is slow or stuck,
@@ -211,6 +214,31 @@ Four further gaps, all verified rather than assumed:
     none: probed against the same dead endpoint it produced one unrelated
     startup warning while all 8 retries went past on the message channel. It is
     kept as a sink for what else the CLI says, not as the diagnosis.
+
+16. **The reasoning IS capturable now, and it joins the developer options.**
+    Decision 6 rejected reasoning capture because the forwarding boundary put
+    the subagents out of reach. That boundary is the SDK's *default*, not a
+    property of it: `forwardSubagentText` forwards a subagent's text and
+    thinking as messages carrying `parent_tool_use_id`, and it was never set.
+
+    It takes two options, because either alone leaves the transcript unable to
+    answer the question. Measured on the 2026-08-14 playground run, with
+    neither set: 7 thinking blocks in the lead session, **every one of them
+    `thinking: ""`** — signed, empty, and accompanied by 62
+    `system`/`thinking_tokens` events counting reasoning whose text nothing
+    kept; and 120 subagent tool calls with zero blocks of any other kind. So
+    `thinking: {type: "adaptive", display: "summarized"}` is what makes a block
+    carry words, and `forwardSubagentText` is what makes the blocks exist for
+    the streams that do the work.
+
+    They sit in `debugQueryOptions` with the other three, for the reason
+    decision 15 gives: volume, and a sink nothing collects. A pod's transcript
+    would grow by every subagent's prose to no reader.
+
+    The progress feed is unaffected, and that is checked rather than hoped:
+    `assistantToolUseBlocks` selects `type === "tool_use"` and ignores every
+    other block kind, so the new content reaches `claude.log` and stops there.
+    Decision 12 still holds — this is developer detail that is READ, not fed.
 
 8. **`console.*` is converted, not merely scrubbed.** It shares the fd with the
    feed, so a bare line makes the stream unparseable — and a watchdog cannot

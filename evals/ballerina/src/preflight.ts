@@ -1,0 +1,165 @@
+/**
+ * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+ *
+ * WSO2 LLC. licenses this file to you under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+/**
+ * What has to be true before a sweep is worth running.
+ *
+ * Every check here exists because its absence produces a NUMBER rather than an
+ * error — a sweep that runs happily and attributes its result to a change that
+ * was never loaded. That is the expensive failure: three hours of runs whose
+ * conclusion is wrong in a way nothing in the report can reveal.
+ *
+ * This runs ONCE per sweep, before the first session, and refuses rather than
+ * warns. A warning at the top of a three-hour run is read after the run.
+ */
+
+import { execFileSync } from "node:child_process";
+import { existsSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { PATHS, SKILL_NAME } from "./config.js";
+
+export interface Preflight {
+  /** Everything that must be fixed before running. */
+  blockers: string[];
+  /** Facts worth stamping into the report so a result can be placed later. */
+  facts: Record<string, string>;
+}
+
+/** Takes no arguments: every path it checks is declared in `config.ts`. */
+export function preflight(): Preflight {
+  const blockers: string[] = [];
+  const facts: Record<string, string> = {};
+
+  const bal = which("bal");
+  if (!bal) {
+    blockers.push("`bal` is not on PATH — host mode runs the developer's own toolchain, so install Ballerina first");
+  } else {
+    facts.bal = version(bal);
+  }
+
+  // THE trap this file exists for. Host mode resolves `bal library` out of
+  // ~/.ballerina, so a working-tree jar is invisible until install-local.sh
+  // copies it in. A sweep against a stale tool reports the OLD CLI's numbers
+  // under the new CLI's name, and nothing downstream can tell.
+  const installed = installedToolJar();
+  const built = builtToolJar();
+  if (!installed) {
+    blockers.push(
+      "`bal library` is not installed — the ballerina skill's lookups would all fail and the run would " +
+        "measure the fallback path. Install it: packages/bal-library-tool/install-local.sh",
+    );
+  } else if (built && statSync(built).mtimeMs > statSync(installed).mtimeMs) {
+    blockers.push(
+      "`bal library` resolves to an installed jar OLDER than your working-tree build — this sweep would " +
+        "measure the previous CLI. Re-run packages/bal-library-tool/install-local.sh",
+    );
+  }
+  if (installed) facts.balLibraryJar = `${installed} (${new Date(statSync(installed).mtimeMs).toISOString()})`;
+
+  // The skill is read from the working tree on every run, so its content is a
+  // fact about the sweep rather than something to check. Stamped so a report
+  // from last week can be placed against the skill it actually ran.
+  //
+  // The NEWEST file in the whole directory, not SKILL.md's own mtime. Measured
+  // the moment this existed: a fix to `references/code-rules.md` moved a case
+  // from 2 build cycles to 1, and the report still stamped the previous day —
+  // provenance that misses the file you edited is worse than none, because it
+  // reads as proof the run predates your change.
+  const skillDir = join(PATHS.skillsDir, SKILL_NAME);
+  if (!existsSync(join(skillDir, "SKILL.md"))) blockers.push(`the ballerina skill is missing at ${skillDir}`);
+  else facts.skillMtime = new Date(newestMtime(skillDir)).toISOString();
+
+  return { blockers, facts };
+}
+
+/** The most recent mtime anywhere under a directory. */
+function newestMtime(dir: string): number {
+  const listing = tryExec("find", [dir, "-type", "f"]);
+  if (!listing) return 0;
+  return listing
+    .split("\n")
+    .filter(Boolean)
+    .reduce((newest, file) => Math.max(newest, statSync(file).mtimeMs), 0);
+}
+
+/**
+ * The credential check, kept separate because it is about the ENVIRONMENT the
+ * sessions will get rather than about the tools.
+ *
+ * Host mode here means `claude login` and nothing else. A key in the
+ * environment is not an error to fix — it is stripped (see `hostEnv`) — so this
+ * only reports what was removed, which is worth knowing when a developer
+ * expected a key to be used.
+ */
+export function credentialNotes(env: NodeJS.ProcessEnv): string[] {
+  const notes: string[] = [];
+  if (env.ANTHROPIC_API_KEY) notes.push("ANTHROPIC_API_KEY present in the environment — withheld from every session");
+  if (env.CLAUDE_CODE_OAUTH_TOKEN) {
+    notes.push("CLAUDE_CODE_OAUTH_TOKEN present in the environment — withheld from every session");
+  }
+  return notes;
+}
+
+/**
+ * The environment a session gets: the developer's, minus both credentials.
+ *
+ * There is no opt-in. Not "host by default" — host is the only path, because a
+ * harness whose credential can vary between sweeps cannot compare them.
+ *
+ * Deleting rather than never-adding is the load-bearing part. This package
+ * loads no `.env` itself, but `make eval-bal` inherits the shell, and an
+ * exported `ANTHROPIC_API_KEY` is ordinary on a developer machine here — the
+ * playground reads one from `deployments/.env` for its own runs. Claude Code
+ * ranks that key above the keychain, so a stray export would silently bill the
+ * platform's key while the report claimed a subscription run. `credentialNotes`
+ * says so when it happens rather than letting the removal be invisible.
+ */
+export function hostEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out = { ...env };
+  delete out.ANTHROPIC_API_KEY;
+  delete out.CLAUDE_CODE_OAUTH_TOKEN;
+  return out;
+}
+
+function installedToolJar(): string | undefined {
+  if (!existsSync(PATHS.installedToolDir)) return undefined;
+  // <version>/any/tool/libs/*.jar — one version at a time, installed by the
+  // tool's own script, so the first match found is the installed tool.
+  const found = tryExec("find", [PATHS.installedToolDir, "-name", "*.jar", "-type", "f"]);
+  return found?.split("\n").filter(Boolean)[0];
+}
+
+function builtToolJar(): string | undefined {
+  return existsSync(PATHS.workingTreeJar) ? PATHS.workingTreeJar : undefined;
+}
+
+function which(cmd: string): string | undefined {
+  return tryExec("which", [cmd])?.split("\n")[0];
+}
+
+function version(bal: string): string {
+  return tryExec(bal, ["version"])?.split("\n")[0] ?? "unknown";
+}
+
+function tryExec(cmd: string, args: string[]): string | undefined {
+  try {
+    return execFileSync(cmd, args, { encoding: "utf8" }).trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}

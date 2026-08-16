@@ -1,0 +1,16 @@
+prompt: |
+  An HTTP backend for maintenance faults in our rental buildings. A tenant
+  reports a fault with a short title; staff list them, filter by status, and
+  move a fault along as it is picked up and finished. Whoever attends it can
+  attach a photo and fetch it back later.
+
+  Faults go in Postgres, creating the table on startup if it is missing. Photos
+  go in S3, with only the pointer kept. Environment specifics stay configurable.
+  No tests.
+
+expect:
+  builds: true
+  imports:
+    - ballerina/http
+    - ballerinax/postgresql
+    - ballerinax/aws.s3

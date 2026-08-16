@@ -92,6 +92,11 @@ eval:
 eval-ui:
 	$(PNPM) --filter @aep/spec-agent-evals eval:ui
 
+# Ballerina coding evals: host mode, your own `claude login`, on demand.
+# Needs an installed `bal library` — packages/bal-library-tool/install-local.sh.
+eval-bal:
+	$(PNPM) --filter @aep/ballerina-evals eval $(if $(ARGS),-- $(ARGS),)
+
 lint:
 	$(TURBO) run lint
 	@for d in $(GO_MODULE_DIRS); do echo ">> golangci-lint $$d"; ( cd "$$d" && $(GOLANGCI) run ./... ); done

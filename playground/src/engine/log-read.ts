@@ -234,11 +234,13 @@ export function renderLogView(runDir: string, view: LogView): string[] {
 
   if (view === "thinking") {
     if (thoughts.length === 0) {
-      // Worth saying rather than showing an empty list: measured across four
-      // runs, the orchestrator produced 16 thinking blocks and both subagents
-      // produced none, so the agents doing the implementing are observable only
-      // through their tool calls.
-      out.push("  (no thinking blocks — subagents emit none, so an empty list is normal)");
+      // An empty list used to be NORMAL and is now a symptom, so it names the
+      // cause rather than reassuring. Both halves of the reasoning pair live in
+      // `debugQueryOptions` (ADR-0002 decision 16): without a `thinking`
+      // display the blocks arrive signed and empty, and without
+      // `forwardSubagentText` the subagents — which do most of the work —
+      // forward no blocks at all. A run predating that change has neither.
+      out.push("  (no thinking blocks — the run captured none; see ADR-0002 decision 16)");
       return out;
     }
     for (const t of thoughts) {

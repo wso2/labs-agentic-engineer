@@ -1,0 +1,23 @@
+{
+  "name": "@aep/ballerina-evals",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Ballerina coding evals: one prompt → one package → bal build, measuring the path the agent took through `bal library` (evals/ballerina/README.md).",
+  "scripts": {
+    "eval": "tsx src/cli.ts",
+    "build": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "test": "tsx --test \"test/**/*.test.ts\""
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.220",
+    "remote-worker": "workspace:*",
+    "yaml": "^2.8.4"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "tsx": "^4.21.0"
+  }
+}

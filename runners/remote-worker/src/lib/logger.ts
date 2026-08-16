@@ -92,6 +92,55 @@ export function openDebugSinks(logDir: string, scrub: (line: string) => string):
   };
 }
 
+/**
+ * The SDK options that exist only to be read by a developer afterwards.
+ *
+ * Split out as a pure function so the boundary is testable: the expensive,
+ * prompt-bearing options must be provably absent from a run that did not ask
+ * for them, and "absent" is not something an integration test of a live session
+ * can assert.
+ *
+ * `includePartialMessages` is in here for volume, not secrecy — it multiplies
+ * the message count by roughly the token count, and the run loop drops every
+ * frame it produces on the floor after the watchdog has seen it. The other two
+ * are in here for both reasons.
+ *
+ * `thinking` and `forwardSubagentText` are the reasoning pair, and they only
+ * make sense together. ADR-0002 decision 6 rejected reasoning capture on the
+ * measurement that it could not reach the subagents — where a coding run does
+ * nearly all of its work — and `forwardSubagentText` is the SDK capability that
+ * answers exactly that; see decision 16 for the reversal. Volume is why they
+ * stay on this side of the gate: a pod's transcript grows by every subagent's
+ * prose, and nothing collects a pod's files to read it back.
+ */
+export interface DebugQueryOptions {
+  includePartialMessages?: true;
+  debugFile?: string;
+  stderr?: (data: string) => void;
+  thinking?: { type: "adaptive"; display: "summarized" };
+  forwardSubagentText?: true;
+}
+
+export function debugQueryOptions(sinks: DebugSinks | undefined): DebugQueryOptions {
+  if (!sinks) return {};
+  return {
+    includePartialMessages: true,
+    debugFile: sinks.debugFilePath,
+    stderr: (data: string) => sinks.onStderr(data),
+    // Without a display, thinking blocks arrive SIGNED AND EMPTY — measured on
+    // the 2026-08-14 run: 7 blocks at the top level, every one `thinking: ""`,
+    // while `system`/`thinking_tokens` counted the reasoning that produced them.
+    // A transcript that records the reasoning happened but not what it was
+    // cannot answer why a run took the path it took.
+    thinking: { type: "adaptive", display: "summarized" },
+    // The SDK forwards only tool_use/tool_result from a subagent by default,
+    // which is why the same run held 120 subagent tool calls and zero words of
+    // subagent reasoning. The progress feed is unaffected either way: the
+    // translator reads `tool_use` blocks and ignores every other kind.
+    forwardSubagentText: true,
+  };
+}
+
 export function formatDuration(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000);
   if (totalSeconds < 60) return `${totalSeconds}s`;
