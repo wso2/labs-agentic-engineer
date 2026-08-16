@@ -29,8 +29,10 @@ import {
   addMessage,
   chatKeyFor,
   consumePendingSeed,
+  getMessages,
   replaceMessages,
   setPendingSeed,
+  upsertQuestionMessage,
 } from "../chatStore";
 
 const ORG = "acme";
@@ -446,7 +448,9 @@ describe("AgentChatPanel — questions in the feed are a banner, not a card", ()
 
   it("clicking the banner navigates to the project's spec view", () => {
     renderPanel();
-    mockPanelNavigate.mockClear(); // the pending question auto-navigates once on mount
+    // Nothing navigated on mount (see the arrival describe below) — the click
+    // is the only route change here.
+    expect(mockPanelNavigate).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByTestId("questions-pointer"));
 
@@ -454,6 +458,105 @@ describe("AgentChatPanel — questions in the feed are a banner, not a card", ()
       to: "/projects/$projectName/spec",
       params: { projectName: PROJECT },
     });
+  });
+});
+
+// Live-testing round 2: opening the chat rail MOUNTS this panel, so anything
+// the panel does on mount is what the header's "Toggle agent chat" does. It
+// used to navigate to the spec view for any question the thread still had
+// pending — clicking the toggle on the project overview silently changed
+// route. Only a question that ARRIVES on the live stream may move the user.
+describe("AgentChatPanel — the spec-view jump follows question ARRIVAL, not mount", () => {
+  const QUESTIONS: AskQuestionInput[] = [
+    { question: "Who signs in?", options: [{ label: "Anyone" }] },
+  ];
+  const SPEC_ROUTE = {
+    to: "/projects/$projectName/spec",
+    params: { projectName: PROJECT },
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    consumePendingSeed(KEY);
+    replaceMessages(KEY, []);
+    mockMessages = [];
+  });
+
+  it("navigates nowhere when the panel opens over an already-pending question", () => {
+    // A question the thread carried before this panel existed — a rehydrate
+    // or a persisted log, never a live arrival.
+    mockMessages = [
+      {
+        id: "q-mounted",
+        role: "question",
+        turnId: "t1",
+        toolCallId: "tc-already-pending",
+        questions: QUESTIONS,
+      },
+    ];
+
+    renderPanel();
+
+    expect(mockPanelNavigate).not.toHaveBeenCalled();
+    // The banner is still there — the way to the form is offered, not forced.
+    expect(screen.getByTestId("questions-pointer")).toBeInTheDocument();
+  });
+
+  it("still navigates nowhere when the user closes and re-opens the rail", () => {
+    mockMessages = [
+      {
+        id: "q-mounted-2",
+        role: "question",
+        turnId: "t1",
+        toolCallId: "tc-still-pending",
+        questions: QUESTIONS,
+      },
+    ];
+
+    const { unmount } = renderPanel();
+    unmount(); // the rail closes — Collapse unmountOnExit
+    renderPanel(); // and opens again
+
+    expect(mockPanelNavigate).not.toHaveBeenCalled();
+  });
+
+  it("navigates when a question arrives on the live stream while the panel is open", () => {
+    const { rerender } = renderPanel();
+    expect(mockPanelNavigate).not.toHaveBeenCalled();
+
+    // The fold's write — the one path that means "this streamed in now".
+    act(() =>
+      upsertQuestionMessage(KEY, {
+        role: "question",
+        turnId: "t1",
+        toolCallId: "tc-arrived",
+        questions: QUESTIONS,
+        streaming: false,
+      }),
+    );
+    mockMessages = getMessages(KEY);
+    rerender(withProviders(<AgentChatPanel {...panelProps()} />));
+
+    expect(mockPanelNavigate).toHaveBeenCalledWith(SPEC_ROUTE);
+    expect(mockPanelNavigate).toHaveBeenCalledTimes(1);
+  });
+
+  it("moves the user once per question, not on every re-render", () => {
+    const { rerender } = renderPanel();
+    act(() =>
+      upsertQuestionMessage(KEY, {
+        role: "question",
+        turnId: "t1",
+        toolCallId: "tc-arrived-once",
+        questions: QUESTIONS,
+        streaming: false,
+      }),
+    );
+    mockMessages = getMessages(KEY);
+    rerender(withProviders(<AgentChatPanel {...panelProps()} />));
+    rerender(withProviders(<AgentChatPanel {...panelProps()} />));
+
+    expect(mockPanelNavigate).toHaveBeenCalledTimes(1);
   });
 });
 

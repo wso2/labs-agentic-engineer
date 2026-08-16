@@ -51,6 +51,7 @@ import { useAgentChat } from "../useAgentChat";
 import {
   chatKeyFor,
   consumePendingSeed,
+  isLiveQuestion,
   peekPendingSeed,
   subscribeSeed,
 } from "../chatStore";
@@ -230,7 +231,7 @@ export function AgentChatPanel({
   }, [navigate, projectName]);
 
   // Questions are answered on the spec view (the form takes over the body), so
-  // take the user there the moment one arrives — otherwise the agent is blocked
+  // take the user there the moment one ARRIVES — otherwise the agent is blocked
   // on an answer they can't see from wherever they are. Fires exactly ONCE per
   // question: after that the user is free to navigate away (and to reopen this
   // panel) without being yanked back. Keyed by toolCallId, NOT message id —
@@ -248,9 +249,16 @@ export function AgentChatPanel({
   }, [messages, answerableIds]);
   useEffect(() => {
     if (!pendingQuestionKey || autoOpenedQuestions.has(pendingQuestionKey)) return;
+    // ARRIVED, not "is pending": only a question that streamed in while this
+    // panel was attached may move the user. A question the thread already
+    // carried when the panel mounted must not — the panel mounts when the chat
+    // rail OPENS (a closed rail unmounts it), so navigating here turned the
+    // header's "Toggle agent chat" into a jump to the spec view from anywhere
+    // in the project (live-testing round 2).
+    if (!isLiveQuestion(chatKey, pendingQuestionKey)) return;
     autoOpenedQuestions.add(pendingQuestionKey);
     openSpec();
-  }, [pendingQuestionKey, openSpec]);
+  }, [chatKey, pendingQuestionKey, openSpec]);
 
   // --- Drag-to-resize (persisted) --------------------------------------
   const [width, setWidth] = useState<number>(() => {

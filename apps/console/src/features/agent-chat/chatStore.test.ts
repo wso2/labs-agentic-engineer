@@ -40,9 +40,11 @@ import {
   getChatOpenRequests,
   getMessages,
   hasDeterministicFlush,
+  isLiveQuestion,
   notifyTurnEnd,
   peekPendingSeed,
   registerDeterministicFlush,
+  replaceMessages,
   requestChatOpen,
   setPendingSeed,
   setTurnStatus,
@@ -50,6 +52,7 @@ import {
   subscribeChatOpen,
   subscribeSeed,
   subscribeTurnEnd,
+  upsertQuestionMessage,
   upsertToolMessage,
 } from "./chatStore";
 
@@ -350,5 +353,49 @@ describe("chat-open requests", () => {
     const key2 = freshKey();
     requestChatOpen(key1);
     expect(getChatOpenRequests(key2)).toBe(0);
+  });
+});
+
+// Live question arrivals (#485 live-testing round 2): "this card streamed in
+// while this tab was attached", the signal that keeps the chat panel's
+// auto-navigation off the mount path (opening the rail must not change route).
+describe("live question arrivals", () => {
+  const QUESTIONS = [{ question: "Who signs in?", options: [{ label: "Anyone" }] }];
+
+  it("marks a card folded off the live stream, and only that card", () => {
+    const key = freshKey();
+    expect(isLiveQuestion(key, "tc-1")).toBe(false);
+
+    upsertQuestionMessage(key, {
+      role: "question",
+      turnId: "t1",
+      toolCallId: "tc-1",
+      questions: QUESTIONS,
+    });
+
+    expect(isLiveQuestion(key, "tc-1")).toBe(true);
+    expect(isLiveQuestion(key, "tc-2")).toBe(false);
+  });
+
+  it("leaves a REHYDRATED card unmarked — replaceMessages is not an arrival", () => {
+    const key = freshKey();
+    replaceMessages(key, [
+      { id: "q1", role: "question", turnId: "t1", toolCallId: "tc-9", questions: QUESTIONS },
+    ]);
+
+    expect(getMessages(key)).toHaveLength(1);
+    expect(isLiveQuestion(key, "tc-9")).toBe(false);
+  });
+
+  it("keeps distinct keys apart", () => {
+    const key1 = freshKey();
+    const key2 = freshKey();
+    upsertQuestionMessage(key1, {
+      role: "question",
+      turnId: "t1",
+      toolCallId: "tc-3",
+      questions: QUESTIONS,
+    });
+    expect(isLiveQuestion(key2, "tc-3")).toBe(false);
   });
 });

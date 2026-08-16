@@ -121,7 +121,11 @@ export function AppLayout() {
   const search = useSearch({ strict: false }) as {
     generate?: "requirements" | "design";
   };
-  const generate = search.generate;
+  // Spec-route only. The signal exists to start a turn on the spec workspace,
+  // and consuming it navigates THERE (`clearGenerate` below) — read off any
+  // other project route, a stray or stale `?generate` would move the user the
+  // moment the chat panel mounted (live-testing round 2).
+  const generate = isSpecRoute ? search.generate : undefined;
   useEffect(() => {
     if (generate && projectName) setChatOpen(true);
   }, [generate, projectName]);
