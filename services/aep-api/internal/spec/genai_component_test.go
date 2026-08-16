@@ -328,6 +328,17 @@ func (m *memTurnRepo) GetActive(_ context.Context, orgID, projectID string) (*sp
 	return nil, nil
 }
 
+func (m *memTurnRepo) HasAny(_ context.Context, orgID, projectID string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, r := range m.rows {
+		if r.OrgID == orgID && r.ProjectID == projectID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (m *memTurnRepo) LastTerminal(_ context.Context, orgID, projectID, conversationID string) (*spec.AgentTurn, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

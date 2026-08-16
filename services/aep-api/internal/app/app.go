@@ -385,6 +385,8 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		// #430: the project-scoped thread store — resolve/rotate the current
 		// conversation, and the conversation_rotated admission fence on turns.
 		Conversations: spec.NewConversationRepository(db),
+		// #485: the one-auto-/start-per-project claim behind KickoffSpec.
+		Kickoffs: spec.NewKickoffRepository(db),
 		Recorder:      turnActivityRecorder{svc: activitySvc, authorship: specAuthored},
 	}
 	// MCP discovery on design-generation turns (dependency-management Phase 5):
@@ -440,6 +442,9 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// Agentic Engineer marker, carrying the idea the user typed at create for
 	// the /start flow to generate requirements from.
 	projectService.SetDescriptorWriter(spec.NewDescriptorWriter(filesSvc))
+	// BE-side /start kickoff (#485): a project created with a prompt starts
+	// its spec interview server-side (exactly once, spec_kickoffs-claimed).
+	projectService.SetSpecKickoff(genaiSvc)
 
 	// The Task-keyed log endpoint (issue number → newest execution by default,
 	// executionId query pins one for history browsing). (The runner skills-pull

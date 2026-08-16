@@ -199,8 +199,12 @@ type ServiceDeps struct {
 	// the current thread, and the single-era admission fence on StartTurn.
 	// Optional (nil skips the fence) — a test seam; production always wires it.
 	Conversations ConversationRepository
-	MCPTokens     MCPTokenMinter
-	MCPBaseURL    string
+	// Kickoffs is the one-auto-/start-per-project claim store (#485) behind
+	// KickoffSpec. Optional (nil makes KickoffSpec refuse with
+	// ErrKickoffUnavailable) — a test seam; production always wires it.
+	Kickoffs   KickoffRepository
+	MCPTokens  MCPTokenMinter
+	MCPBaseURL string
 	// TurnFinishHook, when set, is invoked once with the terminal outcome of
 	// every turn (outcome is "completed" | "failed"). The devflow feature uses
 	// it to signal a waiting design-generate workflow. Best-effort — a nil hook
@@ -241,6 +245,7 @@ type Service struct {
 	snapshots     sourcecontrol.SnapshotProvider
 	skillsRepo    SkillsRepoResolver
 	conversations ConversationRepository
+	kickoffs      KickoffRepository
 	mcpTokens     MCPTokenMinter
 	mcpBaseURL    string
 	finishHook    func(ctx context.Context, orgID, projectID, turnID, useCase, outcome string)
@@ -259,6 +264,7 @@ func NewService(d ServiceDeps) *Service {
 		snapshots:     d.Snapshots,
 		skillsRepo:    d.SkillsRepo,
 		conversations: d.Conversations,
+		kickoffs:      d.Kickoffs,
 		mcpTokens:     d.MCPTokens,
 		mcpBaseURL:    d.MCPBaseURL,
 		finishHook:    d.TurnFinishHook,

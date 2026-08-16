@@ -43,6 +43,12 @@ var (
 	ErrForbidden       = errors.New("forbidden")
 )
 
+// specKickoffTimeout bounds the kickoff's wait for the freshly-created repo
+// to finish provisioning (GitHub repo creation + clone happen async after the
+// create returns). Generous: past it, the manual Generate-spec CTA is the
+// fallback.
+const specKickoffTimeout = 10 * time.Minute
+
 // Service handles business logic for project operations. edge.Deps holds it as a
 // concrete *project.Service (there is one implementation; the old ProjectService
 // interface existed only to be faked, and the component tier fakes at the HTTP
@@ -56,6 +62,7 @@ type Service struct {
 	skillsProv     skillsProvisioner
 	descriptors    descriptorWriter      // project descriptor stamp; may be nil
 	skillMirrorSvc skillMirror           // seeds .claude/skills into the new repo; may be nil
+	specKickoffSvc specKickoff           // BE-side /start kickoff (#485); may be nil
 	deprovisioner  resourceDeprovisioner // dependency provisioning teardown; may be nil
 	runReader      milestoneRunRows      // build/deploy stage reads + delete purge (status_stages.go)
 	bindingsReader bindingsReader        // deploy stage: OC release bindings (status_stages.go)
@@ -117,11 +124,28 @@ type skillMirror interface {
 	SyncProjectSkills(ctx context.Context, orgID, projectID string) error
 }
 
+// specKickoff starts the project's first `/start` turn server-side (#485), so
+// a project created with a prompt is already interviewing by the time the
+// user reaches the spec view. Exactly-once per project is enforced on the
+// spec side (the spec_kickoffs claim + the one-active-turn guard) — this
+// domain only decides WHEN to fire: after the repo + descriptor exist, and
+// only when the user actually gave a prompt. Narrow port declared here (like
+// the three above) so projects keeps no spec edge; *spec.Service satisfies it
+// via KickoffSpec. Wired at the composition root; nil is a documented no-op.
+type specKickoff interface {
+	KickoffSpec(ctx context.Context, orgID, projectID string) error
+}
+
 func (s *Service) SetSkillsProvisioner(p skillsProvisioner) { s.skillsProv = p }
 
 func (s *Service) SetDescriptorWriter(w descriptorWriter) { s.descriptors = w }
 
 func (s *Service) SetSkillMirror(m skillMirror) { s.skillMirrorSvc = m }
+
+// SetSpecKickoff wires the BE-side `/start` kickoff (#485) so creating a
+// project with a prompt starts its spec interview. A nil kickoff is a
+// documented no-op (the console's manual Generate-spec CTA remains).
+func (s *Service) SetSpecKickoff(k specKickoff) { s.specKickoffSvc = k }
 
 func NewProjectService(
 	client openchoreo.ProjectClient,
@@ -256,6 +280,28 @@ func (s *Service) CreateProject(ctx context.Context, orgName string, req *gen.Cr
 					slog.ErrorContext(ctx, "failed to write project descriptor (project usable; /start will ask for the idea)",
 						"project", project.Name, "error", derr)
 				}
+			}
+
+			// Kick off the spec interview (#485): a project born from a prompt
+			// (ADR-0005) starts its `/start` turn server-side, so the user
+			// watches it narrate instead of clicking Generate spec. ASYNC —
+			// the turn can only start once the repo finishes provisioning, and
+			// that wait must never sit in the create latency; the kickoff
+			// retries against the not-ready repo until the timeout. Only when
+			// a prompt exists: a prompt-less project keeps the manual CTA.
+			// Best-effort like every step above — exactly-once and every other
+			// guard live on the spec side (KickoffSpec), and a failed kickoff
+			// costs the user one click, nothing more.
+			if s.specKickoffSvc != nil && strings.TrimSpace(req.Prompt) != "" {
+				kickoff, projectName := s.specKickoffSvc, project.Name
+				async.Go(context.Background(), "spec kickoff", func(context.Context) {
+					bg, cancel := context.WithTimeout(context.Background(), specKickoffTimeout)
+					defer cancel()
+					if kerr := kickoff.KickoffSpec(bg, orgName, projectName); kerr != nil {
+						slog.WarnContext(bg, "spec kickoff failed (manual Generate spec remains)",
+							"org", orgName, "project", projectName, "error", kerr)
+					}
+				})
 			}
 
 			// Seed `.claude/skills/` so a clone carries the org's coding

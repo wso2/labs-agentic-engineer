@@ -782,7 +782,7 @@ type CreateProjectRequest struct {
 	DisplayName        string `json:"displayName,omitempty"`
 	Name               string `json:"name"`
 
-	// Prompt The user's initial requirement — what they want built. Persisted as the project's requirement and kicks off spec derivation for the new project (issue #72). Projects created without a prompt keep today's behavior.
+	// Prompt The user's initial requirement — what they want built. Persisted into the project's descriptor as its requirement, and starts the `/start` spec-interview turn server-side once the repo finishes provisioning (issue #485) — exactly one auto-start per project, enforced server-side; attach via get-active-turn / stream-turn. Projects created without a prompt start nothing and keep the manual generate path.
 	Prompt string `json:"prompt,omitempty"`
 
 	// RepoName Repository name for the project's GitHub repo; defaults to the project name, the organization is fixed server-side (issue #71).

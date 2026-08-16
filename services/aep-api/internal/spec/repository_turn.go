@@ -104,6 +104,12 @@ type TurnRepository interface {
 	// GetActive returns the project's running turn, or (nil, nil).
 	GetActive(ctx context.Context, orgID, projectID string) (*AgentTurn, error)
 
+	// HasAny reports whether ANY turn row — running or terminal — exists for
+	// the project: the kickoff's "a user already owns the interview" check
+	// (#485). Firing an auto-/start after any first turn is the #432 bug
+	// class server-side, so the kickoff stands down instead.
+	HasAny(ctx context.Context, orgID, projectID string) (bool, error)
+
 	// LastTerminal returns the most recent completed/failed turn of a
 	// conversation — the D20 filesChangedExternally / divergence-note input.
 	LastTerminal(ctx context.Context, orgID, projectID, conversationID string) (*AgentTurn, error)
@@ -231,6 +237,17 @@ func (r *turnRepository) GetActive(ctx context.Context, orgID, projectID string)
 		return nil, err
 	}
 	return &t, nil
+}
+
+func (r *turnRepository) HasAny(ctx context.Context, orgID, projectID string) (bool, error) {
+	var n int64
+	err := r.db.WithContext(ctx).Model(&AgentTurn{}).
+		Where("org_id = ? AND project_id = ?", orgID, projectID).
+		Count(&n).Error
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 func (r *turnRepository) LastTerminal(ctx context.Context, orgID, projectID, conversationID string) (*AgentTurn, error) {

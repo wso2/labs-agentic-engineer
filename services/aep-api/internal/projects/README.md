@@ -47,6 +47,7 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
 | repo/workspace bootstrap · repo-name conflict | needs | `sourcecontrol` — on project create/delete |
 | design read · spec-stage snapshot | needs | `spec` — the Stage aggregate's spec column + component OpenAPI source |
 | `descriptorWriter` | needs | `spec` — stamps `specs/.agentic-engineer.toml` on create (best-effort; nil is a no-op) |
+| `specKickoff` | needs | `spec` — starts the `/start` spec interview server-side after a prompt-ful create (async + best-effort; exactly-once and every turn guard live spec-side; nil is a no-op) |
 | build/exec status (`SetStageSources` port) | needs | `delivery` — the build/deploy columns of the Stage aggregate, wired at the root |
 | `runAbandoner` (`SetRunAbandoner`) | needs | `delivery` — ends the supervisors of a deleted project's live runs, wired at the root (nil is a no-op) |
 | per-project agent usage (`UsageService`) | needs | `delivery` — the agent-usage ledger, keyed by lifetime (`contracts.UsageScope`) |
@@ -94,11 +95,12 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
   (CORS origins, an OIDC callback) orders nothing and is written by the converge. A cycle among hard edges
   is `ErrDeployPermanent` — nobody can go first — see
   [ADR-0019](../../../../docs/decisions/ADR-0019-deploy-order-follows-the-hard-wiring-edges.md).
-- **Everything after the OC project + repo is best-effort.** Skills provisioning, the webhook, and the
-  project descriptor are each logged-and-continued on failure: none of them may destroy a creation the
-  user already committed to. The one exception stays the repo-NAME conflict, which can never succeed on
-  retry and so compensates the project away and fails. A missing descriptor costs the user one question
-  from the `/start` skill, nothing more.
+- **Everything after the OC project + repo is best-effort.** Skills provisioning, the webhook, the
+  project descriptor, and the spec kickoff are each logged-and-continued on failure: none of them may
+  destroy a creation the user already committed to. The one exception stays the repo-NAME conflict, which
+  can never succeed on retry and so compensates the project away and fails. A missing descriptor costs
+  the user one question from the `/start` skill; a failed kickoff costs one click on Generate spec —
+  nothing more.
 - **Slug guards run before any service touch.** projectName/componentName/buildName path params are validated
   as DNS-label slugs (`RequireSlug`) and 400 on malformed BEFORE the OC client / repo is reached.
 - **The wire quirks the contract-first cutover pinned stay pinned**: get-component-config returns a literal

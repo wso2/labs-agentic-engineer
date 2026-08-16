@@ -94,6 +94,14 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
   the instruction and derives the flow's eager skills from the spec, so a console CTA, a typed command and
   a playground run produce identical turns (services/agents/design/ADR-0003). This domain holds NO prompt
   text; the flow token is kept here because it also gates web search and MCP minting for design turns.
+- **The spec kickoff** (`kickoff.go`) — a project created WITH a prompt gets its `/start` turn started
+  server-side (`KickoffSpec`, reached from `projects` through its `specKickoff` port), so the interview is
+  already narrating when the user first opens the spec view. Exactly one AUTO `/start` per project, ever:
+  the `spec_kickoffs` claim row (`repository_kickoff.go`, insert-on-conflict — the #420 admission pattern)
+  is spent whether or not the turn ultimately starts, and a project any turn has already run for stands the
+  kickoff down (`HasAny`) — firing `/start` over an open exchange is the #432 skip-valve bug, server-side.
+  Deliberately NOT a uniqueness rule on `/start` turns: a user re-running `/start` later is an amendment
+  interview. The kickoff retries while the repo/skills repo provision, bounded by the caller's deadline.
 - **Persistence**: the `agent_turns` gorm lives in this domain (`repository_turn.go` over the
   `agent_turn.go` entity), single write-authority — as does `project_conversations`
   (`repository_conversation.go`): the project's CURRENT chat thread pointer (#430), server-minted,

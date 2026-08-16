@@ -68,6 +68,7 @@ func BaseModels() []any {
 		&delivery.RunCycle{},
 		&delivery.AgentUsageLedgerEntry{},
 		&spec.ProjectConversation{},
+		&spec.SpecKickoff{},
 	}
 }
 
