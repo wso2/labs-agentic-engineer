@@ -100,7 +100,15 @@ that's a stalled feature — investigate, don't ignore.
   the spec view's shared form (the chat carries a hand-off banner plus a
   `/start` transition line); the form's data path is independent of the chat
   rail, and entering the spec view mid-turn opens the chat panel beside the
-  doc — [#485](https://github.com/wso2/labs-agentic-engineer/issues/485),
+  doc. Live testing then settled four more: the chat toggle only opens and
+  closes the rail (the spec-view jump follows a question's live ARRIVAL, never
+  the panel's mount); the working state covers the whole first-run turn,
+  including the drafting beat right after answers are submitted (a turn this
+  tab started is known at once, without waiting for the active-turn poll); the
+  overview's pipeline loads as stage skeletons instead of a blank slab; and
+  machinery instructions (answers, the finish valve) read in the chat as one
+  human line, expandable to the verbatim text that was sent —
+  [#485](https://github.com/wso2/labs-agentic-engineer/issues/485),
   [#483](https://github.com/wso2/labs-agentic-engineer/issues/483)
 - Deployments page — one-story rail + environment panel: Development /
   Validation / Production as one numbered rail (Builds-spine vocabulary,
