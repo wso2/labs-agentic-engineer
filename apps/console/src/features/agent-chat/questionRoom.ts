@@ -23,7 +23,7 @@
 // actions; observed by the form for live updates.
 
 import type { Doc, Map as YMap } from "yjs";
-import type { AskQuestionInput, QuestionAnswer } from "@aep/agent-stream";
+import type { AskQuestionInput, QuestionAnswer, QuestionSessionInfo } from "@aep/agent-stream";
 
 const QUESTIONS_MAP = "questions" as const;
 
@@ -33,6 +33,8 @@ const QUESTIONS_MAP = "questions" as const;
 export interface RoomQuestion {
   toolCallId: string;
   questions: AskQuestionInput[];
+  /** Grilling-session checklist (#486): present on session rounds only. */
+  session?: QuestionSessionInfo;
   /**
    * Legacy (#430 D5 removed ownership): pre-#430 entries carry the id of the
    * user whose client mirrored them first. Never written any more and never
@@ -75,13 +77,22 @@ function questionsMap(doc: Doc): YMap<RoomQuestion> {
  */
 export function mirrorQuestion(
   doc: Doc,
-  entry: { toolCallId: string; questions: AskQuestionInput[]; streaming?: boolean },
+  entry: {
+    toolCallId: string;
+    questions: AskQuestionInput[];
+    session?: QuestionSessionInfo;
+    streaming?: boolean;
+  },
 ): void {
   const map = questionsMap(doc);
   const existing = map.get(entry.toolCallId);
   map.set(entry.toolCallId, {
     toolCallId: entry.toolCallId,
     questions: entry.questions,
+    // The checklist rides the mirror like the questions do; a re-mirror
+    // without one keeps whatever the entry already carried (the session
+    // object closes early in the stream, but never resurrect a dropped one).
+    ...(entry.session ? { session: entry.session } : existing?.session ? { session: existing.session } : {}),
     // A re-mirror flips streaming off by OMITTING it — never resurrect the
     // gate from a stale entry, and never leak `streaming: false` into the doc.
     ...(entry.streaming ? { streaming: true } : {}),

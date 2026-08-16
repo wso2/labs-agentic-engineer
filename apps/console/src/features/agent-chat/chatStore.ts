@@ -22,7 +22,7 @@
 // uuid per (org, project), minted lazily on first send — the BFF's
 // conversation store is the durable history; this log is display state.
 
-import type { AskQuestionInput, QuestionAnswer } from "@aep/agent-stream";
+import type { AskQuestionInput, QuestionAnswer, QuestionSessionInfo } from "@aep/agent-stream";
 
 export type ChatMessage =
   | {
@@ -79,6 +79,8 @@ export type ChatMessage =
       toolCallId: string;
       /** One entry (ask_question) or several (ask_questions) — rendered as one card. */
       questions: AskQuestionInput[];
+      /** Grilling-session checklist (#486): present on session rounds only. */
+      session?: QuestionSessionInfo;
       /** Set once answered via the card — one entry per question; flips it read-only. */
       answers?: QuestionAnswer[];
       /**

@@ -23,22 +23,24 @@
 //
 // The form is driven by the room's shared Yjs `questions` map, so EVERY collab
 // participant sees the questions and each other's selections live — and ANY
-// member submits or skips (#430 D5). The conversation is one shared project
+// member submits or finishes (#430 D5). A grilling-session round (#486)
+// additionally carries the session's area checklist in its header. The conversation is one shared project
 // thread, so form-submit and a composer reply are the same act; the answer
 // travels through the submitter's pendingSeed exactly like their typed reply
 // would.
 
 import { useRef } from "react";
 import { Box, Button, Checkbox, Chip, CircularProgress, Radio, Stack, TextField, Typography } from "@wso2/oxygen-ui";
-import { Sparkles, Users } from "@wso2/oxygen-ui-icons-react";
+import { Check, Sparkles, Users } from "@wso2/oxygen-ui-icons-react";
 import type { Doc } from "yjs";
-import type { AskQuestionInput, QuestionAnswer } from "@aep/agent-stream";
+import type { AskQuestionInput, QuestionAnswer, QuestionSessionInfo } from "@aep/agent-stream";
 import {
   applyNote,
   applySelection,
   isFreeTextOption,
   isQuestionAnswered,
   normalizeAnswers,
+  serializeFinishInstruction,
   serializeQuestionAnswer,
 } from "../../agent-chat/questionCards";
 import { chatKeyFor, setPendingSeed } from "../../agent-chat/chatStore";
@@ -114,6 +116,36 @@ function OptionCard({
         )}
       </Box>
     </Box>
+  );
+}
+
+/**
+ * The session area checklist (#486): the grilling session's scope, one chip
+ * per area — settled areas ticked, this round's areas highlighted, remaining
+ * ones outlined — so every round shows where the session stands.
+ */
+function SessionAreaChecklist({ session }: { session: QuestionSessionInfo }) {
+  return (
+    <Stack
+      data-testid="session-area-checklist"
+      direction="row"
+      spacing={1}
+      useFlexGap
+      sx={{ alignItems: "center", flexWrap: "wrap", mb: 1 }}
+    >
+      {session.areas.map((area) => (
+        <Chip
+          key={area.name}
+          label={area.name}
+          size="small"
+          {...(area.state === "done"
+            ? { color: "success" as const, variant: "outlined" as const, icon: <Check size={14} /> }
+            : area.state === "now"
+              ? { color: "primary" as const }
+              : { variant: "outlined" as const })}
+        />
+      ))}
+    </Stack>
   );
 }
 
@@ -258,13 +290,15 @@ export function SpecQuestionForm({
     closeRoomQuestion(doc, entry.toolCallId);
   };
 
-  // Skip: close the form for the WHOLE room and tell the agent to stop asking
-  // and proceed — otherwise the turn sits waiting on an answer that isn't
-  // coming. Any member, same as submit (#430 D5).
-  const skip = () => {
+  // Finish valve (#486): close the form for the WHOLE room and tell the agent
+  // to finish on recommendations — otherwise the turn sits waiting on an
+  // answer that isn't coming. Answers already given ride along as decisions;
+  // unanswered questions get the agent's recommended answer tagged *assumed*.
+  // Any member, same as submit (#430 D5).
+  const finish = () => {
     setPendingSeed(
       chatKeyFor(org, projectName),
-      "Skip these questions — stop interviewing and proceed with your best assumptions, stating them.",
+      serializeFinishInstruction(entry.questions, answers),
     );
     closeRoomQuestion(doc, entry.toolCallId);
   };
@@ -280,9 +314,10 @@ export function SpecQuestionForm({
           <Stack direction="row" spacing={1} sx={{ alignItems: "center", mb: 0.5 }}>
             <Sparkles size={18} color="var(--oxygen-palette-primary-main, currentColor)" />
             <Typography variant="h5" sx={{ fontWeight: 700 }}>
-              Quick questions
+              {entry.session ? (entry.session.title ?? "Grilling session") : "Quick questions"}
             </Typography>
           </Stack>
+          {entry.session && <SessionAreaChecklist session={entry.session} />}
           <Stack direction="row" spacing={0.75} sx={{ alignItems: "center", mb: 4 }}>
             <Users size={14} />
             <Typography variant="body2" color="text.secondary">
@@ -326,8 +361,8 @@ export function SpecQuestionForm({
           flexShrink: 0,
         }}
       >
-        <Button variant="text" color="inherit" disabled={streaming} onClick={skip}>
-          Skip questions
+        <Button variant="text" color="inherit" disabled={streaming} onClick={finish}>
+          Finish — use recommendations
         </Button>
         <Button variant="contained" disabled={!canSubmit} onClick={submit}>
           Continue

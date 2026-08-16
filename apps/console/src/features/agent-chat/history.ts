@@ -29,7 +29,7 @@
 // the later user messages via answerableQuestionIds.
 
 import type { ChatMessage } from "./chatStore.js";
-import { isQuestionTool, parseQuestionsInput } from "./questionCards.js";
+import { isQuestionTool, parseQuestionsInput, parseSessionInfo } from "./questionCards.js";
 import type { ConversationMessage } from "./api/turns.js";
 
 // Ids are POSITION-STABLE (`h<n>`, and `h<n>:q-<toolCallId>` for question
@@ -69,12 +69,14 @@ function questionCardsOf(content: unknown, at: number): Extract<ChatMessage, { r
     if (p.type !== "tool-call" || !isQuestionTool(p.toolName)) continue;
     const questions = parseQuestionsInput(p.toolName!, p.input);
     if (!questions) continue;
+    const session = parseSessionInfo(p.toolName!, p.input);
     cards.push({
       id: `h${at + cards.length}:q-${p.toolCallId ?? ""}`,
       role: "question",
       turnId: "history",
       toolCallId: p.toolCallId ?? "",
       questions,
+      ...(session ? { session } : {}),
     });
   }
   return cards;

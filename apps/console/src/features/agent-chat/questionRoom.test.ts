@@ -89,6 +89,43 @@ describe("closeStaleRoomQuestions", () => {
   });
 });
 
+describe("mirrorQuestion — session checklist (#486)", () => {
+  const SESSION = { title: "Grilling Favorites", areas: [{ name: "limits", state: "now" as const }] };
+
+  it("carries the checklist into the room entry", () => {
+    const doc = new Doc();
+    mirrorQuestion(doc, { toolCallId: "tc-s", questions: [Q], session: SESSION });
+    expect(entryOf(doc, "tc-s")?.session).toEqual(SESSION);
+  });
+
+  it("a re-mirror without a session keeps the existing one (park/resume)", () => {
+    const doc = new Doc();
+    mirrorQuestion(doc, { toolCallId: "tc-s", questions: [Q], session: SESSION });
+    // A resume/backfill mirror computed before the session parsed must not
+    // strip the header off a parked round…
+    mirrorQuestion(doc, { toolCallId: "tc-s", questions: [Q] });
+    expect(entryOf(doc, "tc-s")?.session).toEqual(SESSION);
+  });
+
+  it("a re-mirror with a fresh checklist replaces the old states", () => {
+    const doc = new Doc();
+    mirrorQuestion(doc, { toolCallId: "tc-s", questions: [Q], session: SESSION });
+    const next = { areas: [{ name: "limits", state: "done" as const }] };
+    mirrorQuestion(doc, { toolCallId: "tc-s", questions: [Q], session: next });
+    expect(entryOf(doc, "tc-s")?.session).toEqual(next);
+  });
+
+  it("re-mirroring preserves co-edited answers alongside the session (resume keeps the draft)", () => {
+    const doc = new Doc();
+    mirrorQuestion(doc, { toolCallId: "tc-s", questions: [Q], session: SESSION });
+    updateRoomAnswer(doc, "tc-s", (live) => applySelection(live.questions, live.answers, 0, "OIDC"));
+    mirrorQuestion(doc, { toolCallId: "tc-s", questions: [Q], session: SESSION });
+    const entry = entryOf(doc, "tc-s")!;
+    expect(entry.answers![0]!.selected).toEqual(["OIDC"]);
+    expect(entry.session).toEqual(SESSION);
+  });
+});
+
 describe("updateRoomAnswer (live-state edits)", () => {
   const QS = [
     { question: "q0", options: [{ label: "A" }, { label: "B" }] },

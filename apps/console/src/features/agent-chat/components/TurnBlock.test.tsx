@@ -132,4 +132,18 @@ describe("TurnBlock", () => {
     renderTurn(turn({ status: "failed", items: [narration("oops"), errorItem("boom")] }));
     expect(screen.getByTestId("chat-error")).toHaveTextContent("boom");
   });
+
+  it("renders a grilling session's closing summary as a summary card (#486)", () => {
+    renderTurn(
+      turn({ items: [narration("**Session summary** — 7 asked · 2 assumed\n\n- ownership: settled")] }),
+    );
+    expect(screen.getByTestId("session-summary")).toBeInTheDocument();
+    expect(screen.getByText("Grilling session complete")).toBeInTheDocument();
+    expect(screen.getByText(/7 asked · 2 assumed/)).toBeInTheDocument();
+  });
+
+  it("ordinary narration never gets the summary chrome", () => {
+    renderTurn(turn({ items: [narration("I wrote a session summary into the doc.")] }));
+    expect(screen.queryByTestId("session-summary")).not.toBeInTheDocument();
+  });
 });

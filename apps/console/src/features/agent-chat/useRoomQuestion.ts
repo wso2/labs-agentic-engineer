@@ -85,6 +85,7 @@ export function useRoomQuestion(doc: Doc | null, chatKey: string): RoomQuestion 
         mirrorQuestion(doc, {
           toolCallId: m.toolCallId,
           questions: m.questions,
+          ...(m.session ? { session: m.session } : {}),
           ...(m.streaming ? { streaming: true } : {}),
         });
       }

@@ -98,4 +98,16 @@ describe("projectableHistory", () => {
       { id: "h0:q-tc-b", role: "question", turnId: "history", toolCallId: "tc-b", questions: input.questions },
     ]);
   });
+
+  it("rehydrates the session checklist on a grilling-session round (#486)", () => {
+    const input = {
+      session: { title: "Grilling Favorites", areas: [{ name: "limits", state: "now" }] },
+      questions: [{ question: "Q1", options: [{ label: "A" }] }],
+    };
+    const history: ConversationMessage[] = [
+      { role: "assistant", content: [{ type: "tool-call", toolName: "ask_questions", toolCallId: "tc-s", input }] },
+    ];
+    const out = projectableHistory(history);
+    expect(out[0]).toMatchObject({ role: "question", toolCallId: "tc-s", session: input.session });
+  });
 });

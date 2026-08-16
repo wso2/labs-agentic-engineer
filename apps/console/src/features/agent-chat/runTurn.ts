@@ -35,7 +35,13 @@ import {
   setTurnStatus,
   notifyTurnEnd,
 } from "./chatStore.js";
-import { extractStreamingQuestions, isQuestionTool, parseQuestionsInput } from "./questionCards.js";
+import {
+  extractStreamingQuestions,
+  extractStreamingSession,
+  isQuestionTool,
+  parseQuestionsInput,
+  parseSessionInfo,
+} from "./questionCards.js";
 import { getTurn, isTurnStreamNotFound, openTurnStream } from "./api/turns.js";
 
 const FILE_TOOLS = new Set(["addFile", "editFile", "removeFile"]);
@@ -127,11 +133,13 @@ export async function attachAndFoldTurn(
   const finalizeStreamingQuestions = (): void => {
     for (const [id, st] of inputs) {
       if (st.shownQuestions > 0) {
+        const session = extractStreamingSession(st.toolName, st.buf);
         upsertQuestionMessage(chatKey, {
           role: "question",
           turnId,
           toolCallId: id,
           questions: extractStreamingQuestions(st.toolName, st.buf),
+          ...(session ? { session } : {}),
           streaming: false,
         });
         st.shownQuestions = 0;
@@ -179,11 +187,16 @@ export async function attachAndFoldTurn(
           const streamed = extractStreamingQuestions(st.toolName, st.buf);
           if (streamed.length > st.shownQuestions) {
             st.shownQuestions = streamed.length;
+            // `session` precedes `questions` in the schema, so by the first
+            // complete question it is normally already parseable — the form
+            // header shows the session scope from its first paint.
+            const session = extractStreamingSession(st.toolName, st.buf);
             upsertQuestionMessage(chatKey, {
               role: "question",
               turnId,
               toolCallId: part.id!,
               questions: streamed,
+              ...(session ? { session } : {}),
               streaming: true,
             });
           }
@@ -227,6 +240,7 @@ export async function attachAndFoldTurn(
           break;
         }
         if (part.toolCallId) inputs.delete(part.toolCallId);
+        const session = parseSessionInfo(part.toolName!, part.input);
         // Landing in the chat log is ALSO what surfaces the question on the
         // spec panel: useRoomQuestion subscribes to this log and mirrors
         // answerable questions into the room's shared Yjs map (single path —
@@ -236,6 +250,7 @@ export async function attachAndFoldTurn(
           turnId,
           toolCallId: part.toolCallId ?? "",
           questions,
+          ...(session ? { session } : {}),
           streaming: false,
         });
         break;

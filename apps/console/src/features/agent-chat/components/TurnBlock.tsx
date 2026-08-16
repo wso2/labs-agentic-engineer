@@ -18,8 +18,9 @@
 
 import { Fragment, type ReactNode } from "react";
 import { alpha, Box, Link, Stack, Typography } from "@wso2/oxygen-ui";
-import { Check, CircleQuestionMark, Sparkles, X as XIcon } from "@wso2/oxygen-ui-icons-react";
+import { Check, CircleQuestionMark, ClipboardCheck, Sparkles, X as XIcon } from "@wso2/oxygen-ui-icons-react";
 import { MarkdownView } from "../../../components/MarkdownView";
+import { isSessionSummaryText } from "../questionCards";
 import type { ChatItem } from "../toolGrouping";
 import type { FeedBlock } from "../feed";
 import { ActivityStep } from "./ActivityStep";
@@ -87,6 +88,37 @@ function TurnFooter({
         Open spec
       </Link>
     </Stack>
+  );
+}
+
+/**
+ * A grilling session's closing summary (#486): the message leads with the
+ * `Session summary` marker line, so it renders as a bordered card instead of
+ * plain narration — the session's "N asked · M assumed" verdict and the next
+ * deep-dive offer deserve to be findable in the thread.
+ */
+function SessionSummaryCard({ content }: { content: string }) {
+  return (
+    <Box
+      data-testid="session-summary"
+      sx={{
+        my: 1,
+        px: 2,
+        py: 1.5,
+        borderRadius: 2,
+        border: 1,
+        borderColor: "success.main",
+        bgcolor: (theme) => alpha(theme.palette.success.main, 0.06),
+      }}
+    >
+      <Stack direction="row" spacing={1} sx={{ alignItems: "center", mb: 0.5 }}>
+        <ClipboardCheck size={16} color="var(--oxygen-palette-success-main, currentColor)" />
+        <Typography variant="caption" sx={{ fontWeight: 700, color: "success.main" }}>
+          Grilling session complete
+        </Typography>
+      </Stack>
+      <MarkdownView>{content}</MarkdownView>
+    </Box>
   );
 }
 
@@ -188,7 +220,13 @@ function TurnBody({
       // Empty assistant messages appear briefly at a turn's start (created
       // before the first text delta); render nothing until they have content.
       if (msg.content) {
-        out.push(<MarkdownView key={msg.id}>{msg.content}</MarkdownView>);
+        out.push(
+          isSessionSummaryText(msg.content) ? (
+            <SessionSummaryCard key={msg.id} content={msg.content} />
+          ) : (
+            <MarkdownView key={msg.id}>{msg.content}</MarkdownView>
+          ),
+        );
       }
     } else if (msg.role === "question" && msg.questions?.length) {
       // EVERY question is answered on the spec body's shared form — one place,

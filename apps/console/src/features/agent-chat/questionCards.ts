@@ -25,11 +25,14 @@
 import {
   ASK_QUESTION_TOOL,
   ASK_QUESTIONS_TOOL,
+  SESSION_SUMMARY_MARK,
   buildAnswerInstruction,
   buildAnswersInstruction,
+  buildFinishInstruction,
   type AskQuestionInput,
   type QuestionAnswer,
   type AskQuestionOption,
+  type QuestionSessionInfo,
 } from "@aep/agent-stream";
 import type { ChatMessage } from "./chatStore";
 
@@ -103,6 +106,46 @@ export function isQuestionTool(toolName: string | undefined): boolean {
   return toolName === ASK_QUESTION_TOOL || toolName === ASK_QUESTIONS_TOOL;
 }
 
+/** Parse one `session` value; null unless it is a well-formed checklist. */
+function parseOneSession(value: unknown): QuestionSessionInfo | null {
+  if (typeof value !== "object" || value === null) return null;
+  const v = value as Record<string, unknown>;
+  if (!Array.isArray(v.areas)) return null;
+  const areas: QuestionSessionInfo["areas"] = [];
+  for (const raw of v.areas) {
+    if (typeof raw !== "object" || raw === null) return null;
+    const a = raw as Record<string, unknown>;
+    if (typeof a.name !== "string" || !a.name) return null;
+    if (a.state !== "done" && a.state !== "now" && a.state !== "todo") return null;
+    areas.push({ name: a.name, state: a.state });
+  }
+  if (areas.length === 0) return null;
+  return {
+    ...(typeof v.title === "string" && v.title ? { title: v.title } : {}),
+    areas,
+  };
+}
+
+/**
+ * The grilling-session checklist on an `ask_questions` call (issue #486), or
+ * undefined for one-form interviews / a malformed `session`. Kept separate
+ * from `parseQuestionsInput` deliberately: session chrome is decoration — a
+ * bad checklist must never cost the user the questions themselves.
+ */
+export function parseSessionInfo(toolName: string, input: unknown): QuestionSessionInfo | undefined {
+  if (toolName !== ASK_QUESTIONS_TOOL) return undefined;
+  let value = input;
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return undefined;
+    }
+  }
+  if (typeof value !== "object" || value === null) return undefined;
+  return parseOneSession((value as Record<string, unknown>).session) ?? undefined;
+}
+
 /**
  * Incrementally extract the COMPLETE question objects from a PARTIAL
  * `ask_questions` input buffer, so the form can render questions one by one
@@ -130,23 +173,7 @@ export function extractStreamingQuestions(
   while (i < n) {
     while (i < n && /[\s,]/.test(buf[i]!)) i++;
     if (i >= n || buf[i] !== "{") break;
-    let depth = 0;
-    let inStr = false;
-    let esc = false;
-    let end = -1;
-    for (let j = i; j < n; j++) {
-      const c = buf[j]!;
-      if (inStr) {
-        if (esc) esc = false;
-        else if (c === "\\") esc = true;
-        else if (c === '"') inStr = false;
-      } else if (c === '"') inStr = true;
-      else if (c === "{") depth++;
-      else if (c === "}" && --depth === 0) {
-        end = j;
-        break;
-      }
-    }
+    const end = scanObjectEnd(buf, i);
     if (end < 0) break; // this element is still streaming
     try {
       const q = parseOneQuestion(JSON.parse(buf.slice(i, end + 1)));
@@ -157,6 +184,48 @@ export function extractStreamingQuestions(
     i = end + 1;
   }
   return out;
+}
+
+/** End index of the JSON object opening at `buf[start] === "{"`, string-aware; -1 while it still streams. */
+function scanObjectEnd(buf: string, start: number): number {
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  for (let j = start; j < buf.length; j++) {
+    const c = buf[j]!;
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === "\\") esc = true;
+      else if (c === '"') inStr = false;
+    } else if (c === '"') inStr = true;
+    else if (c === "{") depth++;
+    else if (c === "}" && --depth === 0) return j;
+  }
+  return -1;
+}
+
+/**
+ * The session checklist off a PARTIAL `ask_questions` buffer. The schema puts
+ * `session` before `questions` precisely so the header is on the wire before
+ * the first question closes — the form shows its scope from the first painted
+ * frame. Undefined until the object closes (the final `tool-call` parse
+ * remains the authority).
+ */
+export function extractStreamingSession(
+  toolName: string | undefined,
+  buf: string,
+): QuestionSessionInfo | undefined {
+  if (toolName !== ASK_QUESTIONS_TOOL) return undefined;
+  const m = buf.match(/"session"\s*:\s*\{/);
+  if (!m) return undefined;
+  const start = (m.index ?? 0) + m[0].length - 1;
+  const end = scanObjectEnd(buf, start);
+  if (end < 0) return undefined;
+  try {
+    return parseOneSession(JSON.parse(buf.slice(start, end + 1))) ?? undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -263,6 +332,47 @@ export function serializeQuestionAnswer(
       ...(answers[i]?.freeText ? { freeText: answers[i]!.freeText } : {}),
     })),
   );
+}
+
+/**
+ * Serialize the finish valve ("Finish — use recommendations", #486) for a
+ * card: answers the room already gave ride as decisions, every question still
+ * unanswered is listed for a recommended answer tagged `*assumed*`. Splitting
+ * here (with the same answered-check that gates submit) is what keeps the
+ * decision-to-question link across the valve — a partially answered round
+ * loses nothing.
+ */
+export function serializeFinishInstruction(
+  questions: AskQuestionInput[],
+  answers: QuestionAnswer[] | null | undefined,
+): string {
+  const aligned = normalizeAnswers(questions, answers);
+  const answered: Array<{ question: string; selected: string[]; freeText?: string }> = [];
+  const unanswered: string[] = [];
+  questions.forEach((q, i) => {
+    const a = aligned[i]!;
+    if (isQuestionAnswered(q, a)) {
+      answered.push({
+        question: q.question,
+        selected: a.selected,
+        ...(a.freeText?.trim() ? { freeText: a.freeText.trim() } : {}),
+      });
+    } else {
+      unanswered.push(q.question);
+    }
+  });
+  return buildFinishInstruction(answered, unanswered);
+}
+
+/**
+ * True when an assistant message is a grilling session's closing summary —
+ * it leads with the `SESSION_SUMMARY_MARK` line (allowing markdown emphasis
+ * or a heading around it). The chat then renders it as a summary card rather
+ * than plain narration.
+ */
+export function isSessionSummaryText(content: string): boolean {
+  const re = new RegExp(String.raw`^\s*(?:#{1,4}\s*|\*\*)?${SESSION_SUMMARY_MARK}`, "i");
+  return re.test(content);
 }
 
 /**

@@ -28,10 +28,14 @@ import {
   applyNote,
   applySelection,
   extractStreamingQuestions,
+  extractStreamingSession,
   isQuestionAnswered,
   isQuestionTool,
+  isSessionSummaryText,
   normalizeAnswers,
   parseQuestionsInput,
+  parseSessionInfo,
+  serializeFinishInstruction,
 } from "./questionCards";
 import type { QuestionAnswer } from "@aep/agent-stream";
 import type { ChatMessage } from "./chatStore";
@@ -265,6 +269,108 @@ describe("buildAnswerInstruction / buildAnswersInstruction (wire contract)", () 
       { question: "Q2", selected: ["X", "Y"], freeText: "note" },
     ]);
     expect(out).toBe('Answers:\n- "Q1": A\n- "Q2": X, Y — note');
+  });
+});
+
+describe("parseSessionInfo (grilling sessions, #486)", () => {
+  const SESSION = {
+    title: "Grilling Favorites",
+    areas: [
+      { name: "ownership", state: "done" },
+      { name: "limits", state: "now" },
+      { name: "privacy", state: "todo" },
+    ],
+  };
+  const BATCH = { session: SESSION, questions: [SINGLE] };
+
+  it("returns the checklist off an ask_questions input (object and string)", () => {
+    expect(parseSessionInfo(ASK_QUESTIONS_TOOL, BATCH)).toEqual(SESSION);
+    expect(parseSessionInfo(ASK_QUESTIONS_TOOL, JSON.stringify(BATCH))).toEqual(SESSION);
+  });
+
+  it("is undefined for one-form interviews (no session field)", () => {
+    expect(parseSessionInfo(ASK_QUESTIONS_TOOL, { questions: [SINGLE] })).toBeUndefined();
+  });
+
+  it("is undefined for the single-question tool", () => {
+    expect(parseSessionInfo(ASK_QUESTION_TOOL, BATCH)).toBeUndefined();
+  });
+
+  it("drops a title that is not a non-empty string", () => {
+    const got = parseSessionInfo(ASK_QUESTIONS_TOOL, { session: { title: "", areas: SESSION.areas }, questions: [SINGLE] });
+    expect(got).toEqual({ areas: SESSION.areas });
+  });
+
+  it.each([
+    ["empty areas", { areas: [] }],
+    ["area without name", { areas: [{ state: "now" }] }],
+    ["bad state", { areas: [{ name: "a", state: "soon" }] }],
+    ["areas not a list", { areas: "ownership" }],
+    ["session not an object", "ownership"],
+  ])("session chrome is decoration — %s never costs the questions", (_name, session) => {
+    expect(parseSessionInfo(ASK_QUESTIONS_TOOL, { session, questions: [SINGLE] })).toBeUndefined();
+    expect(parseQuestionsInput(ASK_QUESTIONS_TOOL, { session, questions: [SINGLE] })).toEqual([SINGLE]);
+  });
+});
+
+describe("extractStreamingSession", () => {
+  const SESSION = { title: "Grilling Favorites", areas: [{ name: "limits", state: "now" }] };
+  const JSON_BUF = JSON.stringify({ session: SESSION, questions: [SINGLE] });
+
+  it("returns the checklist as soon as the session object closes — before any question does", () => {
+    const cut = JSON_BUF.indexOf('"questions"');
+    expect(extractStreamingSession(ASK_QUESTIONS_TOOL, JSON_BUF.slice(0, cut))).toEqual(SESSION);
+  });
+
+  it("is undefined while the session object still streams", () => {
+    const cut = JSON_BUF.indexOf('"limits"');
+    expect(extractStreamingSession(ASK_QUESTIONS_TOOL, JSON_BUF.slice(0, cut))).toBeUndefined();
+  });
+
+  it("is undefined without a session field, for other tools, and for garbage", () => {
+    expect(extractStreamingSession(ASK_QUESTIONS_TOOL, JSON.stringify({ questions: [SINGLE] }))).toBeUndefined();
+    expect(extractStreamingSession(ASK_QUESTION_TOOL, JSON_BUF)).toBeUndefined();
+    expect(extractStreamingSession(ASK_QUESTIONS_TOOL, "")).toBeUndefined();
+  });
+});
+
+describe("serializeFinishInstruction (finish valve, #486)", () => {
+  const QS = [
+    { question: "Who owns a round?", options: [{ label: "The opener" }, { label: "Anyone" }] },
+    { question: "Any limits?", options: [{ label: "None" }] },
+  ];
+
+  it("splits given answers from unanswered questions", () => {
+    const out = serializeFinishInstruction(QS, [{ selected: ["The opener"] }]);
+    expect(out).toContain('- "Who owns a round?": The opener');
+    expect(out).toMatch(/Unanswered[\s\S]*- "Any limits\?"/);
+    expect(out).toContain("*assumed*");
+  });
+
+  it("an escape-hatch selection without text is NOT an answer", () => {
+    const ESC = [{ question: "q", options: [{ label: "Something else" }] }];
+    const out = serializeFinishInstruction(ESC, [{ selected: ["Something else"] }]);
+    expect(out).toMatch(/Unanswered[\s\S]*- "q"/);
+  });
+
+  it("a fully unanswered form lists every question", () => {
+    const out = serializeFinishInstruction(QS, null);
+    expect(out).toMatch(/- "Who owns a round\?"/);
+    expect(out).toMatch(/- "Any limits\?"/);
+    expect(out).not.toContain("user's decision");
+  });
+});
+
+describe("isSessionSummaryText", () => {
+  it("matches the marker line, plain / bold / heading", () => {
+    expect(isSessionSummaryText("**Session summary** — 7 asked · 2 assumed\n...")).toBe(true);
+    expect(isSessionSummaryText("Session summary — 3 asked · 0 assumed")).toBe(true);
+    expect(isSessionSummaryText("## Session summary — done")).toBe(true);
+  });
+
+  it("does not match ordinary narration", () => {
+    expect(isSessionSummaryText("I updated the PRD with your answers.")).toBe(false);
+    expect(isSessionSummaryText("Here is a session summary of sorts")).toBe(false);
   });
 });
 
