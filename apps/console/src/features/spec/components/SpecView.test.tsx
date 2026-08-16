@@ -825,7 +825,7 @@ describe("SpecView fresh-project working state (#485)", () => {
 
     expect(screen.getByTestId("spec-working-state")).toBeInTheDocument();
     expect(
-      screen.getByText("The agent is preparing your questions…"),
+      screen.getByText("The agent is processing the idea…"),
     ).toBeInTheDocument();
     expect(
       screen.queryByText("Select a file to view its content."),
@@ -842,7 +842,7 @@ describe("SpecView fresh-project working state (#485)", () => {
 
     expect(screen.getByText("The agent is drafting the PRD…")).toBeInTheDocument();
     expect(
-      screen.queryByText("The agent is preparing your questions…"),
+      screen.queryByText("The agent is processing the idea…"),
     ).not.toBeInTheDocument();
     // The drafting line beats the pane's pre-existing empty state — with no
     // file selected yet, that was what the user saw after submitting answers.

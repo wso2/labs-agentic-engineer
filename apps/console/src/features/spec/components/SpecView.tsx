@@ -1153,7 +1153,9 @@ export function SpecView({ projectName }: { projectName: string }) {
                     {interview.drafting
                       ? "The agent is drafting the PRD…"
                       : interview.running
-                        ? "The agent is preparing your questions…"
+                        ? // Same words as the overview's Spec card: this is
+                          // the stage the user clicked through FROM.
+                          "The agent is processing the idea…"
                         : // Not running, yet questions are waiting: they have
                           // landed in the thread and the room form is a beat
                           // behind. Name that beat rather than claim work

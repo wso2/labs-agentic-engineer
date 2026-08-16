@@ -96,7 +96,7 @@ that's a stalled feature — investigate, don't ignore.
   file nav renders every upcoming artifact as a ghost entry with a
   when-label, ghosts graduate to solid rows (pulsing while the agent streams
   the file), and the main pane holds a working state naming the turn's actual
-  stage (preparing questions / drafting the PRD). Questions render ONLY on
+  stage (processing the idea / drafting the PRD). Questions render ONLY on
   the spec view's shared form (the chat carries a hand-off banner plus a
   `/start` transition line); the form's data path is independent of the chat
   rail, and entering the spec view mid-turn opens the chat panel beside the
