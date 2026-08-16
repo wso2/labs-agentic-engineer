@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import {
   Box,
   Button,
@@ -24,6 +24,7 @@ import {
   CardActionArea,
   CardContent,
   Chip,
+  Skeleton,
   Stack,
   Typography,
 } from "@wso2/oxygen-ui";
@@ -234,6 +235,67 @@ function SpecActionStage({
   );
 }
 
+// The three stages, in journey order — shared by the live pipeline and its
+// loading state so both always name the same steps.
+const STAGES = [
+  { key: "spec", title: "Spec", icon: <FileText size={18} /> },
+  { key: "build", title: "Build", icon: <ListChecks size={18} /> },
+  { key: "deploy", title: "Deploy", icon: <Rocket size={18} /> },
+] as const;
+
+function StageArrow() {
+  return (
+    <ChevronRight
+      size={20}
+      style={{ flexShrink: 0, alignSelf: "center", opacity: 0.4 }}
+    />
+  );
+}
+
+/**
+ * The pipeline while the project's status is still in flight (#485
+ * live-testing round 2 — it used to be one blank grey slab for the first few
+ * seconds of every fresh project). The stage frames, icons and titles are
+ * structure, known without asking the server; everything the status decides —
+ * the version chip and the state line — is a skeleton, so nothing is claimed
+ * before it is known.
+ */
+export function OverviewPipelineSkeleton() {
+  return (
+    <Stack
+      data-testid="overview-pipeline-skeleton"
+      aria-busy="true"
+      aria-label="Loading the project pipeline"
+      direction={{ xs: "column", md: "row" }}
+      spacing={1}
+      sx={{ alignItems: { xs: "stretch", md: "center" } }}
+    >
+      {STAGES.map((stage, i) => (
+        <Fragment key={stage.key}>
+          {i > 0 && <StageArrow />}
+          <Card variant="outlined" sx={{ flex: 1, minWidth: 0 }}>
+            <CardContent>
+              <Stack
+                direction="row"
+                spacing={1}
+                sx={{ alignItems: "center", mb: 1.5 }}
+              >
+                {stage.icon}
+                <Typography variant="subtitle2" color="text.secondary">
+                  {stage.title}
+                </Typography>
+                <Box sx={{ flexGrow: 1 }} />
+                <Skeleton variant="rounded" width={48} height={24} />
+              </Stack>
+              <Skeleton variant="text" width="70%" />
+            </CardContent>
+          </Card>
+        </Fragment>
+      ))}
+    </Stack>
+  );
+}
+
 // The overview's centerpiece (#183): one connected journey, spec → build →
 // deploy, each stage stamped with its version and linking to its section.
 export function OverviewPipeline({
@@ -284,10 +346,7 @@ export function OverviewPipeline({
           projectName={projectName}
         />
       )}
-      <ChevronRight
-        size={20}
-        style={{ flexShrink: 0, alignSelf: "center", opacity: 0.4 }}
-      />
+      <StageArrow />
       <StageCard
         icon={<ListChecks size={18} />}
         title="Build"
@@ -295,10 +354,7 @@ export function OverviewPipeline({
         to="builds"
         projectName={projectName}
       />
-      <ChevronRight
-        size={20}
-        style={{ flexShrink: 0, alignSelf: "center", opacity: 0.4 }}
-      />
+      <StageArrow />
       <StageCard
         icon={<Rocket size={18} />}
         title="Deploy"

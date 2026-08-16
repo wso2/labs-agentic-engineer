@@ -37,7 +37,7 @@ import { useProject, useProjectComponents, useProjectStatus } from "../api/queri
 import { projectChip } from "../lib/projectChip";
 import { RecentActivity } from "./RecentActivity";
 import { ComponentsList } from "./ComponentsList";
-import { OverviewPipeline } from "./OverviewPipeline";
+import { OverviewPipeline, OverviewPipelineSkeleton } from "./OverviewPipeline";
 
 function SectionError({
   what,
@@ -108,10 +108,18 @@ export function ProjectOverview({ projectName }: { projectName: string }) {
                 <Typography variant="h4" component="span">
                   {displayName}
                 </Typography>
-                {status.data && (
+                {/* The identity line loads with the same status query as the
+                    pipeline below — placeholders keep its shape rather than
+                    letting the chip and repo link pop in a beat later. */}
+                {status.data ? (
                   <StatusChip {...projectChip(status.data)} appearance="soft" dot />
-                )}
+                ) : status.isPending ? (
+                  <Skeleton variant="rounded" width={88} height={24} />
+                ) : null}
               </Stack>
+              {status.isPending && (
+                <Skeleton variant="text" width={220} sx={{ mt: 0.5 }} />
+              )}
               {status.data?.repoUrl && (
                 <MuiLink
                   href={status.data.repoUrl}
@@ -142,7 +150,7 @@ export function ProjectOverview({ projectName }: { projectName: string }) {
             onRetry={() => void status.refetch()}
           />
         ) : status.isPending ? (
-          <Skeleton variant="rounded" height={96} />
+          <OverviewPipelineSkeleton />
         ) : (
           <OverviewPipeline projectName={projectName} status={status.data} />
         )}

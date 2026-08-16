@@ -29,7 +29,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AskQuestionInput } from "@aep/agent-stream";
 import type { components } from "../../../generated/aep-api";
 import { addMessage, chatKeyFor, replaceMessages } from "../../agent-chat/chatStore";
-import { OverviewPipeline } from "./OverviewPipeline";
+import { OverviewPipeline, OverviewPipelineSkeleton } from "./OverviewPipeline";
 
 type ProjectStatus = components["schemas"]["ProjectStatus"];
 
@@ -209,5 +209,32 @@ describe("OverviewPipeline — the spec stage's action", () => {
 
       expect(mockInterview).toHaveBeenCalledWith(ORG, PROJECT, true);
     });
+  });
+});
+
+// Live-testing round 2: for the first seconds of a fresh project the status
+// query is still in flight, and the pipeline area was one blank grey slab —
+// no stages, no chip, nothing to read. The loading state now shows the
+// journey's real shape and skeletons for everything the status decides.
+describe("OverviewPipelineSkeleton — the status-loading state", () => {
+  it("names the three stages while claiming nothing about them", () => {
+    render(<OverviewPipelineSkeleton />);
+
+    expect(screen.getByTestId("overview-pipeline-skeleton")).toBeInTheDocument();
+    expect(screen.getByText("Spec")).toBeInTheDocument();
+    expect(screen.getByText("Build")).toBeInTheDocument();
+    expect(screen.getByText("Deploy")).toBeInTheDocument();
+    // No invented status: no version chip, no state line, no CTA.
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.queryByText(/interviewing/)).not.toBeInTheDocument();
+  });
+
+  it("marks itself busy for assistive tech", () => {
+    render(<OverviewPipelineSkeleton />);
+
+    expect(screen.getByTestId("overview-pipeline-skeleton")).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
   });
 });
