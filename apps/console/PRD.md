@@ -84,15 +84,15 @@ Features currently being built. One line each; **must be emptied on ship**
 that's a stalled feature — investigate, don't ignore.
 
 - Spec view — first run: `POST /projects` starts the `/start` turn
-  server-side (prompt-gated, one per project, enforced in the BE), retiring
-  the console's client-side injection and the double-`/start` bug class. The
-  interview is therefore usually already running when the user first lands,
-  so its state is read from the server (`useSpecInterview`) rather than the
-  local chat log: the overview's Spec card shows the turn's stage ("Agent is
-  preparing your questions…" / "interviewing — N questions waiting" / "Agent
-  is drafting the PRD…") in place of Generate spec, and the
-  chat panel drops the canned greeting + off-domain chips on a spec-less
-  project. The spec view itself opens onto a journey instead of a void — the
+  server-side (every project, one per project, enforced in the BE), retiring
+  the console's client-side injection and the double-`/start` bug class. With
+  no idea captured at create, that turn opens by asking what the user is
+  building. The interview is therefore already running when the user first
+  lands, so its state is read from the server (`useSpecInterview`) rather than
+  the local chat log: the overview's Spec card shows the turn's stage in place
+  of Generate spec, and the chat panel drops the canned greeting +
+  off-domain chips on a spec-less project. The spec view itself opens onto a
+  journey instead of a void — the
   file nav renders every upcoming artifact as a ghost entry with a
   when-label, ghosts graduate to solid rows (pulsing while the agent streams
   the file), and the main pane holds a working state naming the turn's actual
@@ -101,13 +101,20 @@ that's a stalled feature — investigate, don't ignore.
   `/start` transition line); the form's data path is independent of the chat
   rail, and entering the spec view mid-turn opens the chat panel beside the
   doc. Live testing then settled four more: the chat toggle only opens and
-  closes the rail (the spec-view jump follows a question's live ARRIVAL, never
-  the panel's mount); the working state covers the whole first-run turn,
+  closes the rail; the working state covers the whole first-run turn,
   including the drafting beat right after answers are submitted (a turn this
   tab started is known at once, without waiting for the active-turn poll); the
   overview's pipeline loads as stage skeletons instead of a blank slab; and
   machinery instructions (answers, the finish valve) read in the chat as one
-  human line, expandable to the verbatim text that was sent —
+  human line, expandable to the verbatim text that was sent. A third round
+  made the whole first run read as ONE conversation: no effect navigates —
+  the spec view is reached only by the Spec card or the chat's questions
+  banner — the chat opens with the user's `/start`, the agent's reading line
+  and its hand-off line before the banner, and the Spec card speaks as the
+  agent ("Agent is processing the idea" / "Agent has N questions", CTA
+  "Continue spec" for the whole run). The room's co-edited answers moved out
+  of the mirrored question value into their own per-question keys, so a
+  reload's pre-sync mirror can no longer lose them to the room's own copy —
   [#485](https://github.com/wso2/labs-agentic-engineer/issues/485),
   [#483](https://github.com/wso2/labs-agentic-engineer/issues/483)
 - Deployments page — one-story rail + environment panel: Development /
