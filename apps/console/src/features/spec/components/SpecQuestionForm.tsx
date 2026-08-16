@@ -241,12 +241,12 @@ export function SpecQuestionForm({
     updateRoomAnswer(doc, entry.toolCallId, (live) => applyNote(live.questions, live.answers, qi, freeText));
   };
 
-  const allAnswered = entry.questions.every((q, i) => isQuestionAnswered(q, answers[i]));
+  const unanswered = entry.questions.filter((q, i) => !isQuestionAnswered(q, answers[i])).length;
   // While the batch is still streaming (#270 latency), the form is readable and
   // selectable but cannot submit or skip: the turn is still running, and more
   // questions may yet arrive. The final mirror clears the gate.
   const streaming = entry.streaming === true;
-  const canSubmit = allAnswered && !streaming;
+  const canSubmit = unanswered === 0 && !streaming;
 
   const submit = () => {
     if (!canSubmit) return;
@@ -326,6 +326,18 @@ export function SpecQuestionForm({
           flexShrink: 0,
         }}
       >
+        {/* A disabled Continue must never be a mystery: name what is still
+            missing. A free-text question (no options — the agent asks for a
+            typed answer) reads as an optional note field next to the choice
+            cards, so "everything is picked" and "everything is answered" are
+            not the same thing, and only the form knows the difference. */}
+        {!streaming && unanswered > 0 && (
+          <Typography variant="body2" color="text.secondary" sx={{ flexGrow: 1 }}>
+            {unanswered === 1
+              ? "1 question still needs an answer"
+              : `${unanswered} questions still need an answer`}
+          </Typography>
+        )}
         <Button variant="text" color="inherit" disabled={streaming} onClick={skip}>
           Skip questions
         </Button>

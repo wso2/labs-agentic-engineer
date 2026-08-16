@@ -26,10 +26,12 @@ import type { Doc, Map as YMap } from "yjs";
 import type { AskQuestionInput, QuestionAnswer } from "@aep/agent-stream";
 
 const QUESTIONS_MAP = "questions" as const;
+const ANSWERS_MAP = "questionAnswers" as const;
 
 /** One collaboratively-answered question card, stored as a plain value in the
- *  Yjs `questions` map (keyed by toolCallId). Last-write-wins per entry — the
- *  co-edited draft `answers` is adequate for the spike. */
+ *  Yjs `questions` map (keyed by toolCallId). Last-write-wins per entry — a
+ *  re-mirror of the same question is the same value, so nothing is at stake.
+ *  The co-edited `answers` are NOT part of it; see `answersMap`. */
 export interface RoomQuestion {
   toolCallId: string;
   questions: AskQuestionInput[];
@@ -40,7 +42,12 @@ export interface RoomQuestion {
    * entries still parse.
    */
   ownerId?: string;
-  /** The shared draft answer, co-edited by the room; null until first touched. */
+  /**
+   * The shared draft answer, co-edited by the room; null until first touched.
+   * RESOLVED at read time from the separate answers map — the value stored
+   * under this field is legacy only (rooms written before the split), which
+   * `mirrorQuestion` migrates on first touch and never writes again.
+   */
   answers: QuestionAnswer[] | null;
   /** Set once the asker submits or skips — the form closes for the whole room. */
   submitted?: boolean;
@@ -62,16 +69,67 @@ export interface RoomQuestion {
 
 // --- Shared `questions` map helpers ----------------------------------------
 
-function questionsMap(doc: Doc): YMap<RoomQuestion> {
-  return doc.getMap<RoomQuestion>(QUESTIONS_MAP);
+/** What is actually stored under a toolCallId — the MIRROR of the question. */
+type StoredQuestion = Omit<RoomQuestion, "answers"> & {
+  /** Legacy inline answers; read (and migrated) but never written. */
+  answers?: QuestionAnswer[] | null;
+};
+
+function questionsMap(doc: Doc): YMap<StoredQuestion> {
+  return doc.getMap<StoredQuestion>(QUESTIONS_MAP);
+}
+
+/**
+ * The co-edited answers, in their OWN map keyed `<toolCallId>#<index>` — never
+ * inside the mirrored question value (#485 live-testing round 3).
+ *
+ * A reload creates a fresh local Y.Doc and mirrors the question into it from
+ * the chat log — which is available instantly (localStorage cache, then the
+ * thread bootstrap) — while the provider is still handshaking. When the room's
+ * persisted state finally syncs in, that write and the PRE-RELOAD session's
+ * write target the same key concurrently, and Y.Map resolves such a tie by
+ * clientID (random per doc). Half the time the server's copy wins and takes
+ * everything in it with it — including answers the user had already given, so
+ * the form could never satisfy its submit gate. Splitting them out removes the
+ * tie: the incoming copy has nothing under an answer key, so the answer
+ * survives. Per-INDEX keys go one further — two people answering different
+ * questions at once no longer overwrite each other either.
+ */
+function answersMap(doc: Doc): YMap<QuestionAnswer> {
+  return doc.getMap<QuestionAnswer>(ANSWERS_MAP);
+}
+
+function answerKey(toolCallId: string, index: number): string {
+  return `${toolCallId}#${index}`;
+}
+
+/** The answers stored for a card, aligned to `count`; null when untouched. */
+function readAnswers(doc: Doc, toolCallId: string, count: number): QuestionAnswer[] | null {
+  const map = answersMap(doc);
+  let touched = false;
+  const out: QuestionAnswer[] = [];
+  for (let i = 0; i < count; i++) {
+    const stored = map.get(answerKey(toolCallId, i));
+    if (stored) touched = true;
+    out.push(stored ?? { selected: [] });
+  }
+  return touched ? out : null;
+}
+
+/** The stored mirror plus its resolved answers — what every reader sees. */
+function resolve(doc: Doc, stored: StoredQuestion): RoomQuestion {
+  const { answers: legacy, ...rest } = stored;
+  return {
+    ...rest,
+    answers: readAnswers(doc, stored.toolCallId, stored.questions.length) ?? legacy ?? null,
+  };
 }
 
 /**
  * Mirror a parsed question into the room's shared map (idempotent by
- * toolCallId — a re-fold overwrites the same key, preserving any co-edited
- * answers already present). No ownership claim (#430 D5): the chat thread is
- * project-scoped, so every member's log carries the question and any member
- * may submit — there is no submit right to protect.
+ * toolCallId — a re-fold overwrites the same key). No ownership claim (#430
+ * D5): the chat thread is project-scoped, so every member's log carries the
+ * question and any member may submit — there is no submit right to protect.
  */
 export function mirrorQuestion(
   doc: Doc,
@@ -79,24 +137,43 @@ export function mirrorQuestion(
 ): void {
   const map = questionsMap(doc);
   const existing = map.get(entry.toolCallId);
-  map.set(entry.toolCallId, {
+  // A room written before the answers split carries its draft inline. Move it
+  // across on first touch so an interview open across the upgrade keeps what
+  // the user already selected.
+  if (existing?.answers) migrateLegacyAnswers(doc, entry.toolCallId, existing.answers);
+  const next: StoredQuestion = {
     toolCallId: entry.toolCallId,
     questions: entry.questions,
     // A re-mirror flips streaming off by OMITTING it — never resurrect the
     // gate from a stale entry, and never leak `streaming: false` into the doc.
     ...(entry.streaming ? { streaming: true } : {}),
-    answers: existing?.answers ?? null,
     ...(existing?.submitted ? { submitted: true } : {}),
     askedAt: existing?.askedAt ?? Date.now(),
-  });
+  };
+  // The log re-mirrors on every change; an identical write would still churn
+  // the doc and wake every observer in the room for nothing.
+  if (existing && !existing.answers && sameStoredQuestion(existing, next)) return;
+  map.set(entry.toolCallId, next);
 }
 
-/** Write the co-edited draft answer for a card (any participant). */
-export function setRoomAnswer(doc: Doc, toolCallId: string, answers: QuestionAnswer[] | null): void {
-  const map = questionsMap(doc);
-  const existing = map.get(toolCallId);
-  if (!existing) return;
-  map.set(toolCallId, { ...existing, answers });
+function sameStoredQuestion(a: StoredQuestion, b: StoredQuestion): boolean {
+  return (
+    a.submitted === b.submitted &&
+    a.streaming === b.streaming &&
+    a.askedAt === b.askedAt &&
+    JSON.stringify(a.questions) === JSON.stringify(b.questions)
+  );
+}
+
+function migrateLegacyAnswers(
+  doc: Doc,
+  toolCallId: string,
+  legacy: QuestionAnswer[],
+): void {
+  const map = answersMap(doc);
+  legacy.forEach((answer, i) => {
+    if (!map.has(answerKey(toolCallId, i))) map.set(answerKey(toolCallId, i), answer);
+  });
 }
 
 /**
@@ -107,16 +184,25 @@ export function setRoomAnswer(doc: Doc, toolCallId: string, answers: QuestionAns
  * answers and the later write would clobber the earlier one. `update` also
  * receives the live `questions`, so an edit is always aligned to the current
  * question count.
+ *
+ * Only the slots whose value actually CHANGED are written, so an edit to one
+ * question never republishes (and so never clobbers) another's.
  */
 export function updateRoomAnswer(
   doc: Doc,
   toolCallId: string,
   update: (live: RoomQuestion) => QuestionAnswer[],
 ): void {
-  const map = questionsMap(doc);
-  const existing = map.get(toolCallId);
-  if (!existing) return;
-  map.set(toolCallId, { ...existing, answers: update(existing) });
+  const stored = questionsMap(doc).get(toolCallId);
+  if (!stored) return;
+  const live = resolve(doc, stored);
+  const next = update(live);
+  const map = answersMap(doc);
+  next.forEach((answer, i) => {
+    const key = answerKey(toolCallId, i);
+    if (JSON.stringify(map.get(key)) === JSON.stringify(answer)) return;
+    map.set(key, answer);
+  });
 }
 
 /**
@@ -128,6 +214,9 @@ export function closeRoomQuestion(doc: Doc, toolCallId: string): void {
   const map = questionsMap(doc);
   const existing = map.get(toolCallId);
   if (!existing) return;
+  // The answer slots stay beside their closed question: they are what was
+  // submitted, they are bounded by the interview's own question count, and
+  // deleting them would race a teammate's client still rendering the form.
   map.set(toolCallId, { ...existing, submitted: true });
 }
 
@@ -166,14 +255,19 @@ export function closeStaleRoomQuestions(
   }
 }
 
-/** Snapshot the room's questions in insertion order. */
+/** Snapshot the room's questions in insertion order, answers resolved. */
 export function readRoomQuestions(doc: Doc): RoomQuestion[] {
-  return [...questionsMap(doc).values()];
+  return [...questionsMap(doc).values()].map((stored) => resolve(doc, stored));
 }
 
-/** Observe the room's questions map; returns an unsubscribe. */
+/** Observe the room's questions AND their answers; returns an unsubscribe. */
 export function observeRoomQuestions(doc: Doc, fn: () => void): () => void {
-  const map = questionsMap(doc);
-  map.observe(fn);
-  return () => map.unobserve(fn);
+  const questions = questionsMap(doc);
+  const answers = answersMap(doc);
+  questions.observe(fn);
+  answers.observe(fn);
+  return () => {
+    questions.unobserve(fn);
+    answers.unobserve(fn);
+  };
 }
