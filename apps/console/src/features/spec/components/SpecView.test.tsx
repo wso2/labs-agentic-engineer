@@ -157,9 +157,12 @@ vi.mock("@aep/ui-design-view", () => ({
 // QueryClientProvider nor MSW — only the Build routing under test is real. -
 const mockMutateAsync = vi.fn();
 const mockPreflightRefetch = vi.fn();
+let mockSpecStatus = "approved";
 vi.mock("../../projects/api/queries", () => ({
   useProject: () => ({ data: { displayName: "Test Project" } }),
-  useProjectStatus: () => ({ data: { specStatus: "approved" } }),
+  // Delegated (not a fixed factory) so the blank-state block can drive the
+  // status that decides skeleton-vs-failure.
+  useProjectStatus: () => ({ data: { specStatus: mockSpecStatus } }),
   useProjectTags: () => ({ data: { latest: "v1", specDirty: false } }),
   useBuildProject: () => ({ mutateAsync: mockMutateAsync }),
   useBuildPreflight: () => ({ refetch: mockPreflightRefetch }),
@@ -247,6 +250,7 @@ const BASE_FILES = [
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockSpecStatus = "approved";
   // clearAllMocks() clears recorded CALLS, not a queued mockResolvedValueOnce:
   // a one-shot value a test queued but never consumed survives into the NEXT
   // test and answers its first call. That turns one failure into two — the
@@ -770,5 +774,102 @@ describe("SpecView header metadata (soft version chips)", () => {
     expect(
       screen.queryByRole("button", { name: /solo|published/i }),
     ).not.toBeInTheDocument();
+  });
+});
+
+// #485: a project whose spec has not been written yet must not open into a
+// void. The main pane holds the PRD's skeleton outline instead — but only
+// while the document is still coming.
+describe("SpecView fresh-project blank state (#485)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockSpecStatus = "pending";
+    mockFlush.mockResolvedValue(undefined);
+    mockUseSpecFiles.mockReturnValue({
+      data: [],
+      isPending: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+  });
+
+  it("shows the skeleton PRD when no spec file exists yet", () => {
+    render(<SpecView projectName="proj1" />);
+
+    expect(screen.getByTestId("prd-skeleton")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Select a file to view its content."),
+    ).not.toBeInTheDocument();
+  });
+
+  it("suppresses the skeleton on a failed derivation — no promise of a doc that isn't coming", () => {
+    mockSpecStatus = "failed";
+    render(<SpecView projectName="proj1" />);
+
+    expect(screen.queryByTestId("prd-skeleton")).not.toBeInTheDocument();
+    expect(screen.getByText("The agent's last turn failed")).toBeInTheDocument();
+  });
+});
+
+// #485: the nav's graduation beat. A file that exists only in the live room
+// (the git list has no sha for it yet) is one the agent is writing right now.
+describe("SpecView writing pulse (#485)", () => {
+  const PRD_PATH = "specs/requirements/prd.md";
+  const agentPeer = {
+    clientId: 1,
+    name: "Agent",
+    color: "#f2711d",
+    kind: "agent",
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFlush.mockResolvedValue(undefined);
+  });
+
+  it("pulses a file the agent has streamed into the room but git has not committed", () => {
+    mockUseSpecFiles.mockReturnValue({
+      data: [],
+      isPending: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    mockCollab = { ...soloCollab(), docPaths: [PRD_PATH], peers: [agentPeer] };
+
+    render(<SpecView projectName="proj1" />);
+
+    expect(screen.getByTestId("writing-pulse")).toBeInTheDocument();
+  });
+
+  it("stops pulsing once the file is committed — git's sha wins the union", () => {
+    mockUseSpecFiles.mockReturnValue({
+      data: [{ path: PRD_PATH, sha: "abc", group: "requirements" }],
+      isPending: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    mockCollab = { ...soloCollab(), docPaths: [PRD_PATH], peers: [agentPeer] };
+
+    render(<SpecView projectName="proj1" />);
+
+    expect(screen.queryByTestId("writing-pulse")).not.toBeInTheDocument();
+  });
+
+  it("stops pulsing when the agent leaves, even with the file still uncommitted", () => {
+    mockUseSpecFiles.mockReturnValue({
+      data: [],
+      isPending: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    mockCollab = { ...soloCollab(), docPaths: [PRD_PATH], peers: [] };
+
+    render(<SpecView projectName="proj1" />);
+
+    expect(screen.queryByTestId("writing-pulse")).not.toBeInTheDocument();
   });
 });

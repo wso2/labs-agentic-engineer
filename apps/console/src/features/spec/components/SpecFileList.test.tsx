@@ -30,7 +30,11 @@ import { SpecFileList } from "./SpecFileList";
 
 const noop = vi.fn();
 
-function renderList(files: SpecFileEntry[], failed = false) {
+function renderList(
+  files: SpecFileEntry[],
+  failed = false,
+  writingPaths: ReadonlySet<string> = new Set(),
+) {
   return render(
     <SpecFileList
       files={files}
@@ -39,6 +43,7 @@ function renderList(files: SpecFileEntry[], failed = false) {
       onAddArtifact={noop}
       onRegenerateDesign={noop}
       failed={failed}
+      writingPaths={writingPaths}
     />,
   );
 }
@@ -97,5 +102,20 @@ describe("SpecFileList — ghost entries", () => {
     // Only the Designs group is still pending → its 3 ghosts remain.
     expect(screen.getAllByTestId("ghost-file")).toHaveLength(3);
     expect(screen.queryByText("minted after design")).not.toBeInTheDocument();
+  });
+});
+
+describe("SpecFileList — the writing pulse", () => {
+  it("pulses the row the agent is streaming into", () => {
+    renderList([PRD], false, new Set([PRD.path]));
+
+    expect(screen.getByTestId("writing-pulse")).toBeInTheDocument();
+  });
+
+  it("leaves a committed file static — the pulse means 'being written', not 'exists'", () => {
+    renderList([PRD], false, new Set());
+
+    expect(screen.getByRole("button", { name: "prd.md" })).toBeInTheDocument();
+    expect(screen.queryByTestId("writing-pulse")).not.toBeInTheDocument();
   });
 });

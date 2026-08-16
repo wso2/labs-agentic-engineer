@@ -70,6 +70,7 @@ export function SpecFileList({
   onRegenerateDesign,
   regenerateDisabled,
   failed,
+  writingPaths,
 }: {
   files: SpecFileEntry[];
   selection: SpecSelection | null;
@@ -82,6 +83,8 @@ export function SpecFileList({
   regenerateDisabled?: boolean;
   /** Derivation failed — empty groups say that instead of ghost entries. */
   failed: boolean;
+  /** Paths the agent is writing right now — those rows pulse (#485). */
+  writingPaths: ReadonlySet<string>;
 }) {
   const selKey = selection ? selectionKey(selection) : null;
   const isSel = (sel: SpecSelection) => selKey === selectionKey(sel);
@@ -148,6 +151,33 @@ export function SpecFileList({
     </Box>
   );
 
+  // The graduation beat (#485): a ghost turns into a solid row the moment its
+  // file lands, and while the agent is still streaming that file the row
+  // pulses — the nav says "being written now", not just "exists". Rendered as
+  // a titled span so the state is readable without relying on the animation
+  // (reduced motion stills the dot, the tooltip still explains it).
+  const writingDot = (
+    <Tooltip title="The agent is writing this file">
+      <Box
+        component="span"
+        data-testid="writing-pulse"
+        sx={{
+          width: 8,
+          height: 8,
+          borderRadius: "50%",
+          bgcolor: "primary.main",
+          flexShrink: 0,
+          animation: "specFileWritingPulse 1.2s ease-in-out infinite",
+          "@keyframes specFileWritingPulse": {
+            "0%, 100%": { opacity: 0.35 },
+            "50%": { opacity: 1 },
+          },
+          "@media (prefers-reduced-motion: reduce)": { animation: "none" },
+        }}
+      />
+    </Tooltip>
+  );
+
   // `indent` bumps a row one level deeper than the top-level tree (matching
   // the old console's depth-based pl: files inside an expanded component sit
   // right of both the top-level entries and the component's own header row).
@@ -165,6 +195,7 @@ export function SpecFileList({
     >
       <ListItemIcon sx={{ minWidth: 32 }}>{icon}</ListItemIcon>
       <ListItemText primary={label} slotProps={{ primary: { noWrap: true } }} />
+      {sel.kind === "file" && writingPaths.has(sel.path) && writingDot}
     </ListItemButton>
   );
 

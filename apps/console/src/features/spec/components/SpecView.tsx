@@ -440,6 +440,17 @@ export function SpecView({ projectName }: { projectName: string }) {
     specStatus === "draft" ||
     specStatus === "in_progress";
   const failed = specStatus === "failed";
+  // Files the agent is writing RIGHT NOW (#485): the union above gives a
+  // live-room-only entry an empty sha, because git has nothing to hash yet —
+  // that is exactly "streamed into the room, not committed". Gated on an agent
+  // peer so an uncommitted file stops pulsing the moment the turn ends.
+  const writingPaths = useMemo(
+    () =>
+      new Set(
+        agentInRoom ? files.filter((f) => f.sha === "").map((f) => f.path) : [],
+      ),
+    [files, agentInRoom],
+  );
   // The design gate: Build arms once design files are generated (#80).
   const hasDesignFiles = files.some((f) => f.group === "designs");
   // The PRD's Open Questions gate (#365/#372): undeferred questions block
@@ -914,6 +925,7 @@ export function SpecView({ projectName }: { projectName: string }) {
                 onRegenerateDesign={generateDesign}
                 regenerateDisabled={agentBusy}
                 failed={failed}
+                writingPaths={writingPaths}
               />
             </Box>
             <Box
@@ -1078,10 +1090,13 @@ export function SpecView({ projectName }: { projectName: string }) {
                     />
                   </Box>
                 )
-              ) : files.length === 0 ? (
+              ) : files.length === 0 && !failed ? (
                 // The fresh-project blank state (#485): the PRD's skeleton
                 // outline, not a void — the BE-started /start turn is (or is
-                // about to be) writing exactly this document.
+                // about to be) writing exactly this document. Suppressed on a
+                // failed derivation, where a shimmer would promise a document
+                // that is not coming (the nav's ghosts stand down for the same
+                // reason).
                 <PrdSkeleton projectName={projectName} />
               ) : (
                 <Typography variant="body2" color="text.secondary">
