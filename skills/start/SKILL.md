@@ -54,12 +54,13 @@ is their document.
 - **The bar, not the budget.** Ask only what changes the PRD. Three questions
   is a good form; padding one out to the cap is an interrogation.
 - **More questions than a form holds** → ask those whose answers change the
-  document most, and send every one left behind through the skip valve.
+  document most, and send every one left behind through the finish valve.
 
-Depth is opt-in: the quick pass ends with an offer to grill deeper (see "Where
-this stops"), and the user can go deeper in chat on any feature.
+Depth is opt-in — the **offer** is not. Anything you assumed earns one in the
+closing message (see "Where this stops"), and whenever the user asks for depth
+on an area, then or later, that opens a `grilling` session, not another form.
 
-## The skip valve
+## The finish valve
 
 At any point the user may say "just generate" / "skip". Stop asking
 immediately: fill every remaining decision with your recommended answer and tag
@@ -92,18 +93,28 @@ than a cold start, never more.
 ## Where this stops
 
 `/start` ends at the PRD. Design, components, and tasks are later steps with
-their own skills and gates. Close with a one-paragraph summary of the decisions
-taken (calling out every `*assumed*` one) — and make that summary an
-**actionable offer**: state the counts and list the assumed areas, e.g.
+their own skills and gates.
 
-> Drafted from 4 answers + 3 assumptions — grill me on: notifications ·
-> permissions · data retention. Name an area (or say "all") and I'll dig in.
+Close the turn in exactly this order — three parts, and **the offer comes
+before the next step**. A message that ends on "run `/design`" reads as the
+turn's one instruction, and the deep dive is never taken:
 
-A reply accepting the offer opens a **grilling session** on the named areas —
-run it in the `grilling` skill's session mode, scoped to those areas' tagged
-decisions. The one-form rule binds the quick pass only, never a session the
-user asked for. With nothing assumed, offer nothing — just the summary.
+1. **The summary** — one short paragraph of the decisions taken, calling out
+   every `*assumed*` one.
+2. **The offer** — the assumptions, counted and named, as a question the user
+   can answer with one word:
 
-Then point the user at the next step: review `specs/requirements/prd.md`, then
-run `/design` — open questions must be answered or explicitly deferred before
-design can proceed.
+   > I assumed 3 things — want me to grill you properly on: notifications ·
+   > permissions · data retention? Say "yes" for all, or name the areas.
+
+   Name the areas you assumed or thinned, in the user's own vocabulary. With
+   nothing assumed, skip this part entirely — never invent areas to offer.
+3. **The next step** — review `specs/requirements/prd.md`, then run `/design`;
+   open questions must be answered or explicitly deferred before design can
+   proceed.
+
+Any reply accepting the offer — "yes", "all", an area name, or any other ask to
+go deeper — opens a **grilling session** on those areas: run the `grilling`
+skill's session mode, scoped to their `*assumed*` decisions, with the areas as
+the session's checklist. Do NOT answer that reply with one more form. The
+one-form rule binds the quick pass only, never a session the user asked for.

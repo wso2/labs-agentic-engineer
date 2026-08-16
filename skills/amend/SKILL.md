@@ -16,7 +16,9 @@ byte-identical, and story numbers only ever append (they are permanent —
 designs, criteria, and tasks cite them).
 
 The PRD's shape is defined by the `prd-contract` skill — follow it when writing.
-The `grilling` skill owns the question mechanics for every branch below.
+The `grilling` skill owns the question mechanics for every branch below, and the
+mode each branch runs in: **one form** for add-a-feature and add-an-actor, a
+**session** for going deeper.
 
 ## Add a feature
 
@@ -38,9 +40,14 @@ see/do). Add or amend only the stories the instruction implies for them.
 
 ## Go deeper on a feature
 
-Expand `specs/requirements/features/<slug>.md` — interview for the missing
-depth, then write it there. The PRD body gains at most new story lines the
-depth surfaced; everything else lands in the feature file.
+This branch **is** the deep dive, so it runs the `grilling` skill's **session
+mode**, never a single form: the feature's unsettled areas are the session's
+checklist — every `*assumed*` decision the PRD or the feature file carries for
+it first, then whatever the file leaves thin.
+
+Expand `specs/requirements/features/<slug>.md` between rounds (write-as-you-go),
+and close with the session summary. The PRD body gains at most new story lines
+the depth surfaced; everything else lands in the feature file.
 
 ## Resolve open questions
 
