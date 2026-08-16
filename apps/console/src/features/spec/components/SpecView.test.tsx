@@ -22,7 +22,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
 import type { components } from "../../../generated/aep-api";
-import { chatKeyFor, notifyTurnEnd } from "../../agent-chat/chatStore";
+import { chatKeyFor, getChatOpenRequests, notifyTurnEnd } from "../../agent-chat/chatStore";
 import { SpecView } from "./SpecView";
 
 type PreflightItem = components["schemas"]["PreflightItem"];
@@ -102,6 +102,22 @@ vi.mock("../../../auth/SessionContext", () => ({
 const mockUseTurnEndFlush = vi.fn();
 vi.mock("../collab/useTurnEndFlush", () => ({
   useTurnEndFlush: (...args: unknown[]) => mockUseTurnEndFlush(...args),
+}));
+
+// --- First-run interview state (#485 live-testing round): stubbed — the
+// polling/fallback logic is covered in useSpecInterview.test.tsx; these tests
+// drive the stage directly and assert SpecView's own wiring/rendering.
+const mockUseSpecInterview = vi.fn();
+vi.mock("../../agent-chat/useSpecInterview", () => ({
+  useSpecInterview: (...args: unknown[]) => mockUseSpecInterview(...args),
+}));
+
+// --- Chat-log bootstrap (#485 live-testing round): its own seeding behavior
+// is covered by useChatLogBootstrap.test.tsx — stubbed so SpecView still needs
+// no QueryClientProvider; a wiring test below checks the arguments.
+const mockUseChatLogBootstrap = vi.fn();
+vi.mock("../../agent-chat/useChatLogBootstrap", () => ({
+  useChatLogBootstrap: (...args: unknown[]) => mockUseChatLogBootstrap(...args),
 }));
 
 // --- "Resolve in chat" (#252 Task 9 seam, Task 5's plumbing): its own
@@ -251,6 +267,11 @@ const BASE_FILES = [
 beforeEach(() => {
   vi.clearAllMocks();
   mockSpecStatus = "approved";
+  mockUseSpecInterview.mockReturnValue({
+    running: false,
+    questionsWaiting: 0,
+    drafting: false,
+  });
   // clearAllMocks() clears recorded CALLS, not a queued mockResolvedValueOnce:
   // a one-shot value a test queued but never consumed survives into the NEXT
   // test and answers its first call. That turns one failure into two — the
@@ -777,10 +798,10 @@ describe("SpecView header metadata (soft version chips)", () => {
   });
 });
 
-// #485: a project whose spec has not been written yet must not open into a
-// void. The main pane holds the PRD's skeleton outline instead — but only
-// while the document is still coming.
-describe("SpecView fresh-project blank state (#485)", () => {
+// #485 (reworked in the live-testing round): a project whose spec has not been
+// written yet must not open into a void — but the answer is a WORKING state
+// naming what the agent is actually doing, not a mock document skeleton.
+describe("SpecView fresh-project working state (#485)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockSpecStatus = "pending";
@@ -794,21 +815,130 @@ describe("SpecView fresh-project blank state (#485)", () => {
     });
   });
 
-  it("shows the skeleton PRD when no spec file exists yet", () => {
+  it("shows the working state with the interview stage line while the turn prepares questions", () => {
+    mockUseSpecInterview.mockReturnValue({
+      running: true,
+      questionsWaiting: 0,
+      drafting: false,
+    });
     render(<SpecView projectName="proj1" />);
 
-    expect(screen.getByTestId("prd-skeleton")).toBeInTheDocument();
+    expect(screen.getByTestId("spec-working-state")).toBeInTheDocument();
+    expect(
+      screen.getByText("The agent is preparing your questions…"),
+    ).toBeInTheDocument();
     expect(
       screen.queryByText("Select a file to view its content."),
     ).not.toBeInTheDocument();
   });
 
-  it("suppresses the skeleton on a failed derivation — no promise of a doc that isn't coming", () => {
+  it("switches the stage line to drafting once the interview is answered", () => {
+    mockUseSpecInterview.mockReturnValue({
+      running: true,
+      questionsWaiting: 0,
+      drafting: true,
+    });
+    render(<SpecView projectName="proj1" />);
+
+    expect(screen.getByText("The agent is drafting the PRD…")).toBeInTheDocument();
+    expect(
+      screen.queryByText("The agent is preparing your questions…"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows no working state while nothing runs — no spinner with no agent behind it", () => {
+    render(<SpecView projectName="proj1" />);
+
+    expect(screen.queryByTestId("spec-working-state")).not.toBeInTheDocument();
+    // The honest deriving line remains for the pre-kickoff window.
+    expect(
+      screen.getByText("The agents are shaping the spec — files appear here as they land."),
+    ).toBeInTheDocument();
+  });
+
+  it("suppresses the working state on a failed derivation — no promise of a doc that isn't coming", () => {
     mockSpecStatus = "failed";
     render(<SpecView projectName="proj1" />);
 
-    expect(screen.queryByTestId("prd-skeleton")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("spec-working-state")).not.toBeInTheDocument();
     expect(screen.getByText("The agent's last turn failed")).toBeInTheDocument();
+  });
+
+  it("arms the interview hook only while no file exists", () => {
+    render(<SpecView projectName="proj1" />);
+    expect(mockUseSpecInterview).toHaveBeenCalledWith("acme", "proj1", true);
+  });
+
+  it("disarms the interview hook once files exist", () => {
+    mockUseSpecFiles.mockReturnValue({
+      data: BASE_FILES,
+      isPending: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    render(<SpecView projectName="proj1" />);
+    expect(mockUseSpecInterview).toHaveBeenCalledWith("acme", "proj1", false);
+  });
+});
+
+// #485 live-testing round: the question form's data path must not depend on
+// the chat rail, and an active first-run turn opens the chat panel so the
+// narration is visible beside the doc.
+describe("SpecView first-run arrival (#485 live-testing round)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockSpecStatus = "pending";
+    mockFlush.mockResolvedValue(undefined);
+    mockUseSpecFiles.mockReturnValue({
+      data: [],
+      isPending: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+  });
+
+  it("bootstraps the chat log from the server thread, independent of the chat panel", () => {
+    render(<SpecView projectName="proj1" />);
+    expect(mockUseChatLogBootstrap).toHaveBeenCalledWith("acme", "proj1");
+  });
+
+  it("requests the chat panel open while the first-run turn streams", () => {
+    mockUseSpecInterview.mockReturnValue({
+      running: true,
+      questionsWaiting: 0,
+      drafting: false,
+    });
+    const key = chatKeyFor("acme", "proj1");
+    const before = getChatOpenRequests(key);
+
+    render(<SpecView projectName="proj1" />);
+
+    expect(getChatOpenRequests(key)).toBe(before + 1);
+  });
+
+  it("requests the chat panel open when questions are pending", () => {
+    mockUseSpecInterview.mockReturnValue({
+      running: false,
+      questionsWaiting: 3,
+      drafting: false,
+    });
+    const key = chatKeyFor("acme", "proj1");
+    const before = getChatOpenRequests(key);
+
+    render(<SpecView projectName="proj1" />);
+
+    expect(getChatOpenRequests(key)).toBe(before + 1);
+  });
+
+  it("does not auto-open on an ordinary visit", () => {
+    const key = chatKeyFor("acme", "proj1");
+    const before = getChatOpenRequests(key);
+
+    render(<SpecView projectName="proj1" />);
+
+    expect(getChatOpenRequests(key)).toBe(before);
   });
 });
 

@@ -56,18 +56,24 @@ import { SpecQuestionForm } from "./SpecQuestionForm";
 import { countBlockingOpenQuestions } from "../lib/openQuestions";
 import { nextVersionLabel, parsePrdStories } from "../lib/buildScope";
 import { useRoomQuestion } from "../../agent-chat/useRoomQuestion";
+import { useSpecInterview } from "../../agent-chat/useSpecInterview";
+import { useChatLogBootstrap } from "../../agent-chat/useChatLogBootstrap";
 import { CollabTextArea } from "../collab/CollabTextArea";
 import { SpecMdEditor } from "../collab/SpecMdEditor";
 import { useYTextString } from "../collab/useYTextString";
 import { useTurnEndFlush } from "../collab/useTurnEndFlush";
-import { chatKeyFor, setPendingSeed, subscribeTurnEnd } from "../../agent-chat/chatStore";
+import {
+  chatKeyFor,
+  requestChatOpen,
+  setPendingSeed,
+  subscribeTurnEnd,
+} from "../../agent-chat/chatStore";
 import { useResolveDependencyViaChat } from "../../agent-chat/useResolveDependencyViaChat";
 import type { DependencyResolutionIntent } from "../../projects/lib/dependencyResolutionMessage.js";
 import { useDesignCellChangeCount } from "../collab/useDesignCellChange";
 import { AddArtifactDialog } from "./AddArtifactDialog";
 import { BuildDependencyDrawer } from "./BuildDependencyDrawer";
 import { SpecFileList } from "./SpecFileList";
-import { PrdSkeleton } from "./PrdSkeleton";
 import { CellDiagramPanel } from "./CellDiagramPanel";
 import { WireframePanel } from "./WireframePanel";
 import { OpenApiView } from "@aep/ui-openapi-view";
@@ -105,6 +111,12 @@ export function SpecView({ projectName }: { projectName: string }) {
   // the chat panel, not the collab room's "acme".
   const roomDoc = collab.doc;
   const roomQuestion = useRoomQuestion(roomDoc, chatKeyFor(orgHandle ?? "default", projectName));
+  // The form's data path must not depend on the chat rail (#485 live-testing
+  // fix): useRoomQuestion mirrors the local chat LOG into the room, and only
+  // the panel used to fill that log — so arriving here with questions pending
+  // showed no form until the chat was opened once. Seed an empty log from the
+  // server thread on arrival instead.
+  useChatLogBootstrap(orgHandle ?? "default", projectName);
   // Chat-path turn-end flush (#252 Task 5): the chat panel's chatKey uses a
   // DIFFERENT fallback ("default", matching AppLayout/AgentChatPanel) than
   // the collab room's org scoping above ("acme") — these are unrelated
@@ -451,6 +463,27 @@ export function SpecView({ projectName }: { projectName: string }) {
       ),
     [files, agentInRoom],
   );
+  // First-run turn state (#485 live-testing round) — the same server-sourced
+  // state the chat narration and the overview card read. Armed only while no
+  // file exists (git or live room): once content streams, the working state
+  // below is gone and settled projects pay no polling.
+  const interview = useSpecInterview(
+    orgHandle ?? "default",
+    projectName,
+    files.length === 0 && !failed,
+  );
+  // Auto-open the chat panel when the user ENTERS the spec view while the
+  // first-run turn is active (streaming, or parked on questions), so the
+  // narration is visible beside the doc. Once per mount — closing the panel is
+  // respected for the rest of the visit — and never on ordinary visits, where
+  // the interview hook above is disabled and both signals stay false.
+  const autoOpenedChatRef = useRef(false);
+  const firstRunTurnActive = interview.running || interview.questionsWaiting > 0;
+  useEffect(() => {
+    if (!firstRunTurnActive || autoOpenedChatRef.current) return;
+    autoOpenedChatRef.current = true;
+    requestChatOpen(chatKeyFor(orgHandle ?? "default", projectName));
+  }, [firstRunTurnActive, orgHandle, projectName]);
   // The design gate: Build arms once design files are generated (#80).
   const hasDesignFiles = files.some((f) => f.group === "designs");
   // The PRD's Open Questions gate (#365/#372): undeferred questions block
@@ -1090,14 +1123,32 @@ export function SpecView({ projectName }: { projectName: string }) {
                     />
                   </Box>
                 )
-              ) : files.length === 0 && !failed ? (
-                // The fresh-project blank state (#485): the PRD's skeleton
-                // outline, not a void — the BE-started /start turn is (or is
-                // about to be) writing exactly this document. Suppressed on a
-                // failed derivation, where a shimmer would promise a document
-                // that is not coming (the nav's ghosts stand down for the same
-                // reason).
-                <PrdSkeleton projectName={projectName} />
+              ) : files.length === 0 && !failed && interview.running ? (
+                // The fresh-project working state (#485 live-testing round —
+                // replaces the mock-document skeleton, which read as content
+                // that wasn't there): a small spinner plus the turn's ACTUAL
+                // stage, from the same interview state the chat narration
+                // uses. Gone the moment real content streams (the file union
+                // picks the live room file up), and never shown on a failed
+                // derivation — no promise of a document that is not coming.
+                <Box
+                  data-testid="spec-working-state"
+                  sx={{
+                    height: "100%",
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 1.5,
+                  }}
+                >
+                  <CircularProgress size={24} aria-label="The agent is working" />
+                  <Typography variant="body2" color="text.secondary">
+                    {interview.drafting
+                      ? "The agent is drafting the PRD…"
+                      : "The agent is preparing your questions…"}
+                  </Typography>
+                </Box>
               ) : (
                 <Typography variant="body2" color="text.secondary">
                   {deriving

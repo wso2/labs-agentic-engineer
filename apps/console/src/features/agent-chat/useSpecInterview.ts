@@ -41,6 +41,20 @@ function waitingQuestionCount(messages: ChatMessage[]): number {
   return n;
 }
 
+/** The interview's questions were asked AND all answered/superseded — the
+ *  thread has moved past the interview, so a running turn is writing content
+ *  (the working-state and stage lines say "drafting", not "preparing"). */
+function questionsSettled(messages: ChatMessage[]): boolean {
+  const ids = answerableQuestionIds(messages);
+  let asked = false;
+  for (const m of messages) {
+    if (m.role !== "question") continue;
+    asked = true;
+    if (ids.has(m.id)) return false;
+  }
+  return asked;
+}
+
 /**
  * The fresh project's spec-interview state (#485), readable from ANY surface —
  * the overview's Spec card in particular, which must show "interviewing…" /
@@ -52,6 +66,10 @@ export interface SpecInterviewState {
   running: boolean;
   /** Unanswered questions the agent is waiting on. */
   questionsWaiting: number;
+  /** The running turn is PAST the interview — questions asked and answered,
+   *  the agent is writing the document. False while it is still preparing or
+   *  waiting on questions, and always false when nothing runs. */
+  drafting: boolean;
 }
 
 /** Matches useAgentChat's foreign-turn poll — the turn is server-driven, so
@@ -85,6 +103,10 @@ export function useSpecInterview(
     useCallback((fn: () => void) => subscribe(chatKey, fn), [chatKey]),
     () => getMessages(chatKey).length > 0,
   );
+  const storeSettled = useSyncExternalStore(
+    useCallback((fn: () => void) => subscribe(chatKey, fn), [chatKey]),
+    () => questionsSettled(getMessages(chatKey)),
+  );
 
   const active = useQuery({
     queryKey: ["agent-active-turn", projectName],
@@ -96,33 +118,43 @@ export function useSpecInterview(
   });
   const running = enabled && active.data?.status === "running";
 
-  // Rehydrate fallback: only while the local log is empty AND no turn streams
-  // (an attached panel supersedes it; a running turn can't be awaiting answers).
+  // Rehydrate fallback: only while the local log is empty (an attached panel
+  // supersedes it). Runs even while a turn streams — a running turn can't be
+  // AWAITING answers, but the thread is the only place a fresh landing can
+  // learn whether the running turn is still interviewing or already drafting.
   const conversation = useQuery({
     queryKey: conversationKeys.current(projectName),
     queryFn: () => fetchCurrentConversationId(projectName),
     staleTime: Infinity,
-    enabled: enabled && !storeHasLog && !running,
+    enabled: enabled && !storeHasLog,
     retry: false,
   });
   const rehydrated = useQuery({
     queryKey: ["agent-conversation-questions", projectName, conversation.data],
     queryFn: async () => {
       const history = await getConversationMessages(projectName, conversation.data!);
-      if (!history) return 0;
-      return waitingQuestionCount(projectableHistory(history));
+      if (!history) return { waiting: 0, settled: false };
+      const messages = projectableHistory(history);
+      return {
+        waiting: waitingQuestionCount(messages),
+        settled: questionsSettled(messages),
+      };
     },
-    enabled: enabled && !storeHasLog && !running && conversation.data !== undefined,
+    enabled: enabled && !storeHasLog && conversation.data !== undefined,
     refetchInterval: INTERVIEW_POLL_MS,
     retry: false,
   });
 
+  const settled = storeHasLog ? storeSettled : (rehydrated.data?.settled ?? false);
   return {
     running,
     questionsWaiting: !enabled
       ? 0
       : storeHasLog
         ? storeCount
-        : (rehydrated.data ?? 0),
+        : running
+          ? 0 // a running turn is never awaiting answers
+          : (rehydrated.data?.waiting ?? 0),
+    drafting: running && settled,
   };
 }

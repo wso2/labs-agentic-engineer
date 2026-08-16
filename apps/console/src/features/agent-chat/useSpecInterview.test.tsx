@@ -96,8 +96,61 @@ describe("useSpecInterview", () => {
       wrapper: wrapper(),
     });
     await waitFor(() => expect(result.current.running).toBe(true));
-    // A running turn cannot be awaiting answers — no rehydrate happens.
+    // A running turn cannot be awaiting answers, whatever the thread says.
+    expect(result.current.questionsWaiting).toBe(0);
+    // No questions asked yet — the turn is still preparing them, not drafting.
+    expect(result.current.drafting).toBe(false);
+  });
+
+  // The drafting stage (live-testing round): questions asked AND answered in
+  // the thread while a turn runs means the agent is past the interview and
+  // writing the document — the stage lines say "drafting", not "preparing".
+  it("reports drafting when the running turn follows an answered interview", async () => {
+    mockGetActive.mockResolvedValue({ turnId: "t2", status: "running" });
+    mockGetHistory.mockResolvedValue([
+      askQuestionsCall,
+      { role: "user", content: "Answers: yes to both" },
+    ]);
+
+    const { result } = renderHook(() => useSpecInterview(ORG, PROJECT, true), {
+      wrapper: wrapper(),
+    });
+    await waitFor(() => expect(result.current.drafting).toBe(true));
+    expect(result.current.questionsWaiting).toBe(0);
+  });
+
+  it("derives drafting from the live log once one exists", async () => {
+    mockGetActive.mockResolvedValue({ turnId: "t2", status: "running" });
+    addMessage(KEY, {
+      role: "question",
+      turnId: "t1",
+      toolCallId: "tc-1",
+      questions: [{ question: "Open browsing?", options: [{ label: "Yes" }] }],
+    });
+    addMessage(KEY, { role: "user", content: "Yes", turnId: "t2", status: "completed" });
+
+    const { result } = renderHook(() => useSpecInterview(ORG, PROJECT, true), {
+      wrapper: wrapper(),
+    });
+    await waitFor(() => expect(result.current.drafting).toBe(true));
     expect(mockGetHistory).not.toHaveBeenCalled();
+  });
+
+  it("never reports drafting while questions are still waiting", async () => {
+    mockGetActive.mockResolvedValue({ turnId: "t1", status: "running" });
+    addMessage(KEY, {
+      role: "question",
+      turnId: "t1",
+      toolCallId: "tc-1",
+      questions: [{ question: "Open browsing?", options: [{ label: "Yes" }] }],
+    });
+
+    const { result } = renderHook(() => useSpecInterview(ORG, PROJECT, true), {
+      wrapper: wrapper(),
+    });
+    await waitFor(() => expect(result.current.running).toBe(true));
+    expect(result.current.questionsWaiting).toBe(1);
+    expect(result.current.drafting).toBe(false);
   });
 
   it("counts waiting questions from the server thread when no local log exists", async () => {
@@ -148,7 +201,7 @@ describe("useSpecInterview", () => {
     const { result } = renderHook(() => useSpecInterview(ORG, PROJECT, false), {
       wrapper: wrapper(),
     });
-    expect(result.current).toEqual({ running: false, questionsWaiting: 0 });
+    expect(result.current).toEqual({ running: false, questionsWaiting: 0, drafting: false });
     expect(mockGetActive).not.toHaveBeenCalled();
     expect(mockFetchCurrent).not.toHaveBeenCalled();
   });

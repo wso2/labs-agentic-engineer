@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AppShell,
   Box,
@@ -59,6 +59,7 @@ import { OrgSwitcher, ProjectSwitcher } from "./HeaderSwitchers";
 import { AlertsNotificationPanel, NotificationButton } from "./NotificationBell";
 import { AgentChatPanel } from "../features/agent-chat/components/AgentChatPanel";
 import { useHasPendingSeed } from "../features/agent-chat/useHasPendingSeed";
+import { useChatOpenRequest } from "../features/agent-chat/useChatOpenRequest";
 
 // Footer links (grilled 2026-07-12): the repo is the only real destination
 // today — /tree/HEAD/docs follows the default branch.
@@ -144,6 +145,26 @@ export function AppLayout() {
   useEffect(() => {
     if (hasPendingSeed && projectName) setChatOpen(true);
   }, [hasPendingSeed, projectName]);
+
+  // First-run arrival (#485 live-testing round): SpecView requests the panel
+  // open when the user enters the spec view while the interview turn is
+  // active, so its narration runs beside the doc. Same reactive-open shape as
+  // the seed effect above. Only an INCREASE for the CURRENT project opens the
+  // panel: the counters outlive route changes, so acting on the absolute
+  // value would re-open a closed panel merely for switching back to a project
+  // that once requested one.
+  const chatOpenRequest = useChatOpenRequest(orgHandle ?? "default", projectName);
+  const seenOpenRequestRef = useRef<{ project: string | undefined; count: number }>({
+    project: undefined,
+    count: 0,
+  });
+  useEffect(() => {
+    const seen = seenOpenRequestRef.current;
+    if (projectName && seen.project === projectName && chatOpenRequest > seen.count) {
+      setChatOpen(true);
+    }
+    seenOpenRequestRef.current = { project: projectName, count: chatOpenRequest };
+  }, [chatOpenRequest, projectName]);
 
   return (
     <AppShell initialCollapsed={false} collapseOnSelectOnMobile>

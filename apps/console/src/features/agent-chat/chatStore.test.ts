@@ -37,14 +37,17 @@ import {
   chatKeyFor,
   consumePendingSeed,
   dropTurnOutput,
+  getChatOpenRequests,
   getMessages,
   hasDeterministicFlush,
   notifyTurnEnd,
   peekPendingSeed,
   registerDeterministicFlush,
+  requestChatOpen,
   setPendingSeed,
   setTurnStatus,
   subscribe,
+  subscribeChatOpen,
   subscribeSeed,
   subscribeTurnEnd,
   upsertToolMessage,
@@ -319,5 +322,33 @@ describe("deterministic-flush registration", () => {
     expect(hasDeterministicFlush(key)).toBe(true); // one registration still live
     unregisterB();
     expect(hasDeterministicFlush(key)).toBe(false);
+  });
+});
+
+// Chat-open requests (#485 live-testing round): SpecView asks AppLayout to
+// open the panel across a sibling-subtree boundary. A monotonic counter — the
+// consumer opens on an increase, so a later request re-opens a closed panel.
+describe("chat-open requests", () => {
+  it("counts requests per key and notifies subscribers", () => {
+    const key = freshKey();
+    expect(getChatOpenRequests(key)).toBe(0);
+
+    let notified = 0;
+    const unsubscribe = subscribeChatOpen(key, () => (notified += 1));
+    requestChatOpen(key);
+    requestChatOpen(key);
+
+    expect(getChatOpenRequests(key)).toBe(2);
+    expect(notified).toBe(2);
+    unsubscribe();
+    requestChatOpen(key);
+    expect(notified).toBe(2); // unsubscribed listeners stay quiet
+  });
+
+  it("keeps distinct keys apart", () => {
+    const key1 = freshKey();
+    const key2 = freshKey();
+    requestChatOpen(key1);
+    expect(getChatOpenRequests(key2)).toBe(0);
   });
 });

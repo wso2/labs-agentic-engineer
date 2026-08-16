@@ -333,6 +333,37 @@ export function subscribeSeed(key: string, fn: () => void): () => void {
   return () => set.delete(fn);
 }
 
+// --- Chat-open requests (#485 live-testing round) --------------------------
+//
+// A surface may ask the layout to OPEN the chat panel: SpecView does so when
+// the user arrives while the first-run turn is active, so the narration is
+// visible beside the document. SpecView and the panel's owner (AppLayout) are
+// sibling subtrees with no shared React state — same handoff shape as
+// pendingSeed above, but a pure UI signal with nothing to consume: a monotonic
+// counter per chat key, so each request is a fresh snapshot for
+// useSyncExternalStore even after the user closed the panel in between.
+
+const chatOpenRequests = new Map<string, number>();
+const chatOpenListeners = new Map<string, Set<() => void>>();
+
+/** Ask whoever owns the chat panel's open state to open it. */
+export function requestChatOpen(key: string): void {
+  chatOpenRequests.set(key, (chatOpenRequests.get(key) ?? 0) + 1);
+  for (const fn of chatOpenListeners.get(key) ?? []) fn();
+}
+
+/** Monotonic count of open requests for `key` (0 = never requested). */
+export function getChatOpenRequests(key: string): number {
+  return chatOpenRequests.get(key) ?? 0;
+}
+
+export function subscribeChatOpen(key: string, fn: () => void): () => void {
+  const set = chatOpenListeners.get(key) ?? new Set();
+  set.add(fn);
+  chatOpenListeners.set(key, set);
+  return () => set.delete(fn);
+}
+
 // --- Turn-end bus (#252 Task 5: freshness / turn-end flush) ---------------
 //
 // "A collab turn's terminal frame arrived" (runTurn.ts's `turn-committed` /
