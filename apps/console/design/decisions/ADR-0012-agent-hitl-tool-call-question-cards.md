@@ -97,3 +97,28 @@ todo }`), restated every round with moved states and stable names.
 - **The summary card is a prose convention, not a frame.** A closing message
   leading with the `Session summary` marker renders as a bordered card;
   without the marker it is ordinary narration.
+
+### What opens a session (2026-08-16 reachability round)
+
+The chrome above renders only when the agent sends `session`, and a live run
+showed nothing ever did: "grill me properly on the voting rules" came back as
+one 6-question form with no checklist, and `/start` closed on "run /design"
+with no offer. Session mode had a shape and no trigger. The fix is entirely in
+the prompt layer, and it is stated in three places because a turn may reach the
+model holding any subset of them:
+
+1. **The `grilling` skill's frontmatter description** — a plain chat turn
+   inlines no skill (`eagerSkillsFor` returns nothing for `kind: "chat"`), so
+   the catalog description is the ONLY thing that can pull the body in. It now
+   names the user's own words ("grill me", "go deeper", "pin down").
+2. **The skill body** — session mode has two triggers, the calling flow *and* a
+   user message pairing a depth ask with a scope; a depth ask is never answered
+   with a single form.
+3. **The `ask_questions` tool description and field descriptions** — always in
+   context, skill or no skill: a deep-dive request is one ROUND (1–4 questions,
+   `session` on every round including the first). The 8-question ceiling is
+   one-form mode's budget and is now labelled as such.
+
+`services/agents/test/skill-triggers.test.ts` pins the properties (not the
+wording) against the real `skills/` library, since the composer's behaviour and
+the skill text have to stay in agreement for any of this to fire.
