@@ -280,7 +280,7 @@ export function SpecQuestionForm({
           <Stack direction="row" spacing={1} sx={{ alignItems: "center", mb: 0.5 }}>
             <Sparkles size={18} color="var(--oxygen-palette-primary-main, currentColor)" />
             <Typography variant="h5" sx={{ fontWeight: 700 }}>
-              Quick questions
+              A few clarifications to write your spec
             </Typography>
           </Stack>
           <Stack direction="row" spacing={0.75} sx={{ alignItems: "center", mb: 4 }}>

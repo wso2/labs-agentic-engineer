@@ -132,10 +132,10 @@ function StageCard({
 // "Continue spec" NEVER carries `?generate`. Injecting a second `/start` into
 // an open exchange is the whole bug: landing on an unanswered question form, it
 // reads to the start skill as the user's skip valve, so the interview is
-// silently replaced by the agent's own answers (see `agentEngaged`). Dropping
-// the param also keeps AppLayout from auto-opening the chat panel, so the
-// pending question form owns the spec body on arrival — which is the thing the
-// user actually came back for.
+// silently replaced by the agent's own answers (see `agentEngaged`). The chat
+// panel still opens on arrival — SpecView requests it while the first-run turn
+// is active (live-testing round) — but side by side, so the question form
+// keeps the spec body.
 //
 // One button, two labels, one destination: "Edit spec" would be the wrong third
 // word, since a spec the user could edit is exactly what an open exchange has
@@ -152,13 +152,18 @@ function SpecActionStage({
   interview: SpecInterviewState;
 }) {
   const navigate = useNavigate();
+  // Wording aligned with the spec view's working-state stage lines (#485
+  // live-testing round): the card tracks the turn's ACTUAL stage — preparing
+  // questions, parked on questions, or drafting the document.
   const interviewLine =
     interview.questionsWaiting > 0
       ? `interviewing — ${interview.questionsWaiting} question${
           interview.questionsWaiting === 1 ? "" : "s"
         } waiting`
       : interview.running
-        ? "interviewing…"
+        ? interview.drafting
+          ? "Agent is drafting the PRD…"
+          : "Agent is preparing your questions…"
         : null;
   // The interview state is an open exchange by definition — same injection
   // guard as `engaged`, sourced server-side so it holds before the chat log

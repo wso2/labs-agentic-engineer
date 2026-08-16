@@ -49,7 +49,8 @@ vi.mock("@tanstack/react-router", () => ({
 // The server-sourced interview state (#485) — mocked so these tests drive it
 // directly; the hook's own polling/fallback logic is covered in
 // useSpecInterview.test.tsx.
-const mockInterview = vi.fn<(...args: unknown[]) => { running: boolean; questionsWaiting: number }>();
+const mockInterview =
+  vi.fn<(...args: unknown[]) => { running: boolean; questionsWaiting: number; drafting: boolean }>();
 vi.mock("../../agent-chat/useSpecInterview", () => ({
   useSpecInterview: (...args: unknown[]) => mockInterview(...args),
 }));
@@ -87,7 +88,7 @@ describe("OverviewPipeline — the spec stage's action", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     replaceMessages(KEY, []);
-    mockInterview.mockReturnValue({ running: false, questionsWaiting: 0 });
+    mockInterview.mockReturnValue({ running: false, questionsWaiting: 0, drafting: false });
   });
 
   it("offers Generate spec, carrying the generate signal, on an untouched project", () => {
@@ -107,8 +108,9 @@ describe("OverviewPipeline — the spec stage's action", () => {
 
     expect(screen.queryByRole("button", { name: /Generate spec/ })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Continue spec/ }));
-    // No `search`: the param is what injects the second `/start`, and dropping
-    // it also leaves the chat panel closed so the question form owns the body.
+    // No `search`: the param is what injects the second `/start`. (SpecView
+    // itself opens the chat panel beside the doc while the turn is active —
+    // the form still owns the spec body.)
     expect(mockNavigate).toHaveBeenCalledWith({
       to: "/projects/$projectName/spec",
       params: { projectName: PROJECT },
@@ -155,11 +157,11 @@ describe("OverviewPipeline — the spec stage's action", () => {
   // show the LIVE state — no chat log exists in this browser yet, which is
   // exactly why the state is server-sourced (useSpecInterview), not log-derived.
   describe("the BE-started interview (#485)", () => {
-    it("shows interviewing… instead of Generate spec while the turn streams", () => {
-      mockInterview.mockReturnValue({ running: true, questionsWaiting: 0 });
+    it("shows the preparing stage instead of Generate spec while the turn streams", () => {
+      mockInterview.mockReturnValue({ running: true, questionsWaiting: 0, drafting: false });
       renderPipeline();
 
-      expect(screen.getByText("interviewing…")).toBeInTheDocument();
+      expect(screen.getByText("Agent is preparing your questions…")).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: /Generate spec/ })).not.toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: /Continue spec/ }));
       // No `search`: injecting /start into the running interview is the bug
@@ -171,15 +173,26 @@ describe("OverviewPipeline — the spec stage's action", () => {
     });
 
     it("shows the waiting-question count once the turn parks on questions", () => {
-      mockInterview.mockReturnValue({ running: false, questionsWaiting: 4 });
+      mockInterview.mockReturnValue({ running: false, questionsWaiting: 4, drafting: false });
       renderPipeline();
 
       expect(screen.getByText("interviewing — 4 questions waiting")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /Continue spec/ })).toBeInTheDocument();
     });
 
+    // The live-testing round: the card's stage text must cover the DRAFTING
+    // phase too — after the answers land, "questions waiting" is over but the
+    // agent is still working, and the card has to say on what.
+    it("shows the drafting stage once the answered interview turn writes the PRD", () => {
+      mockInterview.mockReturnValue({ running: true, questionsWaiting: 0, drafting: true });
+      renderPipeline();
+
+      expect(screen.getByText("Agent is drafting the PRD…")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Continue spec/ })).toBeInTheDocument();
+    });
+
     it("keeps the singular for one waiting question", () => {
-      mockInterview.mockReturnValue({ running: false, questionsWaiting: 1 });
+      mockInterview.mockReturnValue({ running: false, questionsWaiting: 1, drafting: false });
       renderPipeline();
 
       expect(screen.getByText("interviewing — 1 question waiting")).toBeInTheDocument();
