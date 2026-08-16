@@ -56,6 +56,9 @@ import {
 } from "../chatStore";
 import { useTurnEndDependencyRefresh } from "../useTurnEndDependencyRefresh";
 import { useAgentEngaged } from "../useAgentEngaged";
+import { useSpecInterview } from "../useSpecInterview";
+import { useSpecFiles } from "../../spec/api/queries";
+import { WorkingIndicator } from "./WorkingIndicator";
 import { useCurrentAuthor } from "../currentUser";
 import { buildFeed, participantsOf, type FeedBlock } from "../feed";
 import { answerableQuestionIds } from "../questionCards";
@@ -76,7 +79,10 @@ const WIDTH_STEP = 24; // keyboard resize increment
 const WIDTH_KEY = "aep.chat.panelWidth";
 
 // Empty-state starter prompts — one click prefills the composer (mirrors
-// ProjectCreate's example-prompt pattern, scaled to a chip).
+// ProjectCreate's example-prompt pattern, scaled to a chip). Shown only once
+// the project HAS spec files: on a fresh project the canned suggestions are
+// off-domain noise (#485) — the empty state narrates the BE-started interview
+// instead.
 const SUGGESTIONS = [
   "Draft the requirements for this project",
   "Add acceptance criteria to the spec",
@@ -143,6 +149,15 @@ export function AgentChatPanel({
   const author = useCurrentAuthor();
   const navigate = useNavigate();
   const [draft, setDraft] = useState("");
+
+  // Fresh-project empty state (#485): no spec files yet means the BE-started
+  // /start turn is (or is about to be) the whole story — the empty state
+  // narrates that instead of greeting + canned chips. Unknown (still loading)
+  // counts as fresh so canned chips never flash on a project that turns out
+  // to be new.
+  const specFiles = useSpecFiles(projectName);
+  const fresh = (specFiles.data?.length ?? 0) === 0;
+  const interview = useSpecInterview(org, projectName, fresh);
 
   const feed = useMemo(
     () => buildFeed(messages, { currentUserId: author.id, activeTurnId }),
@@ -475,36 +490,74 @@ export function AgentChatPanel({
       <Box ref={scrollRef} sx={{ flexGrow: 1, overflow: "auto", p: 2 }}>
         <Box ref={contentRef}>
           {feed.length === 0 ? (
-            <Stack
-              spacing={2}
-              sx={{ alignItems: "center", textAlign: "center", mt: 5, px: 1 }}
-            >
-              <Avatar sx={{ width: 48, height: 48, bgcolor: "primary.main" }}>
-                <Sparkles size={24} />
-              </Avatar>
-              <Typography variant="subtitle2">Hi! I&apos;m your Agent.</Typography>
-              <Typography variant="body2" color="text.secondary">
-                Ask me to edit this project&apos;s spec — I join the shared
-                workspace and you can watch the files change live.
-              </Typography>
+            fresh ? (
+              // Fresh project (#485): the interview's narration lands in this
+              // feed within seconds of the BE-started turn attaching — this
+              // is the pre-attach beat, not a greeting. No canned chips.
               <Stack
-                direction="row"
-                spacing={1}
-                useFlexGap
-                sx={{ flexWrap: "wrap", justifyContent: "center" }}
+                spacing={2}
+                sx={{ alignItems: "center", textAlign: "center", mt: 5, px: 1 }}
               >
-                {SUGGESTIONS.map((s) => (
-                  <Chip
-                    key={s}
-                    label={s}
-                    variant="outlined"
-                    size="small"
-                    onClick={() => setDraft(s)}
-                    sx={{ cursor: "pointer" }}
-                  />
-                ))}
+                <Avatar sx={{ width: 48, height: 48, bgcolor: "primary.main" }}>
+                  <Sparkles size={24} />
+                </Avatar>
+                {interview.running ? (
+                  <>
+                    <Typography variant="subtitle2">
+                      Reading your idea…
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      The agent is shaping this project&apos;s spec — its
+                      narration streams in here, and its questions arrive on
+                      the spec view.
+                    </Typography>
+                    <WorkingIndicator label="Attaching to the live turn…" />
+                  </>
+                ) : (
+                  <>
+                    <Typography variant="subtitle2">
+                      The spec interview starts here.
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Narration streams in live as the agent reads your idea
+                      and plans its questions; answers happen on the spec
+                      view.
+                    </Typography>
+                  </>
+                )}
               </Stack>
-            </Stack>
+            ) : (
+              <Stack
+                spacing={2}
+                sx={{ alignItems: "center", textAlign: "center", mt: 5, px: 1 }}
+              >
+                <Avatar sx={{ width: 48, height: 48, bgcolor: "primary.main" }}>
+                  <Sparkles size={24} />
+                </Avatar>
+                <Typography variant="subtitle2">Hi! I&apos;m your Agent.</Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Ask me to edit this project&apos;s spec — I join the shared
+                  workspace and you can watch the files change live.
+                </Typography>
+                <Stack
+                  direction="row"
+                  spacing={1}
+                  useFlexGap
+                  sx={{ flexWrap: "wrap", justifyContent: "center" }}
+                >
+                  {SUGGESTIONS.map((s) => (
+                    <Chip
+                      key={s}
+                      label={s}
+                      variant="outlined"
+                      size="small"
+                      onClick={() => setDraft(s)}
+                      sx={{ cursor: "pointer" }}
+                    />
+                  ))}
+                </Stack>
+              </Stack>
+            )
           ) : (
             <MessageList
               feed={feed}

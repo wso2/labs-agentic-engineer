@@ -39,6 +39,10 @@ import type { components } from "../../../generated/aep-api";
 import { useSession } from "../../../auth/SessionContext";
 import { useAgentEngaged } from "../../agent-chat/useAgentEngaged";
 import {
+  useSpecInterview,
+  type SpecInterviewState,
+} from "../../agent-chat/useSpecInterview";
+import {
   buildStageView,
   CHIP_COLOR,
   deployStageView,
@@ -119,6 +123,12 @@ function StageCard({
 // requirements turn, and when the agent is mid-exchange the same stage offers
 // the way back into it.
 //
+// A fresh prompt-ful project is usually ALREADY interviewing — the BE starts
+// `/start` at create (#485) — so the card shows the live state
+// ("interviewing…", "interviewing — N questions waiting") instead of offering
+// to start what is running. Generate spec survives only as the prompt-less
+// project's manual fallback.
+//
 // "Continue spec" NEVER carries `?generate`. Injecting a second `/start` into
 // an open exchange is the whole bug: landing on an unanswered question form, it
 // reads to the start skill as the user's skip valve, so the interview is
@@ -134,12 +144,26 @@ function SpecActionStage({
   projectName,
   view,
   engaged,
+  interview,
 }: {
   projectName: string;
   view: StageView;
   engaged: boolean;
+  interview: SpecInterviewState;
 }) {
   const navigate = useNavigate();
+  const interviewLine =
+    interview.questionsWaiting > 0
+      ? `interviewing — ${interview.questionsWaiting} question${
+          interview.questionsWaiting === 1 ? "" : "s"
+        } waiting`
+      : interview.running
+        ? "interviewing…"
+        : null;
+  // The interview state is an open exchange by definition — same injection
+  // guard as `engaged`, sourced server-side so it holds before the chat log
+  // ever loaded in this browser.
+  const open = engaged || interviewLine !== null;
   return (
     <Card
       variant="outlined"
@@ -165,18 +189,25 @@ function SpecActionStage({
             </>
           )}
         </Stack>
-        {/* The state line the plain stage card would have shown. An amendment
-            replaces that card, and the spec's status ("published", "draft
-            changes") is true throughout — losing it would make an open
-            exchange look like a project with no spec at all. Empty on the
-            cold-start CTA, where there is no spec to have a status. */}
-        {view.line && (
+        {/* The live interview state wins the line; otherwise the state line
+            the plain stage card would have shown. An amendment replaces that
+            card, and the spec's status ("published", "draft changes") is true
+            throughout — losing it would make an open exchange look like a
+            project with no spec at all. Empty on the cold-start CTA, where
+            there is no spec to have a status. */}
+        {(interviewLine ?? view.line) && (
           <Typography
             variant="body2"
-            color={view.tone === "error" ? "error.main" : "text.secondary"}
+            color={
+              interviewLine
+                ? "primary.main"
+                : view.tone === "error"
+                  ? "error.main"
+                  : "text.secondary"
+            }
             sx={{ mb: 1.5 }}
           >
-            {view.line}
+            {interviewLine ?? view.line}
           </Typography>
         )}
         <Button
@@ -187,11 +218,11 @@ function SpecActionStage({
             void navigate({
               to: "/projects/$projectName/spec",
               params: { projectName },
-              ...(engaged ? {} : { search: { generate: "requirements" as const } }),
+              ...(open ? {} : { search: { generate: "requirements" as const } }),
             })
           }
         >
-          {engaged ? "Continue spec" : "Generate spec"}
+          {open ? "Continue spec" : "Generate spec"}
         </Button>
       </CardContent>
     </Card>
@@ -216,6 +247,15 @@ export function OverviewPipeline({
   // and the overview otherwise gives no sign one is open.
   const { orgHandle } = useSession();
   const engaged = useAgentEngaged(orgHandle ?? "default", projectName);
+  // The BE-started interview (#485), server-sourced so it shows on a fresh
+  // landing where no chat log exists yet. Enabled only pre-spec — once a spec
+  // exists, `engaged` (the live chat log) covers amendment interviews without
+  // this hook's polling.
+  const interview = useSpecInterview(
+    orgHandle ?? "default",
+    projectName,
+    spec.cta === true,
+  );
 
   return (
     <Stack
@@ -224,7 +264,12 @@ export function OverviewPipeline({
       sx={{ alignItems: { xs: "stretch", md: "center" } }}
     >
       {spec.cta || engaged ? (
-        <SpecActionStage projectName={projectName} view={spec} engaged={engaged} />
+        <SpecActionStage
+          projectName={projectName}
+          view={spec}
+          engaged={engaged}
+          interview={interview}
+        />
       ) : (
         <StageCard
           icon={<FileText size={18} />}

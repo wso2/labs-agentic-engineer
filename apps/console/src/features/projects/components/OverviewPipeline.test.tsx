@@ -46,6 +46,14 @@ vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => mockNavigate,
 }));
 
+// The server-sourced interview state (#485) — mocked so these tests drive it
+// directly; the hook's own polling/fallback logic is covered in
+// useSpecInterview.test.tsx.
+const mockInterview = vi.fn<(...args: unknown[]) => { running: boolean; questionsWaiting: number }>();
+vi.mock("../../agent-chat/useSpecInterview", () => ({
+  useSpecInterview: (...args: unknown[]) => mockInterview(...args),
+}));
+
 const QUESTIONS: AskQuestionInput[] = [
   { question: "Who signs in?", options: [{ label: "Anyone" }] },
 ];
@@ -79,6 +87,7 @@ describe("OverviewPipeline — the spec stage's action", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     replaceMessages(KEY, []);
+    mockInterview.mockReturnValue({ running: false, questionsWaiting: 0 });
   });
 
   it("offers Generate spec, carrying the generate signal, on an untouched project", () => {
@@ -140,5 +149,52 @@ describe("OverviewPipeline — the spec stage's action", () => {
     renderPipeline();
 
     expect(screen.getByRole("button", { name: /Generate spec/ })).toBeInTheDocument();
+  });
+
+  // #485: the BE starts /start at create, so on a fresh landing the card must
+  // show the LIVE state — no chat log exists in this browser yet, which is
+  // exactly why the state is server-sourced (useSpecInterview), not log-derived.
+  describe("the BE-started interview (#485)", () => {
+    it("shows interviewing… instead of Generate spec while the turn streams", () => {
+      mockInterview.mockReturnValue({ running: true, questionsWaiting: 0 });
+      renderPipeline();
+
+      expect(screen.getByText("interviewing…")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Generate spec/ })).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: /Continue spec/ }));
+      // No `search`: injecting /start into the running interview is the bug
+      // this feature retires.
+      expect(mockNavigate).toHaveBeenCalledWith({
+        to: "/projects/$projectName/spec",
+        params: { projectName: PROJECT },
+      });
+    });
+
+    it("shows the waiting-question count once the turn parks on questions", () => {
+      mockInterview.mockReturnValue({ running: false, questionsWaiting: 4 });
+      renderPipeline();
+
+      expect(screen.getByText("interviewing — 4 questions waiting")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Continue spec/ })).toBeInTheDocument();
+    });
+
+    it("keeps the singular for one waiting question", () => {
+      mockInterview.mockReturnValue({ running: false, questionsWaiting: 1 });
+      renderPipeline();
+
+      expect(screen.getByText("interviewing — 1 question waiting")).toBeInTheDocument();
+    });
+
+    it("polls only pre-spec: a settled project disables the hook", () => {
+      renderPipeline({ exists: true, version: "v2" });
+
+      expect(mockInterview).toHaveBeenCalledWith(ORG, PROJECT, false);
+    });
+
+    it("arms the hook on a fresh project", () => {
+      renderPipeline();
+
+      expect(mockInterview).toHaveBeenCalledWith(ORG, PROJECT, true);
+    });
   });
 });

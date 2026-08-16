@@ -97,6 +97,23 @@ vi.mock("../useTurnEndDependencyRefresh", () => ({
     mockUseTurnEndDependencyRefresh(...args),
 }));
 
+// --- Fresh-project empty state (#485): the panel decides greeting-vs-
+// narration off the spec file list + the interview state; both are stubbed
+// so tests set them directly (their own logic is covered in
+// useSpecInterview.test.tsx / the spec feature's query tests). Defaults are
+// a settled project, so the pre-#485 describes exercise the classic
+// greeting-and-chips panel unchanged.
+let mockSpecFilesData: unknown[] | undefined = [
+  { path: "specs/requirements/prd.md", sha: "a", group: "requirements" },
+];
+vi.mock("../../spec/api/queries", () => ({
+  useSpecFiles: () => ({ data: mockSpecFilesData }),
+}));
+let mockInterviewState = { running: false, questionsWaiting: 0 };
+vi.mock("../useSpecInterview", () => ({
+  useSpecInterview: () => mockInterviewState,
+}));
+
 type PanelProps = ComponentProps<typeof AgentChatPanel>;
 
 function panelProps(overrides: Partial<PanelProps> = {}): PanelProps {
@@ -377,5 +394,48 @@ describe("AgentChatPanel — generation CTAs", () => {
     const { rerender } = renderPanel({ autoGenerate: "requirements" });
     rerender(withProviders(<AgentChatPanel {...panelProps({ autoGenerate: "requirements" })} />));
     expect(mockSend).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("AgentChatPanel — fresh-project empty state (#485)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockMessages = [];
+    replaceMessages(KEY, []);
+    mockSpecFilesData = [];
+    mockInterviewState = { running: false, questionsWaiting: 0 };
+  });
+
+  it("drops the greeting and the canned chips before any spec exists", () => {
+    renderPanel();
+
+    expect(screen.queryByText(/Hi! I'm your Agent/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Draft the requirements for this project"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("The spec interview starts here.")).toBeInTheDocument();
+  });
+
+  it("narrates the live turn while the BE-started /start streams", () => {
+    mockInterviewState = { running: true, questionsWaiting: 0 };
+    renderPanel();
+
+    expect(screen.getByText("Reading your idea…")).toBeInTheDocument();
+    expect(screen.getByTestId("working")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Draft the requirements for this project"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps greeting + chips for a project that already has spec files", () => {
+    mockSpecFilesData = [
+      { path: "specs/requirements/prd.md", sha: "a", group: "requirements" },
+    ];
+    renderPanel();
+
+    expect(screen.getByText(/Hi! I'm your Agent/)).toBeInTheDocument();
+    expect(
+      screen.getByText("Draft the requirements for this project"),
+    ).toBeInTheDocument();
   });
 });
