@@ -17,9 +17,9 @@
 package projects
 
 // The BE-side /start kickoff hook (#485): create fires the specKickoff port —
-// async, prompt-gated, best-effort. Exactly-once and every turn-side guard
-// live in the spec domain; these tests pin only what THIS domain decides:
-// when the port fires and that its failure never surfaces.
+// async, for every project, best-effort. Exactly-once and every turn-side
+// guard live in the spec domain; these tests pin only what THIS domain
+// decides: when the port fires and that its failure never surfaces.
 
 import (
 	"context"
@@ -87,14 +87,15 @@ func TestCreateProject_KicksOffSpecWhenPromptExists(t *testing.T) {
 	}
 }
 
-// A prompt-less project keeps the manual Generate-spec CTA — no auto-start,
-// so /start doesn't run an interview against an empty idea.
-func TestCreateProject_NoKickoffWithoutPrompt(t *testing.T) {
+// A prompt-less project ALSO gets its turn: `/start` with no captured idea
+// opens by asking what the user is building (skills/start), which is the first
+// beat of the same conversation — not a project that sits inert behind a CTA.
+func TestCreateProject_KicksOffSpecWithoutPrompt(t *testing.T) {
 	t.Parallel()
-	kickoff := newFakeSpecKickoff(nil)
-	svc := createSvcWithKickoff(t, kickoff)
-
 	for _, prompt := range []string{"", "   \n\t"} {
+		kickoff := newFakeSpecKickoff(nil)
+		svc := createSvcWithKickoff(t, kickoff)
+
 		_, err := svc.CreateProject(context.Background(), "acme", &gen.CreateProjectRequest{
 			Name:   "empty-shell",
 			Prompt: prompt,
@@ -102,11 +103,14 @@ func TestCreateProject_NoKickoffWithoutPrompt(t *testing.T) {
 		if err != nil {
 			t.Fatalf("create(prompt=%q): %v", prompt, err)
 		}
-	}
-	select {
-	case got := <-kickoff.calls:
-		t.Fatalf("kickoff fired for a prompt-less create: %v", got)
-	case <-time.After(200 * time.Millisecond):
+		select {
+		case got := <-kickoff.calls:
+			if got != [2]string{"acme", "empty-shell"} {
+				t.Fatalf("kickoff target = %v", got)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("kickoff never fired for a create with prompt=%q", prompt)
+		}
 	}
 }
 

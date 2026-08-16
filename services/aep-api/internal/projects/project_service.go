@@ -282,17 +282,18 @@ func (s *Service) CreateProject(ctx context.Context, orgName string, req *gen.Cr
 				}
 			}
 
-			// Kick off the spec interview (#485): a project born from a prompt
-			// (ADR-0005) starts its `/start` turn server-side, so the user
-			// watches it narrate instead of clicking Generate spec. ASYNC —
-			// the turn can only start once the repo finishes provisioning, and
-			// that wait must never sit in the create latency; the kickoff
-			// retries against the not-ready repo until the timeout. Only when
-			// a prompt exists: a prompt-less project keeps the manual CTA.
-			// Best-effort like every step above — exactly-once and every other
-			// guard live on the spec side (KickoffSpec), and a failed kickoff
-			// costs the user one click, nothing more.
-			if s.specKickoffSvc != nil && strings.TrimSpace(req.Prompt) != "" {
+			// Kick off the spec interview (#485): EVERY new project starts its
+			// `/start` turn server-side, so the user watches it narrate instead
+			// of clicking Generate spec. Not gated on the prompt — with no idea
+			// captured, `/start` opens by asking what the user is building
+			// (skills/start), which is a better first beat than a project that
+			// sits inert until someone finds the CTA. ASYNC — the turn can only
+			// start once the repo finishes provisioning, and that wait must
+			// never sit in the create latency; the kickoff retries against the
+			// not-ready repo until the timeout. Best-effort like every step
+			// above — exactly-once and every other guard live on the spec side
+			// (KickoffSpec), and a failed kickoff costs the user one click.
+			if s.specKickoffSvc != nil {
 				kickoff, projectName := s.specKickoffSvc, project.Name
 				async.Go(context.Background(), "spec kickoff", func(context.Context) {
 					bg, cancel := context.WithTimeout(context.Background(), specKickoffTimeout)

@@ -47,7 +47,7 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
 | repo/workspace bootstrap · repo-name conflict | needs | `sourcecontrol` — on project create/delete |
 | design read · spec-stage snapshot | needs | `spec` — the Stage aggregate's spec column + component OpenAPI source |
 | `descriptorWriter` | needs | `spec` — stamps `specs/.agentic-engineer.toml` on create (best-effort; nil is a no-op) |
-| `specKickoff` | needs | `spec` — starts the `/start` spec interview server-side after a prompt-ful create (async + best-effort; exactly-once and every turn guard live spec-side; nil is a no-op) |
+| `specKickoff` | needs | `spec` — starts the `/start` spec interview server-side after every create (async + best-effort; exactly-once and every turn guard live spec-side; nil is a no-op) |
 | build/exec status (`SetStageSources` port) | needs | `delivery` — the build/deploy columns of the Stage aggregate, wired at the root |
 | `runAbandoner` (`SetRunAbandoner`) | needs | `delivery` — ends the supervisors of a deleted project's live runs, wired at the root (nil is a no-op) |
 | per-project agent usage (`UsageService`) | needs | `delivery` — the agent-usage ledger, keyed by lifetime (`contracts.UsageScope`) |

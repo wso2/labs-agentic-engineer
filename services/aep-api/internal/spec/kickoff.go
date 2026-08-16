@@ -14,13 +14,15 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// The BE-side `/start` kickoff (#485): a project created WITH a prompt gets
-// its spec interview started server-side, so the turn is already narrating by
-// the time the user reaches the spec view — the console injects nothing. The
-// projects domain calls KickoffSpec (through its narrow specKickoff port)
-// right after stamping the descriptor; the instruction is the bare `/start`
-// token, so the idea rides in from the descriptor exactly as it does for a
-// user-typed command (start_command.go — one expansion path, not two).
+// The BE-side `/start` kickoff (#485): EVERY new project gets its spec
+// interview started server-side, so the turn is already narrating by the time
+// the user reaches the spec view — the console injects nothing. The projects
+// domain calls KickoffSpec (through its narrow specKickoff port) right after
+// stamping the descriptor; the instruction is the bare `/start` token, so the
+// idea rides in from the descriptor exactly as it does for a user-typed
+// command (start_command.go — one expansion path, not two). With no idea
+// captured the expansion attaches none and the start skill opens by asking
+// what the user is building — the conversation begins either way.
 //
 // Exactly-once is layered:
 //   - spec_kickoffs claim (TryClaim) — one AUTO kickoff per project, ever.
