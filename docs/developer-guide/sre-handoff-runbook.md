@@ -58,10 +58,36 @@ The alert pipeline must actually evaluate rules — this is the step that is com
 
 - observability-logs-opensearch module chart >= 0.5.1 (ships the logs-adapter)
 - `observer-config`: `LOGS_ADAPTER_ENABLED=true`,
-  `RCA_SERVICE_URL=http://ai-rca-agent:8080`, `ALERT_SUPPRESSION_WINDOW=1h`
+  `RCA_SERVICE_URL=http://ai-rca-agent:8080`, `ALERT_SUPPRESSION_WINDOW=30m`
   (unset suppression ⇒ duplicate issues + dispatches)
 - an `ObservabilityAlertRule` scoped to the component (UID + name labels) with
   `actions.incident.enabled` + `triggerAiRca: true`
+
+Two knobs decide how quickly an RCA lands, and they are deliberately separate:
+
+| Knob | Where | Meaning |
+|---|---|---|
+| `condition.interval` / `window` | `alert_rule_trait.go` (`1m` / `5m`) | detection latency — how long an error waits to be seen |
+| `ALERT_SUPPRESSION_WINDOW` | `observer-config` (`30m`) | cooldown — the gap between two RCA runs for one component |
+
+Do not use the interval as the cooldown. It was once `30m` for that reason, which
+bought a cooldown suppression already provides at the cost of 30m of blindness.
+
+Expect ~5-70s from the ERROR line to `POST /analyze` (fluent-bit flush and index
+refresh, then up to one interval), and ~3min more for RCA → remediation →
+handoff.
+
+Two ceilings this wiring cannot lift:
+
+- The logs-adapter hardcodes a **60-minute throttle** on the monitor's webhook
+  action and its API exposes no field for it, so a *sustained* error stream still
+  yields one RCA per hour regardless of the 30m suppression window. Bursty errors
+  are unaffected: the alert completes and the next one re-fires immediately.
+- On a laptop, **idle sleep** stalls OpenSearch's alerting job scheduler — sweeps
+  simply do not run while suspended, so a 1m interval silently becomes however
+  long the machine slept. Run `caffeinate -s` (or stay on AC) while demoing. A
+  request that reports a far smaller `elapsedMs` than its wall-clock span is the
+  tell.
 
 ## Verify
 

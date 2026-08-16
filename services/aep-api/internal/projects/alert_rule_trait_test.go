@@ -36,20 +36,41 @@ func condition(t *testing.T) map[string]interface{} {
 	return cond
 }
 
-// The evaluation interval is the floor on how often one component can drive an
-// RCA run, and it is sized to the alert → RCA → issue → coding-agent → PR loop
-// (~30m). A shorter interval re-analyses a failure that is already being fixed.
-func TestAutoRCARuleEvaluatesAtTheRepairLoopCadence(t *testing.T) {
-	got := condition(t)["interval"]
-	if got != "30m" {
-		t.Errorf("evaluation interval = %v, want 30m", got)
+// The evaluation interval is the detection latency: an error waits at most one
+// interval before it can raise an alert, so it must stay small. It is NOT the
+// cooldown between RCA runs — that is the observer's ALERT_SUPPRESSION_WINDOW.
+// Regressing this to the repair-loop cadence (it was once 30m) buys a cooldown
+// that suppression already provides, at the cost of 30m of blindness.
+func TestAutoRCARuleDetectsWithinAMinute(t *testing.T) {
+	interval, err := time.ParseDuration(condition(t)["interval"].(string))
+	if err != nil {
+		t.Fatalf("interval is not a duration: %v", err)
+	}
+	if interval > time.Minute {
+		t.Errorf("evaluation interval = %s, want <= 1m: an error waits this long to be detected", interval)
 	}
 }
 
-// Window and interval must stay equal so consecutive evaluations tile the
-// timeline: a shorter window leaves errors in the gap unobserved, a longer one
-// re-counts lines an earlier evaluation already alerted on.
-func TestAutoRCARuleWindowTilesTheInterval(t *testing.T) {
+// The adapter rejects sub-minute durations (whole minutes or hours only), so an
+// interval below the floor makes every rule fail to sync rather than detect
+// faster.
+func TestAutoRCARuleIntervalIsAWholeMinute(t *testing.T) {
+	cond := condition(t)
+	for _, field := range []string{"interval", "window"} {
+		d, err := time.ParseDuration(cond[field].(string))
+		if err != nil {
+			t.Fatalf("%s is not a duration: %v", field, err)
+		}
+		if d < time.Minute || d%time.Minute != 0 {
+			t.Errorf("%s = %s, want a whole number of minutes >= 1m", field, d)
+		}
+	}
+}
+
+// The window must exceed the interval so consecutive evaluations overlap. Equal
+// windows merely abut, which drops any line fluent-bit indexes just after a
+// window closed. The resulting double-count is absorbed by suppression.
+func TestAutoRCARuleWindowOverlapsTheInterval(t *testing.T) {
 	cond := condition(t)
 	window, err := time.ParseDuration(cond["window"].(string))
 	if err != nil {
@@ -59,8 +80,8 @@ func TestAutoRCARuleWindowTilesTheInterval(t *testing.T) {
 	if err != nil {
 		t.Fatalf("interval is not a duration: %v", err)
 	}
-	if window != interval {
-		t.Errorf("window %s != interval %s: evaluations leave a gap or overlap", window, interval)
+	if window <= interval {
+		t.Errorf("window %s <= interval %s: evaluations abut instead of overlapping, so a line indexed just after a window closes is never seen", window, interval)
 	}
 }
 

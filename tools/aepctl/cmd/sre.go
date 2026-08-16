@@ -213,10 +213,18 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 	// 5. Alert->RCA auto-trigger + AEP handoff wiring (post-helm ConfigMap
 	// patches; the charts don't expose all these keys). In-cluster URLs.
 	fmt.Println("Wiring alert->RCA auto-trigger + AEP handoff...")
+	// ALERT_SUPPRESSION_WINDOW is the cooldown between two RCA runs for one
+	// (rule, component): the observer drops a repeat alert before incident
+	// storage, notification, or /analyze. It — not the rule's evaluation
+	// interval — is what keeps a fast-detecting rule from re-analysing a failure
+	// the repair loop is already fixing, so it is sized to that loop
+	// (alert → RCA → issue → coding-agent → PR, ~30m). UNSET ⇒ NO de-dup.
+	// Paired with autoRCAEvaluationInterval in
+	// services/aep-api/internal/projects/alert_rule_trait.go.
 	if err := patchConfigMap(ctx, client, sreObsNamespace, "observer-config", map[string]string{
 		"LOGS_ADAPTER_ENABLED":     "true",
 		"RCA_SERVICE_URL":          p.RcaServiceURL,
-		"ALERT_SUPPRESSION_WINDOW": "1h",
+		"ALERT_SUPPRESSION_WINDOW": "30m",
 	}); err != nil {
 		return err
 	}

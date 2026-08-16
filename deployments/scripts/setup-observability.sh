@@ -448,10 +448,20 @@ echo "✅ logs-opensearch ready (incl. logs-adapter)"
 #   observer-config:
 #     LOGS_ADAPTER_ENABLED     without it, log alert rules are never evaluated
 #     RCA_SERVICE_URL          where the observer POSTs /analyze on alert fire
-#     ALERT_SUPPRESSION_WINDOW per-rule+component de-dup. UNSET ⇒ NO de-dup:
-#                              concurrent RCA runs race the handoff's
-#                              search-then-create dedup ⇒ duplicate GitHub
-#                              issues + duplicate coding-agent dispatches.
+#     ALERT_SUPPRESSION_WINDOW per-rule+component de-dup, and so the cooldown
+#                              between two RCA runs for one component: a repeat
+#                              alert is dropped before incident storage,
+#                              notification, or /analyze. This — not the alert
+#                              rule's evaluation interval — is what stops a
+#                              fast-detecting rule from re-analysing a failure
+#                              the repair loop is already fixing, so it is sized
+#                              to that loop (alert → RCA → issue →
+#                              coding-agent → PR, ~30m). Paired with
+#                              autoRCAEvaluationInterval in services/aep-api/
+#                              internal/projects/alert_rule_trait.go.
+#                              UNSET ⇒ NO de-dup: concurrent RCA runs race the
+#                              handoff's search-then-create dedup ⇒ duplicate
+#                              GitHub issues + duplicate coding-agent dispatches.
 #   rca-agent-config:
 #     AE_HANDOFF               enables the RCA→AEP handoff stage (issue+dispatch)
 #     AE_AUTO_DISPATCH         false ⇒ issue-only; a human dispatches from AEP
@@ -461,7 +471,7 @@ echo "✅ logs-opensearch ready (incl. logs-adapter)"
 echo ""
 echo "3️⃣b Alert→RCA auto-trigger + AEP handoff wiring"
 kubectl --context "$CLUSTER_CONTEXT" -n "$NS" patch cm observer-config --type=merge -p \
-    '{"data":{"LOGS_ADAPTER_ENABLED":"true","RCA_SERVICE_URL":"http://ai-rca-agent:8080","ALERT_SUPPRESSION_WINDOW":"1h"}}'
+    '{"data":{"LOGS_ADAPTER_ENABLED":"true","RCA_SERVICE_URL":"http://ai-rca-agent:8080","ALERT_SUPPRESSION_WINDOW":"30m"}}'
 kubectl --context "$CLUSTER_CONTEXT" -n "$NS" rollout restart deploy/observer
 if [ "$AE_HANDOFF" = "true" ]; then
     kubectl --context "$CLUSTER_CONTEXT" -n "$NS" patch cm rca-agent-config --type=merge -p \

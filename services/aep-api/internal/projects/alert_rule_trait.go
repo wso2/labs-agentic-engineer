@@ -40,19 +40,31 @@ const autoRCALogQuery = "error"
 const autoRCADefaultChannel = "default"
 
 // autoRCAEvaluationInterval is how often the adapter evaluates the rule, and so
-// the floor on the gap between two RCA runs for one component. It is sized to
-// the downstream repair loop: alert → RCA → GitHub issue → coding-agent → PR
-// takes ~30m, and re-firing inside that window analyses a failure that is
-// already being fixed.
+// the DETECTION LATENCY: an error waits at most one interval before it can raise
+// an alert. It is deliberately short — an RCA report is only useful while the
+// failure is still fresh.
 //
-// autoRCAEvaluationWindow is the lookback each evaluation aggregates over, and
-// is held EQUAL to the interval so consecutive evaluations tile the timeline.
-// A window shorter than the interval leaves an unobserved gap between runs
-// (a 30m interval over a 5m window would miss errors logged in the other 25m);
-// a longer one re-counts lines an earlier evaluation already alerted on.
+// It is NOT the gap between two RCA runs. These used to be the same knob (both
+// 30m), on the reasoning that the repair loop (alert → RCA → GitHub issue →
+// coding-agent → PR) takes ~30m and re-firing inside that window re-analyses a
+// failure already being fixed. That conflated two independent concerns and paid
+// for the cooldown with 30m of blindness. The cooldown now lives where it
+// belongs: the observer's ALERT_SUPPRESSION_WINDOW, which drops a repeat alert
+// per (rule, namespace, component UID) before it reaches incident storage,
+// notification, or RCA. Keep the two in sync — see the SRE installers
+// (tools/aepctl/cmd/sre.go, deployments/scripts/setup-observability.sh).
+//
+// autoRCAEvaluationWindow is the lookback each evaluation aggregates over. It is
+// held LARGER than the interval so consecutive evaluations overlap: a line is
+// indexed by fluent-bit some time after the service writes it, and a window that
+// merely abuts the previous one drops any line that lands just after its window
+// closed. The overlap re-counts lines an earlier evaluation already alerted on,
+// which is harmless precisely because suppression dedupes downstream — with
+// window == interval that double-count was the thing to avoid, so tightening
+// the window without a suppression window in place would reintroduce it.
 const (
-	autoRCAEvaluationWindow   = "30m"
-	autoRCAEvaluationInterval = "30m"
+	autoRCAEvaluationWindow   = "5m"
+	autoRCAEvaluationInterval = "1m"
 )
 
 // DesiredObservabilityAlertRuleTraits returns the default "error → RCA"
