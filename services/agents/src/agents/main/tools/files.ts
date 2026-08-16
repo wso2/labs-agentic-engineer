@@ -160,13 +160,18 @@ export const askQuestionsInputSchema = z.object({
     .optional()
     .describe(
       "Grilling-session rounds ONLY (the grilling skill's session mode): the session's area checklist, shown in the " +
-        "form header as settled-vs-remaining scope. OMIT it entirely on ordinary one-form interviews.",
+        "form header as settled-vs-remaining scope. Send it on EVERY round of a session, the FIRST one included — a " +
+        "round without it renders as a plain one-form interview and the user loses the scope. OMIT it entirely on " +
+        "ordinary one-form interviews.",
     ),
   questions: z
     .array(askQuestionInputSchema)
     .min(1)
     .max(8)
-    .describe("1–8 questions rendered together as one form; each answered independently."),
+    .describe(
+      "1–8 questions rendered together as one form; each answered independently. The 8 ceiling is the one-form " +
+        "interview's budget: a grilling-session round takes 1–4, and a fifth question belongs to the next round.",
+    ),
 });
 
 // --- Drift guard: Zod schema ⇄ sse-events wire type -------------------------
@@ -198,7 +203,9 @@ export const askQuestionsTool: Tool = tool({
   description:
     "Ask the user SEVERAL structured questions at once, rendered as a single form — use it when you have multiple " +
     "independent decisions to gather in one round instead of asking them one turn at a time. Each entry is a full " +
-    "question (1–5 options, optional recommended, optional multiSelect). Ends your turn; the answers arrive as the next message.",
+    "question (1–5 options, optional recommended, optional multiSelect). When the user asks you to grill them, go " +
+    "deeper or pin down details on something, this is one ROUND of a grilling session: keep it to 1–4 questions and " +
+    "pass `session` (load the grilling skill for the rest). Ends your turn; the answers arrive as the next message.",
   inputSchema: askQuestionsInputSchema,
   execute: async (input) => ({ status: "awaiting_user_response" as const, ...input }),
 });

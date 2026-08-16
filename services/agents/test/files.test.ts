@@ -19,7 +19,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { FileBundle, type LoadSkillResult, type LoadSkillReferenceResult } from "@aep/agent-stream";
-import { buildFileTools, LOAD_SKILL, LOAD_SKILL_REFERENCE } from "../src/agents/main/tools/files.js";
+import {
+  askQuestionsInputSchema,
+  askQuestionsTool,
+  buildFileTools,
+  LOAD_SKILL,
+  LOAD_SKILL_REFERENCE,
+} from "../src/agents/main/tools/files.js";
 import { SkillReadError, type SkillSource } from "../src/agents/main/skill-source.js";
 import { testSkillSource, type TestSkill } from "./skill-source.js";
 
@@ -172,4 +178,63 @@ test("loadSkill I/O fault returns could-not-read — never unknown skills", asyn
       ["component-architecture"],
     );
   }
+});
+
+// --- grilling sessions: the round contract the model reads (#486) ------------
+//
+// A session is reachable only if the model can tell a session ROUND from a
+// one-form interview while it is drafting the call. Two things carry that: the
+// optional `session` checklist, and the tool text that says when to send it.
+// Both are asserted here because both were absent from a live deep-dive run.
+
+test("ask_questions accepts a session round and keeps the checklist verbatim", () => {
+  const parsed = askQuestionsInputSchema.parse({
+    session: {
+      title: "Voting & nominations",
+      areas: [
+        { name: "Eligibility", state: "done" },
+        { name: "Quorum", state: "now" },
+        { name: "Nominee limits", state: "todo" },
+      ],
+    },
+    questions: [{ question: "What quorum?", options: [] }],
+  });
+  assert.deepEqual(parsed.session?.areas.map((a) => a.state), ["done", "now", "todo"]);
+});
+
+test("ask_questions still accepts a one-form interview with no session", () => {
+  const parsed = askQuestionsInputSchema.parse({ questions: [{ question: "Who?", options: [] }] });
+  assert.equal(parsed.session, undefined);
+});
+
+test("an area state outside done/now/todo is rejected — the console renders three", () => {
+  assert.throws(() =>
+    askQuestionsInputSchema.parse({
+      session: { areas: [{ name: "Quorum", state: "asking" }] },
+      questions: [{ question: "What quorum?", options: [] }],
+    }),
+  );
+});
+
+test("session precedes questions, so the checklist streams before the first question", () => {
+  assert.deepEqual(Object.keys(askQuestionsInputSchema.shape), ["session", "questions"]);
+});
+
+test("the round-size split is stated where the model always reads it", () => {
+  // The 8-question ceiling belongs to one-form mode; a session round takes 1–4.
+  // Said on the field itself, so it holds even when no skill is loaded.
+  assert.match(askQuestionsInputSchema.shape.questions.description ?? "", /1–4/);
+  assert.match(askQuestionsInputSchema.shape.session.description ?? "", /EVERY round/);
+});
+
+test("the ask_questions tool names the free-text trigger that opens a session", () => {
+  // The live failure: "grill me properly on X" produced one 6-question form.
+  const description = askQuestionsTool.description;
+  assert.ok(
+    typeof description === "string",
+    "the tool text must be static — it is the model's only always-on copy of the rule",
+  );
+  assert.match(description, /grill/i);
+  assert.match(description, /1–4/);
+  assert.match(description, /session/i);
 });
