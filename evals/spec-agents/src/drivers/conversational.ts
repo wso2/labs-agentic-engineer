@@ -101,6 +101,7 @@ export async function runConversationalSection(
     }
 
     rec.questions = pending.questions.map((q) => q.question);
+    if (pending.session) rec.session = pending.session;
     const batch = await simAnswers(brief, pending.questions, questionsAsked);
     questionsAsked += pending.questions.length;
     rec.answers = batch;

@@ -31,6 +31,7 @@ import {
   ASK_QUESTIONS_TOOL,
   type AskQuestionInput,
   type AskQuestionsInput,
+  type QuestionSessionInfo,
   type StreamPart,
 } from "@aep/agent-stream";
 
@@ -40,6 +41,12 @@ export interface PendingQuestions {
   batch: boolean;
   /** The questions to render; a single `ask_question` is a one-element list. */
   questions: AskQuestionInput[];
+  /**
+   * The grilling session this round belongs to (#486), when the agent sent one.
+   * Absent on an ordinary one-form interview — and its absence is exactly how a
+   * session that failed to open is spotted, here and in the eval transcripts.
+   */
+  session?: QuestionSessionInfo;
 }
 
 /**
@@ -56,7 +63,11 @@ export function pendingQuestions(toolCalls: StreamPart[]): PendingQuestions | un
       return { batch: false, questions: [tc.input as AskQuestionInput] };
     }
     if (tc.toolName === ASK_QUESTIONS_TOOL) {
-      return { batch: true, questions: (tc.input as AskQuestionsInput).questions };
+      const input = tc.input as AskQuestionsInput;
+      // The checklist is chrome: a round whose `session` is malformed still has
+      // its questions answered, exactly as the console treats it.
+      const session = Array.isArray(input.session?.areas) ? input.session : undefined;
+      return { batch: true, questions: input.questions, ...(session ? { session } : {}) };
     }
   }
   return undefined;

@@ -20,7 +20,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { AskQuestionOption, StreamPart } from "@aep/agent-stream";
 import { pendingQuestions } from "../src/engine/questions.js";
-import { parseSelection } from "../src/tui/questions.js";
+import { parseSelection, renderSessionHeader } from "../src/tui/questions.js";
 
 const OPTIONS: AskQuestionOption[] = [
   { label: "Individual consumers", recommended: true },
@@ -56,6 +56,72 @@ test("pendingQuestions: an ask_questions call unwraps the form's questions", () 
 
 test("pendingQuestions: no question tool-call ⇒ undefined (ordinary turn)", () => {
   assert.equal(pendingQuestions([toolCall("editFile", { path: "x" })]), undefined);
+});
+
+// --- grilling sessions (#486) ------------------------------------------------
+// The `session` checklist is what distinguishes a session ROUND from a one-form
+// interview. Dropping it here would make a session indistinguishable from a
+// single form in the playground and in every eval transcript — the exact
+// failure the reachability round was opened for.
+
+test("pendingQuestions: a session round carries its area checklist through", () => {
+  const pending = pendingQuestions([
+    toolCall("ask_questions", {
+      session: {
+        title: "Voting & nominations",
+        areas: [
+          { name: "Eligibility", state: "now" },
+          { name: "Quorum", state: "todo" },
+        ],
+      },
+      questions: [{ question: "Who may vote?", options: OPTIONS }],
+    }),
+  ]);
+  assert.ok(pending);
+  assert.equal(pending.session?.title, "Voting & nominations");
+  assert.deepEqual(pending.session?.areas, [
+    { name: "Eligibility", state: "now" },
+    { name: "Quorum", state: "todo" },
+  ]);
+});
+
+test("pendingQuestions: a one-form interview has no session", () => {
+  const pending = pendingQuestions([
+    toolCall("ask_questions", { questions: [{ question: "A", options: OPTIONS }] }),
+  ]);
+  assert.equal(pending?.session, undefined);
+});
+
+test("pendingQuestions: a malformed checklist costs the header, never the questions", () => {
+  const pending = pendingQuestions([
+    toolCall("ask_questions", {
+      session: { title: "Broken" },
+      questions: [{ question: "A", options: OPTIONS }],
+    }),
+  ]);
+  assert.equal(pending?.questions.length, 1);
+  assert.equal(pending?.session, undefined);
+});
+
+test("renderSessionHeader: every area shows, marked by state", () => {
+  const out = renderSessionHeader({
+    title: "Voting & nominations",
+    areas: [
+      { name: "Eligibility", state: "done" },
+      { name: "Quorum", state: "now" },
+      { name: "Nominee limits", state: "todo" },
+    ],
+  });
+  assert.match(out, /Grilling session — Voting & nominations/);
+  assert.match(out, /✔ Eligibility/);
+  assert.match(out, /▸ Quorum/);
+  assert.match(out, /· Nominee limits/);
+});
+
+test("renderSessionHeader: a titleless session still announces itself", () => {
+  const out = renderSessionHeader({ areas: [{ name: "Reviews", state: "now" }] });
+  assert.match(out, /Grilling session\n/);
+  assert.match(out, /▸ Reviews/);
 });
 
 // --- parseSelection ----------------------------------------------------------

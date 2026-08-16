@@ -28,7 +28,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { reportTrace, shouldReportTrace } from "evalite/traces";
-import type { StreamPart } from "@aep/agent-stream";
+import type { QuestionSessionInfo, StreamPart } from "@aep/agent-stream";
 import type { SimAnswer } from "./sim-user.js";
 
 export interface TurnUsage {
@@ -44,6 +44,13 @@ export interface TurnRecord {
   agentText: string;
   toolCalls: Array<{ toolName: string; input: unknown }>;
   questions: string[];
+  /**
+   * The grilling-session checklist this turn's round carried (#486), when it was
+   * a session round. Lifted out of the tool input because it is the one thing a
+   * reviewer must be able to see at a glance: a deep-dive turn that asked
+   * WITHOUT a checklist ran a one-form interview instead of a session.
+   */
+  session?: QuestionSessionInfo;
   answers: SimAnswer[];
   /** The raw, unabridged StreamPart stream for this turn. */
   parts: StreamPart[];
@@ -76,6 +83,14 @@ export function sumUsage(records: TurnRecord[]): TurnUsage {
   );
 }
 
+/** `Voting & nominations: ✔ Eligibility · ▸ Quorum · ○ Nominee limits` */
+export function renderSessionLine(session: QuestionSessionInfo): string {
+  const marks: Record<string, string> = { done: "✔", now: "▸", todo: "○" };
+  const areas = session.areas.map((a) => `${marks[a.state] ?? "○"} ${a.name}`).join(" · ");
+  const title = session.title?.trim();
+  return `session${title ? ` "${title}"` : ""}: ${areas || "(no areas)"}`;
+}
+
 /** One evalite trace per turn (visible under the case in the serve UI). */
 export function reportTurnTrace(rec: TurnRecord, start: number): void {
   if (!shouldReportTrace()) return;
@@ -84,6 +99,7 @@ export function reportTurnTrace(rec: TurnRecord, start: number): void {
     output: [
       rec.agentText.trim(),
       rec.toolCalls.length ? `tool calls: ${rec.toolCalls.map((t) => t.toolName).join(", ")}` : "",
+      rec.session ? renderSessionLine(rec.session) : "",
       rec.questions.length ? `asked:\n${rec.questions.map((q) => `- ${q}`).join("\n")}` : "",
       rec.answers.length
         ? `sim answered:\n${rec.answers.map((a) => `- [${a.source}] ${a.selected.join(", ")}${a.freeText ? ` — ${a.freeText}` : ""}`).join("\n")}`
@@ -120,6 +136,7 @@ export function renderTranscript(
     lines.push(`## Turn ${r.turn} (${(r.ms / 1000).toFixed(1)}s${r.usage ? `, ${r.usage.inputTokens}in/${r.usage.outputTokens}out tokens` : ""})`, "");
     lines.push("### User → agent", "", "```", r.instruction, "```", "");
     if (r.agentText.trim()) lines.push("### Agent said", "", r.agentText.trim(), "");
+    if (r.session) lines.push(`### Grilling session round`, "", renderSessionLine(r.session), "");
     if (r.toolCalls.length) {
       lines.push("### Tool calls", "");
       for (const t of r.toolCalls) lines.push(`- \`${t.toolName}\` ${JSON.stringify(t.input)?.slice(0, 400) ?? ""}`);

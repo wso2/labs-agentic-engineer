@@ -32,6 +32,7 @@ import {
   type AskQuestionInput,
   type AskQuestionOption,
   type QuestionAnswer,
+  type QuestionSessionInfo,
 } from "@aep/agent-stream";
 import type { PendingQuestions } from "../engine/questions.js";
 
@@ -39,6 +40,29 @@ const color = (code: string) => (s: string): string => (stdout.isTTY ? `\x1b[${c
 const dim = color("2");
 const bold = color("1");
 const cyan = color("36");
+
+/** The console's done-ticked / now-highlighted / todo-outlined chips, in text. */
+const AREA_MARK: Record<string, string> = { done: "✔", now: "▸", todo: "·" };
+
+/**
+ * Render a grilling-session round's area checklist above its questions (#486) —
+ * the terminal's half of the console's checklist header, so a session is as
+ * visible in `pnpm play` as it is in the console. One-form interviews carry no
+ * `session` and print nothing.
+ */
+export function renderSessionHeader(session: QuestionSessionInfo): string {
+  const title = session.title?.trim();
+  const head = `\n${cyan("§")} ${bold(`Grilling session${title ? ` — ${title}` : ""}`)}\n`;
+  if (session.areas.length === 0) return head;
+  const areas = session.areas
+    .map((a) => {
+      const mark = AREA_MARK[a.state] ?? "·";
+      const name = a.state === "now" ? bold(a.name) : a.state === "done" ? dim(a.name) : a.name;
+      return `${mark} ${name}`;
+    })
+    .join("   ");
+  return `${head}    ${areas}\n`;
+}
 
 /** Render one question and its numbered options to a string block. */
 function renderQuestion(q: AskQuestionInput, ordinal?: number): string {
@@ -102,6 +126,7 @@ export async function collectAnswers(
   pending: PendingQuestions,
 ): Promise<string | null> {
   const numbered = pending.questions.length > 1;
+  if (pending.session) stdout.write(renderSessionHeader(pending.session));
   const answers: Array<{ question: string } & QuestionAnswer> = [];
   for (let i = 0; i < pending.questions.length; i++) {
     const q = pending.questions[i]!;
