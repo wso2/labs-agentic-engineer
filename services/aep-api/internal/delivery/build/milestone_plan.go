@@ -18,6 +18,7 @@ package build
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -142,7 +143,7 @@ func (s *Service) claimVersion(ctx context.Context, orgID, projectID string, sco
 		MilestoneTitle:  milestoneTitle,
 		Tag:             tag,
 		Origin:          delivery.RunOriginSpecBuild,
-		// PLANNING, not waiting: fillMilestone has not run yet, so for the next
+		// PLANNING, not waiting: the run has not filled its milestone yet, so for the next
 		// minutes this row is a version being written, not a run parked on
 		// something a human has to do. Admitting as waiting is what made the
 		// console tell users their build was held while it was busy.
@@ -257,53 +258,65 @@ func gatesLast(issues []sourcecontrol.IssueInfo) []sourcecontrol.IssueInfo {
 	return out
 }
 
-// fillMilestone is the detached half: plan the version's Tasks into the
-// milestone, mint its gates, and hand the run to the supervisor. It runs on a
-// context detached from the request because a planning turn is an LLM turn.
+// startRun hands the claimed version to the supervisor, which fills its
+// milestone — gates, then the planning turn — as the run's first phase.
 //
-// A failure here SETTLES the run it was filling. The row is the spec-run mutex;
-// leaving it non-terminal after a plan that never landed would block every
-// later build behind a run nobody is driving.
-func (s *Service) fillMilestone(ctx context.Context, orgID, projectID, tag string, run *delivery.MilestoneRun, inputs []delivery.ProvisionInput) {
+// The click carries the Tag and the provision inputs into the request because
+// only the caller knows this is a version being FILLED rather than a run being
+// resumed; the sweep and the adoption paths leave both empty and the workflow
+// skips planning. See delivery.StartRunRequest.
+//
+// A supervisor that cannot start is the one failure this path still settles
+// itself. Everything the run does after this point is the workflow's to fail,
+// with Temporal's retries behind it.
+func (s *Service) startRun(ctx context.Context, orgID, projectID, tag string,
+	run *delivery.MilestoneRun, inputs []delivery.ProvisionInput) error {
 	p := s.plan
-	// Gates first: an open gate is a dispatch hold, so minting them before the
-	// work means the predicate is honest from the moment the first Task lands.
-	if p.gates != nil {
-		if err := p.gates.ProvisionForBuild(ctx, orgID, projectID, tag, run.MilestoneNumber, inputs); err != nil {
-			s.failRun(ctx, run, fmt.Errorf("provision dependencies: %w", err))
-			return
-		}
-	}
-	if p.planner != nil {
-		if err := p.planner.PlanIntoMilestone(ctx, orgID, projectID, run.MilestoneNumber); err != nil {
-			s.failRun(ctx, run, fmt.Errorf("plan tasks: %w", err))
-			return
-		}
-	}
 	if p.starter == nil {
 		slog.InfoContext(ctx, "build: no run supervisor wired — run row waits",
 			"project", projectID, "run", run.ID, "milestone", run.MilestoneNumber)
-		return
+		return nil
 	}
-	if err := p.starter.StartRun(ctx, delivery.StartRunRequest{
+	err := p.starter.StartRun(ctx, delivery.StartRunRequest{
 		OrgID:           orgID,
 		ProjectID:       projectID,
 		MilestoneNumber: run.MilestoneNumber,
 		MilestoneTitle:  run.MilestoneTitle,
 		Origin:          delivery.RunOriginSpecBuild,
 		RunID:           run.ID,
-	}); err != nil {
-		s.failRun(ctx, run, fmt.Errorf("start run: %w", err))
+		Tag:             tag,
+		ProvisionInputs: inputs,
+	})
+	if err == nil {
+		return nil
 	}
+	s.failRun(ctx, run, fmt.Errorf("start run: %w", err))
+	if errors.Is(err, delivery.ErrRunNotStarted) {
+		// The platform is not ready to work this version — no workflow engine, no
+		// agent dispatcher. A 503 says so, and because the row above is now
+		// terminal the user's next click is admitted rather than refused by a run
+		// that never ran.
+		return &EdgeError{Status: 503, Message: "the platform is not ready to work this version — try again shortly"}
+	}
+	return &EdgeError{Status: 502, Message: "start run: " + err.Error()}
 }
 
 // failRun settles a run the plan path could not fill, so the mutex it armed is
 // released. The reason names exactly this failure class, keeping the terminal
 // reasons honest.
+//
+// The settle write DELIBERATELY outlives the request. This runs on the click's
+// own context, and a user who navigates away — or a proxy that times out — while
+// StartRun is in flight would otherwise cancel the one write that makes the row
+// terminal. The row would stay `planning`, which is non-terminal, and the
+// project's spec mutex would stay held: no later build could be admitted, and
+// the reconcile sweep counts `planning` as live so nothing would heal it. A
+// cancelled client must not be able to wedge a project.
 func (s *Service) failRun(ctx context.Context, run *delivery.MilestoneRun, cause error) {
 	slog.ErrorContext(ctx, "build: milestone plan path failed — settling the run",
 		"project", run.ProjectID, "run", run.ID, "milestone", run.MilestoneNumber, "error", cause)
-	if _, err := s.plan.runs.Settle(ctx, run.ID, delivery.RunStateFailed, delivery.RunReasonPlanFailed); err != nil {
+	settleCtx := context.WithoutCancel(ctx)
+	if _, err := s.plan.runs.Settle(settleCtx, run.ID, delivery.RunStateFailed, delivery.RunReasonPlanFailed); err != nil {
 		slog.ErrorContext(ctx, "build: settling the failed run ALSO failed — the project's spec mutex is held",
 			"project", run.ProjectID, "run", run.ID, "error", err)
 	}

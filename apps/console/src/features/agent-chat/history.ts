@@ -32,6 +32,12 @@ import type { ChatMessage } from "./chatStore.js";
 import { isQuestionTool, parseQuestionsInput } from "./questionCards.js";
 import type { ConversationMessage } from "./api/turns.js";
 
+// Ids are POSITION-STABLE (`h<n>`, and `h<n>:q-<toolCallId>` for question
+// cards): the same server history projects to the same ids every time, so the
+// D6 rehydrate — which REPLACES the log on mount, foreign turn, and refocus —
+// neither remounts unchanged React rows nor re-arms the panel's
+// one-per-question auto-navigation. A thread is append-only, so a row's
+// position never moves under it.
 export function projectableHistory(history: ConversationMessage[]): ChatMessage[] {
   const out: ChatMessage[] = [];
   for (const m of history) {
@@ -39,22 +45,22 @@ export function projectableHistory(history: ConversationMessage[]): ChatMessage[
     if (m.role === "user") {
       if (!text) continue;
       out.push({
-        id: "",
+        id: `h${out.length}`,
         role: "user",
         content: text,
         status: "completed",
         ...(m.author ? { author: m.author } : {}),
       });
     } else if (m.role === "assistant") {
-      if (text) out.push({ id: "", role: "assistant", turnId: "history", content: text });
-      for (const q of questionCardsOf(m.content)) out.push(q);
+      if (text) out.push({ id: `h${out.length}`, role: "assistant", turnId: "history", content: text });
+      for (const q of questionCardsOf(m.content, out.length)) out.push(q);
     }
   }
   return out;
 }
 
 /** Reconstruct question cards from an assistant message's tool-call parts. */
-function questionCardsOf(content: unknown): Extract<ChatMessage, { role: "question" }>[] {
+function questionCardsOf(content: unknown, at: number): Extract<ChatMessage, { role: "question" }>[] {
   if (!Array.isArray(content)) return [];
   const cards: Extract<ChatMessage, { role: "question" }>[] = [];
   for (const part of content) {
@@ -64,7 +70,7 @@ function questionCardsOf(content: unknown): Extract<ChatMessage, { role: "questi
     const questions = parseQuestionsInput(p.toolName!, p.input);
     if (!questions) continue;
     cards.push({
-      id: "",
+      id: `h${at + cards.length}:q-${p.toolCallId ?? ""}`,
       role: "question",
       turnId: "history",
       toolCallId: p.toolCallId ?? "",

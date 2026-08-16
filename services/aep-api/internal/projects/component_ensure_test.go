@@ -54,10 +54,15 @@ func (ensureRepoSvc) DeleteRepo(context.Context, string, string) error {
 
 func TestEnsureComponent_ProvisionsOCComponentFromDesign(t *testing.T) {
 	var captured *openchoreo.CreateComponentRequest
+	var capturedSpec *openchoreo.ComponentSpecDesired
 	oc := &ocmocks.ComponentClientMock{
 		CreateComponentFunc: func(_ context.Context, _, _ string, req *openchoreo.CreateComponentRequest) (*gen.Component, error) {
 			captured = req
 			return &gen.Component{Name: req.Name}, nil
+		},
+		ApplyComponentSpecFunc: func(_ context.Context, _, _, _ string, d openchoreo.ComponentSpecDesired) error {
+			capturedSpec = &d
+			return nil
 		},
 	}
 	// A design with one service component named "order-service".
@@ -90,9 +95,21 @@ func TestEnsureComponent_ProvisionsOCComponentFromDesign(t *testing.T) {
 	if captured.Type != "deployment/service" {
 		t.Errorf("component type = %q, want deployment/service", captured.Type)
 	}
-	// AutoBuild=false (builds are BFF-driven at the merge SHA), AutoDeploy=true.
-	if captured.AutoBuild || !captured.AutoDeploy {
-		t.Errorf("autoBuild/autoDeploy = %v/%v, want false/true", captured.AutoBuild, captured.AutoDeploy)
+	// Both false: builds are BFF-driven at the merge SHA, and deploys are
+	// BFF-driven at the deploy stage. An autoDeploy=true component would have
+	// OpenChoreo promoting releases underneath the supervisor.
+	if captured.AutoBuild || captured.AutoDeploy {
+		t.Errorf("autoBuild/autoDeploy = %v/%v, want false/false", captured.AutoBuild, captured.AutoDeploy)
+	}
+	// The desired spec is re-asserted on EVERY ensure, not only at create: the
+	// trait shape is frozen into the next release, so a design edit that has not
+	// reached the CR before the build is an edit the release silently drops.
+	if capturedSpec == nil {
+		t.Fatal("EnsureComponent must re-assert the component spec")
+	}
+	if capturedSpec.AutoBuild || capturedSpec.AutoDeploy {
+		t.Errorf("re-asserted autoBuild/autoDeploy = %v/%v, want false/false",
+			capturedSpec.AutoBuild, capturedSpec.AutoDeploy)
 	}
 	wf := captured.Workflow
 	if wf == nil || wf.Name != "dockerfile-builder" || wf.Kind != "ClusterWorkflow" {
@@ -122,6 +139,9 @@ func TestEnsureComponent_WebAppKind_UsesWebApplicationEntrypoint(t *testing.T) {
 		CreateComponentFunc: func(_ context.Context, _, _ string, req *openchoreo.CreateComponentRequest) (*gen.Component, error) {
 			captured = req
 			return &gen.Component{Name: req.Name}, nil
+		},
+		ApplyComponentSpecFunc: func(context.Context, string, string, string, openchoreo.ComponentSpecDesired) error {
+			return nil
 		},
 	}
 	files := map[string]string{

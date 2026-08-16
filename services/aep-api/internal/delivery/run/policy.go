@@ -58,7 +58,7 @@ func Dispatchable(s MilestoneSnapshot) bool {
 // budget the cycle spends, not to change what the agent does.
 func nextCycleKind(previous cycleResult) string {
 	switch previous {
-	case cycleRed:
+	case cycleRed, cycleDeployFailed:
 		return delivery.CycleKindFix
 	case cycleConflict:
 		return delivery.CycleKindConflict
@@ -163,7 +163,69 @@ type CycleBuildState struct {
 	Expected int      `json:"expected"`
 	Settled  int      `json:"settled"`
 	Red      []string `json:"red,omitempty"`
+	// Components is the set the merge touched, in the fan-out's own order. The
+	// DEPLOY stage promotes exactly this list rather than re-deriving it from
+	// GitHub: the two stages must agree on which components a cycle owns, and a
+	// second path to that answer is a second chance to disagree.
+	Components []string `json:"components,omitempty"`
 }
 
 // Green reports whether every component the merge touched has built.
 func (s CycleBuildState) Green() bool { return len(s.Red) == 0 && s.Settled >= s.Expected }
+
+// CycleDeployState is how far a cycle's DEPLOY has got: how many components were
+// promoted, how many are serving, and which ones the cluster has given up on.
+//
+// It mirrors CycleBuildState deliberately — the loop asks the same question of
+// both stages ("is this settled, and did it settle badly?") and answering it in
+// two different shapes would earn nothing.
+//
+// Expected == 0 is a real answer, not a degenerate one: a validation cycle's
+// pull request carries only tests and a report, so it rebuilds and redeploys
+// nothing and is Ready the moment it merges.
+type CycleDeployState struct {
+	Expected int      `json:"expected"`
+	Ready    int      `json:"ready"`
+	Failed   []string `json:"failed,omitempty"`
+	// Pending NAMES the components that have reached no verdict yet, where Ready
+	// is only counted.
+	//
+	// Named because the deadline reports them AS the failure: a cycle can expire
+	// with some components serving and others still rolling out, and a fix issue
+	// that named the whole cycle would file work against components that deployed
+	// perfectly. Counting was enough while the only question was "are we done
+	// yet"; the deadline made "which ones aren't" a question too.
+	Pending []string `json:"pending,omitempty"`
+	// Reasons carries OpenChoreo's own condition reason per failed component,
+	// for the issue body a failed deploy mints. Never branched on.
+	Reasons map[string]string `json:"reasons,omitempty"`
+}
+
+// Green reports whether every component the cycle deployed is serving.
+func (s CycleDeployState) Green() bool { return len(s.Failed) == 0 && s.Ready >= s.Expected }
+
+// classifyCycleDeploys folds the per-component reads into the cycle's verdict.
+//
+// A component that is neither Ready nor Failed is still rolling out, and counts
+// as neither — which is what keeps the poll waiting rather than declaring a slow
+// rollout finished or broken.
+func classifyCycleDeploys(expected int, states []delivery.ComponentDeploy) CycleDeployState {
+	out := CycleDeployState{Expected: expected}
+	for _, st := range states {
+		switch {
+		case st.Failed:
+			out.Failed = append(out.Failed, st.Component)
+			if st.Reason != "" {
+				if out.Reasons == nil {
+					out.Reasons = map[string]string{}
+				}
+				out.Reasons[st.Component] = st.Reason
+			}
+		case st.Ready:
+			out.Ready++
+		default:
+			out.Pending = append(out.Pending, st.Component)
+		}
+	}
+	return out
+}

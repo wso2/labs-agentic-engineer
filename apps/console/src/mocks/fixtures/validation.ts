@@ -317,7 +317,7 @@ const ARTIFACTS: Record<ValidationScenario, Artifacts> = {
   // No acceptance oracle was ever authored — that IS the reason it was skipped.
   skipped: {},
   // The oracle exists; the report does not yet, because the attempt is still
-  // running or has not started.
+  // running or has not started. A REPEAT attempt does have one — see REPEAT_ARTIFACTS.
   running: { criteria: PARTIAL.criteria },
   none: { criteria: PARTIAL.criteria },
   // Mid-repair: the failed attempt's report is committed and stays readable, which
@@ -328,8 +328,13 @@ const ARTIFACTS: Record<ValidationScenario, Artifacts> = {
 /** The validation artifacts a scenario puts in the repo, as Files-API entries. */
 export function validationFiles(
   scenario: ValidationScenario,
+  attempt: ValidationAttempt = "first",
 ): { path: string; content: string }[] {
-  const { criteria, report } = ARTIFACTS[scenario];
+  // A repeat attempt is running OVER a failed one whose report is still committed —
+  // which is what its copy counts. A first attempt has the oracle and nothing else.
+  const { criteria, report } = isRepeat(scenario, attempt)
+    ? FAILED
+    : ARTIFACTS[scenario];
   return [
     ...(criteria ? [{ path: CRITERIA_PATH, content: criteria }] : []),
     ...(report ? [{ path: REPORT_PATH, content: report }] : []),
@@ -516,7 +521,48 @@ const RUNS: Record<ValidationScenario, MilestoneRunView> = {
   }),
 };
 
+// `running` is the one scenario with TWO honest shapes, because the loop repeats:
+// a first attempt (no verdict yet, nothing to report) and a repeat attempt (the
+// previous attempt's verdict still on the row, its report still committed). They
+// render differently — only the repeat has a verdict tile, and only its copy marks
+// its numbers as the last attempt's — and `deploy.validation` is `running` for both,
+// so no value of the scenario switch can tell them apart.
+//
+// Hence a second devtools key rather than a tenth scenario:
+//   localStorage.setItem('aep:mock:validation', 'running')
+//   localStorage.setItem('aep:mock:validation-attempt', 'repeat')
+//
+// It is read only for `running`; every other scenario has one shape and ignores it.
+export type ValidationAttempt = "first" | "repeat";
+
+/** The key's accepted values — also the list the handler validates against. */
+export const VALIDATION_ATTEMPTS: ValidationAttempt[] = ["first", "repeat"];
+
+// Attempt 1 merged and failed, a coding cycle repaired it, attempt 2 is in flight
+// against the fixed system. The in-flight cycle is re-id'd because
+// VALIDATION_IN_FLIGHT is hardcoded `cycle-2`, which the merged attempt owns here.
+const RUNNING_REPEAT: MilestoneRunView = run({
+  state: "running",
+  endedAt: null,
+  validation: { verdict: "failed", issue: 12, reportPath: REPORT_PATH },
+  cycles: [
+    CODING_1,
+    validationCycle(2, "failed"),
+    CODING_3,
+    { ...VALIDATION_IN_FLIGHT, id: "cycle-4", createdAt: "2026-07-10T10:24:00Z" },
+  ],
+});
+
+/** True when the scenario/attempt pair is the repeat-attempt shape. */
+function isRepeat(scenario: ValidationScenario, attempt: ValidationAttempt): boolean {
+  return scenario === "running" && attempt === "repeat";
+}
+
 /** The version's run story for a validation scenario. */
-export function validationRuns(scenario: ValidationScenario): BuildRunList {
-  return { tag: "v1", milestoneNumber: 1, runs: [RUNS[scenario]] };
+export function validationRuns(
+  scenario: ValidationScenario,
+  attempt: ValidationAttempt = "first",
+): BuildRunList {
+  const row = isRepeat(scenario, attempt) ? RUNNING_REPEAT : RUNS[scenario];
+  return { tag: "v1", milestoneNumber: 1, runs: [row] };
 }

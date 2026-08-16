@@ -92,9 +92,16 @@ const TONE_TO_STATUS: Record<StageTone, StatusTone> = {
 // fix" for the same run.
 function headerChip(view: ReturnType<typeof validationView>): PageHeaderStatus | undefined {
   if (!view) return undefined;
+  const lead = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
   return {
     // The shared labels are lowercase for mid-sentence use; the chip leads.
-    label: view.label.charAt(0).toUpperCase() + view.label.slice(1),
+    label: lead(view.label),
+    // This chip stands ALONE at the top of the page — nothing beside it spells out
+    // what "Validated*" hedges — so the two mark-bearing labels need their spoken
+    // form here. Run through the same capitalization rather than pre-cased at the
+    // mapper, so one casing rule covers both names. A no-op for the seven states
+    // that carry no spoken form.
+    ...(view.spoken ? { spokenLabel: lead(view.spoken) } : {}),
     tone: TONE_TO_STATUS[view.tone],
   };
 }
@@ -188,16 +195,29 @@ export function ValidationPage({
   const attemptRuns = runList
     .filter((r) => (r.cycles ?? []).some((c) => c.kind === "validation"))
     .reverse();
-  // The LAST attempt across the whole version, not the first, and not the newest
-  // run's. A version can be judged more than once — a failed attempt is repaired
-  // and re-validated, and a revalidation asks again later — so pairing an older
-  // attempt's merge commit with the current verdict would show the wrong report.
-  const validationCycle = attemptRuns
-    .flatMap((r) => (r.cycles ?? []).filter((c) => c.kind === "validation"))
-    .at(-1);
+  // Every attempt across the whole version, oldest first. The LAST is what the page
+  // is about — not the first, and not the newest run's. A version can be judged more
+  // than once (a failed attempt is repaired and re-validated; a revalidation asks
+  // again later), so pairing an older attempt's merge commit with the current verdict
+  // would show the wrong report.
+  const validationCycles = attemptRuns.flatMap((r) =>
+    (r.cycles ?? []).filter((c) => c.kind === "validation"),
+  );
+  const validationCycle = validationCycles.at(-1);
+  // The report is pinned to the last attempt that MERGED, which is not always the
+  // last attempt. A repeat attempt in flight has no report yet by definition, and its
+  // cycle record carries no mergeSha — pinning to it passes an empty ref, which
+  // degrades to a branch-tip read, the one thing this pin exists to prevent. The tip
+  // happens to hold the previous attempt's report until the new one merges, so the
+  // bug returns the right bytes by accident and would stop the moment anything else
+  // wrote the path.
+  const reportCycle = validationCycles.filter((c) => c.mergeSha).at(-1);
   // The cycle carries the pull request's page as the webhook reported it. This
   // page used to build one from the project's repoUrl and the number, which is a
   // CLONE url — a `.git` suffix produced a link that 404s.
+  //
+  // Taken from the LATEST attempt rather than the merged one: mid-repeat the open
+  // pull request is the one a reader wants, and it is the one this link is for.
   const prUrl = validationCycle?.prUrl;
 
   // The run reached an ANSWER — which is not the same as "everything passed", and
@@ -210,16 +230,16 @@ export function ValidationPage({
   // found" note instead of the tile that explains the breach.
   const missingReport = rawVerdict === "unreported";
   const criteria = useValidationCriteria(projectName, version, settled);
-  // Pinned to THIS run's validation-cycle merge commit. Reading the branch tip
-  // would show whichever run last overwrote the path — so an older run in the story
-  // would display the newest run's results, and a run that committed no report
+  // Pinned to the merge commit of the attempt that produced it. Reading the branch
+  // tip would show whichever run last overwrote the path — so an older run in the
+  // story would display the newest run's results, and a run that committed no report
   // would silently inherit its predecessor's.
   const report = useValidationReport(
     projectName,
     version,
     settled && !missingReport,
     reportPath,
-    validationCycle?.mergeSha,
+    reportCycle?.mergeSha,
   );
   const tally = useTally(criteria.data?.content, report.data?.content);
 
@@ -243,19 +263,16 @@ export function ValidationPage({
   const cancelling =
     cancel.isPending || (cancelRequestedFor === liveRun?.id && !cancel.isError);
 
-  // Body rule: the log shows while there is no report worth showing — nothing
-  // settled yet, or an attempt IN FLIGHT, whose report does not exist yet and whose
-  // predecessor's is about to be replaced — OR the user toggled ?view=logs.
+  // Body rule: the log shows while there is no report to show at all, or the reader
+  // asked for it. Nothing else — a state that forces the log makes the "View report"
+  // button inert, because `?view=logs | absent` has no third value for a default to
+  // yield to, so `onViewChange(undefined)` cannot outrank it.
   //
-  // The in-flight arm is what makes a repeat attempt read like the first one. It was
-  // unreachable while the page had no lifecycle input: a second attempt runs with a
-  // verdict already on the row, so `settled` was true and the page opened on the
-  // previous attempt's report under a chip announcing that validation was running.
-  //
-  // `awaiting-fix` deliberately does NOT show the log: the cycle in flight then is a
-  // coding one, and this feed is filtered to validation cycles, so it would be a
-  // stale log where the reader wants the report naming what is being fixed.
-  const showLogs = !settled || state === "running" || view === "logs";
+  // A repeat attempt in flight is NOT such a state, though it briefly was. Its
+  // predecessor's report is real and is what the reader wants while the fix is being
+  // re-checked; that it belongs to the previous attempt is said by the tile, in the
+  // sentence and again in the tally.
+  const showLogs = !settled || view === "logs";
 
   // The verdict tile stays visible in BOTH bodies — a verdict does not stop being
   // true because the reader switched to the log. `state` is what it leads with, so

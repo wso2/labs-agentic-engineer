@@ -22,7 +22,7 @@ import (
 	"testing"
 )
 
-// The stories field (#369, platform-recomputed from the cell) must survive
+// The stories field (#369, agent-authored during enrichment) must survive
 // the strict design.json codec in BOTH directions: a decode-only fix would
 // have the next save silently strip the field (the preflight regression that
 // motivated this: `json: unknown field "stories"`).

@@ -24,14 +24,12 @@ Run a short scoped interview (one form: what the feature does, for whom, and
 any policy it implies — skip what the instruction already says). Then:
 
 - append the feature's stories with fresh numbers,
-- write or extend `specs/requirements/features/<slug>.md` with the depth,
-- add the new story numbers to the single **Phasing** entry — the product
-  ships in one phase, so there is no later phase to defer them to; a feature
-  that should not ship yet is an Out of Scope line instead,
+- write or extend `specs/requirements/features/<slug>.md` with the depth —
+  a feature that should not ship yet is an Out of Scope line instead,
 - record any new product decisions (org defaults answer silently, as ever).
 
-Done when every new story has a number, a place in the Phasing entry, and an
-actor the Actors section defines.
+Done when every new story has a number and an actor the Actors section
+defines.
 
 ## Add an actor
 
@@ -50,7 +48,7 @@ Walk the **Open Questions** list, one `ask_question` each. Two exits per
 question:
 
 - **Answered** — the answer moves to the section it belongs in (a decision, a
-  story, a phase) and the question is removed.
+  story) and the question is removed.
 - **Deferred** — the user says later: mark it "deferred — does not block
   design" and leave it in place.
 
@@ -58,6 +56,6 @@ Done when no question is left in the undecided state.
 
 ## Close
 
-Summarize exactly what changed — new story numbers, phases touched, questions
+Summarize exactly what changed — new story numbers, sections touched, questions
 resolved or deferred — in a few lines. The rest of the flow (design, build)
 stays untouched by this skill.

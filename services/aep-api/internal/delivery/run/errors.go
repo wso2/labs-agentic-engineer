@@ -41,8 +41,11 @@ package run
 // because it swallows its error by contract and so never retries at all.
 
 import (
+	"errors"
+
 	"go.temporal.io/sdk/temporal"
 
+	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
@@ -66,4 +69,43 @@ func sourceControlErr(err error) error {
 		return err
 	}
 	return temporal.NewNonRetryableApplicationError(err.Error(), errTypePermanentSourceControl, err)
+}
+
+// errTypePermanentPlan is the ApplicationError type a permanent planning failure
+// carries.
+const errTypePermanentPlan = "PermanentPlanFailure"
+
+// planErr classifies a planning round trip, and is the whole point of moving
+// planning into the workflow.
+//
+// The detached goroutine this replaced had no such distinction: a seven-second
+// TCP connect timeout to GitHub and "the repository was deleted" both settled
+// the version `plan-failed`. Now the first is a blip that Temporal retries under
+// the default unbounded policy, and only the second — which repeating cannot
+// change — comes back non-retryable and fails the run on its first attempt.
+//
+// The classification is sourcecontrol's, not this package's: planning is an LLM
+// turn wrapped around git and GitHub calls, so the failures worth telling apart
+// are exactly the ones sourceControlErr already names.
+func planErr(err error) error {
+	if err == nil || !sourcecontrol.IsPermanent(err) {
+		return err
+	}
+	return temporal.NewNonRetryableApplicationError(err.Error(), errTypePermanentPlan, err)
+}
+
+// errTypePermanentDeploy is the ApplicationError type a permanent deploy failure
+// carries, named for the class a reader of a failed workflow needs first: the
+// component this run was promoting is gone.
+const errTypePermanentDeploy = "PermanentDeployFailure"
+
+// deployErr is sourceControlErr's twin for the deploy stage, and exists for the
+// same reason: an answer must not be retried like a blip. WHICH deploy failures
+// are permanent is the projects domain's to say (delivery.ErrDeployPermanent) —
+// this package only knows how to say it to Temporal.
+func deployErr(err error) error {
+	if err == nil || !errors.Is(err, delivery.ErrDeployPermanent) {
+		return err
+	}
+	return temporal.NewNonRetryableApplicationError(err.Error(), errTypePermanentDeploy, err)
 }

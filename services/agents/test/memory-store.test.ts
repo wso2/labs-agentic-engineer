@@ -25,6 +25,7 @@ function fresh(id: string): Conversation {
   return {
     id,
     messages: [{ role: "user", content: "hi" }],
+    turns: [],
     status: "active",
     createdAt: new Date("2020-01-01T00:00:00Z"),
     updatedAt: new Date("2020-01-01T00:00:00Z"),

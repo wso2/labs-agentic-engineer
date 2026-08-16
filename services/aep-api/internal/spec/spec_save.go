@@ -207,10 +207,10 @@ func validateSpecBundles(reqFiles, designFiles map[string]string) error {
 			})
 		}
 	}
-	// The phase gate (#369/#370/#371) runs only once the basic layout gates
-	// pass — its checks presuppose a PRD and a design tree to read.
+	// The build gate (#369) runs only once the basic layout gates pass — its
+	// checks presuppose a PRD and a design tree to read.
 	if len(files) == 0 {
-		for _, f := range validatePhaseGate(reqFiles, designFiles) {
+		for _, f := range validateBuildGate(reqFiles, designFiles) {
 			files = append(files, FileValidationError{
 				Path: DesignDir + "/" + f.Path, Code: f.Code, Message: f.Message,
 			})

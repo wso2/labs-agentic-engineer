@@ -70,7 +70,45 @@ function sse(frames: unknown[]): Response {
   });
 }
 
+// Project-scoped threads (#430): the console resolves the current thread
+// before it can send or rehydrate ANYTHING, so without these two handlers the
+// whole mock-mode chat surface is dead (composer disabled forever). One
+// stable id per project per page instance; rotation mints a fresh one.
+const currentThread = new Map<string, string>();
+let threadCounter = 0;
+function threadFor(projectName: string): string {
+  let id = currentThread.get(projectName);
+  if (!id) {
+    threadCounter += 1;
+    id = `mock-thread-${instanceId}-${threadCounter}`;
+    currentThread.set(projectName, id);
+  }
+  return id;
+}
+function threadView(id: string) {
+  return {
+    conversationId: id,
+    createdAt: new Date().toISOString(),
+    createdBy: "You",
+    current: true,
+  };
+}
+
 export const agentChatHandlers = [
+  http.get("*/api/v1/projects/:projectName/agents/conversations", ({ params }) => {
+    return HttpResponse.json({
+      conversations: [threadView(threadFor(params.projectName as string))],
+    });
+  }),
+
+  http.post("*/api/v1/projects/:projectName/agents/conversations", ({ params }) => {
+    const projectName = params.projectName as string;
+    threadCounter += 1;
+    const fresh = `mock-thread-${instanceId}-${threadCounter}`;
+    currentThread.set(projectName, fresh);
+    return HttpResponse.json(threadView(fresh), { status: 201 });
+  }),
+
   http.post("*/api/v1/projects/:projectName/agents/:conversationId/messages", async ({ request }) => {
     const body = (await request.json()) as { instruction?: string };
     turnCounter += 1;

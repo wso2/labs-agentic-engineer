@@ -25,6 +25,7 @@ package build
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -33,11 +34,11 @@ import (
 	"time"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
-	"github.com/wso2/aep/aep-api/internal/spec"
 	"github.com/wso2/aep/aep-api/internal/platform/gittest"
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 	githubclient "github.com/wso2/aep/aep-api/internal/sourcecontrol/githubhost"
+	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
 // ---- real IssueService on a stub --------------------------------------------
@@ -411,20 +412,20 @@ func TestSupersede_NeverSupersedesTheVersionBeingCut(t *testing.T) {
 	}
 }
 
-// ---- fill: gates, planning, supervisor ---------------------------------------
+// ---- start: handing the claimed version to the supervisor --------------------
+//
+// Gates and planning moved INTO the run workflow, so what the click owns here is
+// exactly one step: start the supervisor, and settle the row when it cannot.
 
-func TestFillMilestone_MintsGatesPlansThenStartsTheRun(t *testing.T) {
+func TestStartRun_CarriesThePlanningInputsToTheSupervisor(t *testing.T) {
 	h := newPlanHarness(t)
 	run := &delivery.MilestoneRun{ID: "run-1", ProjectID: "shop", MilestoneNumber: 9, MilestoneTitle: "v3"}
+	inputs := []delivery.ProvisionInput{{Component: "api", Dependency: "db", Kind: "platform-resource"}}
 
-	h.svc.fillMilestone(context.Background(), "acme", "shop", "v3", run, nil)
+	if err := h.svc.startRun(context.Background(), "acme", "shop", "v3", run, inputs); err != nil {
+		t.Fatalf("startRun: %v", err)
+	}
 
-	if len(h.gates.milestones) != 1 || h.gates.milestones[0] != 9 {
-		t.Errorf("gate resolver called with %v, want [9] — gates must join the version's milestone", h.gates.milestones)
-	}
-	if len(h.planner.milestones) != 1 || h.planner.milestones[0] != 9 {
-		t.Errorf("planner called with %v, want [9]", h.planner.milestones)
-	}
 	if len(h.starter.started) != 1 {
 		t.Fatalf("started %d runs, want 1", len(h.starter.started))
 	}
@@ -433,40 +434,65 @@ func TestFillMilestone_MintsGatesPlansThenStartsTheRun(t *testing.T) {
 		got.Origin != delivery.RunOriginSpecBuild {
 		t.Errorf("start request = %+v", got)
 	}
+	// The Tag is what tells the workflow this is a version to FILL rather than a
+	// run to resume — without it the supervisor would skip planning and settle an
+	// unplanned version as delivered.
+	if got.Tag != "v3" {
+		t.Errorf("start request Tag = %q, want the version being filled", got.Tag)
+	}
+	if len(got.ProvisionInputs) != 1 || got.ProvisionInputs[0].Dependency != "db" {
+		t.Errorf("provision inputs not carried: %+v", got.ProvisionInputs)
+	}
+	// The click no longer plans; nothing here should have run gates or a turn.
+	if len(h.gates.milestones) != 0 || len(h.planner.milestones) != 0 {
+		t.Errorf("the click must not plan: gates=%v planner=%v", h.gates.milestones, h.planner.milestones)
+	}
 	if len(h.runs.settled) != 0 {
-		t.Errorf("a clean plan must settle nothing, got %v", h.runs.settled)
+		t.Errorf("a clean start must settle nothing, got %v", h.runs.settled)
 	}
 }
 
-// A plan that cannot land must not leave the project wedged behind the mutex it
-// armed: the run settles failed with the reason that names this class.
-func TestFillMilestone_PlanFailure_SettlesTheRun(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		setup func(*planHarness)
-	}{
-		{"gates", func(h *planHarness) { h.gates.err = fmt.Errorf("resource catalog down") }},
-		{"planner", func(h *planHarness) { h.planner.err = fmt.Errorf("anthropic 500") }},
-		{"supervisor", func(h *planHarness) { h.starter.err = fmt.Errorf("temporal down") }},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			h := newPlanHarness(t)
-			tc.setup(h)
-			run := &delivery.MilestoneRun{ID: "run-1", ProjectID: "shop", MilestoneNumber: 9, MilestoneTitle: "v3"}
+// A supervisor that cannot start must not leave the project wedged behind the
+// mutex the click armed. The row settles, so the user's next click is admitted
+// rather than refused by a run that never ran.
+func TestStartRun_NotStarted_SettlesTheRunAnd503s(t *testing.T) {
+	h := newPlanHarness(t)
+	h.starter.err = delivery.ErrRunNotStarted
+	run := &delivery.MilestoneRun{ID: "run-1", ProjectID: "shop", MilestoneNumber: 9, MilestoneTitle: "v3"}
 
-			h.svc.fillMilestone(context.Background(), "acme", "shop", "v3", run, nil)
+	err := h.svc.startRun(context.Background(), "acme", "shop", "v3", run, nil)
 
-			want := "run-1:" + delivery.RunStateFailed + ":" + delivery.RunReasonPlanFailed
-			if len(h.runs.settled) != 1 || h.runs.settled[0] != want {
-				t.Fatalf("settled = %v, want [%s]", h.runs.settled, want)
-			}
-		})
+	var edge *EdgeError
+	if !errors.As(err, &edge) || edge.Status != 503 {
+		t.Fatalf("want a 503 EdgeError, got %v", err)
+	}
+	want := "run-1:" + delivery.RunStateFailed + ":" + delivery.RunReasonPlanFailed
+	if len(h.runs.settled) != 1 || h.runs.settled[0] != want {
+		t.Fatalf("settled = %v, want [%s]", h.runs.settled, want)
+	}
+}
+
+// Any other start failure settles the same way — the row must never survive a
+// start that did not happen — but reads as a bad gateway rather than "not ready".
+func TestStartRun_OtherFailure_SettlesTheRunAnd502s(t *testing.T) {
+	h := newPlanHarness(t)
+	h.starter.err = fmt.Errorf("temporal refused")
+	run := &delivery.MilestoneRun{ID: "run-1", ProjectID: "shop", MilestoneNumber: 9, MilestoneTitle: "v3"}
+
+	err := h.svc.startRun(context.Background(), "acme", "shop", "v3", run, nil)
+
+	var edge *EdgeError
+	if !errors.As(err, &edge) || edge.Status != 502 {
+		t.Fatalf("want a 502 EdgeError, got %v", err)
+	}
+	if len(h.runs.settled) != 1 {
+		t.Fatalf("settled = %v, want exactly one", h.runs.settled)
 	}
 }
 
 // An unwired supervisor is not a failure: the run row waits, exactly as the
 // event plane's own no-op starter leaves an adopted milestone waiting.
-func TestFillMilestone_NoSupervisor_LeavesTheRunWaiting(t *testing.T) {
+func TestStartRun_NoSupervisor_LeavesTheRunWaiting(t *testing.T) {
 	h := newPlanHarness(t)
 	h.svc.SetPlanPath(PlanPathDeps{
 		Milestones: newIssueSvcOnStub(t, h.stub),
@@ -475,13 +501,11 @@ func TestFillMilestone_NoSupervisor_LeavesTheRunWaiting(t *testing.T) {
 	})
 	run := &delivery.MilestoneRun{ID: "run-1", ProjectID: "shop", MilestoneNumber: 9, MilestoneTitle: "v3"}
 
-	h.svc.fillMilestone(context.Background(), "acme", "shop", "v3", run, nil)
-
+	if err := h.svc.startRun(context.Background(), "acme", "shop", "v3", run, nil); err != nil {
+		t.Fatalf("an unwired supervisor is not an error: %v", err)
+	}
 	if len(h.runs.settled) != 0 {
 		t.Errorf("an unwired supervisor must not settle the run, got %v", h.runs.settled)
-	}
-	if len(h.planner.milestones) != 1 {
-		t.Errorf("planning must still happen without a supervisor, got %v", h.planner.milestones)
 	}
 }
 
@@ -496,26 +520,22 @@ func requestsTo(stub *gittest.Stub, method, path string) []gittest.RecordedReque
 	return out
 }
 
-// TestClaimVersion_MilestoneIsTitledAfterTheVersion pins SINGLE-PHASE MODE: a
-// claim names its milestone after the TAG even when the scope declares a phase,
-// and the previous VERSION's milestone is superseded. The declared phase still
-// rides the scope — it drives the gate and the plan — it just does not name the
-// milestone. Delete this when per-phase milestones come back.
+// TestClaimVersion_MilestoneIsTitledAfterTheVersion pins milestone identity:
+// a claim names its milestone after the TAG, and the previous version's
+// milestone is superseded.
 func TestClaimVersion_MilestoneIsTitledAfterTheVersion(t *testing.T) {
 	h := newPlanHarness(t)
 	h.stub.OnFunc(http.MethodGet, "/repos/acme/widgets/milestones", jsonPage(`[]`))
 	h.stub.On(http.MethodPost, "/repos/acme/widgets/milestones", http.StatusCreated, `{"number":4,"title":"v3"}`)
 	h.stub.OnFunc(http.MethodGet, "/repos/acme/widgets/issues", jsonPage(`[]`))
 	h.stub.On(http.MethodPatch, "/repos/acme/widgets/milestones/2", http.StatusOK, `{}`)
-	// The previous version ran the same PHASE. Under phase-titled milestones
-	// this claim would top milestone 2 up; under single-phase mode v3 is its own
-	// version and supersedes v2.
+	// v3 is its own version and supersedes v2's milestone.
 	h.runs.rows = []delivery.MilestoneRun{{
 		OrgID: "acme", ProjectID: "shop", MilestoneNumber: 2,
 		MilestoneTitle: "v2", Tag: "v2", Origin: delivery.RunOriginSpecBuild,
 	}}
 
-	run, err := h.svc.claimVersion(context.Background(), "acme", "shop", spec.BuildScope{Tag: "v3", Phase: 1})
+	run, err := h.svc.claimVersion(context.Background(), "acme", "shop", spec.BuildScope{Tag: "v3"})
 	if err != nil {
 		t.Fatalf("claimVersion: %v", err)
 	}

@@ -22,9 +22,11 @@
 // place instead of splitting between two surfaces.
 //
 // The form is driven by the room's shared Yjs `questions` map, so EVERY collab
-// participant sees the questions and each other's selections live. Only the
-// user who triggered the turn (`ownerId`) can submit or skip — they hold the
-// SSE stream back to the agent; everyone else co-authors.
+// participant sees the questions and each other's selections live — and ANY
+// member submits or skips (#430 D5). The conversation is one shared project
+// thread, so form-submit and a composer reply are the same act; the answer
+// travels through the submitter's pendingSeed exactly like their typed reply
+// would.
 
 import { useRef } from "react";
 import { Box, Button, Checkbox, Chip, CircularProgress, Radio, Stack, TextField, Typography } from "@wso2/oxygen-ui";
@@ -40,7 +42,6 @@ import {
   serializeQuestionAnswer,
 } from "../../agent-chat/questionCards";
 import { chatKeyFor, setPendingSeed } from "../../agent-chat/chatStore";
-import { useCurrentAuthor } from "../../agent-chat/currentUser";
 import {
   closeRoomQuestion,
   updateRoomAnswer,
@@ -223,8 +224,6 @@ export function SpecQuestionForm({
   org: string;
   projectName: string;
 }) {
-  const me = useCurrentAuthor();
-  const isOwner = entry.ownerId === me.id;
   // Re-aligned to the CURRENT question count on every render: while the batch
   // streams the stored array is shorter than the list, and editing through a
   // short array drops writes for the later questions (#335).
@@ -247,7 +246,7 @@ export function SpecQuestionForm({
   // selectable but cannot submit or skip: the turn is still running, and more
   // questions may yet arrive. The final mirror clears the gate.
   const streaming = entry.streaming === true;
-  const canSubmit = isOwner && allAnswered && !streaming;
+  const canSubmit = allAnswered && !streaming;
 
   const submit = () => {
     if (!canSubmit) return;
@@ -261,9 +260,8 @@ export function SpecQuestionForm({
 
   // Skip: close the form for the WHOLE room and tell the agent to stop asking
   // and proceed — otherwise the turn sits waiting on an answer that isn't
-  // coming. Gated to the asker, same as submit (only they can drive the agent).
+  // coming. Any member, same as submit (#430 D5).
   const skip = () => {
-    if (!isOwner) return;
     setPendingSeed(
       chatKeyFor(org, projectName),
       "Skip these questions — stop interviewing and proceed with your best assumptions, stating them.",
@@ -288,9 +286,8 @@ export function SpecQuestionForm({
           <Stack direction="row" spacing={0.75} sx={{ alignItems: "center", mb: 4 }}>
             <Users size={14} />
             <Typography variant="body2" color="text.secondary">
-              {isOwner
-                ? "Everyone on this project can answer together — you'll send the answers."
-                : `Everyone on this project can answer together — ${entry.ownerId} sends them.`}
+              Everyone on this project can answer together — anyone can send the
+              answers.
             </Typography>
           </Stack>
 
@@ -315,7 +312,7 @@ export function SpecQuestionForm({
         </Box>
       </Box>
 
-      {/* Sticky footer — Continue sits bottom-right, gated to the asker. */}
+      {/* Sticky footer — Continue sits bottom-right, open to any member. */}
       <Stack
         direction="row"
         spacing={2}
@@ -329,12 +326,7 @@ export function SpecQuestionForm({
           flexShrink: 0,
         }}
       >
-        {!isOwner && (
-          <Typography variant="caption" color="text.secondary">
-            Your picks are shared live — only the person who asked can send them.
-          </Typography>
-        )}
-        <Button variant="text" color="inherit" disabled={!isOwner || streaming} onClick={skip}>
+        <Button variant="text" color="inherit" disabled={streaming} onClick={skip}>
           Skip questions
         </Button>
         <Button variant="contained" disabled={!canSubmit} onClick={submit}>

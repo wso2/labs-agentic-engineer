@@ -19,7 +19,7 @@ When the cell is saved, the platform scaffolds
 `specs/design/components/<id>/design.json` for every deployable component —
 the mechanical fields (name, type, version, buildpack, appPath, entrypoint, a
 default exposure) plus a `"language": "TBD"` sentinel. Your job is the
-JUDGMENT fields, and the build gate refuses an in-phase component left
+JUDGMENT fields, and the build gate refuses a deployable component left
 unenriched:
 
 - **language** — **Language is decided in this order**: the organization skill's Tech stack
@@ -29,6 +29,10 @@ Replace the scaffold's `"language": "TBD"` sentinel with the decided value;
 the build gate refuses a component whose language is still TBD. That choice is a fact
 you record, not a preference you re-derive per component: write it as the
 component's `language` and pin the matching stack skill in `skillsPinned`.
+- **stories** — the PRD story numbers this component serves, as an integer
+  array (e.g. `"stories": [1, 2, 4]`). Claim every story the component
+  actually serves: the build gate refuses the tag while any PRD story is
+  claimed by no component.
 - **dependencies** — the playbook below.
 - **description** — one paragraph: single responsibility, port/entrypoint
   expectations, and what it explicitly does NOT do.
@@ -46,10 +50,9 @@ write that `design.json` (addFile/editFile) — do NOT put `skillsPinned` in
 `design.md` frontmatter. Each component carries only the skills its own build
 needs.
 
-`stories` is platform-recomputed from the cell's citations — cite stories in
-the CELL, never here; an authored value is overwritten on save. Writing the
-whole enriched file yourself (removeFile + addFile with every field) is
-equally valid — the scaffold is a safety net, not a required intermediate.
+Writing the whole enriched file yourself (removeFile + addFile with every
+field) is equally valid — the scaffold is a safety net, not a required
+intermediate.
 
 ## Deriving components — deployment units the requirements justify
 

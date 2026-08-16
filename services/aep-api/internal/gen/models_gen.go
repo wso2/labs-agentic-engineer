@@ -459,6 +459,7 @@ func (e TimelineEventEmitter) Valid() bool {
 
 // Defines values for TurnConflictCode.
 const (
+	ConversationRotated TurnConflictCode = "conversation_rotated"
 	RequirementsMissing TurnConflictCode = "requirements_missing"
 	TurnInProgress      TurnConflictCode = "turn_in_progress"
 )
@@ -466,6 +467,8 @@ const (
 // Valid indicates whether the value is a known member of the TurnConflictCode enum.
 func (e TurnConflictCode) Valid() bool {
 	switch e {
+	case ConversationRotated:
+		return true
 	case RequirementsMissing:
 		return true
 	case TurnInProgress:
@@ -1181,6 +1184,19 @@ type Project struct {
 	UID     string `json:"uid,omitempty"`
 }
 
+// ProjectConversationList The project's chat threads, newest first. One element today — the current thread; the array shape is the multi-conversation future's contract, so it grows without a rename.
+type ProjectConversationList struct {
+	Conversations []ProjectConversationView `json:"conversations"`
+}
+
+// ProjectConversationView One project chat thread (#430). The id is server-minted and stored against the project — the client never chooses it. Exactly one thread per project is current; turns addressed to a demoted id are refused with 409 conversation_rotated.
+type ProjectConversationView struct {
+	ConversationID string    `json:"conversationId"`
+	CreatedAt      time.Time `json:"createdAt"`
+	CreatedBy      string    `json:"createdBy,omitempty"`
+	Current        bool      `json:"current"`
+}
+
 // ProjectList defines model for ProjectList.
 type ProjectList struct {
 	Items []Project `json:"items"`
@@ -1729,7 +1745,7 @@ type TimelineEvent struct {
 // TimelineEventEmitter Who produced the line — `subagent` for work the main agent fanned out with the Task tool, absent for the main agent itself. Absence is a positive fact, not an unknown.
 type TimelineEventEmitter string
 
-// TurnConflict create-turn 409 body. turn_in_progress carries the active turn's id; requirements_missing means the design use-case has no requirements to work from.
+// TurnConflict create-turn 409 body. turn_in_progress carries the active turn's id; requirements_missing means the design use-case has no requirements to work from; conversation_rotated means the addressed thread is no longer the project's current one — re-resolve via list-conversations and retry.
 type TurnConflict struct {
 	ActiveTurnID string           `json:"activeTurnId,omitempty"`
 	Code         TurnConflictCode `json:"code"`

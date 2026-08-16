@@ -21,7 +21,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import type { CriterionTally } from "@aep/ui-validation-view";
-import { VerdictTile, verdictCounts, verdictSentence } from "./VerdictTile";
+import { VerdictTile } from "./VerdictTile";
 
 function tally(
   total: number,
@@ -33,153 +33,12 @@ function tally(
   };
 }
 
-describe("verdictSentence", () => {
-  // `passed` now REQUIRES full coverage, so its sentence must say so — claiming
-  // only "everything passed" is what let a green banner sit over criteria nobody
-  // had checked.
-  it("passed names coverage, not just the result", () => {
-    expect(verdictSentence("passed", tally(40, { pass: 40 }))).toBe(
-      "All 40 validation criteria were covered by a test and passed.",
-    );
-  });
-
-  // The pair the vocabulary exists for. The numbers are the whole point: without
-  // them "Validated*" leaves the reader asking which part.
-  it("partial counts the uncovered criteria against the authored total", () => {
-    const t = tally(40, { pass: 35, manual: 3, not_run: 2 });
-    expect(verdictSentence("partial", t)).toBe(
-      "Everything that ran passed, but 5 of 40 validation criteria couldn't be automated — please validate them manually.",
-    );
-  });
-
-  it("partial inflects for a single uncovered criterion", () => {
-    expect(verdictSentence("partial", tally(40, { pass: 39, manual: 1 }))).toContain(
-      "1 of 40 validation criteria couldn't be automated — please validate it manually",
-    );
-  });
-
-  // A failing verdict now ENDS the run, which is a consequence no chip can state —
-  // so the sentence has to carry it.
-  it("failed counts the failures and states what it did to the run", () => {
-    const s = verdictSentence("failed", tally(40, { fail: 2, pass: 38 }));
-    expect(s).toContain("2 of 40 criteria failed");
-    expect(s).toContain("they are marked below");
-    expect(s).toContain("the milestone stays open for the fix");
-  });
-
-  it("failed inflects for a single failure", () => {
-    expect(verdictSentence("failed", tally(40, { fail: 1, pass: 39 }))).toContain(
-      "it is marked below",
-    );
-  });
-
-  // The consequence clause is the half that goes STALE mid-loop: a fatal verdict on
-  // a live run is not the run's answer, and "the run stopped here" would tell a
-  // reader the version was abandoned while the platform is repairing it. The
-  // evidence half — what the report found — is unchanged, because that much is
-  // still true.
-  it("failed keeps its evidence but not its ending while a repair is in flight", () => {
-    const t = tally(40, { fail: 2, pass: 38 });
-    const s = verdictSentence("failed", t, "awaiting-fix");
-    expect(s).toContain("2 of 40 criteria failed");
-    expect(s).not.toContain("The run stopped here");
-    expect(s).toContain("validates again once the fix is deployed");
-    // The run is the subject here as it is in every other run sentence a reader
-    // meets — a second actor would read as a second thing acting.
-    expect(s).toContain("The run filed each failure as an issue");
-  });
-
-  it("failed says a repeat attempt is running while one is", () => {
-    const s = verdictSentence("failed", tally(40, { fail: 2, pass: 38 }), "running");
-    expect(s).toContain("2 of 40 criteria failed");
-    expect(s).not.toContain("The run stopped here");
-    expect(s).toContain("A new validation attempt is running");
-  });
-
-  // `unreported` gets its OWN mid-loop sentence rather than the failed one's ending:
-  // the platform files nothing for it (there is no failing criterion to turn into
-  // work), so promising a fix would name work that does not exist.
-  it("unreported promises a retry, never a fix, while the loop repeats it", () => {
-    const s = verdictSentence("unreported", undefined, "awaiting-fix");
-    expect(s).toContain("the run is validating again");
-    expect(s).not.toContain("fix");
-    expect(s).not.toContain("there are no results to show for this run");
-  });
-
-  // A state is only honoured for the two verdicts the loop repeats. Everything else
-  // is final the moment it is written, so its copy must not acquire a mid-loop
-  // ending from a lifecycle value that could only be stale.
-  it("leaves a final verdict's sentence alone whatever state it is given", () => {
-    for (const v of ["passed", "partial", "inconclusive"]) {
-      const t = tally(40, { pass: 35, manual: 5 });
-      expect(verdictSentence(v, t, "awaiting-fix"), `${v} changed mid-loop`).toBe(
-        verdictSentence(v, t),
-      );
-    }
-  });
-
-  it("inconclusive asks for manual validation", () => {
-    expect(verdictSentence("inconclusive", tally(12, { manual: 12 }))).toBe(
-      "None of the 12 validation criteria could be automated — please validate them manually.",
-    );
-  });
-
-  // Not a test outcome but a reporting failure, so the sentence says so instead of
-  // reading as a failing suite — and it must never quote the terminal reason, which
-  // is a wire value, not something to hand a reader.
-  it("unreported names the reporting failure, never the terminal reason", () => {
-    const s = verdictSentence("unreported", undefined);
-    expect(s).toContain("generating the validation report");
-    expect(s).not.toContain("validation-unreported");
-  });
-
-  // The tile renders before the report loads, and `unreported` has no report at
-  // all — every sentence must still read as a whole sentence.
-  it("every verdict degrades to a count-free sentence", () => {
-    for (const v of ["passed", "partial", "failed", "inconclusive", "unreported"]) {
-      const s = verdictSentence(v, undefined);
-      expect(s, `no sentence for ${v}`).not.toBe("");
-      expect(s, `${v} leaked a count`).not.toMatch(/\d+ of \d+|All 0|the 0 /);
-    }
-  });
-
-  // A total of one would force verb agreement on every numbered form, so the
-  // numbered forms are gated on total > 1 rather than inflected six ways.
-  it("skips the numbers for a single-criterion oracle", () => {
-    expect(verdictSentence("passed", tally(1, { pass: 1 }))).toBe(
-      "Every validation criterion was covered by a test and passed.",
-    );
-  });
-
-  it("is empty for a verdict it does not speak for", () => {
-    expect(verdictSentence("skipped", tally(0))).toBe("");
-    expect(verdictSentence("", undefined)).toBe("");
-  });
-});
-
-describe("verdictCounts", () => {
-  it("reads as a run-on line, lowercased", () => {
-    expect(verdictCounts(tally(40, { fail: 2, pass: 35, manual: 3 }))).toBe(
-      "2 failed · 35 passed · 3 manual",
-    );
-  });
-
-  it("names an unknown status verbatim rather than dropping it", () => {
-    expect(verdictCounts(tally(1, { quarantined: 1 }))).toBe("1 quarantined");
-  });
-
-  it("is empty with no report and with no tally", () => {
-    expect(verdictCounts(tally(40))).toBe("");
-    expect(verdictCounts(undefined)).toBe("");
-  });
-});
-
 describe("VerdictTile", () => {
   it("leads with the shared mapper's label as its headline", () => {
     render(<VerdictTile verdict="partial" tally={tally(40, { pass: 35, manual: 5 })} />);
-    // "validated" in the mapper (green since #401; the tile's copy carries
-    // the uncovered-criteria hedge); a headline leads.
-    expect(screen.getByText("Validated")).toBeInTheDocument();
+    // "validated*" in the mapper — the mark hedges what the sentence below spells
+    // out; a headline leads, so it is capitalized here.
+    expect(screen.getByText("Validated*")).toBeInTheDocument();
   });
 
   it("renders the counts under the sentence", () => {

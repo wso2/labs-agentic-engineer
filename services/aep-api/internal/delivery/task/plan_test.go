@@ -290,13 +290,13 @@ func TestPlanIntoMilestone_WriteFailureIsAnError(t *testing.T) {
 	}
 }
 
-// TestPlanIntoMilestone_DeltaScopeAndStamp pins the phase-native plan (#369/
-// #370): the instruction carries the platform-computed milestone scope with
+// TestPlanIntoMilestone_DeltaScopeAndStamp pins the scope-native plan (#369):
+// the instruction carries the platform-computed milestone scope with
 // per-story coverage, and a created Task is stamped with its component's
-// in-scope citations — zero LLM discretion on either.
+// claimed stories — zero LLM discretion on either.
 func TestPlanIntoMilestone_DeltaScopeAndStamp(t *testing.T) {
 	rigScope = spec.BuildScope{
-		Tag: "v2", Phase: 1, InScope: []int{1, 2},
+		Tag: "v2", InScope: []int{1, 2},
 		StoryTitles:      map[int]string{1: "As a user, I want A.", 2: "As a user, I want B."},
 		ComponentStories: map[string][]int{"svc": {1, 2}},
 	}
@@ -314,8 +314,8 @@ func TestPlanIntoMilestone_DeltaScopeAndStamp(t *testing.T) {
 	if scope == nil {
 		t.Fatalf("turn carries no milestone scope")
 	}
-	if scope.Phase != 1 || scope.Tag != "v2" {
-		t.Errorf("scope = phase %d tag %q, want phase 1 tag v2", scope.Phase, scope.Tag)
+	if scope.Tag != "v2" {
+		t.Errorf("scope tag = %q, want v2", scope.Tag)
 	}
 	want := agentsvc.PlanStory{Number: 1, Title: "As a user, I want A.", Covered: false}
 	if !slices.Contains(scope.Stories, want) {

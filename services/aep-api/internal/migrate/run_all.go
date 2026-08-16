@@ -67,6 +67,7 @@ func BaseModels() []any {
 		&delivery.MilestoneRun{},
 		&delivery.RunCycle{},
 		&delivery.AgentUsageLedgerEntry{},
+		&spec.ProjectConversation{},
 	}
 }
 
@@ -178,6 +179,10 @@ func Steps(db *gorm.DB, deploymentTier string, credKey []byte) []database.Step {
 		// Follows phase11, which added the secret_ref_* columns the new row
 		// carries just like the default row does.
 		ctxStep("phase13_anthropic_credential_role", RunPhase13AnthropicCredentialRole),
+		// project_conversations (AutoMigrated from the model) gains the #430
+		// one-current-thread-per-scope partial unique index — the admission
+		// fence lazy create and rotation race against.
+		ctxStep("project_conversations", RunProjectConversations),
 	}
 }
 

@@ -24,10 +24,16 @@ import (
 	"io"
 	"net/http"
 	"os/exec"
+	"strings"
 	"time"
 )
 
 const LocalPort = "18200"
+
+// httpClient is a package-level client with a conservative timeout so that
+// callers using context.Background() cannot block indefinitely on an
+// unresponsive OpenBao endpoint.
+var httpClient = &http.Client{Timeout: 30 * time.Second}
 
 // PortForward starts kubectl port-forward to pod/<release>-0 in the background.
 // Caller must kill the returned process when done.
@@ -88,7 +94,7 @@ func Req(ctx context.Context, method, baseURL, token, path string, body interfac
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -109,4 +115,40 @@ func Must(ctx context.Context, method, baseURL, token, path string, body interfa
 		return nil, fmt.Errorf("OpenBao %s %s returned %d: %v", method, path, status, result)
 	}
 	return result, nil
+}
+
+// GetSAToken creates a short-lived bearer token for the given ServiceAccount
+// using kubectl and returns it. aepctl uses this token to authenticate to
+// OpenBao's Kubernetes auth method without needing a long-lived secret.
+func GetSAToken(ctx context.Context, namespace, saName, kubeconfig string) (string, error) {
+	args := []string{"create", "token", saName, "-n", namespace}
+	if kubeconfig != "" {
+		args = append([]string{"--kubeconfig", kubeconfig}, args...)
+	}
+	out, err := exec.CommandContext(ctx, "kubectl", args...).Output()
+	if err != nil {
+		return "", fmt.Errorf("create token for %s/%s: %w", namespace, saName, err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// KubernetesLogin authenticates to OpenBao using the Kubernetes auth method and
+// returns a client token scoped to the given role's policies.
+func KubernetesLogin(ctx context.Context, baseURL, role, jwt string) (string, error) {
+	result, err := Must(ctx, "POST", baseURL, "", "/v1/auth/kubernetes/login", map[string]interface{}{
+		"role": role,
+		"jwt":  jwt,
+	})
+	if err != nil {
+		return "", fmt.Errorf("kubernetes login: %w", err)
+	}
+	auth, ok := result["auth"].(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("kubernetes login: unexpected response format")
+	}
+	token, ok := auth["client_token"].(string)
+	if !ok || token == "" {
+		return "", fmt.Errorf("kubernetes login: no client_token in response")
+	}
+	return token, nil
 }

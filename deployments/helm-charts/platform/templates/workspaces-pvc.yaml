@@ -13,7 +13,7 @@ metadata:
     app.kubernetes.io/part-of: wso2-aep
 spec:
   accessModes:
-    - {{ .Values.workspaces.accessMode | default "ReadWriteMany" }}
+    - {{ .Values.workspaces.accessMode | default "ReadWriteOnce" }}
   {{- if .Values.workspaces.storageClassName }}
   storageClassName: {{ .Values.workspaces.storageClassName | quote }}
   {{- end }}

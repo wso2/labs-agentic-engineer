@@ -21,27 +21,44 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-
-	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 )
 
 type ConfigService interface {
 	GetConfig(ctx context.Context, orgID, projectName, componentName string) (*ComponentConfig, error)
 	UpdateConfig(ctx context.Context, orgID, projectName, componentName string, envVars EnvVarSlice) (*ComponentConfig, error)
 	GetEnvVarsForDeploy(ctx context.Context, orgID, projectName, componentName string) (EnvVarSlice, error)
+	// SetConverger attaches the binding converger after construction. It is a
+	// setter because the two services are mutually dependent — the deployment
+	// service reads env vars from here while composing a binding, and an edit
+	// here pushes onto the live binding through there — and one of them has to be
+	// built first.
+	SetConverger(c BindingConverger)
+}
+
+// BindingConverger re-asserts a deployed component's wiring from its current
+// desired state. Declared consumer-side; *DeploymentService satisfies it.
+type BindingConverger interface {
+	Converge(ctx context.Context, orgID, projectID string, components []string) error
 }
 
 type configService struct {
-	repo         ConfigRepository
-	componentSvc ComponentService
+	repo        ConfigRepository
+	deployments BindingConverger
 }
 
-// NewConfigService wires the config repo and (optionally) a ComponentService
-// for mirroring env-var updates onto the OC Component's workflow params so
-// the next build picks them up. Pass nil for componentSvc to disable that
-// mirror (the env vars still land in the DB; they just won't reach OC).
-func NewConfigService(repo ConfigRepository, componentSvc ComponentService) ConfigService {
-	return &configService{repo: repo, componentSvc: componentSvc}
+// NewConfigService wires the config repo and (optionally) the binding converger
+// that pushes an env-var edit onto the live deployment. Pass nil to disable that
+// push — the env vars still land in the DB, and the next deploy carries them.
+func NewConfigService(repo ConfigRepository, deployments BindingConverger) ConfigService {
+	return &configService{repo: repo, deployments: deployments}
+}
+
+// SetConverger attaches the binding converger. Nil leaves an env-var edit
+// landing in the DB only, which the next deploy picks up.
+func (s *configService) SetConverger(c BindingConverger) {
+	if s != nil {
+		s.deployments = c
+	}
 }
 
 func (s *configService) GetConfig(ctx context.Context, orgID, projectName, componentName string) (*ComponentConfig, error) {
@@ -80,19 +97,20 @@ func (s *configService) UpdateConfig(ctx context.Context, orgID, projectName, co
 	slog.InfoContext(ctx, "updated component config",
 		"org", orgID, "project", projectName, "component", componentName, "envVarCount", len(envVars))
 
-	// Mirror onto each environment's ReleaseBinding
-	// (spec.workloadOverrides.container.env) so OC's controller renders
-	// the values into the pod spec on the next reconcile — no rebuild
-	// needed. Best-effort: the canonical record is the DB, and any RBs
-	// that haven't been created yet (pre-first-deploy) will pick up the
-	// values the next time this flow runs.
-	if s.componentSvc != nil {
-		wfEnvVars := make([]openchoreo.WorkflowEnvVarRef, 0, len(envVars))
-		for _, ev := range envVars {
-			wfEnvVars = append(wfEnvVars, openchoreo.WorkflowEnvVarRef{Key: ev.Key, Value: ev.Value})
-		}
-		if err := s.componentSvc.UpdateWorkflowEnvVars(ctx, orgID, projectName, componentName, wfEnvVars); err != nil {
-			slog.WarnContext(ctx, "mirror env vars onto OC Component failed; DB is updated, next build may still see stale vars",
+	// Converge the component's ReleaseBinding so OC renders the new values into
+	// the pod spec on its next reconcile — no rebuild needed.
+	//
+	// A CONVERGE, not a field patch: the binding has one writer, and it composes
+	// the whole desired state from the DB record this function just wrote. That
+	// is what stops an env-var edit from clobbering the trait config, which a
+	// per-field write to the same object could do the moment the two disagreed
+	// about anything else on it. The release in flight is never re-pinned.
+	//
+	// Best-effort: the DB is the canonical record, and a component with no
+	// binding yet picks these values up when the deploy stage first creates one.
+	if s.deployments != nil {
+		if err := s.deployments.Converge(ctx, orgID, projectName, []string{componentName}); err != nil {
+			slog.WarnContext(ctx, "converge component binding failed; DB is updated, the next deploy will carry the values",
 				"org", orgID, "project", projectName, "component", componentName, "error", err)
 		}
 	}

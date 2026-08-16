@@ -26,7 +26,7 @@ flowchart LR
 ## Slices
 | Slice | Use-cases | Entry |
 |---|---|---|
-| `genaiturns` | create / get / active / stream turn + get-conversation (the AgentTurn lifecycle) | `.../agents/{cid}/messages`, `.../turns/...` |
+| `genaiturns` | create / get / active / stream turn + get-conversation (the AgentTurn lifecycle) + list/rotate the project's conversation threads (#430) | `.../agents/{cid}/messages`, `.../agents/conversations`, `.../turns/...` |
 | `files` | list / read / apply files over the project workspace | `GET/POST .../files...` |
 | `tags` | list the project's `v<N>` spec version tags | `GET .../tags` |
 | `skills` | list / create / update / delete / import / sync / get the org Skill library | `/skills...` |
@@ -42,6 +42,7 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
 | `resourceTypeCatalog` (returns `CRTType`) | needs | `dependencies` — the PE-authored CRT markers + declared outputs, projected at the root |
 | `AnthropicKeyResolver` · git-token `Resolver` | needs | `platform/secrets` — per-org keys + sealed git tokens |
 | `ArtifactService` · `ArtifactStore` · `SplitFrontmatter` | offers | `delivery` / `projects` / `dependencies` — design reads, spec-save, status snapshots |
+| `HardConfigEdges` · `HardProvidersFor` | offers | `projects` (deploy order) / `dependencies` (runtime-config compose) — which sibling addresses a component cannot start without |
 | `DescriptorWriter` | offers | `projects` — stamps `specs/.agentic-engineer.toml` into a repo at project create |
 | `CredentialsRefreshService`-adjacent turn/tag reads | offers | delivery/build (SpecTagger, validation criteria) |
 
@@ -94,12 +95,23 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
   a playground run produce identical turns (services/agents/design/ADR-0003). This domain holds NO prompt
   text; the flow token is kept here because it also gates web search and MCP minting for design turns.
 - **Persistence**: the `agent_turns` gorm lives in this domain (`repository_turn.go` over the
-  `agent_turn.go` entity), single write-authority. Spec content itself is not gorm — it lives in git,
+  `agent_turn.go` entity), single write-authority — as does `project_conversations`
+  (`repository_conversation.go`): the project's CURRENT chat thread pointer (#430), server-minted,
+  one current row per (org, project, use case) under a partial unique index; StartTurn refuses a
+  non-current id with 409 `conversation_rotated` (the single-era rule — it relaxes to "belongs to
+  this project" when multiple live threads land). Spec content itself is not gorm — it lives in git,
   reached through sourcecontrol's `Workspace`/gitfs engine.
 
 ## Invariants — don't break
 - **Single write-authority** over the git spec-content store and its `v<N>` tags — every save/tag/discard
   runs through this domain's gitfs Workspace engine; no other domain writes spec content.
+- **One authority for which wiring edges are HARD** (`wiring_edges.go`). A hard edge is an address the
+  platform stamps into a component's own start-up config — today a web app's sibling *services*, whose
+  URLs land in `env-config.js`. Both consumers read the same rule: `dependencies` composes the file, and
+  `projects` orders the deploy waves around it, so they can never disagree about which addresses are
+  needed. Everything else is soft (it flows consumer→provider: CORS origins, an OIDC callback) and orders
+  nothing. Deliberately NOT hard: service→service, which OpenChoreo resolves through its own connection
+  mechanism — ordering it would refuse two services that call each other. ADR-0019.
 - **`CRTType` is a projection, not a re-export.** design-save reads the dependencies resource-type catalog
   through the `resourceTypeCatalog` port in spec's OWN vocabulary (`CRTType`), mapped by a root
   adapter — the spec domain names the dependencies domain nowhere.

@@ -297,6 +297,227 @@ func TestReconcile_DeletionThunderError(t *testing.T) {
 	}
 }
 
+// Confidential client: spec.clientId is used as the Thunder name, secret is
+// read from the referenced Kubernetes Secret.
+func TestReconcile_ConfidentialClient(t *testing.T) {
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "my-secrets"},
+		Data:       map[string][]byte{"MY_SECRET": []byte("s3cr3t")},
+	}
+	app := newApp("ns", "svc-client", v1alpha1.ThunderApplicationSpec{
+		DisplayName: "My Service",
+		ClientType:  "confidential",
+		ClientID:    "my-service-client",
+		SecretRef:   &v1alpha1.SecretKeyRef{Name: "my-secrets", Key: "MY_SECRET"},
+	})
+	admin := &fakeAdmin{clientID: "my-service-client"}
+	r, cl := newReconciler(t, admin, app, secret)
+
+	if _, err := r.Reconcile(context.Background(), reqFor(app)); err != nil {
+		t.Fatalf("Reconcile returned error: %v", err)
+	}
+
+	if len(admin.ensureCalls) != 1 {
+		t.Fatalf("EnsureApplication called %d times, want 1", len(admin.ensureCalls))
+	}
+	got := admin.ensureCalls[0]
+	if got.Name != "my-service-client" {
+		t.Errorf("DesiredApp.Name = %q, want my-service-client", got.Name)
+	}
+	if got.ClientType != "confidential" {
+		t.Errorf("DesiredApp.ClientType = %q, want confidential", got.ClientType)
+	}
+	if got.ClientSecret != "s3cr3t" {
+		t.Errorf("DesiredApp.ClientSecret = %q, want s3cr3t", got.ClientSecret)
+	}
+
+	// ConfigMap carries the explicit client_id.
+	var cm corev1.ConfigMap
+	if err := cl.Get(context.Background(), types.NamespacedName{Namespace: "ns", Name: "svc-client-oauth"}, &cm); err != nil {
+		t.Fatalf("get oauth ConfigMap: %v", err)
+	}
+	if cm.Data["client_id"] != "my-service-client" {
+		t.Errorf("ConfigMap client_id = %q, want my-service-client", cm.Data["client_id"])
+	}
+}
+
+// Confidential client with missing secretRef → error, CR marked not ready.
+func TestReconcile_ConfidentialClient_MissingSecretRef(t *testing.T) {
+	app := newApp("ns", "broken", v1alpha1.ThunderApplicationSpec{
+		ClientType: "confidential",
+		ClientID:   "broken-client",
+		// SecretRef intentionally omitted
+	})
+	admin := &fakeAdmin{}
+	r, cl := newReconciler(t, admin, app)
+
+	res, err := r.Reconcile(context.Background(), reqFor(app))
+	if err != nil {
+		t.Fatalf("Reconcile should not return an error: %v", err)
+	}
+	if res.RequeueAfter <= 0 {
+		t.Errorf("RequeueAfter = %v, want > 0 (should retry)", res.RequeueAfter)
+	}
+	if len(admin.ensureCalls) != 0 {
+		t.Errorf("EnsureApplication called %d times, want 0", len(admin.ensureCalls))
+	}
+
+	var updated v1alpha1.ThunderApplication
+	if err := cl.Get(context.Background(), reqFor(app).NamespacedName, &updated); err != nil {
+		t.Fatalf("get CR: %v", err)
+	}
+	if updated.Status.Ready {
+		t.Errorf("Status.Ready = true, want false")
+	}
+}
+
+// Confidential client where the Secret exists in a different namespace (not the
+// CR's namespace) → CR marked not ready, EnsureApplication not called. This
+// proves the controller enforces same-namespace Secret access only.
+func TestReconcile_ConfidentialClient_SecretWrongNamespace(t *testing.T) {
+	// Secret is in "other-ns", CR is in "ns" — controller must not find it.
+	secretInOtherNS := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "other-ns", Name: "my-secrets"},
+		Data:       map[string][]byte{"MY_SECRET": []byte("s3cr3t")},
+	}
+	app := newApp("ns", "svc-client", v1alpha1.ThunderApplicationSpec{
+		ClientType: "confidential",
+		ClientID:   "my-service-client",
+		SecretRef:  &v1alpha1.SecretKeyRef{Name: "my-secrets", Key: "MY_SECRET"},
+	})
+	admin := &fakeAdmin{clientID: "my-service-client"}
+	r, cl := newReconciler(t, admin, app, secretInOtherNS)
+
+	res, err := r.Reconcile(context.Background(), reqFor(app))
+	if err != nil {
+		t.Fatalf("Reconcile should not return an error: %v", err)
+	}
+	if res.RequeueAfter <= 0 {
+		t.Errorf("RequeueAfter = %v, want > 0 (should retry)", res.RequeueAfter)
+	}
+	if len(admin.ensureCalls) != 0 {
+		t.Errorf("EnsureApplication called %d times, want 0", len(admin.ensureCalls))
+	}
+
+	var updated v1alpha1.ThunderApplication
+	if err := cl.Get(context.Background(), reqFor(app).NamespacedName, &updated); err != nil {
+		t.Fatalf("get CR: %v", err)
+	}
+	if updated.Status.Ready {
+		t.Errorf("Status.Ready = true, want false")
+	}
+}
+
+// Unsupported clientType → CR marked not ready, EnsureApplication not called.
+func TestReconcile_UnsupportedClientType(t *testing.T) {
+	app := newApp("ns", "bad-type", v1alpha1.ThunderApplicationSpec{
+		ClientType: "bearer", // not public or confidential
+		ClientID:   "bad-type-client",
+	})
+	admin := &fakeAdmin{}
+	r, cl := newReconciler(t, admin, app)
+
+	res, err := r.Reconcile(context.Background(), reqFor(app))
+	if err != nil {
+		t.Fatalf("Reconcile should not return an error: %v", err)
+	}
+	if res.RequeueAfter <= 0 {
+		t.Errorf("RequeueAfter = %v, want > 0 (should retry)", res.RequeueAfter)
+	}
+	if len(admin.ensureCalls) != 0 {
+		t.Errorf("EnsureApplication called %d times, want 0", len(admin.ensureCalls))
+	}
+
+	var updated v1alpha1.ThunderApplication
+	if err := cl.Get(context.Background(), reqFor(app).NamespacedName, &updated); err != nil {
+		t.Fatalf("get CR: %v", err)
+	}
+	if updated.Status.Ready {
+		t.Errorf("Status.Ready = true, want false")
+	}
+}
+
+// spec.clientId override: Thunder name uses the explicit client ID, not derived.
+func TestReconcile_ClientIDOverride(t *testing.T) {
+	app := newApp("some-ns", "some-cr", v1alpha1.ThunderApplicationSpec{
+		ClientID:     "my-explicit-id",
+		Scopes:       "openid",
+		RedirectURIs: "https://app.example.com",
+	})
+	admin := &fakeAdmin{}
+	r, _ := newReconciler(t, admin, app)
+
+	if _, err := r.Reconcile(context.Background(), reqFor(app)); err != nil {
+		t.Fatalf("Reconcile returned error: %v", err)
+	}
+	if len(admin.ensureCalls) != 1 {
+		t.Fatalf("EnsureApplication called %d times, want 1", len(admin.ensureCalls))
+	}
+	if admin.ensureCalls[0].Name != "my-explicit-id" {
+		t.Errorf("DesiredApp.Name = %q, want my-explicit-id", admin.ensureCalls[0].Name)
+	}
+}
+
+// Deletion uses spec.clientId when set.
+func TestReconcile_Deletion_ClientIDOverride(t *testing.T) {
+	now := metav1.Now()
+	app := newApp("ns", "app", v1alpha1.ThunderApplicationSpec{ClientID: "explicit-id"})
+	app.DeletionTimestamp = &now
+	app.Finalizers = []string{thunderFinalizer}
+	admin := &fakeAdmin{}
+	r, _ := newReconciler(t, admin, app)
+
+	if _, err := r.Reconcile(context.Background(), reqFor(app)); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(admin.deleteCalls) != 1 || admin.deleteCalls[0] != "explicit-id" {
+		t.Errorf("DeleteApplication calls = %#v, want [explicit-id]", admin.deleteCalls)
+	}
+}
+
+// Secret rotation: after the referenced Secret's value changes the reconciler
+// picks up the new client secret on the next reconcile (triggered by the
+// Secret watch added to SetupWithManager).
+func TestReconcile_ConfidentialClient_SecretRotation(t *testing.T) {
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "my-secrets"},
+		Data:       map[string][]byte{"MY_SECRET": []byte("original-secret")},
+	}
+	app := newApp("ns", "svc-client", v1alpha1.ThunderApplicationSpec{
+		ClientType: "confidential",
+		ClientID:   "my-service-client",
+		SecretRef:  &v1alpha1.SecretKeyRef{Name: "my-secrets", Key: "MY_SECRET"},
+	})
+	admin := &fakeAdmin{clientID: "my-service-client"}
+	r, cl := newReconciler(t, admin, app, secret)
+
+	// First reconcile uses the original secret.
+	if _, err := r.Reconcile(context.Background(), reqFor(app)); err != nil {
+		t.Fatalf("first Reconcile: %v", err)
+	}
+	if len(admin.ensureCalls) != 1 || admin.ensureCalls[0].ClientSecret != "original-secret" {
+		t.Fatalf("first reconcile: ClientSecret = %q, want original-secret", admin.ensureCalls[0].ClientSecret)
+	}
+
+	// Rotate the secret value in the cluster.
+	secret.Data["MY_SECRET"] = []byte("rotated-secret")
+	if err := cl.Update(context.Background(), secret); err != nil {
+		t.Fatalf("update Secret: %v", err)
+	}
+
+	// Second reconcile (as would be triggered by the Secret watch) picks up
+	// the new value.
+	if _, err := r.Reconcile(context.Background(), reqFor(app)); err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+	if len(admin.ensureCalls) != 2 {
+		t.Fatalf("EnsureApplication called %d times, want 2", len(admin.ensureCalls))
+	}
+	if admin.ensureCalls[1].ClientSecret != "rotated-secret" {
+		t.Errorf("after rotation: ClientSecret = %q, want rotated-secret", admin.ensureCalls[1].ClientSecret)
+	}
+}
+
 func containsFinalizer(finalizers []string, want string) bool {
 	for _, f := range finalizers {
 		if f == want {

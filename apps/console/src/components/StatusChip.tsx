@@ -16,7 +16,22 @@
  * under the License.
  */
 
+import type { ReactNode } from "react";
 import { Box, Chip, alpha } from "@wso2/oxygen-ui";
+
+// The standard clip-rect recipe: out of view, still in the accessibility tree.
+// Inlined rather than imported so this component keeps its one Oxygen dependency.
+const VISUALLY_HIDDEN = {
+  position: "absolute",
+  width: 1,
+  height: 1,
+  padding: 0,
+  margin: -1,
+  overflow: "hidden",
+  clip: "rect(0 0 0 0)",
+  whiteSpace: "nowrap",
+  border: 0,
+} as const;
 
 // Console-wide status/kind chip (Task 4): every domain (task status, alert
 // classification, skill origin, project phase, ...) maps its own vocabulary
@@ -66,17 +81,40 @@ const TONE_PALETTE: Record<
 // unaffected.
 export function StatusChip({
   label,
+  spokenLabel,
   tone,
   variant,
   appearance = "solid",
   dot = false,
 }: {
   label: string;
+  /**
+   * The accessible name, for a label that carries meaning in PUNCTUATION a screen
+   * reader does not announce — "Validated*" would otherwise be heard as "Validated",
+   * indistinguishable from a clean pass. Omitted everywhere else, which keeps the
+   * default "the name is the visible label".
+   */
+  spokenLabel?: string;
   tone: StatusTone;
   variant?: "filled" | "outlined";
   appearance?: "solid" | "soft";
   dot?: boolean;
 }) {
+  // Visually-hidden TEXT, not aria-label on the root. A Chip with no onClick renders
+  // a plain div with no role, and an aria-label on a roleless element is ignored by
+  // screen readers — so the accessible name has to come from content. The visible
+  // string is hidden from the a11y tree and the spoken one takes its place.
+  const named = (visible: ReactNode): ReactNode =>
+    spokenLabel ? (
+      <>
+        <span aria-hidden>{visible}</span>
+        <Box component="span" sx={VISUALLY_HIDDEN}>
+          {spokenLabel}
+        </Box>
+      </>
+    ) : (
+      visible
+    );
   if (appearance === "soft") {
     const isNeutral = tone === "neutral";
     const labelNode = dot ? (
@@ -99,7 +137,7 @@ export function StatusChip({
     return (
       <Chip
         size="small"
-        label={labelNode}
+        label={named(labelNode)}
         sx={(theme) =>
           isNeutral
             ? {
@@ -120,7 +158,7 @@ export function StatusChip({
   return (
     <Chip
       size="small"
-      label={label}
+      label={named(label)}
       color={TONE_COLOR[tone]}
       {...(variant ? { variant } : {})}
     />

@@ -29,7 +29,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 )
 
 func TestConfigService_GetConfig(t *testing.T) {
@@ -89,14 +88,14 @@ func TestConfigService_UpdateConfig_PersistsAndMirrors(t *testing.T) {
 		saved = c
 		return nil
 	}}
-	var mirrorOrg, mirrorProj, mirrorComp string
-	var mirrored []openchoreo.WorkflowEnvVarRef
-	comp := &stubComponentSvc{UpdateWorkflowEnvVarsFunc: func(_ context.Context, org, proj, c string, envVars []openchoreo.WorkflowEnvVarRef) error {
-		mirrorOrg, mirrorProj, mirrorComp = org, proj, c
-		mirrored = envVars
+	var convergedOrg, convergedProj string
+	var convergedComps []string
+	conv := stubConverger{fn: func(_ context.Context, org, proj string, comps []string) error {
+		convergedOrg, convergedProj = org, proj
+		convergedComps = comps
 		return nil
 	}}
-	svc := NewConfigService(repo, comp)
+	svc := NewConfigService(repo, conv)
 
 	in := EnvVarSlice{{Key: "DB_HOST", Value: "db"}, {Key: "PORT", Value: "8080"}}
 	out, err := svc.UpdateConfig(context.Background(), "acme", "web", "svc", in)
@@ -111,23 +110,37 @@ func TestConfigService_UpdateConfig_PersistsAndMirrors(t *testing.T) {
 	if out == nil || len(out.EnvVars) != 2 {
 		t.Fatalf("returned config: %+v", out)
 	}
-	// The mirror re-shapes EnvVar → WorkflowEnvVarRef and targets the same tuple.
-	if mirrorOrg != "acme" || mirrorProj != "web" || mirrorComp != "svc" {
-		t.Fatalf("mirror scope: (%q,%q,%q)", mirrorOrg, mirrorProj, mirrorComp)
+	// The edit is pushed onto the live deployment by CONVERGING that component's
+	// binding — the binding has one writer, and it re-reads these values from the
+	// record above rather than being handed a patch of its own.
+	if convergedOrg != "acme" || convergedProj != "web" {
+		t.Fatalf("converge scope: (%q,%q)", convergedOrg, convergedProj)
 	}
-	if len(mirrored) != 2 || mirrored[0].Key != "DB_HOST" || mirrored[0].Value != "db" {
-		t.Fatalf("mirror payload: %+v", mirrored)
+	if len(convergedComps) != 1 || convergedComps[0] != "svc" {
+		t.Fatalf("converge components: %+v", convergedComps)
 	}
 }
 
-func TestConfigService_UpdateConfig_MirrorFailureIsBestEffort(t *testing.T) {
+// stubConverger doubles the deployment service's converge verb.
+type stubConverger struct {
+	fn func(ctx context.Context, orgID, projectID string, components []string) error
+}
+
+func (s stubConverger) Converge(ctx context.Context, orgID, projectID string, components []string) error {
+	if s.fn == nil {
+		return nil
+	}
+	return s.fn(ctx, orgID, projectID, components)
+}
+
+func TestConfigService_UpdateConfig_ConvergeFailureIsBestEffort(t *testing.T) {
 	t.Parallel()
 	repo := &stubConfigRepo{UpsertFunc: func(context.Context, *ComponentConfig) error { return nil }}
-	comp := &stubComponentSvc{UpdateWorkflowEnvVarsFunc: func(context.Context, string, string, string, []openchoreo.WorkflowEnvVarRef) error {
-		return errors.New("no release bindings yet")
+	conv := stubConverger{fn: func(context.Context, string, string, []string) error {
+		return errors.New("no release binding yet")
 	}}
-	// A mirror failure is logged, not surfaced: the DB write already succeeded.
-	out, err := NewConfigService(repo, comp).UpdateConfig(context.Background(), "acme", "web", "svc", EnvVarSlice{{Key: "K", Value: "v"}})
+	// A converge failure is logged, not surfaced: the DB write already succeeded.
+	out, err := NewConfigService(repo, conv).UpdateConfig(context.Background(), "acme", "web", "svc", EnvVarSlice{{Key: "K", Value: "v"}})
 	if err != nil || out == nil {
 		t.Fatalf("mirror failure must not fail the update: out=%+v err=%v", out, err)
 	}
@@ -148,11 +161,11 @@ func TestConfigService_UpdateConfig_RepoErrorWraps(t *testing.T) {
 	repo := &stubConfigRepo{UpsertFunc: func(context.Context, *ComponentConfig) error {
 		return errors.New("unique violation")
 	}}
-	comp := &stubComponentSvc{UpdateWorkflowEnvVarsFunc: func(context.Context, string, string, string, []openchoreo.WorkflowEnvVarRef) error {
-		t.Error("mirror must not run when the DB write failed")
+	conv := stubConverger{fn: func(context.Context, string, string, []string) error {
+		t.Error("converge must not run when the DB write failed")
 		return nil
 	}}
-	if _, err := NewConfigService(repo, comp).UpdateConfig(context.Background(), "acme", "web", "svc", EnvVarSlice{{Key: "K", Value: "v"}}); err == nil || !strings.Contains(err.Error(), "update config") {
+	if _, err := NewConfigService(repo, conv).UpdateConfig(context.Background(), "acme", "web", "svc", EnvVarSlice{{Key: "K", Value: "v"}}); err == nil || !strings.Contains(err.Error(), "update config") {
 		t.Fatalf("Upsert error must wrap with 'update config', got %v", err)
 	}
 }

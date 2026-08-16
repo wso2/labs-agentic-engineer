@@ -47,8 +47,9 @@ var sreUninstallCmd = &cobra.Command{
   4. Deletes the observability namespace and all namespaced resources inside it
      (ESO SecretStore/ExternalSecrets, synced Secrets, ConfigMaps, etc.)
 
-The AEP platform namespace (wso2-aep), OpenBao, ESO, and the bootstrap
-release are not affected.`,
+The AEP platform namespace (wso2-aep), OpenBao, the ESO controller, and all
+AEP platform resources are not affected. Only ESO SecretStore and ExternalSecret
+resources in the observability namespace are removed as part of step 4.`,
 	RunE: runSreUninstall,
 }
 
@@ -124,6 +125,6 @@ func runSreUninstall(cmd *cobra.Command, args []string) error {
 		step(fmt.Sprintf("namespace %s deleted", sreUninstallObsNamespace))
 	}
 
-	fmt.Println("\nDone. AEP platform and bootstrap are still running.")
+	fmt.Println("\nDone. AEP platform, OpenBao, and the ESO controller are still running.")
 	return nil
 }

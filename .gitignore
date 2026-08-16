@@ -73,6 +73,12 @@ deployments/helm-charts/platform/values.local.dev.yaml
 # `GOWORK=off go build -o local-secret-manager-api .` in that directory).
 deployments/local-secret-manager-api/local-secret-manager-api
 
+# Compiled aepctl binary (built by `go build` in tools/aepctl)
+tools/aepctl/aepctl
+
+# Compiled setup-local binary (built from deployments/scripts)
+deployments/scripts/setup-local
+
 # Local PR-evidence screenshots (attached to PRs by hand, never committed)
 /.screenshots-*/
 # Local session artifacts — dev-tool config and working notes, not repo content
@@ -84,3 +90,10 @@ deployments/local-secret-manager-api/local-secret-manager-api
 .aider*
 
 .devtools
+/.idea/.gitignore
+/.idea/go.imports.xml
+/.idea/golinter.xml
+/.idea/modules.xml
+/.idea/inspectionProfiles/Project_Default.xml
+/.idea/vcs.xml
+/.idea/wso2-agentic-engineer-2.iml

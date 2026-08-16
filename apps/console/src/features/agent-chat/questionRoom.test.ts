@@ -34,54 +34,57 @@ function entryOf(doc: Doc, toolCallId: string) {
 }
 
 describe("closeStaleRoomQuestions", () => {
-  it("closes this owner's entry once its question is no longer answerable (composer answer)", () => {
+  it("closes an entry once its question is no longer answerable (composer answer)", () => {
     const doc = new Doc();
-    mirrorQuestion(doc, { toolCallId: "tc-1", questions: [Q], ownerId: "me" });
+    mirrorQuestion(doc, { toolCallId: "tc-1", questions: [Q] });
     expect(entryOf(doc, "tc-1")?.submitted).toBeUndefined();
 
-    closeStaleRoomQuestions(doc, "me", new Set(["tc-1"]), new Set(["tc-1"]));
+    closeStaleRoomQuestions(doc, new Set(["tc-1"]), new Set(["tc-1"]));
     expect(entryOf(doc, "tc-1")?.submitted).toBe(true);
   });
 
-  it("orphans (no backing log message) close only past the TTL — never a live cross-tab question", () => {
+  it("orphans (no backing log message) close only past the TTL — never a live question under a not-yet-rehydrated client", () => {
     const doc = new Doc();
-    mirrorQuestion(doc, { toolCallId: "tc-fresh", questions: [Q], ownerId: "me" });
-    // Another tab whose log lacks the message must NOT close a fresh entry…
-    closeStaleRoomQuestions(doc, "me", new Set(), new Set(["tc-other"]));
+    mirrorQuestion(doc, { toolCallId: "tc-fresh", questions: [Q] });
+    // A client whose log lacks the message must NOT close a fresh entry…
+    closeStaleRoomQuestions(doc, new Set(), new Set(["tc-other"]));
     expect(entryOf(doc, "tc-fresh")?.submitted).toBeUndefined();
     // …but once the entry is older than the TTL it is a zombie and closes.
     const askedAt = entryOf(doc, "tc-fresh")!.askedAt!;
-    closeStaleRoomQuestions(doc, "me", new Set(), new Set(), askedAt + ORPHAN_QUESTION_TTL_MS + 1);
+    closeStaleRoomQuestions(doc, new Set(), new Set(), askedAt + ORPHAN_QUESTION_TTL_MS + 1);
     expect(entryOf(doc, "tc-fresh")?.submitted).toBe(true);
   });
 
-  it("treats an unstamped legacy entry as an ancient zombie", () => {
+  it("treats an unstamped legacy entry as an ancient zombie (ownerId tolerated on old entries)", () => {
     const doc = new Doc();
     doc.getMap("questions").set("tc-legacy", {
-      toolCallId: "tc-legacy", questions: [Q], ownerId: "me", answers: null,
+      toolCallId: "tc-legacy", questions: [Q], ownerId: "someone", answers: null,
     });
-    closeStaleRoomQuestions(doc, "me", new Set(), new Set());
+    closeStaleRoomQuestions(doc, new Set(), new Set());
     expect(entryOf(doc, "tc-legacy")?.submitted).toBe(true);
   });
 
-  it("never closes another owner's entry (their log is authoritative, not mine)", () => {
+  // The thread is project-scoped (#430): every member's log converges on the
+  // same proof, so a superseded close is valid from ANY client — there is no
+  // per-owner filter any more.
+  it("closes a superseded entry regardless of which client mirrored it", () => {
     const doc = new Doc();
-    mirrorQuestion(doc, { toolCallId: "tc-2", questions: [Q], ownerId: "teammate" });
-    closeStaleRoomQuestions(doc, "me", new Set(["tc-2"]), new Set());
-    expect(entryOf(doc, "tc-2")?.submitted).toBeUndefined();
+    mirrorQuestion(doc, { toolCallId: "tc-2", questions: [Q] });
+    closeStaleRoomQuestions(doc, new Set(["tc-2"]), new Set(["tc-2"]));
+    expect(entryOf(doc, "tc-2")?.submitted).toBe(true);
   });
 
   it("leaves live and already-submitted entries alone", () => {
     const doc = new Doc();
-    mirrorQuestion(doc, { toolCallId: "tc-3", questions: [Q], ownerId: "me" });
-    closeStaleRoomQuestions(doc, "me", new Set(), new Set(["tc-3"]));
+    mirrorQuestion(doc, { toolCallId: "tc-3", questions: [Q] });
+    closeStaleRoomQuestions(doc, new Set(), new Set(["tc-3"]));
     expect(entryOf(doc, "tc-3")?.submitted).toBeUndefined();
 
-    closeStaleRoomQuestions(doc, "me", new Set(["tc-3"]), new Set(["tc-3"]));
+    closeStaleRoomQuestions(doc, new Set(["tc-3"]), new Set(["tc-3"]));
     const after = entryOf(doc, "tc-3");
     expect(after?.submitted).toBe(true);
-    // Idempotent: a second pass keeps answers/ownership intact.
-    closeStaleRoomQuestions(doc, "me", new Set(["tc-3"]), new Set(["tc-3"]));
+    // Idempotent: a second pass keeps answers intact.
+    closeStaleRoomQuestions(doc, new Set(["tc-3"]), new Set(["tc-3"]));
     expect(entryOf(doc, "tc-3")).toEqual(after);
   });
 });
@@ -94,7 +97,7 @@ describe("updateRoomAnswer (live-state edits)", () => {
 
   it("two edits between renders both survive (no stale-snapshot clobber)", () => {
     const doc = new Doc();
-    mirrorQuestion(doc, { toolCallId: "tc", questions: QS, ownerId: "me" });
+    mirrorQuestion(doc, { toolCallId: "tc", questions: QS });
     // Both calls run before any re-render — each must see the other's write.
     updateRoomAnswer(doc, "tc", (live) => applySelection(live.questions, live.answers, 0, "A"));
     updateRoomAnswer(doc, "tc", (live) => applySelection(live.questions, live.answers, 1, "B"));
@@ -105,11 +108,11 @@ describe("updateRoomAnswer (live-state edits)", () => {
 
   it("aligns to the LIVE question count when the batch grew since render", () => {
     const doc = new Doc();
-    mirrorQuestion(doc, { toolCallId: "tc", questions: QS, ownerId: "me" });
+    mirrorQuestion(doc, { toolCallId: "tc", questions: QS });
     updateRoomAnswer(doc, "tc", (live) => applySelection(live.questions, live.answers, 0, "A"));
     // The batch streams two more questions in…
     const grown = [...QS, { question: "q2", options: [{ label: "A" }] }, { question: "q3", options: [{ label: "A" }] }];
-    mirrorQuestion(doc, { toolCallId: "tc", questions: grown, ownerId: "me" });
+    mirrorQuestion(doc, { toolCallId: "tc", questions: grown });
     // …and a late question is still editable.
     updateRoomAnswer(doc, "tc", (live) => applySelection(live.questions, live.answers, 3, "A"));
     const answers = readRoomQuestions(doc)[0]!.answers!;

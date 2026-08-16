@@ -16,59 +16,42 @@
 
 package spec
 
-// build_scope.go — the PHASE SCOPE of one build (spec-agent redesign #370/
-// #369): a v<N> tag snapshots the PRD + design of exactly ONE PRD phase, so
-// the milestone is the PHASE's ledger and task planning covers the phase's
-// stories. Computed here (the cell declares the phase and per-component
-// citations; the PRD's Phasing section declares the phase's story set) and
-// consumed by delivery/build (milestone identity) and delivery/task (delta
-// planning + the Serves-stories stamp).
+// build_scope.go — the STORY SCOPE of one build (spec-agent redesign #369): a
+// v<N> tag snapshots the PRD + design, so the milestone is the version's
+// ledger and task planning covers the PRD's stories. Computed here (the PRD's
+// User Stories section declares the story set; each component's design.json
+// claims the stories it serves) and consumed by delivery/build (milestone
+// identity) and delivery/task (delta planning + the Serves-stories stamp).
 
 import (
 	"context"
 	"fmt"
-	"regexp"
-	"strings"
+	"maps"
+	"slices"
 )
 
-// BuildScope is one tag's phase scope. A zero Phase means the snapshot
-// declares none (legacy or gate-bypassed content); consumers fall back to
-// tag-scoped behavior.
+// BuildScope is one tag's story scope. An empty InScope means the snapshot
+// carries no readable stories (legacy or gate-bypassed content); consumers
+// fall back to tag-scoped behavior.
 type BuildScope struct {
 	// Tag is the spec version this scope was computed at (e.g. "v3").
 	Tag string
-	// Phase is the PRD phase the design declares; 0 when undeclared.
-	Phase int
-	// InScope is the declared phase's story set, ascending.
+	// InScope is the PRD's story set, ascending.
 	InScope []int
-	// StoryTitles maps an in-scope story number to its PRD story line (the
-	// text after "N. ").
+	// StoryTitles maps a story number to its PRD story line (the text after
+	// "N. ").
 	StoryTitles map[int]string
-	// ComponentStories maps a deployable component id to the IN-SCOPE stories
-	// it cites (cell citations ∩ InScope), ascending.
+	// ComponentStories maps a deployable component id to the stories its
+	// design.json claims (claims ∩ InScope), ascending.
 	ComponentStories map[string][]int
 }
 
-// MilestoneTitle is the title of the milestone this scope claims — currently
-// the TAG, always.
-//
-// TEMPORARY (single-phase mode): the product ships one phase per app for now,
-// so a phase-named milestone would only ever read "Phase 1" while the version
-// beside it moved v1 → v2 → v3. Naming it after the version keeps one milestone
-// per version, as before phases existed.
-//
-// The rest of the phase story is untouched — the gate still requires a declared
-// phase and full in-scope coverage, and planning still works the declared
-// phase's stories. To restore per-phase milestones, return
-// fmt.Sprintf("Phase %d", s.Phase) for a declared phase and fall back to the
-// tag when s.Phase <= 0.
+// MilestoneTitle is the title of the milestone this scope claims — the tag,
+// so there is one milestone per spec version.
 func (s BuildScope) MilestoneTitle() string { return s.Tag }
 
-// storyLinePattern matches one numbered PRD story line: "7. As a member, ...".
-var storyLinePattern = regexp.MustCompile(`(?m)^(\d+)\.\s+(.+)$`)
-
-// BuildScopeAtTag computes the tag's phase scope from the tagged snapshot. A
-// snapshot without a cell or a declared phase yields a zero-Phase scope (the
+// BuildScopeAtTag computes the tag's story scope from the tagged snapshot. A
+// snapshot without a cell or readable PRD stories yields an empty scope (the
 // legacy one-milestone-per-version behavior); the build gate normally makes
 // that impossible for freshly-cut tags.
 func (s *artifactService) BuildScopeAtTag(ctx context.Context, orgID, projectID, tag string) (BuildScope, error) {
@@ -86,30 +69,26 @@ func (s *artifactService) BuildScopeAtTag(ctx context.Context, orgID, projectID,
 		return scope, fmt.Errorf("read design at %s: %w", tag, err)
 	}
 	facts, err := parseCellFacts(designFiles[designCellFile])
-	if err != nil || facts.Phase == 0 {
+	if err != nil {
 		return scope, nil
 	}
-	scope.Phase = facts.Phase
-	inScope := parsePRDPhasing(reqFiles[requirementsMainFile])[facts.Phase]
-	scope.InScope = sortedStorySet(inScope)
-	scope.StoryTitles = map[int]string{}
-	for _, m := range storyLinePattern.FindAllStringSubmatch(markdownSection(reqFiles[requirementsMainFile], "User Stories"), -1) {
-		var n int
-		fmt.Sscanf(m[1], "%d", &n)
-		if inScope[n] {
-			scope.StoryTitles[n] = strings.TrimSpace(m[2])
-		}
+	stories := parsePRDStories(reqFiles[requirementsMainFile])
+	if len(stories) == 0 {
+		return scope, nil
 	}
+	scope.InScope = slices.Sorted(maps.Keys(stories))
+	scope.StoryTitles = stories
 	scope.ComponentStories = map[string][]int{}
-	for _, c := range facts.Components {
+	for id, claims := range componentStoryClaims(facts, designFiles) {
 		var served []int
-		for _, n := range c.Stories {
-			if inScope[n] {
+		for _, n := range claims {
+			if _, ok := stories[n]; ok {
 				served = append(served, n)
 			}
 		}
 		if len(served) > 0 {
-			scope.ComponentStories[c.ID] = served
+			slices.Sort(served)
+			scope.ComponentStories[id] = slices.Compact(served)
 		}
 	}
 	return scope, nil

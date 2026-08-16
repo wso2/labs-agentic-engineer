@@ -101,6 +101,14 @@ const (
 	// on a succeeded run.
 	RunReasonRedispatchBudget     = "redispatch-budget"
 	RunReasonBuildRetriggerBudget = "build-retrigger-budget"
+	// RunReasonDeployBudget — the cycle's components built, but a deployment
+	// never reached Ready and no fix issue arrived to recover it.
+	//
+	// Its own class rather than a shade of build-retrigger-budget, because the
+	// two send a human to different places: a red build is code that did not
+	// compile, while this is code that compiled and would not run — a bad image,
+	// an unrenderable trait, a missing dependency at runtime.
+	RunReasonDeployBudget = "deploy-budget"
 	RunReasonFixChainBudget       = "fix-chain-budget"
 	RunReasonConflictBudget       = "conflict-budget"
 	RunReasonNoProgress           = "no-progress"

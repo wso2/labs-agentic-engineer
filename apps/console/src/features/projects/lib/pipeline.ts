@@ -162,6 +162,11 @@ export function validationState(deployValidation: string, verdict: string): stri
 // "Validation") and the distinction the vocabulary exists for would be sighted-only.
 // It is absent everywhere else, so the default stays "the name is the visible label"
 // and a caller that ignores the field is still correct for seven of the nine states.
+//
+// It is never the VISIBLE string. A caller with room says the hedge in its own prose
+// (the verdict tile's sentence, the deployments banner's); a caller without room
+// shows the mark. Substituting the spoken form for the label would put a third
+// wording on screen and make the mark unreachable.
 export function validationView(
   validation: string,
 ): { label: string; tone: StageTone; spoken?: string } | null {
@@ -191,11 +196,18 @@ export function validationView(
       return { label: "validated", tone: "success" };
     case "partial":
       // Something passed, nothing failed, and some criteria were never covered.
-      // Green like `passed` (#401 review): nothing about this run failed, and the
-      // deployments surface prints the actual counts ("3/6 passed") beside the
-      // chip, so the numbers carry the hedge the old asterisk did. The spoken
-      // form keeps the distinction screen readers can't get from a shared label.
-      return { label: "validated", tone: "success", spoken: "validated, partially" };
+      //
+      // The ASTERISK is the hedge and the TONE is the outcome, and separating them
+      // is the point: nothing about this run failed, so green is honest, but the
+      // bare word "validated" would claim a result for criteria nobody checked.
+      // A spell-out ("partially validated") is not wanted here — the mark is meant
+      // to be quiet, and the surfaces that have room say it in full a line later.
+      //
+      // `info` is NOT available for this, which is what makes the mark necessary
+      // rather than merely nice: `running` is the only other info, and
+      // deploymentStory's TONE_STATE maps info to `active` — the rail's hollow
+      // pulsing dot. A settled partial verdict would pulse there forever.
+      return { label: "validated*", tone: "success", spoken: "validated, partially" };
     case "failed":
       return { label: "validation failed", tone: "error" };
     case "inconclusive":

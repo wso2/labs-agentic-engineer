@@ -140,6 +140,44 @@ func (h *Handler) StreamTurn(ctx context.Context, request gen.StreamTurnRequestO
 	}}, nil
 }
 
+// ListConversations resolves the project's chat threads (#430) — one element
+// today, the current thread, lazily created on first read so every member
+// converges on it. Plural-shaped so the multi-conversation future grows the
+// array instead of renaming the endpoint.
+func (h *Handler) ListConversations(ctx context.Context, request gen.ListConversationsRequestObject) (gen.ListConversationsResponseObject, error) {
+	org := tenant.BoundOrgFromContext(ctx)
+	rows, err := h.genai.ListConversations(ctx, org, request.ProjectName)
+	if err != nil {
+		return nil, mapGenAITurnError(ctx, err)
+	}
+	views := make([]gen.ProjectConversationView, 0, len(rows))
+	for _, row := range rows {
+		views = append(views, conversationView(row))
+	}
+	return gen.ListConversations200JSONResponse(gen.ProjectConversationList{Conversations: views}), nil
+}
+
+// RotateConversation starts a fresh thread for the whole project (#430 D4).
+// Deliberately ungated — rotation is the escape hatch from an abandoned
+// interview; the console owns the confirmation that names what is at stake.
+func (h *Handler) RotateConversation(ctx context.Context, request gen.RotateConversationRequestObject) (gen.RotateConversationResponseObject, error) {
+	org := tenant.BoundOrgFromContext(ctx)
+	row, err := h.genai.RotateConversation(ctx, org, request.ProjectName)
+	if err != nil {
+		return nil, mapGenAITurnError(ctx, err)
+	}
+	return gen.RotateConversation201JSONResponse(conversationView(*row)), nil
+}
+
+func conversationView(row spec.ProjectConversation) gen.ProjectConversationView {
+	return gen.ProjectConversationView{
+		ConversationID: row.ID,
+		CreatedAt:      row.CreatedAt,
+		CreatedBy:      row.CreatedBy,
+		Current:        row.Current,
+	}
+}
+
 func (h *Handler) GetConversation(ctx context.Context, request gen.GetConversationRequestObject) (gen.GetConversationResponseObject, error) {
 	org := tenant.BoundOrgFromContext(ctx)
 	raw, err := h.genai.Rehydrate(ctx, org, request.ProjectName, request.ConversationID)
@@ -151,15 +189,23 @@ func (h *Handler) GetConversation(ctx context.Context, request gen.GetConversati
 
 // ---- responses ---------------------------------------------------------------
 
-// turnConflictOf maps the two StartTurn conflict rejections onto the
-// contract's 409 TurnConflict body ({"code":"turn_in_progress","activeTurnId"}
-// / {"code":"requirements_missing"} — declared in the contract, generated
-// type); every other error stays on the envelope path (mapGenAITurnError).
+// turnConflictOf maps the StartTurn conflict rejections onto the contract's
+// 409 TurnConflict body ({"code":"turn_in_progress","activeTurnId"} /
+// {"code":"requirements_missing"} / {"code":"conversation_rotated"} — declared
+// in the contract, generated type); every other error stays on the envelope
+// path (mapGenAITurnError).
 func turnConflictOf(err error) (gen.CreateTurnResponseObject, bool) {
 	var inProgress *spec.TurnInProgressError
 	if errors.As(err, &inProgress) {
 		return gen.CreateTurn409JSONResponse(gen.TurnConflict{
 			Code: gen.TurnInProgress, ActiveTurnID: inProgress.ActiveTurnID,
+		}), true
+	}
+	if errors.Is(err, spec.ErrConversationRotated) {
+		// #430 single-era rule: the addressed thread is no longer current —
+		// the console re-resolves via list-conversations and retries.
+		return gen.CreateTurn409JSONResponse(gen.TurnConflict{
+			Code: gen.ConversationRotated,
 		}), true
 	}
 	return nil, false
@@ -321,6 +367,12 @@ func mapGenAITurnError(ctx context.Context, err error) error {
 		// today (drop the stale `_skills` row; the next resolve re-provisions).
 		slog.ErrorContext(ctx, "genai turn: org skills repository unavailable", "error", err)
 		return apierr.ServiceUnavailable("org skills repository unavailable — contact your platform admin")
+	case errors.Is(err, spec.ErrConversationsUnavailable):
+		// A wiring bug (the thread store was not assembled), never a client
+		// error — logged 503 with a clear message, same posture as the
+		// skills-repo arm above.
+		slog.ErrorContext(ctx, "genai turn: conversation store not configured", "error", err)
+		return apierr.ServiceUnavailable(spec.ErrConversationsUnavailable.Error())
 	default:
 		return genaiInternalError(ctx, "genai turn", err)
 	}

@@ -154,13 +154,22 @@ func (e *Events) startRun(ctx context.Context, orgID, projectID string, mileston
 			"project", projectID, "milestone", milestone.Number)
 		return nil
 	}
-	return e.p.Starter.StartRun(ctx, delivery.StartRunRequest{
+	err := e.p.Starter.StartRun(ctx, delivery.StartRunRequest{
 		OrgID:           orgID,
 		ProjectID:       projectID,
 		MilestoneNumber: milestone.Number,
 		MilestoneTitle:  milestone.Title,
 		Origin:          delivery.RunOriginIncidentAdoption,
 	})
+	if errors.Is(err, delivery.ErrRunNotStarted) {
+		// A degraded boot. This package re-offers on a timer — the reconcile
+		// sweep runs every pass — so "not started yet" is nothing to report. The
+		// callers that have no timer are the ones the sentinel exists for.
+		slog.DebugContext(ctx, "eventcore: platform not ready to start a run — the sweep will re-offer",
+			"project", projectID, "milestone", milestone.Number)
+		return nil
+	}
+	return err
 }
 
 // Revalidate asks a version's acceptance criteria again, against the system

@@ -179,16 +179,16 @@ func (s *PlanService) startPlanLocked(ctx context.Context, orgID, projectID stri
 	// exists for.
 	contextFiles := map[string]string{}
 	preload, slugs := s.assembleMilestoneTasks(ctx, orgID, projectID, milestoneNumber, contextFiles)
-	// The tag's PHASE scope (#370): the in-scope story set drives DELTA
+	// The tag's story scope (#369): the PRD's story set drives DELTA
 	// planning — stories already covered by existing Tasks (their platform
-	// stamps, #369) need no new work. Best-effort: a scope-less snapshot
+	// stamps) need no new work. Best-effort: a scope-less snapshot
 	// degrades to the legacy plan-everything behavior.
 	scope := spec.BuildScope{}
 	if tag := s.versions.LatestSpecTag(ctx, orgID, projectID); tag != "" {
 		if sc, serr := s.versions.BuildScopeAtTag(ctx, orgID, projectID, tag); serr == nil {
 			scope = sc
 		} else {
-			slog.WarnContext(ctx, "plan: phase scope read failed — planning without milestone scope",
+			slog.WarnContext(ctx, "plan: story scope read failed — planning without milestone scope",
 				"project", projectID, "tag", tag, "error", serr)
 		}
 	}
@@ -331,13 +331,13 @@ func (s *PlanService) assembleMilestoneTasks(ctx context.Context, orgID, project
 	return preload, slugs
 }
 
-// planScopeFor states the milestone's phase scope (#370) as facts: which
-// in-scope stories the existing Tasks already cover, and which this plan must.
+// planScopeFor states the milestone's story scope (#369) as facts: which
+// stories the existing Tasks already cover, and which this plan must.
 // Platform-computed — the model never decides coverage, and never sees this as
 // anything but the section the agents service renders from it. nil when the
-// snapshot declares no phase.
+// snapshot carries no readable stories.
 func planScopeFor(scope spec.BuildScope, covered map[int]bool) *agentsvc.PlanScope {
-	if scope.Phase == 0 || len(scope.InScope) == 0 {
+	if len(scope.InScope) == 0 {
 		return nil
 	}
 	stories := make([]agentsvc.PlanStory, 0, len(scope.InScope))
@@ -348,7 +348,7 @@ func planScopeFor(scope spec.BuildScope, covered map[int]bool) *agentsvc.PlanSco
 			Covered: covered[n],
 		})
 	}
-	return &agentsvc.PlanScope{Phase: scope.Phase, Tag: scope.Tag, Stories: stories}
+	return &agentsvc.PlanScope{Tag: scope.Tag, Stories: stories}
 }
 
 // planContextFor carries the milestone's existing-Task renders as facts, sorted

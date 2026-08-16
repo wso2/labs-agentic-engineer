@@ -64,11 +64,19 @@ func NewSupervisor(rt *delivery.Runtime, runs RunStore, dispatcher delivery.Mile
 // StartRun admits the run row when the caller has not already, then starts the
 // supervisor over its milestone.
 //
-// Idempotent by construction, because both of its callers re-offer the same
-// milestone: adoption fires on every `aep:codingagent` label, and the reconcile
-// sweep re-offers every pass until a run is live. A milestone that already has
-// a live run reuses its row, and a workflow that is already running answers
-// AlreadyStarted, which is success.
+// Idempotent by construction, because its callers re-offer the same milestone:
+// adoption fires on every `aep:codingagent` label, and the reconcile sweep
+// re-offers every pass. A milestone that already has a live run reuses its row,
+// and a workflow that is already running answers AlreadyStarted, which is
+// success.
+//
+// A DEGRADED boot — no dispatcher, no workflow engine — returns
+// delivery.ErrRunNotStarted rather than nil. The distinction is load-bearing now
+// that the run workflow owns planning: a caller that returns success without
+// starting anything leaves the row non-terminal with nothing behind it, and a
+// non-terminal row answers LiveRunForMilestone forever, so the sweep skips it
+// and the spec mutex never releases. Callers that re-offer on a timer swallow
+// the sentinel; the build click, which has no timer, settles the row on it.
 func (s *Supervisor) StartRun(ctx context.Context, req delivery.StartRunRequest) error {
 	if s == nil {
 		return nil
@@ -76,12 +84,12 @@ func (s *Supervisor) StartRun(ctx context.Context, req delivery.StartRunRequest)
 	if s.dispatcher == nil {
 		slog.WarnContext(ctx, "run: no agent dispatcher wired — the run row waits",
 			"project", req.ProjectID, "milestone", req.MilestoneNumber, "origin", req.Origin)
-		return nil
+		return delivery.ErrRunNotStarted
 	}
 	if s.rt == nil || !s.rt.Available() {
 		slog.WarnContext(ctx, "run: temporal unavailable — the run row waits for the reconcile sweep",
 			"project", req.ProjectID, "milestone", req.MilestoneNumber)
-		return nil
+		return delivery.ErrRunNotStarted
 	}
 
 	row, err := s.admit(ctx, req)
@@ -110,6 +118,13 @@ func (s *Supervisor) StartRun(ctx context.Context, req delivery.StartRunRequest)
 		MilestoneNumber: row.MilestoneNumber,
 		MilestoneTitle:  row.MilestoneTitle,
 		Origin:          row.Origin,
+		// Planning inputs come off the REQUEST, never the row — the inverse of the
+		// budgets below, and for the mirror-image reason. The row says which run
+		// this is; only the caller knows whether it is asking for a version to be
+		// FILLED (the build click) or an existing run to be RESUMED (the sweep, an
+		// adoption). Reading a tag off the row would make every re-offer re-plan.
+		Tag:             req.Tag,
+		ProvisionInputs: req.ProvisionInputs,
 		// Budgets come off the ROW, never the request: a run the sweep re-offers is
 		// an existing row, and reading the re-offer's (default) values would quietly
 		// widen a run that was admitted narrower.

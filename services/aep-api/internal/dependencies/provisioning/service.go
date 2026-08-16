@@ -205,7 +205,8 @@ func (s *Service) admitProvisionRow(ctx context.Context, orgID, projectID, repo,
 //
 // It no longer posts the wiring comment. That used to happen here, and the
 // audience was whatever working-set issues existed AT THIS MOMENT — which on a
-// first build is none, because fillMilestone provisions before it plans. The
+// first build is none, because the run's planning phase provisions before it
+// plans (run/workflow.go fillMilestone). The
 // resource half the agent cannot invent now travels in design.json
 // (spec/derive_wiring.go), and the endpoint half is published at cycle dispatch
 // (wiring.go), where the dispatch predicate guarantees both a resolved design and

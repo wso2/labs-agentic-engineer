@@ -93,8 +93,9 @@ type CreateComponentRequest struct {
 	Workflow    *ComponentWorkflowSpec `json:"workflow,omitempty"`
 	// Traits are ClusterTrait attachments emitted by the BFF based on
 	// design.json (e.g. `api-configuration` when
-	// `exposesAPI.auth: end-user-required`). See services/trait_sync.go for the
-	// canonical emitter.
+	// `exposesAPI.auth: end-user-required`). projects.DesiredDeploymentFor is the
+	// canonical projection — it computes this shape and the binding's matching
+	// per-environment config together, so the two cannot disagree.
 	Traits []ComponentTrait `json:"traits,omitempty"`
 	// Labels are stamped onto metadata.labels (e.g. aep.wso2.com/* markers on
 	// ephemeral coding-agent Components).
@@ -156,6 +157,58 @@ type ComponentTrait struct {
 // what was previously pinned per-feature (runtimeconfig, provisioning,
 // codingagent, project status).
 const DevEnvironmentName = "development"
+
+// ComponentSpecDesired is the platform-owned half of a Component's spec: the
+// trait shape and the build/deploy policy.
+//
+// Both fields are plain bools with no "leave it alone" option, deliberately.
+// Every component this platform creates is BFF-built and BFF-deployed, so
+// AutoBuild/AutoDeploy have exactly one correct value; making them optional
+// would only create a way for a component to keep an inherited setting that
+// puts OpenChoreo's controller back in the deploy path.
+type ComponentSpecDesired struct {
+	Traits     []ComponentTrait
+	AutoBuild  bool
+	AutoDeploy bool
+}
+
+// ReleaseBindingDesired is the WHOLE binding a caller wants, in one value —
+// the pin plus every field the platform owns on it. It exists because a
+// ReleaseBinding is one object with one writer: composing the pin, the trait
+// configs and the workload overrides into a single desired state is what makes
+// the binding renderable at every instant, rather than briefly holding a trait
+// whose per-environment config has not been written yet (which fails the whole
+// render, not just that trait).
+//
+// The two authoritative fields are POINTER-shaped in effect: a nil map / nil
+// pointer means "this caller does not manage that field, leave it alone", and a
+// non-nil value REPLACES the field wholesale. That distinction is what lets the
+// ephemeral coding-agent path (which owns only the pin) and the user-component
+// deploy path (which owns everything) share one verb without either erasing the
+// other's writes.
+type ReleaseBindingDesired struct {
+	// ComponentName is the FRIENDLY name; the client scopes it.
+	ComponentName string
+	Environment   string
+	// ReleaseName is the pin — writing it IS the deploy.
+	ReleaseName string
+	// State is spec.state ("Active" / "Undeploy"). Empty leaves OC's default.
+	State string
+	// TraitEnvironmentConfigs, when non-nil, replaces spec.traitEnvironmentConfigs
+	// entirely: an instance absent from the map is an instance the platform no
+	// longer wants, so removal needs no tombstone value of its own.
+	TraitEnvironmentConfigs map[string]map[string]interface{}
+	// Env / Files, when non-nil, replace spec.workloadOverrides.container.{env,files}.
+	// Non-nil-but-empty is meaningful: it clears the field.
+	Env   []WorkflowEnvVarRef
+	Files []WorkflowFileVar
+}
+
+// ReleaseBindingState values for ReleaseBindingDesired.State.
+const (
+	ReleaseBindingStateActive   = "Active"
+	ReleaseBindingStateUndeploy = "Undeploy"
+)
 
 // ReleaseBindingSummary is one ReleaseBinding's identity plus its aggregate
 // Ready condition — the minimal view the project-status deploy stage derives

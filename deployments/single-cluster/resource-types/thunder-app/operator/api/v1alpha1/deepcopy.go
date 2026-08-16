@@ -88,9 +88,13 @@ func (in *ThunderApplicationList) DeepCopyObject() runtime.Object {
 }
 
 // DeepCopyInto copies the receiver, writing into out. in must be non-nil.
-// All fields are scalars, so a struct copy is a full deep copy.
 func (in *ThunderApplicationSpec) DeepCopyInto(out *ThunderApplicationSpec) {
 	*out = *in
+	if in.SecretRef != nil {
+		in, out := &in.SecretRef, &out.SecretRef
+		*out = new(SecretKeyRef)
+		**out = **in
+	}
 }
 
 // DeepCopy copies the receiver, creating a new ThunderApplicationSpec.

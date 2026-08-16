@@ -75,6 +75,17 @@ type StartRunRequest struct {
 	// supervision must happen together or a row exists that nobody drives.
 	RunID string
 
+	// Tag and ProvisionInputs ask the run to FILL its milestone before working
+	// it: mint the version's dependency gates, then plan its Tasks.
+	//
+	// Only the build click sets them, and that is the whole contract. A run the
+	// sweep or an adoption re-offers is past planning — re-offering must resume a
+	// run, never re-derive a version — so those callers leave both empty and the
+	// workflow skips its planning phase. They ride the REQUEST rather than the run
+	// row for exactly that reason: the row cannot tell "start me" from "fill me".
+	Tag             string
+	ProvisionInputs []ProvisionInput
+
 	// CycleCeiling and ValidationAttempts pin this run's budgets, overriding the
 	// platform defaults. Zero on both means "use the default", which is what every
 	// caller but the revalidate trigger passes — and what the sweep and adoption

@@ -30,14 +30,34 @@ type ThunderApplicationSpec struct {
 	// Platform-managed: aep-api patches it via binding environmentConfigs once
 	// the consuming SPA's public URL resolves. May be empty at creation.
 	RedirectURIs string `json:"redirectUris,omitempty"`
+	// ClientType is either "public" (default) or "confidential".
+	// "public" creates a PKCE authorization_code client (browser SPA).
+	// "confidential" creates a client_credentials client (service-to-service);
+	// SecretRef is required in that case.
+	// +kubebuilder:validation:Enum=public;confidential
+	ClientType string `json:"clientType,omitempty"`
+	// ClientID overrides the derived aep-<namespace>-<name> identity. Use this
+	// for platform clients that must have a stable, well-known client ID.
+	ClientID string `json:"clientId,omitempty"`
+	// SecretRef points to the Kubernetes Secret key holding the pre-generated
+	// OAuth client secret. Required when clientType=confidential.
+	SecretRef *SecretKeyRef `json:"secretRef,omitempty"`
 	// NOTE (v1 scope): no instanceRef — the operator always targets the single
 	// platform Thunder. A future BYO field slots in here additively.
 }
 
-// Reference-typed fields on ThunderApplicationSpec (slice/map/pointer) would
-// require a matching update in deepcopy.go — see the doc comment there. (Not
-// a doc comment on the type: keeping it detached avoids changing the
-// generated CRD schema description.)
+// SecretKeyRef selects a key from a Kubernetes Secret in the same namespace
+// as the ThunderApplication CR. Cross-namespace references are not supported.
+type SecretKeyRef struct {
+	// Name of the secret.
+	Name string `json:"name"`
+	// Key within the secret.
+	Key string `json:"key"`
+}
+
+// ThunderApplicationSpec now contains a SecretRef pointer — deepcopy.go
+// handles it explicitly. Adding any further slice, map, or pointer fields
+// requires a matching update there.
 
 // ThunderApplicationStatus reports the observed state of a ThunderApplication.
 type ThunderApplicationStatus struct {

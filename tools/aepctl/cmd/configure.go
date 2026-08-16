@@ -42,46 +42,20 @@ var configImportFile string
 var configImportCmd = &cobra.Command{
 	Use:   "import",
 	Short: "Apply a local config file to the in-cluster aep-cli-config ConfigMap",
-	Long: `Reads a local YAML config file and upserts the aep-cli-config ConfigMap
-in the wso2-aep namespace. Use this to set or update AEP configuration
-without re-running aep platform install.
+	Long: `Reads a local YAML config file, validates it, and writes all recognised
+config keys to the aep-cli-config ConfigMap in the wso2-aep namespace.
+Creates the namespace if it does not yet exist.
 
-Only keys present in the file are written; existing keys not in the file
-are left untouched. thunder.admin_client_secret is intentionally ignored
-— it is managed by OpenBao/ESO and never stored in the ConfigMap.
+This command must be run before 'aep platform install'. All config values
+for the install must come from this ConfigMap — no hardcoded defaults are
+used at install time.
 
-Example config file:
+All keys from the file are written; keys absent from the file are stored
+as empty (their zero value). thunder.admin_client_secret is intentionally
+ignored — it is managed by OpenBao/ESO and never stored in the ConfigMap.
 
-  server: http://aep-server.openchoreo.localhost:8080
-
-  thunder:
-    url: http://thunder-service.thunder.svc.cluster.local:8090
-    public_url: https://thunder.example.com
-    admin_client_id: openchoreo-system-app
-    namespace: thunder
-    config_map: thunder-config-map
-    deployment: thunder-deployment
-
-  oc:
-    api_url: http://openchoreo-api.openchoreo-control-plane.svc.cluster.local:8080
-    org_namespace: default
-    local_org_provisioning:
-      enabled: false
-
-  platform:
-    workspaces:
-      access_mode: ReadWriteMany
-
-  codingagent:
-    local_stubs:
-      enabled: false
-    secret_manager_api:
-      url: https://sma.example.com
-
-  webhook:
-    delivery_url: https://webhook.example.com
-    local_smee:
-      enabled: false`,
+Start from the defaults template:
+  aep platform config import --config ~/aepctl-configs/defaults.yaml`,
 	RunE: runConfigImport,
 }
 
@@ -95,8 +69,16 @@ func init() {
 func runConfigImport(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
-	// Read the local file into a standalone viper instance so it does not
-	// interfere with the global viper used by the rest of the CLI.
+	// Validate the file before touching the cluster. Fail fast on errors.
+	if errs := config.ValidateFile(configImportFile); len(errs) > 0 {
+		_, _ = fmt.Fprintln(os.Stderr, "Config file validation failed:")
+		for _, e := range errs {
+			_, _ = fmt.Fprintf(os.Stderr, "  %s\n", e)
+		}
+		return fmt.Errorf("fix the errors above and re-run import")
+	}
+
+	// Re-read the file into an isolated viper to collect values.
 	fv := viper.New()
 	fv.SetConfigFile(configImportFile)
 	if err := fv.ReadInConfig(); err != nil {
@@ -107,15 +89,12 @@ func runConfigImport(cmd *cobra.Command, args []string) error {
 		_, _ = fmt.Fprintln(os.Stderr, "warning: thunder.admin_client_secret is managed by OpenBao/ESO — ignoring")
 	}
 
-	// Collect only the keys that are explicitly set in the file.
-	data := make(map[string]string)
+	// Write ALL recognised keys. Keys absent from the file are stored as empty
+	// string (their zero value). This ensures the ConfigMap is always complete
+	// and ValidateLoaded can distinguish "never imported" from "explicitly empty".
+	data := make(map[string]string, len(config.ConfigMapKeys))
 	for _, k := range config.ConfigMapKeys {
-		if fv.IsSet(k) {
-			data[k] = fv.GetString(k)
-		}
-	}
-	if len(data) == 0 {
-		return fmt.Errorf("no recognised config keys found in %s", configImportFile)
+		data[k] = fv.GetString(k)
 	}
 
 	client, err := k8s.NewClient(kubeconfig)
@@ -124,6 +103,11 @@ func runConfigImport(cmd *cobra.Command, args []string) error {
 	}
 
 	const aepNamespace = "wso2-aep"
+	if err := ensureNamespace(ctx, client, aepNamespace); err != nil {
+		return fmt.Errorf("ensure namespace %s: %w", aepNamespace, err)
+	}
+
+
 	existing, err := client.CoreV1().ConfigMaps(aepNamespace).Get(ctx, config.ConfigMapName, metav1.GetOptions{})
 	if err != nil {
 		if !apierrors.IsNotFound(err) {
@@ -141,12 +125,7 @@ func runConfigImport(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("create %s: %w", config.ConfigMapName, err)
 		}
 	} else {
-		if existing.Data == nil {
-			existing.Data = make(map[string]string)
-		}
-		for k, v := range data {
-			existing.Data[k] = v
-		}
+		existing.Data = data
 		_, err = client.CoreV1().ConfigMaps(aepNamespace).Update(ctx, existing, metav1.UpdateOptions{})
 		if err != nil {
 			return fmt.Errorf("update %s: %w", config.ConfigMapName, err)
@@ -158,9 +137,11 @@ func runConfigImport(cmd *cobra.Command, args []string) error {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	_, _ = fmt.Fprintf(os.Stdout, "Applied %d key(s) to %s/%s:\n", len(keys), aepNamespace, config.ConfigMapName)
+	_, _ = fmt.Fprintf(os.Stdout, "Wrote %d key(s) to %s/%s:\n", len(keys), aepNamespace, config.ConfigMapName)
 	for _, k := range keys {
-		_, _ = fmt.Fprintf(os.Stdout, "  %s\n", k)
+		_, _ = fmt.Fprintf(os.Stdout, "  %s = %s\n", k, data[k])
 	}
+	_, _ = fmt.Fprintln(os.Stdout, "\nRun 'aep platform install' to apply.")
 	return nil
 }
+

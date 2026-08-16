@@ -101,10 +101,6 @@ function storageKey(org: string, project: string): string {
   return `aep.chat.v1.${org}.${project}`;
 }
 
-function convKey(org: string, project: string): string {
-  return `aep.chat.conv.${org}.${project}`;
-}
-
 /**
  * A persisted message is renderable only if it matches the CURRENT schema.
  * Guards against a log written by an older build (the `aep.chat.v1` key is
@@ -273,45 +269,24 @@ export function dropTurnOutput(key: string, turnId: string): void {
 }
 
 export function replaceMessages(key: string, messages: ChatMessage[]): void {
+  // Rows that arrive with an id KEEP it. The D6 rehydrate replaces the whole
+  // log repeatedly (mount, foreign turn, refocus); minting fresh ids each
+  // time made every replace a full React remount, a full localStorage
+  // rewrite, and — worst — re-armed the panel's one-per-question
+  // auto-navigation, which keys off ids it has already seen.
+  // projectableHistory supplies position-stable ids for exactly this reason;
+  // minting here is the fallback for callers that don't.
   persist(
     key,
-    messages.map((m) => ({ ...m, id: nextId() })),
+    messages.map((m) => (m.id ? m : { ...m, id: nextId() })),
   );
 }
 
-/**
- * Start a fresh conversation for the project (header "New conversation"):
- * mint a new conversation uuid and clear the display log. The old server-side
- * conversation stays intact server-side; this only re-points local identity
- * and empties the panel. Callers gate this behind "no turn running".
- */
-export function startNewConversation(org: string, project: string): void {
-  try {
-    localStorage.setItem(convKey(org, project), crypto.randomUUID());
-  } catch {
-    // identity is best-effort; a fresh id is minted lazily on next send
-  }
-  replaceMessages(storageKey(org, project), []);
-}
-
-/** The project's conversation uuid; minted + persisted on first use. */
-export function conversationIdFor(
-  org: string,
-  project: string,
-  { create }: { create: boolean },
-): string | null {
-  const key = convKey(org, project);
-  try {
-    const existing = localStorage.getItem(key);
-    if (existing) return existing;
-    if (!create) return null;
-    const fresh = crypto.randomUUID();
-    localStorage.setItem(key, fresh);
-    return fresh;
-  } catch {
-    return create ? crypto.randomUUID() : null;
-  }
-}
+// The conversation ID is no longer stored here (#430): it is SERVER-minted,
+// stored against the project, and resolved via the conversations endpoint
+// (api/conversations.ts + useAgentChat) — which is what makes the thread
+// shared across every member's browser. This store keeps only the local
+// display log, demoted to a paint-fast cache of the server thread.
 
 // --- pendingSeed (#252 Task 5: "Resolve via chat") ------------------------
 //

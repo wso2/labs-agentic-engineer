@@ -36,7 +36,6 @@ import {
   appendAssistantText,
   chatKeyFor,
   consumePendingSeed,
-  conversationIdFor,
   dropTurnOutput,
   getMessages,
   hasDeterministicFlush,
@@ -197,13 +196,9 @@ describe("chatStore", () => {
     expect((msg as { author?: unknown } | undefined)?.author).toBeUndefined();
   });
 
-  it("mints one conversation id per project and persists it", () => {
-    expect(conversationIdFor("o", "p", { create: false })).toBeNull();
-    const id = conversationIdFor("o", "p", { create: true });
-    expect(id).toBeTruthy();
-    expect(conversationIdFor("o", "p", { create: false })).toBe(id);
-    expect(conversationIdFor("o", "p2", { create: true })).not.toBe(id);
-  });
+  // The conversation id is no longer minted here (#430): it is server-minted,
+  // stored against the project, and resolved via api/conversations.ts — the
+  // store keeps only the local display log.
 });
 
 // pendingSeed (#252 Task 5): the "Resolve via chat" action writes here from a

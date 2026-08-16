@@ -38,6 +38,8 @@
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/env.sh"
+# pin_node_image — keeps the imported tag out of kubelet's image GC.
+source "$SCRIPT_DIR/utils.sh"
 
 IMAGE="${AGENT_RUNNER_IMAGE:-aep-runner:dev}"
 WORKER_DIR="$SCRIPT_DIR/../../runners/remote-worker"
@@ -72,9 +74,31 @@ fi
 if [ "${SKIP_IMPORT:-0}" = "1" ]; then
     echo "⏭️  node import skipped (SKIP_IMPORT=1) — the caller owns it"
 elif command -v k3d &>/dev/null && k3d cluster list "$CLUSTER_NAME" &>/dev/null; then
-    k3d image import "$IMAGE" -c "$CLUSTER_NAME" \
-        && echo "✅ imported $IMAGE into k3d cluster '$CLUSTER_NAME'" \
-        || echo "⚠️  k3d image import failed; first dispatch may cold-pull"
+    # A missing image is a FAILURE, not a warning: this tag is local-only, so a pod
+    # that cannot find it has no registry to fall back on and the dispatch is dead.
+    # Both callers already expect a non-zero exit here and turn it into their own
+    # message (setup-aep.sh's "dispatch stays disabled until fixed", setup.sh's
+    # background-build branch), so exiting non-zero is what makes those fire.
+    if k3d image import "$IMAGE" -c "$CLUSTER_NAME"; then
+        # A successful import is not durable on its own: an idle local-only tag is
+        # collected early by kubelet's image GC, and the next Job then has nothing to
+        # pull. pin_node_image both pins it and verifies it actually landed on every
+        # node — `k3d image import` is known to flake and still exit 0, which shows
+        # up here as exit 2 and is an import failure rather than a pinning one.
+        PIN_RC=0
+        pin_node_image "$IMAGE" || PIN_RC=$?
+        case "$PIN_RC" in
+            0) echo "✅ imported $IMAGE into k3d cluster '$CLUSTER_NAME' (verified in node containerd)" ;;
+            2) echo "❌ import reported success but the image is not in the node — re-run 'make build-runner'"
+               exit 1 ;;
+            # Pinned-but-unlabelled: the image IS there, so dispatch works today. Not
+            # worth failing a build over — it only means GC can still evict it.
+            *) echo "✅ imported $IMAGE into k3d cluster '$CLUSTER_NAME' (unpinned — see the warning above)" ;;
+        esac
+    else
+        echo "❌ k3d image import failed — $IMAGE is not in the node and has no registry to pull from"
+        exit 1
+    fi
 else
     echo "ℹ️  k3d cluster '$CLUSTER_NAME' not found — built the image only; setup-aep.sh imports it at cluster setup."
 fi

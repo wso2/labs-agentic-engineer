@@ -51,6 +51,7 @@ export type {
   TurnKind,
   PlanScope,
   PlanContextFile,
+  TurnJournal,
   WorkspaceRef,
   McpConfig,
   CollabConfig,

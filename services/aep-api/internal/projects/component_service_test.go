@@ -133,19 +133,6 @@ func TestComponentService_ListBuilds_DelegatesToWorkflowRuns(t *testing.T) {
 	}
 }
 
-func TestComponentService_UpdateWorkflowEnvVars_Passthrough(t *testing.T) {
-	t.Parallel()
-	oc := &ocmocks.ComponentClientMock{UpdateComponentWorkflowEnvVarsFunc: func(context.Context, string, string, string, []openchoreo.WorkflowEnvVarRef) error {
-		return nil
-	}}
-	if err := NewComponentService(oc, nil, nil, nil, nil).UpdateWorkflowEnvVars(context.Background(), "acme", "web", "svc", []openchoreo.WorkflowEnvVarRef{{Key: "K", Value: "V"}}); err != nil {
-		t.Fatalf("update env vars happy: %v", err)
-	}
-	if c := oc.UpdateComponentWorkflowEnvVarsCalls(); len(c) != 1 || len(c[0].EnvVars) != 1 || c[0].EnvVars[0].Key != "K" {
-		t.Fatalf("OC UpdateComponentWorkflowEnvVars args: %+v", c)
-	}
-}
-
 // --- TriggerBuild: the build-secret pre-stage chain ---------------------------
 
 func TestComponentService_TriggerBuild_NoStagerWhenPortsNil(t *testing.T) {

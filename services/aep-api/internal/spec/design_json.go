@@ -80,8 +80,8 @@ type componentDesignJSON struct {
 	AppPath      string           `json:"appPath,omitempty"`
 	Entrypoint   string           `json:"entrypoint,omitempty"`
 	Exposure     string           `json:"exposure,omitempty"`
-	// Stories is the platform-recomputed citation copy from the cell (#369) —
-	// carried losslessly through the codec so a save never strips it.
+	// Stories is the agent-authored list of PRD stories this component serves
+	// (#369) — the build gate's coverage check reads it.
 	Stories      []int            `json:"stories,omitempty"`
 	Description  string           `json:"description,omitempty"`
 	Endpoint     *endpointJSON    `json:"endpoint,omitempty"`

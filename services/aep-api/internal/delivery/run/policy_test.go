@@ -193,3 +193,43 @@ func TestCycleBuildStateGreen(t *testing.T) {
 		}
 	}
 }
+
+// A cycle can expire with SOME components serving and others still rolling out.
+// The deadline must report only the ones that did not come up — filing fix work
+// against a component that deployed fine sends an agent after nothing.
+func TestClassifyCycleDeploys_PendingNamesOnlyTheUnsettled(t *testing.T) {
+	t.Parallel()
+	got := classifyCycleDeploys(3, []delivery.ComponentDeploy{
+		{Component: "ready-one", Ready: true},
+		{Component: "still-rolling"},
+		{Component: "ready-two", Ready: true},
+	})
+	if got.Ready != 2 {
+		t.Errorf("Ready = %d, want 2", got.Ready)
+	}
+	if len(got.Pending) != 1 || got.Pending[0] != "still-rolling" {
+		t.Errorf("Pending = %v, want only the component that never settled", got.Pending)
+	}
+	if got.Green() {
+		t.Error("a partially deployed cycle must not read as green")
+	}
+}
+
+// A failed component is named AND carries OpenChoreo's reason, while a pending
+// one is neither — the three-way split the supervisor branches on.
+func TestClassifyCycleDeploys_SeparatesFailedFromPending(t *testing.T) {
+	t.Parallel()
+	got := classifyCycleDeploys(2, []delivery.ComponentDeploy{
+		{Component: "broken", Failed: true, Reason: "RenderingFailed"},
+		{Component: "rolling"},
+	})
+	if len(got.Failed) != 1 || got.Failed[0] != "broken" {
+		t.Errorf("Failed = %v", got.Failed)
+	}
+	if got.Reasons["broken"] != "RenderingFailed" {
+		t.Errorf("Reasons = %v, want the condition reason carried through", got.Reasons)
+	}
+	if len(got.Pending) != 1 || got.Pending[0] != "rolling" {
+		t.Errorf("Pending = %v", got.Pending)
+	}
+}

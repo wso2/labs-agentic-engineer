@@ -239,16 +239,18 @@ describe("validationView", () => {
       tone: "error",
     });
   });
-  // Something passed and nothing failed, but criteria were left uncovered.
-  // Visually this shares `passed`'s green label (#401 review — the deployments
-  // surface prints the counts beside it, which carry the hedge); the SPOKEN
-  // form is what still distinguishes it, so that is what this test pins.
-  it("partial → validated (success), spoken form keeps the distinction", () => {
+  // Something passed and nothing failed, but criteria were left uncovered. The
+  // ASTERISK hedges and the TONE reports the outcome: green is honest because
+  // nothing failed, while the bare word would claim a result for criteria nobody
+  // checked. `info` is unavailable — `running` owns it, and deploymentStory maps it
+  // to the rail's pulsing `active` dot, which a settled verdict must not get.
+  it("partial → validated* (success), with a spoken form for the mark", () => {
     expect(validationView("partial")).toEqual({
-      label: "validated",
+      label: "validated*",
       tone: "success",
       spoken: "validated, partially",
     });
+    expect(validationView("partial")?.tone).toBe(validationView("passed")?.tone);
   });
   it("inconclusive → validation? (warning)", () => {
     expect(validationView("inconclusive")).toEqual({

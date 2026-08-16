@@ -153,9 +153,9 @@ type ArtifactService interface {
 	// ValidateSpecAtTag re-runs the whole-spec gate at a `v<N>` tag — the dev
 	// workflow's defensive pre-plan check.
 	ValidateSpecAtTag(ctx context.Context, orgID, projectID, tag string) error
-	// BuildScopeAtTag computes the tag's PHASE scope (#370/#369): the declared
-	// phase, its in-scope story set + titles, and per-component in-scope
-	// citations. Consumed by delivery/build (phase milestone identity) and
+	// BuildScopeAtTag computes the tag's story scope (#369): the PRD's story
+	// set + titles, and per-component claims from each design.json's
+	// `stories`. Consumed by delivery/build (milestone identity) and
 	// delivery/task (delta planning + the Serves-stories stamp).
 	BuildScopeAtTag(ctx context.Context, orgID, projectID, tag string) (BuildScope, error)
 	// LatestSpecTag returns the newest `v<N>` tag name from the local mirror
@@ -209,8 +209,8 @@ var allowedRequirementExts = []string{".md", ".excalidraw", ".dsl"}
 // against the published schema) plus the FE-derived `*.gen.json` projections;
 // `.cell` is the project-level cell-diagram DSL (design.cell) that drives the
 // live architecture diagram; `.dsl` is the per-component wireframes DSL
-// (wireframes.dsl) — the phase gate demands it for in-phase web-applications,
-// so it must ride the bundle the gate reads.
+// (wireframes.dsl) — the build gate demands it for deployable
+// web-applications, so it must ride the bundle the gate reads.
 var allowedDesignExts = []string{".md", ".yaml", ".yml", ".json", ".cell", ".dsl"}
 
 func hasAllowedDesignExt(name string) bool {

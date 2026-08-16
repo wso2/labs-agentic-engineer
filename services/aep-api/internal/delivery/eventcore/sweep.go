@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
@@ -30,15 +31,24 @@ import (
 // on purpose.
 const defaultSweepInterval = 60 * time.Second
 
-// Sweep is the reconcile backstop, and it has exactly ONE trigger condition:
+// Sweep is the reconcile backstop, and it has TWO trigger conditions:
 //
-//	a milestone with open work and no live run gets one.
+//	a milestone with open work and no live run gets one, and
+//	a live run row past its planning phase is re-offered to the supervisor.
 //
-// That single rule heals both failure modes the event plane can have. A
-// delivery GitHub never made (or that failed past its retries) leaves a
-// milestone with work and nobody working it. And the adoption-versus-settle
-// race — an issue joining a milestone in the instant the supervisor decided it
-// was empty — leaves exactly the same footprint.
+// The first heals both failure modes the event plane can have. A delivery
+// GitHub never made (or that failed past its retries) leaves a milestone with
+// work and nobody working it. And the adoption-versus-settle race — an issue
+// joining a milestone in the instant the supervisor decided it was empty —
+// leaves exactly the same footprint.
+//
+// The second heals a failure mode the row model has: a live ROW is not a live
+// WORKFLOW. Nothing else notices a row whose execution is gone, and because a
+// non-terminal row answers LiveRunForMilestone forever, the first rule would
+// skip it forever while the partial indexes refuse every later run on that
+// project. Re-offering is idempotent — a running execution answers
+// AlreadyStarted and the row is reused, not re-admitted — so the healthy case
+// costs one Temporal call and changes nothing.
 //
 // The rule is safe because supersede makes it so: the plan path closes the
 // previous version's open issues before minting the next milestone, so an
@@ -119,7 +129,26 @@ func (s *Sweep) reconcileRepo(ctx context.Context, repo RepoRef) error {
 			continue
 		}
 		if live != nil {
-			continue // somebody is on it
+			// A live ROW is not a live WORKFLOW. Re-offer it: StartRun is
+			// idempotent — an execution that is running answers AlreadyStarted,
+			// and the row is reused rather than re-admitted — so this costs one
+			// Temporal call and heals a row whose workflow is gone. Without it a
+			// non-terminal row answers LiveRunForMilestone forever, the sweep
+			// skips it forever, and the partial indexes refuse every later run on
+			// that project (the wedge migrate/milestone_runs.go:75-85 documents).
+			//
+			// EXCEPT a run still in its planning phase. Re-offering that one would
+			// start a fresh workflow with no Tag and no provision inputs — the
+			// caller's, not the row's — so it would skip planning entirely and
+			// settle an unplanned version as delivered. A planning row is the
+			// click's to resolve: it starts the workflow synchronously and settles
+			// the row when it cannot.
+			if live.State != delivery.RunStatePlanning {
+				if serr := e.startRun(ctx, repo.OrgID, repo.ProjectID, milestone); serr != nil {
+					errs = append(errs, serr)
+				}
+			}
+			continue
 		}
 		counts, cerr := e.p.Issues.MilestoneIssueCounts(ctx, repo.OrgID, repo.ProjectID, milestone.Number)
 		if cerr != nil {

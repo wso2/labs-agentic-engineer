@@ -74,6 +74,15 @@ slices.
   DB row — the org-namespaced OpenChoreo `ResourceType` is the registry (ADR-0009).
 
 ## Invariants — don't break
+- **`env-config.js` is ready or absent, never partial** — and "ready" means exactly *the keys the SPA needs
+  to START*: a sibling backend's address, a platform resource's outputs. `src/env.ts` throws on a missing
+  key at module load, so half a file is worse than the stale one the pod already has. The SPA's OWN
+  external URL is deliberately not one of those keys: it exists only once the SPA has a rendered binding,
+  so requiring it before the first write is a demand the SPA cannot meet until it has already been
+  deployed — and the one thing that needs it (registering the callback URL with an OIDC dependency) is not
+  read by the bundle at all. That registration is SOFT: it is retried by the deploy stage's converge pass
+  and by the converge watcher, and it never holds the file back. Grading it hard once withheld
+  `window._env_` entirely and served a blank page. ADR-0019.
 - **Secret values never leave the SecretWriter port.** External-resource secret values route through SM-API;
   issue bodies, comments, and API responses carry only names / paths / refs — never secret material. The
   domain imports no secret-backend SDK (the fence holds via `platform/secrets`).

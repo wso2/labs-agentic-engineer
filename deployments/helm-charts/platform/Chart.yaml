@@ -16,3 +16,8 @@ maintainers:
 name: aep-platform
 type: application
 version: 0.0.0-dev
+dependencies:
+  - name: thunder-app-operator
+    version: "0.0.0-dev"
+    repository: "file://../../single-cluster/resource-types/thunder-app/operator/helm"
+    condition: thunder-app-operator.enabled

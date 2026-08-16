@@ -107,7 +107,6 @@ const (
 
 // PlanScope is a plan turn's milestone and its story coverage.
 type PlanScope struct {
-	Phase   int         `json:"phase"`
 	Tag     string      `json:"tag"`
 	Stories []PlanStory `json:"stories"`
 }
@@ -154,6 +153,13 @@ type TurnRequest struct {
 	// FROM the doc, and applies ops to the doc — nothing is committed to git.
 	// Wire shape pinned by @aep/agent-stream's CollabConfig.
 	Collab *CollabBlock `json:"collab,omitempty"`
+	// Journal, when set, is the turn's display record (#463): the raw
+	// client-sent instruction (exactly what the sender's UI rendered as the
+	// user bubble) plus the acting user's best-effort display identity. The
+	// agents service stores it beside the transcript and serves it for user
+	// rows on the get-conversation read — the composed model prompt never
+	// reaches a browser. Wire shape pinned by @aep/agent-stream's TurnRequest.
+	Journal *JournalBlock `json:"journal,omitempty"`
 	// WebSearch, when true, has the agents service register Anthropic's
 	// provider-executed web_search tool for this turn (external-dependency-
 	// discovery #252) — it lets the model verify a candidate external API/SDK
@@ -182,6 +188,22 @@ type CollabBlock struct {
 type MCPBlock struct {
 	URL   string `json:"url"`
 	Token string `json:"token"`
+}
+
+// JournalBlock is a turn's display record (#463): what the client sent,
+// verbatim, and who sent it. Author mirrors the console's live author shape
+// ({id: email, displayName}) so a rehydrated row is attributable — and
+// self-vs-teammate distinguishable — exactly like a live one; nil for callers
+// with no human identity (M2M tokens journal no author, never a bare subject).
+type JournalBlock struct {
+	Text   string         `json:"text"`
+	Author *JournalAuthor `json:"author,omitempty"`
+}
+
+// JournalAuthor is the acting user in the console's author shape.
+type JournalAuthor struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"displayName"`
 }
 
 // UpstreamError is a non-2xx pre-stream response from the agents service. The

@@ -1,12 +1,11 @@
 # OpenBao helm values for AEP v1 local setup.
 #
 # Extends the OpenChoreo defaults
-# (https://raw.githubusercontent.com/openchoreo/openchoreo/v1.0.1-hotfix.1/install/k3d/common/values-openbao.yaml)
-# with the AEP-specific `aep-secret-reader` policy + role so
-# git-service's ExternalSecret reconciler can resolve per-repo build
-# tokens written by mint-build. Mirrors agent-manager's
-# single-cluster/values-openbao.yaml pattern — declarative postStart,
-# no kubectl-exec follow-up.
+# (https://raw.githubusercontent.com/openchoreo/openchoreo/release-v1.2/install/k3d/common/values-openbao.yaml)
+# with the AEP-specific `aep-secret-reader` policy (read-only on aep/*)
+# for future least-privilege reader roles, and seeds AEP platform secrets.
+# Mirrors agent-manager's single-cluster/values-openbao.yaml pattern —
+# declarative postStart, no kubectl-exec follow-up.
 #
 # Service.type=NodePort + nodePort=30820 are still passed via --set in
 # setup-prerequisites.sh so the value is co-located with k3d-local-config.yaml's
@@ -72,15 +71,6 @@ server:
       path "secret/data/aep/*" { capabilities = ["read", "list"] }
       path "secret/metadata/aep/*" { capabilities = ["read", "list"] }
       POLICY
-
-      # Re-bind the existing openchoreo-secret-writer-role to also carry
-      # the aep-secret-reader policy. ESO's default ServiceAccount
-      # (external-secrets-openbao in `openbao` ns) maps to this role.
-      bao write auth/kubernetes/role/openchoreo-secret-writer-role \
-        bound_service_account_names=external-secrets-openbao \
-        bound_service_account_namespaces=openbao \
-        policies=openchoreo-secret-writer-policy,aep-secret-reader \
-        ttl=1h
 
       # ── OC platform seed values (carry-over from OC defaults) ───────
       bao kv put secret/backstage-backend-secret value="local-dev-backend-secret"

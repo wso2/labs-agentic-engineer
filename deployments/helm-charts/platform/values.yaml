@@ -121,10 +121,10 @@ codingAgentRunner:
 # aep-api reads its pod logs and resource tree through that same API. The only
 # switch left here is the local-dev stub toggle below.
 codingAgentDispatch:
-  localStubs:
+  openBaoDirect:
     # LOCAL DEV ONLY. Sets OPENBAO_ADDR/TOKEN on aep-api for in-process secrets
     # delivery. NEVER set true in production — prod injects a real
-    # SecretsProvider. `aep init` sets this true for local installs.
+    # SecretsProvider. `aep platform install` sets this true for local installs.
     enabled: false
 
 # GitHub webhook delivery. GitHub delivers pull_request/push/issues events to
@@ -179,9 +179,23 @@ thunder:
   adminURL: "http://thunder-service.thunder.svc.cluster.local:8090"
   jwksURL: "http://thunder-service.thunder.svc.cluster.local:8090/oauth2/jwks"
 
+# thunder-app-operator subchart values.
+# enabled=true (default): operator runs as a subchart — used by aepctl platform install.
+# enabled=false: subchart is skipped — used by local dev (setup-local.sh installs the
+# operator as a standalone Helm release in thunder-app-operator-system instead).
+# ThunderApplication CRs in templates/thunder-app-operator/ are always deployed
+# regardless of this flag; the operator (subchart or standalone) reconciles them.
+thunder-app-operator:
+  enabled: true
+  thunder:
+    adminURL: "http://thunder-service.thunder.svc.cluster.local:8090"
+    # existingSecret is set by aepctl platform install via --set to point at the
+    # ESO-synced aep-thunder-operator-creds Secret. Local dev leaves this empty and
+    # uses the chart-managed Secret with the operator chart's built-in defaults.
+
 openbao:
-  # Address of the OpenBao service. Matches: helm install aep ./bundle -n wso2-aep
-  addr: "http://aep-aep-openbao.wso2-aep.svc.cluster.local:8200"
+  # Address of OpenChoreo's built-in OpenBao service.
+  addr: "http://openbao.openbao.svc.cluster.local:8200"
 
 # Shared git workspaces (RWO PVC + co-located pods). aep-api writes; agents mounts RO.
 # See services/aep-api/design/shared-workspace-volume.md.

@@ -64,11 +64,21 @@ Derive the distribution root with `bal home`, never a hardcoded version; both ro
 
 ## Dockerfile
 
+`Dockerfile` — multi-stage, pinned Ballerina builder, JRE runtime:
+
 ```dockerfile
-FROM ballerina/ballerina:2201.13.5 
+FROM ballerina/ballerina:2201.13.5 AS builder
 WORKDIR /src
 COPY --chown=ballerina:troupe . .
-ENTRYPOINT ["bal", "run"]
+RUN bal build && mv target/bin/*.jar /tmp/service.jar
+
+FROM eclipse-temurin:21-jre
+WORKDIR /app
+COPY --from=builder /tmp/service.jar /app/service.jar
+EXPOSE 9090
+ENTRYPOINT ["java", "-jar", "/app/service.jar"]
 ```
 
-`--chown` is required, not stylistic: `COPY` always lands files as `root:root` regardless of the base image's `USER` directive, but the container runs as the non-root `ballerina` user. Without it, `bal run` fails writing `target/`/`Dependencies.toml` and the pod crash-loops.
+`--chown` is required, not stylistic: `COPY` always lands files as `root:root` regardless of the base image's `USER` directive, but the builder runs as the non-root `ballerina` user. Without it, `bal build` cannot write `target/`.
+
+The dataplane root filesystem is read-only. `bal run` writes `/.ballerina` and `target/` at start, which crash-loops the pod (`FileSystemException: /.ballerina: Read-only file system`). The runtime entrypoint is the jar the builder produced. The jar is moved to `/tmp/service.jar` so the runtime `COPY` has a stable path regardless of the package name.

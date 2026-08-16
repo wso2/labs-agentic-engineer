@@ -21,6 +21,12 @@ var _ openchoreo.ComponentClient = &ComponentClientMock{}
 //
 //		// make and configure a mocked openchoreo.ComponentClient
 //		mockedComponentClient := &ComponentClientMock{
+//			ApplyComponentSpecFunc: func(ctx context.Context, orgName string, projectName string, componentName string, desired openchoreo.ComponentSpecDesired) error {
+//				panic("mock out the ApplyComponentSpec method")
+//			},
+//			ApplyReleaseBindingFunc: func(ctx context.Context, orgName string, projectName string, in openchoreo.ReleaseBindingDesired) error {
+//				panic("mock out the ApplyReleaseBinding method")
+//			},
 //			CreateComponentFunc: func(ctx context.Context, orgName string, projectName string, req *openchoreo.CreateComponentRequest) (*gen.Component, error) {
 //				panic("mock out the CreateComponent method")
 //			},
@@ -41,6 +47,9 @@ var _ openchoreo.ComponentClient = &ComponentClientMock{}
 //			},
 //			GetComponentFunc: func(ctx context.Context, orgName string, projectName string, componentName string) (*gen.Component, error) {
 //				panic("mock out the GetComponent method")
+//			},
+//			GetReleaseBindingStatusFunc: func(ctx context.Context, orgName string, projectName string, componentName string, environment string) (*openchoreo.ReleaseBindingSummary, error) {
+//				panic("mock out the GetReleaseBindingStatus method")
 //			},
 //			GetWorkflowRunFunc: func(ctx context.Context, orgName string, runName string) (*gen.WorkflowRun, error) {
 //				panic("mock out the GetWorkflowRun method")
@@ -72,15 +81,6 @@ var _ openchoreo.ComponentClient = &ComponentClientMock{}
 //			UpdateComponentTraitEnvironmentConfigsFunc: func(ctx context.Context, orgName string, projectName string, componentName string, configs map[string]map[string]interface{}) error {
 //				panic("mock out the UpdateComponentTraitEnvironmentConfigs method")
 //			},
-//			UpdateComponentTraitsFunc: func(ctx context.Context, orgName string, projectName string, componentName string, traits []openchoreo.ComponentTrait) error {
-//				panic("mock out the UpdateComponentTraits method")
-//			},
-//			UpdateComponentWorkflowEnvVarsFunc: func(ctx context.Context, orgName string, projectName string, componentName string, envVars []openchoreo.WorkflowEnvVarRef) error {
-//				panic("mock out the UpdateComponentWorkflowEnvVars method")
-//			},
-//			UpdateComponentWorkflowFilesFunc: func(ctx context.Context, orgName string, projectName string, componentName string, files []openchoreo.WorkflowFileVar) error {
-//				panic("mock out the UpdateComponentWorkflowFiles method")
-//			},
 //		}
 //
 //		// use mockedComponentClient in code that requires openchoreo.ComponentClient
@@ -88,6 +88,12 @@ var _ openchoreo.ComponentClient = &ComponentClientMock{}
 //
 //	}
 type ComponentClientMock struct {
+	// ApplyComponentSpecFunc mocks the ApplyComponentSpec method.
+	ApplyComponentSpecFunc func(ctx context.Context, orgName string, projectName string, componentName string, desired openchoreo.ComponentSpecDesired) error
+
+	// ApplyReleaseBindingFunc mocks the ApplyReleaseBinding method.
+	ApplyReleaseBindingFunc func(ctx context.Context, orgName string, projectName string, in openchoreo.ReleaseBindingDesired) error
+
 	// CreateComponentFunc mocks the CreateComponent method.
 	CreateComponentFunc func(ctx context.Context, orgName string, projectName string, req *openchoreo.CreateComponentRequest) (*gen.Component, error)
 
@@ -108,6 +114,9 @@ type ComponentClientMock struct {
 
 	// GetComponentFunc mocks the GetComponent method.
 	GetComponentFunc func(ctx context.Context, orgName string, projectName string, componentName string) (*gen.Component, error)
+
+	// GetReleaseBindingStatusFunc mocks the GetReleaseBindingStatus method.
+	GetReleaseBindingStatusFunc func(ctx context.Context, orgName string, projectName string, componentName string, environment string) (*openchoreo.ReleaseBindingSummary, error)
 
 	// GetWorkflowRunFunc mocks the GetWorkflowRun method.
 	GetWorkflowRunFunc func(ctx context.Context, orgName string, runName string) (*gen.WorkflowRun, error)
@@ -139,17 +148,32 @@ type ComponentClientMock struct {
 	// UpdateComponentTraitEnvironmentConfigsFunc mocks the UpdateComponentTraitEnvironmentConfigs method.
 	UpdateComponentTraitEnvironmentConfigsFunc func(ctx context.Context, orgName string, projectName string, componentName string, configs map[string]map[string]interface{}) error
 
-	// UpdateComponentTraitsFunc mocks the UpdateComponentTraits method.
-	UpdateComponentTraitsFunc func(ctx context.Context, orgName string, projectName string, componentName string, traits []openchoreo.ComponentTrait) error
-
-	// UpdateComponentWorkflowEnvVarsFunc mocks the UpdateComponentWorkflowEnvVars method.
-	UpdateComponentWorkflowEnvVarsFunc func(ctx context.Context, orgName string, projectName string, componentName string, envVars []openchoreo.WorkflowEnvVarRef) error
-
-	// UpdateComponentWorkflowFilesFunc mocks the UpdateComponentWorkflowFiles method.
-	UpdateComponentWorkflowFilesFunc func(ctx context.Context, orgName string, projectName string, componentName string, files []openchoreo.WorkflowFileVar) error
-
 	// calls tracks calls to the methods.
 	calls struct {
+		// ApplyComponentSpec holds details about calls to the ApplyComponentSpec method.
+		ApplyComponentSpec []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// OrgName is the orgName argument value.
+			OrgName string
+			// ProjectName is the projectName argument value.
+			ProjectName string
+			// ComponentName is the componentName argument value.
+			ComponentName string
+			// Desired is the desired argument value.
+			Desired openchoreo.ComponentSpecDesired
+		}
+		// ApplyReleaseBinding holds details about calls to the ApplyReleaseBinding method.
+		ApplyReleaseBinding []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// OrgName is the orgName argument value.
+			OrgName string
+			// ProjectName is the projectName argument value.
+			ProjectName string
+			// In is the in argument value.
+			In openchoreo.ReleaseBindingDesired
+		}
 		// CreateComponent holds details about calls to the CreateComponent method.
 		CreateComponent []struct {
 			// Ctx is the ctx argument value.
@@ -230,6 +254,19 @@ type ComponentClientMock struct {
 			ProjectName string
 			// ComponentName is the componentName argument value.
 			ComponentName string
+		}
+		// GetReleaseBindingStatus holds details about calls to the GetReleaseBindingStatus method.
+		GetReleaseBindingStatus []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// OrgName is the orgName argument value.
+			OrgName string
+			// ProjectName is the projectName argument value.
+			ProjectName string
+			// ComponentName is the componentName argument value.
+			ComponentName string
+			// Environment is the environment argument value.
+			Environment string
 		}
 		// GetWorkflowRun holds details about calls to the GetWorkflowRun method.
 		GetWorkflowRun []struct {
@@ -355,46 +392,9 @@ type ComponentClientMock struct {
 			// Configs is the configs argument value.
 			Configs map[string]map[string]interface{}
 		}
-		// UpdateComponentTraits holds details about calls to the UpdateComponentTraits method.
-		UpdateComponentTraits []struct {
-			// Ctx is the ctx argument value.
-			Ctx context.Context
-			// OrgName is the orgName argument value.
-			OrgName string
-			// ProjectName is the projectName argument value.
-			ProjectName string
-			// ComponentName is the componentName argument value.
-			ComponentName string
-			// Traits is the traits argument value.
-			Traits []openchoreo.ComponentTrait
-		}
-		// UpdateComponentWorkflowEnvVars holds details about calls to the UpdateComponentWorkflowEnvVars method.
-		UpdateComponentWorkflowEnvVars []struct {
-			// Ctx is the ctx argument value.
-			Ctx context.Context
-			// OrgName is the orgName argument value.
-			OrgName string
-			// ProjectName is the projectName argument value.
-			ProjectName string
-			// ComponentName is the componentName argument value.
-			ComponentName string
-			// EnvVars is the envVars argument value.
-			EnvVars []openchoreo.WorkflowEnvVarRef
-		}
-		// UpdateComponentWorkflowFiles holds details about calls to the UpdateComponentWorkflowFiles method.
-		UpdateComponentWorkflowFiles []struct {
-			// Ctx is the ctx argument value.
-			Ctx context.Context
-			// OrgName is the orgName argument value.
-			OrgName string
-			// ProjectName is the projectName argument value.
-			ProjectName string
-			// ComponentName is the componentName argument value.
-			ComponentName string
-			// Files is the files argument value.
-			Files []openchoreo.WorkflowFileVar
-		}
 	}
+	lockApplyComponentSpec                     sync.RWMutex
+	lockApplyReleaseBinding                    sync.RWMutex
 	lockCreateComponent                        sync.RWMutex
 	lockDeleteComponent                        sync.RWMutex
 	lockEnsureComponentType                    sync.RWMutex
@@ -402,6 +402,7 @@ type ComponentClientMock struct {
 	lockEnsureReleaseBinding                   sync.RWMutex
 	lockEnsureWorkload                         sync.RWMutex
 	lockGetComponent                           sync.RWMutex
+	lockGetReleaseBindingStatus                sync.RWMutex
 	lockGetWorkflowRun                         sync.RWMutex
 	lockListComponents                         sync.RWMutex
 	lockListDeployments                        sync.RWMutex
@@ -412,9 +413,98 @@ type ComponentClientMock struct {
 	lockTriggerBuild                           sync.RWMutex
 	lockTriggerBuildAtCommit                   sync.RWMutex
 	lockUpdateComponentTraitEnvironmentConfigs sync.RWMutex
-	lockUpdateComponentTraits                  sync.RWMutex
-	lockUpdateComponentWorkflowEnvVars         sync.RWMutex
-	lockUpdateComponentWorkflowFiles           sync.RWMutex
+}
+
+// ApplyComponentSpec calls ApplyComponentSpecFunc.
+func (mock *ComponentClientMock) ApplyComponentSpec(ctx context.Context, orgName string, projectName string, componentName string, desired openchoreo.ComponentSpecDesired) error {
+	if mock.ApplyComponentSpecFunc == nil {
+		panic("ComponentClientMock.ApplyComponentSpecFunc: method is nil but ComponentClient.ApplyComponentSpec was just called")
+	}
+	callInfo := struct {
+		Ctx           context.Context
+		OrgName       string
+		ProjectName   string
+		ComponentName string
+		Desired       openchoreo.ComponentSpecDesired
+	}{
+		Ctx:           ctx,
+		OrgName:       orgName,
+		ProjectName:   projectName,
+		ComponentName: componentName,
+		Desired:       desired,
+	}
+	mock.lockApplyComponentSpec.Lock()
+	mock.calls.ApplyComponentSpec = append(mock.calls.ApplyComponentSpec, callInfo)
+	mock.lockApplyComponentSpec.Unlock()
+	return mock.ApplyComponentSpecFunc(ctx, orgName, projectName, componentName, desired)
+}
+
+// ApplyComponentSpecCalls gets all the calls that were made to ApplyComponentSpec.
+// Check the length with:
+//
+//	len(mockedComponentClient.ApplyComponentSpecCalls())
+func (mock *ComponentClientMock) ApplyComponentSpecCalls() []struct {
+	Ctx           context.Context
+	OrgName       string
+	ProjectName   string
+	ComponentName string
+	Desired       openchoreo.ComponentSpecDesired
+} {
+	var calls []struct {
+		Ctx           context.Context
+		OrgName       string
+		ProjectName   string
+		ComponentName string
+		Desired       openchoreo.ComponentSpecDesired
+	}
+	mock.lockApplyComponentSpec.RLock()
+	calls = mock.calls.ApplyComponentSpec
+	mock.lockApplyComponentSpec.RUnlock()
+	return calls
+}
+
+// ApplyReleaseBinding calls ApplyReleaseBindingFunc.
+func (mock *ComponentClientMock) ApplyReleaseBinding(ctx context.Context, orgName string, projectName string, in openchoreo.ReleaseBindingDesired) error {
+	if mock.ApplyReleaseBindingFunc == nil {
+		panic("ComponentClientMock.ApplyReleaseBindingFunc: method is nil but ComponentClient.ApplyReleaseBinding was just called")
+	}
+	callInfo := struct {
+		Ctx         context.Context
+		OrgName     string
+		ProjectName string
+		In          openchoreo.ReleaseBindingDesired
+	}{
+		Ctx:         ctx,
+		OrgName:     orgName,
+		ProjectName: projectName,
+		In:          in,
+	}
+	mock.lockApplyReleaseBinding.Lock()
+	mock.calls.ApplyReleaseBinding = append(mock.calls.ApplyReleaseBinding, callInfo)
+	mock.lockApplyReleaseBinding.Unlock()
+	return mock.ApplyReleaseBindingFunc(ctx, orgName, projectName, in)
+}
+
+// ApplyReleaseBindingCalls gets all the calls that were made to ApplyReleaseBinding.
+// Check the length with:
+//
+//	len(mockedComponentClient.ApplyReleaseBindingCalls())
+func (mock *ComponentClientMock) ApplyReleaseBindingCalls() []struct {
+	Ctx         context.Context
+	OrgName     string
+	ProjectName string
+	In          openchoreo.ReleaseBindingDesired
+} {
+	var calls []struct {
+		Ctx         context.Context
+		OrgName     string
+		ProjectName string
+		In          openchoreo.ReleaseBindingDesired
+	}
+	mock.lockApplyReleaseBinding.RLock()
+	calls = mock.calls.ApplyReleaseBinding
+	mock.lockApplyReleaseBinding.RUnlock()
+	return calls
 }
 
 // CreateComponent calls CreateComponentFunc.
@@ -730,6 +820,54 @@ func (mock *ComponentClientMock) GetComponentCalls() []struct {
 	mock.lockGetComponent.RLock()
 	calls = mock.calls.GetComponent
 	mock.lockGetComponent.RUnlock()
+	return calls
+}
+
+// GetReleaseBindingStatus calls GetReleaseBindingStatusFunc.
+func (mock *ComponentClientMock) GetReleaseBindingStatus(ctx context.Context, orgName string, projectName string, componentName string, environment string) (*openchoreo.ReleaseBindingSummary, error) {
+	if mock.GetReleaseBindingStatusFunc == nil {
+		panic("ComponentClientMock.GetReleaseBindingStatusFunc: method is nil but ComponentClient.GetReleaseBindingStatus was just called")
+	}
+	callInfo := struct {
+		Ctx           context.Context
+		OrgName       string
+		ProjectName   string
+		ComponentName string
+		Environment   string
+	}{
+		Ctx:           ctx,
+		OrgName:       orgName,
+		ProjectName:   projectName,
+		ComponentName: componentName,
+		Environment:   environment,
+	}
+	mock.lockGetReleaseBindingStatus.Lock()
+	mock.calls.GetReleaseBindingStatus = append(mock.calls.GetReleaseBindingStatus, callInfo)
+	mock.lockGetReleaseBindingStatus.Unlock()
+	return mock.GetReleaseBindingStatusFunc(ctx, orgName, projectName, componentName, environment)
+}
+
+// GetReleaseBindingStatusCalls gets all the calls that were made to GetReleaseBindingStatus.
+// Check the length with:
+//
+//	len(mockedComponentClient.GetReleaseBindingStatusCalls())
+func (mock *ComponentClientMock) GetReleaseBindingStatusCalls() []struct {
+	Ctx           context.Context
+	OrgName       string
+	ProjectName   string
+	ComponentName string
+	Environment   string
+} {
+	var calls []struct {
+		Ctx           context.Context
+		OrgName       string
+		ProjectName   string
+		ComponentName string
+		Environment   string
+	}
+	mock.lockGetReleaseBindingStatus.RLock()
+	calls = mock.calls.GetReleaseBindingStatus
+	mock.lockGetReleaseBindingStatus.RUnlock()
 	return calls
 }
 
@@ -1198,149 +1336,5 @@ func (mock *ComponentClientMock) UpdateComponentTraitEnvironmentConfigsCalls() [
 	mock.lockUpdateComponentTraitEnvironmentConfigs.RLock()
 	calls = mock.calls.UpdateComponentTraitEnvironmentConfigs
 	mock.lockUpdateComponentTraitEnvironmentConfigs.RUnlock()
-	return calls
-}
-
-// UpdateComponentTraits calls UpdateComponentTraitsFunc.
-func (mock *ComponentClientMock) UpdateComponentTraits(ctx context.Context, orgName string, projectName string, componentName string, traits []openchoreo.ComponentTrait) error {
-	if mock.UpdateComponentTraitsFunc == nil {
-		panic("ComponentClientMock.UpdateComponentTraitsFunc: method is nil but ComponentClient.UpdateComponentTraits was just called")
-	}
-	callInfo := struct {
-		Ctx           context.Context
-		OrgName       string
-		ProjectName   string
-		ComponentName string
-		Traits        []openchoreo.ComponentTrait
-	}{
-		Ctx:           ctx,
-		OrgName:       orgName,
-		ProjectName:   projectName,
-		ComponentName: componentName,
-		Traits:        traits,
-	}
-	mock.lockUpdateComponentTraits.Lock()
-	mock.calls.UpdateComponentTraits = append(mock.calls.UpdateComponentTraits, callInfo)
-	mock.lockUpdateComponentTraits.Unlock()
-	return mock.UpdateComponentTraitsFunc(ctx, orgName, projectName, componentName, traits)
-}
-
-// UpdateComponentTraitsCalls gets all the calls that were made to UpdateComponentTraits.
-// Check the length with:
-//
-//	len(mockedComponentClient.UpdateComponentTraitsCalls())
-func (mock *ComponentClientMock) UpdateComponentTraitsCalls() []struct {
-	Ctx           context.Context
-	OrgName       string
-	ProjectName   string
-	ComponentName string
-	Traits        []openchoreo.ComponentTrait
-} {
-	var calls []struct {
-		Ctx           context.Context
-		OrgName       string
-		ProjectName   string
-		ComponentName string
-		Traits        []openchoreo.ComponentTrait
-	}
-	mock.lockUpdateComponentTraits.RLock()
-	calls = mock.calls.UpdateComponentTraits
-	mock.lockUpdateComponentTraits.RUnlock()
-	return calls
-}
-
-// UpdateComponentWorkflowEnvVars calls UpdateComponentWorkflowEnvVarsFunc.
-func (mock *ComponentClientMock) UpdateComponentWorkflowEnvVars(ctx context.Context, orgName string, projectName string, componentName string, envVars []openchoreo.WorkflowEnvVarRef) error {
-	if mock.UpdateComponentWorkflowEnvVarsFunc == nil {
-		panic("ComponentClientMock.UpdateComponentWorkflowEnvVarsFunc: method is nil but ComponentClient.UpdateComponentWorkflowEnvVars was just called")
-	}
-	callInfo := struct {
-		Ctx           context.Context
-		OrgName       string
-		ProjectName   string
-		ComponentName string
-		EnvVars       []openchoreo.WorkflowEnvVarRef
-	}{
-		Ctx:           ctx,
-		OrgName:       orgName,
-		ProjectName:   projectName,
-		ComponentName: componentName,
-		EnvVars:       envVars,
-	}
-	mock.lockUpdateComponentWorkflowEnvVars.Lock()
-	mock.calls.UpdateComponentWorkflowEnvVars = append(mock.calls.UpdateComponentWorkflowEnvVars, callInfo)
-	mock.lockUpdateComponentWorkflowEnvVars.Unlock()
-	return mock.UpdateComponentWorkflowEnvVarsFunc(ctx, orgName, projectName, componentName, envVars)
-}
-
-// UpdateComponentWorkflowEnvVarsCalls gets all the calls that were made to UpdateComponentWorkflowEnvVars.
-// Check the length with:
-//
-//	len(mockedComponentClient.UpdateComponentWorkflowEnvVarsCalls())
-func (mock *ComponentClientMock) UpdateComponentWorkflowEnvVarsCalls() []struct {
-	Ctx           context.Context
-	OrgName       string
-	ProjectName   string
-	ComponentName string
-	EnvVars       []openchoreo.WorkflowEnvVarRef
-} {
-	var calls []struct {
-		Ctx           context.Context
-		OrgName       string
-		ProjectName   string
-		ComponentName string
-		EnvVars       []openchoreo.WorkflowEnvVarRef
-	}
-	mock.lockUpdateComponentWorkflowEnvVars.RLock()
-	calls = mock.calls.UpdateComponentWorkflowEnvVars
-	mock.lockUpdateComponentWorkflowEnvVars.RUnlock()
-	return calls
-}
-
-// UpdateComponentWorkflowFiles calls UpdateComponentWorkflowFilesFunc.
-func (mock *ComponentClientMock) UpdateComponentWorkflowFiles(ctx context.Context, orgName string, projectName string, componentName string, files []openchoreo.WorkflowFileVar) error {
-	if mock.UpdateComponentWorkflowFilesFunc == nil {
-		panic("ComponentClientMock.UpdateComponentWorkflowFilesFunc: method is nil but ComponentClient.UpdateComponentWorkflowFiles was just called")
-	}
-	callInfo := struct {
-		Ctx           context.Context
-		OrgName       string
-		ProjectName   string
-		ComponentName string
-		Files         []openchoreo.WorkflowFileVar
-	}{
-		Ctx:           ctx,
-		OrgName:       orgName,
-		ProjectName:   projectName,
-		ComponentName: componentName,
-		Files:         files,
-	}
-	mock.lockUpdateComponentWorkflowFiles.Lock()
-	mock.calls.UpdateComponentWorkflowFiles = append(mock.calls.UpdateComponentWorkflowFiles, callInfo)
-	mock.lockUpdateComponentWorkflowFiles.Unlock()
-	return mock.UpdateComponentWorkflowFilesFunc(ctx, orgName, projectName, componentName, files)
-}
-
-// UpdateComponentWorkflowFilesCalls gets all the calls that were made to UpdateComponentWorkflowFiles.
-// Check the length with:
-//
-//	len(mockedComponentClient.UpdateComponentWorkflowFilesCalls())
-func (mock *ComponentClientMock) UpdateComponentWorkflowFilesCalls() []struct {
-	Ctx           context.Context
-	OrgName       string
-	ProjectName   string
-	ComponentName string
-	Files         []openchoreo.WorkflowFileVar
-} {
-	var calls []struct {
-		Ctx           context.Context
-		OrgName       string
-		ProjectName   string
-		ComponentName string
-		Files         []openchoreo.WorkflowFileVar
-	}
-	mock.lockUpdateComponentWorkflowFiles.RLock()
-	calls = mock.calls.UpdateComponentWorkflowFiles
-	mock.lockUpdateComponentWorkflowFiles.RUnlock()
 	return calls
 }

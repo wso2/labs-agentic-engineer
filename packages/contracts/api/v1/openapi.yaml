@@ -498,6 +498,67 @@ paths:
       summary: Stream a project's activity feed (replay + live tail) as SSE
       tags:
       - Projects
+  /projects/{projectName}/agents/conversations:
+    get:
+      operationId: list-conversations
+      parameters:
+      - description: Project name (DNS-label slug)
+        in: path
+        name: projectName
+        required: true
+        schema:
+          description: Project name (DNS-label slug)
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectConversationList'
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+      security:
+      - userJWT: []
+      summary: List the project's chat threads (one element today — the current
+        thread, lazily created on first read; plural-shaped for the
+        multi-conversation future)
+      tags:
+      - GenAI
+    post:
+      operationId: rotate-conversation
+      parameters:
+      - description: Project name (DNS-label slug)
+        in: path
+        name: projectName
+        required: true
+        schema:
+          description: Project name (DNS-label slug)
+          type: string
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectConversationView'
+          description: The fresh current thread. Rotation is project-wide — the
+            demoted thread stops being current for every member.
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+      security:
+      - userJWT: []
+      summary: Start a new conversation for the whole project (demotes the current
+        thread, mints a fresh one)
+      tags:
+      - GenAI
   /projects/{projectName}/agents/{conversationId}/messages:
     get:
       operationId: get-conversation
@@ -569,8 +630,9 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TurnConflict'
-          description: A turn is already running for this project, or the design
-            use-case has no requirements yet.
+          description: A turn is already running for this project, the design
+            use-case has no requirements yet, or the addressed conversation is
+            no longer the project's current thread (conversation_rotated).
         default:
           content:
             application/json:
@@ -4358,6 +4420,40 @@ components:
       required:
         - projects
       type: object
+    ProjectConversationView:
+      additionalProperties: false
+      description: One project chat thread (#430). The id is server-minted and
+        stored against the project — the client never chooses it. Exactly one
+        thread per project is current; turns addressed to a demoted id are
+        refused with 409 conversation_rotated.
+      properties:
+        conversationId:
+          type: string
+        createdAt:
+          format: date-time
+          type: string
+        createdBy:
+          type: string
+        current:
+          type: boolean
+      required:
+      - conversationId
+      - createdAt
+      - current
+      type: object
+    ProjectConversationList:
+      additionalProperties: false
+      description: The project's chat threads, newest first. One element today —
+        the current thread; the array shape is the multi-conversation future's
+        contract, so it grows without a rename.
+      properties:
+        conversations:
+          items:
+            $ref: '#/components/schemas/ProjectConversationView'
+          type: array
+      required:
+      - conversations
+      type: object
     ProvisionBody:
       additionalProperties: false
       properties:
@@ -5440,12 +5536,15 @@ components:
       additionalProperties: false
       description: create-turn 409 body. turn_in_progress carries the active
         turn's id; requirements_missing means the design use-case has no
-        requirements to work from.
+        requirements to work from; conversation_rotated means the addressed
+        thread is no longer the project's current one — re-resolve via
+        list-conversations and retry.
       properties:
         code:
           enum:
           - turn_in_progress
           - requirements_missing
+          - conversation_rotated
           type: string
         activeTurnId:
           type: string

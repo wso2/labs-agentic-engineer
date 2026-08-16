@@ -35,12 +35,18 @@ import (
 // plus the projectName that scopes it. The client applies ScopedComponentName
 // internally so callers never deal with the prefixed k8s name.
 //
-// Deploy chain: with AutoDeploy=true set on the Component (see
-// dispatch_service.ensureOCComponent), OC's Component controller owns the
-// Workload → ComponentRelease → ReleaseBinding fan-out for USER components.
-// Ephemeral platform components (coding-agent) have no build WorkflowRun —
-// the BFF drives EnsureWorkload / EnsureRelease / EnsureReleaseBinding
-// explicitly instead.
+// Deploy chain: the BFF owns it, for every component. AutoDeploy is false
+// everywhere, so no controller promotes a release on its own — the platform
+// decides when a build becomes a running deployment, which is what lets the run
+// supervisor order validation AFTER the version is actually serving.
+//
+// The two halves differ only in who posts the Workload:
+//
+//   - USER components: the build's last step posts the Workload; the deploy
+//     stage then calls EnsureRelease + ApplyReleaseBinding at the merge SHA.
+//   - Ephemeral platform components (coding-agent): no build exists, so the
+//     dispatcher drives EnsureWorkload as well, then EnsureRelease +
+//     EnsureReleaseBinding.
 type ComponentClient interface {
 	ListComponents(ctx context.Context, orgName, projectName string, limit int, cursor string) (*gen.ComponentList, error)
 	GetComponent(ctx context.Context, orgName, projectName, componentName string) (*gen.Component, error)
@@ -57,36 +63,26 @@ type ComponentClient interface {
 	// Drives the retention reaper.
 	ListInternalComponents(ctx context.Context, orgName, projectName string) ([]InternalComponent, error)
 
-	// The explicit deploy chain for the platform's own ephemeral components:
-	// Workload → ComponentRelease → ReleaseBinding. User components ride
-	// AutoDeploy instead (see the interface header); an agent cycle has no
-	// build to post a Workload, so the BFF drives all three writes. Every one
+	// The explicit deploy chain. EnsureWorkload is the ephemeral half — an
+	// agent cycle has no build to post a Workload, so the dispatcher posts it —
+	// while a user component's Workload arrives from its build. Every one
 	// treats 409 as success so a crashed dispatch resumes.
 	EnsureWorkload(ctx context.Context, orgName, projectName string, in WorkloadInput) error
 	EnsureRelease(ctx context.Context, orgName, projectName, componentName, releaseName string) (releaseNameOut string, err error)
 	EnsureReleaseBinding(ctx context.Context, orgName, projectName, componentName, environment, releaseName string) error
 
-	// UpdateComponentWorkflowEnvVars writes per-component env vars onto each
-	// of the component's ReleaseBindings at
-	// `spec.workloadOverrides.container.env`. Per-env (one RB per
-	// environment) so OC's controller renders the values straight into the
-	// pod spec on the next reconcile — no rebuild required, matching how
-	// PE-managed components (aep-api, agent-manager-service, etc.)
-	// carry their env. ReleaseBindings are listed by component label and
-	// each is updated independently; if no RBs exist yet (pre-first-deploy)
-	// the call is a soft no-op and the caller is expected to retry once
-	// the first build has produced RBs.
-	UpdateComponentWorkflowEnvVars(ctx context.Context, orgName, projectName, componentName string, envVars []WorkflowEnvVarRef) error
+	// ApplyReleaseBinding converges a USER component's binding onto the desired
+	// state — the pin plus every field the platform owns on it, in one write.
+	// Distinct from EnsureReleaseBinding above, which is create-only because an
+	// ephemeral component's binding is never re-pinned; this one re-pins on
+	// every cycle, which is what a deploy IS.
+	ApplyReleaseBinding(ctx context.Context, orgName, projectName string, in ReleaseBindingDesired) error
 
-	// UpdateComponentWorkflowFiles writes per-component literal files onto
-	// each of the component's ReleaseBindings at
-	// `spec.workloadOverrides.container.files`. Used by the runtime-config
-	// pipeline to drop `env-config.js` (and any other literal file) into
-	// the pod via an OC-rendered ConfigMap mounted at the declared
-	// mountPath — no rebuild needed. As with UpdateComponentWorkflowEnvVars,
-	// when no ReleaseBindings exist yet the call is a soft no-op and the
-	// caller is expected to retry after the first build produces RBs.
-	UpdateComponentWorkflowFiles(ctx context.Context, orgName, projectName, componentName string, files []WorkflowFileVar) error
+	// GetReleaseBindingStatus reads one binding's aggregate Ready condition, or
+	// (nil, nil) when it does not exist yet. The deploy stage's readiness poll:
+	// the component-scoped read, where ListProjectReleaseBindings is the
+	// project-status page's.
+	GetReleaseBindingStatus(ctx context.Context, orgName, projectName, componentName, environment string) (*ReleaseBindingSummary, error)
 
 	// DeleteComponent removes the Component CR. OC's controller GCs the
 	// chain (Component → ReleaseBinding → RenderedRelease → Deployment /
@@ -102,23 +98,36 @@ type ComponentClient interface {
 	// exist (idempotent — 404 is treated as success).
 	DeleteComponent(ctx context.Context, orgName, projectName, componentName string) error
 
-	// UpdateComponentTraits replaces `spec.traits` on an existing Component
-	// with the supplied slice. Passing an empty slice clears traits.
-	// Returns ErrComponentNotFound when the Component does not exist (the
-	// caller decides whether to recreate or no-op). Used by trait_sync.go
-	// when a user toggles `exposesAPI.auth` on `design.json` after first deploy.
-	UpdateComponentTraits(ctx context.Context, orgName, projectName, componentName string, traits []ComponentTrait) error
+	// ApplyComponentSpec re-asserts the platform-owned half of an existing
+	// Component's spec — its traits and its build/deploy policy — in one
+	// GET-then-PUT. Returns ErrComponentNotFound when the Component does not
+	// exist (the caller decides whether to recreate or no-op).
+	//
+	// Called on EVERY component ensure, not only when something changed: the
+	// trait shape is frozen into the next ComponentRelease, so a design edit
+	// that has not reached the CR before the build is an edit the release
+	// silently drops.
+	ApplyComponentSpec(ctx context.Context, orgName, projectName, componentName string, desired ComponentSpecDesired) error
 
 	// UpdateComponentTraitEnvironmentConfigs writes per-environment trait
 	// configs onto each of the component's ReleaseBindings at
 	// `spec.traitEnvironmentConfigs`. Configs is keyed by trait instance
 	// name; the value is the parameters block (e.g. `{"jwtAuth": {"enabled": true}}`).
 	// Passing an empty map clears the field. When no RBs exist yet (pre-
-	// first-deploy) the call is a soft no-op — the caller retries via the
-	// trait-sync watcher once the deploy chain catches up.
+	// first-deploy) the call is a soft no-op.
+	//
+	// Superseded for user components by ApplyReleaseBinding, which writes the
+	// trait configs in the SAME object write as the release pin — that is what
+	// closes the window where a binding was renderable with a trait attached and
+	// its config missing. Nothing retries this call any more: the trait-sync
+	// watcher it used to lean on is gone, and the deploy stage composes the whole
+	// binding at once (ADR-0017).
 	UpdateComponentTraitEnvironmentConfigs(ctx context.Context, orgName, projectName, componentName string, configs map[string]map[string]interface{}) error
 
-	// Deploy (read-only — auto-deploy on the Component drives the chain)
+	// Deploy (read-only). The platform drives the chain itself — components carry
+	// autoDeploy: false and the run supervisor performs the promote (ADR-0017) —
+	// so this reads back what OpenChoreo resolved, including the external URLs the
+	// deploy order depends on.
 	ListDeployments(ctx context.Context, orgName, projectName, componentName string) (*gen.DeploymentList, error)
 
 	// ListProjectReleaseBindings returns the org's ReleaseBindings owned by
@@ -536,133 +545,6 @@ func (c *componentClient) CreateComponent(ctx context.Context, orgName, projectN
 	})
 }
 
-// UpdateComponentWorkflowEnvVars lists the component's ReleaseBindings
-// and writes the env vars onto each one at
-// `spec.workloadOverrides.container.env`. One RB per environment — OC's
-// controller renders the value into the pod spec on the next reconcile,
-// so changing env vars no longer requires a rebuild.
-//
-// When no ReleaseBindings exist yet (the first build hasn't produced
-// one), the call is a soft no-op: the caller is expected to retry after
-// a successful deploy. An empty `envVars` slice clears any previously
-// set env block on each binding.
-func (c *componentClient) UpdateComponentWorkflowEnvVars(ctx context.Context, orgName, projectName, componentName string, envVars []WorkflowEnvVarRef) error {
-	scopedComp := ScopedComponentName(projectName, componentName)
-	componentQ := ocgen.ComponentQueryParam(scopedComp)
-	listResp, err := c.oc.ListReleaseBindingsWithResponse(ctx, orgName, &ocgen.ListReleaseBindingsParams{
-		Component: &componentQ,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to list release bindings for env-var update: %w", err)
-	}
-	if listResp.StatusCode() != http.StatusOK || listResp.JSON200 == nil {
-		return handleErrorResponse(listResp.StatusCode(), ErrorResponses{
-			JSON401: listResp.JSON401,
-			JSON403: listResp.JSON403,
-			JSON500: listResp.JSON500,
-		})
-	}
-
-	rbs := listResp.JSON200.Items
-	if len(rbs) == 0 {
-		// First build hasn't produced a ReleaseBinding yet — nothing to
-		// patch. The caller retries once the deploy chain catches up.
-		return nil
-	}
-
-	envList := workflowEnvVarRefsToGen(envVars)
-	for _, rb := range rbs {
-		if rb.Spec == nil {
-			rb.Spec = &ocgen.ReleaseBindingSpec{}
-		}
-		if rb.Spec.WorkloadOverrides == nil {
-			rb.Spec.WorkloadOverrides = &ocgen.WorkloadOverrides{}
-		}
-		if rb.Spec.WorkloadOverrides.Container == nil {
-			rb.Spec.WorkloadOverrides.Container = &ocgen.ContainerOverride{}
-		}
-		rb.Spec.WorkloadOverrides.Container.Env = envList
-
-		updResp, uerr := c.oc.UpdateReleaseBindingWithResponse(ctx, orgName, ocgen.ReleaseBindingNameParam(rb.Metadata.Name), ocgen.UpdateReleaseBindingJSONRequestBody(rb))
-		if uerr != nil {
-			return fmt.Errorf("failed to update release binding %s: %w", rb.Metadata.Name, uerr)
-		}
-		if updResp.StatusCode() != http.StatusOK && updResp.StatusCode() != http.StatusCreated {
-			return handleErrorResponse(updResp.StatusCode(), ErrorResponses{
-				JSON400: updResp.JSON400,
-				JSON401: updResp.JSON401,
-				JSON403: updResp.JSON403,
-				JSON404: updResp.JSON404,
-				JSON500: updResp.JSON500,
-			})
-		}
-	}
-	return nil
-}
-
-// UpdateComponentWorkflowFiles lists the component's ReleaseBindings and
-// writes the literal files onto each one at
-// `spec.workloadOverrides.container.files`. Per-env (one RB per
-// environment) so OC's controller materialises a ConfigMap mounted at
-// the declared mountPath on the next reconcile — no rebuild required.
-//
-// When no ReleaseBindings exist yet (the first build hasn't produced
-// one), the call is a soft no-op: the caller is expected to retry after
-// a successful deploy. An empty `files` slice clears any previously set
-// files block on each binding.
-func (c *componentClient) UpdateComponentWorkflowFiles(ctx context.Context, orgName, projectName, componentName string, files []WorkflowFileVar) error {
-	scopedComp := ScopedComponentName(projectName, componentName)
-	componentQ := ocgen.ComponentQueryParam(scopedComp)
-	listResp, err := c.oc.ListReleaseBindingsWithResponse(ctx, orgName, &ocgen.ListReleaseBindingsParams{
-		Component: &componentQ,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to list release bindings for file update: %w", err)
-	}
-	if listResp.StatusCode() != http.StatusOK || listResp.JSON200 == nil {
-		return handleErrorResponse(listResp.StatusCode(), ErrorResponses{
-			JSON401: listResp.JSON401,
-			JSON403: listResp.JSON403,
-			JSON500: listResp.JSON500,
-		})
-	}
-
-	rbs := listResp.JSON200.Items
-	if len(rbs) == 0 {
-		// First build hasn't produced a ReleaseBinding yet — soft no-op.
-		return nil
-	}
-
-	fileList := workflowFileVarsToGen(files)
-	for _, rb := range rbs {
-		if rb.Spec == nil {
-			rb.Spec = &ocgen.ReleaseBindingSpec{}
-		}
-		if rb.Spec.WorkloadOverrides == nil {
-			rb.Spec.WorkloadOverrides = &ocgen.WorkloadOverrides{}
-		}
-		if rb.Spec.WorkloadOverrides.Container == nil {
-			rb.Spec.WorkloadOverrides.Container = &ocgen.ContainerOverride{}
-		}
-		rb.Spec.WorkloadOverrides.Container.Files = fileList
-
-		updResp, uerr := c.oc.UpdateReleaseBindingWithResponse(ctx, orgName, ocgen.ReleaseBindingNameParam(rb.Metadata.Name), ocgen.UpdateReleaseBindingJSONRequestBody(rb))
-		if uerr != nil {
-			return fmt.Errorf("failed to update release binding %s files: %w", rb.Metadata.Name, uerr)
-		}
-		if updResp.StatusCode() != http.StatusOK && updResp.StatusCode() != http.StatusCreated {
-			return handleErrorResponse(updResp.StatusCode(), ErrorResponses{
-				JSON400: updResp.JSON400,
-				JSON401: updResp.JSON401,
-				JSON403: updResp.JSON403,
-				JSON404: updResp.JSON404,
-				JSON500: updResp.JSON500,
-			})
-		}
-	}
-	return nil
-}
-
 // workflowFileVarsToGen converts the BFF-internal file model into
 // the ocgen.FileVar slice for ReleaseBinding workloadOverrides. An empty
 // `files` returns a pointer to an empty slice so the server-side patch
@@ -708,17 +590,17 @@ func (c *componentClient) DeleteComponent(ctx context.Context, orgName, projectN
 	})
 }
 
-// UpdateComponentTraits replaces spec.traits on the named Component. GET-
-// then-PUT to satisfy OC's full-object update semantics. Pass an empty
-// slice to clear traits.
-func (c *componentClient) UpdateComponentTraits(ctx context.Context, orgName, projectName, componentName string, traits []ComponentTrait) error {
+// ApplyComponentSpec re-asserts traits + build/deploy policy on the named
+// Component. GET-then-PUT to satisfy OC's full-object update semantics; an
+// empty trait slice clears traits.
+func (c *componentClient) ApplyComponentSpec(ctx context.Context, orgName, projectName, componentName string, desired ComponentSpecDesired) error {
 	scopedComp := ScopedComponentName(projectName, componentName)
 	// GET and PUT both inside the retried closure: a retry has to re-read, or
 	// it replays the same stale resourceVersion. See stale_write.go.
-	return retryStaleWrite(ctx, "component/"+scopedComp+" spec.traits", func(ctx context.Context) error {
+	return retryStaleWrite(ctx, "component/"+scopedComp+" spec", func(ctx context.Context) error {
 		getResp, err := c.oc.GetComponentWithResponse(ctx, orgName, scopedComp)
 		if err != nil {
-			return fmt.Errorf("failed to get component for traits update: %w", err)
+			return fmt.Errorf("failed to get component for spec update: %w", err)
 		}
 		if getResp.StatusCode() != http.StatusOK || getResp.JSON200 == nil {
 			return handleErrorResponse(getResp.StatusCode(), ErrorResponses{
@@ -732,11 +614,18 @@ func (c *componentClient) UpdateComponentTraits(ctx context.Context, orgName, pr
 		if comp.Spec == nil {
 			comp.Spec = &ocgen.ComponentSpec{}
 		}
-		comp.Spec.Traits = componentTraitsToGen(traits)
+		comp.Spec.Traits = componentTraitsToGen(desired.Traits)
+		// autoDeploy is re-asserted on every pass, not only at create. A
+		// component created before the platform owned deploy still carries
+		// autoDeploy=true, and leaving it would have OC's controller promoting
+		// releases underneath the deploy stage — two writers racing over one
+		// binding's pin, with the loser's release silently serving.
+		autoBuild, autoDeploy := desired.AutoBuild, desired.AutoDeploy
+		comp.Spec.AutoBuild, comp.Spec.AutoDeploy = &autoBuild, &autoDeploy
 
 		updResp, err := c.oc.UpdateComponentWithResponse(ctx, orgName, ocgen.ComponentNameParam(scopedComp), ocgen.UpdateComponentJSONRequestBody(comp))
 		if err != nil {
-			return fmt.Errorf("failed to update component traits: %w", err)
+			return fmt.Errorf("failed to update component spec: %w", err)
 		}
 		if updResp.StatusCode() != http.StatusOK && updResp.StatusCode() != http.StatusCreated {
 			return handleErrorResponse(updResp.StatusCode(), ErrorResponses{
@@ -777,7 +666,8 @@ func (c *componentClient) UpdateComponentTraitEnvironmentConfigs(ctx context.Con
 	rbs := listResp.JSON200.Items
 	if len(rbs) == 0 {
 		// First build hasn't produced a ReleaseBinding yet — soft no-op.
-		// The trait_sync watcher will retry once the deploy chain catches up.
+		// The deploy stage creates the binding complete; the converge sweep
+		// re-asserts it afterwards.
 		return nil
 	}
 

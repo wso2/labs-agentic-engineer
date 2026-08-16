@@ -44,11 +44,10 @@ import { answerableQuestionIds } from "./questionCards.js";
  * of the panel opening, and the suppressed CTA still navigates — it withholds
  * a send, never the destination.
  *
- * What this canNOT see is a start from a TEAMMATE's browser: conversations are
- * per-browser (the id is FE-chosen, `chatStore.conversationIdFor`), so the
- * pending-question fact exists only in the asker's log and there is no
- * project-wide signal to consult. That case is covered by the start skill's own
- * rule; making it enforceable needs project-scoped conversations (#430).
+ * Conversations are PROJECT-scoped (#430): every browser rehydrates the same
+ * server thread, so a teammate's in-flight turn and unanswered questions reach
+ * this log too — the predicate is project-accurate up to the freshness
+ * triggers in `useAgentChat` (mount, foreign-turn poll, tab refocus).
  */
 export function agentEngaged(messages: ChatMessage[]): boolean {
   if (messages.some((m) => m.role === "user" && m.status === "in_flight")) return true;

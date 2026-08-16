@@ -40,10 +40,11 @@ import { PageHeader } from "../../../components/PageHeader";
 import { StatusChip, type StatusTone } from "../../../components/StatusChip";
 import { StageRow } from "../../builds/components/StageRow";
 import { useDesignDependencies } from "../../spec/api/queries";
+import { useValidationEvidence } from "../../validation/api/counts";
 import {
-  useValidationCounts,
+  verdictSentence,
   type ValidationCounts,
-} from "../../validation/api/counts";
+} from "../../validation/lib/verdict";
 import {
   useComponentsDeployments,
   useProjectComponents,
@@ -70,7 +71,6 @@ import {
 } from "../lib/promotion";
 import { ConnectionValuesDialog } from "./ConnectionValuesDialog";
 import { PromoteDialog } from "./PromoteDialog";
-import { ValidationChip } from "./ValidationChip";
 
 const LinkButton = createLink(Button);
 const RouterLink = createLink(MuiLink);
@@ -190,21 +190,45 @@ function ComponentRow({ card }: { card: DeploymentCard }) {
   );
 }
 
-/** The validation stage's own evidence: the verdict, and the way to the report. */
+/**
+ * The validation stage's own evidence: what the last attempt found, and the way to
+ * the report.
+ *
+ * EVERY state takes its sentence from the SHARED copy the Validation page's tile
+ * reads, word for word. Writing any of them here is what let the two come apart:
+ * this banner announced a lifecycle state as a verdict ("This deployment's verdict:
+ * awaiting fix.") and, on a settled failure, led with the count that PASSED — so a
+ * reader moving between the two surfaces met a different voice and a different
+ * headline number for one outcome.
+ */
 function VerdictBanner({
   projectName,
   validation,
+  verdict,
   counts,
 }: {
   projectName: string;
+  /** deploy.validation — the loop's position. */
   validation: string;
+  /** The run's stored verdict, which `awaiting-fix` folds away. */
+  verdict: string;
   counts?: ValidationCounts;
 }) {
   const view = validationView(validation);
   if (!view) return null;
-  const sentence = counts
-    ? `${view.label.charAt(0).toUpperCase() + view.label.slice(1)} — ${counts.passed} of ${counts.total} criteria passed on this deployment.`
-    : `This deployment's verdict: ${view.label}.`;
+  // WHICH verdict the sentence is about differs by state, and only that. A settled
+  // deploy.validation IS the verdict, mirrored — which is also the only place the
+  // three states outside COUNTABLE (`inconclusive`, `unreported`, `skipped`) can be
+  // read from here, since their run row is never fetched. The two lifecycle values
+  // are the ones that fold a verdict away, so those take the run's.
+  const inFlight = validation === "running" || validation === "awaiting-fix";
+  const sentence =
+    verdictSentence(inFlight ? verdict : validation, counts, validation) ||
+    // `skipped`, and any value from a newer server. The shared copy deliberately has
+    // no sentence for skipped: the stage note beside this already says the version
+    // authored no criteria, and two adjacent elements saying it once each is a
+    // restatement. Naming the verdict complements that instead.
+    `This deployment's verdict: ${view.label}.`;
   return (
     <Box
       sx={(theme) => {
@@ -233,7 +257,10 @@ function VerdictBanner({
         size="small"
         color="inherit"
         endIcon={<ArrowRight size={14} aria-hidden />}
-        sx={{ flexShrink: 0, fontWeight: 500 }}
+        // Text, not outlined — it sits inside the banner's own border. Which
+        // costs it MUI's 5px text padding, half what the outlined navigation
+        // buttons get, so px is said explicitly.
+        sx={{ flexShrink: 0, fontWeight: 500, px: 1.25 }}
       >
         View full report
       </LinkButton>
@@ -317,11 +344,13 @@ export function DeploymentsPage({ projectName }: { projectName: string }) {
     () => connectionRows(dependencies.data),
     [dependencies.data],
   );
-  // Criteria counts for the rail's Validation stage (#395, decision 3): the
-  // Validation page's own criteria/report join, keyed on the BUILD version
-  // (the newest run — what deploy.validation describes). undefined in every
-  // failure mode, and the stage falls back to the bare verdict label.
-  const counts = useValidationCounts(
+  // The rail's Validation stage (#395, decision 3): the Validation page's own
+  // criteria/report join, keyed on the BUILD version (the newest run — what
+  // deploy.validation describes). The VERDICT comes back with the counts because
+  // `awaiting-fix` folds `failed` and `unreported` into one word and the banner's
+  // sentence differs for each; counts are undefined in every failure mode, and every
+  // sentence has a count-free form.
+  const { verdict: runVerdict, counts } = useValidationEvidence(
     projectName,
     status.data?.build.version ?? "",
     deploy?.validation ?? "",
@@ -510,6 +539,7 @@ export function DeploymentsPage({ projectName }: { projectName: string }) {
               <VerdictBanner
                 projectName={projectName}
                 validation={deploy.validation}
+                verdict={runVerdict}
                 {...(counts && { counts })}
               />
             </StageRow>
@@ -617,14 +647,12 @@ export function DeploymentsPage({ projectName }: { projectName: string }) {
               </Typography>
             </Stack>
           )}
-          {deploy?.validation && (
-            <Box sx={{ mt: 1.25 }}>
-              <ValidationChip
-                projectName={projectName}
-                validation={deploy.validation}
-              />
-            </Box>
-          )}
+          {/* No validation pill here. It said "Awaiting fix" — a label with no
+              subject — under a components-ready bar in a card about the DEV
+              ENVIRONMENT, so it read as the deployment awaiting a fix. Validation is
+              the stage AFTER this one, which the rail already numbers as step 2 and
+              names, with the actor, the counts, a sentence and its own link to the
+              report. This was a strictly weaker duplicate of that row. */}
           <Divider sx={{ my: 2 }} />
           {/* The design's connections, and the way to hand the platform their
               REAL values after build-time placeholders (#395 follow-up):
@@ -642,10 +670,10 @@ export function DeploymentsPage({ projectName }: { projectName: string }) {
                   label={row.detail ? `${row.name} (${row.detail})` : row.name}
                   trailing={
                     row.kind === "external" && row.config.length > 0 ? (
-                      // The ValidationChip pill recipe, in the app's accent —
+                      // The console's tinted-pill recipe, in the app's accent —
                       // an ACTION among readouts must out-rank its neighbours'
-                      // quiet captions, and this is the console's one shape
-                      // for "a pill you can press".
+                      // quiet captions, and this is the one shape for "a pill you
+                      // can press".
                       <Button
                         size="small"
                         color="inherit"

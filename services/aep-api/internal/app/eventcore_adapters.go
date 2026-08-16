@@ -26,6 +26,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/delivery/eventcore"
 	"github.com/wso2/aep/aep-api/internal/delivery/runread"
 	"github.com/wso2/aep/aep-api/internal/platform/gitfs/naming"
+	"github.com/wso2/aep/aep-api/internal/projects"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
@@ -223,6 +224,27 @@ func (l eventcoreRepoLister) ListAll(ctx context.Context) ([]eventcore.RepoRef, 
 			continue
 		}
 		out = append(out, eventcore.RepoRef{OrgID: rows[i].OrgID, ProjectID: rows[i].ProjectID, FullName: owner + "/" + name})
+	}
+	return out, nil
+}
+
+// projectLister projects the same repository onto the deployment converge
+// sweep's lister.
+//
+// The git-repository index rather than the executions table, deliberately: the
+// sweep it replaced enumerated projects with dispatched components, and the run
+// loop mints no execution rows, so on that rail it saw nothing at all. Every
+// project the platform tracks has a repo row.
+type projectLister struct{ repos sourcecontrol.RepoRepository }
+
+func (l projectLister) ListAll(ctx context.Context) ([]projects.ProjectRef, error) {
+	rows, err := l.repos.ListAllReady(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]projects.ProjectRef, 0, len(rows))
+	for i := range rows {
+		out = append(out, projects.ProjectRef{OrgID: rows[i].OrgID, ProjectID: rows[i].ProjectID})
 	}
 	return out, nil
 }

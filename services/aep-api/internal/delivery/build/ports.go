@@ -68,8 +68,8 @@ type RepoLookup interface {
 // handler unwraps *spec.SpecValidationError into the 422 detail.
 type SpecTagger interface {
 	TagSpec(ctx context.Context, orgID, projectID string) (*spec.SpecSaveResult, error)
-	// BuildScopeAtTag reads the tag's phase scope (#370): the milestone the
-	// claim mints is the PHASE's, and a same-phase re-tag reuses it.
+	// BuildScopeAtTag reads the tag's story scope (#369): the milestone the
+	// claim mints is the version's.
 	BuildScopeAtTag(ctx context.Context, orgID, projectID, tag string) (spec.BuildScope, error)
 }
 

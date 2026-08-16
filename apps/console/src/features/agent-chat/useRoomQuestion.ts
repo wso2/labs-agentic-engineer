@@ -26,7 +26,6 @@ import { useEffect, useState } from "react";
 import type { Doc } from "yjs";
 import { getMessages, subscribe } from "./chatStore.js";
 import { answerableQuestionIds } from "./questionCards.js";
-import { useCurrentAuthor } from "./currentUser.js";
 import {
   closeStaleRoomQuestions,
   mirrorQuestion,
@@ -45,7 +44,6 @@ function pendingQuestion(all: RoomQuestion[]): RoomQuestion | undefined {
 }
 
 export function useRoomQuestion(doc: Doc | null, chatKey: string): RoomQuestion | undefined {
-  const me = useCurrentAuthor();
   const [entry, setEntry] = useState<RoomQuestion | undefined>(undefined);
 
   // Mirror this client's chat log into the room — initially AND on every log
@@ -55,13 +53,12 @@ export function useRoomQuestion(doc: Doc | null, chatKey: string): RoomQuestion 
   // delivered user message): the room's `submitted` flag lives in an ephemeral
   // doc (rooms unload when empty), but the submitted/skipped answer persists
   // in the log right after the question — that check is what stops a fresh doc
-  // from resurrecting an already-answered form. The `ownerId: me.id` claim
-  // assumes "my log ⇒ my turn", which holds across real users (separate
-  // browsers don't share localStorage); two same-browser tabs with different
-  // `aep:mock:user` identities race for it (first-writer-wins — dev-only).
+  // from resurrecting an already-answered form. No ownership claim (#430 D5):
+  // the chat thread is project-scoped, every member's log converges on the
+  // same questions, and any member may submit.
   useEffect(() => {
     if (!doc) return;
-    // Close MY entries the log no longer backs: superseded (answered via the
+    // Close entries the log no longer backs: superseded (answered via the
     // card or a composer reply) and orphaned (no log message at all — a
     // persistent collab room outlives a cleared log). Runs from the log
     // subscription AND the doc observer (entries can sync in from the server
@@ -77,7 +74,7 @@ export function useRoomQuestion(doc: Doc | null, chatKey: string): RoomQuestion 
         known.add(m.toolCallId);
         if (!answerable.has(m.id)) superseded.add(m.toolCallId);
       }
-      closeStaleRoomQuestions(doc, me.id, superseded, known);
+      closeStaleRoomQuestions(doc, superseded, known);
     };
     const backfill = () => {
       const messages = getMessages(chatKey);
@@ -88,7 +85,6 @@ export function useRoomQuestion(doc: Doc | null, chatKey: string): RoomQuestion 
         mirrorQuestion(doc, {
           toolCallId: m.toolCallId,
           questions: m.questions,
-          ownerId: me.id, // it's this client's log, so this client ran the turn
           ...(m.streaming ? { streaming: true } : {}),
         });
       }
@@ -101,7 +97,7 @@ export function useRoomQuestion(doc: Doc | null, chatKey: string): RoomQuestion 
       unsubscribe();
       unobserve();
     };
-  }, [doc, chatKey, me.id]);
+  }, [doc, chatKey]);
 
   useEffect(() => {
     if (!doc) {

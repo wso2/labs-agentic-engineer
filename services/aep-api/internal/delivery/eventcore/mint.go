@@ -66,6 +66,61 @@ func (e *Events) mintFixIssue(ctx context.Context, run *delivery.MilestoneRun, e
 	})
 }
 
+// MintDeployFixIssues files one issue per component whose deployment never came
+// up, and returns the issue numbers.
+//
+// EXPORTED, unlike every other minter here, because its trigger is the only
+// platform failure with no webhook behind it. A build going red arrives as an
+// event this package observes; a ReleaseBinding that never reaches Ready is a
+// level nobody delivers, so the run supervisor is the only thing that ever
+// learns it — and it reaches this package through a port rather than minting
+// the issue itself, which is what keeps issue writing in one place with one
+// dedupe convention.
+//
+// The dedupe key is (component, commit): a redeploy of the same commit that
+// fails the same way finds the open issue and files nothing, while the next
+// version's failure is genuinely new work.
+func (e *Events) MintDeployFixIssues(ctx context.Context, orgID, projectID string, milestoneNumber int,
+	components []string, reasons map[string]string, commitSHA string) ([]int, error) {
+	filed := make([]int, 0, len(components))
+	for _, component := range components {
+		reason := reasons[component]
+		body := fmt.Sprintf(
+			"Component **%s** built successfully at merge commit `%s`, but its deployment never became ready. "+
+				"The image exists — what does not work is running it.\n\n"+
+				"Deployment details:\n\n"+
+				"- Component: %s\n"+
+				"- Merge commit: %s\n"+
+				"- Environment: %s\n"+
+				"- OpenChoreo reported: %s\n\n"+
+				"Look for a runtime problem rather than a compile one: a container that exits at startup, a missing "+
+				"or misnamed environment variable, a port that does not match the declared endpoint, a health check "+
+				"the app never satisfies, or a declared dependency the workload cannot reach. Fix it, then include "+
+				"this issue in your pull request's Resolves list.",
+			component, delivery.ShortSHA(commitSHA), component, commitSHA,
+			openchoreoDevEnvironment, orNone(reason))
+
+		number, err := e.mint(ctx, orgID, projectID, sourcecontrol.CreateIssueRequest{
+			Title:     fmt.Sprintf("Fix the failed deployment for %s", component),
+			Body:      body,
+			Labels:    []string{delivery.LabelAgentWork},
+			Milestone: &milestoneNumber,
+			DedupeKey: fmt.Sprintf("aep deploy %s %s", component, delivery.ShortSHA(commitSHA)),
+		})
+		if err != nil {
+			return filed, err
+		}
+		if number > 0 {
+			filed = append(filed, number)
+		}
+	}
+	return filed, nil
+}
+
+// openchoreoDevEnvironment is named here rather than imported so this package
+// keeps no dependency on the OpenChoreo client for one string in one issue body.
+const openchoreoDevEnvironment = "development"
+
 // mintConflictIssue files the conflict issue for a pull request that would not
 // merge. It NAMES the pull request — the single structured reference the issue
 // model allows — because the agent derives its rebase target from it: it works

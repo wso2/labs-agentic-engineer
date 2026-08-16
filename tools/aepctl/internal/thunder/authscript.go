@@ -82,7 +82,7 @@ upsert_app() {
   local client_id="$1" payload="$2"
   local app_id
   app_id=$(echo "$APPS" | tr '\n' ' ' | sed 's/" *: *"/":"/g' \
-    | grep -o "\"client_id\":\"${client_id}\"[^}]*\"id\":\"[^\"]*\"\|\"id\":\"[^\"]*\"[^}]*\"client_id\":\"${client_id}\"" \
+    | grep -o "\"clientId\":\"${client_id}\"[^}]*\"id\":\"[^\"]*\"\|\"id\":\"[^\"]*\"[^}]*\"clientId\":\"${client_id}\"" \
     | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
   if [ -n "$app_id" ]; then
     log "  updating ${client_id} (${app_id})..."
@@ -103,13 +103,13 @@ upsert_app() {
 confidential() {
   local name="$1" desc="$2" cid="$3" secret="$4"
   upsert_app "$cid" "{
-    \"name\":\"$name\",\"description\":\"$desc\",\"ou_id\":\"$OU_ID\",
-    \"inbound_auth_config\":[{\"type\":\"oauth2\",\"config\":{
-      \"client_id\":\"$cid\",\"client_secret\":\"$secret\",
-      \"grant_types\":[\"client_credentials\"],
-      \"token_endpoint_auth_method\":\"client_secret_post\",
-      \"pkce_required\":false,\"public_client\":false,
-      \"token\":{\"access_token\":{\"validity_period\":3600}}
+    \"name\":\"$name\",\"description\":\"$desc\",\"ouId\":\"$OU_ID\",
+    \"inboundAuthConfig\":[{\"type\":\"oauth2\",\"config\":{
+      \"clientId\":\"$cid\",\"clientSecret\":\"$secret\",
+      \"grantTypes\":[\"client_credentials\"],
+      \"tokenEndpointAuthMethod\":\"client_secret_post\",
+      \"pkceRequired\":false,\"publicClient\":false,
+      \"token\":{\"accessToken\":{\"validityPeriod\":3600}}
     }}]}"
 }
 
@@ -129,17 +129,17 @@ log "Registering console PKCE client..."
 USER_ATTRS='["given_name","family_name","username","groups","ouId","ouName","ouHandle"]'
 upsert_app "aep-console-client" "{
   \"name\":\"AEP Console\",\"description\":\"AEP Platform Console\",
-  \"ou_id\":\"$OU_ID\",\"auth_flow_id\":\"$AUTH_FLOW_ID\",
-  \"inbound_auth_config\":[{\"type\":\"oauth2\",\"config\":{
-    \"client_id\":\"aep-console-client\",
-    \"redirect_uris\":[\"${CONSOLE_URL}\",\"${CONSOLE_URL}/\",\"${CONSOLE_URL}/callback\"],
-    \"grant_types\":[\"authorization_code\",\"refresh_token\"],
-    \"response_types\":[\"code\"],
-    \"token_endpoint_auth_method\":\"none\",
-    \"pkce_required\":true,\"public_client\":true,
+  \"ouId\":\"$OU_ID\",\"authFlowId\":\"$AUTH_FLOW_ID\",
+  \"inboundAuthConfig\":[{\"type\":\"oauth2\",\"config\":{
+    \"clientId\":\"aep-console-client\",
+    \"redirectUris\":[\"${CONSOLE_URL}\",\"${CONSOLE_URL}/\",\"${CONSOLE_URL}/callback\"],
+    \"grantTypes\":[\"authorization_code\",\"refresh_token\"],
+    \"responseTypes\":[\"code\"],
+    \"tokenEndpointAuthMethod\":\"none\",
+    \"pkceRequired\":true,\"publicClient\":true,
     \"token\":{
-      \"access_token\":{\"validity_period\":86400,\"user_attributes\":$USER_ATTRS},
-      \"id_token\":{\"validity_period\":86400,\"user_attributes\":$USER_ATTRS}
+      \"accessToken\":{\"validityPeriod\":86400,\"userAttributes\":$USER_ATTRS},
+      \"idToken\":{\"validityPeriod\":86400,\"userAttributes\":$USER_ATTRS}
     }
   }}]}"
 
@@ -147,22 +147,22 @@ upsert_app "aep-console-client" "{
 log "Registering CLI PKCE client..."
 upsert_app "aep-cli-client" "{
   \"name\":\"AEP CLI\",\"description\":\"AEP CLI tool — PKCE login\",
-  \"ou_id\":\"$OU_ID\",\"auth_flow_id\":\"$AUTH_FLOW_ID\",
-  \"inbound_auth_config\":[{\"type\":\"oauth2\",\"config\":{
-    \"client_id\":\"aep-cli-client\",
-    \"redirect_uris\":[\"http://localhost\",\"http://127.0.0.1\"],
-    \"grant_types\":[\"authorization_code\",\"refresh_token\"],
-    \"response_types\":[\"code\"],
-    \"token_endpoint_auth_method\":\"none\",
-    \"pkce_required\":true,\"public_client\":true,
-    \"token\":{\"access_token\":{\"validity_period\":86400}}
+  \"ouId\":\"$OU_ID\",\"authFlowId\":\"$AUTH_FLOW_ID\",
+  \"inboundAuthConfig\":[{\"type\":\"oauth2\",\"config\":{
+    \"clientId\":\"aep-cli-client\",
+    \"redirectUris\":[\"http://localhost\",\"http://127.0.0.1\"],
+    \"grantTypes\":[\"authorization_code\",\"refresh_token\"],
+    \"responseTypes\":[\"code\"],
+    \"tokenEndpointAuthMethod\":\"none\",
+    \"pkceRequired\":true,\"publicClient\":true,
+    \"token\":{\"accessToken\":{\"validityPeriod\":86400}}
   }}]}"
 
 # ── Assign aep-system-client to Administrator role ────────────────────────────
 log "Assigning aep-system-client to Administrator role..."
 APPS2=$(curl -sf --noproxy "*" -H "Authorization: Bearer $TOKEN" "${THUNDER_URL}/applications?limit=200")
 SYS_APP_ID=$(echo "$APPS2" | tr '\n' ' ' | sed 's/" *: *"/":"/g' \
-  | grep -o '"client_id":"aep-system-client"[^}]*"id":"[^"]*"\|"id":"[^"]*"[^}]*"client_id":"aep-system-client"' \
+  | grep -o '"clientId":"aep-system-client"[^}]*"id":"[^"]*"\|"id":"[^"]*"[^}]*"clientId":"aep-system-client"' \
   | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
 ROLES=$(curl -sf --noproxy "*" -H "Authorization: Bearer $TOKEN" "${THUNDER_URL}/roles?limit=200" || true)
 ADMIN_ROLE_ID=$(echo "$ROLES" | tr '\n' ' ' \
@@ -171,7 +171,7 @@ ADMIN_ROLE_ID=$(echo "$ROLES" | tr '\n' ' ' \
 if [ -n "$SYS_APP_ID" ] && [ -n "$ADMIN_ROLE_ID" ]; then
   curl -sf --noproxy "*" -X POST \
     -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-    -d "{\"role_id\":\"$ADMIN_ROLE_ID\",\"application_id\":\"$SYS_APP_ID\"}" \
+    -d "{\"roleId\":\"$ADMIN_ROLE_ID\",\"applicationId\":\"$SYS_APP_ID\"}" \
     "${THUNDER_URL}/role-assignments" -o /dev/null 2>/dev/null || true
   log_ok "aep-system-client -> Administrator"
 else

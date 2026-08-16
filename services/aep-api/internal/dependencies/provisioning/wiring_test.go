@@ -123,7 +123,7 @@ func TestWiring_PublishedAtDispatch(t *testing.T) {
 
 // THE REGRESSION GUARD. Gate resolution must no longer post: its audience was
 // whatever working-set issues happened to exist at that instant, and on a first
-// build (fillMilestone provisions before it plans) that is none — the miss that
+// build (the run's planning phase provisions before it plans) that is none — the miss that
 // let an agent ship SQLite instead of the Postgres it had provisioned. The gate
 // still closes; only the comment moved.
 func TestWiring_GateResolutionPostsNothing(t *testing.T) {

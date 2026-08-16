@@ -91,7 +91,7 @@ func init() {
 	f := sreInstallCmd.Flags()
 	f.StringVar(&sreNamespace, "namespace", "wso2-aep", "Namespace where AEP + OpenBao are installed")
 	f.StringVar(&sreObsNamespace, "obs-namespace", "openchoreo-observability-plane", "Observability plane namespace")
-	f.StringVar(&sreOpenBaoAddr, "openbao-addr", "http://aep-aep-openbao.wso2-aep.svc.cluster.local:8200", "In-cluster OpenBao address for the obs-namespace SecretStore")
+	f.StringVar(&sreOpenBaoAddr, "openbao-addr", "http://openbao.openbao.svc.cluster.local:8200", "In-cluster OpenBao address for the obs-namespace SecretStore")
 	f.StringVar(&sreObsPlaneVersion, "obs-plane-version", "1.0.1-hotfix.1", "openchoreo-observability-plane chart version")
 	f.StringVar(&sreObsLogsVersion, "obs-logs-version", "0.5.1", "observability-logs-opensearch chart version")
 	f.StringVar(&sreRcaImageRepo, "rca-image-repo", "tharindulak/openchoreo-sre-agent", "RCA/SRE agent image repository")

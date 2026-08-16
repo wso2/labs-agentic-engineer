@@ -35,9 +35,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: aep-server
-            dockerfile: tools/aepctl/Dockerfile.server
-            context: tools/aepctl
           - name: aep-api
             dockerfile: services/aep-api/Dockerfile
             context: services/aep-api
@@ -125,21 +122,9 @@ jobs:
             helm registry login ${{ env.REGISTRY }} \
               --username ${{ github.actor }} --password-stdin
 
-      - name: Package bootstrap chart
-        run: |
-          cp -r deployments/helm-charts/bootstrap /tmp/bootstrap
-
-          yq -i '.version = "${{ inputs.version }}"' /tmp/bootstrap/Chart.yaml
-          yq -i '.appVersion = "${{ inputs.version }}"' /tmp/bootstrap/Chart.yaml
-          yq -i '.aepServer.image.repository = "${{ env.IMAGE_PREFIX }}/aep-server"' /tmp/bootstrap/values.yaml
-          yq -i '.aepServer.image.tag = "${{ inputs.version }}"' /tmp/bootstrap/values.yaml
-          yq -i '.aepServer.image.pullPolicy = "IfNotPresent"' /tmp/bootstrap/values.yaml
-
-          helm dependency build /tmp/bootstrap
-          helm package /tmp/bootstrap --destination /tmp/charts
-
       - name: Package platform chart
         run: |
+          helm dependency update deployments/helm-charts/platform
           cp -r deployments/helm-charts/platform /tmp/platform
 
           yq -i '.version = "${{ inputs.version }}"' /tmp/platform/Chart.yaml
@@ -196,13 +181,11 @@ jobs:
             --version ${{ inputs.version }} -n wso2-aep --create-namespace
 
           aep platform install \\
-            --server http://aep-server.openchoreo.localhost:8080 \\
             --platform-version ${{ inputs.version }}
           \`\`\`
 
           ### Images
 
-          - \`ghcr.io/wso2/aep/aep-server:${{ inputs.version }}\`
           - \`ghcr.io/wso2/aep/aep-api:${{ inputs.version }}\`
           - \`ghcr.io/wso2/aep/agents:${{ inputs.version }}\`
           - \`ghcr.io/wso2/aep/collab:${{ inputs.version }}\`

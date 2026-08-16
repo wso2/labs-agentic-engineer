@@ -33,10 +33,12 @@ import {
   runHeartbeatLine,
 } from "../fixtures/run-progress";
 import {
+  VALIDATION_ATTEMPTS,
   VALIDATION_FILE_PATHS,
   VALIDATION_SCENARIOS,
   validationFiles,
   validationRuns,
+  type ValidationAttempt,
   type ValidationScenario,
 } from "../fixtures/validation";
 
@@ -60,6 +62,17 @@ function validationScenario(): ValidationScenario | null {
     : null;
 }
 
+// Which attempt a `running` scenario is on (aep:mock:validation-attempt). It splits
+// the one scenario the switch cannot: `deploy.validation` is `running` for both a
+// first attempt and a repeat, and only the repeat carries a verdict to render.
+// Ignored by every other scenario, and by an unknown value.
+function validationAttempt(): ValidationAttempt {
+  const raw = localStorage.getItem("aep:mock:validation-attempt");
+  return raw && VALIDATION_ATTEMPTS.includes(raw as ValidationAttempt)
+    ? (raw as ValidationAttempt)
+    : "first";
+}
+
 // The project's files with the two validation artifacts swapped for the ones the
 // overridden verdict implies. Dropping them first is what makes `unreported` and
 // `skipped` reachable: those scenarios contribute FEWER files, not different ones.
@@ -68,7 +81,7 @@ function specFiles(s: Exclude<ProjectScenario, "error">) {
   if (!v) return projectSpecFiles[s];
   return [
     ...projectSpecFiles[s].filter((f) => !VALIDATION_FILE_PATHS.includes(f.path)),
-    ...validationFiles(v),
+    ...validationFiles(v, validationAttempt()),
   ];
 }
 
@@ -150,7 +163,7 @@ export const projectHandlers = [
       // The verdict lives on the RUN, and its cycles are what the page reads the
       // report at — so an override has to replace the whole story, not patch a
       // field onto the project scenario's.
-      const runs = v ? validationRuns(v) : projectBuildRuns[s];
+      const runs = v ? validationRuns(v, validationAttempt()) : projectBuildRuns[s];
       return { ...runs, tag: String(params.tag) };
     }),
   ),

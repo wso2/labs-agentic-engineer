@@ -39,12 +39,6 @@ which external services the product depends on (by capability, e.g.
 Decisions taken from org defaults or the skip valve are ordinary entries;
 skip-valve entries carry the *assumed* tag.>
 
-## Phasing
-<ONE phase, holding EVERY story. Exactly one entry, in EXACTLY this
-machine-read form — the build gate parses it:
-- **Phase 1 — <one-line goal>**: <goal detail>. Stories: 1, 2, 3, 4, 5.
-List every story number the PRD defines. Never write a second phase entry.>
-
 ## Out of Scope
 <what this project deliberately does not do>
 
@@ -64,15 +58,13 @@ section) or explicitly deferred ("deferred — does not block design") before
   numbers are never reused or renumbered — designs, criteria, and tasks cite
   them.
 - **Every statement lands.** Everything the user said in the brief or the
-  interview appears somewhere above — as a story, a decision, a phase, an
+  interview appears somewhere above — as a story, a decision, an
   out-of-scope line, or an open question. A user statement with no home is a
   defect.
 - **Actors before citation.** A story only names actors the Actors section
   defines.
-- **One phase, and it is total.** The product ships in a single phase for now:
-  Phase 1 lists every story, and there is no Phase 2. Work that should come
-  later is not a later phase — it is an Out of Scope line, or it is not a
-  story yet.
+- **The story list is total.** Every story the PRD defines ships. Work that
+  should come later is an Out of Scope line, or it is not a story yet.
 - **No acceptance criteria.** Validation criteria live in
   `specs/validation/validation-criteria.json` — the single acceptance oracle.
   The PRD never duplicates them.

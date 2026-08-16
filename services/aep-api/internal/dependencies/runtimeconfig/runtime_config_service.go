@@ -94,30 +94,36 @@ func (s *RuntimeConfigService) SetResourceCatalog(c resourceMarkerCatalog) {
 	s.catalog = c
 }
 
-// EmitForComponent computes the env-config.js content for the named
-// component and writes it onto each of the component's ReleaseBindings.
-// No-op when the component is not a web-app.
+// FilesForComponent computes the literal files the named component's
+// ReleaseBinding must carry — today just env-config.js, for a web app.
 //
-// Idempotent + best-effort. The OC client returns a soft no-op when no
-// ReleaseBindings exist yet — the cascade hook re-fires on every deploy
-// in the project so the file lands after the first build catches up.
-func (s *RuntimeConfigService) EmitForComponent(ctx context.Context, orgID, projectID, componentName string) error {
+// It COMPUTES and does not write. The binding has one writer (the deploy
+// stage), which asks for these values while it is composing the whole desired
+// state, so the file lands in the same object write as the release pin rather
+// than in a follow-up patch that had to wait for the binding to exist.
+//
+// `ready` is false when a required key could not be populated yet — typically a
+// dependency URL that resolves only once a sibling is serving. The caller must
+// then leave the field unmanaged: a partially populated window._env_ is worse
+// than a stale one, because the SPA's src/env.ts throws on it at module load.
+// A non-web-app component wants no files at all, which is (nil, true).
+func (s *RuntimeConfigService) FilesForComponent(ctx context.Context, orgID, projectID, componentName string) ([]openchoreo.WorkflowFileVar, bool, error) {
 	if s == nil {
-		return nil
+		return nil, true, nil
 	}
 	if orgID == "" || projectID == "" || componentName == "" {
-		return fmt.Errorf("runtime_config: empty orgID/projectID/componentName")
+		return nil, false, fmt.Errorf("runtime_config: empty orgID/projectID/componentName")
 	}
 
 	design, err := s.store.ReadDesign(ctx, orgID, projectID)
 	if err != nil {
 		if spec.IsNotFound(err) {
-			return nil
+			return nil, true, nil
 		}
-		return fmt.Errorf("runtime_config: read design: %w", err)
+		return nil, false, fmt.Errorf("runtime_config: read design: %w", err)
 	}
 	if design == nil {
-		return nil
+		return nil, true, nil
 	}
 
 	var match *spec.DesignComponent
@@ -128,84 +134,22 @@ func (s *RuntimeConfigService) EmitForComponent(ctx context.Context, orgID, proj
 		}
 	}
 	if match == nil || match.ComponentType != spec.ComponentTypeWebApplication {
-		return nil
+		return nil, true, nil
 	}
 
 	envValues, ready := s.buildEnvValues(ctx, orgID, projectID, match, design)
 	if !ready {
-		// One or more required keys couldn't be populated yet (transient
-		// OC error, SPA URL not resolved, etc.). DO NOT write a partial
-		// env-config.js — that would either blank previously valid keys
-		// or ship a window._env_ that the SPA's src/env.ts throws on at
-		// module load. The cascade hook re-fires on every deploy event,
-		// so the next sibling deploy (or this SPA's own follow-up
-		// reconcile) will retry.
-		slog.InfoContext(ctx, "runtime_config: required keys not yet ready; deferring env-config.js write",
-			"orgID", orgID,
-			"projectID", projectID,
-			"component", componentName,
-			"keys", sortedKeys(envValues),
-		)
-		return nil
+		slog.InfoContext(ctx, "runtime_config: required keys not yet ready; deferring env-config.js",
+			"orgID", orgID, "projectID", projectID, "component", componentName, "keys", sortedKeys(envValues))
+		return nil, false, nil
 	}
-	file := openchoreo.WorkflowFileVar{
+	slog.InfoContext(ctx, "runtime_config: env-config.js composed",
+		"orgID", orgID, "projectID", projectID, "component", componentName, "keys", sortedKeys(envValues))
+	return []openchoreo.WorkflowFileVar{{
 		Key:       "env-config.js",
 		MountPath: "/usr/share/nginx/html/",
 		Value:     renderEnvConfigJS(envValues),
-	}
-
-	if err := s.componentClient.UpdateComponentWorkflowFiles(ctx, orgID, projectID, componentName, []openchoreo.WorkflowFileVar{file}); err != nil {
-		return fmt.Errorf("runtime_config: update workflow files: %w", err)
-	}
-
-	slog.InfoContext(ctx, "emitting env-config.js",
-		"orgID", orgID,
-		"projectID", projectID,
-		"component", componentName,
-		"keys", sortedKeys(envValues),
-	)
-	return nil
-}
-
-// EmitForProjectSPAs re-emits env-config.js on every web-app component in
-// the project. Called from the dispatch cascade so that when ANY component
-// lands `deployed` (especially a sibling service whose external URL just
-// resolved), every SPA picks up the new value in its ReleaseBinding without
-// waiting for the SPA itself to re-deploy.
-//
-// Idempotent + best-effort: a failure on one component logs and continues.
-func (s *RuntimeConfigService) EmitForProjectSPAs(ctx context.Context, orgID, projectID string) error {
-	if s == nil {
-		return nil
-	}
-	if orgID == "" || projectID == "" {
-		return fmt.Errorf("runtime_config: empty orgID/projectID")
-	}
-	design, err := s.store.ReadDesign(ctx, orgID, projectID)
-	if err != nil {
-		if spec.IsNotFound(err) {
-			return nil
-		}
-		return fmt.Errorf("runtime_config: read design: %w", err)
-	}
-	if design == nil {
-		return nil
-	}
-	for _, c := range design.Components {
-		if c.ComponentType != spec.ComponentTypeWebApplication {
-			continue
-		}
-		k8sName := k8sname.ToK8sName(c.Name)
-		if err := s.EmitForComponent(ctx, orgID, projectID, k8sName); err != nil {
-			slog.WarnContext(ctx, "runtime_config: per-SPA emit failed; continuing",
-				"orgID", orgID,
-				"projectID", projectID,
-				"componentName", k8sName,
-				"error", err,
-			)
-		}
-	}
-	return nil
+	}}, true, nil
 }
 
 // buildEnvValues assembles the map that becomes `window._env_`.
@@ -221,30 +165,27 @@ func (s *RuntimeConfigService) EmitForProjectSPAs(ctx context.Context, orgID, pr
 //     dependency's provisioned binding outputs (resolved by OC); the BFF never
 //     calls the upstream from this path.
 //
-// buildEnvValues returns the map + a `ready` flag. The flag is false
-// when a required key couldn't be populated yet (transient OC error,
-// SPA URL not yet resolved, etc.). The caller must NOT write a
-// partial env-config.js on `!ready` — see EmitForComponent.
+// buildEnvValues returns the map + a `ready` flag, where ready means "every key
+// the SPA needs to START is present" — a sibling backend's address, a platform
+// resource's outputs. The caller must NOT write a partial env-config.js on
+// `!ready`: src/env.ts throws on a missing key at module load, so half a file is
+// worse than the stale one the pod already has.
+//
+// The SPA's OWN external URL is deliberately NOT one of those keys. It exists
+// only once the SPA has a rendered binding, so requiring it before the SPA's
+// first write is a demand the SPA cannot satisfy until it has already been
+// deployed — and the one thing that needs it (registering the callback URL with
+// an OIDC dependency) is not read by the bundle at all. See layerPlatformResources.
 func (s *RuntimeConfigService) buildEnvValues(ctx context.Context, orgID, projectID string, webapp *spec.DesignComponent, design *spec.DesignFile) (out map[string]interface{}, ready bool) {
 	out = map[string]interface{}{}
 	ready = true
 
-	// Index sibling components by name for type lookup.
-	byName := make(map[string]spec.DesignComponent, len(design.Components))
-	for _, c := range design.Components {
-		byName[c.Name] = c
-	}
-
+	// The same edge rule the deploy stage orders its waves by. Sharing it is what
+	// makes the order honest: every dependency this loop needs a URL for is one the
+	// scheduler has already waited for within this cycle, so a deferral here means
+	// the provider is outside the cycle and not yet deployed at all.
 	var firstServiceURL string
-	for _, dep := range webapp.ComponentDependsOn() {
-		sibling, ok := byName[dep]
-		if !ok {
-			continue
-		}
-		// Skip non-service deps (peer webapps aren't called over HTTP).
-		if sibling.ComponentType != spec.ComponentTypeService {
-			continue
-		}
+	for _, dep := range spec.HardProvidersFor(design, webapp.Name) {
 		k8sName := k8sname.ToK8sName(dep)
 		list, err := s.componentClient.ListDeployments(ctx, orgID, projectID, k8sName)
 		if err != nil {
@@ -321,19 +262,33 @@ func platformResourceDeps(c *spec.DesignComponent) []spec.Dependency {
 // own <origin><consumer-url-path> into that env-config key on the dependency's
 // dev binding (declarative: the operator registers the callback URL).
 //
+// The two halves are graded differently, and that is the point of the split.
+//
+//	The OUTPUTS are HARD. A SPA without its OIDC client_id cannot start; the
+//	values come from the dependency's own provisioned binding and owe nothing to
+//	any component being up. Missing them defers the whole file.
+//
+//	The consumer-URL REGISTRATION is SOFT. It needs the SPA's own external URL,
+//	which exists only once the SPA has a rendered binding — so requiring it
+//	before the SPA's first write is a demand the SPA cannot satisfy until it has
+//	already been deployed. It is not needed before the SPA serves, only before
+//	someone logs in, so the converge pass that follows the deploy waves does it.
+//
+// Grading the registration hard is what blanked a page: an unresolved SPA URL
+// (soft) vetoed the client_id (hard) that had been sitting resolved all along,
+// and the SPA was published with no window._env_ at all.
+//
 // It fetches the CRT marker catalog ONCE for the whole pass (only reached when
 // the web-app has ≥1 platform-resource dep). Fail-open-with-retry: a nil or
-// unreachable catalog, a failed patch, or an unresolved binding all return
-// false ("defer the env-config.js write") rather than erroring — this is a
-// retried cascade hook, not a user-facing save gate, so deferring simply waits
-// for the next deploy event (contrast design-save, which fails CLOSED on an
-// unreachable catalog because a silent skip there could expose an API).
+// unreachable catalog or an unresolved binding defer the env-config.js write
+// rather than erroring — this is a retried cascade hook, not a user-facing save
+// gate (contrast design-save, which fails CLOSED on an unreachable catalog
+// because a silent skip there could expose an API).
 //
 // All-or-nothing at the write level: any not-ready dependency sets ready=false,
-// and the caller (EmitForComponent) then skips the whole write — a deferring
-// dependency contributes NO keys of its own (`continue` before its outputs),
-// and sibling deps' keys already in `out` are never shipped because the write
-// is gated. The SPA is thus never handed a partial window._env_.
+// and the caller then skips the whole write — a deferring dependency contributes
+// NO keys of its own, and sibling deps' keys already in `out` are never shipped
+// because the write is gated. The SPA is thus never handed a partial window._env_.
 func (s *RuntimeConfigService) layerPlatformResources(ctx context.Context, orgID, projectID string, webapp *spec.DesignComponent, deps []spec.Dependency, out map[string]interface{}) bool {
 	if s.resourceClient == nil {
 		slog.WarnContext(ctx, "runtime_config: resourceClient not wired; deferring platform-resource outputs",
@@ -362,29 +317,32 @@ func (s *RuntimeConfigService) layerPlatformResources(ctx context.Context, orgID
 		bindingName := ocname.ExternalResourceBindingName(projectID, dep.Name, bindingEnv)
 		m := markers[dep.ResourceType]
 
-		// Annotation-driven consumer-URL patch. Gate on ConsumerURLEnvConfig (the
-		// path is already defaulted into the markers when the env-config marker is
-		// set — never branch on the path alone).
+		// Annotation-driven consumer-URL patch — the SOFT half. Gate on
+		// ConsumerURLEnvConfig (the path is already defaulted into the markers when
+		// the env-config marker is set — never branch on the path alone).
+		//
+		// Neither an unresolved SPA URL nor a failed patch touches `ready`: the
+		// registration is retried by the converge pass and by the converge watcher,
+		// and holding the file back for it would keep a startable SPA off the air
+		// for a fact it does not read.
 		if m.ConsumerURLEnvConfig != "" {
 			if !spaResolved {
 				spaOrigin = strings.TrimRight(s.componentExternalURL(ctx, orgID, projectID, webapp.Name), "/")
 				spaResolved = true
 			}
-			if spaOrigin == "" {
-				slog.InfoContext(ctx, "runtime_config: SPA external URL not yet resolved; will retry on next cascade",
+			switch {
+			case spaOrigin == "":
+				slog.InfoContext(ctx, "runtime_config: SPA external URL not yet resolved; consumer URL registers on the converge pass",
 					"projectID", projectID, "component", webapp.Name, "dep", dep.Name)
-				ready = false
-				continue
-			}
-			// Idempotent inside the client (no-op when already present), so
-			// re-running on every cascade doesn't churn the CR. On failure DEFER.
-			if perr := s.resourceClient.PatchBindingEnvironmentConfigs(ctx, orgID, bindingName,
-				map[string]string{m.ConsumerURLEnvConfig: spaOrigin + m.ConsumerURLPath}); perr != nil {
-				slog.WarnContext(ctx, "runtime_config: patch binding consumer URL failed; deferring",
-					"projectID", projectID, "component", webapp.Name, "dep", dep.Name,
-					"binding", bindingName, "envConfig", m.ConsumerURLEnvConfig, "error", perr)
-				ready = false
-				continue
+			default:
+				// Idempotent inside the client (no-op when already present), so
+				// re-running on every cascade doesn't churn the CR.
+				if perr := s.resourceClient.PatchBindingEnvironmentConfigs(ctx, orgID, bindingName,
+					map[string]string{m.ConsumerURLEnvConfig: spaOrigin + m.ConsumerURLPath}); perr != nil {
+					slog.WarnContext(ctx, "runtime_config: patch binding consumer URL failed; will retry on the next converge",
+						"projectID", projectID, "component", webapp.Name, "dep", dep.Name,
+						"binding", bindingName, "envConfig", m.ConsumerURLEnvConfig, "error", perr)
+				}
 			}
 		}
 

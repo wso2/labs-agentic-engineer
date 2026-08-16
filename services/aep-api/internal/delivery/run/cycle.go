@@ -18,6 +18,7 @@ package run
 
 import (
 	"errors"
+	"time"
 
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
@@ -46,6 +47,11 @@ const (
 	cycleAgentDead
 	// cycleCancelled — a human abandoned the increment mid-cycle.
 	cycleCancelled
+	// cycleDeployFailed — merged and built, but a component's ReleaseBinding
+	// never came up. Distinct from cycleRed because the failure is a different
+	// class with a different terminal reason: the code compiled, the platform
+	// could not run it.
+	cycleDeployFailed
 	// cycleQuotaBlocked — the org has no agent-concurrency slot, so the cycle
 	// never launched. Not a failure and not a spent budget: the run settles
 	// blocked with an actionable message.
@@ -68,8 +74,10 @@ const (
 //	                                    ├─ conflict  ─► cycleConflict
 //	                                    ├─ no landing within the deadline ─► re-dispatch
 //	                                    └─ merged ─► wait for the fan-out's builds
-//	                                                 ├─ all green ─► cycleGreen
-//	                                                 └─ a component red ─► cycleRed
+//	                                                 ├─ a component red ─► cycleRed
+//	                                                 └─ all green ─► DEPLOY, then wait for Ready
+//	                                                                ├─ all ready ─► cycleGreen
+//	                                                                └─ a component failed ─► cycleDeployFailed
 //
 // anchorIssue is set only for the validation cycle: every other kind works the
 // milestone's whole working set, because a fix or conflict issue is ordinary
@@ -129,20 +137,102 @@ func (l *loop) runCycle(ctx workflow.Context, kind string, anchorIssue int) (cyc
 		return cycleNone, err
 	}
 	l.st.Phase = delivery.RunPhaseBuilding
-	res, err = l.awaitBuilds(ctx)
+	res, components, err := l.awaitBuilds(ctx)
 	if err != nil {
 		return cycleNone, err
 	}
-	if res == cycleGreen {
-		// Green is the first moment the managed-API trait config has somewhere to
-		// land: OpenChoreo builds the ReleaseBinding that carries it out of the
-		// workload the build's last step generates. Deliberately not on the red
-		// path — a component that did not build has no new binding to converge,
-		// and the fix cycle that follows will pass through here again.
-		l.syncAPITraits(ctx)
+	if res != cycleGreen {
+		return res, nil
 	}
-	return res, nil
+	// Built, not yet running. The deploy is the platform's own act — nothing
+	// promotes a release on its own — so the cycle is not over until the
+	// components this merge touched are serving. Everything downstream of a
+	// green cycle depends on that being true rather than merely requested:
+	// validation asserts against the deployment, and the version is called
+	// delivered on the strength of it.
+	l.st.Phase = delivery.RunPhaseDeploying
+	return l.deployCycle(ctx, components)
 }
+
+// deployCycle promotes the cycle's components and waits for them to serve.
+//
+// WAVE BY WAVE, then one CONVERGE — because the wiring between components splits
+// into two kinds that want opposite treatment (spec.HardConfigEdges).
+//
+// A HARD edge is an address the platform stamps into a component's own start-up
+// config: a web app reads API_BASE_URL out of window._env_ at module load and
+// throws without it. That address exists only once the provider has a rendered
+// binding, so a consumer promoted alongside its provider is published with a
+// config nothing could have filled — a blank page served to anyone who visits
+// before the repair. Hard edges therefore ORDER the deploy: each wave waits for
+// the last to serve, and every component's config is right the first time it is
+// written.
+//
+// A SOFT edge runs the other way — a provider learning about its consumer. A
+// protected API's CORS allowlist is the project's SPA origins; an OIDC resource
+// wants the SPA's callback URL registered. Neither is needed before the consumer
+// serves, and requiring them would make the graph circular and unsatisfiable
+// (the SPA needs the API's address, the API needs the SPA's). So they are not
+// ordered at all: one converge at the end, when every address exists.
+//
+// The converge passes an EMPTY commit, and that is what makes it a converge and
+// not a third promote: nothing is re-cut, so it cannot fail on a release that is
+// already there, and no component's live release can move under a pass whose job
+// is only to finish the wiring.
+func (l *loop) deployCycle(ctx workflow.Context, components []string) (cycleResult, error) {
+	if len(components) == 0 {
+		// A validation cycle's pull request carries tests and a report and
+		// touches no component, so there is nothing to promote and nothing to
+		// wait for.
+		return cycleGreen, nil
+	}
+	waves, err := l.planDeployWaves(ctx, components)
+	if err != nil {
+		// An unsatisfiable ORDER is a deployment failure like any other, and has to
+		// arrive as one. Returned raw it would fail the workflow outright: the
+		// boundary returns on a cycle error before it can mint the fix work or
+		// settle the row, leaving a non-terminal run that blocks every later build
+		// on the project — the same wedge this stage exists to stop producing.
+		//
+		// Only a PERMANENT failure converts. A plan that could not be read is a
+		// blip, and Temporal's retry is the right answer for it.
+		if !isPermanentDeploy(err) {
+			return cycleNone, err
+		}
+		l.deployFailed = components
+		l.deployFailures = reasonForAll(components, err)
+		return cycleDeployFailed, nil
+	}
+
+	// ONE deadline for the whole stage rather than one per wave. What a version
+	// is owed is a time to be serving; a per-wave budget would silently multiply
+	// that allowance by however many levels the design happens to have.
+	deadlineCtx, stopDeadline := workflow.WithCancel(ctx)
+	defer stopDeadline()
+	deadline := workflow.NewTimer(deadlineCtx, deployReadyTimeout)
+
+	for _, wave := range waves {
+		if err := l.deploy(ctx, wave, l.mergeSHA); err != nil {
+			return cycleNone, err
+		}
+		res, err := l.awaitDeployments(ctx, wave, deadline)
+		if err != nil || res != cycleGreen {
+			return res, err
+		}
+	}
+
+	if err := l.deploy(ctx, components, convergeNoPromotion); err != nil {
+		return cycleNone, err
+	}
+	return l.awaitDeployments(ctx, components, deadline)
+}
+
+// convergeNoPromotion is the commit a converge deploys at: none. The deployer
+// reads an empty commit as "re-assert the wiring at whatever release is already
+// serving", so this is the difference between finishing a component's wiring and
+// promoting it again — named rather than spelled `""` at the call site, because
+// which of those two a pass does is the whole point of the pass.
+const convergeNoPromotion = ""
 
 // dispatchUntilLanded spends the cycle's re-dispatch budget trying to land a
 // merged pull request.
@@ -253,35 +343,98 @@ func (l *loop) awaitLanding(ctx workflow.Context, deadline workflow.Future) land
 // fix belongs there too — at the point of creation, where the cause is still
 // known — and not in a timeout here, which could only report "something took too
 // long" about a run that was never going to start.
-func (l *loop) awaitBuilds(ctx workflow.Context) (cycleResult, error) {
+func (l *loop) awaitBuilds(ctx workflow.Context) (cycleResult, []string, error) {
 	for {
 		state, err := l.pollBuilds(ctx)
 		if err != nil {
-			return cycleNone, err
+			return cycleNone, nil, err
 		}
 		if len(state.Red) > 0 {
-			return cycleRed, nil
+			return cycleRed, state.Components, nil
+		}
+		if state.Green() {
+			return cycleGreen, state.Components, nil
+		}
+
+		if cancelled, _ := l.awaitWake(ctx, buildPollInterval, nil); cancelled {
+			return cycleCancelled, nil, nil
+		}
+	}
+}
+
+// awaitWake blocks until something worth re-polling happens: a signal, the poll
+// timer, a cancel, or (when given) a stage deadline.
+//
+// Every signal is DRAINED without being read. That is the loop's standing rule —
+// a signal is a wake-up, never evidence — so what a waiter does on waking is
+// always the same: go and re-read ground truth. Both stages therefore need the
+// identical select, and the only things that differ between them are how often
+// to re-poll and whether the stage has an expiry at all.
+func (l *loop) awaitWake(ctx workflow.Context, poll time.Duration, deadline workflow.Future) (cancelled, expired bool) {
+	timerCtx, stop := workflow.WithCancel(ctx)
+	defer stop()
+
+	sel := workflow.NewSelector(ctx)
+	sel.AddReceive(l.cancel, func(c workflow.ReceiveChannel, _ bool) {
+		c.Receive(ctx, nil)
+		cancelled = true
+	})
+	for _, ch := range []workflow.ReceiveChannel{l.builds, l.workable, l.merged, l.conflict} {
+		sel.AddReceive(ch, func(c workflow.ReceiveChannel, _ bool) { c.Receive(ctx, nil) })
+	}
+	sel.AddFuture(workflow.NewTimer(timerCtx, poll), func(workflow.Future) {})
+	if deadline != nil {
+		sel.AddFuture(deadline, func(workflow.Future) { expired = true })
+	}
+	sel.Select(ctx)
+	return cancelled, expired
+}
+
+// awaitDeployments waits for the promoted components to reach a verdict.
+//
+// Unlike awaitBuilds this stage HAS a deadline, and the difference is not
+// arbitrary. A WorkflowRun always terminates — the platform gives every build an
+// active deadline — so a build poll cannot wait forever by accident. A
+// ReleaseBinding is a continuously reconciled level with no terminal state at
+// all: an image that will never pull and a rollout that is thirty seconds from
+// Ready look identical from here, and the only thing that separates them is how
+// long you are prepared to wait.
+//
+// On expiry the cycle is treated as a deploy failure rather than a hang, which
+// puts a fix issue in the milestone and lets the loop's ordinary recovery run.
+//
+// The deadline is the STAGE's and is passed in, so a run cannot buy itself more
+// time by having more waves to wait through.
+func (l *loop) awaitDeployments(ctx workflow.Context, components []string, deadline workflow.Future) (cycleResult, error) {
+	expired := false
+
+	for {
+		state, err := l.pollDeployments(ctx, components)
+		if err != nil {
+			return cycleNone, err
+		}
+		if len(state.Failed) > 0 {
+			l.deployFailures = state.Reasons
+			l.deployFailed = state.Failed
+			return cycleDeployFailed, nil
 		}
 		if state.Green() {
 			return cycleGreen, nil
 		}
-
-		timerCtx, stop := workflow.WithCancel(ctx)
-		cancelled := false
-		sel := workflow.NewSelector(ctx)
-		sel.AddReceive(l.cancel, func(c workflow.ReceiveChannel, _ bool) {
-			c.Receive(ctx, nil)
-			cancelled = true
-		})
-		for _, ch := range []workflow.ReceiveChannel{l.builds, l.workable, l.merged, l.conflict} {
-			sel.AddReceive(ch, func(c workflow.ReceiveChannel, _ bool) { c.Receive(ctx, nil) })
+		if expired {
+			// Out of time. Reported as a failure of the components that have not
+			// come up — and ONLY those: a cycle can expire with some components
+			// serving and others still rolling out, and filing fix work against
+			// one that deployed fine would send an agent after nothing.
+			l.deployFailed = state.Pending
+			return cycleDeployFailed, nil
 		}
-		sel.AddFuture(workflow.NewTimer(timerCtx, buildPollInterval), func(workflow.Future) {})
-		sel.Select(ctx)
-		stop()
+
+		cancelled, hitDeadline := l.awaitWake(ctx, deployPollInterval, deadline)
 		if cancelled {
 			return cycleCancelled, nil
 		}
+		expired = expired || hitDeadline
 	}
 }
 
@@ -335,6 +488,32 @@ func (l *loop) dispatch(ctx workflow.Context, kind string, anchorIssue int, cycl
 	return jobRef, err
 }
 
+// deploy promotes at commitSHA, or converges when it is empty.
+func (l *loop) deploy(ctx workflow.Context, components []string, commitSHA string) error {
+	return workflow.ExecuteActivity(activityCtx(ctx), (*Activities).DeployCycle, DeployCycleInput{
+		OrgID: l.in.OrgID, ProjectID: l.in.ProjectID, Components: components, CommitSHA: commitSHA,
+	}).Get(ctx, nil)
+}
+
+// planDeployWaves asks for the order. No commit rides the request: the order is
+// a property of the DESIGN, not of the release being promoted, and sending one
+// would imply the plan changes with the commit.
+func (l *loop) planDeployWaves(ctx workflow.Context, components []string) ([][]string, error) {
+	var waves [][]string
+	err := workflow.ExecuteActivity(activityCtx(ctx), (*Activities).PlanDeployWaves, DeployCycleInput{
+		OrgID: l.in.OrgID, ProjectID: l.in.ProjectID, Components: components,
+	}).Get(ctx, &waves)
+	return waves, err
+}
+
+func (l *loop) pollDeployments(ctx workflow.Context, components []string) (CycleDeployState, error) {
+	var state CycleDeployState
+	err := workflow.ExecuteActivity(activityCtx(ctx), (*Activities).PollCycleDeployments, DeployCycleInput{
+		OrgID: l.in.OrgID, ProjectID: l.in.ProjectID, Components: components, CommitSHA: l.mergeSHA,
+	}).Get(ctx, &state)
+	return state, err
+}
+
 func (l *loop) pollBuilds(ctx workflow.Context) (CycleBuildState, error) {
 	var state CycleBuildState
 	err := workflow.ExecuteActivity(activityCtx(ctx), (*Activities).PollCycleBuilds, CycleBuildsInput{
@@ -353,4 +532,29 @@ func isAgentQuotaBlocked(err error) bool {
 		return appErr.Type() == delivery.ErrTypeAgentQuotaBlocked
 	}
 	return false
+}
+
+// isPermanentDeploy reports whether a deploy-stage activity failed for a reason
+// repeating cannot change. Same mechanism as isAgentQuotaBlocked and for the same
+// reason: deployErr stamps the TYPE on the way out, and a sentinel does not
+// survive Temporal's error round trip.
+func isPermanentDeploy(err error) bool {
+	var appErr *temporal.ApplicationError
+	if errors.As(err, &appErr) {
+		return appErr.Type() == errTypePermanentDeploy
+	}
+	return false
+}
+
+// reasonForAll attributes one stage-wide failure to every component in it.
+//
+// An unsatisfiable order is nobody's individual fault — the components are stuck
+// on each other — so each fix issue carries the same cause, which names the whole
+// cycle rather than the component it happens to be filed against.
+func reasonForAll(components []string, err error) map[string]string {
+	out := make(map[string]string, len(components))
+	for _, name := range components {
+		out[name] = err.Error()
+	}
+	return out
 }

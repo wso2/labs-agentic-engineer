@@ -134,50 +134,104 @@ vi.mock("../../spec/api/queries", () => ({
   useDesignDependencies: () => ({ data: mockDependencies, isPending: false }),
 }));
 
-// Criteria counts (#395 decision 3) — undefined by default (the fallback
-// path); individual tests set it to assert the "n/m passed" upgrade.
-let mockCounts: { passed: number; total: number } | undefined;
+// The criteria/report join (#395 decision 3) — counts undefined by default (the
+// fallback path); individual tests set them to assert the "n/m passed" upgrade. The
+// VERDICT rides with them because `deploy.validation` folds `failed` and `unreported`
+// into one `awaiting-fix`, and the banner's sentence differs for each.
+let mockCounts:
+  | { passed: number; failed: number; uncovered: number; total: number }
+  | undefined;
+let mockVerdict = "";
 
 vi.mock("../../validation/api/counts", () => ({
-  useValidationCounts: () => mockCounts,
+  useValidationEvidence: () => ({
+    verdict: mockVerdict,
+    ...(mockCounts ? { counts: mockCounts } : {}),
+  }),
 }));
 
 beforeEach(() => {
   mockCounts = undefined;
+  mockVerdict = "";
   mockMutate.mockClear();
   mockDependencies = DEFAULT_DEPENDENCIES;
 });
 
-describe("DeploymentsPage — validation chip", () => {
-  it("routes a RUNNING validation to the Validation page", () => {
+describe("DeploymentsPage — validation", () => {
+  // A run mid-self-heal. `awaiting-fix` folds `failed` and `unreported` into one
+  // word, so the banner reads the RUN's verdict for the numbers and names the
+  // implementation as what is being fixed — the state used to render as
+  // "This deployment\'s verdict: awaiting fix.", a lifecycle value announced as a
+  // verdict, over a stage note claiming the system "was checked".
+  it("says what failed and what is being done, while the loop is healing", () => {
     mockDeploy = {
       version: "v1",
       status: "deployed",
       components: { total: 1, ready: 1 },
-      validation: "running",
+      validation: "awaiting-fix",
     };
+    mockVerdict = "failed";
+    mockCounts = { passed: 4, failed: 2, uncovered: 0, total: 6 };
 
     render(<DeploymentsPage projectName="acme" />);
 
-    const chip = screen.getByRole("link", { name: /^Validating$/ });
-    expect(chip).toHaveAttribute("href", "/projects/acme/validation");
-    // Internal navigation, not a new-tab external link.
-    expect(chip).not.toHaveAttribute("target");
+    expect(
+      screen.getByText(
+        "2 of 6 criteria failed. The implementation is being fixed. Validation will run again.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/verdict: awaiting fix/)).not.toBeInTheDocument();
+    // The note answers the "when?" the sentence leaves out, and must not claim the
+    // system was already checked.
+    // The note is a WAIT and nothing more. It renders BEFORE the banner, so it names
+    // the implementation rather than saying "the fix" — which has no antecedent yet —
+    // and leaves "runs again" to the banner, whose sentence the Validation page's
+    // tile shares and must keep.
+    expect(screen.getByText("Waits for the implementation fix to deploy.")).toBeInTheDocument();
+    expect(screen.queryByText(/Runs again/)).not.toBeInTheDocument();
   });
 
-  it("routes a FAILED validation to the Validation page", () => {
+  // A SETTLED failure. The banner wrote its own sentence for these and led with the
+  // count that PASSED ("Validation failed — 4 of 6 criteria passed on this
+  // deployment"), while the tile on the Validation page led with the failures — one
+  // outcome, two voices and two headline numbers, depending which surface you were on.
+  it("leads a settled failure with the failures, in the tile's own words", () => {
     mockDeploy = {
       version: "v1",
       status: "deployed",
       components: { total: 1, ready: 1 },
       validation: "failed",
     };
+    mockCounts = { passed: 4, failed: 2, uncovered: 0, total: 6 };
 
     render(<DeploymentsPage projectName="acme" />);
 
-    const chip = screen.getByRole("link", { name: /^Validation failed$/ });
-    expect(chip).toHaveAttribute("href", "/projects/acme/validation");
-    expect(chip).not.toHaveAttribute("target");
+    expect(
+      screen.getByText(
+        "2 of 6 criteria failed. The run stopped here, so the milestone stays open for the fix.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/criteria passed on this deployment/)).not.toBeInTheDocument();
+  });
+
+  // The same fold, the other way: nothing is filed for an `unreported` attempt, so
+  // promising a fix would name work that does not exist.
+  it("promises a retry, not a fix, when the repeated verdict was unreported", () => {
+    mockDeploy = {
+      version: "v1",
+      status: "deployed",
+      components: { total: 1, ready: 1 },
+      validation: "awaiting-fix",
+    };
+    mockVerdict = "unreported";
+
+    render(<DeploymentsPage projectName="acme" />);
+
+    expect(
+      screen.getByText(
+        "The validation report couldn't be generated. Validation will run again.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("routes a PASSED validation to the Validation page", () => {
@@ -190,12 +244,16 @@ describe("DeploymentsPage — validation chip", () => {
 
     render(<DeploymentsPage projectName="acme" />);
 
-    const chip = screen.getByRole("link", { name: /^Validated$/ });
-    expect(chip).toHaveAttribute("href", "/projects/acme/validation");
-    expect(chip).not.toHaveAttribute("target");
+    // ONE way into the Validation page from this card, on the rail's own stage.
+    // There used to be a second — a pill in the Dev environment panel — which said
+    // "Awaiting fix" with no subject in a card about deployments, and carried less
+    // than the row it duplicated.
+    const link = screen.getByRole("link", { name: /View full report/ });
+    expect(link).toHaveAttribute("href", "/projects/acme/validation");
+    expect(link).not.toHaveAttribute("target");
   });
 
-  it("renders no validation chip or verdict when there is nothing to validate", () => {
+  it("renders no verdict when there is nothing to validate", () => {
     mockDeploy = {
       version: "v1",
       status: "deployed",
@@ -206,8 +264,7 @@ describe("DeploymentsPage — validation chip", () => {
     render(<DeploymentsPage projectName="acme" />);
 
     // The rail's Validation STAGE is still on screen (it is a stage of the
-    // story), but with no verdict there is no chip and no report link.
-    expect(screen.queryByRole("link", { name: /Validat/ })).not.toBeInTheDocument();
+    // story), but with no verdict there is no banner and no report link.
     expect(screen.queryByText(/View full report/)).not.toBeInTheDocument();
   });
 });
@@ -245,13 +302,15 @@ describe("DeploymentsPage — story rail", () => {
       components: { total: 1, ready: 1 },
       validation: "passed",
     };
-    mockCounts = { passed: 12, total: 12 };
+    mockCounts = { passed: 12, failed: 0, uncovered: 0, total: 12 };
 
     render(<DeploymentsPage projectName="acme" />);
 
     expect(screen.getByText("12/12 passed")).toBeInTheDocument();
+    // The tile's own sentence, word for word — the banner used to write its own,
+    // which is how a settled FAILURE came to lead with the count that passed.
     expect(
-      screen.getByText("Validated — 12 of 12 criteria passed on this deployment."),
+      screen.getByText("All 12 criteria were covered by a test and passed."),
     ).toBeInTheDocument();
   });
 });

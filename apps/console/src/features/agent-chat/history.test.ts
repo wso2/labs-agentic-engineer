@@ -28,19 +28,19 @@ describe("projectableHistory", () => {
     ];
     expect(projectableHistory(history)).toEqual([
       {
-        id: "",
+        id: "h0",
         role: "user",
         content: "hi",
         status: "completed",
         author: { id: "u-me", displayName: "Developer" },
       },
-      { id: "", role: "assistant", turnId: "history", content: "hello" },
+      { id: "h1", role: "assistant", turnId: "history", content: "hello" },
     ]);
   });
 
   it("omits author when the message has none (backward compatible)", () => {
     const [msg] = projectableHistory([{ role: "user", content: "hi" }]);
-    expect(msg).toEqual({ id: "", role: "user", content: "hi", status: "completed" });
+    expect(msg).toEqual({ id: "h0", role: "user", content: "hi", status: "completed" });
     expect((msg as { author?: unknown } | undefined)?.author).toBeUndefined();
   });
 
@@ -62,7 +62,7 @@ describe("projectableHistory", () => {
       { role: "assistant", content: [{ type: "text", text: "hi " }, { type: "text", text: "there" }] },
     ];
     expect(projectableHistory(history)).toEqual([
-      { id: "", role: "assistant", turnId: "history", content: "hi there" },
+      { id: "h0", role: "assistant", turnId: "history", content: "hi there" },
     ]);
   });
 
@@ -95,7 +95,7 @@ describe("projectableHistory", () => {
     ];
     const out = projectableHistory(history);
     expect(out).toEqual([
-      { id: "", role: "question", turnId: "history", toolCallId: "tc-b", questions: input.questions },
+      { id: "h0:q-tc-b", role: "question", turnId: "history", toolCallId: "tc-b", questions: input.questions },
     ]);
   });
 });

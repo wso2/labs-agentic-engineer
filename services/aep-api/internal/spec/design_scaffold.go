@@ -20,11 +20,12 @@ package spec
 // cell is the primary design source, so the moment a save lands
 // specs/design/design.cell, the platform derives a design.json SKELETON for
 // every deployable component the cell declares that has none yet — in the same
-// commit. The agent then only ENRICHES (language, dependencies, description,
-// skillsPinned); it never authors the mechanical fields. Skeletons satisfy the
-// design write-gate outright (strict schema, non-empty strings), so a
-// scaffolded-but-unenriched component is valid on disk and the build-tag gate
-// (spec_save.go) is what demands enrichment for in-phase components.
+// commit. The agent then only ENRICHES (language, stories, dependencies,
+// description, skillsPinned); it never authors the mechanical fields.
+// Skeletons satisfy the design write-gate outright (strict schema, non-empty
+// strings), so a scaffolded-but-unenriched component is valid on disk and the
+// build-tag gate (spec_save.go) is what demands enrichment for deployable
+// components.
 
 import (
 	"encoding/json"
@@ -84,16 +85,16 @@ func scaffoldFromCell(cellSource string, exists func(path string) bool) map[stri
 		if exists(path) {
 			continue
 		}
-		out[path] = renderScaffold(c.ID, componentType, c.Stories)
+		out[path] = renderScaffold(c.ID, componentType)
 	}
 	return out
 }
 
 // renderScaffold emits a skeleton that passes the strict design write-gate.
 // Key order is stable (marshal of an ordered struct) so scaffolds are
-// byte-deterministic. `stories` is the platform-recomputed citation copy from
-// the cell (omitted when the node cites nothing).
-func renderScaffold(id, componentType string, stories []int) string {
+// byte-deterministic. `stories` is deliberately absent — the agent authors it
+// during enrichment (the build-tag gate's coverage check reads it).
+func renderScaffold(id, componentType string) string {
 	skeleton := struct {
 		Name         string `json:"name"`
 		Type         string `json:"type"`
@@ -103,7 +104,6 @@ func renderScaffold(id, componentType string, stories []int) string {
 		AppPath      string `json:"appPath"`
 		Entrypoint   string `json:"entrypoint"`
 		Exposure     string `json:"exposure"`
-		Stories      []int  `json:"stories,omitempty"`
 		Dependencies []any  `json:"dependencies"`
 		Description  string `json:"description"`
 	}{
@@ -115,80 +115,11 @@ func renderScaffold(id, componentType string, stories []int) string {
 		AppPath:      id,
 		Entrypoint:   "deployment/" + componentType,
 		Exposure:     scaffoldExposureByType[componentType],
-		Stories:      stories,
 		Dependencies: []any{},
-		Description:  "Scaffolded from design.cell — enrich with this component's responsibility, language (org Tech stack default first), dependencies, and pinned skills.",
+		Description:  "Scaffolded from design.cell — enrich with this component's responsibility, language (org Tech stack default first), the PRD stories it serves, dependencies, and pinned skills.",
 	}
 	b, _ := json.MarshalIndent(skeleton, "", "  ")
 	return string(b) + "\n"
-}
-
-// designCanonicalKeyOrder is the top-level key order restamped design.json
-// files are re-emitted in — the scaffold's order first, the remaining known
-// keys after; unknown keys cannot occur (the strict gates reject them).
-var designCanonicalKeyOrder = []string{
-	"name", "type", "version", "language", "buildpack", "appPath",
-	"entrypoint", "exposure", "stories", "dependencies", "description",
-	"endpoint", "skillsPinned", "exposesAPI", "componentAgentInstructions",
-}
-
-// restampDesignStories overwrites the `stories` field of a design.json with
-// the cell's citations (the field is platform-recomputed, like a dependency's
-// wiring — an authored value never survives). Returns the updated content and
-// whether it changed; malformed JSON returns unchanged (the write-gates own
-// rejecting it).
-func restampDesignStories(content string, stories []int) (string, bool) {
-	var obj map[string]any
-	if err := json.Unmarshal([]byte(content), &obj); err != nil {
-		return content, false
-	}
-	current, _ := obj["stories"].([]any)
-	if len(current) == len(stories) {
-		same := true
-		for i, v := range current {
-			n, ok := v.(float64)
-			if !ok || int(n) != stories[i] {
-				same = false
-				break
-			}
-		}
-		if same {
-			return content, false
-		}
-	}
-	if len(stories) == 0 {
-		if _, present := obj["stories"]; !present {
-			return content, false
-		}
-		delete(obj, "stories")
-	} else {
-		obj["stories"] = stories
-	}
-
-	var b strings.Builder
-	b.WriteString("{")
-	first := true
-	for _, key := range designCanonicalKeyOrder {
-		v, present := obj[key]
-		if !present {
-			continue
-		}
-		enc, err := json.MarshalIndent(v, "  ", "  ")
-		if err != nil {
-			return content, false
-		}
-		if !first {
-			b.WriteString(",")
-		}
-		first = false
-		b.WriteString("\n  ")
-		nameEnc, _ := json.Marshal(key)
-		b.Write(nameEnc)
-		b.WriteString(": ")
-		b.Write(enc)
-	}
-	b.WriteString("\n}\n")
-	return b.String(), true
 }
 
 // sortedPaths returns the scaffold map's paths in stable order (deterministic
@@ -200,19 +131,4 @@ func sortedPaths(m map[string]string) []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-// componentIDOfDesignPath extracts <id> from
-// specs/design/components/<id>/design.json; ok=false for any other path.
-func componentIDOfDesignPath(path string) (string, bool) {
-	const prefix = "specs/design/components/"
-	const suffix = "/design.json"
-	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, suffix) {
-		return "", false
-	}
-	id := strings.TrimSuffix(strings.TrimPrefix(path, prefix), suffix)
-	if id == "" || strings.Contains(id, "/") {
-		return "", false
-	}
-	return id, true
 }

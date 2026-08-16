@@ -33,19 +33,18 @@ var rootCmd = &cobra.Command{
 	Short: "AEP CLI — deployment and operations tooling for the AEP platform",
 	Long:  `aep manages the lifecycle of an AEP platform installation on a Kubernetes cluster.`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		// aep platform install bootstraps the cluster from scratch — the
-		// ConfigMap doesn't exist yet, so skip the cluster config load.
-		if cmd.Annotations["skipClusterConfig"] == "true" {
-			return nil
-		}
 		ctx := context.Background()
 		client, err := k8s.NewClient(kubeconfig)
 		if err != nil {
 			return fmt.Errorf("connect to cluster: %w", err)
 		}
 		const aepNamespace = "wso2-aep"
-		if err := config.LoadFromCluster(ctx, client, aepNamespace); err != nil {
+		n, err := config.LoadFromCluster(ctx, client, aepNamespace)
+		if err != nil {
 			return err
+		}
+		if n > 0 && cmd.CommandPath() == "aep platform install" {
+			_, _ = fmt.Fprintf(os.Stderr, "note: applying %d pre-seeded config key(s) from %s — run 'aep platform config export' to review\n", n, config.ConfigMapName)
 		}
 		return config.LoadThunderSecretFromCluster(ctx, client, aepNamespace)
 	},

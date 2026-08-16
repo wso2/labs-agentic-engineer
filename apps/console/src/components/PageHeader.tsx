@@ -22,6 +22,8 @@ import { StatusChip, type StatusTone } from "./StatusChip";
 
 export interface PageHeaderStatus {
   label: string;
+  /** Accessible name, when the label hedges with a mark no screen reader says. */
+  spokenLabel?: string;
   tone: StatusTone;
   variant?: "filled" | "outlined";
 }
@@ -77,6 +79,7 @@ export function PageHeader({
               tone={status.tone}
               appearance="soft"
               dot
+              {...(status.spokenLabel ? { spokenLabel: status.spokenLabel } : {})}
               {...(status.variant ? { variant: status.variant } : {})}
             />
           </Stack>

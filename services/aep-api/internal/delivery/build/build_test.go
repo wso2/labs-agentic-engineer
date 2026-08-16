@@ -132,6 +132,8 @@ func (p *planSpy) ListByProject(context.Context, string, string) ([]delivery.Mil
 	return p.rows, p.listErr
 }
 
+// PlanIntoMilestone is still satisfied so the spy fits the port set, but the
+// click never calls it now — planning is the run workflow's first phase.
 func (p *planSpy) PlanIntoMilestone(_ context.Context, _, _ string, milestoneNumber int) error {
 	p.planned <- milestoneNumber
 	return nil
@@ -146,18 +148,18 @@ func (p *planSpy) StartRun(_ context.Context, req delivery.StartRunRequest) erro
 	return nil
 }
 
-// awaitPlan waits for the detached plan turn to reach the planner. The click
-// returns its tag before planning finishes, so a test that asserts on the plan
-// must synchronise here rather than sleep.
-func (p *planSpy) awaitPlan(t *testing.T) int {
+// awaitStart returns the milestone the click handed to the supervisor. No
+// synchronisation: the click starts the run synchronously and the supervisor
+// fills the milestone as the run's own first phase, so by the time the click has
+// returned, the start either happened or failed the request.
+func (p *planSpy) awaitStart(t *testing.T) int {
 	t.Helper()
-	select {
-	case n := <-p.planned:
-		return n
-	case <-time.After(5 * time.Second):
-		t.Fatal("the detached plan path never reached the planner")
-		return 0
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.started) != 1 {
+		t.Fatalf("started %d runs, want exactly 1", len(p.started))
 	}
+	return p.started[0].MilestoneNumber
 }
 
 func (p *planSpy) milestones() []string {
@@ -254,12 +256,12 @@ func TestBuild_CutsTheTagAndClaimsTheVersion(t *testing.T) {
 		row.State != delivery.RunStatePlanning {
 		t.Errorf("admitted run = %+v", row)
 	}
-	if n := spy.awaitPlan(t); n != 9 {
+	if n := spy.awaitStart(t); n != 9 {
 		t.Errorf("planned into milestone %d, want 9", n)
 	}
 }
 
-func TestBuild_UnchangedSpec_ReturnsExistingTagAndStillPlans(t *testing.T) {
+func TestBuild_UnchangedSpec_ReturnsExistingTagAndStillStartsTheRun(t *testing.T) {
 	spy := newPlanSpy()
 	tagger := &fakeTagger{res: &spec.SpecSaveResult{Status: "unchanged", Tag: "v2", Version: 2}}
 	svc := withPlanPath(newSvc(fakeRepos{}, tagger), spy)
@@ -273,7 +275,7 @@ func TestBuild_UnchangedSpec_ReturnsExistingTagAndStillPlans(t *testing.T) {
 	}
 	// CreateMilestone is idempotent, so a re-build of an unchanged spec adopts
 	// the same milestone and re-plans into it (dedupe makes that additive-only).
-	spy.awaitPlan(t)
+	spy.awaitStart(t)
 }
 
 // The spec-run mutex: a second click while a spec run is live is a 409, and it
@@ -397,7 +399,7 @@ func TestStartProjectBuild_HappyPath_ClaimsTheVersion(t *testing.T) {
 	if len(spy.admittedRuns()) != 1 {
 		t.Errorf("admitted %d run rows, want 1", len(spy.admittedRuns()))
 	}
-	spy.awaitPlan(t)
+	spy.awaitStart(t)
 }
 
 // ----- GET /builds (the version ledger) ---------------------------------------

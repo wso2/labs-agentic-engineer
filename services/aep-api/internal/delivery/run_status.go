@@ -83,6 +83,16 @@ type RunStatus struct {
 // decision branches on them, which is what lets the loop re-enter earlier
 // phases without inventing a state machine.
 const (
+	// RunPhasePlanning is the run FILLING its milestone: minting the version's
+	// dependency gates, then planning its Tasks into it. It runs once, before the
+	// first cycle boundary, and only for a run that owns a version — every other
+	// origin adopts a milestone somebody already filled.
+	//
+	// It is a phase rather than a pre-run step because planning is the longest
+	// and most failure-prone thing a version does, and the click had nowhere
+	// durable to put it. As the workflow's own first phase it survives a worker
+	// restart and retries a blip, where a detached goroutine could do neither.
+	RunPhasePlanning = "planning"
 	// RunPhaseWaiting is the unbounded wait between cycles, and the state a
 	// dispatch-holding gate parks the run in.
 	RunPhaseWaiting = "waiting"
@@ -90,15 +100,20 @@ const (
 	// land.
 	RunPhaseCoding = "coding"
 	// RunPhaseBuilding is merged, waiting for the fan-out's BUILDS to settle.
-	//
-	// Builds only. It said "and, via AutoDeploy, their deployments" and that was
-	// never true: the deploy chain is kicked off from INSIDE the build (its last
-	// step posts the Workload CR) and OpenChoreo's controller runs it afterwards,
-	// so a green WorkflowRun means the deployment has been asked for, not that it
-	// has landed. Nothing in this loop observes a ReleaseBinding — deployment is a
-	// continuously reconciled level with no link back to the cycle that caused it,
-	// so a cycle could not honestly claim it.
+	// Builds only — what happens to the images afterwards is the next phase.
 	RunPhaseBuilding = "building"
+	// RunPhaseDeploying is built, waiting for the components this cycle touched
+	// to actually SERVE: the release is cut, the binding is pinned and wired, and
+	// the loop is watching each binding's Ready condition.
+	//
+	// The phase exists because the platform performs the deploy. While
+	// OpenChoreo's AutoDeploy promoted releases on its own, a cycle could not
+	// honestly claim a deployment — the chain was kicked off from inside the
+	// build and reconciled afterwards with no link back to the cycle that caused
+	// it, so a green WorkflowRun meant the deployment had been ASKED for. Now the
+	// run pins the release itself, which is what makes "deployed" a fact this
+	// loop owns and can wait on.
+	RunPhaseDeploying = "deploying"
 	// RunPhaseValidating is the validation cycle.
 	RunPhaseValidating = "validating"
 	// RunPhaseSettling is the terminal bookkeeping: the milestone close and the

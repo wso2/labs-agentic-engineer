@@ -50,8 +50,7 @@ This command reverses exactly what aep platform install did:
   - deletes workspaces PVCs (Helm never removes these)
   - optionally deletes the aep-cli-config ConfigMap (--purge-config)
 
-What it does NOT touch (bootstrap):
-  - the bootstrap Helm release (aep) — OpenBao, ESO, aep-server
+What it does NOT touch:
   - OpenBao secrets or ESO-synced Secrets
   - the wso2-aep namespace itself
 
@@ -74,7 +73,7 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 		if uninstallPurgeConfig {
 			fmt.Printf("The aep-cli-config ConfigMap will also be deleted.\n")
 		}
-		fmt.Printf("The bootstrap release (aep), OpenBao, and ESO are NOT affected.\n")
+		fmt.Printf("OpenBao secrets and ESO are NOT affected.\n")
 		fmt.Print("Type \"yes\" to confirm: ")
 		scanner := bufio.NewScanner(os.Stdin)
 		scanner.Scan()
@@ -139,6 +138,6 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	fmt.Println("\nDone. Bootstrap (aep release, OpenBao, ESO) is still running.")
+	fmt.Println("\nDone. OpenBao secrets and ESO are NOT affected.")
 	return nil
 }

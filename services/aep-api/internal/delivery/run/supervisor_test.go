@@ -77,16 +77,22 @@ func TestSupervisorIsNilSafe(t *testing.T) {
 
 // TestStartRunRefusesWithoutADispatcher: a run that could dispatch nothing must
 // not be started, because starting it would burn the version's run row on a
-// loop with no way forward. The row stays waiting and the reconcile sweep
-// re-offers the milestone once the coding agent can be handed one.
+// loop with no way forward.
+//
+// It REPORTS the refusal rather than swallowing it. Callers that re-offer on a
+// timer (adoption, the reconcile sweep) treat the sentinel as nothing to do; the
+// build click, which has no timer, settles the row it armed — without which a
+// non-terminal row with no workflow behind it would refuse every later build on
+// that project forever.
 func TestStartRunRefusesWithoutADispatcher(t *testing.T) {
 	runs := &countingRuns{}
 	s := NewSupervisor(delivery.NewRuntime(configWithNoTemporal()), runs, nil)
-	if err := s.StartRun(context.Background(), delivery.StartRunRequest{
+	err := s.StartRun(context.Background(), delivery.StartRunRequest{
 		OrgID: testOrg, ProjectID: testProject, MilestoneNumber: testMilepost,
 		Origin: delivery.RunOriginIncidentAdoption,
-	}); err != nil {
-		t.Fatalf("StartRun: %v", err)
+	})
+	if !errors.Is(err, delivery.ErrRunNotStarted) {
+		t.Fatalf("StartRun = %v, want ErrRunNotStarted", err)
 	}
 	if runs.admits != 0 || runs.lives != 0 {
 		t.Fatalf("an unwired dispatcher must not touch the run store (admits=%d lives=%d)", runs.admits, runs.lives)
@@ -94,16 +100,17 @@ func TestStartRunRefusesWithoutADispatcher(t *testing.T) {
 }
 
 // TestStartRunWaitsForTemporal: with a dispatcher but no connected Temporal
-// client, the start is a logged no-op — aep-api boots and serves everything
-// else while the workflow engine is down, and the sweep re-offers.
+// client, aep-api still boots and serves everything else — but the start is
+// REPORTED, not silently dropped. Same reasoning as the dispatcher case above.
 func TestStartRunWaitsForTemporal(t *testing.T) {
 	runs := &countingRuns{}
 	s := NewSupervisor(delivery.NewRuntime(configWithNoTemporal()), runs, fakeDispatcher{})
-	if err := s.StartRun(context.Background(), delivery.StartRunRequest{
+	err := s.StartRun(context.Background(), delivery.StartRunRequest{
 		OrgID: testOrg, ProjectID: testProject, MilestoneNumber: testMilepost,
 		Origin: delivery.RunOriginIncidentAdoption,
-	}); err != nil {
-		t.Fatalf("StartRun: %v", err)
+	})
+	if !errors.Is(err, delivery.ErrRunNotStarted) {
+		t.Fatalf("StartRun = %v, want ErrRunNotStarted", err)
 	}
 	if runs.admits != 0 {
 		t.Fatalf("no run row may be admitted while the engine that would drive it is down")

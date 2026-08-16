@@ -678,7 +678,11 @@ func Test_buildEnvValues_defers(t *testing.T) {
 		}
 	})
 
-	t.Run("consumer-URL patch failure defers before the read", func(t *testing.T) {
+	// The consumer-URL registration is the SOFT half: the dependency's own outputs
+	// owe it nothing, so a failed patch must not hold back a file the SPA cannot
+	// start without. The converge pass and the converge watcher both retry the
+	// registration; nothing retries a SPA nobody handed a client_id to.
+	t.Run("consumer-URL patch failure does not gate the outputs", func(t *testing.T) {
 		t.Parallel()
 		design := readDesign(t, authWebFiles)
 		web := componentNamed(t, design, "web")
@@ -687,34 +691,44 @@ func Test_buildEnvValues_defers(t *testing.T) {
 		rc := rcOutputs(authOutputs(), errors.New("oc: patch failed"))
 		cat := &fakeCatalog{markers: authMarkers("thunder-app")}
 		out, ready := svcWithCatalog(oc, rc, nil, cat).buildEnvValues(ctx, "acme", "proj", web, design)
-		if ready {
-			t.Fatalf("want ready=false when the consumer-URL patch fails")
+		if !ready {
+			t.Fatalf("want ready=true; a failed callback registration is not a missing start-up value")
 		}
-		for k := range out {
-			if strings.HasPrefix(k, "USER_AUTH_") {
-				t.Errorf("no output keys when the patch failed; got %q", k)
-			}
+		if out["USER_AUTH_CLIENT_ID"] == nil {
+			t.Errorf("the dependency's outputs must still be emitted; out=%v", out)
 		}
-		if n := len(rc.GetBindingCalls()); n != 0 {
-			t.Errorf("GetBinding must not run after a patch failure; got %d", n)
+		if n := len(rc.GetBindingCalls()); n != 1 {
+			t.Errorf("the outputs must be read despite the patch failure; GetBinding calls = %d", n)
 		}
 	})
 
-	t.Run("SPA URL unresolved defers the annotated dep before any patch", func(t *testing.T) {
+	// THE BLANK PAGE, pinned. A SPA's own external URL exists only once it has a
+	// rendered binding, so demanding it before the SPA's first write is a demand
+	// the SPA cannot satisfy until it has already been deployed. Grading that
+	// chicken-and-egg as hard withheld window._env_ entirely — the bundle threw at
+	// module load and the app served nothing until an out-of-band watcher repaired
+	// it up to ten minutes later.
+	t.Run("an unresolved SPA URL still emits the keys the SPA starts with", func(t *testing.T) {
 		t.Parallel()
 		design := readDesign(t, authWebFiles)
 		web := componentNamed(t, design, "web")
 
-		// api resolves, but the SPA's own URL (web) does not → defer before patch.
+		// api resolves (its wave went first); the SPA's own URL does not exist yet.
 		oc := ocResolving(map[string]string{"api": "http://api.local"})
 		rc := rcOutputs(authOutputs(), nil)
 		cat := &fakeCatalog{markers: authMarkers("thunder-app")}
-		_, ready := svcWithCatalog(oc, rc, nil, cat).buildEnvValues(ctx, "acme", "proj", web, design)
-		if ready {
-			t.Fatalf("want ready=false when the SPA external URL is not yet resolved")
+		out, ready := svcWithCatalog(oc, rc, nil, cat).buildEnvValues(ctx, "acme", "proj", web, design)
+		if !ready {
+			t.Fatalf("want ready=true; the SPA's own URL is not a value the SPA reads")
+		}
+		if out["API_BASE_URL"] != "http://api.local" {
+			t.Errorf("the backend address the bundle reads is missing; out=%v", out)
+		}
+		if out["USER_AUTH_CLIENT_ID"] == nil {
+			t.Errorf("the OIDC client_id the bundle reads is missing; out=%v", out)
 		}
 		if n := len(rc.PatchBindingEnvironmentConfigsCalls()); n != 0 {
-			t.Errorf("the binding must not be patched before the SPA URL resolves; got %d", n)
+			t.Errorf("nothing can be registered before the SPA URL resolves; got %d patches", n)
 		}
 	})
 
@@ -774,9 +788,17 @@ func Test_componentExternalURL(t *testing.T) {
 	})
 }
 
-// --- EmitForComponent --------------------------------------------------------
+// mustFiles reduces FilesForComponent to its error, for the cases that only
+// assert whether it refuses.
+func mustFiles(t *testing.T, svc *RuntimeConfigService, ctx context.Context, org, proj, comp string) error {
+	t.Helper()
+	_, _, err := svc.FilesForComponent(ctx, org, proj, comp)
+	return err
+}
 
-func Test_EmitForComponent(t *testing.T) {
+// --- FilesForComponent -------------------------------------------------------
+
+func Test_FilesForComponent(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
@@ -800,28 +822,21 @@ func Test_EmitForComponent(t *testing.T) {
 			"api": "http://api.local/todo",
 			"web": "http://web.local/",
 		})
-		oc.UpdateComponentWorkflowFilesFunc = func(context.Context, string, string, string, []openchoreo.WorkflowFileVar) error {
-			return nil
-		}
 		rc := rcOutputs(authOutputs(), nil)
 		cat := &fakeCatalog{markers: authMarkers("thunder-app")}
 		svc := svcWithCatalog(oc, rc, storeWith(webAndAPI("thunder-app")), cat)
 
-		if err := svc.EmitForComponent(ctx, "acme", "proj", "web"); err != nil {
-			t.Fatalf("EmitForComponent: %v", err)
+		files, ready, err := svc.FilesForComponent(ctx, "acme", "proj", "web")
+		if err != nil {
+			t.Fatalf("FilesForComponent: %v", err)
 		}
-		calls := oc.UpdateComponentWorkflowFilesCalls()
-		if len(calls) != 1 {
-			t.Fatalf("want exactly 1 UpdateComponentWorkflowFiles call; got %d", len(calls))
+		if !ready {
+			t.Fatal("want ready with every dependency resolved")
 		}
-		call := calls[0]
-		if call.OrgName != "acme" || call.ProjectName != "proj" || call.ComponentName != "web" {
-			t.Errorf("emit scoped wrong: org=%q proj=%q comp=%q", call.OrgName, call.ProjectName, call.ComponentName)
+		if len(files) != 1 {
+			t.Fatalf("want 1 file composed; got %d", len(files))
 		}
-		if len(call.Files) != 1 {
-			t.Fatalf("want 1 file emitted; got %d", len(call.Files))
-		}
-		f := call.Files[0]
+		f := files[0]
 		if f.Key != "env-config.js" || f.MountPath != "/usr/share/nginx/html/" {
 			t.Errorf("file identity drifted: key=%q mountPath=%q", f.Key, f.MountPath)
 		}
@@ -857,16 +872,14 @@ func Test_EmitForComponent(t *testing.T) {
 				"components/api/design.json": serviceComponentMd(),
 			}
 			oc := ocResolving(map[string]string{"api": "http://api.local/todo"})
-			oc.UpdateComponentWorkflowFilesFunc = func(context.Context, string, string, string, []openchoreo.WorkflowFileVar) error {
-				return nil
-			}
 			svc := NewRuntimeConfigService(oc, nil, storeWith(files))
 
-			if err := svc.EmitForComponent(ctx, "acme", "proj", "web"); err != nil {
-				t.Fatalf("EmitForComponent(%q): %v", retired, err)
+			got, ready, err := svc.FilesForComponent(ctx, "acme", "proj", "web")
+			if err != nil {
+				t.Fatalf("FilesForComponent(%q): %v", retired, err)
 			}
-			if n := len(oc.UpdateComponentWorkflowFilesCalls()); n != 0 {
-				t.Fatalf("retired spelling %q must not emit env-config.js; got %d emits", retired, n)
+			if !ready || len(got) != 0 {
+				t.Fatalf("retired spelling %q must compose no env-config.js; got %d files (ready=%v)", retired, len(got), ready)
 			}
 		}
 	})
@@ -874,36 +887,33 @@ func Test_EmitForComponent(t *testing.T) {
 	t.Run("not-ready (unresolved service dep) defers the write", func(t *testing.T) {
 		t.Parallel()
 		oc := ocResolving(map[string]string{})
-		oc.UpdateComponentWorkflowFilesFunc = func(context.Context, string, string, string, []openchoreo.WorkflowFileVar) error {
-			t.Errorf("UpdateComponentWorkflowFiles must NOT be called when not ready")
-			return nil
-		}
 		svc := NewRuntimeConfigService(oc, nil, storeWith(webAndAPI("")))
 
-		if err := svc.EmitForComponent(ctx, "acme", "proj", "web"); err != nil {
-			t.Fatalf("EmitForComponent should be a soft no-op when not ready; got %v", err)
+		files, ready, err := svc.FilesForComponent(ctx, "acme", "proj", "web")
+		if err != nil {
+			t.Fatalf("FilesForComponent should not error when not ready; got %v", err)
 		}
-		if n := len(oc.UpdateComponentWorkflowFilesCalls()); n != 0 {
-			t.Errorf("want 0 emits when not ready; got %d", n)
+		// ready=false is what tells the deploy stage to leave the binding's files
+		// UNMANAGED. A partially populated window._env_ is worse than a stale one:
+		// the SPA's src/env.ts throws on it at module load.
+		if ready || len(files) != 0 {
+			t.Errorf("want ready=false and no files; got ready=%v files=%d", ready, len(files))
 		}
 	})
 
 	t.Run("not-ready (auth outputs unresolved) defers the write", func(t *testing.T) {
 		t.Parallel()
 		oc := ocResolving(map[string]string{"api": "http://api.local", "web": "http://web.local"})
-		oc.UpdateComponentWorkflowFilesFunc = func(context.Context, string, string, string, []openchoreo.WorkflowFileVar) error {
-			t.Errorf("UpdateComponentWorkflowFiles must NOT be called when outputs are unresolved")
-			return nil
-		}
 		rc := rcOutputs(nil, nil) // binding has no status yet
 		cat := &fakeCatalog{markers: authMarkers("thunder-app")}
 		svc := svcWithCatalog(oc, rc, storeWith(webAndAPI("thunder-app")), cat)
 
-		if err := svc.EmitForComponent(ctx, "acme", "proj", "web"); err != nil {
-			t.Fatalf("EmitForComponent: %v", err)
+		files, ready, err := svc.FilesForComponent(ctx, "acme", "proj", "web")
+		if err != nil {
+			t.Fatalf("FilesForComponent: %v", err)
 		}
-		if n := len(oc.UpdateComponentWorkflowFilesCalls()); n != 0 {
-			t.Errorf("want 0 emits; got %d", n)
+		if ready || len(files) != 0 {
+			t.Errorf("want ready=false and no files; got ready=%v files=%d", ready, len(files))
 		}
 	})
 
@@ -912,8 +922,8 @@ func Test_EmitForComponent(t *testing.T) {
 		oc := &ocmocks.ComponentClientMock{}
 		svc := NewRuntimeConfigService(oc, nil, storeWith(webAndAPI("")))
 
-		if err := svc.EmitForComponent(ctx, "acme", "proj", "api"); err != nil {
-			t.Fatalf("EmitForComponent on a service should be nil; got %v", err)
+		if _, _, err := svc.FilesForComponent(ctx, "acme", "proj", "api"); err != nil {
+			t.Fatalf("FilesForComponent on a service should be nil; got %v", err)
 		}
 		if len(oc.ListDeploymentsCalls()) != 0 {
 			t.Errorf("no OC reads expected for a non-web-app; got %d", len(oc.ListDeploymentsCalls()))
@@ -924,8 +934,8 @@ func Test_EmitForComponent(t *testing.T) {
 		t.Parallel()
 		oc := &ocmocks.ComponentClientMock{}
 		svc := NewRuntimeConfigService(oc, nil, storeWith(webAndAPI("")))
-		if err := svc.EmitForComponent(ctx, "acme", "proj", "ghost"); err != nil {
-			t.Fatalf("EmitForComponent on a missing component should be nil; got %v", err)
+		if _, _, err := svc.FilesForComponent(ctx, "acme", "proj", "ghost"); err != nil {
+			t.Fatalf("FilesForComponent on a missing component should be nil; got %v", err)
 		}
 		if len(oc.ListDeploymentsCalls()) != 0 {
 			t.Errorf("no OC reads expected; got %d", len(oc.ListDeploymentsCalls()))
@@ -936,7 +946,7 @@ func Test_EmitForComponent(t *testing.T) {
 		t.Parallel()
 		oc := &ocmocks.ComponentClientMock{}
 		svc := NewRuntimeConfigService(oc, nil, storeWith(map[string]string{}))
-		if err := svc.EmitForComponent(ctx, "acme", "proj", "web"); err != nil {
+		if err := mustFiles(t, svc, ctx, "acme", "proj", "web"); err != nil {
 			t.Fatalf("want nil when there is no design yet; got %v", err)
 		}
 	})
@@ -950,7 +960,7 @@ func Test_EmitForComponent(t *testing.T) {
 		})
 		oc := &ocmocks.ComponentClientMock{}
 		svc := NewRuntimeConfigService(oc, nil, store)
-		if err := svc.EmitForComponent(ctx, "acme", "proj", "web"); err != nil {
+		if err := mustFiles(t, svc, ctx, "acme", "proj", "web"); err != nil {
 			t.Fatalf("ErrArtifactNotFound must be swallowed; got %v", err)
 		}
 	})
@@ -963,128 +973,19 @@ func Test_EmitForComponent(t *testing.T) {
 			{"acme", "", "web"},
 			{"acme", "proj", ""},
 		} {
-			if err := svc.EmitForComponent(ctx, tc.org, tc.proj, tc.comp); err == nil {
-				t.Errorf("EmitForComponent(%q,%q,%q) should error on empty identifier", tc.org, tc.proj, tc.comp)
+			if err := mustFiles(t, svc, ctx, tc.org, tc.proj, tc.comp); err == nil {
+				t.Errorf("FilesForComponent(%q,%q,%q) should error on empty identifier", tc.org, tc.proj, tc.comp)
 			}
 		}
 	})
 
-	t.Run("UpdateComponentWorkflowFiles error propagates", func(t *testing.T) {
-		t.Parallel()
-		oc := ocResolving(map[string]string{"api": "http://api.local"}) // no PR dep → ready
-		oc.UpdateComponentWorkflowFilesFunc = func(context.Context, string, string, string, []openchoreo.WorkflowFileVar) error {
-			return errors.New("oc write failed")
-		}
-		svc := NewRuntimeConfigService(oc, nil, storeWith(webAndAPI("")))
-		err := svc.EmitForComponent(ctx, "acme", "proj", "web")
-		if err == nil {
-			t.Fatalf("want the OC write error to propagate")
-		}
-		if !strings.Contains(err.Error(), "update workflow files") {
-			t.Errorf("error not wrapped as expected: %v", err)
-		}
-	})
 
 	t.Run("nil service receiver is a no-op", func(t *testing.T) {
 		t.Parallel()
 		var svc *RuntimeConfigService
-		if err := svc.EmitForComponent(ctx, "acme", "proj", "web"); err != nil {
+		if err := mustFiles(t, svc, ctx, "acme", "proj", "web"); err != nil {
 			t.Errorf("nil receiver EmitForComponent should be nil; got %v", err)
 		}
 	})
 }
 
-// --- EmitForProjectSPAs ------------------------------------------------------
-
-func Test_EmitForProjectSPAs(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-
-	twoSPAsOneService := map[string]string{
-		spec.DesignRootFile:           rootDesignMd(),
-		"components/web1/design.json": webappMd("web1", "api"),
-		"components/web2/design.json": webappMd("web2", "api"),
-		"components/api/design.json":  serviceComponentMd(),
-	}
-
-	t.Run("emits each web-app, skips services", func(t *testing.T) {
-		t.Parallel()
-		oc := ocResolving(map[string]string{"api": "http://api.local"})
-		oc.UpdateComponentWorkflowFilesFunc = func(context.Context, string, string, string, []openchoreo.WorkflowFileVar) error {
-			return nil
-		}
-		svc := NewRuntimeConfigService(oc, nil, storeWith(twoSPAsOneService))
-
-		if err := svc.EmitForProjectSPAs(ctx, "acme", "proj"); err != nil {
-			t.Fatalf("EmitForProjectSPAs: %v", err)
-		}
-		calls := oc.UpdateComponentWorkflowFilesCalls()
-		if len(calls) != 2 {
-			t.Fatalf("want 2 emits (one per web-app); got %d", len(calls))
-		}
-		emitted := map[string]bool{}
-		for _, c := range calls {
-			emitted[c.ComponentName] = true
-		}
-		if !emitted["web1"] || !emitted["web2"] {
-			t.Errorf("both SPAs must be emitted; got %v", emitted)
-		}
-		if emitted["api"] {
-			t.Errorf("the service component must not be emitted")
-		}
-	})
-
-	t.Run("no web-apps is a no-op", func(t *testing.T) {
-		t.Parallel()
-		files := map[string]string{
-			spec.DesignRootFile:          rootDesignMd(),
-			"components/api/design.json": serviceComponentMd(),
-		}
-		oc := &ocmocks.ComponentClientMock{} // must never be touched
-		svc := NewRuntimeConfigService(oc, nil, storeWith(files))
-		if err := svc.EmitForProjectSPAs(ctx, "acme", "proj"); err != nil {
-			t.Fatalf("want nil with no web-apps; got %v", err)
-		}
-		if len(oc.UpdateComponentWorkflowFilesCalls()) != 0 {
-			t.Errorf("no emits expected; got %d", len(oc.UpdateComponentWorkflowFilesCalls()))
-		}
-	})
-
-	t.Run("per-SPA emit failure is best-effort: continues and returns nil", func(t *testing.T) {
-		t.Parallel()
-		oc := ocResolving(map[string]string{"api": "http://api.local"})
-		oc.UpdateComponentWorkflowFilesFunc = func(_ context.Context, _, _, componentName string, _ []openchoreo.WorkflowFileVar) error {
-			if componentName == "web1" {
-				return errors.New("oc write failed for web1")
-			}
-			return nil
-		}
-		svc := NewRuntimeConfigService(oc, nil, storeWith(twoSPAsOneService))
-
-		if err := svc.EmitForProjectSPAs(ctx, "acme", "proj"); err != nil {
-			t.Fatalf("EmitForProjectSPAs must swallow per-component errors; got %v", err)
-		}
-		if n := len(oc.UpdateComponentWorkflowFilesCalls()); n != 2 {
-			t.Errorf("want both SPAs attempted (2 write calls); got %d", n)
-		}
-	})
-
-	t.Run("empty identifiers error", func(t *testing.T) {
-		t.Parallel()
-		svc := NewRuntimeConfigService(&ocmocks.ComponentClientMock{}, nil, storeWith(twoSPAsOneService))
-		if err := svc.EmitForProjectSPAs(ctx, "", "proj"); err == nil {
-			t.Errorf("empty orgID should error")
-		}
-		if err := svc.EmitForProjectSPAs(ctx, "acme", ""); err == nil {
-			t.Errorf("empty projectID should error")
-		}
-	})
-
-	t.Run("nil service receiver is a no-op", func(t *testing.T) {
-		t.Parallel()
-		var svc *RuntimeConfigService
-		if err := svc.EmitForProjectSPAs(ctx, "acme", "proj"); err != nil {
-			t.Errorf("nil receiver EmitForProjectSPAs should be nil; got %v", err)
-		}
-	})
-}

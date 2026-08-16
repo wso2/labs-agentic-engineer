@@ -228,18 +228,20 @@ func TestUpdateComponentTraitEnvironmentConfigs_EmptyValueDeletes(t *testing.T) 
 	}
 }
 
-// TestUpdateComponentTraits_RetriesConflictAs500 — the Component half of the
+// TestApplyComponentSpec_RetriesConflictAs500 — the Component half of the
 // same hazard: this write is the one that PROVOKES the controller rewrite, so it
 // races too.
-func TestUpdateComponentTraits_RetriesConflictAs500(t *testing.T) {
+func TestApplyComponentSpec_RetriesConflictAs500(t *testing.T) {
 	noStaleWriteBackoff(t)
 	f := &fakeOC{failPUTs: 1}
 	c, closeSrv := newFakeOCClient(t, f)
 	defer closeSrv()
 
-	traits := []ComponentTrait{{InstanceName: "api-http", Kind: "ClusterTrait", Name: "api-configuration"}}
-	if err := c.UpdateComponentTraits(context.Background(), "org", "proj", "api", traits); err != nil {
-		t.Fatalf("UpdateComponentTraits should survive one conflict: %v", err)
+	desired := ComponentSpecDesired{
+		Traits: []ComponentTrait{{InstanceName: "api-http", Kind: "ClusterTrait", Name: "api-configuration"}},
+	}
+	if err := c.ApplyComponentSpec(context.Background(), "org", "proj", "api", desired); err != nil {
+		t.Fatalf("ApplyComponentSpec should survive one conflict: %v", err)
 	}
 	if f.putCount != 2 {
 		t.Errorf("want 2 PUT attempts, got %d", f.putCount)

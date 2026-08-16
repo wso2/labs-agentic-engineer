@@ -17,6 +17,7 @@
 package delivery
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -151,6 +152,48 @@ func BuildRunNamePrefix(projectID, component, sha string) string {
 // BuildRunName names attempt n (1-based) of a component's build at a commit.
 func BuildRunName(projectID, component, sha string, attempt int) string {
 	return fmt.Sprintf("%s%d", BuildRunNamePrefix(projectID, component, sha), attempt)
+}
+
+// ErrDeployPermanent marks a deploy failure that repeating cannot change: the
+// component is gone from the design, or OpenChoreo does not have it.
+//
+// It exists for the same reason sourcecontrol.IsPermanent does, and splits the
+// same way. The supervisor's activities run under Temporal's DEFAULT unbounded
+// retry, which is right for a blip and wrong for an ANSWER — a component that no
+// longer exists will not start existing on attempt 300, and retrying it hides
+// the one failure that mattered behind a thousand copies. WHICH failures are
+// permanent belongs to the domain that talks to OpenChoreo; turning that into
+// Temporal's vocabulary belongs to run/errors.go. This sentinel is the seam
+// between them, so neither has to import the other's world.
+var ErrDeployPermanent = errors.New("permanent deploy failure")
+
+// ComponentDeploy is one component's deployment in one environment, as the run
+// loop reasons about it: which release was pinned, and what the cluster says
+// about the binding that pins it.
+//
+// It lives here for the same reason the build contract does — the DEPLOY STAGE
+// writes it and the supervisor reads it back to decide whether a cycle may
+// validate, and a second definition would let the two disagree about what
+// "deployed" means.
+//
+// Ready and Failed are separate booleans rather than a status string because
+// the third state — neither, i.e. still rolling out — is the one the poll spends
+// most of its time in, and it is the state a status enum keeps tempting callers
+// to fold into one of the other two.
+type ComponentDeploy struct {
+	Component   string `json:"component"`
+	Environment string `json:"environment"`
+	// Release is the ComponentRelease this deployment pinned. Empty on a read
+	// that only observed the binding.
+	Release string `json:"release,omitempty"`
+	// Ready is the binding's aggregate Ready condition being True (or the
+	// component being deliberately undeployed).
+	Ready bool `json:"ready"`
+	// Failed is Ready=False — a verdict, not a wait.
+	Failed bool `json:"failed,omitempty"`
+	// Reason is OpenChoreo's own condition reason, carried verbatim for the
+	// issue body a failed deployment mints. Never branched on.
+	Reason string `json:"reason,omitempty"`
 }
 
 // MergeBuild is one component's build at a merge SHA, read back off its

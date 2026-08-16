@@ -1,0 +1,35 @@
+{{- if not .Values.localSecrets.enabled }}
+{{- /*
+  Allow ESO's controller SA to create tokens for the external-secrets-openbao SA
+  in the openbao namespace. This lets the SecretStore authenticate to OC's
+  built-in OpenBao using that SA's identity (openchoreo-secret-writer-role).
+*/}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: aep-eso-openbao-token
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/part-of: aep
+rules:
+- apiGroups: [""]
+  resources: ["serviceaccounts/token"]
+  resourceNames: ["external-secrets-openbao"]
+  verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aep-eso-openbao-token
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/part-of: aep
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: aep-eso-openbao-token
+subjects:
+- kind: ServiceAccount
+  name: external-secrets
+  namespace: external-secrets
+{{- end }}

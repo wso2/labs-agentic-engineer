@@ -382,7 +382,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		Broker:     turnBroker,
 		Snapshots:  workspaceEngine,
 		SkillsRepo: skillsRepoForTurns,
-		Recorder:   turnActivityRecorder{svc: activitySvc, authorship: specAuthored},
+		// #430: the project-scoped thread store — resolve/rotate the current
+		// conversation, and the conversation_rotated admission fence on turns.
+		Conversations: spec.NewConversationRepository(db),
+		Recorder:      turnActivityRecorder{svc: activitySvc, authorship: specAuthored},
 	}
 	// MCP discovery on design-generation turns (dependency-management Phase 5):
 	// the BFF mints a short-lived aud:aep-api-mcp token per turn so the agents
@@ -413,7 +416,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// nil-safe internally), so the stager is always wired.
 	buildStager := buildSecretStagerAdapter{svc: buildCredService}
 	componentService := projects.NewComponentService(componentClient, observClient, artifactStore, repoService, buildStager)
-	configService := projects.NewConfigService(configRepo, componentService)
+	// deploymentService is built below, so the converger is attached after
+	// construction — an env-var edit pushes onto the live binding through the one
+	// writer rather than patching a field of it.
+	configService := projects.NewConfigService(configRepo, nil)
 	designService := spec.NewDesignService(artifactStore, artifactSvcGit)
 
 	// Tasks are GitHub issues (the Task/Execution split, tasks-github-native):
@@ -463,14 +469,12 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		taskStreamHub,
 	)
 
-	// trait_sync is the single shared emitter that reconciles the
-	// `api-configuration` ClusterTrait on a Component CR + per-environment
-	// ReleaseBindings. The Component CR's trait shape is set independently of
-	// this, at component create (projects/component_service.go); what this
-	// emitter adds is the per-environment half, which needs a ReleaseBinding to
-	// exist and so cannot run before a build has deployed. Its trigger is the run
-	// supervisor at builds-green — see the NOTE above the watcher list.
-	traitSyncService := projects.NewTraitSyncService(componentClient, artifactStore)
+	// The deployment service: single writer of a user component's ReleaseBinding.
+	// It cuts the release from the Workload a build posted, composes the whole
+	// desired binding — release pin, trait env configs, workload overrides — and
+	// writes it once. Driven by the run supervisor's deploy stage, because
+	// components carry AutoDeploy=false and nothing else promotes a release.
+	deploymentService := projects.NewDeploymentService(componentClient, artifactStore)
 
 	// Thunder admin client + IDP service. Reads
 	// aep-system-client credentials from env (THUNDER_*) and exposes
@@ -521,9 +525,9 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		Issuer:  cfg.PlatformIDP.Issuer,
 		JWKSURL: cfg.PlatformIDP.JWKSURL,
 	}).WithSecretRefWriter(secretRefWriter)
-	// Make idpService available to trait_sync so first-protected-deploy
-	// provisions the publisher app lazily.
-	traitSyncService.SetIDPService(idpService)
+	// Make idpService available to the deployment projection so a
+	// first-protected-deploy provisions the org publisher app lazily.
+	deploymentService.SetIDPService(idpService)
 
 	// Connect-state JWT issuer (App-mode OAuth CSRF state). This HS256 signing
 	// key only ever leaves the BFF as a JWT signature inside the GitHub OAuth
@@ -668,25 +672,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// A build that fails at git-clone-auth within budget is re-minted + re-tried
 	// (§7): the build-secret stager is always wired, so the retrier is too.
 	execWatcher.WithBuildRetrier(codingExecutor, codingExecutor.AuthRetryBudget())
-
-	// NOTE: the trait_sync drift watcher enumerated (org,project,component) from
-	// the component_tasks table to periodically reconcile the api-configuration
-	// ClusterTrait. That table is gone (tasks are GitHub issues), so the periodic
-	// watcher is dropped. The per-env traitEnvironmentConfigs (jwtAuth/CORS) are
-	// re-emitted from the run supervisor instead, when a cycle's builds go green
-	// (run.Deps.APITraits below). traitDeployObserver, wired into the
-	// MultiDeployObserver fan-out below, reaches the same emitter from the
-	// ExecWatcher deploy path and is kept for the paths that still mint
-	// `kind=build` execution rows — it is inert for anything the run loop builds,
-	// which is what left every protected API's gateway unauthenticated until the
-	// run-loop trigger was added.
-	//
-	// Both triggers are events, so neither covers drift: a ReleaseBinding
-	// recreated, a config stripped, or a transient OC failure during the write
-	// (the fan-out is best-effort and does not retry) stays broken until the next
-	// green cycle. The component-enumerating reconcile backstop over the OC
-	// component list — the sibling of runtimeconfig.NewWatcher below — is what
-	// would close that, and is still owed.
 
 	// Inbound JWT verifier — Thunder publishes the User JWT and Service JWT
 	// signing keys at JWKSURL. Lazy fetch on first request avoids compose
@@ -1133,23 +1118,22 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// this fails OPEN (defer + retry) when the catalog is unreachable: emission is
 	// a retried cascade hook, not a user-facing save gate.
 	runtimeConfigSvc.SetResourceCatalog(resourceTypeCatalog)
-	// The ensure-time half of the pair above rides the event plane's pre-build
-	// component ensure; it is set here because runtimeConfigSvc is built after
-	// the event plane.
-	eventPlane.SetComponentEnsurer(eventcoreComponents{comp: componentService, runtime: runtimeConfigSvc})
-	// Fan the build-success deploy event out to both the cross-project access grant
-	// AND env-config.js re-emission. Best-effort + error-isolated: one observer
-	// failing never stops the other (matching the old cascade's warn-and-continue).
-	execWatcher.WithDeployObserver(codingagent.NewMultiDeployObserver(
-		provisioningSvc,
-		spaDeployObserver{svc: runtimeConfigSvc},
-		// api-configuration trait re-emit: land the jwtAuth/CORS
-		// traitEnvironmentConfigs on each protected API's ReleaseBinding once it
-		// (or a sibling SPA) deploys. EnsureComponent sets only the CR trait
-		// shape at create; this deploy-time PATCH is what makes the gateway
-		// enforce end-user auth (docs/design/api-platform-integration.md §6).
-		traitDeployObserver{svc: traitSyncService},
-	))
+	// The pre-build ensure is now the Component CR alone. env-config.js used to be
+	// emitted here too and could not land — the binding it writes to does not
+	// exist before the first build — so it is a deploy-stage input instead, pulled
+	// by the deployment service while it composes the binding.
+	eventPlane.SetComponentEnsurer(eventcoreComponents{comp: componentService})
+	// The deployment service's two config inputs, wired here because both are
+	// built after it.
+	deploymentService.SetConfigSources(configService, runtimeConfigSvc)
+	configService.SetConverger(deploymentService)
+	// The cross-project access grant is the only deploy observer left. The two
+	// that rode beside it — the env-config.js re-emit and the api-configuration
+	// trait re-emit — were writes to a ReleaseBinding this platform now composes
+	// in one place, and both were inert on the run-loop rail anyway: they hang off
+	// the ExecWatcher, which sweeps `kind=build` execution rows the run loop never
+	// mints.
+	execWatcher.WithDeployObserver(codingagent.NewMultiDeployObserver(provisioningSvc))
 
 	slog.Info("OpenChoreo API", "baseURL", cfg.PlatformAPI.BaseURL)
 
@@ -1203,7 +1187,11 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		// gate defers the write), and — since a web-app is dispatched last — no
 		// later build-success re-fires it. This idempotent sweep lands env-config.js
 		// once the URL converges (replaces the dropped periodic reconcile backstop).
-		runtimeconfig.NewWatcher(executionRepo, runtimeConfigSvc, asServiceIdentity, 0),
+		// The binding converge sweep: the ONE backstop for drift no event causes.
+		// It replaces two half-backstops that each covered one field of one object
+		// — the retired trait drift watcher and the env-config.js sweep — because
+		// with a single writer there is one thing to re-assert.
+		projects.NewConvergeWatcher(projectLister{repos: repoRepo}, deploymentService, artifactStore, asServiceIdentity, 0),
 		// Periodic credential validator — walks every active org_credentials row
 		// once per cfg.CredentialValidatorInterval (default 24h), probes GitHub,
 		// flags identity drift on confirmed unauthorised secrets.
@@ -1242,12 +1230,17 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 			// its Job ref. It mints no execution row — the cycle record is the
 			// supervisor's own bookkeeping.
 			Dispatcher: codingExecutor,
-			// Managed-API gateway policy, converged at builds-green. This rail is
-			// where the trait sync has to hang now: it took over building from the
-			// ExecWatcher deploy path (which reached the same emitter through
-			// traitDeployObserver below) but writes no `kind=build` execution rows,
-			// so that observer no longer fires for anything this loop builds.
-			APITraits: traitSyncService,
+			// The deploy stage. The supervisor promotes each cycle's components
+			// itself and waits for them to serve, which is what puts validation
+			// after a running version rather than after a green build.
+			Deploy:       deploymentService,
+			Deployments:  deploymentService,
+			DeployIssues: eventPlane,
+			// The planning phase. These are the same two collaborators the build
+			// click used to drive in a detached goroutine; behind an activity they
+			// are durable across a restart and retried on a blip.
+			Gates:   buildGateResolver{prov: provisioningSvc},
+			Planner: taskPlan,
 		})
 		watchers = append(watchers, run.NewWorkerWatcher(temporalRuntime, runActs))
 		slog.Info("run: temporal worker watcher registered", "hostPort", cfg.Temporal.HostPort)

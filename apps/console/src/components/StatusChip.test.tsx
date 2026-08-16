@@ -57,4 +57,38 @@ describe("StatusChip", () => {
       "MuiChip-outlined",
     );
   });
+
+  // For a label that hedges with a MARK — "Validated*" — which no screen reader
+  // announces, so it would be heard as "Validated" and be indistinguishable from a
+  // clean pass. Visually-hidden text rather than aria-label on the root: a Chip with
+  // no onClick renders a plain div with no role, and an aria-label there is ignored.
+  describe("spokenLabel", () => {
+    it("hides the marked label from the a11y tree and speaks the spelled-out one", () => {
+      render(
+        <StatusChip label="Validated*" spokenLabel="Validated, partially" tone="success" />,
+      );
+      expect(screen.getByText("Validated*")).toHaveAttribute("aria-hidden");
+      expect(screen.getByText("Validated, partially")).toBeInTheDocument();
+    });
+
+    it("does the same for the soft appearance the page title uses", () => {
+      render(
+        <StatusChip
+          label="Validated*"
+          spokenLabel="Validated, partially"
+          tone="success"
+          appearance="soft"
+          dot
+        />,
+      );
+      expect(screen.getByText("Validated*")).toBeInTheDocument();
+      expect(screen.getByText("Validated, partially")).toBeInTheDocument();
+    });
+
+    // The default stays "the name is the visible label" — no wrapper, no duplicate.
+    it("leaves an unmarked label alone", () => {
+      render(<StatusChip label="Validated" tone="success" />);
+      expect(screen.getByText("Validated")).not.toHaveAttribute("aria-hidden");
+    });
+  });
 });

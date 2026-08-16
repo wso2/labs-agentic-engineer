@@ -451,7 +451,9 @@ describe("ValidationPage lifecycle", () => {
     expect(screen.queryByText("Validation failed")).not.toBeInTheDocument();
     expect(screen.queryByText(/the milestone stays open for the fix/)).not.toBeInTheDocument();
     expect(
-      screen.getByText(/The run filed each failure as an issue on this version/),
+      screen.getByText(
+        "1 of 3 criteria failed. The implementation is being fixed. Validation will run again.",
+      ),
     ).toBeInTheDocument();
     // The failed report stays — it is the evidence of WHAT is being fixed, and the
     // coding cycle in flight has no validation log to show in its place.
@@ -464,7 +466,7 @@ describe("ValidationPage lifecycle", () => {
   // page had no lifecycle input: a second attempt runs with a verdict already on the
   // row, so the page opened on the PREVIOUS attempt's report under a tile claiming
   // the run had stopped.
-  it("shows the live log, not the last attempt's report, while a repeat attempt runs", () => {
+  it("opens on the last attempt's report while a repeat attempt runs", () => {
     mockValidation = "running";
     mockRun = {
       ...run({
@@ -477,13 +479,44 @@ describe("ValidationPage lifecycle", () => {
     mockReport.data = { content: REPORT };
     renderPage(undefined);
 
-    expect(screen.getByTestId("run-feed")).toHaveTextContent("validation");
+    // The previous attempt's report is real, and it is what the reader wants while
+    // the fix is being re-checked. That it belongs to the last attempt is the tile's
+    // job to say — twice, in the sentence and in the tally.
+    expect(screen.queryByTestId("run-feed")).not.toBeInTheDocument();
+    expect(screen.getByText("Shoppers can search the catalog.")).toBeInTheDocument();
     // Chip and tile headline both, as with every other state.
     expect(screen.getAllByText("Validating").length).toBe(2);
     expect(screen.queryByText("Validation failed")).not.toBeInTheDocument();
-    // The tile rides over the log — the last attempt's finding is still true — but
-    // ends on the attempt in flight rather than on a run that stopped.
-    expect(screen.getByText(/A new validation attempt is running/)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "1 of 3 criteria failed in the last attempt. The implementation has been fixed and deployed. Validation is running again.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/\(last attempt\)$/)).toBeInTheDocument();
+  });
+
+  // The regression this replaced a default with: no state may FORCE a body, because
+  // `?view=logs | absent` has no third value, so `onViewChange(undefined)` cannot
+  // outrank a forced arm and the "View report" button silently does nothing.
+  it("keeps the report/log toggle working while a repeat attempt runs", () => {
+    mockValidation = "running";
+    mockRun = {
+      ...run({
+        validation: { verdict: "failed", reportPath: "tests/validation/report.json" },
+        cycles: [validationCycle],
+      }),
+      state: "running",
+    };
+    mockCriteria.data = { content: CRITERIA };
+    mockReport.data = { content: REPORT };
+
+    const onViewChange = renderPage("logs");
+
+    // ?view=logs is honoured...
+    expect(screen.getByTestId("run-feed")).toHaveTextContent("validation");
+    // ...and the way back is offered and lands on the report.
+    fireEvent.click(screen.getByRole("button", { name: /View report/ }));
+    expect(onViewChange).toHaveBeenCalledWith(undefined);
   });
 
   it("says so, and shows nothing else, when the run SKIPPED validation", () => {
@@ -545,9 +578,13 @@ describe("ValidationPage lifecycle", () => {
     renderPage(undefined);
 
     expect(screen.queryByTestId("run-feed")).not.toBeInTheDocument();
-    // Partial shares `passed`'s visible label since #401; the tile's copy and
-    // the spoken form carry the uncovered-criteria distinction.
-    expect(screen.getAllByText("Validated").length).toBe(2);
+    // The mark is the hedge, on both the chip and the tile headline.
+    expect(screen.getAllByText("Validated*").length).toBe(2);
+    expect(screen.queryByText("Validated")).not.toBeInTheDocument();
+    // The chip stands alone at the top of the page, so it carries the spoken form —
+    // a screen reader hears nothing of the asterisk otherwise. Visually-hidden TEXT,
+    // because a Chip with no onClick has no role and would ignore an aria-label.
+    expect(screen.getByText("Validated, partially")).toBeInTheDocument();
     expect(screen.getByText("Shoppers can search the catalog.")).toBeInTheDocument();
   });
 
@@ -584,7 +621,7 @@ describe("ValidationPage lifecycle", () => {
     expect(screen.queryByTestId("run-feed")).not.toBeInTheDocument();
     expect(screen.getAllByText("Validation error").length).toBe(2);
     expect(
-      screen.getByText(/generating the validation report/),
+      screen.getByText(/validation report couldn't be generated/),
     ).toBeInTheDocument();
     expect(screen.queryByText(/report wasn't found/)).not.toBeInTheDocument();
     // The criteria still render — they live under specs/, not in the report.

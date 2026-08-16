@@ -32,7 +32,6 @@ import (
 	"net/http"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -83,6 +82,9 @@ func pollEnv(t *testing.T, script ...error) (*testsuite.TestWorkflowEnvironment,
 	env.RegisterActivity(acts)
 	env.OnActivity(acts.SetRunState, mock.Anything, mock.Anything).Return(nil)
 	env.OnActivity(acts.SettleRun, mock.Anything, mock.Anything).Return(nil)
+	// A run that plans nothing now SETTLES rather than parking, and settling
+	// stamps a `skipped` verdict on the way out.
+	env.OnActivity(acts.SetValidationVerdict, mock.Anything, mock.Anything).Return(nil)
 	return env, port
 }
 
@@ -94,6 +96,11 @@ func executePoll(env *testsuite.TestWorkflowEnvironment) {
 		MilestoneNumber: testMilepost,
 		MilestoneTitle:  "v3",
 		Origin:          delivery.RunOriginSpecBuild,
+		// A spec build always carries the tag it claimed — it is what tells the loop
+		// this run OWNS the version and therefore plans its own milestone. Omitting
+		// it would describe a state the click cannot produce, and the run would park
+		// waiting for work nobody was going to file.
+		Tag: "v3",
 	})
 }
 
@@ -136,18 +143,10 @@ func TestPollMilestoneStopsOnGraphQLNotFound(t *testing.T) {
 }
 
 // The other half of the contract: a blip is still retried, unbounded, exactly
-// as before. Two 500s then an answer, and the run carries on to its park.
+// as before. Two 500s then an answer, and the run carries on.
 func TestPollMilestoneKeepsRetryingATransientFailure(t *testing.T) {
 	blip := &sourcecontrol.HTTPStatusError{StatusCode: http.StatusInternalServerError, Body: "server error"}
 	env, port := pollEnv(t, blip, blip, nil)
-
-	// The poll succeeds into an empty milestone with no cycles behind it, which
-	// parks the run in the unbounded wait; cancel is that wait's only expiry.
-	env.RegisterDelayedCallback(func() {
-		env.SignalWorkflow(delivery.SigRunCancel, delivery.RunSignal{
-			Signal: delivery.SigRunCancel, MilestoneNumber: testMilepost,
-		})
-	}, time.Minute)
 
 	executePoll(env)
 
@@ -155,9 +154,13 @@ func TestPollMilestoneKeepsRetryingATransientFailure(t *testing.T) {
 	require.NoError(t, env.GetWorkflowError())
 	require.Equal(t, 3, port.count(), "a transient failure must be retried until it answers")
 
+	// The poll answers an empty milestone with no cycles behind it. That used to
+	// park the run in an unbounded wait, because the click admitted the row
+	// before planning and "empty" could mean "not planned yet". Planning is the
+	// workflow's own first phase now, so empty is unambiguous: delivered.
 	var res RunResult
 	require.NoError(t, env.GetWorkflowResult(&res))
-	require.Equal(t, delivery.RunStateCancelled, res.State)
+	require.Equal(t, delivery.RunStateSucceeded, res.State)
 }
 
 // sourceControlErr is the whole seam, so its pass-through half is pinned
@@ -168,4 +171,79 @@ func TestSourceControlErrLeavesUnclassifiedErrorsAlone(t *testing.T) {
 
 	transient := errors.New("dial tcp: connection refused")
 	require.Same(t, transient, sourceControlErr(transient))
+}
+
+// scriptedPlanner answers the planning turn from a queued script — one entry per
+// call, the last repeating — and counts how often it was asked.
+type scriptedPlanner struct {
+	mu     sync.Mutex
+	script []error
+	calls  int
+}
+
+func (s *scriptedPlanner) PlanIntoMilestone(context.Context, string, string, int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls++
+	return s.script[min(s.calls-1, len(s.script)-1)]
+}
+
+func (s *scriptedPlanner) count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
+}
+
+// planEnv wires the real PlanMilestone over a scripted planner. The milestone
+// poll answers empty, so a run that gets past planning settles immediately and
+// the test measures planning alone.
+func planEnv(t *testing.T, script ...error) (*testsuite.TestWorkflowEnvironment, *scriptedPlanner) {
+	t.Helper()
+	var ts testsuite.WorkflowTestSuite
+	env := ts.NewTestWorkflowEnvironment()
+	planner := &scriptedPlanner{script: script}
+	acts := NewActivities(Deps{Milestones: &scriptedMilestones{script: []error{nil}}, Planner: planner})
+	env.RegisterActivity(acts)
+	env.OnActivity(acts.SetRunState, mock.Anything, mock.Anything).Return(nil)
+	env.OnActivity(acts.SettleRun, mock.Anything, mock.Anything).Return(nil)
+	env.OnActivity(acts.SetValidationVerdict, mock.Anything, mock.Anything).Return(nil)
+	return env, planner
+}
+
+func executePlan(env *testsuite.TestWorkflowEnvironment) {
+	env.ExecuteWorkflow(MilestoneRunWorkflow, RunInput{
+		RunID:           testRunID,
+		OrgID:           testOrg,
+		ProjectID:       testProject,
+		MilestoneNumber: testMilepost,
+		MilestoneTitle:  "v3",
+		Origin:          delivery.RunOriginSpecBuild,
+		Tag:             "v3",
+	})
+}
+
+// THE regression this whole change exists for. A version died `plan-failed`
+// because a seven-second TCP connect timeout to GitHub reached a plan path with
+// no retry at all. Under the workflow the blip is asked again and the version
+// survives it.
+func TestPlanMilestoneRetriesABlip(t *testing.T) {
+	env, planner := planEnv(t, errors.New("connect github.com:443: connection timed out"), nil)
+
+	executePlan(env)
+
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+	require.Equal(t, 2, planner.count(), "a transient planning failure must be asked again")
+}
+
+// The other half: an ANSWER is asked exactly once. A repository that is gone
+// will not come back on attempt 300, and retrying it would hide the one failure
+// that mattered behind a thousand copies.
+func TestPlanMilestoneStopsAtTheFirstPermanentFailure(t *testing.T) {
+	env, planner := planEnv(t, sourcecontrol.ErrRepoNotFound)
+
+	executePlan(env)
+
+	require.True(t, env.IsWorkflowCompleted())
+	require.Equal(t, 1, planner.count(), "a permanent planning failure must be asked exactly once")
 }

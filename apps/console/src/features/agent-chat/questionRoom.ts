@@ -33,8 +33,13 @@ const QUESTIONS_MAP = "questions" as const;
 export interface RoomQuestion {
   toolCallId: string;
   questions: AskQuestionInput[];
-  /** Local user id of the turn-owner who mirrored it — only they can submit. */
-  ownerId: string;
+  /**
+   * Legacy (#430 D5 removed ownership): pre-#430 entries carry the id of the
+   * user whose client mirrored them first. Never written any more and never
+   * read — any project member submits or skips; kept in the type so old room
+   * entries still parse.
+   */
+  ownerId?: string;
   /** The shared draft answer, co-edited by the room; null until first touched. */
   answers: QuestionAnswer[] | null;
   /** Set once the asker submits or skips — the form closes for the whole room. */
@@ -64,13 +69,13 @@ function questionsMap(doc: Doc): YMap<RoomQuestion> {
 /**
  * Mirror a parsed question into the room's shared map (idempotent by
  * toolCallId — a re-fold overwrites the same key, preserving any co-edited
- * answers already present). Ownership is FIRST-writer-wins: a re-mirror (a
- * replay, or another tab's back-fill from a shared chat log) must never
- * reassign `ownerId`, or a teammate could steal the submit right.
+ * answers already present). No ownership claim (#430 D5): the chat thread is
+ * project-scoped, so every member's log carries the question and any member
+ * may submit — there is no submit right to protect.
  */
 export function mirrorQuestion(
   doc: Doc,
-  entry: { toolCallId: string; questions: AskQuestionInput[]; ownerId: string; streaming?: boolean },
+  entry: { toolCallId: string; questions: AskQuestionInput[]; streaming?: boolean },
 ): void {
   const map = questionsMap(doc);
   const existing = map.get(entry.toolCallId);
@@ -80,7 +85,6 @@ export function mirrorQuestion(
     // A re-mirror flips streaming off by OMITTING it — never resurrect the
     // gate from a stale entry, and never leak `streaming: false` into the doc.
     ...(entry.streaming ? { streaming: true } : {}),
-    ownerId: existing?.ownerId ?? entry.ownerId,
     answers: existing?.answers ?? null,
     ...(existing?.submitted ? { submitted: true } : {}),
     askedAt: existing?.askedAt ?? Date.now(),
@@ -131,31 +135,29 @@ export function closeRoomQuestion(doc: Doc, toolCallId: string): void {
 export const ORPHAN_QUESTION_TTL_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Close (for the whole room) THIS owner's entries their chat log no longer
- * backs. Two classes, deliberately different rules:
+ * Close (for the whole room) entries the chat log no longer backs. Two
+ * classes, deliberately different rules:
  *
  * - SUPERSEDED (the log HAS the message, but a later delivered user message —
  *   e.g. a composer reply, an equally valid answer path per ADR-0012 — made it
- *   unanswerable): close immediately. The log in hand is proof.
+ *   unanswerable): close immediately. The log in hand is proof — and since the
+ *   thread is project-scoped (#430), every member's log converges on the same
+ *   proof, so any client may close on it.
  * - ORPHAN (no log message at all): close only past ORPHAN_QUESTION_TTL_MS
- *   (unstamped legacy entries count as ancient). Another tab with a stale
- *   in-memory log, or another device of the same user, legitimately lacks the
- *   asker's log — an aggressive orphan rule would close LIVE questions across
- *   tabs. The TTL keeps a persistent collab room from resurrecting zombie
- *   forms forever without racing living sessions.
- *
- * Only the owner closes their own entries — a teammate's log simply lacks the
- * message, which must never read as "stale".
+ *   (unstamped legacy entries count as ancient). A client that has not
+ *   rehydrated yet legitimately lacks the message — an aggressive orphan rule
+ *   would close LIVE questions out from under fresher clients. The TTL keeps a
+ *   persistent collab room from resurrecting zombie forms forever without
+ *   racing living sessions.
  */
 export function closeStaleRoomQuestions(
   doc: Doc,
-  ownerId: string,
   supersededToolCallIds: ReadonlySet<string>,
   knownToolCallIds: ReadonlySet<string>,
   now: number = Date.now(),
 ): void {
   for (const entry of readRoomQuestions(doc)) {
-    if (entry.submitted || entry.ownerId !== ownerId) continue;
+    if (entry.submitted) continue;
     const superseded = supersededToolCallIds.has(entry.toolCallId);
     const orphanExpired =
       !knownToolCallIds.has(entry.toolCallId) &&
