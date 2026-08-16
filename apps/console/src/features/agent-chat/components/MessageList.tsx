@@ -16,8 +16,10 @@
  * under the License.
  */
 
-import { Avatar, Box, Stack, Typography, alpha } from "@wso2/oxygen-ui";
+import { useMemo, useState } from "react";
+import { Avatar, Box, Link, Stack, Typography, alpha } from "@wso2/oxygen-ui";
 import type { FeedBlock } from "../feed";
+import { summarizeUserMessage } from "../userMessageSummary";
 import { TurnBlock } from "./TurnBlock";
 import { WorkingIndicator } from "./WorkingIndicator";
 
@@ -42,6 +44,11 @@ function UserBlock({ block }: { block: Extract<FeedBlock, { kind: "user" }> }) {
   const isOwn = attribution.isOwn;
   const time = timeOf(message.createdAt);
   const failed = message.status === "failed";
+  // Interview answers and the finish valve travel as plain-text instructions;
+  // the thread reads them as one line, with the instruction itself one click
+  // away. Nothing here changes what was sent.
+  const machinery = useMemo(() => summarizeUserMessage(message.content), [message.content]);
+  const [detailOpen, setDetailOpen] = useState(false);
   return (
     // Your own messages align to the right, teammates to the left — the
     // familiar chat convention that makes "who said this" scannable at a
@@ -94,16 +101,51 @@ function UserBlock({ block }: { block: Extract<FeedBlock, { kind: "user" }> }) {
               : theme.palette.action.hover,
         }}
       >
-        <Typography
-          sx={{
-            whiteSpace: "pre-wrap",
-            fontSize: "0.875rem",
-            color: "text.primary",
-            opacity: failed ? 0.6 : 1,
-          }}
-        >
-          {message.content}
-        </Typography>
+        {machinery ? (
+          <Stack spacing={0.5} sx={{ alignItems: "flex-start" }}>
+            <Typography
+              data-testid="user-message-summary"
+              sx={{
+                fontSize: "0.875rem",
+                color: "text.primary",
+                opacity: failed ? 0.6 : 1,
+              }}
+            >
+              {machinery.summary}
+            </Typography>
+            <Link
+              component="button"
+              type="button"
+              variant="caption"
+              aria-expanded={detailOpen}
+              onClick={() => setDetailOpen((v) => !v)}
+              sx={{ fontWeight: 600 }}
+            >
+              {detailOpen ? "Hide details" : "Show details"}
+            </Link>
+            {detailOpen && (
+              <Typography
+                data-testid="user-message-detail"
+                variant="caption"
+                color="text.secondary"
+                sx={{ whiteSpace: "pre-wrap", textAlign: "left" }}
+              >
+                {machinery.detail}
+              </Typography>
+            )}
+          </Stack>
+        ) : (
+          <Typography
+            sx={{
+              whiteSpace: "pre-wrap",
+              fontSize: "0.875rem",
+              color: "text.primary",
+              opacity: failed ? 0.6 : 1,
+            }}
+          >
+            {message.content}
+          </Typography>
+        )}
       </Box>
     </Box>
   );
