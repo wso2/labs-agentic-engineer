@@ -52,6 +52,19 @@ section) or explicitly deferred ("deferred — does not block design") before
 <anything real that fits nowhere above; omit the section when empty>
 ```
 
+## The `*assumed*` token
+
+The inline `*assumed*` emphasis token is the ENTIRE assumption-capture
+contract (issue #478) — no ledger section, no sidecar, no ids:
+
+- **Placement** — the token sits at the **end of the line it qualifies**, one
+  token per line, valid in **any** PRD section.
+- **Semantics** — it means exactly "a recommended answer was applied without
+  the user deciding" (the skip/finish valve, or a headless run). Org-default
+  decisions stay untagged; asked-and-answered decisions carry no marker.
+- **Lifecycle** — settling the decision (a grilling session, or the user's own
+  edit) rewrites the line without the token; it is just text.
+
 ## Rules
 
 - **Story numbers are permanent.** New stories append with fresh numbers;

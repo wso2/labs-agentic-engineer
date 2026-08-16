@@ -56,8 +56,8 @@ is their document.
 - **More questions than a form holds** → ask those whose answers change the
   document most, and send every one left behind through the skip valve.
 
-Depth is opt-in: after generating, the user can go deeper in chat on any
-feature.
+Depth is opt-in: the quick pass ends with an offer to grill deeper (see "Where
+this stops"), and the user can go deeper in chat on any feature.
 
 ## The skip valve
 
@@ -93,6 +93,17 @@ than a cold start, never more.
 
 `/start` ends at the PRD. Design, components, and tasks are later steps with
 their own skills and gates. Close with a one-paragraph summary of the decisions
-taken (calling out every `*assumed*` one), then point the user at the next
-step: review `specs/requirements/prd.md`, then run `/design` — open questions
-must be answered or explicitly deferred before design can proceed.
+taken (calling out every `*assumed*` one) — and make that summary an
+**actionable offer**: state the counts and list the assumed areas, e.g.
+
+> Drafted from 4 answers + 3 assumptions — grill me on: notifications ·
+> permissions · data retention. Name an area (or say "all") and I'll dig in.
+
+A reply accepting the offer opens a **grilling session** on the named areas —
+run it in the `grilling` skill's session mode, scoped to those areas' tagged
+decisions. The one-form rule binds the quick pass only, never a session the
+user asked for. With nothing assumed, offer nothing — just the summary.
+
+Then point the user at the next step: review `specs/requirements/prd.md`, then
+run `/design` — open questions must be answered or explicitly deferred before
+design can proceed.

@@ -1,6 +1,6 @@
 ---
 name: grilling
-description: Use when an instruction or skill asks you to interview, grill, or clarify with the user before generating — the structured-question mechanics for ask_question and ask_questions.
+description: Use when an instruction or skill asks you to interview, grill, or clarify with the user before generating — the structured-question mechanics for ask_question and ask_questions, in one-form or session mode — or when the user accepts a "grill me on…" offer.
 metadata:
   aep:
     kind: platform
@@ -39,18 +39,64 @@ Each form ends your turn; the user's answers arrive as the next message.
   user didn't state; ask instead.
 
 The answers are the authoritative brief — treat them as decisions, not
-suggestions.
+suggestions. Free text in ANY answer may overturn an earlier answer — the
+latest statement wins; reconcile the document to it on your next write.
+
+## Modes
+
+How many forms an interview may spend is the **calling flow's rule**, not this
+skill's. Two modes exist; the calling skill or the user's request picks one.
+
+### One-form mode (the default)
+
+Some flows allow exactly **one** form — `/start`'s coverage walk, a scoped
+amend. Obey it: converging early is always allowed, asking a second form never
+is. Everything a single form cannot carry goes through the skip valve as an
+`*assumed*` recommendation.
+
+### Session mode (the calling flow opts in)
+
+A **grilling session** interrogates a named scope across several rounds. Run
+one when a flow explicitly opens a session — the user accepting a "grill me
+on: …" offer, a deep-dive on an `*assumed*` decision, a design clarification
+that names it.
+
+- **Open with the scope.** Name the session's scope as an **area checklist**
+  ("Grilling Favorites: ownership · limits · privacy") in your prose before
+  the first round. Areas come from the request plus what the document shows
+  is unsettled.
+- **Rounds are adaptive small batches**: one `ask_questions` form of **1–4
+  questions** — independent questions ride together, genuinely dependent
+  chains split across rounds. Never a full survey.
+- **Send the checklist every round**: pass the form's `session` field —
+  optional short `title`, plus the FULL `areas` list with per-area `state`
+  (`done` = settled, `now` = this round asks into it, `todo` = still ahead).
+  Keep area names stable; only states move.
+- **Write as you go**: the turn that asks round N+1 FIRST applies round N's
+  settled decisions to the document, then asks. Writing and asking share a
+  turn — the live document is the progress indicator. A free-text override of
+  an earlier answer is reconciled in the same write.
+- **Converge — you declare the end.** Stop when the remaining questions would
+  no longer change the artifact. There is no round cap and no length guard;
+  the only-artifact-changing-questions rule is what bounds the session.
+- **Close with a summary.** After the final write, end with a message that
+  opens with the line
+  `**Session summary** — <N> asked · <M> assumed`
+  (N = questions the user answered, M = decisions filled from your
+  recommendations and tagged `*assumed*`), followed by the per-area outcomes.
+  Name the areas still carrying `*assumed*` decisions — the summary doubles as
+  the next deep-dive offer.
 
 ## Ending the interview
 
 - **Converged**: the remaining unknowns no longer change the artifact — stop
-  and generate.
-- **Skip valve**: the user says "just generate" / "skip" — stop immediately,
-  apply your recommended answer to every remaining decision, and tag each one
-  `*assumed*` where it lands in the artifact.
+  and generate (in session mode: write, then the summary above).
+- **Finish valve**: every form carries "Finish — use recommendations", and the
+  user may equally type "just generate" / "skip". Stop asking immediately.
+  Answers the message lists as given are the user's decisions; apply your
+  recommended answer to every other listed question AND every remaining
+  undecided area, tagging each one `*assumed*` where it lands — per the
+  `prd-contract` rules: end of the line it qualifies, one token per line, any
+  section. In session mode, still close with the summary.
 - **Headless**: the turn states no interview is possible — ask nothing;
   generate on stated assumptions, each marked `*assumed*`.
-
-How many forms an interview may spend is the calling skill's rule, not this
-one's — some flows allow exactly one. Obey it; converging early is always
-allowed, asking again never is.
