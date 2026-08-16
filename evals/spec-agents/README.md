@@ -20,7 +20,10 @@ and its closed tickets (#352–#357).
    (`src/sim-user.ts`) answering `ask_question` pauses via the production
    answer serializers: adjacent-only volunteering (tagged), per-answer
    `source: fact | persona-fallback | improvised`, and a fatigue curve that
-   degrades answers as questions accumulate (reset per section). Task
+   degrades answers as questions accumulate (reset per section). The loop
+   answers however many rounds the agent asks — a one-form `/start` pass and
+   a multi-round grilling session (#486) both fit; the turn cap bounds
+   runaway sessions, and the fatigue curve prices over-asking. Task
    generation is the detached one-shot `task-plan` toolset turn, folded to
    `issues/*.md` via the playground's `FsIssueStore`.
 3. **Scoring** (`src/scoring/`) — runs inside the task, not in evalite
@@ -30,7 +33,9 @@ and its closed tickets (#352–#357).
      tightening is an explainable score shift, not drift.
    - *rubric judge*: one sonnet call at temperature 0, seeing the artifact,
      the rubric, and the sim's decisions digest — user-decided scope is never
-     penalized as invention.
+     penalized as invention, and `*assumed*`-tagged recommendations (the
+     finish valve's visible-by-design output) are judged on substance, never
+     as defects.
    - *bands*: combined score → **pass ≥75 / review 50–75 / fail <50**; a
      `mustNot` violation forces at least review.
 4. **Chain** (`evals/chain.eval.ts`) — requirements → design continue ONE

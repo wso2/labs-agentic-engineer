@@ -69,9 +69,11 @@ export async function judgeArtifact(input: {
     schema: responseSchema,
     system: `You judge a generated ${input.artifactLabel} against a rubric.
 
-For each MUST-COVER item (by index) decide covered=true/false — covered means the artifact states it, correctly and unambiguously. Quote the evidence (or say why it is missing/wrong).
+The interview that produced the artifact may have been a single question form or a multi-round grilling session — both are legitimate flows; judge only the artifact. Lines tagged *assumed* are recommended answers the user delegated via the finish valve, not defects and not inventions: judge their substance like any other line.
+
+For each MUST-COVER item (by index) decide covered=true/false — covered means the artifact states it, correctly and unambiguously (an *assumed* tag does not make a statement uncovered). Quote the evidence (or say why it is missing/wrong).
 For each MUST-NOT item (by index) decide violated=true/false — violated means the artifact contains what the item forbids. Quote the evidence when violated.
-Also list INVENTIONS: substantive requirements or scope in the artifact that trace to neither the rubric, nor plausibly to the product idea, nor to the user's interview decisions given below. Do not list phrasing differences or reasonable elaborations.`,
+Also list INVENTIONS: substantive requirements or scope in the artifact that trace to neither the rubric, nor plausibly to the product idea, nor to the user's interview decisions given below. Do not list phrasing differences or reasonable elaborations; an *assumed*-tagged recommendation is visible-by-design, not an invention.`,
     prompt: [
       `MUST COVER:\n${mustCover.map((m, i) => `${i}. ${m.item}`).join("\n")}`,
       input.rubric.mustNot.length ? `MUST NOT:\n${input.rubric.mustNot.map((m, i) => `${i}. ${m}`).join("\n")}` : "",
