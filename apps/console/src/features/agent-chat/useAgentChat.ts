@@ -24,6 +24,7 @@ import {
   chatKeyFor,
   dropTurnOutput,
   getMessages,
+  registerChatLogOwner,
   replaceMessages,
   setLocalTurnActive,
   setTurnStatus,
@@ -89,6 +90,11 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
   const attachedRef = useRef(false);
   const author = useCurrentAuthor();
   const queryClient = useQueryClient();
+
+  // This hook is the log's live writer while it is mounted (it folds the
+  // stream and rehydrates on mount/poll/refocus). Claiming it stands the spec
+  // view's bootstrap poll down, so the two never race over the same log.
+  useEffect(() => registerChatLogOwner(chatKey), [chatKey]);
 
   // Publish this tab's turn activity for surfaces that hold no chat connection
   // — the spec view's working state and the overview's stage line read it

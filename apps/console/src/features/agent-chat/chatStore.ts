@@ -397,6 +397,36 @@ export function subscribeLocalTurn(key: string, fn: () => void): () => void {
   return () => set.delete(fn);
 }
 
+// --- Chat-log ownership (#485 live-testing round 3) -----------------------
+//
+// "A mounted chat panel is folding and rehydrating this log." The panel is the
+// log's live writer, but it only exists while the rail is OPEN (Collapse
+// unmountOnExit) — so with the rail closed nothing kept the log current, and a
+// question the agent asked in that window never reached the spec view's form,
+// which is fed by mirroring the log into the collab room. The spec view's
+// bootstrap covers that window; this registry is how it knows to stand down
+// again the moment a panel takes over, rather than racing its live fold.
+//
+// Ref-counted like the deterministic-flush registry below, so an overlapping
+// remount can't have one cleanup clear the other's registration.
+
+const chatLogOwners = new Map<string, number>();
+
+/** Claim the log as this panel's to write. Call the result on unmount. */
+export function registerChatLogOwner(key: string): () => void {
+  chatLogOwners.set(key, (chatLogOwners.get(key) ?? 0) + 1);
+  return () => {
+    const remaining = (chatLogOwners.get(key) ?? 1) - 1;
+    if (remaining <= 0) chatLogOwners.delete(key);
+    else chatLogOwners.set(key, remaining);
+  };
+}
+
+/** True while a live writer owns `key`'s log. */
+export function hasChatLogOwner(key: string): boolean {
+  return (chatLogOwners.get(key) ?? 0) > 0;
+}
+
 // --- Turn-end bus (#252 Task 5: freshness / turn-end flush) ---------------
 //
 // "A collab turn's terminal frame arrived" (runTurn.ts's `turn-committed` /

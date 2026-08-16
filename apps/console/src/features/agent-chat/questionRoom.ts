@@ -103,6 +103,11 @@ function answerKey(toolCallId: string, index: number): string {
   return `${toolCallId}#${index}`;
 }
 
+/** Says nothing — the shape `normalizeAnswers` pads an untouched slot with. */
+function isEmptyAnswer(answer: QuestionAnswer): boolean {
+  return answer.selected.length === 0 && (answer.freeText ?? "").length === 0;
+}
+
 /** The answers stored for a card, aligned to `count`; null when untouched. */
 function readAnswers(doc: Doc, toolCallId: string, count: number): QuestionAnswer[] | null {
   const map = answersMap(doc);
@@ -172,6 +177,9 @@ function migrateLegacyAnswers(
 ): void {
   const map = answersMap(doc);
   legacy.forEach((answer, i) => {
+    // Same rule as updateRoomAnswer: an empty slot is not worth a key, and
+    // claiming one would make this migration a competing write.
+    if (isEmptyAnswer(answer)) return;
     if (!map.has(answerKey(toolCallId, i))) map.set(answerKey(toolCallId, i), answer);
   });
 }
@@ -186,7 +194,13 @@ function migrateLegacyAnswers(
  * question count.
  *
  * Only the slots whose value actually CHANGED are written, so an edit to one
- * question never republishes (and so never clobbers) another's.
+ * question never republishes (and so never clobbers) another's. `update`
+ * returns a FULL array — normalized, so every untouched question comes back as
+ * an empty answer — and publishing those empties would put a value on keys the
+ * room may already hold real answers under (a teammate's, or this user's own
+ * from before a reload), reopening the very clientID tie the split exists to
+ * remove. An empty answer for a key that does not exist yet says nothing, so
+ * it is not written; clearing an EXISTING answer still is.
  */
 export function updateRoomAnswer(
   doc: Doc,
@@ -200,7 +214,12 @@ export function updateRoomAnswer(
   const map = answersMap(doc);
   next.forEach((answer, i) => {
     const key = answerKey(toolCallId, i);
-    if (JSON.stringify(map.get(key)) === JSON.stringify(answer)) return;
+    const current = map.get(key);
+    if (current === undefined) {
+      if (isEmptyAnswer(answer)) return;
+    } else if (JSON.stringify(current) === JSON.stringify(answer)) {
+      return;
+    }
     map.set(key, answer);
   });
 }

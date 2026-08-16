@@ -45,7 +45,8 @@ import {
   upsertQuestionMessage,
 } from "../../agent-chat/chatStore";
 import { projectableHistory } from "../../agent-chat/history";
-import { mirrorQuestion } from "../../agent-chat/questionRoom";
+import { mirrorQuestion, updateRoomAnswer } from "../../agent-chat/questionRoom";
+import { applySelection } from "../../agent-chat/questionCards";
 import { useRoomQuestion } from "../../agent-chat/useRoomQuestion";
 import { SpecQuestionForm } from "./SpecQuestionForm";
 
@@ -146,6 +147,32 @@ describe("the question form across a reload", () => {
     expect(continueButton()).toBeEnabled();
 
     // …and the room arrives, concurrently with everything above.
+    act(() => sync(local, persisted));
+
+    expect(continueButton()).toBeEnabled();
+  });
+
+  // The narrower half of the same race: only SOME questions were answered
+  // before the reload. An untouched slot must not be published — writing the
+  // normalized empty default would claim a key the incoming room copy already
+  // holds a real answer under, and that tie is settled by clientID again.
+  it("keeps a PRE-reload answer while a different question is answered post-reload", () => {
+    const chatKey = freshKey();
+    const persisted = new Y.Doc();
+    const local = new Y.Doc();
+    local.clientID = 1;
+    persisted.clientID = 2;
+    mirrorQuestion(persisted, { toolCallId: TOOL_CALL_ID, questions: QUESTIONS });
+    updateRoomAnswer(persisted, TOOL_CALL_ID, (live) =>
+      applySelection(live.questions, live.answers, 0, "Anyone"),
+    );
+
+    // The reload: fresh doc, log first, provider still handshaking. The user
+    // answers the OTHER question, not seeing the one they already answered.
+    replaceMessages(chatKey, projectableHistory(HISTORY));
+    render(<Probe doc={local} chatKey={chatKey} />);
+    fireEvent.click(screen.getByText("Card"));
+
     act(() => sync(local, persisted));
 
     expect(continueButton()).toBeEnabled();

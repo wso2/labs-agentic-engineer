@@ -16,32 +16,43 @@
  * under the License.
  */
 
-import { useCallback, useEffect, useSyncExternalStore } from "react";
+import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { chatKeyFor, getMessages, replaceMessages, subscribe } from "./chatStore.js";
+import {
+  chatKeyFor,
+  getMessages,
+  hasChatLogOwner,
+  replaceMessages,
+} from "./chatStore.js";
 import { getConversationMessages } from "./api/turns.js";
 import { conversationKeys, fetchCurrentConversationId } from "./api/conversations.js";
 import { projectableHistory } from "./history.js";
 
+/** Matches useAgentChat's foreign-turn poll — the thread is server-driven, so
+ *  every reader of it learns about a change at the same cadence. */
+const THREAD_POLL_MS = 12_000;
+
 /**
- * Seed an EMPTY local chat log from the project's server thread (#485
- * live-testing round). The spec body's question form is fed by mirroring the
- * chat LOG into the collab room (useRoomQuestion) — but only useAgentChat
- * rehydrated the log, so on a fresh browser the form appeared only after the
- * chat panel had been opened once. SpecView mounts this hook so a pending
- * question surfaces on arrival, chat rail open or not.
+ * Keep the local chat log current from the project's server thread whenever no
+ * chat panel is doing it (#485).
  *
- * One-shot by design: a non-empty log means either a previous session's cache
- * (already mirrorable) or an attached panel actively folding — both supersede
- * this. The panel's own D6 rehydrate later REPLACES the log with the same
- * position-stable rows, so the two writers converge instead of fighting.
+ * The spec body's question form is fed by mirroring the chat LOG into the
+ * collab room (useRoomQuestion) — but only useAgentChat writes that log, and it
+ * exists only while the chat rail is OPEN (Collapse unmountOnExit). So the form
+ * appeared only after the chat had been opened once, and — once the rail was
+ * closed again — a question the agent asked in the meantime never arrived at
+ * all: the log kept whatever it had, the room was never told, and the spec view
+ * sat on its working state. SpecView mounts this hook so the question path
+ * holds with the rail open, closed, or never opened.
+ *
+ * It stands down while a panel owns the log (`hasChatLogOwner`): that hook's
+ * own rehydrate covers freshness, and overwriting a live fold mid-turn would
+ * drop streamed partials. Both writers project the SAME server history through
+ * `projectableHistory`, whose ids are position-stable, so handing the log back
+ * and forth changes nothing on screen.
  */
 export function useChatLogBootstrap(org: string, projectName: string): void {
   const chatKey = chatKeyFor(org, projectName);
-  const empty = useSyncExternalStore(
-    useCallback((fn: () => void) => subscribe(chatKey, fn), [chatKey]),
-    () => getMessages(chatKey).length === 0,
-  );
 
   // Same cache entry useAgentChat resolves — an open panel or a prior visit
   // makes this free.
@@ -49,26 +60,35 @@ export function useChatLogBootstrap(org: string, projectName: string): void {
     queryKey: conversationKeys.current(projectName),
     queryFn: () => fetchCurrentConversationId(projectName),
     staleTime: Infinity,
-    enabled: empty,
     retry: false,
   });
   const conversationId = conversation.data;
 
   useEffect(() => {
-    if (!empty || !conversationId) return;
+    if (!conversationId) return;
     let cancelled = false;
-    void getConversationMessages(projectName, conversationId)
-      .then((history) => {
-        if (cancelled || !history) return;
-        // Re-check at write time: an attached panel may have started folding
-        // (or its rehydrate landed) while this fetch was in flight — the live
-        // log always wins over a bootstrap.
-        if (getMessages(chatKey).length > 0) return;
-        replaceMessages(chatKey, projectableHistory(history));
-      })
-      .catch(() => undefined); // best-effort — the panel's rehydrate remains
+    const pull = async () => {
+      if (hasChatLogOwner(chatKey)) return;
+      const history = await getConversationMessages(projectName, conversationId).catch(
+        () => null, // best-effort — the next tick retries
+      );
+      // Re-check at write time: a panel may have attached (or started folding)
+      // while this fetch was in flight — the live writer always wins.
+      if (cancelled || !history || hasChatLogOwner(chatKey)) return;
+      // LOCAL-ONLY rows survive the replace, exactly as useAgentChat's D6
+      // rehydrate keeps them: a failed send's user row and its error row exist
+      // nowhere server-side, and washing them out would destroy the only copy
+      // of a message the user still needs to retry.
+      const localOnly = getMessages(chatKey).filter(
+        (m) => m.role === "error" || (m.role === "user" && m.status === "failed"),
+      );
+      replaceMessages(chatKey, [...projectableHistory(history), ...localOnly]);
+    };
+    void pull();
+    const poll = setInterval(() => void pull(), THREAD_POLL_MS);
     return () => {
       cancelled = true;
+      clearInterval(poll);
     };
-  }, [empty, conversationId, chatKey, projectName]);
+  }, [conversationId, chatKey, projectName]);
 }

@@ -18,16 +18,23 @@
 
 // @vitest-environment jsdom
 
-// The spec view's log bootstrap (#485 live-testing round). What matters: the
-// question form's data path no longer depends on the chat panel — an empty
-// local log is seeded from the server thread, and a log that already exists
-// (or fills while the fetch is in flight) is never clobbered.
+// The spec view's log bootstrap (#485). What matters: the question form's data
+// path does not depend on the chat panel — the log is seeded from the server
+// thread and KEPT current while no panel owns it, so a question the agent asks
+// while the rail is closed still reaches the room's shared form. A panel that
+// attaches takes the log back, and its live fold is never overwritten.
 
 import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { renderHook, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { addMessage, chatKeyFor, getMessages, replaceMessages } from "./chatStore";
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  addMessage,
+  chatKeyFor,
+  getMessages,
+  registerChatLogOwner,
+  replaceMessages,
+} from "./chatStore";
 import { useChatLogBootstrap } from "./useChatLogBootstrap";
 
 const ORG = "acme";
@@ -73,6 +80,10 @@ const askQuestionsCall = {
   ],
 };
 
+const hasQuestion = () => getMessages(KEY).some((m) => m.role === "question");
+
+let releaseOwner: (() => void) | null = null;
+
 describe("useChatLogBootstrap", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -81,30 +92,55 @@ describe("useChatLogBootstrap", () => {
     mockGetHistory.mockResolvedValue([]);
   });
 
+  afterEach(() => {
+    releaseOwner?.();
+    releaseOwner = null;
+    vi.useRealTimers();
+  });
+
   it("seeds an empty log from the server thread — pending questions included", async () => {
     mockGetHistory.mockResolvedValue([askQuestionsCall]);
 
     renderHook(() => useChatLogBootstrap(ORG, PROJECT), { wrapper: wrapper() });
 
-    await waitFor(() =>
-      expect(getMessages(KEY).some((m) => m.role === "question")).toBe(true),
-    );
+    await waitFor(() => expect(hasQuestion()).toBe(true));
     expect(mockGetHistory).toHaveBeenCalledWith(PROJECT, "conv-1");
   });
 
-  it("does nothing when a log already exists — the live/cached log wins", async () => {
+  // The defect this poll exists for: the user opened the chat once (so the log
+  // is no longer empty), then closed the rail — unmounting the only writer.
+  // The agent then asked its questions. Nothing brought them in, so the shared
+  // form never appeared and the spec view sat on its working state.
+  it("keeps the log current while no panel owns it — a question asked with the rail closed still lands", async () => {
+    vi.useFakeTimers();
     addMessage(KEY, { role: "user", content: "/start", status: "completed" });
+    mockGetHistory.mockResolvedValue([{ role: "user", content: "/start" }]);
+
+    renderHook(() => useChatLogBootstrap(ORG, PROJECT), { wrapper: wrapper() });
+    await vi.waitFor(() => expect(mockGetHistory).toHaveBeenCalledTimes(1));
+    expect(hasQuestion()).toBe(false);
+
+    // The agent's turn ends on ask_questions while the rail is closed.
+    mockGetHistory.mockResolvedValue([{ role: "user", content: "/start" }, askQuestionsCall]);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(12_000);
+    });
+
+    expect(hasQuestion()).toBe(true);
+  });
+
+  it("stands down while a chat panel owns the log", async () => {
+    releaseOwner = registerChatLogOwner(KEY);
+    addMessage(KEY, { role: "assistant", turnId: "t1", content: "streaming…" });
 
     renderHook(() => useChatLogBootstrap(ORG, PROJECT), { wrapper: wrapper() });
 
-    // No thread resolve, no history fetch, log untouched.
-    await new Promise((r) => setTimeout(r, 0));
-    expect(mockFetchCurrent).not.toHaveBeenCalled();
+    await waitFor(() => expect(mockFetchCurrent).toHaveBeenCalled());
     expect(mockGetHistory).not.toHaveBeenCalled();
     expect(getMessages(KEY)).toHaveLength(1);
   });
 
-  it("never clobbers a log that filled while the fetch was in flight", async () => {
+  it("never clobbers a log a panel took over while the fetch was in flight", async () => {
     let resolveHistory!: (v: unknown) => void;
     mockGetHistory.mockReturnValue(new Promise((r) => (resolveHistory = r)));
 
@@ -112,11 +148,27 @@ describe("useChatLogBootstrap", () => {
     await waitFor(() => expect(mockGetHistory).toHaveBeenCalled());
 
     // The chat panel attached and started folding a live turn meanwhile.
+    releaseOwner = registerChatLogOwner(KEY);
     addMessage(KEY, { role: "assistant", turnId: "t1", content: "streaming…" });
     resolveHistory([askQuestionsCall]);
 
     await new Promise((r) => setTimeout(r, 0));
     expect(getMessages(KEY)).toHaveLength(1);
     expect(getMessages(KEY)[0]!.role).toBe("assistant");
+  });
+
+  // A failed send exists only here — the thread never saw it, so a refresh
+  // from the thread must not be what destroys the text the user needs to retry.
+  it("keeps local-only rows across a refresh", async () => {
+    addMessage(KEY, { role: "user", content: "retry me", status: "failed" });
+    addMessage(KEY, { role: "error", content: "Failed to reach the agent." });
+    mockGetHistory.mockResolvedValue([askQuestionsCall]);
+
+    renderHook(() => useChatLogBootstrap(ORG, PROJECT), { wrapper: wrapper() });
+
+    await waitFor(() => expect(hasQuestion()).toBe(true));
+    const messages = getMessages(KEY);
+    expect(messages.some((m) => m.role === "user" && m.status === "failed")).toBe(true);
+    expect(messages.some((m) => m.role === "error")).toBe(true);
   });
 });

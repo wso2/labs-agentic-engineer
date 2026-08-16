@@ -187,9 +187,11 @@ func TestKickoffSpec_SpentClaimIsANoOp(t *testing.T) {
 	t.Parallel()
 	claims := &fakeKickoffClaims{claimed: false}
 	s := NewService(ServiceDeps{
-		Kickoffs:      claims,
+		Kickoffs: claims,
+		// Fully wired, and the stubs panic on use: a spent claim must return
+		// without touching either store.
 		Conversations: &memConvRepoStub{},
-		// Turns nil: a spent claim must return before touching the turn store.
+		Turns:         &neverCalledTurnRepo{},
 	})
 	if err := s.KickoffSpec(context.Background(), "acme", "shop"); err != nil {
 		t.Fatalf("KickoffSpec: %v", err)
@@ -211,11 +213,36 @@ func TestKickoffSpec_WonClaimStandsDownOnAPriorTurn(t *testing.T) {
 	}
 }
 
+// neverCalledTurnRepo panics on every method — a call is a test bug.
+type neverCalledTurnRepo struct{ TurnRepository }
+
+// A store the kickoff needs but was not wired is a composition-root bug. It
+// must be REFUSED, not discovered halfway through: the projects domain runs
+// this on a detached goroutine, where a nil-store panic takes the process down
+// instead of logging the best-effort failure it was promised.
 func TestKickoffSpec_RefusesWhenUnwired(t *testing.T) {
 	t.Parallel()
-	s := NewService(ServiceDeps{})
-	if err := s.KickoffSpec(context.Background(), "acme", "shop"); !errors.Is(err, ErrKickoffUnavailable) {
-		t.Fatalf("err = %v, want ErrKickoffUnavailable", err)
+	for name, deps := range map[string]ServiceDeps{
+		"nothing wired": {},
+		"no claim store": {
+			Conversations: &memConvRepoStub{},
+			Turns:         &neverCalledTurnRepo{},
+		},
+		"no conversation store": {
+			Kickoffs: &fakeKickoffClaims{claimed: true},
+			Turns:    &neverCalledTurnRepo{},
+		},
+		"no turn store": {
+			Kickoffs:      &fakeKickoffClaims{claimed: true},
+			Conversations: &memConvRepoStub{},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := NewService(deps)
+			if err := s.KickoffSpec(context.Background(), "acme", "shop"); !errors.Is(err, ErrKickoffUnavailable) {
+				t.Fatalf("err = %v, want ErrKickoffUnavailable", err)
+			}
+		})
 	}
 }
 

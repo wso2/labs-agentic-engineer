@@ -41,9 +41,9 @@ import (
 	"time"
 )
 
-// ErrKickoffUnavailable means the service was assembled without the kickoff
-// claim store (ServiceDeps.Kickoffs) or the conversation store — a wiring bug,
-// not a runtime condition; production always wires both.
+// ErrKickoffUnavailable means the service was assembled without one of the
+// stores the kickoff needs (ServiceDeps.Kickoffs / Conversations / Turns) — a
+// wiring bug, not a runtime condition; production always wires all three.
 var ErrKickoffUnavailable = errors.New("spec kickoff store not configured")
 
 // kickoffRetryInterval paces the wait for the freshly-created repo: project
@@ -57,7 +57,10 @@ const kickoffRetryInterval = 3 * time.Second
 // running (a user got there first). Retries while the repo or the org skills
 // repo is still provisioning, until ctx expires.
 func (s *Service) KickoffSpec(ctx context.Context, orgID, projectID string) error {
-	if s.kickoffs == nil || s.conversations == nil {
+	// `turns` included: the claimed path calls HasAny on it, and the caller
+	// runs this on a detached goroutine — a nil there is a process crash, not
+	// the logged best-effort failure the projects domain is promised.
+	if s.kickoffs == nil || s.conversations == nil || s.turns == nil {
 		return ErrKickoffUnavailable
 	}
 	claimed, err := s.kickoffs.TryClaim(ctx, orgID, projectID)
