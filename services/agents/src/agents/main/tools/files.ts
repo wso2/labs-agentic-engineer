@@ -138,7 +138,30 @@ export const askQuestionInputSchema = z.object({
     .describe("True → the user may pick several options together (checkboxes). Defaults to false (a single choice)."),
 });
 
+// Session-mode metadata (issue #486). `session` PRECEDES `questions` so it
+// streams first and the console renders the area checklist header before the
+// first question object closes.
+const questionSessionAreaSchema = z.object({
+  name: z.string().describe("Short area name from the session's opening checklist — keep it stable across rounds."),
+  state: z
+    .enum(["done", "now", "todo"])
+    .describe("done = settled by earlier rounds; now = this round asks into it; todo = still ahead."),
+});
+
+const questionSessionInfoSchema = z.object({
+  title: z.string().optional().describe('Short session title, e.g. "Grilling Favorites".'),
+  areas: z
+    .array(questionSessionAreaSchema)
+    .describe("The FULL area checklist, restated every round with updated states — names never change mid-session."),
+});
+
 export const askQuestionsInputSchema = z.object({
+  session: questionSessionInfoSchema
+    .optional()
+    .describe(
+      "Grilling-session rounds ONLY (the grilling skill's session mode): the session's area checklist, shown in the " +
+        "form header as settled-vs-remaining scope. OMIT it entirely on ordinary one-form interviews.",
+    ),
   questions: z
     .array(askQuestionInputSchema)
     .min(1)

@@ -134,6 +134,18 @@ export const ASK_QUESTIONS_TOOL = "ask_questions" as const;
 export const ANSWER_PREFIX = 'Answer to "' as const;
 export const ANSWERS_PREFIX = "Answers:" as const;
 
+/** The finish-valve instruction's leading marker (issue #486). */
+export const FINISH_PREFIX = "Finish — use recommendations." as const;
+
+/**
+ * The marker a grilling session's closing summary message leads with — the
+ * grilling skill instructs the model to open the summary with it, and the
+ * console styles a matching assistant message as a summary card. Prose
+ * convention, not a wire frame: a summary without it still renders as
+ * ordinary narration.
+ */
+export const SESSION_SUMMARY_MARK = "Session summary" as const;
+
 /** One candidate answer on a question. */
 export interface AskQuestionOption {
   /** Short display text — the value echoed back in the serialized answer. */
@@ -174,11 +186,34 @@ export interface AskQuestionInput {
   multiSelect?: boolean;
 }
 
+/** One scope area on a grilling session's checklist (issue #486). */
+export interface QuestionSessionArea {
+  /** Short area name, e.g. "ownership" — stable across the session's rounds. */
+  name: string;
+  /** `done` = settled by earlier rounds, `now` = this round asks into it, `todo` = still ahead. */
+  state: "done" | "now" | "todo";
+}
+
+/**
+ * Session-mode metadata on an `ask_questions` round (issue #486): the area
+ * checklist the console renders in the form header so the user sees settled
+ * vs remaining scope. Only grilling sessions send it; one-form interviews
+ * omit the field and render exactly as before.
+ */
+export interface QuestionSessionInfo {
+  /** Short session title, e.g. `Grilling Favorites`. */
+  title?: string;
+  /** The full scope checklist, every round — states move, names never do. */
+  areas: QuestionSessionArea[];
+}
+
 /**
  * The `ask_questions` tool input — a LIST of questions answered as one form.
  * Each entry is a full `AskQuestionInput`.
  */
 export interface AskQuestionsInput {
+  /** Grilling-session rounds only (issue #486); absent on one-form interviews. */
+  session?: QuestionSessionInfo;
   /** 1–8 questions rendered together; each answered independently. */
   questions: AskQuestionInput[];
 }
@@ -225,6 +260,39 @@ export function buildAnswersInstruction(
     (a) => `- "${a.question}": ${serializeBody(a.selected, a.freeText)}`,
   );
   return `${ANSWERS_PREFIX}\n${lines.join("\n")}`;
+}
+
+/**
+ * Serialize the finish valve ("Finish — use recommendations", issue #486) into
+ * the next turn's instruction. Unlike the old blanket skip text this keeps the
+ * decision-to-question link: answers already given ride as decisions (question
+ * quoted verbatim, exactly like a submit), and each unanswered question is
+ * listed so the agent applies its recommended answer and tags the landing line
+ * `*assumed*`. That split is what the closing summary's "N asked, M assumed"
+ * count and the `*assumed*` tagging derive from — the inline token stays the
+ * only durable doc artifact.
+ */
+export function buildFinishInstruction(
+  answered: Array<{ question: string; selected: string[]; freeText?: string }>,
+  unanswered: string[],
+): string {
+  const parts: string[] = [FINISH_PREFIX];
+  if (answered.length > 0) {
+    parts.push(
+      "Answers already given — treat each as the user's decision:\n" +
+        answered.map((a) => `- "${a.question}": ${serializeBody(a.selected, a.freeText)}`).join("\n"),
+    );
+  }
+  if (unanswered.length > 0) {
+    parts.push(
+      "Unanswered — apply your recommended answer to each and tag the decision *assumed* where it lands:\n" +
+        unanswered.map((q) => `- "${q}"`).join("\n"),
+    );
+  }
+  parts.push(
+    "Stop asking. Apply your recommended answer to every remaining undecided area the same way, each tagged *assumed*.",
+  );
+  return parts.join("\n\n");
 }
 
 // --- Skills (progressive disclosure, ADR-0002) ------------------------------
