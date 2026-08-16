@@ -83,6 +83,20 @@ Features currently being built. One line each; **must be emptied on ship**
 (the line moves to the inventory below). If a line sits here for weeks,
 that's a stalled feature — investigate, don't ignore.
 
+- Spec view — first run: `POST /projects` starts the `/start` turn
+  server-side (prompt-gated, one per project, enforced in the BE), retiring
+  the console's client-side injection and the double-`/start` bug class. The
+  interview is therefore usually already running when the user first lands,
+  so its state is read from the server (`useSpecInterview`) rather than the
+  local chat log: the overview's Spec card shows "interviewing…" /
+  "interviewing — N questions waiting" in place of Generate spec, and the
+  chat panel drops the canned greeting + off-domain chips on a spec-less
+  project. The spec view itself opens onto a journey instead of a void — the
+  file nav renders every upcoming artifact as a ghost entry with a
+  when-label, ghosts graduate to solid rows (pulsing while the agent streams
+  the file), and the main pane holds the PRD's skeleton outline —
+  [#485](https://github.com/wso2/labs-agentic-engineer/issues/485),
+  [#483](https://github.com/wso2/labs-agentic-engineer/issues/483)
 - Deployments page — one-story rail + environment panel: Development /
   Validation / Production as one numbered rail (Builds-spine vocabulary,
   ADR-0014) with a side panel (version, rollout, endpoints, production
