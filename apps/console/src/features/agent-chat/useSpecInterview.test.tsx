@@ -25,9 +25,14 @@
 
 import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { addMessage, chatKeyFor, replaceMessages } from "./chatStore";
+import {
+  addMessage,
+  chatKeyFor,
+  replaceMessages,
+  setLocalTurnActive,
+} from "./chatStore";
 import { useSpecInterview } from "./useSpecInterview";
 
 const ORG = "acme";
@@ -84,6 +89,7 @@ describe("useSpecInterview", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     replaceMessages(KEY, []);
+    setLocalTurnActive(KEY, false);
     mockGetActive.mockResolvedValue(null);
     mockFetchCurrent.mockResolvedValue("conv-1");
     mockGetHistory.mockResolvedValue([]);
@@ -197,7 +203,58 @@ describe("useSpecInterview", () => {
     expect(result.current.questionsWaiting).toBe(1);
   });
 
+  // Live-testing round 2: submitting interview answers starts a turn this tab
+  // knows about immediately, while the active-turn poll below would leave
+  // every surface on its pre-turn state for up to a full interval — long
+  // enough that the spec view showed "Select a file to view its content."
+  // instead of the drafting line for the whole window.
+  it("reports running from a turn this tab started, without waiting for the poll", () => {
+    const { result } = renderHook(() => useSpecInterview(ORG, PROJECT, true), {
+      wrapper: wrapper(),
+    });
+    expect(result.current.running).toBe(false);
+
+    act(() => setLocalTurnActive(KEY, true));
+
+    expect(result.current.running).toBe(true);
+  });
+
+  it("reports drafting the moment the answered interview's turn starts here", () => {
+    addMessage(KEY, {
+      role: "question",
+      turnId: "t1",
+      toolCallId: "tc-1",
+      questions: [{ question: "Open browsing?", options: [{ label: "Yes" }] }],
+    });
+    addMessage(KEY, {
+      role: "user",
+      content: 'Answers:\n- "Open browsing?": Yes',
+      turnId: "t2",
+      status: "in_flight",
+    });
+
+    const { result } = renderHook(() => useSpecInterview(ORG, PROJECT, true), {
+      wrapper: wrapper(),
+    });
+    act(() => setLocalTurnActive(KEY, true));
+
+    expect(result.current.drafting).toBe(true);
+  });
+
+  it("stops reporting running when the local turn settles", () => {
+    setLocalTurnActive(KEY, true);
+    const { result } = renderHook(() => useSpecInterview(ORG, PROJECT, true), {
+      wrapper: wrapper(),
+    });
+    expect(result.current.running).toBe(true);
+
+    act(() => setLocalTurnActive(KEY, false));
+
+    expect(result.current.running).toBe(false);
+  });
+
   it("is inert when disabled — no requests, idle state", () => {
+    setLocalTurnActive(KEY, true);
     const { result } = renderHook(() => useSpecInterview(ORG, PROJECT, false), {
       wrapper: wrapper(),
     });

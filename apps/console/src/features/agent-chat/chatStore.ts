@@ -393,6 +393,41 @@ export function subscribeChatOpen(key: string, fn: () => void): () => void {
   return () => set.delete(fn);
 }
 
+// --- Local turn activity (#485 live-testing round 2) ----------------------
+//
+// The chat panel knows a turn is running the moment it starts one; the
+// server's active-turn poll (useSpecInterview, 12 s) learns much later. This
+// slot publishes the panel's own in-flight state to surfaces that hold no chat
+// connection — the spec view's working state, the overview's stage line — so
+// submitting interview answers flips them to "the agent is drafting" at once
+// instead of leaving the plain empty state on screen for a poll interval.
+//
+// Never persisted, and cleared by the writer's own effect cleanup: a flag that
+// outlived the turn behind it would strand a spinner forever, and the server
+// poll is the durable signal for everyone else anyway.
+
+const localTurnActive = new Map<string, boolean>();
+const localTurnListeners = new Map<string, Set<() => void>>();
+
+/** Publish (or clear) "a turn started from this tab is streaming". */
+export function setLocalTurnActive(key: string, active: boolean): void {
+  if ((localTurnActive.get(key) ?? false) === active) return;
+  if (active) localTurnActive.set(key, true);
+  else localTurnActive.delete(key);
+  for (const fn of localTurnListeners.get(key) ?? []) fn();
+}
+
+export function isLocalTurnActive(key: string): boolean {
+  return localTurnActive.get(key) ?? false;
+}
+
+export function subscribeLocalTurn(key: string, fn: () => void): () => void {
+  const set = localTurnListeners.get(key) ?? new Set();
+  set.add(fn);
+  localTurnListeners.set(key, set);
+  return () => set.delete(fn);
+}
+
 // --- Turn-end bus (#252 Task 5: freshness / turn-end flush) ---------------
 //
 // "A collab turn's terminal frame arrived" (runTurn.ts's `turn-committed` /

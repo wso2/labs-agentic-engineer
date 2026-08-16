@@ -25,6 +25,7 @@ import {
   dropTurnOutput,
   getMessages,
   replaceMessages,
+  setLocalTurnActive,
   setTurnStatus,
   subscribe,
   type ChatMessage,
@@ -88,6 +89,17 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
   const attachedRef = useRef(false);
   const author = useCurrentAuthor();
   const queryClient = useQueryClient();
+
+  // Publish this tab's turn activity for surfaces that hold no chat connection
+  // — the spec view's working state and the overview's stage line read it
+  // instead of waiting out their 12 s active-turn poll (#485 live-testing
+  // round 2). Cleared when the turn settles and on unmount, so the flag never
+  // outlives the turn behind it.
+  useEffect(() => {
+    if (!isSending) return;
+    setLocalTurnActive(chatKey, true);
+    return () => setLocalTurnActive(chatKey, false);
+  }, [chatKey, isSending]);
 
   // The project's current thread id (#430) — server-resolved, shared by every
   // member. staleTime Infinity: the id only moves on rotation, and rotation

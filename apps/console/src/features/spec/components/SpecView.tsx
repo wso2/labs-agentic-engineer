@@ -1123,7 +1123,7 @@ export function SpecView({ projectName }: { projectName: string }) {
                     />
                   </Box>
                 )
-              ) : files.length === 0 && !failed && interview.running ? (
+              ) : files.length === 0 && !failed && firstRunTurnActive ? (
                 // The fresh-project working state (#485 live-testing round —
                 // replaces the mock-document skeleton, which read as content
                 // that wasn't there): a small spinner plus the turn's ACTUAL
@@ -1131,6 +1131,12 @@ export function SpecView({ projectName }: { projectName: string }) {
                 // uses. Gone the moment real content streams (the file union
                 // picks the live room file up), and never shown on a failed
                 // derivation — no promise of a document that is not coming.
+                //
+                // Covers the WHOLE first-run turn, not just its running half:
+                // between submitting answers and the next turn attaching — and
+                // between a question landing and the room mirroring it into the
+                // form — the pane otherwise fell back to "Select a file…",
+                // which reads as a finished, empty workspace (round 2).
                 <Box
                   data-testid="spec-working-state"
                   sx={{
@@ -1146,7 +1152,13 @@ export function SpecView({ projectName }: { projectName: string }) {
                   <Typography variant="body2" color="text.secondary">
                     {interview.drafting
                       ? "The agent is drafting the PRD…"
-                      : "The agent is preparing your questions…"}
+                      : interview.running
+                        ? "The agent is preparing your questions…"
+                        : // Not running, yet questions are waiting: they have
+                          // landed in the thread and the room form is a beat
+                          // behind. Name that beat rather than claim work
+                          // nobody is doing.
+                          "Opening the agent's questions…"}
                   </Typography>
                 </Box>
               ) : (

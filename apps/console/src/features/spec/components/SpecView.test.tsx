@@ -844,6 +844,30 @@ describe("SpecView fresh-project working state (#485)", () => {
     expect(
       screen.queryByText("The agent is preparing your questions…"),
     ).not.toBeInTheDocument();
+    // The drafting line beats the pane's pre-existing empty state — with no
+    // file selected yet, that was what the user saw after submitting answers.
+    expect(
+      screen.queryByText("Select a file to view its content."),
+    ).not.toBeInTheDocument();
+  });
+
+  // Live-testing round 2: the working state has to cover the WHOLE first-run
+  // turn. Between a question landing in the thread and the room mirroring it
+  // into the form, the pane fell back to "Select a file to view its content."
+  // — a finished, empty workspace, mid-interview.
+  it("keeps a working state while questions wait and no turn is streaming", () => {
+    mockUseSpecInterview.mockReturnValue({
+      running: false,
+      questionsWaiting: 2,
+      drafting: false,
+    });
+    render(<SpecView projectName="proj1" />);
+
+    expect(screen.getByTestId("spec-working-state")).toBeInTheDocument();
+    expect(screen.getByText("Opening the agent's questions…")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Select a file to view its content."),
+    ).not.toBeInTheDocument();
   });
 
   it("shows no working state while nothing runs — no spinner with no agent behind it", () => {

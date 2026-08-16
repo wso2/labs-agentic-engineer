@@ -21,7 +21,9 @@ import { useQuery } from "@tanstack/react-query";
 import {
   chatKeyFor,
   getMessages,
+  isLocalTurnActive,
   subscribe,
+  subscribeLocalTurn,
   type ChatMessage,
 } from "./chatStore.js";
 import { answerableQuestionIds } from "./questionCards.js";
@@ -62,7 +64,8 @@ function questionsSettled(messages: ChatMessage[]): boolean {
  * turn works, without the chat panel ever having been opened.
  */
 export interface SpecInterviewState {
-  /** A turn is streaming right now (`GET /turns/active`, 12 s poll). */
+  /** A turn is streaming right now — from `GET /turns/active` (12 s poll) or,
+   *  without waiting for it, from a turn this tab itself started. */
   running: boolean;
   /** Unanswered questions the agent is waiting on. */
   questionsWaiting: number;
@@ -107,6 +110,14 @@ export function useSpecInterview(
     useCallback((fn: () => void) => subscribe(chatKey, fn), [chatKey]),
     () => questionsSettled(getMessages(chatKey)),
   );
+  // A turn THIS tab started (answers submitted, a typed message) is known the
+  // instant it starts, where the poll below would leave every surface on its
+  // pre-turn state for up to a full interval — long enough that submitting
+  // interview answers looked like nothing happened (#485 live-testing round 2).
+  const localRunning = useSyncExternalStore(
+    useCallback((fn: () => void) => subscribeLocalTurn(chatKey, fn), [chatKey]),
+    () => isLocalTurnActive(chatKey),
+  );
 
   const active = useQuery({
     queryKey: ["agent-active-turn", projectName],
@@ -116,7 +127,7 @@ export function useSpecInterview(
     // 404s while the repo provisions are expected — the interval is the retry.
     retry: false,
   });
-  const running = enabled && active.data?.status === "running";
+  const running = enabled && (active.data?.status === "running" || localRunning);
 
   // Rehydrate fallback: only while the local log is empty (an attached panel
   // supersedes it). Runs even while a turn streams — a running turn can't be

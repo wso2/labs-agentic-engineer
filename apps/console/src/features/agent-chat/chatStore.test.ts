@@ -41,15 +41,18 @@ import {
   getMessages,
   hasDeterministicFlush,
   isLiveQuestion,
+  isLocalTurnActive,
   notifyTurnEnd,
   peekPendingSeed,
   registerDeterministicFlush,
   replaceMessages,
   requestChatOpen,
+  setLocalTurnActive,
   setPendingSeed,
   setTurnStatus,
   subscribe,
   subscribeChatOpen,
+  subscribeLocalTurn,
   subscribeSeed,
   subscribeTurnEnd,
   upsertQuestionMessage,
@@ -397,5 +400,36 @@ describe("live question arrivals", () => {
       questions: QUESTIONS,
     });
     expect(isLiveQuestion(key2, "tc-3")).toBe(false);
+  });
+});
+
+// Local turn activity (#485 live-testing round 2): the panel's own in-flight
+// state, published for surfaces that hold no chat connection so they don't
+// wait out a 12 s poll to notice the turn the user just started.
+describe("local turn activity", () => {
+  it("publishes and clears, notifying subscribers on each change", () => {
+    const key = freshKey();
+    expect(isLocalTurnActive(key)).toBe(false);
+
+    let notified = 0;
+    const unsubscribe = subscribeLocalTurn(key, () => (notified += 1));
+    setLocalTurnActive(key, true);
+    expect(isLocalTurnActive(key)).toBe(true);
+    expect(notified).toBe(1);
+
+    setLocalTurnActive(key, true); // unchanged — no listener churn
+    expect(notified).toBe(1);
+
+    setLocalTurnActive(key, false);
+    expect(isLocalTurnActive(key)).toBe(false);
+    expect(notified).toBe(2);
+    unsubscribe();
+  });
+
+  it("keeps distinct keys apart", () => {
+    const key1 = freshKey();
+    const key2 = freshKey();
+    setLocalTurnActive(key1, true);
+    expect(isLocalTurnActive(key2)).toBe(false);
   });
 });
