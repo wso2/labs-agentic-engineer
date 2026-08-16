@@ -73,6 +73,16 @@ export interface SpecInterviewState {
    *  the agent is writing the document. False while it is still preparing or
    *  waiting on questions, and always false when nothing runs. */
   drafting: boolean;
+  /**
+   * The project's thread already carries an exchange — the interview HAS
+   * begun, whether or not a turn happens to be streaming this second. The
+   * durable form of `running`: between the poll's intervals, and between
+   * submitting answers and the next turn attaching, `running` dips false while
+   * the first run is very much in progress. A CTA that reads the momentary
+   * signal flips back to "Generate spec" in those gaps and offers to inject a
+   * second `/start` into an open exchange (the #432 skip-valve bug).
+   */
+  started: boolean;
 }
 
 /** Matches useAgentChat's foreign-turn poll — the turn is server-driven, so
@@ -144,11 +154,14 @@ export function useSpecInterview(
     queryKey: ["agent-conversation-questions", projectName, conversation.data],
     queryFn: async () => {
       const history = await getConversationMessages(projectName, conversation.data!);
-      if (!history) return { waiting: 0, settled: false };
+      if (!history) return { waiting: 0, settled: false, started: false };
       const messages = projectableHistory(history);
       return {
         waiting: waitingQuestionCount(messages),
         settled: questionsSettled(messages),
+        // Any message at all: the thread has been spoken in, so the first run
+        // is under way even between turns.
+        started: messages.length > 0,
       };
     },
     enabled: enabled && !storeHasLog && conversation.data !== undefined,
@@ -167,5 +180,7 @@ export function useSpecInterview(
           ? 0 // a running turn is never awaiting answers
           : (rehydrated.data?.waiting ?? 0),
     drafting: running && settled,
+    started:
+      enabled && (running || storeHasLog || (rehydrated.data?.started ?? false)),
   };
 }

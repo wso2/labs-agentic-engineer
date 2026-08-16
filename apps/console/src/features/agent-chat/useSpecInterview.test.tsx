@@ -253,12 +253,54 @@ describe("useSpecInterview", () => {
     expect(result.current.running).toBe(false);
   });
 
+  // `started` is the DURABLE first-run signal (#485 live-testing round 3): the
+  // overview's CTA reads it so it cannot flip back to "Generate spec" — and
+  // re-offer to inject a second /start — in the gaps where `running` dips.
+  describe("started — the thread has been spoken in", () => {
+    it("is false for a project whose thread is empty", async () => {
+      const { result } = renderHook(() => useSpecInterview(ORG, PROJECT, true), {
+        wrapper: wrapper(),
+      });
+      await waitFor(() => expect(mockGetHistory).toHaveBeenCalled());
+      expect(result.current.started).toBe(false);
+    });
+
+    it("stays true between turns — a thread with history, nothing running", async () => {
+      mockGetHistory.mockResolvedValue([
+        { role: "user", content: "/start" },
+        askQuestionsCall,
+        { role: "user", content: "Answers: yes to both" },
+      ]);
+
+      const { result } = renderHook(() => useSpecInterview(ORG, PROJECT, true), {
+        wrapper: wrapper(),
+      });
+      await waitFor(() => expect(result.current.started).toBe(true));
+      expect(result.current.running).toBe(false);
+      expect(result.current.questionsWaiting).toBe(0);
+    });
+
+    it("is true as soon as the local log has anything", () => {
+      addMessage(KEY, { role: "user", content: "/start", status: "completed" });
+
+      const { result } = renderHook(() => useSpecInterview(ORG, PROJECT, true), {
+        wrapper: wrapper(),
+      });
+      expect(result.current.started).toBe(true);
+    });
+  });
+
   it("is inert when disabled — no requests, idle state", () => {
     setLocalTurnActive(KEY, true);
     const { result } = renderHook(() => useSpecInterview(ORG, PROJECT, false), {
       wrapper: wrapper(),
     });
-    expect(result.current).toEqual({ running: false, questionsWaiting: 0, drafting: false });
+    expect(result.current).toEqual({
+      running: false,
+      questionsWaiting: 0,
+      drafting: false,
+      started: false,
+    });
     expect(mockGetActive).not.toHaveBeenCalled();
     expect(mockFetchCurrent).not.toHaveBeenCalled();
   });

@@ -153,23 +153,26 @@ function SpecActionStage({
   interview: SpecInterviewState;
 }) {
   const navigate = useNavigate();
-  // Wording aligned with the spec view's working-state stage lines (#485
-  // live-testing round): the card tracks the turn's ACTUAL stage — preparing
-  // questions, parked on questions, or drafting the document.
+  // The card speaks as the agent (#485 live-testing round 3), tracking the
+  // turn's ACTUAL stage: reading the idea, waiting on answers, or writing the
+  // document.
   const interviewLine =
     interview.questionsWaiting > 0
-      ? `interviewing — ${interview.questionsWaiting} question${
+      ? `Agent has ${interview.questionsWaiting} question${
           interview.questionsWaiting === 1 ? "" : "s"
-        } waiting`
+        }`
       : interview.running
         ? interview.drafting
           ? "Agent is drafting the PRD…"
-          : "Agent is preparing your questions…"
+          : "Agent is processing the idea"
         : null;
   // The interview state is an open exchange by definition — same injection
   // guard as `engaged`, sourced server-side so it holds before the chat log
-  // ever loaded in this browser.
-  const open = engaged || interviewLine !== null;
+  // ever loaded in this browser. `started` rather than the momentary signals:
+  // the label must not flip back to "Generate spec" (which would attach
+  // `?generate` and inject a second `/start`) in the gaps between the poll's
+  // intervals or between one first-run turn ending and the next attaching.
+  const open = engaged || interview.started || interviewLine !== null;
   return (
     <Card
       variant="outlined"
