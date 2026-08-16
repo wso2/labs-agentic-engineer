@@ -69,7 +69,6 @@ export function SpecFileList({
   onAddArtifact,
   onRegenerateDesign,
   regenerateDisabled,
-  deriving,
   failed,
 }: {
   files: SpecFileEntry[];
@@ -81,9 +80,7 @@ export function SpecFileList({
   onRegenerateDesign: () => void;
   /** Disabled while an agent turn runs — a re-generate would be dropped mid-turn. */
   regenerateDisabled?: boolean;
-  /** Agents are still shaping the spec — empty groups say so. */
-  deriving: boolean;
-  /** Derivation failed — empty groups say that instead. */
+  /** Derivation failed — empty groups say that instead of ghost entries. */
   failed: boolean;
 }) {
   const selKey = selection ? selectionKey(selection) : null;
@@ -107,11 +104,49 @@ export function SpecFileList({
     });
   };
 
-  const emptyNote = failed
-    ? "Derivation failed"
-    : deriving
-      ? "Being derived…"
-      : "No files yet";
+  // Empty groups render the journey as GHOST entries (#485): each upcoming
+  // artifact by name, with a when-label — the nav doubles as the stepper, so
+  // a fresh project is legible before anything is generated. Ghosts graduate
+  // as real files land (a present group simply lists them), and the labels
+  // point forward: once requirements exist, the architecture ghost re-labels
+  // to the review step that actually gates it. A failed derivation says so
+  // instead — an error state must not dress up as a plan.
+  const failedNote = (
+    <Typography
+      variant="body2"
+      color="text.secondary"
+      sx={{ px: 2, py: 0.5, fontStyle: "italic" }}
+    >
+      Derivation failed
+    </Typography>
+  );
+
+  const ghost = (name: string, when: string) => (
+    <Box
+      key={name}
+      data-testid="ghost-file"
+      sx={{
+        mx: 2,
+        my: 0.5,
+        px: 1.25,
+        py: 0.5,
+        border: "1px dashed",
+        borderColor: "divider",
+        borderRadius: 1,
+      }}
+    >
+      <Typography
+        variant="body2"
+        color="text.secondary"
+        sx={{ fontFamily: "monospace", fontSize: "0.8125rem" }}
+      >
+        {name}
+      </Typography>
+      <Typography variant="caption" color="text.disabled">
+        {when}
+      </Typography>
+    </Box>
+  );
 
   // `indent` bumps a row one level deeper than the top-level tree (matching
   // the old console's depth-based pl: files inside an expanded component sit
@@ -136,6 +171,7 @@ export function SpecFileList({
   const flatGroup = (
     title: string,
     groupFiles: SpecFileEntry[],
+    emptyState: React.ReactNode,
     addBtn?: boolean,
   ) => (
     <Box sx={{ mb: 1 }}>
@@ -170,20 +206,19 @@ export function SpecFileList({
           )}
         </List>
       ) : (
-        <Typography
-          variant="body2"
-          color="text.secondary"
-          sx={{ px: 2, py: 0.5, fontStyle: "italic" }}
-        >
-          {emptyNote}
-        </Typography>
+        emptyState
       )}
     </Box>
   );
 
   return (
     <Box component="nav" aria-label="Spec files" sx={{ py: 1 }}>
-      {flatGroup("Requirements", requirements, true)}
+      {flatGroup(
+        "Requirements",
+        requirements,
+        failed ? failedNote : ghost("prd.md", "written after your answers"),
+        true,
+      )}
 
       {/* Designs — grouped by component, with synthetic diagram entries. */}
       <Box sx={{ mb: 1 }}>
@@ -280,18 +315,27 @@ export function SpecFileList({
               );
             })}
           </List>
+        ) : failed ? (
+          failedNote
         ) : (
-          <Typography
-            variant="body2"
-            color="text.secondary"
-            sx={{ px: 2, py: 0.5, fontStyle: "italic" }}
-          >
-            {emptyNote}
-          </Typography>
+          <>
+            {ghost(
+              "architecture",
+              requirements.length > 0
+                ? "next — after you review the PRD"
+                : "derived from the PRD",
+            )}
+            {ghost("design.md · security.md", "derived from the PRD")}
+            {ghost("components/…", "one per service & app")}
+          </>
         )}
       </Box>
 
-      {flatGroup("Validation", validation)}
+      {flatGroup(
+        "Validation",
+        validation,
+        failed ? failedNote : ghost("criteria", "minted after design"),
+      )}
     </Box>
   );
 }

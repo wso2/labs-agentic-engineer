@@ -67,6 +67,7 @@ import { useDesignCellChangeCount } from "../collab/useDesignCellChange";
 import { AddArtifactDialog } from "./AddArtifactDialog";
 import { BuildDependencyDrawer } from "./BuildDependencyDrawer";
 import { SpecFileList } from "./SpecFileList";
+import { PrdSkeleton } from "./PrdSkeleton";
 import { CellDiagramPanel } from "./CellDiagramPanel";
 import { WireframePanel } from "./WireframePanel";
 import { OpenApiView } from "@aep/ui-openapi-view";
@@ -912,7 +913,6 @@ export function SpecView({ projectName }: { projectName: string }) {
                 onAddArtifact={() => setAddArtifactOpen(true)}
                 onRegenerateDesign={generateDesign}
                 regenerateDisabled={agentBusy}
-                deriving={deriving}
                 failed={failed}
               />
             </Box>
@@ -1078,6 +1078,11 @@ export function SpecView({ projectName }: { projectName: string }) {
                     />
                   </Box>
                 )
+              ) : files.length === 0 ? (
+                // The fresh-project blank state (#485): the PRD's skeleton
+                // outline, not a void — the BE-started /start turn is (or is
+                // about to be) writing exactly this document.
+                <PrdSkeleton projectName={projectName} />
               ) : (
                 <Typography variant="body2" color="text.secondary">
                   {deriving
