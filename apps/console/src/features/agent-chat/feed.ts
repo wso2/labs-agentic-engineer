@@ -65,6 +65,17 @@ export interface BuildFeedOptions {
   activeTurnId?: string | undefined;
 }
 
+/**
+ * The instruction is the first-run `/start` command. Word-boundary, not
+ * startsWith: "/start a rota planner" is a start turn, "/startle" is not. The
+ * rehydrate keeps the verbatim command (#463), so this survives a fresh
+ * browser. Shared with the feed's renderer, which speaks the turn's opening
+ * stage line before any output exists to hang a turn block off.
+ */
+export function isStartInstruction(content: string | undefined): boolean {
+  return /^\/start\b/.test(content?.trim() ?? "");
+}
+
 function attributionFor(
   initiator: UserMessage | undefined,
   currentUserId: string,
@@ -142,10 +153,7 @@ export function buildFeed(
         attribution: attributionFor(initiator, currentUserId),
         items: [],
         status: "committed",
-        // Word-boundary, not startsWith: "/start a rota planner" is a start
-        // turn, "/startle" would not be. Rehydrate keeps the verbatim command
-        // (#463), so the flag survives a fresh browser.
-        startTurn: /^\/start\b/.test(initiator?.content.trim() ?? ""),
+        startTurn: isStartInstruction(initiator?.content),
       };
       blocks.push(block);
       open = { block, raw: [], initiator };

@@ -223,38 +223,9 @@ export function upsertQuestionMessage(
   key: string,
   msg: WithoutId<Extract<ChatMessage, { role: "question" }>>,
 ): void {
-  noteLiveQuestion(key, msg.toolCallId);
   upsertByToolCallId(key, "question", msg, (existing) =>
     existing.answers ? { answers: existing.answers } : {},
   );
-}
-
-// --- Live question arrivals (#485 live-testing round 2) --------------------
-//
-// "This question card streamed into the log while this tab was attached" —
-// true by construction: `upsertQuestionMessage` above is called ONLY from
-// runTurn's live fold, while every other way a question card enters the log (a
-// thread rehydrate, the spec view's bootstrap, a persisted log) goes through
-// `replaceMessages`. The chat panel's auto-navigation keys off this so that
-// MOUNTING the panel — all the header's "Toggle agent chat" does, since the
-// closed rail unmounts it — over a thread that already carries a pending
-// question can never change the route.
-//
-// In-memory and per tab, like the seed and open-request slots below: it
-// describes what this session witnessed, not what the thread contains.
-
-const liveQuestions = new Map<string, Set<string>>();
-
-function noteLiveQuestion(key: string, toolCallId: string): void {
-  if (!toolCallId) return;
-  const seen = liveQuestions.get(key) ?? new Set<string>();
-  seen.add(toolCallId);
-  liveQuestions.set(key, seen);
-}
-
-/** True once `toolCallId` has arrived on the live stream in this tab. */
-export function isLiveQuestion(key: string, toolCallId: string): boolean {
-  return liveQuestions.get(key)?.has(toolCallId) ?? false;
 }
 
 /** Streamed text accumulates into the turn's last assistant message. */
@@ -299,10 +270,8 @@ export function dropTurnOutput(key: string, turnId: string): void {
 
 export function replaceMessages(key: string, messages: ChatMessage[]): void {
   // Rows that arrive with an id KEEP it. The D6 rehydrate replaces the whole
-  // log repeatedly (mount, foreign turn, refocus); minting fresh ids each
-  // time made every replace a full React remount, a full localStorage
-  // rewrite, and — worst — re-armed the panel's one-per-question
-  // auto-navigation, which keys off ids it has already seen.
+  // log repeatedly (mount, foreign turn, refocus); minting fresh ids each time
+  // made every replace a full React remount and a full localStorage rewrite.
   // projectableHistory supplies position-stable ids for exactly this reason;
   // minting here is the fallback for callers that don't.
   persist(

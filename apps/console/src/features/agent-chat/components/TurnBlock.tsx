@@ -31,6 +31,18 @@ import { WorkingIndicator } from "./WorkingIndicator";
 
 type TurnFeedBlock = Extract<FeedBlock, { kind: "turn" }>;
 
+/**
+ * The first-run turn's opening line (#485 live-testing round 3). The stream
+ * gives no equivalent — the model goes straight to reading files — so the
+ * console speaks the stage, and it is the turn's FIRST line so a user opening
+ * the chat at any moment reads a conversation (their `/start`, the agent
+ * answering) rather than a bare command followed by machinery. Exported
+ * because the feed's working tail says it too, in the window before the turn
+ * has produced anything to hang a turn block off.
+ */
+export const START_READING_LINE =
+  "Looking at your idea to generate the product requirements document…";
+
 /** The activity rail: a vertical line the tool steps hang off. */
 function ActivityRail({ children }: { children: ReactNode }) {
   return (
@@ -153,6 +165,11 @@ function TurnBody({
     rail = [];
   };
 
+  // The first-run turn OPENS with the agent saying what it is doing.
+  if (startTurn) {
+    out.push(<MarkdownView key="start-reading">{START_READING_LINE}</MarkdownView>);
+  }
+
   items.forEach((item, idx) => {
     if (item.kind === "tool-group") {
       rail.push(
@@ -198,18 +215,23 @@ function TurnBody({
       // one interaction, visible to the whole room. The chat only points at it
       // so the thread stays readable.
       //
-      // The first-run narrative beat (#485 live-testing round): working
-      // narration, then a plain agent line announcing the handoff, then the
-      // banner. Rendered console-side because the model calls ask_questions
-      // without speaking a transition; once per turn, /start turns only —
-      // other flows' questions are not "before drafting the PRD".
+      // The first-run narrative beat (#485 live-testing round): the reading
+      // line above, working narration, then this plain agent line announcing
+      // the handoff, then the banner. Rendered console-side because the model
+      // calls ask_questions without speaking a transition; once per turn,
+      // /start turns only — other flows' questions are not "before generating
+      // the PRD".
+      //
+      // A single question on a /start turn is the brief-gathering one the
+      // start skill opens with when no idea was captured ("What are you
+      // building?"), so the line stays neutral about what came before it.
       if (startTurn && !questionIntroPushed) {
         questionIntroPushed = true;
         out.push(
           <MarkdownView key={`${msg.id}-intro`}>
             {msg.questions.length === 1
-              ? "I have a question to clarify before drafting the PRD."
-              : "I have a few questions to clarify before drafting the PRD."}
+              ? "One question before I can generate the PRD."
+              : "I have a few more questions before generating the PRD."}
           </MarkdownView>,
         );
       }

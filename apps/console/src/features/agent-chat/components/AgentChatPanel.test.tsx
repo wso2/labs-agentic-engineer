@@ -61,8 +61,9 @@ vi.mock("../useAgentChat", () => ({
   }),
 }));
 
-// The panel auto-navigates to the spec view when a question card arrives —
-// with messages staged in tests that would crash outside a RouterProvider.
+// The panel's banner and header buttons navigate on CLICK; nothing else in it
+// may. Stubbed because the bare render has no RouterProvider — and because the
+// "never navigates" describe asserts on this mock.
 const mockPanelNavigate = vi.fn();
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => mockPanelNavigate,
@@ -437,13 +438,23 @@ describe("AgentChatPanel — questions in the feed are a banner, not a card", ()
     expect(screen.queryByText("Members only")).not.toBeInTheDocument();
   });
 
-  it("shows the /start transition line between narration and banner", () => {
+  // Round 3: whenever the user opens the chat, the first run must read as an
+  // exchange — their command, the agent saying what it is doing, its work, and
+  // the handoff to the questions — not a bare `/start` and a banner.
+  it("reads as one conversation, in order", () => {
     renderPanel();
 
-    expect(screen.getByText("Reading your idea…")).toBeInTheDocument();
-    expect(
-      screen.getByText("I have a few questions to clarify before drafting the PRD."),
-    ).toBeInTheDocument();
+    expect(screen.getByTestId("user-message")).toHaveTextContent("/start");
+    const turn = screen.getByTestId("turn-block").textContent ?? "";
+    const order = [
+      "Looking at your idea to generate the product requirements document…",
+      "Reading your idea…", // the turn's own narration
+      "I have a few more questions before generating the PRD.",
+      "The agent has 2 questions", // the banner
+    ].map((line) => turn.indexOf(line));
+
+    expect(order).not.toContain(-1);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
   });
 
   it("clicking the banner navigates to the project's spec view", () => {
@@ -461,19 +472,16 @@ describe("AgentChatPanel — questions in the feed are a banner, not a card", ()
   });
 });
 
-// Live-testing round 2: opening the chat rail MOUNTS this panel, so anything
-// the panel does on mount is what the header's "Toggle agent chat" does. It
-// used to navigate to the spec view for any question the thread still had
-// pending — clicking the toggle on the project overview silently changed
-// route. Only a question that ARRIVES on the live stream may move the user.
-describe("AgentChatPanel — the spec-view jump follows question ARRIVAL, not mount", () => {
+// Live-testing round 3: the app NEVER moves the user by itself. A question
+// arriving is an event in the conversation, not a command to change route —
+// the spec view is reached only by clicking the overview's Spec card or this
+// thread's questions banner. The panel used to jump there on arrival, which
+// yanked the user out of whatever they were reading (rounds 1 and 2 narrowed
+// the trigger; this removes it).
+describe("AgentChatPanel — no effect ever navigates", () => {
   const QUESTIONS: AskQuestionInput[] = [
     { question: "Who signs in?", options: [{ label: "Anyone" }] },
   ];
-  const SPEC_ROUTE = {
-    to: "/projects/$projectName/spec",
-    params: { projectName: PROJECT },
-  };
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -483,8 +491,6 @@ describe("AgentChatPanel — the spec-view jump follows question ARRIVAL, not mo
   });
 
   it("navigates nowhere when the panel opens over an already-pending question", () => {
-    // A question the thread carried before this panel existed — a rehydrate
-    // or a persisted log, never a live arrival.
     mockMessages = [
       {
         id: "q-mounted",
@@ -499,6 +505,30 @@ describe("AgentChatPanel — the spec-view jump follows question ARRIVAL, not mo
 
     expect(mockPanelNavigate).not.toHaveBeenCalled();
     // The banner is still there — the way to the form is offered, not forced.
+    expect(screen.getByTestId("questions-pointer")).toBeInTheDocument();
+  });
+
+  // The regression this round exists for: the user is reading the overview
+  // with the chat rail open when the interview's questions land. The feed
+  // gains its banner; the route does not move.
+  it("navigates nowhere when questions ARRIVE on the live stream", () => {
+    const { rerender } = renderPanel();
+    expect(mockPanelNavigate).not.toHaveBeenCalled();
+
+    // The fold's write — the one path that means "this streamed in now".
+    act(() =>
+      upsertQuestionMessage(KEY, {
+        role: "question",
+        turnId: "t1",
+        toolCallId: "tc-arrived",
+        questions: QUESTIONS,
+        streaming: false,
+      }),
+    );
+    mockMessages = getMessages(KEY);
+    rerender(withProviders(<AgentChatPanel {...panelProps()} />));
+
+    expect(mockPanelNavigate).not.toHaveBeenCalled();
     expect(screen.getByTestId("questions-pointer")).toBeInTheDocument();
   });
 
@@ -518,45 +548,6 @@ describe("AgentChatPanel — the spec-view jump follows question ARRIVAL, not mo
     renderPanel(); // and opens again
 
     expect(mockPanelNavigate).not.toHaveBeenCalled();
-  });
-
-  it("navigates when a question arrives on the live stream while the panel is open", () => {
-    const { rerender } = renderPanel();
-    expect(mockPanelNavigate).not.toHaveBeenCalled();
-
-    // The fold's write — the one path that means "this streamed in now".
-    act(() =>
-      upsertQuestionMessage(KEY, {
-        role: "question",
-        turnId: "t1",
-        toolCallId: "tc-arrived",
-        questions: QUESTIONS,
-        streaming: false,
-      }),
-    );
-    mockMessages = getMessages(KEY);
-    rerender(withProviders(<AgentChatPanel {...panelProps()} />));
-
-    expect(mockPanelNavigate).toHaveBeenCalledWith(SPEC_ROUTE);
-    expect(mockPanelNavigate).toHaveBeenCalledTimes(1);
-  });
-
-  it("moves the user once per question, not on every re-render", () => {
-    const { rerender } = renderPanel();
-    act(() =>
-      upsertQuestionMessage(KEY, {
-        role: "question",
-        turnId: "t1",
-        toolCallId: "tc-arrived-once",
-        questions: QUESTIONS,
-        streaming: false,
-      }),
-    );
-    mockMessages = getMessages(KEY);
-    rerender(withProviders(<AgentChatPanel {...panelProps()} />));
-    rerender(withProviders(<AgentChatPanel {...panelProps()} />));
-
-    expect(mockPanelNavigate).toHaveBeenCalledTimes(1);
   });
 });
 

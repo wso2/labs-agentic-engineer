@@ -29,12 +29,17 @@
 // the panel's mount effects, so a stubbed panel would prove nothing.
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { OxygenTheme, OxygenUIThemeProvider } from "@wso2/oxygen-ui";
 import type { ReactNode } from "react";
 import { AppLayout } from "./AppLayout";
-import { chatKeyFor, replaceMessages } from "../features/agent-chat/chatStore";
+import {
+  chatKeyFor,
+  getMessages,
+  replaceMessages,
+  upsertQuestionMessage,
+} from "../features/agent-chat/chatStore";
 
 const ORG = "acme";
 const PROJECT = "proj1";
@@ -89,7 +94,12 @@ vi.mock("../features/spec/api/queries", () => ({
   useSpecFiles: () => ({ data: [] }),
 }));
 vi.mock("../features/agent-chat/useSpecInterview", () => ({
-  useSpecInterview: () => ({ running: false, questionsWaiting: 1, drafting: false }),
+  useSpecInterview: () => ({
+    running: false,
+    questionsWaiting: 1,
+    drafting: false,
+    started: true,
+  }),
 }));
 vi.mock("../features/agent-chat/useTurnEndDependencyRefresh", () => ({
   useTurnEndDependencyRefresh: vi.fn(),
@@ -148,6 +158,51 @@ describe("AppLayout — the agent-chat toggle", () => {
     fireEvent.click(screen.getByLabelText("Toggle agent chat"));
     fireEvent.click(screen.getByLabelText("Toggle agent chat"));
 
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  // Round 3, the rail's visibility rule: the overview never opens it by
+  // itself. The spec view does (SpecView.test.tsx pins that), because the
+  // interview's narration belongs beside the document being written; the
+  // overview is a page the user chose to read.
+  it("never opens the rail by itself on the overview", () => {
+    renderLayout();
+
+    expect(screen.queryByLabelText("Close agent chat")).not.toBeInTheDocument();
+  });
+});
+
+// Round 3: NOTHING moves the user. The user is reading the overview with the
+// chat open when the interview's questions land — the feed gains its banner,
+// the route stays put. Rendered through the real layout + panel because the
+// defect lived in exactly that seam.
+describe("AppLayout — a question arriving on the overview", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    replaceMessages(KEY, []);
+    mockMessages = [];
+  });
+
+  it("navigates nowhere when the question streams in with the rail open", () => {
+    renderLayout();
+    fireEvent.click(screen.getByLabelText("Toggle agent chat"));
+    expect(mockNavigate).not.toHaveBeenCalled();
+
+    // The live fold's write — "this streamed in now".
+    act(() =>
+      upsertQuestionMessage(KEY, {
+        role: "question",
+        turnId: "t1",
+        toolCallId: "tc-arrived-on-overview",
+        questions: [{ question: "Who signs in?", options: [{ label: "Anyone" }] }],
+        streaming: false,
+      }),
+    );
+    mockMessages = getMessages(KEY);
+    fireEvent.click(screen.getByLabelText("Toggle agent chat")); // close…
+    fireEvent.click(screen.getByLabelText("Toggle agent chat")); // …and re-open
+
+    expect(screen.getByTestId("questions-pointer")).toBeInTheDocument();
     expect(mockNavigate).not.toHaveBeenCalled();
   });
 });

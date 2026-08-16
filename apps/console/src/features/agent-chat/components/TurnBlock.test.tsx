@@ -148,6 +148,28 @@ describe("TurnBlock", () => {
   });
 });
 
+// The first run reads as one conversation (#485 live-testing round 3): the
+// user's `/start`, then the agent saying what it is doing — before any tool
+// step, so a chat opened at any moment shows an exchange, not machinery.
+describe("TurnBlock — the start turn opens by speaking", () => {
+  const READING = "Looking at your idea to generate the product requirements document…";
+
+  it("opens a start turn with the reading line, ahead of its activity", () => {
+    renderTurn(turn({ startTurn: true, status: "running", items: [toolGroup("specs/requirements/prd.md")] }));
+    expect(screen.getByText(READING)).toBeInTheDocument();
+  });
+
+  it("opens an EMPTY start turn with it too — the beat before anything streams", () => {
+    renderTurn(turn({ startTurn: true, status: "running", items: [] }));
+    expect(screen.getByText(READING)).toBeInTheDocument();
+  });
+
+  it("says nothing of the kind on an ordinary turn", () => {
+    renderTurn(turn({ items: [narration("sure")] }));
+    expect(screen.queryByText(READING)).not.toBeInTheDocument();
+  });
+});
+
 // Live-testing round (#485): question CARDS never render in chat — the feed
 // shows only the banner that hands off to the spec view's shared form.
 describe("TurnBlock — questions stay out of the chat surface", () => {
@@ -173,14 +195,14 @@ describe("TurnBlock — questions stay out of the chat surface", () => {
     expect(onOpenSpec).toHaveBeenCalledOnce();
   });
 
-  // The first-run narrative beat: narration → a plain agent transition line →
-  // the banner. Console-rendered, /start turns only.
+  // The first-run narrative beat: the reading line, narration, a plain agent
+  // transition line, then the banner. Console-rendered, /start turns only.
   it("precedes a start turn's banner with the transition line", () => {
     renderTurn(
-      turn({ startTurn: true, items: [narration("Reading your idea…"), questionItem(QUESTIONS)] }),
+      turn({ startTurn: true, items: [narration("Reading the idea."), questionItem(QUESTIONS)] }),
     );
     expect(
-      screen.getByText("I have a few questions to clarify before drafting the PRD."),
+      screen.getByText("I have a few more questions before generating the PRD."),
     ).toBeInTheDocument();
     expect(screen.getByTestId("questions-pointer")).toBeInTheDocument();
   });
@@ -188,14 +210,14 @@ describe("TurnBlock — questions stay out of the chat surface", () => {
   it("uses the singular transition for a single question", () => {
     renderTurn(turn({ startTurn: true, items: [questionItem([QUESTIONS[0]!])] }));
     expect(
-      screen.getByText("I have a question to clarify before drafting the PRD."),
+      screen.getByText("One question before I can generate the PRD."),
     ).toBeInTheDocument();
   });
 
   it("adds no transition line outside a start turn", () => {
     renderTurn(turn({ items: [questionItem(QUESTIONS)] }));
     expect(
-      screen.queryByText(/to clarify before drafting the PRD/),
+      screen.queryByText(/before generating the PRD/),
     ).not.toBeInTheDocument();
   });
 });

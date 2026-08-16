@@ -51,7 +51,6 @@ import { useAgentChat } from "../useAgentChat";
 import {
   chatKeyFor,
   consumePendingSeed,
-  isLiveQuestion,
   peekPendingSeed,
   subscribeSeed,
 } from "../chatStore";
@@ -92,11 +91,6 @@ const SUGGESTIONS = [
 
 const clampWidth = (n: number): number =>
   Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.round(n)));
-
-// Question ids we've already auto-navigated to the spec form for. Module-level,
-// NOT a ref: this panel unmounts whenever the user collapses it, so a ref would
-// reset and re-navigate on every reopen while a question is still pending.
-const autoOpenedQuestions = new Set<string>();
 
 function initialOf(name: string): string {
   return name.trim().charAt(0).toUpperCase() || "?";
@@ -230,35 +224,12 @@ export function AgentChatPanel({
     });
   }, [navigate, projectName]);
 
-  // Questions are answered on the spec view (the form takes over the body), so
-  // take the user there the moment one ARRIVES — otherwise the agent is blocked
-  // on an answer they can't see from wherever they are. Fires exactly ONCE per
-  // question: after that the user is free to navigate away (and to reopen this
-  // panel) without being yanked back. Keyed by toolCallId, NOT message id —
-  // the D6 rehydrate REPLACES the log and reconstructed rows carry fresh ids,
-  // so an id-keyed dedupe would re-yank on every refocus while a question
-  // stays pending; the toolCallId survives every reconstruction.
-  const pendingQuestionKey = useMemo(() => {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const m = messages[i]!;
-      if (m.role === "question" && m.questions?.length && answerableIds.has(m.id)) {
-        return m.toolCallId;
-      }
-    }
-    return null;
-  }, [messages, answerableIds]);
-  useEffect(() => {
-    if (!pendingQuestionKey || autoOpenedQuestions.has(pendingQuestionKey)) return;
-    // ARRIVED, not "is pending": only a question that streamed in while this
-    // panel was attached may move the user. A question the thread already
-    // carried when the panel mounted must not — the panel mounts when the chat
-    // rail OPENS (a closed rail unmounts it), so navigating here turned the
-    // header's "Toggle agent chat" into a jump to the spec view from anywhere
-    // in the project (live-testing round 2).
-    if (!isLiveQuestion(chatKey, pendingQuestionKey)) return;
-    autoOpenedQuestions.add(pendingQuestionKey);
-    openSpec();
-  }, [chatKey, pendingQuestionKey, openSpec]);
+  // NOTHING here navigates on its own. A question arriving is an event in the
+  // conversation, not a command to move the user: the spec view is reached by
+  // clicking the overview's Spec card or this thread's questions banner, both
+  // of which stay one click away (#485 live-testing round 3). The panel used to
+  // jump to the spec view the moment a question streamed in, which yanked the
+  // user out of whatever they were reading.
 
   // --- Drag-to-resize (persisted) --------------------------------------
   const [width, setWidth] = useState<number>(() => {

@@ -40,7 +40,6 @@ import {
   getChatOpenRequests,
   getMessages,
   hasDeterministicFlush,
-  isLiveQuestion,
   isLocalTurnActive,
   notifyTurnEnd,
   peekPendingSeed,
@@ -215,6 +214,70 @@ describe("chatStore", () => {
 // siblings under AppLayout) — consumed exactly once, mirroring the ?generate=
 // one-shot-fire shape but sourced from the store since the seeded message is
 // per-click dynamic content, not a fixed enum signal.
+describe("question cards", () => {
+  const QUESTIONS = [{ question: "Who signs in?", options: [{ label: "Anyone" }] }];
+
+  it("upserts by toolCallId — a replay re-fold updates the card, never duplicates it", () => {
+    const key = freshKey();
+    upsertQuestionMessage(key, {
+      role: "question",
+      turnId: "t1",
+      toolCallId: "tc-1",
+      questions: QUESTIONS,
+      streaming: true,
+    });
+    upsertQuestionMessage(key, {
+      role: "question",
+      turnId: "t1",
+      toolCallId: "tc-1",
+      questions: QUESTIONS,
+      streaming: false,
+    });
+
+    const messages = getMessages(key);
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({ toolCallId: "tc-1", streaming: false });
+  });
+
+  it("keeps answers already recorded on the card", () => {
+    const key = freshKey();
+    replaceMessages(key, [
+      {
+        id: "q1",
+        role: "question",
+        turnId: "t1",
+        toolCallId: "tc-2",
+        questions: QUESTIONS,
+        answers: [{ selected: ["Anyone"] }],
+      },
+    ]);
+
+    upsertQuestionMessage(key, {
+      role: "question",
+      turnId: "t1",
+      toolCallId: "tc-2",
+      questions: QUESTIONS,
+      streaming: false,
+    });
+
+    expect(getMessages(key)[0]).toMatchObject({ answers: [{ selected: ["Anyone"] }] });
+  });
+
+  // The D6 rehydrate REPLACES the log on mount, foreign turn and refocus;
+  // position-stable ids are what keep that from remounting every React row.
+  it("replaceMessages keeps supplied ids and mints only for rows without one", () => {
+    const key = freshKey();
+    replaceMessages(key, [
+      { id: "h0", role: "user", content: "/start", status: "completed" },
+      { role: "assistant", turnId: "history", content: "on it" } as never,
+    ]);
+
+    const [first, second] = getMessages(key);
+    expect(first!.id).toBe("h0");
+    expect(second!.id).toBeTruthy();
+  });
+});
+
 describe("pendingSeed", () => {
   it("is absent until set, then consumed exactly once", () => {
     const key = freshKey();
@@ -356,50 +419,6 @@ describe("chat-open requests", () => {
     const key2 = freshKey();
     requestChatOpen(key1);
     expect(getChatOpenRequests(key2)).toBe(0);
-  });
-});
-
-// Live question arrivals (#485 live-testing round 2): "this card streamed in
-// while this tab was attached", the signal that keeps the chat panel's
-// auto-navigation off the mount path (opening the rail must not change route).
-describe("live question arrivals", () => {
-  const QUESTIONS = [{ question: "Who signs in?", options: [{ label: "Anyone" }] }];
-
-  it("marks a card folded off the live stream, and only that card", () => {
-    const key = freshKey();
-    expect(isLiveQuestion(key, "tc-1")).toBe(false);
-
-    upsertQuestionMessage(key, {
-      role: "question",
-      turnId: "t1",
-      toolCallId: "tc-1",
-      questions: QUESTIONS,
-    });
-
-    expect(isLiveQuestion(key, "tc-1")).toBe(true);
-    expect(isLiveQuestion(key, "tc-2")).toBe(false);
-  });
-
-  it("leaves a REHYDRATED card unmarked — replaceMessages is not an arrival", () => {
-    const key = freshKey();
-    replaceMessages(key, [
-      { id: "q1", role: "question", turnId: "t1", toolCallId: "tc-9", questions: QUESTIONS },
-    ]);
-
-    expect(getMessages(key)).toHaveLength(1);
-    expect(isLiveQuestion(key, "tc-9")).toBe(false);
-  });
-
-  it("keeps distinct keys apart", () => {
-    const key1 = freshKey();
-    const key2 = freshKey();
-    upsertQuestionMessage(key1, {
-      role: "question",
-      turnId: "t1",
-      toolCallId: "tc-3",
-      questions: QUESTIONS,
-    });
-    expect(isLiveQuestion(key2, "tc-3")).toBe(false);
   });
 });
 

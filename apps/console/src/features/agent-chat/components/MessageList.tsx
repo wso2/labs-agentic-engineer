@@ -18,9 +18,10 @@
 
 import { useMemo, useState } from "react";
 import { Avatar, Box, Link, Stack, Typography, alpha } from "@wso2/oxygen-ui";
-import type { FeedBlock } from "../feed";
+import { isStartInstruction, type FeedBlock } from "../feed";
 import { summarizeUserMessage } from "../userMessageSummary";
-import { TurnBlock } from "./TurnBlock";
+import { MarkdownView } from "../../../components/MarkdownView";
+import { START_READING_LINE, TurnBlock } from "./TurnBlock";
 import { WorkingIndicator } from "./WorkingIndicator";
 
 // The agent activity stream (task 3): a linear, author-attributed feed of user
@@ -166,6 +167,15 @@ export function MessageList({
    *  produced any content (and so has no running turn block of its own yet). */
   showWorkingTail: boolean;
 }) {
+  // A turn block only exists once the turn has produced something, so the
+  // first seconds of the first run are just the user's `/start` and this tail.
+  // Speak the same opening line here (#485 live-testing round 3) — when the
+  // turn block does appear it leads with the identical line, so the thread
+  // reads continuously rather than replacing one beat with another.
+  const tail = feed[feed.length - 1];
+  const startTail =
+    tail?.kind === "user" && isStartInstruction(tail.message.content);
+
     // No dividers between blocks: each block's author header ("You" / "✦
     // Agent") plus the spacing already separates turns; hard rules made the
     // feed read like a table rather than a chat.
@@ -184,7 +194,15 @@ export function MessageList({
           />
         ),
       )}
-      {showWorkingTail && <WorkingIndicator />}
+      {showWorkingTail &&
+        (startTail ? (
+          <Stack spacing={1} data-testid="start-turn-tail">
+            <MarkdownView>{START_READING_LINE}</MarkdownView>
+            <WorkingIndicator />
+          </Stack>
+        ) : (
+          <WorkingIndicator />
+        ))}
     </Stack>
   );
 }
