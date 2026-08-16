@@ -51,6 +51,9 @@ export type FeedBlock =
       attribution: Attribution;
       items: ChatItem[];
       status: TurnLifecycle;
+      /** The turn was initiated by `/start` — the first-run interview. Drives
+       *  the console-side transition line before its question banner. */
+      startTurn: boolean;
     };
 
 export interface BuildFeedOptions {
@@ -139,6 +142,10 @@ export function buildFeed(
         attribution: attributionFor(initiator, currentUserId),
         items: [],
         status: "committed",
+        // Word-boundary, not startsWith: "/start a rota planner" is a start
+        // turn, "/startle" would not be. Rehydrate keeps the verbatim command
+        // (#463), so the flag survives a fresh browser.
+        startTurn: /^\/start\b/.test(initiator?.content.trim() ?? ""),
       };
       blocks.push(block);
       open = { block, raw: [], initiator };

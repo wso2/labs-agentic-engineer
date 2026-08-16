@@ -259,6 +259,33 @@ describe("buildFeed — turn lifecycle status", () => {
   });
 });
 
+// The first-run transition line (#485 live-testing round) keys off the
+// initiating command, which rehydrate preserves verbatim (#463).
+describe("buildFeed — startTurn", () => {
+  it("flags a turn initiated by /start (bare or with an inline idea)", () => {
+    const blocks = buildFeed(
+      [user("u1", "/start a rota planner", { turnId: "t1" }), assistant("a1", "Reading…", "t1")],
+      { currentUserId: ME },
+    );
+    expect(turnAt(blocks, 1).startTurn).toBe(true);
+  });
+
+  it("does not flag other commands or plain chat", () => {
+    for (const content of ["/design", "/startle everyone", "please add a feature"]) {
+      const blocks = buildFeed(
+        [user("u1", content, { turnId: "t1" }), assistant("a1", "ok", "t1")],
+        { currentUserId: ME },
+      );
+      expect(turnAt(blocks, 1).startTurn).toBe(false);
+    }
+  });
+
+  it("does not flag a turn with no initiating user message", () => {
+    const blocks = buildFeed([assistant("a1", "hello", "t1")], { currentUserId: ME });
+    expect(turnAt(blocks, 0).startTurn).toBe(false);
+  });
+});
+
 describe("participantsOf", () => {
   it("lists distinct authors with the current user first, as You", () => {
     const people = participantsOf(

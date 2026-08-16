@@ -397,6 +397,66 @@ describe("AgentChatPanel — generation CTAs", () => {
   });
 });
 
+// Live-testing round (#485): the chat surface never renders a question CARD —
+// only the banner that hands off to the spec view, preceded (on the /start
+// turn) by the console-rendered transition line.
+describe("AgentChatPanel — questions in the feed are a banner, not a card", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    consumePendingSeed(KEY);
+    replaceMessages(KEY, []);
+    mockSpecFilesData = [
+      { path: "specs/requirements/prd.md", sha: "a", group: "requirements" },
+    ];
+    mockInterviewState = { running: false, questionsWaiting: 0 };
+    mockMessages = [
+      { id: "u1", role: "user", content: "/start", turnId: "t1", status: "completed" },
+      { id: "a1", role: "assistant", turnId: "t1", content: "Reading your idea…" },
+      {
+        id: "q1",
+        role: "question",
+        turnId: "t1",
+        toolCallId: `tc-banner-${Math.random()}`,
+        questions: [
+          { question: "Who signs in?", options: [{ label: "Anyone" }, { label: "Members only" }] },
+          { question: "Photo uploads?", options: [{ label: "Yes" }] },
+        ],
+      },
+    ];
+  });
+
+  it("renders the banner and suppresses the card's questions and options", () => {
+    renderPanel();
+
+    expect(screen.getByTestId("questions-pointer")).toBeInTheDocument();
+    expect(screen.getByText("The agent has 2 questions")).toBeInTheDocument();
+    expect(screen.queryByText("Who signs in?")).not.toBeInTheDocument();
+    expect(screen.queryByText("Anyone")).not.toBeInTheDocument();
+    expect(screen.queryByText("Members only")).not.toBeInTheDocument();
+  });
+
+  it("shows the /start transition line between narration and banner", () => {
+    renderPanel();
+
+    expect(screen.getByText("Reading your idea…")).toBeInTheDocument();
+    expect(
+      screen.getByText("I have a few questions to clarify before drafting the PRD."),
+    ).toBeInTheDocument();
+  });
+
+  it("clicking the banner navigates to the project's spec view", () => {
+    renderPanel();
+    mockPanelNavigate.mockClear(); // the pending question auto-navigates once on mount
+
+    fireEvent.click(screen.getByTestId("questions-pointer"));
+
+    expect(mockPanelNavigate).toHaveBeenCalledWith({
+      to: "/projects/$projectName/spec",
+      params: { projectName: PROJECT },
+    });
+  });
+});
+
 describe("AgentChatPanel — fresh-project empty state (#485)", () => {
   beforeEach(() => {
     vi.clearAllMocks();

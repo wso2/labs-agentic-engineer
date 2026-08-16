@@ -60,7 +60,21 @@ const turn = (over: Partial<Turn> = {}): Turn => ({
   attribution: { displayName: "You", isOwn: true },
   items: [],
   status: "committed",
+  startTurn: false,
   ...over,
+});
+
+const questionItem = (
+  questions: { question: string; options: { label: string }[] }[],
+): ChatItem => ({
+  kind: "message",
+  message: {
+    id: "q1",
+    role: "question",
+    turnId: "t1",
+    toolCallId: "tcq1",
+    questions,
+  },
 });
 
 function renderTurn(t: Turn, onOpenSpec = vi.fn()) {
@@ -131,5 +145,57 @@ describe("TurnBlock", () => {
   it("keeps the chat-error testid for an error message inside the turn", () => {
     renderTurn(turn({ status: "failed", items: [narration("oops"), errorItem("boom")] }));
     expect(screen.getByTestId("chat-error")).toHaveTextContent("boom");
+  });
+});
+
+// Live-testing round (#485): question CARDS never render in chat — the feed
+// shows only the banner that hands off to the spec view's shared form.
+describe("TurnBlock — questions stay out of the chat surface", () => {
+  const QUESTIONS = [
+    { question: "Who signs in?", options: [{ label: "Anyone" }, { label: "Members only" }] },
+    { question: "Photo uploads?", options: [{ label: "Yes" }] },
+  ];
+
+  it("renders the banner for a question batch — never the questions or options", () => {
+    renderTurn(turn({ items: [questionItem(QUESTIONS)] }));
+
+    expect(screen.getByTestId("questions-pointer")).toBeInTheDocument();
+    expect(screen.getByText("The agent has 2 questions")).toBeInTheDocument();
+    // The card content must not leak into the chat feed.
+    expect(screen.queryByText("Who signs in?")).not.toBeInTheDocument();
+    expect(screen.queryByText("Anyone")).not.toBeInTheDocument();
+    expect(screen.queryByText("Members only")).not.toBeInTheDocument();
+  });
+
+  it("the banner hands off to the spec view", () => {
+    const onOpenSpec = renderTurn(turn({ items: [questionItem(QUESTIONS)] }));
+    fireEvent.click(screen.getByTestId("questions-pointer"));
+    expect(onOpenSpec).toHaveBeenCalledOnce();
+  });
+
+  // The first-run narrative beat: narration → a plain agent transition line →
+  // the banner. Console-rendered, /start turns only.
+  it("precedes a start turn's banner with the transition line", () => {
+    renderTurn(
+      turn({ startTurn: true, items: [narration("Reading your idea…"), questionItem(QUESTIONS)] }),
+    );
+    expect(
+      screen.getByText("I have a few questions to clarify before drafting the PRD."),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("questions-pointer")).toBeInTheDocument();
+  });
+
+  it("uses the singular transition for a single question", () => {
+    renderTurn(turn({ startTurn: true, items: [questionItem([QUESTIONS[0]!])] }));
+    expect(
+      screen.getByText("I have a question to clarify before drafting the PRD."),
+    ).toBeInTheDocument();
+  });
+
+  it("adds no transition line outside a start turn", () => {
+    renderTurn(turn({ items: [questionItem(QUESTIONS)] }));
+    expect(
+      screen.queryByText(/to clarify before drafting the PRD/),
+    ).not.toBeInTheDocument();
   });
 });

@@ -136,14 +136,17 @@ function TurnBody({
   expandedGroups,
   onToggleGroup,
   onOpenSpec,
+  startTurn,
 }: {
   items: ChatItem[];
   expandedGroups: Set<string>;
   onToggleGroup: (id: string) => void;
   onOpenSpec: () => void;
+  startTurn: boolean;
 }) {
   const out: ReactNode[] = [];
   let rail: ReactNode[] = [];
+  let questionIntroPushed = false;
   const flushRail = (key: string) => {
     if (rail.length === 0) return;
     out.push(<ActivityRail key={key}>{rail}</ActivityRail>);
@@ -194,6 +197,22 @@ function TurnBody({
       // EVERY question is answered on the spec body's shared form — one place,
       // one interaction, visible to the whole room. The chat only points at it
       // so the thread stays readable.
+      //
+      // The first-run narrative beat (#485 live-testing round): working
+      // narration, then a plain agent line announcing the handoff, then the
+      // banner. Rendered console-side because the model calls ask_questions
+      // without speaking a transition; once per turn, /start turns only —
+      // other flows' questions are not "before drafting the PRD".
+      if (startTurn && !questionIntroPushed) {
+        questionIntroPushed = true;
+        out.push(
+          <MarkdownView key={`${msg.id}-intro`}>
+            {msg.questions.length === 1
+              ? "I have a question to clarify before drafting the PRD."
+              : "I have a few questions to clarify before drafting the PRD."}
+          </MarkdownView>,
+        );
+      }
       out.push(
         <QuestionsPointer key={msg.id} count={msg.questions.length} onOpen={onOpenSpec} />,
       );
@@ -236,6 +255,7 @@ export function TurnBlock({
         expandedGroups={expandedGroups}
         onToggleGroup={onToggleGroup}
         onOpenSpec={onOpenSpec}
+        startTurn={turn.startTurn}
       />
       <TurnFooter status={turn.status} onOpenSpec={onOpenSpec} />
     </Box>
