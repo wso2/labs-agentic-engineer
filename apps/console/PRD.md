@@ -114,7 +114,16 @@ that's a stalled feature — investigate, don't ignore.
   agent ("Agent is processing the idea" / "Agent has N questions", CTA
   "Continue spec" for the whole run). The room's co-edited answers moved out
   of the mirrored question value into their own per-question keys, so a
-  reload's pre-sync mirror can no longer lose them to the room's own copy —
+  reload's pre-sync mirror can no longer lose them to the room's own copy. A
+  fourth round removed the console's `/start` injection entirely: the Spec
+  card is navigation, since the backend already owns that first turn, and
+  what the card used to inject was a second turn the one-active-turn guard
+  rejected ("An agent turn is already running for this project"). The kickoff
+  now records its outcome, so the card reads pending / failed(reason) /
+  started off the project status and offers **Retry** — which asks the
+  backend to run its kickoff again, never a chat message. `?generate=design`
+  survives (design has no backend kickoff) and waits for the server's
+  active-turn read to answer before it sends —
   [#485](https://github.com/wso2/labs-agentic-engineer/issues/485),
   [#483](https://github.com/wso2/labs-agentic-engineer/issues/483)
 - Deployments page — one-story rail + environment panel: Development /

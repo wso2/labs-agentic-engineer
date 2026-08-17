@@ -99,8 +99,8 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
   project descriptor, and the spec kickoff are each logged-and-continued on failure: none of them may
   destroy a creation the user already committed to. The one exception stays the repo-NAME conflict, which
   can never succeed on retry and so compensates the project away and fails. A missing descriptor costs
-  the user one question from the `/start` skill; a failed kickoff costs one click on Generate spec —
-  nothing more.
+  the user one question from the `/start` skill; a failed kickoff is RECORDED on the claim and surfaced
+  on the spec stage (`status.spec.kickoff`), so the overview names it and offers Retry — nothing more.
 - **Slug guards run before any service touch.** projectName/componentName/buildName path params are validated
   as DNS-label slugs (`RequireSlug`) and 400 on malformed BEFORE the OC client / repo is reached.
 - **The wire quirks the contract-first cutover pinned stay pinned**: get-component-config returns a literal

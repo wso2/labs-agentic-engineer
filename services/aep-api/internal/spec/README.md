@@ -102,6 +102,15 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
   kickoff down (`HasAny`) — firing `/start` over an open exchange is the #432 skip-valve bug, server-side.
   Deliberately NOT a uniqueness rule on `/start` turns: a user re-running `/start` later is an amendment
   interview. The kickoff retries while the repo/skills repo provision, bounded by the caller's deadline.
+  The claim also RECORDS the attempt's outcome (status + reason), and `Kickoff` reads it back as
+  none/pending/failed/started for the project status: a bare claim reads the same whether the turn was
+  created or the attempt died, which left the console unable to tell an interview that is starting from
+  one that never will. A pending claim older than `KickoffWindow` (the kickoff's own deadline, which
+  `projects.specKickoffTimeout` reads from here) is REPORTED as failed — its process cannot still be
+  running — without rewriting the row. `RetryKickoff` (POST `…/spec/kickoff`) is the user-triggered
+  second attempt: one pass, no provisioning loop, idempotent by state. There is no automatic retry and
+  no self-healing sweep — an agents service that is down has nothing to retry into, and a turn that
+  starts an hour later starts with nobody watching.
 - **Persistence**: the `agent_turns` gorm lives in this domain (`repository_turn.go` over the
   `agent_turn.go` entity), single write-authority — as does `project_conversations`
   (`repository_conversation.go`): the project's CURRENT chat thread pointer (#430), server-minted,
