@@ -157,9 +157,12 @@ vi.mock("@aep/ui-design-view", () => ({
 // QueryClientProvider nor MSW — only the Build routing under test is real. -
 const mockMutateAsync = vi.fn();
 const mockPreflightRefetch = vi.fn();
+// Reassigned per test; the spec stage's kickoff (#485) drives the empty pane's
+// waiting line, so the first-run tests below need to move it.
+let mockStatus: Record<string, unknown> = { specStatus: "approved" };
 vi.mock("../../projects/api/queries", () => ({
   useProject: () => ({ data: { displayName: "Test Project" } }),
-  useProjectStatus: () => ({ data: { specStatus: "approved" } }),
+  useProjectStatus: () => ({ data: mockStatus }),
   useProjectTags: () => ({ data: { latest: "v1", specDirty: false } }),
   useBuildProject: () => ({ mutateAsync: mockMutateAsync }),
   useBuildPreflight: () => ({ refetch: mockPreflightRefetch }),
@@ -247,6 +250,7 @@ const BASE_FILES = [
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockStatus = { specStatus: "approved" };
   // clearAllMocks() clears recorded CALLS, not a queued mockResolvedValueOnce:
   // a one-shot value a test queued but never consumed survives into the NEXT
   // test and answers its first call. That turns one failure into two — the
@@ -770,5 +774,52 @@ describe("SpecView header metadata (soft version chips)", () => {
     expect(
       screen.queryByRole("button", { name: /solo|published/i }),
     ).not.toBeInTheDocument();
+  });
+});
+
+// The empty pane through a new project's first run (#485). It is reached only
+// when there are no files at all — the pane auto-selects files[0] — which is
+// exactly when "Select a file to view its content." was an instruction nobody
+// could follow.
+describe("SpecView — the first run's waiting pane", () => {
+  beforeEach(() => {
+    mockUseSpecFiles.mockReturnValue({
+      data: [],
+      isPending: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+  });
+
+  it("never asks the user to select a file that does not exist", () => {
+    mockStatus = {
+      specStatus: "",
+      spec: {
+        exists: false,
+        version: "",
+        dirty: false,
+        design: false,
+        kickoff: { status: "pending", reason: "" },
+      },
+    };
+    render(<SpecView projectName="proj1" />);
+
+    expect(screen.queryByText(/Select a file to view its content/)).not.toBeInTheDocument();
+    expect(screen.getByTestId("spec-waiting")).toHaveTextContent(
+      "The agent is looking at your idea…",
+    );
+  });
+
+  // The ladder always resolves: no kickoff, no agent in the room, no files —
+  // and the pane still says what is happening rather than going blank.
+  it("falls back to the terminal rung with nothing else known", () => {
+    mockStatus = { specStatus: "" };
+    render(<SpecView projectName="proj1" />);
+
+    expect(screen.getByTestId("spec-waiting")).toHaveTextContent(
+      "The agent is working on your spec. This view fills in as it writes.",
+    );
+    expect(screen.queryByText(/Select a file to view its content/)).not.toBeInTheDocument();
   });
 });

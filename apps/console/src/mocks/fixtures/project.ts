@@ -45,7 +45,18 @@ type SpecStage = components["schemas"]["SpecStage"];
 type BuildStage = components["schemas"]["BuildStage"];
 type DeployStage = components["schemas"]["DeployStage"];
 
-const noSpec: SpecStage = { exists: false, version: "", dirty: false, design: false };
+// The server-side spec kickoff (#485). `pending` on the no-spec fixture is the
+// real shape of a freshly-created project: the backend has claimed the `/start`
+// turn and the console renders the agent working. Every other fixture has a
+// spec, where the kickoff has nothing left to report.
+const noKickoff: SpecStage["kickoff"] = { status: "none", reason: "" };
+const noSpec: SpecStage = {
+  exists: false,
+  version: "",
+  dirty: false,
+  design: false,
+  kickoff: { status: "pending", reason: "" },
+};
 const idleBuild: BuildStage = { version: "", status: "idle" };
 const noDeploy: DeployStage = {
   version: "",
@@ -89,7 +100,7 @@ export const projectStatuses: Record<
     hasTasks: false,
     specStatus: "draft",
     designStatus: "in_progress",
-    spec: { exists: true, version: "", dirty: false, design: true },
+    spec: { exists: true, version: "", dirty: false, design: true, kickoff: noKickoff },
     build: idleBuild,
     deploy: noDeploy,
   },
@@ -103,7 +114,7 @@ export const projectStatuses: Record<
     hasTasks: false,
     specStatus: "failed",
     designStatus: "failed",
-    spec: { exists: true, version: "", dirty: false, design: false },
+    spec: { exists: true, version: "", dirty: false, design: false, kickoff: noKickoff },
     build: idleBuild,
     deploy: noDeploy,
   },
@@ -118,7 +129,7 @@ export const projectStatuses: Record<
     hasTasks: false,
     specStatus: "approved",
     designStatus: "approved",
-    spec: { exists: true, version: "v1", dirty: false, design: true },
+    spec: { exists: true, version: "v1", dirty: false, design: true, kickoff: noKickoff },
     build: {
       version: "v1",
       status: "running",
@@ -135,7 +146,7 @@ export const projectStatuses: Record<
     hasTasks: false,
     specStatus: "approved",
     designStatus: "approved",
-    spec: { exists: true, version: "v1", dirty: false, design: true },
+    spec: { exists: true, version: "v1", dirty: false, design: true, kickoff: noKickoff },
     build: {
       version: "v1",
       status: "succeeded",
@@ -157,7 +168,7 @@ export const projectStatuses: Record<
     hasTasks: false,
     specStatus: "approved",
     designStatus: "approved",
-    spec: { exists: true, version: "v1", dirty: true, design: true },
+    spec: { exists: true, version: "v1", dirty: true, design: true, kickoff: noKickoff },
     build: {
       version: "v1",
       status: "succeeded",
@@ -181,7 +192,7 @@ export const projectStatuses: Record<
     hasTasks: false,
     specStatus: "approved",
     designStatus: "approved",
-    spec: { exists: true, version: "v1", dirty: false, design: true },
+    spec: { exists: true, version: "v1", dirty: false, design: true, kickoff: noKickoff },
     build: {
       version: "v1",
       status: "succeeded",

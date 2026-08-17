@@ -241,7 +241,8 @@ export function SpecQuestionForm({
     updateRoomAnswer(doc, entry.toolCallId, (live) => applyNote(live.questions, live.answers, qi, freeText));
   };
 
-  const allAnswered = entry.questions.every((q, i) => isQuestionAnswered(q, answers[i]));
+  const unanswered = entry.questions.filter((q, i) => !isQuestionAnswered(q, answers[i])).length;
+  const allAnswered = unanswered === 0;
   // While the batch is still streaming (#270 latency), the form is readable and
   // selectable but cannot submit or skip: the turn is still running, and more
   // questions may yet arrive. The final mirror clears the gate.
@@ -280,7 +281,7 @@ export function SpecQuestionForm({
           <Stack direction="row" spacing={1} sx={{ alignItems: "center", mb: 0.5 }}>
             <Sparkles size={18} color="var(--oxygen-palette-primary-main, currentColor)" />
             <Typography variant="h5" sx={{ fontWeight: 700 }}>
-              Quick questions
+              A few clarifications to write your spec
             </Typography>
           </Stack>
           <Stack direction="row" spacing={0.75} sx={{ alignItems: "center", mb: 4 }}>
@@ -326,8 +327,20 @@ export function SpecQuestionForm({
           flexShrink: 0,
         }}
       >
+        {/* A disabled button must never be a mystery: say what is missing,
+            beside the control it blocks. */}
+        {!canSubmit && !streaming && (
+          <Typography variant="body2" color="text.secondary">
+            {unanswered === 1
+              ? "1 question still needs an answer"
+              : `${unanswered} questions still need an answer`}
+          </Typography>
+        )}
+        {/* Not "Skip questions": the agent does not skip them, it ANSWERS them
+            with its recommendations and tags each one `*assumed*` where it
+            lands. Naming the act is what makes the assumptions reviewable. */}
         <Button variant="text" color="inherit" disabled={streaming} onClick={skip}>
-          Skip questions
+          Finish — use recommendations
         </Button>
         <Button variant="contained" disabled={!canSubmit} onClick={submit}>
           Continue

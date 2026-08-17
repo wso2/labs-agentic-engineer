@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AppShell,
   Box,
@@ -59,6 +59,7 @@ import { OrgSwitcher, ProjectSwitcher } from "./HeaderSwitchers";
 import { AlertsNotificationPanel, NotificationButton } from "./NotificationBell";
 import { AgentChatPanel } from "../features/agent-chat/components/AgentChatPanel";
 import { useHasPendingSeed } from "../features/agent-chat/useHasPendingSeed";
+import { useSpecFirstRun } from "../features/projects/hooks/useSpecFirstRun";
 
 // Footer links (grilled 2026-07-12): the repo is the only real destination
 // today — /tree/HEAD/docs follows the default branch.
@@ -112,13 +113,17 @@ export function AppLayout() {
   // The spec workspace is the console's full-screen surface (#80).
   const isSpecRoute = Boolean(projectName) && activeItem === "spec";
 
-  // "Generate spec" CTA (#150): the Spec card navigates here with ?generate=1.
-  // Open the panel and hand the one-shot signal to AgentChatPanel, which sends
-  // the first requirements turn; then strip the param so a refresh/back doesn't
-  // re-fire it.
+  // The Generate-design CTA (#159) navigates here with `?generate=design`:
+  // open the panel, hand the one-shot signal to AgentChatPanel, and strip the
+  // param so a refresh or a back doesn't re-fire it.
+  //
+  // There is no `?generate=requirements`. The spec interview is started by the
+  // BACKEND at project creation (#485), so the console has nothing to inject —
+  // and when it did, the two starts raced into "an agent turn is already
+  // running for this project".
   const navigate = useNavigate();
   const search = useSearch({ strict: false }) as {
-    generate?: "requirements" | "design";
+    generate?: "design";
   };
   const generate = search.generate;
   useEffect(() => {
@@ -144,6 +149,25 @@ export function AppLayout() {
   useEffect(() => {
     if (hasPendingSeed && projectName) setChatOpen(true);
   }, [hasPendingSeed, projectName]);
+
+  // The first run (#485): the rail opens ITSELF on the spec view while the
+  // agent is working on a brand-new project, because that view is otherwise
+  // dead air and the narration is the only thing explaining the wait. It does
+  // NOT open on the overview — the Spec card says the same thing there in one
+  // line, and a rail that springs open on arrival is a page that moved under
+  // the user.
+  //
+  // Once only, per project: a user who closes it has said what they want, and
+  // the next status poll must not reopen it. Nothing here NAVIGATES — the
+  // user reaches the spec view by clicking, never by an effect.
+  const firstRun = useSpecFirstRun(projectName, isSpecRoute);
+  const autoOpenedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!projectName || !isSpecRoute || !firstRun.open) return;
+    if (autoOpenedRef.current === projectName) return;
+    autoOpenedRef.current = projectName;
+    setChatOpen(true);
+  }, [projectName, isSpecRoute, firstRun.open]);
 
   return (
     <AppShell initialCollapsed={false} collapseOnSelectOnMobile>
@@ -347,13 +371,17 @@ export function AppLayout() {
           <Box sx={{ flexGrow: 1, minWidth: 0 }}>
             <Outlet />
           </Box>
-          {/* Horizontal Collapse gives the sidebar-style slide; unmountOnExit
-              keeps the closed panel out of the tree (no idle polling). */}
+          {/* Horizontal Collapse gives the sidebar-style slide. The panel
+              stays MOUNTED while closed (#485): it is the chat log's only live
+              writer — the attach, the rehydrate and the foreign-turn poll all
+              live in it — so unmounting it on close froze the thread. With the
+              rail shut the log went stale, the overview's Spec card could not
+              see the agent working, and the spec view never learned it had
+              asked anything. */}
           {projectName && (
             <Collapse
               in={chatOpen}
               orientation="horizontal"
-              unmountOnExit
               sx={{ height: "100%", flexShrink: 0 }}
             >
               <AgentChatPanel

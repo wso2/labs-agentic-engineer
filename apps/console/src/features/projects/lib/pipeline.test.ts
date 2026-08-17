@@ -42,7 +42,14 @@ function status(over: {
     hasTasks: false,
     specStatus: "",
     designStatus: "",
-    spec: { exists: true, version: "", dirty: false, design: false, ...over.spec },
+    spec: {
+      exists: true,
+      version: "",
+      dirty: false,
+      design: false,
+      kickoff: { status: "none", reason: "" },
+      ...over.spec,
+    },
     build: { version: "", status: "idle", ...over.build },
     deploy: {
       version: "",

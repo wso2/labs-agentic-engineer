@@ -76,6 +76,8 @@ import { ValidationView } from "@aep/ui-validation-view";
 import type { SpecSelection } from "../api/designTree";
 import { DESIGN_CELL_PATH, componentOf } from "../api/designTree";
 import { useSession } from "../../../auth/SessionContext";
+import { useSpecFirstRun } from "../../projects/hooks/useSpecFirstRun";
+import { specWaitingLine } from "../lib/waitingLine";
 
 type PreflightItem = components["schemas"]["PreflightItem"];
 type BuildInputItem = components["schemas"]["BuildInputItem"];
@@ -116,6 +118,10 @@ export function SpecView({ projectName }: { projectName: string }) {
     orgHandle ?? "default",
     projectName,
   );
+  // The first run (#485): the backend started this project's `/start` turn at
+  // create, and this view is where the user watches it. Read here so the empty
+  // pane can say what the agent is doing rather than ask for a click.
+  const firstRun = useSpecFirstRun(projectName);
   const [selection, setSelection] = useState<SpecSelection | null>(null);
   const [addArtifactOpen, setAddArtifactOpen] = useState(false);
   // Build (#162): commit-then-build. buildPhase drives the button label /
@@ -1079,11 +1085,21 @@ export function SpecView({ projectName }: { projectName: string }) {
                   </Box>
                 )
               ) : (
-                <Typography variant="body2" color="text.secondary">
-                  {deriving
-                    ? "The agents are shaping the spec — files appear here as they land."
-                    : "Select a file to view its content."}
-                </Typography>
+                // No file is selectable, because there are none: the pane
+                // auto-selects files[0], so this branch IS the empty spec.
+                // Every rung of the ladder is a statement about the agent —
+                // never an instruction the user cannot follow (#485).
+                <Stack
+                  data-testid="spec-waiting"
+                  direction="row"
+                  spacing={1.5}
+                  sx={{ alignItems: "center", justifyContent: "center", height: "100%" }}
+                >
+                  <CircularProgress size={18} aria-hidden />
+                  <Typography variant="body2" color="text.secondary">
+                    {specWaitingLine({ stage: firstRun.stage, writing: agentBusy })}
+                  </Typography>
+                </Stack>
               )}
             </Box>
           </Box>

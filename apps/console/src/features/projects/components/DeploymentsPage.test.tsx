@@ -90,7 +90,13 @@ function status(): ProjectStatus {
     hasTasks: true,
     specStatus: "approved",
     designStatus: "approved",
-    spec: { exists: true, version: "v1", dirty: false, design: true },
+    spec: {
+      exists: true,
+      version: "v1",
+      dirty: false,
+      design: true,
+      kickoff: { status: "none", reason: "" },
+    },
     build: { version: "v1", status: "succeeded" },
     deploy: mockDeploy,
   };

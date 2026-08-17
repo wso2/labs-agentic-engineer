@@ -24,6 +24,7 @@ import {
   CardActionArea,
   CardContent,
   Chip,
+  CircularProgress,
   Stack,
   Typography,
 } from "@wso2/oxygen-ui";
@@ -31,6 +32,7 @@ import {
   ChevronRight,
   FileText,
   ListChecks,
+  RefreshCw,
   Rocket,
   Sparkles,
 } from "@wso2/oxygen-ui-icons-react";
@@ -38,6 +40,9 @@ import { useNavigate } from "@tanstack/react-router";
 import type { components } from "../../../generated/aep-api";
 import { useSession } from "../../../auth/SessionContext";
 import { useAgentEngaged } from "../../agent-chat/useAgentEngaged";
+import { useInterviewState } from "../../agent-chat/interviewState";
+import { useRetrySpecKickoff } from "../api/queries";
+import { specFirstRunView, type SpecFirstRunView } from "../lib/specFirstRun";
 import {
   buildStageView,
   CHIP_COLOR,
@@ -114,36 +119,51 @@ function StageCard({
   );
 }
 
-// The spec stage as a call-to-action: when no spec exists yet (#150 behavior
-// preserved) Generate spec opens the Spec view and auto-sends the first
-// requirements turn, and when the agent is mid-exchange the same stage offers
-// the way back into it.
+// The spec stage as a call-to-action, and as the agent's own voice through a
+// new project's first run (#485).
 //
-// "Continue spec" NEVER carries `?generate`. Injecting a second `/start` into
-// an open exchange is the whole bug: landing on an unanswered question form, it
-// reads to the start skill as the user's skip valve, so the interview is
-// silently replaced by the agent's own answers (see `agentEngaged`). Dropping
-// the param also keeps AppLayout from auto-opening the chat panel, so the
-// pending question form owns the spec body on arrival — which is the thing the
-// user actually came back for.
+// The CTA is PURE NAVIGATION. It carries no `?generate`, seeds no message and
+// sends nothing: the backend starts every project's `/start` turn at creation,
+// and a console that started one too raced it into the one-active-turn 409.
+// (The older hazard is still real and is why this is worth saying twice: a
+// second `/start` landing on an unanswered question form reads to the start
+// skill as the user's skip valve, so the interview is silently replaced by the
+// agent's own answers.)
 //
-// One button, two labels, one destination: "Edit spec" would be the wrong third
-// word, since a spec the user could edit is exactly what an open exchange has
-// not produced yet.
+// One button, two labels, one destination. "Continue spec" whenever an
+// interview is open — "Generate spec" would promise a start that has already
+// happened — and "Edit spec" is the wrong third word, since a spec the user
+// could edit is exactly what an open exchange has not produced yet.
 function SpecActionStage({
   projectName,
   view,
+  firstRun,
   engaged,
 }: {
   projectName: string;
   view: StageView;
+  firstRun: SpecFirstRunView;
   engaged: boolean;
 }) {
   const navigate = useNavigate();
+  const retry = useRetrySpecKickoff(projectName);
+  const failed = firstRun.stage === "failed";
+  // The first run speaks for the card: a live interview's state is the only
+  // thing worth saying while the document does not exist yet. Otherwise the
+  // spec's own status ("published", "draft changes") stays — an amendment
+  // replaces the plain card, and losing that line would make an open exchange
+  // look like a project with no spec at all.
+  const line = firstRun.line || view.line;
+  const working = firstRun.stage === "starting" || firstRun.stage === "reading";
   return (
     <Card
       variant="outlined"
-      sx={{ flex: 1, minWidth: 0, borderColor: "primary.main", borderWidth: 2 }}
+      sx={{
+        flex: 1,
+        minWidth: 0,
+        borderWidth: 2,
+        borderColor: failed ? "error.main" : "primary.main",
+      }}
     >
       <CardContent>
         <Stack direction="row" spacing={1} sx={{ alignItems: "center", mb: 1.5 }}>
@@ -165,34 +185,67 @@ function SpecActionStage({
             </>
           )}
         </Stack>
-        {/* The state line the plain stage card would have shown. An amendment
-            replaces that card, and the spec's status ("published", "draft
-            changes") is true throughout — losing it would make an open
-            exchange look like a project with no spec at all. Empty on the
-            cold-start CTA, where there is no spec to have a status. */}
-        {view.line && (
-          <Typography
-            variant="body2"
-            color={view.tone === "error" ? "error.main" : "text.secondary"}
-            sx={{ mb: 1.5 }}
+        {line && (
+          <Stack
+            direction="row"
+            spacing={1}
+            sx={{ alignItems: "center", mb: 1.5 }}
           >
-            {view.line}
+            {working && <CircularProgress size={14} aria-hidden />}
+            <Typography
+              variant="body2"
+              color={
+                failed || view.tone === "error" ? "error.main" : "text.secondary"
+              }
+            >
+              {line}
+            </Typography>
+          </Stack>
+        )}
+        {/* The failure says what happened, in the words the backend derived
+            from the turn that died. A card that showed an error with nothing
+            in it was the state this replaces. */}
+        {failed && firstRun.reason && (
+          <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1.5 }}>
+            {firstRun.reason}
           </Typography>
         )}
-        <Button
-          variant="contained"
-          size="small"
-          startIcon={<Sparkles size={16} />}
-          onClick={() =>
-            void navigate({
-              to: "/projects/$projectName/spec",
-              params: { projectName },
-              ...(engaged ? {} : { search: { generate: "requirements" as const } }),
-            })
-          }
-        >
-          {engaged ? "Continue spec" : "Generate spec"}
-        </Button>
+        {failed ? (
+          <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+            <Button
+              variant="contained"
+              size="small"
+              color="error"
+              startIcon={<RefreshCw size={16} />}
+              loading={retry.isPending}
+              disabled={retry.isPending}
+              onClick={() => retry.mutate()}
+            >
+              Retry
+            </Button>
+            {retry.isError && (
+              <Typography variant="caption" color="error.main">
+                {retry.error instanceof Error
+                  ? retry.error.message
+                  : "Failed to retry the spec interview."}
+              </Typography>
+            )}
+          </Stack>
+        ) : (
+          <Button
+            variant="contained"
+            size="small"
+            startIcon={<Sparkles size={16} />}
+            onClick={() =>
+              void navigate({
+                to: "/projects/$projectName/spec",
+                params: { projectName },
+              })
+            }
+          >
+            {engaged || firstRun.open ? "Continue spec" : "Generate spec"}
+          </Button>
+        )}
       </CardContent>
     </Card>
   );
@@ -216,6 +269,11 @@ export function OverviewPipeline({
   // and the overview otherwise gives no sign one is open.
   const { orgHandle } = useSession();
   const engaged = useAgentEngaged(orgHandle ?? "default", projectName);
+  // The first run (#485): the backend's kickoff report, sharpened by whatever
+  // the live chat log already knows. The rail does not have to be open — the
+  // log is kept fresh for the whole project view (AppLayout).
+  const interview = useInterviewState(orgHandle ?? "default", projectName);
+  const firstRun = specFirstRunView(status, interview);
 
   return (
     <Stack
@@ -223,8 +281,13 @@ export function OverviewPipeline({
       spacing={1}
       sx={{ alignItems: { xs: "stretch", md: "center" } }}
     >
-      {spec.cta || engaged ? (
-        <SpecActionStage projectName={projectName} view={spec} engaged={engaged} />
+      {spec.cta || engaged || firstRun.stage !== "none" ? (
+        <SpecActionStage
+          projectName={projectName}
+          view={spec}
+          firstRun={firstRun}
+          engaged={engaged}
+        />
       ) : (
         <StageCard
           icon={<FileText size={18} />}

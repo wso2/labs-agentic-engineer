@@ -104,9 +104,11 @@ function useProjectResource<T>(
   fetcher: () => Promise<{ data?: T; error?: unknown }>,
   what: string,
   refetchInterval?: number | ((data: T | undefined) => number | false),
+  enabled = true,
 ) {
   return useQuery({
     queryKey,
+    enabled,
     queryFn: async () => {
       const { data, error } = await fetcher();
       if (error || data === undefined) {
@@ -126,7 +128,12 @@ function useProjectResource<T>(
 
 // The page's only poller (#183): the whole pipeline renders from this one
 // aggregate (ADR-0006), so nothing else on the overview needs an interval.
-export function useProjectStatus(projectName: string) {
+//
+// `enabled` exists for callers that want this aggregate on SOME routes only —
+// the shell's first-run read (#485) asks for it on the spec view and nowhere
+// else, rather than adding a standing poll to every project page. Callers on
+// the same route share one query by key, so asking twice costs nothing.
+export function useProjectStatus(projectName: string, enabled = true) {
   return useProjectResource(
     projectKeys.status(projectName),
     () =>
@@ -138,6 +145,7 @@ export function useProjectStatus(projectName: string) {
       !status || statusIsMoving(status)
         ? STATUS_ACTIVE_POLL_MS
         : STATUS_IDLE_POLL_MS,
+    enabled,
   );
 }
 
@@ -426,4 +434,32 @@ export function useGithubOrg() {
   return {
     data: data?.gitProvider?.githubLogin ?? data?.gitProvider?.identityLogin ?? null,
   };
+}
+
+// Retry the server-side spec kickoff (#485). The console NEVER starts the spec
+// interview by sending a chat message — it asks the backend to do its own job
+// again, which is why this is a mutation and not a seeded `/start`. The
+// response IS the new state, and a refused attempt comes back as a 200 body
+// (status failed with a reason), so the card renders the same way whether the
+// state arrived from here or from the status poll. The status invalidation
+// keeps the two in step.
+export function useRetrySpecKickoff(projectName: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const { data, error } = await client.POST(
+        "/projects/{projectName}/spec/kickoff",
+        { params: { path: { projectName } } },
+      );
+      if (error || data === undefined) {
+        throw new Error(apiErrorMessage(error, "Failed to retry the spec interview"));
+      }
+      return data;
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({
+        queryKey: projectKeys.status(projectName),
+      });
+    },
+  });
 }
