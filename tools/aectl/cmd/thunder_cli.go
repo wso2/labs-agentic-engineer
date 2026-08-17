@@ -28,7 +28,7 @@ import (
 	"github.com/spf13/viper"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/wso2/aep/aepctl/internal/thunder"
+	"github.com/wso2/aep/aectl/internal/thunder"
 )
 
 // registerThunderFlags adds Thunder connection flags to cmd and binds each one

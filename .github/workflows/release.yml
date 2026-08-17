@@ -180,7 +180,7 @@ jobs:
           helm install aep oci://ghcr.io/wso2/aep/charts/aep-bootstrap \\
             --version ${{ inputs.version }} -n wso2-aep --create-namespace
 
-          aep platform install \\
+          aectl platform install \\
             --platform-version ${{ inputs.version }}
           \`\`\`
 
@@ -195,7 +195,7 @@ jobs:
 
   # ─── CTL: build CLI binaries ─────────────────────────────────────────────────
   build-ctl-binaries:
-    name: Build aep binary (${{ matrix.goos }}/${{ matrix.goarch }})
+    name: Build aectl binary (${{ matrix.goos }}/${{ matrix.goarch }})
     if: ${{ inputs.component == 'ctl' || inputs.component == 'all' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -222,21 +222,23 @@ jobs:
         with:
           go-version-file: go.work
 
-      - name: Build aep
-        working-directory: tools/aepctl
+      - name: Build aectl
+        working-directory: tools/aectl
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
+          VERSION: ${{ inputs.version }}
         run: |
-          go build -trimpath -ldflags="-s -w -X main.version=${{ inputs.version }}" \
-            -o aep-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext || '' }} .
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]] || { echo "invalid version: $VERSION"; exit 1; }
+          go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" \
+            -o aectl-${GOOS}-${GOARCH}${{ matrix.ext || '' }} .
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: aep-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: tools/aepctl/aep-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext || '' }}
+          name: aectl-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: tools/aectl/aectl-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext || '' }}
 
   # ─── CTL: create GitHub release ──────────────────────────────────────────────
   create-ctl-release:
@@ -253,29 +255,32 @@ jobs:
       - name: Download all binaries
         uses: actions/download-artifact@v4
         with:
-          pattern: aep-*
+          pattern: aectl-*
           path: dist
           merge-multiple: true
 
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ inputs.version }}
+          REPO: ${{ github.repository }}
         run: |
-          gh release create "ctl/v${{ inputs.version }}" \
-            --title "AEP CTL v${{ inputs.version }}" \
-            --notes "## AEP CTL v${{ inputs.version }}
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]] || { echo "invalid version: $VERSION"; exit 1; }
+          gh release create "ctl/v${VERSION}" \
+            --title "AECTL v${VERSION}" \
+            --notes "## AECTL v${VERSION}
 
           ### Install
 
           **Linux (amd64)**
           \`\`\`bash
-          curl -L https://github.com/${{ github.repository }}/releases/download/ctl%2Fv${{ inputs.version }}/aep-linux-amd64 \
-            -o /usr/local/bin/aep && chmod +x /usr/local/bin/aep
+          curl -L https://github.com/${REPO}/releases/download/ctl%2Fv${VERSION}/aectl-linux-amd64 \
+            -o /usr/local/bin/aectl && chmod +x /usr/local/bin/aectl
           \`\`\`
 
           **macOS (Apple Silicon)**
           \`\`\`bash
-          curl -L https://github.com/${{ github.repository }}/releases/download/ctl%2Fv${{ inputs.version }}/aep-darwin-arm64 \
-            -o /usr/local/bin/aep && chmod +x /usr/local/bin/aep
+          curl -L https://github.com/${REPO}/releases/download/ctl%2Fv${VERSION}/aectl-darwin-arm64 \
+            -o /usr/local/bin/aectl && chmod +x /usr/local/bin/aectl
           \`\`\`" \
-            dist/aep-*
+            dist/aectl-*

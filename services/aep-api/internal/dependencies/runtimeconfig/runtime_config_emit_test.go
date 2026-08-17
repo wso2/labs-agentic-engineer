@@ -345,7 +345,7 @@ func Test_buildEnvValues_genericEmission(t *testing.T) {
 		cat := &fakeCatalog{markers: authMarkers("thunder-app")}
 		svc := svcWithCatalog(oc, rc, nil, cat)
 
-		out, ready := svc.buildEnvValues(ctx, "acme", "proj", web, design)
+		out, ready := svc.buildEnvValues(ctx, "acme", "proj", web)
 		if !ready {
 			t.Fatalf("want ready=true; got false (out=%v)", out)
 		}
@@ -401,7 +401,7 @@ func Test_buildEnvValues_genericEmission(t *testing.T) {
 		cat := &fakeCatalog{markers: authMarkers("thunder-app")}
 		svc := svcWithCatalog(oc, rc, nil, cat)
 
-		out, ready := svc.buildEnvValues(ctx, "acme", "proj", web, design)
+		out, ready := svc.buildEnvValues(ctx, "acme", "proj", web)
 		if !ready {
 			t.Fatalf("want ready=true; got false (out=%v)", out)
 		}
@@ -450,7 +450,7 @@ func Test_buildEnvValues_genericEmission(t *testing.T) {
 		}}
 		svc := svcWithCatalog(oc, rc, nil, cat)
 
-		_, ready := svc.buildEnvValues(ctx, "acme", "proj", web, design)
+		_, ready := svc.buildEnvValues(ctx, "acme", "proj", web)
 		if !ready {
 			t.Fatalf("want ready=true")
 		}
@@ -474,7 +474,7 @@ func Test_buildEnvValues_genericEmission(t *testing.T) {
 		cat := &fakeCatalog{markers: map[string]dependencies.TypeMarkers{}} // no markers for postgres
 		svc := svcWithCatalog(oc, rc, nil, cat)
 
-		out, ready := svc.buildEnvValues(ctx, "acme", "proj", web, design)
+		out, ready := svc.buildEnvValues(ctx, "acme", "proj", web)
 		if !ready {
 			t.Fatalf("want ready=true; got false (out=%v)", out)
 		}
@@ -501,12 +501,21 @@ func Test_buildEnvValues_genericEmission(t *testing.T) {
 		cat := &fakeCatalog{markers: authMarkers("thunder-app")}
 		svc := svcWithCatalog(oc, rc, nil, cat)
 
-		out, ready := svc.buildEnvValues(ctx, "acme", "proj", web, design)
+		out, ready := svc.buildEnvValues(ctx, "acme", "proj", web)
 		if !ready {
 			t.Fatalf("want ready=true; got false (out=%v)", out)
 		}
-		if out["API_BASE_URL"] != "http://api.local" || out["API_URL"] != "http://api.local" {
-			t.Errorf("service-URL keys drifted: %v", out)
+		if _, ok := out["API_BASE_URL"]; ok {
+			t.Errorf("API_BASE_URL must not be emitted; browser uses same-origin /api; out=%v", out)
+		}
+		if _, ok := out["API_URL"]; ok {
+			t.Errorf("API_URL must not be emitted; pod env is for nginx only; out=%v", out)
+		}
+		if len(out) != 0 {
+			t.Errorf("want empty env map for a webapp with only a sibling service dep; got %v", out)
+		}
+		if n := len(oc.ListDeploymentsCalls()); n != 0 {
+			t.Errorf("ListDeployments must not be called for a sibling service dep; got %d", n)
 		}
 		if cat.calls != 0 {
 			t.Errorf("catalog must NOT be read when there is no platform-resource dep; got %d", cat.calls)
@@ -529,7 +538,7 @@ func Test_buildEnvValues_defers(t *testing.T) {
 		"components/api/design.json": serviceComponentMd(),
 	}
 
-	t.Run("unresolved service dep gates emission (ready=false)", func(t *testing.T) {
+	t.Run("unresolved sibling service dep does not gate emission", func(t *testing.T) {
 		t.Parallel()
 		files := map[string]string{
 			spec.DesignRootFile:          rootDesignMd(),
@@ -540,16 +549,19 @@ func Test_buildEnvValues_defers(t *testing.T) {
 		web := componentNamed(t, design, "web")
 
 		oc := ocResolving(map[string]string{})
-		out, ready := NewRuntimeConfigService(oc, nil, nil).buildEnvValues(ctx, "acme", "proj", web, design)
-		if ready {
-			t.Fatalf("want ready=false when a required service dep has no resolved URL; got true (out=%v)", out)
+		out, ready := NewRuntimeConfigService(oc, nil, nil).buildEnvValues(ctx, "acme", "proj", web)
+		if !ready {
+			t.Fatalf("want ready=true; sibling API URL is not a window._env_ key; got false (out=%v)", out)
 		}
 		if _, ok := out["API_BASE_URL"]; ok {
-			t.Errorf("API_BASE_URL must be absent when the dep is unresolved; out=%v", out)
+			t.Errorf("API_BASE_URL must be absent; out=%v", out)
+		}
+		if n := len(oc.ListDeploymentsCalls()); n != 0 {
+			t.Errorf("ListDeployments must not be called for a sibling service dep; got %d", n)
 		}
 	})
 
-	t.Run("ListDeployments error on a service dep gates emission", func(t *testing.T) {
+	t.Run("ListDeployments is not consulted for a sibling service dep", func(t *testing.T) {
 		t.Parallel()
 		files := map[string]string{
 			spec.DesignRootFile:          rootDesignMd(),
@@ -561,12 +573,13 @@ func Test_buildEnvValues_defers(t *testing.T) {
 
 		oc := &ocmocks.ComponentClientMock{
 			ListDeploymentsFunc: func(context.Context, string, string, string) (*gen.DeploymentList, error) {
+				t.Errorf("ListDeployments must not be called for sibling service deps")
 				return nil, errors.New("oc: transient")
 			},
 		}
-		_, ready := NewRuntimeConfigService(oc, nil, nil).buildEnvValues(ctx, "acme", "proj", web, design)
-		if ready {
-			t.Fatalf("want ready=false on a transient OC error for a required dep; got true")
+		out, ready := NewRuntimeConfigService(oc, nil, nil).buildEnvValues(ctx, "acme", "proj", web)
+		if !ready {
+			t.Fatalf("want ready=true when sibling ListDeployments is unused; got false (out=%v)", out)
 		}
 	})
 
@@ -581,7 +594,7 @@ func Test_buildEnvValues_defers(t *testing.T) {
 		web := componentNamed(t, design, "web")
 
 		oc := &ocmocks.ComponentClientMock{}
-		out, ready := NewRuntimeConfigService(oc, nil, nil).buildEnvValues(ctx, "acme", "proj", web, design)
+		out, ready := NewRuntimeConfigService(oc, nil, nil).buildEnvValues(ctx, "acme", "proj", web)
 		if !ready {
 			t.Fatalf("want ready=true; a non-service dep is skipped, not deferred")
 		}
@@ -600,7 +613,7 @@ func Test_buildEnvValues_defers(t *testing.T) {
 
 		oc := ocResolving(map[string]string{"api": "http://api.local", "web": "http://web.local"})
 		cat := &fakeCatalog{markers: authMarkers("thunder-app")}
-		out, ready := svcWithCatalog(oc, nil, nil, cat).buildEnvValues(ctx, "acme", "proj", web, design)
+		out, ready := svcWithCatalog(oc, nil, nil, cat).buildEnvValues(ctx, "acme", "proj", web)
 		if ready {
 			t.Fatalf("want ready=false when the resource client is unwired")
 		}
@@ -617,7 +630,7 @@ func Test_buildEnvValues_defers(t *testing.T) {
 		oc := ocResolving(map[string]string{"api": "http://api.local", "web": "http://web.local"})
 		rc := rcOutputs(authOutputs(), nil)
 		// No SetResourceCatalog → nil catalog.
-		out, ready := NewRuntimeConfigService(oc, rc, nil).buildEnvValues(ctx, "acme", "proj", web, design)
+		out, ready := NewRuntimeConfigService(oc, rc, nil).buildEnvValues(ctx, "acme", "proj", web)
 		if ready {
 			t.Fatalf("want ready=false when the catalog is unwired")
 		}
@@ -634,7 +647,7 @@ func Test_buildEnvValues_defers(t *testing.T) {
 		oc := ocResolving(map[string]string{"api": "http://api.local", "web": "http://web.local"})
 		rc := rcOutputs(authOutputs(), nil)
 		cat := &fakeCatalog{err: errors.New("oc: catalog unreachable")}
-		out, ready := svcWithCatalog(oc, rc, nil, cat).buildEnvValues(ctx, "acme", "proj", web, design)
+		out, ready := svcWithCatalog(oc, rc, nil, cat).buildEnvValues(ctx, "acme", "proj", web)
 		if ready {
 			t.Fatalf("want ready=false when the catalog fetch fails")
 		}
@@ -653,7 +666,7 @@ func Test_buildEnvValues_defers(t *testing.T) {
 		oc := ocResolving(map[string]string{"api": "http://api.local", "web": "http://web.local"})
 		rc := rcOutputs(nil, nil) // binding has no status yet
 		cat := &fakeCatalog{markers: authMarkers("thunder-app")}
-		out, ready := svcWithCatalog(oc, rc, nil, cat).buildEnvValues(ctx, "acme", "proj", web, design)
+		out, ready := svcWithCatalog(oc, rc, nil, cat).buildEnvValues(ctx, "acme", "proj", web)
 		if ready {
 			t.Fatalf("want ready=false when the binding outputs are not ready")
 		}
@@ -672,7 +685,7 @@ func Test_buildEnvValues_defers(t *testing.T) {
 		oc := ocResolving(map[string]string{"api": "http://api.local", "web": "http://web.local"})
 		rc := rcOutputs(map[string]string{}, nil) // status present, zero outputs
 		cat := &fakeCatalog{markers: authMarkers("thunder-app")}
-		_, ready := svcWithCatalog(oc, rc, nil, cat).buildEnvValues(ctx, "acme", "proj", web, design)
+		_, ready := svcWithCatalog(oc, rc, nil, cat).buildEnvValues(ctx, "acme", "proj", web)
 		if ready {
 			t.Fatalf("want ready=false when the binding has zero outputs")
 		}
@@ -690,7 +703,7 @@ func Test_buildEnvValues_defers(t *testing.T) {
 		oc := ocResolving(map[string]string{"api": "http://api.local", "web": "http://web.local"})
 		rc := rcOutputs(authOutputs(), errors.New("oc: patch failed"))
 		cat := &fakeCatalog{markers: authMarkers("thunder-app")}
-		out, ready := svcWithCatalog(oc, rc, nil, cat).buildEnvValues(ctx, "acme", "proj", web, design)
+		out, ready := svcWithCatalog(oc, rc, nil, cat).buildEnvValues(ctx, "acme", "proj", web)
 		if !ready {
 			t.Fatalf("want ready=true; a failed callback registration is not a missing start-up value")
 		}
@@ -717,12 +730,9 @@ func Test_buildEnvValues_defers(t *testing.T) {
 		oc := ocResolving(map[string]string{"api": "http://api.local"})
 		rc := rcOutputs(authOutputs(), nil)
 		cat := &fakeCatalog{markers: authMarkers("thunder-app")}
-		out, ready := svcWithCatalog(oc, rc, nil, cat).buildEnvValues(ctx, "acme", "proj", web, design)
+		out, ready := svcWithCatalog(oc, rc, nil, cat).buildEnvValues(ctx, "acme", "proj", web)
 		if !ready {
 			t.Fatalf("want ready=true; the SPA's own URL is not a value the SPA reads")
-		}
-		if out["API_BASE_URL"] != "http://api.local" {
-			t.Errorf("the backend address the bundle reads is missing; out=%v", out)
 		}
 		if out["USER_AUTH_CLIENT_ID"] == nil {
 			t.Errorf("the OIDC client_id the bundle reads is missing; out=%v", out)
@@ -743,7 +753,7 @@ func Test_buildEnvValues_defers(t *testing.T) {
 			return nil, errors.New("oc down")
 		}
 		cat := &fakeCatalog{markers: authMarkers("thunder-app")}
-		_, ready := svcWithCatalog(oc, rc, nil, cat).buildEnvValues(ctx, "acme", "proj", web, design)
+		_, ready := svcWithCatalog(oc, rc, nil, cat).buildEnvValues(ctx, "acme", "proj", web)
 		if ready {
 			t.Fatalf("want ready=false when GetBinding errors")
 		}
@@ -842,8 +852,6 @@ func Test_FilesForComponent(t *testing.T) {
 		}
 		for _, want := range []string{
 			"window._env_ = {",
-			`API_BASE_URL: "http://api.local/todo"`,
-			`API_URL: "http://api.local/todo"`,
 			`USER_AUTH_CLIENT_ID: "web-cid"`,
 			`USER_AUTH_ISSUER: "http://thunder.local"`,
 			`USER_AUTH_JWKS_URL: "http://thunder.local/jwks"`,
@@ -852,6 +860,9 @@ func Test_FilesForComponent(t *testing.T) {
 			if !strings.Contains(f.Value, want) {
 				t.Errorf("emitted env-config.js missing %q\ngot:\n%s", want, f.Value)
 			}
+		}
+		if strings.Contains(f.Value, "API_BASE_URL") || strings.Contains(f.Value, "API_URL:") {
+			t.Errorf("sibling API public URLs must not appear in env-config.js:\n%s", f.Value)
 		}
 		if strings.Contains(f.Value, "THUNDER_") {
 			t.Errorf("no legacy THUNDER_* key must appear in env-config.js:\n%s", f.Value)
@@ -884,20 +895,27 @@ func Test_FilesForComponent(t *testing.T) {
 		}
 	})
 
-	t.Run("not-ready (unresolved service dep) defers the write", func(t *testing.T) {
+	t.Run("unresolved sibling service dep still writes env-config.js", func(t *testing.T) {
 		t.Parallel()
 		oc := ocResolving(map[string]string{})
 		svc := NewRuntimeConfigService(oc, nil, storeWith(webAndAPI("")))
 
 		files, ready, err := svc.FilesForComponent(ctx, "acme", "proj", "web")
 		if err != nil {
-			t.Fatalf("FilesForComponent should not error when not ready; got %v", err)
+			t.Fatalf("FilesForComponent: %v", err)
 		}
-		// ready=false is what tells the deploy stage to leave the binding's files
-		// UNMANAGED. A partially populated window._env_ is worse than a stale one:
-		// the SPA's src/env.ts throws on it at module load.
-		if ready || len(files) != 0 {
-			t.Errorf("want ready=false and no files; got ready=%v files=%d", ready, len(files))
+		if !ready {
+			t.Fatalf("want ready=true when only a sibling service dep is unresolved; got false")
+		}
+		if len(files) != 1 {
+			t.Fatalf("want 1 file when only a sibling service dep is unresolved; got %d", len(files))
+		}
+		val := files[0].Value
+		if !strings.Contains(val, "window._env_ = {") {
+			t.Errorf("want an env-config.js write; got %q", val)
+		}
+		if strings.Contains(val, "API_BASE_URL") {
+			t.Errorf("API_BASE_URL must not appear:\n%s", val)
 		}
 	})
 

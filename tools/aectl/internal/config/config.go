@@ -29,7 +29,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
-// ConfigMapName is the in-cluster ConfigMap written by `aep init` and read by
+// ConfigMapName is the in-cluster ConfigMap written by `aectl init` and read by
 // all subsequent commands. It lives in the AEP platform namespace (wso2-aep).
 const ConfigMapName = "aep-cli-config"
 
@@ -168,7 +168,7 @@ func validateViper(v *viper.Viper) []string {
 // LoadFromCluster reads the aep-cli-config ConfigMap from the given namespace
 // and loads each entry into viper via SetDefault, so CLI flags and AEP_* env
 // vars still take precedence. Returns the number of keys loaded and nil if the
-// ConfigMap does not yet exist (i.e. before `aep init` has run).
+// ConfigMap does not yet exist (i.e. before `aectl init` has run).
 func LoadFromCluster(ctx context.Context, client kubernetes.Interface, namespace string) (int, error) {
 	cm, err := client.CoreV1().ConfigMaps(namespace).Get(ctx, ConfigMapName, metav1.GetOptions{})
 	if err != nil {

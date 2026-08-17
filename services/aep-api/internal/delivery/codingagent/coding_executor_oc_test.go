@@ -96,12 +96,9 @@ func fullSecretRefs() (fakeCodingKey, *organization.OrgCredential) {
 			Property: "api-key",
 			EnvVar:   "ANTHROPIC_API_KEY",
 		}}, &organization.OrgCredential{
-			SecretRefName:      strPtr("acme-github-pat-secrets"),
-			SecretRefKVPath:    strPtr("user-app-secrets/wc-acme/acme-github-pat-secrets"),
-			SecretRefProperty:  strPtr("token"),
-			SMAPISecretRefName: strPtr("acme-github-pat-secrets"),
-			SMAPIKVPath:        strPtr("user-app-secrets/wc-acme/acme-github-pat-secrets"),
-			SMAPIProperty:      strPtr("token"),
+			SecretRefName:     strPtr("acme-github-pat-secrets"),
+			SecretRefKVPath:   strPtr("user-app-secrets/wc-acme/acme-github-pat-secrets"),
+			SecretRefProperty: strPtr("token"),
 		}
 }
 
@@ -296,7 +293,6 @@ func TestDispatch_OCPathStillRequiresTheOrgsSecretRefs(t *testing.T) {
 	rec := &chainRecorder{}
 	anthropic, github := fullSecretRefs()
 	github.SecretRefName = nil
-	github.SMAPISecretRefName = nil
 	e := newCodingDispatchExecutor(anthropic, github)
 	e.WithOCDispatch(NewOCDispatcher(rec.client()).WithImage("runner:1"))
 

@@ -70,7 +70,7 @@ and serve the route at `/callback`. Post-sign-in landing is
 **Token endpoint is cross-origin.** The browser posts straight to
 `<DEP>_ISSUER/oauth2/token`; discovery is
 `<DEP>_ISSUER/.well-known/openid-configuration`. Nothing is proxied same-origin,
-which is why `react-webapp` keeps nginx purely static.
+which is why `react-webapp` does not proxy `/oidc/` — nginx only reverse-proxies sibling APIs under `/api`.
 
 **Persist the session and renew silently.** The OAuth client is provisioned with
 the `refresh_token` grant alongside `authorization_code` + PKCE, so an expiring
@@ -161,7 +161,7 @@ on every visit. `currentUser()` already renews silently.
 ```ts
 export async function listTodos() {
   const token = await getAccessToken();
-  const res = await fetch(`${env.API_BASE_URL}/todos`, {
+  const res = await fetch(`/api/todos`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
   if (res.status === 401) { await signIn(); return []; }

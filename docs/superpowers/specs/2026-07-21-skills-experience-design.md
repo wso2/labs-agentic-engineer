@@ -72,7 +72,7 @@ One principle at every tier: **copies are fine when every copy is managed** — 
 |---|---|---|---|
 | Platform → org | `org-skills` repo | reconcile on platform release — **unmodified copies only** | hash mismatch = override; never overwritten; "review the diff" flow |
 | Upstream → org (imported) | `org-skills` repo | reviewed `skills update` only (never automatic — supply-chain boundary) | hash-detected fork; merge by review |
-| Org → project | project skill copies (`.claude/skills/` in project repo) | BFF (project creation, design publish, task dispatch) + optional `aep skills sync` | self-healing: copies are generated, the next diff-first refresh overwrites any hand-edit |
+| Org → project | project skill copies (`.claude/skills/` in project repo) | BFF (project creation, design publish, task dispatch) + optional `aectl skills sync` | self-healing: copies are generated, the next diff-first refresh overwrites any hand-edit |
 
 Key properties:
 
@@ -135,9 +135,9 @@ The shared artifact is a **contract** — the manifest schema, the content-hash 
 | Org reconcile (platform → org repo, 3-way) | BFF, server-side | Go — existing `Reconcile()` behind `POST /org/skills/sync` | settings-page button, project creation, platform release | core |
 | Project seed/refresh (org repo → project skill copies) | BFF, server-side — the **single writer** of skill copies | Go — same committed-truth write surface as design files; diff-first, commits to main | project creation; design save/publish; **task dispatch** (guarantees fresh copies in every task clone) | core |
 | Runner consumption (no sync) | runner pod | TS — reads `.claude/skills/` from its project clone; preload pinned via SDK `skills:` array; on-demand for the rest; records loads | every task — zero skill-related network; the org-skills clone of today's `skills_resolver.ts` is retired | core |
-| Local freshness (org repo → dev clone) | developer machine | Go — new `aep skills sync` command in the existing `tools/aepctl` CLI (binary `aep`, already has `login` + `~/.aep/config.yaml`); writes the project skill copies + `CLAUDE.md` "load these first" note | manual, **optional** | convenience — ship last |
+| Local freshness (org repo → dev clone) | developer machine | Go — new `aectl skills sync` command in the existing `tools/aectl` CLI (binary `aectl`, already has `login` + `~/.aectl/config.yaml`); writes the project skill copies + `CLAUDE.md` "load these first" note | manual, **optional** | convenience — ship last |
 
-The CLI is never packed into project repos and is not required for local dev: a fresh clone already carries the full library from the last refresh commit — `aep skills sync` only closes the staleness window between refresh commits. Project repos carry only data: `skillsApplied[]` (already committed) + the skill copies.
+The CLI is never packed into project repos and is not required for local dev: a fresh clone already carries the full library from the last refresh commit — `aectl skills sync` only closes the staleness window between refresh commits. Project repos carry only data: `skillsApplied[]` (already committed) + the skill copies.
 
 ### Skill copies in the project repo
 
@@ -194,7 +194,7 @@ sequenceDiagram
 
     Note over PR,LOC: local dev - zero setup
     LOC->>PR: git clone, .claude/skills/ already present
-    LOC->>LOC: optional aep skills sync for freshness
+    LOC->>LOC: optional aectl skills sync for freshness
 ```
 
 ## 7. Audit & determinism
@@ -213,7 +213,7 @@ sequenceDiagram
 | Coding agent's skill universe | only `skillsApplied` — rest unreachable | whole library copied into the repo; pinned preloaded + rest on-demand |
 | Preload rule | `org`-kind among applied | everything pinned, any kind |
 | Skill delivery to runner | per-task org-skills clone → scratch → `.aep/skills-plugin/` | read the skill copies (`.claude/skills/`) from the workspace clone |
-| Local dev | no skills at all | zero-setup via the committed skill copies; optional `aep skills sync` |
+| Local dev | no skills at all | zero-setup via the committed skill copies; optional `aectl skills sync` |
 | `skillsApplied` typo | silent warn-and-skip at build | corrective error at design save |
 | pin deleted after save | silent warn-and-skip at build (pod log only) | build proceeds; warning surfaced on execution row + console |
 | Audit | none | git-anchored + build record of actual loads |

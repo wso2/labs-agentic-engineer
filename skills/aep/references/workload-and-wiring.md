@@ -69,6 +69,7 @@ endpoints:
     port: 9090
     basePath: /                 # optional; root path for API services
     visibility:
+      - project
       - external
 
 dependencies:                    # what you resolved above — omit a half you have none of
@@ -104,11 +105,23 @@ configurations:
 | `internal` | across all namespaces in the cluster |
 | `external` | public internet via the ingress gateway |
 
-**Every service component with dependents MUST list `external`.** That is what
-makes the deployed URL reachable from a dependent SPA's browser, and what lets
-the platform resolve the URL into a dependent's runtime config. Omit it and
-nothing errors: the dependent's config is never written, and its
-`<DEP_NAME>_URL` arrives empty.
+**A sibling SPA reaches a service through same-origin `/api`, not `external`.**
+OpenChoreo connections may only use `project` or `namespace`; `external` on a
+*dependency* is rejected. Same project → consumer `visibility: project`. Other
+project → `visibility: namespace` plus `project:` (and the provider must already
+list `namespace` / be org-published). That "not `external`" is the SPA's
+**dependency** entry only — not the service's own `endpoints[].visibility`.
+
+The SPA browser calls `/api` on its own host; nginx in the SPA pod reverse-proxies
+to the project Service URL injected as `<DEP_NAME>_URL`. That pod env var is not
+a `window._env_` key.
+
+**Provider endpoint visibility:** a service a sibling SPA calls lists
+`visibility: [project, external]` — `project` for the nginx hop, `external` so
+the API remains curl-able on the public gateway. Write both YAML list items.
+A single-item `project` list is wrong even when the SPA uses `/api`, and
+`design.json` `exposure: intranet` does not drop `external`. The SPA must not
+fetch that public URL. Org-published services still add `namespace` as below.
 
 **Org-published services.** If the component's `design.json` sets
 `exposesAPI.orgPublished: true`, components in OTHER projects consume it — also

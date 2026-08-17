@@ -23,8 +23,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/wso2/aep/aepctl/internal/config"
-	k8s "github.com/wso2/aep/aepctl/internal/kubernetes"
+	"github.com/wso2/aep/aectl/internal/config"
+	k8s "github.com/wso2/aep/aectl/internal/kubernetes"
 )
 
 var configTestFile string
@@ -36,7 +36,7 @@ var configTestCmd = &cobra.Command{
 correct type and format.
 
 Validate a local file before importing:
-  aep platform config test --config ~/aepctl-configs/defaults.yaml
+  aep platform config test --config ~/aectl-configs/defaults.yaml
 
 Validate what is currently in the cluster:
   aep platform config test`,

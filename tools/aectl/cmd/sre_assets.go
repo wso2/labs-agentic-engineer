@@ -16,10 +16,10 @@
 
 package cmd
 
-// Manifest + Helm-values templates for `aep sre install`. Rendered against
+// Manifest + Helm-values templates for `aectl sre install`. Rendered against
 // sreParams. Secrets are pulled from OpenBao via ESO (never plaintext); the
 // obs-namespace SecretStore authenticates as the ESO controller SA, which is
-// already bound to the eso-reader OpenBao role by `aep init`.
+// already bound to the eso-reader OpenBao role by `aectl init`.
 
 // obs-namespace SecretStore + ExternalSecrets. All sourced from secret/data/aep/*.
 const sreSecretsTmpl = `

@@ -118,7 +118,7 @@ func Must(ctx context.Context, method, baseURL, token, path string, body interfa
 }
 
 // GetSAToken creates a short-lived bearer token for the given ServiceAccount
-// using kubectl and returns it. aepctl uses this token to authenticate to
+// using kubectl and returns it. aectl uses this token to authenticate to
 // OpenBao's Kubernetes auth method without needing a long-lived secret.
 func GetSAToken(ctx context.Context, namespace, saName, kubeconfig string) (string, error) {
 	args := []string{"create", "token", saName, "-n", namespace}

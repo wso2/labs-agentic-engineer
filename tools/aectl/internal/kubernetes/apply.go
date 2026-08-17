@@ -41,7 +41,7 @@ import (
 
 // Applier applies arbitrary (incl. CRD) manifests to the cluster via
 // server-side apply, resolving each object's GVK to a REST resource through
-// discovery. It lets aepctl manage OpenChoreo/ESO/Gateway CRs without shelling
+// discovery. It lets aectl manage OpenChoreo/ESO/Gateway CRs without shelling
 // out to kubectl.
 type Applier struct {
 	dyn    dynamic.Interface

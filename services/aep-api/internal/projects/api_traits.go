@@ -71,31 +71,7 @@ func APIConfigurationInstanceName(componentName, endpointName string) string {
 // function returns nil + a tombstone entry to strip any previously-set
 // config.
 //
-// `allowedOrigins` lists the SPA hostnames the gateway should
-// echo on CORS preflight. Empty/nil falls back to the trait schema's
-// default of `["*"]` (wildcard). Either way `allowedHeaders` stays `["*"]`
-// and `allowCredentials` stays false:
-//
-//   - Bearer auth does NOT need `allowCredentials`. That flag governs
-//     cookies, TLS client certs and browser-managed HTTP auth; an
-//     `Authorization` header set by JS is an ordinary header and only has to
-//     appear in `Access-Control-Allow-Headers`. Every SPA this platform
-//     generates keeps its token in localStorage and the gateway strips
-//     `authorization` before the upstream, so no cookie ever rides the API
-//     call.
-//   - Credentials-off is what makes the header wildcard legal — the WSO2
-//     platform forbids `*` combined with credentials and answers such a
-//     preflight with NO CORS headers at all, which browsers report as a
-//     blanket CORS failure.
-//   - `["*"]` rather than a fixed list because the gateway REFLECTS the
-//     requested header names back. A generated client sending anything the
-//     list did not anticipate (the gateway-injected `X-User-*` identity
-//     headers, `If-Match`, `X-Request-Id`) otherwise gets the same
-//     all-or-nothing blackout: the browser blocks the request before it is
-//     ever sent, so nothing reaches the access log to diagnose.
-//
-// Origins stay pinned to the sibling SPA list — this widens headers, never
-// the origin, and CORS constrains browsers only (curl was never gated).
+// CORS omits `allowedOrigins` so the trait schema default `["*"]` applies.
 //
 // `configs` is keyed by trait instance name; the value is the parameters
 // block that lands at `ReleaseBinding.spec.traitEnvironmentConfigs[<inst>]`.
@@ -108,7 +84,7 @@ func APIConfigurationInstanceName(componentName, endpointName string) string {
 // is no longer hardcoded, so a component whose workload names its endpoint
 // something other than "http" still renders (previously deploy rendering failed
 // with `workload.endpoints["http"]: no such key`).
-func DesiredAPIConfigurationTraitWithIssuers(componentName, endpointName string, enabled bool, issuers []string, allowedOrigins []string) (traits []openchoreo.ComponentTrait, configs map[string]map[string]interface{}) {
+func DesiredAPIConfigurationTraitWithIssuers(componentName, endpointName string, enabled bool, issuers []string) (traits []openchoreo.ComponentTrait, configs map[string]map[string]interface{}) {
 	endpointName = strings.TrimSpace(endpointName)
 	if endpointName == "" {
 		endpointName = spec.DefaultEndpointName
@@ -135,16 +111,6 @@ func DesiredAPIConfigurationTraitWithIssuers(componentName, endpointName string,
 	}
 	cors := map[string]interface{}{
 		"enabled": true,
-	}
-	if len(allowedOrigins) > 0 {
-		originsIface := make([]interface{}, 0, len(allowedOrigins))
-		for _, o := range allowedOrigins {
-			originsIface = append(originsIface, o)
-		}
-		cors["allowedOrigins"] = originsIface
-		cors["allowedMethods"] = []interface{}{"GET", "HEAD", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"}
-		cors["allowedHeaders"] = []interface{}{"*"}
-		cors["allowCredentials"] = false
 	}
 	configs = map[string]map[string]interface{}{
 		inst: {

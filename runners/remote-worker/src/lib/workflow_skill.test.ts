@@ -193,7 +193,8 @@ const REFERENCE_RULES: Record<string, string[]> = {
     "**Copy a `wiring` object verbatim**",
     "A `platform-resource` with no `wiring` is broken input",
     "**One that already exists is edited, never regenerated.**",
-    "**Every service component with dependents MUST list `external`.**",
+    "**A sibling SPA reaches a service through same-origin `/api`, not `external`.**",
+    "**Provider endpoint visibility:** a service a sibling SPA calls lists",
   ],
 };
 

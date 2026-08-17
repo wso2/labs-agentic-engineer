@@ -16,7 +16,7 @@
 
 package main
 
-import "github.com/wso2/aep/aepctl/cmd"
+import "github.com/wso2/aep/aectl/cmd"
 
 func main() {
 	cmd.Execute()

@@ -46,7 +46,7 @@ func TestHardConfigEdges(t *testing.T) {
 		design *DesignFile
 		want   map[string][]string
 	}{{
-		name:   "a web app's sibling service is hard — its address lands in window._env_",
+		name:   "a web app's sibling service is hard — nginx needs its Service URL",
 		design: &DesignFile{Components: []DesignComponent{edgeWebApp("shop-web", "shop-api"), edgeService("shop-api")}},
 		want:   map[string][]string{"shop-web": {"shop-api"}},
 	}, {

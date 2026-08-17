@@ -46,16 +46,10 @@ type OrganizationIDPProfile struct {
 	// Secret-ref triplet — populated by SecretRefWriter.WritePublisher after
 	// EnsureOrgPublisher provisions the Thunder cc app. The dispatcher
 	// short-circuits the per-run runner-auth ExternalSecret when missing.
-	// secret_ref_* is the provider-neutral name (EXPAND); sm_api_* is kept
-	// for dual-write until phase 09 CONTRACT.
 	SecretRefName      *string    `gorm:"type:text;column:secret_ref_name" json:"-"`
 	SecretRefKVPath    *string    `gorm:"type:text;column:secret_ref_kv_path" json:"-"`
 	SecretRefProperty  *string    `gorm:"type:text;column:secret_ref_property" json:"-"`
 	SecretRefWrittenAt *time.Time `gorm:"column:secret_ref_written_at" json:"-"`
-	SMAPISecretRefName *string    `gorm:"type:text;column:sm_api_secret_ref_name" json:"-"`
-	SMAPIKVPath        *string    `gorm:"type:text;column:sm_api_kv_path" json:"-"`
-	SMAPIProperty      *string    `gorm:"type:text;column:sm_api_property" json:"-"`
-	SMAPIWrittenAt     *time.Time `gorm:"column:sm_api_written_at" json:"-"`
 	CreatedAt          time.Time  `gorm:"column:created_at" json:"createdAt"`
 	UpdatedAt          time.Time  `gorm:"column:updated_at" json:"updatedAt"`
 }

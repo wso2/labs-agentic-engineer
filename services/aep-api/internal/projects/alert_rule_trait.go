@@ -52,7 +52,7 @@ const autoRCADefaultChannel = "default"
 // belongs: the observer's ALERT_SUPPRESSION_WINDOW, which drops a repeat alert
 // per (rule, namespace, component UID) before it reaches incident storage,
 // notification, or RCA. Keep the two in sync — see the SRE installers
-// (tools/aepctl/cmd/sre.go, deployments/scripts/setup-observability.sh).
+// (tools/aectl/cmd/sre.go, deployments/scripts/setup-observability.sh).
 //
 // autoRCAEvaluationWindow is the lookback each evaluation aggregates over. It is
 // held LARGER than the interval so consecutive evaluations overlap: a line is

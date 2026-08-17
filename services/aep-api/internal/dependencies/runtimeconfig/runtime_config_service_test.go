@@ -61,25 +61,3 @@ func Test_renderEnvConfigJS(t *testing.T) {
 		prev = i
 	}
 }
-
-// Test_upperSnakeKey — kebab-case + dash + camelCase normalise to safe
-// JS identifier prefixes.
-func Test_upperSnakeKey(t *testing.T) {
-	cases := []struct{ in, want string }{
-		{"todo-api", "TODO_API"},
-		{"todo_api", "TODO_API"},
-		{"TodoApi", "TODOAPI"},
-		{"todo--api", "TODO_API"},
-		{"--todo-api--", "TODO_API"},
-		{"", ""},
-		{"a", "A"},
-		{"a-b-c", "A_B_C"},
-		{"todo-api-v2", "TODO_API_V2"},
-	}
-	for _, c := range cases {
-		got := upperSnakeKey(c.in)
-		if got != c.want {
-			t.Errorf("upperSnakeKey(%q) = %q; want %q", c.in, got, c.want)
-		}
-	}
-}

@@ -27,8 +27,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"gopkg.in/yaml.v3"
 
-	"github.com/wso2/aep/aepctl/internal/config"
-	k8s "github.com/wso2/aep/aepctl/internal/kubernetes"
+	"github.com/wso2/aep/aectl/internal/config"
+	k8s "github.com/wso2/aep/aectl/internal/kubernetes"
 )
 
 var (
@@ -40,9 +40,9 @@ var configExportCmd = &cobra.Command{
 	Use:   "export",
 	Short: "Export the in-cluster config to a local YAML file",
 	Long: `Reads the aep-cli-config ConfigMap from the cluster and writes it as a
-YAML file you can edit and re-apply with 'aep platform config import'.
+YAML file you can edit and re-apply with 'aectl platform config import'.
 
-  aep platform config export --output aep-config.yaml
+  aep platform config export --output aectl-config.yaml
 
 Use - as the output path to print to stdout instead of writing a file.`,
 	RunE: runConfigExport,
@@ -50,7 +50,7 @@ Use - as the output path to print to stdout instead of writing a file.`,
 
 func init() {
 	configCmd.AddCommand(configExportCmd)
-	configExportCmd.Flags().StringVar(&configExportOutput, "output", "aep-config.yaml", "file to write (use - for stdout)")
+	configExportCmd.Flags().StringVar(&configExportOutput, "output", "aectl-config.yaml", "file to write (use - for stdout)")
 	configExportCmd.Flags().BoolVar(&configExportOverride, "override", false, "overwrite existing file without prompting")
 }
 
@@ -66,7 +66,7 @@ func runConfigExport(cmd *cobra.Command, args []string) error {
 	cm, err := client.CoreV1().ConfigMaps(aepNamespace).Get(ctx, config.ConfigMapName, metav1.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return fmt.Errorf("%s not found — run 'aep platform install' first", config.ConfigMapName)
+			return fmt.Errorf("%s not found — run 'aectl platform install' first", config.ConfigMapName)
 		}
 		return fmt.Errorf("read %s: %w", config.ConfigMapName, err)
 	}

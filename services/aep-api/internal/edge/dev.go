@@ -130,7 +130,7 @@ func collectResyncOrgs(ctx context.Context, db *gorm.DB, only string) ([]string,
 	var patOrgs []string
 	if err := db.WithContext(ctx).Raw(
 		`SELECT oc_org_id FROM org_credentials
-		  WHERE secret_ref_name IS NOT NULL OR sm_api_secret_ref_name IS NOT NULL`,
+		  WHERE secret_ref_name IS NOT NULL`,
 	).Scan(&patOrgs).Error; err != nil {
 		return nil, err
 	}
@@ -138,7 +138,7 @@ func collectResyncOrgs(ctx context.Context, db *gorm.DB, only string) ([]string,
 	var anthropicOrgs []string
 	if err := db.WithContext(ctx).Raw(
 		`SELECT oc_org_id FROM org_anthropic_credentials
-		  WHERE secret_ref_name IS NOT NULL OR sm_api_secret_ref_name IS NOT NULL`,
+		  WHERE secret_ref_name IS NOT NULL`,
 	).Scan(&anthropicOrgs).Error; err != nil {
 		return nil, err
 	}

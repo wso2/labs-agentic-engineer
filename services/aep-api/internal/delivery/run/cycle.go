@@ -159,20 +159,17 @@ func (l *loop) runCycle(ctx workflow.Context, kind string, anchorIssue int) (cyc
 // WAVE BY WAVE, then one CONVERGE — because the wiring between components splits
 // into two kinds that want opposite treatment (spec.HardConfigEdges).
 //
-// A HARD edge is an address the platform stamps into a component's own start-up
-// config: a web app reads API_BASE_URL out of window._env_ at module load and
-// throws without it. That address exists only once the provider has a rendered
-// binding, so a consumer promoted alongside its provider is published with a
-// config nothing could have filled — a blank page served to anyone who visits
-// before the repair. Hard edges therefore ORDER the deploy: each wave waits for
-// the last to serve, and every component's config is right the first time it is
-// written.
+// A HARD edge is an address the platform must have before the consumer can
+// serve a useful first byte: a web app's nginx reverse-proxies `/api` to a
+// sibling Service URL injected as pod env. That address exists only once the
+// provider has a rendered binding, so a SPA promoted alongside its API answers
+// `/api` with 502 until the Service exists. Hard edges therefore ORDER the
+// deploy: each wave waits for the last to serve.
 //
-// A SOFT edge runs the other way — a provider learning about its consumer. A
-// protected API's CORS allowlist is the project's SPA origins; an OIDC resource
-// wants the SPA's callback URL registered. Neither is needed before the consumer
-// serves, and requiring them would make the graph circular and unsatisfiable
-// (the SPA needs the API's address, the API needs the SPA's). So they are not
+// A SOFT edge runs the other way — a provider learning about its consumer. An
+// OIDC resource wants the SPA's callback URL registered. That is not needed
+// before the consumer serves, and requiring it would make the graph circular
+// (the SPA needs the API's address, the IdP needs the SPA's). So they are not
 // ordered at all: one converge at the end, when every address exists.
 //
 // The converge passes an EMPTY commit, and that is what makes it a converge and

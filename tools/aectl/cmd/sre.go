@@ -36,7 +36,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 
-	k8s "github.com/wso2/aep/aepctl/internal/kubernetes"
+	k8s "github.com/wso2/aep/aectl/internal/kubernetes"
 )
 
 // SRE (RCA) agent install. Brings the OpenChoreo Observability Plane + SRE/RCA
@@ -45,7 +45,7 @@ import (
 // install: secrets flow OpenBao->ESO (never plaintext), and the RCA->AEP handoff
 // targets in-cluster Service DNS instead of host.k3d.internal.
 //
-// Prerequisite: `aep init` must have run first (it registers the
+// Prerequisite: `aectl init` must have run first (it registers the
 // openchoreo-rca-agent Thunder client and seeds the OpenBao secrets this reads).
 
 var (
@@ -79,7 +79,7 @@ installs them if missing (idempotent), then applies the AEP integration:
 obs-namespace secrets (via OpenBao/ESO), the alert->RCA auto-trigger + AEP
 handoff wiring, the authz grants, and the observability CRs.
 
-Run 'aep init' first — it registers the openchoreo-rca-agent Thunder client and
+Run 'aectl init' first — it registers the openchoreo-rca-agent Thunder client and
 seeds the OpenBao secrets this command reads via External Secrets.`,
 	RunE: runSreInstall,
 }
@@ -186,12 +186,12 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println("Applying obs-namespace SecretStore + ExternalSecrets (OpenBao->ESO)...")
 	if err := applyTemplate(ctx, applier, "sre-secrets", sreObsNamespace, sreSecretsTmpl, p); err != nil {
-		return fmt.Errorf("apply secrets: %w (did you run `aep init`?)", err)
+		return fmt.Errorf("apply secrets: %w (did you run `aectl init`?)", err)
 	}
 	// ESO must materialise the OpenSearch creds before the charts start.
 	for _, s := range []string{"opensearch-admin-credentials", "rca-agent-secret", "observer-secret"} {
 		if err := waitForSecret(ctx, client, sreObsNamespace, s, 2*time.Minute); err != nil {
-			return fmt.Errorf("%w\nESO did not sync %q — check the SecretStore/ExternalSecrets and that `aep init` seeded OpenBao", err, s)
+			return fmt.Errorf("%w\nESO did not sync %q — check the SecretStore/ExternalSecrets and that `aectl init` seeded OpenBao", err, s)
 		}
 	}
 	fmt.Println("✅ Secrets synced")
@@ -292,7 +292,7 @@ func applyTemplate(ctx context.Context, applier *k8s.Applier, fieldManager, ns, 
 	if err := t.Execute(&buf, p); err != nil {
 		return err
 	}
-	return applier.ApplyYAML(ctx, "aepctl-sre", ns, buf.String())
+	return applier.ApplyYAML(ctx, "aectl-sre", ns, buf.String())
 }
 
 // ensureClusterGatewayCA copies the cluster gateway CA cert from the
@@ -392,7 +392,7 @@ func patchConfigMap(ctx context.Context, client *kubernetes.Clientset, ns, name 
 }
 
 func rolloutRestart(ctx context.Context, client *kubernetes.Clientset, ns, name string) error {
-	patch := fmt.Sprintf(`{"spec":{"template":{"metadata":{"annotations":{"aepctl.wso2.com/restartedAt":%q}}}}}`,
+	patch := fmt.Sprintf(`{"spec":{"template":{"metadata":{"annotations":{"aectl.wso2.com/restartedAt":%q}}}}}`,
 		time.Now().UTC().Format(time.RFC3339))
 	_, err := client.AppsV1().Deployments(ns).Patch(ctx, name, types.StrategicMergePatchType, []byte(patch), metav1.PatchOptions{})
 	return err
@@ -466,7 +466,7 @@ func writeTempValues(prefix, tmpl string, p sreParams) (string, func(), error) {
 	if err != nil {
 		return "", nil, err
 	}
-	f, err := os.CreateTemp("", "aepctl-"+prefix+"-*.yaml")
+	f, err := os.CreateTemp("", "aectl-"+prefix+"-*.yaml")
 	if err != nil {
 		return "", nil, err
 	}

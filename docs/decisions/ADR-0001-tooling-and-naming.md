@@ -17,8 +17,8 @@
 | Node | 22 LTS (`engines.node >=22`) |
 | pnpm | 10 (`packageManager: pnpm@10`) |
 | npm scope | `@aep/*` (e.g. `@aep/contracts`, `@aep/ui-explorer`) |
-| Go module prefix | `github.com/wso2/aep/<name>` (e.g. `.../aep-api`, `.../aepctl`, `.../thunder-app-operator`) |
-| Contracts | OpenAPI-first, REST only, for the platform's own service/BFF APIs; JSON Schema for internal events. `tools/aepctl`'s CLI↔`aep-server` control-plane channel is the one exception — a gRPC service defined in `tools/aepctl/proto/admin.proto` (see `tools/aepctl/AGENTS.md`) |
+| Go module prefix | `github.com/wso2/aep/<name>` (e.g. `.../aep-api`, `.../aectl`, `.../thunder-app-operator`) |
+| Contracts | OpenAPI-first, REST only, for the platform's own service/BFF APIs; JSON Schema for internal events. `tools/aectl`'s CLI↔`aep-server` control-plane channel is the one exception — a gRPC service defined in `tools/aectl/proto/admin.proto` (see `tools/aectl/AGENTS.md`) |
 | Go codegen | `oapi-codegen` `StrictServerInterface`, pinned via go.mod `tool` directive |
 | TS codegen | `openapi-typescript` |
 | Generated code | asymmetric by consumer. aep-api's contract codegen (`internal/gen/*_gen.go`, `internal/igen/*_gen.go`) is named with an underscore precisely so it misses the `*.gen.go` ignore pattern — it's **committed**, with `make gen-api-check` as a CI freshness gate diffing it against the contract. The OpenChoreo API client (`internal/clients/openchoreo/gen/*.gen.go`) does match that pattern but is explicitly un-ignored (`!services/aep-api/internal/clients/openchoreo/gen/*.gen.go`) and also committed, generated once from a pinned upstream spec. The console's generated types and route tree (`apps/console/src/generated/`) really are gitignored — no negation covers them |

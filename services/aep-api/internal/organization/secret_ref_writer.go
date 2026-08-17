@@ -279,7 +279,7 @@ func (w *SecretRefWriter) DeleteAnthropic(ctx context.Context, ocOrgID string, r
 		EntityName:            role.SecretRefEntity(),
 		SecretKey:             secretmanagersvc.SecretKeyAPIKey,
 	}
-	refName := derefPreferString(row.SecretRefName, row.SMAPISecretRefName)
+	refName := derefOrEmpty(row.SecretRefName)
 	if err := w.client.DeleteSecret(ctx, loc, refName); err != nil {
 		return fmt.Errorf("secret-ref writer: delete anthropic secret: %w", err)
 	}
@@ -372,7 +372,7 @@ func (w *SecretRefWriter) DeletePublisher(ctx context.Context, ocOrgID string) e
 		ControlPlaneNamespace: ocOrgID,
 		EntityName:            "publisher",
 	}
-	refName := derefPreferString(row.SecretRefName, row.SMAPISecretRefName)
+	refName := derefOrEmpty(row.SecretRefName)
 	if err := w.client.DeleteSecret(ctx, loc, refName); err != nil {
 		return fmt.Errorf("secret-ref writer: delete publisher secret: %w", err)
 	}
@@ -401,7 +401,7 @@ func (w *SecretRefWriter) DeleteGitHubPAT(ctx context.Context, ocOrgID string) e
 		EntityName:            "github-pat",
 		SecretKey:             secretmanagersvc.SecretKeyAPIKey,
 	}
-	refName := derefPreferString(row.SecretRefName, row.SMAPISecretRefName)
+	refName := derefOrEmpty(row.SecretRefName)
 	if err := w.client.DeleteSecret(ctx, loc, refName); err != nil {
 		return fmt.Errorf("secret-ref writer: delete github-pat secret: %w", err)
 	}

@@ -33,10 +33,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/wso2/aep/aepctl/internal/bootstrap"
-	"github.com/wso2/aep/aepctl/internal/config"
-	k8s "github.com/wso2/aep/aepctl/internal/kubernetes"
-	"github.com/wso2/aep/aepctl/internal/openbao"
+	"github.com/wso2/aep/aectl/internal/bootstrap"
+	"github.com/wso2/aep/aectl/internal/config"
+	k8s "github.com/wso2/aep/aectl/internal/kubernetes"
+	"github.com/wso2/aep/aectl/internal/openbao"
 )
 
 const (
@@ -71,13 +71,13 @@ var initCmd = &cobra.Command{
 	Use:   "install",
 	Short: "Provision OpenBao secrets, install the platform, and configure Thunder",
 	Long: `Full AEP platform installation in one command:
-  1. Validates the cluster config (imported via 'aep platform config import')
+  1. Validates the cluster config (imported via 'aectl platform config import')
   2. Seeds all platform secrets into OpenChoreo's built-in OpenBao instance
   3. Installs or upgrades the platform Helm chart (idempotent)
   4. Waits for all platform pods to be ready
   5. Registers AEP OAuth clients in Thunder
 
-Run 'aep platform config import --config <file>' before this command.
+Run 'aectl platform config import --config <file>' before this command.
 All configuration values are read from the imported ConfigMap — no
 hardcoded defaults are used.`,
 	RunE: runAEPInit,
@@ -114,7 +114,7 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 	// Pre-flight: all config values must come from the imported ConfigMap.
 	// PersistentPreRunE has already loaded it; fail fast if any required key is missing.
 	if errs := config.ValidateLoaded(); len(errs) > 0 {
-		_, _ = fmt.Fprintln(os.Stderr, "Missing or invalid config. Run 'aep platform config import --config <file>' first:")
+		_, _ = fmt.Fprintln(os.Stderr, "Missing or invalid config. Run 'aectl platform config import --config <file>' first:")
 		for _, e := range errs {
 			_, _ = fmt.Fprintf(os.Stderr, "  %s\n", e)
 		}
@@ -154,12 +154,16 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 		}
 		_, _ = fmt.Fprintln(os.Stdout, "Existing secrets verified — skipping provisioning.")
 	} else {
-		anthropicKey, err := readMaskedInput("Anthropic API key")
-		if err != nil {
-			return fmt.Errorf("read Anthropic API key: %w", err)
-		}
+		anthropicKey := strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY"))
 		if anthropicKey == "" {
-			return fmt.Errorf("an Anthropic API key is required")
+			var err error
+			anthropicKey, err = readMaskedInput("Anthropic API key")
+			if err != nil {
+				return fmt.Errorf("read Anthropic API key: %w", err)
+			}
+			if anthropicKey == "" {
+				return fmt.Errorf("an Anthropic API key is required")
+			}
 		}
 
 		if openBaoDirect && os.Getenv("AEP_OPENBAO_TOKEN") == "" {
@@ -172,20 +176,23 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		if os.Getenv("AEP_THUNDER_ADMIN_CLIENT_SECRET") == "" {
-			thunderSecret, err := readMaskedInput("Thunder admin client secret (Enter = use value from config)")
+		thunderSecret := strings.TrimSpace(os.Getenv("AEP_THUNDER_ADMIN_CLIENT_SECRET"))
+		if thunderSecret == "" {
+			var err error
+			thunderSecret, err = readMaskedInput("Thunder admin client secret")
 			if err != nil {
 				return fmt.Errorf("read Thunder admin client secret: %w", err)
 			}
-			if thunderSecret != "" {
-				viper.Set("thunder.admin_client_secret", thunderSecret)
+			if thunderSecret == "" {
+				return fmt.Errorf("a Thunder admin client secret is required")
 			}
 		}
+		viper.Set("thunder.admin_client_secret", thunderSecret)
 
 		adminClientID := viper.GetString("thunder.admin_client_id")
 		adminClientSecret := viper.GetString("thunder.admin_client_secret")
 		if adminClientID == "" {
-			return fmt.Errorf("thunder.admin_client_id is not set — run 'aep platform config import' first or set it in ~/.aep/config.yaml")
+			return fmt.Errorf("thunder.admin_client_id is not set — run 'aectl platform config import' first or set it in ~/.aectl/config.yaml")
 		}
 		if adminClientSecret == "" {
 			return fmt.Errorf("thunder.admin_client_secret is not set — set it via AEP_THUNDER_ADMIN_CLIENT_SECRET or re-run without --reuse-secrets")
@@ -534,7 +541,7 @@ func checkOCVersion(ctx context.Context, client *kubernetes.Clientset, namespace
 		}
 		if !ok {
 			return fmt.Errorf("OpenChoreo version %s is below the minimum required version %s: "+
-				"upgrade OpenChoreo to %s or later before running `aep init`",
+				"upgrade OpenChoreo to %s or later before running `aectl platform install`",
 				ver, minVersion, minVersion)
 		}
 		return nil
@@ -595,7 +602,7 @@ func checkBuildRegistry(ctx context.Context, client *kubernetes.Clientset, names
 		if apierrors.IsNotFound(err) {
 			return fmt.Errorf("build image registry Service %q not found in namespace %q: "+
 				"the coding-agent build pipeline needs an in-cluster image registry (publish + deploy-time pull); "+
-				"provision the OpenChoreo build plane's registry before running `aep init`, "+
+				"provision the OpenChoreo build plane's registry before running `aectl platform install`, "+
 				"or pass --registry-service if yours is named differently", service, namespace)
 		}
 		return fmt.Errorf("check registry Service %q/%q: %w", namespace, service, err)

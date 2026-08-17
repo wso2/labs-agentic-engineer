@@ -271,8 +271,8 @@ func (s *CredentialService) ResyncSecretRef(ctx context.Context, ocOrgID string)
 	if row.Kind != "user-pat" || row.Status != "active" {
 		return false, nil
 	}
-	kvPath := row.ResolvedSecretRefKVPath()
-	prop := row.ResolvedSecretRefProperty()
+	kvPath := row.SecretRefKVPath
+	prop := row.SecretRefProperty
 	if kvPath == nil || prop == nil || *kvPath == "" || *prop == "" {
 		return false, nil
 	}
