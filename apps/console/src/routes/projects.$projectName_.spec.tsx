@@ -23,9 +23,10 @@ import { SpecView } from "../features/spec/components/SpecView";
 // /projects/$projectName layout: the spec view is a full-screen workspace
 // without the shared project header (#80).
 //
-// `?generate=requirements|design` (#150/#159): arriving from a "Generate spec"
-// or "Generate/Re-generate design" CTA — AppLayout opens the agent panel and
-// auto-sends the matching generation turn.
+// `?generate=design` (#159): arriving from a "Generate/Re-generate design"
+// CTA — AppLayout opens the agent panel and auto-sends the design turn. There
+// is no `requirements` counterpart: the backend starts every project's spec
+// interview at create (#485), so injecting one from here only ever raced it.
 //
 // `?connections=open`: arriving from the Builds page's gate hold banner — a
 // dispatch gate is holding the run and the connection drawer is where its
@@ -33,10 +34,8 @@ import { SpecView } from "../features/spec/components/SpecView";
 export const Route = createFileRoute("/projects/$projectName_/spec")({
   validateSearch: (
     search: Record<string, unknown>,
-  ): { generate?: "requirements" | "design"; connections?: "open" } => ({
-    ...(search.generate === "requirements" || search.generate === "design"
-      ? { generate: search.generate }
-      : {}),
+  ): { generate?: "design"; connections?: "open" } => ({
+    ...(search.generate === "design" ? { generate: "design" as const } : {}),
     ...(search.connections === "open" ? { connections: "open" as const } : {}),
   }),
   component: SpecRoute,

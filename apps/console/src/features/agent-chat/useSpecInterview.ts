@@ -27,9 +27,10 @@ import {
   type ChatMessage,
 } from "./chatStore.js";
 import { answerableQuestionIds } from "./questionCards.js";
-import { getActiveTurn, getConversationMessages } from "./api/turns.js";
+import { getConversationMessages } from "./api/turns.js";
 import { conversationKeys, fetchCurrentConversationId } from "./api/conversations.js";
 import { projectableHistory } from "./history.js";
+import { ACTIVE_TURN_POLL_MS, useActiveTurn } from "./useActiveTurn.js";
 
 /** Questions the agent is still waiting on — summed across answerable CARDS
  *  (an ask_questions batch is one card carrying several questions, and the
@@ -85,9 +86,8 @@ export interface SpecInterviewState {
   started: boolean;
 }
 
-/** Matches useAgentChat's foreign-turn poll — the turn is server-driven, so
- *  every surface learns about it at the same cadence. */
-const INTERVIEW_POLL_MS = 12_000;
+/** The thread rehydrate follows the active-turn poll's cadence. */
+const INTERVIEW_POLL_MS = ACTIVE_TURN_POLL_MS;
 
 /**
  * `running` comes from the active-turn poll (DB-backed, works even while the
@@ -129,15 +129,10 @@ export function useSpecInterview(
     () => isLocalTurnActive(chatKey),
   );
 
-  const active = useQuery({
-    queryKey: ["agent-active-turn", projectName],
-    queryFn: () => getActiveTurn(projectName),
-    enabled,
-    refetchInterval: INTERVIEW_POLL_MS,
-    // 404s while the repo provisions are expected — the interval is the retry.
-    retry: false,
-  });
-  const running = enabled && (active.data?.status === "running" || localRunning);
+  // The same server read the chat panel gates its injected sends on — one
+  // query, one poll, one answer to "is a turn running right now".
+  const active = useActiveTurn(projectName, enabled);
+  const running = active.active || (enabled && localRunning);
 
   // Rehydrate fallback: only while the local log is empty (an attached panel
   // supersedes it). Runs even while a turn streams — a running turn can't be

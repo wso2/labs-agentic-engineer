@@ -113,13 +113,14 @@ export function AppLayout() {
   // The spec workspace is the console's full-screen surface (#80).
   const isSpecRoute = Boolean(projectName) && activeItem === "spec";
 
-  // "Generate spec" CTA (#150): the Spec card navigates here with ?generate=1.
-  // Open the panel and hand the one-shot signal to AgentChatPanel, which sends
-  // the first requirements turn; then strip the param so a refresh/back doesn't
-  // re-fire it.
+  // "Generate design" CTA (#159): the spec view navigates here with
+  // ?generate=design. Open the panel and hand the one-shot signal to
+  // AgentChatPanel, which sends the design turn; then strip the param so a
+  // refresh/back doesn't re-fire it. Requirements have no such signal — the
+  // backend owns that first turn (#485).
   const navigate = useNavigate();
   const search = useSearch({ strict: false }) as {
-    generate?: "requirements" | "design";
+    generate?: "design";
   };
   // Spec-route only. The signal exists to start a turn on the spec workspace,
   // and consuming it navigates THERE (`clearGenerate` below) — read off any

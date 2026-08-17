@@ -23,7 +23,7 @@ import type { ComponentProps } from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AskQuestionInput } from "@aep/agent-stream";
-import { START_COMMAND } from "@aep/contracts/commands";
+import { DESIGN_COMMAND } from "@aep/contracts/commands";
 import { AgentChatPanel } from "./AgentChatPanel";
 import {
   addMessage,
@@ -117,6 +117,20 @@ vi.mock("../useSpecInterview", () => ({
   useSpecInterview: () => mockInterviewState,
 }));
 
+// --- The server's active-turn read (#485): the gate on every injected send.
+// Its own behavior is covered in useActiveTurn.test.tsx; here it is a knob, so
+// each test states what the SERVER says while the local log stays empty — the
+// browser-blind window the BE-started `/start` opened. Default: the read has
+// answered, nothing is running.
+let mockActiveTurn = { active: false, resolved: true };
+const mockUseActiveTurn = vi.fn();
+vi.mock("../useActiveTurn", () => ({
+  useActiveTurn: (...args: unknown[]) => {
+    mockUseActiveTurn(...args);
+    return mockActiveTurn;
+  },
+}));
+
 type PanelProps = ComponentProps<typeof AgentChatPanel>;
 
 function panelProps(overrides: Partial<PanelProps> = {}): PanelProps {
@@ -140,6 +154,7 @@ describe("AgentChatPanel — pendingSeed + turn-end wiring (#252 Task 5)", () =>
   beforeEach(() => {
     vi.clearAllMocks();
     consumePendingSeed(KEY); // drain any leftover seed between tests
+    mockActiveTurn = { active: false, resolved: true };
   });
 
   it("auto-sends a seed that was already pending before mount, exactly once", () => {
@@ -174,36 +189,85 @@ describe("AgentChatPanel — pendingSeed + turn-end wiring (#252 Task 5)", () =>
     expect(mockSend).not.toHaveBeenCalled();
   });
 
+  // #485: a seed sent into a live turn collects the 409 ("An agent turn is
+  // already running…") and the message is lost with it. It is HELD instead —
+  // still in the store — and goes out when the turn ends.
+  it("holds a seed — unconsumed — while a turn is running server-side", () => {
+    mockActiveTurn = { active: true, resolved: true };
+    setPendingSeed(KEY, "resolve dependency D");
+    renderPanel();
+
+    expect(mockSend).not.toHaveBeenCalled();
+    expect(consumePendingSeed(KEY)).toBe("resolve dependency D");
+  });
+
+  it("holds a seed — unconsumed — until the active-turn read answers", () => {
+    mockActiveTurn = { active: false, resolved: false };
+    setPendingSeed(KEY, "resolve dependency E");
+    renderPanel();
+
+    expect(mockSend).not.toHaveBeenCalled();
+    expect(consumePendingSeed(KEY)).toBe("resolve dependency E");
+  });
+
+  it("sends the held seed once the running turn ends", () => {
+    mockActiveTurn = { active: true, resolved: true };
+    setPendingSeed(KEY, "resolve dependency F");
+    const { rerender } = renderPanel();
+    expect(mockSend).not.toHaveBeenCalled();
+
+    mockActiveTurn = { active: false, resolved: true };
+    rerender(withProviders(<AgentChatPanel {...panelProps()} />));
+
+    expect(mockSend).toHaveBeenCalledWith("resolve dependency F");
+    expect(mockSend).toHaveBeenCalledTimes(1);
+  });
+
   it("wires the universal turn-end freshness fallback with this project's chat key", () => {
     renderPanel();
     expect(mockUseTurnEndDependencyRefresh).toHaveBeenCalledWith(KEY, PROJECT);
   });
 });
 
-// The injected generate (#150 spec / #159 design). The overview's spec stage
-// already declines to attach `?generate` while the agent is mid-exchange, but
-// the signal also arrives from a pasted URL — this is where "may I send this"
-// is decided. A `/start` landing on an unanswered question form reads to the
-// start skill as the user's own skip valve, so the interview is silently
-// replaced by the agent's recommended answers; nothing errors, and the loss is
-// only visible as `*assumed*` tags in the PRD.
-describe("AgentChatPanel — the injected generate is gated on an open exchange", () => {
+// The injected design generate (#159) — the last injected command the console
+// has. The spec view already declines to offer it mid-exchange, but the signal
+// also arrives from a pasted URL, so "may I send this" is decided here.
+//
+// Two things make a send wrong. A question waiting: `/design` landing on an
+// unanswered form reads to the skill as the user's own skip valve, and the
+// interview is silently replaced by the agent's recommended answers. A turn
+// already running: aep-api's one-active-turn guard rejects the send outright —
+// "An agent turn is already running for this project" — and THAT one is
+// invisible to the chat log, because the running turn may be the backend's
+// (#485) or a teammate's, with nothing in this browser to show for it.
+describe("AgentChatPanel — the injected design generate is gated", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     consumePendingSeed(KEY);
     replaceMessages(KEY, []);
+    mockActiveTurn = { active: false, resolved: true };
   });
 
   const QUESTIONS: AskQuestionInput[] = [
     { question: "Who signs in?", options: [{ label: "Anyone" }] },
   ];
 
-  it("sends the requirements command when nothing is in flight", () => {
+  it("sends the design command when nothing is in flight", () => {
     const onAutoGenerated = vi.fn();
-    renderPanel({ autoGenerate: "requirements", onAutoGenerated });
+    renderPanel({ autoGenerate: "design", onAutoGenerated });
 
-    expect(mockSend).toHaveBeenCalledWith(START_COMMAND);
+    expect(mockSend).toHaveBeenCalledWith(DESIGN_COMMAND);
     expect(onAutoGenerated).toHaveBeenCalledTimes(1);
+  });
+
+  // Generate design is clicked on projects that ALWAYS have prior history —
+  // the requirements it derives from. History alone must never suppress it.
+  it("sends on a project with prior history and no running turn", () => {
+    addMessage(KEY, { role: "user", content: "/start", turnId: "t0", status: "completed" });
+    addMessage(KEY, { role: "assistant", turnId: "t0", content: "Wrote the PRD." });
+    renderPanel({ autoGenerate: "design", onAutoGenerated: vi.fn() });
+
+    expect(mockSend).toHaveBeenCalledWith(DESIGN_COMMAND);
   });
 
   // The panel mounts fresh on the Generate CTA, so the thread id is usually
@@ -213,11 +277,42 @@ describe("AgentChatPanel — the injected generate is gated on an open exchange"
   it("holds the signal — unconsumed — until the thread id resolves", () => {
     mockConversationReady = false;
     const onAutoGenerated = vi.fn();
-    renderPanel({ autoGenerate: "requirements", onAutoGenerated });
+    renderPanel({ autoGenerate: "design", onAutoGenerated });
 
     expect(mockSend).not.toHaveBeenCalled();
     expect(onAutoGenerated).not.toHaveBeenCalled();
     mockConversationReady = true;
+  });
+
+  // The same hold, on the server's answer. Firing on a read that has not
+  // answered yet is firing on a default, not on knowledge — which is exactly
+  // how the CTA used to send into a turn it could not see.
+  it("holds the signal — unconsumed — until the active-turn read answers", () => {
+    mockActiveTurn = { active: false, resolved: false };
+    const onAutoGenerated = vi.fn();
+    renderPanel({ autoGenerate: "design", onAutoGenerated });
+
+    expect(mockSend).not.toHaveBeenCalled();
+    expect(onAutoGenerated).not.toHaveBeenCalled();
+  });
+
+  // The invisible case: nothing in this browser's log, a turn running
+  // server-side. Suppressed — and CONSUMED, so the param cannot re-fire on a
+  // later mount with no click behind it.
+  it("sends nothing when the server reports a running turn, with an empty log", () => {
+    mockActiveTurn = { active: true, resolved: true };
+    const onAutoGenerated = vi.fn();
+    renderPanel({ autoGenerate: "design", onAutoGenerated });
+
+    expect(mockSend).not.toHaveBeenCalled();
+    expect(onAutoGenerated).toHaveBeenCalledTimes(1);
+  });
+
+  it("fires once the read says the turn ended (recovery stays possible)", () => {
+    mockActiveTurn = { active: false, resolved: true };
+    renderPanel({ autoGenerate: "design", onAutoGenerated: vi.fn() });
+
+    expect(mockSend).toHaveBeenCalledWith(DESIGN_COMMAND);
   });
 
   it("holds a pending seed — unconsumed — until the thread id resolves", () => {
@@ -233,20 +328,13 @@ describe("AgentChatPanel — the injected generate is gated on an open exchange"
 
   it("sends nothing while a question is waiting to be answered", () => {
     addMessage(KEY, { role: "question", turnId: "t1", toolCallId: "tc1", questions: QUESTIONS });
-    renderPanel({ autoGenerate: "requirements", onAutoGenerated: vi.fn() });
+    renderPanel({ autoGenerate: "design", onAutoGenerated: vi.fn() });
 
     expect(mockSend).not.toHaveBeenCalled();
   });
 
   it("sends nothing while a turn is in flight", () => {
     addMessage(KEY, { role: "user", content: "/start", turnId: "t1", status: "in_flight" });
-    renderPanel({ autoGenerate: "requirements", onAutoGenerated: vi.fn() });
-
-    expect(mockSend).not.toHaveBeenCalled();
-  });
-
-  it("gates the design signal on the same condition", () => {
-    addMessage(KEY, { role: "question", turnId: "t1", toolCallId: "tc1", questions: QUESTIONS });
     renderPanel({ autoGenerate: "design", onAutoGenerated: vi.fn() });
 
     expect(mockSend).not.toHaveBeenCalled();
@@ -259,14 +347,14 @@ describe("AgentChatPanel — the injected generate is gated on an open exchange"
   it("still consumes the signal when it suppresses the send", () => {
     addMessage(KEY, { role: "question", turnId: "t1", toolCallId: "tc1", questions: QUESTIONS });
     const onAutoGenerated = vi.fn();
-    renderPanel({ autoGenerate: "requirements", onAutoGenerated });
+    renderPanel({ autoGenerate: "design", onAutoGenerated });
 
     expect(onAutoGenerated).toHaveBeenCalledTimes(1);
   });
 
   it("never fires late: answering after a suppressed mount sends nothing", () => {
     addMessage(KEY, { role: "question", turnId: "t1", toolCallId: "tc1", questions: QUESTIONS });
-    renderPanel({ autoGenerate: "requirements", onAutoGenerated: vi.fn() });
+    renderPanel({ autoGenerate: "design", onAutoGenerated: vi.fn() });
     expect(mockSend).not.toHaveBeenCalled();
 
     act(() =>
@@ -372,30 +460,26 @@ describe("AgentChatPanel — /<skill> composer shortcut", () => {
   });
 });
 
-// The generation CTAs (#150 spec / #159 design). Requirements go through
-// `/start` — the console composes nothing and reads no local copy of the idea,
-// so a different browser, device or teammate kicks off identically.
-describe("AgentChatPanel — generation CTAs", () => {
+// The generation CTA (#159 design) — the ONLY one left. Requirements are
+// started by the backend at project create (#485); the console injects nothing
+// for them, so there is no requirements signal to test.
+describe("AgentChatPanel — the design CTA", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     consumePendingSeed(KEY);
-  });
-
-  it("auto-sends /start verbatim for the requirements signal", () => {
-    renderPanel({ autoGenerate: "requirements" });
-    // Flow commands go verbatim (#373): the SERVER expands the token and
-    // decides the flow's eager skills, so the CTA equals a typed /start.
-    expect(mockSend).toHaveBeenCalledWith("/start");
+    mockActiveTurn = { active: false, resolved: true };
   });
 
   it("auto-sends /design verbatim for the design signal", () => {
     renderPanel({ autoGenerate: "design" });
+    // Flow commands go verbatim (#373): the SERVER expands the token and
+    // decides the flow's eager skills, so the CTA equals a typed /design.
     expect(mockSend).toHaveBeenCalledWith("/design");
   });
 
   it("fires the signal exactly once", () => {
-    const { rerender } = renderPanel({ autoGenerate: "requirements" });
-    rerender(withProviders(<AgentChatPanel {...panelProps({ autoGenerate: "requirements" })} />));
+    const { rerender } = renderPanel({ autoGenerate: "design" });
+    rerender(withProviders(<AgentChatPanel {...panelProps({ autoGenerate: "design" })} />));
     expect(mockSend).toHaveBeenCalledTimes(1);
   });
 });

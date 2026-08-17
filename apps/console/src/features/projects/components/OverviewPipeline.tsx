@@ -119,28 +119,21 @@ function StageCard({
   );
 }
 
-// The spec stage as a call-to-action: when no spec exists yet (#150 behavior
-// preserved) Generate spec opens the Spec view and auto-sends the first
-// requirements turn, and when the agent is mid-exchange the same stage offers
-// the way back into it.
+// The spec stage as a call-to-action: the way into the interview the BACKEND
+// started, showing what it is doing on the way.
 //
-// A fresh prompt-ful project is usually ALREADY interviewing — the BE starts
-// `/start` at create (#485) — so the card shows the live state
-// ("interviewing…", "interviewing — N questions waiting") instead of offering
-// to start what is running. Generate spec survives only as the prompt-less
-// project's manual fallback.
+// This card NEVER starts a turn. Every new project's `/start` is fired
+// server-side at create (#485), so the console has nothing to inject — and
+// what it used to inject (`?generate=requirements` → a composed `/start` from
+// the chat panel) was a SECOND turn racing the backend's first. The
+// one-active-turn guard rejected it, and the user read "An agent turn is
+// already running for this project" on a button that promised a spec. The
+// param is gone; this is now navigation and nothing else.
 //
-// "Continue spec" NEVER carries `?generate`. Injecting a second `/start` into
-// an open exchange is the whole bug: landing on an unanswered question form, it
-// reads to the start skill as the user's skip valve, so the interview is
-// silently replaced by the agent's own answers (see `agentEngaged`). The chat
-// panel still opens on arrival — SpecView requests it while the first-run turn
-// is active (live-testing round) — but side by side, so the question form
-// keeps the spec body.
-//
-// One button, two labels, one destination: "Edit spec" would be the wrong third
-// word, since a spec the user could edit is exactly what an open exchange has
-// not produced yet.
+// The label tracks state only so the button tells the truth about where it
+// leads: an exchange to continue, or a spec view to open. "Edit spec" would be
+// the wrong third word, since a spec the user could edit is exactly what an
+// open exchange has not produced yet.
 function SpecActionStage({
   projectName,
   view,
@@ -166,12 +159,9 @@ function SpecActionStage({
           ? "Agent is drafting the PRD…"
           : "Agent is processing the idea"
         : null;
-  // The interview state is an open exchange by definition — same injection
-  // guard as `engaged`, sourced server-side so it holds before the chat log
-  // ever loaded in this browser. `started` rather than the momentary signals:
-  // the label must not flip back to "Generate spec" (which would attach
-  // `?generate` and inject a second `/start`) in the gaps between the poll's
-  // intervals or between one first-run turn ending and the next attaching.
+  // `started` rather than the momentary signals: the label must not flip back
+  // in the gaps between the poll's intervals, or between one first-run turn
+  // ending and the next attaching.
   const open = engaged || interview.started || interviewLine !== null;
   return (
     <Card
@@ -227,11 +217,10 @@ function SpecActionStage({
             void navigate({
               to: "/projects/$projectName/spec",
               params: { projectName },
-              ...(open ? {} : { search: { generate: "requirements" as const } }),
             })
           }
         >
-          {open ? "Continue spec" : "Generate spec"}
+          {open ? "Continue spec" : "Open spec"}
         </Button>
       </CardContent>
     </Card>

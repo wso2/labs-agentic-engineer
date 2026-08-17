@@ -18,11 +18,12 @@
 
 // @vitest-environment jsdom
 
-// The spec stage's two actions. The stage is derived from GIT, which cannot see
-// an interview: no requirements file exists until the agent writes one, so the
-// old card invited "Generate spec" for the entire duration of the interview it
-// had already started — and a second click injected a `/start` that the start
-// skill read as the user's skip valve.
+// The spec stage's action. The stage is derived from GIT, which cannot see an
+// interview: no requirements file exists until the agent writes one, so the old
+// card invited "Generate spec" for the entire duration of the interview the
+// BACKEND had already started — and clicking it injected a second `/start`,
+// which the one-active-turn guard rejected. The card no longer injects
+// anything; these tests hold that line.
 
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -103,26 +104,33 @@ describe("OverviewPipeline — the spec stage's action", () => {
     });
   });
 
-  it("offers Generate spec, carrying the generate signal, on an untouched project", () => {
+  // The reported bug, at its source: the backend fires every new project's
+  // `/start` at create, so this card has nothing to inject — and what it used
+  // to inject raced that turn into a 409. NO navigation from this card carries
+  // a `search` any more, in any state.
+  it("navigates with no generate signal on an untouched project", () => {
     renderPipeline();
 
-    fireEvent.click(screen.getByRole("button", { name: /Generate spec/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Open spec/ }));
     expect(mockNavigate).toHaveBeenCalledWith({
       to: "/projects/$projectName/spec",
       params: { projectName: PROJECT },
-      search: { generate: "requirements" },
     });
+  });
+
+  it("never offers to generate the spec", () => {
+    renderPipeline();
+
+    expect(screen.queryByRole("button", { name: /Generate spec/ })).not.toBeInTheDocument();
   });
 
   it("offers Continue spec, with NO generate signal, while a question waits", () => {
     addMessage(KEY, { role: "question", turnId: "t1", toolCallId: "tc1", questions: QUESTIONS });
     renderPipeline();
 
-    expect(screen.queryByRole("button", { name: /Generate spec/ })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Continue spec/ }));
-    // No `search`: the param is what injects the second `/start`. (SpecView
-    // itself opens the chat panel beside the doc while the turn is active —
-    // the form still owns the spec body.)
+    // (SpecView itself opens the chat panel beside the doc while the turn is
+    // active — the form still owns the spec body.)
     expect(mockNavigate).toHaveBeenCalledWith({
       to: "/projects/$projectName/spec",
       params: { projectName: PROJECT },
@@ -154,22 +162,15 @@ describe("OverviewPipeline — the spec stage's action", () => {
     renderPipeline({ exists: true, version: "v2" });
 
     expect(screen.queryByRole("button", { name: /Continue spec/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Generate spec/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Open spec/ })).not.toBeInTheDocument();
     expect(screen.getByText("published")).toBeInTheDocument();
-  });
-
-  it("retry still works: a failed attempt leaves Generate spec armed", () => {
-    addMessage(KEY, { role: "user", content: "/start", turnId: "t1", status: "failed" });
-    renderPipeline();
-
-    expect(screen.getByRole("button", { name: /Generate spec/ })).toBeInTheDocument();
   });
 
   // #485: the BE starts /start at create, so on a fresh landing the card must
   // show the LIVE state — no chat log exists in this browser yet, which is
   // exactly why the state is server-sourced (useSpecInterview), not log-derived.
   describe("the BE-started interview (#485)", () => {
-    it("shows the preparing stage instead of Generate spec while the turn streams", () => {
+    it("shows the preparing stage while the turn streams", () => {
       mockInterview.mockReturnValue({
         running: true,
         questionsWaiting: 0,
@@ -179,10 +180,8 @@ describe("OverviewPipeline — the spec stage's action", () => {
       renderPipeline();
 
       expect(screen.getByText("Agent is processing the idea")).toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: /Generate spec/ })).not.toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: /Continue spec/ }));
-      // No `search`: injecting /start into the running interview is the bug
-      // this feature retires.
+      // No `search`, here as everywhere: the injected /start is gone.
       expect(mockNavigate).toHaveBeenCalledWith({
         to: "/projects/$projectName/spec",
         params: { projectName: PROJECT },
@@ -231,9 +230,9 @@ describe("OverviewPipeline — the spec stage's action", () => {
     });
 
     // Round 3: `running` dips false between the 12 s poll's intervals and
-    // between one first-run turn ending and the next attaching. The CTA must
-    // not flip back to Generate spec there — it would re-attach `?generate`
-    // and inject a second /start into the open exchange.
+    // between one first-run turn ending and the next attaching. The label must
+    // not flip back there — the exchange is still open, and the button would
+    // stop naming where it leads.
     it("keeps Continue spec through a lull in the started interview", () => {
       mockInterview.mockReturnValue({
         running: false,
@@ -243,7 +242,7 @@ describe("OverviewPipeline — the spec stage's action", () => {
       });
       renderPipeline();
 
-      expect(screen.queryByRole("button", { name: /Generate spec/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Open spec/ })).not.toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: /Continue spec/ }));
       expect(mockNavigate).toHaveBeenCalledWith({
         to: "/projects/$projectName/spec",
