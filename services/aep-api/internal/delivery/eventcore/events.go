@@ -390,6 +390,12 @@ func (e *Events) wakeIfWorkable(ctx context.Context, orgID, projectID string, mi
 	if err != nil || run == nil {
 		return err
 	}
+	if e.p.Issues == nil {
+		// AdoptIssue tolerates a nil Issues (it guards both of its own writes),
+		// and reaches here regardless — so this must guard too, or a partially
+		// wired Events panics on the counts read rather than degrading.
+		return nil
+	}
 	if run.State != delivery.RunStateWaiting {
 		// A running run re-reads the milestone at its own cycle boundary; waking
 		// it mid-cycle would only race the agent that is already working. A

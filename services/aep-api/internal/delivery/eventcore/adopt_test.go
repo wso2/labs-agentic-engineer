@@ -137,6 +137,27 @@ func TestAdoption_DoesNotWakeARunMidCycle(t *testing.T) {
 	}
 }
 
+// The wake is the LAST thing adoption does, and the only one that reads the
+// host after the decisive writes — milestone, label, no-second-run — have all
+// landed. Failing the call on it would report an adoption that fully succeeded
+// as a failure to the SRE/RCA handoff, which retries or reports "handoff
+// failed" over work already dispatched. The run still re-derives at its next
+// cycle boundary, so a lost wake costs latency, never correctness.
+func TestAdoption_SurvivesAFailedWake(t *testing.T) {
+	h := newHarness(t, aRun("run-1", 4, delivery.RunStateWaiting))
+	h.issues.withCounts(4, 0, 1, 1).failCounts(errors.New("github: 502 bad gateway"))
+
+	if err := h.events.AdoptIssue(context.Background(), testOrg, testProject, AdoptTarget{Number: 31}); err != nil {
+		t.Fatalf("a failed wake must not fail an adoption that already landed: %v", err)
+	}
+	if got := h.issues.labelsOn(31); !delivery.HasLabel(got, delivery.LabelAgentWork) {
+		t.Fatalf("the adoption's own writes must still stand, labels = %v", got)
+	}
+	if got := h.sup.named(delivery.SigRunWorkable); len(got) != 0 {
+		t.Fatalf("no signal can be sent when the counts read failed, got %v", got)
+	}
+}
+
 // succeededRun is a DEPLOYED version: the spec build that completed, whose
 // milestone is where incidents belong.
 func succeededRun(id string, milestone int) delivery.MilestoneRun {

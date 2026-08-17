@@ -194,8 +194,10 @@ type fakeIssues struct {
 	// byMilestone is the milestone's open issues, keyed by milestone number.
 	byMilestone map[int][]sourcecontrol.IssueInfo
 	counts      map[int]*sourcecontrol.MilestoneIssueCounts
-	created     []sourcecontrol.CreateIssueRequest
-	assigned    []string
+	// countsErr fails MilestoneIssueCounts when set — see failCounts.
+	countsErr error
+	created   []sourcecontrol.CreateIssueRequest
+	assigned  []string
 	// labelled records the labels stamped on an existing issue, keyed by issue
 	// number — the write adoption makes to put an issue in the working set.
 	labelled map[int][]string
@@ -348,10 +350,20 @@ func hasAllLabels(have, want []string) bool {
 func (f *fakeIssues) MilestoneIssueCounts(_ context.Context, _, _ string, number int) (*sourcecontrol.MilestoneIssueCounts, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.countsErr != nil {
+		return nil, f.countsErr
+	}
 	if c, ok := f.counts[number]; ok {
 		return c, nil
 	}
 	return &sourcecontrol.MilestoneIssueCounts{}, nil
+}
+
+// failCounts makes the counts read fail, standing in for a transient host
+// error on the ONE read adoption makes after its decisive writes have landed.
+func (f *fakeIssues) failCounts(err error) *fakeIssues {
+	f.countsErr = err
+	return f
 }
 
 // withOpenIssues describes a milestone by each open issue's LABELS and counts it

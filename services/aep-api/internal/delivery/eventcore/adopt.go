@@ -104,7 +104,18 @@ func (e *Events) AdoptIssue(ctx context.Context, orgID, projectID string, target
 		// WAITING one is parked and re-derives only when told to — and the label
 		// this call just wrote comes back as a suppressed echo, so the webhook
 		// path will not tell it.
-		return e.wakeIfWorkable(ctx, orgID, projectID, milestone.Number)
+		//
+		// Best-effort, exactly as signal() is: by this point adoption has done
+		// everything that decides the outcome — milestone, label, no second run
+		// — and the supervisor re-derives from ground truth at its next cycle
+		// boundary anyway. Propagating would report an adoption that FULLY
+		// SUCCEEDED as a failure to the SRE/RCA handoff, inviting a retry over
+		// work already dispatched. A lost wake costs latency, never correctness.
+		if err := e.wakeIfWorkable(ctx, orgID, projectID, milestone.Number); err != nil {
+			slog.WarnContext(ctx, "eventcore: adopted, but could not wake the parked run — the next cycle boundary picks it up",
+				"issue", target.Number, "milestone", milestone.Number, "error", err)
+		}
+		return nil
 	}
 	return e.startRun(ctx, orgID, projectID, milestone)
 }

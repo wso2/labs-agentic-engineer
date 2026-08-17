@@ -296,7 +296,9 @@ func (a eventcoreComponents) EnsureComponent(ctx context.Context, orgID, project
 // the SRE/RCA handoff's promote-from-issue leg hands a freshly filed issue to
 // the coding agent. It passes a BARE target — the caller just created the
 // issue, so it belongs to no milestone yet and adoption files it under the
-// deployed version's.
+// version it is an incident against: the deployed one, or the spec build still
+// in flight when nothing has been deployed yet. With neither, adoption refuses
+// with delivery.ErrNoAdoptableMilestone, which the edge maps to a 409.
 type eventcoreAdopter struct{ events *eventcore.Events }
 
 func (a eventcoreAdopter) AdoptIssue(ctx context.Context, orgID, projectID string, issueNumber int) error {
