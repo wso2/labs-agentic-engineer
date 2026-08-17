@@ -19,10 +19,12 @@ package spec_test
 // DB tier for the spec_kickoffs claim (#485): the composite-PK
 // insert-on-conflict is what makes the auto-/start exactly-once per project —
 // racing claimers must resolve to ONE winner (the #420 admission pattern).
-// Also covers TurnRepository.HasAny, the kickoff's stand-down read.
+// Also covers TurnRepository.Standing — the kickoff read's one input, and the
+// stand-down that stops a Retry firing over a turn that already progressed.
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -200,18 +202,18 @@ func TestKickoffRepo_RacingClaimersResolveToOneWinner(t *testing.T) {
 	}
 }
 
-func TestTurnRepo_HasAnySeesRunningAndTerminalRows(t *testing.T) {
+func TestTurnRepo_StandingSeparatesALiveTurnFromADeadOne(t *testing.T) {
 	t.Parallel()
 	db := dbtest.New(t)
 	repo := spec.NewTurnRepository(db, nil)
 	ctx := context.Background()
 
-	has, err := repo.HasAny(ctx, "o1", "p1")
+	st, err := repo.Standing(ctx, "o1", "p1")
 	if err != nil {
-		t.Fatalf("HasAny on empty: %v", err)
+		t.Fatalf("Standing on empty: %v", err)
 	}
-	if has {
-		t.Fatal("HasAny = true on a project with no turns")
+	if st.Progressed || st.LastFailure != nil {
+		t.Fatalf("Standing on a project with no turns = %+v, want the zero value", st)
 	}
 
 	row, err := repo.TryStart(ctx, &spec.AgentTurn{
@@ -221,20 +223,134 @@ func TestTurnRepo_HasAnySeesRunningAndTerminalRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TryStart: %v", err)
 	}
-	if has, err = repo.HasAny(ctx, "o1", "p1"); err != nil || !has {
-		t.Fatalf("HasAny with a running row = (%v, %v), want true", has, err)
+	if st, err = repo.Standing(ctx, "o1", "p1"); err != nil || !st.Progressed {
+		t.Fatalf("Standing with a running row = (%+v, %v), want progressed", st, err)
 	}
 
-	// Terminal rows still count — "did any turn EVER run" is the question.
-	if _, err = repo.Finish(ctx, row.ID, spec.TurnTerminal{Status: "completed"}); err != nil {
+	// The turn dies. The ROW is still there — which is exactly what an
+	// existence check could not tell apart, and why the console believed a
+	// kickoff had succeeded on a project where nothing ran (#485 round 5).
+	if _, err = repo.Finish(ctx, row.ID, spec.TurnTerminal{
+		Status:  "failed",
+		Reason:  "dispatch-failed",
+		Message: "agents dispatch failed: connection refused",
+	}); err != nil {
 		t.Fatalf("Finish: %v", err)
 	}
-	if has, err = repo.HasAny(ctx, "o1", "p1"); err != nil || !has {
-		t.Fatalf("HasAny with a terminal row = (%v, %v), want true", has, err)
+	st, err = repo.Standing(ctx, "o1", "p1")
+	if err != nil {
+		t.Fatalf("Standing after the failure: %v", err)
+	}
+	if st.Progressed {
+		t.Fatal("Standing.Progressed = true with only a failed turn")
+	}
+	if st.LastFailure == nil || st.LastFailure.Message != "agents dispatch failed: connection refused" {
+		t.Fatalf("LastFailure = %+v, want the dead turn with its message", st.LastFailure)
+	}
+
+	// A later turn that GETS somewhere outranks the corpse — a retry that
+	// worked must not leave the card reading failed.
+	if _, err = repo.TryStart(ctx, &spec.AgentTurn{
+		OrgID: "o1", ProjectID: "p1", ConversationID: "c1",
+		UseCase: "general", BaseRef: "abc", Status: "running",
+	}); err != nil {
+		t.Fatalf("second TryStart: %v", err)
+	}
+	if st, err = repo.Standing(ctx, "o1", "p1"); err != nil || !st.Progressed {
+		t.Fatalf("Standing after a retry = (%+v, %v), want progressed", st, err)
+	}
+	if st.LastFailure != nil {
+		t.Fatalf("LastFailure = %+v, want nil once something progressed", st.LastFailure)
 	}
 
 	// The tenant scope is (org, project) — a neighbor sees nothing.
-	if has, err = repo.HasAny(ctx, "o2", "p1"); err != nil || has {
-		t.Fatalf("HasAny across orgs = (%v, %v), want false", has, err)
+	if st, err = repo.Standing(ctx, "o2", "p1"); err != nil || st.Progressed || st.LastFailure != nil {
+		t.Fatalf("Standing across orgs = (%+v, %v), want the zero value", st, err)
+	}
+}
+
+// The live failure, reproduced against Postgres end to end (#485 round 5):
+// `docker stop aep-agents`, create a project — aep-api created the turn, wrote
+// `started` on the claim, and the turn then failed asynchronously. The claim
+// never moved again, so every read of it said the kickoff had succeeded: no
+// error on the Spec card, no Retry, a spec view that never filled in.
+//
+// This is the state transition that must now flip the card, exercised through
+// the real repositories rather than fakes, because the whole bug was the gap
+// between what the claim row said and what the turn row did.
+func TestKickoff_ADeadFirstRunTurnReadsAsAFailedKickoff(t *testing.T) {
+	t.Parallel()
+	db := dbtest.New(t)
+	kickoffs := spec.NewKickoffRepository(db)
+	turns := spec.NewTurnRepository(db, nil)
+	svc := spec.NewService(spec.ServiceDeps{Kickoffs: kickoffs, Turns: turns})
+	ctx := context.Background()
+
+	// --- create: the claim is taken and the turn is dispatched.
+	if won, err := kickoffs.TryClaim(ctx, "o1", "p1"); err != nil || !won {
+		t.Fatalf("TryClaim = (%v, %v), want a win", won, err)
+	}
+	row, err := turns.TryStart(ctx, &spec.AgentTurn{
+		OrgID: "o1", ProjectID: "p1", ConversationID: "c1",
+		UseCase: "general", BaseRef: "abc", Status: "running",
+	})
+	if err != nil {
+		t.Fatalf("TryStart: %v", err)
+	}
+	// StartTurn returned, so the attempt recorded success. It is the last
+	// thing that will ever write this row.
+	if err = kickoffs.SetOutcome(ctx, "o1", "p1", spec.KickoffStatusStarted, ""); err != nil {
+		t.Fatalf("SetOutcome: %v", err)
+	}
+	state, err := svc.Kickoff(ctx, "o1", "p1")
+	if err != nil {
+		t.Fatalf("Kickoff while running: %v", err)
+	}
+	if state.Status != spec.KickoffStatusStarted {
+		t.Fatalf("status = %q while the turn runs, want started", state.Status)
+	}
+
+	// --- seconds later: the agents service is down, and the turn dies.
+	if _, err = turns.Finish(ctx, row.ID, spec.TurnTerminal{
+		Status:  "failed",
+		Reason:  "dispatch-failed",
+		Message: "agents dispatch failed: Post \"http://aep-agents:4000/turns\": dial tcp: connect: connection refused",
+	}); err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+
+	state, err = svc.Kickoff(ctx, "o1", "p1")
+	if err != nil {
+		t.Fatalf("Kickoff after the turn died: %v", err)
+	}
+	if state.Status != spec.KickoffStatusFailed {
+		t.Fatalf("status = %q after the turn died, want failed", state.Status)
+	}
+	if !strings.Contains(state.Reason, "connection refused") {
+		t.Fatalf("reason = %q, want the turn's own cause", state.Reason)
+	}
+
+	// Derived, not written back: the claim is untouched, so the next real
+	// outcome (a Retry's) still wins. No backfill, no sweep.
+	claim, err := kickoffs.Get(ctx, "o1", "p1")
+	if err != nil || claim == nil {
+		t.Fatalf("Get = (%+v, %v), want the claim", claim, err)
+	}
+	if claim.Status != spec.KickoffStatusStarted {
+		t.Fatalf("claim status = %q, want it left at started", claim.Status)
+	}
+
+	// --- Retry: a new turn attaches, and the card goes back to working.
+	if _, err = turns.TryStart(ctx, &spec.AgentTurn{
+		OrgID: "o1", ProjectID: "p1", ConversationID: "c1",
+		UseCase: "general", BaseRef: "abc", Status: "running",
+	}); err != nil {
+		t.Fatalf("retry TryStart: %v", err)
+	}
+	if state, err = svc.Kickoff(ctx, "o1", "p1"); err != nil {
+		t.Fatalf("Kickoff after the retry: %v", err)
+	}
+	if state.Status != spec.KickoffStatusStarted {
+		t.Fatalf("status = %q after a retry attached, want started", state.Status)
 	}
 }

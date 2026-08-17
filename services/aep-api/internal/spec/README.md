@@ -98,16 +98,21 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
   server-side (`KickoffSpec`, reached from `projects` through its `specKickoff` port), so the interview is
   already narrating when the user first opens the spec view. Exactly one AUTO `/start` per project, ever:
   the `spec_kickoffs` claim row (`repository_kickoff.go`, insert-on-conflict — the #420 admission pattern)
-  is spent whether or not the turn ultimately starts, and a project any turn has already run for stands the
-  kickoff down (`HasAny`) — firing `/start` over an open exchange is the #432 skip-valve bug, server-side.
-  Deliberately NOT a uniqueness rule on `/start` turns: a user re-running `/start` later is an amendment
-  interview. The kickoff retries while the repo/skills repo provision, bounded by the caller's deadline.
-  The claim also RECORDS the attempt's outcome (status + reason), and `Kickoff` reads it back as
-  none/pending/failed/started for the project status: a bare claim reads the same whether the turn was
-  created or the attempt died, which left the console unable to tell an interview that is starting from
-  one that never will. A pending claim older than `KickoffWindow` (the kickoff's own deadline, which
-  `projects.specKickoffTimeout` reads from here) is REPORTED as failed — its process cannot still be
-  running — without rewriting the row. `RetryKickoff` (POST `…/spec/kickoff`) is the user-triggered
+  is spent whether or not the turn ultimately starts, and a project whose interview has already PROGRESSED
+  stands the kickoff down (`TurnRepository.Standing`) — firing `/start` over an open exchange is the #432
+  skip-valve bug, server-side. Deliberately NOT a uniqueness rule on `/start` turns: a user re-running
+  `/start` later is an amendment interview. The kickoff retries while the repo/skills repo provision,
+  bounded by the caller's deadline.
+  The claim RECORDS the attempt's outcome (status + reason) and `Kickoff` reads none/pending/failed/started
+  for the project status, but what it reports is the first-run TURN's outcome, not the dispatch's: a turn
+  running or completed is `started`; a project whose every turn DIED is `failed`, carrying that turn's own
+  cause. The two are different events — the turn is created and the claim stamped synchronously, then the
+  turn runs detached and can fail seconds later with the agents service down, long after anything is left
+  to record it. Keying on the claim alone (and on a bare turn-row existence check) reported success for
+  projects where the interview never ran. Both failure reads are DERIVED, never written back, so a Retry's
+  real outcome still wins; there is no backfill and no sweep. A pending claim older than `KickoffWindow`
+  (the kickoff's own deadline, which `projects.specKickoffTimeout` reads from here) is likewise REPORTED as
+  failed — its process cannot still be running. `RetryKickoff` (POST `…/spec/kickoff`) is the user-triggered
   second attempt: one pass, no provisioning loop, idempotent by state. There is no automatic retry and
   no self-healing sweep — an agents service that is down has nothing to retry into, and a turn that
   starts an hour later starts with nobody watching.

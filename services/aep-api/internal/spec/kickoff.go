@@ -26,11 +26,16 @@
 //
 // Exactly-once is layered:
 //   - spec_kickoffs claim (TryClaim) — one AUTO kickoff per project, ever.
-//   - HasAny — a user who beat the kickoff to the first turn owns the
-//     interview; firing `/start` over it is the #432 bug class server-side
-//     (an unanswered question reads a fresh `/start` as the skip valve).
+//   - TurnStanding.Progressed — a user who beat the kickoff to the first turn
+//     owns the interview; firing `/start` over it is the #432 bug class
+//     server-side (an unanswered question reads a fresh `/start` as the skip
+//     valve).
 //   - the D18 one-active guard — a turn racing the kickoff's StartTurn makes
 //     it lose cleanly (TurnInProgressError → treated as done).
+//
+// What the console is told is the TURN's outcome, not the dispatch's: an
+// attempt that returns cleanly and whose turn dies seconds later (the agents
+// service unreachable) is a failed kickoff, and says so. See Service.Kickoff.
 
 package spec
 
@@ -39,7 +44,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
+
+	"github.com/wso2/aep/aep-api/internal/platform/text"
 )
 
 // ErrKickoffUnavailable means the service was assembled without one of the
@@ -84,8 +92,9 @@ func (s *Service) KickoffSpec(ctx context.Context, orgID, projectID string) erro
 // user's Retry so both start the interview identically.
 func (s *Service) kickoffAttempt(orgID, projectID string) kickoffDeps {
 	return kickoffDeps{
-		hasAnyTurn: func(c context.Context) (bool, error) {
-			return s.turns.HasAny(c, orgID, projectID)
+		progressed: func(c context.Context) (bool, error) {
+			st, err := s.turns.Standing(c, orgID, projectID)
+			return st.Progressed, err
 		},
 		start: func(c context.Context) error {
 			// The kickoff mints (or converges on) the project's current thread
@@ -161,10 +170,21 @@ type KickoffState struct {
 //
 // The console renders three states from it that nothing else can answer:
 // "starting…" for the seconds between the claim and the turn row, a NAMED
-// failure with a Retry when the attempt died, and silence once a turn exists
-// (from there the turn reads say everything). Deriving those from the running
-// turn, the thread and the spec files reads "untouched project" in the first
-// case and forever in the second.
+// failure with a Retry when the interview died, and silence once a turn is
+// under way (from there the turn reads say everything). Deriving those from
+// the running turn, the thread and the spec files reads "untouched project" in
+// the first case and forever in the second.
+//
+// The failure half keys off the first-run turn's OUTCOME, not the dispatch's.
+// The two are different events: aep-api creates the turn and stamps the claim
+// `started` synchronously, then the turn runs on a detached goroutine and can
+// fail seconds later with the agents service down. Reading the claim alone
+// (and treating any turn row as success) told the console a kickoff had
+// succeeded on projects where the interview never ran — no error, no Retry, a
+// spec view that never filled in.
+//
+// Only ever asked for a project with no spec (populateStages gates it), which
+// is what makes "no turn progressed" mean "nothing came of this".
 //
 // Unwired stores answer `none` rather than refusing: this rides a polled status
 // read, and the nil seam is a test assembly.
@@ -179,14 +199,29 @@ func (s *Service) Kickoff(ctx context.Context, orgID, projectID string) (Kickoff
 	if claim == nil {
 		return KickoffState{Status: KickoffStatusNone}, nil
 	}
-	// A turn — running or finished — settles it, whatever the row says: the
-	// interview is under way (the kickoff's, or a user's that beat it).
-	has, err := s.turns.HasAny(ctx, orgID, projectID)
+	// What the TURN did settles it, whatever the claim row says. A turn
+	// running or completed means the interview is under way (the kickoff's, or
+	// a user's that beat it) — and the claim being `started` means only that
+	// dispatch returned, so it cannot answer this on its own.
+	standing, err := s.turns.Standing(ctx, orgID, projectID)
 	if err != nil {
-		return KickoffState{}, fmt.Errorf("check prior turns: %w", err)
+		return KickoffState{}, fmt.Errorf("read turn standing: %w", err)
 	}
-	if has {
+	if standing.Progressed {
 		return KickoffState{Status: KickoffStatusStarted}, nil
+	}
+	// The turn was created and then DIED — the agents service unreachable is
+	// the ordinary way — and this read only runs for a project with no spec, so
+	// nothing came of it. The claim says `started` and always will: the failure
+	// happened asynchronously, long after the attempt that stamped it returned.
+	// The turn's own outcome is the only honest answer, and it is what puts the
+	// error and the Retry on the card. Derived, never written back — the next
+	// attempt's real outcome still wins.
+	if standing.LastFailure != nil {
+		return KickoffState{
+			Status: KickoffStatusFailed,
+			Reason: kickoffTurnFailureReason(standing.LastFailure),
+		}, nil
 	}
 	if claim.Status == KickoffStatusFailed {
 		return KickoffState{Status: KickoffStatusFailed, Reason: claim.Reason}, nil
@@ -288,6 +323,25 @@ func kickoffTouchedAt(c *SpecKickoff) time.Time {
 	return c.UpdatedAt
 }
 
+// kickoffTurnFailureReason renders a DEAD first-run turn as the card's
+// sentence — the other half of KickoffFailureReason, which only ever sees a
+// dispatch that never produced a turn at all.
+//
+// The turn's message carries the cause (an unreachable agents service arrives
+// as `dispatch-failed` plus the dial error); the bare failure class is the
+// fallback, and a row with neither still gets a sentence, because the card
+// must never render an error with nothing in it.
+func kickoffTurnFailureReason(t *AgentTurn) string {
+	detail := strings.TrimSpace(t.Message)
+	if detail == "" {
+		detail = strings.TrimSpace(t.Reason)
+	}
+	if detail == "" {
+		return "The spec interview's first turn failed before it wrote anything."
+	}
+	return "The spec interview's first turn failed: " + text.Truncate(detail, kickoffReasonLimit)
+}
+
 // KickoffFailureReason turns an attempt's error into a sentence the console can
 // show. The two provisioning cases are named because they are ordinary and
 // self-resolving; anything else carries its cause, because this console's users
@@ -302,17 +356,14 @@ func KickoffFailureReason(err error) string {
 	case errors.Is(err, ErrSkillsRepoUnavailable):
 		return "The organization's skills repository was not ready, so the spec interview could not start yet."
 	}
-	msg := err.Error()
-	if len(msg) > kickoffReasonLimit {
-		msg = msg[:kickoffReasonLimit] + "…"
-	}
-	return "The spec interview could not be started: " + msg
+	return "The spec interview could not be started: " +
+		text.Truncate(err.Error(), kickoffReasonLimit)
 }
 
 // kickoffDeps narrows the retry loop's world to three seams so the loop's
 // decisions are testable without the full turn machinery.
 type kickoffDeps struct {
-	hasAnyTurn func(context.Context) (bool, error)
+	progressed func(context.Context) (bool, error)
 	start      func(context.Context) error
 	interval   time.Duration
 }
@@ -338,12 +389,17 @@ func runKickoff(ctx context.Context, d kickoffDeps) error {
 	}
 }
 
-// runKickoffOnce is one pass: stand down if a turn already exists, otherwise
-// start one, treating the lost D18 race as the same outcome. It waits for
-// nothing — the retry loop above owns waiting, and the user's Retry deliberately
-// does not, because somebody is watching that click.
+// runKickoffOnce is one pass: stand down if the interview has already got
+// somewhere, otherwise start it, treating the lost D18 race as the same
+// outcome. It waits for nothing — the retry loop above owns waiting, and the
+// user's Retry deliberately does not, because somebody is watching that click.
+//
+// The stand-down asks whether a turn PROGRESSED, not whether a row exists: a
+// project whose every turn died has no interview to fire over, and Retry over
+// one that stood down on the corpse of the failed attempt would have been a
+// button that reported success and did nothing.
 func runKickoffOnce(ctx context.Context, d kickoffDeps) error {
-	has, err := d.hasAnyTurn(ctx)
+	has, err := d.progressed(ctx)
 	if err != nil {
 		return fmt.Errorf("check prior turns: %w", err)
 	}

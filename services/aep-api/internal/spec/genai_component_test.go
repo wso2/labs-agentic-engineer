@@ -328,15 +328,25 @@ func (m *memTurnRepo) GetActive(_ context.Context, orgID, projectID string) (*sp
 	return nil, nil
 }
 
-func (m *memTurnRepo) HasAny(_ context.Context, orgID, projectID string) (bool, error) {
+func (m *memTurnRepo) Standing(_ context.Context, orgID, projectID string) (spec.TurnStanding, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	var st spec.TurnStanding
 	for _, r := range m.rows {
-		if r.OrgID == orgID && r.ProjectID == projectID {
-			return true, nil
+		if r.OrgID != orgID || r.ProjectID != projectID {
+			continue
+		}
+		switch r.Status {
+		case "running", "completed":
+			return spec.TurnStanding{Progressed: true}, nil
+		case "failed":
+			if st.LastFailure == nil || r.CreatedAt.After(st.LastFailure.CreatedAt) {
+				cp := *r
+				st.LastFailure = &cp
+			}
 		}
 	}
-	return false, nil
+	return st, nil
 }
 
 func (m *memTurnRepo) LastTerminal(_ context.Context, orgID, projectID, conversationID string) (*spec.AgentTurn, error) {

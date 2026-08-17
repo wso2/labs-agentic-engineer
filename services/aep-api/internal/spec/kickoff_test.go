@@ -33,7 +33,7 @@ func TestRunKickoff_StartsWhenNoTurnEverRan(t *testing.T) {
 	t.Parallel()
 	started := 0
 	err := runKickoff(context.Background(), kickoffDeps{
-		hasAnyTurn: func(context.Context) (bool, error) { return false, nil },
+		progressed: func(context.Context) (bool, error) { return false, nil },
 		start:      func(context.Context) error { started++; return nil },
 		interval:   time.Millisecond,
 	})
@@ -51,7 +51,7 @@ func TestRunKickoff_StartsWhenNoTurnEverRan(t *testing.T) {
 func TestRunKickoff_StandsDownWhenATurnAlreadyRan(t *testing.T) {
 	t.Parallel()
 	err := runKickoff(context.Background(), kickoffDeps{
-		hasAnyTurn: func(context.Context) (bool, error) { return true, nil },
+		progressed: func(context.Context) (bool, error) { return true, nil },
 		start: func(context.Context) error {
 			t.Fatal("start must not fire when a turn already ran")
 			return nil
@@ -69,7 +69,7 @@ func TestRunKickoff_RetriesWhileTheRepoProvisions(t *testing.T) {
 	t.Parallel()
 	checks, attempts := 0, 0
 	err := runKickoff(context.Background(), kickoffDeps{
-		hasAnyTurn: func(context.Context) (bool, error) { checks++; return false, nil },
+		progressed: func(context.Context) (bool, error) { checks++; return false, nil },
 		start: func(context.Context) error {
 			attempts++
 			if attempts < 3 {
@@ -94,7 +94,7 @@ func TestRunKickoff_RetriesWhileTheSkillsRepoProvisions(t *testing.T) {
 	t.Parallel()
 	attempts := 0
 	err := runKickoff(context.Background(), kickoffDeps{
-		hasAnyTurn: func(context.Context) (bool, error) { return false, nil },
+		progressed: func(context.Context) (bool, error) { return false, nil },
 		start: func(context.Context) error {
 			attempts++
 			if attempts == 1 {
@@ -117,7 +117,7 @@ func TestRunKickoff_RetriesWhileTheSkillsRepoProvisions(t *testing.T) {
 func TestRunKickoff_TreatsAConcurrentTurnAsDone(t *testing.T) {
 	t.Parallel()
 	err := runKickoff(context.Background(), kickoffDeps{
-		hasAnyTurn: func(context.Context) (bool, error) { return false, nil },
+		progressed: func(context.Context) (bool, error) { return false, nil },
 		start: func(context.Context) error {
 			return &TurnInProgressError{ActiveTurnID: "t-1"}
 		},
@@ -133,7 +133,7 @@ func TestRunKickoff_SurfacesNonProvisioningFailures(t *testing.T) {
 	boom := errors.New("boom")
 	attempts := 0
 	err := runKickoff(context.Background(), kickoffDeps{
-		hasAnyTurn: func(context.Context) (bool, error) { return false, nil },
+		progressed: func(context.Context) (bool, error) { return false, nil },
 		start:      func(context.Context) error { attempts++; return boom },
 		interval:   time.Millisecond,
 	})
@@ -150,7 +150,7 @@ func TestRunKickoff_GivesUpWhenTheDeadlineExpires(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
 	err := runKickoff(ctx, kickoffDeps{
-		hasAnyTurn: func(context.Context) (bool, error) { return false, nil },
+		progressed: func(context.Context) (bool, error) { return false, nil },
 		start:      func(context.Context) error { return ErrProjectRepoNotFound },
 		interval:   5 * time.Millisecond,
 	})
@@ -210,15 +210,22 @@ func claimRow(status string, age time.Duration) *SpecKickoff {
 	}
 }
 
-// hasAnyOnlyTurnRepo panics on everything but HasAny — the only read a
+// standingOnlyTurnRepo panics on everything but Standing — the only read a
 // stood-down kickoff may make.
-type hasAnyOnlyTurnRepo struct {
+type standingOnlyTurnRepo struct {
 	TurnRepository
-	hasAny bool
+	standing TurnStanding
 }
 
-func (f *hasAnyOnlyTurnRepo) HasAny(context.Context, string, string) (bool, error) {
-	return f.hasAny, nil
+func (f *standingOnlyTurnRepo) Standing(context.Context, string, string) (TurnStanding, error) {
+	return f.standing, nil
+}
+
+// progressed / diedAt build the two standings the kickoff read turns on.
+func progressed() TurnStanding { return TurnStanding{Progressed: true} }
+
+func diedAt(reason, message string) TurnStanding {
+	return TurnStanding{LastFailure: &AgentTurn{Status: "failed", Reason: reason, Message: message}}
 }
 
 func TestKickoffSpec_SpentClaimIsANoOp(t *testing.T) {
@@ -243,7 +250,7 @@ func TestKickoffSpec_WonClaimStandsDownOnAPriorTurn(t *testing.T) {
 	t.Parallel()
 	s := NewService(ServiceDeps{
 		Kickoffs:      &fakeKickoffClaims{claimed: true},
-		Turns:         &hasAnyOnlyTurnRepo{hasAny: true},
+		Turns:         &standingOnlyTurnRepo{standing: progressed()},
 		Conversations: &memConvRepoStub{},
 	})
 	if err := s.KickoffSpec(context.Background(), "acme", "shop"); err != nil {
@@ -298,7 +305,7 @@ func TestKickoff_PendingWhileClaimedWithNoTurnYet(t *testing.T) {
 	t.Parallel()
 	s := NewService(ServiceDeps{
 		Kickoffs: &fakeKickoffClaims{row: claimRow(KickoffStatusPending, 0)},
-		Turns:    &hasAnyOnlyTurnRepo{hasAny: false},
+		Turns:    &standingOnlyTurnRepo{},
 	})
 	state, err := s.Kickoff(context.Background(), "acme", "shop")
 	if err != nil {
@@ -315,7 +322,7 @@ func TestKickoff_PendingForARowWithNoStatus(t *testing.T) {
 	t.Parallel()
 	s := NewService(ServiceDeps{
 		Kickoffs: &fakeKickoffClaims{row: claimRow("", time.Minute)},
-		Turns:    &hasAnyOnlyTurnRepo{hasAny: false},
+		Turns:    &standingOnlyTurnRepo{},
 	})
 	state, err := s.Kickoff(context.Background(), "acme", "shop")
 	if err != nil {
@@ -331,7 +338,7 @@ func TestKickoff_StartedOnceTheTurnExists(t *testing.T) {
 	// Even while the row still says pending: the turn settles it.
 	s := NewService(ServiceDeps{
 		Kickoffs: &fakeKickoffClaims{row: claimRow(KickoffStatusPending, 0)},
-		Turns:    &hasAnyOnlyTurnRepo{hasAny: true},
+		Turns:    &standingOnlyTurnRepo{standing: progressed()},
 	})
 	state, err := s.Kickoff(context.Background(), "acme", "shop")
 	if err != nil {
@@ -342,13 +349,93 @@ func TestKickoff_StartedOnceTheTurnExists(t *testing.T) {
 	}
 }
 
+// The case the fourth round's failure path missed entirely (found by stopping
+// aep-agents and creating a project): the turn WAS created — so the claim was
+// stamped `started` and every existence check said the interview was in hand —
+// and then it failed asynchronously. The claim never moves again, because the
+// attempt that would have recorded a failure returned successfully minutes
+// earlier. The turn's outcome is the only thing left that knows.
+func TestKickoff_FailedWhenTheFirstRunTurnDied(t *testing.T) {
+	t.Parallel()
+	s := NewService(ServiceDeps{
+		// The claim says started — exactly the row the live test left behind.
+		Kickoffs: &fakeKickoffClaims{row: claimRow(KickoffStatusStarted, time.Minute)},
+		Turns: &standingOnlyTurnRepo{
+			standing: diedAt("dispatch-failed", "agents dispatch failed: connection refused"),
+		},
+	})
+	state, err := s.Kickoff(context.Background(), "acme", "shop")
+	if err != nil {
+		t.Fatalf("Kickoff: %v", err)
+	}
+	if state.Status != KickoffStatusFailed {
+		t.Fatalf("status = %q, want failed — the turn died and nothing else says so", state.Status)
+	}
+	if !strings.Contains(state.Reason, "connection refused") {
+		t.Fatalf("reason = %q, want the turn's own message carried", state.Reason)
+	}
+}
+
+// A turn that is RUNNING or COMPLETED outranks any earlier failure: a retry
+// whose new turn is streaming, or a first run parked on its questions, is the
+// interview working. Only a project whose every turn died reads as failed.
+func TestKickoff_StartedWhenSomethingProgressedDespiteAFailure(t *testing.T) {
+	t.Parallel()
+	s := NewService(ServiceDeps{
+		Kickoffs: &fakeKickoffClaims{row: claimRow(KickoffStatusStarted, time.Minute)},
+		Turns:    &standingOnlyTurnRepo{standing: progressed()},
+	})
+	state, err := s.Kickoff(context.Background(), "acme", "shop")
+	if err != nil {
+		t.Fatalf("Kickoff: %v", err)
+	}
+	if state.Status != KickoffStatusStarted {
+		t.Fatalf("status = %q, want started", state.Status)
+	}
+}
+
+// A dead turn with nothing on it still gets a sentence — an error card with an
+// empty body is worse than a vague one.
+func TestKickoff_FailedTurnWithoutDetailStillSaysSomething(t *testing.T) {
+	t.Parallel()
+	s := NewService(ServiceDeps{
+		Kickoffs: &fakeKickoffClaims{row: claimRow(KickoffStatusStarted, time.Minute)},
+		Turns:    &standingOnlyTurnRepo{standing: diedAt("", "")},
+	})
+	state, err := s.Kickoff(context.Background(), "acme", "shop")
+	if err != nil {
+		t.Fatalf("Kickoff: %v", err)
+	}
+	if state.Status != KickoffStatusFailed || state.Reason == "" {
+		t.Fatalf("state = %+v, want failed with a reason", state)
+	}
+}
+
+// Retry after a dead turn must actually START one. The stand-down used to ask
+// "does a turn row exist", which the corpse answered yes to — so the retry
+// reported success, recorded `started`, and did nothing.
+func TestRunKickoffOnce_RetriesOverADeadTurn(t *testing.T) {
+	t.Parallel()
+	started := 0
+	err := runKickoffOnce(context.Background(), kickoffDeps{
+		progressed: func(context.Context) (bool, error) { return false, nil },
+		start:      func(context.Context) error { started++; return nil },
+	})
+	if err != nil {
+		t.Fatalf("runKickoffOnce: %v", err)
+	}
+	if started != 1 {
+		t.Fatalf("starts = %d, want 1 — a failed turn is not an interview", started)
+	}
+}
+
 func TestKickoff_FailedCarriesTheRecordedReason(t *testing.T) {
 	t.Parallel()
 	row := claimRow(KickoffStatusFailed, time.Minute)
 	row.Reason = "The agents service was unreachable."
 	s := NewService(ServiceDeps{
 		Kickoffs: &fakeKickoffClaims{row: row},
-		Turns:    &hasAnyOnlyTurnRepo{hasAny: false},
+		Turns:    &standingOnlyTurnRepo{},
 	})
 	state, err := s.Kickoff(context.Background(), "acme", "shop")
 	if err != nil {
@@ -366,7 +453,7 @@ func TestKickoff_StalledPendingReadsAsFailed(t *testing.T) {
 	t.Parallel()
 	s := NewService(ServiceDeps{
 		Kickoffs: &fakeKickoffClaims{row: claimRow(KickoffStatusPending, KickoffWindow+time.Minute)},
-		Turns:    &hasAnyOnlyTurnRepo{hasAny: false},
+		Turns:    &standingOnlyTurnRepo{},
 	})
 	state, err := s.Kickoff(context.Background(), "acme", "shop")
 	if err != nil {
@@ -423,7 +510,7 @@ func TestKickoffSpec_RecordsTheStartedOutcome(t *testing.T) {
 	claims := &fakeKickoffClaims{claimed: true}
 	s := NewService(ServiceDeps{
 		Kickoffs:      claims,
-		Turns:         &hasAnyOnlyTurnRepo{hasAny: true}, // stands down: a turn exists
+		Turns:         &standingOnlyTurnRepo{standing: progressed()}, // stands down: a turn exists
 		Conversations: &memConvRepoStub{},
 	})
 	if err := s.KickoffSpec(context.Background(), "acme", "shop"); err != nil {

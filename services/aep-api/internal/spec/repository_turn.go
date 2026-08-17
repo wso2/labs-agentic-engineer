@@ -104,11 +104,10 @@ type TurnRepository interface {
 	// GetActive returns the project's running turn, or (nil, nil).
 	GetActive(ctx context.Context, orgID, projectID string) (*AgentTurn, error)
 
-	// HasAny reports whether ANY turn row — running or terminal — exists for
-	// the project: the kickoff's "a user already owns the interview" check
-	// (#485). Firing an auto-/start after any first turn is the #432 bug
-	// class server-side, so the kickoff stands down instead.
-	HasAny(ctx context.Context, orgID, projectID string) (bool, error)
+	// Standing reports how the project's turns stand AS A WHOLE — the #485
+	// kickoff read's one input. Deliberately not a bare existence check: see
+	// TurnStanding.
+	Standing(ctx context.Context, orgID, projectID string) (TurnStanding, error)
 
 	// LastTerminal returns the most recent completed/failed turn of a
 	// conversation — the D20 filesChangedExternally / divergence-note input.
@@ -239,15 +238,50 @@ func (r *turnRepository) GetActive(ctx context.Context, orgID, projectID string)
 	return &t, nil
 }
 
-func (r *turnRepository) HasAny(ctx context.Context, orgID, projectID string) (bool, error) {
+// TurnStanding is how a project's turns stand as a whole (#485): whether the
+// interview has GOT anywhere, and — when it has not — what killed it.
+//
+// It exists because "a turn row exists" and "a turn is under way" are not the
+// same thing, and the kickoff read treated them as one. A `/start` turn whose
+// agents dispatch fails leaves a row that is failed within seconds: the row
+// said the kickoff succeeded, so the console showed no error and no Retry on a
+// project where nothing was ever going to happen.
+type TurnStanding struct {
+	// Progressed is true when a turn is RUNNING or has COMPLETED — the
+	// interview is in someone's hands, and an auto-`/start` over it is the
+	// #432 skip-valve bug (a completed turn is also where an unanswered
+	// question lives, which is why the line is drawn here).
+	Progressed bool
+	// LastFailure is the project's newest failed turn, set only when nothing
+	// has progressed — every turn this project ever had died. nil otherwise,
+	// including for a project with no turns at all.
+	LastFailure *AgentTurn
+}
+
+func (r *turnRepository) Standing(ctx context.Context, orgID, projectID string) (TurnStanding, error) {
 	var n int64
 	err := r.db.WithContext(ctx).Model(&AgentTurn{}).
-		Where("org_id = ? AND project_id = ?", orgID, projectID).
+		Where("org_id = ? AND project_id = ? AND status IN ?",
+			orgID, projectID, []string{turnStatusRunning, turnStatusCompleted}).
 		Count(&n).Error
 	if err != nil {
-		return false, err
+		return TurnStanding{}, err
 	}
-	return n > 0, nil
+	if n > 0 {
+		return TurnStanding{Progressed: true}, nil
+	}
+	var t AgentTurn
+	err = r.db.WithContext(ctx).
+		Where("org_id = ? AND project_id = ? AND status = ?", orgID, projectID, turnStatusFailed).
+		Order("created_at DESC").
+		First(&t).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return TurnStanding{}, nil
+	}
+	if err != nil {
+		return TurnStanding{}, err
+	}
+	return TurnStanding{LastFailure: &t}, nil
 }
 
 func (r *turnRepository) LastTerminal(ctx context.Context, orgID, projectID, conversationID string) (*AgentTurn, error) {
