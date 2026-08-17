@@ -385,7 +385,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		// #430: the project-scoped thread store — resolve/rotate the current
 		// conversation, and the conversation_rotated admission fence on turns.
 		Conversations: spec.NewConversationRepository(db),
-		Recorder:      turnActivityRecorder{svc: activitySvc, authorship: specAuthored},
+		// #485: the one-server-side-`/start`-per-project claim, and what became
+		// of it — the spec stage's kickoff report and its Retry read it.
+		Kickoffs: spec.NewKickoffRepository(db),
+		Recorder: turnActivityRecorder{svc: activitySvc, authorship: specAuthored},
 	}
 	// MCP discovery on design-generation turns (dependency-management Phase 5):
 	// the BFF mints a short-lived aud:aep-api-mcp token per turn so the agents
@@ -440,6 +443,11 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// Agentic Engineer marker, carrying the idea the user typed at create for
 	// the /start flow to generate requirements from.
 	projectService.SetDescriptorWriter(spec.NewDescriptorWriter(filesSvc))
+
+	// Start every new project's spec interview server-side (#485). Wired
+	// after the descriptor writer above because the kickoff's turn snapshot
+	// must already carry the idea it reads.
+	projectService.SetSpecKickoff(genaiSvc)
 
 	// The Task-keyed log endpoint (issue number → newest execution by default,
 	// executionId query pins one for history browsing). (The runner skills-pull

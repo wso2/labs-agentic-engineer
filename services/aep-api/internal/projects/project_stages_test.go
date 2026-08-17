@@ -21,6 +21,7 @@ package projects
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,6 +32,10 @@ import (
 	"github.com/wso2/aep/aep-api/internal/gen"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
+
+// noKickoff is the spec stage's default kickoff report (#485): a legal enum
+// value on every path, including the ones that never reach the stage read.
+var noKickoff = gen.SpecKickoffState{Status: gen.SpecKickoffStateStatusNone}
 
 func devBinding(name, readyStatus, readyReason string) openchoreo.ReleaseBindingSummary {
 	return openchoreo.ReleaseBindingSummary{
@@ -85,7 +90,7 @@ func TestStageDerivation_FullPipeline(t *testing.T) {
 	}
 	st := mustStatus(t, fx)
 
-	if want := (gen.SpecStage{Exists: true, Version: "v2", Dirty: true, Design: true}); st.Spec != want {
+	if want := (gen.SpecStage{Exists: true, Version: "v2", Dirty: true, Design: true, Kickoff: noKickoff}); st.Spec != want {
 		t.Errorf("spec = %+v, want %+v", st.Spec, want)
 	}
 
@@ -541,7 +546,7 @@ func TestRepoNotReady_ZeroValueStages(t *testing.T) {
 	if st.Phase != "repo-cloning" {
 		t.Fatalf("phase = %q, want repo-cloning", st.Phase)
 	}
-	if st.Spec != (gen.SpecStage{}) {
+	if st.Spec != (gen.SpecStage{Kickoff: noKickoff}) {
 		t.Errorf("spec = %+v, want zero-valued", st.Spec)
 	}
 	if st.Build.Status != "idle" || st.Build.Version != "" {
@@ -549,5 +554,88 @@ func TestRepoNotReady_ZeroValueStages(t *testing.T) {
 	}
 	if st.Deploy.Status != "none" || st.Deploy.Version != "" || st.Deploy.Components.Total != 0 {
 		t.Errorf("deploy = %+v, want none zero-valued", st.Deploy)
+	}
+}
+
+// The spec kickoff (#485) rides the spec stage: it is the ONLY thing on this
+// read the console cannot derive from git, and it is the difference between a
+// project that looks untouched and one whose interview died.
+func TestSpecStage_KickoffReport(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		fx         statusFixture
+		wantStatus gen.SpecKickoffStateStatus
+		wantReason string
+	}{
+		{
+			name:       "a fresh project carries the pending kickoff",
+			fx:         statusFixture{kickoff: &spec.KickoffState{Status: spec.KickoffStatusPending}},
+			wantStatus: gen.SpecKickoffStateStatusPending,
+		},
+		{
+			name: "a dead interview reports the reason the card shows",
+			fx: statusFixture{kickoff: &spec.KickoffState{
+				Status: spec.KickoffStatusFailed,
+				Reason: "The spec interview's first turn failed: connection refused",
+			}},
+			wantStatus: gen.SpecKickoffStateStatusFailed,
+			wantReason: "connection refused",
+		},
+		{
+			// Once the interview has produced a document, the kickoff has
+			// nothing left to say — and the read stops paying for it.
+			name: "a project with a spec reports none, whatever the claim says",
+			fx: statusFixture{
+				snap:    spec.StatusSnapshot{HasSpec: true},
+				kickoff: &spec.KickoffState{Status: spec.KickoffStatusFailed, Reason: "stale"},
+			},
+			wantStatus: gen.SpecKickoffStateStatusNone,
+		},
+		{
+			name:       "an unwired kickoff port reads as none",
+			fx:         statusFixture{},
+			wantStatus: gen.SpecKickoffStateStatusNone,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := mustStatus(t, tc.fx)
+			if st.Spec.Kickoff.Status != tc.wantStatus {
+				t.Fatalf("kickoff status = %q, want %q", st.Spec.Kickoff.Status, tc.wantStatus)
+			}
+			if tc.wantReason != "" && !strings.Contains(st.Spec.Kickoff.Reason, tc.wantReason) {
+				t.Fatalf("reason = %q, want it to contain %q", st.Spec.Kickoff.Reason, tc.wantReason)
+			}
+		})
+	}
+}
+
+// A kickoff store that cannot answer fails the read like every other source:
+// fabricating `none` would hide the Retry the user needs.
+func TestSpecStage_KickoffReadFailureIsStrict(t *testing.T) {
+	t.Parallel()
+	fx := statusFixture{kickoffErr: fmt.Errorf("db down")}
+	if _, err := fx.service().GetProjectStatus(context.Background(), "acme", "web"); err == nil {
+		t.Fatal("kickoff read failure must fail the status read")
+	}
+}
+
+// A repo that is still cloning short-circuits the whole stage read, and the
+// kickoff enum must still be a legal value rather than an empty string.
+func TestSpecStage_KickoffDefaultsOnAnUnreadyRepo(t *testing.T) {
+	t.Parallel()
+	repoSvc := &fakeRepoSvc{GetRepoFunc: func(context.Context, string, string) (*sourcecontrol.GitRepository, error) {
+		return &sourcecontrol.GitRepository{Status: "cloning"}, nil
+	}}
+	st, err := NewProjectService(nil, repoSvc, nil, nil, nil).GetProjectStatus(context.Background(), "acme", "web")
+	if err != nil {
+		t.Fatalf("GetProjectStatus: %v", err)
+	}
+	if st.Spec.Kickoff.Status != gen.SpecKickoffStateStatusNone {
+		t.Fatalf("kickoff status = %q, want none", st.Spec.Kickoff.Status)
 	}
 }

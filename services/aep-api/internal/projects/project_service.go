@@ -60,6 +60,7 @@ type Service struct {
 	runReader      milestoneRunRows      // build/deploy stage reads + delete purge (status_stages.go)
 	bindingsReader bindingsReader        // deploy stage: OC release bindings (status_stages.go)
 	runAbandoner   runAbandoner          // run-supervisor teardown on delete; may be nil
+	specKickoff    specKickoff           // server-side /start at create (#485); may be nil
 }
 
 // runAbandoner is project_service's narrow consumer port for the run-supervisor
@@ -116,6 +117,23 @@ type descriptorWriter interface {
 type skillMirror interface {
 	SyncProjectSkills(ctx context.Context, orgID, projectID string) error
 }
+
+// specKickoff is the narrow consumer port for the server-side `/start` (#485):
+// projects owns project creation and the status read, and the spec domain owns
+// the turn — so projects asks, and never learns how a turn is started.
+//
+// KickoffSpec is idempotent per project (the spec domain holds the claim), which
+// is what lets create call it unconditionally. Kickoff is the report the status
+// read carries. *spec.Service satisfies both. Wired at the composition root; nil
+// is a documented no-op that reads as "no kickoff".
+type specKickoff interface {
+	KickoffSpec(ctx context.Context, orgID, projectID string) error
+	Kickoff(ctx context.Context, orgID, projectID string) (spec.KickoffState, error)
+}
+
+// SetSpecKickoff wires the server-side spec interview. A nil kickoff means new
+// projects start nothing and the status read reports `none`.
+func (s *Service) SetSpecKickoff(k specKickoff) { s.specKickoff = k }
 
 func (s *Service) SetSkillsProvisioner(p skillsProvisioner) { s.skillsProv = p }
 
@@ -277,6 +295,31 @@ func (s *Service) CreateProject(ctx context.Context, orgName string, req *gen.Cr
 					}
 				})
 			}
+
+			// Start the spec interview (#485). EVERY new project gets one — a
+			// project created without a prompt starts the same turn, and the
+			// start skill opens by asking what the user is building. The console
+			// composes no `/start`, so this is the only thing that begins the
+			// conversation.
+			//
+			// ASYNC, and after the descriptor write above: the turn's snapshot is
+			// taken at the repo head, so the idea must already be committed, and
+			// the freshly-created repo may still be cloning — the kickoff waits
+			// for it rather than making the user wait for both. Best-effort like
+			// every other post-create step: the outcome is recorded on the claim,
+			// so a failure reaches the user as a card with a Retry rather than as
+			// a create that rolled back.
+			if s.specKickoff != nil {
+				kickoff, projectName := s.specKickoff, project.Name
+				async.Go(context.Background(), "spec kickoff", func(context.Context) {
+					bg, cancel := context.WithTimeout(context.Background(), spec.KickoffWindow)
+					defer cancel()
+					if kerr := kickoff.KickoffSpec(bg, orgName, projectName); kerr != nil {
+						slog.WarnContext(bg, "spec kickoff failed (the status read carries the reason; Retry re-attempts)",
+							"org", orgName, "project", projectName, "error", kerr)
+					}
+				})
+			}
 		}
 	}
 
@@ -395,6 +438,10 @@ func (s *Service) GetProjectStatus(ctx context.Context, orgName, projectName str
 	status := &gen.ProjectStatus{}
 	status.Build.Status = buildIdle
 	status.Deploy.Status = deployNone
+	// The kickoff report is enum-required too, and every early return below
+	// leaves it here: a project whose repo is still cloning has nothing to say
+	// about an interview that cannot have started (#485).
+	status.Spec.Kickoff.Status = gen.SpecKickoffStateStatusNone
 
 	// Check git repo
 	if s.repoSvc == nil {

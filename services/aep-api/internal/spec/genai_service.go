@@ -95,7 +95,6 @@ func (e *TurnInProgressError) Error() string {
 // never inject the namespace separator and escape its tenant scope.
 var conversationIDPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,200}$`)
 
-
 // ---- ports -----------------------------------------------------------------
 
 // RepoResolver looks up the project's git repo row (its OrgID/ProjectID are the
@@ -199,8 +198,13 @@ type ServiceDeps struct {
 	// the current thread, and the single-era admission fence on StartTurn.
 	// Optional (nil skips the fence) — a test seam; production always wires it.
 	Conversations ConversationRepository
-	MCPTokens     MCPTokenMinter
-	MCPBaseURL    string
+	// Kickoffs is the spec_kickoffs claim store (#485): one server-side
+	// `/start` per project, and what became of it. Optional (nil makes the
+	// kickoff read answer `none` and the start/retry paths refuse) — a test
+	// seam; production always wires it.
+	Kickoffs   KickoffRepository
+	MCPTokens  MCPTokenMinter
+	MCPBaseURL string
 	// TurnFinishHook, when set, is invoked once with the terminal outcome of
 	// every turn (outcome is "completed" | "failed"). The devflow feature uses
 	// it to signal a waiting design-generate workflow. Best-effort — a nil hook
@@ -232,15 +236,16 @@ type TurnActivityRecorder interface {
 // implementation and no test fake (the old GenAIService interface had no
 // substitution; the component tier exercises the real service).
 type Service struct {
-	repos      RepoResolver
-	git        GitReader
-	keys       AnthropicKeyResolver
-	client     agentsvc.Client
+	repos         RepoResolver
+	git           GitReader
+	keys          AnthropicKeyResolver
+	client        agentsvc.Client
 	turns         TurnRepository
 	broker        *TurnBroker
 	snapshots     sourcecontrol.SnapshotProvider
 	skillsRepo    SkillsRepoResolver
 	conversations ConversationRepository
+	kickoffs      KickoffRepository
 	mcpTokens     MCPTokenMinter
 	mcpBaseURL    string
 	finishHook    func(ctx context.Context, orgID, projectID, turnID, useCase, outcome string)
@@ -259,6 +264,7 @@ func NewService(d ServiceDeps) *Service {
 		snapshots:     d.Snapshots,
 		skillsRepo:    d.SkillsRepo,
 		conversations: d.Conversations,
+		kickoffs:      d.Kickoffs,
 		mcpTokens:     d.MCPTokens,
 		mcpBaseURL:    d.MCPBaseURL,
 		finishHook:    d.TurnFinishHook,
@@ -382,13 +388,13 @@ func (s *Service) StartTurn(ctx context.Context, orgID, projectID string, in Tur
 		summary:          in.Instruction,
 		// Captured before the detached goroutine: the identity reads the
 		// request's bearer, and the journal (#463) attributes the turn.
-		author: journalAuthorFrom(ctx),
-		repoRef:          ref,
-		baseRef:          baseRef,
-		skillsRef:        skillsRef,
-		anthropicKey:     key,
-		collabRoomID:     collabRoomID,
-		collabToken:      collabToken,
+		author:       journalAuthorFrom(ctx),
+		repoRef:      ref,
+		baseRef:      baseRef,
+		skillsRef:    skillsRef,
+		anthropicKey: key,
+		collabRoomID: collabRoomID,
+		collabToken:  collabToken,
 	}
 	// Detached: the turn runs to completion (or a terminal failure) server-
 	// side regardless of the client connection (D16). runTurnSafe is the panic

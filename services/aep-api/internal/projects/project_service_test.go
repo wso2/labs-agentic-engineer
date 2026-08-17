@@ -795,6 +795,30 @@ type statusFixture struct {
 	cycle       *delivery.RunCycle
 	bindings    []openchoreo.ReleaseBindingSummary
 	bindingsErr error
+	// kickoff is the server-side `/start` report (#485). nil leaves the port
+	// unwired, which is the pre-#485 shape and must still read as `none`.
+	kickoff    *spec.KickoffState
+	kickoffErr error
+}
+
+// fakeSpecKickoff stands in for the spec domain's kickoff port. It records the
+// create-time call so the create test can prove EVERY new project gets one.
+type fakeSpecKickoff struct {
+	state   spec.KickoffState
+	readErr error
+	started chan struct{}
+	err     error
+}
+
+func (f *fakeSpecKickoff) KickoffSpec(context.Context, string, string) error {
+	if f.started != nil {
+		close(f.started)
+	}
+	return f.err
+}
+
+func (f *fakeSpecKickoff) Kickoff(context.Context, string, string) (spec.KickoffState, error) {
+	return f.state, f.readErr
 }
 
 func (fx statusFixture) service() *Service {
@@ -823,6 +847,13 @@ func (fx statusFixture) service() *Service {
 		},
 	}
 	svc := NewProjectService(nil, repoSvc, nil, fakeArtifacts, nil)
+	if fx.kickoff != nil || fx.kickoffErr != nil {
+		state := spec.KickoffState{}
+		if fx.kickoff != nil {
+			state = *fx.kickoff
+		}
+		svc.SetSpecKickoff(&fakeSpecKickoff{state: state, readErr: fx.kickoffErr})
+	}
 	svc.SetStageSources(
 		fakeRunReader{rows: fx.runs, err: fx.runsErr, cycle: fx.cycle},
 		fakeBindingsReader{items: fx.bindings, err: fx.bindingsErr})
@@ -974,6 +1005,7 @@ func TestGetProjectStatus_PhaseLadder(t *testing.T) {
 				Version: tc.fx.snap.SpecVersion,
 				Dirty:   tc.fx.snap.SpecDirty,
 				Design:  tc.fx.snap.HasDesign,
+				Kickoff: noKickoff,
 			}
 			if st.Spec != want {
 				t.Errorf("spec stage = %+v, want %+v", st.Spec, want)

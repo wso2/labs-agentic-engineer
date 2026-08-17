@@ -112,6 +112,26 @@ func (h *Handler) GetActiveTurn(ctx context.Context, request gen.GetActiveTurnRe
 	return gen.GetActiveTurn200JSONResponse(turnStatusModel(st)), nil
 }
 
+// RetrySpecKickoff re-attempts the server-side `/start` (#485) on the user's
+// say-so. It exists as an endpoint precisely so the console never has to send
+// `/start` itself: retrying is the backend doing its own job again, and a
+// console-composed chat message would race the very kickoff it is retrying.
+//
+// A refused attempt is the 200 BODY, not an HTTP error — the console renders
+// the same card whether the state came from here or from the status poll, so an
+// error status would only give it a second, redundant shape to handle.
+func (h *Handler) RetrySpecKickoff(ctx context.Context, request gen.RetrySpecKickoffRequestObject) (gen.RetrySpecKickoffResponseObject, error) {
+	org := tenant.BoundOrgFromContext(ctx)
+	state, err := h.genai.RetryKickoff(ctx, org, request.ProjectName)
+	if err != nil {
+		return nil, mapGenAITurnError(ctx, err)
+	}
+	return gen.RetrySpecKickoff200JSONResponse(gen.SpecKickoffState{
+		Status: gen.SpecKickoffStateStatus(state.Status),
+		Reason: state.Reason,
+	}), nil
+}
+
 func (h *Handler) StreamTurn(ctx context.Context, request gen.StreamTurnRequestObject) (gen.StreamTurnResponseObject, error) {
 	org := tenant.BoundOrgFromContext(ctx)
 	// ?from wins over Last-Event-ID; the header names the last RECEIVED
@@ -367,6 +387,11 @@ func mapGenAITurnError(ctx context.Context, err error) error {
 		// today (drop the stale `_skills` row; the next resolve re-provisions).
 		slog.ErrorContext(ctx, "genai turn: org skills repository unavailable", "error", err)
 		return apierr.ServiceUnavailable("org skills repository unavailable — contact your platform admin")
+	case errors.Is(err, spec.ErrKickoffUnavailable):
+		// Same posture as the two arms below: a wiring bug, never a client
+		// error — the kickoff store was not assembled.
+		slog.ErrorContext(ctx, "genai turn: spec kickoff store not configured", "error", err)
+		return apierr.ServiceUnavailable(spec.ErrKickoffUnavailable.Error())
 	case errors.Is(err, spec.ErrConversationsUnavailable):
 		// A wiring bug (the thread store was not assembled), never a client
 		// error — logged 503 with a clear message, same posture as the

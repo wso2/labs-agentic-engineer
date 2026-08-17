@@ -125,6 +125,7 @@ var opOwner = map[string]string{
 	"ReadFile":                      embedSpec,
 	"ReadFileBundle":                embedSpec,
 	"RequestOrgServiceAccess":       embedDependencies,
+	"RetrySpecKickoff":              embedSpec,
 	"RotateConversation":            embedSpec,
 	"RotateIdpClientSecret":         embedOrganization,
 	"SetSkillEnabled":               embedSpec,

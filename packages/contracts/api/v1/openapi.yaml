@@ -1876,6 +1876,43 @@ paths:
       summary: Get the collaboration session descriptor for the spec workspace
       tags:
       - Collaboration
+  /projects/{projectName}/spec/kickoff:
+    post:
+      operationId: retry-spec-kickoff
+      description: >-
+        Re-attempt the server-side spec kickoff (#485). The console NEVER starts the interview by
+        sending a chat message — it asks the backend to do its own job again, which is why this is an
+        endpoint rather than an injected `/start`. Idempotent: a project already interviewing, or one
+        whose kickoff is still working, is left alone and its state returned. One attempt, no
+        provisioning retry loop — somebody is watching the click, so a repo that is still cloning comes
+        back as a failure that says so. A failed attempt is reported IN THE BODY (status failed with a
+        reason), not as an HTTP error: the caller renders the same card either way.
+      parameters:
+      - description: Project name (DNS-label slug)
+        in: path
+        name: projectName
+        required: true
+        schema:
+          description: Project name (DNS-label slug)
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpecKickoffState'
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+      security:
+      - userJWT: []
+      summary: Retry a project's server-side spec kickoff
+      tags:
+      - Spec
   /projects/{projectName}/status:
     get:
       operationId: get-project-status
@@ -3291,9 +3328,11 @@ components:
         name:
           type: string
         prompt:
-          description: 'The user''s initial requirement — what they want built. Persisted as the project''s
-            requirement and kicks off spec derivation for the new project (issue #72). Projects created
-            without a prompt keep today''s behavior.'
+          description: 'The user''s initial requirement — what they want built. Persisted into the project''s
+            descriptor as its requirement (issue #72). EVERY new project starts its `/start` spec-interview
+            turn server-side once the repo finishes provisioning (issue #485) — exactly one auto-start per
+            project, enforced server-side; attach via get-active-turn / stream-turn. A project created
+            without a prompt starts the same turn: the agent opens by asking what the user wants to build.'
           type: string
         repoName:
           description: 'Repository name for the project''s GitHub repo; defaults to the project name,
@@ -5092,6 +5131,34 @@ components:
       - updates
       - count
       type: object
+    SpecKickoffState:
+      additionalProperties: false
+      description: >-
+        The server-side spec kickoff (#485): every new project's `/start` turn is started by the
+        backend, and this is what became of it. The console needs it because the alternative —
+        deriving "has the interview started" from the running turn, the thread and the spec files —
+        is blind for the seconds between the claim and the turn row, and blind forever to a kickoff
+        that failed. Only ever a report: no console action starts a `/start` turn.
+      properties:
+        reason:
+          description: Why the kickoff failed, in the user's words. Empty unless status is failed.
+          type: string
+        status:
+          description: >-
+            none - no kickoff was ever claimed for this project; pending - claimed and still working
+            (the repo may still be provisioning); failed - nothing came of the attempt, and Retry is
+            the way out; started - a turn is under way (the kickoff's, or a user's that beat it) and
+            the turn reads take over.
+          enum:
+          - none
+          - pending
+          - failed
+          - started
+          type: string
+      required:
+      - status
+      - reason
+      type: object
     SpecStage:
       additionalProperties: false
       description: Spec-stage aggregate on ProjectStatus (#184). Approved/draft is derived, not stored
@@ -5107,6 +5174,8 @@ components:
         exists:
           description: Any spec file created; false renders the Generate-spec CTA.
           type: boolean
+        kickoff:
+          $ref: '#/components/schemas/SpecKickoffState'
         version:
           description: Latest v<N> spec tag; "" if never published.
           type: string
@@ -5115,6 +5184,7 @@ components:
       - version
       - dirty
       - design
+      - kickoff
       type: object
     StartConnectInputBody:
       additionalProperties: false

@@ -173,6 +173,11 @@ func (s *Service) populateStages(ctx context.Context, orgName, projectName strin
 		Dirty:   snap.SpecDirty,
 		Design:  snap.HasDesign,
 	}
+	kickoff, err := s.specKickoffState(ctx, orgName, projectName, snap.HasSpec)
+	if err != nil {
+		return err
+	}
+	status.Spec.Kickoff = kickoff
 	applyFlatArtifactFields(status, snap)
 
 	// Build stage: the newest SPEC BUILD (ListByProject is newest-first).
@@ -238,6 +243,33 @@ func (s *Service) populateStages(ctx context.Context, orgName, projectName strin
 	}
 	status.Deploy.Validation = gen.DeployStageValidation(state)
 	return nil
+}
+
+// specKickoffState carries the server-side `/start`'s outcome onto the spec
+// stage (#485) — the one thing on this read that is not derived from git.
+//
+// Asked ONLY while the project has no spec, which keeps the poll budget intact
+// (this is one indexed local row read, and it stops the moment the interview
+// produces a file) and is also what makes the spec domain's "no turn
+// progressed" mean "nothing came of this". A project with a spec answers
+// `none`: whatever the kickoff did, the document is the answer now.
+//
+// Strict, like every other source here: a store that cannot answer fails the
+// read rather than reporting a state it does not know. A fabricated `none`
+// would hide the Retry the user needs.
+func (s *Service) specKickoffState(ctx context.Context, orgName, projectName string, hasSpec bool) (gen.SpecKickoffState, error) {
+	none := gen.SpecKickoffState{Status: gen.SpecKickoffStateStatusNone}
+	if hasSpec || s.specKickoff == nil {
+		return none, nil
+	}
+	state, err := s.specKickoff.Kickoff(ctx, orgName, projectName)
+	if err != nil {
+		return none, fmt.Errorf("spec kickoff state: %w", err)
+	}
+	return gen.SpecKickoffState{
+		Status: gen.SpecKickoffStateStatus(state.Status),
+		Reason: state.Reason,
+	}, nil
 }
 
 // validationStage resolves the deploy.validation value, reading the run's latest

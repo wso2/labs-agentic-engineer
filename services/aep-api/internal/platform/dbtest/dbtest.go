@@ -110,7 +110,7 @@ const (
 	// per process), so a stale template can never outlive a run — this only
 	// needs to be stable within a run. Bump it when internal/migrate's step list
 	// or base-model set changes, purely as documentation of intent.
-	schemaVersion = "9"
+	schemaVersion = "10"
 
 	// shutdownTimeout bounds the teardown in Main. It only has to cover a stop +
 	// remove of a local container; if Docker is wedged for longer than this the

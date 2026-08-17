@@ -108,6 +108,13 @@ type TurnRepository interface {
 	// conversation — the D20 filesChangedExternally / divergence-note input.
 	LastTerminal(ctx context.Context, orgID, projectID, conversationID string) (*AgentTurn, error)
 
+	// Standing summarises what a project's turns have amounted to: whether any
+	// turn ever got somewhere, and — when none did — the last one that died.
+	// It is the spec kickoff's ground truth (#485): a turn ROW proves only that
+	// dispatch returned, so a project whose every turn failed must read as a
+	// failed kickoff, not as one that started.
+	Standing(ctx context.Context, orgID, projectID string) (TurnStanding, error)
+
 	// SweepStale fails every running row whose heartbeat predates olderThan
 	// (reason stream-died, message "replica crashed or hung") and returns the
 	// swept rows so the caller can emit broker terminals.
@@ -247,6 +254,46 @@ func (r *turnRepository) LastTerminal(ctx context.Context, orgID, projectID, con
 		return nil, err
 	}
 	return &t, nil
+}
+
+// TurnStanding is what a project's turns amount to, for a caller that must
+// distinguish "the agent is on it" from "nothing came of any of this".
+type TurnStanding struct {
+	// Progressed is true when some turn is running or completed — the interview
+	// is in hands, whoever started it.
+	Progressed bool
+	// LastFailure is the newest failed turn, and is read ONLY when nothing
+	// progressed: with a live or completed turn on the project, an older
+	// failure says nothing about where the project stands.
+	LastFailure *AgentTurn
+}
+
+func (r *turnRepository) Standing(ctx context.Context, orgID, projectID string) (TurnStanding, error) {
+	var progressed int64
+	err := r.db.WithContext(ctx).
+		Model(&AgentTurn{}).
+		Where("org_id = ? AND project_id = ? AND status IN ?",
+			orgID, projectID, []string{turnStatusRunning, turnStatusCompleted}).
+		Limit(1).
+		Count(&progressed).Error
+	if err != nil {
+		return TurnStanding{}, err
+	}
+	if progressed > 0 {
+		return TurnStanding{Progressed: true}, nil
+	}
+	var failed AgentTurn
+	err = r.db.WithContext(ctx).
+		Where("org_id = ? AND project_id = ? AND status = ?", orgID, projectID, turnStatusFailed).
+		Order("created_at DESC").
+		First(&failed).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return TurnStanding{}, nil
+	}
+	if err != nil {
+		return TurnStanding{}, err
+	}
+	return TurnStanding{LastFailure: &failed}, nil
 }
 
 func (r *turnRepository) SweepStale(ctx context.Context, olderThan time.Time) ([]AgentTurn, error) {

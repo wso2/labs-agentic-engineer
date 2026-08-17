@@ -328,6 +328,25 @@ func (m *memTurnRepo) GetActive(_ context.Context, orgID, projectID string) (*sp
 	return nil, nil
 }
 
+func (m *memTurnRepo) Standing(_ context.Context, orgID, projectID string) (spec.TurnStanding, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var st spec.TurnStanding
+	for _, r := range m.rows { // insertion order == creation order
+		if r.OrgID != orgID || r.ProjectID != projectID {
+			continue
+		}
+		switch r.Status {
+		case "running", "completed":
+			return spec.TurnStanding{Progressed: true}, nil
+		case "failed":
+			cp := *r
+			st.LastFailure = &cp
+		}
+	}
+	return st, nil
+}
+
 func (m *memTurnRepo) LastTerminal(_ context.Context, orgID, projectID, conversationID string) (*spec.AgentTurn, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -520,12 +539,12 @@ func newGenaiRig(t *testing.T, seed map[string]string, opts ...rigOption) *genai
 		skillsRepo = cfg.skillsRepo
 	}
 	svc := spec.NewService(spec.ServiceDeps{
-		Repos:      stubRepoResolver{rec: rec},
-		Git:        sourcecontrol.NewGitOpsService(stubResolver{}, fx.Engine),
-		Keys:       func(context.Context, string) (string, error) { return rig.key, nil },
-		Client:     client,
-		Turns:      turns,
-		Broker:     broker,
+		Repos:         stubRepoResolver{rec: rec},
+		Git:           sourcecontrol.NewGitOpsService(stubResolver{}, fx.Engine),
+		Keys:          func(context.Context, string) (string, error) { return rig.key, nil },
+		Client:        client,
+		Turns:         turns,
+		Broker:        broker,
 		Snapshots:     fx.Engine,
 		SkillsRepo:    skillsRepo,
 		Conversations: cfg.conversations,
@@ -653,8 +672,8 @@ func Test202Flow_PreviewOnlyAndStreamReplays(t *testing.T) {
 	baseRef := r.fx.Origin.HeadSHA(t)
 
 	final := map[string]string{
-		"specs/requirements/notes.md":        "# Notes\nBody\n",
-		"specs/requirements/prd.md": "# Requirements\n",
+		"specs/requirements/notes.md": "# Notes\nBody\n",
+		"specs/requirements/prd.md":   "# Requirements\n",
 	}
 	r.fake.parts = []string{
 		textPart("working"),
@@ -1101,7 +1120,6 @@ func TestWebSearchGate_AttachAndLeak(t *testing.T) {
 		}
 	})
 }
-
 
 // TestD20_FilesChangedExternallyAndDivergenceNote pins the server-derived
 // flag: a second turn in the same conversation after main moved externally

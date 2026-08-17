@@ -26,7 +26,7 @@ flowchart LR
 ## Slices
 | Slice | Use-cases | Entry |
 |---|---|---|
-| `genaiturns` | create / get / active / stream turn + get-conversation (the AgentTurn lifecycle) + list/rotate the project's conversation threads (#430) | `.../agents/{cid}/messages`, `.../agents/conversations`, `.../turns/...` |
+| `genaiturns` | create / get / active / stream turn + get-conversation (the AgentTurn lifecycle) + list/rotate the project's conversation threads (#430) + retry the server-side spec kickoff (#485) | `.../agents/{cid}/messages`, `.../agents/conversations`, `.../turns/...`, `POST .../spec/kickoff` |
 | `files` | list / read / apply files over the project workspace | `GET/POST .../files...` |
 | `tags` | list the project's `v<N>` spec version tags | `GET .../tags` |
 | `skills` | list / create / update / delete / import / sync / get the org Skill library | `/skills...` |
@@ -44,11 +44,13 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
 | `ArtifactService` · `ArtifactStore` · `SplitFrontmatter` | offers | `delivery` / `projects` / `dependencies` — design reads, spec-save, status snapshots |
 | `HardConfigEdges` | offers | `projects` (deploy order) — which sibling addresses a component cannot start without |
 | `DescriptorWriter` | offers | `projects` — stamps `specs/.agentic-engineer.toml` into a repo at project create |
+| `KickoffSpec` · `Kickoff` | offers | `projects` — starts every new project's `/start` turn, and reports what became of it (#485) |
 | `CredentialsRefreshService`-adjacent turn/tag reads | offers | delivery/build (SpecTagger, validation criteria) |
 
 ## Owns
 - git spec content (`prd.md`, `specs/design/**`), the annotated `v<N>` tag (the version store),
-  the org-skills repo, `AgentTurn` (turn lifecycle) + the resumable-turn SSE broker (in-memory seam).
+  the org-skills repo, `AgentTurn` (turn lifecycle) + the resumable-turn SSE broker (in-memory seam),
+  and `SpecKickoff` — the one-server-side-`/start`-per-project claim (#485).
 - **The Skill library.** One flat authored library at repo-root `skills/`, COPY'd into the image and read
   at runtime from `config.SkillsDir` (default `/app/skills`) — not go:embed'd. A skill dir is `SKILL.md`
   plus the [Agent Skills standard structure](https://agentskills.io/specification) — `scripts/`,
@@ -139,6 +141,21 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
   turn snapshot (`agentfold.InTurnSnapshot` and its TS mirror), and `.toml` is not an admitted extension
   either — so the captured idea reaches a turn ONLY via the `/start` expansion, never by the model opening
   the file. Do not "fix" this by widening the snapshot filter.
+- **The spec interview is started HERE, never by a client.** Every new project's `/start` turn is
+  started server-side at create (`kickoff.go`, called by `projects` through a narrow port), and the only
+  other way in is the user's Retry endpoint. A console that also composed `/start` raced this one and
+  users met the one-active-turn 409; there is no second starter, by design.
+  - Exactly-once is layered: the `spec_kickoffs` claim (one auto kickoff per project, ever), the
+    turn STANDING (a user who started the first turn owns the interview — firing `/start` over an
+    unanswered question form reads to the start skill as the skip valve), and the D18 one-active guard.
+  - **The kickoff's outcome is the TURN's, not the dispatch's.** Dispatch returns and stamps the claim
+    `started` seconds before a turn can die with the agents service unreachable, so the read derives
+    failure from a project with no spec, no turn that progressed, and a turn that ended failed — at read
+    time, never written back. Reading the claim alone reported a healthy kickoff for interviews that
+    never ran.
+  - Retry stands down only on a kickoff that actually PROGRESSED (or is still inside its window), never
+    merely because a claim row exists: a failed attempt leaves its claim behind, and standing down on
+    that corpse is a button that reports success and starts nothing.
 - **The kickoff is never signalled through `useCase`.** That field is part of the conversation identity
   (`namespacedID`), so keying `/start` on it would put the turn in a different conversation from the chat
   around it — and `/start` runs an interview whose answers arrive as ordinary chat turns.

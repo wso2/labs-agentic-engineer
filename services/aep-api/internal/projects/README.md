@@ -47,6 +47,7 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
 | repo/workspace bootstrap · repo-name conflict | needs | `sourcecontrol` — on project create/delete |
 | design read · spec-stage snapshot | needs | `spec` — the Stage aggregate's spec column + component OpenAPI source |
 | `descriptorWriter` | needs | `spec` — stamps `specs/.agentic-engineer.toml` on create (best-effort; nil is a no-op) |
+| `specKickoff` (`SetSpecKickoff`) | needs | `spec` — starts every new project's `/start` turn at create, and reports what became of it on the Stage aggregate (#485; nil is a no-op that reads as `none`) |
 | build/exec status (`SetStageSources` port) | needs | `delivery` — the build/deploy columns of the Stage aggregate, wired at the root |
 | `runAbandoner` (`SetRunAbandoner`) | needs | `delivery` — ends the supervisors of a deleted project's live runs, wired at the root (nil is a no-op) |
 | per-project agent usage (`UsageService`) | needs | `delivery` — the agent-usage ledger, keyed by lifetime (`contracts.UsageScope`) |
@@ -99,6 +100,13 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
   user already committed to. The one exception stays the repo-NAME conflict, which can never succeed on
   retry and so compensates the project away and fails. A missing descriptor costs the user one question
   from the `/start` skill, nothing more.
+- **Every new project starts its spec interview, and the console starts none.** Create fires the spec
+  domain's kickoff (async, after the descriptor commit the turn's snapshot must carry), for projects with
+  a prompt and without one alike — with no captured idea the start skill opens by asking what the user
+  wants to build. It is best-effort like the steps above: the outcome is recorded on the spec domain's
+  claim, so a failure reaches the user as a card with a Retry rather than as a create that rolled back.
+  Do not add a prompt gate, and do not add a second starter — a console that also sent `/start` raced
+  this one into the one-active-turn 409.
 - **Slug guards run before any service touch.** projectName/componentName/buildName path params are validated
   as DNS-label slugs (`RequireSlug`) and 400 on malformed BEFORE the OC client / repo is reached.
 - **The wire quirks the contract-first cutover pinned stay pinned**: get-component-config returns a literal
@@ -109,7 +117,9 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
   `milestone_runs` row (a version's delivery IS its run), deploy from the project's `development` release
   bindings — with no GitHub API, Temporal query, or origin fetch. Any source failure fails the whole read
   (the console keeps last-good); the one carve-out: a deploy tag missing from the local mirror degrades to
-  a 0 denominator, not a 500.
+  a 0 denominator, not a 500. The spec stage carries ONE non-git fact — the kickoff report (#485) — and
+  only while the project has no spec: one indexed local row read that stops the moment the interview
+  produces a file.
 - **The build stage carries NO task counts** — not zeroed ones, none at all. Their only honest source is
   the version's milestone on GitHub, and a 5s poll may not spend GitHub rate, so the field is absent from
   the contract rather than present and always zero; the console renders counts from the list-tasks
