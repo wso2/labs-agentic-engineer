@@ -479,6 +479,14 @@ export function SpecView({ projectName }: { projectName: string }) {
   // the interview hook above is disabled and both signals stay false.
   const autoOpenedChatRef = useRef(false);
   const firstRunTurnActive = interview.running || interview.questionsWaiting > 0;
+  // The first run has produced nothing yet, so the pane has nothing to browse
+  // (#485 round 5). Deliberately independent of the interview state: whether
+  // the turn is streaming, parked on questions, or has not surfaced at all,
+  // this project is waiting on the agent — and the file-picker empty state is
+  // only ever right for a project whose spec EXISTS. `hasSpec` is the server's
+  // own answer, so a status read still in flight waits rather than guessing.
+  const specAwaited =
+    files.length === 0 && !failed && status.data?.hasSpec !== true;
   useEffect(() => {
     if (!firstRunTurnActive || autoOpenedChatRef.current) return;
     autoOpenedChatRef.current = true;
@@ -1123,7 +1131,7 @@ export function SpecView({ projectName }: { projectName: string }) {
                     />
                   </Box>
                 )
-              ) : files.length === 0 && !failed && firstRunTurnActive ? (
+              ) : specAwaited ? (
                 // The fresh-project working state (#485 live-testing round —
                 // replaces the mock-document skeleton, which read as content
                 // that wasn't there): a small spinner plus the turn's ACTUAL
@@ -1132,11 +1140,13 @@ export function SpecView({ projectName }: { projectName: string }) {
                 // picks the live room file up), and never shown on a failed
                 // derivation — no promise of a document that is not coming.
                 //
-                // Covers the WHOLE first-run turn, not just its running half:
-                // between submitting answers and the next turn attaching — and
-                // between a question landing and the room mirroring it into the
-                // form — the pane otherwise fell back to "Select a file…",
-                // which reads as a finished, empty workspace (round 2).
+                // The stage line is a LADDER, not a gate (round 5): every rung
+                // below the known stages ends on the generic wait line, because
+                // a project with no spec and no files is waiting on the agent
+                // whatever the interview poll has resolved so far. Gating the
+                // whole state on a resolved stage is what let a spec view
+                // opened before the questions were injected fall through to
+                // "Select a file…" — a file picker with no files.
                 <Box
                   data-testid="spec-working-state"
                   sx={{
@@ -1155,12 +1165,16 @@ export function SpecView({ projectName }: { projectName: string }) {
                       : interview.running
                         ? // Same words as the overview's Spec card: this is
                           // the stage the user clicked through FROM.
-                          "The agent is processing the idea…"
-                        : // Not running, yet questions are waiting: they have
-                          // landed in the thread and the room form is a beat
-                          // behind. Name that beat rather than claim work
-                          // nobody is doing.
-                          "Opening the agent's questions…"}
+                          "The agent is looking at your idea…"
+                        : interview.questionsWaiting > 0
+                          ? // Questions have landed in the thread and the room
+                            // form is a beat behind. Name that beat rather than
+                            // claim work nobody is doing.
+                            "Opening the agent's questions…"
+                          : // Nothing resolved yet — the first seconds of the
+                            // project, before the turn or its questions exist.
+                            // Say what is true of all of them.
+                            "The agent is working on your spec. This view fills in as it writes."}
                   </Typography>
                 </Box>
               ) : (

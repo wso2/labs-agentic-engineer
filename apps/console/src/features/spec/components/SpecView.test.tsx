@@ -174,11 +174,15 @@ vi.mock("@aep/ui-design-view", () => ({
 const mockMutateAsync = vi.fn();
 const mockPreflightRefetch = vi.fn();
 let mockSpecStatus = "approved";
+let mockHasSpec = true;
 vi.mock("../../projects/api/queries", () => ({
   useProject: () => ({ data: { displayName: "Test Project" } }),
   // Delegated (not a fixed factory) so the blank-state block can drive the
-  // status that decides skeleton-vs-failure.
-  useProjectStatus: () => ({ data: { specStatus: mockSpecStatus } }),
+  // status that decides skeleton-vs-failure, and hasSpec — which is what
+  // separates the first-run wait state from the real file-picker empty state.
+  useProjectStatus: () => ({
+    data: { specStatus: mockSpecStatus, hasSpec: mockHasSpec },
+  }),
   useProjectTags: () => ({ data: { latest: "v1", specDirty: false } }),
   useBuildProject: () => ({ mutateAsync: mockMutateAsync }),
   useBuildPreflight: () => ({ refetch: mockPreflightRefetch }),
@@ -267,6 +271,7 @@ const BASE_FILES = [
 beforeEach(() => {
   vi.clearAllMocks();
   mockSpecStatus = "approved";
+  mockHasSpec = true;
   mockUseSpecInterview.mockReturnValue({
     running: false,
     questionsWaiting: 0,
@@ -805,6 +810,7 @@ describe("SpecView fresh-project working state (#485)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockSpecStatus = "pending";
+    mockHasSpec = false;
     mockFlush.mockResolvedValue(undefined);
     mockUseSpecFiles.mockReturnValue({
       data: [],
@@ -825,7 +831,7 @@ describe("SpecView fresh-project working state (#485)", () => {
 
     expect(screen.getByTestId("spec-working-state")).toBeInTheDocument();
     expect(
-      screen.getByText("The agent is processing the idea…"),
+      screen.getByText("The agent is looking at your idea…"),
     ).toBeInTheDocument();
     expect(
       screen.queryByText("Select a file to view its content."),
@@ -842,7 +848,7 @@ describe("SpecView fresh-project working state (#485)", () => {
 
     expect(screen.getByText("The agent is drafting the PRD…")).toBeInTheDocument();
     expect(
-      screen.queryByText("The agent is processing the idea…"),
+      screen.queryByText("The agent is looking at your idea…"),
     ).not.toBeInTheDocument();
     // The drafting line beats the pane's pre-existing empty state — with no
     // file selected yet, that was what the user saw after submitting answers.
@@ -870,14 +876,43 @@ describe("SpecView fresh-project working state (#485)", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("shows no working state while nothing runs — no spinner with no agent behind it", () => {
+  // Round 5: the maintainer opened the spec view BEFORE the questions were
+  // injected — before the interview state had resolved at all — and got the
+  // bare file-picker empty state on a project that has no files to pick.
+  // A project with no spec and no files is always waiting on the agent.
+  it("waits on the agent before the interview state resolves", () => {
+    render(<SpecView projectName="proj1" />);
+
+    expect(screen.getByTestId("spec-working-state")).toBeInTheDocument();
+    expect(
+      screen.getByText("The agent is working on your spec. This view fills in as it writes."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Select a file to view its content."),
+    ).not.toBeInTheDocument();
+  });
+
+  // The other side of the same rule: once the spec EXISTS the pane is a file
+  // browser again, and a running turn there is an ordinary amendment — never
+  // a first-run wait state over content the user came to read.
+  it("shows no wait state once the spec exists", () => {
+    mockHasSpec = true;
+    mockSpecStatus = "approved";
+    mockUseSpecInterview.mockReturnValue({
+      running: true,
+      questionsWaiting: 0,
+      drafting: false,
+    });
+    mockUseSpecFiles.mockReturnValue({
+      data: BASE_FILES,
+      isPending: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
     render(<SpecView projectName="proj1" />);
 
     expect(screen.queryByTestId("spec-working-state")).not.toBeInTheDocument();
-    // The honest deriving line remains for the pre-kickoff window.
-    expect(
-      screen.getByText("The agents are shaping the spec — files appear here as they land."),
-    ).toBeInTheDocument();
   });
 
   it("suppresses the working state on a failed derivation — no promise of a doc that isn't coming", () => {
