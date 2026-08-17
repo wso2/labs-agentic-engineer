@@ -125,16 +125,7 @@ func runSreStatus(cmd *cobra.Command, args []string) error {
 	// (rca-agent-anthropic-secret) and falls back to the envFrom variable
 	// (rca-agent-secret).
 	fmt.Println("RCA LLM key")
-	switch {
-	case secretKeyNonEmpty(ctx, client, sreStatusObsNamespace, "rca-agent-anthropic-secret", "RCA_LLM_API_KEY"):
-		fmt.Printf("  %-36s org's console-connected key\n", "rca-agent-anthropic-secret")
-	case secretKeyNonEmpty(ctx, client, sreStatusObsNamespace, "rca-agent-secret", "RCA_LLM_API_KEY"):
-		fmt.Printf("  %-36s static key from deployments/.env\n", "rca-agent-secret")
-	default:
-		fmt.Printf("  %-36s NONE — analyses will fail\n", "(unresolved)")
-		fmt.Println("  Connect a key at Settings → Anthropic Integration, or set")
-		fmt.Println("  ANTHROPIC_API_KEY in deployments/.env and re-run setup-observability.sh.")
-	}
+	reportRCALLMKeySource(ctx, client)
 	fmt.Println()
 
 	// ── Pods ─────────────────────────────────────────────────────────────────
@@ -165,17 +156,59 @@ func runSreStatus(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// rcaLLMKeySources are the two RCA_LLM_API_KEY carriers in the resolution order
+// the agent itself uses: src/clients/llm.py:resolve_api_key prefers the mounted
+// file (rca-agent-anthropic-secret) and falls back to the envFrom variable
+// (rca-agent-secret).
+var rcaLLMKeySources = []struct{ secret, source string }{
+	{"rca-agent-anthropic-secret", "org's console-connected key"},
+	{"rca-agent-secret", "static key from deployments/.env"},
+}
+
+// reportRCALLMKeySource prints the key source the RCA agent will actually
+// resolve, walking the sources in the agent's own precedence order.
+//
+// An unreadable Secret stops the walk rather than falling through to the next
+// source: a higher-precedence source that cannot be read may or may not hold the
+// key that wins, so the outcome is unknown — and reporting an unknown as "NONE —
+// analyses will fail" is the same class of false signal this command exists to
+// remove.
+func reportRCALLMKeySource(ctx context.Context, client kubernetes.Interface) {
+	for _, src := range rcaLLMKeySources {
+		nonEmpty, err := secretKeyNonEmpty(ctx, client, sreStatusObsNamespace, src.secret, "RCA_LLM_API_KEY")
+		switch {
+		case err != nil:
+			fmt.Printf("  %-36s unable to verify: %v\n", src.secret, err)
+			return
+		case nonEmpty:
+			fmt.Printf("  %-36s %s\n", src.secret, src.source)
+			return
+		}
+	}
+	fmt.Printf("  %-36s NONE — analyses will fail\n", "(unresolved)")
+	fmt.Println("  Connect a key at Settings → Anthropic Integration, or set")
+	fmt.Println("  ANTHROPIC_API_KEY in deployments/.env and re-run setup-observability.sh.")
+}
+
 // secretKeyNonEmpty reports whether ns/name carries a non-empty value at key.
 //
 // A missing Secret, a missing key, and a present-but-empty value all collapse to
-// false on purpose: for credential wiring they are the same outcome, and it is
-// the empty value specifically that a plain existence check reports as healthy.
-// Any API error is likewise false — an unreadable Secret is not evidence of a
-// usable key.
-func secretKeyNonEmpty(ctx context.Context, client kubernetes.Interface, ns, name, key string) bool {
+// (false, nil) on purpose: for credential wiring they are the same outcome — the
+// key is not there — and it is the empty value specifically that a plain
+// existence check reports as healthy. A missing Secret in particular is the
+// normal state for rca-agent-anthropic-secret on an install that has never had a
+// key connected.
+//
+// Any other API error is returned rather than folded into false: an unreadable
+// Secret is not evidence of a missing key either, and the caller must be able to
+// say "unable to verify" instead of diagnosing a failure it did not observe.
+func secretKeyNonEmpty(ctx context.Context, client kubernetes.Interface, ns, name, key string) (bool, error) {
 	s, err := client.CoreV1().Secrets(ns).Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		return false
+	switch {
+	case apierrors.IsNotFound(err):
+		return false, nil
+	case err != nil:
+		return false, err
 	}
-	return len(s.Data[key]) > 0
+	return len(s.Data[key]) > 0, nil
 }

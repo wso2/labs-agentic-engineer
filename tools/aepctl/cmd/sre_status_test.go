@@ -18,11 +18,14 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 // The present-but-empty case is the one this function exists for: an empty
@@ -87,9 +90,33 @@ func TestSecretKeyNonEmpty(t *testing.T) {
 			if tt.secret != nil {
 				client = fake.NewSimpleClientset(tt.secret)
 			}
-			if got := secretKeyNonEmpty(context.Background(), client, ns, name, key); got != tt.want {
+			got, err := secretKeyNonEmpty(context.Background(), client, ns, name, key)
+			if err != nil {
+				t.Fatalf("secretKeyNonEmpty() error = %v, want nil: a Secret that is absent, keyless or empty is a resolved answer, not a failure to look", err)
+			}
+			if got != tt.want {
 				t.Errorf("secretKeyNonEmpty() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// An unreadable Secret — RBAC denial, a partial apiserver outage — is not
+// evidence that the key is missing. Folding it into false made `sre status`
+// report "NONE — analyses will fail" for an install it never managed to inspect,
+// which is the same false-signal class the RCA key check was added to remove.
+func TestSecretKeyNonEmptyPropagatesAPIErrors(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	denied := errors.New("secrets is forbidden: User cannot get resource \"secrets\"")
+	client.PrependReactor("get", "secrets", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, denied
+	})
+
+	got, err := secretKeyNonEmpty(context.Background(), client, "openchoreo-observability-plane", "rca-agent-secret", "RCA_LLM_API_KEY")
+	if !errors.Is(err, denied) {
+		t.Errorf("secretKeyNonEmpty() error = %v, want %v", err, denied)
+	}
+	if got {
+		t.Errorf("secretKeyNonEmpty() = true on an unreadable Secret, want false")
 	}
 }

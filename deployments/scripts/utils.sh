@@ -343,19 +343,49 @@ fix_node_dns() {
 # guards against is itself silent (kubectl prints the fsnotify error to stdout
 # and exits 0), so a false ✅ here would hide exactly the failure it prevents.
 # The serverlb node ships no sysctl binary and is expected to be skipped.
+#
+# 1024 is a floor, not a setting: a node already above it keeps its value. This
+# runs on every start, so overwriting unconditionally would walk a deliberately
+# raised limit back down once per boot.
+#
+# Best-effort by contract — it returns 0 even when it enumerates nothing. Both
+# callers run under `set -e` and invoke it bare, and this is an ergonomics fix
+# for `kubectl logs -f`, not a precondition for a working cluster: aborting
+# setup over it would trade a degraded convenience for no cluster at all. The
+# distinct failure messages below are what carries the signal instead.
 raise_node_inotify_limits() {
     echo "🔧 Raising k3d node inotify limits..."
-    local raised=0
-    for node in $(docker ps --filter "name=k3d-${CLUSTER_NAME}" --format '{{.Names}}'); do
-        if docker exec --privileged "$node" \
-               sysctl -w fs.inotify.max_user_instances=1024 >/dev/null 2>&1; then
-            raised=$((raised + 1))
+    local floor=1024
+    local nodes
+    # Enumeration is captured before the loop: inside `for node in $(docker ps)`
+    # a docker failure is indistinguishable from a cluster with no nodes, and
+    # both would land on the same "not raised on any node" warning — pointing at
+    # the inotify limit when the real fault is the container runtime.
+    if ! nodes=$(docker ps --filter "name=k3d-${CLUSTER_NAME}" --format '{{.Names}}' 2>/dev/null); then
+        echo "⚠️  could not enumerate k3d nodes — 'docker ps' failed. Is Docker running?"
+        echo "    inotify limits left untouched."
+        return 0
+    fi
+    if [ -z "$nodes" ]; then
+        echo "⚠️  no k3d-${CLUSTER_NAME} containers running — inotify limits left untouched."
+        return 0
+    fi
+
+    local ensured=0 node
+    for node in $nodes; do
+        if docker exec --privileged "$node" sh -c '
+                current=$(sysctl -n fs.inotify.max_user_instances 2>/dev/null) || exit 1
+                case "$current" in ""|*[!0-9]*) exit 1 ;; esac
+                [ "$current" -ge '"$floor"' ] && exit 0
+                sysctl -w fs.inotify.max_user_instances='"$floor"' >/dev/null
+            ' 2>/dev/null; then
+            ensured=$((ensured + 1))
         else
             echo "   ⏭️  $node — sysctl not applied (no sysctl binary, or not privileged)"
         fi
     done
-    if [ "$raised" -gt 0 ]; then
-        echo "✅ Node inotify limits raised on $raised node(s) (kubectl logs -f)"
+    if [ "$ensured" -gt 0 ]; then
+        echo "✅ Node inotify limits >= ${floor} on $ensured node(s) (kubectl logs -f)"
     else
         echo "⚠️  inotify limit NOT raised on any node — 'kubectl logs -f' may"
         echo "    truncate with 'failed to create fsnotify watcher: too many open files'."
