@@ -77,7 +77,14 @@ function status(spec: Partial<ProjectStatus["spec"]>): ProjectStatus {
     hasTasks: false,
     specStatus: "",
     designStatus: "",
-    spec: { exists: false, version: "", dirty: false, design: false, ...spec },
+    spec: {
+      exists: false,
+      version: "",
+      dirty: false,
+      design: false,
+      kickoff: { status: "none" as const, reason: "" },
+      ...spec,
+    },
     build: { version: "", status: "idle" },
     deploy: {
       version: "",

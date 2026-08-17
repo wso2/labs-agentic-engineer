@@ -38,6 +38,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 )
 
@@ -56,6 +57,10 @@ const kickoffRetryInterval = 3 * time.Second
 // per project (the spec_kickoffs claim); a no-op when a turn already ran or is
 // running (a user got there first). Retries while the repo or the org skills
 // repo is still provisioning, until ctx expires.
+//
+// The outcome is RECORDED on the claim either way, which is what lets the
+// console say "starting…" or "couldn't start: <why>" instead of showing a
+// project that looks busy forever.
 func (s *Service) KickoffSpec(ctx context.Context, orgID, projectID string) error {
 	// `turns` included: the claimed path calls HasAny on it, and the caller
 	// runs this on a detached goroutine — a nil there is a process crash, not
@@ -70,7 +75,15 @@ func (s *Service) KickoffSpec(ctx context.Context, orgID, projectID string) erro
 	if !claimed {
 		return nil // already kicked off — the claim is spent
 	}
-	return runKickoff(ctx, kickoffDeps{
+	err = runKickoff(ctx, s.kickoffAttempt(orgID, projectID))
+	s.recordKickoffOutcome(ctx, orgID, projectID, err)
+	return err
+}
+
+// kickoffAttempt is the one attempt, shared by the create-time kickoff and the
+// user's Retry so both start the interview identically.
+func (s *Service) kickoffAttempt(orgID, projectID string) kickoffDeps {
+	return kickoffDeps{
 		hasAnyTurn: func(c context.Context) (bool, error) {
 			return s.turns.HasAny(c, orgID, projectID)
 		},
@@ -90,7 +103,210 @@ func (s *Service) KickoffSpec(ctx context.Context, orgID, projectID string) erro
 			return terr
 		},
 		interval: kickoffRetryInterval,
+	}
+}
+
+// recordKickoffOutcome stamps the attempt's result on the claim. Detached from
+// the caller's ctx: the commonest failure IS the deadline expiring, and a write
+// on the dead context would lose exactly the outcome the user needs to see.
+// Best-effort — the attempt's own error is what the caller acts on.
+func (s *Service) recordKickoffOutcome(ctx context.Context, orgID, projectID string, attemptErr error) {
+	status, reason := KickoffStatusStarted, ""
+	if attemptErr != nil {
+		status, reason = KickoffStatusFailed, KickoffFailureReason(attemptErr)
+	}
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), kickoffOutcomeWriteTimeout)
+	defer cancel()
+	if err := s.kickoffs.SetOutcome(wctx, orgID, projectID, status, reason); err != nil {
+		slog.ErrorContext(wctx, "failed to record spec kickoff outcome",
+			"org", orgID, "project", projectID, "status", status, "error", err)
+	}
+}
+
+// KickoffWindow bounds how long a claim without a turn still counts as a
+// kickoff IN PROGRESS. It is the kickoff's own lifetime — the deadline the
+// caller gives runKickoff (projects.specKickoffTimeout reads it from here, so
+// the two cannot drift). Past it the attempt cannot still be running, so a
+// claim with no outcome is read as a failure the user can retry.
+const KickoffWindow = 10 * time.Minute
+
+// Kickoff statuses (SpecKickoff.Status and the contract's enum).
+const (
+	// KickoffStatusNone is not a stored value: it is what the read reports for
+	// a project with no claim at all.
+	KickoffStatusNone    = "none"
+	KickoffStatusPending = "pending"
+	KickoffStatusFailed  = "failed"
+	KickoffStatusStarted = "started"
+)
+
+// kickoffOutcomeWriteTimeout bounds the detached outcome write.
+const kickoffOutcomeWriteTimeout = 5 * time.Second
+
+// kickoffReasonLimit caps the carried cause — a reason is a sentence for a
+// card, not a stack trace.
+const kickoffReasonLimit = 300
+
+const kickoffStalledReason = "The spec interview did not start, and the attempt is no longer running. Retry to start it."
+
+// KickoffState is what became of a project's server-side kickoff.
+type KickoffState struct {
+	// Status is one of the KickoffStatus* values.
+	Status string
+	// Reason is the user-facing failure sentence; empty unless Status is failed.
+	Reason string
+}
+
+// Kickoff reports what became of this project's server-side `/start` (#485).
+//
+// The console renders three states from it that nothing else can answer:
+// "starting…" for the seconds between the claim and the turn row, a NAMED
+// failure with a Retry when the attempt died, and silence once a turn exists
+// (from there the turn reads say everything). Deriving those from the running
+// turn, the thread and the spec files reads "untouched project" in the first
+// case and forever in the second.
+//
+// Unwired stores answer `none` rather than refusing: this rides a polled status
+// read, and the nil seam is a test assembly.
+func (s *Service) Kickoff(ctx context.Context, orgID, projectID string) (KickoffState, error) {
+	if s.kickoffs == nil || s.turns == nil {
+		return KickoffState{Status: KickoffStatusNone}, nil
+	}
+	claim, err := s.kickoffs.Get(ctx, orgID, projectID)
+	if err != nil {
+		return KickoffState{}, fmt.Errorf("read kickoff claim: %w", err)
+	}
+	if claim == nil {
+		return KickoffState{Status: KickoffStatusNone}, nil
+	}
+	// A turn — running or finished — settles it, whatever the row says: the
+	// interview is under way (the kickoff's, or a user's that beat it).
+	has, err := s.turns.HasAny(ctx, orgID, projectID)
+	if err != nil {
+		return KickoffState{}, fmt.Errorf("check prior turns: %w", err)
+	}
+	if has {
+		return KickoffState{Status: KickoffStatusStarted}, nil
+	}
+	if claim.Status == KickoffStatusFailed {
+		return KickoffState{Status: KickoffStatusFailed, Reason: claim.Reason}, nil
+	}
+	// Pending — including rows from before the status column, which read as ""
+	// and are treated the same way. A pending claim older than the kickoff's own
+	// deadline cannot still be working: its process died mid-attempt (a restart,
+	// a lost pod) with nothing left to record the failure. Reading it as failed
+	// is what puts Retry in front of the user; nothing is rewritten here, so the
+	// next real outcome still wins.
+	if time.Since(kickoffTouchedAt(claim)) > KickoffWindow {
+		return KickoffState{Status: KickoffStatusFailed, Reason: kickoffStalledReason}, nil
+	}
+	return KickoffState{Status: KickoffStatusPending}, nil
+}
+
+// RetryKickoff re-attempts the kickoff on the user's say-so — the only way a
+// project gets a second one, and the reason the create-time kickoff does not
+// retry forever on its own: an agents service that is down has nothing to
+// retry into, and a turn that starts an hour later starts with nobody
+// watching.
+//
+// Idempotent by state, not by lock: a project already interviewing, or one
+// whose kickoff is still working, is left alone and its state returned. Two
+// clicks that do race resolve on the one-active-turn guard, which the attempt
+// already treats as success.
+//
+// The attempt is ONE pass — no provisioning retry loop — because the user is
+// waiting on the answer. A repo that is still cloning comes back as a failure
+// that says so, and the button is right there.
+func (s *Service) RetryKickoff(ctx context.Context, orgID, projectID string) (KickoffState, error) {
+	if s.kickoffs == nil || s.conversations == nil || s.turns == nil {
+		return KickoffState{}, ErrKickoffUnavailable
+	}
+	state, err := s.Kickoff(ctx, orgID, projectID)
+	if err != nil {
+		return KickoffState{}, err
+	}
+	attempt := s.kickoffAttempt(orgID, projectID)
+	return runRetry(ctx, state, retryDeps{
+		claim: func(c context.Context) error {
+			_, cerr := s.kickoffs.TryClaim(c, orgID, projectID)
+			return cerr
+		},
+		rearm: func(c context.Context) error {
+			return s.kickoffs.Rearm(c, orgID, projectID)
+		},
+		// ONE pass, not runKickoff's loop: the user is waiting on this click,
+		// so a repo that is still cloning is an answer, not a reason to sleep.
+		attempt: func(c context.Context) error { return runKickoffOnce(c, attempt) },
+		record: func(c context.Context, aerr error) {
+			s.recordKickoffOutcome(c, orgID, projectID, aerr)
+		},
 	})
+}
+
+// retryDeps narrows the retry's world to its four side effects, so the
+// decisions above are testable without the turn machinery — same seam shape as
+// kickoffDeps.
+type retryDeps struct {
+	claim   func(context.Context) error
+	rearm   func(context.Context) error
+	attempt func(context.Context) error
+	record  func(context.Context, error)
+}
+
+// runRetry is the retry's decision, given what the kickoff's state already is.
+func runRetry(ctx context.Context, state KickoffState, d retryDeps) (KickoffState, error) {
+	switch state.Status {
+	case KickoffStatusStarted, KickoffStatusPending:
+		// Already in hand. A second click must not start a second attempt, and
+		// must not report failure for work that is simply still running.
+		return state, nil
+	case KickoffStatusNone:
+		if err := d.claim(ctx); err != nil {
+			return KickoffState{}, fmt.Errorf("claim kickoff: %w", err)
+		}
+	default: // failed
+		if err := d.rearm(ctx); err != nil {
+			return KickoffState{}, fmt.Errorf("rearm kickoff: %w", err)
+		}
+	}
+	err := d.attempt(ctx)
+	d.record(ctx, err)
+	if err != nil {
+		// The failure is the ANSWER, not an error: the caller renders the same
+		// card it would have rendered from the status read.
+		return KickoffState{Status: KickoffStatusFailed, Reason: KickoffFailureReason(err)}, nil
+	}
+	return KickoffState{Status: KickoffStatusStarted}, nil
+}
+
+// kickoffTouchedAt is the claim's last movement — the retry stamps updated_at,
+// and rows written before that column carry the zero time.
+func kickoffTouchedAt(c *SpecKickoff) time.Time {
+	if c.UpdatedAt.IsZero() {
+		return c.CreatedAt
+	}
+	return c.UpdatedAt
+}
+
+// KickoffFailureReason turns an attempt's error into a sentence the console can
+// show. The two provisioning cases are named because they are ordinary and
+// self-resolving; anything else carries its cause, because this console's users
+// are the platform's own engineers and "something went wrong" would cost them
+// the one detail worth having.
+func KickoffFailureReason(err error) string {
+	switch {
+	case err == nil:
+		return ""
+	case errors.Is(err, ErrProjectRepoNotFound):
+		return "The project repository was still being created, so the spec interview could not start yet."
+	case errors.Is(err, ErrSkillsRepoUnavailable):
+		return "The organization's skills repository was not ready, so the spec interview could not start yet."
+	}
+	msg := err.Error()
+	if len(msg) > kickoffReasonLimit {
+		msg = msg[:kickoffReasonLimit] + "…"
+	}
+	return "The spec interview could not be started: " + msg
 }
 
 // kickoffDeps narrows the retry loop's world to three seams so the loop's
@@ -107,20 +323,9 @@ type kickoffDeps struct {
 // is in hands already; anything else is a real failure and returns.
 func runKickoff(ctx context.Context, d kickoffDeps) error {
 	for {
-		has, err := d.hasAnyTurn(ctx)
-		if err != nil {
-			return fmt.Errorf("check prior turns: %w", err)
-		}
-		if has {
-			return nil // a user started the first turn — never fire /start over it
-		}
-		err = d.start(ctx)
+		err := runKickoffOnce(ctx, d)
 		if err == nil {
 			return nil
-		}
-		var inProgress *TurnInProgressError
-		if errors.As(err, &inProgress) {
-			return nil // lost the D18 race to a concurrent turn — same outcome
 		}
 		if !errors.Is(err, ErrProjectRepoNotFound) && !errors.Is(err, ErrSkillsRepoUnavailable) {
 			return err
@@ -131,4 +336,24 @@ func runKickoff(ctx context.Context, d kickoffDeps) error {
 		case <-time.After(d.interval):
 		}
 	}
+}
+
+// runKickoffOnce is one pass: stand down if a turn already exists, otherwise
+// start one, treating the lost D18 race as the same outcome. It waits for
+// nothing — the retry loop above owns waiting, and the user's Retry deliberately
+// does not, because somebody is watching that click.
+func runKickoffOnce(ctx context.Context, d kickoffDeps) error {
+	has, err := d.hasAnyTurn(ctx)
+	if err != nil {
+		return fmt.Errorf("check prior turns: %w", err)
+	}
+	if has {
+		return nil // a user started the first turn — never fire /start over it
+	}
+	err = d.start(ctx)
+	var inProgress *TurnInProgressError
+	if errors.As(err, &inProgress) {
+		return nil // lost the D18 race to a concurrent turn — same outcome
+	}
+	return err
 }

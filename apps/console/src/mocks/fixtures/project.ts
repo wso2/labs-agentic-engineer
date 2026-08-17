@@ -45,7 +45,17 @@ type SpecStage = components["schemas"]["SpecStage"];
 type BuildStage = components["schemas"]["BuildStage"];
 type DeployStage = components["schemas"]["DeployStage"];
 
-const noSpec: SpecStage = { exists: false, version: "", dirty: false, design: false };
+// Every mock project's kickoff is settled: the BE-started interview (#485) is
+// a live-stack concern, and the mock projects are all past it.
+const noKickoff: SpecStage["kickoff"] = { status: "none", reason: "" };
+
+const noSpec: SpecStage = {
+  exists: false,
+  version: "",
+  dirty: false,
+  design: false,
+  kickoff: noKickoff,
+};
 const idleBuild: BuildStage = { version: "", status: "idle" };
 const noDeploy: DeployStage = {
   version: "",
@@ -89,7 +99,7 @@ export const projectStatuses: Record<
     hasTasks: false,
     specStatus: "draft",
     designStatus: "in_progress",
-    spec: { exists: true, version: "", dirty: false, design: true },
+    spec: { exists: true, version: "", dirty: false, design: true, kickoff: noKickoff },
     build: idleBuild,
     deploy: noDeploy,
   },
@@ -103,7 +113,7 @@ export const projectStatuses: Record<
     hasTasks: false,
     specStatus: "failed",
     designStatus: "failed",
-    spec: { exists: true, version: "", dirty: false, design: false },
+    spec: { exists: true, version: "", dirty: false, design: false, kickoff: noKickoff },
     build: idleBuild,
     deploy: noDeploy,
   },
@@ -118,7 +128,7 @@ export const projectStatuses: Record<
     hasTasks: false,
     specStatus: "approved",
     designStatus: "approved",
-    spec: { exists: true, version: "v1", dirty: false, design: true },
+    spec: { exists: true, version: "v1", dirty: false, design: true, kickoff: noKickoff },
     build: {
       version: "v1",
       status: "running",
@@ -135,7 +145,7 @@ export const projectStatuses: Record<
     hasTasks: false,
     specStatus: "approved",
     designStatus: "approved",
-    spec: { exists: true, version: "v1", dirty: false, design: true },
+    spec: { exists: true, version: "v1", dirty: false, design: true, kickoff: noKickoff },
     build: {
       version: "v1",
       status: "succeeded",
@@ -157,7 +167,7 @@ export const projectStatuses: Record<
     hasTasks: false,
     specStatus: "approved",
     designStatus: "approved",
-    spec: { exists: true, version: "v1", dirty: true, design: true },
+    spec: { exists: true, version: "v1", dirty: true, design: true, kickoff: noKickoff },
     build: {
       version: "v1",
       status: "succeeded",
@@ -181,7 +191,7 @@ export const projectStatuses: Record<
     hasTasks: false,
     specStatus: "approved",
     designStatus: "approved",
-    spec: { exists: true, version: "v1", dirty: false, design: true },
+    spec: { exists: true, version: "v1", dirty: false, design: true, kickoff: noKickoff },
     build: {
       version: "v1",
       status: "succeeded",

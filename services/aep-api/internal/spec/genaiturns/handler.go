@@ -51,6 +51,7 @@ const createTurnMaxInstructionBytes = 64 << 10
 //	get-active-turn  GET  …/turns/active                     → status | 204
 //	stream-turn      GET  …/turns/{turnId}/stream?from=N     → SSE replay + tail
 //	get-conversation GET  …/agents/{conversationId}/messages → rehydrate
+//	retry-kickoff    POST …/spec/kickoff                     → kickoff state
 //
 // The stream events are the raw agents StreamParts plus ONE aep-api terminal
 // event (turn-committed / turn-failed), each stamped with `id: <index>`; the
@@ -110,6 +111,25 @@ func (h *Handler) GetActiveTurn(ctx context.Context, request gen.GetActiveTurnRe
 		return gen.GetActiveTurn204Response{}, nil
 	}
 	return gen.GetActiveTurn200JSONResponse(turnStatusModel(st)), nil
+}
+
+// RetrySpecKickoff re-attempts the project's server-side spec kickoff (#485).
+//
+// It exists so the console can recover a failed kickoff WITHOUT sending a chat
+// message: `/start` belongs to the backend, and a console-composed one is a
+// second turn racing the first. A failed attempt comes back 200 with
+// status=failed and its reason — the caller renders that card either way, and
+// an HTTP error would only make the same state harder to read.
+func (h *Handler) RetrySpecKickoff(ctx context.Context, request gen.RetrySpecKickoffRequestObject) (gen.RetrySpecKickoffResponseObject, error) {
+	org := tenant.BoundOrgFromContext(ctx)
+	st, err := h.genai.RetryKickoff(ctx, org, request.ProjectName)
+	if err != nil {
+		return nil, mapGenAITurnError(ctx, err)
+	}
+	return gen.RetrySpecKickoff200JSONResponse(gen.SpecKickoffState{
+		Status: gen.SpecKickoffStateStatus(st.Status),
+		Reason: st.Reason,
+	}), nil
 }
 
 func (h *Handler) StreamTurn(ctx context.Context, request gen.StreamTurnRequestObject) (gen.StreamTurnResponseObject, error) {

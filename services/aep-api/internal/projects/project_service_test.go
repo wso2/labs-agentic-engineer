@@ -795,6 +795,9 @@ type statusFixture struct {
 	cycle       *delivery.RunCycle
 	bindings    []openchoreo.ReleaseBindingSummary
 	bindingsErr error
+	// kickoff is the BE-kickoff port (#485); nil leaves it unwired, which is
+	// how every pre-#485 status test still reads.
+	kickoff *fakeSpecKickoff
 }
 
 func (fx statusFixture) service() *Service {
@@ -826,6 +829,9 @@ func (fx statusFixture) service() *Service {
 	svc.SetStageSources(
 		fakeRunReader{rows: fx.runs, err: fx.runsErr, cycle: fx.cycle},
 		fakeBindingsReader{items: fx.bindings, err: fx.bindingsErr})
+	if fx.kickoff != nil {
+		svc.SetSpecKickoff(fx.kickoff)
+	}
 	return svc
 }
 
@@ -974,6 +980,9 @@ func TestGetProjectStatus_PhaseLadder(t *testing.T) {
 				Version: tc.fx.snap.SpecVersion,
 				Dirty:   tc.fx.snap.SpecDirty,
 				Design:  tc.fx.snap.HasDesign,
+				// No kickoff port wired in this fixture — `none`, never blank:
+				// the contract's enum has no empty member.
+				Kickoff: gen.SpecKickoffState{Status: gen.SpecKickoffStateStatusNone},
 			}
 			if st.Spec != want {
 				t.Errorf("spec stage = %+v, want %+v", st.Spec, want)

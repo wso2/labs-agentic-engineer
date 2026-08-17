@@ -165,6 +165,23 @@ func (s *Service) populateStages(ctx context.Context, orgName, projectName strin
 		return err
 	}
 
+	// The BE kickoff's state (#485), read ONLY for a project with no spec yet:
+	// that is the sole state where the answer changes what the card says, and
+	// it keeps two index lookups off every settled project's 5s poll. Serial
+	// rather than a fourth errgroup member for the same reason — it needs
+	// `snap` to know whether to ask at all.
+	kickoff := gen.SpecKickoffState{Status: gen.SpecKickoffStateStatusNone}
+	if !snap.HasSpec && s.specKickoffSvc != nil {
+		st, err := s.specKickoffSvc.Kickoff(ctx, orgName, projectName)
+		if err != nil {
+			return fmt.Errorf("spec kickoff state: %w", err)
+		}
+		kickoff = gen.SpecKickoffState{
+			Status: gen.SpecKickoffStateStatus(st.Status),
+			Reason: st.Reason,
+		}
+	}
+
 	// Spec stage + flat artifact fields: one snapshot, same semantics as the
 	// retired per-call reads — minus their per-poll origin fetches.
 	status.Spec = gen.SpecStage{
@@ -172,6 +189,7 @@ func (s *Service) populateStages(ctx context.Context, orgName, projectName strin
 		Version: snap.SpecVersion,
 		Dirty:   snap.SpecDirty,
 		Design:  snap.HasDesign,
+		Kickoff: kickoff,
 	}
 	applyFlatArtifactFields(status, snap)
 

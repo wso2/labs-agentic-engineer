@@ -30,11 +30,18 @@ import (
 	ocmocks "github.com/wso2/aep/aep-api/internal/clients/openchoreo/mocks"
 	"github.com/wso2/aep/aep-api/internal/gen"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
+	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
 type fakeSpecKickoff struct {
 	calls chan [2]string // (org, project) per call
 	err   error
+	// The status read's side of the port: what Kickoff answers, and how many
+	// times it was asked (the status tests assert it is skipped once a spec
+	// exists).
+	state      spec.KickoffState
+	stateErr   error
+	stateCalls int
 }
 
 func newFakeSpecKickoff(err error) *fakeSpecKickoff {
@@ -44,6 +51,11 @@ func newFakeSpecKickoff(err error) *fakeSpecKickoff {
 func (f *fakeSpecKickoff) KickoffSpec(_ context.Context, orgID, projectID string) error {
 	f.calls <- [2]string{orgID, projectID}
 	return f.err
+}
+
+func (f *fakeSpecKickoff) Kickoff(context.Context, string, string) (spec.KickoffState, error) {
+	f.stateCalls++
+	return f.state, f.stateErr
 }
 
 func createSvcWithKickoff(t *testing.T, k specKickoff) *Service {

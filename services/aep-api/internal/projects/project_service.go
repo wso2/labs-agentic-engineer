@@ -46,8 +46,10 @@ var (
 // specKickoffTimeout bounds the kickoff's wait for the freshly-created repo
 // to finish provisioning (GitHub repo creation + clone happen async after the
 // create returns). Generous: past it, the manual Generate-spec CTA is the
-// fallback.
-const specKickoffTimeout = 10 * time.Minute
+// fallback — which is exactly why the deadline and the status flag's liveness
+// window are ONE constant: the console keeps suppressing that CTA for as long
+// as, and no longer than, the kickoff may still fire.
+const specKickoffTimeout = spec.KickoffWindow
 
 // Service handles business logic for project operations. edge.Deps holds it as a
 // concrete *project.Service (there is one implementation; the old ProjectService
@@ -134,6 +136,12 @@ type skillMirror interface {
 // via KickoffSpec. Wired at the composition root; nil is a documented no-op.
 type specKickoff interface {
 	KickoffSpec(ctx context.Context, orgID, projectID string) error
+
+	// Kickoff answers what became of that kickoff — claimed and still working,
+	// failed with a reason, or landed on a turn. The project status carries it
+	// (#485): without it the console cannot tell a project whose interview is
+	// starting from one whose interview never will.
+	Kickoff(ctx context.Context, orgID, projectID string) (spec.KickoffState, error)
 }
 
 func (s *Service) SetSkillsProvisioner(p skillsProvisioner) { s.skillsProv = p }

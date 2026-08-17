@@ -85,7 +85,11 @@ func TestStageDerivation_FullPipeline(t *testing.T) {
 	}
 	st := mustStatus(t, fx)
 
-	if want := (gen.SpecStage{Exists: true, Version: "v2", Dirty: true, Design: true}); st.Spec != want {
+	want := gen.SpecStage{
+		Exists: true, Version: "v2", Dirty: true, Design: true,
+		Kickoff: gen.SpecKickoffState{Status: gen.SpecKickoffStateStatusNone},
+	}
+	if st.Spec != want {
 		t.Errorf("spec = %+v, want %+v", st.Spec, want)
 	}
 
@@ -542,12 +546,75 @@ func TestRepoNotReady_ZeroValueStages(t *testing.T) {
 		t.Fatalf("phase = %q, want repo-cloning", st.Phase)
 	}
 	if st.Spec != (gen.SpecStage{}) {
-		t.Errorf("spec = %+v, want zero-valued", st.Spec)
+		t.Errorf("spec = %+v, want zero-valued (the short-circuit fills no stage)", st.Spec)
 	}
 	if st.Build.Status != "idle" || st.Build.Version != "" {
 		t.Errorf("build = %+v, want idle zero-valued", st.Build)
 	}
 	if st.Deploy.Status != "none" || st.Deploy.Version != "" || st.Deploy.Components.Total != 0 {
 		t.Errorf("deploy = %+v, want none zero-valued", st.Deploy)
+	}
+}
+
+// ---- The BE kickoff's state (#485) ----------------------------------------
+//
+// Project create claims the kickoff, then the turn row appears seconds later
+// (the repo is still cloning). In between — and forever, if the attempt died —
+// the git snapshot has no spec, no turn is active and no thread exists, so
+// every client-side signal says "untouched project". The claim is the only
+// truth, and the spec stage is where the console reads it.
+
+func TestSpecStage_CarriesTheKickoffState(t *testing.T) {
+	t.Parallel()
+	kickoff := newFakeSpecKickoff(nil)
+	kickoff.state = spec.KickoffState{
+		Status: spec.KickoffStatusFailed,
+		Reason: "The agents service was unreachable.",
+	}
+	fx := statusFixture{snap: spec.StatusSnapshot{}, kickoff: kickoff}
+
+	st := mustStatus(t, fx)
+
+	wantStage := gen.SpecStage{
+		Kickoff: gen.SpecKickoffState{
+			Status: gen.SpecKickoffStateStatusFailed,
+			Reason: "The agents service was unreachable.",
+		},
+	}
+	if st.Spec != wantStage {
+		t.Errorf("spec = %+v, want %+v", st.Spec, wantStage)
+	}
+}
+
+// Once a spec exists the kickoff is ancient history and the card it feeds is
+// gone — so the claim is never read. This keeps two index lookups off every
+// settled project's 5s status poll.
+func TestSpecStage_SkipsTheKickoffReadOnceASpecExists(t *testing.T) {
+	t.Parallel()
+	kickoff := newFakeSpecKickoff(nil)
+	kickoff.state = spec.KickoffState{Status: spec.KickoffStatusPending}
+	fx := statusFixture{
+		snap:    spec.StatusSnapshot{HasSpec: true, SpecVersion: "v1"},
+		kickoff: kickoff,
+	}
+
+	st := mustStatus(t, fx)
+
+	if kickoff.stateCalls != 0 {
+		t.Errorf("kickoff reads = %d, want 0 once a spec exists", kickoff.stateCalls)
+	}
+	if st.Spec.Kickoff.Status != gen.SpecKickoffStateStatusNone {
+		t.Errorf("kickoff status = %q, want none on a project that already has a spec", st.Spec.Kickoff.Status)
+	}
+}
+
+// An unwired kickoff port (the pre-#485 assembly, and every other status test)
+// reports `none` rather than failing the read.
+func TestSpecStage_UnwiredKickoffReportsNone(t *testing.T) {
+	t.Parallel()
+	st := mustStatus(t, statusFixture{snap: spec.StatusSnapshot{}})
+
+	if st.Spec.Kickoff.Status != gen.SpecKickoffStateStatusNone {
+		t.Errorf("kickoff status = %q, want none with no kickoff port wired", st.Spec.Kickoff.Status)
 	}
 }

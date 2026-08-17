@@ -318,28 +318,28 @@ func (e RunProgressLineEmitter) Valid() bool {
 
 // Defines values for RunValidationVerdict.
 const (
-	Failed       RunValidationVerdict = "failed"
-	Inconclusive RunValidationVerdict = "inconclusive"
-	Partial      RunValidationVerdict = "partial"
-	Passed       RunValidationVerdict = "passed"
-	Skipped      RunValidationVerdict = "skipped"
-	Unreported   RunValidationVerdict = "unreported"
+	RunValidationVerdictFailed       RunValidationVerdict = "failed"
+	RunValidationVerdictInconclusive RunValidationVerdict = "inconclusive"
+	RunValidationVerdictPartial      RunValidationVerdict = "partial"
+	RunValidationVerdictPassed       RunValidationVerdict = "passed"
+	RunValidationVerdictSkipped      RunValidationVerdict = "skipped"
+	RunValidationVerdictUnreported   RunValidationVerdict = "unreported"
 )
 
 // Valid indicates whether the value is a known member of the RunValidationVerdict enum.
 func (e RunValidationVerdict) Valid() bool {
 	switch e {
-	case Failed:
+	case RunValidationVerdictFailed:
 		return true
-	case Inconclusive:
+	case RunValidationVerdictInconclusive:
 		return true
-	case Partial:
+	case RunValidationVerdictPartial:
 		return true
-	case Passed:
+	case RunValidationVerdictPassed:
 		return true
-	case Skipped:
+	case RunValidationVerdictSkipped:
 		return true
-	case Unreported:
+	case RunValidationVerdictUnreported:
 		return true
 	default:
 		return false
@@ -361,6 +361,30 @@ func (e SkillUpdateState) Valid() bool {
 	case SkillUpdateStateOverridden:
 		return true
 	case SkillUpdateStateUpdate:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SpecKickoffStateStatus.
+const (
+	SpecKickoffStateStatusFailed  SpecKickoffStateStatus = "failed"
+	SpecKickoffStateStatusNone    SpecKickoffStateStatus = "none"
+	SpecKickoffStateStatusPending SpecKickoffStateStatus = "pending"
+	SpecKickoffStateStatusStarted SpecKickoffStateStatus = "started"
+)
+
+// Valid indicates whether the value is a known member of the SpecKickoffStateStatus enum.
+func (e SpecKickoffStateStatus) Valid() bool {
+	switch e {
+	case SpecKickoffStateStatusFailed:
+		return true
+	case SpecKickoffStateStatusNone:
+		return true
+	case SpecKickoffStateStatusPending:
+		return true
+	case SpecKickoffStateStatusStarted:
 		return true
 	default:
 		return false
@@ -1568,6 +1592,18 @@ type SkillUpdateList struct {
 	Updates []SkillUpdate `json:"updates"`
 }
 
+// SpecKickoffState The server-side spec kickoff (#485): every new project's `/start` turn is started by the backend, and this is what became of it. The console needs it because the alternative — deriving "has the interview started" from the running turn, the thread and the spec files — is blind for the seconds between the claim and the turn row (measured at 2.4-5.7s), and blind forever to a kickoff that failed. Only ever a report: no console action starts a `/start` turn.
+type SpecKickoffState struct {
+	// Reason Why the kickoff failed, in the user's words. Empty unless status is failed.
+	Reason string `json:"reason"`
+
+	// Status none - no kickoff was ever claimed for this project; pending - claimed and still working (the repo may still be provisioning); failed - the attempt ended without a turn, and Retry is the way out; started - a turn exists, so the interview is under way (or a user started it first) and the turn reads take over.
+	Status SpecKickoffStateStatus `json:"status"`
+}
+
+// SpecKickoffStateStatus none - no kickoff was ever claimed for this project; pending - claimed and still working (the repo may still be provisioning); failed - the attempt ended without a turn, and Retry is the way out; started - a turn exists, so the interview is under way (or a user started it first) and the turn reads take over.
+type SpecKickoffStateStatus string
+
 // SpecStage Spec-stage aggregate on ProjectStatus (#184). Approved/draft is derived, not stored — version set and not dirty = approved (vN); dirty = draft changes (vN+); no version = unpublished draft; exists false = no spec yet.
 type SpecStage struct {
 	// Design Design files exist for the spec (gates the Spec view's design button).
@@ -1578,6 +1614,9 @@ type SpecStage struct {
 
 	// Exists Any spec file created; false renders the Generate-spec CTA.
 	Exists bool `json:"exists"`
+
+	// Kickoff The server-side spec kickoff (#485): every new project's `/start` turn is started by the backend, and this is what became of it. The console needs it because the alternative — deriving "has the interview started" from the running turn, the thread and the spec files — is blind for the seconds between the claim and the turn row (measured at 2.4-5.7s), and blind forever to a kickoff that failed. Only ever a report: no console action starts a `/start` turn.
+	Kickoff SpecKickoffState `json:"kickoff"`
 
 	// Version Latest v<N> spec tag; "" if never published.
 	Version string `json:"version"`

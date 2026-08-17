@@ -19,6 +19,9 @@ package spec
 import (
 	"context"
 	"errors"
+	"fmt"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -165,11 +168,46 @@ type fakeKickoffClaims struct {
 	claimed bool
 	calls   int
 	err     error
+	// row is what Get returns — the claim's presence, status and age,
+	// independent of whether THIS caller won it.
+	row *SpecKickoff
+	// The write side: what the attempt recorded, and how often a spent claim
+	// was put back into pending.
+	outcomes [][2]string // (status, reason) per SetOutcome
+	rearms   int
 }
 
 func (f *fakeKickoffClaims) TryClaim(context.Context, string, string) (bool, error) {
 	f.calls++
 	return f.claimed, f.err
+}
+
+func (f *fakeKickoffClaims) Get(context.Context, string, string) (*SpecKickoff, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.row, nil
+}
+
+func (f *fakeKickoffClaims) SetOutcome(_ context.Context, _, _, status, reason string) error {
+	f.outcomes = append(f.outcomes, [2]string{status, reason})
+	return nil
+}
+
+func (f *fakeKickoffClaims) Rearm(context.Context, string, string) error {
+	f.rearms++
+	return nil
+}
+
+// claimRow builds a claim in `status`, last touched `age` ago.
+func claimRow(status string, age time.Duration) *SpecKickoff {
+	return &SpecKickoff{
+		OrgID:     "acme",
+		ProjectID: "shop",
+		Status:    status,
+		CreatedAt: time.Now().Add(-age),
+		UpdatedAt: time.Now().Add(-age),
+	}
 }
 
 // hasAnyOnlyTurnRepo panics on everything but HasAny — the only read a
@@ -249,3 +287,284 @@ func TestKickoffSpec_RefusesWhenUnwired(t *testing.T) {
 // memConvRepoStub satisfies ConversationRepository for paths that never reach
 // it; any call is a test bug.
 type memConvRepoStub struct{ ConversationRepository }
+
+// ---- Kickoff: what became of the server-side /start ------------------------
+//
+// The console renders three things from this that nothing else can answer:
+// "starting…" for the seconds between the claim and the turn row, a NAMED
+// failure with a Retry when the attempt died, and silence once a turn exists.
+
+func TestKickoff_PendingWhileClaimedWithNoTurnYet(t *testing.T) {
+	t.Parallel()
+	s := NewService(ServiceDeps{
+		Kickoffs: &fakeKickoffClaims{row: claimRow(KickoffStatusPending, 0)},
+		Turns:    &hasAnyOnlyTurnRepo{hasAny: false},
+	})
+	state, err := s.Kickoff(context.Background(), "acme", "shop")
+	if err != nil {
+		t.Fatalf("Kickoff: %v", err)
+	}
+	if state.Status != KickoffStatusPending {
+		t.Fatalf("status = %q, want pending while the claim has no turn yet", state.Status)
+	}
+}
+
+// A row written before the status column exists reads as "" — the same
+// in-progress meaning, so old projects never render a failure they never had.
+func TestKickoff_PendingForARowWithNoStatus(t *testing.T) {
+	t.Parallel()
+	s := NewService(ServiceDeps{
+		Kickoffs: &fakeKickoffClaims{row: claimRow("", time.Minute)},
+		Turns:    &hasAnyOnlyTurnRepo{hasAny: false},
+	})
+	state, err := s.Kickoff(context.Background(), "acme", "shop")
+	if err != nil {
+		t.Fatalf("Kickoff: %v", err)
+	}
+	if state.Status != KickoffStatusPending {
+		t.Fatalf("status = %q, want pending", state.Status)
+	}
+}
+
+func TestKickoff_StartedOnceTheTurnExists(t *testing.T) {
+	t.Parallel()
+	// Even while the row still says pending: the turn settles it.
+	s := NewService(ServiceDeps{
+		Kickoffs: &fakeKickoffClaims{row: claimRow(KickoffStatusPending, 0)},
+		Turns:    &hasAnyOnlyTurnRepo{hasAny: true},
+	})
+	state, err := s.Kickoff(context.Background(), "acme", "shop")
+	if err != nil {
+		t.Fatalf("Kickoff: %v", err)
+	}
+	if state.Status != KickoffStatusStarted {
+		t.Fatalf("status = %q, want started once a turn row exists", state.Status)
+	}
+}
+
+func TestKickoff_FailedCarriesTheRecordedReason(t *testing.T) {
+	t.Parallel()
+	row := claimRow(KickoffStatusFailed, time.Minute)
+	row.Reason = "The agents service was unreachable."
+	s := NewService(ServiceDeps{
+		Kickoffs: &fakeKickoffClaims{row: row},
+		Turns:    &hasAnyOnlyTurnRepo{hasAny: false},
+	})
+	state, err := s.Kickoff(context.Background(), "acme", "shop")
+	if err != nil {
+		t.Fatalf("Kickoff: %v", err)
+	}
+	if state.Status != KickoffStatusFailed || state.Reason != row.Reason {
+		t.Fatalf("state = %+v, want failed carrying the row's reason", state)
+	}
+}
+
+// A pending claim older than the kickoff's own deadline cannot still be
+// working — its process died mid-attempt with nothing left to record the
+// failure. Reading it as failed is what puts Retry in front of the user.
+func TestKickoff_StalledPendingReadsAsFailed(t *testing.T) {
+	t.Parallel()
+	s := NewService(ServiceDeps{
+		Kickoffs: &fakeKickoffClaims{row: claimRow(KickoffStatusPending, KickoffWindow+time.Minute)},
+		Turns:    &hasAnyOnlyTurnRepo{hasAny: false},
+	})
+	state, err := s.Kickoff(context.Background(), "acme", "shop")
+	if err != nil {
+		t.Fatalf("Kickoff: %v", err)
+	}
+	if state.Status != KickoffStatusFailed || state.Reason == "" {
+		t.Fatalf("state = %+v, want failed with a reason once the window has passed", state)
+	}
+}
+
+func TestKickoff_NoneWithoutAClaim(t *testing.T) {
+	t.Parallel()
+	s := NewService(ServiceDeps{
+		Kickoffs: &fakeKickoffClaims{},
+		Turns:    &neverCalledTurnRepo{},
+	})
+	state, err := s.Kickoff(context.Background(), "acme", "shop")
+	if err != nil {
+		t.Fatalf("Kickoff: %v", err)
+	}
+	if state.Status != KickoffStatusNone {
+		t.Fatalf("status = %q, want none with no claim", state.Status)
+	}
+}
+
+// The unwired seam degrades to "no kickoff" rather than refusing: this feeds a
+// polled status read, where an error would brick the whole overview.
+func TestKickoff_UnwiredReportsNone(t *testing.T) {
+	t.Parallel()
+	state, err := NewService(ServiceDeps{}).Kickoff(context.Background(), "acme", "shop")
+	if err != nil {
+		t.Fatalf("Kickoff: %v", err)
+	}
+	if state.Status != KickoffStatusNone {
+		t.Fatalf("status = %q, want none when the stores are not wired", state.Status)
+	}
+}
+
+func TestKickoff_SurfacesTheClaimReadFailure(t *testing.T) {
+	t.Parallel()
+	s := NewService(ServiceDeps{
+		Kickoffs: &fakeKickoffClaims{err: errors.New("db down")},
+		Turns:    &neverCalledTurnRepo{},
+	})
+	if _, err := s.Kickoff(context.Background(), "acme", "shop"); err == nil {
+		t.Fatal("err = nil, want the claim read's failure")
+	}
+}
+
+// ---- The outcome the attempt records ---------------------------------------
+
+func TestKickoffSpec_RecordsTheStartedOutcome(t *testing.T) {
+	t.Parallel()
+	claims := &fakeKickoffClaims{claimed: true}
+	s := NewService(ServiceDeps{
+		Kickoffs:      claims,
+		Turns:         &hasAnyOnlyTurnRepo{hasAny: true}, // stands down: a turn exists
+		Conversations: &memConvRepoStub{},
+	})
+	if err := s.KickoffSpec(context.Background(), "acme", "shop"); err != nil {
+		t.Fatalf("KickoffSpec: %v", err)
+	}
+	if len(claims.outcomes) != 1 || claims.outcomes[0][0] != KickoffStatusStarted {
+		t.Fatalf("outcomes = %v, want one started", claims.outcomes)
+	}
+}
+
+// The failure the console has to be able to SAY. A reason is recorded with it —
+// a bare "failed" would leave the card at "something went wrong".
+func TestKickoffFailureReason_NamesTheProvisioningCases(t *testing.T) {
+	t.Parallel()
+	for name, err := range map[string]error{
+		"repo":   fmt.Errorf("start: %w", ErrProjectRepoNotFound),
+		"skills": fmt.Errorf("start: %w", ErrSkillsRepoUnavailable),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := KickoffFailureReason(err); got == "" || strings.Contains(got, "%!w") {
+				t.Fatalf("reason = %q, want a sentence", got)
+			}
+		})
+	}
+}
+
+// Anything else carries its cause: this console's users are the platform's own
+// engineers, and "something went wrong" costs them the one useful detail.
+func TestKickoffFailureReason_CarriesAnUnknownCause(t *testing.T) {
+	t.Parallel()
+	got := KickoffFailureReason(errors.New("dial tcp agents:8080: connection refused"))
+	if !strings.Contains(got, "connection refused") {
+		t.Fatalf("reason = %q, want the cause carried", got)
+	}
+}
+
+func TestKickoffFailureReason_CapsTheCarriedCause(t *testing.T) {
+	t.Parallel()
+	got := KickoffFailureReason(errors.New(strings.Repeat("x", 5000)))
+	if len(got) > kickoffReasonLimit+100 {
+		t.Fatalf("reason length = %d, want it capped", len(got))
+	}
+}
+
+// ---- Retry: the ONLY way a project gets a second kickoff -------------------
+//
+// The create-time kickoff deliberately does not retry forever on its own: an
+// agents service that is down has nothing to retry into, and a turn that starts
+// an hour later starts with nobody watching. So the user clicks, and this is
+// what that click does.
+
+func recordingRetryDeps(attemptErr error) (*retryDeps, *[]string) {
+	log := &[]string{}
+	d := retryDeps{
+		claim:   func(context.Context) error { *log = append(*log, "claim"); return nil },
+		rearm:   func(context.Context) error { *log = append(*log, "rearm"); return nil },
+		attempt: func(context.Context) error { *log = append(*log, "attempt"); return attemptErr },
+		record: func(_ context.Context, err error) {
+			if err != nil {
+				*log = append(*log, "record:failed")
+				return
+			}
+			*log = append(*log, "record:started")
+		},
+	}
+	return &d, log
+}
+
+func TestRunRetry_ReArmsAndAttemptsAfterAFailure(t *testing.T) {
+	t.Parallel()
+	d, log := recordingRetryDeps(nil)
+	state, err := runRetry(context.Background(), KickoffState{Status: KickoffStatusFailed}, *d)
+	if err != nil {
+		t.Fatalf("runRetry: %v", err)
+	}
+	if state.Status != KickoffStatusStarted {
+		t.Fatalf("status = %q, want started", state.Status)
+	}
+	if want := []string{"rearm", "attempt", "record:started"}; !slices.Equal(*log, want) {
+		t.Fatalf("steps = %v, want %v", *log, want)
+	}
+}
+
+// Idempotence, both halves: a project already interviewing and one whose
+// kickoff is still working are both left ALONE. A second click must not start a
+// second attempt, and must not report failure for work still in flight.
+func TestRunRetry_IsANoOpWhileTheKickoffIsInHand(t *testing.T) {
+	t.Parallel()
+	for _, status := range []string{KickoffStatusStarted, KickoffStatusPending} {
+		t.Run(status, func(t *testing.T) {
+			d, log := recordingRetryDeps(nil)
+			state, err := runRetry(context.Background(), KickoffState{Status: status}, *d)
+			if err != nil {
+				t.Fatalf("runRetry: %v", err)
+			}
+			if state.Status != status {
+				t.Fatalf("status = %q, want %q unchanged", state.Status, status)
+			}
+			if len(*log) != 0 {
+				t.Fatalf("steps = %v, want none", *log)
+			}
+		})
+	}
+}
+
+// A project that never had a claim (created before the kickoff existed, or one
+// whose claim never landed): claiming IS the retry.
+func TestRunRetry_ClaimsWhenNothingWasEverClaimed(t *testing.T) {
+	t.Parallel()
+	d, log := recordingRetryDeps(nil)
+	if _, err := runRetry(context.Background(), KickoffState{Status: KickoffStatusNone}, *d); err != nil {
+		t.Fatalf("runRetry: %v", err)
+	}
+	if want := []string{"claim", "attempt", "record:started"}; !slices.Equal(*log, want) {
+		t.Fatalf("steps = %v, want %v", *log, want)
+	}
+}
+
+// The service is still down: the same failure comes back — as the ANSWER, not
+// an error — so the card says why and the button is still there.
+func TestRunRetry_ReturnsTheFailureAsState(t *testing.T) {
+	t.Parallel()
+	d, log := recordingRetryDeps(errors.New("dial tcp agents:8080: connection refused"))
+	state, err := runRetry(context.Background(), KickoffState{Status: KickoffStatusFailed}, *d)
+	if err != nil {
+		t.Fatalf("runRetry: %v", err)
+	}
+	if state.Status != KickoffStatusFailed {
+		t.Fatalf("status = %q, want failed", state.Status)
+	}
+	if !strings.Contains(state.Reason, "connection refused") {
+		t.Fatalf("reason = %q, want the cause", state.Reason)
+	}
+	if want := []string{"rearm", "attempt", "record:failed"}; !slices.Equal(*log, want) {
+		t.Fatalf("steps = %v, want %v", *log, want)
+	}
+}
+
+func TestRetryKickoff_RefusesWhenUnwired(t *testing.T) {
+	t.Parallel()
+	if _, err := NewService(ServiceDeps{}).RetryKickoff(context.Background(), "acme", "shop"); !errors.Is(err, ErrKickoffUnavailable) {
+		t.Fatalf("err = %v, want ErrKickoffUnavailable", err)
+	}
+}
