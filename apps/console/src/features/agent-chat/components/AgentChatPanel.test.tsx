@@ -531,9 +531,9 @@ describe("AgentChatPanel — questions in the feed are a banner, not a card", ()
     expect(screen.getByTestId("user-message")).toHaveTextContent("/start");
     const turn = screen.getByTestId("turn-block").textContent ?? "";
     const order = [
-      "Looking at your idea to generate the product requirements document…",
+      "Looking at your idea…",
       "Reading your idea…", // the turn's own narration
-      "I have a few more questions before generating the PRD.",
+      "I have some clarifications about your idea before I write the PRD.",
       "The agent has 2 questions", // the banner
     ].map((line) => turn.indexOf(line));
 

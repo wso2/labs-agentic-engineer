@@ -152,7 +152,7 @@ describe("TurnBlock", () => {
 // user's `/start`, then the agent saying what it is doing — before any tool
 // step, so a chat opened at any moment shows an exchange, not machinery.
 describe("TurnBlock — the start turn opens by speaking", () => {
-  const READING = "Looking at your idea to generate the product requirements document…";
+  const READING = "Looking at your idea…";
 
   it("opens a start turn with the reading line, ahead of its activity", () => {
     renderTurn(turn({ startTurn: true, status: "running", items: [toolGroup("specs/requirements/prd.md")] }));
@@ -177,6 +177,8 @@ describe("TurnBlock — questions stay out of the chat surface", () => {
     { question: "Who signs in?", options: [{ label: "Anyone" }, { label: "Members only" }] },
     { question: "Photo uploads?", options: [{ label: "Yes" }] },
   ];
+  const CLARIFICATIONS =
+    "I have some clarifications about your idea before I write the PRD.";
 
   it("renders the banner for a question batch — never the questions or options", () => {
     renderTurn(turn({ items: [questionItem(QUESTIONS)] }));
@@ -201,23 +203,20 @@ describe("TurnBlock — questions stay out of the chat surface", () => {
     renderTurn(
       turn({ startTurn: true, items: [narration("Reading the idea."), questionItem(QUESTIONS)] }),
     );
-    expect(
-      screen.getByText("I have a few more questions before generating the PRD."),
-    ).toBeInTheDocument();
+    expect(screen.getByText(CLARIFICATIONS)).toBeInTheDocument();
     expect(screen.getByTestId("questions-pointer")).toBeInTheDocument();
   });
 
-  it("uses the singular transition for a single question", () => {
+  // One line whatever the batch size: the count already rides the banner right
+  // below it, and the card carries it too — saying it a third time, inflected,
+  // is the drift this round set out to remove.
+  it("uses the same transition for a single question", () => {
     renderTurn(turn({ startTurn: true, items: [questionItem([QUESTIONS[0]!])] }));
-    expect(
-      screen.getByText("One question before I can generate the PRD."),
-    ).toBeInTheDocument();
+    expect(screen.getByText(CLARIFICATIONS)).toBeInTheDocument();
   });
 
   it("adds no transition line outside a start turn", () => {
     renderTurn(turn({ items: [questionItem(QUESTIONS)] }));
-    expect(
-      screen.queryByText(/before generating the PRD/),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/before I write the PRD/)).not.toBeInTheDocument();
   });
 });

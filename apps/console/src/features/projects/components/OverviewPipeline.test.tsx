@@ -200,7 +200,7 @@ describe("OverviewPipeline — the spec stage's action", () => {
       });
       renderPipeline();
 
-      expect(screen.getByText("Agent is processing the idea")).toBeInTheDocument();
+      expect(screen.getByText("Agent is looking at your idea")).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: /Continue spec/ }));
       // No `search`, here as everywhere: the injected /start is gone.
       expect(mockNavigate).toHaveBeenCalledWith({
@@ -218,7 +218,9 @@ describe("OverviewPipeline — the spec stage's action", () => {
       });
       renderPipeline();
 
-      expect(screen.getByText("Agent has 4 questions")).toBeInTheDocument();
+      expect(
+        screen.getByText("Agent has 4 questions about your idea"),
+      ).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /Continue spec/ })).toBeInTheDocument();
     });
 
@@ -247,7 +249,9 @@ describe("OverviewPipeline — the spec stage's action", () => {
       });
       renderPipeline();
 
-      expect(screen.getByText("Agent has 1 question")).toBeInTheDocument();
+      expect(
+        screen.getByText("Agent has 1 question about your idea"),
+      ).toBeInTheDocument();
     });
 
     // Round 3: `running` dips false between the 12 s poll's intervals and

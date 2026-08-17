@@ -39,9 +39,21 @@ type TurnFeedBlock = Extract<FeedBlock, { kind: "turn" }>;
  * answering) rather than a bare command followed by machinery. Exported
  * because the feed's working tail says it too, in the window before the turn
  * has produced anything to hang a turn block off.
+ *
+ * The agent's half of the overview Spec card's "Agent is looking at your idea"
+ * (round 5): one stage, said once in each voice. Naming the deliverable here
+ * ("…to generate the product requirements document") made the two surfaces
+ * read as different events.
  */
-export const START_READING_LINE =
-  "Looking at your idea to generate the product requirements document…";
+export const START_READING_LINE = "Looking at your idea…";
+
+/**
+ * The first-run turn's handoff to the questions — the agent's half of the
+ * card's "Agent has N questions about your idea". Uninflected on purpose:
+ * see the push site below.
+ */
+const QUESTION_INTRO_LINE =
+  "I have some clarifications about your idea before I write the PRD.";
 
 /** The activity rail: a vertical line the tool steps hang off. */
 function ActivityRail({ children }: { children: ReactNode }) {
@@ -224,15 +236,14 @@ function TurnBody({
       //
       // A single question on a /start turn is the brief-gathering one the
       // start skill opens with when no idea was captured ("What are you
-      // building?"), so the line stays neutral about what came before it.
+      // building?"), so the line stays neutral about what came before it —
+      // and uninflected (round 5): the count is already on the banner right
+      // below and on the overview card, and the agent's voice here matches
+      // the card's "Agent has N questions about your idea".
       if (startTurn && !questionIntroPushed) {
         questionIntroPushed = true;
         out.push(
-          <MarkdownView key={`${msg.id}-intro`}>
-            {msg.questions.length === 1
-              ? "One question before I can generate the PRD."
-              : "I have a few more questions before generating the PRD."}
-          </MarkdownView>,
+          <MarkdownView key={`${msg.id}-intro`}>{QUESTION_INTRO_LINE}</MarkdownView>,
         );
       }
       out.push(

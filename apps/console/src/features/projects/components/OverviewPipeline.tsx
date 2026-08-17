@@ -157,15 +157,21 @@ function SpecActionStage({
   // The card speaks as the agent (#485 live-testing round 3), tracking the
   // turn's ACTUAL stage: reading the idea, waiting on answers, or writing the
   // document.
+  //
+  // "your idea" throughout (round 5): the card narrates ABOUT the agent and
+  // the chat is the agent speaking, but both are about the one thing the user
+  // typed — so the card's two first-run lines and the chat's two
+  // (START_READING_LINE, the question handoff) are the same sentence in two
+  // voices. The count stays here and nowhere else.
   const interviewLine =
     interview.questionsWaiting > 0
       ? `Agent has ${interview.questionsWaiting} question${
           interview.questionsWaiting === 1 ? "" : "s"
-        }`
+        } about your idea`
       : interview.running
         ? interview.drafting
           ? "Agent is drafting the PRD…"
-          : "Agent is processing the idea"
+          : "Agent is looking at your idea"
         : kickoff.status === "pending"
           ? // The claim exists and its turn does not yet: the interview IS
             // starting, and for those seconds this is the only signal that says

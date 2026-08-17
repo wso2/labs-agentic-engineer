@@ -63,7 +63,10 @@ const HISTORY = [
   {
     role: "assistant" as const,
     content: [
-      { type: "text", text: "I have a few more questions before generating the PRD." },
+      {
+        type: "text",
+        text: "I have some clarifications about your idea before I write the PRD.",
+      },
       {
         type: "tool-call",
         toolName: "ask_questions",
