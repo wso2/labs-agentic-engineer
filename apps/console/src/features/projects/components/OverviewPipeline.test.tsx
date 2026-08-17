@@ -63,6 +63,19 @@ vi.mock("../../agent-chat/useSpecInterview", () => ({
   useSpecInterview: (...args: unknown[]) => mockInterview(...args),
 }));
 
+// The Retry mutation (#485) — the card's ONLY write, and it asks the BACKEND to
+// start the interview; it never sends a chat message. Mocked here so the tests
+// can assert exactly that, and drive the pending/error arms.
+const mockRetry = vi.fn();
+const mockRetryProject = vi.fn();
+let mockRetryState = { isPending: false, isError: false, error: null as Error | null };
+vi.mock("../api/queries", () => ({
+  useRetrySpecKickoff: (...args: unknown[]) => {
+    mockRetryProject(...args);
+    return { mutate: mockRetry, ...mockRetryState };
+  },
+}));
+
 const QUESTIONS: AskQuestionInput[] = [
   { question: "Who signs in?", options: [{ label: "Anyone" }] },
 ];
@@ -103,6 +116,7 @@ describe("OverviewPipeline — the spec stage's action", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     replaceMessages(KEY, []);
+    mockRetryState = { isPending: false, isError: false, error: null };
     mockInterview.mockReturnValue({
       running: false,
       questionsWaiting: 0,
@@ -295,5 +309,103 @@ describe("OverviewPipelineSkeleton — the status-loading state", () => {
       "aria-busy",
       "true",
     );
+  });
+});
+
+// The kickoff's own state (#485). Everything else this card reads — the running
+// turn, the thread, the spec files — is empty both while the interview is
+// STARTING and forever after a kickoff that never started. These two states are
+// the difference between a project that is fine and one that is stuck, and only
+// the claim knows which.
+describe("OverviewPipeline — the spec kickoff's state", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    replaceMessages(KEY, []);
+    mockRetryState = { isPending: false, isError: false, error: null };
+    mockInterview.mockReturnValue({
+      running: false,
+      questionsWaiting: 0,
+      drafting: false,
+      started: false,
+    });
+  });
+
+  // The measured window: 2.4-5.7s between the claim and the turn row, with an
+  // empty chat log in this browser. The card must say the interview is
+  // starting — and must not offer to start one.
+  it("says the interview is starting while the kickoff is pending", () => {
+    renderPipeline({ kickoff: { status: "pending", reason: "" } });
+
+    expect(screen.getByText("Agent is starting the interview")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Retry/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Continue spec/ }));
+    // Navigation only — no injected `/start`, which is what raced the backend.
+    expect(mockNavigate).toHaveBeenCalledWith({
+      to: "/projects/$projectName/spec",
+      params: { projectName: PROJECT },
+    });
+  });
+
+  it("names the failure and offers Retry when the kickoff failed", () => {
+    renderPipeline({
+      kickoff: { status: "failed", reason: "The agents service was unreachable." },
+    });
+
+    expect(screen.getByText("The agents service was unreachable.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Retry/ })).toBeInTheDocument();
+  });
+
+  // The retry asks the BACKEND to run its kickoff again. Nothing is sent to the
+  // chat, and nothing is navigated: the card stays put and re-renders from the
+  // refreshed status.
+  it("retries through the backend, without navigating", () => {
+    renderPipeline({ kickoff: { status: "failed", reason: "boom" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /Retry/ }));
+
+    expect(mockRetry).toHaveBeenCalledTimes(1);
+    expect(mockRetryProject).toHaveBeenCalledWith(PROJECT);
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  // A second click while one attempt is in flight is harmless on the server
+  // (the endpoint is idempotent by state) — the button says so rather than
+  // looking inert.
+  it("locks Retry while an attempt is in flight", () => {
+    mockRetryState = { isPending: true, isError: false, error: null };
+    renderPipeline({ kickoff: { status: "failed", reason: "boom" } });
+
+    const button = screen.getByRole("button", { name: /Retrying/ });
+    expect(button).toBeDisabled();
+  });
+
+  it("surfaces a retry that could not reach the backend", () => {
+    mockRetryState = {
+      isPending: false,
+      isError: true,
+      error: new Error("Failed to retry the spec interview"),
+    };
+    renderPipeline({ kickoff: { status: "failed", reason: "boom" } });
+
+    expect(screen.getByText("Failed to retry the spec interview")).toBeInTheDocument();
+  });
+
+  // A failed kickoff still leaves the spec view reachable — the thread and the
+  // composer are there, and a user who wants to type is not blocked by a card.
+  it("keeps the way into the spec view on a failed kickoff", () => {
+    renderPipeline({ kickoff: { status: "failed", reason: "boom" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /Open spec/ }));
+    expect(mockNavigate).toHaveBeenCalledWith({
+      to: "/projects/$projectName/spec",
+      params: { projectName: PROJECT },
+    });
+  });
+
+  it("says nothing about a kickoff on a project that never had one", () => {
+    renderPipeline({ kickoff: { status: "none", reason: "" } });
+
+    expect(screen.queryByText(/Agent is starting/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Retry/ })).not.toBeInTheDocument();
   });
 });

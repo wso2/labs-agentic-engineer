@@ -314,6 +314,38 @@ export function useCreateProject() {
   });
 }
 
+// Retry the server-side spec kickoff (#485).
+//
+// The console never starts the spec interview itself — the backend fires every
+// new project's `/start` at create, and a console-composed one was a second
+// turn racing it. When that kickoff fails, this asks the backend to try again;
+// the answer is the kickoff's new state, and a failure comes back IN it
+// (status "failed" with a reason) rather than as a thrown error, so the card
+// renders the same way whether it is showing a stored failure or a fresh one.
+//
+// The status read is invalidated on success so the card re-renders from the
+// server's own view rather than from a second copy of it here.
+export function useRetrySpecKickoff(projectName: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const { data, error } = await client.POST(
+        "/projects/{projectName}/spec/kickoff",
+        { params: { path: { projectName } } },
+      );
+      if (error || data === undefined) {
+        throw new Error(apiErrorMessage(error, "Failed to retry the spec interview"));
+      }
+      return data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: projectKeys.status(projectName),
+      });
+    },
+  });
+}
+
 // Delete a project (#107). The BFF cascade destroys the OC project and its
 // deployments, ends the run supervisors, and purges the platform's own repo
 // record, executions and run ledger. It does NOT delete the GitHub repository —

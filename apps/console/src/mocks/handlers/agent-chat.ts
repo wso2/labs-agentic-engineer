@@ -135,6 +135,13 @@ export const agentChatHandlers = [
     return new HttpResponse(null, { status: 204 });
   }),
 
+  // Retry the server-side spec kickoff (#485). The mock projects all have a
+  // settled kickoff, so this answers `started`: enough for the console's
+  // request/refetch path, without pretending to run an interview.
+  http.post("*/api/v1/projects/:projectName/spec/kickoff", () =>
+    HttpResponse.json({ status: "started", reason: "" }),
+  ),
+
   http.get("*/api/v1/projects/:projectName/turns/:turnId/stream", ({ params }) => {
     const turnId = String(params.turnId);
     const instruction = turnInstruction.get(turnId) ?? "";

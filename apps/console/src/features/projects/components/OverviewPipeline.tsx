@@ -32,6 +32,7 @@ import {
   ChevronRight,
   FileText,
   ListChecks,
+  RefreshCw,
   Rocket,
   Sparkles,
 } from "@wso2/oxygen-ui-icons-react";
@@ -43,6 +44,7 @@ import {
   useSpecInterview,
   type SpecInterviewState,
 } from "../../agent-chat/useSpecInterview";
+import { useRetrySpecKickoff } from "../api/queries";
 import {
   buildStageView,
   CHIP_COLOR,
@@ -52,6 +54,7 @@ import {
 } from "../lib/pipeline";
 
 type ProjectStatus = components["schemas"]["ProjectStatus"];
+type SpecKickoffState = components["schemas"]["SpecKickoffState"];
 
 function StageCard({
   icon,
@@ -139,13 +142,18 @@ function SpecActionStage({
   view,
   engaged,
   interview,
+  kickoff,
 }: {
   projectName: string;
   view: StageView;
   engaged: boolean;
   interview: SpecInterviewState;
+  /** What became of the backend's `/start` (#485) — the only signal that can
+   *  tell "starting…" from "never started". */
+  kickoff: SpecKickoffState;
 }) {
   const navigate = useNavigate();
+  const retry = useRetrySpecKickoff(projectName);
   // The card speaks as the agent (#485 live-testing round 3), tracking the
   // turn's ACTUAL stage: reading the idea, waiting on answers, or writing the
   // document.
@@ -158,7 +166,17 @@ function SpecActionStage({
         ? interview.drafting
           ? "Agent is drafting the PRD…"
           : "Agent is processing the idea"
-        : null;
+        : kickoff.status === "pending"
+          ? // The claim exists and its turn does not yet: the interview IS
+            // starting, and for those seconds this is the only signal that says
+            // so — the turn, the thread and the spec files are all still empty.
+            "Agent is starting the interview"
+          : null;
+  // A kickoff that FAILED is the one state this card must not paper over: the
+  // project sits with no interview and no way in, and the platform will not
+  // retry on its own (an agents service that is down has nothing to retry
+  // into). Name what failed, and put the retry on the card.
+  const failed = kickoff.status === "failed";
   // `started` rather than the momentary signals: the label must not flip back
   // in the gaps between the poll's intervals, or between one first-run turn
   // ending and the next attaching.
@@ -194,34 +212,68 @@ function SpecActionStage({
             throughout — losing it would make an open exchange look like a
             project with no spec at all. Empty on the cold-start CTA, where
             there is no spec to have a status. */}
-        {(interviewLine ?? view.line) && (
+        {(failed || interviewLine || view.line) && (
           <Typography
             variant="body2"
             color={
-              interviewLine
-                ? "primary.main"
-                : view.tone === "error"
-                  ? "error.main"
-                  : "text.secondary"
+              failed
+                ? "error.main"
+                : interviewLine
+                  ? "primary.main"
+                  : view.tone === "error"
+                    ? "error.main"
+                    : "text.secondary"
             }
             sx={{ mb: 1.5 }}
           >
-            {interviewLine ?? view.line}
+            {failed
+              ? // The reason comes from the attempt itself, so the card says
+                // what actually went wrong rather than "something went wrong".
+                (kickoff.reason || "The spec interview could not be started.")
+              : (interviewLine ?? view.line)}
           </Typography>
         )}
-        <Button
-          variant="contained"
-          size="small"
-          startIcon={<Sparkles size={16} />}
-          onClick={() =>
-            void navigate({
-              to: "/projects/$projectName/spec",
-              params: { projectName },
-            })
-          }
-        >
-          {open ? "Continue spec" : "Open spec"}
-        </Button>
+        <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+          {failed && (
+            <Button
+              variant="contained"
+              size="small"
+              startIcon={<RefreshCw size={16} />}
+              // Asks the BACKEND to start the interview again — never a chat
+              // message. Disabled while one attempt is in flight; a second
+              // click on a kickoff already running would be a no-op anyway
+              // (the endpoint is idempotent by state), but a button that does
+              // nothing visible invites a third.
+              disabled={retry.isPending}
+              onClick={() => retry.mutate()}
+            >
+              {retry.isPending ? "Retrying…" : "Retry"}
+            </Button>
+          )}
+          <Button
+            variant={failed ? "outlined" : "contained"}
+            size="small"
+            startIcon={<Sparkles size={16} />}
+            onClick={() =>
+              void navigate({
+                to: "/projects/$projectName/spec",
+                params: { projectName },
+              })
+            }
+          >
+            {open ? "Continue spec" : "Open spec"}
+          </Button>
+        </Stack>
+        {/* The retry itself failing to REACH the backend is a different
+            failure from the kickoff failing, and the card would otherwise look
+            unchanged after the click. */}
+        {retry.isError && (
+          <Typography variant="body2" color="error.main" sx={{ mt: 1.5 }}>
+            {retry.error instanceof Error
+              ? retry.error.message
+              : "Failed to retry the spec interview."}
+          </Typography>
+        )}
       </CardContent>
     </Card>
   );
@@ -328,6 +380,7 @@ export function OverviewPipeline({
           view={spec}
           engaged={engaged}
           interview={interview}
+          kickoff={status.spec.kickoff}
         />
       ) : (
         <StageCard
