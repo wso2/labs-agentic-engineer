@@ -133,8 +133,14 @@ export const PATH_METRICS = {
    * before and after, so this counts the habit rather than polices it.
    */
   filters: /\|\s*(head|grep|sed|tail|awk|cut|wc)\b/,
-  /** The tool's verbs. An unknown token is reported under its own name, not as "?". */
-  verbs: ["search", "overview", "ops", "type", "api"],
+  /**
+   * The tool's verbs. An unknown token is reported under its own name, not as
+   * "?", so a verb missing here still shows in the census — but its TARGET is
+   * dropped, which silently removes the call from detour attribution. That is
+   * why the list has to track the CLI: `guide` (ADR-0017) was invisible to
+   * `worstDetour` until it was added.
+   */
+  verbs: ["search", "overview", "ops", "type", "guide", "api"],
   /**
    * A result at or under this many characters carried a suggestion or nothing.
    * `api <pkg> | grep X` returning "(Bash completed with no output)" is 31

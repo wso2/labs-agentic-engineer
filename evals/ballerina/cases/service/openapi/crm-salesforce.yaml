@@ -1,0 +1,277 @@
+openapi: 3.0.3
+info:
+  title: Lead Pipeline API
+  version: 1.0.0
+paths:
+  /leads:
+    get:
+      operationId: listLeads
+      summary: List leads, newest first
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/LeadStatus"
+        - name: owner
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Matching leads
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Lead"
+    post:
+      operationId: createLead
+      summary: Capture a lead
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewLead"
+      responses:
+        "201":
+          description: The captured lead
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Lead"
+        "400":
+          description: The lead was rejected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /leads/{leadId}:
+    get:
+      operationId: getLead
+      summary: Fetch one lead
+      parameters:
+        - name: leadId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The lead
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Lead"
+        "404":
+          description: No such lead
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /leads/{leadId}/convert:
+    post:
+      operationId: convertLead
+      summary: Convert a lead into an account, a contact and an opportunity
+      parameters:
+        - name: leadId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConversionRequest"
+      responses:
+        "200":
+          description: What the conversion produced
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Conversion"
+        "404":
+          description: No such lead
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+        "409":
+          description: The lead was already converted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /leads/{leadId}/notes:
+    post:
+      operationId: addLeadNote
+      summary: Attach a note to a lead
+      parameters:
+        - name: leadId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewNote"
+      responses:
+        "201":
+          description: The attached note
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Note"
+        "404":
+          description: No such lead
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /opportunities:
+    get:
+      operationId: listOpportunities
+      summary: List opportunities by stage
+      parameters:
+        - name: stage
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/OpportunityStage"
+        - name: minAmount
+          in: query
+          required: false
+          schema:
+            type: number
+            format: double
+      responses:
+        "200":
+          description: Matching opportunities
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Opportunity"
+components:
+  schemas:
+    LeadStatus:
+      type: string
+      enum: [open, working, qualified, converted, disqualified]
+    OpportunityStage:
+      type: string
+      enum: [prospecting, proposal, negotiation, won, lost]
+    NewLead:
+      type: object
+      required: [company, contactName, email]
+      properties:
+        company:
+          type: string
+          minLength: 1
+        contactName:
+          type: string
+          minLength: 1
+        email:
+          type: string
+        phone:
+          type: string
+        source:
+          type: string
+    Lead:
+      type: object
+      required: [leadId, company, contactName, email, status, createdAt]
+      properties:
+        leadId:
+          type: string
+        company:
+          type: string
+        contactName:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+        source:
+          type: string
+        status:
+          $ref: "#/components/schemas/LeadStatus"
+        owner:
+          type: string
+        createdAt:
+          type: string
+    ConversionRequest:
+      type: object
+      required: [opportunityName]
+      properties:
+        opportunityName:
+          type: string
+        amount:
+          type: number
+          format: double
+        closeDate:
+          type: string
+    Conversion:
+      type: object
+      required: [leadId, accountId, contactId, opportunityId]
+      properties:
+        leadId:
+          type: string
+        accountId:
+          type: string
+        contactId:
+          type: string
+        opportunityId:
+          type: string
+    NewNote:
+      type: object
+      required: [title, body]
+      properties:
+        title:
+          type: string
+        body:
+          type: string
+    Note:
+      type: object
+      required: [noteId, leadId, title, body, createdAt]
+      properties:
+        noteId:
+          type: string
+        leadId:
+          type: string
+        title:
+          type: string
+        body:
+          type: string
+        createdAt:
+          type: string
+    Opportunity:
+      type: object
+      required: [opportunityId, name, accountId, stage, amount]
+      properties:
+        opportunityId:
+          type: string
+        name:
+          type: string
+        accountId:
+          type: string
+        stage:
+          $ref: "#/components/schemas/OpportunityStage"
+        amount:
+          type: number
+          format: double
+        closeDate:
+          type: string
+    ErrorMessage:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string

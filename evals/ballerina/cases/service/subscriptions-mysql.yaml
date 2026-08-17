@@ -1,0 +1,21 @@
+prompt: |
+  An HTTP subscription billing service backed by MySQL. Plans, subscribers,
+  subscriptions and invoices each live in their own table, created on startup if
+  missing. Registering an email twice is a 409; listing filters by status and
+  plan. Cancelling leaves the subscription running until it renews.
+
+  A job runs on a schedule and sweeps subscriptions whose renewal has come due:
+  a trial becomes active, an active one raises the next invoice and moves its
+  renewal on, and one cancelled earlier is closed out.
+
+  Generate the service from `openapi.yaml`. Connection details and the sweep
+  interval stay configurable. No tests.
+
+fixtures:
+  openapi.yaml: openapi/subscriptions-mysql.yaml
+
+expect:
+  builds: true
+  imports:
+    - ballerina/http
+    - ballerinax/mysql

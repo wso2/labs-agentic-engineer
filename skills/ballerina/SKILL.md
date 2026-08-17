@@ -25,51 +25,29 @@ cd <project-name>
 
 Write tests only when the user asks — then load [tests.md](references/tests.md).
 
+Starting from an OpenAPI contract instead of a blank package — load [openapi.md](references/openapi.md).
+
 ### bal library
 
 **Run `bal library --help` before your first lookup, and follow the flow it describes.** It reads a
 package off Central so you write signatures that exist rather than remembered ones.
 
 - Run `bal library` unpiped. The CLI is designed to filter and give you the information you need
-  with fewer calls. Narrow with flags only. Instructions and workflow is there in the
-  `bal library --help` output.
+  with fewer calls. Narrow with the verb's own arguments and flags — a name, a path, `--client` —
+  never with a shell filter. Instructions and workflow is there in the `bal library --help` output.
 - A failed lookup is not a blocker: write from `code-rules.md` and let `bal build` name what is
   wrong. Report the failure's JSON rather than improvising a signature.
 - When `bal build` rejects something a connector's guide told you to write, go back to the
   signature — the guide is prose and drifts, the signature is generated. That is the usual cause.
+- `ballerina/*` is the standard library; every vendor or third-party connector is `ballerinax/*`. — `search` when you cannot name the package.
 - Prefer a `ballerinax/*` connector over a `trigger.*` package covering the same events.
 
 ### bal build
 
 - An `import` plus `bal build` resolves a package — no manual `Dependencies.toml` edit.
-- `target/` is the incremental cache — leave it in place; "no work to do" confirms the last build holds.
+- `target/` is the incremental cache — leave it in place. A build that printed `Generating executable` is green; do not re-run `bal build` to confirm it.
 - Configurables are read at runtime, so env variables or Config.toml is not needed to build.
-
-### bal openapi
-
-```bash
-bal tool pull openapi                          # once per environment
-bal openapi -i oas.yaml --mode service         # generate service from openapi spec
-bal openapi -i oas.yaml --mode client          # generate client from openapi spec
-```
-
-- The stub is the starting point: fill every empty resource body with Edit — an unfilled body is a compile error.
-- Change the generated `new (9090, config = {host: "localhost"})` to `new (9090)` — localhost binding leaves the deployed container unreachable while it looks healthy.
-- Delete the `bal new` scaffold's `main.bal` once the service exists.
 
 ## Dockerfile
 
-Follow the exact multi stage dockerfile below.
-
-```dockerfile
-FROM ballerina/ballerina:2201.13.5 AS builder
-WORKDIR /src
-COPY --chown=ballerina:troupe . .
-RUN bal build && mv target/bin/*.jar /tmp/service.jar
-
-FROM eclipse-temurin:21-jre
-WORKDIR /app
-COPY --from=builder /tmp/service.jar /app/service.jar
-EXPOSE 9090
-ENTRYPOINT ["java", "-jar", "/app/service.jar"]
-```
+When the user asks for a container image — load [dockerfile.md](references/dockerfile.md).

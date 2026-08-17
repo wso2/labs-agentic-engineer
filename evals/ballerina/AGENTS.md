@@ -47,6 +47,13 @@ downstream can tell.
   flag → env → default. Add a tunable there, never beside its use.
 - Cases are data under `cases/<suite>/`. **A folder IS a suite**; nothing
   enumerates them.
+- **Build the import set before writing the case.** A package that resolves
+  alone can still be unresolvable beside another: `ballerina/ftp` pins
+  `data.csv:0.8.2` and refuses to share a graph with the current `0.10.0`. A
+  scratch package importing every coordinate `as _` settles it in a minute,
+  where the case would spend a 30-minute attempt failing at resolution and
+  reporting it as the agent's score. Run `bal openapi -i` over a new contract
+  too — the only errors should be the empty resource stubs.
 - **Pin only what the compiler forces.** Three of the first five cases asserted
   an import that turned out optional — `ballerinax/aws.auth` and `ballerina/sql`
   are both inferred in idiomatic code *and* compile when written out. An

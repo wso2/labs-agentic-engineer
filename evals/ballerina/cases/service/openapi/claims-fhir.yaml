@@ -1,0 +1,257 @@
+openapi: 3.0.3
+info:
+  title: Patient Claim Intake API
+  version: 1.0.0
+paths:
+  /patients:
+    post:
+      operationId: registerPatient
+      summary: Register a patient
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewPatient"
+      responses:
+        "201":
+          description: The registered patient
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PatientSummary"
+        "400":
+          description: The patient was rejected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /patients/{patientId}:
+    get:
+      operationId: getPatient
+      summary: Fetch one patient
+      parameters:
+        - name: patientId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The patient
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PatientSummary"
+        "404":
+          description: No such patient
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /claims:
+    get:
+      operationId: listClaims
+      summary: List claims for a patient
+      parameters:
+        - name: patientId
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/ClaimStatus"
+      responses:
+        "200":
+          description: Matching claims
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ClaimSummary"
+    post:
+      operationId: submitClaim
+      summary: Submit a claim for a patient
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewClaim"
+      responses:
+        "201":
+          description: The submitted claim
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimSummary"
+        "404":
+          description: No such patient
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+        "422":
+          description: The claim did not validate
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /claims/{claimId}:
+    get:
+      operationId: getClaim
+      summary: Fetch one claim
+      parameters:
+        - name: claimId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The claim
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimSummary"
+        "404":
+          description: No such claim
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /claims/{claimId}/cancel:
+    post:
+      operationId: cancelClaim
+      summary: Cancel a submitted claim
+      parameters:
+        - name: claimId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The cancelled claim
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimSummary"
+        "404":
+          description: No such claim
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+components:
+  schemas:
+    Gender:
+      type: string
+      enum: [male, female, other, unknown]
+    ClaimStatus:
+      type: string
+      enum: [draft, active, cancelled]
+    NewPatient:
+      type: object
+      required: [mrn, givenName, familyName, birthDate, gender]
+      properties:
+        mrn:
+          type: string
+          minLength: 1
+        givenName:
+          type: string
+          minLength: 1
+        familyName:
+          type: string
+          minLength: 1
+        birthDate:
+          type: string
+        gender:
+          $ref: "#/components/schemas/Gender"
+        phone:
+          type: string
+    PatientSummary:
+      type: object
+      required: [patientId, fhirId, mrn, givenName, familyName, birthDate, gender]
+      properties:
+        patientId:
+          type: string
+        fhirId:
+          type: string
+        mrn:
+          type: string
+        givenName:
+          type: string
+        familyName:
+          type: string
+        birthDate:
+          type: string
+        gender:
+          $ref: "#/components/schemas/Gender"
+        phone:
+          type: string
+    ClaimItem:
+      type: object
+      required: [sequence, productOrService, quantity, unitPriceCents]
+      properties:
+        sequence:
+          type: integer
+          format: int32
+          minimum: 1
+        productOrService:
+          type: string
+        quantity:
+          type: integer
+          format: int32
+          minimum: 1
+        unitPriceCents:
+          type: integer
+          format: int64
+          minimum: 0
+    NewClaim:
+      type: object
+      required: [patientId, providerId, claimType, items]
+      properties:
+        patientId:
+          type: string
+        providerId:
+          type: string
+        claimType:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClaimItem"
+    ClaimSummary:
+      type: object
+      required: [claimId, fhirId, patientId, providerId, status, totalCents, createdAt, items]
+      properties:
+        claimId:
+          type: string
+        fhirId:
+          type: string
+        patientId:
+          type: string
+        providerId:
+          type: string
+        status:
+          $ref: "#/components/schemas/ClaimStatus"
+        totalCents:
+          type: integer
+          format: int64
+        createdAt:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClaimItem"
+    ErrorMessage:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string

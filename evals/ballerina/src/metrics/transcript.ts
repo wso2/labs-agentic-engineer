@@ -39,7 +39,7 @@ const VERBS = new Set<string>(PATH_METRICS.verbs);
 export interface Lookup {
   /** The full shell command, as the agent wrote it. */
   command: string;
-  /** `search` | `overview` | `ops` | `type` | `api`, or "" when the verb is unreadable. */
+  /** One of `PATH_METRICS.verbs`, or "" when the verb is unreadable. */
   verb: string;
   /** The `org/name` the verb was pointed at, or "" for `search` / a malformed call. */
   target: string;
@@ -53,7 +53,11 @@ export interface Lookup {
   verbs: string[];
   /** Wrapped in `head`/`grep`/`sed`/`tail`/`awk` — the habit that truncates navigation. */
   piped: boolean;
-  /** The tool answered with a failure JSON on stderr (exit 1), not a document. */
+  /**
+   * The tool answered with a failure JSON instead of a document. Read off the
+   * body rather than off `$?`, which is the only way that survives a pipe — and
+   * a piped call is the common case this measures.
+   */
   failed: boolean;
   /** The failure's `kind`, when it failed. */
   failureKind?: string;
@@ -67,7 +71,7 @@ export interface PathMetrics {
   lookups: number;
   /** How many were wrapped in a filter. The skill and `--help` both ask for zero. */
   piped: number;
-  /** Exit-2 answers: a call that bought nothing but a suggestion. */
+  /** Failures: a call that bought nothing but a `kind` and a suggestion. */
   failed: number;
   /** Results that carried the `## Next` navigation block. */
   sawNext: number;

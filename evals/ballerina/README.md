@@ -60,6 +60,30 @@ are a cost distinction, not a kind:
 | `service/` | an OpenAPI-generated HTTP service over connectors | the common shape |
 | `full/` | a whole service across several packages, ~10-15 min | confirm |
 
+### What `service/` already reaches for
+
+Every case there is HTTP-triggered and generated from an `openapi.yaml`, so what
+distinguishes one is the library behind it. Read this before adding the next one
+— a case that repeats a row costs a sweep slot and measures nothing new.
+
+| case | beyond `ballerina/http` | what it stresses |
+|---|---|---|
+| `alerts-twilio` | `twilio` | one connector, an outcome recorded per recipient |
+| `catalog-redis` | `redis` | cache-aside in front of an upstream API |
+| `claims-fhir` | `health.fhir.r4.international401` | a very large generated type surface, and two shapes to hold apart — the API's and FHIR's |
+| `crm-salesforce` | `salesforce` | a query-driven connector, and one call that creates three objects |
+| `exports-sftp` | `ftp` | stdlib only: remote files as the store of record, listed and streamed back |
+| `helpdesk-gmail-jira` | `googleapis.gmail`, `jira` | two connectors joined on one mail thread |
+| `intake-fanout` | `googleapis.sheets`, `github`, `slack` | three-way fan-out with partial success |
+| `knowledge-openai-pinecone` | `openai.embeddings`, `openai.chat`, `pinecone.vector` | embed → upsert → query → complete, with a score threshold |
+| `orders-mongodb` | `mongodb` | a document store and a filtered listing |
+| `partner-gateway-jwt` | `jwt` | an inbound token validated and read, an outbound one fetched and reused |
+| `payments-stripe` | `stripe`, `crypto` | a third party's ids as the truth, plus an HMAC-verified webhook |
+| `shipments-rabbitmq` | `rabbitmq` | a publish, and an HTTP client that retries and trips a breaker |
+| `subscriptions-mysql` | `mysql` | a relational schema raised on startup and a job that sweeps it |
+| `telemetry-kafka` | `kafka` | a keyed publish |
+| `workorders-cosmos-asb` | `azure_cosmosdb`, `asb` | a partition key threaded through every read, then a queue handoff |
+
 ```yaml
 prompt: |            # handed to the agent verbatim
   In this Ballerina package, write `s3_client.bal` containing: …

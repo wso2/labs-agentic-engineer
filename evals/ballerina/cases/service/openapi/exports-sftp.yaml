@@ -1,0 +1,207 @@
+openapi: 3.0.3
+info:
+  title: Ledger Export API
+  version: 1.0.0
+paths:
+  /entries:
+    post:
+      operationId: recordEntry
+      summary: Record a ledger entry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewEntry"
+      responses:
+        "201":
+          description: The recorded entry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Entry"
+        "400":
+          description: The entry was rejected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /exports:
+    get:
+      operationId: listExports
+      summary: Exports sitting on the remote server
+      responses:
+        "200":
+          description: The exports
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Export"
+    post:
+      operationId: createExport
+      summary: Write a period's entries out and upload them
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExportRequest"
+      responses:
+        "202":
+          description: The uploaded export
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Export"
+        "400":
+          description: The period was rejected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /exports/{exportId}:
+    get:
+      operationId: getExport
+      summary: Fetch one export's details
+      parameters:
+        - name: exportId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The export
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Export"
+        "404":
+          description: No such export
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+    delete:
+      operationId: deleteExport
+      summary: Remove an export from the remote server
+      parameters:
+        - name: exportId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: The export was removed
+        "404":
+          description: No such export
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /exports/{exportId}/content:
+    get:
+      operationId: downloadExport
+      summary: Read an export back off the remote server
+      parameters:
+        - name: exportId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The CSV
+          content:
+            text/csv:
+              schema:
+                type: string
+        "404":
+          description: No such export
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+components:
+  schemas:
+    EntryKind:
+      type: string
+      enum: [debit, credit]
+    NewEntry:
+      type: object
+      required: [account, kind, amountCents, description]
+      properties:
+        account:
+          type: string
+          minLength: 1
+        kind:
+          $ref: "#/components/schemas/EntryKind"
+        amountCents:
+          type: integer
+          format: int64
+          minimum: 1
+        description:
+          type: string
+          maxLength: 200
+        reference:
+          type: string
+    Entry:
+      type: object
+      required: [entryId, account, kind, amountCents, description, postedAt, voided]
+      properties:
+        entryId:
+          type: string
+        account:
+          type: string
+        kind:
+          $ref: "#/components/schemas/EntryKind"
+        amountCents:
+          type: integer
+          format: int64
+        description:
+          type: string
+        reference:
+          type: string
+        postedAt:
+          type: string
+        voided:
+          type: boolean
+    ExportRequest:
+      type: object
+      required: [from, to]
+      properties:
+        from:
+          type: string
+        to:
+          type: string
+        includeVoided:
+          type: boolean
+    Export:
+      type: object
+      required: [exportId, from, to, rowCount, remotePath, sizeBytes, createdAt]
+      properties:
+        exportId:
+          type: string
+        from:
+          type: string
+        to:
+          type: string
+        rowCount:
+          type: integer
+          format: int32
+        remotePath:
+          type: string
+        sizeBytes:
+          type: integer
+          format: int64
+        createdAt:
+          type: string
+    ErrorMessage:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string

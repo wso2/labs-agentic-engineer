@@ -9,16 +9,18 @@ For tests, see [tests.md](tests.md) — write them only when the user asks.
 - Define `configurable` variables for all external values (API keys, hosts, ports, credentials).
   - Allowed types: `string`, `int`, `decimal`, `boolean` only.
   - Never assign hardcoded default values to configurables — reading an environment variable via `os:getEnv` (see Environment Variables below) is not a hardcoded default and is the expected pattern for platform-injected values.
-- Initialize clients at module level, before any function or service declarations.
+  - A configurable with no default is written `configurable string apiKey = ?;` — `= ?` which means during the runtime, this value must be provided.
+- Initialize clients at module level, before any function or service declarations: `final foo:Client fooClient = check new (config);`. A constructor is allowed there; but connector calls are not, wrap those in function body and call them if needed.
 - Declare listeners with the `listener` keyword (`listener foo:Listener lsn = new (config);`), not a `final` variable — `service ... on lsn` attachment requires it; a `final foo:Listener` fails to compile.
-- An event/streaming listener (change-data-capture, message topic/queue, etc.) attaches its service to a vendor channel/topic string that sits **between the service type and `on`**: `service <pkg>:<ServiceType> "<channel>" on <listener>` — e.g. a Salesforce CDC service binds to a channel like `service salesforce:CdcService "/data/LeadChangeEvent" on lsn`. The channel goes on the **`service` declaration** (its attach path) — **not** as a listener constructor argument; the listener `new (...)` takes only its config. This string isn't in the library API — get it from the connector's guide (`bal library overview <org/name>` carries it) or the vendor docs, and wire it in **before** writing the service. If neither has it, **ask the user — never invent one**: without it the code usually still compiles and the service silently receives nothing. Never ship an event service without its channel.
+- An event/streaming listener (change-data-capture, message topic/queue, etc.) attaches its service to a vendor channel/topic string that sits **between the service type and `on`**: `service <pkg>:<ServiceType> "<channel>" on <listener>` — e.g. a Salesforce CDC service binds to a channel like `service salesforce:CdcService "/data/LeadChangeEvent" on lsn`. The channel goes on the **`service` declaration** (its attach path) — **not** as a listener constructor argument; the listener `new (...)` takes only its config. This string isn't in the library API — get it from the connector's readme (`bal library guide <org/name>`) or the vendor docs, and wire it in **before** writing the service. If neither has it, **ask the user — never invent one**: without it the code usually still compiles and the service silently receives nothing. Never ship an event service without its channel.
 - Only some of a package's `service object` types are attachable to its listener. `bal library api` is what answers that (its own `--help` says how to read the answer): **never write `on new Listener(...)` for a type the document could not confirm.** An interceptor is the common case — it reaches the runtime as a `createInterceptors()` return from an interceptable service, not as an attachment.
-- A template with an empty body is a skeleton, not a complete service. The comment inside it says when the method contract is unpublished, and several listeners reject an empty body — a GraphQL service needs at least one `resource function get`, a Kafka service needs `remote function onConsumerRecord`. Take the required methods from the package's guide.
-- Implement a `main` function OR a service — not both, unless the requirement explicitly needs both.
+- A template with an empty body is a skeleton, not a complete service. The comment inside it says when the method contract is unpublished, and several listeners reject an empty body — a GraphQL service needs at least one `resource function get`, a Kafka service needs `remote function onConsumerRecord`. Take the required methods from `bal library guide <org/name>`.
+- Implement a `main` function OR a service — not both.
+- Startup work — creating a table, warming a cache — needs neither. A module-level `final () dbReady = check initDb();` runs before any listener starts, so a failure there fails the service fast.
 
 ## Data
 
-- Use records for all data structures. Never use `map<json>`, `map<anydata>`, or raw `json`.
+- Use records for all data structures. Never use `map<json>`, `map<anydata>`, or raw `json` — unless a library signature declares one. This also, convert into a record as much as possible.
 - Prefer closed records (`record {| ... |}`) for data shapes you own. Use an open record only when tolerating extra/unknown fields is deliberate (e.g. a loosely-specified inbound payload).
 - Never access or manipulate a `json` variable directly. Define a record, convert json to it (`cloneWithType()` or `fromJsonStringWithType()`), then use the record.
 - If a return typedesc is marked `<>` in a signature (`bal library` prints it as `typedesc<T> T = <>`), define a custom record for the expected data shape.
@@ -30,17 +32,22 @@ For tests, see [tests.md](tests.md) — write them only when the user asks.
 
 - Always use **two-word camelCase** for ALL identifiers: variables, parameters, record fields (e.g., `userName`, `baseUrl`, `responseBody`).
 - Exception: a record whose fields bind to external payload/JSON keys (e.g. via `cloneWithType()`) must use the **exact source key names** — even if that means single-word or PascalCase (e.g. `Name`, `CreatedDate`). The wire contract wins over the naming convention here.
+- A reserved word cannot name anything — function, variable, field, parameter, resource path segment or any identifier — without a leading quote. The ones that bite read like ordinary service nouns: `conflict`, `order`, `limit`, `start`, `join`, `outer`, `select`, `from`, `where`, `on`, `by`, `equals`, `let`, `do`, `fail`. 
+- Use ' to escape the reserved keyword (int 'limit = 20).
 
 ## Function Calls
 
 - Dot notation (`.`) for normal functions. Arrow notation (`->`) for remote and resource functions (Only works inside a function body).
-- Resource function invocation: `clientVar->/path/["param"].get(key="value")`
-- Always use **named arguments**: `client->post("/path", message = payload)` — never positional.
+- Resource function invocation: `clientVar->/path/["param"].get(key="value")`. A path whose segment contains a dot is still a path — `clientVar->/some\.operation.post(payload)`, never `clientVar->some\.operation(payload)`. The escaped dot is part of the segment, not a method name. The last `.get(), .post() .. ` is the accessor.
+- Use **named arguments** for optional and defaultable parameters: `client->post("/path", message = payload)`. An included-record parameter — written `*SomeConfig` in the signature — is passed positionally as a record literal instead.
+- A call returning a non-nil value cannot stand alone as a statement; assign it, discarding with `_` if unused: `ResultType _ = check client->doSomething(arg);`. Only a `()`-returning call may be a bare `check` statement.
 
 ## Type Safety
 
 - Declare types explicitly in all variable declarations and `foreach` statements.
 - To narrow a union or optional type: assign to a separate typed variable first, then use it in the `if` condition.
+- Narrow with **sequential early-return `if`s, never an `else if` chain** — for any union, not just `T|error`, a narrowing does not survive an `if`/`else if` that has no final `else`: afterwards the value is still the whole union and `x.field` fails (*"does not support field access"*) even though every branch returned.
+- Better still, guard for what you want and return the rest in one line — `if r !is Success { return r; }` — so a helper that maps failures to results returns the whole union and each caller narrows once before the happy path.
 - An **optional field** (`field?: T` — what every non-required OpenAPI property generates) needs optional field access: `payload?.dueDate`, often `payload?.priority ?: "medium"`. Plain `payload.dueDate` fails to compile with *"field access cannot be used to access an optional field of a type that includes nil"*.
 - Do not invoke methods on json access expressions — always use a separate statement.
 
@@ -70,7 +77,9 @@ resource function get users() returns UserList|http:NotFound {
 
 Params bind from the signature, no annotation needed: a plain typed param is a query param (`?` or a default makes it optional), `@http:Header` binds a header. Escape a reserved word or a hyphen with a leading quote — `int 'limit = 20`, `@http:Header string x\-user\-id`.
 
-`http:Ok`, `http:Created`, `http:BadRequest`, `http:Unauthorized`, `http:NotFound` are `record {| *CommonResponse; … |}`, so each takes `body?`, `headers?` and `mediaType?`. `http:NoContent` takes `headers?` only — no body — and `http:NO_CONTENT` is its empty value.
+Every `http:<StatusName>` record is `record {| *CommonResponse; … |}` and takes `body?`, `headers?` and `mediaType?` — `http:Ok`, `http:Created`, `http:BadRequest`, `http:Unauthorized`, `http:NotFound`, `http:Conflict` and `http:InternalServerError` alike. It is a family, not a list: you do not need a lookup to confirm one exists. `http:NoContent` takes `headers?` only — no body — and `http:NO_CONTENT` is its empty value.
+
+`check` needs an `error` member in the enclosing return type, so a resource returning `UserList|http:NotFound` cannot use it — that is *"invalid usage of the 'check' expression operator: no matching error return type(s) in the enclosing invokable"*, and it catches `.close()` and langlib calls as much as client actions. Add `|error` to the union and `http` maps a returned error to 500, which is the right shape for an upstream failure the contract never modelled; otherwise assign to `T|error` and branch with the early-return guards under Type Safety.
 
 ```ballerina
 resource function get items(string? status, int 'limit = 20) returns http:Ok|http:BadRequest {
@@ -105,7 +114,7 @@ resource function post items(@http:Header string x\-user\-id, ItemInput payload)
 
 ## Logging & Observability
 
-- Use the `ballerina/log` module for logging: `log:printInfo`, `log:printError`, `log:printWarn`, `log:printDebug`. Attach context as structured key-value pairs (named arguments) rather than concatenating into the message — e.g. `log:printError("order failed", id = orderId)`.
+- Use the `ballerina/log` module for logging: `log:printInfo`, `log:printError`, `log:printWarn`, `log:printDebug`. Attach context as structured key-value pairs (named arguments) rather than concatenating into the message — e.g. `log:printError("order failed", id = orderId, 'error = err)`.
 - Never log secrets, auth tokens/headers, or raw request/response payloads — redact or hash sensitive values before logging.
 - Prefer Ballerina's built-in runtime observability (metrics + distributed tracing) over hand-rolled instrumentation. It needs no code changes — enable it via `Config.toml`, or pass `--observability-included` to `bal run`/`bal build` (already set in the `Ballerina.toml` generated by `bal new`):
   ```toml

@@ -1,0 +1,289 @@
+openapi: 3.0.3
+info:
+  title: Checkout API
+  version: 1.0.0
+paths:
+  /customers:
+    post:
+      operationId: createCustomer
+      summary: Register a paying customer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewCustomer"
+      responses:
+        "201":
+          description: The registered customer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Customer"
+        "400":
+          description: The customer was rejected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /customers/{customerId}:
+    get:
+      operationId: getCustomer
+      summary: Fetch one customer
+      parameters:
+        - name: customerId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The customer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Customer"
+        "404":
+          description: No such customer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /customers/{customerId}/payments:
+    get:
+      operationId: listCustomerPayments
+      summary: Payments taken from one customer
+      parameters:
+        - name: customerId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/PaymentStatus"
+      responses:
+        "200":
+          description: Matching payments
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Payment"
+        "404":
+          description: No such customer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /payments:
+    post:
+      operationId: takePayment
+      summary: Start a payment against a customer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewPayment"
+      responses:
+        "201":
+          description: The started payment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Payment"
+        "404":
+          description: No such customer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /payments/{paymentId}:
+    get:
+      operationId: getPayment
+      summary: Fetch one payment
+      parameters:
+        - name: paymentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The payment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Payment"
+        "404":
+          description: No such payment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /payments/{paymentId}/refund:
+    post:
+      operationId: refundPayment
+      summary: Refund a payment, in full or in part
+      parameters:
+        - name: paymentId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefundRequest"
+      responses:
+        "200":
+          description: The refund
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Refund"
+        "404":
+          description: No such payment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+        "409":
+          description: The payment cannot be refunded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /webhooks/stripe:
+    post:
+      operationId: receiveStripeEvent
+      summary: Accept a signed Stripe event and settle the payment it names
+      parameters:
+        - name: Stripe-Signature
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StripeEvent"
+      responses:
+        "204":
+          description: The event was accepted
+        "401":
+          description: The signature did not verify
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+components:
+  schemas:
+    PaymentStatus:
+      type: string
+      enum: [pending, succeeded, failed, refunded]
+    NewCustomer:
+      type: object
+      required: [email, name]
+      properties:
+        email:
+          type: string
+        name:
+          type: string
+          minLength: 1
+    Customer:
+      type: object
+      required: [customerId, email, name, createdAt]
+      properties:
+        customerId:
+          type: string
+        email:
+          type: string
+        name:
+          type: string
+        createdAt:
+          type: string
+    NewPayment:
+      type: object
+      required: [customerId, amountCents, currency]
+      properties:
+        customerId:
+          type: string
+        amountCents:
+          type: integer
+          format: int64
+          minimum: 1
+        currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+        description:
+          type: string
+    Payment:
+      type: object
+      required: [paymentId, customerId, amountCents, currency, status, createdAt]
+      properties:
+        paymentId:
+          type: string
+        customerId:
+          type: string
+        amountCents:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        status:
+          $ref: "#/components/schemas/PaymentStatus"
+        clientSecret:
+          type: string
+        createdAt:
+          type: string
+    RefundRequest:
+      type: object
+      properties:
+        amountCents:
+          type: integer
+          format: int64
+          minimum: 1
+        reason:
+          type: string
+    Refund:
+      type: object
+      required: [refundId, paymentId, amountCents, status]
+      properties:
+        refundId:
+          type: string
+        paymentId:
+          type: string
+        amountCents:
+          type: integer
+          format: int64
+        status:
+          type: string
+    StripeEvent:
+      type: object
+      required: [id, type, created]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        created:
+          type: integer
+          format: int64
+        paymentId:
+          type: string
+    ErrorMessage:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string

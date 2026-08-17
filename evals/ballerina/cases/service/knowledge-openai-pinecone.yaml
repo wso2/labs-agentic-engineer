@@ -1,0 +1,26 @@
+prompt: |
+  An HTTP knowledge base. Indexing a document splits its text into chunks of a
+  configurable size, embeds each chunk with OpenAI, and upserts the vectors into
+  a Pinecone index carrying the document id, the chunk text and the tags as
+  metadata. Removing a document deletes the vectors it produced.
+
+  Asking a question embeds it the same way, queries the index for the nearest
+  chunks — narrowed by tags when they are given — and asks an OpenAI chat model
+  to answer from those chunks alone. The answer comes back with the chunks it
+  drew on and their scores. A query whose best match is below a configurable
+  score threshold is a 422 rather than a guess.
+
+  Generate the service from `openapi.yaml`. Both API keys, the Pinecone index,
+  the embedding model, the chat model, the chunk size and the threshold stay
+  configurable. No tests.
+
+fixtures:
+  openapi.yaml: openapi/knowledge-openai-pinecone.yaml
+
+expect:
+  builds: true
+  imports:
+    - ballerina/http
+    - ballerinax/openai.embeddings
+    - ballerinax/openai.chat
+    - ballerinax/pinecone.vector

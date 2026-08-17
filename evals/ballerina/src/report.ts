@@ -176,6 +176,36 @@ export function renderReport(input: ReportInput): string {
 }
 
 /**
+ * Which previous sweep the baseline column compares against: the most recent
+ * one that ran EVERY case this sweep ran.
+ *
+ * Newest-directory-wins is the obvious rule and it is wrong — measured wrong. A
+ * one-case debug re-run of `catalog-redis` sat between two full sweeps, so the
+ * full sweep after it would have dashed six cases and diffed the seventh
+ * against a run made under different conditions: six phantom regressions and
+ * one number nobody could interpret, in the column a reader trusts most.
+ *
+ * Requiring coverage means every row in the column answers the same question,
+ * or there is no column. A narrower sweep still baselines against a wider run
+ * that contains it, which is the case that matters when iterating on one suite.
+ * An unreadable summary is skipped rather than fatal: an older format should
+ * cost the comparison, never the run.
+ */
+export function pickBaseline(
+  candidates: string[],
+  currentKeys: string[],
+  read: (dir: string) => Summary[] | undefined,
+): Summary[] | undefined {
+  for (const dir of [...candidates].sort().reverse()) {
+    const summaries = read(dir);
+    if (!summaries) continue;
+    const covered = new Set(summaries.map((s) => s.key));
+    if (currentKeys.every((k) => covered.has(k))) return summaries;
+  }
+  return undefined;
+}
+
+/**
  * A delta, and whether it is big enough to mean anything.
  *
  * The bar is the WIDER of the two spreads: a change that moves the median less

@@ -1,0 +1,23 @@
+prompt: |
+  An HTTP claim intake service in front of a FHIR server. The API speaks its own
+  shape — the records in `openapi.yaml` — and FHIR is what it stores in. A
+  registered patient becomes an R4 `Patient` resource carrying the MRN as an
+  identifier and the name, birth date and gender in their FHIR form; a submitted
+  claim becomes an R4 `Claim` referencing that patient, one line item per entry,
+  with the total summed from the lines.
+
+  Reads fetch the resource back by its FHIR id and map it down to the API's own
+  shape. Cancelling sets the claim's FHIR status. A resource the server refuses
+  to accept is a 422 carrying what it objected to.
+
+  Generate the service from `openapi.yaml`. The FHIR server's base url and token
+  stay configurable. No tests.
+
+fixtures:
+  openapi.yaml: openapi/claims-fhir.yaml
+
+expect:
+  builds: true
+  imports:
+    - ballerina/http
+    - ballerinax/health.fhir.r4.international401

@@ -1,0 +1,22 @@
+prompt: |
+  An HTTP support desk that works out of a shared mailbox. The inbox lists mail
+  carrying a configurable label, read from Gmail. Opening a ticket takes one of
+  those messages, raises a Jira issue in the named project carrying its subject
+  and body, and sends an acknowledgement back on the same mail thread.
+
+  A reply goes to both places: the mail thread and the issue as a comment.
+  Closing a ticket resolves the issue and sends a final reply. Tickets are kept
+  in memory, holding the mail thread and the issue key together.
+
+  Generate the service from `openapi.yaml`. Gmail and Jira credentials, the
+  label and the default project stay configurable. No tests.
+
+fixtures:
+  openapi.yaml: openapi/helpdesk-gmail-jira.yaml
+
+expect:
+  builds: true
+  imports:
+    - ballerina/http
+    - ballerinax/googleapis.gmail
+    - ballerinax/jira

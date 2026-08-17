@@ -69,6 +69,25 @@ export interface CaseExpectations {
   imports?: string[];
   /** Import paths it must NOT contain — a wrong package chosen over the right one. */
   importsNot?: string[];
+  /**
+   * Regular expressions the produced `.bal` sources must match, and must not.
+   *
+   * The behavioural axis. `builds` and `imports` between them cannot tell a
+   * service that uses a connector from one that constructs its client and never
+   * calls it — measured across all 17 attempts of the 2026-08-16 sweep, where
+   * every semantic defect found afterwards had passed: a fabricated per-recipient
+   * delivery outcome, a Kafka producer that never publishes, a Cosmos read with
+   * the wrong partition key, and `return true` where an HMAC check belongs.
+   *
+   * Deliberately regexes over source rather than a parsed AST. What a case wants
+   * to assert is usually "this call happens with this argument", which is a line
+   * of Ballerina; a matcher that needed a symbol table would be a second
+   * implementation of the compiler and would still not answer it. The cost is
+   * that a comment can satisfy a pattern — acceptable, because the failure being
+   * defended against is a plausible fake, not a hostile one.
+   */
+  mustContain?: string[];
+  mustNotContain?: string[];
 }
 
 /** Everything under `cases/`, in suite-then-name order. */
@@ -112,7 +131,7 @@ function readCase(file: string, suite: string): EvalCase {
     prompt,
     ...(typeof doc.packageName === "string" ? { packageName: doc.packageName } : {}),
     ...(isRecord(doc.fixtures) ? { fixtures: resolveFixtures(doc.fixtures, file) } : {}),
-    ...(isRecord(doc.expect) ? { expect: readExpectations(doc.expect) } : {}),
+    ...(isRecord(doc.expect) ? { expect: readExpectations(doc.expect, file) } : {}),
   };
 }
 
@@ -135,12 +154,44 @@ function resolveFixtures(doc: Record<string, unknown>, file: string): Record<str
   return resolved;
 }
 
-function readExpectations(doc: Record<string, unknown>): CaseExpectations {
+function readExpectations(doc: Record<string, unknown>, file: string): CaseExpectations {
+  const known = new Set(["builds", "imports", "importsNot", "mustContain", "mustNotContain"]);
+  // An unknown key is refused rather than ignored, for the reason the missing-fixture
+  // refusal above exists: a case whose `mustContian:` typo is silently dropped asserts
+  // nothing and reports a pass, and nothing downstream can see it happened.
+  for (const key of Object.keys(doc)) {
+    if (!known.has(key)) {
+      throw new Error(`${file}: unknown expectation '${key}', expected one of ${[...known].join(", ")}`);
+    }
+  }
   return {
     ...(typeof doc.builds === "boolean" ? { builds: doc.builds } : {}),
     ...(Array.isArray(doc.imports) ? { imports: stringList(doc.imports) } : {}),
     ...(Array.isArray(doc.importsNot) ? { importsNot: stringList(doc.importsNot) } : {}),
+    ...(Array.isArray(doc.mustContain) ? { mustContain: patterns(doc.mustContain, file, "mustContain") } : {}),
+    ...(Array.isArray(doc.mustNotContain)
+      ? { mustNotContain: patterns(doc.mustNotContain, file, "mustNotContain") }
+      : {}),
   };
+}
+
+/**
+ * Validate each pattern by COMPILING it here, at load, rather than at match time.
+ *
+ * A malformed regex discovered mid-sweep would surface as a harness error on one
+ * attempt an hour in; discovered at load it fails the run before any session
+ * starts, which is the only point at which it costs nothing.
+ */
+function patterns(value: unknown[], file: string, key: string): string[] {
+  const found = stringList(value);
+  for (const pattern of found) {
+    try {
+      new RegExp(pattern);
+    } catch (e) {
+      throw new Error(`${file}: ${key} pattern ${JSON.stringify(pattern)} is not a valid regex: ${String(e)}`);
+    }
+  }
+  return found;
 }
 
 function directories(dir: string): string[] {

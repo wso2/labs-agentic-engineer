@@ -30,7 +30,7 @@ import type { EvalCase } from "./cases.js";
 import { runSession } from "./driver.js";
 import { readAgentBuilds, readBuildAttempt, summarize, type BuildMetrics } from "./metrics/build.js";
 import { parseTranscript, readPathMetrics, toolResults, type PathMetrics } from "./metrics/transcript.js";
-import { prepareScratch, verify } from "./scratch.js";
+import { archive, prepareScratch, readSources, verify } from "./scratch.js";
 
 export interface SweepOptions {
   cases: EvalCase[];
@@ -115,6 +115,7 @@ async function runAttempt(evalCase: EvalCase, attempt: number, opts: SweepOption
     const build = summarize(readAgentBuilds(bashCalls(messages)));
     const verified = verify(scratch.workspace);
     const verifiedAttempt = readBuildAttempt(verified.output, verified.exitCode);
+    const sources = readSources(scratch.workspace);
 
     const record: Attempt = {
       case: evalCase.name,
@@ -128,10 +129,10 @@ async function runAttempt(evalCase: EvalCase, attempt: number, opts: SweepOption
         signatureErrors: verifiedAttempt.signatureErrors.length,
       },
       imports: verified.imports,
-      violations: checkExpectations(evalCase, verified.exitCode === 0, verified.imports),
+      violations: checkExpectations(evalCase, verified.exitCode === 0, verified.imports, sources),
       timedOut: session.timedOut,
       ...(session.error !== undefined ? { error: session.error } : {}),
-      dir: scratch.workspace,
+      dir: scratch.archiveDir,
     };
     writeFileSync(join(scratch.runDir, "metrics.json"), JSON.stringify(record, null, 2));
     // The transcript, kept. Every metric above is DERIVED from it, so without the source a number
@@ -139,6 +140,14 @@ async function runAttempt(evalCase: EvalCase, attempt: number, opts: SweepOption
     // record of which two is a measurement you have to re-run the sweep to read.
     writeFileSync(join(scratch.runDir, "transcript.jsonl"), session.transcript);
     writeFileSync(join(scratch.runDir, "build.log"), verified.output);
+    // The package moves from staging into `.runs/` only now that it has been
+    // scored, so the artifact a human opens is the one that was measured. Losing
+    // the copy is not worth failing an attempt that already has its numbers.
+    try {
+      archive(scratch);
+    } catch {
+      /* the measurement stands; only the readable copy is gone */
+    }
     opts.onEvent({
       kind: "done",
       case: `${evalCase.suite}/${evalCase.name}`,
@@ -191,7 +200,12 @@ function bashCalls(messages: Record<string, unknown>[]): { command: string; outp
   return out;
 }
 
-function checkExpectations(evalCase: EvalCase, green: boolean, imports: string[]): string[] {
+function checkExpectations(
+  evalCase: EvalCase,
+  green: boolean,
+  imports: string[],
+  sources: string,
+): string[] {
   const expect = evalCase.expect ?? {};
   const violations: string[] = [];
   if (expect.builds !== false && !green) violations.push("bal build failed");
@@ -200,6 +214,14 @@ function checkExpectations(evalCase: EvalCase, green: boolean, imports: string[]
   }
   for (const forbidden of expect.importsNot ?? []) {
     if (imports.includes(forbidden)) violations.push(`unexpected import ${forbidden}`);
+  }
+  // The behavioural axis. Patterns were compiled once at load, so a bad one has
+  // already failed the run rather than one attempt of it.
+  for (const pattern of expect.mustContain ?? []) {
+    if (!new RegExp(pattern).test(sources)) violations.push(`source does not match ${pattern}`);
+  }
+  for (const pattern of expect.mustNotContain ?? []) {
+    if (new RegExp(pattern).test(sources)) violations.push(`source matches forbidden ${pattern}`);
   }
   return violations;
 }

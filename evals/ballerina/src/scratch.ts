@@ -33,15 +33,18 @@
  */
 
 import { execFileSync, execSync } from "node:child_process";
-import { cpSync, mkdirSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type { EvalCase } from "./cases.js";
 
 export interface Scratch {
-  /** The Ballerina package root — the session's `cwd`. */
+  /** The Ballerina package root — the session's `cwd`. Outside the repo; see prepareScratch. */
   workspace: string;
   /** `.logs/` and metrics live here, OUTSIDE the workspace so a build never sees them. */
   runDir: string;
+  /** Where the finished package is copied for a human to read. See `archive`. */
+  archiveDir: string;
 }
 
 /**
@@ -51,6 +54,22 @@ export interface Scratch {
  * what a real task starts from, down to the `main.bal` the skill tells the agent
  * to delete — and a case that starts from a shape no real project has would tune
  * the skill against a fiction.
+ *
+ * The package is staged in a TEMP DIRECTORY rather than under `.runs/`, and this
+ * is the whole point of the function rather than an implementation detail. When
+ * the workspace lived inside the repo, `cases/` was a few `..` from every
+ * session's `cwd` — and in the 2026-08-16 sweep the `claims-fhir` attempt did
+ * exactly what that permits: it ran `find … /evals/ballerina/cases -iname
+ * '*claims*fhir*'`, read its own `expect.imports`, concluded that "the grading
+ * only checks that the build succeeds and that the expected imports are present",
+ * and REVERSED a design decision it had already made. Three other attempts in the
+ * same sweep never looked, which is worse than if all of them had: the
+ * contamination is per-attempt, so the runs are not comparable to each other.
+ *
+ * An attempt that can read its own answer key is not measuring the skill, and no
+ * import assertion made against one means anything. `archive` copies the finished
+ * package back under `.runs/` afterwards, so the artifact a human opens is
+ * unchanged — only the session's reachable filesystem is.
  */
 export function prepareScratch(root: string, evalCase: EvalCase, attempt: number, skillsDir: string): Scratch {
   const base = join(root, evalCase.suite, evalCase.name, `attempt-${attempt}`);
@@ -58,12 +77,30 @@ export function prepareScratch(root: string, evalCase: EvalCase, attempt: number
   mkdirSync(runDir, { recursive: true });
 
   const pkg = evalCase.packageName ?? evalCase.name.replace(/-/g, "_");
-  execFileSync("bal", ["new", pkg], { cwd: base, stdio: "pipe" });
-  const workspace = join(base, pkg);
+  const staging = mkdtempSync(join(tmpdir(), "bal-eval-"));
+  execFileSync("bal", ["new", pkg], { cwd: staging, stdio: "pipe" });
+  const workspace = join(staging, pkg);
 
   mirrorSkill(skillsDir, workspace);
   plantFixtures(evalCase, workspace);
-  return { workspace, runDir };
+  return { workspace, runDir, archiveDir: join(base, pkg) };
+}
+
+/**
+ * Copy the finished package out of staging and into `.runs/`, then drop staging.
+ *
+ * Called after the verifying build, so what lands is the package as it was
+ * scored — including `target/`, because the README promises a directory you can
+ * `cd` into and `bal build` by hand.
+ *
+ * Failure here is deliberately swallowed by the caller rather than thrown: the
+ * attempt has already been measured, and losing the archive copy is a worse
+ * reason to fail a sweep than it is a thing to fail a sweep over.
+ */
+export function archive(scratch: Scratch): void {
+  mkdirSync(dirname(scratch.archiveDir), { recursive: true });
+  cpSync(scratch.workspace, scratch.archiveDir, { recursive: true });
+  rmSync(dirname(scratch.workspace), { recursive: true, force: true });
 }
 
 /**
@@ -126,6 +163,34 @@ export function verify(workspace: string): VerifyResult {
     output = `${err.stdout ?? ""}${err.stderr ?? ""}`;
   }
   return { exitCode, output, imports: readImports(workspace) };
+}
+
+/**
+ * Every `.bal` the agent wrote, concatenated — what a source assertion matches.
+ *
+ * Scoped to the package's OWN sources. `target/` is build output, and
+ * `.claude/skills/` is the mirrored skill, which carries worked examples: a
+ * pattern like `http:RetryConfig` appears in `code-rules.md` whether or not the
+ * agent wrote it, so matching the skill would let every case assert itself.
+ */
+export function readSources(workspace: string): string {
+  const parts: string[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        if (entry.name === "target" || entry.name === ".claude") continue;
+        walk(join(dir, entry.name));
+      } else if (entry.name.endsWith(".bal")) {
+        parts.push(readFileSync(join(dir, entry.name), "utf8"));
+      }
+    }
+  };
+  try {
+    walk(workspace);
+  } catch {
+    return "";
+  }
+  return parts.join("\n");
 }
 
 /** Every `import org/name...;` across the package's own sources. */

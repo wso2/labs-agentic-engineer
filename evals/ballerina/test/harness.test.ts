@@ -22,7 +22,8 @@ import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discoverCases, selectCases } from "../src/cases.js";
-import { compare, stat, METRIC_KEYS } from "../src/report.js";
+import { archive, prepareScratch, readSources } from "../src/scratch.js";
+import { compare, pickBaseline, stat, METRIC_KEYS, type Summary } from "../src/report.js";
 import { hostEnv } from "../src/preflight.js";
 import { DEFAULTS, PATH_METRICS, PATHS, REPORTED_METRICS, SESSION } from "../src/config.js";
 
@@ -62,6 +63,32 @@ test("cases: a case with no prompt is refused at load, not run as an empty sessi
   // An empty session scores a clean zero on every metric, which reads as a pass.
   const root = casesTree({ narrow: { "bad.yaml": "expect:\n  builds: true\n" } });
   assert.throws(() => discoverCases(root), /'prompt' is required/);
+});
+
+test("cases: a source assertion is parsed and its regex compiled at load", () => {
+  const root = casesTree({
+    narrow: {
+      "a.yaml":
+        "prompt: p\nexpect:\n  mustContain:\n    - 'kafkaProducer->send'\n  mustNotContain:\n    - 'return true'\n",
+    },
+  });
+  const found = discoverCases(root);
+  assert.deepEqual(found[0]?.expect?.mustContain, ["kafkaProducer->send"]);
+  assert.deepEqual(found[0]?.expect?.mustNotContain, ["return true"]);
+});
+
+test("cases: a malformed assertion regex fails the run at load, not an hour into a sweep", () => {
+  // A bad pattern found mid-sweep surfaces as a harness error on one attempt after
+  // the lanes are already spent; found at load it costs nothing.
+  const root = casesTree({ narrow: { "a.yaml": "prompt: p\nexpect:\n  mustContain:\n    - '('\n" } });
+  assert.throws(() => discoverCases(root), /is not a valid regex/);
+});
+
+test("cases: an unknown expectation key is refused rather than silently ignored", () => {
+  // The failure being defended against: `mustContian:` asserts nothing, reports a
+  // pass, and reads identically to a case that genuinely passed.
+  const root = casesTree({ narrow: { "a.yaml": "prompt: p\nexpect:\n  mustContian:\n    - x\n" } });
+  assert.throws(() => discoverCases(root), /unknown expectation 'mustContian'/);
 });
 
 test("cases: selection is exact, so a typo selects nothing rather than something else", () => {
@@ -203,4 +230,74 @@ test("hostEnv: both credentials are stripped, everything else survives", () => {
   assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, undefined);
   assert.equal(env.PATH, "/usr/bin");
   assert.equal(env.HOME, "/home/dev");
+});
+
+test("baseline: a one-case debug run does not become the baseline for a full sweep", () => {
+  // The measured shape: two full sweeps with a single-case re-run between them.
+  // Newest-directory-wins picked the re-run, which would have dashed six cases
+  // and diffed the seventh against different conditions.
+  const runs: Record<string, Summary[]> = {
+    "2026-08-15T12-00-00Z": [summaryFor("narrow/a"), summaryFor("service/b")],
+    "2026-08-16T03-35-00Z": [summaryFor("service/b")],
+  };
+  const read = (dir: string): Summary[] | undefined => runs[dir];
+  const dirs = Object.keys(runs);
+
+  assert.deepEqual(
+    pickBaseline(dirs, ["narrow/a", "service/b"], read)?.map((s) => s.key),
+    ["narrow/a", "service/b"],
+    "walks past the newer run that covers only one of the two cases",
+  );
+  // A narrower sweep still baselines against a wider run that contains it.
+  assert.ok(pickBaseline(dirs, ["service/b"], read));
+  // Nothing covers it: no column beats a misleading one.
+  assert.equal(pickBaseline(dirs, ["service/c"], read), undefined);
+});
+
+function summaryFor(key: string): Summary {
+  return { key, suite: "", case: "", attempts: 1, green: 1, clean: 1, stats: {}, violations: {} };
+}
+
+test("scratch: an attempt runs outside the repo and is archived back afterwards", () => {
+  // B3. When the workspace lived under `.runs/`, `cases/` was a few `..` from the
+  // session's cwd — and the claims-fhir attempt of the 2026-08-16 sweep read its own
+  // expect.imports and reversed a design decision on the strength of it. What the
+  // session can reach is the assertion here; the archive copy is what keeps the
+  // README's promise that you can cd into the result and build it by hand.
+  const runs = mkdtempSync(join(tmpdir(), "bal-evals-runs-"));
+  const skills = mkdtempSync(join(tmpdir(), "bal-evals-skills-"));
+  mkdirSync(join(skills, "ballerina"), { recursive: true });
+  writeFileSync(join(skills, "ballerina", "SKILL.md"), "# skill\n");
+
+  const evalCase = { name: "smoke", suite: "narrow", file: "", prompt: "p" };
+  const scratch = prepareScratch(runs, evalCase, 1, skills);
+
+  assert.ok(
+    !scratch.workspace.startsWith(runs),
+    `the session's cwd must not be inside the runs tree, got ${scratch.workspace}`,
+  );
+  assert.ok(existsSync(join(scratch.workspace, "Ballerina.toml")), "a real bal new package");
+  assert.ok(existsSync(join(scratch.workspace, ".claude", "skills", "ballerina", "SKILL.md")));
+
+  archive(scratch);
+  assert.ok(existsSync(join(scratch.archiveDir, "Ballerina.toml")), "archived for a human to open");
+  assert.ok(scratch.archiveDir.startsWith(runs), "the archive lands under .runs/");
+  assert.ok(!existsSync(scratch.workspace), "staging is dropped once copied");
+});
+
+test("scratch: source assertions read the package's own .bal, not the mirrored skill", () => {
+  // The skill carries worked examples, so a pattern like `http:RetryConfig` appears
+  // in `code-rules.md` whether or not the agent wrote it. Matching the mirror would
+  // let every case assert itself. `target/` is build output for the same reason.
+  const workspace = mkdtempSync(join(tmpdir(), "bal-eval-sources-"));
+  writeFileSync(join(workspace, "service.bal"), "import ballerina/http;\nhttp:RetryConfig cfg = {};\n");
+  mkdirSync(join(workspace, ".claude", "skills", "ballerina"), { recursive: true });
+  writeFileSync(join(workspace, ".claude", "skills", "ballerina", "leak.bal"), "SKILL_EXAMPLE_MARKER");
+  mkdirSync(join(workspace, "target"), { recursive: true });
+  writeFileSync(join(workspace, "target", "generated.bal"), "BUILD_OUTPUT_MARKER");
+
+  const sources = readSources(workspace);
+  assert.match(sources, /http:RetryConfig/);
+  assert.doesNotMatch(sources, /SKILL_EXAMPLE_MARKER/);
+  assert.doesNotMatch(sources, /BUILD_OUTPUT_MARKER/);
 });

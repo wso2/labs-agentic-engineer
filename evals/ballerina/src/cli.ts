@@ -29,7 +29,7 @@ import { join } from "node:path";
 import { discoverCases, selectCases } from "./cases.js";
 import { DEFAULTS, PATHS } from "./config.js";
 import { credentialNotes, preflight } from "./preflight.js";
-import { renderReport, summarize, type Summary } from "./report.js";
+import { pickBaseline, renderReport, summarize, type Summary } from "./report.js";
 import { warmCache } from "./scratch.js";
 import { runSweep } from "./sweep.js";
 
@@ -177,7 +177,10 @@ async function main(): Promise<number> {
   });
 
   const summaries = summarize(results);
-  const baseline = previousSummaries(runsRoot);
+  const baseline = previousSummaries(
+    runsRoot,
+    summaries.map((s) => s.key),
+  );
   const report = renderReport({
     summaries,
     facts: checks.facts,
@@ -195,25 +198,22 @@ async function main(): Promise<number> {
 }
 
 /**
- * The previous sweep's summary, for the baseline column.
- *
- * Previous by directory name, which sorts chronologically because the stamp is
- * an ISO timestamp. A missing or unreadable one is simply no baseline — an
- * older format should cost the comparison column, never the run.
+ * The baseline summary, read off disk. Which one to pick is `pickBaseline`'s —
+ * that choice is part of the comparison and lives beside `compare` in
+ * `report.ts`, not in the entry point, which cannot be imported without running
+ * a sweep.
  */
-function previousSummaries(currentRunDir: string): Summary[] | undefined {
+function previousSummaries(currentRunDir: string, currentKeys: string[]): Summary[] | undefined {
   if (!existsSync(RUNS_DIR)) return undefined;
   const current = currentRunDir.split("/").pop();
-  const previous = readdirSync(RUNS_DIR)
-    .filter((d) => d !== current)
-    .sort()
-    .pop();
-  if (!previous) return undefined;
-  try {
-    return JSON.parse(readFileSync(join(RUNS_DIR, previous, "summary.json"), "utf8")) as Summary[];
-  } catch {
-    return undefined;
-  }
+  const candidates = readdirSync(RUNS_DIR).filter((d) => d !== current);
+  return pickBaseline(candidates, currentKeys, (dir) => {
+    try {
+      return JSON.parse(readFileSync(join(RUNS_DIR, dir, "summary.json"), "utf8")) as Summary[];
+    } catch {
+      return undefined;
+    }
+  });
 }
 
 /**
