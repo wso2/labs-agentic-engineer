@@ -96,7 +96,7 @@ that's a stalled feature — investigate, don't ignore.
   file nav renders every upcoming artifact as a ghost entry with a
   when-label, ghosts graduate to solid rows (pulsing while the agent streams
   the file), and the main pane holds a working state naming the turn's actual
-  stage (processing the idea / drafting the PRD). Questions render ONLY on
+  stage (looking at your idea / drafting the PRD). Questions render ONLY on
   the spec view's shared form (the chat carries a hand-off banner plus a
   `/start` transition line); the form's data path is independent of the chat
   rail, and entering the spec view mid-turn opens the chat panel beside the
@@ -111,8 +111,7 @@ that's a stalled feature — investigate, don't ignore.
   the spec view is reached only by the Spec card or the chat's questions
   banner — the chat opens with the user's `/start`, the agent's reading line
   and its hand-off line before the banner, and the Spec card speaks as the
-  agent ("Agent is processing the idea" / "Agent has N questions", CTA
-  "Continue spec" for the whole run). The room's co-edited answers moved out
+  agent (CTA "Continue spec" for the whole run). The room's co-edited answers moved out
   of the mirrored question value into their own per-question keys, so a
   reload's pre-sync mirror can no longer lose them to the room's own copy. A
   fourth round removed the console's `/start` injection entirely: the Spec
@@ -123,7 +122,16 @@ that's a stalled feature — investigate, don't ignore.
   started off the project status and offers **Retry** — which asks the
   backend to run its kickoff again, never a chat message. `?generate=design`
   survives (design has no backend kickoff) and waits for the server's
-  active-turn read to answer before it sends —
+  active-turn read to answer before it sends. A fifth round put the first run
+  in one voice and made the failure real: the card narrates about the agent
+  ("Agent is looking at your idea" / "Agent has N questions about your idea")
+  and the chat is the agent speaking ("Looking at your idea…" / "I have some
+  clarifications about your idea before I write the PRD."); the spec view
+  never offers a file picker to a project with no files, waiting on the agent
+  instead whatever the interview state has resolved; and a failed kickoff is
+  now keyed off the first-run TURN's outcome, so an agents service that is
+  down surfaces the error and the Retry rather than a card that looks busy
+  forever —
   [#485](https://github.com/wso2/labs-agentic-engineer/issues/485),
   [#483](https://github.com/wso2/labs-agentic-engineer/issues/483)
 - Deployments page — one-story rail + environment panel: Development /
