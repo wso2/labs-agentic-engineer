@@ -72,20 +72,26 @@ export function countsFromTally(tally: CriterionTally): ValidationCounts {
  * fixed → fixed and deployed) and validation (will run → is running) — so a reader
  * watching the state change can follow what happened between them.
  */
-function loopTail(state: string): string {
+function loopTail(state: string, repairing: boolean): string {
   switch (state) {
     case "awaiting-fix":
       return "The implementation is being fixed. Validation will run again.";
     case "running":
-      // "has been fixed and deployed" is a fact, not a guess: a repeat attempt can
-      // only exist once the repair issues closed, the working set emptied and the
-      // build went deployed-green — that is the boundary condition that mints a
-      // validation cycle at all.
-      return "The implementation has been fixed and deployed. Validation is running again.";
+      // "has been fixed and deployed" is a fact about a REPAIR — a repeat attempt on
+      // the same run can only exist once the repair issues closed, the working set
+      // emptied and the build went deployed-green. It is false about a revalidation,
+      // which asks the same question again with nothing changed in between, so it is
+      // said only when the run holding the verdict is the one running again.
+      return repairing
+        ? "The implementation has been fixed and deployed. Validation is running again."
+        : RUNNING_AGAIN;
     default:
       return "The run stopped here, so the milestone stays open for the fix.";
   }
 }
+
+// The clause every in-flight repeat ends on, whichever kind it is.
+const RUNNING_AGAIN = "Validation is running again.";
 
 // A newer attempt is in flight, so every number on screen is the PREVIOUS attempt's
 // and has to say so. True for `running` alone: under `awaiting-fix` nothing has
@@ -105,6 +111,28 @@ function failureEvidence(counts: ValidationCounts | undefined, state: string): s
   return counts && counts.total > 1 && counts.failed > 0
     ? `${counts.failed} of ${counts.total} criteria failed${when}.`
     : `At least one criterion failed${when}.`;
+}
+
+// What a NON-FATAL verdict reads as while a new attempt is in flight — a
+// revalidation, since nothing else re-asks a green result.
+//
+// A short stale summary rather than the settled sentence, and deliberately without
+// its call to action ("please validate them manually"): the attempt in flight may
+// change what is left to do by hand, so advising on it now is premature.
+function staleSummary(verdict: string, counts: ValidationCounts | undefined): string {
+  const counted = (counts?.total ?? 0) > 1;
+  switch (verdict) {
+    case "passed":
+      return counted
+        ? `All ${counts?.total} criteria passed in the last attempt.`
+        : "Every criterion passed in the last attempt.";
+    case "partial":
+      return counted && (counts?.uncovered ?? 0) > 0
+        ? `${counts?.uncovered} of ${counts?.total} criteria were never covered in the last attempt.`
+        : "Some criteria were never covered in the last attempt.";
+    default:
+      return "No criteria could be automated in the last attempt.";
+  }
 }
 
 /**
@@ -148,8 +176,16 @@ export function verdictSentence(
   verdict: string,
   counts: ValidationCounts | undefined,
   state: string = verdict,
+  repairing = false,
 ): string {
   const counted = (counts?.total ?? 0) > 1;
+  // A non-fatal verdict CAN sit under a live state after all — a revalidation asks a
+  // settled version again — and its settled sentence would report the last attempt's
+  // result as the current one. Only `running` reaches here; `awaiting-fix` requires a
+  // fatal verdict by construction.
+  if (state === "running" && (verdict === "passed" || verdict === "partial" || verdict === "inconclusive")) {
+    return `${staleSummary(verdict, counts)} ${RUNNING_AGAIN}`;
+  }
   switch (verdict) {
     case "passed":
       // Names coverage, not just the result: `passed` REQUIRES that every criterion
@@ -169,7 +205,7 @@ export function verdictSentence(
         : "Everything that ran passed, but some criteria couldn't be automated — please validate them manually.";
     }
     case "failed":
-      return `${failureEvidence(counts, state)} ${loopTail(state)}`;
+      return `${failureEvidence(counts, state)} ${loopTail(state, repairing)}`;
     case "inconclusive":
       return counted
         ? `None of the ${counts?.total} criteria could be automated — please validate them manually.`
@@ -182,11 +218,22 @@ export function verdictSentence(
         case "awaiting-fix":
           return "The validation report couldn't be generated. Validation will run again.";
         case "running":
-          return "The validation report couldn't be generated in the last attempt. Validation is running again.";
+          return `The validation report couldn't be generated in the last attempt. ${RUNNING_AGAIN}`;
         default:
           return "The validation report couldn't be generated, so there are no results to show for this run.";
       }
     default:
-      return "";
+      // No verdict yet, which only a LIFECYCLE state can be: the first attempt of a
+      // run, before anything has been concluded. It needs a sentence of its own or
+      // the caller falls through to naming the state as a verdict — "This
+      // deployment's verdict: validating." — the very thing sharing this copy was
+      // meant to stop. `awaiting-fix` cannot reach here; it requires a fatal verdict.
+      //
+      // Says what there is to SEE rather than what is happening: the rail's stage
+      // note beside it already says the deployed system is being checked, and two
+      // adjacent elements saying that is a restatement.
+      return state === "running"
+        ? "Nothing reported yet — the validation attempt is still running."
+        : "";
   }
 }

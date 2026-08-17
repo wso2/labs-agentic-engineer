@@ -67,7 +67,9 @@ describe("StatusChip", () => {
       render(
         <StatusChip label="Validated*" spokenLabel="Validated, partially" tone="success" />,
       );
-      expect(screen.getByText("Validated*")).toHaveAttribute("aria-hidden");
+      // The VALUE matters: `aria-hidden="false"` would satisfy a bare existence
+      // check while leaving the marked label exposed to assistive technology.
+      expect(screen.getByText("Validated*")).toHaveAttribute("aria-hidden", "true");
       expect(screen.getByText("Validated, partially")).toBeInTheDocument();
     });
 
@@ -81,7 +83,12 @@ describe("StatusChip", () => {
           dot
         />,
       );
-      expect(screen.getByText("Validated*")).toBeInTheDocument();
+      // The soft label nests the text inside the dot wrapper, so the hidden element
+      // is an ANCESTOR — asserting presence alone would pass with nothing hidden at
+      // all. This is the appearance the page title uses, so it is the one that counts.
+      expect(
+        screen.getByText("Validated*").closest('[aria-hidden="true"]'),
+      ).toBeInTheDocument();
       expect(screen.getByText("Validated, partially")).toBeInTheDocument();
     });
 

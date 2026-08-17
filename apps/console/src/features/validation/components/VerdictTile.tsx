@@ -67,6 +67,7 @@ const SEVERITY: Record<StageTone, "success" | "info" | "warning" | "error"> = {
 export function VerdictTile({
   verdict,
   state = verdict,
+  repairing = false,
   tally,
 }: {
   verdict: string;
@@ -75,6 +76,8 @@ export function VerdictTile({
    * verdict, which is what "this verdict is the run's answer" looks like.
    */
   state?: string;
+  /** The attempt in flight repairs this verdict rather than re-asking it. */
+  repairing?: boolean;
   tally?: CriterionTally;
 }) {
   const view = validationView(state);
@@ -91,7 +94,7 @@ export function VerdictTile({
         {view.label.charAt(0).toUpperCase() + view.label.slice(1)}
       </AlertTitle>
       <Typography variant="body2">
-        {verdictSentence(verdict, tally && countsFromTally(tally), state)}
+        {verdictSentence(verdict, tally && countsFromTally(tally), state, repairing)}
       </Typography>
       {counts && (
         <Typography variant="body2" sx={{ mt: 0.5, fontWeight: 500 }}>

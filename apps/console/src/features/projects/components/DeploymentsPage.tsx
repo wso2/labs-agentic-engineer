@@ -205,6 +205,7 @@ function VerdictBanner({
   projectName,
   validation,
   verdict,
+  repairing,
   counts,
 }: {
   projectName: string;
@@ -212,6 +213,8 @@ function VerdictBanner({
   validation: string;
   /** The run's stored verdict, which `awaiting-fix` folds away. */
   verdict: string;
+  /** The attempt in flight repairs that verdict rather than re-asking it. */
+  repairing: boolean;
   counts?: ValidationCounts;
 }) {
   const view = validationView(validation);
@@ -223,7 +226,7 @@ function VerdictBanner({
   // are the ones that fold a verdict away, so those take the run's.
   const inFlight = validation === "running" || validation === "awaiting-fix";
   const sentence =
-    verdictSentence(inFlight ? verdict : validation, counts, validation) ||
+    verdictSentence(inFlight ? verdict : validation, counts, validation, repairing) ||
     // `skipped`, and any value from a newer server. The shared copy deliberately has
     // no sentence for skipped: the stage note beside this already says the version
     // authored no criteria, and two adjacent elements saying it once each is a
@@ -350,7 +353,11 @@ export function DeploymentsPage({ projectName }: { projectName: string }) {
   // `awaiting-fix` folds `failed` and `unreported` into one word and the banner's
   // sentence differs for each; counts are undefined in every failure mode, and every
   // sentence has a count-free form.
-  const { verdict: runVerdict, counts } = useValidationEvidence(
+  const {
+    verdict: runVerdict,
+    repairing: runRepairing,
+    counts,
+  } = useValidationEvidence(
     projectName,
     status.data?.build.version ?? "",
     deploy?.validation ?? "",
@@ -540,6 +547,7 @@ export function DeploymentsPage({ projectName }: { projectName: string }) {
                 projectName={projectName}
                 validation={deploy.validation}
                 verdict={runVerdict}
+                repairing={runRepairing}
                 {...(counts && { counts })}
               />
             </StageRow>

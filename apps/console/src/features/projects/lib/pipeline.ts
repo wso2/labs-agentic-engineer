@@ -110,14 +110,9 @@ export function deployStageView(status: ProjectStatus): StageView {
   }
 }
 
-// The two deploy.validation values that mean the LOOP is still working, so a
-// verdict beside them is the last attempt's rather than the run's answer. Neither
-// is ever a stored verdict, which is why they can only come from deploy.validation.
-const VALIDATION_IN_FLIGHT = new Set(["running", "awaiting-fix"]);
-
 // The verdicts the loop repeats — delivery.ValidationVerdictFailsRun in the
-// console's terms. Every other verdict is final the moment it is written, so a
-// lifecycle value cannot legitimately sit over one.
+// console's terms. Every other verdict is final until something re-asks it, so
+// `awaiting-fix` beside one of those can only be poll skew.
 const VALIDATION_REPEATED = new Set(["failed", "unreported"]);
 
 /**
@@ -138,8 +133,17 @@ const VALIDATION_REPEATED = new Set(["failed", "unreported"]);
  * as the verdict, not as a repair of something that passed.
  */
 export function validationState(deployValidation: string, verdict: string): string {
+  // `running` wins over ANY verdict, including a green one. It means a validation
+  // cycle is genuinely in flight, which no verdict can be stale about — and a
+  // revalidation is exactly that over a settled result, so guarding it would leave
+  // the chip reading "Validated" while the platform re-asks the question. The poll
+  // skew this once guarded against is one interval of a merely stale "Validating",
+  // where a revalidation mislabelled is persistent.
+  if (deployValidation === "running") return deployValidation;
+  // `awaiting-fix` keeps the guard: it can only sit over a verdict the loop repeats,
+  // so pairing it with a green one is skew by definition, not a state.
   if (
-    VALIDATION_IN_FLIGHT.has(deployValidation) &&
+    deployValidation === "awaiting-fix" &&
     (verdict === "" || VALIDATION_REPEATED.has(verdict))
   ) {
     return deployValidation;

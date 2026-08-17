@@ -49,6 +49,12 @@ import {
   type StageTone,
 } from "../../projects/lib/pipeline";
 import { useValidationCriteria, useValidationReport } from "../api/queries";
+import {
+  answeredRun,
+  isRepairing,
+  lastMergedValidationCycle,
+  validatingRun,
+} from "../lib/runs";
 import { VerdictTile } from "./VerdictTile";
 
 // Validation lives on the DEPLOYMENT surface because the deployment is what is
@@ -61,17 +67,6 @@ import { VerdictTile } from "./VerdictTile";
 // The validation cycle is the phase of the run this page owns; the rest of the
 // loop is the Builds page's story.
 const VALIDATION_CYCLE = ["validation"] as const;
-
-// The run origins that ask a version's acceptance criteria — the console's mirror
-// of delivery.RunValidates. A spec build validates the version it delivered, and a
-// revalidation exists to ask again; an incident adoption is absent on purpose,
-// because it fixes one thing in an already-judged version.
-//
-// It matters that this is an ORIGIN test and not "does the run have a validation
-// cycle": a spec build with no criteria authored settles `skipped` and opens no
-// cycle, and that is still the version's answer — the one the "not validated"
-// empty state below is written for.
-const VALIDATING_ORIGINS: readonly string[] = ["spec-build", "revalidate"];
 
 // StageTone → StatusTone. The two unions differ only in `ghost`, which the shared
 // validation mapper never returns; it is mapped for exhaustiveness only.
@@ -170,16 +165,20 @@ export function ValidationPage({
   // DELIVERED the version stops being the newest.
   const runs = useBuildRuns(projectName, version || undefined);
   const runList = runs.data?.runs ?? [];
-  // Origins that ask the question at all — delivery/RunValidates, in the console's
-  // terms. An incident run is deliberately absent: it fixes one thing in a version
-  // already judged, and re-validating the system for it would price every incident
-  // like a release.
-  const run = runList.find((r) => VALIDATING_ORIGINS.includes(r.origin));
-  // The verdict VALUE drives every decision below. Deriving them from the chip's
-  // rendered label instead (as this page used to) breaks silently the moment the
-  // copy changes — and swapping in the shared mapper changes its casing.
-  const rawVerdict = run?.validation?.verdict ?? "";
-  const reportPath = run?.validation?.reportPath ?? "";
+  // Whether ANY run on this version ever asked the question — the test the "not
+  // validated" empty state below is written for. An incident run is deliberately
+  // absent from the origins: it fixes one thing in a version already judged, and
+  // re-validating the system for it would price every incident like a release.
+  const run = validatingRun(runList);
+  // The verdict and its report come from the run that ANSWERED, which a revalidation
+  // makes a different row from the one being asked: it enters the loop at validation
+  // with an empty verdict while the delivering run still holds the version's result.
+  const answered = answeredRun(runList);
+  const rawVerdict = answered?.validation?.verdict ?? "";
+  const reportPath = answered?.validation?.reportPath ?? "";
+  // Whether the attempt in flight is REPAIRING that verdict or re-asking it — the
+  // difference between the self-heal loop (one run, repeating) and a revalidation.
+  const repairing = isRepairing(runList);
   // What to SAY, which is not the same as what the run last concluded. A fatal
   // verdict on a live run is mid-loop: the platform files the failures as work and
   // validates again, so the column alone would announce a terminal failure over a
@@ -211,7 +210,7 @@ export function ValidationPage({
   // happens to hold the previous attempt's report until the new one merges, so the
   // bug returns the right bytes by accident and would stop the moment anything else
   // wrote the path.
-  const reportCycle = validationCycles.filter((c) => c.mergeSha).at(-1);
+  const reportCycle = lastMergedValidationCycle(runList);
   // The cycle carries the pull request's page as the webhook reported it. This
   // page used to build one from the project's repoUrl and the number, which is a
   // CLONE url — a `.git` suffix produced a link that 404s.
@@ -278,7 +277,12 @@ export function ValidationPage({
   // true because the reader switched to the log. `state` is what it leads with, so
   // a repair in flight reads as one instead of as a run that stopped.
   const tile = settled ? (
-    <VerdictTile verdict={rawVerdict} state={state} {...(tally ? { tally } : {})} />
+    <VerdictTile
+      verdict={rawVerdict}
+      state={state}
+      repairing={repairing}
+      {...(tally ? { tally } : {})}
+    />
   ) : null;
 
   const chip = headerChip(verdict);
