@@ -19,7 +19,7 @@
 // @vitest-environment jsdom
 
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { components } from "../../../generated/aep-api";
 
 let mockUrl: string | undefined = "https://storefront.dev.example.com/";
@@ -44,9 +44,20 @@ const webapp: Component = {
   status: "active",
 };
 
+const service: Component = {
+  name: "catalog-api",
+  displayName: "Catalog API",
+  description: "API",
+  type: "service",
+  status: "active",
+};
+
 describe("ComponentsList — Open app", () => {
-  it("links a deployed web-application to its public URL", () => {
+  beforeEach(() => {
     mockUrl = "https://storefront.dev.example.com/";
+  });
+
+  it("links a deployed web-application to its public URL", () => {
     render(<ComponentsList projectName="shop" items={[webapp]} />);
     const link = screen.getByRole("link", { name: "Open Storefront" });
     expect(link).toHaveAttribute("href", "https://storefront.dev.example.com/");
@@ -56,5 +67,10 @@ describe("ComponentsList — Open app", () => {
     mockUrl = undefined;
     render(<ComponentsList projectName="shop" items={[webapp]} />);
     expect(screen.queryByRole("link", { name: "Open Storefront" })).toBeNull();
+  });
+
+  it("does not put Open on a service row", () => {
+    render(<ComponentsList projectName="shop" items={[service]} />);
+    expect(screen.queryByRole("link", { name: /Open / })).toBeNull();
   });
 });

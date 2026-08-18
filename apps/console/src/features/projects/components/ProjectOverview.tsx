@@ -29,11 +29,13 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import { Link as LinkIcon } from "@wso2/oxygen-ui-icons-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { PageHeader } from "../../../components/PageHeader";
 import { SectionTitle } from "../../../components/SectionTitle";
 import { StatusChip } from "../../../components/StatusChip";
 import { useProject, useProjectComponents, useProjectStatus } from "../api/queries";
+import { projectKeys } from "../api/keys";
 import { projectChip } from "../lib/projectChip";
 import { RecentActivity } from "./RecentActivity";
 import { ComponentsList } from "./ComponentsList";
@@ -59,24 +61,27 @@ function SectionError({
 // The overview renders from ONE polling read (#183): the status aggregate
 // powers the whole pipeline. The components list has no interval of its own —
 // it refetches when the poll shows a build/deploy transition (the only times
-// components change).
+// components change). Invalidate the components *prefix* so nested
+// list-deployments queries (Open app) refresh with the list, not only the list.
 export function ProjectOverview({ projectName }: { projectName: string }) {
   const project = useProject(projectName);
   const status = useProjectStatus(projectName);
   const componentsQuery = useProjectComponents(projectName);
+  const queryClient = useQueryClient();
 
   const buildState = status.data?.build.status;
   const deployState = status.data?.deploy.status;
   const prev = useRef<string | undefined>(undefined);
-  const refetchComponents = componentsQuery.refetch;
   useEffect(() => {
     if (buildState === undefined) return;
     const key = `${buildState}:${deployState}`;
     if (prev.current !== undefined && prev.current !== key) {
-      void refetchComponents();
+      void queryClient.invalidateQueries({
+        queryKey: projectKeys.components(projectName),
+      });
     }
     prev.current = key;
-  }, [buildState, deployState, refetchComponents]);
+  }, [buildState, deployState, projectName, queryClient]);
 
   const displayName = project.data?.displayName ?? project.data?.name ?? projectName;
   const initial = (displayName.trim()[0] ?? "P").toUpperCase();

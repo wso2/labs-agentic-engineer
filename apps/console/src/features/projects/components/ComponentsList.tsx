@@ -161,7 +161,6 @@ function WebAppOpenLink({
       rel="noreferrer"
       variant="body2"
       aria-label={`Open ${displayName}`}
-      onClick={(e) => e.stopPropagation()}
       sx={{ display: "inline-flex", alignItems: "center", gap: 0.5, flexShrink: 0 }}
     >
       Open app <ExternalLink size={14} />
