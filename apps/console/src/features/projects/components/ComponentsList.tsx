@@ -22,13 +22,15 @@ import {
   Box,
   Card,
   CardContent,
+  Link as MuiLink,
   Stack,
   Tooltip,
   Typography,
 } from "@wso2/oxygen-ui";
-import { Boxes } from "@wso2/oxygen-ui-icons-react";
+import { Boxes, ExternalLink } from "@wso2/oxygen-ui-icons-react";
 import { EmptyState } from "../../../components/EmptyState";
 import type { components } from "../../../generated/aep-api";
+import { useComponentEndpointUrl } from "../api/queries";
 import { ComponentOpenApiDialog } from "./ComponentOpenApiDialog";
 
 type Component = components["schemas"]["Component"];
@@ -38,12 +40,8 @@ const isWebApp = (c: Component) => c.type === "web-application";
 
 // Component cards: one compact single-row card per component — avatar, name and
 // description. Services open their OpenAPI contract on click (JWT-guarded, so
-// via the authenticated dialog, not a raw link).
-//
-// Deliberately state-free. A component's build state used to be rolled up from
-// its tasks, but an issue no longer names a component — issue bodies are prose
-// the platform writes and never reads back — so the roll-up had no input left.
-// What is running lives on the deployments board, which reads the cluster.
+// via the authenticated dialog, not a raw link). Web-applications show Open
+// app when list-deployments has resolved a public URL.
 export function ComponentsList({
   projectName,
   items,
@@ -113,6 +111,13 @@ export function ComponentsList({
                       {c.description ?? "—"}
                     </Typography>
                   </Box>
+                  {isWebApp(c) && (
+                    <WebAppOpenLink
+                      projectName={projectName}
+                      displayName={c.displayName ?? c.name}
+                      componentName={c.name}
+                    />
+                  )}
                 </Stack>
               </CardContent>
             </Card>
@@ -132,5 +137,34 @@ export function ComponentsList({
         onClose={() => setContractComponent(null)}
       />
     </>
+  );
+}
+
+// Public URL for a web-application row (#196 / #538): the hook already exists
+// and Deployments reads the same list-deployments field. Overview never called
+// it, so a Ready SPA had no Open link here even when endpointUrl was set.
+function WebAppOpenLink({
+  projectName,
+  componentName,
+  displayName,
+}: {
+  projectName: string;
+  componentName: string;
+  displayName: string;
+}) {
+  const { data: url } = useComponentEndpointUrl(projectName, componentName);
+  if (!url) return null;
+  return (
+    <MuiLink
+      href={url}
+      target="_blank"
+      rel="noreferrer"
+      variant="body2"
+      aria-label={`Open ${displayName}`}
+      onClick={(e) => e.stopPropagation()}
+      sx={{ display: "inline-flex", alignItems: "center", gap: 0.5, flexShrink: 0 }}
+    >
+      Open app <ExternalLink size={14} />
+    </MuiLink>
   );
 }
