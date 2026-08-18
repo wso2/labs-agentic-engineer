@@ -512,6 +512,15 @@ func (c *componentClient) CreateComponent(ctx context.Context, orgName, projectN
 		}
 	}
 
+	// Cloud PAS web-application still emits a hostname-less catch-all HTTPRoute.
+	// Overlay httproute-external before the Component exists so the first
+	// release renders a dedicated hostname (issue 538).
+	if req != nil && isWebApplicationEntrypoint(req.Type) {
+		if err := c.ensureWebApplicationHTTPRouteHostnames(ctx, orgName); err != nil {
+			return nil, fmt.Errorf("create component: ensure web-application HTTPRoute hostnames: %w", err)
+		}
+	}
+
 	resp, err := c.oc.CreateComponentWithResponse(ctx, orgName, buildCreateComponentBody(projectName, req))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create component: %w", err)
