@@ -142,12 +142,11 @@ into `workload.yaml` and the managed-API gateway binds to. The port lives in
 - **Preserved verbatim** where the platform has already written them:
   `exposesAPI`, `componentAgentInstructions`, and any dependency
   `status`/`reason`.
-- **Recomputed and overwritten** on every save: a dependency's `wiring` object,
-  and the component's `stories` array — the platform restamps it from the
-  design.cell citations, so cite stories in the CELL, never here.
+- **Recomputed and overwritten** on every save: a dependency's `wiring` object.
   The platform derives its `ref` and its env-var names from the dependency's name
   and its resource type's declared outputs, so anything you write there is
-  discarded.
+  discarded. `stories` is NOT in this class — it is yours to author, per the
+  **stories** field above.
 
 ### dependencies — one entry per Interactions arrow
 
