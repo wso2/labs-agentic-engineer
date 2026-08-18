@@ -59,7 +59,7 @@ func TestPatchWebApplicationHTTPRouteResources_ReplacesCatchAll(t *testing.T) {
 	if len(out) != 3 {
 		t.Fatalf("len(out) = %d, want 3 (service, httproute-external, env-config)", len(out))
 	}
-	if resourceID(out[0]) != "service" || resourceID(out[2]) != "env-config" {
+	if componentTypeResourceID(out[0]) != "service" || componentTypeResourceID(out[2]) != "env-config" {
 		t.Fatalf("surrounding resources moved: ids=%v", resourceIDs(out))
 	}
 	ext, ok := out[1].(map[string]any)
@@ -104,24 +104,6 @@ func TestPatchWebApplicationHTTPRouteResources_IdempotentWhenHostnamesExist(t *t
 	}
 }
 
-func TestPatchWebApplicationHTTPRouteResources_RewritesExternalWithoutHostnames(t *testing.T) {
-	t.Parallel()
-	in := []any{
-		map[string]any{
-			"id":       "httproute-external",
-			"template": map[string]any{"spec": map[string]any{"rules": []any{}}},
-		},
-	}
-	out, changed := patchWebApplicationHTTPRouteResources(in)
-	if !changed {
-		t.Fatal("expected hostname-less httproute-external to be rewritten")
-	}
-	hostnames := resourceHostnames(out[0])
-	if hostnames == "" {
-		t.Fatal("rewritten route has no hostnames")
-	}
-}
-
 func TestPatchComponentTypeDoc_PreservesResourceVersion(t *testing.T) {
 	t.Parallel()
 	doc := map[string]any{
@@ -154,7 +136,7 @@ func TestPatchComponentTypeDoc_PreservesResourceVersion(t *testing.T) {
 func resourceIDs(resources []any) []string {
 	ids := make([]string, len(resources))
 	for i, r := range resources {
-		ids[i] = resourceID(r)
+		ids[i] = componentTypeResourceID(r)
 	}
 	return ids
 }
@@ -225,7 +207,7 @@ func TestEnsureWebApplicationHTTPRouteHostnames_PutsHostnamesAndKeepsResourceVer
 	}
 	spec, _ := putBody["spec"].(map[string]any)
 	resources, _ := spec["resources"].([]any)
-	if len(resources) != 1 || resourceID(resources[0]) != "httproute-external" {
+	if len(resources) != 1 || componentTypeResourceID(resources[0]) != "httproute-external" {
 		t.Errorf("PUT resources = %v", resources)
 	}
 	if resourceHostnames(resources[0]) == "" {

@@ -26,50 +26,25 @@ import (
 	ocgen "github.com/wso2/aep/aep-api/internal/clients/openchoreo/gen"
 )
 
-// WebApplicationComponentTypeName is the namespaced ComponentType PAS
-// bootstraps into each org. AEP components reference it as
-// deployment/web-application; the CR's metadata.name is unprefixed.
-const WebApplicationComponentTypeName = "web-application"
-
+const webApplicationComponentTypeName = "web-application"
 const webApplicationComponentTypeRef = "deployment/web-application"
 
-// Same CEL as deployments/helm-charts/platform/templates/openchoreo-org-types/
-// componenttype-web-application.yaml and setup-aep.sh. Dedicated hostname +
-// path / so OpenChoreo fills ReleaseBinding status.endpoints[].externalURLs.
+// Same CEL as the local org web-application type (helm + setup-aep.sh): a
+// dedicated hostname and path / so OpenChoreo fills
+// ReleaseBinding status.endpoints[].externalURLs.
 const webApplicationHTTPRouteForEach = `${workload.endpoints.transformList(name, ep, ("external" in ep.visibility && ep.type in ["HTTP", "REST", "GraphQL", "Websocket"]) ? [name] : []).flatten()}`
 
 const webApplicationHTTPRouteHostnames = `${[gateway.ingress.external.?http, gateway.ingress.external.?https]
               .filter(g, g.hasValue()).map(g, g.value().host).distinct()
               .map(h, oc_dns_label(endpoint, metadata.componentName, metadata.environmentName, metadata.componentNamespace) + "." + h)}`
 
-func isWebApplicationEntrypoint(componentType string) bool {
-	return componentType == webApplicationComponentTypeRef || componentType == WebApplicationComponentTypeName
-}
-
-func resourceID(r any) string {
+func componentTypeResourceID(r any) string {
 	m, ok := r.(map[string]any)
 	if !ok {
 		return ""
 	}
 	id, _ := m["id"].(string)
 	return id
-}
-
-func resourceHasHostnames(r any) bool {
-	m, ok := r.(map[string]any)
-	if !ok {
-		return false
-	}
-	tmpl, _ := m["template"].(map[string]any)
-	spec, _ := tmpl["spec"].(map[string]any)
-	switch h := spec["hostnames"].(type) {
-	case string:
-		return h != ""
-	case []any:
-		return len(h) > 0
-	default:
-		return false
-	}
 }
 
 func webApplicationExternalHTTPRoute() map[string]any {
@@ -116,50 +91,21 @@ func webApplicationExternalHTTPRoute() map[string]any {
 	}
 }
 
-// patchWebApplicationHTTPRouteResources replaces a hostname-less HTTPRoute
-// template with httproute-external. Returns a new slice; in is not mutated.
+// patchWebApplicationHTTPRouteResources replaces id:httproute (the PAS
+// catch-all) with httproute-external. Everything else, including an already
+// hosted httproute-external, is left alone.
 func patchWebApplicationHTTPRouteResources(in []any) ([]any, bool) {
-	hosted := false
-	for _, r := range in {
-		if resourceID(r) == "httproute-external" && resourceHasHostnames(r) {
-			hosted = true
-			break
-		}
-	}
-
 	out := make([]any, 0, len(in))
 	changed := false
-	replaced := false
 	for _, r := range in {
-		id := resourceID(r)
-		switch {
-		case hosted && id == "httproute":
+		if componentTypeResourceID(r) == "httproute" {
+			out = append(out, webApplicationExternalHTTPRoute())
 			changed = true
 			continue
-		case !hosted && (id == "httproute" || id == "httproute-external"):
-			out = append(out, webApplicationExternalHTTPRoute())
-			replaced = true
-			changed = true
-		default:
-			out = append(out, r)
 		}
+		out = append(out, r)
 	}
-	if hosted || replaced {
-		return out, changed
-	}
-	inserted := false
-	withInsert := make([]any, 0, len(out)+1)
-	for _, r := range out {
-		withInsert = append(withInsert, r)
-		if resourceID(r) == "service" {
-			withInsert = append(withInsert, webApplicationExternalHTTPRoute())
-			inserted = true
-		}
-	}
-	if !inserted {
-		withInsert = append(withInsert, webApplicationExternalHTTPRoute())
-	}
-	return withInsert, true
+	return out, changed
 }
 
 func patchWebApplicationComponentTypeDoc(doc map[string]any) (bool, error) {
@@ -186,13 +132,12 @@ func patchWebApplicationComponentTypeDoc(doc map[string]any) (bool, error) {
 	return true, nil
 }
 
-// ensureWebApplicationHTTPRouteHostnames overlays httproute-external onto the
-// org's namespaced web-application ComponentType when it still emits a
-// catch-all HTTPRoute. 404 is a no-op: local cluster types already mint
-// hostnames and there is nothing namespaced to patch.
+// ensureWebApplicationHTTPRouteHostnames replaces a catch-all httproute on
+// the org namespaced web-application ComponentType. 404 is a no-op: local
+// installs often have only the already-hosted cluster type.
 func (c *componentClient) ensureWebApplicationHTTPRouteHostnames(ctx context.Context, orgName string) error {
-	return retryStaleWrite(ctx, "componenttype/"+WebApplicationComponentTypeName+" httproute", func(ctx context.Context) error {
-		getResp, err := c.oc.GetComponentTypeWithResponse(ctx, orgName, ocgen.ComponentTypeNameParam(WebApplicationComponentTypeName))
+	return retryStaleWrite(ctx, "componenttype/"+webApplicationComponentTypeName+" httproute", func(ctx context.Context) error {
+		getResp, err := c.oc.GetComponentTypeWithResponse(ctx, orgName, ocgen.ComponentTypeNameParam(webApplicationComponentTypeName))
 		if err != nil {
 			return fmt.Errorf("get web-application componenttype: %w", err)
 		}
@@ -223,7 +168,7 @@ func (c *componentClient) ensureWebApplicationHTTPRouteHostnames(ctx context.Con
 		if err != nil {
 			return fmt.Errorf("marshal web-application componenttype: %w", err)
 		}
-		updResp, err := c.oc.UpdateComponentTypeWithBodyWithResponse(ctx, orgName, ocgen.ComponentTypeNameParam(WebApplicationComponentTypeName), "application/json", bytes.NewReader(raw))
+		updResp, err := c.oc.UpdateComponentTypeWithBodyWithResponse(ctx, orgName, ocgen.ComponentTypeNameParam(webApplicationComponentTypeName), "application/json", bytes.NewReader(raw))
 		if err != nil {
 			return fmt.Errorf("update web-application componenttype: %w", err)
 		}
