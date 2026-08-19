@@ -102,15 +102,29 @@ export function discoverCases(casesDir: string): EvalCase[] {
 }
 
 /**
- * Narrow a discovered set by suite and by case name.
+ * Narrow a discovered set by suite and by case name, either of which may name
+ * several, comma-separated.
  *
- * Both filters are exact rather than fuzzy: a typo that silently selects
- * nothing is the failure mode here, and `--case aws-submodul` matching zero
- * cases is caught by the caller's emptiness check, where a prefix match would
- * quietly run a different case.
+ * Each member is exact rather than fuzzy: a typo that silently selects nothing
+ * is the failure mode here, and `--case aws-submodul` matching zero cases is
+ * caught by the caller's emptiness check, where a prefix match would quietly run
+ * a different case. A list is not a relaxation of that — `a,nope` still selects
+ * only `a`, and only a list whose every member missed is refused.
  */
 export function selectCases(all: EvalCase[], suite?: string, name?: string): EvalCase[] {
-  return all.filter((c) => (suite ? c.suite === suite : true) && (name ? c.name === name : true));
+  const suites = members(suite);
+  const names = members(name);
+  return all.filter((c) => (suites ? suites.has(c.suite) : true) && (names ? names.has(c.name) : true));
+}
+
+/** A comma-separated filter as a set, or undefined for "no filter". */
+function members(value?: string): Set<string> | undefined {
+  if (!value) return undefined;
+  const found = value
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+  return found.length > 0 ? new Set(found) : undefined;
 }
 
 function readCase(file: string, suite: string): EvalCase {

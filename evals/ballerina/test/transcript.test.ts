@@ -61,7 +61,7 @@ test("path metrics: the 2026-08-14 run, as analysed by hand", () => {
   assert.equal(m.byVerb.overview, 8);
   assert.equal(m.byVerb.type, 9);
   assert.equal(m.byVerb.api, 2);
-  assert.equal(m.byVerb.ops, undefined, "never reached for `ops` in this run");
+  assert.equal(m.byVerb.client, undefined, "never reached for a container verb in this run");
   const invocations = Object.values(m.byVerb).reduce((a, b) => a + b, 0);
   assert.equal(invocations, 20);
 });
@@ -117,18 +117,156 @@ test("worstDetour: no wasted calls is a zero, not a one", () => {
   assert.deepEqual(detour, { target: "", calls: 0, chars: 0 });
 });
 
+/**
+ * H2, which inverted the metric this harness exists to produce.
+ *
+ * The check used to be `body.trim().startsWith("{")`, which only holds when the
+ * caller REDIRECTED stderr. An unpiped failure arrives with the runner's own
+ * `Exit code 1` prefix in front of the JSON, so every failure from a
+ * well-behaved unpiped call was scored as a successful document — and the
+ * failure rate therefore rewarded the piping the design is trying to make
+ * unnecessary.
+ */
+test("readPathMetrics: an unpiped failure is a failure, prefix and all", () => {
+  const failure = '{"kind":"symbol-not-found","qualified":"ballerinax/kafka:4.6.5"}';
+  const cases: { label: string; body: string; kind: string | undefined }[] = [
+    { label: "redirected", body: `${failure}\n`, kind: "symbol-not-found" },
+    { label: "unpiped, with the runner's prefix", body: `Exit code 1\n\n${failure}\n`, kind: "symbol-not-found" },
+    { label: "a document is not a failure", body: "# ballerinax/kafka 4.6.5\n\n| Clients | 3 |\n", kind: undefined },
+  ];
+  for (const { label, body, kind } of cases) {
+    const m = readPathMetrics(transcript("bal library type ballerinax/kafka NoSuchType", body));
+    assert.equal(m.lookups, 1, label);
+    assert.equal(m.failed, kind === undefined ? 0 : 1, label);
+  }
+  // A record body has braces too, and it is not a failure object.
+  const record = "public type X record {\n    string a;\n};\n";
+  assert.equal(readPathMetrics(transcript("bal library type x/y X", record)).failed, 0);
+});
+
+/**
+ * A pipe that CUT is a different finding from a pipe that was merely typed.
+ *
+ * The 2026-08-17 sweep counted claims-fhir at 6 piped of 6 and telemetry-kafka at
+ * 5 of 5, against a skill that asks for zero — a number that reads as a crisis. But
+ * every document is now bounded, and `overview ballerina/crypto` is 42 lines, so
+ * `| head -250` over it removes nothing at all. Without this split the habit and
+ * the damage report as one figure, and only the damage is evidence about the tool.
+ */
+test("truncation: a window the document never reached cut nothing", () => {
+  const short = `${"line\n".repeat(40)}## Next\n`;
+  const piped = readPathMetrics(transcript("bal library overview ballerina/crypto | head -250", short));
+  assert.equal(piped.piped, 1, "still the habit");
+  assert.equal(piped.truncated, 0, "but 41 lines through a 250-line window lost nothing");
+
+  const long = "line\n".repeat(250);
+  const cut = readPathMetrics(transcript("bal library api ballerinax/github | head -250", long));
+  assert.equal(cut.truncated, 1, "the window was reached, so the rest is gone");
+});
+
+test("truncation: a content filter always cuts, and a byte window is measured in bytes", () => {
+  const body = `${"line\n".repeat(40)}## Next\n`;
+  // grep/sed/awk/cut/wc drop lines or columns by construction — there is no
+  // window to fall short of, and `grep` is what drops a trailing note while
+  // keeping the signature it belongs to.
+  for (const filter of ["grep -n 'function'", "sed -n '1,20p'", "awk '{print $1}'", "cut -c1-80", "wc -l"]) {
+    const m = readPathMetrics(transcript(`bal library api x/y | ${filter}`, body));
+    assert.equal(m.truncated, 1, filter);
+  }
+  assert.equal(readPathMetrics(transcript("bal library api x/y | head -c 100", body)).truncated, 1);
+  assert.equal(readPathMetrics(transcript("bal library api x/y | head -c 40000", body)).truncated, 0);
+  // A bare `head` is ten lines, which is the shape that hides the most.
+  assert.equal(readPathMetrics(transcript("bal library api x/y | head", body)).truncated, 1);
+  // Unpiped is neither.
+  const clean = readPathMetrics(transcript("bal library overview x/y", body));
+  assert.equal(clean.piped, 0);
+  assert.equal(clean.truncated, 0);
+});
+
+test("truncation: even the runs that piped everything only cut about a third", () => {
+  // Measured, against the expectation that wrote this test. "19 of 19 piped" was
+  // read for two sweeps as 19 damaged documents; it was 9, and 5 in the next run.
+  // The other ten were windows the document never reached. So the headline number
+  // overstated its own finding by 2-4x, in the direction that invites a fix to a
+  // problem half that size — which is the whole reason for keeping them apart.
+  const before = readPathMetrics(fixture("run-2026-08-14.ndjson"));
+  assert.equal(before.piped, 19);
+  assert.equal(before.truncated, 9);
+
+  const after = readPathMetrics(fixture("run-2026-08-15.ndjson"));
+  assert.equal(after.piped, 19);
+  assert.equal(after.truncated, 5);
+});
+
+/**
+ * A lookup that found no `bal library` AT ALL invalidates the attempt.
+ *
+ * Measured on 2026-08-17, and it is not hypothetical: three sessions in one sweep ran
+ * `bal tool pull openapi`, which rewrites `~/.ballerina/.config/bal-tools.toml` and
+ * DROPS the locally installed `library` entry, because that entry carries
+ * `repository = "local"` and the regeneration does not preserve it. `catalog-redis`
+ * then answered `unknown command 'library'` four times, and one session went on to
+ * `bal tool pull library` — installing the PUBLISHED tool over the working-tree build.
+ *
+ * From that point the sweep measured a different tool under the name of the one being
+ * tested. `preflight` cannot see it: it checks once, before the first session, and the
+ * clobber happens inside them. So it has to be caught on the way out, per attempt, and
+ * it is not a bad score — it is the absence of evidence, which must never average in
+ * with runs that had a tool.
+ */
+test("integrity: a lookup that found no bal library at all is counted, not scored", () => {
+  const missing = "bal: unknown command 'library'\nRun 'bal help' for usage.\n";
+  const m = readPathMetrics(transcript("bal library overview ballerinax/redis 2>&1", missing));
+  assert.equal(m.toolMissing, 1);
+  // And it is NOT silently a successful document: the body carried no answer.
+  assert.equal(m.lookups, 1);
+
+  const fine = readPathMetrics(transcript("bal library overview x/y", "<!-- bal library overview v1 -->\n"));
+  assert.equal(fine.toolMissing, 0);
+});
+
+/** One assistant turn holding one Bash call, and the result the runner returned for it. */
+function transcript(command: string, body: string): string {
+  const id = "toolu_1";
+  return [
+    JSON.stringify({
+      type: "assistant",
+      message: { content: [{ type: "tool_use", id, name: "Bash", input: { command } }] },
+    }),
+    JSON.stringify({
+      type: "user",
+      message: { content: [{ type: "tool_result", tool_use_id: id, content: body }] },
+    }),
+  ].join("\n");
+}
+
 test("readInvocation: verb and target, including the shapes that have no target", () => {
   assert.deepEqual(readInvocation("bal library overview ballerinax/aws.s3 2>&1 | head -200"), {
     verb: "overview",
     target: "ballerinax/aws.s3",
   });
-  assert.deepEqual(readInvocation("bal library type ballerina/mime Entity --deps"), {
+  assert.deepEqual(readInvocation("bal library type ballerina/mime Entity -r"), {
     verb: "type",
     target: "ballerina/mime",
   });
-  // `search` takes keywords; reporting "kafka" as a package would invent
-  // detours between unrelated searches.
-  assert.deepEqual(readInvocation("bal library search kafka messaging"), { verb: "search", target: "" });
+  // `find` takes keywords; reporting "kafka" as a package would invent detours
+  // between unrelated searches.
+  assert.deepEqual(readInvocation("bal library find kafka messaging"), { verb: "find", target: "" });
+  // The verbs the 2026-08-17 kind split introduced. A verb missing from the
+  // config list keeps its own name but LOSES its target, which silently removes
+  // the call from detour attribution — so each one is pinned with its target.
+  assert.deepEqual(readInvocation("bal library client ballerinax/github Client repos"), {
+    verb: "client",
+    target: "ballerinax/github",
+  });
+  assert.deepEqual(readInvocation("bal library class ballerina/http Cookie"), {
+    verb: "class",
+    target: "ballerina/http",
+  });
+  assert.deepEqual(readInvocation("bal library funcs ballerina/uuid"), {
+    verb: "funcs",
+    target: "ballerina/uuid",
+  });
   assert.deepEqual(readInvocation("bal library --help | head -50"), { verb: "help", target: "" });
 });
 
@@ -188,6 +326,8 @@ function fake(over: Partial<Lookup>): Lookup {
     verb: "type",
     target: "x/y",
     piped: false,
+    truncated: false,
+    toolMissing: false,
     failed: false,
     sawNext: false,
     chars: 2000,

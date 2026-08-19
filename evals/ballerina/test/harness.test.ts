@@ -18,6 +18,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readAgentBuilds } from "../src/metrics/build.js";
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -98,6 +99,27 @@ test("cases: selection is exact, so a typo selects nothing rather than something
   assert.equal(selectCases(all, undefined, "aws-s3").length, 0, "a prefix must not match");
   assert.equal(selectCases(all, "narrow").length, 2);
   assert.equal(selectCases(all, "full").length, 0);
+});
+
+test("cases: a comma-separated selection picks exactly those cases", () => {
+  // The tuning loop runs a handful of cases, not one and not a whole suite. Without
+  // this it is several sweeps, each with its own report and its own baseline diff.
+  const root = casesTree({
+    narrow: { "a.yaml": "prompt: p\n", "b.yaml": "prompt: p\n" },
+    service: { "c.yaml": "prompt: p\n" },
+  });
+  const all = discoverCases(root);
+  assert.deepEqual(
+    selectCases(all, undefined, "a,c").map((c) => c.name),
+    ["a", "c"],
+  );
+  assert.deepEqual(
+    selectCases(all, "narrow,service", "c").map((c) => c.name),
+    ["c"],
+    "suite and case still intersect",
+  );
+  assert.equal(selectCases(all, undefined, "a, b").length, 2, "surrounding space is trimmed");
+  assert.equal(selectCases(all, undefined, "a,nope").length, 1, "an unknown member selects nothing of its own");
 });
 
 test("cases: expectations are read, including importsNot", () => {
@@ -200,13 +222,39 @@ test("config: env vars override defaults, and a malformed one falls back", async
 });
 
 test("config: the filter regex catches every way a run has narrowed a document", () => {
-  // Every one of these was written by a real run. `--client`/`--sigs`/a name are
-  // flags, not filters, and must NOT count.
+  // Every one of these was written by a real run. A selector, `-s` and `-r` are
+  // arguments, not filters, and must NOT count.
   for (const piped of ["bal library overview x/y | head -200", "bal library api x/y 2>&1 | grep -n Auth"]) {
     assert.ok(PATH_METRICS.filters.test(piped), piped);
   }
-  for (const clean of ["bal library overview ballerina/http --client Client", "bal library type x/y Z --deps"]) {
+  for (const clean of [
+    "bal library client ballerina/http Client",
+    "bal library client ballerinax/github -s \"cache\"",
+    "bal library type x/y Z -r",
+  ]) {
     assert.ok(!PATH_METRICS.filters.test(clean), clean);
+  }
+});
+
+/**
+ * H4: a `bal build` in a scratch directory is not a build cycle of the case.
+ *
+ * The test used to be `/\bbal build\b/` against the command and nothing else, so
+ * a probe an agent ran to check one signature counted as a compiler round trip
+ * of the project under test — and "agent build cycles" is one of the three
+ * headline numbers. Conservative on purpose: a command this cannot classify
+ * counts as a project build, because under-counting the number the tool is meant
+ * to drive down would flatter the tool.
+ */
+test("build: a probe build somewhere else is not a cycle of the case", () => {
+  const green = "Compiling source\n\tacme/app:0.1.0\n\nGenerating executable\n";
+  const counted = ["bal build", "bal build --offline", "cd myproject && bal build"];
+  const ignored = ["cd /tmp/probe && bal build", "bal build /tmp/probe", "cd $TMPDIR/x && bal build"];
+  for (const command of counted) {
+    assert.equal(readAgentBuilds([{ command, output: green }]).length, 1, command);
+  }
+  for (const command of ignored) {
+    assert.equal(readAgentBuilds([{ command, output: green }]).length, 0, command);
   }
 });
 
@@ -254,8 +302,44 @@ test("baseline: a one-case debug run does not become the baseline for a full swe
   assert.equal(pickBaseline(dirs, ["service/c"], read), undefined);
 });
 
+test("baseline: a sweep that ran without the tool is never the baseline", () => {
+  // Measured, and it inverted three rows at once. The 2026-08-17 sweep whose sessions
+  // dropped the `library` registration reported telemetry-kafka at 16 lookup tokens
+  // and 1 turn — a run with no tool in it. The next, clean sweep then diffed 6,500
+  // tokens against that 16 and printed "+6484", which reads as a 400x regression when
+  // it is the tool coming back. A baseline is a claim about conditions, and those
+  // conditions did not include the thing under test.
+  const runs: Record<string, Summary[]> = {
+    "2026-08-17T10-00-00Z": [withMissing("service/a", 0), withMissing("service/b", 0)],
+    "2026-08-17T11-00-00Z": [withMissing("service/a", 0), withMissing("service/b", 4)],
+  };
+  const read = (dir: string): Summary[] | undefined => runs[dir];
+  const dirs = Object.keys(runs);
+
+  const picked = pickBaseline(dirs, ["service/a", "service/b"], read);
+  assert.ok(picked, "a clean older sweep is still available");
+  assert.equal(picked?.[1]?.stats.toolMissing?.max, 0, "walked past the contaminated newer sweep");
+
+  // One spoiled case spoils the sweep as a baseline: the attempts ran concurrently
+  // and shared one `bal-tools.toml`, so a neighbour's clean row is not proof.
+  const onlyDirty: Record<string, Summary[]> = { "2026-08-17T11-00-00Z": runs["2026-08-17T11-00-00Z"] ?? [] };
+  assert.equal(
+    pickBaseline(Object.keys(onlyDirty), ["service/a"], (d) => onlyDirty[d]),
+    undefined,
+    "no column beats a misleading one",
+  );
+});
+
 function summaryFor(key: string): Summary {
   return { key, suite: "", case: "", attempts: 1, green: 1, clean: 1, stats: {}, violations: {} };
+}
+
+/** A summary carrying a `toolMissing` stat, which is what disqualifies a baseline. */
+function withMissing(key: string, missing: number): Summary {
+  return {
+    ...summaryFor(key),
+    stats: { toolMissing: { median: missing, min: missing, max: missing, spread: 0 } },
+  };
 }
 
 test("scratch: an attempt runs outside the repo and is archived back afterwards", () => {

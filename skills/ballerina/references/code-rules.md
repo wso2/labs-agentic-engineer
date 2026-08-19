@@ -285,7 +285,7 @@ if result is http:ClientRequestError {
 }
 ```
 
-The hierarchy is `ClientRequestError` and `RemoteServerError` under `ApplicationResponseError` under `ClientError` under `Error`, and **only those three carry `detail().statusCode`** — `http:SslError` and the rest reach `Error` without one, so `is` on the specific type is what makes `.detail()` legal. `bal library type ballerina/http ClientRequestError --deps` prints the whole chain and the detail record.
+The hierarchy is `ClientRequestError` and `RemoteServerError` under `ApplicationResponseError` under `ClientError` under `Error`, and **only those three carry `detail().statusCode`** — `http:SslError` and the rest reach `Error` without one, so `is` on the specific type is what makes `.detail()` legal. `bal library type ballerina/http ClientRequestError -r` prints the whole chain and the detail record.
 
 ---
 

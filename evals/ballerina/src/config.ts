@@ -138,9 +138,10 @@ export const PATH_METRICS = {
    * "?", so a verb missing here still shows in the census — but its TARGET is
    * dropped, which silently removes the call from detour attribution. That is
    * why the list has to track the CLI: `guide` (ADR-0017) was invisible to
-   * `worstDetour` until it was added.
+   * `worstDetour` until it was added, and the 2026-08-17 kind split replaced
+   * `search`/`ops` with `find`/`client`/`class`/`funcs`.
    */
-  verbs: ["search", "overview", "ops", "type", "guide", "api"],
+  verbs: ["find", "overview", "client", "class", "funcs", "type", "guide", "api"],
   /**
    * A result at or under this many characters carried a suggestion or nothing.
    * `api <pkg> | grep X` returning "(Bash completed with no output)" is 31
@@ -181,15 +182,29 @@ export const BUILD_METRICS = {
  * reported that is not named here.
  */
 export const REPORTED_METRICS = [
-  "lookups",
+  // The PRIMARY axis leads. The 2026-08-17 redesign deliberately buys bytes with
+  // calls — `googleapis.sheets` goes from one call to two while `ballerina/crypto`
+  // goes from 64,310 bytes to about 1,000 — so a report that led with call count
+  // would score the change as a regression on the axis it was not optimising.
+  // Calls are a diagnostic and sit below the outcomes they explain.
+  "lookupTokens",
+  "sigErrors",
+  "buildCycles",
+  "otherErrors",
+  "turns",
+  "invocations",
+  // FIRST, above the outcomes, because a nonzero value means none of them are
+  // evidence: the tool was not there to answer. It is the only metric here that
+  // invalidates a row rather than scoring it.
+  "toolMissing",
   "piped",
+  // Below `piped` and not instead of it: the habit and the damage are different
+  // findings, and only this one is evidence about the tool. A sweep can read 6/6
+  // piped and 0 truncated, which is a style note, or 6/6 and 6, which is a defect.
+  "truncated",
   "failed",
   "sawNext",
   "detourCalls",
-  "lookupTokens",
-  "buildCycles",
-  "sigErrors",
-  "otherErrors",
   "costUsd",
   // Seconds, not the milliseconds the transcript carries. A reported metric's
   // key is what `summary.json` stores it under, so a key naming one unit while

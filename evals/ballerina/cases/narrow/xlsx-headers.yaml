@@ -1,0 +1,54 @@
+# The DISCOVERY case, and the only one where the guide is the only source.
+#
+# Three things no other case reaches:
+#
+#  1. The prompt names no package. `ballerina/xlsx` is 1.0.1 with ~50 pulls, far
+#     newer than any training cut-off, so an agent cannot know it exists — this is
+#     the one case that fails outright unless `bal library find` is used. Every
+#     other case hands the package over in the prompt.
+#  2. It has NO CLIENT, so `funcs` and `class` are the callable surface. The
+#     service cases are all client-driven and never exercise either verb.
+#  3. `@xlsx:Name` and the `time:Date` cell binding appear in NO signature. They
+#     are readme facts (guide chunks 4 and 8), so the header mapping cannot be
+#     reached by reading the API — only by reading the guide. That is what the
+#     mismatched column headers below are for.
+#
+# The reference solution was compiled before this case was written: an annotated
+# record with three `@xlsx:Name` fields and a `time:Date`, over `parseSheet` and
+# `writeSheet`, builds clean on Ballerina 2201.13.2.
+prompt: |
+  In this Ballerina package, write `roster.bal` that reads and writes our staff
+  roster as an Excel `.xlsx` workbook on disk.
+
+  The workbook's first sheet has three columns, headed exactly `Full Name`,
+  `Work Email` and `Hired`. The last of those is a date cell, and it must come
+  back as a date rather than as a string.
+
+  Expose:
+
+  - a public record type for one row, with the fields named `name`, `email` and
+    `hiredOn` — not the spreadsheet's headings,
+  - `public function readRoster(string path)` returning those rows or an error,
+  - `public function writeRoster(<rows>, string path)` writing them to a sheet
+    named `Roster`.
+
+  Use a Ballerina library for the format. Do not parse or emit the workbook
+  yourself, and do not shell out.
+
+  Then run `bal build` until it is clean. Do not write tests.
+
+expect:
+  builds: true
+  imports:
+    - ballerina/xlsx
+  # The header mapping is the whole point: a run that renames the record's fields
+  # to the spreadsheet's headings, or drops the mapping and lets the parse fail at
+  # runtime, compiles just as green. Only the annotation proves the guide was read.
+  mustContain:
+    - "@xlsx:Name"
+    - 'value:\s*"Full Name"'
+    - "time:Date"
+  mustNotContain:
+    # The failure this case exists to catch: unable to find the package, the agent
+    # writes a ZIP/XML reader instead of admitting it could not.
+    - "ballerina/io.*[Zz]ip|unzip|xl/worksheets"

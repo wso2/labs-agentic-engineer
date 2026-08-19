@@ -99,8 +99,8 @@ Ballerina coding evals — one prompt, one package, one 'bal build'.
   pnpm eval [--suite <name>] [--case <name>] [--repeats N] [--concurrency N]
             [--timeout <minutes>] [--list]
 
-  --suite        only cases in cases/<name>/ (any folder is a suite)
-  --case         only the case with this filename stem
+  --suite        only cases in cases/<name>/ (any folder is a suite; comma-separated)
+  --case         only cases with this filename stem (comma-separated)
   --repeats      attempts per case (use 3+ before believing a delta)
   --concurrency  attempts in flight at once
   --timeout      per-attempt ceiling in minutes
@@ -173,6 +173,9 @@ async function main(): Promise<number> {
         );
       }
       if (event.kind === "failed") console.log(`  ! ${event.case} #${event.attempt} — ${event.reason}`);
+      // Loud, and it names the attempt it was noticed at: every attempt BEFORE this
+      // one may have run without the tool, and their numbers are not evidence.
+      if (event.kind === "repaired") console.log(`  ⚠ ${event.case} #${event.attempt} — ${event.what}`);
     },
   });
 

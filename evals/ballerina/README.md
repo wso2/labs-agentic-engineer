@@ -15,11 +15,19 @@ pnpm --filter @aep/ballerina-evals eval --list          # what exists
 make eval-bal                                           # every case, once, at DEFAULTS.concurrency
 make eval-bal ARGS="--suite narrow --repeats 3"         # the tuning loop
 make eval-bal ARGS="--case aws-s3-submodule"            # one case while iterating
+make eval-bal ARGS="--case xlsx-headers,catalog-redis"  # a handful, in one report
 make eval-bal ARGS="--suite full --concurrency 2"       # the reality check
 ```
 
 Flags: `--suite`, `--case`, `--repeats`, `--concurrency`, `--timeout` (minutes),
-`--list`.
+`--list`. `--suite` and `--case` each take a comma-separated list, because the
+tuning loop runs a handful rather than one or all — separate sweeps would each
+carry their own report and their own baseline diff. Every member is still matched
+exactly, so a typo in one of them selects nothing rather than something else.
+
+**Do not reinstall the tool while a sweep is running.** Preflight checks the jar
+once, at the start; an install mid-sweep leaves attempts on either side of it
+measuring different tools under one report.
 
 ## Every knob is in `src/config.ts`
 
@@ -59,6 +67,18 @@ are a cost distinction, not a kind:
 | `narrow/` | one file, one package weakness, ~1-2 min | iterate |
 | `service/` | an OpenAPI-generated HTTP service over connectors | the common shape |
 | `full/` | a whole service across several packages, ~10-15 min | confirm |
+
+### What `narrow/` already reaches for
+
+Each of these exists to exercise a part of the CLI the `service/` cases never
+touch, because every one of those is client-driven and names its package in the
+prompt.
+
+| case | verb it forces | what it stresses |
+|---|---|---|
+| `aws-s3-submodule` | `type` across a package edge | a submodule's config type, and the `aws.auth` detour |
+| `xlsx-headers` | `find`, then `guide`, then `funcs` | the prompt names NO package, and `ballerina/xlsx` is far newer than any cut-off, so the case fails outright unless `find` is used. It has no client, and `@xlsx:Name` plus the `time:Date` cell binding appear in no signature — they are readme facts. **Measured: `find` 1, `overview` 1, `guide` 5, `funcs` 2** — the only case where the guide is the dominant verb |
+| `kafka-listener-service` | attachment, and the commit contract | `service on <listener>`, the one shape nothing else in the suite writes, where an invented method name (`onMessage`, `onRecord`) compiles as an unattached service that consumes nothing — which `builds: true` cannot see. **It does not force `api`:** measured, the first run used `overview`/`type`/`client` and got `onConsumerRecord` from recall. The claim that it would was wrong |
 
 ### What `service/` already reaches for
 
@@ -119,10 +139,32 @@ idiomatic form.
 Two axes, because neither means anything alone — a run can reach a green build
 by luck, and take a clean path to the wrong answer.
 
-**Path** (`src/metrics/transcript.ts`), from `claude.log`: lookups, how many were
-piped through a filter, exit-2s, how often `## Next` survived, verb census, and
-**worst detour** — the longest run of consecutive zero-yield calls circling one
-package. That last one is the `aws.auth` metric.
+**Path** (`src/metrics/transcript.ts`), from `claude.log`: lookup **tokens** —
+the primary axis — then turns, invocations, how many were piped through a filter,
+failures, how often `## Next` survived, verb census, and **worst detour**, the
+longest run of consecutive zero-yield calls circling one package. That last one
+is the `aws.auth` metric.
+
+Tokens lead deliberately. The 2026-08-17 interface change buys bytes with calls —
+`googleapis.sheets` goes from one lookup to two while `ballerina/crypto` goes from
+64,310 bytes to about 3,500 — so a report led by call count would score that as a
+regression on the axis it was not optimising. Calls are a diagnostic and sit below
+the outcomes they explain.
+
+**Turns and invocations are different numbers and both are printed.** A chained
+`bal library type … ; bal library overview …` is one round trip and two questions:
+a turn is what costs latency and context, an invocation is what was asked. One
+column labelled "calls" hid which of the two it meant.
+
+**`…piped` and `…piped AND cut` are also different numbers**, for the same reason.
+Every document is bounded since 2026-08-17, so `| head -250` over a 42-line map
+removes nothing, while a `grep` over the same document drops the trailing
+`// Special Agent Note:` off every line it keeps. `truncated` counts only the pipes
+that reached their window — content filters always, `head`/`tail` when the body
+came back at or over the limit. The split immediately corrected a standing
+misreading: the two runs recorded for months as "19 of 19 piped" had cut **9 and
+5**. The headline was overstating its own finding by two to four times, which is
+the direction that invites a fix to a problem half the size.
 
 **Outcome** (`src/metrics/build.ts`): the harness's own `bal build` after the
 session, plus the agent's own build cycles — with errors **split into signature
@@ -165,6 +207,38 @@ because the failure it prevents produces *numbers*, not an error: a sweep
 against a stale tool reports the old CLI's behaviour under the new CLI's name,
 and nothing downstream can tell. The skill needs no such step — it is read from
 the working tree and copied into each scratch package per attempt.
+
+### And the registration can be dropped *during* a sweep
+
+Preflight cannot catch this one, because it happens inside the sessions.
+`bal tool pull openapi` — which every `service/` case legitimately runs — rewrites
+`~/.ballerina/.config/bal-tools.toml` from `bal`'s own view of installed tools,
+and the local `library` entry carries `repository = "local"`, which that view does
+not include. The entry is dropped, and from that moment **every lookup in every
+concurrent attempt** answers `unknown command 'library'`.
+
+Measured on 2026-08-17: three sessions pulled openapi, `catalog-redis` failed four
+lookups, and one session tried to help itself with `bal tool pull library` —
+installing the *published* tool over the working-tree build, so the sweep carried
+on measuring a different tool under the name of the one under test.
+
+Two defences, because either alone is insufficient:
+
+- **`ensureToolRegistered()` runs before every attempt** and re-installs when the
+  command has gone missing, printing `⚠ <case> #n` when it did. Safe mid-sweep: it
+  restores the tool the sweep began against rather than changing it.
+- **`toolMissing` is a reported metric, and it leads the table.** A nonzero value
+  means the attempt is *not evidence*, and the report says so in those words,
+  above the numbers. That matters more than the repair — an attempt already
+  spoiled cannot be un-spoiled, and the failure mode being defended against is
+  averaging it in with attempts that had a tool.
+
+A spoiled sweep is also **never used as a baseline**, and one spoiled case
+disqualifies the whole run rather than its own row — the attempts shared one
+`bal-tools.toml`, so a neighbour's clean row is not evidence the neighbour was
+unaffected. Measured why: the contaminated sweep reported `telemetry-kafka` at 16
+lookup tokens and 1 turn, and the next clean sweep diffed 6,500 against that 16 and
+printed `+6484`, which reads as a 400× regression when it is the tool coming back.
 
 ## Why not the runner
 

@@ -25,22 +25,29 @@ cd <project-name>
 
 Write tests only when the user asks — then load [tests.md](references/tests.md).
 
-Starting from an OpenAPI contract instead of a blank package — load [openapi.md](references/openapi.md).
+### Working with OpenAPI Specifications
+
+- Prioritize generating services and clients from OAS specifications as instructed in [openapi.md](references/openapi.md) 
 
 ### bal library
 
 **Run `bal library --help` before your first lookup, and follow the flow it describes.** It reads a
-package off Central so you write signatures that exist rather than remembered ones.
+package off Central so you write signatures that exist rather than remembered ones. `--help` is the
+grammar — the verbs, their flags, the session to walk; each document prints the rules about its own
+contents. What follows is what you carry into every lookup.
 
-- Run `bal library` unpiped. The CLI is designed to filter and give you the information you need
-  with fewer calls. Narrow with the verb's own arguments and flags — a name, a path, `--client` —
-  never with a shell filter. Instructions and workflow is there in the `bal library --help` output.
-- A failed lookup is not a blocker: write from `code-rules.md` and let `bal build` name what is
-  wrong. Report the failure's JSON rather than improvising a signature.
-- When `bal build` rejects something a connector's guide told you to write, go back to the
-  signature — the guide is prose and drifts, the signature is generated. That is the usual cause.
-- `ballerina/*` is the standard library; every vendor or third-party connector is `ballerinax/*`. — `search` when you cannot name the package.
-- Prefer a `ballerinax/*` connector over a `trigger.*` package covering the same events.
+#### Working with library
+
+##### Preferences
+- `ballerina/*` is the standard library; every vendor or third-party connector is `ballerinax/*`. 
+- Prefer a `ballerinax/*` connector over a `trigger.*` package covering the same
+events.
+- Balerina has libraries created for working with standards, search before creating your own implementation.
+- A trailing `// Special Agent Note:` mentions important informations, follow them. eg: Other package references.
+- **Line one states the document's own length** If it says `· 535 lines` and you filtered using head | tail for 150 which mean the other 385 are gone and the answer can be among them: re-run that call unfiltered before writing anything from it. The library cli is designed to be self contained. You can't judge without the whole output.
+- -r flag only covers dependant types in the own package. For the external package references, you might need to invoke `bal library type` if you need them.
+- Tool may return ## Next section: Those are suggestions for your next look up navigation tool. Use them as hints.
+- Tool might return errors, Handle accoringly based on the error message.
 
 ### bal build
 

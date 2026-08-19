@@ -110,9 +110,31 @@ export function summarize(attempts: BuildAttempt[]): BuildMetrics {
 export function readAgentBuilds(commands: { command: string; output: string }[]): BuildAttempt[] {
   const out: BuildAttempt[] = [];
   for (const { command, output } of commands) {
-    if (!/\bbal build\b/.test(command)) continue;
+    if (!isProjectBuild(command)) continue;
     const attempt = readBuildAttempt(output, /^ERROR \[/m.test(output) ? 1 : 0);
     out.push(attempt);
   }
   return out;
+}
+
+/**
+ * Is this `bal build` a build of the CASE, or a probe somewhere else?
+ *
+ * H4. The test was `/\bbal build\b/` against the command string and nothing
+ * else, so every `bal build` the agent ran in a scratch directory to check a
+ * signature counted as a build cycle of the project under test — and "build
+ * cycles" is one of the three headline numbers. A probe is recognisable: it
+ * either names another directory (`cd /tmp/probe && bal build`, `bal build
+ * <path>`) or it is a dry-run/compile-only form.
+ *
+ * Deliberately conservative. A command this cannot classify counts as a project
+ * build, because under-counting the metric the tool is supposed to drive down
+ * would flatter the tool.
+ */
+function isProjectBuild(command: string): boolean {
+  if (!/\bbal build\b/.test(command)) return false;
+  // A `cd` to anywhere outside the project, or a scratch path, is a probe.
+  if (/\bcd\s+(?:\/tmp|\/var\/folders|\$TMPDIR|~\/tmp)/.test(command)) return false;
+  // `bal build <dir>` builds something other than the working directory.
+  return !/\bbal build\s+(?![-\s])\S/.test(command);
 }

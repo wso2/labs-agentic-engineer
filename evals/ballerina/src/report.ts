@@ -62,15 +62,28 @@ export interface Stat {
  * fails there rather than silently vanishing from a report.
  */
 const METRICS: { key: ReportedMetric; label: string; of: (a: Attempt) => number }[] = [
-  { key: "lookups", label: "bal library calls", of: (a) => a.path.lookups },
+  // The outcomes first: how much the agent had to read, and whether what it read
+  // was right. These are what the tool is for.
+  { key: "lookupTokens", label: "lookup tokens", of: (a) => a.path.lookupTokens },
+  { key: "sigErrors", label: "signature errors", of: (a) => a.build.totalSignatureErrors },
+  { key: "buildCycles", label: "agent build cycles", of: (a) => a.build.cycles },
+  { key: "otherErrors", label: "other errors", of: (a) => a.build.totalErrors - a.build.totalSignatureErrors },
+  // Then the diagnostics. TURNS and INVOCATIONS are different numbers and both are
+  // printed: a chained `bal library a ; bal library b` is one round trip and two
+  // questions, so a turn measures latency and context while an invocation measures
+  // what was asked. One column labelled "calls" hid which of the two it meant.
+  { key: "turns", label: "bal library turns", of: (a) => a.path.lookups },
+  {
+    key: "invocations",
+    label: "…invocations",
+    of: (a) => Object.values(a.path.byVerb).reduce((sum, n) => sum + n, 0),
+  },
+  { key: "toolMissing", label: "bal library MISSING", of: (a) => a.path.toolMissing },
   { key: "piped", label: "…piped", of: (a) => a.path.piped },
+  { key: "truncated", label: "…piped AND cut", of: (a) => a.path.truncated },
   { key: "failed", label: "…failed", of: (a) => a.path.failed },
   { key: "sawNext", label: "…saw ## Next", of: (a) => a.path.sawNext },
   { key: "detourCalls", label: "worst detour (calls)", of: (a) => a.path.worstDetour.calls },
-  { key: "lookupTokens", label: "lookup tokens", of: (a) => a.path.lookupTokens },
-  { key: "buildCycles", label: "agent build cycles", of: (a) => a.build.cycles },
-  { key: "sigErrors", label: "signature errors", of: (a) => a.build.totalSignatureErrors },
-  { key: "otherErrors", label: "other errors", of: (a) => a.build.totalErrors - a.build.totalSignatureErrors },
   { key: "costUsd", label: "cost (USD)", of: (a) => a.path.costUsd },
   { key: "durationSeconds", label: "duration (s)", of: (a) => Math.round(a.path.durationMs / 1000) },
 ];
@@ -153,6 +166,21 @@ export function renderReport(input: ReportInput): string {
       `${summary.green}/${summary.attempts} built · ${summary.clean}/${summary.attempts} met every expectation`,
       "",
     );
+    // ABOVE the table, because it says the table is not evidence. A `bal tool pull`
+    // inside a session can drop the locally installed `library` registration, and
+    // every lookup after that answers `unknown command 'library'` — see
+    // PathMetrics.toolMissing. Numbers from such an attempt describe a run with no
+    // tool in it, and they average in silently with runs that had one.
+    const missing = summary.stats.toolMissing;
+    if (missing && missing.max > 0) {
+      lines.push(
+        `> **NOT EVIDENCE — \`bal library\` was missing for ${missing.min}–${missing.max} lookups.** ` +
+          "Something in the session rewrote `~/.ballerina/.config/bal-tools.toml` and dropped the local " +
+          "tool. Re-install it (`packages/bal-library-tool/install-local.sh`) and re-run this case; " +
+          "disregard every number below.",
+        "",
+      );
+    }
     const base = input.baseline?.find((b) => b.key === summary.key);
     lines.push(base ? "| metric | median | spread | vs baseline |" : "| metric | median | spread |");
     lines.push(base ? "|---|---:|---:|---|" : "|---|---:|---:|");
@@ -199,6 +227,15 @@ export function pickBaseline(
   for (const dir of [...candidates].sort().reverse()) {
     const summaries = read(dir);
     if (!summaries) continue;
+    // A sweep that ran without `bal library` describes conditions that did not include
+    // the thing under test, so it cannot be a baseline. Measured: a contaminated sweep
+    // reported telemetry-kafka at 16 lookup tokens, and the next clean one printed
+    // "+6484" against it — the tool coming back, rendered as a 400x regression.
+    //
+    // ONE spoiled case disqualifies the whole sweep, not just its own row: the attempts
+    // ran concurrently against one `bal-tools.toml`, so a neighbour's clean row is not
+    // evidence that the neighbour was unaffected.
+    if (summaries.some((s) => (s.stats.toolMissing?.max ?? 0) > 0)) continue;
     const covered = new Set(summaries.map((s) => s.key));
     if (currentKeys.every((k) => covered.has(k))) return summaries;
   }

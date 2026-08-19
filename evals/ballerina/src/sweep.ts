@@ -28,6 +28,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { EvalCase } from "./cases.js";
 import { runSession } from "./driver.js";
+import { ensureToolRegistered } from "./preflight.js";
 import { readAgentBuilds, readBuildAttempt, summarize, type BuildMetrics } from "./metrics/build.js";
 import { parseTranscript, readPathMetrics, toolResults, type PathMetrics } from "./metrics/transcript.js";
 import { archive, prepareScratch, readSources, verify } from "./scratch.js";
@@ -47,7 +48,14 @@ export interface SweepOptions {
 export type SweepEvent =
   | { kind: "start"; case: string; attempt: number }
   | { kind: "done"; case: string; attempt: number; green: boolean; lookups: number; ms: number }
-  | { kind: "failed"; case: string; attempt: number; reason: string };
+  | { kind: "failed"; case: string; attempt: number; reason: string }
+  /**
+   * Something about the ENVIRONMENT was wrong and was put right, which the attempt
+   * itself survives. Separate from "failed" because it is not the attempt that
+   * failed, and separate from silence because a sweep that quietly repaired its own
+   * toolchain is a sweep whose earlier attempts may already be worthless.
+   */
+  | { kind: "repaired"; case: string; attempt: number; what: string };
 
 /** One attempt's full record — the row every report is built from. */
 export interface Attempt {
@@ -102,6 +110,15 @@ async function runAttempt(evalCase: EvalCase, attempt: number, opts: SweepOption
   mkdirSync(base, { recursive: true });
 
   try {
+    // Before EVERY attempt, not once per sweep: a `bal tool pull` inside any
+    // concurrent session can drop the local `library` registration, and from that
+    // moment every lookup in every attempt answers `unknown command 'library'`.
+    // See ensureToolRegistered — this restores the tool the sweep began against.
+    const repaired = ensureToolRegistered();
+    if (repaired) {
+      opts.onEvent({ kind: "repaired", case: `${evalCase.suite}/${evalCase.name}`, attempt, what: repaired });
+    }
+
     const scratch = prepareScratch(opts.runsRoot, evalCase, attempt, opts.skillsDir);
     const session = await runSession({
       workspace: scratch.workspace,

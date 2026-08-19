@@ -136,6 +136,43 @@ export function hostEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return out;
 }
 
+/**
+ * Is `bal library` reachable right now — and put it back if it is not.
+ *
+ * Called before EVERY attempt, not once per sweep, because the thing it guards
+ * against happens inside a session. `bal tool pull openapi` — which the
+ * `service/` cases legitimately run to generate their service from a contract —
+ * rewrites `~/.ballerina/.config/bal-tools.toml` from `bal`'s own view of
+ * installed tools, and the locally installed `library` entry carries
+ * `repository = "local"`, which that view does not include. So the entry is
+ * dropped, and every subsequent lookup in every concurrent attempt answers
+ * `unknown command 'library'`.
+ *
+ * Measured on 2026-08-17: three sessions pulled openapi, `catalog-redis` then
+ * failed four lookups, and one session tried to help itself by running
+ * `bal tool pull library` — which installed the PUBLISHED tool over the
+ * working-tree build, so the rest of the sweep measured a different tool under
+ * the name of the one under test. That is worse than a crash: it produces
+ * numbers.
+ *
+ * The repair re-runs the tool's own installer, which is a second or two when the
+ * jar is already built. It is safe to do mid-sweep because it RESTORES the tool
+ * the sweep was started against rather than changing it.
+ *
+ * @returns a note when a repair happened, so the report can say so
+ */
+export function ensureToolRegistered(): string | undefined {
+  if (tryExec("bal", ["library", "--help"]) !== undefined) return undefined;
+  const installer = join(PATHS.repoRoot, "packages", "bal-library-tool", "install-local.sh");
+  if (!existsSync(installer)) {
+    return `bal library is not registered and ${installer} is missing — attempts will measure nothing`;
+  }
+  tryExec(installer, []);
+  return tryExec("bal", ["library", "--help"]) === undefined
+    ? "bal library is not registered and re-installing it did not help — attempts will measure nothing"
+    : "bal library had been dropped from bal-tools.toml (a `bal tool pull` in a session) and was re-installed";
+}
+
 function installedToolJar(): string | undefined {
   if (!existsSync(PATHS.installedToolDir)) return undefined;
   // <version>/any/tool/libs/*.jar — one version at a time, installed by the

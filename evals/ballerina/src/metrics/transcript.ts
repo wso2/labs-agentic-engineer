@@ -54,6 +54,11 @@ export interface Lookup {
   /** Wrapped in `head`/`grep`/`sed`/`tail`/`awk` — the habit that truncates navigation. */
   piped: boolean;
   /**
+   * The pipe actually CUT something, rather than being a window the document
+   * never reached. See {@link readTruncation} — this is the half that is evidence.
+   */
+  truncated: boolean;
+  /**
    * The tool answered with a failure JSON instead of a document. Read off the
    * body rather than off `$?`, which is the only way that survives a pipe — and
    * a piped call is the common case this measures.
@@ -61,6 +66,12 @@ export interface Lookup {
   failed: boolean;
   /** The failure's `kind`, when it failed. */
   failureKind?: string;
+  /**
+   * `bal` did not know the `library` command — the tool was not there to answer.
+   * See {@link PathMetrics.toolMissing}: this invalidates an attempt rather than
+   * scoring it.
+   */
+  toolMissing: boolean;
   /** The `## Next` block survived into the result. */
   sawNext: boolean;
   /** Result size, the input the model actually paid for. */
@@ -71,8 +82,31 @@ export interface PathMetrics {
   lookups: number;
   /** How many were wrapped in a filter. The skill and `--help` both ask for zero. */
   piped: number;
+  /**
+   * How many of those pipes cut the document short — the subset that is evidence
+   * rather than habit. Since the 2026-08-17 budgets every document is bounded, so
+   * `| head -250` over a 42-line map removes nothing, and reporting it beside a
+   * `grep` that dropped a trailing import note treats the two as one finding.
+   */
+  truncated: number;
   /** Failures: a call that bought nothing but a `kind` and a suggestion. */
   failed: number;
+  /**
+   * Lookups that found no `bal library` at all — `bal: unknown command 'library'`.
+   *
+   * **Any value above zero means this attempt is not evidence.** Measured on
+   * 2026-08-17: `bal tool pull openapi`, which three sessions in one sweep ran
+   * legitimately, rewrites `~/.ballerina/.config/bal-tools.toml` and drops the
+   * locally installed `library` entry, because it carries `repository = "local"`
+   * and the regeneration does not preserve it. One session then ran
+   * `bal tool pull library` and installed the PUBLISHED tool over the working-tree
+   * build, so the sweep continued measuring a different tool under the name of the
+   * one under test.
+   *
+   * `preflight` cannot catch it — it checks once, before the first session, and the
+   * clobber happens inside them. This is the check on the way out.
+   */
+  toolMissing: number;
   /** Results that carried the `## Next` navigation block. */
   sawNext: number;
   /** Calls per verb, so "never reached for `ops`" is visible rather than inferred. */
@@ -144,6 +178,8 @@ export function readPathMetrics(ndjson: string): PathMetrics {
   return {
     lookups: lookups.length,
     piped: lookups.filter((l) => l.piped).length,
+    truncated: lookups.filter((l) => l.truncated).length,
+    toolMissing: lookups.filter((l) => l.toolMissing).length,
     failed: lookups.filter((l) => l.failed).length,
     sawNext: lookups.filter((l) => l.sawNext).length,
     byVerb,
@@ -157,7 +193,18 @@ export function readPathMetrics(ndjson: string): PathMetrics {
   };
 }
 
-/** Every `bal library` call in the transcript, in the order it was made. */
+/**
+ * Every `bal library` TURN in the transcript, in the order it was made.
+ *
+ * One record per tool call, not per invocation, and the difference is deliberate
+ * rather than the H3 defect it was first read as. A chained
+ * `bal library type … ; bal library overview …` is ONE round trip with the model
+ * and TWO questions, and the two numbers measure different things: a turn is
+ * what costs latency and context, an invocation is what was asked. Collapsing
+ * them would delete the cheaper axis, so both are reported and
+ * {@link readVerbs} is what counts the second — see `report.ts`, which labels
+ * them apart.
+ */
 export function readLookups(messages: Record<string, unknown>[], results: Map<string, string>): Lookup[] {
   const out: Lookup[] = [];
   for (const message of messages) {
@@ -174,6 +221,8 @@ export function readLookups(messages: Record<string, unknown>[], results: Map<st
         ...readInvocation(command),
         verbs: readVerbs(command),
         piped: FILTERS.test(command),
+        truncated: readTruncation(command, body),
+        toolMissing: TOOL_MISSING.test(body),
         failed: failure !== undefined,
         ...(failure !== undefined ? { failureKind: failure } : {}),
         sawNext: body.includes("## Next"),
@@ -183,6 +232,59 @@ export function readLookups(messages: Record<string, unknown>[], results: Map<st
   }
   return out;
 }
+
+/**
+ * Did the filter on this command actually cut the document, or was its window
+ * never reached?
+ *
+ * The distinction the `piped` count alone cannot make. Every document is bounded
+ * since the 2026-08-17 budgets, and `overview ballerina/crypto` is 42 lines, so
+ * `| head -250` over it is a habit with no consequence. A `grep` over the same
+ * document drops the trailing `// Special Agent Note:` off every line it keeps,
+ * which is the failure the skill's "never pipe it" line exists for. Counting both
+ * as one number is what made "6 piped of 6" unreadable.
+ *
+ * Two rules, because two kinds of filter:
+ *
+ *  - `grep`/`sed`/`awk`/`cut`/`wc` drop lines or columns BY CONSTRUCTION. There is
+ *    no window to fall short of, so they always count.
+ *  - `head`/`tail` cut only if the document reached the window. Compared against
+ *    what came back, since the pre-pipe size is not recorded anywhere — which is
+ *    also why the comparison is `>=`: a runner prefix line inflates the body by
+ *    one, and erring toward "it cut" is the safe direction for a metric whose
+ *    whole job is to not under-report damage.
+ *
+ * The residual false positive — a `head -5` over a document that was exactly five
+ * lines — is not distinguishable from outside and is left as one.
+ */
+export function readTruncation(command: string, body: string): boolean {
+  if (CONTENT_FILTERS.test(command)) return true;
+  const lines = body.replace(/\n$/, "").split("\n").length;
+  for (const match of command.matchAll(WINDOW_FILTERS)) {
+    const flags = match[2] ?? "";
+    const count = /-(?:n\s*|c\s*)?(\d+)/.exec(flags);
+    // A bare `head` or `tail` is ten lines, which is the shape that hides most.
+    const window = count?.[1] ? Number(count[1]) : DEFAULT_WINDOW_LINES;
+    const measured = /-c\b/.test(flags) ? body.length : lines;
+    if (measured >= window) return true;
+  }
+  return false;
+}
+
+/**
+ * `bal` reporting that it has no `library` command.
+ *
+ * Matched on the body rather than the exit code, which a pipe discards — and every
+ * measured occurrence was inside a piped call.
+ */
+const TOOL_MISSING = /unknown command 'library'/;
+
+/** Filters with no window: whatever they keep, they dropped the rest. */
+const CONTENT_FILTERS = /\|\s*(grep|sed|awk|cut|wc)\b/;
+/** Filters with a window, plus the argument text to read its size out of. */
+const WINDOW_FILTERS = /\|\s*(head|tail)\b([^|]*)/g;
+/** `head` and `tail` with no count. */
+const DEFAULT_WINDOW_LINES = 10;
 
 /**
  * The verb and package a command was aimed at.
@@ -195,12 +297,15 @@ export function readLookups(messages: Record<string, unknown>[], results: Map<st
 export function readInvocation(command: string): { verb: string; target: string } {
   const match = /\bbal library\s+([^\s|;&]+)(?:\s+([^\s|;&-][^\s|;&]*))?/.exec(command);
   if (!match) return { verb: "", target: "" };
-  const verb = match[1] ?? "";
+  return describeInvocation(match[1] ?? "", match[2] ?? "");
+}
+
+function describeInvocation(verb: string, target: string): { verb: string; target: string } {
   if (!VERBS.has(verb)) return { verb: verb.replace(/^--?/, "") || "", target: "" };
-  // `search` takes keywords, never a coordinate — reporting the first keyword as
+  // `find` takes keywords, never a coordinate — reporting the first keyword as
   // a package would invent detours between unrelated searches.
-  if (verb === "search") return { verb, target: "" };
-  return { verb, target: match[2] ?? "" };
+  if (verb === "find") return { verb, target: "" };
+  return { verb, target };
 }
 
 /**
@@ -218,20 +323,52 @@ export function readVerbs(command: string): string[] {
   return out.filter((v) => v !== "");
 }
 
-/** The `kind` of a failure JSON, or undefined when the body is a document. */
+/**
+ * The `kind` of a failure JSON, or undefined when the body is a document.
+ *
+ * H2, and it inverted the metric this harness exists to produce. The check used
+ * to be `trimmed.startsWith("{")`, which only holds when the caller REDIRECTED
+ * stderr — an unpiped failure arrives as `Exit code 1\n\n{"kind":…}` because the
+ * tool runner prefixes the code. So every failure from a well-behaved,
+ * unpiped call was scored as a successful document, and the failure rate
+ * therefore *rewarded* the piping the design is trying to make unnecessary.
+ *
+ * The fix is to look for the object rather than to require it first: one JSON
+ * object on stderr is the whole contract (ADR-0015), so the last `{…}` run in
+ * the body is it, whatever preceded it.
+ */
 function readFailure(body: string): string | undefined {
-  const trimmed = body.trim();
-  if (!trimmed.startsWith("{")) return undefined;
-  try {
-    const parsed: unknown = JSON.parse(trimmed);
-    if (parsed && typeof parsed === "object") {
-      const kind = (parsed as Record<string, unknown>).kind;
-      if (typeof kind === "string") return kind;
+  for (const candidate of failureCandidates(body)) {
+    try {
+      const parsed: unknown = JSON.parse(candidate);
+      if (parsed && typeof parsed === "object") {
+        const kind = (parsed as Record<string, unknown>).kind;
+        if (typeof kind === "string") return kind;
+      }
+    } catch {
+      // Not this run; try the next.
     }
-  } catch {
-    return undefined;
   }
   return undefined;
+}
+
+/**
+ * Every `{…}` run in the body, innermost-last first.
+ *
+ * A document can legitimately contain braces — a record body does — so this
+ * cannot simply take the first `{`. It takes candidates from the LAST `{` on a
+ * line that starts one, which is where a one-line failure object sits, and lets
+ * `JSON.parse` reject anything that is not one.
+ */
+function failureCandidates(body: string): string[] {
+  const out: string[] = [];
+  for (const line of body.trim().split("\n").reverse()) {
+    const start = line.indexOf("{");
+    if (start >= 0 && line.trimEnd().endsWith("}")) {
+      out.push(line.slice(start).trimEnd());
+    }
+  }
+  return out;
 }
 
 /**
