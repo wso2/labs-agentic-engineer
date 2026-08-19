@@ -42,7 +42,7 @@ import { EarlierSessions } from "./EarlierSessions";
 import { MilestonePanel } from "./MilestonePanel";
 import { RunHistoryList } from "./RunHistoryList";
 import { RunStory } from "./RunStory";
-import { ConnectionConfiguration } from "./ConnectionConfiguration";
+import { ExternalResources } from "./ExternalResources";
 
 /**
  * The Builds page is ONE VERSION'S STORY, latest by default.
@@ -60,12 +60,12 @@ export function BuildsPage({
   projectName,
   tag,
   onTagChange,
-  connectionsOpen,
+  connections,
 }: {
   projectName: string;
   tag: string | undefined;
   onTagChange: (tag: string | undefined) => void;
-  connectionsOpen: boolean;
+  connections: string | undefined;
 }) {
   const builds = useBuilds(projectName);
 
@@ -173,10 +173,10 @@ export function BuildsPage({
     return (
       <>
         <PageHeader title="Builds" backTo={backTo} />
-        <ConnectionConfiguration projectName={projectName} open={connectionsOpen} />
         <Box sx={{ display: "flex", justifyContent: "center", p: 6 }}>
           <CircularProgress aria-label="Loading builds" />
         </Box>
+        <ExternalResources projectName={projectName} connections={connections} />
       </>
     );
   }
@@ -185,7 +185,6 @@ export function BuildsPage({
     return (
       <>
         <PageHeader title="Builds" backTo={backTo} />
-        <ConnectionConfiguration projectName={projectName} open={connectionsOpen} />
         <Alert
           severity="error"
           action={<Button onClick={() => void builds.refetch()}>Retry</Button>}
@@ -195,6 +194,7 @@ export function BuildsPage({
             ? `: ${builds.error.message}`
             : ""}
         </Alert>
+        <ExternalResources projectName={projectName} connections={connections} />
       </>
     );
   }
@@ -203,11 +203,11 @@ export function BuildsPage({
     return (
       <>
         <PageHeader title="Builds" backTo={backTo} />
-        <ConnectionConfiguration projectName={projectName} open={connectionsOpen} />
         <Typography variant="body2" color="text.secondary" sx={{ py: 3 }}>
           No builds yet — publish your spec and click Build in the spec view to
           start the first one.
         </Typography>
+        <ExternalResources projectName={projectName} connections={connections} />
       </>
     );
   }
@@ -239,7 +239,6 @@ export function BuildsPage({
       {/* No version subtitle: the picker on the right already names the
           version, and repeating it under the title said it twice. */}
       <PageHeader title="Builds" backTo={backTo} actions={versionSelector} />
-      <ConnectionConfiguration projectName={projectName} open={connectionsOpen} />
 
       {runs.isError ? (
         <Alert
@@ -287,6 +286,14 @@ export function BuildsPage({
                 {...(milestone ? { milestone } : {})}
               />
             )}
+            {/* IN the run's column, directly under its card. Full width below
+                the grid put it after whichever of the two columns was taller —
+                a long milestone, or a version with many earlier sessions — so
+                the one thing on this page a person can act on was the thing they
+                had to scroll for. Above the history blocks for the same reason:
+                a settled session is a record, and a record must not outrank an
+                open request for a value. */}
+            <ExternalResources projectName={projectName} connections={connections} />
             {/* The current run's own earlier sessions, then the milestone's
                 earlier runs — both are history, and both belong below the
                 card rather than inside it. */}

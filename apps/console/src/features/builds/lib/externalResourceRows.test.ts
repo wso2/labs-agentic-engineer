@@ -18,11 +18,11 @@
 
 import { describe, expect, it } from "vitest";
 import type { components } from "../../../generated/aep-api";
-import { externalConnectionRows } from "./externalConnectionRows";
+import { externalResourceRows } from "./externalResourceRows";
 
 type ComponentDependencies = components["schemas"]["ComponentDependencies"];
 
-describe("externalConnectionRows", () => {
+describe("externalResourceRows", () => {
   it("projects one described card with the union of every consumer's keys", () => {
     const dependencies: ComponentDependencies[] = [
       {
@@ -54,7 +54,7 @@ describe("externalConnectionRows", () => {
       },
     ];
 
-    expect(externalConnectionRows(dependencies)).toEqual([
+    expect(externalResourceRows(dependencies)).toEqual([
       {
         id: "external:stripe",
         name: "stripe",
@@ -93,7 +93,7 @@ describe("externalConnectionRows", () => {
       },
     ];
 
-    expect(externalConnectionRows(dependencies)).toEqual([
+    expect(externalResourceRows(dependencies)).toEqual([
       {
         id: "external:stripe",
         name: "Stripe",
@@ -122,7 +122,7 @@ describe("externalConnectionRows", () => {
       },
     ];
 
-    expect(externalConnectionRows(dependencies)[0]?.config).toEqual([
+    expect(externalResourceRows(dependencies)[0]?.config).toEqual([
       { key: "REGION", secret: false, defaultValue: "us-east-1" },
     ]);
   });
@@ -142,6 +142,6 @@ describe("externalConnectionRows", () => {
       },
     ];
 
-    expect(externalConnectionRows(dependencies)).toEqual([]);
+    expect(externalResourceRows(dependencies)).toEqual([]);
   });
 });

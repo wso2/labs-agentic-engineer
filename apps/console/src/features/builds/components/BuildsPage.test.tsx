@@ -238,14 +238,14 @@ afterEach(() => {
 function renderPage(
   tag?: string,
   onTagChange = vi.fn(),
-  connectionsOpen = false,
+  connections: string | undefined = undefined,
 ) {
   render(
     <BuildsPage
       projectName="acme"
       tag={tag}
       onTagChange={onTagChange}
-      connectionsOpen={connectionsOpen}
+      connections={connections}
     />,
   );
   return onTagChange;
@@ -257,7 +257,7 @@ describe("BuildsPage — one version's story", () => {
     expect(screen.getByText(/No builds yet/)).toBeInTheDocument();
   });
 
-  it("keeps project connection configuration expanded without build history", () => {
+  it("offers external resources even with no build history", () => {
     mockConnectionDependencies = [
       {
         componentName: "checkout-api",
@@ -274,13 +274,15 @@ describe("BuildsPage — one version's story", () => {
       configured: false,
       dependencies: [{ name: "stripe", state: "unset", missingKeys: [] }],
     };
-    renderPage(undefined, vi.fn(), true);
+    renderPage(undefined, vi.fn(), "open");
 
+    // Values are a project-level concern, so the section is reachable before the
+    // project has ever been built — that is the "configure ahead of a build" path.
+    expect(screen.getByText(/No builds yet/)).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /Connection configuration/i }),
+      screen.getByRole("button", { name: /External resources/i }),
     ).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByRole("region", { name: "stripe" })).toBeInTheDocument();
-    expect(screen.getByDisplayValue("us-east-1")).toBeInTheDocument();
+    expect(screen.getByRole("listitem", { name: "stripe" })).toBeInTheDocument();
   });
 
   it("defaults to the newest version, not to a ledger list", () => {
@@ -868,7 +870,7 @@ describe("BuildsPage — one version's story", () => {
         projectName="acme"
         tag={undefined}
         onTagChange={vi.fn()}
-        connectionsOpen={false}
+        connections={undefined}
       />,
     );
     expect(invalidateQueries).not.toHaveBeenCalled();
@@ -881,7 +883,7 @@ describe("BuildsPage — one version's story", () => {
         projectName="acme"
         tag={undefined}
         onTagChange={vi.fn()}
-        connectionsOpen={false}
+        connections={undefined}
       />,
     );
     expect(invalidateQueries).toHaveBeenCalledTimes(1);
@@ -892,7 +894,7 @@ describe("BuildsPage — one version's story", () => {
         projectName="acme"
         tag={undefined}
         onTagChange={vi.fn()}
-        connectionsOpen={false}
+        connections={undefined}
       />,
     );
     expect(invalidateQueries).toHaveBeenCalledTimes(1);

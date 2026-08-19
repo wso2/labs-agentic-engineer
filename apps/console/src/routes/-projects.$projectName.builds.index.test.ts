@@ -27,7 +27,18 @@ describe("validateBuildsSearch", () => {
     });
   });
 
-  it("drops unrecognised configuration state", () => {
-    expect(validateBuildsSearch({ connections: "closed" })).toEqual({});
+  // Anything that is not `open` names a RESOURCE whose dialog should open, so
+  // the value cannot be validated against a fixed set here — an unknown name
+  // degrades to an expanded section inside the component, which beats erroring
+  // the route on a link a colleague was sent.
+  it("keeps a named resource as the configuration deep link", () => {
+    expect(validateBuildsSearch({ connections: "email-provider" })).toEqual({
+      connections: "email-provider",
+    });
+  });
+
+  it("drops a configuration deep link that names nothing", () => {
+    expect(validateBuildsSearch({ connections: "" })).toEqual({});
+    expect(validateBuildsSearch({ connections: 7 })).toEqual({});
   });
 });

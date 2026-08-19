@@ -30,15 +30,42 @@ import {
 import { X } from "@wso2/oxygen-ui-icons-react";
 import { ConnectionValueFields } from "@aep/ui-connection-value-fields";
 import { useSaveConnectionValues } from "../api/queries";
-import type { ConnectionRow } from "../lib/promotion";
+import type { components } from "../../../generated/aep-api";
 
-// Update an external connection's values for an environment (#395: the
-// build-time drawer collected them once — often as placeholders — and this
-// is the way to hand the platform the real ones afterwards). The fields come
-// from the connection's own config schema; values are WRITE-ONLY: secrets go
-// to the secret manager and are never echoed back, so the form always opens
-// empty rather than pretending to show what is stored. Saving re-authors the
-// connection's resource and the platform reconciles the new values in.
+type ConfigKey = components["schemas"]["ConfigKey"];
+
+/**
+ * What this dialog needs of a dependency: a name to save under and the keys to
+ * collect. Deliberately NOT `ConnectionRow` — the Builds page projects its own
+ * row type (external-only, keys unioned across consumers) and both satisfy this
+ * shape structurally, so two callers share one dialog without either lib
+ * bending to the other.
+ */
+export interface ValuesDialogResource {
+  name: string;
+  config: ConfigKey[];
+}
+
+/** Plain defaults the design already declares are legitimate initial input; a
+ *  SECRET default is not — echoing one into a field would put a shared dummy
+ *  credential a click away from being saved as the real value. */
+function seedPlainDefaults(config: ConfigKey[]): Record<string, string> {
+  return Object.fromEntries(
+    config
+      .filter((key) => !key.secret && key.defaultValue !== undefined)
+      .map((key) => [key.key, key.defaultValue ?? ""]),
+  );
+}
+
+// Collect an external resource's values for an environment. Two callers: the
+// Deployments page (#395 — the build-time drawer collected placeholders and this
+// hands the platform the real ones), and the Builds page's External resources
+// section, where a run parked on the deploy gate is waiting for them.
+//
+// The fields come from the resource's own config schema, and stored values are
+// WRITE-ONLY: secrets go to the secret manager and are never echoed back, so a
+// key already set opens EMPTY rather than pretending to show what is stored.
+// Saving re-authors the resource and the platform reconciles the new values in.
 
 export function ConnectionValuesDialog({
   open,
@@ -54,19 +81,24 @@ export function ConnectionValuesDialog({
   /** Called after a successful save (the page owns the confirmation). */
   onSaved: () => void;
   projectName: string;
-  connection: ConnectionRow;
+  connection: ValuesDialogResource;
   environment: string;
 }) {
-  const save = useSaveConnectionValues(projectName);
-  const [values, setValues] = useState<Record<string, string>>({});
+  const save = useSaveConnectionValues(projectName, connection.name);
+  const [values, setValues] = useState<Record<string, string>>(() =>
+    seedPlainDefaults(connection.config),
+  );
+  // Reseed on CLOSE, never while open — a reseed mid-entry would wipe the field
+  // the user is typing into. Keyed on the resource too, so opening a second one
+  // starts from its own defaults rather than the first one's.
   useEffect(() => {
     if (!open) {
-      setValues({});
+      setValues(seedPlainDefaults(connection.config));
       save.reset();
     }
     // save.reset is stable (react-query); depending on `save` would loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [open, connection.name]);
 
   const complete = connection.config.every(
     (k) => (values[k.key] ?? "").trim() !== "",
@@ -87,7 +119,7 @@ export function ConnectionValuesDialog({
       </DialogTitle>
       <DialogContent>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          New {environment} values for this connection. Stored values never
+          New {environment} values for this resource. Stored values never
           display here — saving replaces them all.
         </Typography>
         <ConnectionValueFields
