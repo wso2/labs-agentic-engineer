@@ -665,17 +665,9 @@ func TestAdoption_IntoALiveRunIsANoOp(t *testing.T) {
 	}
 }
 
-func TestAdoption_NeverDeployedProjectRefusesClearly(t *testing.T) {
-	h := newHarness(t) // no runs at all
-
-	err := h.events.AdoptIssue(context.Background(), testOrg, testProject, AdoptTarget{Number: 31})
-	if !errors.Is(err, ErrNoDeployedMilestone) {
-		t.Fatalf("adoption without a deployed version must refuse with the actionable error, got %v", err)
-	}
-	if len(h.issues.assigned) != 0 || len(h.sup.started) != 0 {
-		t.Fatal("a refused adoption must write nothing")
-	}
-}
+// The refusal case now lives in adopt_test.go
+// (TestAdoption_NothingBuiltRefusesWithTheSharedSentinel), where it asserts the
+// shared sentinel the HTTP edge maps and the in-flight fallback that precedes it.
 
 // ---- revalidation ---------------------------------------------------------
 

@@ -19,8 +19,12 @@ package task
 import (
 	"context"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/wso2/aep/aep-api/internal/delivery"
+	"github.com/wso2/aep/aep-api/internal/platform/apierr"
 )
 
 // promote-task-from-issue is the SRE/RCA handoff's dispatch leg. It is ADOPTION
@@ -119,14 +123,31 @@ func TestPromoteAndExecute_NilEnsurer_SkipsPreCheck(t *testing.T) {
 }
 
 // The adopter's refusal reaches the caller verbatim: the console and the MCP
-// server both render it, and "no milestone for the deployed version — trigger a
-// build" is the message a human needs.
+// server both render it, and the message is what a human needs to act on.
 func TestPromoteAndExecute_AdopterErrorPropagates(t *testing.T) {
-	adopter := &fakeAdopter{err: errors.New("no milestone for the deployed version — trigger a build")}
+	adopter := &fakeAdopter{err: delivery.ErrNoAdoptableMilestone}
 	cmds, _ := newPromoteCommands([]string{"user-service"}, adopter)
 
 	err := cmds.PromoteAndExecute(context.Background(), "org1", "proj1", "user-service", 42)
-	if err == nil || !strings.Contains(err.Error(), "no milestone for the deployed version") {
+	if !errors.Is(err, delivery.ErrNoAdoptableMilestone) {
 		t.Fatalf("err = %v, want the adopter's refusal verbatim", err)
+	}
+}
+
+// THE REGRESSION at the HTTP edge. This refusal used to fall through to the
+// default arm and leave as an opaque 500 with an "internal error" body — so the
+// SRE/RCA handoff's only actionable failure was indistinguishable from a server
+// fault, and the message written for a human never reached one.
+func TestMapTaskCommandError_NoAdoptableMilestoneIsAConflict(t *testing.T) {
+	var ae *apierr.Error
+	if !errors.As(mapTaskCommandError(delivery.ErrNoAdoptableMilestone), &ae) {
+		t.Fatal("the refusal must map to a typed transport error")
+	}
+	if ae.Status != http.StatusConflict {
+		t.Errorf("status = %d, want %d — a project with nothing built is not a server fault",
+			ae.Status, http.StatusConflict)
+	}
+	if !strings.Contains(ae.Message, delivery.ErrNoAdoptableMilestone.Error()) {
+		t.Errorf("message = %q, want the actionable refusal, not an opaque one", ae.Message)
 	}
 }

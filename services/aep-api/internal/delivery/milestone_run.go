@@ -16,7 +16,25 @@
 
 package delivery
 
-import "time"
+import (
+	"errors"
+	"time"
+)
+
+// ErrNoAdoptableMilestone is adoption's honest refusal: a bare issue joins the
+// milestone of the version it is an incident against, and a project that has
+// never started a spec build has no such version — there is nothing to attach
+// it to, and a guess would file the incident against a version that does not
+// exist.
+//
+// It lives in the kernel rather than in `eventcore` because the HTTP edge has
+// to recognise it: the promote-from-issue leg of the SRE/RCA handoff surfaces
+// it to a caller verbatim, and `task` may not import `eventcore` (the task ⊥
+// run arch lock). A sentinel both packages already import is the only place a
+// shared `errors.Is` can live.
+//
+// The message is written for a human because that is where it ends up.
+var ErrNoAdoptableMilestone = errors.New("no version to adopt this issue into — build the project first")
 
 // MilestoneRun origins, states, terminal reasons and validation verdicts
 // (plain strings, matching the model convention — canonical values here, no

@@ -39,6 +39,34 @@ const autoRCALogQuery = "error"
 // "default" is a placeholder the observer accepts when no real channel exists.
 const autoRCADefaultChannel = "default"
 
+// autoRCAEvaluationInterval is how often the adapter evaluates the rule, and so
+// the DETECTION LATENCY: an error waits at most one interval before it can raise
+// an alert. It is deliberately short — an RCA report is only useful while the
+// failure is still fresh.
+//
+// It is NOT the gap between two RCA runs. These used to be the same knob (both
+// 30m), on the reasoning that the repair loop (alert → RCA → GitHub issue →
+// coding-agent → PR) takes ~30m and re-firing inside that window re-analyses a
+// failure already being fixed. That conflated two independent concerns and paid
+// for the cooldown with 30m of blindness. The cooldown now lives where it
+// belongs: the observer's ALERT_SUPPRESSION_WINDOW, which drops a repeat alert
+// per (rule, namespace, component UID) before it reaches incident storage,
+// notification, or RCA. Keep the two in sync — see the SRE installers
+// (tools/aectl/cmd/sre.go, deployments/scripts/setup-observability.sh).
+//
+// autoRCAEvaluationWindow is the lookback each evaluation aggregates over. It is
+// held LARGER than the interval so consecutive evaluations overlap: a line is
+// indexed by fluent-bit some time after the service writes it, and a window that
+// merely abuts the previous one drops any line that lands just after its window
+// closed. The overlap re-counts lines an earlier evaluation already alerted on,
+// which is harmless precisely because suppression dedupes downstream — with
+// window == interval that double-count was the thing to avoid, so tightening
+// the window without a suppression window in place would reintroduce it.
+const (
+	autoRCAEvaluationWindow   = "5m"
+	autoRCAEvaluationInterval = "1m"
+)
+
 // DesiredObservabilityAlertRuleTraits returns the default "error → RCA"
 // observability-alert-rule trait instance (+ its per-environment config) for a
 // component. componentName is the k8s-shaped name; the instance is named
@@ -65,8 +93,8 @@ func DesiredObservabilityAlertRuleTraits(componentName string) (traits []opencho
 				"query": autoRCALogQuery,
 			},
 			"condition": map[string]interface{}{
-				"window":    "5m",
-				"interval":  "1m",
+				"window":    autoRCAEvaluationWindow,
+				"interval":  autoRCAEvaluationInterval,
 				"operator":  "gte",
 				"threshold": 1,
 			},

@@ -375,9 +375,26 @@ func (e *Events) OnIssues(ctx context.Context, _, action string, payload []byte)
 	if !ok {
 		return nil // an issue outside every milestone belongs to no run
 	}
-	run, err := e.p.Runs.LiveRunForMilestone(ctx, orgID, projectID, ms.Number)
+	return e.wakeIfWorkable(ctx, orgID, projectID, ms.Number)
+}
+
+// wakeIfWorkable signals the run parked on a milestone that its working set is
+// no longer empty. It is the ONE definition of "this milestone can now be
+// worked", shared by the issues webhook and by adoption — two callers that must
+// not drift apart on when a parked run deserves waking.
+//
+// Returns having written nothing when there is no run, when the run is not
+// parked, or when the milestone still holds nothing dispatchable.
+func (e *Events) wakeIfWorkable(ctx context.Context, orgID, projectID string, milestoneNumber int) error {
+	run, err := e.p.Runs.LiveRunForMilestone(ctx, orgID, projectID, milestoneNumber)
 	if err != nil || run == nil {
 		return err
+	}
+	if e.p.Issues == nil {
+		// AdoptIssue tolerates a nil Issues (it guards both of its own writes),
+		// and reaches here regardless — so this must guard too, or a partially
+		// wired Events panics on the counts read rather than degrading.
+		return nil
 	}
 	if run.State != delivery.RunStateWaiting {
 		// A running run re-reads the milestone at its own cycle boundary; waking
@@ -387,7 +404,7 @@ func (e *Events) OnIssues(ctx context.Context, _, action string, payload []byte)
 		// and is not needed.
 		return nil
 	}
-	counts, err := e.p.Issues.MilestoneIssueCounts(ctx, orgID, projectID, ms.Number)
+	counts, err := e.p.Issues.MilestoneIssueCounts(ctx, orgID, projectID, milestoneNumber)
 	if err != nil {
 		return err
 	}

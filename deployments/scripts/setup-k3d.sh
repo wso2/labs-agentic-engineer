@@ -119,6 +119,11 @@ echo "✅ CoreDNS configured"
 # Fix node-level DNS (8.8.8.8 fallback for external image pulls).
 fix_node_dns
 
+# Raise the node's inotify instance ceiling so `kubectl logs -f` keeps working
+# once the cluster is fully loaded. Unconditional (not gated on cluster
+# creation) because the sysctl resets with the node container.
+raise_node_inotify_limits
+
 # Ensure pods can resolve host.k3d.internal (k3d only sets it as a TLS SAN;
 # the CoreDNS NodeHosts entry is on us). Paired with OC's coredns-custom.yaml
 # rewrite for *.openchoreo.localhost above.

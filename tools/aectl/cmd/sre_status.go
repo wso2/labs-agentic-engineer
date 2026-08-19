@@ -25,6 +25,7 @@ import (
 	"github.com/spf13/cobra"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 
 	k8s "github.com/wso2/aep/aectl/internal/kubernetes"
 )
@@ -95,7 +96,12 @@ func runSreStatus(cmd *cobra.Command, args []string) error {
 
 	// ── ESO secrets ──────────────────────────────────────────────────────────
 	fmt.Println("ESO secrets")
-	esoSecrets := []string{"opensearch-admin-credentials", "rca-agent-secret", "observer-secret"}
+	esoSecrets := []string{
+		"opensearch-admin-credentials",
+		"rca-agent-secret",
+		"rca-agent-anthropic-secret",
+		"observer-secret",
+	}
 	for _, name := range esoSecrets {
 		_, err := client.CoreV1().Secrets(sreStatusObsNamespace).Get(ctx, name, metav1.GetOptions{})
 		switch {
@@ -107,6 +113,19 @@ func runSreStatus(cmd *cobra.Command, args []string) error {
 			fmt.Printf("  %-36s (error: %v)\n", name, err)
 		}
 	}
+	fmt.Println()
+
+	// ── RCA LLM key ──────────────────────────────────────────────────────────
+	// Secret presence above says nothing about whether the RCA agent can reach an
+	// LLM. Both sources may hold an EMPTY RCA_LLM_API_KEY — an empty string is a
+	// legal Secret value, and rca-agent-secret is created unconditionally even
+	// when deployments/.env carries no key — so "present" reads identically for a
+	// working install and a broken one. Report the source the agent will actually
+	// resolve instead: src/clients/llm.py:resolve_api_key prefers the mounted file
+	// (rca-agent-anthropic-secret) and falls back to the envFrom variable
+	// (rca-agent-secret).
+	fmt.Println("RCA LLM key")
+	reportRCALLMKeySource(ctx, client)
 	fmt.Println()
 
 	// ── Pods ─────────────────────────────────────────────────────────────────
@@ -135,4 +154,61 @@ func runSreStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// rcaLLMKeySources are the two RCA_LLM_API_KEY carriers in the resolution order
+// the agent itself uses: src/clients/llm.py:resolve_api_key prefers the mounted
+// file (rca-agent-anthropic-secret) and falls back to the envFrom variable
+// (rca-agent-secret).
+var rcaLLMKeySources = []struct{ secret, source string }{
+	{"rca-agent-anthropic-secret", "org's console-connected key"},
+	{"rca-agent-secret", "static key from deployments/.env"},
+}
+
+// reportRCALLMKeySource prints the key source the RCA agent will actually
+// resolve, walking the sources in the agent's own precedence order.
+//
+// An unreadable Secret stops the walk rather than falling through to the next
+// source: a higher-precedence source that cannot be read may or may not hold the
+// key that wins, so the outcome is unknown — and reporting an unknown as "NONE —
+// analyses will fail" is the same class of false signal this command exists to
+// remove.
+func reportRCALLMKeySource(ctx context.Context, client kubernetes.Interface) {
+	for _, src := range rcaLLMKeySources {
+		nonEmpty, err := secretKeyNonEmpty(ctx, client, sreStatusObsNamespace, src.secret, "RCA_LLM_API_KEY")
+		switch {
+		case err != nil:
+			fmt.Printf("  %-36s unable to verify: %v\n", src.secret, err)
+			return
+		case nonEmpty:
+			fmt.Printf("  %-36s %s\n", src.secret, src.source)
+			return
+		}
+	}
+	fmt.Printf("  %-36s NONE — analyses will fail\n", "(unresolved)")
+	fmt.Println("  Connect a key at Settings → Anthropic Integration, or set")
+	fmt.Println("  ANTHROPIC_API_KEY in deployments/.env and re-run setup-observability.sh.")
+}
+
+// secretKeyNonEmpty reports whether ns/name carries a non-empty value at key.
+//
+// A missing Secret, a missing key, and a present-but-empty value all collapse to
+// (false, nil) on purpose: for credential wiring they are the same outcome — the
+// key is not there — and it is the empty value specifically that a plain
+// existence check reports as healthy. A missing Secret in particular is the
+// normal state for rca-agent-anthropic-secret on an install that has never had a
+// key connected.
+//
+// Any other API error is returned rather than folded into false: an unreadable
+// Secret is not evidence of a missing key either, and the caller must be able to
+// say "unable to verify" instead of diagnosing a failure it did not observe.
+func secretKeyNonEmpty(ctx context.Context, client kubernetes.Interface, ns, name, key string) (bool, error) {
+	s, err := client.CoreV1().Secrets(ns).Get(ctx, name, metav1.GetOptions{})
+	switch {
+	case apierrors.IsNotFound(err):
+		return false, nil
+	case err != nil:
+		return false, err
+	}
+	return len(s.Data[key]) > 0, nil
 }
