@@ -76,6 +76,13 @@ every key is empty — because an external secret is health-checked as an unknow
 resource and reported healthy unconditionally. The two words name different
 facts and must not be merged.
 
+Both OpenChoreo behaviours this decision rests on — that an absent key fails
+rendering while an empty one renders as an empty string, and that a binding
+reports `Ready` regardless of what its secret backend holds — are pinned with
+citations and an OpenChoreo version in
+[`openchoreo-resource-binding-behavior.md`](../../services/aep-api/internal/projects/design/openchoreo-resource-binding-behavior.md),
+so a version bump has an obvious place to be re-verified.
+
 ## Consequences
 
 **The deploy gate requires the platform to own deployment.** Today components are
