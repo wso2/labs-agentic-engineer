@@ -45,7 +45,8 @@ type fakeIssues struct {
 	// filter by project (production lists issues per project repo). Seeded issues
 	// carry no project and match every project — backward compatible with the
 	// single-project tests.
-	project map[int]string
+	project   map[int]string
+	milestone map[int]int
 	// raceNewIssues simulates GitHub's eventually-consistent label-filtered issue
 	// LIST: when true, an issue just returned by CreateIssue is hidden from
 	// ListIssues (as if the list index has not caught up yet). CreateIssue still
@@ -61,7 +62,7 @@ func newFakeIssues(seed []sourcecontrol.IssueInfo) *fakeIssues {
 			max = i.Number
 		}
 	}
-	return &fakeIssues{list: seed, closed: map[int]string{}, comments: map[int][]string{}, nextNum: max + 1, project: map[int]string{}, hiddenFromList: map[int]bool{}}
+	return &fakeIssues{list: seed, closed: map[int]string{}, comments: map[int][]string{}, nextNum: max + 1, project: map[int]string{}, milestone: map[int]int{}, hiddenFromList: map[int]bool{}}
 }
 
 func (f *fakeIssues) ListIssues(_ context.Context, _, projectID string, labels []string) ([]sourcecontrol.IssueInfo, error) {
@@ -86,12 +87,37 @@ func (f *fakeIssues) ListIssues(_ context.Context, _, projectID string, labels [
 	}
 	return out, nil
 }
+func (f *fakeIssues) ListMilestoneIssues(_ context.Context, _, projectID string, filter sourcecontrol.MilestoneIssuesFilter) ([]sourcecontrol.IssueInfo, error) {
+	var out []sourcecontrol.IssueInfo
+	for _, i := range f.list {
+		if f.project[i.Number] != projectID || f.milestone[i.Number] != filter.Number {
+			continue
+		}
+		if filter.State != "" && filter.State != "all" && !strings.EqualFold(i.State, filter.State) {
+			continue
+		}
+		matches := true
+		for _, label := range filter.Labels {
+			if !contains(i.Labels, label) {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			out = append(out, i)
+		}
+	}
+	return out, nil
+}
 func (f *fakeIssues) CreateIssue(_ context.Context, _, projectID string, req sourcecontrol.CreateIssueRequest) (*sourcecontrol.IssueResult, error) {
 	f.created = append(f.created, req)
 	n := f.nextNum
 	f.nextNum++
 	f.list = append(f.list, sourcecontrol.IssueInfo{Number: n, Title: req.Title, Body: req.Body, State: "open", Labels: req.Labels})
 	f.project[n] = projectID
+	if req.Milestone != nil {
+		f.milestone[n] = *req.Milestone
+	}
 	if f.raceNewIssues {
 		f.hiddenFromList[n] = true
 	}
@@ -476,7 +502,7 @@ func TestEnsureProvisionIssues_MintsPerDepDeduped(t *testing.T) {
 	}
 	// The returned map carries the minted gate number for each distinct dep — the
 	// read-your-write the build path threads past the racy list.
-	if gateByDep["stripe"] != 0 || gateByDep["orders-db"] == 0 {
+	if gateByDep["stripe"].number != 0 || gateByDep["orders-db"].number == 0 {
 		t.Fatalf("EnsureProvisionIssues must return the minted gate number per dep, got %+v", gateByDep)
 	}
 	// A gate is PROSE plus two labels: the aep:provision marker and the
@@ -511,7 +537,7 @@ func TestEnsureProvisionIssues_MintsPerDepDeduped(t *testing.T) {
 		t.Fatalf("second mint must be a no-op, created %d", len(issues.created))
 	}
 	// The map still resolves the pre-existing open gates (from openProvisionDeps).
-	if gateByDep2["stripe"] != 0 || gateByDep2["orders-db"] == 0 {
+	if gateByDep2["stripe"].number != 0 || gateByDep2["orders-db"].number == 0 {
 		t.Fatalf("second call must still return the existing gate numbers, got %+v", gateByDep2)
 	}
 }

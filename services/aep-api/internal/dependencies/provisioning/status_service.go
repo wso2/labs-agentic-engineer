@@ -58,6 +58,14 @@ type ProjectDependencyReadiness struct {
 	Dependencies []ExternalDependencyReadiness
 }
 
+// DeploymentReadiness keeps the two deploy-gate blockers separate: external
+// configuration is user work, while platform-resource provisioning is work the
+// platform is still completing.
+type DeploymentReadiness struct {
+	Unconfigured []string
+	Provisioning []string
+}
+
 // Status reads the dependency's per-env OC binding and reports its readiness +
 // output names. External and platform-resource bindings share one naming form
 // (ExternalResourceBindingName), so one read path serves both. A missing binding
@@ -155,6 +163,64 @@ func (s *Service) ConfigurationReadiness(ctx context.Context, orgID, projectID, 
 		result.Dependencies = append(result.Dependencies, ExternalDependencyReadiness{Name: name, State: state, MissingKeys: missing})
 	}
 	return result, nil
+}
+
+// DeploymentReadiness derives the whole project's deploy gate from one design
+// snapshot. External dependencies are decoded against their union config
+// schema; platform resources use the OpenChoreo binding Ready condition.
+func (s *Service) DeploymentReadiness(ctx context.Context, orgID, projectID, env string) (*DeploymentReadiness, error) {
+	env = normalizedEnv(env)
+	comps, err := s.design.ReadDesignComponents(ctx, orgID, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("provisioning: read design: %w", err)
+	}
+	out := &DeploymentReadiness{Unconfigured: []string{}, Provisioning: []string{}}
+
+	externals := spec.UnionExternalConfigKeys(comps)
+	externalNames := make([]string, 0, len(externals))
+	for name := range externals {
+		externalNames = append(externalNames, name)
+	}
+	sort.Strings(externalNames)
+	for _, name := range externalNames {
+		bindingName := ocname.ExternalResourceBindingName(projectID, name, env)
+		binding, readErr := s.bindings.GetBinding(ctx, orgID, bindingName)
+		if readErr != nil {
+			return nil, fmt.Errorf("provisioning: read binding %q: %w", bindingName, readErr)
+		}
+		state, _, decodeErr := externalValueState(binding, externals[name])
+		if decodeErr != nil {
+			return nil, fmt.Errorf("provisioning: decode binding %q: %w", bindingName, decodeErr)
+		}
+		if state != ValueStateConfigured {
+			out.Unconfigured = append(out.Unconfigured, name)
+		}
+	}
+
+	platform := map[string]struct{}{}
+	for _, comp := range comps {
+		for _, dep := range comp.Dependencies {
+			if dep.Kind == spec.DependencyKindPlatformResource {
+				platform[dep.Name] = struct{}{}
+			}
+		}
+	}
+	platformNames := make([]string, 0, len(platform))
+	for name := range platform {
+		platformNames = append(platformNames, name)
+	}
+	sort.Strings(platformNames)
+	for _, name := range platformNames {
+		bindingName := ocname.ExternalResourceBindingName(projectID, name, env)
+		binding, readErr := s.bindings.GetBinding(ctx, orgID, bindingName)
+		if readErr != nil {
+			return nil, fmt.Errorf("provisioning: read binding %q: %w", bindingName, readErr)
+		}
+		if binding == nil || !binding.IsReady() {
+			out.Provisioning = append(out.Provisioning, name)
+		}
+	}
+	return out, nil
 }
 
 func externalValueState(binding *openchoreo.ResourceReleaseBinding, keys []spec.ConfigKey) (ExternalDependencyValueState, []string, error) {

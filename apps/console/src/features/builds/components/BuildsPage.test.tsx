@@ -708,6 +708,32 @@ describe("BuildsPage — one version's story", () => {
     ).not.toBeInTheDocument();
   });
 
+  // The deploy gate's park (ADR-0020). The run is built and deployable and the
+  // only thing left is a credential, so the card has to say that and offer the
+  // way to fix it — a `waiting` chip on its own reads as a hung run, and the
+  // one person who could clear it in ten seconds never learns that they can.
+  it("names the connections a deploy-gate park waits on, with a way to fix it", async () => {
+    mockBuilds = [build("v2", "in_progress")];
+    mockRuns = [
+      run({
+        state: "waiting",
+        waitingReason: "external-values",
+        blockingDependencies: ["stripe"],
+        cycles: [],
+      }),
+    ];
+    mockIssues = [...withOpenWork()];
+    renderPage();
+
+    expect(await screen.findByText(/Waiting for connection values: stripe/)).toBeInTheDocument();
+    // The way out is a real navigation into the configuration section, not a
+    // sentence telling the reader to go and find it.
+    const action = screen.getByRole("link", { name: "Configure connections" });
+    expect(action).toHaveAttribute("href", expect.stringContaining("connections=open"));
+    // And it must not ALSO render the generic park, which says the opposite.
+    expect(screen.queryByText("Parked between build sessions")).not.toBeInTheDocument();
+  });
+
   it("tells the gate story before the first session, not a generic wait", () => {
     // runHold defers an open-gate wait to the provisioning section — so the
     // card must actually mount it. Without this, a run stalled on a

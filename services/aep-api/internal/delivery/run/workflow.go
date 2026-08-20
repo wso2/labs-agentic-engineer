@@ -138,6 +138,11 @@ type loop struct {
 	merged   workflow.ReceiveChannel
 	builds   workflow.ReceiveChannel
 	conflict workflow.ReceiveChannel
+	// valuesSaved wakes a run parked on the deploy gate. Separate from workable
+	// because the two park for different reasons and re-derive different
+	// predicates: workable is "the dispatch gate opened", this is "a credential
+	// arrived".
+	valuesSaved workflow.ReceiveChannel
 
 	// lastResult is what the previous cycle produced — it selects the next
 	// cycle's kind and feeds the no-progress rule.
@@ -198,6 +203,7 @@ func newLoop(ctx workflow.Context, in RunInput) *loop {
 		merged:                workflow.GetSignalChannel(ctx, delivery.SigRunPRMerged),
 		builds:                workflow.GetSignalChannel(ctx, delivery.SigRunBuildTerminal),
 		conflict:              workflow.GetSignalChannel(ctx, delivery.SigRunConflict),
+		valuesSaved:           workflow.GetSignalChannel(ctx, delivery.SigRunValuesSaved),
 		st: delivery.RunStatus{
 			RunID:           in.RunID,
 			MilestoneNumber: in.MilestoneNumber,
@@ -716,7 +722,7 @@ func (l *loop) await(ctx workflow.Context) (cancelled bool) {
 		c.Receive(ctx, nil)
 		cancelled = true
 	})
-	for _, ch := range []workflow.ReceiveChannel{l.workable, l.merged, l.builds, l.conflict} {
+	for _, ch := range []workflow.ReceiveChannel{l.workable, l.merged, l.builds, l.conflict, l.valuesSaved} {
 		sel.AddReceive(ch, func(c workflow.ReceiveChannel, _ bool) { c.Receive(ctx, nil) })
 	}
 	sel.AddFuture(workflow.NewTimer(timerCtx, waitPollInterval), func(workflow.Future) {})

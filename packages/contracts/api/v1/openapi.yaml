@@ -4129,6 +4129,22 @@ components:
             empty while the run is non-terminal and on a succeeded run. agent-quota-blocked
             explains state=blocked.
           type: string
+        waitingReason:
+          description: Why a `waiting` run is waiting. Empty for the ordinary between-cycles
+            park, which needs no explanation. `external-values` is the deploy gate — the run
+            is built and ready to deploy, and every remaining blocker is a credential only a
+            human can supply. That park is unbounded and only cancellation exits it, so a
+            client that renders `waiting` without this reads a working run as a hung one.
+          enum:
+          - external-values
+          type: string
+        blockingDependencies:
+          description: The external dependency names a `waiting` run is blocked on, so a client
+            can name them and link straight to their configuration. Empty unless waitingReason
+            is set.
+          items:
+            type: string
+          type: array
         validation:
           $ref: '#/components/schemas/RunValidation'
       required:

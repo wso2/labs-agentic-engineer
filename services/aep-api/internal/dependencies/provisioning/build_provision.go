@@ -89,7 +89,7 @@ func (s *Service) ProvisionForBuild(ctx context.Context, orgID, ocOrgID, project
 	// eventually-consistent label list (which lags a just-created gate and strands
 	// the provision run — issue #164). Empty when no platform input was carried;
 	// a missing dep resolves to 0 (a safe no-op gate).
-	var gateByDep map[string]int
+	var gateByDep map[string]provisionGate
 	hasPlatformResourceInput := false
 	for _, in := range inputs {
 		if in.Kind == buildKindPlatformResrc {
@@ -112,13 +112,16 @@ func (s *Service) ProvisionForBuild(ctx context.Context, orgID, ocOrgID, project
 	}
 	for _, in := range inputs {
 		gate := gateByDep[strings.ToLower(in.Dependency)]
+		if in.Kind == buildKindPlatformResrc && gate.completed {
+			continue
+		}
 		switch in.Kind {
 		case buildKindExternalConfig:
-			if err := s.authorExternalPrepared(ctx, orgID, ocOrgID, projectID, in, gate); err != nil {
+			if err := s.authorExternalPrepared(ctx, orgID, ocOrgID, projectID, in, gate.number); err != nil {
 				failures = append(failures, ProvisionFailure{Component: in.Component, Dependency: in.Dependency, Reason: err.Error()})
 			}
 		case buildKindPlatformResrc:
-			if err := s.provisionResource(ctx, orgID, projectID, in.Dependency, gate, in.Parameters, nil); err != nil {
+			if err := s.provisionResource(ctx, orgID, projectID, in.Dependency, gate.number, in.Parameters, nil); err != nil {
 				failures = append(failures, ProvisionFailure{Component: in.Component, Dependency: in.Dependency, Reason: err.Error()})
 			}
 		case buildKindOrgService:

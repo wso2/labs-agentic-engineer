@@ -88,11 +88,30 @@ type MilestoneRunRepository interface {
 	// answer with a useful conflict instead of a bare insert failure.
 	ActiveSpecRunByProject(ctx context.Context, orgID, projectID string) (*MilestoneRun, error)
 
+	// ActiveRunByProject is ActiveSpecRunByProject without the origin filter:
+	// the project's newest non-terminal run whatever started it.
+	//
+	// A sibling rather than a widening of the one above, because the two answer
+	// different questions. That one backs the build endpoint's 409 and means
+	// "is the spec mutex held" — broadening it would start refusing builds
+	// because an unrelated incident run is live. This one backs the deploy
+	// gate's wake-up and means "is there a run that might be parked on this",
+	// and an incident-adoption or revalidate run parks on the gate exactly like
+	// a spec run does. Using the spec-only lookup here would leave those two
+	// parked until their poll interval, forever if a signal were the only wake.
+	ActiveRunByProject(ctx context.Context, orgID, projectID string) (*MilestoneRun, error)
+
 	// SetState moves a non-terminal run between waiting and running (the loop
 	// oscillates across cycle boundaries) and stamps started_at on the first
 	// transition to running. It refuses a terminal state — that is Settle's job
 	// — and returns (nil, nil) when the run is already terminal.
 	SetState(ctx context.Context, id, state string) (*MilestoneRun, error)
+
+	// SetWaiting parks a non-terminal run WITH the reason it is parked and the
+	// dependencies it is parked on — one write, so the console never reads a
+	// `waiting` row whose explanation has not landed yet. Returns (nil, nil) when
+	// the run is already terminal, like SetState.
+	SetWaiting(ctx context.Context, id, reason string, dependencies []string) (*MilestoneRun, error)
 
 	// Settle ends a run: it writes a terminal state plus its terminal reason and
 	// stamps ended_at, guarded on the run still being non-terminal so the first
@@ -191,6 +210,21 @@ func (r *milestoneRunRepository) ActiveSpecRunByProject(ctx context.Context, org
 	return &row, nil
 }
 
+func (r *milestoneRunRepository) ActiveRunByProject(ctx context.Context, orgID, projectID string) (*MilestoneRun, error) {
+	var row MilestoneRun
+	err := r.db.WithContext(ctx).
+		Where("org_id = ? AND project_id = ? AND state IN ?", orgID, projectID, nonTerminalRunStates).
+		Order("created_at DESC").
+		First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
 func (r *milestoneRunRepository) SetState(ctx context.Context, id, state string) (*MilestoneRun, error) {
 	if state != RunStateWaiting && state != RunStateRunning {
 		return nil, fmt.Errorf("milestone run: SetState takes a non-terminal state, got %q (use Settle)", state)
@@ -200,8 +234,23 @@ func (r *milestoneRunRepository) SetState(ctx context.Context, id, state string)
 		// COALESCE so a re-entry into running keeps the ORIGINAL start stamp:
 		// started_at marks when the run first did work, not the latest cycle.
 		updates["started_at"] = gorm.Expr("COALESCE(started_at, ?)", time.Now().UTC())
+		// Leaving a stale reason on a running run would have the console showing
+		// "waiting for your credentials" over a run that is already deploying.
+		updates["waiting_reason"] = ""
+		updates["blocking_dependencies"] = DependencyNames(nil)
 	}
 	return r.updateNonTerminal(ctx, id, updates)
+}
+
+// SetWaiting parks the run WITH its explanation, in one write. Separate from
+// SetState because only the deploy gate has an explanation to give: every other
+// park is between cycles and self-evident from the phase.
+func (r *milestoneRunRepository) SetWaiting(ctx context.Context, id, reason string, dependencies []string) (*MilestoneRun, error) {
+	return r.updateNonTerminal(ctx, id, map[string]any{
+		"state":                 RunStateWaiting,
+		"waiting_reason":        reason,
+		"blocking_dependencies": DependencyNames(dependencies),
+	})
 }
 
 func (r *milestoneRunRepository) Settle(ctx context.Context, id, state, terminalReason string) (*MilestoneRun, error) {

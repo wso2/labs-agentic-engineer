@@ -38,6 +38,7 @@ import (
 // comment idempotent. sourcecontrol.IssueService satisfies it.
 type IssueClient interface {
 	ListIssues(ctx context.Context, orgID, projectID string, labels []string) ([]sourcecontrol.IssueInfo, error)
+	ListMilestoneIssues(ctx context.Context, orgID, projectID string, filter sourcecontrol.MilestoneIssuesFilter) ([]sourcecontrol.IssueInfo, error)
 	CreateIssue(ctx context.Context, orgID, projectID string, req sourcecontrol.CreateIssueRequest) (*sourcecontrol.IssueResult, error)
 	CloseIssue(ctx context.Context, orgID, projectID string, number int, comment string) error
 	CommentIssue(ctx context.Context, orgID, projectID string, number int, body string) error
@@ -134,6 +135,16 @@ type PlatformProvisioner = dependencies.ResourceProvisioner
 // openchoreo.ResourceClient satisfies it.
 type BindingReader interface {
 	GetBinding(ctx context.Context, namespace, name string) (*openchoreo.ResourceReleaseBinding, error)
+}
+
+// ValuesSavedNotifier tells the delivery supervisor that external values were
+// saved. It carries a FACT, not a command: the consumer re-derives readiness
+// for itself, so this port can never be used to order a deploy. Declared here
+// so provisioning never imports delivery/run (that would cycle); the app-root
+// adapter bridges it onto the run repository and supervisor. Nil is a
+// documented no-op — the run's own wait-poll backstop still re-derives.
+type ValuesSavedNotifier interface {
+	ValuesSaved(ctx context.Context, orgID, projectID string) error
 }
 
 // ProviderResolver resolves a dependency's provider endpoint in OpenChoreo. It

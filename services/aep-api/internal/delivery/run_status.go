@@ -60,6 +60,17 @@ type RunStatus struct {
 	// while the run is waiting.
 	Phase string `json:"phase,omitempty"`
 
+	// WaitingReason names WHY a `waiting` run is waiting (a RunWaitingOn* value),
+	// and BlockingDependencies names what it is waiting on. Both empty for the
+	// ordinary between-cycles park, which needs no explanation.
+	//
+	// The deploy gate's park does. It is unbounded, only cancellation exits it,
+	// and the thing that ends it is a person typing a credential — so a run that
+	// does not say "I am waiting for YOU, about THESE" reads as a hang, and the
+	// developer who could clear it in ten seconds never learns that they can.
+	WaitingReason        string   `json:"waitingReason,omitempty"`
+	BlockingDependencies []string `json:"blockingDependencies,omitempty"`
+
 	// CycleKind / CycleAttempt / CyclePR describe the cycle in flight.
 	CycleKind    string `json:"cycleKind,omitempty"`
 	CycleAttempt int    `json:"cycleAttempt,omitempty"`
@@ -119,4 +130,14 @@ const (
 	// RunPhaseSettling is the terminal bookkeeping: the milestone close and the
 	// run row's final write.
 	RunPhaseSettling = "settling"
+)
+
+// RunWaitingOn* values explain a `waiting` run. Only the deploy gate sets one:
+// every other park is between cycles and needs no explanation.
+const (
+	// RunWaitingOnExternalValues is the deploy gate's park (ADR-0020): the run is
+	// built and ready to deploy, and every remaining blocker is a value only a
+	// human can supply. The one waiting reason the console renders as a call to
+	// action rather than as a status.
+	RunWaitingOnExternalValues = "external-values"
 )

@@ -180,13 +180,16 @@ export function gateDrive(gate: TaskView): GateDrive {
  * nothing.
  */
 export interface RunHold {
-  kind: "planning" | "no-work" | "parked";
+  kind: "planning" | "no-work" | "parked" | "external-values";
   /** Warning is reserved for a hold only a human can release; error for one
    *  that already went wrong. The platform doing its own bounded work is
    *  information, not an alarm. */
   tone: "info" | "warning" | "error";
   title: string;
   body: string;
+  /** The external dependencies a deploy-gate park is waiting on, so the notice
+   *  can name them. Only ever set for kind "external-values". */
+  dependencies?: string[];
 }
 
 export function runHold(
@@ -204,6 +207,31 @@ export function runHold(
         "the milestone is written.",
     };
   }
+  // The deploy gate's park (ADR-0020), checked FIRST and without needing the
+  // issue plane: it is the one hold whose cause is neither a gate nor the
+  // working set, and the one the reader can personally clear. Ranking it below
+  // the milestone-dependent branches would hide it behind "Parked between build
+  // sessions" — a sentence that tells the one person who can release the run
+  // that there is nothing to do.
+  if (run.state === "waiting" && run.waitingReason === "external-values") {
+    const deps = run.blockingDependencies ?? [];
+    return {
+      kind: "external-values",
+      // Warning, not error: nothing failed. The run is built, deployable, and
+      // waiting on a human — which is exactly what warning is reserved for.
+      tone: "warning",
+      title:
+        deps.length > 0
+          ? `Waiting for connection values: ${deps.join(", ")}`
+          : "Waiting for connection values",
+      body:
+        "Everything built. Deployment is held until every connection has real " +
+        "values — the run resumes and deploys on its own once the last one is " +
+        "saved, with nothing to restart.",
+      dependencies: deps,
+    };
+  }
+
   if (run.state !== "waiting" || milestone === undefined) return null;
 
   // A gate hold is answered by the PROVISIONING SECTION on the run's rail, not

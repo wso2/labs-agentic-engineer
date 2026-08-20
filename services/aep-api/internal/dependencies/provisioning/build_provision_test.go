@@ -123,6 +123,39 @@ func TestProvisionForBuild_UsesMintedPlatformGateDespiteListRace(t *testing.T) {
 	}
 }
 
+// A Temporal activity may be retried after the readiness watcher has already
+// closed a successfully-provisioned dependency's gate. The retry must reuse
+// that version's terminal result: minting a new gate and authoring the same
+// resource again turns one transient sibling failure into an unbounded loop.
+func TestProvisionForBuild_RetryAfterClosedGateDoesNotProvisionAgain(t *testing.T) {
+	issues := newFakeIssues(nil)
+	plat := &fakePlatProv{}
+	svc := newTestService(issues, &fakeExecStore{}, fakeDesign{comps: designWithDeps()}, &fakeExtProv{}, plat, &fakeBindings{})
+	inputs := []BuildProvisionInput{{
+		Component: "orders", Dependency: "orders-db", Kind: "platform-resource",
+		Parameters: map[string]any{"instances": 1},
+	}}
+
+	if fails, err := svc.ProvisionForBuild(context.Background(), "acme", "acme", "proj", "v3", 7, inputs); err != nil || len(fails) != 0 {
+		t.Fatalf("first ProvisionForBuild = (%+v, %v), want success", fails, err)
+	}
+	gate := gateNumber(issues, "orders-db")
+	if err := issues.CloseIssue(context.Background(), "acme", "proj", gate, "ready"); err != nil {
+		t.Fatalf("close gate: %v", err)
+	}
+	issues.created = nil
+
+	if fails, err := svc.ProvisionForBuild(context.Background(), "acme", "acme", "proj", "v3", 7, inputs); err != nil || len(fails) != 0 {
+		t.Fatalf("retried ProvisionForBuild = (%+v, %v), want success", fails, err)
+	}
+	if len(issues.created) != 0 {
+		t.Fatalf("retry minted %d replacement gate(s), want none", len(issues.created))
+	}
+	if plat.calls != 1 {
+		t.Fatalf("retry provisioned the resource %d times total, want once", plat.calls)
+	}
+}
+
 // TestProvisionForBuild_ExternalAuthorFailureContinues pins the batch semantics:
 // a per-input author error becomes a ProvisionFailure (data, not an activity
 // error) and the batch continues to the remaining inputs.

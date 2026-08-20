@@ -52,6 +52,11 @@ type RunStore interface {
 	MilestoneSpecTag(ctx context.Context, orgID, projectID string, milestoneNumber int) (string, error)
 	// SetState moves the run between waiting and running.
 	SetState(ctx context.Context, id, state string) error
+	// SetWaiting is SetState(waiting) plus the reason it is waiting and the
+	// dependencies it is waiting ON. `waiting` is unbounded and only cancellation
+	// exits it, so a park with no stated reason is indistinguishable from a hang
+	// — the reason is what makes the state actionable rather than alarming.
+	SetWaiting(ctx context.Context, id, reason string, dependencies []string) error
 	// Settle writes the terminal state and its reason, once.
 	Settle(ctx context.Context, id, state, reason string) error
 	// BumpBudget increments one counter — bookkeeping for the read model, never
@@ -227,6 +232,22 @@ type Gates interface {
 // a blip and failed fast on an answer — none of which a detached goroutine had.
 type Planner interface {
 	PlanIntoMilestone(ctx context.Context, orgID, projectID string, milestoneNumber int) error
+}
+
+// DeployGate answers whether the project may deploy at all: every external
+// dependency configured, every platform resource provisioned (ADR-0020).
+//
+// The two blockers come back SEPARATELY because the supervisor treats them as
+// different kinds of fact. A platform resource that is still provisioning is the
+// platform working, so the stage polls. An unconfigured external dependency is a
+// human who has not supplied a credential, so the run parks in `waiting` and
+// says whose turn it is. Collapsing them into one boolean would force the loop
+// to guess which of those two it is looking at.
+//
+// Satisfied by the provisioning service's readiness method directly — not
+// through its HTTP handler, which is a thin projection of the same call.
+type DeployGate interface {
+	DeploymentReadiness(ctx context.Context, orgID, projectID, env string) (unconfigured, provisioning []string, err error)
 }
 
 // DeploymentReader reads back what the cluster says about those deployments —
