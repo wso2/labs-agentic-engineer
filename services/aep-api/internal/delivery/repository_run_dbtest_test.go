@@ -531,3 +531,140 @@ func TestMilestoneRunRepository_ReadsAndTagResolution(t *testing.T) {
 		t.Fatalf("MilestoneNumberForTag after purge found = %v, want false", found)
 	}
 }
+
+// TestMilestoneRunRepository_RunsWaitingOnValues pins the fan-out behind the
+// deploy gate's wake-up: saving one external value has to reach EVERY run parked
+// on it, not merely the newest.
+//
+// The gate's park is the one wait with no poll fallback — the provisioning
+// branch re-checks on a timer, but a run blocked on unconfigured values sleeps
+// on the signal alone. A wake that reached only the newest run therefore left an
+// older parked sibling asleep until somebody cancelled it, and
+// TestMilestoneRunRepository_OneLiveRunPerMilestone already establishes that two
+// runs on different milestones are live at once by design.
+func TestMilestoneRunRepository_RunsWaitingOnValues(t *testing.T) {
+	t.Parallel()
+	db := dbtest.New(t)
+	repo := delivery.NewMilestoneRunRepository(db)
+	ctx := context.Background()
+
+	park := func(run *delivery.MilestoneRun, deps ...string) string {
+		t.Helper()
+		ok, _, err := repo.TryAdmit(ctx, run)
+		if err != nil || !ok {
+			t.Fatalf("TryAdmit = (%v, %v), want admitted", ok, err)
+		}
+		if _, err := repo.SetWaiting(ctx, run.ID, delivery.RunWaitingOnExternalValues, deps); err != nil {
+			t.Fatalf("SetWaiting: %v", err)
+		}
+		return run.ID
+	}
+
+	// Two runs on the project, different milestones, both parked on the gate.
+	older := park(specRun("orga", "proj", 1, "v1"), "stripe")
+	newer := park(incidentRun("orga", "proj", 2, "v2"), "stripe")
+
+	// A run parked BETWEEN CYCLES carries no reason (the deploy gate is the only
+	// park that sets one). It is waiting, but not on a human, so a value save
+	// must not signal it.
+	betweenCycles := revalidateRun("orga", "proj", 3, "v3")
+	if ok, _, err := repo.TryAdmit(ctx, betweenCycles); err != nil || !ok {
+		t.Fatalf("TryAdmit(between cycles) = (%v, %v), want admitted", ok, err)
+	}
+	if _, err := repo.SetState(ctx, betweenCycles.ID, delivery.RunStateWaiting); err != nil {
+		t.Fatalf("SetState(waiting, no reason): %v", err)
+	}
+
+	// Another project's parked run must never be swept in — the wake is scoped
+	// to the project whose values were saved.
+	elsewhere := park(specRun("orga", "other", 1, "v1"), "stripe")
+
+	rows, err := repo.RunsWaitingOnValues(ctx, "orga", "proj")
+	if err != nil {
+		t.Fatalf("RunsWaitingOnValues: %v", err)
+	}
+	got := map[string]bool{}
+	for _, row := range rows {
+		got[row.ID] = true
+	}
+	if len(rows) != 2 || !got[older] || !got[newer] {
+		t.Fatalf("RunsWaitingOnValues returned %d rows (%v), want exactly the two parked on values (%s, %s)",
+			len(rows), got, older, newer)
+	}
+	if got[betweenCycles.ID] {
+		t.Errorf("a reasonless between-cycles park was returned; only %q parks belong to the value wake",
+			delivery.RunWaitingOnExternalValues)
+	}
+	if got[elsewhere] {
+		t.Errorf("another project's parked run was returned; the wake must stay project-scoped")
+	}
+
+	// Resuming one clears it from the set, so a second save does not re-signal a
+	// run that is already deploying.
+	if _, err := repo.SetState(ctx, newer, delivery.RunStateRunning); err != nil {
+		t.Fatalf("SetState(running): %v", err)
+	}
+	rows, err = repo.RunsWaitingOnValues(ctx, "orga", "proj")
+	if err != nil {
+		t.Fatalf("RunsWaitingOnValues after resume: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != older {
+		t.Fatalf("after resuming the newer run, RunsWaitingOnValues = %d rows, want only the still-parked %s", len(rows), older)
+	}
+}
+
+// TestMilestoneRunRepository_ParkNamesItsBlockers is the regression for the
+// deploy gate's park write.
+//
+// BlockingDependencies is a jsonb column, but the park is written through
+// updateNonTerminal's map[string]any — and a gorm map update bypasses the
+// field's `serializer:json`, handing the driver a bare []string that encodes as
+// a Postgres array literal and is rejected as invalid json (SQLSTATE 22P02).
+// Every park that actually had a dependency to name therefore failed, which is
+// every park the gate makes: setWaitingOnValues is only reached with a non-empty
+// list. Nothing caught it because the gate's own tests mock the repository, and
+// the park writes real jsonb only here.
+func TestMilestoneRunRepository_ParkNamesItsBlockers(t *testing.T) {
+	t.Parallel()
+	db := dbtest.New(t)
+	repo := delivery.NewMilestoneRunRepository(db)
+	ctx := context.Background()
+
+	run := specRun("orgb", "proj", 1, "v1")
+	if ok, _, err := repo.TryAdmit(ctx, run); err != nil || !ok {
+		t.Fatalf("TryAdmit = (%v, %v), want admitted", ok, err)
+	}
+
+	parked, err := repo.SetWaiting(ctx, run.ID, delivery.RunWaitingOnExternalValues,
+		[]string{"stripe", "twilio"})
+	if err != nil {
+		t.Fatalf("SetWaiting with named blockers: %v", err)
+	}
+	if got := []string(parked.BlockingDependencies); len(got) != 2 || got[0] != "stripe" || got[1] != "twilio" {
+		t.Fatalf("BlockingDependencies = %v, want [stripe twilio] — the park has to say what it waits for", got)
+	}
+	if parked.WaitingReason != delivery.RunWaitingOnExternalValues {
+		t.Fatalf("WaitingReason = %q, want %q", parked.WaitingReason, delivery.RunWaitingOnExternalValues)
+	}
+
+	// Re-read, so the assertion covers the round trip and not just the value the
+	// write returned.
+	back, err := repo.GetByIDScoped(ctx, "orgb", run.ID)
+	if err != nil {
+		t.Fatalf("GetByIDScoped: %v", err)
+	}
+	if got := []string(back.BlockingDependencies); len(got) != 2 || got[0] != "stripe" {
+		t.Fatalf("re-read BlockingDependencies = %v, want [stripe twilio]", got)
+	}
+
+	// Resuming clears both, so the console cannot show a deploying run as still
+	// waiting on credentials that already arrived.
+	resumed, err := repo.SetState(ctx, run.ID, delivery.RunStateRunning)
+	if err != nil {
+		t.Fatalf("SetState(running): %v", err)
+	}
+	if resumed.WaitingReason != "" || len(resumed.BlockingDependencies) != 0 {
+		t.Fatalf("after resume: reason=%q blockers=%v, want both cleared",
+			resumed.WaitingReason, resumed.BlockingDependencies)
+	}
+}

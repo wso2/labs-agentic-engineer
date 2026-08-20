@@ -255,19 +255,28 @@ type valuesSavedNotifier struct {
 }
 
 func (n valuesSavedNotifier) ValuesSaved(ctx context.Context, orgID, projectID string) error {
-	// Any origin, not just spec-build: an incident-adoption or revalidate run
-	// parks on the gate exactly like a spec run, and the spec-only lookup would
-	// leave those waiting for their poll interval instead.
-	row, err := n.runs.ActiveRunByProject(ctx, orgID, projectID)
+	// EVERY parked run, any origin — not just the newest. An incident-adoption or
+	// revalidate run parks on this gate exactly like a spec run, and they can be
+	// live at the same time. The external-values park sleeps on this signal with
+	// no poll fallback, so a run this wake skips stays parked until it is
+	// cancelled. One saved value can unblock several runs at once.
+	rows, err := n.runs.RunsWaitingOnValues(ctx, orgID, projectID)
 	if err != nil {
 		return err
 	}
-	if row == nil {
-		// Values saved with no live run is the ordinary case — a developer
-		// configuring ahead of the next build. Nothing to wake.
-		return nil
+	// Values saved with no parked run is the ordinary case — a developer
+	// configuring ahead of the next build. Nothing to wake.
+	var errs []error
+	for i := range rows {
+		// Keep going after a failure: one run whose workflow has already gone
+		// (settled between the read and the signal) must not strand its
+		// siblings. The supervisor's own not-found handling decides what is
+		// benign; anything it still reports is joined and returned.
+		if err := n.supervisor.SignalRun(ctx, &rows[i], delivery.SigRunValuesSaved, delivery.RunSignal{}); err != nil {
+			errs = append(errs, err)
+		}
 	}
-	return n.supervisor.SignalRun(ctx, row, delivery.SigRunValuesSaved, delivery.RunSignal{})
+	return errors.Join(errs...)
 }
 
 // deployGate projects the provisioning service's readiness read onto the run

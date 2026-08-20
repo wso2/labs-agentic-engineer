@@ -101,6 +101,18 @@ type MilestoneRunRepository interface {
 	// parked until their poll interval, forever if a signal were the only wake.
 	ActiveRunByProject(ctx context.Context, orgID, projectID string) (*MilestoneRun, error)
 
+	// RunsWaitingOnValues returns EVERY run in the project parked on the deploy
+	// gate's external-values wait — not just the newest.
+	//
+	// The deploy gate's park is the one wait with no poll fallback: the
+	// provisioning branch re-checks on deployPollInterval, but a run blocked on
+	// unconfigured values sleeps on the signal alone. So a wake that reaches only
+	// the newest run leaves any older parked sibling — an incident-adoption or
+	// revalidate run started before it — asleep until someone cancels it. Saving
+	// one value unblocks every run that value unblocks, so the wake has to fan
+	// out the same way.
+	RunsWaitingOnValues(ctx context.Context, orgID, projectID string) ([]MilestoneRun, error)
+
 	// SetState moves a non-terminal run between waiting and running (the loop
 	// oscillates across cycle boundaries) and stamps started_at on the first
 	// transition to running. It refuses a terminal state — that is Settle's job
@@ -223,6 +235,18 @@ func (r *milestoneRunRepository) ActiveRunByProject(ctx context.Context, orgID, 
 		return nil, err
 	}
 	return &row, nil
+}
+
+func (r *milestoneRunRepository) RunsWaitingOnValues(ctx context.Context, orgID, projectID string) ([]MilestoneRun, error) {
+	var rows []MilestoneRun
+	if err := r.db.WithContext(ctx).
+		Where("org_id = ? AND project_id = ? AND state = ? AND waiting_reason = ?",
+			orgID, projectID, RunStateWaiting, RunWaitingOnExternalValues).
+		Order("created_at ASC").
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
 
 func (r *milestoneRunRepository) SetState(ctx context.Context, id, state string) (*MilestoneRun, error) {

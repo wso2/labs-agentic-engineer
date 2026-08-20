@@ -16,7 +16,12 @@
 
 package delivery
 
-import "time"
+import (
+	"database/sql/driver"
+	"encoding/json"
+	"fmt"
+	"time"
+)
 
 // MilestoneRun origins, states, terminal reasons and validation verdicts
 // (plain strings, matching the model convention — canonical values here, no
@@ -266,6 +271,43 @@ const (
 // IssueNumbers on RunCycle.
 type DependencyNames []string
 
+// Value/Scan make DependencyNames encode itself as jsonb.
+//
+// The gorm `serializer:json` tag only covers the STRUCT write path. The run
+// repository parks a run through updateNonTerminal, which writes a
+// map[string]any — and a map update hands the value straight to the driver,
+// serializer untouched. A bare []string is then encoded as a Postgres array
+// literal (`{stripe}`), which jsonb rejects with SQLSTATE 22P02, so the deploy
+// gate's park failed the moment it had a dependency to name. Owning the
+// encoding on the type makes both write paths agree.
+func (d DependencyNames) Value() (driver.Value, error) {
+	if d == nil {
+		return nil, nil
+	}
+	return json.Marshal([]string(d))
+}
+
+func (d *DependencyNames) Scan(src any) error {
+	if src == nil {
+		*d = nil
+		return nil
+	}
+	var raw []byte
+	switch v := src.(type) {
+	case []byte:
+		raw = v
+	case string:
+		raw = []byte(v)
+	default:
+		return fmt.Errorf("delivery: cannot scan %T into DependencyNames", src)
+	}
+	if len(raw) == 0 {
+		*d = nil
+		return nil
+	}
+	return json.Unmarshal(raw, (*[]string)(d))
+}
+
 type MilestoneRun struct {
 	ID        string `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
 	OrgID     string `gorm:"index;not null" json:"-"`
@@ -295,7 +337,7 @@ type MilestoneRun struct {
 	// reads this row. Set by the deploy gate's park (ADR-0020) and cleared on the
 	// next move to running; empty for the ordinary between-cycles park.
 	WaitingReason        string          `gorm:"type:text" json:"waitingReason,omitempty"`
-	BlockingDependencies DependencyNames `gorm:"type:jsonb;serializer:json" json:"blockingDependencies,omitempty"`
+	BlockingDependencies DependencyNames `gorm:"type:jsonb" json:"blockingDependencies,omitempty"`
 
 	// Budget counters. CyclesTotal is checked against CycleCeiling; FixCycles and
 	// ConflictCycles bound the two recovery chains; BuildRetriggers is the

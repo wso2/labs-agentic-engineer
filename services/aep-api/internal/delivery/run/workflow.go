@@ -777,6 +777,14 @@ func (l *loop) setState(ctx workflow.Context, state string) error {
 		return err
 	}
 	l.st.State = state
+	if state == delivery.RunStateRunning {
+		// Mirror what the repository's SetState does to the row: a resumed run
+		// is not waiting on anything. The row alone is not enough — QueryRunStatus
+		// answers out of l.st, so leaving these set would have a query report a
+		// deploying run as still parked on credentials that already arrived.
+		l.st.WaitingReason = ""
+		l.st.BlockingDependencies = nil
+	}
 	return nil
 }
 
