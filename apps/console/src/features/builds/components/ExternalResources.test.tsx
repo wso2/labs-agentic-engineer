@@ -203,6 +203,26 @@ describe("ExternalResources", () => {
     expect(within(row("stripe")).queryByRole("button")).not.toBeInTheDocument();
   });
 
+  it("matches readiness whose casing differs from the design's", () => {
+    // externalResourceRows dedupes shared externals on a lowercased name but
+    // keeps the first declaration's casing, so the row name and the readiness
+    // name can legitimately differ in case. Exact matching left the row
+    // `unknown`, which withholds Configure — the developer could not supply
+    // values for a resource the platform was waiting on.
+    dependencies = externalDependencies("Stripe");
+    readiness = {
+      configured: false,
+      dependencies: [{ name: "stripe", state: "unset", missingKeys: ["API_KEY"] }],
+    };
+
+    renderSection();
+
+    expect(within(row("Stripe")).queryByText("Unknown")).not.toBeInTheDocument();
+    expect(
+      within(row("Stripe")).getByRole("button", { name: /Configure for Stripe/i }),
+    ).toBeInTheDocument();
+  });
+
   it("summarises what is outstanding, and collapses once nothing is", () => {
     dependencies = externalDependencies("stripe", "twilio");
     readiness = {

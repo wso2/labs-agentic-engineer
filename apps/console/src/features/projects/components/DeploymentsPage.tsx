@@ -761,7 +761,13 @@ export function DeploymentsPage({ projectName }: { projectName: string }) {
               what the rail doesn't say. */}
           <PanelOverline>Connections</PanelOverline>
           <Stack spacing={1.25} sx={{ mt: 1 }}>
-            {componentDependencyStatuses.isPending ? (
+            {/* The design load gates this too: externalDependencyRefs derives
+                from dependencies.data, so while that is pending the refs list
+                is empty, useComponentDependencyStatuses runs no queries, and
+                its isPending is false. Without this the panel falls through to
+                "declares no connections" for a project that declares several.
+                Same guard the production stage already applies below. */}
+            {dependencies.isPending || componentDependencyStatuses.isPending ? (
               <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
                 <CircularProgress size={18} aria-hidden />
                 <Typography variant="body2" color="text.secondary">

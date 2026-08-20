@@ -235,11 +235,16 @@ export function ExternalResources({
   );
 
   const entries = useMemo<ResourceRow[]>(() => {
+    // Keyed case-insensitively to match externalResourceRows, which dedupes
+    // shared externals on a lowercased name but keeps the FIRST declaration's
+    // casing. Exact matching here would leave a row whose casing differs from
+    // the readiness read stuck on `unknown` — and `unknown` withholds the
+    // configure action, so the developer could not supply its values at all.
     const byName = new Map(
-      (readiness.data?.dependencies ?? []).map((d) => [d.name, d]),
+      (readiness.data?.dependencies ?? []).map((d) => [d.name.toLowerCase(), d]),
     );
     return rows.map((row) => {
-      const found = byName.get(row.name);
+      const found = byName.get(row.name.toLowerCase());
       return {
         row,
         state: (found?.state ?? "unknown") as ReadinessState,

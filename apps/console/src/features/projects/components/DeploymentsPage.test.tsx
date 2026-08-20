@@ -53,17 +53,19 @@ type ComponentDependencies = components["schemas"]["ComponentDependencies"];
 
 // Query hooks replaced wholesale — no QueryClientProvider / MSW needed, only the
 // rendering under test is real (mirrors TasksList.test.tsx).
-let mockDeploy: DeployStage = {
+const DEFAULT_DEPLOY: DeployStage = {
   version: "v1",
   status: "deployed",
   components: { total: 1, ready: 1 },
   validation: "none",
 };
+let mockDeploy: DeployStage = DEFAULT_DEPLOY;
 
 // The design's dependency read (the promote dialog's connection list, and
 // the Configure button's own gate) — overridden per test; defaults to one
 // required external connection, reset in beforeEach so a test that mutates
-// it can't bleed into the next.
+// it can't bleed into the next. mockDependenciesPending models the window
+// before that read lands, which the Connections panel has to treat as loading.
 const DEFAULT_DEPENDENCIES: ComponentDependencies[] = [
   {
     componentName: "storefront",
@@ -79,6 +81,7 @@ const DEFAULT_DEPENDENCIES: ComponentDependencies[] = [
   },
 ];
 let mockDependencies: ComponentDependencies[] = DEFAULT_DEPENDENCIES;
+let mockDependenciesPending = false;
 const mockUseComponentDependencyStatuses = vi.fn();
 const mockComponentStatusRefetch = vi.fn();
 let mockComponentStatusPending = false;
@@ -149,7 +152,10 @@ vi.mock("../api/queries", () => ({
 }));
 
 vi.mock("../../spec/api/queries", () => ({
-  useDesignDependencies: () => ({ data: mockDependencies, isPending: false }),
+  useDesignDependencies: () => ({
+    data: mockDependenciesPending ? undefined : mockDependencies,
+    isPending: mockDependenciesPending,
+  }),
 }));
 
 // The criteria/report join (#395 decision 3) — counts undefined by default (the
@@ -178,10 +184,16 @@ beforeEach(() => {
   mockRepairing = false;
   mockMutate.mockClear();
   mockDependencies = DEFAULT_DEPENDENCIES;
+  mockDependenciesPending = false;
+  mockDeploy = DEFAULT_DEPLOY;
   mockComponentDependencyStatuses = [];
   mockComponentStatusPending = false;
   mockComponentStatusFailedCount = 0;
   mockComponentStatusRefetch.mockClear();
+  // Cleared too, not just refetch: the assertion on it is toHaveBeenCalledWith,
+  // which is satisfied by ANY recorded call — including one left by an earlier
+  // test, which would let a regression in the refs passed here still pass.
+  mockUseComponentDependencyStatuses.mockClear();
 });
 
 describe("DeploymentsPage — validation", () => {
@@ -394,6 +406,22 @@ describe("DeploymentsPage — connections", () => {
     expect(screen.getByText("Loading connection readiness…")).toBeInTheDocument();
     expect(screen.queryByText("Readiness unknown")).not.toBeInTheDocument();
     expect(screen.queryByText("Configured")).not.toBeInTheDocument();
+  });
+
+  it("keeps loading while the design read is still in flight", () => {
+    // The readiness refs derive from the design read, so while it is pending
+    // there are no refs, no queries run, and componentDependencyStatuses is NOT
+    // pending. Gating on that alone fell through to the empty-state copy and
+    // told the developer a project with connections declares none.
+    mockDependenciesPending = true;
+    mockComponentStatusPending = false;
+
+    render(<DeploymentsPage projectName="acme" />);
+
+    expect(screen.getByText("Loading connection readiness…")).toBeInTheDocument();
+    expect(
+      screen.queryByText("This design declares no connections."),
+    ).not.toBeInTheDocument();
   });
 
   it("shows a connection-region error, hides partial readiness, and retries", () => {

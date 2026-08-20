@@ -67,6 +67,18 @@ describe("component dependency status mock", () => {
     });
   });
 
+  it("falls back to the project scenario when nothing is overridden", async () => {
+    // No localStorage key at all — the path every mock-mode page actually takes.
+    // The explicit-override tests above all skip it, so a regression in the
+    // scenario-derived branch would go unnoticed.
+    const response = await fetch(endpoint);
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toMatchObject({ outputs: expect.any(Array) });
+    expect(body).toHaveProperty("ready");
+  });
+
   it("serves a deliberate typed error", async () => {
     localStorage.setItem("aep:mock:component-dependency-status", "error");
 
@@ -77,5 +89,41 @@ describe("component dependency status mock", () => {
       code: "dependency_status_error",
       message: "Mock error loading component dependency status",
     });
+  });
+});
+
+describe("external value save refreshes readiness", () => {
+  const readinessEndpoint =
+    "http://localhost/api/v1/projects/acme/dependencies/readiness";
+  const valuesEndpoint =
+    "http://localhost/api/v1/projects/acme/dependencies/external-resources/stripe/values";
+
+  it("reflects a saved resource in the next readiness read, and its aggregate", async () => {
+    const before = await (await fetch(readinessEndpoint)).json();
+    const stripeBefore = before.dependencies.find(
+      (d: { name: string }) => d.name === "stripe",
+    );
+    expect(stripeBefore?.state).not.toBe("configured");
+
+    const saved = await fetch(valuesEndpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ values: { API_KEY: "sk-live" } }),
+    });
+    expect(saved.status).toBe(200);
+
+    // The write has to be visible to the READ — the mock is the dev-time
+    // surface the Builds page drives, so a save that does not move readiness
+    // would make the page look broken with no server involved.
+    const after = await (await fetch(readinessEndpoint)).json();
+    const stripeAfter = after.dependencies.find(
+      (d: { name: string }) => d.name === "stripe",
+    );
+    expect(stripeAfter?.state).toBe("configured");
+    expect(after.configured).toBe(
+      after.dependencies.every(
+        (d: { state: string }) => d.state === "configured",
+      ),
+    );
   });
 });

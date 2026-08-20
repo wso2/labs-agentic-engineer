@@ -320,6 +320,19 @@ export function BuildDependencyDrawer({
         ) : null}
 
         <Stack direction="row" spacing={2} justifyContent="flex-end">
+          {/* canContinue also requires every chat-only blocker to be gone, so
+              with both kinds present the developer can fill each spec field and
+              still find Continue disabled. Name the remaining step rather than
+              leaving a dead button to explain itself. */}
+          {externalSpecGroups.length > 0 && chatOnlyGroups.length > 0 ? (
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{ alignSelf: "center", mr: "auto" }}
+            >
+              Resolve the dependencies above in chat before continuing.
+            </Typography>
+          ) : null}
           <Button onClick={onClose} disabled={submitting}>
             Cancel
           </Button>
