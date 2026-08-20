@@ -31,9 +31,16 @@ import { firstEndpointUrl } from "../lib/deploymentUrl";
 import { deploymentsAreMoving } from "../lib/deploymentRows";
 import { projectKeys } from "./keys";
 import { apiErrorMessage } from "../../../api/errors";
+import { specKeys } from "../../spec/api/keys";
 
 type CreateProjectRequest = components["schemas"]["CreateProjectRequest"];
 type BuildRequest = components["schemas"]["BuildRequest"];
+type DependencyStatus = components["schemas"]["DependencyStatus"];
+
+export interface ComponentDependencyRef {
+  componentName: string;
+  dependencyName: string;
+}
 
 export function useProjectsList(search = "", limit?: number) {
   return useInfiniteQuery({
@@ -246,13 +253,70 @@ export function useComponentOpenApi(
   });
 }
 
-// Re-collect an external connection's values (#395: dummy values at build
-// time, real ones later). POST …/external-resources/{name}/values re-splits
-// plain/secret by the design's schema, rewrites secrets to the secret
-// manager and re-authors the OC resource — values never echo back, so this
-// is write-only by design. No automatic retry (a failed write is surfaced).
-export function useSaveConnectionValues(projectName: string) {
+// Read development value readiness from the generated per-component status
+// endpoint. useQueries keeps the hook count stable while the selected design
+// or project dependency set changes, and each component/dependency pair owns
+// an independently invalidatable cache entry.
+export function useComponentDependencyStatuses(
+  projectName: string,
+  dependencies: readonly ComponentDependencyRef[],
+  environment = "development",
+) {
+  return useQueries({
+    queries: dependencies.map(({ componentName, dependencyName }) => ({
+      queryKey: projectKeys.componentDependencyStatus(
+        projectName,
+        componentName,
+        dependencyName,
+        environment,
+      ),
+      queryFn: async (): Promise<DependencyStatus> => {
+        const { data, error } = await client.GET(
+          "/projects/{projectName}/components/{componentName}/dependencies/{depName}/status",
+          {
+            params: {
+              path: { projectName, componentName, depName: dependencyName },
+              query: { environment },
+            },
+          },
+        );
+        if (error || data === undefined) {
+          throw new Error(
+            apiErrorMessage(error, "Failed to load dependency status"),
+          );
+        }
+        return data;
+      },
+    })),
+    combine: (results) => ({
+      isPending: results.some((result) => result.isPending),
+      failedCount: results.filter((result) => result.isError).length,
+      statuses: results.map((result, index) => ({
+        ...dependencies[index]!,
+        status: result.data,
+      })),
+      refetch: () => Promise.all(results.map((result) => result.refetch())),
+    }),
+  });
+}
+
+// Collect or correct an external connection's values after provisioning has
+// authored its schema with unset/defaulted values. POST
+// …/external-resources/{name}/values re-splits plain/secret by the design's
+// schema, rewrites secrets to the secret manager and re-authors the OC resource
+// — values never echo back, so this is write-only by design. No automatic retry
+// (a failed write is surfaced).
+export function useSaveConnectionValues(
+  projectName: string,
+  connectionName?: string,
+) {
+  const queryClient = useQueryClient();
   return useMutation({
+    mutationKey: [
+      ...projectKeys.dependencyReadinessRoot(projectName),
+      "save-values",
+      connectionName,
+    ],
     mutationFn: async ({
       name,
       environment,
@@ -273,6 +337,46 @@ export function useSaveConnectionValues(projectName: string) {
       // and an empty-body success must not read as a failure.
       if (error) {
         throw new Error(apiErrorMessage(error, "Failed to save the connection's values"));
+      }
+      return data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: projectKeys.dependencyReadinessRoot(projectName),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: projectKeys.componentDependencyStatuses(projectName),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: specKeys.dependencies(projectName),
+      });
+    },
+  });
+}
+
+// Build configuration is environment-specific. The Builds page consumes this
+// cache entry while a run is active or afterwards; configuration does not gate
+// Build.
+export function useProjectDependencyReadiness(
+  projectName: string,
+  environment = "development",
+) {
+  return useQuery({
+    queryKey: projectKeys.dependencyReadiness(projectName, environment),
+    queryFn: async () => {
+      const { data, error } = await client.GET(
+        "/projects/{projectName}/dependencies/readiness",
+        {
+          params: {
+            path: { projectName },
+            query: { environment },
+          },
+        },
+      );
+      if (error || data === undefined) {
+        throw new Error(
+          apiErrorMessage(error, "Failed to load dependency readiness"),
+        );
       }
       return data;
     },
@@ -365,8 +469,8 @@ export function useBuildPreflight(projectName: string) {
 // Trigger a project build (#162): the single-tag flow — the BFF validates,
 // tags v<N>, and runs the dev workflow, returning the tag. The Spec view
 // commits the room first (collab flush-on-demand) so this tags the current
-// HEAD. Carries the drawer's resolved dependency inputs (#164); defaults to
-// an empty list for callers that haven't been rewired to the drawer yet.
+// HEAD. Carries preflight-resolved and automatic dependency inputs (#164);
+// defaults to an empty list for older callers.
 // Invalidates the project's reads since status/tasks/tags shift once the
 // build starts.
 export function useBuildProject(projectName: string) {
@@ -399,9 +503,9 @@ export function useBuildProject(projectName: string) {
   // TanStack infers the mutation's variables type from mutationFn's own
   // parameter, which stays required even with a default value (a default
   // only makes a *plain* function's parameter optional, not a generically
-  // inferred one) — so callers that predate the drawer's inputs and still
-  // call mutate()/mutateAsync() with no arguments need the default applied
-  // at this thin wrapper instead.
+  // inferred one) — so callers that send no preflight inputs and still call
+  // mutate()/mutateAsync() with no arguments need the default applied at this
+  // thin wrapper instead.
   return {
     ...mutation,
     mutate: (

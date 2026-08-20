@@ -382,8 +382,8 @@ describe("RunSpine", () => {
     expect(screen.getByText("needs you")).toBeInTheDocument();
     expect(screen.getByText(/Supply the configuration/)).toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: /Resolve connections/ }),
-    ).toHaveAttribute("href", "/projects/acme/spec?connections=open");
+      screen.getByRole("link", { name: /Configure connections/ }),
+    ).toHaveAttribute("href", "/projects/acme/builds?connections=open");
   });
 
   // The reported bug: a postgres cluster and an identity app take ~5 minutes to
@@ -405,7 +405,7 @@ describe("RunSpine", () => {
     expect(screen.queryByText(/Supply the configuration/)).not.toBeInTheDocument();
     // Nothing to go and do, so no way out is offered.
     expect(
-      screen.queryByRole("link", { name: /Resolve connections/ }),
+      screen.queryByRole("link", { name: /Configure connections/ }),
     ).not.toBeInTheDocument();
     // The dependencies are still named — that is what is being waited on.
     expect(screen.getByText("ceramics-db (postgres-cnpg)")).toBeInTheDocument();
@@ -427,8 +427,8 @@ describe("RunSpine", () => {
     expect(screen.getByText("db")).toBeInTheDocument();
     expect(screen.getByText("provisioning")).toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: /Resolve connections/ }),
-    ).toHaveAttribute("href", "/projects/acme/spec?connections=open");
+      screen.getByRole("link", { name: /Configure connections/ }),
+    ).toHaveAttribute("href", "/projects/acme/builds?connections=open");
   });
 
   // A resolved connection is part of how the version came to exist, so the stage

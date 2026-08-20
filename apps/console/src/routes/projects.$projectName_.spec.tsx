@@ -26,18 +26,13 @@ import { SpecView } from "../features/spec/components/SpecView";
 // `?generate=requirements|design` (#150/#159): arriving from a "Generate spec"
 // or "Generate/Re-generate design" CTA — AppLayout opens the agent panel and
 // auto-sends the matching generation turn.
-//
-// `?connections=open`: arriving from the Builds page's gate hold banner — a
-// dispatch gate is holding the run and the connection drawer is where its
-// dependency is supplied, so the drawer opens on arrival.
 export const Route = createFileRoute("/projects/$projectName_/spec")({
   validateSearch: (
     search: Record<string, unknown>,
-  ): { generate?: "requirements" | "design"; connections?: "open" } => ({
+  ): { generate?: "requirements" | "design" } => ({
     ...(search.generate === "requirements" || search.generate === "design"
       ? { generate: search.generate }
       : {}),
-    ...(search.connections === "open" ? { connections: "open" as const } : {}),
   }),
   component: SpecRoute,
 });

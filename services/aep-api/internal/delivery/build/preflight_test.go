@@ -60,6 +60,49 @@ func kindsByDep(items []PreflightItem) map[string][]string {
 
 // ----- tests -------------------------------------------------------------------
 
+// An external-config item carries its schema for later collection, but it is
+// not a design-resolution blocker.
+func TestPreflight_ExternalConfigSchemaDoesNotRequireResolution(t *testing.T) {
+	svc := NewPreflightService(PreflightDeps{
+		Design: fakeDesign{comps: []spec.DesignComponent{{
+			Name: "orders",
+			Dependencies: []spec.Dependency{{
+				Kind:   spec.DependencyKindExternal,
+				Name:   "stripe",
+				Config: []spec.ConfigKey{{Key: "STRIPE_KEY", Secret: true}},
+			}},
+		}}},
+		Status: fakeStatus{},
+	})
+
+	pf, err := svc.Preflight(context.Background(), "acme", "shop")
+	require.NoError(t, err)
+	require.True(t, pf.NeedsInput)
+	require.False(t, pf.NeedsResolution)
+	require.Equal(t, "external-config", pf.Items[0].Kind)
+}
+
+// An unresolved external dependency remains a design-resolution blocker.
+func TestPreflight_UnresolvedExternalRequiresResolution(t *testing.T) {
+	svc := NewPreflightService(PreflightDeps{
+		Design: fakeDesign{comps: []spec.DesignComponent{{
+			Name: "orders",
+			Dependencies: []spec.Dependency{{
+				Kind:   spec.DependencyKindExternal,
+				Name:   "stripe",
+				Status: spec.DependencyStatusUnresolved,
+				Reason: spec.DependencyReasonNeedsInput,
+			}},
+		}}},
+		Status: fakeStatus{},
+	})
+
+	pf, err := svc.Preflight(context.Background(), "acme", "shop")
+	require.NoError(t, err)
+	require.True(t, pf.NeedsResolution)
+	require.Equal(t, "external-unresolved", pf.Items[0].Kind)
+}
+
 func TestPreflight_ItemsPerKind(t *testing.T) {
 	comps := []spec.DesignComponent{{Name: "orders", ComponentType: spec.ComponentTypeService,
 		Dependencies: []spec.Dependency{
@@ -147,21 +190,26 @@ func TestPreflight_ComponentKindDependency_NeverEmits(t *testing.T) {
 	require.Empty(t, pf.Items)
 }
 
-// A dependency already Ready (provisioned or in-flight) is not re-asked: the
-// external-config and platform-resource items disappear once Status reports
-// ready. (external-spec is not currently emitted at all — see the doc comment
-// on Preflight; it was NeedsSpec-driven, and that field was dropped.)
-func TestPreflight_ReadyDependency_SkipsConfigAndResourceItems(t *testing.T) {
+// A resolved external dependency always exposes its config schema, even when
+// the legacy provisioning status says Ready. The schema is a non-gating view
+// used by Builds for later corrections; platform-resource readiness keeps its
+// existing behavior and suppresses the automatic provisioning item.
+func TestPreflight_ReadyResolvedExternal_EmitsSchemaWithoutGating(t *testing.T) {
 	comps := []spec.DesignComponent{{Name: "orders", ComponentType: spec.ComponentTypeService,
 		Dependencies: []spec.Dependency{
-			{Kind: spec.DependencyKindExternal, Name: "stripe"},
+			{Kind: spec.DependencyKindExternal, Name: "stripe", Status: spec.DependencyStatusResolved,
+				Config: []spec.ConfigKey{{Key: "STRIPE_KEY", Secret: true}}},
 			{Kind: spec.DependencyKindPlatformResource, Name: "orders-db", ResourceType: "postgres-cnpg"},
 		}}}
 	svc := NewPreflightService(PreflightDeps{Design: fakeDesign{comps: comps}, Status: readyStatus{}})
 	pf, err := svc.Preflight(context.Background(), "acme", "shop")
 	require.NoError(t, err)
-	require.False(t, pf.NeedsInput)
-	require.Empty(t, pf.Items)
+	require.True(t, pf.NeedsInput)
+	require.False(t, pf.NeedsResolution)
+	require.Equal(t, []string{"external-config"}, kindsByDep(pf.Items)["stripe"])
+	require.Equal(t, []ConfigKeyView{{Key: "STRIPE_KEY", Secret: true}}, pf.Items[0].Config)
+	_, platformPresent := kindsByDep(pf.Items)["orders-db"]
+	require.False(t, platformPresent)
 }
 
 // Non-service components (e.g. web-application) flow through the SAME

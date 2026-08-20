@@ -79,6 +79,15 @@ const DEFAULT_DEPENDENCIES: ComponentDependencies[] = [
   },
 ];
 let mockDependencies: ComponentDependencies[] = DEFAULT_DEPENDENCIES;
+const mockUseComponentDependencyStatuses = vi.fn();
+const mockComponentStatusRefetch = vi.fn();
+let mockComponentStatusPending = false;
+let mockComponentStatusFailedCount = 0;
+let mockComponentDependencyStatuses: Array<{
+  componentName: string;
+  dependencyName: string;
+  status: components["schemas"]["DependencyStatus"] | undefined;
+}> = [];
 
 function status(): ProjectStatus {
   return {
@@ -128,6 +137,15 @@ vi.mock("../api/queries", () => ({
     failedCount: 0,
   }),
   useProjectStatus: () => ({ data: status() }),
+  useComponentDependencyStatuses: (...args: unknown[]) => {
+    mockUseComponentDependencyStatuses(...args);
+    return {
+      isPending: mockComponentStatusPending,
+      failedCount: mockComponentStatusFailedCount,
+      statuses: mockComponentDependencyStatuses,
+      refetch: mockComponentStatusRefetch,
+    };
+  },
 }));
 
 vi.mock("../../spec/api/queries", () => ({
@@ -155,6 +173,10 @@ beforeEach(() => {
   mockVerdict = "";
   mockMutate.mockClear();
   mockDependencies = DEFAULT_DEPENDENCIES;
+  mockComponentDependencyStatuses = [];
+  mockComponentStatusPending = false;
+  mockComponentStatusFailedCount = 0;
+  mockComponentStatusRefetch.mockClear();
 });
 
 describe("DeploymentsPage — validation", () => {
@@ -316,6 +338,298 @@ describe("DeploymentsPage — story rail", () => {
 });
 
 describe("DeploymentsPage — connections", () => {
+  it("shows a connection-region loading state without readiness claims", () => {
+    mockComponentStatusPending = true;
+
+    render(<DeploymentsPage projectName="acme" />);
+
+    expect(screen.getByText("Loading connection readiness…")).toBeInTheDocument();
+    expect(screen.queryByText("Readiness unknown")).not.toBeInTheDocument();
+    expect(screen.queryByText("Configured")).not.toBeInTheDocument();
+  });
+
+  it("shows a connection-region error, hides partial readiness, and retries", () => {
+    mockComponentStatusFailedCount = 1;
+    mockComponentDependencyStatuses = [
+      {
+        componentName: "storefront",
+        dependencyName: "stripe",
+        status: {
+          outputs: [],
+          ready: true,
+          status: "Ready",
+          valueState: "configured",
+        },
+      },
+    ];
+
+    render(<DeploymentsPage projectName="acme" />);
+
+    expect(screen.getByText("Failed to load connection readiness")).toBeInTheDocument();
+    expect(screen.queryByText("Configured")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry connection readiness" }));
+    expect(mockComponentStatusRefetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows each development connection's real readiness and keeps correctable externals configurable", () => {
+    mockDeploy = {
+      version: "v1",
+      status: "deployed",
+      components: { total: 1, ready: 1 },
+      validation: "passed",
+    };
+    mockDependencies = [
+      {
+        componentName: "storefront",
+        dependencies: [
+          {
+            kind: "external",
+            name: "stripe",
+            config: [{ key: "STRIPE_SECRET_KEY", secret: true }],
+          },
+          {
+            kind: "external",
+            name: "twilio",
+            config: [{ key: "TWILIO_TOKEN", secret: true }],
+          },
+          {
+            kind: "external",
+            name: "sendgrid",
+            config: [{ key: "SENDGRID_API_KEY", secret: true }],
+          },
+          {
+            kind: "platform-resource",
+            name: "shop-db",
+            resourceType: "postgres-cnpg",
+          },
+        ],
+      },
+    ];
+    mockComponentDependencyStatuses = [
+      {
+        componentName: "storefront",
+        dependencyName: "stripe",
+        status: {
+          outputs: [],
+          ready: true,
+          status: "Ready",
+          valueState: "configured",
+        },
+      },
+      {
+        componentName: "storefront",
+        dependencyName: "twilio",
+        status: {
+          outputs: [],
+          ready: false,
+          status: "Ready",
+          valueState: "unset",
+        },
+      },
+      {
+        componentName: "storefront",
+        dependencyName: "sendgrid",
+        status: {
+          outputs: [],
+          ready: false,
+          status: "Pending",
+          valueState: "not-provisioned",
+        },
+      },
+    ];
+
+    render(<DeploymentsPage projectName="acme" />);
+
+    expect(mockUseComponentDependencyStatuses).toHaveBeenCalledWith(
+      "acme",
+      [
+        { componentName: "storefront", dependencyName: "stripe" },
+        { componentName: "storefront", dependencyName: "twilio" },
+        { componentName: "storefront", dependencyName: "sendgrid" },
+      ],
+    );
+
+    const configured = screen.getByRole("region", { name: "stripe" });
+    const configuredChip = within(configured)
+      .getByText("Configured")
+      .closest(".MuiChip-root");
+    expect(configuredChip).toHaveClass("MuiChip-colorSuccess");
+    expect(
+      within(configured).getByRole("button", { name: "Configure stripe" }),
+    ).toBeInTheDocument();
+
+    const unset = screen.getByRole("region", { name: "twilio" });
+    const unsetChip = within(unset)
+      .getByText("Needs values")
+      .closest(".MuiChip-root");
+    expect(unsetChip).toHaveClass("MuiChip-colorWarning");
+    expect(
+      within(unset).getByRole("button", { name: "Configure twilio" }),
+    ).toBeInTheDocument();
+
+    const provisioning = screen.getByRole("region", { name: "sendgrid" });
+    expect(
+      within(provisioning)
+        .getByText("Platform provisioning")
+        .closest(".MuiChip-root"),
+    ).toHaveClass("MuiChip-colorInfo");
+    expect(
+      within(provisioning).queryByText("Needs values"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("uses not-provisioned < unset < configured when components share external connections", () => {
+    mockDeploy = {
+      version: "v1",
+      status: "deployed",
+      components: { total: 1, ready: 1 },
+      validation: "passed",
+    };
+    mockDependencies = [
+      {
+        componentName: "storefront",
+        dependencies: [
+          {
+            kind: "external",
+            name: "stripe",
+            config: [{ key: "STRIPE_SECRET_KEY", secret: true }],
+          },
+          {
+            kind: "external",
+            name: "twilio",
+            config: [{ key: "TWILIO_TOKEN", secret: true }],
+          },
+        ],
+      },
+      {
+        componentName: "worker",
+        dependencies: [
+          {
+            kind: "external",
+            name: "stripe",
+            config: [{ key: "STRIPE_SECRET_KEY", secret: true }],
+          },
+          {
+            kind: "external",
+            name: "twilio",
+            config: [{ key: "TWILIO_TOKEN", secret: true }],
+          },
+        ],
+      },
+      {
+        componentName: "notifications",
+        dependencies: [
+          {
+            kind: "external",
+            name: "twilio",
+            config: [{ key: "TWILIO_TOKEN", secret: true }],
+          },
+        ],
+      },
+    ];
+    mockComponentDependencyStatuses = [
+      {
+        componentName: "storefront",
+        dependencyName: "stripe",
+        status: {
+          outputs: [],
+          ready: true,
+          status: "Ready",
+          valueState: "configured",
+        },
+      },
+      {
+        componentName: "storefront",
+        dependencyName: "twilio",
+        status: {
+          outputs: [],
+          ready: true,
+          status: "Ready",
+          valueState: "configured",
+        },
+      },
+      {
+        componentName: "worker",
+        dependencyName: "stripe",
+        status: {
+          outputs: [],
+          ready: false,
+          status: "Ready",
+          valueState: "unset",
+        },
+      },
+      {
+        componentName: "worker",
+        dependencyName: "twilio",
+        status: {
+          outputs: [],
+          ready: false,
+          status: "Ready",
+          valueState: "unset",
+        },
+      },
+      {
+        componentName: "notifications",
+        dependencyName: "twilio",
+        status: {
+          outputs: [],
+          ready: false,
+          status: "Pending",
+          valueState: "not-provisioned",
+        },
+      },
+    ];
+
+    render(<DeploymentsPage projectName="acme" />);
+
+    const stripe = screen.getByRole("region", { name: "stripe" });
+    expect(
+      within(stripe)
+        .getByText("Needs values")
+        .closest(".MuiChip-root"),
+    ).toHaveClass("MuiChip-colorWarning");
+    expect(within(stripe).queryByText("Configured")).not.toBeInTheDocument();
+
+    const twilio = screen.getByRole("region", { name: "twilio" });
+    expect(
+      within(twilio)
+        .getByText("Platform provisioning")
+        .closest(".MuiChip-root"),
+    ).toHaveClass("MuiChip-colorInfo");
+    expect(within(twilio).queryByText("Needs values")).not.toBeInTheDocument();
+  });
+
+  it("treats a missing shared status as unknown instead of configured", () => {
+    mockDependencies = [
+      { componentName: "storefront", dependencies: [{ kind: "external", name: "stripe", config: [{ key: "KEY" }] }] },
+      { componentName: "worker", dependencies: [{ kind: "external", name: "stripe", config: [{ key: "KEY" }] }] },
+    ];
+    mockComponentDependencyStatuses = [
+      { componentName: "storefront", dependencyName: "stripe", status: { outputs: [], ready: true, status: "Ready", valueState: "configured" } },
+      { componentName: "worker", dependencyName: "stripe", status: undefined },
+    ];
+    render(<DeploymentsPage projectName="acme" />);
+    const row = screen.getByRole("region", { name: "stripe" });
+    expect(within(row).getByText("Readiness unknown")).toBeInTheDocument();
+    expect(within(row).queryByText("Configured")).not.toBeInTheDocument();
+  });
+
+  it("renders an external with no returned status as neutral unknown", () => {
+    render(<DeploymentsPage projectName="acme" />);
+    const row = screen.getByRole("region", { name: "stripe" });
+    expect(within(row).getByText("Readiness unknown")).toBeInTheDocument();
+    expect(within(row).queryByText("Configured")).not.toBeInTheDocument();
+  });
+
+  it("does not apply external readiness to a same-named platform row", () => {
+    mockDependencies = [{ componentName: "storefront", dependencies: [{ kind: "platform-resource", name: "stripe", resourceType: "postgres-cnpg" }] }];
+    mockComponentDependencyStatuses = [{ componentName: "other", dependencyName: "stripe", status: { outputs: [], ready: false, status: "Ready", valueState: "unset" } }];
+    render(<DeploymentsPage projectName="acme" />);
+    const row = screen.getByRole("region", { name: "stripe (postgres-cnpg)" });
+    expect(within(row).queryByText("Needs values")).not.toBeInTheDocument();
+    expect(within(row).getByText("provisioned")).toBeInTheDocument();
+  });
+
   it("re-collects an external connection's values from the side panel", () => {
     mockDeploy = {
       version: "v1",

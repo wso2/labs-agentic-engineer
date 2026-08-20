@@ -171,6 +171,33 @@ describe("DesignView — dependency status cards (#252 Task 9)", () => {
     expect(screen.getByText("STRIPE_REGION")).toBeInTheDocument();
     expect(screen.getAllByTestId("secret-icon")).toHaveLength(1);
   });
+
+  it("shows external value readiness independently from resolved design status", () => {
+    const { rerender } = render(
+      <DesignView
+        design={designJson([{ kind: "external", name: "stripe" }])}
+        dependencyStatus={{
+          stripe: { status: "resolved", valueState: "unset" },
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Resolved")).toBeInTheDocument();
+    expect(screen.getByText("Needs values")).toBeInTheDocument();
+
+    rerender(
+      <DesignView
+        design={designJson([{ kind: "external", name: "stripe" }])}
+        dependencyStatus={{
+          stripe: { status: "resolved", valueState: "configured" },
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Resolved")).toBeInTheDocument();
+    expect(screen.getByText("Configured")).toBeInTheDocument();
+    expect(screen.queryByText("Needs values")).not.toBeInTheDocument();
+  });
 });
 
 // #252 Task 17: state-based affordance — a non-resolved dependency keeps its

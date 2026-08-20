@@ -36,17 +36,19 @@ import {
   type DesignConfigEntry,
 } from "./parse.js";
 
-// #252 Task 9: read-time resolution status for ONE dependency, keyed by name
-// in DesignViewProps.dependencyStatus. `status`/`reason` are the two fields
-// parse.ts deliberately never parses from the raw design.json (see its
-// file-header comment) — this is their ONLY source. Kept as raw strings
-// (not a closed union) so an unrecognized value still renders instead of
-// widening this package's dependency on the server's exact enum.
+// Read-time status for ONE dependency, keyed by name in
+// DesignViewProps.dependencyStatus. parse.ts deliberately never parses these
+// values from raw design.json (see its file-header comment) — the server read
+// model is their ONLY source. Resolution status/reason stay raw strings so an
+// unrecognized server value still renders; valueState is the closed external
+// readiness vocabulary shared with the configuration surfaces.
 export interface DependencyStatusInfo {
   /** "resolved" | "ambiguous" | "unresolved" | "blocked". */
   status?: string | undefined;
   /** "needs-spec" | "needs-input" | "not-found" | "access-required". */
   reason?: string | undefined;
+  /** Read-time development value readiness for external dependencies. */
+  valueState?: "not-provisioned" | "unset" | "configured" | undefined;
 }
 
 const STATUS_COLOR: Record<string, "success" | "warning" | "error"> = {
@@ -66,6 +68,22 @@ const REASON_LABEL: Record<string, string> = {
   "needs-input": "needs input",
   "not-found": "not found",
   "access-required": "access required",
+};
+const VALUE_STATE_COLOR: Record<
+  NonNullable<DependencyStatusInfo["valueState"]>,
+  "info" | "warning" | "success"
+> = {
+  "not-provisioned": "info",
+  unset: "warning",
+  configured: "success",
+};
+const VALUE_STATE_LABEL: Record<
+  NonNullable<DependencyStatusInfo["valueState"]>,
+  string
+> = {
+  "not-provisioned": "Platform provisioning",
+  unset: "Needs values",
+  configured: "Configured",
 };
 
 // Solid background per component type / dependency kind. Text color is
@@ -282,6 +300,7 @@ function DependencyCard({
   const color = KIND_COLOR[dep.kind] ?? FALLBACK;
   const kindLabel = KIND_LABEL[dep.kind] ?? dep.kind;
   const resolutionStatus = status?.status;
+  const valueState = dep.kind === "external" ? status?.valueState : undefined;
   const isResolved = resolutionStatus === "resolved";
   const showResolution = Boolean(resolutionStatus) && !isResolved;
   const showUsedBy = (usedBy?.length ?? 0) > 1;
@@ -306,6 +325,13 @@ function DependencyCard({
             size="small"
             color={STATUS_COLOR[resolutionStatus] ?? "default"}
             label={STATUS_LABEL[resolutionStatus] ?? resolutionStatus}
+          />
+        )}
+        {valueState && (
+          <Chip
+            size="small"
+            color={VALUE_STATE_COLOR[valueState]}
+            label={VALUE_STATE_LABEL[valueState]}
           />
         )}
         {isResolved && onReconsider && (
@@ -452,12 +478,13 @@ export interface DesignViewProps {
   design: string;
   /**
    * OPTIONAL read-time resolution status per dependency name, from #252
-   * Task 2's `GET /projects/{p}/design/dependencies` endpoint — the ONLY
-   * source of `status`/`reason`. parse.ts deliberately does not parse these
-   * two fields from the raw design.json (see its file-header comment): they
-   * are computed server-side on every read (models.ComputeDependencyStatus)
-   * and never authored/persisted, so recomputing them here — e.g. from
-   * `candidates.length` — would drift from that single resolution authority.
+   * Task 2's `GET /projects/{p}/design/dependencies` endpoint supplies
+   * `status`/`reason`; the independent per-component dependency-status
+   * endpoint supplies external `valueState`. parse.ts
+   * deliberately does not parse these fields from the raw design.json (see
+   * its file-header comment): they are computed server-side on every read and
+   * never authored/persisted, so recomputing them here would drift from that
+   * single read-time authority.
    * Optional and keyed defensively (a missing entry just renders without a
    * status chip) so existing callers that don't fetch this endpoint are
    * unaffected.

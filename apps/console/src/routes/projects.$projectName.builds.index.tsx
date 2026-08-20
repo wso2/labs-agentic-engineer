@@ -22,25 +22,37 @@ import { BuildsPage } from "../features/builds/components/BuildsPage";
 // ?tag=vN selects a previous build; absent = the newest build (#185). The
 // param is validated as "a non-empty string" only — an unknown tag falls
 // back to newest inside BuildsPage rather than erroring the route.
+export function validateBuildsSearch(search: Record<string, unknown>): {
+  tag?: string;
+  connections?: "open";
+} {
+  const tag = search.tag;
+  return {
+    ...(typeof tag === "string" && tag !== "" ? { tag } : {}),
+    ...(search.connections === "open" ? { connections: "open" as const } : {}),
+  };
+}
+
 export const Route = createFileRoute("/projects/$projectName/builds/")({
-  validateSearch: (search: Record<string, unknown>): { tag?: string } => {
-    const tag = search.tag;
-    return typeof tag === "string" && tag !== "" ? { tag } : {};
-  },
+  validateSearch: validateBuildsSearch,
   component: BuildsRoute,
 });
 
 function BuildsRoute() {
   const { projectName } = Route.useParams();
-  const { tag } = Route.useSearch();
+  const { tag, connections } = Route.useSearch();
   const navigate = Route.useNavigate();
   return (
     <BuildsPage
       projectName={projectName}
       tag={tag}
+      connectionsOpen={connections === "open"}
       onTagChange={(next) =>
         void navigate({
-          search: next ? { tag: next } : {},
+          search: {
+            ...(next ? { tag: next } : {}),
+            ...(connections === "open" ? { connections: "open" as const } : {}),
+          },
           replace: true,
         })
       }

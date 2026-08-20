@@ -79,6 +79,37 @@ describe("connectionRows", () => {
     expect(rows.find((r) => r.name === "shop-db")?.provisioned).toBe(true);
     expect(rows.find((r) => r.name === "stripe")?.provisioned).toBe(false);
   });
+
+  it("keeps the original first-row schema for a shared production connection", () => {
+    const rows = connectionRows([
+      {
+        componentName: "checkout-api",
+        dependencies: [
+          {
+            kind: "external",
+            name: "stripe",
+            description: "First declaration",
+            config: [{ key: "FIRST_KEY", secret: false }],
+          },
+        ],
+      },
+      {
+        componentName: "checkout-worker",
+        dependencies: [
+          {
+            kind: "external",
+            name: "stripe",
+            description: "Second declaration",
+            config: [{ key: "SECOND_KEY", secret: true }],
+          },
+        ],
+      },
+    ]);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.config).toEqual([{ key: "FIRST_KEY", secret: false }]);
+    expect(rows[0]).not.toHaveProperty("description");
+  });
 });
 
 describe("readiness over entered values", () => {
