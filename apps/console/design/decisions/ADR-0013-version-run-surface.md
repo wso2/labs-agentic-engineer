@@ -140,9 +140,10 @@ is no ledger list in between.
   provisioning gate.
 - External values are no longer resolved by re-submitting Build. They are saved
   independently from the deep-linked Builds configuration section while a run
-  continues. This does not yet make them a deploy gate: repo-wide ADR-0017 has
-  already taken the deploy verb off OpenChoreo's `autoDeploy`, so until
-  ADR-0020's gate ships the run deploys without consulting them.
+  continues. Repo-wide ADR-0017 took the deploy verb off OpenChoreo's
+  `autoDeploy`, and repo-wide ADR-0020 makes those values a DEPLOY gate: the run
+  parks in `waiting` naming the dependencies it needs, and resumes when the last
+  value is saved.
 - Tests follow the house convention — `vi.mock` at the hook boundary, jsdom via
   a per-file pragma, fixtures as local factories typed off the generated
   contract. MSW stays the **dev-time** worker; the new endpoints (including the
