@@ -155,11 +155,8 @@ webhook:
 # does. This provisions the api-configuration ClusterTrait + the namespaced
 # service/web-application ComponentTypes in the org's control-plane namespace.
 localOrgProvisioning:
-  # LOCAL DEV ONLY (single-org). PROD: false — platform-api ProvisionOrgUnit
-  # creates these per-org, so the chart must not.
-  enabled: false
   # The org's OpenChoreo control-plane namespace where the namespaced
-  # ComponentTypes are created. For the local single-org install this is the OC
+  # ComponentTypes are created. For a single-org install this is the OC
   # control-plane namespace ("default"), NOT the platform release namespace.
   orgNamespace: "default"
 

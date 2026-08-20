@@ -28,9 +28,7 @@ codingAgentDispatch:
   openBaoDirect:
     enabled: true
 
-# Provision per-org OC ComponentTypes locally (cloud does this via platform-api).
 localOrgProvisioning:
-  enabled: true
   orgNamespace: default
 
 # GitHub webhooks are OFF by default locally. To trigger component builds on PR

@@ -1,9 +1,5 @@
-{{- if .Values.localOrgProvisioning.enabled }}
-# LOCAL ORG PROVISIONING (local stand-in for cloud platform-api ProvisionOrgUnit).
 # Per-org NAMESPACED ComponentType that aep-api references (kind=ComponentType).
-# Derived verbatim from the AEP ClusterComponentType spec in
-# deployments/scripts/setup-aep.sh. Gated off in prod (ProvisionOrgUnit creates
-# these per-org there). See values.yaml localOrgProvisioning.
+# Derived from the AEP ClusterComponentType spec in deployments/scripts/setup-aep.sh.
 apiVersion: openchoreo.dev/v1alpha1
 kind: ComponentType
 metadata:
@@ -220,4 +216,3 @@ spec:
               backendRefs:
                 - name: "${metadata.componentName}"
                   port: "${workload.endpoints[endpoint].port}"
-{{- end }}

@@ -272,8 +272,6 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 	if u := viper.GetString("webhook.delivery_url"); u != "" {
 		helmArgs = append(helmArgs, "--set", "webhook.deliveryURL="+u)
 	}
-	helmArgs = append(helmArgs, "--set",
-		fmt.Sprintf("localOrgProvisioning.enabled=%t", viper.GetBool("oc.local_org_provisioning.enabled")))
 	if ns := viper.GetString("oc.org_namespace"); ns != "" {
 		helmArgs = append(helmArgs, "--set", "localOrgProvisioning.orgNamespace="+ns)
 	}
