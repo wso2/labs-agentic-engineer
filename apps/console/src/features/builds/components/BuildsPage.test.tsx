@@ -23,7 +23,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { components } from "../../../generated/aep-api";
 
 type BuildSummary = components["schemas"]["BuildSummary"];
+type ComponentDependencies = components["schemas"]["ComponentDependencies"];
 type MilestoneRunView = components["schemas"]["MilestoneRunView"];
+type ProjectDependencyReadiness =
+  components["schemas"]["ProjectDependencyReadiness"];
 type TaskView = components["schemas"]["TaskView"];
 
 // Router stubbed to plain anchors — no RouterProvider needed. createLink is
@@ -84,8 +87,36 @@ vi.mock("../../tasks/api/queries", () => ({
 // rather than issuing a second request.
 // The platform records a CLONE url — it carries a `.git` suffix.
 const mockRepoUrl = "https://github.com/acme/demo.git";
+let mockConnectionDependencies: ComponentDependencies[] = [];
+let mockDependencyReadiness: ProjectDependencyReadiness = {
+  configured: true,
+  dependencies: [],
+};
 vi.mock("../../projects/api/queries", () => ({
   useProjectStatus: () => ({ data: { repoUrl: mockRepoUrl } }),
+  useProjectDependencyReadiness: () => ({
+    data: mockDependencyReadiness,
+    isPending: false,
+    isError: false,
+    error: null,
+    refetch: vi.fn(),
+  }),
+  useSaveConnectionValues: () => ({
+    mutate: vi.fn(),
+    isPending: false,
+    isError: false,
+    error: null,
+  }),
+}));
+
+vi.mock("../../spec/api/queries", () => ({
+  useDesignDependencies: () => ({
+    data: mockConnectionDependencies,
+    isPending: false,
+    isError: false,
+    error: null,
+    refetch: vi.fn(),
+  }),
 }));
 
 let mockBuilds: BuildSummary[] = [];
@@ -194,6 +225,8 @@ afterEach(() => {
   mockRuns = [];
   mockIssues = [];
   mockIssuesError = false;
+  mockConnectionDependencies = [];
+  mockDependencyReadiness = { configured: true, dependencies: [] };
   mockCycleBuilds = [];
   cancelState.isPending = false;
   cancelState.isError = false;
@@ -202,9 +235,18 @@ afterEach(() => {
   invalidateQueries.mockClear();
 });
 
-function renderPage(tag?: string, onTagChange = vi.fn()) {
+function renderPage(
+  tag?: string,
+  onTagChange = vi.fn(),
+  connectionsOpen = false,
+) {
   render(
-    <BuildsPage projectName="acme" tag={tag} onTagChange={onTagChange} />,
+    <BuildsPage
+      projectName="acme"
+      tag={tag}
+      onTagChange={onTagChange}
+      connectionsOpen={connectionsOpen}
+    />,
   );
   return onTagChange;
 }
@@ -213,6 +255,32 @@ describe("BuildsPage — one version's story", () => {
   it("invites the first build when there is none", () => {
     renderPage();
     expect(screen.getByText(/No builds yet/)).toBeInTheDocument();
+  });
+
+  it("keeps project connection configuration expanded without build history", () => {
+    mockConnectionDependencies = [
+      {
+        componentName: "checkout-api",
+        dependencies: [
+          {
+            kind: "external",
+            name: "stripe",
+            config: [{ key: "REGION", defaultValue: "us-east-1" }],
+          },
+        ],
+      },
+    ];
+    mockDependencyReadiness = {
+      configured: false,
+      dependencies: [{ name: "stripe", state: "unset", missingKeys: [] }],
+    };
+    renderPage(undefined, vi.fn(), true);
+
+    expect(
+      screen.getByRole("button", { name: /Connection configuration/i }),
+    ).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("region", { name: "stripe" })).toBeInTheDocument();
+    expect(screen.getByDisplayValue("us-east-1")).toBeInTheDocument();
   });
 
   it("defaults to the newest version, not to a ledger list", () => {
@@ -796,7 +864,12 @@ describe("BuildsPage — one version's story", () => {
     mockBuilds = [build("v2", "in_progress")];
     mockRuns = [run({ state: "running" })];
     const { rerender } = render(
-      <BuildsPage projectName="acme" tag={undefined} onTagChange={vi.fn()} />,
+      <BuildsPage
+        projectName="acme"
+        tag={undefined}
+        onTagChange={vi.fn()}
+        connectionsOpen={false}
+      />,
     );
     expect(invalidateQueries).not.toHaveBeenCalled();
 
@@ -804,13 +877,23 @@ describe("BuildsPage — one version's story", () => {
     // the writes that settle a version can land in the same instant.
     mockRuns = [run({ state: "succeeded" })];
     rerender(
-      <BuildsPage projectName="acme" tag={undefined} onTagChange={vi.fn()} />,
+      <BuildsPage
+        projectName="acme"
+        tag={undefined}
+        onTagChange={vi.fn()}
+        connectionsOpen={false}
+      />,
     );
     expect(invalidateQueries).toHaveBeenCalledTimes(1);
 
     // A further render on the same settled state must not re-read.
     rerender(
-      <BuildsPage projectName="acme" tag={undefined} onTagChange={vi.fn()} />,
+      <BuildsPage
+        projectName="acme"
+        tag={undefined}
+        onTagChange={vi.fn()}
+        connectionsOpen={false}
+      />,
     );
     expect(invalidateQueries).toHaveBeenCalledTimes(1);
   });

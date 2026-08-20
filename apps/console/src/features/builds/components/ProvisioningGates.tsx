@@ -99,11 +99,11 @@ export function ProvisioningGates({
               size="small"
               variant="outlined"
               color={state === "failed" ? "error" : "warning"}
-              to="/projects/$projectName/spec"
+              to="/projects/$projectName/builds"
               params={{ projectName }}
               search={{ connections: "open" }}
             >
-              Resolve connections
+              Configure connections
             </LinkButton>
           </Box>
         )}

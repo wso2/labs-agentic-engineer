@@ -24,6 +24,7 @@
     "@aep/excalidraw-dsl": "workspace:*",
     "@aep/progress-view": "workspace:*",
     "@aep/ui-cell-diagram-view": "workspace:*",
+    "@aep/ui-connection-value-fields": "workspace:*",
     "@aep/ui-design-view": "workspace:*",
     "@aep/ui-excalidraw-view": "workspace:*",
     "@aep/ui-openapi-view": "workspace:*",

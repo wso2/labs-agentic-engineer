@@ -66,7 +66,7 @@ it), and every former feature→feature edge becomes a legal slice→root type r
 
 | Sub-package | Owns | Reaches the root for |
 |---|---|---|
-| `build` (buildpipe) | the whole-spec gate + `v<N>` tag cut, **the milestone plan path** (supersede the previous version, mint `v<N>`'s milestone, admit the run row, then plan its Tasks and mint its gates), the version ledger, dep-drawer preflight | `MilestoneRun`/`StartRunRequest`, and the planner via `SpecPlanner` |
+| `build` (buildpipe) | the whole-spec gate + `v<N>` tag cut, **the milestone plan path** (supersede the previous version, mint `v<N>`'s milestone, admit the run row, then plan its Tasks and mint its gates), the version ledger, single-call preflight schema + design-resolution verdict | `MilestoneRun`/`StartRunRequest`, and the planner via `SpecPlanner` |
 | `task` (taskflow) | the GitHub-native Task READ surface (list/get, scoped to a version by milestone membership) + the plan turn, which mints one **prose** issue per Task **into the version's milestone**, assigned at creation; plus the SRE/RCA handoff's adoption leg | the read DTOs, the milestone label vocabulary, and the run rows (via `MilestoneResolver`) |
 | `execution` | the executions READ surface: the per-Task progress endpoint, the task-log SSE stream, `OpsExecutionReader`. It writes nothing and dispatches nothing — the only execution rows left are the provisioning gates' | `TaskStreamHub`, the executions kernel |
 | `eventcore` | the event plane of the milestone-run loop: the auto-merge policy seam, the merged-PR path-diff build fan-out + per-`(component, SHA)` re-trigger budget, fix/conflict/red-main issue minting, milestone-matched predicate re-evaluation, adoption, the reconcile sweep, and the build sweep that observes those builds reaching terminal | the milestone model (labels, `MilestoneRun`/`RunCycle`, run signals), `DiffComponents`/`BuildRunName` and `BuildTerminalObserver`; **no Temporal** — it reaches the supervisor only through the `RunSignaler`/`RunStarter` ports |
@@ -109,7 +109,7 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
 
 ## Owns
 - The **executions** store (now provisioning gates only) and the Temporal `Runtime` + the one workflow on it.
-- The **build click's whole sequence** (`build`): mutex → repo → drawer pre-tag work → dependency hard
+- The **build click's whole sequence** (`build`): mutex → repo → pre-tag dependency inputs → dependency hard
   gate → whole-spec gate + `v<N>` tag cut → supersede → milestone → run row → plan. The ORDER is the
   domain fact `build` owns; the two halves it does not own (the planning turn, the gate resolvers) are
   root ports.

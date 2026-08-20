@@ -77,7 +77,9 @@ type ProvisionFailure struct {
 // project's committed design (authorExternalPrepared) — the external dep need
 // not be separately registered anywhere.
 func (s *Service) ProvisionForBuild(ctx context.Context, orgID, ocOrgID, projectID, tag string, milestoneNumber int, inputs []BuildProvisionInput) ([]ProvisionFailure, error) {
-	// Mint gates only when the drawer carried inputs. A not-ready dependency is
+	// Mint gates only when the drawer carried a platform-resource input. Automatic
+	// external-config authoring is not a gate input, and org-service visibility
+	// owns its separate gate flow. A not-ready platform dependency is
 	// always surfaced in the build drawer, so a build with no inputs needs no new
 	// gate — and a pure re-build must not churn a fresh gate for every already-ready
 	// dep. Existing gates are still reconciled by settleReadyGates below, so an
@@ -85,10 +87,17 @@ func (s *Service) ProvisionForBuild(ctx context.Context, orgID, ocOrgID, project
 	// gateByDep carries the aep:provision gate issue number the mint step KNOWS for
 	// each dep — captured from the CreateIssue result, not re-looked-up via GitHub's
 	// eventually-consistent label list (which lags a just-created gate and strands
-	// the provision run — issue #164). Empty when no inputs were carried; a missing
-	// dep resolves to 0 (a safe no-op gate).
+	// the provision run — issue #164). Empty when no platform input was carried;
+	// a missing dep resolves to 0 (a safe no-op gate).
 	var gateByDep map[string]int
-	if len(inputs) > 0 {
+	hasPlatformResourceInput := false
+	for _, in := range inputs {
+		if in.Kind == buildKindPlatformResrc {
+			hasPlatformResourceInput = true
+			break
+		}
+	}
+	if hasPlatformResourceInput {
 		var err error
 		gateByDep, err = s.EnsureProvisionIssues(ctx, orgID, projectID, tag, milestoneNumber)
 		if err != nil {

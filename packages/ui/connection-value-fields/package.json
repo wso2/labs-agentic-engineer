@@ -1,0 +1,29 @@
+{
+  "name": "@aep/ui-connection-value-fields",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc",
+    "test": "vitest run",
+    "lint": "eslint ."
+  },
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "@wso2/oxygen-ui": ">=0.1.0"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/react": "19.1.6",
+    "@types/react-dom": "19.0.2",
+    "jsdom": "26.1.0",
+    "typescript": "5.9.3",
+    "vitest": "^4.1.10",
+    "@wso2/oxygen-ui": "0.11.0"
+  }
+}

@@ -19,17 +19,16 @@
 import { useEffect, useState } from "react";
 import {
   Alert,
-  Box,
   Button,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
   IconButton,
-  TextField,
   Typography,
 } from "@wso2/oxygen-ui";
 import { X } from "@wso2/oxygen-ui-icons-react";
+import { ConnectionValueFields } from "@aep/ui-connection-value-fields";
 import { useSaveConnectionValues } from "../api/queries";
 import type { ConnectionRow } from "../lib/promotion";
 
@@ -91,32 +90,13 @@ export function ConnectionValuesDialog({
           New {environment} values for this connection. Stored values never
           display here — saving replaces them all.
         </Typography>
-        <Box
-          sx={{
-            display: "grid",
-            gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" },
-            gap: 1.25,
-          }}
-        >
-          {connection.config.map((key) => (
-            // The KEY is the label (short, stable); the schema's description
-            // goes below as helper text, which WRAPS — a floating label
-            // truncates it to one clipped line (#401 feedback).
-            <TextField
-              key={key.key}
-              label={key.key}
-              {...(key.description && { helperText: key.description })}
-              size="small"
-              fullWidth
-              {...(key.secret && { type: "password" })}
-              value={values[key.key] ?? ""}
-              onChange={(e) =>
-                setValues((v) => ({ ...v, [key.key]: e.target.value }))
-              }
-              sx={{ "& input": { fontFamily: "monospace" } }}
-            />
-          ))}
-        </Box>
+        <ConnectionValueFields
+          config={connection.config}
+          values={values}
+          onValueChange={(key, value) =>
+            setValues((current) => ({ ...current, [key]: value }))
+          }
+        />
         {save.isError && (
           <Alert severity="error" sx={{ mt: 2 }}>
             {save.error instanceof Error && save.error.message

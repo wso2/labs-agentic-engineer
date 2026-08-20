@@ -64,13 +64,23 @@ func newFakeIssues(seed []sourcecontrol.IssueInfo) *fakeIssues {
 	return &fakeIssues{list: seed, closed: map[int]string{}, comments: map[int][]string{}, nextNum: max + 1, project: map[int]string{}, hiddenFromList: map[int]bool{}}
 }
 
-func (f *fakeIssues) ListIssues(_ context.Context, _, projectID string, _ []string) ([]sourcecontrol.IssueInfo, error) {
+func (f *fakeIssues) ListIssues(_ context.Context, _, projectID string, labels []string) ([]sourcecontrol.IssueInfo, error) {
 	var out []sourcecontrol.IssueInfo
 	for _, i := range f.list {
 		if f.hiddenFromList[i.Number] {
 			continue // eventually-consistent list has not caught up to this create yet
 		}
 		if p := f.project[i.Number]; p == "" || p == projectID {
+			matches := true
+			for _, label := range labels {
+				if !contains(i.Labels, label) {
+					matches = false
+					break
+				}
+			}
+			if !matches {
+				continue
+			}
 			out = append(out, i)
 		}
 	}

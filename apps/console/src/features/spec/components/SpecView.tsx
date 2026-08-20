@@ -45,6 +45,7 @@ import type { components } from "../../../generated/aep-api";
 import {
   useBuildPreflight,
   useBuildProject,
+  useComponentDependencyStatuses,
   useProjectStatus,
   useProjectTags,
 } from "../../projects/api/queries";
@@ -79,6 +80,22 @@ import { useSession } from "../../../auth/SessionContext";
 
 type PreflightItem = components["schemas"]["PreflightItem"];
 type BuildInputItem = components["schemas"]["BuildInputItem"];
+
+function automaticBuildInputs(items: PreflightItem[]): BuildInputItem[] {
+  return items.flatMap((item) =>
+    item.kind === "platform-resource"
+      ? [
+          {
+            component: item.component,
+            dependency: item.dependency,
+            kind: "platform-resource" as const,
+            approved: true,
+            ...(item.parameters ? { parameters: item.parameters } : {}),
+          },
+        ]
+      : [],
+  );
+}
 
 // Full-screen spec workspace (#80), per the oxygen-ui sample's
 // LoginEditorView pattern: fullWidth/noPadding page, own header bar,
@@ -121,9 +138,9 @@ export function SpecView({ projectName }: { projectName: string }) {
   // Build (#162): commit-then-build. buildPhase drives the button label /
   // loading; an agent peer in the room means a turn is writing → block Build.
   const build = useBuildProject(projectName);
-  // Preflight (#164): checked between commit and build — a project with
-  // unresolved dependencies (external config/spec, platform resources, org
-  // services) routes through the drawer instead of building blind.
+  // Preflight (#164): checked between commit and build. Design-resolution
+  // blockers route through the drawer; external values and platform resources
+  // remain visible in `items` without blocking the version cut.
   const preflight = useBuildPreflight(projectName);
   const [buildPhase, setBuildPhase] = useState<
     "committing" | "checking" | "building" | null
@@ -200,7 +217,6 @@ export function SpecView({ projectName }: { projectName: string }) {
   // wants to be, so we auto-select it.
   const search = useSearch({ strict: false }) as {
     generate?: "requirements" | "design";
-    connections?: "open";
   };
   const generate = search.generate;
   const agentInRoom = collab.peers.some((p) => p.kind === "agent");
@@ -212,24 +228,6 @@ export function SpecView({ projectName }: { projectName: string }) {
   useEffect(() => {
     if (generate === "design") setSelection({ kind: "cell-diagram" });
   }, [generate]);
-
-  // `?connections=open` — the Builds page's gate hold banner deep-links here
-  // because the connection drawer is where a held dependency is supplied. The
-  // drawer needs the preflight items, which are otherwise only fetched by a
-  // Build click, so this arrival fetches them itself before opening.
-  const connectionsParam = search.connections;
-  useEffect(() => {
-    if (connectionsParam !== "open") return;
-    let cancelled = false;
-    void preflightRef.current.refetch().then(({ data }) => {
-      if (cancelled) return;
-      setPreflightItems(data?.items ?? []);
-      setDependencyDrawerOpen(true);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [connectionsParam]);
 
   // An architectural chat change updates design.cell (targeted editFile
   // patches, or a removeFile + streamed addFile for a restructure). Navigate
@@ -292,20 +290,79 @@ export function SpecView({ projectName }: { projectName: string }) {
         ?.dependencies ?? [],
     [dependencies.data, selectedComponentName],
   );
-  // Keyed by dependency name for DesignView's optional dependencyStatus prop
-  // — status/reason are the ONLY fields this map carries. candidates/config
-  // are already in the raw design.json DesignView parses itself; see
-  // DesignViewProps.dependencyStatus's comment for why status/reason can't
-  // join them.
+  const externalDependencyRefs = useMemo(
+    () =>
+      selectedComponentName
+        ? componentDependencies
+            .filter((dependency) => dependency.kind === "external")
+            .map((dependency) => ({
+              componentName: selectedComponentName,
+              dependencyName: dependency.name,
+            }))
+        : [],
+    [componentDependencies, selectedComponentName],
+  );
+  const componentValueStatuses = useComponentDependencyStatuses(
+    projectName,
+    externalDependencyRefs,
+  );
+  const valueStateByName = useMemo(
+    () =>
+      componentValueStatuses.isPending || componentValueStatuses.failedCount > 0
+        ? new Map<string, undefined>()
+        : new Map(
+            componentValueStatuses.statuses.map((entry) => [
+              entry.dependencyName,
+              entry.status?.valueState,
+            ]),
+          ),
+    [
+      componentValueStatuses.failedCount,
+      componentValueStatuses.isPending,
+      componentValueStatuses.statuses,
+    ],
+  );
+  const connectionReadinessNotice =
+    externalDependencyRefs.length === 0 ? null : componentValueStatuses.isPending ? (
+      <Alert
+        severity="info"
+        icon={<CircularProgress size={18} aria-hidden />}
+        sx={{ mb: 2 }}
+      >
+        Loading connection readiness…
+      </Alert>
+    ) : componentValueStatuses.failedCount > 0 ? (
+      <Alert
+        severity="error"
+        sx={{ mb: 2 }}
+        action={
+          <Button
+            aria-label="Retry connection readiness"
+            onClick={() => void componentValueStatuses.refetch()}
+          >
+            Retry
+          </Button>
+        }
+      >
+        Failed to load connection readiness
+      </Alert>
+    ) : null;
+  // Keyed by dependency name for DesignView's optional dependencyStatus prop.
+  // Resolution status/reason and external valueState are read-time fields;
+  // candidates/config remain in the raw design.json DesignView parses itself.
   const dependencyStatus = useMemo<Record<string, DependencyStatusInfo>>(
     () =>
       Object.fromEntries(
         componentDependencies.map((d) => [
           d.name,
-          { status: d.status, reason: d.reason },
+          {
+            status: d.status,
+            reason: d.reason,
+            valueState: valueStateByName.get(d.name),
+          },
         ]),
       ),
-    [componentDependencies],
+    [componentDependencies, valueStateByName],
   );
   // #252 Task 15: cross-component "Used by" for the selected component's own
   // cards — computed across EVERY component's dependencies (dependencies.data
@@ -343,11 +400,10 @@ export function SpecView({ projectName }: { projectName: string }) {
   // PreflightItem (component/dependency name) rather than the currently
   // selected component's design.json, since the drawer's items can span
   // ANY of the project's service components, not just the one selected in
-  // the file tree. `intent` (#252 Task 17) is "resolve" from a blocker/
-  // external-spec panel's chat button, or "reconsider" from an
-  // external-config/platform-resource/org-service panel's hamburger.
+  // the file tree. The reduced drawer contains only dependencies that still
+  // need resolution, so this path always carries the RESOLVE intent.
   //
-  // #252 Task 15: also closes the drawer, for BOTH intents. The drawer is a
+  // #252 Task 15: also closes the drawer. The drawer is a
   // MUI overlay Drawer (unlike the side-by-side chat panel AppLayout mounts —
   // see its own comment above `chatOpen`), so left open it covers the chat
   // panel the seeded message just opened and the user can't see what they're
@@ -358,16 +414,13 @@ export function SpecView({ projectName }: { projectName: string }) {
   // "Resolve in chat" cards (handleResolveDependency above) have no
   // equivalent occlusion: they render in the main content pane, which the
   // chat panel opens BESIDE (Collapse in AppLayout), never over.
-  const handleResolveDrawerDependency = (
-    item: PreflightItem,
-    intent: DependencyResolutionIntent,
-  ) => {
+  const handleResolveDrawerDependency = (item: PreflightItem) => {
     const dep = (
       dependencies.data?.find((c) => c.componentName === item.component)
         ?.dependencies ?? []
     ).find((d) => d.name === item.dependency);
     if (!dep) return;
-    resolveDependencyViaChat(item.component, dep, intent);
+    resolveDependencyViaChat(item.component, dep, "resolve");
     setDependencyDrawerOpen(false);
   };
 
@@ -488,10 +541,9 @@ export function SpecView({ projectName }: { projectName: string }) {
   const agentBusy = collab.peers.some((p) => p.kind === "agent");
 
   // Build (#162, #164): commit the room's live edits FIRST (POST /build tags
-  // HEAD), then check preflight — a project with unresolved dependencies
-  // routes to the drawer instead of building blind; only once preflight says
-  // the project is ready does this trigger the build and go watch progress
-  // on the overview.
+  // HEAD), then check preflight. Only design-resolution blockers open the
+  // drawer; the remaining items are retained so cut confirmation can derive
+  // the automatic inputs the build endpoint still requires.
   const onBuild = () => {
     setBuildError(null);
     setBuildPhase("committing");
@@ -517,8 +569,8 @@ export function SpecView({ projectName }: { projectName: string }) {
           );
           return;
         }
-        if (data.needsInput) {
-          setPreflightItems(data.items ?? []);
+        setPreflightItems(data.items ?? []);
+        if (data.needsResolution) {
           setDependencyDrawerOpen(true);
           return;
         }
@@ -542,10 +594,21 @@ export function SpecView({ projectName }: { projectName: string }) {
     setBuildPhase("building");
     void (async () => {
       try {
-        await build.mutateAsync({ inputs: [] });
+        const res = await build.mutateAsync({
+          inputs: automaticBuildInputs(preflightItems),
+        });
+        if (res.failures?.length) {
+          setBuildError(
+            res.failures.map((failure) =>
+              `${failure.dependency}: ${failure.reason}`,
+            ).join("; "),
+          );
+          return;
+        }
         void navigate({
-          to: "/projects/$projectName",
+          to: "/projects/$projectName/builds",
           params: { projectName },
+          search: { connections: "open" },
         });
       } catch (e) {
         const details = (e as Error & { details?: Array<{ field?: string; message: string }> }).details;
@@ -561,14 +624,16 @@ export function SpecView({ projectName }: { projectName: string }) {
   };
 
   // Drawer Continue (#164): resubmit the build with the resolved dependency
-  // inputs. A clean response closes the drawer and moves on to the overview;
+  // inputs. A clean response closes the drawer and moves on to Builds;
   // any inputs the BFF/devflow rejects come back as `failures` — surface the
   // reasons and leave the drawer open so the user can fix them and retry.
   const onContinueBuild = async (inputs: BuildInputItem[]) => {
     setBuildError(null);
     setBuildPhase("building");
     try {
-      const res = await build.mutateAsync({ inputs });
+      const res = await build.mutateAsync({
+        inputs: [...inputs, ...automaticBuildInputs(preflightItems)],
+      });
       if (res.failures?.length) {
         setBuildError(
           res.failures.map((f) => `${f.dependency}: ${f.reason}`).join("; "),
@@ -577,8 +642,9 @@ export function SpecView({ projectName }: { projectName: string }) {
       }
       setDependencyDrawerOpen(false);
       void navigate({
-        to: "/projects/$projectName",
+        to: "/projects/$projectName/builds",
         params: { projectName },
+        search: { connections: "open" },
       });
     } catch (e) {
       setBuildError(
@@ -965,12 +1031,15 @@ export function SpecView({ projectName }: { projectName: string }) {
                     ) : isValidationCriteriaFile ? (
                       <ValidationView criteria={structuredLive} />
                     ) : (
-                      <DesignView
-                        design={structuredLive}
-                        dependencyStatus={dependencyStatus}
-                        dependencyUsedBy={dependencyUsedBy}
-                        onResolveDependency={handleResolveDependency}
-                      />
+                      <>
+                        {connectionReadinessNotice}
+                        <DesignView
+                          design={structuredLive}
+                          dependencyStatus={dependencyStatus}
+                          dependencyUsedBy={dependencyUsedBy}
+                          onResolveDependency={handleResolveDependency}
+                        />
+                      </>
                     )
                   ) : content.data ? (
                     isOpenApiFile ? (
@@ -984,13 +1053,16 @@ export function SpecView({ projectName }: { projectName: string }) {
                         criteria={content.data.content}
                       />
                     ) : (
-                      <DesignView
-                        key={content.data.sha}
-                        design={content.data.content}
-                        dependencyStatus={dependencyStatus}
-                        dependencyUsedBy={dependencyUsedBy}
-                        onResolveDependency={handleResolveDependency}
-                      />
+                      <>
+                        {connectionReadinessNotice}
+                        <DesignView
+                          key={content.data.sha}
+                          design={content.data.content}
+                          dependencyStatus={dependencyStatus}
+                          dependencyUsedBy={dependencyUsedBy}
+                          onResolveDependency={handleResolveDependency}
+                        />
+                      </>
                     )
                   ) : agentBusy ? (
                     // Mid-generation the committed fetch is suppressed (the

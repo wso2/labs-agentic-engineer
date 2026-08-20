@@ -38,6 +38,7 @@ import { createLink, Link } from "@tanstack/react-router";
 import { EmptyState } from "../../../components/EmptyState";
 import { PageHeader } from "../../../components/PageHeader";
 import { StatusChip, type StatusTone } from "../../../components/StatusChip";
+import type { components } from "../../../generated/aep-api";
 import { StageRow } from "../../builds/components/StageRow";
 import { useDesignDependencies } from "../../spec/api/queries";
 import { useValidationEvidence } from "../../validation/api/counts";
@@ -46,6 +47,7 @@ import {
   type ValidationCounts,
 } from "../../validation/lib/verdict";
 import {
+  useComponentDependencyStatuses,
   useComponentsDeployments,
   useProjectComponents,
   useProjectStatus,
@@ -74,6 +76,63 @@ import { PromoteDialog } from "./PromoteDialog";
 
 const LinkButton = createLink(Button);
 const RouterLink = createLink(MuiLink);
+
+type DependencyValueState =
+  components["schemas"]["ExternalDependencyValueState"];
+type DevelopmentReadiness = DependencyValueState | "unknown";
+
+const VALUE_STATE_RANK: Record<DevelopmentReadiness, number> = {
+  unknown: -1,
+  "not-provisioned": 0,
+  unset: 1,
+  configured: 2,
+};
+
+const VALUE_STATE_PRESENTATION = {
+  unknown: {
+    label: "Readiness unknown",
+    tone: "neutral",
+    dotColor: "text.disabled",
+  },
+  "not-provisioned": {
+    label: "Platform provisioning",
+    tone: "info",
+    dotColor: "info.main",
+  },
+  unset: {
+    label: "Needs values",
+    tone: "warning",
+    dotColor: "warning.main",
+  },
+  configured: {
+    label: "Configured",
+    tone: "success",
+    dotColor: "success.main",
+  },
+} as const satisfies Record<
+  DevelopmentReadiness,
+  { label: string; tone: StatusTone; dotColor: string }
+>;
+
+function developmentValueStates(
+  statuses: readonly {
+    dependencyName: string;
+    status: components["schemas"]["DependencyStatus"] | undefined;
+  }[],
+): Map<string, DevelopmentReadiness> {
+  const result = new Map<string, DevelopmentReadiness>();
+  for (const entry of statuses) {
+    const next: DevelopmentReadiness = entry.status?.valueState ?? "unknown";
+    const current = result.get(entry.dependencyName);
+    if (
+      current === undefined ||
+      VALUE_STATE_RANK[next] < VALUE_STATE_RANK[current]
+    ) {
+      result.set(entry.dependencyName, next);
+    }
+  }
+  return result;
+}
 
 // Deployments as ONE STORY with a status panel beside it (Deployments UX,
 // Turn 3: option 1c + the 2c promote dialog). The two-column board this
@@ -309,7 +368,13 @@ function PanelRow({
   trailing?: React.ReactNode;
 }) {
   return (
-    <Stack direction="row" spacing={1.25} sx={{ alignItems: "center" }}>
+    <Stack
+      component="section"
+      aria-label={label}
+      direction="row"
+      spacing={1.25}
+      sx={{ alignItems: "center" }}
+    >
       <Box
         sx={{
           width: 6,
@@ -346,6 +411,29 @@ export function DeploymentsPage({ projectName }: { projectName: string }) {
   const connections = useMemo(
     () => connectionRows(dependencies.data),
     [dependencies.data],
+  );
+  const externalDependencyRefs = useMemo(
+    () =>
+      (dependencies.data ?? []).flatMap((component) =>
+        (component.dependencies ?? [])
+          .filter((dependency) => dependency.kind === "external")
+          .map((dependency) => ({
+            componentName: component.componentName,
+            dependencyName: dependency.name,
+          })),
+      ),
+    [dependencies.data],
+  );
+  const componentDependencyStatuses = useComponentDependencyStatuses(
+    projectName,
+    externalDependencyRefs,
+  );
+  // Development readiness comes from each component's read-time dependency
+  // status. Shared connections inherit the least-ready state so one healthy
+  // consumer cannot hide another consumer still waiting for values/platform.
+  const developmentConnectionStates = useMemo(
+    () => developmentValueStates(componentDependencyStatuses.statuses),
+    [componentDependencyStatuses.statuses],
   );
   // The rail's Validation stage (#395, decision 3): the Validation page's own
   // criteria/report join, keyed on the BUILD version (the newest run — what
@@ -452,6 +540,9 @@ export function DeploymentsPage({ projectName }: { projectName: string }) {
     .sort()
     .at(-1);
   const updated = updatedAt ? formatWhen(updatedAt) : null;
+  // Production promotion is intentionally a separate model: it counts the
+  // production values entered in this page, not development's read-time
+  // valueState reported by component dependencies.
   const configured = configuredCount(connections, liveValues);
   const promotable = Boolean(
     deploy && deploy.version && board.production.length === 0,
@@ -670,68 +761,114 @@ export function DeploymentsPage({ projectName }: { projectName: string }) {
               what the rail doesn't say. */}
           <PanelOverline>Connections</PanelOverline>
           <Stack spacing={1.25} sx={{ mt: 1 }}>
-            {connections.length > 0 ? (
-              connections.map((row) => (
-                <PanelRow
-                  key={row.id}
-                  dotColor="success.main"
-                  label={row.detail ? `${row.name} (${row.detail})` : row.name}
-                  trailing={
-                    row.kind === "external" && row.config.length > 0 ? (
-                      // The console's tinted-pill recipe, in the app's accent —
-                      // an ACTION among readouts must out-rank its neighbours'
-                      // quiet captions, and this is the one shape for "a pill you
-                      // can press".
-                      <Button
-                        size="small"
-                        color="inherit"
-                        disableElevation
-                        // The row label holds the connection name; the button's
-                        // accessible name must too, or every row reads
-                        // "Configure" to a screen reader (#401 review).
-                        aria-label={`Configure ${row.name}`}
-                        onClick={() => setValuesTarget(row)}
-                        sx={(theme) => ({
-                          borderRadius: 999,
-                          minWidth: 0,
-                          px: 1.25,
-                          py: 0.25,
-                          flexShrink: 0,
-                          fontWeight: 600,
-                          fontSize: theme.typography.body2.fontSize,
-                          lineHeight: 1.6,
-                          color: "primary.main",
-                          border: `1px solid ${alpha(theme.palette.primary.main, 0.3)}`,
-                          bgcolor: alpha(theme.palette.primary.main, 0.14),
-                          transition: "background-color 120ms, border-color 120ms",
-                          "&:hover, &.Mui-focusVisible": {
-                            bgcolor: alpha(theme.palette.primary.main, 0.24),
-                            borderColor: alpha(theme.palette.primary.main, 0.5),
-                          },
-                          "&.Mui-focusVisible": {
-                            outline: `2px solid ${alpha(theme.palette.primary.main, 0.6)}`,
-                            outlineOffset: 2,
-                          },
-                        })}
-                      >
-                        Configure
-                      </Button>
-                    ) : row.provisioned ? (
-                      <Typography variant="caption" color="success.main">
-                        provisioned
-                      </Typography>
-                    ) : (
-                      // Config-carrying but not user-updatable here (a platform
-                      // resource like an identity app): the platform owns its
-                      // credentials, so say that instead of inferring
-                      // "provisioned" from the else-branch (#401 review).
-                      <Typography variant="caption" color="text.secondary">
-                        platform-managed
-                      </Typography>
-                    )
-                  }
-                />
-              ))
+            {componentDependencyStatuses.isPending ? (
+              <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+                <CircularProgress size={18} aria-hidden />
+                <Typography variant="body2" color="text.secondary">
+                  Loading connection readiness…
+                </Typography>
+              </Stack>
+            ) : componentDependencyStatuses.failedCount > 0 ? (
+              <Alert
+                severity="error"
+                action={
+                  <Button
+                    aria-label="Retry connection readiness"
+                    onClick={() => void componentDependencyStatuses.refetch()}
+                  >
+                    Retry
+                  </Button>
+                }
+              >
+                Failed to load connection readiness
+              </Alert>
+            ) : connections.length > 0 ? (
+              connections.map((row) => {
+                const valueState =
+                  row.kind === "external"
+                    ? (developmentConnectionStates.get(row.name) ?? "unknown")
+                    : undefined;
+                const readiness = valueState
+                  ? VALUE_STATE_PRESENTATION[valueState]
+                  : undefined;
+                const canConfigure =
+                  row.kind === "external" &&
+                  row.config.length > 0 &&
+                  valueState !== "not-provisioned";
+                const configureAction = canConfigure ? (
+                  // The console's tinted-pill recipe, in the app's accent —
+                  // an ACTION among readouts must out-rank its neighbours'
+                  // quiet captions, and this is the one shape for "a pill you
+                  // can press".
+                  <Button
+                    size="small"
+                    color="inherit"
+                    disableElevation
+                    // The row label holds the connection name; the button's
+                    // accessible name must too, or every row reads
+                    // "Configure" to a screen reader (#401 review).
+                    aria-label={`Configure ${row.name}`}
+                    onClick={() => setValuesTarget(row)}
+                    sx={(theme) => ({
+                      borderRadius: 999,
+                      minWidth: 0,
+                      px: 1.25,
+                      py: 0.25,
+                      flexShrink: 0,
+                      fontWeight: 600,
+                      fontSize: theme.typography.body2.fontSize,
+                      lineHeight: 1.6,
+                      color: "primary.main",
+                      border: `1px solid ${alpha(theme.palette.primary.main, 0.3)}`,
+                      bgcolor: alpha(theme.palette.primary.main, 0.14),
+                      transition: "background-color 120ms, border-color 120ms",
+                      "&:hover, &.Mui-focusVisible": {
+                        bgcolor: alpha(theme.palette.primary.main, 0.24),
+                        borderColor: alpha(theme.palette.primary.main, 0.5),
+                      },
+                      "&.Mui-focusVisible": {
+                        outline: `2px solid ${alpha(theme.palette.primary.main, 0.6)}`,
+                        outlineOffset: 2,
+                      },
+                    })}
+                  >
+                    Configure
+                  </Button>
+                ) : null;
+                const trailing = readiness ? (
+                  <Stack
+                    direction="row"
+                    spacing={0.75}
+                    sx={{ alignItems: "center" }}
+                  >
+                    <StatusChip label={readiness.label} tone={readiness.tone} />
+                    {configureAction}
+                  </Stack>
+                ) : configureAction ? (
+                  configureAction
+                ) : row.provisioned ? (
+                  <Typography variant="caption" color="success.main">
+                    provisioned
+                  </Typography>
+                ) : (
+                  // Config-carrying but not user-updatable here (a platform
+                  // resource like an identity app): the platform owns its
+                  // credentials, so say that instead of inferring
+                  // "provisioned" from the else-branch (#401 review).
+                  <Typography variant="caption" color="text.secondary">
+                    platform-managed
+                  </Typography>
+                );
+
+                return (
+                  <PanelRow
+                    key={row.id}
+                    dotColor={readiness?.dotColor ?? "success.main"}
+                    label={row.detail ? `${row.name} (${row.detail})` : row.name}
+                    trailing={trailing}
+                  />
+                );
+              })
             ) : (
               <Typography variant="body2" color="text.secondary">
                 This design declares no connections.

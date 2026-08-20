@@ -243,12 +243,17 @@ func TestProvisionForBuild_SettlesReadyGateNotInInputs(t *testing.T) {
 	bindings := &fakeBindings{byName: map[string]*openchoreo.ResourceReleaseBinding{
 		ocname.ExternalResourceBindingName("proj", "orders-db", "development"): readyBinding("host", "port"),
 	}}
-	design := &countingDesign{comps: designWithDeps()}
+	comps := designWithDeps()
+	comps[0].Dependencies = append(comps[0].Dependencies, spec.Dependency{
+		Kind: spec.DependencyKindPlatformResource, Name: "cache", ResourceType: "redis",
+	})
+	design := &countingDesign{comps: comps}
 	svc := newTestService(issues, execs, design, ext, plat, bindings)
 
 	fails, err := svc.ProvisionForBuild(context.Background(), "acme", "acme", "proj", "v3", 0, []BuildProvisionInput{
 		{Component: "orders", Dependency: "stripe", Kind: "external-config",
 			Config: map[string]string{"region": "us"}, SecretRefByEnv: map[string]string{"development": "sm://x"}},
+		{Component: "orders", Dependency: "cache", Kind: "platform-resource"},
 	})
 	if err != nil {
 		t.Fatalf("ProvisionForBuild: %v", err)
@@ -260,24 +265,25 @@ func TestProvisionForBuild_SettlesReadyGateNotInInputs(t *testing.T) {
 	// orders-db was Ready but not in inputs → its gate must be settled (closed).
 	dbGate := gateNumber(issues, "orders-db")
 	if _, closed := issues.closed[dbGate]; !closed {
-		t.Fatalf("already-ready dep gate #%d must be settled (closed) or consumers strand", dbGate)
+		t.Fatalf("already-ready dep gate #%d must be settled (closed) or consumers strand; closed=%v", dbGate, issues.closed)
 	}
 	// A succeeded provision run was admitted+completed so the gate derives deployed.
 	if r := provisionRowFor(execs, "orders-db"); r == nil || r.Status != string(taskmeta.ExecSucceeded) {
 		t.Fatalf("settle must admit+complete a provision run for orders-db, got %+v", r)
 	}
 	// The resource is already Ready — settle must NOT re-author it.
-	if plat.calls != 0 {
-		t.Fatalf("settle must NOT re-author the already-ready resource, got %d Provision calls", plat.calls)
+	if plat.calls != 1 {
+		t.Fatalf("only the explicit cache input should be authored, got %d Provision calls", plat.calls)
 	}
 	// External authoring has no config-collection gate and therefore no provision row.
 	if n := countProvisionRows(execs, "stripe"); n != 0 {
 		t.Fatalf("stripe must not create a provision run, got %d", n)
 	}
-	// EnsureProvisionIssues, external authoring, and gate settlement each read
-	// the design once. Binding status must not trigger a fourth read.
-	if design.calls != 3 {
-		t.Fatalf("design reads = %d, want 3", design.calls)
+	// EnsureProvisionIssues, external authoring, explicit platform provisioning,
+	// and gate settlement each read the design once. Binding status must not
+	// trigger another read.
+	if design.calls != 4 {
+		t.Fatalf("design reads = %d, want 4", design.calls)
 	}
 }
 
@@ -289,11 +295,16 @@ func TestProvisionForBuild_SkipsNotReadyGateNotInInputs(t *testing.T) {
 	issues := newFakeIssues(nil)
 	execs := &fakeExecStore{}
 	// orders-db has NO binding (never provisioned) → Status reports not-ready.
-	svc := newTestService(issues, execs, fakeDesign{comps: designWithDeps()}, &fakeExtProv{}, &fakePlatProv{}, &fakeBindings{})
+	comps := designWithDeps()
+	comps[0].Dependencies = append(comps[0].Dependencies, spec.Dependency{
+		Kind: spec.DependencyKindPlatformResource, Name: "cache", ResourceType: "redis",
+	})
+	svc := newTestService(issues, execs, fakeDesign{comps: comps}, &fakeExtProv{}, &fakePlatProv{}, &fakeBindings{})
 
 	fails, err := svc.ProvisionForBuild(context.Background(), "acme", "acme", "proj", "v3", 0, []BuildProvisionInput{
 		{Component: "orders", Dependency: "stripe", Kind: "external-config",
 			SecretRefByEnv: map[string]string{"development": "sm://x"}},
+		{Component: "orders", Dependency: "cache", Kind: "platform-resource"},
 	})
 	if err != nil || len(fails) != 0 {
 		t.Fatalf("want clean run, got fails=%+v err=%v", fails, err)
@@ -355,6 +366,33 @@ func TestProvisionForBuild_EmptyInputsDoesNotMint(t *testing.T) {
 	}
 	if len(issues.closed) != 0 {
 		t.Fatalf("no existing gate → nothing to settle, got %d closed", len(issues.closed))
+	}
+}
+
+// Automatic external authoring is not a drawer gate input. A project can have
+// platform dependencies in its design while a rebuild carries only the
+// design-derived external-config entry; that rebuild must not mint unrelated
+// platform gates.
+func TestProvisionForBuild_ExternalOnlyDoesNotMintPlatformGates(t *testing.T) {
+	issues := newFakeIssues(nil)
+	execs := &fakeExecStore{}
+	ext := &fakeExtProv{}
+	svc := newTestService(issues, execs, fakeDesign{comps: designWithDeps()}, ext, &fakePlatProv{}, &fakeBindings{})
+
+	fails, err := svc.ProvisionForBuild(context.Background(), "acme", "acme", "proj", "v3", 0, []BuildProvisionInput{
+		{Component: "orders", Dependency: "stripe", Kind: "external-config"},
+	})
+	if err != nil {
+		t.Fatalf("ProvisionForBuild: %v", err)
+	}
+	if len(fails) != 0 {
+		t.Fatalf("want no failures, got %+v", fails)
+	}
+	if len(issues.created) != 0 {
+		t.Fatalf("external-only authoring must not mint platform gates, got %d", len(issues.created))
+	}
+	if ext.authorPreparedCalls != 1 {
+		t.Fatalf("external authoring calls = %d, want 1", ext.authorPreparedCalls)
 	}
 }
 

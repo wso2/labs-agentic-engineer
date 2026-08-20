@@ -250,5 +250,9 @@ func toBuildPreflight(pf BuildPreflight) gen.BuildPreflight {
 			Parameters:   it.Parameters,
 		})
 	}
-	return gen.BuildPreflight{NeedsInput: pf.NeedsInput, Items: items}
+	return gen.BuildPreflight{
+		NeedsInput:      pf.NeedsInput,
+		NeedsResolution: pf.NeedsResolution,
+		Items:           items,
+	}
 }

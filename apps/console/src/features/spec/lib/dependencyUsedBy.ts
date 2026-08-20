@@ -31,10 +31,9 @@
 // risk in a different shape. computeDependencyUsedBy, applied at SpecView's
 // aggregation layer (it already fetches every component's dependencies via
 // useDesignDependencies), annotates the CURRENTLY VIEWED component's cards
-// with every other component sharing the same dependency, using the exact
-// dedupe identity BuildDependencyDrawer.tsx's groupPreflightItems uses: same
-// `kind` AND identity (`resourceType`+`name` for platform-resource, `name`
-// alone otherwise).
+// with every other component sharing the same dependency. Equivalence uses
+// the dependency kind plus identity (`resourceType`+`name` for a platform
+// resource, `name` alone otherwise).
 
 import type { components } from "../../../generated/aep-api";
 

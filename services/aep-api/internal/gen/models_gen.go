@@ -632,8 +632,9 @@ type BuildLogs struct {
 
 // BuildPreflight defines model for BuildPreflight.
 type BuildPreflight struct {
-	Items      []PreflightItem `json:"items"`
-	NeedsInput bool            `json:"needsInput"`
+	Items           []PreflightItem `json:"items"`
+	NeedsInput      bool            `json:"needsInput"`
+	NeedsResolution bool            `json:"needsResolution"`
 }
 
 // BuildRequest defines model for BuildRequest.

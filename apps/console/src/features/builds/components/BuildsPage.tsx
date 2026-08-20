@@ -42,6 +42,7 @@ import { EarlierSessions } from "./EarlierSessions";
 import { MilestonePanel } from "./MilestonePanel";
 import { RunHistoryList } from "./RunHistoryList";
 import { RunStory } from "./RunStory";
+import { ConnectionConfiguration } from "./ConnectionConfiguration";
 
 /**
  * The Builds page is ONE VERSION'S STORY, latest by default.
@@ -59,10 +60,12 @@ export function BuildsPage({
   projectName,
   tag,
   onTagChange,
+  connectionsOpen,
 }: {
   projectName: string;
   tag: string | undefined;
   onTagChange: (tag: string | undefined) => void;
+  connectionsOpen: boolean;
 }) {
   const builds = useBuilds(projectName);
 
@@ -170,6 +173,7 @@ export function BuildsPage({
     return (
       <>
         <PageHeader title="Builds" backTo={backTo} />
+        <ConnectionConfiguration projectName={projectName} open={connectionsOpen} />
         <Box sx={{ display: "flex", justifyContent: "center", p: 6 }}>
           <CircularProgress aria-label="Loading builds" />
         </Box>
@@ -181,6 +185,7 @@ export function BuildsPage({
     return (
       <>
         <PageHeader title="Builds" backTo={backTo} />
+        <ConnectionConfiguration projectName={projectName} open={connectionsOpen} />
         <Alert
           severity="error"
           action={<Button onClick={() => void builds.refetch()}>Retry</Button>}
@@ -198,6 +203,7 @@ export function BuildsPage({
     return (
       <>
         <PageHeader title="Builds" backTo={backTo} />
+        <ConnectionConfiguration projectName={projectName} open={connectionsOpen} />
         <Typography variant="body2" color="text.secondary" sx={{ py: 3 }}>
           No builds yet — publish your spec and click Build in the spec view to
           start the first one.
@@ -233,6 +239,7 @@ export function BuildsPage({
       {/* No version subtitle: the picker on the right already names the
           version, and repeating it under the title said it twice. */}
       <PageHeader title="Builds" backTo={backTo} actions={versionSelector} />
+      <ConnectionConfiguration projectName={projectName} open={connectionsOpen} />
 
       {runs.isError ? (
         <Alert
