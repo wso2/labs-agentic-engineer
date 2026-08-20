@@ -132,8 +132,9 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   `ended_at IS NULL`: usage arrives from the terminal-log capture, and a cycle closes on the merge webhook
   seconds after its Job exits — fencing it would discard nearly every capture. Entries are keyed
   `(source, source_id)`, so a re-read of the same log updates one entry rather than adding a second.
-- The **deploy stage** (`run`): once a cycle's builds are green, the supervisor cuts each touched
-  component's release from the Workload its build posted, writes the binding that pins it — release
+- The **deploy stage** (`run`): once a cycle's builds are green, the supervisor checks the DEPLOY GATE
+  (every external dependency configured, every platform resource provisioned — ADR-0020), then cuts each
+  touched component's release from the Workload its build posted, writes the binding that pins it — release
   pin, trait env configs and workload overrides in ONE object write — and waits for every binding to
   report Ready before the cycle is green. Components carry `autoDeploy: false`, so nothing else
   promotes a release. It promotes WAVE BY WAVE (providers before the consumers whose start-up config
@@ -265,6 +266,16 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   release. Grading them together is what made the graph look circular: the SPA needs the API's
   address and the API needs the SPA's, and only one of those has to be true before anything serves. A
   cycle among hard edges is `ErrDeployPermanent`, not a wait — nobody can go first. ADR-0019.
+- **The deploy gate polls the platform and PARKS on the person.** A platform resource still
+  provisioning is the platform working, so the stage polls it; an external dependency with no values
+  is a human who has not acted, so the run parks in `waiting` and names what it is waiting on. Parking
+  on the first would hang the run on something that resolves itself; polling the second would spin on
+  a credential that arrives when somebody gets round to it. The park is deliberately OUTSIDE
+  `deployReadyTimeout` — that budget bounds how long a binding may take to serve, and charging a
+  person's lookup against it would settle `deploy-budget` on a run behaving exactly as designed.
+  Saving values signals `run-values-saved`, which carries the FACT and not the command: the supervisor
+  re-reads readiness itself, so a save that leaves another dependency unset parks the run straight
+  back. A lost signal costs one poll interval, not correctness. ADR-0020.
 - **The deploy stage has a DEADLINE, and the build stage deliberately does not.** A WorkflowRun always
   terminates, so `awaitBuilds` can wait forever safely. A ReleaseBinding never does — it is a level
   OpenChoreo reconciles continuously, so an image that will never pull and a rollout thirty seconds

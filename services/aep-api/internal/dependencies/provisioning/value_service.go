@@ -112,6 +112,16 @@ func (s *Service) SaveValues(ctx context.Context, orgID, ocOrgID, projectID, dep
 		s.completeProvisionRow(ctx, orgID, projectID, depName, issueNumber, execID,
 			fmt.Sprintf("External resource `%s` configured (OC binding `%s`).", depName, ref))
 	}
+	if s.valuesSaved != nil {
+		if err := s.valuesSaved.ValuesSaved(ctx, orgID, projectID); err != nil {
+			// The values are already durable, so a failed wake-up must not turn a
+			// successful save into an apparent failure — the caller would retry a
+			// write that already landed. The parked run's wait-poll re-derives
+			// readiness on its own; the signal only makes it prompt.
+			slog.WarnContext(ctx, "provisioning: wake parked run after values saved failed",
+				"org", orgID, "project", projectID, "error", err)
+		}
+	}
 	return nil
 }
 

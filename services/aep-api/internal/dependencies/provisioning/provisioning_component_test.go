@@ -93,6 +93,10 @@ func (f *cBindings) GetBinding(_ context.Context, _, name string) (*openchoreo.R
 
 type cIssues struct{}
 
+func (cIssues) ListMilestoneIssues(context.Context, string, string, sourcecontrol.MilestoneIssuesFilter) ([]sourcecontrol.IssueInfo, error) {
+	return nil, nil
+}
+
 func (cIssues) ListIssues(context.Context, string, string, []string) ([]sourcecontrol.IssueInfo, error) {
 	return nil, nil
 }

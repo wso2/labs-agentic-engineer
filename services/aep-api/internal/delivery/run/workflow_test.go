@@ -72,8 +72,11 @@ type harness struct {
 	dispatches []delivery.MilestoneDispatch
 	finishes   []FinishCycleInput
 	states     []string
-	settle     SettleRunInput
-	verdicts   []string
+	// stateInputs keeps the whole payload, so a test can assert on the REASON a
+	// run parked rather than only that it parked.
+	stateInputs []SetRunStateInput
+	settle      SettleRunInput
+	verdicts    []string
 	// gateMints / plans record the planning phase's two activities, in the order
 	// the loop drove them.
 	gateMints []PlanMilestoneInput
@@ -127,6 +130,7 @@ func newHarness(t *testing.T) *harness {
 	h.env.RegisterActivity(acts.PlanDeployWaves)
 	h.env.RegisterActivity(acts.DeployCycle)
 	h.env.RegisterActivity(acts.PollCycleDeployments)
+	h.env.RegisterActivity(acts.CheckDeployReadiness)
 	h.env.RegisterActivity(acts.MintDeployFixIssues)
 
 	h.env.OnActivity(acts.SetRunState, mock.Anything, mock.Anything).
@@ -135,6 +139,7 @@ func newHarness(t *testing.T) *harness {
 			h.mu.Lock()
 			defer h.mu.Unlock()
 			h.states = append(h.states, in.State)
+			h.stateInputs = append(h.stateInputs, in)
 		}).Return(nil)
 	h.env.OnActivity(acts.SettleRun, mock.Anything, mock.Anything).
 		Run(func(args mock.Arguments) {
@@ -404,6 +409,42 @@ func (h *harness) applyDefaults() {
 	if !h.set["deployMint"] {
 		h.deployMintsAre([]int{testRepairIssue})
 	}
+	if !h.set["gate"] {
+		// An OPEN gate by default: every pre-existing test in this file is about
+		// something other than configuration, and would otherwise park forever.
+		h.gateIs(DeployGateVerdict{})
+	}
+}
+
+// gateIs pins one deploy-gate verdict for every check. Use gateOpensAfter for a
+// gate that changes its mind, which is the case the wake-up path is about.
+func (h *harness) gateIs(v DeployGateVerdict) {
+	h.set["gate"] = true
+	h.env.OnActivity(h.acts.CheckDeployReadiness, mock.Anything, mock.Anything).
+		Return(v, nil)
+}
+
+// gateBlocksAfter is gateOpensAfter's mirror: open for the first n checks, then
+// blocked. It exists to prove a stage does NOT consult the gate — if it did, the
+// later blocked answer would park the run and it would never settle.
+func (h *harness) gateBlocksAfter(n int, blocked DeployGateVerdict) {
+	h.set["gate"] = true
+	h.env.OnActivity(h.acts.CheckDeployReadiness, mock.Anything, mock.Anything).
+		Return(DeployGateVerdict{}, nil).Times(n)
+	h.env.OnActivity(h.acts.CheckDeployReadiness, mock.Anything, mock.Anything).
+		Return(blocked, nil)
+}
+
+// gateOpensAfter answers `blocked` for the first n checks and then opens. It is
+// how a parked run's resumption is observed: the run cannot proceed until a
+// later READ says something different, which is the whole contract of a signal
+// that carries a fact rather than a command.
+func (h *harness) gateOpensAfter(n int, blocked DeployGateVerdict) {
+	h.set["gate"] = true
+	h.env.OnActivity(h.acts.CheckDeployReadiness, mock.Anything, mock.Anything).
+		Return(blocked, nil).Times(n)
+	h.env.OnActivity(h.acts.CheckDeployReadiness, mock.Anything, mock.Anything).
+		Return(DeployGateVerdict{}, nil)
 }
 
 // signal schedules one inbound run signal at a virtual offset from start.
@@ -1796,4 +1837,119 @@ func dedupeStates(states []string) []string {
 		}
 	}
 	return out
+}
+
+// ---- the deploy gate (ADR-0020) ---------------------------------------------
+
+// TestDeployGate_ParkNamesWhyAndWhichDependencies: nothing failed, so the run
+// must not fail — it parks. And because `waiting` is unbounded and only
+// cancellation exits it, the park must say WHY and name what it is waiting on:
+// an unexplained `waiting` reads as a hang, and the one person who could clear
+// it in ten seconds never learns that they can.
+func TestDeployGate_ParkNamesWhyAndWhichDependencies(t *testing.T) {
+	h := newHarness(t)
+	h.milestoneIs(MilestoneSnapshot{Work: 1, Total: 1}, MilestoneSnapshot{})
+	h.merges(1)
+	h.gateIs(DeployGateVerdict{Unconfigured: []string{"stripe", "sendgrid"}})
+	// The park is UNBOUNDED and cancel is its only expiry, so the test has to
+	// end it to observe it — a run left parked would run the test environment
+	// out of virtual time rather than assert anything. Cancelling is not
+	// incidental scaffolding: it is the documented way out, and the run
+	// settling `cancelled` rather than `failed` is half of what this asserts.
+	h.signal(delivery.SigRunCancel, 5*time.Second)
+
+	h.run(delivery.RunOriginSpecBuild, 0)
+	res := h.result(t)
+
+	h.assertSettled(t, res, delivery.RunStateCancelled, "")
+	require.Zero(t, h.deployCount(), "nothing may be promoted while a value is still unset")
+
+	var parked *SetRunStateInput
+	for i := range h.stateInputs {
+		if h.stateInputs[i].State == delivery.RunStateWaiting && h.stateInputs[i].WaitingReason != "" {
+			parked = &h.stateInputs[i]
+			break
+		}
+	}
+	require.NotNil(t, parked, "the gate must park with a stated reason, not a bare waiting")
+	require.Equal(t, delivery.RunWaitingOnExternalValues, parked.WaitingReason)
+	require.Equal(t, []string{"stripe", "sendgrid"}, parked.BlockingDependencies,
+		"the park names the dependencies, so the console can link straight to them")
+}
+
+// TestDeployGate_ProvisioningRetriesRatherThanParks: a platform resource that is
+// still being provisioned is the PLATFORM working, and it resolves itself.
+// Parking on it would hold the run on a human who has nothing to do.
+func TestDeployGate_ProvisioningRetriesRatherThanParks(t *testing.T) {
+	h := newHarness(t)
+	h.milestoneIs(MilestoneSnapshot{Work: 1, Total: 1}, MilestoneSnapshot{})
+	h.merges(1)
+	h.gateOpensAfter(2, DeployGateVerdict{Provisioning: []string{"postgres"}})
+
+	h.run(delivery.RunOriginSpecBuild, 0)
+	res := h.result(t)
+
+	h.assertSettled(t, res, delivery.RunStateSucceeded, "")
+	require.Equal(t, 2, h.deployCount(), "once provisioning finished, the stage deployed normally")
+	for _, in := range h.stateInputs {
+		require.NotEqual(t, delivery.RunWaitingOnExternalValues, in.WaitingReason,
+			"a provisioning resource must never park the run on the user")
+	}
+}
+
+// TestDeployGate_SavedValuesWakeTheRunAndItDeploys: the wake-up carries a FACT,
+// so what actually releases the run is the next READ of readiness returning
+// something different — not the signal itself. The gate answers blocked once,
+// the signal arrives, the re-read opens, and the run deploys.
+func TestDeployGate_SavedValuesWakeTheRunAndItDeploys(t *testing.T) {
+	h := newHarness(t)
+	h.milestoneIs(MilestoneSnapshot{Work: 1, Total: 1}, MilestoneSnapshot{})
+	h.merges(1)
+	h.gateOpensAfter(1, DeployGateVerdict{Unconfigured: []string{"stripe"}})
+	h.signal(delivery.SigRunValuesSaved, 2*time.Second)
+
+	h.run(delivery.RunOriginSpecBuild, 0)
+	res := h.result(t)
+
+	h.assertSettled(t, res, delivery.RunStateSucceeded, "")
+	require.Equal(t, 2, h.deployCount(), "the woken run promoted its wave and converged")
+	require.Contains(t, h.states, delivery.RunStateWaiting, "it really did park before it woke")
+}
+
+// TestDeployGate_CancelledWhileParkedNeverDeploys: cancel is the park's only
+// expiry, and a run a human abandoned must not reach the environment.
+func TestDeployGate_CancelledWhileParkedNeverDeploys(t *testing.T) {
+	h := newHarness(t)
+	h.milestoneIs(MilestoneSnapshot{Work: 1, Total: 1}, MilestoneSnapshot{})
+	h.merges(1)
+	h.gateIs(DeployGateVerdict{Unconfigured: []string{"stripe"}})
+	h.signal(delivery.SigRunCancel, 2*time.Second)
+
+	h.run(delivery.RunOriginSpecBuild, 0)
+	res := h.result(t)
+
+	h.assertSettled(t, res, delivery.RunStateCancelled, "")
+	require.Zero(t, h.deployCount(), "a cancelled run deploys nothing")
+}
+
+// TestDeployGate_ValidationCycleIsNotGated: a validation cycle's pull request
+// carries tests and a report and touches no component, so it promotes nothing.
+// Gating it would park a run on a credential its cycle will never use.
+func TestDeployGate_ValidationCycleIsNotGated(t *testing.T) {
+	h := newHarness(t)
+	h.milestoneIs(MilestoneSnapshot{Work: 1, Total: 1}, MilestoneSnapshot{})
+	h.buildsAre(
+		CycleBuildState{Expected: 1, Settled: 1, Components: []string{"order-service"}},
+		CycleBuildState{}, // the validation cycle's merge touched nothing
+	)
+	h.merges(2)
+	h.validationIs(77, delivery.ValidationVerdictPassed)
+	// Green for the coding cycle's deploy, then blocked. If the validation
+	// cycle consulted the gate at all it would park here and never settle.
+	h.gateBlocksAfter(1, DeployGateVerdict{Unconfigured: []string{"stripe"}})
+
+	h.run(delivery.RunOriginSpecBuild, 0)
+	res := h.result(t)
+
+	h.assertSettled(t, res, delivery.RunStateSucceeded, "")
 }

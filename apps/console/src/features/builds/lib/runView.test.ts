@@ -236,6 +236,49 @@ describe("runHold", () => {
     expect(runHold(run({ state: "planning" }), undefined)).not.toBeNull();
   });
 
+  // The deploy gate's park (ADR-0020). Nothing failed and nothing is broken —
+  // the run is built and waiting on a person — so it must read as a warning
+  // with a job attached, and it must NAME the dependencies or the reader has
+  // to go hunting for which connection is short a value.
+  it("names the connections a deploy-gate park is waiting on", () => {
+    const hold = runHold(
+      run({
+        state: "waiting",
+        waitingReason: "external-values",
+        blockingDependencies: ["stripe", "sendgrid"],
+      }),
+      loaded(),
+    );
+    expect(hold?.kind).toBe("external-values");
+    expect(hold?.tone).toBe("warning");
+    expect(hold?.title).toContain("stripe");
+    expect(hold?.title).toContain("sendgrid");
+    expect(hold?.dependencies).toEqual(["stripe", "sendgrid"]);
+    // It must promise the resumption, or the reader looks for a restart button
+    // that does not exist.
+    expect(hold?.body).toMatch(/resumes and deploys on its own/);
+  });
+
+  // The regression this ranking exists to stop: "Parked between build sessions"
+  // tells the one person who can release the run that there is nothing to do.
+  it("ranks the deploy gate above the generic between-sessions park", () => {
+    const hold = runHold(
+      run({ state: "waiting", waitingReason: "external-values" }),
+      loaded({ openWork: 3 }),
+    );
+    expect(hold?.kind).toBe("external-values");
+  });
+
+  // It is the one hold whose cause is neither a gate nor the working set, so it
+  // must not wait on the issue plane to be explainable.
+  it("does not need the issue plane to explain a deploy-gate park", () => {
+    const hold = runHold(
+      run({ state: "waiting", waitingReason: "external-values" }),
+      undefined,
+    );
+    expect(hold?.kind).toBe("external-values");
+  });
+
   // The gate story is the PROVISIONING STAGE's now: it sits first on the run's
   // rail, names each connection and says who is acting on it. A notice here as
   // well put two warnings on one page competing to explain one fact.

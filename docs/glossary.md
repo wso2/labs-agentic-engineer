@@ -303,6 +303,15 @@ Every config key the design currently declares for an external dependency has a
 non-empty value. This is distinct from OpenChoreo binding **Ready**, which remains
 true while values are unset; use `configured` for the AEP value state.
 
+### Deploy gate
+The milestone run's refusal to deploy until every external dependency is
+**configured** and every platform resource is provisioned (ADR-0020). The third
+gate in the system and the only one keyed on user-supplied values: distinct from
+the **proceed-gate**, which refuses a design save, and from the `aep:provision`
+gate issues, which hold a dispatch. It is checked at the top of the run's deploy
+stage; an unconfigured dependency parks the run in `waiting`, while a resource
+still provisioning is polled.
+
 ### Proceed-gate
 `design/save` refuses (409) while any dependency is unresolved, naming the
 component, dependency, and reason.

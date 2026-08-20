@@ -30,6 +30,7 @@ import {
   alpha,
 } from "@wso2/oxygen-ui";
 import { X } from "@wso2/oxygen-ui-icons-react";
+import { createLink } from "@tanstack/react-router";
 import { StatusChip } from "../../../components/StatusChip";
 import type { components } from "../../../generated/aep-api";
 import { useCancelRun, useCycleBuilds } from "../api/queries";
@@ -48,6 +49,11 @@ import { provisioningStage } from "../lib/provisioning";
 import { sessionIssues, sessionStages } from "../lib/sessionSpine";
 import { runDuration, runStamp } from "../lib/format";
 import { ProvisioningGates } from "./ProvisioningGates";
+
+// Router-typed Oxygen Button (the console's createLink pattern), same as the
+// provisioning section's — the deploy-gate notice needs a real navigation out.
+const LinkButton = createLink(Button);
+
 import { RunDelivered } from "./RunDelivered";
 import { RunGlanceStrip } from "./RunGlanceStrip";
 import { RunHoldNotice } from "./RunHoldNotice";
@@ -279,7 +285,30 @@ export function RunStory({
               <RunBusy title={hold.title} body={hold.body} />
             </Box>
           ) : (
-            <RunHoldNotice tone={hold.tone} title={hold.title} body={hold.body} />
+            <RunHoldNotice
+              tone={hold.tone}
+              title={hold.title}
+              body={hold.body}
+              // The deploy gate's park is the ONE hold on this card the reader
+              // can personally release, so it is the one that carries a way to
+              // do it. The same destination the provisioning section links to,
+              // deliberately: two routes to one configuration section would be
+              // two things to keep in step.
+              action={
+                hold.kind === "external-values" ? (
+                  <LinkButton
+                    size="small"
+                    variant="outlined"
+                    color="warning"
+                    to="/projects/$projectName/builds"
+                    params={{ projectName }}
+                    search={{ connections: "open" }}
+                  >
+                    Configure connections
+                  </LinkButton>
+                ) : undefined
+              }
+            />
           ))}
 
         {cancel.isError && (

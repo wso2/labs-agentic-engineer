@@ -404,12 +404,36 @@ const designDependencies: ComponentDependencies[] = [
       { kind: "component", name: "catalog-api" },
       { kind: "component", name: "orders-api" },
       sharedAuthDependency,
+      // The SAME external as orders-api below, declaring a different key. The
+      // Builds page unions the two, which is the projection its rows depend on
+      // and which a single-consumer fixture would never exercise.
+      {
+        kind: "external",
+        name: "resend",
+        description: "Transactional email",
+        config: [
+          {
+            key: "RESEND_FROM_ADDRESS",
+            description: "Sender address",
+            defaultValue: "hello@shop.example",
+          },
+        ],
+      },
     ],
   },
   {
     componentName: "catalog-api",
     dependencies: [
       { kind: "platform-resource", name: "shop-db", resourceType: "postgres-cnpg" },
+      {
+        kind: "external",
+        name: "algolia",
+        description: "Product search index",
+        config: [
+          { key: "ALGOLIA_APP_ID", description: "Application ID" },
+          { key: "ALGOLIA_ADMIN_KEY", description: "Admin API key", secret: true },
+        ],
+      },
     ],
   },
   {
@@ -420,6 +444,7 @@ const designDependencies: ComponentDependencies[] = [
       {
         kind: "external",
         name: "stripe",
+        description: "Payments",
         config: [
           { key: "STRIPE_SECRET_KEY", description: "Secret key", secret: true },
           {
@@ -428,6 +453,22 @@ const designDependencies: ComponentDependencies[] = [
             secret: true,
           },
         ],
+      },
+      {
+        kind: "external",
+        name: "resend",
+        config: [
+          { key: "RESEND_API_KEY", description: "API key", secret: true },
+        ],
+      },
+      // Declared by the design but ABSENT from every readiness response below —
+      // the neutral/unknown path, which must not be dressed up as either healthy
+      // or broken.
+      {
+        kind: "external",
+        name: "sentry",
+        description: "Error tracking",
+        config: [{ key: "SENTRY_DSN", description: "Ingest DSN" }],
       },
     ],
   },
@@ -463,6 +504,9 @@ const readinessByScenario: Record<
       { name: "stripe", state: "not-provisioned", missingKeys: [] },
     ],
   },
+  // Every state the section has to draw at once: one waiting on a person, one
+  // already done, one the platform is still standing up — and `sentry`, declared
+  // by the design but named by nobody here, for the unknown path.
   building: {
     configured: false,
     dependencies: [
@@ -471,6 +515,8 @@ const readinessByScenario: Record<
         state: "unset",
         missingKeys: ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"],
       },
+      { name: "resend", state: "configured", missingKeys: [] },
+      { name: "algolia", state: "not-provisioned", missingKeys: [] },
     ],
   },
   deploying: {
@@ -481,15 +527,28 @@ const readinessByScenario: Record<
         state: "unset",
         missingKeys: ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"],
       },
+      { name: "resend", state: "configured", missingKeys: [] },
+      { name: "algolia", state: "not-provisioned", missingKeys: [] },
     ],
   },
+  // Nothing outstanding — the section's collapsed one-line receipt.
   deployed: {
     configured: true,
-    dependencies: [{ name: "stripe", state: "configured", missingKeys: [] }],
+    dependencies: [
+      { name: "stripe", state: "configured", missingKeys: [] },
+      { name: "resend", state: "configured", missingKeys: [] },
+      { name: "algolia", state: "configured", missingKeys: [] },
+      { name: "sentry", state: "configured", missingKeys: [] },
+    ],
   },
   "deploy-failed": {
     configured: true,
-    dependencies: [{ name: "stripe", state: "configured", missingKeys: [] }],
+    dependencies: [
+      { name: "stripe", state: "configured", missingKeys: [] },
+      { name: "resend", state: "configured", missingKeys: [] },
+      { name: "algolia", state: "configured", missingKeys: [] },
+      { name: "sentry", state: "configured", missingKeys: [] },
+    ],
   },
   "repo-error": { configured: true, dependencies: [] },
 };

@@ -49,6 +49,7 @@ type Activities struct {
 	deployMint DeployIssueMinter
 	gates      Gates
 	planner    Planner
+	deployGate DeployGate
 }
 
 // Deps carries the activity adapters. runs/cycles/milestones are required; the
@@ -67,6 +68,7 @@ type Deps struct {
 	DeployIssues DeployIssueMinter
 	Gates        Gates
 	Planner      Planner
+	DeployGate   DeployGate
 }
 
 // NewActivities wires the activity adapters.
@@ -85,6 +87,7 @@ func NewActivities(d Deps) *Activities {
 		deployMint: d.DeployIssues,
 		gates:      d.Gates,
 		planner:    d.Planner,
+		deployGate: d.DeployGate,
 	}
 }
 
@@ -94,6 +97,10 @@ func NewActivities(d Deps) *Activities {
 type SetRunStateInput struct {
 	RunID string `json:"runId"`
 	State string `json:"state"`
+	// WaitingReason / BlockingDependencies are carried only into `waiting`, and
+	// only by the deploy gate — every other park is self-evident from the phase.
+	WaitingReason        string   `json:"waitingReason,omitempty"`
+	BlockingDependencies []string `json:"blockingDependencies,omitempty"`
 }
 
 // SetRunState mirrors the loop's waiting ⇄ running oscillation onto the run
@@ -102,6 +109,9 @@ type SetRunStateInput struct {
 func (a *Activities) SetRunState(ctx context.Context, in SetRunStateInput) error {
 	if a.runs == nil {
 		return errNotConfigured
+	}
+	if in.State == delivery.RunStateWaiting && in.WaitingReason != "" {
+		return a.runs.SetWaiting(ctx, in.RunID, in.WaitingReason, in.BlockingDependencies)
 	}
 	return a.runs.SetState(ctx, in.RunID, in.State)
 }
@@ -415,6 +425,37 @@ func (a *Activities) PlanMilestone(ctx context.Context, in PlanMilestoneInput) e
 type ProjectRef struct {
 	OrgID     string `json:"orgId"`
 	ProjectID string `json:"projectId"`
+}
+
+// DeployGateVerdict is what the gate saw, with the two blockers kept apart so
+// the workflow can tell "the platform is still working" from "a human has not
+// acted yet". Both empty means deploy.
+type DeployGateVerdict struct {
+	Unconfigured []string `json:"unconfigured,omitempty"`
+	Provisioning []string `json:"provisioning,omitempty"`
+}
+
+// CheckDeployReadiness reads the project's deploy gate (ADR-0020): every
+// external dependency configured, every platform resource provisioned.
+//
+// Unwired FAILS CLOSED, and is the one collaborator here that does — every
+// other activity degrades to "nothing to do" because the worst case is work not
+// happening. The worst case here is the opposite: a deploy that publishes an
+// application with empty credentials, which is the exact outcome the gate
+// exists to prevent. Non-retryable, because no amount of waiting wires a port.
+//
+// The env is left empty so the readiness service applies its own default rather
+// than the run package pinning an environment name it does not own.
+func (a *Activities) CheckDeployReadiness(ctx context.Context, in ProjectRef) (DeployGateVerdict, error) {
+	if a.deployGate == nil {
+		return DeployGateVerdict{}, temporal.NewNonRetryableApplicationError(
+			"run: deploy gate not configured", "deploy-gate-not-configured", errNotConfigured)
+	}
+	unconfigured, provisioning, err := a.deployGate.DeploymentReadiness(ctx, in.OrgID, in.ProjectID, "")
+	if err != nil {
+		return DeployGateVerdict{}, err
+	}
+	return DeployGateVerdict{Unconfigured: unconfigured, Provisioning: provisioning}, nil
 }
 
 // DeployCycleInput promotes the components a cycle's merge touched, at the

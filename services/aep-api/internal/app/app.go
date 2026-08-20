@@ -1076,6 +1076,14 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// feature never imports build/devflow; the app-root adapter calls the build
 	// service's non-HTTP StartProjectBuild entry point (idempotent).
 	provisioningSvc.SetProviderBuildTrigger(providerBuildTrigger{build: buildSvc})
+	// The deploy gate's wake-up (ADR-0020): saving an external dependency's values
+	// is the one thing that can unpark a run waiting on the gate, and nothing else
+	// observes it — a value save produces no webhook. Set here for the same reason
+	// as the trigger above: provisioning must not import delivery/run.
+	provisioningSvc.SetValuesSavedNotifier(valuesSavedNotifier{
+		runs:       milestoneRunRepo,
+		supervisor: runSupervisor,
+	})
 	// The milestone plan path (issue-driven execution §5): once the build's
 	// whole-spec gate cuts `v<N>`, the click supersedes the previous milestone,
 	// mints this version's, admits the run row that IS the one-spec-run-per-
@@ -1252,6 +1260,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 			// are durable across a restart and retried on a blip.
 			Gates:   buildGateResolver{prov: provisioningSvc},
 			Planner: taskPlan,
+			// The deploy gate. Wired unconditionally: unlike the other
+			// collaborators an absent gate is not a degraded mode but an open
+			// door, so the activity fails closed rather than degrading.
+			DeployGate: deployGate{prov: provisioningSvc},
 		})
 		watchers = append(watchers, run.NewWorkerWatcher(temporalRuntime, runActs))
 		slog.Info("run: temporal worker watcher registered", "hostPort", cfg.Temporal.HostPort)

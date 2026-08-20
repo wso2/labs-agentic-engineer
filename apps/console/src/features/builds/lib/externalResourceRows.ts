@@ -21,27 +21,27 @@ import type { components } from "../../../generated/aep-api";
 type ComponentDependencies = components["schemas"]["ComponentDependencies"];
 type ConfigKey = components["schemas"]["ConfigKey"];
 
-export interface ExternalConnectionRow {
+export interface ExternalResourceRow {
   id: string;
   name: string;
   description?: string;
   config: ConfigKey[];
 }
 
-export type ExternalConnectionValues = Record<
-  string,
-  Record<string, string>
->;
-
 /**
- * Builds-only projection of external connection schemas. A shared external is
+ * Builds-only projection of external resource schemas. A shared external is
  * configured once, so every consumer's keys are unioned and any secret
  * declaration wins a conflicting plain declaration.
+ *
+ * External ONLY. A `platform-resource` (a database, an identity app) carries no
+ * values for anyone to supply — the platform stands it up — so listing one here
+ * would offer a form with nothing in it. The Deployments page's `connectionRows`
+ * is the wider projection, for the promotion readiness it has to report on.
  */
-export function externalConnectionRows(
+export function externalResourceRows(
   all: ComponentDependencies[] | null | undefined,
-): ExternalConnectionRow[] {
-  const byId = new Map<string, ExternalConnectionRow>();
+): ExternalResourceRow[] {
+  const byId = new Map<string, ExternalResourceRow>();
 
   for (const component of all ?? []) {
     for (const dependency of component.dependencies ?? []) {

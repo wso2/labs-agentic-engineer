@@ -22,14 +22,23 @@ import { BuildsPage } from "../features/builds/components/BuildsPage";
 // ?tag=vN selects a previous build; absent = the newest build (#185). The
 // param is validated as "a non-empty string" only — an unknown tag falls
 // back to newest inside BuildsPage rather than erroring the route.
+//
+// ?connections=open expands the External resources section; ?connections=<name>
+// expands it AND opens that resource's dialog, so the person holding a key can
+// be sent straight to their own field. Both are validated only as "a non-empty
+// string": an unknown resource name degrades to "expanded" inside the section,
+// which is a better landing than a route error.
 export function validateBuildsSearch(search: Record<string, unknown>): {
   tag?: string;
-  connections?: "open";
+  connections?: string;
 } {
   const tag = search.tag;
+  const connections = search.connections;
   return {
     ...(typeof tag === "string" && tag !== "" ? { tag } : {}),
-    ...(search.connections === "open" ? { connections: "open" as const } : {}),
+    ...(typeof connections === "string" && connections !== ""
+      ? { connections }
+      : {}),
   };
 }
 
@@ -46,12 +55,12 @@ function BuildsRoute() {
     <BuildsPage
       projectName={projectName}
       tag={tag}
-      connectionsOpen={connections === "open"}
+      connections={connections}
       onTagChange={(next) =>
         void navigate({
           search: {
             ...(next ? { tag: next } : {}),
-            ...(connections === "open" ? { connections: "open" as const } : {}),
+            ...(connections ? { connections } : {}),
           },
           replace: true,
         })

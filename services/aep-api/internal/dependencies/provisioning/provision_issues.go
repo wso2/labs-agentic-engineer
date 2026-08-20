@@ -33,10 +33,19 @@ type provisionDep struct {
 	resourceType string // platform-resource only
 }
 
-// EnsureProvisionIssues mints one aep:provision gate issue per distinct external
-// / platform-resource dependency in the project's approved design, deduped per
-// project (an open gate issue for a dependency name is never re-created). It is
-// idempotent and safe to call after every plan (dependency-management §3.6 step
+// provisionGate is the version-scoped result of reconciling one dependency's
+// gate. completed means the same milestone already has a closed gate, so a
+// retried activity must not mint another issue or author the resource again.
+type provisionGate struct {
+	number    int
+	completed bool
+}
+
+// EnsureProvisionIssues mints one aep:provision gate issue per distinct
+// platform-resource dependency in the project's approved design, deduped per
+// version. An open gate is reused; a closed gate is returned as completed so a
+// retried activity cannot recreate or re-author it. It is idempotent and safe
+// to call after every plan (dependency-management §3.6 step
 // 4: "Planning mints coding issues AND provisioning issues"). The gate issues
 // hold their consumer coding tasks until each derives deployed. Best-effort per
 // issue: a single create failure is logged and does not abort the rest.
@@ -49,7 +58,7 @@ type provisionDep struct {
 // A gate is PROSE plus two labels (gate_labels.go): the aep:provision marker
 // and aep:dep/<slug>. designTag no longer appears anywhere on the issue — the
 // milestone IS the version.
-func (s *Service) EnsureProvisionIssues(ctx context.Context, orgID, projectID, designTag string, milestoneNumber int) (map[string]int, error) {
+func (s *Service) EnsureProvisionIssues(ctx context.Context, orgID, projectID, designTag string, milestoneNumber int) (map[string]provisionGate, error) {
 	comps, err := s.design.ReadDesignComponents(ctx, orgID, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("provisioning: read design: %w", err)
@@ -59,25 +68,25 @@ func (s *Service) EnsureProvisionIssues(ctx context.Context, orgID, projectID, d
 		return nil, nil
 	}
 
-	existing, err := s.openProvisionDeps(ctx, orgID, projectID)
+	existing, err := s.versionProvisionDeps(ctx, orgID, projectID, milestoneNumber)
 	if err != nil {
 		return nil, err
 	}
 
-	// gateByDep maps a lowercased dep name → its OPEN aep:provision gate issue
-	// number, for both pre-existing gates and the ones minted below. The build path
+	// gateByDep maps a lowercased dep name to its version-scoped gate, for both
+	// pre-existing gates and the ones minted below. The build path
 	// threads these numbers directly into provisioning (read-your-write from the
 	// CreateIssue result) instead of re-looking them up via GitHub's
 	// eventually-consistent label-filtered list, which often lags a just-created
 	// gate (issue #164).
-	gateByDep := make(map[string]int, len(distinct))
-	for key, num := range existing {
-		gateByDep[key] = num
+	gateByDep := make(map[string]provisionGate, len(distinct))
+	for key, gate := range existing {
+		gateByDep[key] = gate
 	}
 
 	var created int
 	for key, dep := range distinct {
-		if existing[key] > 0 {
+		if existing[key].number > 0 {
 			continue
 		}
 		title := provisionIssueTitle(dep)
@@ -100,7 +109,7 @@ func (s *Service) EnsureProvisionIssues(ctx context.Context, orgID, projectID, d
 		}
 		// Capture the minted number from the CREATE result — read-your-write, no list.
 		if res != nil {
-			gateByDep[key] = res.Number
+			gateByDep[key] = provisionGate{number: res.Number}
 		}
 		created++
 	}
@@ -108,6 +117,46 @@ func (s *Service) EnsureProvisionIssues(ctx context.Context, orgID, projectID, d
 		slog.InfoContext(ctx, "provisioning: minted gate issues", "project", projectID, "count", created)
 	}
 	return gateByDep, nil
+}
+
+// versionProvisionDeps returns gates already belonging to this version. A
+// closed gate is a terminal success for the activity operation and must remain
+// visible to retries. Milestone zero is retained for legacy callers/tests and
+// can only provide the historical project-wide open-gate behavior.
+func (s *Service) versionProvisionDeps(ctx context.Context, orgID, projectID string, milestoneNumber int) (map[string]provisionGate, error) {
+	if milestoneNumber == 0 {
+		open, err := s.openProvisionDeps(ctx, orgID, projectID)
+		if err != nil {
+			return nil, err
+		}
+		out := make(map[string]provisionGate, len(open))
+		for dep, number := range open {
+			out[dep] = provisionGate{number: number}
+		}
+		return out, nil
+	}
+	issues, err := s.issues.ListMilestoneIssues(ctx, orgID, projectID, sourcecontrol.MilestoneIssuesFilter{
+		Number: milestoneNumber,
+		State:  "all",
+		Labels: []string{delivery.LabelProvisionGate},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("provisioning: list milestone issues: %w", err)
+	}
+	out := map[string]provisionGate{}
+	for _, issue := range issues {
+		dep := gateDepFromLabels(issue.Labels)
+		if dep == "" {
+			continue
+		}
+		gate := provisionGate{number: issue.Number, completed: strings.EqualFold(issue.State, "closed")}
+		// Prefer an open gate if historical duplicates exist: it is the live hold
+		// this attempt must reconcile. Otherwise retain the closed terminal gate.
+		if current, ok := out[dep]; !ok || current.completed {
+			out[dep] = gate
+		}
+	}
+	return out, nil
 }
 
 // distinctProvisionDeps collects the project's distinct platform-resource

@@ -90,12 +90,12 @@ const (
 	// two send a human to different places: a red build is code that did not
 	// compile, while this is code that compiled and would not run — a bad image,
 	// an unrenderable trait, a missing dependency at runtime.
-	RunReasonDeployBudget = "deploy-budget"
-	RunReasonFixChainBudget       = "fix-chain-budget"
-	RunReasonConflictBudget       = "conflict-budget"
-	RunReasonNoProgress           = "no-progress"
-	RunReasonCycleCeiling         = "cycle-ceiling"
-	RunReasonValidationFailed     = "validation-failed"
+	RunReasonDeployBudget     = "deploy-budget"
+	RunReasonFixChainBudget   = "fix-chain-budget"
+	RunReasonConflictBudget   = "conflict-budget"
+	RunReasonNoProgress       = "no-progress"
+	RunReasonCycleCeiling     = "cycle-ceiling"
+	RunReasonValidationFailed = "validation-failed"
 	// RunReasonValidationUnreported is its own failure class, distinct from
 	// validation-failed: the suite going red and the agent delivering no report at
 	// all are different explanations, and a terminal reason exists to explain.
@@ -261,6 +261,11 @@ const (
 // AutoMigrate cannot express a partial index. Incident-adoption runs are
 // deliberately outside the index, so they run concurrently on their own
 // milestones.
+// DependencyNames is a jsonb-serialized list of dependency names. Named so the
+// column's shape is declared once rather than spelled out at the field, matching
+// IssueNumbers on RunCycle.
+type DependencyNames []string
+
 type MilestoneRun struct {
 	ID        string `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
 	OrgID     string `gorm:"index;not null" json:"-"`
@@ -284,6 +289,13 @@ type MilestoneRun struct {
 	// TerminalReason is set exactly once, when the run settles into a non-success
 	// terminal state. Empty while non-terminal and on a succeeded run.
 	TerminalReason string `gorm:"type:text" json:"terminalReason,omitempty"`
+
+	// WaitingReason / BlockingDependencies explain a `waiting` run, and are
+	// persisted rather than read off the live workflow query because the console
+	// reads this row. Set by the deploy gate's park (ADR-0020) and cleared on the
+	// next move to running; empty for the ordinary between-cycles park.
+	WaitingReason        string          `gorm:"type:text" json:"waitingReason,omitempty"`
+	BlockingDependencies DependencyNames `gorm:"type:jsonb;serializer:json" json:"blockingDependencies,omitempty"`
 
 	// Budget counters. CyclesTotal is checked against CycleCeiling; FixCycles and
 	// ConflictCycles bound the two recovery chains; BuildRetriggers is the

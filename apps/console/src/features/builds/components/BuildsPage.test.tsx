@@ -238,14 +238,14 @@ afterEach(() => {
 function renderPage(
   tag?: string,
   onTagChange = vi.fn(),
-  connectionsOpen = false,
+  connections: string | undefined = undefined,
 ) {
   render(
     <BuildsPage
       projectName="acme"
       tag={tag}
       onTagChange={onTagChange}
-      connectionsOpen={connectionsOpen}
+      connections={connections}
     />,
   );
   return onTagChange;
@@ -257,7 +257,7 @@ describe("BuildsPage — one version's story", () => {
     expect(screen.getByText(/No builds yet/)).toBeInTheDocument();
   });
 
-  it("keeps project connection configuration expanded without build history", () => {
+  it("offers external resources even with no build history", () => {
     mockConnectionDependencies = [
       {
         componentName: "checkout-api",
@@ -274,13 +274,15 @@ describe("BuildsPage — one version's story", () => {
       configured: false,
       dependencies: [{ name: "stripe", state: "unset", missingKeys: [] }],
     };
-    renderPage(undefined, vi.fn(), true);
+    renderPage(undefined, vi.fn(), "open");
 
+    // Values are a project-level concern, so the section is reachable before the
+    // project has ever been built — that is the "configure ahead of a build" path.
+    expect(screen.getByText(/No builds yet/)).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /Connection configuration/i }),
+      screen.getByRole("button", { name: /External resources/i }),
     ).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByRole("region", { name: "stripe" })).toBeInTheDocument();
-    expect(screen.getByDisplayValue("us-east-1")).toBeInTheDocument();
+    expect(screen.getByRole("listitem", { name: "stripe" })).toBeInTheDocument();
   });
 
   it("defaults to the newest version, not to a ledger list", () => {
@@ -706,6 +708,32 @@ describe("BuildsPage — one version's story", () => {
     ).not.toBeInTheDocument();
   });
 
+  // The deploy gate's park (ADR-0020). The run is built and deployable and the
+  // only thing left is a credential, so the card has to say that and offer the
+  // way to fix it — a `waiting` chip on its own reads as a hung run, and the
+  // one person who could clear it in ten seconds never learns that they can.
+  it("names the connections a deploy-gate park waits on, with a way to fix it", async () => {
+    mockBuilds = [build("v2", "in_progress")];
+    mockRuns = [
+      run({
+        state: "waiting",
+        waitingReason: "external-values",
+        blockingDependencies: ["stripe"],
+        cycles: [],
+      }),
+    ];
+    mockIssues = [...withOpenWork()];
+    renderPage();
+
+    expect(await screen.findByText(/Waiting for connection values: stripe/)).toBeInTheDocument();
+    // The way out is a real navigation into the configuration section, not a
+    // sentence telling the reader to go and find it.
+    const action = screen.getByRole("link", { name: "Configure connections" });
+    expect(action).toHaveAttribute("href", expect.stringContaining("connections=open"));
+    // And it must not ALSO render the generic park, which says the opposite.
+    expect(screen.queryByText("Parked between build sessions")).not.toBeInTheDocument();
+  });
+
   it("tells the gate story before the first session, not a generic wait", () => {
     // runHold defers an open-gate wait to the provisioning section — so the
     // card must actually mount it. Without this, a run stalled on a
@@ -868,7 +896,7 @@ describe("BuildsPage — one version's story", () => {
         projectName="acme"
         tag={undefined}
         onTagChange={vi.fn()}
-        connectionsOpen={false}
+        connections={undefined}
       />,
     );
     expect(invalidateQueries).not.toHaveBeenCalled();
@@ -881,7 +909,7 @@ describe("BuildsPage — one version's story", () => {
         projectName="acme"
         tag={undefined}
         onTagChange={vi.fn()}
-        connectionsOpen={false}
+        connections={undefined}
       />,
     );
     expect(invalidateQueries).toHaveBeenCalledTimes(1);
@@ -892,7 +920,7 @@ describe("BuildsPage — one version's story", () => {
         projectName="acme"
         tag={undefined}
         onTagChange={vi.fn()}
-        connectionsOpen={false}
+        connections={undefined}
       />,
     );
     expect(invalidateQueries).toHaveBeenCalledTimes(1);
