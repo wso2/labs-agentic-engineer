@@ -83,7 +83,7 @@ func putReferences(t *testing.T, h *Handler) (gen.PutProjectReferencesResponseOb
 // brief and an interview started before they land is conducted blind.
 func TestPutProjectReferences_ReleasesTheHeldKickoff(t *testing.T) {
 	k := &recordingKickoff{}
-	h := New(&stubReferenceStore{}, nil).WithKickoffStarter(k)
+	h := New(&stubReferenceStore{}, nil, nil).WithKickoffStarter(k)
 
 	if _, err := putReferences(t, h); err != nil {
 		t.Fatalf("put references: %v", err)
@@ -100,7 +100,7 @@ func TestPutProjectReferences_ReleasesTheHeldKickoff(t *testing.T) {
 // would interview against documents the upload never accepted.
 func TestPutProjectReferences_NoKickoffWhenTheStoreRejects(t *testing.T) {
 	k := &recordingKickoff{}
-	h := New(&stubReferenceStore{err: errors.New("disk is full")}, nil).WithKickoffStarter(k)
+	h := New(&stubReferenceStore{err: errors.New("disk is full")}, nil, nil).WithKickoffStarter(k)
 
 	if _, err := putReferences(t, h); err == nil {
 		t.Fatal("a rejected upload returned no error")
@@ -113,7 +113,7 @@ func TestPutProjectReferences_NoKickoffWhenTheStoreRejects(t *testing.T) {
 // An unwired starter is a documented no-op: the upload still stores.
 func TestPutProjectReferences_NilKickoffStarterIsNoOp(t *testing.T) {
 	store := &stubReferenceStore{}
-	h := New(store, nil)
+	h := New(store, nil, nil)
 
 	if _, err := putReferences(t, h); err != nil {
 		t.Fatalf("put references: %v", err)

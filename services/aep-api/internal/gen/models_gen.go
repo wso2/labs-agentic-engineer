@@ -1863,6 +1863,19 @@ type RegisterExternalResourceRequest struct {
 	ResourceDocs []ResourceDocWriteDTO `json:"resourceDocs,omitempty"`
 }
 
+// RequirementsImportResult Result of importing a requirements bundle into a project.
+type RequirementsImportResult struct {
+	// Files Repo-relative paths written under specs/requirements/
+	Files []string `json:"files"`
+
+	// Tag Requirements version tag cut by the save gate (e.g. v1)
+	Tag string `json:"tag"`
+
+	// Version Numeric requirements version
+	Version  int      `json:"version"`
+	Warnings []string `json:"warnings"`
+}
+
 // ResourceDocPointerDTO Org resource docs pointer (type + URL or repo path), not file bodies.
 type ResourceDocPointerDTO struct {
 	Path string                    `json:"path,omitempty"`
@@ -2694,6 +2707,12 @@ type PutProjectReferencesMultipartBody struct {
 	Files []openapi_types.File `json:"files"`
 }
 
+// ImportRequirementsMultipartBody defines parameters for ImportRequirements.
+type ImportRequirementsMultipartBody struct {
+	// File Gzip-compressed tarball of a single top-level directory of flat requirements files (prd.md required)
+	File openapi_types.File `json:"file"`
+}
+
 // GetSpecCollabSessionParams defines parameters for GetSpecCollabSession.
 type GetSpecCollabSessionParams struct {
 	// Authorization Bearer token; the display identity is decoded from it
@@ -2788,6 +2807,9 @@ type CreateIssueJSONRequestBody = CreateIssueRequest
 
 // PutProjectReferencesMultipartRequestBody defines body for PutProjectReferences for multipart/form-data ContentType.
 type PutProjectReferencesMultipartRequestBody PutProjectReferencesMultipartBody
+
+// ImportRequirementsMultipartRequestBody defines body for ImportRequirements for multipart/form-data ContentType.
+type ImportRequirementsMultipartRequestBody ImportRequirementsMultipartBody
 
 // PromoteTaskFromIssueJSONRequestBody defines body for PromoteTaskFromIssue for application/json ContentType.
 type PromoteTaskFromIssueJSONRequestBody = PromoteFromIssueRequest

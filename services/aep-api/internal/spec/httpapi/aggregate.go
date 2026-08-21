@@ -56,7 +56,7 @@ func New(d spec.Deps) (*Handlers, error) {
 		// The references upload releases a kickoff that project creation held
 		// (#562) — the turn engine is what fires it, so the slice gets it as
 		// a narrow port rather than growing a genai import.
-		filesHandler:  files.New(d.Files, d.FilesActivity).WithKickoffStarter(d.GenAI),
+		filesHandler:  files.New(d.Files, d.FilesActivity, d.RequirementsImport).WithKickoffStarter(d.GenAI),
 		tagsHandler:   tags.New(d.Artifacts),
 		skillsHandler: skills.New(d.Skills, d.SkillMut, d.SkillImport),
 		collabHandler: collab.New(d.CollabRepo),

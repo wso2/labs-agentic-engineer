@@ -91,6 +91,7 @@ import type { DependencyResolutionIntent } from "../../projects/lib/dependencyRe
 import { usePlan } from "../../agent-chat/usePlan";
 import { approvalInputsFor } from "../lib/buildInputs";
 import { BuildDependencyDrawer } from "./BuildDependencyDrawer";
+import { ImportRequirementsDialog } from "./ImportRequirementsDialog";
 import { SpecFileList } from "./SpecFileList";
 import { CellDiagramPanel } from "./CellDiagramPanel";
 import { WireframePanel } from "./WireframePanel";
@@ -193,6 +194,7 @@ export function SpecView({ projectName }: { projectName: string }) {
     projectName,
   );
   const [selection, setSelection] = useState<SpecSelection | null>(null);
+  const [importRequirementsOpen, setImportRequirementsOpen] = useState(false);
   // Build (#162): commit-then-build. buildPhase drives the button label /
   // loading; an agent peer in the room means a turn is writing → block Build.
   const build = useBuildProject(projectName);
@@ -1357,6 +1359,11 @@ export function SpecView({ projectName }: { projectName: string }) {
                 files={files}
                 selection={effectiveSelection}
                 onSelect={selectManually}
+                {...(hasRequirementsFiles
+                  ? {}
+                  : {
+                      onImportRequirements: () => setImportRequirementsOpen(true),
+                    })}
                 onRegenerateDesign={generateDesign}
                 regenerateDisabled={agentBusy}
                 sections={railSections}
@@ -1633,6 +1640,12 @@ export function SpecView({ projectName }: { projectName: string }) {
           </Box>
         )}
       </Box>
+
+      <ImportRequirementsDialog
+        open={importRequirementsOpen}
+        onClose={() => setImportRequirementsOpen(false)}
+        projectName={projectName}
+      />
 
       <BuildDependencyDrawer
         open={dependencyDrawerOpen}
