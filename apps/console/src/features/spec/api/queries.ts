@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { components } from "../../../generated/aep-api";
 import { client } from "../../../api/client";
 import { specKeys } from "./keys";
@@ -25,6 +25,8 @@ import { apiErrorMessage } from "../../../api/errors";
 
 type FileContent = components["schemas"]["FileContent"];
 type ComponentDependencies = components["schemas"]["ComponentDependencies"];
+type RequirementsImportResult =
+  components["schemas"]["RequirementsImportResult"];
 
 function toError(error: unknown, fallback: string): Error {
   return new Error(apiErrorMessage(error, fallback));
@@ -137,6 +139,37 @@ export function useSpecFileContent(
     queryFn: () => {
       if (!file) throw new Error("no file selected");
       return fetchSpecFileContent(projectName, file);
+    },
+  });
+}
+
+/**
+ * Import a modernize-extract requirements bundle into an empty project.
+ * Multipart cast mirrors useImportSkill — openapi-fetch's declared body type
+ * describes the JSON Schema shape, not the FormData wire body.
+ */
+export function useImportRequirements(projectName: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (file: File): Promise<RequirementsImportResult> => {
+      const formData = new FormData();
+      formData.append("file", file);
+      const { data, error } = await client.POST(
+        "/projects/{projectName}/requirements/import",
+        {
+          params: { path: { projectName } },
+          body: formData as unknown as { file: string },
+        },
+      );
+      if (error) {
+        throw toError(error, "Failed to import the requirements bundle");
+      }
+      return data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: specKeys.files(projectName),
+      });
     },
   });
 }

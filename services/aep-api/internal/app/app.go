@@ -343,6 +343,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// Files API — generic specs/-scoped, GitHub-at-HEAD reads + atomic apply
 	// (commits straight to main under CAS retry). No local working tree.
 	filesSvc := spec.NewFilesService(repoService, gitOpsService)
+	requirementsImportSvc := spec.NewRequirementsImportService(filesSvc, artifactSvcGit)
 
 	// Unified genai committed-truth turn surface (shared-workspace-volume). It
 	// resolves the org Anthropic key (no platform fallback), snapshots the
@@ -835,14 +836,15 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// tag reads, the org skills library, and the collab oracle/descriptor. Its
 	// slice handlers embed straight into the edge's composite.
 	specHandlers, err := spechttpapi.New(spec.Deps{
-		GenAI:         genaiSvc,
-		Files:         filesSvc,
-		FilesActivity: filesActivityRecorder{svc: activitySvc, authorship: specAuthored},
-		Artifacts:     artifactSvcGit,
-		Skills:        skillSvc,
-		SkillMut:      skillMutationSvc,
-		SkillImport:   skillImportSvc,
-		CollabRepo:    repoService,
+		GenAI:              genaiSvc,
+		Files:              filesSvc,
+		FilesActivity:      filesActivityRecorder{svc: activitySvc, authorship: specAuthored},
+		Artifacts:          artifactSvcGit,
+		Skills:             skillSvc,
+		SkillMut:           skillMutationSvc,
+		SkillImport:        skillImportSvc,
+		RequirementsImport: requirementsImportSvc,
+		CollabRepo:         repoService,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("assemble spec domain: %w", err)

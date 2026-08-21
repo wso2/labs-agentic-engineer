@@ -363,4 +363,48 @@ export const projectHandlers = [
     }
     return HttpResponse.json(file);
   }),
+  http.post(
+    "*/api/v1/projects/:projectName/requirements/import",
+    async ({ request, params }) => {
+      let fileName = "";
+      try {
+        const formData = await request.formData();
+        const file = formData.get("file");
+        fileName = file instanceof File ? file.name : "";
+      } catch {
+        fileName = "";
+      }
+      if (!fileName || fileName.includes("invalid")) {
+        return HttpResponse.json(
+          {
+            code: "validation_failed",
+            message: "requirements import failed: MISSING_USER_STORIES: no stories",
+            details: [
+              {
+                field: "prd.md",
+                message:
+                  "MISSING_USER_STORIES: the PRD yields no stories to cover",
+              },
+            ],
+          } satisfies ApiError,
+          { status: 400 },
+        );
+      }
+      const projectName = String(params.projectName ?? "project");
+      return HttpResponse.json(
+        {
+          files: [
+            `specs/requirements/prd.md`,
+            `specs/requirements/domain-model.md`,
+          ],
+          tag: "v1",
+          version: 1,
+          warnings: fileName.includes("warn")
+            ? [`imported into ${projectName} with a soft size warning`]
+            : [],
+        },
+        { status: 201 },
+      );
+    },
+  ),
 ];

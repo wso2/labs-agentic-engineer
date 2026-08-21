@@ -28,8 +28,10 @@ An absent kind means `org`, which is a real decision, not a default to lean on:
 - **`platform`** — AE-owned, read-only in the console. The design-flow skills
   (`start`, `amend`, `grilling`, `prd-contract`, `design`, `cell-design`,
   `architecture`, `security-design`, `openapi-conventions`, `wireframes`,
-  `validation-criteria`, `task-planning`) and the coding run's own workflow skills (`aep`,
-  `aep-validation`, `playwright-cli`).
+  `validation-criteria`, `task-planning`), the coding run's own workflow skills (`aep`,
+  `aep-validation`, `playwright-cli`), and `modernize-extract` (authored here so
+  it reconciles into every org library, but meant to run on a developer's
+  machine in a **legacy** repo — see below).
 - **`org`** — the org-visible stack skills (`go`, `ballerina`, `react-webapp`,
   `api-management`, `thunder-authentication`). Editable and deletable by an org.
 
@@ -141,6 +143,12 @@ To use these skills in your own Claude Code, copy the directories into
 `~/.claude/skills/` (or point a project's `.claude/skills/` at them). Nothing
 assembles a plugin any more — a coding session reads a plain skills directory,
 which is exactly what your own Claude Code reads.
+
+**`modernize-extract` is the one library skill meant to run outside the
+platform** — in a legacy application repo, before anything is imported into
+AEP (ADR-0020). It is `audience: [design]` so it is not mirrored into project
+coding sessions; developers copy it the same way as above. Its body refuses to
+run if `specs/requirements/` or `specs/design/` already exists.
 
 ## Conventions
 

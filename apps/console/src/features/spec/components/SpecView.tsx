@@ -66,6 +66,7 @@ import type { DependencyResolutionIntent } from "../../projects/lib/dependencyRe
 import { useDesignCellChangeCount } from "../collab/useDesignCellChange";
 import { AddArtifactDialog } from "./AddArtifactDialog";
 import { BuildDependencyDrawer } from "./BuildDependencyDrawer";
+import { ImportRequirementsDialog } from "./ImportRequirementsDialog";
 import { SpecFileList } from "./SpecFileList";
 import { CellDiagramPanel } from "./CellDiagramPanel";
 import { WireframePanel } from "./WireframePanel";
@@ -118,6 +119,7 @@ export function SpecView({ projectName }: { projectName: string }) {
   );
   const [selection, setSelection] = useState<SpecSelection | null>(null);
   const [addArtifactOpen, setAddArtifactOpen] = useState(false);
+  const [importRequirementsOpen, setImportRequirementsOpen] = useState(false);
   // Build (#162): commit-then-build. buildPhase drives the button label /
   // loading; an agent peer in the room means a turn is writing → block Build.
   const build = useBuildProject(projectName);
@@ -910,6 +912,11 @@ export function SpecView({ projectName }: { projectName: string }) {
                 selection={effectiveSelection}
                 onSelect={setSelection}
                 onAddArtifact={() => setAddArtifactOpen(true)}
+                onImportRequirements={
+                  hasRequirementsFiles
+                    ? undefined
+                    : () => setImportRequirementsOpen(true)
+                }
                 onRegenerateDesign={generateDesign}
                 regenerateDisabled={agentBusy}
                 deriving={deriving}
@@ -1093,6 +1100,12 @@ export function SpecView({ projectName }: { projectName: string }) {
       <AddArtifactDialog
         open={addArtifactOpen}
         onClose={() => setAddArtifactOpen(false)}
+      />
+
+      <ImportRequirementsDialog
+        open={importRequirementsOpen}
+        onClose={() => setImportRequirementsOpen(false)}
+        projectName={projectName}
       />
 
       <BuildDependencyDrawer

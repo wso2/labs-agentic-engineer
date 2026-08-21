@@ -53,7 +53,7 @@ type Handlers struct {
 func New(d spec.Deps) (*Handlers, error) {
 	return &Handlers{
 		genaiturnsHandler: genaiturns.New(d.GenAI),
-		filesHandler:      files.New(d.Files, d.FilesActivity),
+		filesHandler:      files.New(d.Files, d.FilesActivity, d.RequirementsImport),
 		tagsHandler:       tags.New(d.Artifacts),
 		skillsHandler:     skills.New(d.Skills, d.SkillMut, d.SkillImport),
 		collabHandler:     collab.New(d.CollabRepo),

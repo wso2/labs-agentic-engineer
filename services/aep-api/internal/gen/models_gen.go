@@ -1314,6 +1314,19 @@ type RcaAgentReportList struct {
 	NextCursor string `json:"nextCursor,omitempty"`
 }
 
+// RequirementsImportResult Result of importing a requirements bundle into a project.
+type RequirementsImportResult struct {
+	// Files Repo-relative paths written under specs/requirements/
+	Files []string `json:"files"`
+
+	// Tag Requirements version tag cut by the save gate (e.g. v1)
+	Tag string `json:"tag"`
+
+	// Version Numeric requirements version
+	Version  int      `json:"version"`
+	Warnings []string `json:"warnings"`
+}
+
 // RevalidateAccepted The run that will answer the question. Its cycles stream on the ordinary run progress endpoint, and its verdict becomes the version's once it settles.
 type RevalidateAccepted struct {
 	MilestoneNumber int64  `json:"milestoneNumber"`
@@ -1951,6 +1964,12 @@ type ListIssuesParams struct {
 	Q string `form:"q,omitempty" json:"q,omitempty"`
 }
 
+// ImportRequirementsMultipartBody defines parameters for ImportRequirements.
+type ImportRequirementsMultipartBody struct {
+	// File Gzip-compressed tarball of a single top-level directory of flat requirements files (prd.md required)
+	File openapi_types.File `json:"file"`
+}
+
 // GetSpecCollabSessionParams defines parameters for GetSpecCollabSession.
 type GetSpecCollabSessionParams struct {
 	// Authorization Bearer token; the display identity is decoded from it
@@ -2030,6 +2049,9 @@ type ApplyFilesJSONRequestBody = ApplyRequest
 
 // CreateIssueJSONRequestBody defines body for CreateIssue for application/json ContentType.
 type CreateIssueJSONRequestBody = CreateIssueRequest
+
+// ImportRequirementsMultipartRequestBody defines body for ImportRequirements for multipart/form-data ContentType.
+type ImportRequirementsMultipartRequestBody ImportRequirementsMultipartBody
 
 // PromoteTaskFromIssueJSONRequestBody defines body for PromoteTaskFromIssue for application/json ContentType.
 type PromoteTaskFromIssueJSONRequestBody = PromoteFromIssueRequest

@@ -179,6 +179,17 @@ vi.mock("../api/queries", () => ({
   useSpecFileContent: (...args: unknown[]) => mockUseSpecFileContent(...args),
   useDesignDependencies: (...args: unknown[]) =>
     mockUseDesignDependencies(...args),
+  useImportRequirements: () => ({
+    mutate: vi.fn(),
+    isPending: false,
+    isError: false,
+    error: null,
+    reset: vi.fn(),
+  }),
+}));
+
+vi.mock("./ImportRequirementsDialog", () => ({
+  ImportRequirementsDialog: () => null,
 }));
 
 // --- BuildDependencyDrawer: its own behavior is covered by

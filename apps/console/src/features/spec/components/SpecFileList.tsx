@@ -33,9 +33,11 @@ import {
   ChevronDown,
   ChevronRight,
   FileText,
-  Plus, RefreshCw,
+  Plus,
+  RefreshCw,
   Network,
   LayoutDashboard,
+  Upload,
 } from "@wso2/oxygen-ui-icons-react";
 import type { SpecFileEntry } from "../api/mapping";
 import {
@@ -67,6 +69,7 @@ export function SpecFileList({
   selection,
   onSelect,
   onAddArtifact,
+  onImportRequirements,
   onRegenerateDesign,
   regenerateDisabled,
   deriving,
@@ -76,6 +79,8 @@ export function SpecFileList({
   selection: SpecSelection | null;
   onSelect: (sel: SpecSelection) => void;
   onAddArtifact: () => void;
+  /** Create-only import — only wired when the project has no requirements yet. */
+  onImportRequirements?: () => void;
   /** Re-generate the design (#159) — shown in the Designs header once a design
    *  exists; fires the same design-generation room turn as the header CTA. */
   onRegenerateDesign: () => void;
@@ -137,6 +142,7 @@ export function SpecFileList({
     title: string,
     groupFiles: SpecFileEntry[],
     addBtn?: boolean,
+    importBtn?: boolean,
   ) => (
     <Box sx={{ mb: 1 }}>
       <Box
@@ -151,17 +157,30 @@ export function SpecFileList({
         <Typography variant="overline" color="text.secondary">
           {title}
         </Typography>
-        {addBtn && (
-          <Tooltip title="Add requirement artifact">
-            <IconButton
-              size="small"
-              aria-label="Add requirement artifact"
-              onClick={onAddArtifact}
-            >
-              <Plus size={16} />
-            </IconButton>
-          </Tooltip>
-        )}
+        <Box sx={{ display: "flex", alignItems: "center" }}>
+          {importBtn && onImportRequirements && (
+            <Tooltip title="Import requirements bundle">
+              <IconButton
+                size="small"
+                aria-label="Import requirements"
+                onClick={onImportRequirements}
+              >
+                <Upload size={16} />
+              </IconButton>
+            </Tooltip>
+          )}
+          {addBtn && (
+            <Tooltip title="Add requirement artifact">
+              <IconButton
+                size="small"
+                aria-label="Add requirement artifact"
+                onClick={onAddArtifact}
+              >
+                <Plus size={16} />
+              </IconButton>
+            </Tooltip>
+          )}
+        </Box>
       </Box>
       {groupFiles.length > 0 ? (
         <List dense disablePadding>
@@ -183,7 +202,12 @@ export function SpecFileList({
 
   return (
     <Box component="nav" aria-label="Spec files" sx={{ py: 1 }}>
-      {flatGroup("Requirements", requirements, true)}
+      {flatGroup(
+        "Requirements",
+        requirements,
+        true,
+        requirements.length === 0 && Boolean(onImportRequirements),
+      )}
 
       {/* Designs — grouped by component, with synthetic diagram entries. */}
       <Box sx={{ mb: 1 }}>
