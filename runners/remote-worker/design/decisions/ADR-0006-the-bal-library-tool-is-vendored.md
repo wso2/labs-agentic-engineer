@@ -4,7 +4,7 @@ The `ballerina` skill drives one command by name to learn a package's real
 signatures. That command used to be `bal-library`, a bundle of the in-repo
 TypeScript reader (`@aep/ballerina-central`) baked at `/opt/ballerina-central`
 and put on `PATH`. It is now `bal library` — the same reader, ported to Java and
-shipped as a **Ballerina CLI tool** in its own repository.
+shipped as a **Ballerina CLI tool**.
 
 Three properties of that change forced three decisions, and none of them is a
 straight substitution of the old wiring.
@@ -16,10 +16,12 @@ straight substitution of the old wiring.
   `~/.ballerina/.config/bal-tools.toml`, and `bal` dispatches the `library` verb
   to it. There is no directory to put on `PATH` and no launcher script whose
   `dirname "$0"` a mount could confuse.
-- **It is not in this repository.** The tool lives in its own repo and is **not
-  published to Ballerina Central**, so `bal tool pull library` does not resolve.
-  A fresh clone of this repo has nothing to build and the image has nothing to
-  pull.
+- **It is not on Ballerina Central**, so `bal tool pull library` does not
+  resolve and the image has nothing to pull. When this ADR was written the source
+  was not here either, in a repository of its own; it moved in on 2026-08-24 and
+  now lives at `packages/bal-library-tool`. That closes only half the gap — the
+  runner image is not a JDK/Gradle build host, so it still installs a
+  **prebuilt** distribution rather than compiling the tool at image build.
 - **`bal` version-gates a tool.** The bala's `package.json` records the
   distribution it was installed against, and `bal` refuses a tool stamped
   **newer** than the distribution running it:

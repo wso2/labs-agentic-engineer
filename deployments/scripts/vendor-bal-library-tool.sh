@@ -18,21 +18,21 @@
 # Refreshes the checked-in copy of the `bal library` tool that the runner image
 # installs — runners/remote-worker/vendor/bal-library-tool.
 #
-# WHY THERE IS A COPY AT ALL: the tool is a Ballerina CLI tool living in its own
-# repository, and it is not published to Ballerina Central. So there is nothing a
-# fresh clone of THIS repo can build (the source is not here) and nothing the
-# image can pull (`bal tool pull library` does not resolve). The distribution is
-# checked in instead, and this script is how it gets there.
+# WHY THERE IS A COPY AT ALL: the tool is a Ballerina CLI tool that is not
+# published to Ballerina Central, so the image has nothing to pull (`bal tool
+# pull library` does not resolve). Its source IS here — packages/bal-library-tool
+# — but building it needs a JDK and Gradle, which the runner image is not. The
+# built distribution is checked in instead, and this script is how it gets there.
 # See runners/remote-worker/design/decisions/ADR-0006-the-bal-library-tool-is-vendored.md.
 #
 # Usage:
-#   bash deployments/scripts/vendor-bal-library-tool.sh          # from the tool repo beside this one
+#   bash deployments/scripts/vendor-bal-library-tool.sh          # builds packages/bal-library-tool
 #   BAL_LIBRARY_TOOL_DIR=<path> bash …/vendor-bal-library-tool.sh
 #
-# Needs JDK 21 and the tool's own repository — it runs the tool's `make-dist.sh`,
-# which is the ONE place that decides what a distribution contains. An unzipped
-# release zip has the same layout, so a machine with neither can drop one in by
-# hand; nothing here is generated in a way that only this script understands.
+# Needs JDK 21 — it runs the tool's `make-dist.sh`, which is the ONE place that
+# decides what a distribution contains. An unzipped release zip has the same
+# layout, so a machine without a JDK can drop one in by hand; nothing here is
+# generated in a way that only this script understands.
 #
 # After refreshing, rebuild the image so a dispatched run gets the new jar:
 #   make build-runner FORCE=1
@@ -46,9 +46,9 @@ TOOL_DIR="${BAL_LIBRARY_TOOL_DIR:-$REPO_ROOT/packages/bal-library-tool}"
 VENDOR_DIR="$REPO_ROOT/runners/remote-worker/vendor/bal-library-tool"
 
 if [ ! -x "$TOOL_DIR/make-dist.sh" ]; then
-    echo "❌ no bal library tool repository at $TOOL_DIR" >&2
-    echo "   Clone it there, or point BAL_LIBRARY_TOOL_DIR at your checkout:" >&2
-    echo "     git clone https://github.com/xlight05/bal-library-tool $TOOL_DIR" >&2
+    echo "❌ no bal library tool sources at $TOOL_DIR" >&2
+    echo "   They are tracked in this repo at packages/bal-library-tool; restore" >&2
+    echo "   them, or point BAL_LIBRARY_TOOL_DIR at another checkout." >&2
     echo "   Or unzip a release into $VENDOR_DIR — same layout, no build needed." >&2
     exit 1
 fi

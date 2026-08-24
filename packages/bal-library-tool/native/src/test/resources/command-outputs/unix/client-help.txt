@@ -1,0 +1,43 @@
+Usage: bal library client <org/name> [<Name|selector>...] [-s <q>] [-r] [--refresh]
+
+One client's whole callable surface, or a roster of them. Resource functions by
+path, remote and normal ones by name, the constructor included.
+
+Bare, it lists what the package has: one client is answered whole — constructor,
+resource functions by path, remote and normal ones by name — and several give a
+roster with counts.
+
+The selector grammar follows the CONTAINER, not the verb: a container that declares
+resource functions reads 'get'/'post'/'delete' as an accessor and the token after it
+as a path; one that does not reads the same token as a member name. Paths are
+anchored and matched from the first segment, '*' is a wildcard segment, and {owner},
+owner and [string owner] all address the same one. A segment also answers to its
+escaped spelling, and 'new' addresses the constructor — unless the container really
+declares one, which wins.
+
+A guess costs a line, not a call. This verb answers for a symbol of another kind
+too, prepending one line that names the canonical verb — so 'client' on a class, or
+on a record, still shows it. A name that is a MEMBER rather than a container
+resolves the same way and names its owner.
+
+Never paginated. A listing over its byte budget is re-rendered coarser — signatures
+become names, names become groups with counts — and whatever collapsed says so with
+its size. Narrow with -s or a selector rather than piping: a window cuts the import
+notes off the lines it keeps. Line one states the document's own length, so a window
+that cut is visible — fewer lines than it says means the answer is incomplete.
+
+  -s, --search <q>      Filter this verb's scope by name, path, parameter or type.
+                        Every word and every path segment of the query has to
+                        appear, in any order — to anchor a path, pass it as the
+                        selector instead. A match found only in documentation is
+                        named rather than printed.
+  -r, --resolve-types   Answer as Ballerina: the declaration, then the transitive
+                        closure of every type it names, with cross-package edges
+                        named rather than followed.
+  --refresh             Ignore any cached copy and rewrite it. Worth passing only
+                        when a name should exist and does not.
+
+  bal library client ballerinax/github
+  bal library client ballerinax/github repos
+  bal library client ballerinax/github Client delete repos/{owner}/{repo}/actions/caches -r
+  bal library client ballerinax/twilio -s "message"

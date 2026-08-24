@@ -1,0 +1,1 @@
+{"kind":"validation","message":"Unknown option '--nonesuch'.","suggestion":"Known flags are --module, --resolve-types, --search and --refresh. Run with --help for usage."}

@@ -144,8 +144,8 @@ pnpm play <dir> code --yes --restore
 
 Docker mode mounts that jar over the one the image INSTALLED, so it needs no
 rebuild; the baked copy — `runners/remote-worker/vendor/bal-library-tool`,
-checked in because the tool is in its own repository and not on Central — is what
-a cluster run gets. Every run that overlays it says so, naming the jar.
+checked in because the tool is not on Central and the image does not build it —
+is what a cluster run gets. Every run that overlays it says so, naming the jar.
 
 Host mode cannot overlay anything: `bal library` is a `bal` tool, resolved out of
 **your own** `~/.ballerina`, so the loop there is the tool's `install-local.sh`.

@@ -1,0 +1,34 @@
+Usage: bal library funcs <org/name> [<name|prefix*>...] [-s <q>] [-r] [--refresh]
+
+Functions at module scope — the callable surface of a package that has no client,
+and the utilities of one that does.
+
+The callable surface of a package with no client, and the utilities of one that has
+them. A bare token matches anywhere in a name and '*' is a wildcard, so 'create*'
+selects a family.
+
+A guess costs a line, not a call. This verb answers for a symbol of another kind
+too, prepending one line that names the canonical verb — so 'client' on a class, or
+on a record, still shows it. A name that is a MEMBER rather than a container
+resolves the same way and names its owner.
+
+Never paginated. A listing over its byte budget is re-rendered coarser — signatures
+become names, names become groups with counts — and whatever collapsed says so with
+its size. Narrow with -s or a selector rather than piping: a window cuts the import
+notes off the lines it keeps. Line one states the document's own length, so a window
+that cut is visible — fewer lines than it says means the answer is incomplete.
+
+  -s, --search <q>      Filter this verb's scope by name, path, parameter or type.
+                        Every word and every path segment of the query has to
+                        appear, in any order — to anchor a path, pass it as the
+                        selector instead. A match found only in documentation is
+                        named rather than printed.
+  -r, --resolve-types   Answer as Ballerina: the declaration, then the transitive
+                        closure of every type it names, with cross-package edges
+                        named rather than followed.
+  --refresh             Ignore any cached copy and rewrite it. Worth passing only
+                        when a name should exist and does not.
+
+  bal library funcs ballerina/uuid
+  bal library funcs ballerina/crypto 'hash*'
+  bal library funcs ballerina/crypto -s "sha256" -r

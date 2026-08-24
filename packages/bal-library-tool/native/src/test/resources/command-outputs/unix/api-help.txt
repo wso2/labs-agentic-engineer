@@ -1,0 +1,25 @@
+Usage: bal library api <org/name> [--refresh]
+
+Last resort. Every declaration in one document, unaddressed and large — reach for it
+only when the other verbs did not answer.
+
+How large: ballerinax/github is 927KB here, 738 of them types — which 'type' reads
+one at a time and 'overview' leaves out for that reason.
+
+Reads like 'type': a trailing '// Special Agent Note:' whose clause says 'FROM
+<module> module' is the import to add, and a prefixed name without one is
+pre-declared.
+
+Its '// --- Service ---' section is the only place attachability is answered. A
+service object type gets a 'service X on new Listener(...)' template when the
+package's listener is known to accept it; the rest are listed under a note saying
+that cannot be confirmed, and writing 'on new Listener(...)' for one of those does
+not compile.
+
+It is also the only verb that names a 'configurable', which is module-private and
+therefore unreachable by 'type'.
+
+  --refresh   Ignore any cached copy and rewrite it. Worth passing only when a name
+              should exist and does not.
+
+  bal library api ballerinax/sap

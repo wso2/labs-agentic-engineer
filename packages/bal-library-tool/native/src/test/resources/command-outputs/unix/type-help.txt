@@ -1,0 +1,32 @@
+Usage: bal library type <org/name> <Name>... [-s <q>] [-r] [--refresh]
+
+One or more declarations, as Ballerina. All-or-nothing: a name that does not resolve
+fails the run with candidates.
+
+A trailing '// Special Agent Note:' says what the line alone cannot. A 'FROM
+<module> module' clause IS the import to add, written exactly as printed; a prefixed
+name without one is pre-declared and needs none. Any other clause is about the line,
+not an import.
+
+It is how you read a package's ERRORS: 'overview' names them on its Errors row and
+does not declare them, and this verb takes several names at once, so one call reads
+the whole set with its subtype chain.
+
+All-or-nothing across names: if one does not resolve, the run fails with candidates
+and stdout stays empty, because 'exit 0 means stdout is complete' is what a
+redirecting caller relies on.
+
+  -s, --search <q>      Filter this verb's scope by name, path, parameter or type.
+                        Every word and every path segment of the query has to
+                        appear, in any order — to anchor a path, pass it as the
+                        selector instead. A match found only in documentation is
+                        named rather than printed.
+  -r, --resolve-types   Answer as Ballerina: the declaration, then the transitive
+                        closure of every type it names, with cross-package edges
+                        named rather than followed.
+  --refresh             Ignore any cached copy and rewrite it. Worth passing only
+                        when a name should exist and does not.
+
+  bal library type ballerina/http ClientRequestError -r
+  bal library type ballerinax/aws.auth AuthConfig
+  bal library type ballerinax/github -s "repository"

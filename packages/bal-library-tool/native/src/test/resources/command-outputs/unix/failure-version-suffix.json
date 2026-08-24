@@ -1,0 +1,1 @@
+{"kind":"validation","message":"Invalid package name 'ballerinax/github:6.0.0'. Expected 'org/name' (no version suffix).","suggestion":"Drop any ':version' suffix and pass strictly 'org/name', e.g. 'ballerinax/github'."}

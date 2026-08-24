@@ -1,0 +1,9 @@
+[package]
+org = "ballerinax"
+name = "tool_library"
+version = "0.1.0"
+distribution = "2201.13.2"
+authors = ["Ballerina"]
+keywords = ["library", "search", "copilot"]
+repository = "https://github.com/ballerina-platform/bal-library-tool"
+license = ["Apache-2.0"]

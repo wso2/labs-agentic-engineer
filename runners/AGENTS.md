@@ -192,9 +192,10 @@ into the runner pod at `/app/skills` for live skill edits (see
   <org/name>`), and it is a Ballerina CLI tool: the image installs it into the
   `aep` user's local bala repository and `bal` dispatches `library` to it, so
   there is no command and no `PATH` entry. `vendor/bal-library-tool` is a
-  **checked-in copy** of its distribution — the tool lives in its own repository
-  and is not on Ballerina Central, so a fresh clone has nothing to build and the
-  image has nothing to pull. `make vendor-bal-library-tool` refreshes it; follow
+  **checked-in copy** of its distribution — the tool's source is in this repo
+  (`packages/bal-library-tool`) but it is not on Ballerina Central and the image
+  is no JDK/Gradle build host, so there is nothing for the image to pull and
+  nothing it can compile. `make vendor-bal-library-tool` refreshes it; follow
   it with `make build-runner FORCE=1`, because a dispatched run reads the baked
   install. Being vendored INSIDE this directory, it needs no named build context:
   `skills` is now the only one, and the release workflow lost the node step that

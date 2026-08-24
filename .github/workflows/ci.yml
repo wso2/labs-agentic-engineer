@@ -114,3 +114,54 @@ jobs:
 
       - name: License header check
         run: make license-check
+
+  # ── The `bal library` tool ──────────────────────────────────────────────────
+  # A job of its own rather than steps in `verify`: the toolchain is JDK 21 +
+  # Gradle, which nothing else in this repo needs, and a red Java suite should
+  # read as a red Java suite. The tool's source used to live in a repository of
+  # its own and carried this workflow there; it came along when the source moved
+  # in, minus the release half, which the tool's upstream repo still owns.
+  bal-library-tool:
+    name: bal library tool — build, test, coverage
+    runs-on: ubuntu-latest
+    # Normal runs are ~2 min. The ceiling catches a hung test rather than letting
+    # it run to GitHub's 6h limit.
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: packages/bal-library-tool
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      # The tests are OFFLINE by construction — the corpus is recorded payloads
+      # and the cache seam is `DocsCache.NULL`, so no test reaches the network or
+      # a real $HOME. Ballerina itself is therefore not needed to run them; it is
+      # needed only to package the tool, which `make-dist.sh` does.
+      - name: Test
+        run: ./gradlew :native:test --no-daemon
+
+      # The floors are 80% instruction / 70% branch, declared in
+      # native/build.gradle. Coverage here is a floor, not a score to chase: the
+      # register's fix sites are read once, deep in a payload walk, and a line
+      # nothing executes is a line whose fix nothing will verify.
+      - name: Coverage floors
+        run: ./gradlew :native:jacocoTestCoverageVerification --no-daemon
+
+      - name: Build the tool jar
+        run: ./gradlew :native:jar --no-daemon
+
+      # Repo-relative: `defaults.run.working-directory` reaches `run` steps only.
+      - name: Upload test report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bal-library-tool-test-report
+          path: packages/bal-library-tool/native/build/reports/tests/test
+          retention-days: 7

@@ -1,0 +1,1 @@
+{"kind":"validation","message":"'overview' does not take -r.","suggestion":"--resolve-types belongs to 'client', 'class', 'funcs' and 'type'. Drop it, or use one of those verbs."}

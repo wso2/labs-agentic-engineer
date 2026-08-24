@@ -1,0 +1,1 @@
+{"kind":"validation","message":"'type' needs a declaration name or a search query.","suggestion":"Name it — bal library type ballerinax/github FullRepository — or search for it: bal library type ballerinax/github -s \"repository\"."}
