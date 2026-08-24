@@ -48,6 +48,13 @@ func errProvisioningUnavailable() error {
 	return apierr.ServiceUnavailable("provisioning is not configured")
 }
 
+func (h *Handler) ListWorkloadDependencies(ctx context.Context, _ gen.ListWorkloadDependenciesRequestObject) (gen.ListWorkloadDependenciesResponseObject, error) {
+	if h.svc == nil {
+		return nil, errProvisioningUnavailable()
+	}
+	return nil, errProvisioningUnavailable()
+}
+
 func (h *Handler) ListExternalResources(ctx context.Context, _ gen.ListExternalResourcesRequestObject) (gen.ListExternalResourcesResponseObject, error) {
 	org := tenant.BoundOrgFromContext(ctx)
 	if h.svc == nil {

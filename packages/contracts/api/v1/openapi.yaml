@@ -1607,6 +1607,38 @@ paths:
       summary: List every component's dependencies with read-time computed status/reason
       tags:
       - Dependencies
+  /projects/{projectName}/workload-dependencies:
+    get:
+      operationId: list-workload-dependencies
+      parameters:
+      - description: Project name (DNS-label slug)
+        in: path
+        name: projectName
+        required: true
+        schema:
+          description: Project name (DNS-label slug)
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/WorkloadDependencyDTO'
+                type: array
+                nullable: true
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+      security:
+      - userJWT: []
+      summary: list deployed-workload dependencies for the project Overview (deduped rows)
+      tags:
+      - Dependencies
   /projects/{projectName}/files:
     get:
       operationId: list-files
@@ -3361,6 +3393,33 @@ components:
       required:
       - componentName
       - dependencies
+      type: object
+    WorkloadDependencyDTO:
+      additionalProperties: false
+      properties:
+        kind:
+          enum:
+          - resource
+          - org-service
+          type: string
+        ref:
+          description: Resource type (resource rows)
+          type: string
+        tag:
+          enum:
+          - platform
+          - external
+          type: string
+        name:
+          type: string
+        project:
+          description: Provider project (org-service rows)
+          type: string
+        component:
+          description: Provider component (org-service rows)
+          type: string
+      required:
+      - kind
       type: object
     ComponentList:
       additionalProperties: false

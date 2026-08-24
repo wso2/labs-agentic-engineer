@@ -122,6 +122,7 @@ var opOwner = map[string]string{
 	"ListSkillUpdates":              embedSpec,
 	"ListSkills":                    embedSpec,
 	"ListTasks":                     embedDelivery,
+	"ListWorkloadDependencies":      embedDependencies,
 	"PromoteTaskFromIssue":          embedDelivery,
 	"ProvisionPlatformResource":     embedDependencies,
 	"PutProjectReferences":          embedSpec,

@@ -607,6 +607,42 @@ func (e TurnConflictCode) Valid() bool {
 	}
 }
 
+// Defines values for WorkloadDependencyDTOKind.
+const (
+	OrgService WorkloadDependencyDTOKind = "org-service"
+	Resource   WorkloadDependencyDTOKind = "resource"
+)
+
+// Valid indicates whether the value is a known member of the WorkloadDependencyDTOKind enum.
+func (e WorkloadDependencyDTOKind) Valid() bool {
+	switch e {
+	case OrgService:
+		return true
+	case Resource:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WorkloadDependencyDTOTag.
+const (
+	External WorkloadDependencyDTOTag = "external"
+	Platform WorkloadDependencyDTOTag = "platform"
+)
+
+// Valid indicates whether the value is a known member of the WorkloadDependencyDTOTag enum.
+func (e WorkloadDependencyDTOTag) Valid() bool {
+	switch e {
+	case External:
+		return true
+	case Platform:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ListTasksParamsState.
 const (
 	All    ListTasksParamsState = "all"
@@ -2116,6 +2152,27 @@ type WorkflowRunTask struct {
 	Phase       string `json:"phase,omitempty"`
 	StartedAt   string `json:"startedAt,omitempty"`
 }
+
+// WorkloadDependencyDTO defines model for WorkloadDependencyDTO.
+type WorkloadDependencyDTO struct {
+	// Component Provider component (org-service rows)
+	Component string                    `json:"component,omitempty"`
+	Kind      WorkloadDependencyDTOKind `json:"kind"`
+	Name      string                    `json:"name,omitempty"`
+
+	// Project Provider project (org-service rows)
+	Project string `json:"project,omitempty"`
+
+	// Ref Resource type (resource rows)
+	Ref string                   `json:"ref,omitempty"`
+	Tag WorkloadDependencyDTOTag `json:"tag,omitempty"`
+}
+
+// WorkloadDependencyDTOKind defines model for WorkloadDependencyDTO.Kind.
+type WorkloadDependencyDTOKind string
+
+// WorkloadDependencyDTOTag defines model for WorkloadDependencyDTO.Tag.
+type WorkloadDependencyDTOTag string
 
 // WriteOp defines model for WriteOp.
 type WriteOp struct {
