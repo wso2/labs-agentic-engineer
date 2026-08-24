@@ -68,7 +68,7 @@ export function EndpointsPage() {
             <ListingTable.Body>
               {items.map((row) => (
                 <ListingTable.Row
-                  key={`${row.project}:${row.endpoint}`}
+                  key={`${row.project}:${row.name}:${row.endpoint}`}
                   variant="card"
                   hover
                   clickable
