@@ -138,14 +138,17 @@ library is mounted over the image's `/app/skills`, so `aep/SKILL.md` and
 what the tool it names returns, so tuning the two has to be one loop:
 
 ```bash
-(cd packages/bal-library-tool && ./gradlew :native:jar)   # ~3s
+make bal-library-tool   # ~3s; builds the jar the next run mounts
 pnpm play <dir> code --yes --restore
 ```
 
 Docker mode mounts that jar over the one the image INSTALLED, so it needs no
-rebuild; the baked copy — `runners/remote-worker/vendor/bal-library-tool`,
-checked in because the tool is not on Central and the image does not build it —
-is what a cluster run gets. Every run that overlays it says so, naming the jar.
+rebuild; the baked copy — compiled by the runner image's own first stage from
+`packages/bal-library-tool` (ADR-0008) — is what a cluster run gets. Every run
+that overlays it says so, naming the jar. The version the mount targets is read
+from the tool's `gradle.properties`, which is what the image's build derives it
+from; bumping it without `make build-runner FORCE=1` aims the mount at a path
+that image does not have.
 
 Host mode cannot overlay anything: `bal library` is a `bal` tool, resolved out of
 **your own** `~/.ballerina`, so the loop there is the tool's `install-local.sh`.

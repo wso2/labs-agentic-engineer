@@ -88,7 +88,7 @@ const RUNNER_IMAGE = process.env.AGENT_RUNNER_IMAGE || "aep-runner:dev";
 // tool's `install-local.sh`. Rather than write into someone's `~/.ballerina`
 // behind their back, host mode reports what it found (see `hostToolAdvice`).
 const BAL_TOOL_REPO = join(REPO_ROOT, "packages", "bal-library-tool");
-const VENDORED_TOOL = join(REPO_ROOT, "runners", "remote-worker", "vendor", "bal-library-tool");
+
 // The tool's coordinates, which its bala path is built out of. Pinned here rather
 // than parsed out of the vendored `Ballerina.toml`: that file is the source of
 // truth and a test holds these two to it, so a rename fails a test instead of
@@ -121,24 +121,33 @@ export function workingTreeToolJar(): string | undefined {
  * alone — which is the honest outcome when the tool's repository is not checked
  * out beside this one, since the image's copy is then the only one there is.
  *
- * The container-side path comes from the VENDORED version, because that is the
- * distribution the image installed. Refreshing the vendored tool to a new version
- * without rebuilding the image therefore aims this mount at a path that image
- * does not have; `make build-runner FORCE=1` is what keeps the two together, and
- * the line this prints on every run names the version it is mounting as.
+ * The container-side path is composed from the tool's declared version, because
+ * that is what the image's install used. Bumping that version without rebuilding
+ * the image therefore aims this mount at a path that image does not have;
+ * `make build-runner FORCE=1` is what keeps the two together, and the line this
+ * prints on every run names the version it is mounting as.
  */
 export function toolJarOverlay(): ToolJarOverlay | undefined {
   const hostJar = workingTreeToolJar();
-  const version = vendoredToolVersion();
+  const version = installedToolVersion();
   if (!hostJar || !version) return undefined;
   const libs = `/home/aep/.ballerina/repositories/local/bala/${TOOL_ORG}/${TOOL_NAME}/${version}/any/tool/libs`;
   return { hostJar, imageJar: `${libs}/native-${version}.jar` };
 }
 
-/** The version the image installed: the vendored distribution it was built from. */
-function vendoredToolVersion(): string | undefined {
+/**
+ * The version the image installed.
+ *
+ * Read from the tool's `gradle.properties`, which is where `make-dist.sh`
+ * derives it — and `make-dist.sh` is what the image's first stage runs, so this
+ * is the same value by construction rather than by agreement. It used to be read
+ * from a checked-in `vendor/.../VERSION`; ADR-0008 deleted that file, and a
+ * missing file here returns undefined, which silently disables the overlay.
+ */
+function installedToolVersion(): string | undefined {
   try {
-    return readFileSync(join(VENDORED_TOOL, "VERSION"), "utf8").trim() || undefined;
+    const properties = readFileSync(join(BAL_TOOL_REPO, "gradle.properties"), "utf8");
+    return /^version=(.+)$/m.exec(properties)?.[1]?.trim() || undefined;
   } catch {
     return undefined;
   }

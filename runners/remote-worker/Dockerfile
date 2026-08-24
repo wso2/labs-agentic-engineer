@@ -31,6 +31,59 @@
 #     e2e specs against the deployed system and must never download a
 #     browser at task time.
 
+# ─── Stage 1: the `bal library` tool jar ────────────────────────────────────
+# BUILT here rather than committed. The tool's source is in this monorepo
+# (packages/bal-library-tool), reached as a NAMED BUILD CONTEXT because this
+# image's context is runners/remote-worker — the same mechanism the skill
+# library uses a few lines down. Building it here is what makes a stale tool
+# impossible: there is no artifact to refresh and no ordering to remember, so
+# the jar in the image is always the one this commit's source produces.
+# See design/decisions/ADR-0008-the-bal-library-tool-is-built-in-the-image.md.
+#
+# PINNED TO $BUILDPLATFORM. The jar is architecture-independent, and this image
+# is released for linux/amd64 AND linux/arm64 — without the pin Gradle would run
+# twice, the second time under QEMU, on an image whose arm64 half is already
+# measured at 28 minutes.
+FROM --platform=$BUILDPLATFORM eclipse-temurin:21-jdk AS tool-build
+WORKDIR /tool
+
+# The build files arrive first and the SOURCE last, so editing the tool's code
+# reuses the layer that downloaded Gradle and resolved the dependency graph and
+# only re-runs the compile. Without the split every source edit would re-resolve
+# from scratch on a cold cache.
+COPY --from=bal-library-tool gradle ./gradle
+COPY --from=bal-library-tool gradlew settings.gradle build.gradle gradle.properties ./
+COPY --from=bal-library-tool native/build.gradle ./native/build.gradle
+COPY --from=bal-library-tool Ballerina.toml make-dist.sh ./
+COPY --from=bal-library-tool release ./release
+
+# Resolve the classpath before the source exists, so the download is its own
+# cached layer. `:native:dependencies` touches no sources and fails on nothing.
+RUN --mount=type=secret,id=packagePAT,required=true \
+    --mount=type=cache,target=/root/.gradle,sharing=locked \
+    packageUser=x packagePAT="$(cat /run/secrets/packagePAT)" \
+    ./gradlew :native:dependencies --configuration compileClasspath --no-daemon > /dev/null
+
+COPY --from=bal-library-tool native/src ./native/src
+
+# A SECRET MOUNT and never an ARG or ENV, because `release.yml` builds this image
+# with `cache-to mode=max` — the builder stages are published to a public GHCR
+# buildcache, so a token in a build arg or a layer is published with them. A
+# secret mount is never committed to a layer. Why a token is needed at all, and
+# why no secret has to be provisioned for it: ADR-0008.
+#
+# `make-dist.sh` rather than `gradlew :native:jar` directly: it is the ONE place
+# that decides what a distribution contains, so the image and a release zip
+# cannot disagree about it.
+# `packageUser` is any non-empty string: GitHub Packages authenticates on the
+# token alone and ignores the username, which is why CI can pass `github.actor`
+# — a value that varies per event and per fork — and still resolve.
+RUN --mount=type=secret,id=packagePAT,required=true \
+    --mount=type=cache,target=/root/.gradle,sharing=locked \
+    packageUser=x packagePAT="$(cat /run/secrets/packagePAT)" \
+    ./make-dist.sh
+
+# ─── Stage 2: the runner ────────────────────────────────────────────────────
 FROM node:22-bookworm-slim
 
 RUN apt-get update \
@@ -159,13 +212,9 @@ COPY --from=skills --chown=aep:aep . /app/skills
 # `~/.ballerina/.config/bal-tools.toml`, and `bal` dispatches `library` to it.
 # No directory joins PATH here and no launcher script is involved.
 #
-# `vendor/bal-library-tool` is a CHECKED-IN copy of the tool's distribution
-# rather than a build output — the opposite of the bundled reader it replaces,
-# and why this layer needs no named build context. The tool lives in its own
-# repository and is not published to Ballerina Central, so a fresh clone of this
-# repo has nothing to build and the image has nothing to pull.
-# `make vendor-bal-library-tool` refreshes the copy; see
-# design/decisions/ADR-0006-the-bal-library-tool-is-vendored.md.
+# The distribution comes from the `tool-build` stage at the top of this file,
+# built from this commit's source. There is no checked-in artifact to go stale
+# and no refresh step to forget — see ADR-0008.
 #
 # Installed by RUNNING the tool's own offline installer — the same script a
 # released zip carries — rather than by copying a prebuilt bala tree in. The
@@ -180,11 +229,19 @@ COPY --from=skills --chown=aep:aep . /app/skills
 # root install would leave the whole tree needing a recursive chown to keep both
 # of those working.
 #
-# Last in the file, so refreshing the vendored tool rebuilds two small layers
-# instead of invalidating `npm ci`.
+# Last in the file, so a tool change rebuilds two small layers instead of
+# invalidating `npm ci`.
 USER aep
-COPY --chown=aep:aep vendor/bal-library-tool /tmp/bal-library-tool
+COPY --from=tool-build --chown=aep:aep /tool/dist /tmp/bal-library-tool
+# The `--help` call is a smoke test, and it earns its line: install.sh writes a
+# bala tree and a `bal-tools.toml` entry and exits 0 without ever asking `bal`
+# whether the result is loadable. Everything that can break between those two
+# facts — the jar's name disagreeing with the registered version, a tool stamped
+# for a distribution this image does not run, a missing service registration —
+# is invisible until a task tries `bal library` inside a pod. One command here
+# turns all of it into a failed build.
 RUN HOME=/home/aep bash /tmp/bal-library-tool/install.sh \
+    && bal library --help > /dev/null \
     && rm -rf /tmp/bal-library-tool
 
 ENTRYPOINT ["npx", "tsx", "src/oneshot.ts"]

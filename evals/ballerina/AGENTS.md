@@ -15,8 +15,8 @@ installed, and where differs by mode:
 |---|---|
 | `skills/ballerina/**` | nothing |
 | `packages/bal-library-tool` — host runs (`play --host`, these evals) | `packages/bal-library-tool/install-local.sh` |
-| `packages/bal-library-tool` — docker `pnpm play` | `(cd packages/bal-library-tool && ./gradlew :native:jar)` — the jar is mounted |
-| `packages/bal-library-tool` — dispatched/cluster runs | `make vendor-bal-library-tool && make build-runner FORCE=1` |
+| `packages/bal-library-tool` — docker `pnpm play` | `make bal-library-tool` — the jar is mounted |
+| `packages/bal-library-tool` — dispatched/cluster runs | `make build-runner FORCE=1` — the image compiles the tool itself |
 
 Then measure rather than eyeball:
 

@@ -28,11 +28,14 @@ java {
     targetCompatibility = JavaVersion.VERSION_21
 }
 
-// Everything this tool needs at run time is already on the Ballerina distribution's classpath
+// Everything this tool needs at RUN time is already on the Ballerina distribution's classpath
 // (`bre/lib` ships gson, picocli and the CLI launcher), so the dependencies are compile-only and the
-// jar carries nothing but our own classes. That is what keeps it at roughly 100KB with no
-// third-party code redistributed, and it is why no GitHub Packages credentials and no language
-// server version are needed to build.
+// jar carries nothing but our own classes — roughly 370KB, no third-party code redistributed.
+//
+// BUILD time is a different question, and conflating the two is why the credential requirement below
+// went unnoticed: `org.ballerinalang:ballerina-cli` is published only to ballerina-platform's GitHub
+// Packages, so resolving it needs `packageUser`/`packagePAT` with `read:packages`. The whole of that
+// dependency is one interface, `io.ballerina.cli.BLauncherCmd`.
 dependencies {
     compileOnly "org.ballerinalang:ballerina-cli:${ballerinaLangVersion}"
     compileOnly "info.picocli:picocli:${picocliVersion}"

@@ -99,18 +99,38 @@ Both installers are fully offline and only need `bal` on your `PATH`.
 OpenJDK 21 ([Adopt OpenJDK](https://adoptopenjdk.net/) or any other OpenJDK distribution). Set
 `JAVA_HOME` to the directory you installed it into.
 
-Nothing else. Every dependency is on the Ballerina distribution's own classpath, so there are no
-GitHub Packages credentials to export and no language server version to pin.
+**And a GitHub token with `read:packages`, exported as `packagePAT`.** This is not optional and it is
+worth saying plainly, because this file used to claim the opposite. `org.ballerinalang:ballerina-cli`
+— the one dependency that is not on Maven Central — is published *only* to ballerina-platform's GitHub
+Packages, which requires authentication even for a public read. Without it Gradle fails with
+`Username must not be null!`.
+
+```bash
+gh auth refresh -h github.com -s read:packages   # if you use gh
+export packageUser="$(gh api /user -q .login)"
+export packagePAT="$(gh auth token)"
+```
+
+In GitHub Actions no secret has to be provisioned: `packagePAT: ${{ secrets.GITHUB_TOKEN }}` is
+sufficient for that cross-org public read, and is the convention across WSO2 and ballerina-platform
+repos. The runner image's build stage takes the same token as a BuildKit secret.
+
+The whole dependency is one interface, `io.ballerina.cli.BLauncherCmd`, which `LibraryTool` implements
+and `bal` discovers through `META-INF/services`. Everything else — gson, picocli — is on Central.
 
 ### Build
 
 ```bash
-./gradlew :native:jar      # the tool jar (~250KB, our classes only)
-./gradlew :native:test     # the suite — 485 cases, offline
-./gradlew clean build      # everything, including bala packaging
+./gradlew :native:jar      # the tool jar (~370KB, our classes only)
+./gradlew :native:test     # the suite — 715 cases, offline
 ./install-local.sh         # build and register as a local bal tool
-./make-dist.sh             # the offline distribution, for a consumer to copy
+./make-dist.sh             # the offline distribution: what a release zip and the runner image both use
 ```
+
+There is no `bala` packaging step. The `:ballerina` subproject that published one to Central was
+deleted: nothing here consumed it, and its Gradle plugin resolves only from that same authenticated
+repository, so it failed a clean build at *configuration* time before the classpath was even reached.
+Both installers build the bala tree by hand.
 
 ### Shipping it to something that cannot pull it
 
@@ -170,17 +190,17 @@ The suite is offline and hermetic: no network, and no test can reach your real `
 rendering change is intentional, regenerate the snapshots and review the diff:
 
 ```bash
-UPDATE_SNAPSHOTS=1 ./gradlew :native:test              # the 18 report snapshots + usage text
+UPDATE_SNAPSHOTS=1 ./gradlew :native:test              # the report snapshots + usage text
 BAL_LIBRARY_UPDATE_KEYSPACE=1 ./gradlew :native:test   # after re-recording the fixtures
 ```
 
-The nine `.bal` snapshots have no update switch on purpose. They are the oracle.
+The 13 `.bal` snapshots have no update switch on purpose. They are the oracle.
 
 It runs at two scales, and the difference matters when you change how something renders:
 
 | | asks | answers |
 |---|---|---|
-| **the corpus** — `CorpusTest`, `ViewsTest`, `ViewsAgreeTest` | nine recorded packages, whole documents | *did anything move?* |
+| **the corpus** — `CorpusTest`, `ViewsTest`, `ViewsAgreeTest` | 13 recorded packages, whole documents | *did anything move?* |
 | **the constructs** — `constructs/ConstructTest` | one synthetic payload per Ballerina syntax dimension | *which construct moved, and is it now right?* |
 
 A change to how closed records render fails one construct case by name; the corpus reports it as

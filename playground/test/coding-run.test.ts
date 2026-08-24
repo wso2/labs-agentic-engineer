@@ -482,16 +482,20 @@ test("host mode leaves the developer's own environment alone", () => {
 // clone can neither build nor pull it. A partial refresh therefore fails here
 // rather than 300 layers into a docker build, and the coordinates the container
 // path is composed from are held to the payload's own metadata.
-test("the vendored bal library distribution is complete and matches its coordinates", () => {
-  const vendor = join(REPO_ROOT, "runners", "remote-worker", "vendor", "bal-library-tool");
-  const version = readFileSync(join(vendor, "VERSION"), "utf8").trim();
-  assert.ok(version.length > 0, "VERSION names the version install.sh will register");
-  assert.ok(existsSync(join(vendor, "install.sh")), "the tool's own offline installer");
-  assert.ok(existsSync(join(vendor, `native-${version}.jar`)), "the jar VERSION names");
+test("the bal library tool's source carries what the image install needs", () => {
+  // Asserted against the SOURCE and not a built artifact: ADR-0008 deleted the
+  // checked-in distribution, so the image's first stage runs `make-dist.sh` over
+  // exactly these files. A rename here fails this test instead of failing a
+  // docker build 300 layers in, or — worse — silently disabling the jar overlay.
+  const tool = join(REPO_ROOT, "packages", "bal-library-tool");
+  const version = /^version=(.+)$/m.exec(readFileSync(join(tool, "gradle.properties"), "utf8"))?.[1]?.trim();
+  assert.ok(version && version.length > 0, "gradle.properties names the version install.sh registers");
+  assert.ok(existsSync(join(tool, "release", "install.sh")), "the tool's own offline installer");
+  assert.ok(existsSync(join(tool, "make-dist.sh")), "the one place that decides what a distribution holds");
 
   // install.sh derives the bala path from these, and coding-run.ts composes the
   // mount target from the same three values.
-  const toml = readFileSync(join(vendor, "Ballerina.toml"), "utf8");
+  const toml = readFileSync(join(tool, "Ballerina.toml"), "utf8");
   assert.match(toml, /^org = "ballerinax"$/m);
   assert.match(toml, /^name = "tool_library"$/m);
   const overlay = toolJarOverlay();

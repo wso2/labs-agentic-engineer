@@ -130,6 +130,13 @@ jobs:
     defaults:
       run:
         working-directory: packages/bal-library-tool
+    # Gradle reads these two names to reach ballerina-platform's GitHub Packages,
+    # which is the only place `org.ballerinalang:ballerina-cli` is published. A
+    # repo-scoped GITHUB_TOKEN suffices, so there is no secret to provision —
+    # rationale in runners/remote-worker/design/decisions/ADR-0008.
+    env:
+      packageUser: ${{ github.actor }}
+      packagePAT: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -154,8 +161,11 @@ jobs:
       - name: Coverage floors
         run: ./gradlew :native:jacocoTestCoverageVerification --no-daemon
 
-      - name: Build the tool jar
-        run: ./gradlew :native:jar --no-daemon
+      # `make-dist.sh` and not `:native:jar`, because the distribution is what the
+      # runner image's first stage builds — this is the path release depends on,
+      # so it is the path CI exercises.
+      - name: Package the tool distribution
+        run: ./make-dist.sh
 
       # Repo-relative: `defaults.run.working-directory` reaches `run` steps only.
       - name: Upload test report on failure

@@ -16,16 +16,9 @@
  *  under the License.
  */
 
-plugins {
-    id "net.researchgate.release" version "${releasePluginVersion}"
-    id 'maven-publish'
-}
-
 allprojects {
     group = project.group
     version = project.version
-
-    apply plugin: 'maven-publish'
 
     repositories {
         mavenLocal()
@@ -40,30 +33,12 @@ allprojects {
         }
     }
 
-    ext {
-        snapshotVersion = '-SNAPSHOT'
-        timestampedVersionRegex = '.*-\\d{8}-\\d{6}-\\w.*\$'
-    }
 }
 
-subprojects {
-    configurations {
-        ballerinaStdLibs
-        jbalTools
-    }
-
-    dependencies {
-        jbalTools("org.ballerinalang:jballerina-tools:${ballerinaLangVersion}") {
-            transitive = false
-        }
-    }
-}
-
+// `:native` is the only project, so the root `build` is its build. What used to
+// be here — a `jballerina-tools` configuration, a `-SNAPSHOT`/timestamp version
+// regex and a second name for `:native:build` — all served the `:ballerina`
+// subproject that packaged a bala for Ballerina Central. ADR-0008 deleted it.
 tasks.register('build') {
-    dependsOn(":native:build")
-    dependsOn(":ballerina:build")
-}
-
-task buildNativeOnly {
     dependsOn(":native:build")
 }

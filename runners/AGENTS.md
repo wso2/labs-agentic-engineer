@@ -197,24 +197,26 @@ into the runner pod at `/app/skills` for live skill edits (see
   playground has no library to mirror: `build-runner.sh`, `release.yml`'s matrix
   row, and `local/run-local.sh` all pass it. A dispatched run does not read it —
   its skills come from the clone — but `local.ts` does.
-- **The `bal library` tool is VENDORED and installed, not bundled onto `PATH`.**
-  It is what the `ballerina` skill drives by name (`bal library overview
-  <org/name>`), and it is a Ballerina CLI tool: the image installs it into the
-  `aep` user's local bala repository and `bal` dispatches `library` to it, so
-  there is no command and no `PATH` entry. `vendor/bal-library-tool` is a
-  **checked-in copy** of its distribution — the tool's source is in this repo
-  (`packages/bal-library-tool`) but it is not on Ballerina Central and the image
-  is no JDK/Gradle build host, so there is nothing for the image to pull and
-  nothing it can compile. `make vendor-bal-library-tool` refreshes it; follow
-  it with `make build-runner FORCE=1`, because a dispatched run reads the baked
-  install. Being vendored INSIDE this directory, it needs no named build context:
-  `skills` is now the only one, and the release workflow lost the node step that
-  existed to produce the old bundle. The install runs the tool's OWN installer so
+- **The `bal library` tool is BUILT BY THE IMAGE and installed, not bundled onto
+  `PATH`.** It is what the `ballerina` skill drives by name (`bal library
+  overview <org/name>`), and it is a Ballerina CLI tool: the image installs it
+  into the `aep` user's local bala repository and `bal` dispatches `library` to
+  it, so there is no command and no `PATH` entry. The image's FIRST STAGE
+  compiles it from `packages/bal-library-tool`, reached as the
+  `bal-library-tool` named build context — so there is no artifact to refresh
+  and a build cannot use a tool that is not this commit's (ADR-0008; a committed
+  copy used to live here and went stale silently, because its version string
+  never moved). That stage needs a token that can read ballerina-platform's
+  GitHub Packages, passed as a BuildKit **secret** and never a build arg, since
+  the release workflow publishes builder stages to a public buildcache. Every
+  build path has to pass both the context and the secret: `build-runner.sh`,
+  `release.yml`'s matrix row, and `local/run-local.sh`.
+  The install runs the tool's OWN installer so
   the bala is stamped with this image's pinned distribution — `bal` rejects a
   tool stamped newer than the distribution running it. Tools a skill invokes by
   name belong here rather than in the skill directory: nothing but prose then
   reaches an org's editable skills repo. See
-  `remote-worker/design/decisions/ADR-0006-the-bal-library-tool-is-vendored.md`.
+  `remote-worker/design/decisions/ADR-0008-the-bal-library-tool-is-built-in-the-image.md`.
 - **One image**, `remote-worker/Dockerfile`, serves BOTH task kinds
   (`AEP_TASK_KIND=implementation` and `=validation`). It is Debian-based
   because Playwright's browsers are glibc-linked; do not reintroduce a second,

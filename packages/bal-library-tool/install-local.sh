@@ -23,9 +23,19 @@ set -euo pipefail
 TOOL_ID="library"
 ORG="ballerinax"
 NAME="tool_library"
-VERSION="0.1.0-SNAPSHOT"
-
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Read, not restated. `make-dist.sh` and the playground's jar overlay both derive
+# the version from gradle.properties; a literal here is another copy that goes
+# stale silently and installs to a path nothing else looks in.
+#
+# Guarded, because `awk` exits 0 when it matches nothing — so `set -e` would let
+# an empty VERSION through and install to `.../tool_library//any`.
+VERSION="$(awk -F= '/^version=/{print $2}' "$SCRIPT_DIR/gradle.properties" | tr -d '[:space:]')"
+if [ -z "$VERSION" ]; then
+    echo "ERROR: no version= line in $SCRIPT_DIR/gradle.properties" >&2
+    exit 1
+fi
 BALA_HOME="$HOME/.ballerina/repositories/local/bala"
 TOOL_BALA="$BALA_HOME/$ORG/$NAME/$VERSION/any"
 TOOL_LIBS="$TOOL_BALA/tool/libs"

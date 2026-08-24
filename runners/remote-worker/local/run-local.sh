@@ -110,12 +110,26 @@ if ! curl -sf "http://127.0.0.1:${STUB_PORT}/healthz" >/dev/null 2>&1; then
 fi
 
 echo ">> building runner image ${IMAGE_TAG} (${DOCKERFILE##*/})"
-# The Dockerfile COPYs the skill library from a BuildKit named context that lives
-# outside its build context, so every build path has to pass it or BuildKit fails
-# to resolve it. The `bal library` tool needs no context — it is vendored inside
-# the worker directory (see the Dockerfile).
+# The Dockerfile COPYs from two BuildKit named contexts that live outside its
+# build context — the skill library, and the `bal library` tool's source, which
+# its first stage compiles. Every build path has to pass both or BuildKit fails
+# to resolve them; the others are deployments/scripts/build-runner.sh and
+# release.yml's matrix row.
+#
+# The tool stage resolves `org.ballerinalang:ballerina-cli` from ballerina-platform's
+# GitHub Packages, so it needs a token with `read:packages` — as a secret mount,
+# never a build arg. See ADR-0008.
+export PACKAGE_PAT="${packagePAT:-${GITHUB_TOKEN:-$(gh auth token 2>/dev/null || true)}}"
+if [ -z "$PACKAGE_PAT" ]; then
+  echo "no token to read ballerina-platform's GitHub Packages." >&2
+  echo "  gh auth refresh -h github.com -s read:packages   # then re-run" >&2
+  echo "  export packagePAT=<PAT with read:packages>" >&2
+  exit 2
+fi
 docker build \
   --build-context "skills=$WORKER_DIR/../../skills" \
+  --build-context "bal-library-tool=$WORKER_DIR/../../packages/bal-library-tool" \
+  --secret "id=packagePAT,env=PACKAGE_PAT" \
   -f "$DOCKERFILE" -t "$IMAGE_TAG" "$WORKER_DIR"
 
 mkdir -p "$SCRIPT_DIR/workspace"

@@ -1,5 +1,11 @@
 # ADR-0006 — The `bal library` tool is vendored, installed in-image, and mounted for the playground
 
+Status: **the vendoring decision is superseded by
+[ADR-0008](ADR-0008-the-bal-library-tool-is-built-in-the-image.md)** — the tool's source moved into this
+monorepo, so the image builds it rather than carrying a committed copy. The other two decisions below
+stand unchanged: it is installed by running its own installer in-image, and the playground mounts a
+working-tree jar over that install.
+
 The `ballerina` skill drives one command by name to learn a package's real
 signatures. That command used to be `bal-library`, a bundle of the in-repo
 TypeScript reader (`@aep/ballerina-central`) baked at `/opt/ballerina-central`

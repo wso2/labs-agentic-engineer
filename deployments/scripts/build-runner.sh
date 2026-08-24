@@ -27,9 +27,9 @@
 #
 # Idempotent: the (multi-minute, downloads chromium) build is skipped when the
 # image already exists. FORCE=1 rebuilds — use it after changing the Dockerfile
-# or the runner's TS/toolchain, and after `make vendor-bal-library-tool` (skill
-# edits are picked up live via the skills hostPath overlay and never need a
-# rebuild; so is the `bal library` tool, but only for playground runs — see
+# or the runner's TS/toolchain, or the bal library tool (skill edits are picked
+# up live via the skills hostPath overlay and never need a rebuild; so is the
+# `bal library` tool, but only for playground runs — see
 # playground/src/engine/coding-run.ts).
 #
 # SKIP_IMPORT=1 builds without importing — used by setup.sh, which starts this
@@ -47,15 +47,29 @@ IMAGE="${AGENT_RUNNER_IMAGE:-aep-runner:dev}"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 WORKER_DIR="$REPO_ROOT/runners/remote-worker"
 DOCKERFILE="$WORKER_DIR/Dockerfile"
-# The `bal library` tool the image installs. CHECKED IN (the tool is in its own
-# repository and not on Ballerina Central, so there is nothing to build here and
-# nothing to pull), which means the only way it can be missing is a botched
-# vendor refresh — worth naming here rather than as a COPY failure 300 layers in.
-VENDORED_TOOL="$WORKER_DIR/vendor/bal-library-tool"
+# The `bal library` tool is BUILT by the image's first stage from
+# packages/bal-library-tool (ADR-0008), so there is no artifact to check for and
+# no refresh step to have forgotten. What the build does need is a token that can
+# read ballerina-platform's GitHub Packages, because `org.ballerinalang:ballerina-cli`
+# is published nowhere else — checked here rather than surfacing as a Gradle
+# "Username must not be null!" from inside a build stage.
+#
+# `gh auth token` is the path of least friction for a developer who already has
+# `gh` set up; it needs the `read:packages` scope, which `gh auth login` does not
+# grant by default.
+BAL_TOOL_DIR="$REPO_ROOT/packages/bal-library-tool"
+# EXPORTED, because `--secret env=PACKAGE_PAT` is read from the docker CLI's own
+# environment and a plain shell assignment is not inherited by a child process.
+# Without the export the mount resolves empty and Gradle reports a 401 from
+# inside a build stage — and a cached tool stage hides it entirely.
+export PACKAGE_PAT="${packagePAT:-${GITHUB_TOKEN:-$(gh auth token 2>/dev/null || true)}}"
 
-if [ ! -f "$VENDORED_TOOL/install.sh" ] || [ -z "$(ls "$VENDORED_TOOL"/*.jar 2>/dev/null)" ]; then
-    echo "❌ vendored bal library tool incomplete at $VENDORED_TOOL" >&2
-    echo "   Refresh it: make vendor-bal-library-tool" >&2
+if [ -z "$PACKAGE_PAT" ]; then
+    echo "❌ no token to read ballerina-platform's GitHub Packages." >&2
+    echo "   The image builds the bal library tool, whose ballerina-cli dependency" >&2
+    echo "   is published only there. Any of these works:" >&2
+    echo "     gh auth refresh -h github.com -s read:packages   # then re-run" >&2
+    echo "     export packagePAT=<PAT with read:packages>" >&2
     exit 1
 fi
 
@@ -72,10 +86,15 @@ if [ "${FORCE:-0}" = "1" ] || ! docker image inspect "$IMAGE" &>/dev/null; then
     # --build-context skills=<repo>/skills: the authored skill library lives at
     # the repo root, outside this image's build context, and the runner bakes it
     # at /app/skills (see the Dockerfile). Same mechanism aep-api uses. The
-    # `bal library` tool needs no such context — it is vendored INSIDE the
-    # worker directory, so a plain COPY reaches it.
+    # --build-context bal-library-tool=<repo>/packages/bal-library-tool: same
+    # mechanism, for the same reason — the tool's source is outside this image's
+    # context and its first stage compiles it.
+    # --secret: never a --build-arg. Build args land in image history, and
+    # release.yml publishes this image's builder stages to a public buildcache.
     docker build --provenance=false --sbom=false \
         --build-context "skills=$REPO_ROOT/skills" \
+        --build-context "bal-library-tool=$BAL_TOOL_DIR" \
+        --secret "id=packagePAT,env=PACKAGE_PAT" \
         -f "$DOCKERFILE" -t "$IMAGE" "$WORKER_DIR"
     echo "✅ built $IMAGE"
 else

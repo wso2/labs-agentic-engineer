@@ -1,5 +1,0 @@
-[tool]
-id = "library"
-
-[[dependency]]
-path = "../native/build/libs/native-@toml.version@.jar"

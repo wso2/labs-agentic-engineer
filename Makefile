@@ -43,13 +43,12 @@ LICENSE_HEADER := .github/license-header.txt
 # a $(shell)-expanded arg list) so filenames with shell metacharacters — e.g.
 # TanStack route files like projects.$projectName.tsx — reach addlicense verbatim
 # via NUL-delimited xargs instead of being word-split / $-expanded by the shell.
-# `/vendor/` is excluded because its contents are COPIED IN, not authored here
-# (runners/remote-worker/vendor/bal-library-tool): stamping a header on a
-# generated copy only means the next refresh reverts it.
+# No `/vendor/` exclusion: the runner's vendored bal library distribution was the
+# only one in the repo, and ADR-0008 replaced it with a build stage.
 LICENSE_MATCH = grep -E '\.(go|ts|tsx|sh)$$|(^|/)Dockerfile$$' | \
-	grep -vE '\.gen\.(go|ts)$$|_mock\.go$$|/mocks/|/node_modules/|/dist/|/generated/|/vendor/|(^|/)\.(agents|claude)/'
+	grep -vE '\.gen\.(go|ts)$$|_mock\.go$$|/mocks/|/node_modules/|/dist/|/generated/|(^|/)\.(agents|claude)/'
 
-.PHONY: install gen build dev test lint eval-ui typecheck license license-check tools clean eval cover build-runner workflow-skill deadcode-ts deadcode-ts-check setup-local dev-cluster deploy-local vendor-bal-library-tool
+.PHONY: install gen build dev test lint eval-ui typecheck license license-check tools clean eval cover build-runner workflow-skill deadcode-ts deadcode-ts-check setup-local dev-cluster deploy-local bal-library-tool
 
 install:
 	$(PNPM) install
@@ -133,14 +132,13 @@ deadcode-ts-check:
 build-runner:
 	FORCE=$(FORCE) bash deployments/scripts/build-runner.sh
 
-# Refresh the checked-in copy of the `bal library` tool the runner image installs
-# (runners/remote-worker/vendor/bal-library-tool). The tool is in its own
-# repository and is not on Ballerina Central, so it is copied in rather than
-# built or pulled — needs that repository (BAL_LIBRARY_TOOL_DIR overrides where)
-# and JDK 21. Follow it with `make build-runner FORCE=1`; playground runs mount
-# the tool's working-tree jar and need no rebuild.
-vendor-bal-library-tool:
-	bash deployments/scripts/vendor-bal-library-tool.sh
+# Build the `bal library` tool jar into its working tree, which is what the
+# playground and evals bind-mount over the image's installed copy — so this is
+# the whole edit-run loop for the tool, with no image rebuild (ADR-0008). Needs
+# JDK 21 and a token with `read:packages` (see the tool's README).
+# The runner image builds its own copy; nothing here feeds it.
+bal-library-tool:
+	cd packages/bal-library-tool && ./gradlew :native:jar
 
 # Print the `aep` workflow skill exactly as a coding session reads it. Local
 # mode's text is DERIVED (the authored SKILL.md + skills/aep/overlays/local.md),
