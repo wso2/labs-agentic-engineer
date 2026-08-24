@@ -21,6 +21,7 @@ import {
   Alert,
   Box,
   Button,
+  ButtonBase,
   Chip,
   Skeleton,
   Stack,
@@ -123,17 +124,19 @@ export function OverviewDependencies({ projectName }: { projectName: string }) {
       ) : (
         <Stack spacing={0.5}>
           {rows.map((row) => (
-            <Box
+            <ButtonBase
               key={`${row.kind}-${row.ref ?? row.name}-${row.project ?? ""}-${row.component ?? ""}`}
               onClick={() => onRow(row)}
               sx={{
                 display: "flex",
                 alignItems: "center",
+                justifyContent: "flex-start",
                 gap: 1,
                 px: 1,
                 py: 0.75,
                 borderRadius: 1,
-                cursor: "pointer",
+                width: "100%",
+                textAlign: "left",
                 "&:hover": { bgcolor: "action.hover" },
               }}
             >
@@ -151,7 +154,7 @@ export function OverviewDependencies({ projectName }: { projectName: string }) {
                   {row.component ? ` / ${row.component}` : ""}
                 </Typography>
               )}
-            </Box>
+            </ButtonBase>
           ))}
         </Stack>
       )}

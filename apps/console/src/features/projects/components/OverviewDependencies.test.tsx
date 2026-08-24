@@ -189,9 +189,29 @@ describe("OverviewDependencies", () => {
 
     expect(screen.queryByLabelText("Close")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByText("postgres-cnpg"));
+    fireEvent.click(screen.getByRole("button", { name: /postgres-cnpg/ }));
 
     expect(screen.getAllByText("postgres-cnpg")).toHaveLength(2);
+    expect(screen.getByLabelText("Close")).toBeInTheDocument();
+  });
+
+  it("exposes each row as a button a keyboard user can activate", () => {
+    resetState();
+    depsState = {
+      data: someDependencies,
+      isPending: false,
+      isError: false,
+      refetch,
+    };
+
+    render(<OverviewDependencies projectName={CURRENT_PROJECT} />);
+
+    const row = screen.getByRole("button", { name: /postgres-cnpg/ });
+    expect(row.tagName).toBe("BUTTON");
+    row.focus();
+    expect(row).toHaveFocus();
+    fireEvent.click(row);
+
     expect(screen.getByLabelText("Close")).toBeInTheDocument();
   });
 
@@ -206,7 +226,7 @@ describe("OverviewDependencies", () => {
 
     render(<OverviewDependencies projectName={CURRENT_PROJECT} />);
 
-    fireEvent.click(screen.getByText("gym-api"));
+    fireEvent.click(screen.getByRole("button", { name: /gym-api/ }));
 
     expect(
       screen.getByText(`${PROVIDER_COMPONENT} · API contract`),
@@ -272,7 +292,7 @@ describe("OverviewDependencies", () => {
 
     render(<OverviewDependencies projectName={CURRENT_PROJECT} />);
 
-    fireEvent.click(screen.getByText("mystery-db"));
+    fireEvent.click(screen.getByRole("button", { name: /mystery-db/ }));
 
     expect(screen.queryByLabelText("Close")).not.toBeInTheDocument();
   });
