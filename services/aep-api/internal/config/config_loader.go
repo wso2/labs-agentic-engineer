@@ -60,6 +60,7 @@ func Load() (Config, error) {
 		// Default true: core capability, opt-out (unlike other booleans here which are opt-in extras).
 		PlatformResourcesEnabled: r.readOptionalBool("PLATFORM_RESOURCES_ENABLED", true),
 		AutoMergeCodingPRs:        r.readOptionalBool("AUTO_MERGE_CODING_PRS", false),
+		OCForwardUserJWT:          r.readOptionalBool("OC_FORWARD_USER_JWT", false),
 		TenantGateMode:            r.readOptionalString("TENANT_GATE_MODE", "enforce"),
 		OAuthStateSigningKey:      r.readOptionalString("OAUTH_STATE_SIGNING_KEY", ""),
 		BFFPublicURL:              r.readOptionalString("BFF_PUBLIC_URL", "http://localhost:8090"),

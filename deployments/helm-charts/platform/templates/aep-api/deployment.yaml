@@ -99,6 +99,8 @@ spec:
                   key: AEP_API_CLIENT_SECRET
             - name: SERVICE_AUTH_HOST_HEADER
               value: ""
+            - name: OC_FORWARD_USER_JWT
+              value: {{ .Values.aepApi.forwardUserJWT | default false | quote }}
             - name: BFF_TASK_SIGNING_KEY
               valueFrom:
                 secretKeyRef:

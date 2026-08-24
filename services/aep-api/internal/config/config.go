@@ -76,6 +76,17 @@ type Config struct {
 	// e.g. docker-compose). Read from AUTO_MERGE_CODING_PRS.
 	AutoMergeCodingPRs bool
 
+	// OCForwardUserJWT selects the OC request-auth strategy: true forwards the
+	// inbound user JWT to OpenChoreo (ocauth.AuthModeUserJWT) for requests that
+	// carry one, falling back to the BFF's service identity otherwise; false
+	// (the default) keeps every OC call on the service identity
+	// (ocauth.AuthModeServiceM2M / DirectOCStrategy), matching the OSS
+	// direct-OC default. Forwarding requires the target OC cluster to actually
+	// authorize the caller's JWT claims (a ClusterAuthzRoleBinding) — see
+	// deployments/helm-charts/platform/templates/aep-api/authz.yaml. Read from
+	// OC_FORWARD_USER_JWT.
+	OCForwardUserJWT bool
+
 	// TenantGateMode controls the central per-route tenant gate (§6.1b).
 	// ENFORCE BY DEFAULT (zero-config): "enforce" 404s a path-vs-JWT org
 	// mismatch (closes IDOR-1..5). Set TENANT_GATE_MODE=log to downgrade to

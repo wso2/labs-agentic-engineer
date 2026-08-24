@@ -23,11 +23,12 @@ import (
 	"github.com/wso2/aep/aep-api/app"
 )
 
-// main is the OSS process entry point: NewOSSOptions wires direct-OC Options
-// (M2M AuthProvider when configured, DirectOCStrategy, no impersonation),
-// then hand process lifecycle to app.Run (which owns config load). All
-// service-graph wiring lives in internal/app.Assemble so it is reachable from
-// a test with faked deps.
+// main is the OSS process entry point: NewOSSOptions wires Options (M2M
+// AuthProvider when configured, a request-auth strategy selected by
+// OC_FORWARD_USER_JWT — DirectOCStrategy by default, UserJWTStrategy when
+// set — no impersonation), then hand process lifecycle to app.Run (which owns
+// config load). All service-graph wiring lives in internal/app.Assemble so it
+// is reachable from a test with faked deps.
 func main() {
 	opts, err := app.NewOSSOptions()
 	if err != nil {

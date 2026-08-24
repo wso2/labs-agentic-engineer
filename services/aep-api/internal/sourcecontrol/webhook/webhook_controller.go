@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/organization"
+	"github.com/wso2/aep/aep-api/internal/platform/auth"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
@@ -81,7 +82,10 @@ func NewWebhookController(verifier *Verifier, deliveries *sourcecontrol.Delivery
 }
 
 func (c *webhookController) Receive(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+	// GitHub webhook deliveries carry no AEP user JWT (auth is HMAC-verified
+	// below, not Bearer) — every downstream call this pipeline makes,
+	// including into OpenChoreo, must use the BFF's own service identity.
+	ctx := auth.WithServiceIdentity(r.Context())
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {

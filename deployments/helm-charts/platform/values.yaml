@@ -24,6 +24,14 @@ aepApi:
   serviceAuth:
     clientId: "aep-api-client"
   publicURL: "http://aep-api.openchoreo.localhost:8080"
+  # forwardUserJWT selects the OC request-auth strategy (OC_FORWARD_USER_JWT):
+  # true forwards the inbound user JWT to OpenChoreo instead of always using
+  # aep-api's own service identity. Defaults false (secure default — matches
+  # the OSS direct-OC default). Enabling this also requires the
+  # administrators-group-binding ClusterAuthzRoleBinding below, which grants
+  # cluster-wide OC admin to Thunder's default admin/admin account — do not
+  # enable in a deployment where that account hasn't been rotated/disabled.
+  forwardUserJWT: false
 
 aepAgents:
   replicas: 1

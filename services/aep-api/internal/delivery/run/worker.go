@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"time"
 
+	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/worker"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
@@ -79,6 +80,7 @@ func (w *WorkerWatcher) Run(ctx context.Context) {
 				default:
 				}
 			},
+			Interceptors: []interceptor.WorkerInterceptor{&serviceIdentityInterceptor{}},
 		})
 		Register(wk, w.acts)
 

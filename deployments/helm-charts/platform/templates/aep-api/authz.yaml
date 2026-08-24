@@ -22,3 +22,34 @@ spec:
     - roleRef:
         kind: ClusterAuthzRole
         name: admin
+{{- if .Values.aepApi.forwardUserJWT }}
+---
+# Only needed when aepApi.forwardUserJWT is true (OC_FORWARD_USER_JWT):
+# aep-api then forwards the caller's own JWT to OC instead of always using its
+# service identity, so OC also needs a binding that authorizes THAT token.
+# This binding grants cluster-wide OC admin to any token carrying Thunder's
+# `Administrators` group claim — i.e. Thunder's default admin/admin account —
+# with NO per-org isolation (every org's namespace is reachable). It mirrors
+# the legacy setup-aep.sh `administrators-group-binding` used in local dev.
+# This is an accepted interim tradeoff, not a production-ready authz model:
+# rotate/disable the default Thunder admin account before relying on this in
+# any shared or production cluster, and replace it with real per-org
+# ClusterAuthzRoleBindings (scoped via roleMappings[].scope.namespace) once
+# per-tenant isolation is required.
+apiVersion: openchoreo.dev/v1alpha1
+kind: ClusterAuthzRoleBinding
+metadata:
+  name: administrators-group-binding
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/part-of: wso2-aep
+spec:
+  effect: allow
+  entitlement:
+    claim: groups
+    value: Administrators
+  roleMappings:
+    - roleRef:
+        kind: ClusterAuthzRole
+        name: admin
+{{- end }}
