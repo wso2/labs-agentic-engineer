@@ -70,9 +70,6 @@ type DeploymentInputs struct {
 	// Issuers pins JWT validation to an org's own IDP; empty trusts any
 	// cluster-configured keymanager.
 	Issuers []string
-	// AllowedOrigins is the sibling-SPA CORS allowlist. Empty falls back to the
-	// trait schema's wildcard.
-	AllowedOrigins []string
 	// EnvVars are the user's component config (the DB is their canonical
 	// record). Nil means "not managed by this write" — see
 	// openchoreo.ReleaseBindingDesired.
@@ -94,18 +91,11 @@ type DeploymentInputs struct {
 func DesiredDeploymentFor(in DeploymentInputs) DesiredDeployment {
 	apiEnabled := spec.ResolveAPISecurityEnabled(in.Component)
 
-	// Sibling-SPA origins are for BROWSER callers only. A service-to-service API
-	// has no browser caller, and handing it the project's SPA origins would widen
-	// its CORS surface for nothing — so the allowlist is dropped here rather than
-	// at the point it was gathered, which keeps the gathering one project-wide
-	// read instead of one per component.
-	origins := in.AllowedOrigins
-	if !apiEnabled || spec.ResolveAPISecurityCallerKind(in.Component) != "end-user" {
-		origins = nil
-	}
-
+	// CORS: omit allowedOrigins so the api-configuration trait schema default
+	// ["*"] applies. Do not set cors.enabled false — that would deny all
+	// origins, including curl-from-the-gateway clients.
 	traits, configs := DesiredAPIConfigurationTraitWithIssuers(
-		in.ComponentName, in.Component.EndpointName(), apiEnabled, in.Issuers, origins)
+		in.ComponentName, in.Component.EndpointName(), apiEnabled, in.Issuers)
 
 	// Appended to the SAME slice/map: `spec.traits` is replaced wholesale on
 	// write, so emitting the alert rule separately would clobber the

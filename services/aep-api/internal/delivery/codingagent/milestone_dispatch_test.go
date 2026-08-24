@@ -34,7 +34,7 @@ import (
 func milestoneExecutor(execRows *fakeExecRepo) *CodingExecutor {
 	return NewCodingExecutor(&ocmocks.ComponentClientMock{},
 		fakeRepos{repo: &sourcecontrol.GitRepository{RepoURL: "https://github.com/acme/widgets.git"}},
-		fakeIdentities{}, fakeTokens{}, execRows, "http://git", "http://platform", nil, nil, nil, nil)
+		fakeIdentities{}, execRows, "http://git", "http://platform", nil, nil, nil, nil)
 }
 
 func milestoneDispatch(kind string) delivery.MilestoneDispatch {
@@ -87,8 +87,12 @@ func TestDispatch_ValidationCycle_AnchorsToItsIssue(t *testing.T) {
 	if !strings.Contains(shape.prompt, "https://github.com/acme/widgets/issues/9") {
 		t.Errorf("validation prompt must name the issue URL, got %q", shape.prompt)
 	}
-	if !strings.Contains(shape.prompt, "Closes #9") {
-		t.Errorf("validation prompt must keep its Closes #N link contract, got %q", shape.prompt)
+	// The non-closing reference: the platform owns this task's close.
+	if !strings.Contains(shape.prompt, "Validates #9") {
+		t.Errorf("validation prompt must carry its `Validates #N` link contract, got %q", shape.prompt)
+	}
+	if strings.Contains(shape.prompt, "Closes #9") {
+		t.Errorf("validation prompt must not use a closing keyword, got %q", shape.prompt)
 	}
 	if strings.Contains(shape.prompt, "milestone 4") {
 		t.Errorf("validation must stay issue-anchored, got %q", shape.prompt)

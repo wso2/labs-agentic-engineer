@@ -19,6 +19,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer, type ServerResponse } from "node:http";
+import type { FilePart } from "ai";
 import { runConversationTurn, TurnGuard, ConcurrentTurnError } from "../src/conversation/run-conversation-turn.js";
 import { InMemoryConversationStore } from "../src/store/memory-store.js";
 import type { Conversation } from "../src/store/conversation-store.js";
@@ -188,6 +189,185 @@ test("default turn (no flag) carries no divergence note", async () => {
   const content =
     typeof firstUser?.content === "string" ? firstUser.content : JSON.stringify(firstUser?.content);
   assert.doesNotMatch(content, /files were changed outside/);
+});
+
+
+test("an attachment already in history is not attached twice (#383 follow-up)", async () => {
+  const store = new InMemoryConversationStore();
+  const guard = new TurnGuard();
+  const filePart: FilePart = {
+    type: "file",
+    data: "JVBERi0xLjQ=",
+    mediaType: "application/pdf",
+    filename: "specs/requirements/references/brief.pdf",
+  };
+
+  // Turn 1 (the kickoff) attaches the document.
+  await runConversationTurn({
+    id: "refs-dedupe",
+    instruction: "start",
+    files: SEED_FILES,
+    referenceAttachments: [filePart],
+    model: textModel("ok"),
+    store,
+    guard,
+    onEvent: collector().onEvent,
+  });
+
+  // Turn 2 (a flow) names the same document — it must NOT re-enter history:
+  // one copy of a 5MB PDF per conversation, not one per flow invocation.
+  await runConversationTurn({
+    id: "refs-dedupe",
+    instruction: "design",
+    files: SEED_FILES,
+    referenceAttachments: [filePart],
+    model: textModel("ok"),
+    store,
+    guard,
+    onEvent: collector().onEvent,
+  });
+
+  const stored = (await store.get("refs-dedupe"))!;
+  const fileParts = stored.messages.flatMap((m) =>
+    Array.isArray(m.content) ? m.content.filter((part) => (part as { type?: string }).type === "file") : [],
+  );
+  assert.equal(fileParts.length, 1, "the document must appear in history exactly once");
+});
+
+// --- Chat attachments are EXEMPT from that dedupe (#428) ---------------------
+
+test("a re-attached chat attachment re-enters history — the user meant the new bytes", async () => {
+  // The bug this pins: chat attachment parts used to be merged into
+  // referenceAttachments and so inherited the dedupe above. Someone who revises
+  // a PDF, keeps its name and re-attaches it would have had the new bytes
+  // filtered out by NAME, and the model would silently read the stale copy.
+  //
+  // A reference is re-listed automatically by a flow with content the store
+  // decides; an attachment is a deliberate per-message act. Same mechanism,
+  // different intent.
+  const store = new InMemoryConversationStore();
+  const guard = new TurnGuard();
+  const v1 = { type: "file" as const, data: "djE=", mediaType: "application/pdf", filename: "claim-form.pdf" };
+  const v2 = { type: "file" as const, data: "djI=", mediaType: "application/pdf", filename: "claim-form.pdf" };
+
+  await runConversationTurn({
+    id: "chat-attach",
+    instruction: "add this form",
+    files: SEED_FILES,
+    chatAttachments: [v1],
+    model: textModel("ok"),
+    store,
+    guard,
+    onEvent: collector().onEvent,
+  });
+  // Same NAME, revised bytes.
+  await runConversationTurn({
+    id: "chat-attach",
+    instruction: "I revised it — use this one",
+    files: SEED_FILES,
+    chatAttachments: [v2],
+    model: textModel("ok"),
+    store,
+    guard,
+    onEvent: collector().onEvent,
+  });
+
+  const stored = (await store.get("chat-attach"))!;
+  const parts = stored.messages.flatMap((m) =>
+    Array.isArray(m.content)
+      ? (m.content.filter((part) => (part as { type?: string }).type === "file") as Array<{ data?: unknown }>)
+      : [],
+  );
+  assert.equal(parts.length, 2, "both versions must reach the model");
+  assert.deepEqual(
+    parts.map((p) => p.data),
+    ["djE=", "djI="],
+    "and the revised bytes must be the LATER copy, which the model reads as current",
+  );
+});
+
+test("chat attachments and reference parts share one message, references still deduped", async () => {
+  const store = new InMemoryConversationStore();
+  const guard = new TurnGuard();
+  const ref = {
+    type: "file" as const,
+    data: "cmVm",
+    mediaType: "application/pdf",
+    filename: "specs/requirements/references/brief.pdf",
+  };
+  const chat = { type: "file" as const, data: "Y2hhdA==", mediaType: "image/png", filename: "shot.png" };
+
+  for (let i = 0; i < 2; i++) {
+    await runConversationTurn({
+      id: "mixed",
+      instruction: `turn ${i}`,
+      files: SEED_FILES,
+      referenceAttachments: [ref],
+      chatAttachments: [chat],
+      model: textModel("ok"),
+      store,
+      guard,
+      onEvent: collector().onEvent,
+    });
+  }
+
+  const stored = (await store.get("mixed"))!;
+  const names = stored.messages.flatMap((m) =>
+    Array.isArray(m.content)
+      ? (m.content as Array<{ type?: string; filename?: string }>)
+          .filter((p) => p.type === "file")
+          .map((p) => p.filename)
+      : [],
+  );
+  // The reference appears once (deduped); the attachment appears per turn.
+  assert.equal(names.filter((n) => n === "specs/requirements/references/brief.pdf").length, 1);
+  assert.equal(names.filter((n) => n === "shot.png").length, 2);
+});
+
+// --- Reference PDF attachments (#384) ----------------------------------------
+
+test("referenceAttachments ride the turn's user message as native file parts", async () => {
+  const store = new InMemoryConversationStore();
+  const guard = new TurnGuard();
+  const { onEvent } = collector();
+  const filePart: FilePart = {
+    type: "file",
+    data: "JVBERi0xLjQ=",
+    mediaType: "application/pdf",
+    filename: "specs/requirements/references/brief.pdf",
+  };
+
+  await runConversationTurn({
+    id: "refs1",
+    instruction: "start",
+    files: SEED_FILES,
+    referenceAttachments: [filePart],
+    model: textModel("ok"),
+    store,
+    guard,
+    onEvent,
+  });
+
+  const stored = (await store.get("refs1"))!;
+  const firstUser = stored.messages.find((m) => m.role === "user")!;
+  assert.ok(Array.isArray(firstUser.content), "the user message became a content array");
+  const parts = firstUser.content as unknown as Array<Record<string, unknown>>;
+  assert.ok(
+    parts.some((p) => p.type === "file" && p.mediaType === "application/pdf" && p.data === filePart.data),
+    "the file part is present with its mediaType and bytes",
+  );
+});
+
+test("no referenceAttachments ⇒ the user message stays a plain string (byte-identical to today)", async () => {
+  const store = new InMemoryConversationStore();
+  const guard = new TurnGuard();
+  const { onEvent } = collector();
+
+  await runConversationTurn({ id: "refs2", instruction: "start", files: SEED_FILES, model: textModel("ok"), store, guard, onEvent });
+
+  const stored = (await store.get("refs2"))!;
+  const firstUser = stored.messages.find((m) => m.role === "user")!;
+  assert.equal(typeof firstUser.content, "string");
 });
 
 test("skills: loadSkill is registered over the skillSource, executes server-side, and its body reaches history", async () => {
@@ -443,6 +623,39 @@ test("manifest: a removed file lands in deleted; an added file is hashed", async
   const manifest = lastManifest(events);
   assert.deepEqual(manifest.deleted, [OPENAPI]);
   assert.deepEqual(manifest.files, { "specs/notes.md": sha256Hex("note\n") });
+});
+
+// #578: the uncapped interview rests on this — `start` writes the PRD as soon
+// as the spine answers land and asks the NEXT round in the same turn. A turn
+// that ends awaiting-human still emits its manifest, so the document the user
+// is about to be asked about is committed rather than held until the interview
+// converges.
+test("manifest: a file written before the question is committed with the awaiting-human turn", async () => {
+  const store = new InMemoryConversationStore();
+  const guard = new TurnGuard();
+  const { events, onEvent } = collector();
+
+  const PRD = "specs/requirements/prd.md";
+  const model = mockModel([
+    {
+      kind: "toolCall",
+      toolCallId: "e1",
+      toolName: "editFile",
+      input: { path: PRD, oldString: "- Developer — calls the API", newString: "- Developer *assumed* — calls the API" },
+    },
+    {
+      kind: "toolCall",
+      toolCallId: "q1",
+      toolName: "ask_questions",
+      input: { questions: [{ question: "Which of these did I get wrong?", options: [] }] },
+    },
+  ]);
+  const conv = await runConversationTurn({ id: "m2b", instruction: "/start", files: SEED_FILES, model, store, guard, onEvent });
+
+  assert.equal(conv.status, "awaiting-human");
+  const expected = SEED_FILES[PRD]!.replace("- Developer — calls the API", "- Developer *assumed* — calls the API");
+  const manifest = lastManifest(events);
+  assert.deepEqual(manifest.files, { [PRD]: sha256Hex(expected) });
 });
 
 test("manifest: a chat-only turn emits the EMPTY manifest (files toolset)", async () => {

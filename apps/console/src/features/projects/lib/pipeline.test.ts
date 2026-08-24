@@ -336,10 +336,20 @@ describe("validationState", () => {
   // value only means anything over a verdict the loop actually repeats — pairing a
   // stale `awaiting-fix` with the newer poll's green verdict would announce a repair
   // of something that passed.
-  it("ignores a stale lifecycle over a verdict the loop never repeats", () => {
+  // `running` means a validation cycle is genuinely IN FLIGHT, which no verdict can
+  // be stale about — and a revalidation is exactly that over a settled result, so
+  // guarding it left the chip reading "Validated" while the platform re-asked.
+  it("lets running win over any verdict, including a green one", () => {
+    for (const v of ["passed", "partial", "inconclusive", "failed", "unreported", "skipped"]) {
+      expect(validationState("running", v), `running lost to ${v}`).toBe("running");
+    }
+  });
+
+  // `awaiting-fix` keeps the guard: it can only sit over a verdict the loop repeats,
+  // so pairing it with a green one is poll skew by definition, not a state.
+  it("ignores a stale awaiting-fix over a verdict the loop never repeats", () => {
     expect(validationState("awaiting-fix", "passed")).toBe("passed");
-    expect(validationState("running", "partial")).toBe("partial");
-    expect(validationState("running", "inconclusive")).toBe("inconclusive");
+    expect(validationState("awaiting-fix", "partial")).toBe("partial");
     expect(validationState("awaiting-fix", "skipped")).toBe("skipped");
   });
 

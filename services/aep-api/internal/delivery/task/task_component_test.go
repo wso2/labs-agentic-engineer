@@ -114,6 +114,19 @@ func (f *fakeIssues) AddLabels(_ context.Context, _, _ string, n int, labels []s
 }
 func (f *fakeIssues) RemoveLabel(context.Context, string, string, int, string) error { return nil }
 
+// CloseIssue, ReopenIssue and SetIssueMilestone complete delivery.IssueOps — the
+// writer's port is the domain's whole issue-write surface, and the plan path uses
+// none of the three.
+func (f *fakeIssues) CloseIssue(context.Context, string, string, int, string) error { return nil }
+func (f *fakeIssues) ReopenIssue(context.Context, string, string, int) error        { return nil }
+func (f *fakeIssues) SetIssueMilestone(context.Context, string, string, int, int) error {
+	return nil
+}
+
+// writer wears the domain's issue-write surface over the fake, which is how the
+// plan tap mints.
+func (f *fakeIssues) writer() *delivery.IssueWriter { return delivery.NewIssueWriter(f) }
+
 type fakeRepos struct{}
 
 func (fakeRepos) GetRepo(context.Context, string, string) (*sourcecontrol.GitRepository, error) {
@@ -244,7 +257,7 @@ func TestList_WireShape(t *testing.T) {
 }
 
 func TestGet_IncludesHistory(t *testing.T) {
-	iss := newIssues(taskIssue(5, "orders-db", "open", delivery.LabelProvisionGate))
+	iss := newIssues(taskIssue(5, "orders-db", "open", delivery.KindProvision))
 	execs := fakeExecs{
 		latest:  map[int]map[string]*delivery.Execution{5: {string(taskmeta.KindProvision): row("b", taskmeta.KindProvision, taskmeta.ExecSucceeded, "", 0)}},
 		history: map[int][]delivery.Execution{5: {*row("a", taskmeta.KindProvision, taskmeta.ExecFailed, "", -1), *row("b", taskmeta.KindProvision, taskmeta.ExecSucceeded, "", 0)}},
@@ -290,7 +303,7 @@ func TestPlan_InProgress_409(t *testing.T) {
 	git := sourcecontrol.NewGitOpsService(nilCredResolver{}, fx.Engine)
 	plan := task.NewPlanService(fixedRepos{repo: repoRow},
 		fakeVersions{spec: []spec.RequirementsVersionInfo{{Tag: "v1"}}}, git,
-		func(context.Context, string) (string, error) { return "sk-key", nil }, bt, iss, fx.Engine,
+		func(context.Context, string) (string, error) { return "sk-key", nil }, bt, iss, iss.writer(), fx.Engine,
 		func(context.Context, string) (*sourcecontrol.GitRepository, error) { return skillsRow, nil })
 
 	firstErr := make(chan error, 1)

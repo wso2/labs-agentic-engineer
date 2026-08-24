@@ -90,6 +90,25 @@ func RepoDir(root string, ref RepoRef) (string, error) {
 	return filepath.Join(ReposDir(root), ref.OrgID, ref.ProjectID, ref.RepoSlug), nil
 }
 
+// ReferenceStoreDir is <repoDir>/references — the project's reference
+// documents (console ADR-0017). They are NOT git content: nothing commits
+// them, and `git archive` cannot carry them, so they live beside the mirror
+// and are overlaid into each snapshot on the way out (see references.go).
+//
+// Placing them inside the repo dir rather than a sibling top-level tree buys
+// two properties for free: `enforceOrgQuotas` does a whole-subtree `duDir` of
+// repos/<orgId>, so their bytes already count against the per-org quota; and
+// TrashRepo takes them with it, so "deleted with the project" needs no second
+// delete hook. The reaper's slug-level walk is unaffected — it collects
+// snapshots from snapshots/ and mirrors at the slug dir, never here.
+func ReferenceStoreDir(root string, ref RepoRef) (string, error) {
+	d, err := RepoDir(root, ref)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, "references"), nil
+}
+
 // SnapshotsDir is <repoDir>/snapshots.
 func SnapshotsDir(root string, ref RepoRef) (string, error) {
 	d, err := RepoDir(root, ref)

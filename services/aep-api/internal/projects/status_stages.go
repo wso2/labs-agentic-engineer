@@ -124,11 +124,11 @@ func (s *Service) populateStages(ctx context.Context, orgName, projectName strin
 		}
 		// The deploy denominator depends only on the rows, so read it here —
 		// overlapped with the OC call instead of serial after the join.
-		// deploy.version = the newest SUCCEEDED spec run's version: what the
+		// deploy.version = the newest SUCCEEDED DEV run's version: what the
 		// platform last finished delivering (a running v2 does not unseat a
 		// live v1).
 		for i := range runs {
-			if runs[i].Origin == delivery.RunOriginSpecBuild && runs[i].State == delivery.RunStateSucceeded {
+			if runs[i].Kind == delivery.RunKindDev && runs[i].State == delivery.RunStateSucceeded {
 				// SpecTag, not the milestone title: the title is the milestone's
 				// GitHub name and ComponentCountAtTag below resolves this as a GIT
 				// TAG — a title that is not the tag reads as a vanished tag and
@@ -175,12 +175,12 @@ func (s *Service) populateStages(ctx context.Context, orgName, projectName strin
 	}
 	applyFlatArtifactFields(status, snap)
 
-	// Build stage: the newest SPEC BUILD (ListByProject is newest-first).
+	// Build stage: the newest DEV RUN (ListByProject is newest-first).
 	//
-	// Spec builds specifically, not simply the newest row, because only a spec
-	// build advances the project's version — "what version is this project on" has
-	// always meant the last one built. The other origins work an EXISTING
-	// milestone, which may be any version's: an incident adopted into v3 while the
+	// Dev runs specifically, not simply the newest row, because only a dev run
+	// advances the project's version — "what version is this project on" has
+	// always meant the last one built. The other kinds work an EXISTING
+	// milestone, which may be any version's: a bug adopted into v3 while the
 	// project is on v5, or a revalidation of v3, would otherwise walk the overview
 	// backwards and report the project as being on v3.
 	//
@@ -188,7 +188,7 @@ func (s *Service) populateStages(ctx context.Context, orgName, projectName strin
 	// version's milestone on GitHub, and this endpoint is polled at 5s — a
 	// per-poll GitHub read is exactly what the #184 budget forbids. The console
 	// renders per-version counts from the list-tasks response it already holds.
-	latest := newestByOrigin(runs, delivery.RunOriginSpecBuild)
+	latest := newestByKind(runs, delivery.RunKindDev)
 	if latest != nil {
 		status.Build.Version = latest.SpecTag()
 		status.Build.Status = buildStageStatus(latest.State)
@@ -223,7 +223,7 @@ func (s *Service) populateStages(ctx context.Context, orgName, projectName strin
 	// Validation: the newest verdict for the version the build stage just named —
 	// a column on a row already read above, so the poll costs nothing extra.
 	//
-	// Scoped to that MILESTONE rather than to the spec-build run, because a version
+	// Scoped to that MILESTONE rather than to the dev run, because a version
 	// can be judged more than once: a revalidation is a later run on the same
 	// milestone and its verdict is the version'"'"'s current answer. Scoped to the
 	// milestone rather than to the whole project for the reason above — a run on an
@@ -273,12 +273,12 @@ func (s *Service) validationStage(ctx context.Context, orgID string, run *delive
 	return validationNone, nil
 }
 
-// newestByOrigin returns the newest run of one origin, or nil. rows must be
+// newestByKind returns the newest run of one kind, or nil. rows must be
 // newest-first, which is what ListByProject guarantees — so this is a scan, not a
 // sort, and costs nothing on a slice the caller already holds.
-func newestByOrigin(rows []delivery.MilestoneRun, origin string) *delivery.MilestoneRun {
+func newestByKind(rows []delivery.MilestoneRun, kind string) *delivery.MilestoneRun {
 	for i := range rows {
-		if rows[i].Origin == origin {
+		if rows[i].Kind == kind {
 			return &rows[i]
 		}
 	}
@@ -290,15 +290,15 @@ func newestByOrigin(rows []delivery.MilestoneRun, origin string) *delivery.Miles
 // that version.
 //
 // It exists because a version's answer and the version's BUILD can come from
-// different rows: the spec build delivers it, and a revalidation started
-// afterwards may hold a newer verdict for the very same milestone.
+// different rows: the dev run delivers it, and a revalidation started afterwards
+// may hold a newer verdict for the very same milestone.
 //
-// The ORIGIN filter is the load-bearing half, and it predates revalidation. An
-// incident adoption never validates, and `settle` stamps `skipped` on any
-// succeeded run that never did — so the newest run on a milestone is routinely one
-// whose verdict means "I was never asked". Returning it made a single adopted issue
-// report a genuinely passed version as unvalidated. RunValidates is delivery's own
-// answer to which origins ask the question, so this cannot drift from the loop.
+// The KIND filter is the load-bearing half, and it predates revalidation. A task
+// run never validates, and `settle` stamps `skipped` on any succeeded run that
+// never did — so the newest run on a milestone is routinely one whose verdict
+// means "I was never asked". Returning it made a single adopted issue report a
+// genuinely passed version as unvalidated. RunValidates is delivery's own answer
+// to which kinds ask the question, so this cannot drift from the loop.
 //
 // Keyed on the milestone number, which is the platform key; nil ref means there is
 // no version to answer about.
@@ -307,7 +307,7 @@ func newestValidatingOnMilestone(rows []delivery.MilestoneRun, ref *delivery.Mil
 		return nil
 	}
 	for i := range rows {
-		if rows[i].MilestoneNumber == ref.MilestoneNumber && delivery.RunValidates(rows[i].Origin) {
+		if rows[i].MilestoneNumber == ref.MilestoneNumber && delivery.RunValidates(rows[i].Kind) {
 			return &rows[i]
 		}
 	}

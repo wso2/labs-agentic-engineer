@@ -17,7 +17,13 @@
  */
 
 export interface PrototypeNavState { current: string; stack: string[] }
-export type PrototypeNavEvent = { type: 'navigate'; to: string } | { type: 'back' };
+export type PrototypeNavEvent =
+  | { type: 'navigate'; to: string }
+  | { type: 'back' }
+  /** Switching flows: land on the new flow's entry screen with no history —
+   *  a persona switch starts a fresh walkthrough, it does not continue the
+   *  previous persona's. */
+  | { type: 'reset'; to: string };
 
 /** Figma-style prototype navigation: every navigate (click OR picker jump)
  *  pushes history; back pops it. Same-screen navigates and empty-stack backs
@@ -30,6 +36,7 @@ export function prototypeNavReducer(
     if (event.to === state.current) return state;
     return { current: event.to, stack: [...state.stack, state.current] };
   }
+  if (event.type === 'reset') return { current: event.to, stack: [] };
   if (state.stack.length === 0) return state;
   return { current: state.stack.at(-1)!, stack: state.stack.slice(0, -1) };
 }

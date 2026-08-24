@@ -29,14 +29,14 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// TaskTokenManager issues RS256-signed Task JWTs that authenticate
-// per-task workspace agents to git-service /credentials/refresh.
+// TaskTokenManager issues RS256-signed BFF identity JWTs (MCP discovery,
+// outbound S2S) and publishes the public key at /auth/external/jwks.json.
 //
 // The signing key is loaded once at boot from the BFF_TASK_SIGNING_KEY env var.
-// Verifiers (currently git-service) fetch the public key via the BFF's
-// /auth/external/jwks.json endpoint; rotation works by updating the env var
-// and restarting the BFF — verifiers pick up the new kid automatically via
-// JWKS kid-miss-refresh.
+// Verifiers fetch the public key via JWKS; rotation works by updating the env
+// var and restarting the BFF — verifiers pick up the new kid automatically via
+// JWKS kid-miss-refresh. The coding-agent Job authenticates with Thunder
+// publisher CC, not these tokens.
 type TaskTokenManager struct {
 	keyID      string
 	algorithm  string
@@ -44,9 +44,8 @@ type TaskTokenManager struct {
 	publicKey  *rsa.PublicKey
 	jwks       JWKSResponse
 
-	issuer   string
-	audience string
-	ttl      time.Duration
+	issuer string
+	ttl    time.Duration
 }
 
 // TaskTokenConfig configures the manager.
@@ -56,13 +55,15 @@ type TaskTokenConfig struct {
 	PrivateKey string
 	// Issuer is the iss claim value (e.g., "aep-bff").
 	Issuer string
-	// Audience is the aud claim value (always "git-service" today).
+	// Audience is required at construction (boot env still supplies it).
+	// Each IssueServiceToken call sets aud explicitly.
 	Audience string
-	// TTL is the per-task JWT lifetime. Spec caps at 24h.
+	// TTL is the default lifetime when IssueServiceToken is passed a
+	// non-positive ttl. Spec caps at 24h.
 	TTL time.Duration
 }
 
-// TaskClaims is the custom claim set carried by Task JWTs.
+// TaskClaims is the custom claim set on BFF-signed identity JWTs.
 type TaskClaims struct {
 	jwt.RegisteredClaims
 	TaskID    string `json:"taskId"`
@@ -117,41 +118,9 @@ func NewTaskTokenManager(cfg TaskTokenConfig) (*TaskTokenManager, error) {
 				E:   base64.RawURLEncoding.EncodeToString(big.NewInt(int64(pub.E)).Bytes()),
 			}},
 		},
-		issuer:   cfg.Issuer,
-		audience: cfg.Audience,
-		ttl:      cfg.TTL,
+		issuer: cfg.Issuer,
+		ttl:    cfg.TTL,
 	}, nil
-}
-
-// Issue mints a Task JWT for the given task. The kid header lets verifiers
-// pick the right public key during rotation.
-func (m *TaskTokenManager) Issue(taskID, ocOrgID, projectID string) (string, error) {
-	if taskID == "" || ocOrgID == "" {
-		return "", fmt.Errorf("taskId and ocOrgId are required")
-	}
-	now := time.Now()
-	claims := TaskClaims{
-		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer:    m.issuer,
-			Subject:   taskID,
-			Audience:  jwt.ClaimStrings{m.audience},
-			IssuedAt:  jwt.NewNumericDate(now),
-			NotBefore: jwt.NewNumericDate(now),
-			ExpiresAt: jwt.NewNumericDate(now.Add(m.ttl)),
-		},
-		TaskID:    taskID,
-		OcOrgID:   ocOrgID,
-		ProjectID: projectID,
-	}
-
-	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-	tok.Header["kid"] = m.keyID
-
-	signed, err := tok.SignedString(m.privateKey)
-	if err != nil {
-		return "", fmt.Errorf("sign token: %w", err)
-	}
-	return signed, nil
 }
 
 // AudienceMCP is the aud claim on BFF-signed tokens that authenticate a caller
@@ -174,10 +143,8 @@ func (m *TaskTokenManager) IssueMCPToken(orgID string) (string, error) {
 }
 
 // IssueServiceToken mints a short-lived BFF-signed JWT that authenticates an
-// outbound BFF→service call (e.g. BFF→agents-service) and carries the acting
-// org in the ocOrgId claim. It is the outbound half of the symmetric S2S
-// identity model: the runner presents a BFF-signed token inbound (Issue), and
-// the BFF presents one outbound (here) — both verified against the same
+// outbound BFF→service call (e.g. BFF→agents-service, design-agent MCP) and
+// carries the acting org in the ocOrgId claim. Verifiers use the same
 // /auth/external/jwks.json keyset, so org always travels in a signed claim,
 // never a trusted header.
 //
@@ -215,15 +182,13 @@ func (m *TaskTokenManager) IssueServiceToken(audience, ocOrgID string, ttl time.
 	return signed, nil
 }
 
-// Verify parses + cryptographically validates a Task JWT minted by this
-// BFF (or a peer using the same signing key). Returns the claims on
-// success. Issuer + audience must match the manager's configuration.
+// Verify parses + cryptographically validates a BFF-signed identity JWT
+// minted by this manager (or a peer using the same signing key). Returns
+// the claims on success. Issuer must match the manager's configuration.
 // The exp / nbf claims are honored by jwt.ParseWithClaims automatically.
 //
-// Used by the BFF's per-task endpoints (credentials refresh, skills) to
-// authenticate the runner pod's callback. The runner pod was issued this
-// token at dispatch time and persists it to a file inside the pod's
-// emptyDir — see remote-worker/src/lib/runner.ts.
+// Used by AgentsScopedVerifier to accept BFF MCP tokens (aud aep-api-mcp)
+// on POST /internal/v1/mcp. Runner callbacks do not use this verifier.
 func (m *TaskTokenManager) Verify(tokenString string) (*TaskClaims, error) {
 	if tokenString == "" {
 		return nil, fmt.Errorf("empty token")

@@ -51,13 +51,16 @@ and installation lifecycle.*
   title uniqueness case-sensitively while filtering on it case-insensitively, so the adapter enforces
   case-insensitive uniqueness at create and callers key on the number. Issue counts come from the
   GraphQL predicate; a milestone's `open_issues` counts pull requests and is never read.
-- **`MilestoneIssueCounts` is ONE call, and its exclusions are computed in ONE place.** The dispatch
-  predicate runs at every cycle boundary, so the gate and working-set populations ride a single
-  aliased GraphQL query. GraphQL's `labels:` argument is a **UNION** — an issue matches when it
-  carries ANY listed label — so an intersection is NOT expressible and the working set is taken as a
-  DIFFERENCE of two unions instead: `|aep ∪ exclusions| − |exclusions|`. Callers read it through
-  `OpenNonGateWork()` and never subtract fields themselves; the label kinds are not assumed disjoint,
-  and the arithmetic must not be duplicated.
+- **`MilestoneIssueCounts` is ONE call, and every alias filters on ONE label.** The dispatch predicate
+  runs at every cycle boundary, so all five populations ride a single aliased GraphQL query. GraphQL's
+  `labels:` argument is a **UNION** — an issue matches when it carries ANY listed label — so an
+  intersection is not expressible and a multi-label alias is a wider population than its name claims.
+  One label per alias removes that hazard rather than working around it: the working sets are then plain
+  subtraction (`aep − validation`, and `− development` for a bug-fix run), exact because every workable
+  kind carries `aep` and each subtracted kind is a strict subset of it. Gates are the deliberate
+  exception — they carry no `aep`, so they are counted on their own alias and subtracted from nothing.
+  Callers read the sets through `OpenDevWork()` / `OpenTaskWork()` and never subtract fields themselves;
+  the arithmetic must not be duplicated.
 - **REST narrows on labels, GraphQL widens.** `ListMilestoneIssues`' REST `?labels=a,b` is AND (an
   issue must carry all of them); the GraphQL `labels:` above is OR. Two APIs over one resource, two
   rules — carrying an assumption from one to the other silently empties the working set, and the

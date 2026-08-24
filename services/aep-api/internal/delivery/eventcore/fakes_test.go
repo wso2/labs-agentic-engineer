@@ -56,12 +56,12 @@ type fakeRuns struct {
 
 func newFakeRuns(rows ...delivery.MilestoneRun) *fakeRuns { return &fakeRuns{rows: rows} }
 
-// aRun builds a live spec run over a milestone.
+// aRun builds a live dev run over a milestone.
 func aRun(id string, milestone int, state string) delivery.MilestoneRun {
 	return delivery.MilestoneRun{
 		ID: id, OrgID: testOrg, ProjectID: testProject,
 		MilestoneNumber: milestone, MilestoneTitle: fmt.Sprintf("v%d", milestone),
-		Origin: delivery.RunOriginSpecBuild, State: state,
+		Kind: delivery.RunKindDev, Origin: delivery.RunOriginSpecBuild, State: state,
 		CycleCeiling: delivery.RunDefaultCycleCeiling,
 	}
 }
@@ -99,7 +99,24 @@ func (f *fakeRuns) DeployedMilestoneRun(context.Context, string, string) (*deliv
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for i := range f.rows {
-		if f.rows[i].Origin == delivery.RunOriginSpecBuild && f.rows[i].State == delivery.RunStateSucceeded {
+		if f.rows[i].Kind == delivery.RunKindDev && f.rows[i].State == delivery.RunStateSucceeded {
+			return &f.rows[i], nil
+		}
+	}
+	return nil, nil
+}
+
+// NewestRunForMilestone answers with the FIRST matching row, which mirrors the
+// repository's newest-first ordering: a test that wants a rebuild after a cancel
+// therefore lists the rebuild's row before the cancelled one.
+func (f *fakeRuns) NewestRunForMilestone(_ context.Context, _, _ string, milestone int) (*delivery.MilestoneRun, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.rows {
+		if f.rows[i].MilestoneNumber == milestone {
 			return &f.rows[i], nil
 		}
 	}
@@ -197,41 +214,128 @@ type fakeIssues struct {
 	created     []sourcecontrol.CreateIssueRequest
 	assigned    []string
 	next        int
+	// closed/reopened/commented/labelled record the writes the event plane never
+	// makes. They exist because the fake wears delivery.IssueOps — the domain's
+	// WHOLE issue-write surface — and a test asserting "this handler mints and
+	// nothing else" needs somewhere for an unexpected write to land.
+	closed    []int
+	reopened  []int
+	commented []int
+	labelled  []string
+	// closeComments is the comment each close carried, by issue. A close whose
+	// comment is dropped leaves a human staring at a closed issue with no
+	// explanation, which is a real failure and not a cosmetic one.
+	closeComments map[int]string
+	// labelErr fails every AddLabels. It exists to prove ORDER where two writes
+	// are recorded in separate slices: a cancel labels an issue BEFORE closing it,
+	// so with the label failing nothing may be closed.
+	labelErr error
+}
+
+// writer is the fake wearing the domain's issue-write surface, which is what
+// every mint in this package goes through.
+func (f *fakeIssues) writer() *delivery.IssueWriter { return delivery.NewIssueWriter(f) }
+
+func (f *fakeIssues) CloseIssue(_ context.Context, _, _ string, number int, comment string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.closed = append(f.closed, number)
+	if comment != "" {
+		f.closeComments[number] = comment
+	}
+	return nil
+}
+
+func (f *fakeIssues) ReopenIssue(_ context.Context, _, _ string, number int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.reopened = append(f.reopened, number)
+	return nil
+}
+
+func (f *fakeIssues) CommentIssue(_ context.Context, _, _ string, number int, _ string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.commented = append(f.commented, number)
+	return nil
+}
+
+func (f *fakeIssues) AddLabels(_ context.Context, _, _ string, number int, labels []string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.labelErr != nil {
+		return f.labelErr
+	}
+	for _, l := range labels {
+		f.labelled = append(f.labelled, fmt.Sprintf("%d+%s", number, l))
+	}
+	return nil
+}
+
+func (f *fakeIssues) RemoveLabel(_ context.Context, _, _ string, number int, label string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.labelled = append(f.labelled, fmt.Sprintf("%d-%s", number, label))
+	return nil
 }
 
 func newFakeIssues() *fakeIssues {
 	return &fakeIssues{
-		byMilestone: map[int][]sourcecontrol.IssueInfo{},
-		counts:      map[int]*sourcecontrol.MilestoneIssueCounts{},
-		next:        100,
+		byMilestone:   map[int][]sourcecontrol.IssueInfo{},
+		counts:        map[int]*sourcecontrol.MilestoneIssueCounts{},
+		closeComments: map[int]string{},
+		next:          100,
 	}
 }
 
-// withWork puts open agent-work issues in a milestone.
+// withWork puts open planned-work issues in a milestone: armed, kind
+// `development`, which is what the planner files.
 func (f *fakeIssues) withWork(milestone int, numbers ...int) *fakeIssues {
 	for _, n := range numbers {
 		f.byMilestone[milestone] = append(f.byMilestone[milestone], sourcecontrol.IssueInfo{
-			Number: n, State: "open", Labels: []string{delivery.LabelAgentWork},
+			Number: n, State: "open", Labels: []string{delivery.LabelAgentWork, delivery.KindDevelopment},
 		})
 	}
 	return f
 }
 
-// withValidationIssue puts the milestone's open VALIDATION issue in it, labelled
-// the way the minter files it: `aep:validation` and nothing else. The absent
-// `aep` label is the point — it keeps the issue out of the dispatch working set,
-// and any read that narrows on `aep` cannot see this issue at all.
+// withValidationIssue puts the milestone's open VALIDATION task in it, labelled
+// the way the minter files it: ARMED, and of kind `validation`.
+//
+// The arming label is the point. It is real agent work — an agent is dispatched
+// at it and the platform must auto-merge its pull request — while the KIND is
+// what keeps it out of every working set. Those two facts used to pull against
+// each other through one label, and the auto-merge policy had to name the issue
+// a second time by hand to compensate.
 func (f *fakeIssues) withValidationIssue(milestone, number int) *fakeIssues {
 	f.byMilestone[milestone] = append(f.byMilestone[milestone], sourcecontrol.IssueInfo{
-		Number: number, State: "open", Labels: []string{delivery.LabelValidationWork},
+		Number: number, State: "open", Labels: []string{delivery.LabelAgentWork, delivery.KindValidation},
 	})
 	return f
 }
 
+// withDefects puts open armed BUG issues in a milestone — the population a task
+// run works, and therefore the one the reconcile sweep's trigger routes on.
+//
+// It exists beside withWork because the two are different populations and the
+// difference decides whether anything starts at all: `development` is planned
+// work, dev-workflow's alone, and a sweep that offered a task run for it started
+// a paid agent on a working set that excludes it.
+func (f *fakeIssues) withDefects(milestone int, numbers ...int) *fakeIssues {
+	for _, n := range numbers {
+		f.byMilestone[milestone] = append(f.byMilestone[milestone], sourcecontrol.IssueInfo{
+			Number: n, State: "open",
+			Labels: []string{delivery.LabelAgentWork, delivery.KindBug, delivery.SrcUser},
+		})
+	}
+	f.counts[milestone] = hostCountsOf(f.byMilestone[milestone])
+	return f
+}
+
 // withCounts gives a milestone its open-issue populations: gates, working set
-// ("aep", non-gate, non-validation) and grand total. work and total are stated
-// separately on purpose — the gap between them is the ledger, the population
-// the dispatch predicate must ignore.
+// (armed planned work) and grand total. work and total are stated separately on
+// purpose — the gap between them is the ledger, the population the dispatch
+// predicate must ignore.
 //
 // The numbers are a DESCRIPTION of the milestone, not the counts themselves:
 // they are turned into labelled issues and then counted the way the host counts
@@ -245,16 +349,37 @@ func (f *fakeIssues) withCounts(milestone, provision, work, total int) *fakeIssu
 	}
 	labels := make([][]string, 0, total)
 	for range provision {
-		labels = append(labels, []string{delivery.LabelProvisionGate})
+		labels = append(labels, []string{delivery.KindProvision}) // a gate is NOT armed
 	}
 	for range work {
-		labels = append(labels, []string{delivery.LabelAgentWork})
+		labels = append(labels, []string{delivery.LabelAgentWork, delivery.KindDevelopment})
 	}
 	for range ledger {
-		labels = append(labels, nil) // human-filed: no "aep", never worked
+		labels = append(labels, nil) // human-filed: unarmed, never worked
 	}
 	f.counts[milestone] = hostCounts(labels...)
+	f.seedOpenIssues(milestone, labels...)
 	return f
+}
+
+// seedOpenIssues puts one open issue per label set into the milestone's index, so
+// a milestone DESCRIBED for the counts query is also visible to the REST issues
+// read.
+//
+// Both reads matter now and they answer different callers: the cycle-boundary
+// poll takes the counts (one GraphQL round trip, the loop's hottest read) while
+// the reconcile sweep and the auto-merge policy read the ISSUES, because routing
+// by kind and skipping a marker are intersections a count cannot express. A fake
+// that fed only one of them would let a milestone read as full to one caller and
+// empty to the other — which is the exact disagreement that settles a version
+// nobody built.
+func (f *fakeIssues) seedOpenIssues(milestone int, labelSets ...[]string) {
+	for _, labels := range labelSets {
+		f.byMilestone[milestone] = append(f.byMilestone[milestone], sourcecontrol.IssueInfo{
+			Number: f.next, State: "open", Labels: labels,
+		})
+		f.next++
+	}
 }
 
 // hostCounts answers a milestone's open-issue populations the way the REAL host
@@ -267,27 +392,30 @@ func (f *fakeIssues) withCounts(milestone, provision, work, total int) *fakeIssu
 // precisely why a working set computed by inclusion-exclusion over label
 // overlaps passed its tests and then read every real milestone as empty.
 //
+// Each field counts ONE label, because each alias in the real query filters on
+// one. That is what removed the union's teeth rather than merely working around
+// them: with a single label per population the two semantics coincide, so the
+// query no longer depends on which of them GitHub implements.
+//
 // Anything that wants a milestone's counts in this package goes through here,
 // so no test can state a population the host could not produce.
 func hostCounts(issues ...[]string) *sourcecontrol.MilestoneIssueCounts {
-	anyOf := func(want ...string) int {
+	carrying := func(want string) int {
 		n := 0
 		for _, have := range issues {
-			for _, w := range want {
-				if delivery.HasLabel(have, w) {
-					n++
-					break
-				}
+			if delivery.HasLabel(have, want) {
+				n++
 			}
 		}
 		return n
 	}
 	return &sourcecontrol.MilestoneIssueCounts{
-		OpenProvision: anyOf(delivery.LabelProvisionGate),
-		OpenWorkOrExcluded: anyOf(delivery.LabelAgentWork,
-			delivery.LabelProvisionGate, delivery.LabelValidationWork),
-		OpenExcluded: anyOf(delivery.LabelProvisionGate, delivery.LabelValidationWork),
-		OpenTotal:    len(issues),
+		OpenProvision:         carrying(delivery.KindProvision),
+		OpenAgentWork:         carrying(delivery.LabelAgentWork),
+		OpenDevelopment:       carrying(delivery.KindDevelopment),
+		OpenValidation:        carrying(delivery.KindValidation),
+		OpenValidationRepairs: carrying(delivery.SrcValidation),
+		OpenTotal:             len(issues),
 	}
 }
 
@@ -314,7 +442,9 @@ func (f *fakeIssues) CreateIssue(_ context.Context, _, _ string, req sourcecontr
 //
 // Note the ASYMMETRY with MilestoneIssueCounts below, whose GraphQL `labels:`
 // argument over the same resource is a UNION. Two APIs, two rules; carrying one
-// across to the other is the bug this fake pair exists to keep honest.
+// across to the other is the bug this fake pair exists to keep honest. The
+// asymmetry is still live even though the counts query now lists one label per
+// alias: the next person to add a label to either call site meets it again.
 func (f *fakeIssues) ListMilestoneIssues(_ context.Context, _, _ string, filter sourcecontrol.MilestoneIssuesFilter) ([]sourcecontrol.IssueInfo, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -356,6 +486,58 @@ func (f *fakeIssues) MilestoneIssueCounts(_ context.Context, _, _ string, number
 // (it takes gates, work and a total, and the validation issue is neither).
 func (f *fakeIssues) withOpenIssues(milestone int, issues ...[]string) *fakeIssues {
 	f.counts[milestone] = hostCounts(issues...)
+	f.seedOpenIssues(milestone, issues...)
+	return f
+}
+
+// withIssue puts ONE open issue with an explicit number and label set into the
+// milestone, and re-derives the milestone's counts from everything now in it.
+//
+// The explicit number is why it exists: a test that asserts WHICH issues were
+// commented on or labelled cannot use a seeder that allocates numbers itself.
+func (f *fakeIssues) withIssue(milestone, number int, labels ...string) *fakeIssues {
+	f.byMilestone[milestone] = append(f.byMilestone[milestone], sourcecontrol.IssueInfo{
+		Number: number, State: "open", Labels: labels,
+	})
+	sets := make([][]string, 0, len(f.byMilestone[milestone]))
+	for _, issue := range f.byMilestone[milestone] {
+		sets = append(sets, issue.Labels)
+	}
+	f.counts[milestone] = hostCounts(sets...)
+	return f
+}
+
+// hostCountsOf re-derives a milestone's counts from the OPEN issues now in it,
+// the way the host counts them.
+func hostCountsOf(issues []sourcecontrol.IssueInfo) *sourcecontrol.MilestoneIssueCounts {
+	sets := make([][]string, 0, len(issues))
+	for _, issue := range issues {
+		if !strings.EqualFold(issue.State, "open") {
+			continue
+		}
+		sets = append(sets, issue.Labels)
+	}
+	return hostCounts(sets...)
+}
+
+// withClosedIssue puts one CLOSED issue in the milestone. Counts are re-derived
+// from the OPEN ones only, the way the host counts them.
+//
+// It exists for the properties that are about what is NOT touched: work a cycle
+// genuinely finished is closed, and a cancel must leave it closed and unmarked so
+// a rebuild cannot resurrect it.
+func (f *fakeIssues) withClosedIssue(milestone, number int, labels ...string) *fakeIssues {
+	f.byMilestone[milestone] = append(f.byMilestone[milestone], sourcecontrol.IssueInfo{
+		Number: number, State: "closed", Labels: labels,
+	})
+	sets := make([][]string, 0, len(f.byMilestone[milestone]))
+	for _, issue := range f.byMilestone[milestone] {
+		if issue.State != "open" {
+			continue
+		}
+		sets = append(sets, issue.Labels)
+	}
+	f.counts[milestone] = hostCounts(sets...)
 	return f
 }
 
@@ -583,7 +765,7 @@ func (f *fakeSupervisor) StartRun(_ context.Context, req delivery.StartRunReques
 	f.admits.rows = append(f.admits.rows, delivery.MilestoneRun{
 		ID: fmt.Sprintf("run-started-%d", len(f.admits.rows)+1), OrgID: testOrg, ProjectID: testProject,
 		MilestoneNumber: req.MilestoneNumber, MilestoneTitle: req.MilestoneTitle,
-		Origin: req.Origin, State: delivery.RunStateWaiting,
+		Kind: req.Kind, Origin: req.Origin, State: delivery.RunStateWaiting,
 		// The budgets are SNAPSHOTTED onto the row in production, and the workflow
 		// reads them from there rather than from the request — so a fake that
 		// dropped them would let a test pass while the values never reached the run.

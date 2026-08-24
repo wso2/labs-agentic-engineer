@@ -9,5 +9,5 @@ use (
 	// workspace modules dynamically, so adding a `use` line is the only edit
 	// needed to adopt a new Go module.
 	./services/aep-api
-	./tools/aepctl
+	./tools/aectl
 )

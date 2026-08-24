@@ -34,9 +34,29 @@ vi.mock("@tanstack/react-router", () => ({
 // The live log is the RUN feed filtered to the validation cycle, and it opens
 // an SSE stream. Stub it to a marker so we can assert which lifecycle states
 // show the log vs. the report, without a stream.
+// The run it was pointed at and whether it may open a box are attributes rather than
+// rendered text, so the page's WIRING is assertable without a stream: which run leads
+// and which feed owns the one open log are decisions this page makes, not RunFeed.
 vi.mock("../../builds/components/RunFeed", () => ({
-  RunFeed: ({ cycleKinds }: { cycleKinds?: readonly string[] }) => (
-    <div data-testid="run-feed">{(cycleKinds ?? []).join(",")}</div>
+  RunFeed: ({
+    runId,
+    cycleKinds,
+    expandNewest,
+    runNumber,
+  }: {
+    runId: string;
+    cycleKinds?: readonly string[];
+    expandNewest?: boolean;
+    runNumber?: number;
+  }) => (
+    <div
+      data-testid="run-feed"
+      data-run-id={runId}
+      data-expand-newest={String(expandNewest)}
+      data-run-number={String(runNumber)}
+    >
+      {(cycleKinds ?? []).join(",")}
+    </div>
   ),
 }));
 
@@ -47,6 +67,11 @@ let mockRun: MilestoneRunView | undefined;
 // answers newest-first, so these sit ahead of it. A milestone accumulates runs
 // across its life and only some of them validate, which is what these exercise.
 let mockNewerRuns: MilestoneRunView[] = [];
+// What get-task answers with for the validation issue. Settable to undefined so a
+// test can pin the case where the number exists but its url cannot be resolved —
+// a GitHub read that failed is not the same state as "no issue yet", and the page
+// is required to treat them alike.
+let mockIssueUrl: string | undefined = "https://github.com/acme/demo/issues/30";
 
 function run(over: {
   validation?: RunValidation;
@@ -56,6 +81,7 @@ function run(over: {
     id: "run-1",
     milestoneNumber: 1,
     milestoneTitle: "v1",
+    kind: "dev",
     origin: "spec-build",
     state: "succeeded",
     budgets: {
@@ -81,6 +107,9 @@ const validationCycle = {
   // `${repoUrl}/pull/42`: repoUrl is a clone URL, and this page used to compose
   // one from it — which 404s the moment the clone URL carries a `.git` suffix.
   prUrl: "https://github.com/acme/demo/pull/42",
+  // The issue that FRAMED this attempt. A number only — the cycle record carries no
+  // issue url, which is why the page has to ask get-task for one.
+  validationIssue: 30,
   createdAt: "2026-07-10T10:00:00Z",
 };
 
@@ -152,6 +181,24 @@ vi.mock("../../builds/api/queries", () => ({
               : [],
         }
       : undefined,
+  }),
+}));
+
+// The validation issue's url, which no run record holds — get-task serves this one
+// by number even though list-tasks hides it. The mock models the real hook's gate
+// (`enabled: issueNumber > 0`): no number means no request and therefore no data,
+// which is what makes "asked before an issue existed" visible rather than silently
+// answered.
+vi.mock("../../tasks/api/queries", () => ({
+  useTask: (_project: string, issueNumber: number) => ({
+    isPending: false,
+    isError: false,
+    error: null,
+    refetch: vi.fn(),
+    data:
+      issueNumber > 0 && mockIssueUrl !== undefined
+        ? { issueNumber, issueUrl: mockIssueUrl }
+        : undefined,
   }),
 }));
 
@@ -238,6 +285,7 @@ afterEach(() => {
   mockCriteria.data = undefined;
   mockReport.isError = false;
   mockReport.data = undefined;
+  mockIssueUrl = "https://github.com/acme/demo/issues/30";
 });
 
 // A milestone sees SEQUENTIAL runs across its life and only some of them
@@ -248,11 +296,17 @@ afterEach(() => {
 // reachable only from the Builds rail — so a validation, which can hold an agent
 // for up to two hours, had no stop button on the page that owns it.
 describe("ValidationPage cancel", () => {
-  it("offers cancel while a run is live", () => {
+  it("offers cancel while a validation cycle is in flight", () => {
     mockValidation = "running";
     mockRun = run({ cycles: [validationCycle] });
     mockNewerRuns = [
-      { ...run({ cycles: [validationCycle] }), id: "run-live", origin: "revalidate", state: "running" },
+      {
+        ...run({ cycles: [validationCycle] }),
+        id: "run-live",
+        kind: "validation",
+        origin: "revalidate",
+        state: "running",
+      },
     ];
 
     renderPage(undefined);
@@ -263,14 +317,64 @@ describe("ValidationPage cancel", () => {
     expect(mockCancelMutate).toHaveBeenCalledWith("run-live");
   });
 
+  // The repair loop is validation's, even though the cycle in flight is coding: the
+  // run is only still alive because a criterion failed, and each repair is followed by
+  // another attempt. That is the unbounded wait cancel exists for, and this is the page
+  // that explains it — so the button belongs here rather than only on the Builds rail.
+  it("offers cancel while the run repairs a failed validation", () => {
+    mockValidation = "awaiting-fix";
+    mockRun = {
+      ...run({ validation: { verdict: "failed" }, cycles: [validationCycle] }),
+      state: "running",
+    };
+
+    renderPage(undefined);
+    fireEvent.click(screen.getByRole("button", { name: /Cancel run/ }));
+
+    expect(mockCancelMutate).toHaveBeenCalledWith("run-1");
+  });
+
+  // The regression: liveness alone gated this button, and every run is live through
+  // its coding cycles. A first delivery still writing code therefore offered to cancel
+  // it from underneath "No validation has run yet" — on the one page that has nothing
+  // to say about the work being cancelled.
+  it("hides cancel while the live run is still coding", () => {
+    mockValidation = "none";
+    mockRun = {
+      ...run({
+        cycles: [
+          {
+            id: "cycle-1",
+            kind: "coding",
+            attempts: 1,
+            createdAt: "2026-07-10T09:14:00Z",
+          },
+        ],
+      }),
+      state: "running",
+    };
+
+    renderPage(undefined);
+
+    expect(screen.getByText(/No validation has run yet/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Cancel run/ }),
+    ).not.toBeInTheDocument();
+  });
+
   it("hides cancel once every run has settled", () => {
-    mockRun = run({ validation: { verdict: "passed" }, cycles: [validationCycle] });
+    mockRun = run({
+      validation: { verdict: "passed" },
+      cycles: [validationCycle],
+    });
     mockCriteria.data = { content: CRITERIA };
     mockReport.data = { content: REPORT };
 
     renderPage(undefined);
 
-    expect(screen.queryByRole("button", { name: /Cancel run/ })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Cancel run/ }),
+    ).not.toBeInTheDocument();
   });
 
   // A 503 means the workflow engine was unreachable and NOTHING was cancelled,
@@ -279,7 +383,13 @@ describe("ValidationPage cancel", () => {
     mockValidation = "running";
     mockRun = run({ cycles: [validationCycle] });
     mockNewerRuns = [
-      { ...run({ cycles: [validationCycle] }), id: "run-live", origin: "revalidate", state: "running" },
+      {
+        ...run({ cycles: [validationCycle] }),
+        id: "run-live",
+        kind: "validation",
+        origin: "revalidate",
+        state: "running",
+      },
     ];
     mockCancelError = new Error("the workflow engine is unavailable");
 
@@ -296,13 +406,17 @@ describe("ValidationPage across a milestone's runs", () => {
   // fetched at all.
   it("keeps the verdict when a later incident run never validated", () => {
     mockRun = run({
-      validation: { verdict: "passed", reportPath: "tests/validation/report.md" },
+      validation: {
+        verdict: "passed",
+        reportPath: "tests/validation/report.md",
+      },
       cycles: [validationCycle],
     });
     mockNewerRuns = [
       {
         ...run({ validation: { verdict: "skipped" } }),
         id: "run-incident",
+        kind: "task",
         origin: "incident-adoption",
       },
     ];
@@ -311,8 +425,12 @@ describe("ValidationPage across a milestone's runs", () => {
 
     renderPage(undefined);
 
-    expect(screen.queryByText(/This version was not validated/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/No validation has run yet/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/This version was not validated/),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/No validation has run yet/),
+    ).not.toBeInTheDocument();
   });
 
   // One feed per validating run, so the version reads as a chronology of attempts
@@ -325,6 +443,7 @@ describe("ValidationPage across a milestone's runs", () => {
       {
         ...run({ cycles: [validationCycle] }),
         id: "run-revalidate",
+        kind: "validation",
         origin: "revalidate",
       },
     ];
@@ -343,6 +462,7 @@ describe("ValidationPage across a milestone's runs", () => {
       {
         ...run({}),
         id: "run-incident",
+        kind: "task",
         origin: "incident-adoption",
       },
     ];
@@ -350,6 +470,115 @@ describe("ValidationPage across a milestone's runs", () => {
     renderPage(undefined);
 
     expect(screen.getAllByTestId("run-feed")).toHaveLength(1);
+  });
+
+  // The newest run leads, and the line between attempts is drawn at the RUN boundary —
+  // where the Builds page draws its own — so the caption separates the run being read
+  // from the ones before it rather than sitting above everything.
+  it("draws the newest validating run first, with the earlier runs captioned below it", () => {
+    mockValidation = "running";
+    mockRun = run({ cycles: [validationCycle] });
+    mockNewerRuns = [
+      {
+        ...run({ cycles: [validationCycle] }),
+        id: "run-revalidate",
+        kind: "validation",
+        origin: "revalidate",
+      },
+    ];
+
+    renderPage(undefined);
+
+    // The whole arrangement in one assertion: presence alone would pass whichever
+    // end the newest run were drawn at, which is the bug this replaces.
+    const stack = screen.getAllByTestId("run-feed")[0]?.parentElement;
+    const arrangement = Array.from(stack?.children ?? []).map((el) =>
+      el.getAttribute("data-testid") === "run-feed"
+        ? el.getAttribute("data-run-id")
+        : el.textContent,
+    );
+    expect(arrangement).toEqual([
+      "run-revalidate",
+      "EARLIER VALIDATION RUNS",
+      "run-1",
+    ]);
+  });
+
+  // Exactly one log is open on the page, not one per feed: a settled attempt is a
+  // record, and only the newest run's is still being written.
+  it("lets only the newest run's feed open a log", () => {
+    mockValidation = "running";
+    mockRun = run({ cycles: [validationCycle] });
+    mockNewerRuns = [
+      {
+        ...run({ cycles: [validationCycle] }),
+        id: "run-revalidate",
+        kind: "validation",
+        origin: "revalidate",
+      },
+    ];
+
+    renderPage(undefined);
+
+    expect(
+      screen
+        .getAllByTestId("run-feed")
+        .map((f) => f.getAttribute("data-expand-newest")),
+    ).toEqual(["true", "false"]);
+  });
+
+  // Counted from the OLDEST validating run, so the newest carries the HIGHEST number
+  // and the run count descends the page alongside each feed's cycle count. Counted over
+  // the runs this page SHOWS: a run that never validated has no box here, so numbering
+  // the milestone's whole list would leave gaps.
+  it("numbers the validating runs from the oldest", () => {
+    mockValidation = "running";
+    mockRun = run({ cycles: [validationCycle] });
+    mockNewerRuns = [
+      {
+        ...run({ cycles: [validationCycle] }),
+        id: "run-revalidate",
+        kind: "validation",
+        origin: "revalidate",
+      },
+    ];
+
+    renderPage(undefined);
+
+    expect(
+      screen
+        .getAllByTestId("run-feed")
+        .map((f) => f.getAttribute("data-run-number")),
+    ).toEqual(["2", "1"]);
+  });
+
+  // Unconditional, unlike the caption: a prefix that appeared only once a second run
+  // existed would RENAME a box mid-session when a revalidation starts, and this page
+  // polls while a version is live.
+  it("numbers the run even when one run validated the version", () => {
+    mockValidation = "running";
+    mockRun = run({ cycles: [validationCycle] });
+
+    renderPage(undefined);
+
+    expect(screen.getByTestId("run-feed")).toHaveAttribute(
+      "data-run-number",
+      "1",
+    );
+  });
+
+  // The ordinary case: one run validated the version, so there is no history to
+  // separate and a caption would announce a boundary that does not exist.
+  it("draws no caption when a single run validated the version", () => {
+    mockValidation = "running";
+    mockRun = run({ cycles: [validationCycle] });
+
+    renderPage(undefined);
+
+    expect(screen.getAllByTestId("run-feed")).toHaveLength(1);
+    expect(
+      screen.queryByText("EARLIER VALIDATION RUNS"),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -388,7 +617,9 @@ describe("ValidationPage lifecycle", () => {
 
     renderPage(undefined);
 
-    expect(screen.queryByText(/No validation has run yet/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/No validation has run yet/),
+    ).not.toBeInTheDocument();
     expect(screen.getByTestId("run-feed")).toHaveTextContent("validation");
   });
 
@@ -405,7 +636,9 @@ describe("ValidationPage lifecycle", () => {
 
     // The run story is fetched for v2 — the version the chip is talking about.
     expect(screen.getByTestId("run-feed")).toHaveTextContent("validation");
-    expect(screen.queryByText(/No validation has run yet/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/No validation has run yet/),
+    ).not.toBeInTheDocument();
   });
 
   it("shows the feed for a run whose validation failed", () => {
@@ -437,8 +670,14 @@ describe("ValidationPage lifecycle", () => {
     mockValidation = "awaiting-fix";
     mockRun = {
       ...run({
-        validation: { verdict: "failed", reportPath: "tests/validation/report.json" },
-        cycles: [validationCycle, { ...validationCycle, id: "cycle-3", kind: "coding" }],
+        validation: {
+          verdict: "failed",
+          reportPath: "tests/validation/report.json",
+        },
+        cycles: [
+          validationCycle,
+          { ...validationCycle, id: "cycle-3", kind: "coding" },
+        ],
       }),
       state: "running",
     };
@@ -449,7 +688,9 @@ describe("ValidationPage lifecycle", () => {
     // Chip AND tile headline, both from the shared mapper.
     expect(screen.getAllByText("Awaiting fix").length).toBe(2);
     expect(screen.queryByText("Validation failed")).not.toBeInTheDocument();
-    expect(screen.queryByText(/the milestone stays open for the fix/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/the milestone stays open for the fix/),
+    ).not.toBeInTheDocument();
     expect(
       screen.getByText(
         "1 of 3 criteria failed. The implementation is being fixed. Validation will run again.",
@@ -458,8 +699,12 @@ describe("ValidationPage lifecycle", () => {
     // The failed report stays — it is the evidence of WHAT is being fixed, and the
     // coding cycle in flight has no validation log to show in its place.
     expect(screen.queryByTestId("run-feed")).not.toBeInTheDocument();
-    expect(screen.getByText("Shoppers can search the catalog.")).toBeInTheDocument();
-    expect(screen.getByText(/category option never appeared/)).toBeInTheDocument();
+    expect(
+      screen.getByText("Shoppers can search the catalog."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/category option never appeared/),
+    ).toBeInTheDocument();
   });
 
   // A repeat attempt has to read like the first one. This was unreachable while the
@@ -470,7 +715,10 @@ describe("ValidationPage lifecycle", () => {
     mockValidation = "running";
     mockRun = {
       ...run({
-        validation: { verdict: "failed", reportPath: "tests/validation/report.json" },
+        validation: {
+          verdict: "failed",
+          reportPath: "tests/validation/report.json",
+        },
         cycles: [validationCycle],
       }),
       state: "running",
@@ -483,7 +731,9 @@ describe("ValidationPage lifecycle", () => {
     // the fix is being re-checked. That it belongs to the last attempt is the tile's
     // job to say — twice, in the sentence and in the tally.
     expect(screen.queryByTestId("run-feed")).not.toBeInTheDocument();
-    expect(screen.getByText("Shoppers can search the catalog.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Shoppers can search the catalog."),
+    ).toBeInTheDocument();
     // Chip and tile headline both, as with every other state.
     expect(screen.getAllByText("Validating").length).toBe(2);
     expect(screen.queryByText("Validation failed")).not.toBeInTheDocument();
@@ -502,7 +752,10 @@ describe("ValidationPage lifecycle", () => {
     mockValidation = "running";
     mockRun = {
       ...run({
-        validation: { verdict: "failed", reportPath: "tests/validation/report.json" },
+        validation: {
+          verdict: "failed",
+          reportPath: "tests/validation/report.json",
+        },
         cycles: [validationCycle],
       }),
       state: "running",
@@ -529,7 +782,10 @@ describe("ValidationPage lifecycle", () => {
   it("renders the joined report on a passed verdict", () => {
     mockValidation = "passed";
     mockRun = run({
-      validation: { verdict: "passed", reportPath: "tests/validation/report.json" },
+      validation: {
+        verdict: "passed",
+        reportPath: "tests/validation/report.json",
+      },
       cycles: [validationCycle],
     });
     mockCriteria.data = { content: CRITERIA };
@@ -538,7 +794,9 @@ describe("ValidationPage lifecycle", () => {
 
     // The report, not the log.
     expect(screen.queryByTestId("run-feed")).not.toBeInTheDocument();
-    expect(screen.getByText("Shoppers can search the catalog.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Shoppers can search the catalog."),
+    ).toBeInTheDocument();
     // Per-criterion state chips from the join.
     expect(screen.getByText("Passed")).toBeInTheDocument();
     expect(screen.getByText("Failed")).toBeInTheDocument();
@@ -570,7 +828,10 @@ describe("ValidationPage lifecycle", () => {
   it("renders the report, not the feed, for a PARTIAL verdict", () => {
     mockValidation = "partial";
     mockRun = run({
-      validation: { verdict: "partial", reportPath: "tests/validation/report.json" },
+      validation: {
+        verdict: "partial",
+        reportPath: "tests/validation/report.json",
+      },
       cycles: [validationCycle],
     });
     mockCriteria.data = { content: CRITERIA };
@@ -585,7 +846,9 @@ describe("ValidationPage lifecycle", () => {
     // a screen reader hears nothing of the asterisk otherwise. Visually-hidden TEXT,
     // because a Chip with no onClick has no role and would ignore an aria-label.
     expect(screen.getByText("Validated, partially")).toBeInTheDocument();
-    expect(screen.getByText("Shoppers can search the catalog.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Shoppers can search the catalog."),
+    ).toBeInTheDocument();
   });
 
   it("renders the report for an INCONCLUSIVE verdict", () => {
@@ -603,7 +866,9 @@ describe("ValidationPage lifecycle", () => {
 
     expect(screen.queryByTestId("run-feed")).not.toBeInTheDocument();
     expect(screen.getAllByText("Validation?").length).toBe(2);
-    expect(screen.getByText(/please validate them manually/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/please validate them manually/),
+    ).toBeInTheDocument();
   });
 
   // `unreported` means no report was committed at that commit, and the server
@@ -625,7 +890,9 @@ describe("ValidationPage lifecycle", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText(/report wasn't found/)).not.toBeInTheDocument();
     // The criteria still render — they live under specs/, not in the report.
-    expect(screen.getByText("Shoppers can search the catalog.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Shoppers can search the catalog."),
+    ).toBeInTheDocument();
     // And with no report there is nothing to count.
     expect(screen.queryByText(/\d+ passed/)).not.toBeInTheDocument();
   });
@@ -635,7 +902,10 @@ describe("ValidationPage lifecycle", () => {
   it("tallies the run's outcome once, in the tile", () => {
     mockValidation = "failed";
     mockRun = run({
-      validation: { verdict: "failed", reportPath: "tests/validation/report.json" },
+      validation: {
+        verdict: "failed",
+        reportPath: "tests/validation/report.json",
+      },
       cycles: [validationCycle],
     });
     mockCriteria.data = { content: CRITERIA };
@@ -643,7 +913,9 @@ describe("ValidationPage lifecycle", () => {
     renderPage(undefined);
 
     // 3 criteria: one pass, one fail, one manual.
-    expect(screen.getByText("1 failed · 1 passed · 1 manual")).toBeInTheDocument();
+    expect(
+      screen.getByText("1 failed · 1 passed · 1 manual"),
+    ).toBeInTheDocument();
     expect(screen.queryByText("Passed 1")).not.toBeInTheDocument();
     expect(screen.queryByText("Failed 1")).not.toBeInTheDocument();
   });
@@ -657,8 +929,59 @@ describe("ValidationPage lifecycle", () => {
     mockCriteria.data = { content: CRITERIA };
     renderPage(undefined);
     expect(
-      screen.getByRole("link", { name: /Validation pull request/ }),
+      screen.getByRole("link", { name: /Validation pull request #42/ }),
     ).toHaveAttribute("href", "https://github.com/acme/demo/pull/42");
+  });
+
+  // The cycle holds the issue NUMBER and nothing else, so the url is asked of
+  // get-task — which serves this issue despite list-tasks hiding it — rather than
+  // composed from the project's repoUrl, for the same reason the PR link isn't.
+  it("links the validation issue, resolved by number rather than composed", () => {
+    mockValidation = "passed";
+    mockRun = run({
+      validation: { verdict: "passed" },
+      cycles: [validationCycle],
+    });
+    mockCriteria.data = { content: CRITERIA };
+    renderPage(undefined);
+    expect(
+      screen.getByRole("link", { name: /Validation issue #30/ }),
+    ).toHaveAttribute("href", "https://github.com/acme/demo/issues/30");
+  });
+
+  it("shows no issue link before a cycle has minted one", () => {
+    mockValidation = "passed";
+    mockRun = run({
+      validation: { verdict: "passed" },
+      // 0 is what the wire carries before a cycle mints an issue — the field is
+      // omitempty, so a run that never validated says 0, not "absent".
+      cycles: [{ ...validationCycle, validationIssue: 0 }],
+    });
+    mockCriteria.data = { content: CRITERIA };
+    renderPage(undefined);
+    expect(
+      screen.queryByRole("link", { name: /Validation issue #30/ }),
+    ).toBeNull();
+    // The pull request beside it is unaffected — the two links are independent.
+    expect(
+      screen.getByRole("link", { name: /Validation pull request #42/ }),
+    ).toBeInTheDocument();
+  });
+
+  // A GitHub read that failed leaves the number in hand and no url. The page shows
+  // nothing rather than a link it cannot aim, which is the PR's rule too.
+  it("shows no issue link when the issue url could not be resolved", () => {
+    mockValidation = "passed";
+    mockIssueUrl = undefined;
+    mockRun = run({
+      validation: { verdict: "passed" },
+      cycles: [validationCycle],
+    });
+    mockCriteria.data = { content: CRITERIA };
+    renderPage(undefined);
+    expect(
+      screen.queryByRole("link", { name: /Validation issue #30/ }),
+    ).toBeNull();
   });
 
   it("toggles to the log view via the View logs button", () => {
@@ -697,14 +1020,19 @@ describe("ValidationPage lifecycle", () => {
   it("renders a failure that carries only a location", () => {
     mockValidation = "failed";
     mockRun = run({
-      validation: { verdict: "failed", reportPath: "tests/validation/report.json" },
+      validation: {
+        verdict: "failed",
+        reportPath: "tests/validation/report.json",
+      },
       cycles: [validationCycle],
     });
     mockCriteria.data = { content: CRITERIA };
     mockReport.data = { content: LOCATION_ONLY_FAILURE };
     renderPage(undefined);
 
-    expect(screen.getByText("tests/e2e/specs/AC-001-b.spec.ts:42")).toBeInTheDocument();
+    expect(
+      screen.getByText("tests/e2e/specs/AC-001-b.spec.ts:42"),
+    ).toBeInTheDocument();
   });
 
   it("falls back to criteria-only with a note when the report is missing", () => {
@@ -718,7 +1046,9 @@ describe("ValidationPage lifecycle", () => {
     renderPage(undefined);
 
     expect(screen.getByText(/report wasn't found/)).toBeInTheDocument();
-    expect(screen.getByText("Shoppers can search the catalog.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Shoppers can search the catalog."),
+    ).toBeInTheDocument();
     // No state chips without a report.
     expect(screen.queryByText("Passed")).not.toBeInTheDocument();
   });

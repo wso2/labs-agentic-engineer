@@ -19,6 +19,7 @@ package auth
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -67,7 +68,7 @@ func serveWith(v *AgentsScopedVerifier, req *http.Request) *httptest.ResponseRec
 // token, wrong-audience token, and expired token — all 401, none reaching next.
 func TestAgentsScoped_401Matrix(t *testing.T) {
 	mgr := mcpTestManager(t)
-	v := NewAgentsScopedVerifier(mgr)
+	v := NewAgentsScopedVerifier(mgr, nil)
 
 	// wrong-aud: a validly-signed BFF token minted for agents-service, not MCP.
 	wrongAud, err := mgr.IssueServiceToken("agents-service", "org-x", 5*time.Minute)
@@ -129,7 +130,7 @@ func TestAgentsScoped_401Matrix(t *testing.T) {
 // the org from its ocOrgId claim.
 func TestAgentsScoped_ValidTokenBindsOrg(t *testing.T) {
 	mgr := mcpTestManager(t)
-	v := NewAgentsScopedVerifier(mgr)
+	v := NewAgentsScopedVerifier(mgr, nil)
 
 	tok, err := mgr.IssueMCPToken("claim-org")
 	if err != nil {
@@ -151,7 +152,7 @@ func TestAgentsScoped_ValidTokenBindsOrg(t *testing.T) {
 // from the signed claim: a mismatched org in the path/query/header is ignored.
 func TestAgentsScoped_ClaimWinsOverRequestOrg(t *testing.T) {
 	mgr := mcpTestManager(t)
-	v := NewAgentsScopedVerifier(mgr)
+	v := NewAgentsScopedVerifier(mgr, nil)
 
 	tok, err := mgr.IssueMCPToken("claim-org")
 	if err != nil {
@@ -174,10 +175,108 @@ func TestAgentsScoped_ClaimWinsOverRequestOrg(t *testing.T) {
 
 // TestAgentsScoped_NilManager503 asserts an unconfigured verifier fails closed.
 func TestAgentsScoped_NilManager503(t *testing.T) {
-	v := NewAgentsScopedVerifier(nil)
+	v := NewAgentsScopedVerifier(nil, nil)
 	req := httptest.NewRequest(http.MethodPost, "/internal/v1/mcp", nil)
 	w := serveWith(v, req)
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503, got %d", w.Code)
+	}
+}
+
+func TestAgentsScoped_PublisherCCBindsOrg(t *testing.T) {
+	mgr := mcpTestManager(t)
+	pub, mint := newPublisherVerifier(t)
+	v := NewAgentsScopedVerifier(mgr, pub)
+
+	tok := mint("claim-org", "claim-org")
+	req := httptest.NewRequest(http.MethodPost, "/internal/v1/mcp", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+
+	w := serveWith(v, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body %q)", w.Code, w.Body.String())
+	}
+	if got := w.Body.String(); got != "claim-org" {
+		t.Fatalf("bound org = %q, want claim-org", got)
+	}
+}
+
+func TestAgentsScoped_BFFMCPStillWorksWithPublisherWired(t *testing.T) {
+	mgr := mcpTestManager(t)
+	pub, _ := newPublisherVerifier(t)
+	v := NewAgentsScopedVerifier(mgr, pub)
+
+	tok, err := mgr.IssueMCPToken("bff-org")
+	if err != nil {
+		t.Fatalf("IssueMCPToken: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/internal/v1/mcp", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+
+	w := serveWith(v, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body %q)", w.Code, w.Body.String())
+	}
+	if got := w.Body.String(); got != "bff-org" {
+		t.Fatalf("bound org = %q, want bff-org", got)
+	}
+}
+
+func TestAgentsScoped_TaskJWT401EvenWithPublisherWired(t *testing.T) {
+	mgr := mcpTestManager(t)
+	pub, _ := newPublisherVerifier(t)
+	v := NewAgentsScopedVerifier(mgr, pub)
+
+	tok, err := mgr.IssueServiceToken("git-service", "org-x", 5*time.Minute)
+	if err != nil {
+		t.Fatalf("IssueServiceToken: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/internal/v1/mcp", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+
+	w := serveWith(v, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d (body %q)", w.Code, w.Body.String())
+	}
+}
+
+func TestAgentsScoped_PublisherToken401WhenPublisherNil(t *testing.T) {
+	mgr := mcpTestManager(t)
+	_, mint := newPublisherVerifier(t)
+	v := NewAgentsScopedVerifier(mgr, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/internal/v1/mcp", nil)
+	req.Header.Set("Authorization", "Bearer "+mint("claim-org", "claim-org"))
+
+	w := serveWith(v, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d (body %q)", w.Code, w.Body.String())
+	}
+}
+
+// Both BFF and publisher verify fail: joined error for the log, HTTP still 401
+// with a generic body.
+func TestAgentsScoped_BothVerifyFailStill401(t *testing.T) {
+	mgr := mcpTestManager(t)
+	pub, _ := newPublisherVerifier(t)
+	v := NewAgentsScopedVerifier(mgr, pub)
+
+	_, err := v.resolveOrg("Bearer not-a-jwt")
+	if err == nil {
+		t.Fatal("expected resolveOrg error")
+	}
+	joined, ok := err.(interface{ Unwrap() []error })
+	if !ok || len(joined.Unwrap()) != 2 {
+		t.Fatalf("want errors.Join of 2, got %T %v", err, err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/internal/v1/mcp", nil)
+	req.Header.Set("Authorization", "Bearer not-a-jwt")
+	w := serveWith(v, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d (body %q)", w.Code, w.Body.String())
+	}
+	if got := strings.TrimSpace(w.Body.String()); got != "unauthorized" {
+		t.Fatalf("body = %q, want unauthorized", got)
 	}
 }

@@ -84,7 +84,7 @@ is no ledger list in between.
    acting on it, and listed in the issue register as part of the version's
    record. A resolved gate no longer disappears: it is how the version came to
    exist.)* While any
-   `aep:provision` issue in the milestone is open the run dispatches nothing, so
+   `provision` gate issue in the milestone is open the run dispatches nothing, so
    the gate is the *reason nothing is moving*, not one item among many — which
    makes it the run card's business (decision 4b), not the issue list's. The
    notice names each held dependency and deep-links the spec view's connection
@@ -120,6 +120,25 @@ is no ledger list in between.
    "ended" is a fact about the run, not about the connection: an EOF without
    `[DONE]` is a dropped connection to reattach, and reconnects are idempotent
    (cycles upsert by id, lines dedup by `cycleId:seq`).
+
+9b. **A run feed is one execution; the VERSION's own feed is a second stream, and
+   the page holds one of them at a time.** A version is worked by several runs —
+   the spec build, then whatever repaired or re-judged it — so the run card's feed
+   is a chapter, not the story. `stream-build-progress`
+   (`/builds/{tag}/progress`) is the story: the same frames plus the run each
+   cycle belongs to, in chronological run order, rendered as one timeline with the
+   run KIND as the section marker (`runKindLabel`, the same words the card and the
+   history rows use). Cycle numbering stays RUN-relative, exactly as the wire
+   carries it, so a box is named the same wherever it is read and the heading above
+   is what tells two "Cycle 1"s apart. It sits behind a disclosure on the Builds
+   page: each connection costs the server a ticking derive plus a pod-log read per
+   cycle, and a page that opened both unasked would pay twice to show the same
+   newest cycle twice — so the feed is UNMOUNTED until the reader asks, which is
+   what closes the connection. Its "ended" means something weaker than a run's: the
+   server settles it whenever **no run on the milestone is live**, which is a
+   resting state and not a verdict on the version, so the frame carries `reason:
+   no_live_run` rather than a state and the feed reattaches when the 5s run-list
+   poll shows a new run.
 
 ## Consequences
 

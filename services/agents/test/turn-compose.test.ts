@@ -28,6 +28,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { SURFACES } from "@aep/agent-stream";
 import { composeInstruction, eagerSkillsFor, toolsetFor } from "../src/prompts/turn.js";
 
 /** The platform skill library this monorepo publishes to every org. */
@@ -53,6 +54,74 @@ test("flow points at the skill, with the user's trailing text after a blank line
   );
 });
 
+/**
+ * A command names the user's intent (`/feature`), a skill names an
+ * engineer-facing playbook (`amend`). The three scoped edits are branches of
+ * one playbook, so the command resolves to that skill AND says which branch —
+ * carrying whatever the user clicked as the branch's subject, which is what
+ * makes a lens on the PRD a complete instruction rather than a menu item the
+ * user has to finish from memory (#579).
+ */
+test("a command that names a branch resolves to the skill and says which branch", () => {
+  const feature = composeInstruction({ kind: "flow", skill: "feature", text: "receipt scanning" });
+  assert.ok(feature.startsWith("Load the amend skill and follow it.\n\nAdd a feature: receipt scanning"));
+
+  const actor = composeInstruction({ kind: "flow", skill: "actor", text: "Finance reviewer" });
+  assert.ok(actor.startsWith("Load the amend skill and follow it.\n\nAdd an actor: Finance reviewer"));
+
+  const expand = composeInstruction({
+    kind: "flow",
+    skill: "expand",
+    text: "As an Employee, I want to submit an expense.",
+  });
+  assert.ok(
+    expand.startsWith(
+      "Load the amend skill and follow it.\n\nGo deeper on this feature: As an Employee, I want to submit an expense.",
+    ),
+  );
+
+  // Fired bare (the header's "+ Feature", where there is no line to carry) the
+  // branch still arrives; the skill interviews for the subject.
+  const bare = composeInstruction({ kind: "flow", skill: "feature" });
+  assert.ok(bare.startsWith("Load the amend skill and follow it.\n\nAdd a feature."));
+});
+
+test("a branch command inlines the skill it resolves to, not its own token", () => {
+  for (const token of ["feature", "actor", "expand"]) {
+    assert.deepEqual(eagerSkillsFor({ kind: "flow", skill: token }), [
+      "amend",
+      "grilling",
+      "prd-contract",
+    ]);
+  }
+  // `/settle` is its own skill, so nothing is remapped — but it revises the
+  // same document and carries the same two supporting skills.
+  assert.deepEqual(eagerSkillsFor({ kind: "flow", skill: "settle" }), [
+    "settle",
+    "grilling",
+    "prd-contract",
+  ]);
+});
+
+/**
+ * Both skill maps are keyed by a name the caller supplies, so a name that
+ * happens to live on `Object.prototype` must MISS them rather than inherit.
+ * Indexed directly, `constructor` finds a function whose `.scope` is not one
+ * (a thrown turn) and `toString` finds something `...` cannot spread — where
+ * the user should simply be told the skill does not exist.
+ *
+ * `/constructor` is typable: the grammar admits any `[a-z0-9-]+`. `toString`
+ * is not, but `skill` is an ordinary wire field and nothing downstream of the
+ * parsers re-checks it.
+ */
+test("a skill named after an Object.prototype member is an ordinary unknown skill", () => {
+  for (const token of ["constructor", "toString"]) {
+    const out = composeInstruction({ kind: "flow", skill: token, text: "go" });
+    assert.ok(out.startsWith(`Load the ${token} skill and follow it.\n\ngo`));
+    assert.deepEqual(eagerSkillsFor({ kind: "flow", skill: token }), [token]);
+  }
+});
+
 test("start appends the captured idea, and appends NOTHING when there is none", () => {
   const withIdea = composeInstruction({ kind: "start", idea: "an expense tracker" });
   assert.match(withIdea, /^Load the start skill and follow it\.\n\nThe user's idea for this project:\n\nan expense tracker/);
@@ -61,6 +130,43 @@ test("start appends the captured idea, and appends NOTHING when there is none", 
   const bare = composeInstruction({ kind: "start" });
   assert.equal(bare, composeInstruction({ kind: "start", idea: "  " }));
   assert.doesNotMatch(bare, /The user's idea/);
+});
+
+test("start lists the reference documents, and lists NOTHING when there are none", () => {
+  const withRefs = composeInstruction({
+    kind: "start",
+    idea: "an expense tracker",
+    references: ["specs/requirements/references/rfp.pdf", "specs/requirements/references/glossary.md"],
+  });
+  // Every path is named, and the agent is told to read them as the brief.
+  assert.match(withRefs, /specs\/requirements\/references\/rfp\.pdf/);
+  assert.match(withRefs, /specs\/requirements\/references\/glossary\.md/);
+  assert.match(withRefs, /reference document/i);
+  // The idea still rides alongside them — the two channels are independent.
+  assert.match(withRefs, /The user's idea for this project:\n\nan expense tracker/);
+
+  // Absent and empty are the same thing, and both are byte-identical to a turn
+  // from before this channel existed — a docless project sees no change at all.
+  const bare = composeInstruction({ kind: "start", idea: "an expense tracker" });
+  assert.equal(bare, composeInstruction({ kind: "start", idea: "an expense tracker", references: [] }));
+  assert.doesNotMatch(bare, /reference document/i);
+});
+
+
+test("flow lists the reference documents, and lists NOTHING when there are none", () => {
+  const withRefs = composeInstruction({
+    kind: "flow",
+    skill: "design",
+    references: ["specs/requirements/references/sketch.png"],
+  });
+  assert.match(withRefs, /^Load the design skill and follow it\./);
+  assert.match(withRefs, /specs\/requirements\/references\/sketch\.png/);
+  assert.match(withRefs, /reference document/i);
+
+  // Absent/empty → byte-identical to a plain flow turn.
+  const bare = composeInstruction({ kind: "flow", skill: "design" });
+  assert.equal(bare, composeInstruction({ kind: "flow", skill: "design", references: [] }));
+  assert.doesNotMatch(bare, /reference document/i);
 });
 
 test("target is rendered by the service, never formatted by the caller", () => {
@@ -170,6 +276,9 @@ test("both PRD-writing flows carry the contract as a skill, not a reference", ()
 test("the design flow inlines its whole lineup, in lineup order", () => {
   assert.deepEqual(eagerSkillsFor({ kind: "flow", skill: "design" }), [
     "design",
+    // The design flow interviews at design altitude (#578), so the question
+    // mechanics are inlined here exactly as they are on start and amend.
+    "grilling",
     "cell-design",
     "architecture",
     "security-design",
@@ -193,7 +302,12 @@ test("every eager skill name exists in the platform skill library", () => {
     { kind: "start" } as const,
     { kind: "plan" } as const,
     { kind: "flow", skill: "amend" } as const,
+    { kind: "flow", skill: "settle" } as const,
     { kind: "flow", skill: "design" } as const,
+    // The branch commands resolve to a platform skill, so they are checked too.
+    { kind: "flow", skill: "feature" } as const,
+    { kind: "flow", skill: "actor" } as const,
+    { kind: "flow", skill: "expand" } as const,
   ];
   for (const turn of turns) {
     for (const name of eagerSkillsFor(turn)) {
@@ -220,4 +334,20 @@ test("the tool set is derived from the kind", () => {
   assert.equal(toolsetFor({ kind: "chat", text: "x" }), "files");
   assert.equal(toolsetFor({ kind: "start" }), "files");
   assert.equal(toolsetFor({ kind: "flow", skill: "design" }), "files");
+});
+
+/**
+ * A surface names its own narration skill, and `buildNarrationBlock` skips a
+ * name that resolves to nothing — so renaming the directory would silently
+ * take the console's narration rules off every turn rather than fail anything.
+ * This is that drift guard.
+ */
+test("every surface has a narration skill in the library, and it is design-side", () => {
+  for (const surface of SURFACES) {
+    const body = fs.readFileSync(path.join(SKILLS_DIR, surface, "SKILL.md"), "utf8");
+    assert.match(body, new RegExp(`^name: ${surface}$`, "m"), "frontmatter name must match the directory");
+    assert.match(body, /audience: \[design\]/, "narration is the design agent's — never mirrored to a coding run");
+    // The composer supplies `# Narration policy`; a title in the file renders twice.
+    assert.doesNotMatch(body.replace(/^---[\s\S]*?^---/m, ""), /^# /m);
+  }
 });

@@ -20,6 +20,8 @@ spec:
   allowedTraits:
     - kind: ClusterTrait
       name: api-configuration
+    - kind: ClusterTrait
+      name: observability-alert-rule
   environmentConfigs:
     openAPIV3Schema:
       type: object

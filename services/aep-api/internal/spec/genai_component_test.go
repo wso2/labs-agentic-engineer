@@ -25,12 +25,15 @@ package spec_test
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
@@ -126,6 +129,13 @@ type fakeAgents struct {
 	entered chan struct{}
 	release chan struct{}
 
+	// preHeaderGate blocks the handler BEFORE any response header is written —
+	// the shape of a slow time-to-first-token (a big PDF/image the model must
+	// read before emitting anything). Dispatch is still blocked at this point.
+	preHeaderGate    bool
+	preHeaderEntered chan struct{}
+	preHeaderRelease chan struct{}
+
 	turnStatus int // non-200 → pre-stream failure
 	turnBody   string
 	convStatus int
@@ -145,11 +155,13 @@ type recordedTurn struct {
 func newFakeAgents(t *testing.T) *fakeAgents {
 	t.Helper()
 	f := &fakeAgents{
-		turnStatus: 200,
-		convStatus: 200,
-		convBody:   `{"messages":[{"role":"user","content":"hi"}]}`,
-		entered:    make(chan struct{}, 1),
-		release:    make(chan struct{}),
+		turnStatus:       200,
+		convStatus:       200,
+		convBody:         `{"messages":[{"role":"user","content":"hi"}]}`,
+		entered:          make(chan struct{}, 1),
+		release:          make(chan struct{}),
+		preHeaderEntered: make(chan struct{}, 1),
+		preHeaderRelease: make(chan struct{}),
 	}
 	f.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -190,7 +202,16 @@ func (f *fakeAgents) handleTurn(w http.ResponseWriter, r *http.Request) {
 	f.requests = append(f.requests, recordedTurn{path: r.URL.Path, headers: r.Header.Clone(), req: req})
 	parts, manifest, sever, gated := f.parts, f.manifest, f.sever, f.gated
 	status, body := f.turnStatus, f.turnBody
+	preHeader := f.preHeaderGate
 	f.mu.Unlock()
+
+	if preHeader {
+		select {
+		case f.preHeaderEntered <- struct{}{}:
+		default:
+		}
+		<-f.preHeaderRelease
+	}
 
 	if status != 200 {
 		w.WriteHeader(status)
@@ -410,6 +431,7 @@ type genaiRig struct {
 	fake         *fakeAgents
 	turns        *memTurnRepo
 	broker       *spec.TurnBroker
+	svc          *spec.Service
 	// knobs read at request time
 	key string
 }
@@ -520,12 +542,12 @@ func newGenaiRig(t *testing.T, seed map[string]string, opts ...rigOption) *genai
 		skillsRepo = cfg.skillsRepo
 	}
 	svc := spec.NewService(spec.ServiceDeps{
-		Repos:      stubRepoResolver{rec: rec},
-		Git:        sourcecontrol.NewGitOpsService(stubResolver{}, fx.Engine),
-		Keys:       func(context.Context, string) (string, error) { return rig.key, nil },
-		Client:     client,
-		Turns:      turns,
-		Broker:     broker,
+		Repos:         stubRepoResolver{rec: rec},
+		Git:           sourcecontrol.NewGitOpsService(stubResolver{}, fx.Engine),
+		Keys:          func(context.Context, string) (string, error) { return rig.key, nil },
+		Client:        client,
+		Turns:         turns,
+		Broker:        broker,
 		Snapshots:     fx.Engine,
 		SkillsRepo:    skillsRepo,
 		Conversations: cfg.conversations,
@@ -533,6 +555,7 @@ func newGenaiRig(t *testing.T, seed map[string]string, opts ...rigOption) *genai
 		MCPBaseURL:    cfg.mcpBaseURL,
 		Recorder:      cfg.recorder,
 	})
+	rig.svc = svc
 	rig.h = componenttest.New(t, componenttest.Options{Deps: edge.Deps{Spec: mustSpecHandlers(t, spec.Deps{GenAI: svc})}})
 	return rig
 }
@@ -653,8 +676,8 @@ func Test202Flow_PreviewOnlyAndStreamReplays(t *testing.T) {
 	baseRef := r.fx.Origin.HeadSHA(t)
 
 	final := map[string]string{
-		"specs/requirements/notes.md":        "# Notes\nBody\n",
-		"specs/requirements/prd.md": "# Requirements\n",
+		"specs/requirements/notes.md": "# Notes\nBody\n",
+		"specs/requirements/prd.md":   "# Requirements\n",
 	}
 	r.fake.parts = []string{
 		textPart("working"),
@@ -692,6 +715,12 @@ func Test202Flow_PreviewOnlyAndStreamReplays(t *testing.T) {
 	}
 	if sent.req.Workspace.TurnID != turnID {
 		t.Errorf("dispatched turnId = %s, want %s", sent.req.Workspace.TurnID, turnID)
+	}
+	// #580: every turn the BFF dispatches is read in the console, so it names
+	// that surface and the agents service inlines the console's narration rules.
+	// Unset, the agent narrates repo paths at someone who cannot see a file tree.
+	if sent.req.Surface != agentsvc.SurfaceConsole {
+		t.Errorf("dispatched surface = %q, want %q", sent.req.Surface, agentsvc.SurfaceConsole)
 	}
 	wantConv := "org_" + testOrg + "--proj_" + testProj + "--general--" + convUUID
 	if sent.req.Workspace.ConversationID != wantConv || !strings.Contains(sent.path, wantConv) {
@@ -1102,7 +1131,6 @@ func TestWebSearchGate_AttachAndLeak(t *testing.T) {
 	})
 }
 
-
 // TestD20_FilesChangedExternallyAndDivergenceNote pins the server-derived
 // flag: a second turn in the same conversation after main moved externally
 // dispatches filesChangedExternally=true; after a FAILED turn the divergence
@@ -1349,5 +1377,130 @@ func TestEmptyInstruction_400NoRow(t *testing.T) {
 	}
 	if rec := r.h.AsOrg(testOrg).Get(turnPath("active")); rec.Code != http.StatusNoContent {
 		t.Errorf("no row should exist: active = %d, want 204", rec.Code)
+	}
+}
+
+// A turn whose FIRST model event is slow — the shape of a kickoff carrying a
+// large PDF/image the model must read before emitting anything — must still
+// heartbeat. The agents service opens its SSE stream lazily on that first
+// event, so Dispatch blocks until then; starting the heartbeat only after
+// Dispatch returns left heartbeat_at frozen at created_at, and the 60s sweep
+// failed a perfectly healthy turn as "replica crashed or hung" (observed live
+// on a project with an 848KB PDF + 334KB PNG attached).
+func TestSlowFirstEvent_StillHeartbeats(t *testing.T) {
+	// Seed something the agent does NOT write, so the fold has no parity clash.
+	r := newGenaiRig(t, map[string]string{"README.md": "hi\n"})
+	r.svc.SetHeartbeatEveryForTest(20 * time.Millisecond)
+	r.fake.parts = []string{addFilePart("specs/requirements/prd.md", "# Reqs\n")}
+	m := manifestPart(map[string]string{"specs/requirements/prd.md": "# Reqs\n"}, nil)
+	r.fake.manifest = &m
+	r.fake.preHeaderGate = true
+	// Released via defer (sync.Once): a t.Fatalf before the explicit release
+	// would otherwise leave the handler parked and deadlock server cleanup.
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(r.fake.preHeaderRelease) }) }
+	defer release()
+
+	turnID := r.startTurn(t, convUUID, "", "/start")
+
+	// The handler is now blocked BEFORE writing headers: Dispatch has not
+	// returned, and this is exactly the window the sweep used to kill.
+	select {
+	case <-r.fake.preHeaderEntered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler never reached the pre-header gate")
+	}
+	created := r.turns.row(t, turnID).HeartbeatAt
+	time.Sleep(200 * time.Millisecond) // ≫ the 20ms cadence
+	beat := r.turns.row(t, turnID).HeartbeatAt
+	if !beat.After(created) {
+		t.Fatalf("heartbeat frozen at %v during a slow first event — the sweep would fail this healthy turn", created)
+	}
+
+	release()
+	if st := r.waitTerminal(t, turnID); st.Status != "completed" {
+		t.Fatalf("turn = %+v, want completed once the first event arrives", st)
+	}
+}
+
+// The bug this pins: attachments parsed fine, the journal carried their names,
+// the POST answered 202 and the console rendered chips — and the agents service
+// received NOTHING, because the dispatch never set TurnRequest.Attachments. The
+// turn looked entirely successful while the agent truthfully reported seeing no
+// file. Parsing tests could not catch it; only asserting the DISPATCHED body can.
+func TestStartTurnDispatchesChatAttachments(t *testing.T) {
+	r := newGenaiRig(t, map[string]string{"specs/requirements/prd.md": "# Reqs\n"})
+	convUUID := "11111111-2222-3333-4444-555555555555"
+
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	_ = w.WriteField("instruction", "Add this as a separate form")
+	_ = w.WriteField("collab", "true")
+	part, err := w.CreateFormFile("files", "2025-Motor Claim Form.pdf")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	_, _ = part.Write([]byte("%PDF-1.7 fake"))
+	if err := w.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+
+	rec := r.h.AsOrg(testOrg).PostRaw(turnsPath(convUUID), w.FormDataContentType(), buf.Bytes())
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("multipart POST: code %d, want 202 (%s)", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		TurnID string `json:"turnId"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || out.TurnID == "" {
+		t.Fatalf("202 body = %s (err %v)", rec.Body.String(), err)
+	}
+	r.waitTerminal(t, out.TurnID)
+
+	sent := r.fake.sentTurn(t, 0)
+	if len(sent.req.Attachments) != 1 {
+		t.Fatalf("dispatched attachments = %+v, want exactly one", sent.req.Attachments)
+	}
+	got := sent.req.Attachments[0]
+	// The name is sanitized to a bare base name but otherwise preserved — it is
+	// the dedupe key the agents service matches against history.
+	if got.Name != "2025-Motor Claim Form.pdf" {
+		t.Errorf("name = %q", got.Name)
+	}
+	// A PDF is read natively as a document block, so its real media type rides.
+	if got.MediaType != "application/pdf" {
+		t.Errorf("mediaType = %q, want application/pdf", got.MediaType)
+	}
+	raw, err := base64.StdEncoding.DecodeString(got.Data)
+	if err != nil {
+		t.Fatalf("data is not base64: %v", err)
+	}
+	if string(raw) != "%PDF-1.7 fake" {
+		t.Errorf("decoded bytes = %q", raw)
+	}
+	// The journal carries NAMES for the chips — a separate concern from the
+	// bytes above, and having one without the other is exactly the failure.
+	if sent.req.Journal == nil || len(sent.req.Journal.Attachments) != 1 ||
+		sent.req.Journal.Attachments[0] != "2025-Motor Claim Form.pdf" {
+		t.Errorf("journal attachments = %+v", sent.req.Journal)
+	}
+	if sent.req.Turn.Kind != agentsvc.TurnKindChat || sent.req.Turn.Text != "Add this as a separate form" {
+		t.Errorf("turn = %+v", sent.req.Turn)
+	}
+}
+
+// A JSON send must stay byte-identical to before the multipart arm existed.
+func TestStartTurnJSONCarriesNoAttachments(t *testing.T) {
+	r := newGenaiRig(t, map[string]string{"specs/requirements/prd.md": "# Reqs\n"})
+	convUUID := "11111111-2222-3333-4444-666666666666"
+	turnID := r.startTurn(t, convUUID, "", "tidy the requirements")
+	r.waitTerminal(t, turnID)
+
+	sent := r.fake.sentTurn(t, 0)
+	if sent.req.Attachments != nil {
+		t.Errorf("attachments = %+v, want nil for a JSON send", sent.req.Attachments)
+	}
+	if sent.req.Journal == nil || sent.req.Journal.Attachments != nil {
+		t.Errorf("journal attachments = %+v, want nil", sent.req.Journal)
 	}
 }

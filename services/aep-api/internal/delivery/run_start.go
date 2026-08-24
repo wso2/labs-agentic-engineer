@@ -65,12 +65,18 @@ type StartRunRequest struct {
 	// discovery call. It is the milestone's name, not the version — the run row's
 	// SpecTag answers that.
 	MilestoneTitle string
-	// Origin is RunOriginSpecBuild for the plan path and
-	// RunOriginIncidentAdoption for everything the event plane starts.
+	// Kind is what the run will DO: RunKindDev for the plan path, RunKindTask for
+	// everything the event plane starts by detection, RunKindValidation for a
+	// human asking a shipped version's criteria again. Every predicate the
+	// supervisor and the loop apply reads this, including the build mutex.
+	Kind string
+	// Origin is where the request came from: RunOriginSpecBuild for the plan
+	// path, RunOriginIncidentAdoption for the event plane, RunOriginRevalidate
+	// for the human ask. It is recorded, never branched on.
 	Origin string
 	// RunID is the admitted run row this request supervises, when the caller
 	// already admitted one (the plan path admits the row itself, so that the
-	// spec-run mutex is armed before the slow planning turn begins). Empty means
+	// build mutex is armed before the slow planning turn begins). Empty means
 	// "admit one yourself" — the adoption and sweep paths, where admission and
 	// supervision must happen together or a row exists that nobody drives.
 	RunID string
@@ -85,6 +91,19 @@ type StartRunRequest struct {
 	// row for exactly that reason: the row cannot tell "start me" from "fill me".
 	Tag             string
 	ProvisionInputs []ProvisionInput
+
+	// Rebuild says the version's milestone is ALREADY FILLED: the click resolved
+	// to the SAME tag (the spec did not change), reopened the milestone, and
+	// reopened exactly the issues a cancel had closed. The run mints its gates and
+	// skips the planning TURN.
+	//
+	// Only the build click sets it, and only on that branch. Re-planning a
+	// reopened milestone would mint NOTHING — plan dedupe is the title slug
+	// against the milestone's issues in any state — and the run would then read
+	// the empty working set as "delivered" and settle a version it never built.
+	// It rides the request beside Tag for the same reason: the row cannot tell
+	// "fill me" from "resume me", let alone "I refilled it for you".
+	Rebuild bool
 
 	// CycleCeiling and ValidationAttempts pin this run's budgets, overriding the
 	// platform defaults. Zero on both means "use the default", which is what every

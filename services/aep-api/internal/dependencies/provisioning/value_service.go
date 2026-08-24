@@ -29,10 +29,10 @@ import (
 // plain / secret by the UNION of the dependency's config schema across every
 // component in the project's committed design.json that declares it (the user
 // never marks secrecy; secret always wins on conflict), writes the secrets to
-// SM-API + authors the OC external Resource model, then completes the
-// provision gate synchronously — the external ResourceType is
-// readyWhen:${true}, so the binding is Ready as soon as OC reconciles it, and
-// upstream likewise treats values-collected as immediately deployed.
+// SM-API + authors the OC external Resource model, then completes an existing
+// provision gate when one exists. Builds do not mint an external value-collection
+// gate; the external ResourceType remains readyWhen:${true}
+// while AEP reports value readiness separately as configured/unset.
 //
 // orgID is the OC namespace + issues org; ocOrgID is the SM-API org id (the
 // ctx must carry the user JWT — the SM-API writer reads the ouId claim for the
@@ -44,9 +44,8 @@ func (s *Service) SaveValues(ctx context.Context, orgID, ocOrgID, projectID, dep
 	// declares an external dependency of this name — not just the first
 	// match — so a key marked secret on ANY component is never misclassified
 	// plain merely because a different, secret-blind component happened to be
-	// scanned first (the CRITICAL leak this fixes). This mirrors the build
-	// path's secretKeysByDep (internal/feature/build/inputs_coordinator.go),
-	// which merges the same way across every component. A design read
+	// scanned first (the CRITICAL leak this fixes). Build authoring and readiness
+	// consume the same UnionExternalConfigFor/Keys helpers. A design read
 	// failure still fails here (the underlying design-read error) — a value
 	// is never misclassified plain for lack of a schema.
 	comps, err := s.design.ReadDesignComponents(ctx, orgID, projectID)
@@ -57,7 +56,7 @@ func (s *Service) SaveValues(ctx context.Context, orgID, ocOrgID, projectID, dep
 	if err != nil {
 		return err
 	}
-	unionConfig := spec.UnionExternalConfigFor(comps, depName)
+	unionConfig, _ := spec.UnionExternalConfigFor(comps, depName)
 
 	// The external definition the RT is authored against is built straight off
 	// the design — name + the matched dependency's Description + the UNION
@@ -73,9 +72,8 @@ func (s *Service) SaveValues(ctx context.Context, orgID, ocOrgID, projectID, dep
 		byEnv[env] = splitBySchema(unionConfig, vals)
 	}
 
-	// Admit a provision run for the gate issue (when one exists). Values are
-	// collected via the drawer AFTER planning, so the gate issue normally exists;
-	// provisioning without one still authors the resource, just with no gate to close.
+	// Resolve a legacy gate if one exists. New builds do not mint external value
+	// gates, so the normal path authors the resource without a provision row.
 	issueNumber, _, err := s.findProvisionIssue(ctx, orgID, projectID, depName)
 	if err != nil {
 		return err

@@ -120,9 +120,13 @@ into the runner pod at `/app/skills` for live skill edits (see
   keeps a project's own `.mcp.json` from declaring servers into a run.
 - **`skills:` is an allowlist, and it preloads nothing.** Both halves are
   measured, not assumed. A mirrored skill absent from the array is *rejected* by
-  the Skill tool, so the run lists the WHOLE mirror
+  the Skill tool, so a CODING run lists the WHOLE mirror
   (`listMirroredSkills`) — the BFF already decided what this build may use, and
-  omitting the unpinned copies would leave them as inert files on disk. And
+  omitting the unpinned copies would leave them as inert files on disk. A
+  VALIDATION run lists `onDemandSkills` instead: it builds nothing, so the stack
+  skills in the mirror are not its to reach for, and one named skill is a
+  narrower statement than the whole checkout. Passing `[]` there — which shipped
+  — is not "defer the load", it is "no load is possible". And
   membership only buys a name and a description in the catalog: the body arrives
   when the model invokes the skill. So a pin, which asserts the guidance IS
   needed for this work, appends that body to the system prompt
@@ -156,7 +160,13 @@ into the runner pod at `/app/skills` for live skill edits (see
   is a `skillsPinned` entry someone put in a `design.json` — but no design decides
   whether a coding run follows the coding workflow. `playwright-cli` is
   deliberately NOT always-on: `aep-validation` names it, and mechanics a run may
-  not reach for should cost a load, not every turn.
+  not reach for should cost a load, not every turn. **That decision only works
+  in pairs** — `onDemandSkills` (same file) must then ALLOW it, because `skills:`
+  gates the Skill tool and a skill in neither list is unreachable rather than
+  deferred. It was in neither for three weeks: validation runs looked healthy
+  (their workflow arrives as prompt text, not through the tool) while every
+  `Skill playwright-cli` call was rejected and the agent grepped the mirror's
+  files by hand.
 - **A mirror with no workflow skill is FATAL.** `requireWorkflowBodies` throws and
   both entrypoints report a failed run. Every other skill degrades — a dangling
   pin warns and the build continues — because missing guidance costs quality and
@@ -214,3 +224,19 @@ into the runner pod at `/app/skills` for live skill edits (see
   critical path) and imports it in `setup-aep.sh`; `PREBUILD_RUNNER=0` reverts
   to a serial build. The build is skipped when the tag exists, so use
   `FORCE=1 make build-runner` after changing the Dockerfile or `src/`.
+- **The imported tag is pinned in containerd** — `build-runner.sh` calls
+  `pin_node_image` (`deployments/scripts/utils.sh`) after a successful
+  `k3d image import`. `aep-runner:dev` is local-only, so there is no registry to
+  re-pull from, and it sits idle between dispatches: kubelet's imageGCManager
+  collects least-recently-used images first (it sorts `byLastUsedAndDetected`, not
+  by size) once the node's image filesystem crosses its high threshold (85%,
+  freeing down to 80%), so an idle runner tag goes early and its size means one
+  eviction covers much of the target. That leaves the next dispatch in
+  `ImagePullBackOff` with nothing to recover from. The same helper
+  covers the other local-only imports (`thunder-app-operator:local`, the patched
+  RCA image). It doubles as import verification: an image in no node's containerd
+  means the import silently did not land. Verify a pin from the host with
+  `docker exec k3d-openchoreo-server-0 crictl inspecti aep-runner:dev` →
+  `"pinned": true` (there is no host-side `crictl`). An import replaces the
+  containerd record, so the pin has to live in the import path, not in a manual
+  step.

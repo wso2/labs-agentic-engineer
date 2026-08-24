@@ -32,16 +32,12 @@ type OrgHandle string
 type Source uint8
 
 const (
-	// SourceTaskJWT — a per-task RS256 bearer; org from the task row.
-	SourceTaskJWT Source = iota
 	// SourcePublisherCC — a publisher client-credentials token.
-	SourcePublisherCC
+	SourcePublisherCC Source = iota
 )
 
 func (s Source) String() string {
 	switch s {
-	case SourceTaskJWT:
-		return "task-jwt"
 	case SourcePublisherCC:
 		return "publisher-cc"
 	default:

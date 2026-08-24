@@ -24,7 +24,6 @@ import (
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/delivery/build"
-	"github.com/wso2/aep/aep-api/internal/dependencies"
 	"github.com/wso2/aep/aep-api/internal/dependencies/provisioning"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
@@ -75,20 +74,6 @@ func (d buildDesignDeriver) DerivePlatformResourceFactsAtHead(ctx context.Contex
 	}
 }
 
-// buildSecretStager adapts the external-resource provisioner's SM-API-only
-// StageSecrets onto the build feature's SecretStager port. The dependency name
-// is the registered external-resource name (registerExternalResources keys the
-// catalog on dep.Name), so a name-only ExternalResource is all StageSecrets
-// needs to form the per-env secret entity. orgID is unused — the SM-API write
-// keys on ocOrgID.
-type buildSecretStager struct {
-	prov *dependencies.ExternalResourceProvisioner
-}
-
-func (s buildSecretStager) StageExternalSecrets(ctx context.Context, _, ocOrgID, projectID, depName string, secretsByEnv map[string]map[string]string) (map[string]string, error) {
-	return s.prov.StageSecrets(ctx, ocOrgID, projectID, &dependencies.ExternalResource{Name: depName}, secretsByEnv)
-}
-
 // buildProvisionStatus adapts provisioning.Service.Status onto the build
 // preflight's ProvisionStatusReader port. It collapses the provisioning
 // tri-state onto the preflight bool: a dependency is "already handled" (Ready ==
@@ -112,7 +97,7 @@ func (b buildProvisionStatus) Ready(ctx context.Context, orgID, projectID, depNa
 
 // buildGateResolver adapts the provisioning feature onto the build plan path's
 // GateResolver port: author the version's dependencies and mint its
-// aep:provision gates INTO the version's milestone, so the run's dispatch
+// `provision` gates INTO the version's milestone, so the run's dispatch
 // predicate sees them.
 //
 // It collapses provisioning's per-dependency failure list into one error on

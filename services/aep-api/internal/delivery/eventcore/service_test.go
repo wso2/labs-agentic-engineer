@@ -102,6 +102,7 @@ func newServiceHarness(t *testing.T, rows ...delivery.MilestoneRun) *serviceHarn
 		Runs:           h.runs,
 		Cycles:         h.cycles,
 		Issues:         svc,
+		Writer:         delivery.NewIssueWriter(svc),
 		PRs:            svc,
 		Merger:         svc,
 		Repos:          fakeRepoLookup{},
@@ -166,9 +167,11 @@ func TestService_AutoMergeIssuesTheSquashMergeOnce(t *testing.T) {
 			}
 			// And it must NOT narrow by label. This endpoint's `labels` is AND, so
 			// any value here excludes some population the policy accepts — it used
-			// to send `labels=aep`, which hid the milestone's `aep:validation` issue
-			// and left every validation pull request unmerged. The label decision
-			// belongs to decideAutoMerge, over the labels this read returns.
+			// to send `labels=aep`, which hid the milestone's validation task (then
+			// unarmed) and left every validation pull request unmerged. Adding a
+			// second label would not have fixed it either: AND demands an issue
+			// carrying both, and matches nothing. The label decision belongs to
+			// decideAutoMerge, over the labels this read returns.
 			if strings.Contains(r.Query, "labels=") {
 				t.Fatalf("milestone read query %q must not narrow by label — that decision is the policy's", r.Query)
 			}

@@ -79,14 +79,10 @@ its contract instead.
   write on a blank page. Change what the issue asks and no more — a diff wider
   than its issue is likelier to break something that was green.
 - **A loaded skill outranks your training data.** Where a skill states a
-  convention ("use `modernc.org/sqlite`", "read `window._env_.X_URL`"), it is
+  convention ("use `modernc.org/sqlite`", "read `window._env_.<DEP>_CLIENT_ID`"), it is
   authoritative — never re-derive one from memory.
 - **CORS belongs to the gateway** for a service whose design sets `exposesAPI`:
-  the gateway attaches a filter to every `visibility: external` route, and your
-  own middleware on top of it breaks the response. The one exception is a service
-  with **no** `exposesAPI` that a sibling web app's browser calls directly — that
-  one serves CORS itself, and your stack skill has the wrapper. Web apps never
-  add CORS.
+  the gateway attaches a filter to every `visibility: external` route.
 - **Never commit build output, dependency directories or local env files.** The
   repo-root `.gitignore` covers them; your stack skill names its own.
 

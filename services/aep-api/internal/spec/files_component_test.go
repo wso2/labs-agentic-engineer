@@ -198,8 +198,8 @@ func mustJSON(t *testing.T, v any) string {
 func TestListAtHead_FilteredByPrefix(t *testing.T) {
 	r := newFilesRig(t, map[string]string{
 		"specs/requirements/prd.md": "req",
-		"specs/design/design.md":             "des",
-		"README.md":                          "root",
+		"specs/design/design.md":    "des",
+		"README.md":                 "root",
 	})
 	rec := r.get(apiBase + "?prefix=specs/design/")
 	if rec.Code != http.StatusOK {
@@ -272,8 +272,8 @@ func TestReadAtHead_ValidationReportAllowListed(t *testing.T) {
 
 func TestApply_MultiWriteAndDelete_SingleCommit(t *testing.T) {
 	r := newFilesRig(t, map[string]string{
-		"specs/requirements/prd.md": "old",
-		"specs/requirements/todo.md":         "scratch",
+		"specs/requirements/prd.md":  "old",
+		"specs/requirements/todo.md": "scratch",
 	})
 	reqSHA := r.readSHA(t, "specs/requirements/prd.md")
 	todoSHA := r.readSHA(t, "specs/requirements/todo.md")
@@ -398,8 +398,8 @@ func TestApply_StaleBaseSHA_409_NothingApplied(t *testing.T) {
 // must not be applied (all-or-nothing), and every conflict is collected.
 func TestApply_BatchConflict_AllOrNothing_CollectsAllConflicts(t *testing.T) {
 	r := newFilesRig(t, map[string]string{
-		"specs/requirements/prd.md": "keep me",
-		"specs/requirements/todo.md":         "scratch",
+		"specs/requirements/prd.md":  "keep me",
+		"specs/requirements/todo.md": "scratch",
 	})
 	todoSHA := r.readSHA(t, "specs/requirements/todo.md")
 	headBefore := r.remote.HeadSHA(t)
@@ -473,6 +473,35 @@ func TestApply_SizeCap(t *testing.T) {
 	if rec := r.apply(body); rec.Code != http.StatusBadRequest {
 		t.Errorf("size cap: code %d, want 400", rec.Code)
 	}
+}
+
+// A text file keeps today's wire shape exactly — no encoding key at all, so
+// every existing consumer (the spec editor, the FE viewer) is untouched.
+func TestRead_TextFileKeepsTodaysWireShape(t *testing.T) {
+	r := newFilesRig(t, map[string]string{"specs/requirements/prd.md": "# PRD\nplain text ✅\n"})
+
+	rec := r.get(apiBase + "/specs/requirements/prd.md")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("read code %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, `"encoding"`) {
+		t.Fatalf("text read grew an encoding key — the default must stay implicit: %s", firstBytes(body, 200))
+	}
+	var fc spec.FileContent
+	if err := json.Unmarshal(rec.Body.Bytes(), &fc); err != nil {
+		t.Fatalf("decode read: %v", err)
+	}
+	if fc.Content != "# PRD\nplain text ✅\n" {
+		t.Fatalf("content = %q, want it verbatim", fc.Content)
+	}
+}
+
+func firstBytes(s string, n int) string {
+	if len(s) > n {
+		return s[:n]
+	}
+	return s
 }
 
 func TestApply_WarningsNonBlocking(t *testing.T) {

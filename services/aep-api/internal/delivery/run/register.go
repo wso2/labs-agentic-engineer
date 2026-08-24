@@ -23,15 +23,27 @@ import (
 	"github.com/wso2/aep/aep-api/internal/delivery"
 )
 
-// Register puts the run supervisor on a Temporal worker.
+// Register puts the three run workflows on a Temporal worker.
+//
+// THREE RegisterWorkflow calls and exactly ONE RegisterActivity, and the
+// asymmetry is forced. Temporal registers an activity by its reflected METHOD
+// NAME, so two activity structs sharing any method name — and three structs
+// carved out of one loop would share a great many — panic the worker at Start,
+// which is a boot-time crash with a stack trace that names neither workflow. One
+// Activities struct with three workflows taking method expressions off it is the
+// only shape that cannot break that way, whatever gets added later.
 //
 // It is a function rather than a worker of its own because a task queue must be
 // served by ONE worker that knows every workflow on it: a second worker polling
 // the same queue with a disjoint registration would fail whichever tasks it
-// picked up by accident. The composition root therefore hands this to the
-// existing worker watcher, and it becomes the supervisor's own worker when that
-// watcher's other registrations retire.
+// picked up by accident. The three workflows therefore share one queue, and
+// WorkerWatcher owns it.
 func Register(wk worker.Worker, acts *Activities) {
-	wk.RegisterWorkflowWithOptions(MilestoneRunWorkflow, workflow.RegisterOptions{Name: delivery.MilestoneRunWorkflowName})
+	wk.RegisterWorkflowWithOptions(DevRunWorkflow,
+		workflow.RegisterOptions{Name: delivery.DevRunWorkflowName})
+	wk.RegisterWorkflowWithOptions(ValidationRunWorkflow,
+		workflow.RegisterOptions{Name: delivery.ValidationRunWorkflowName})
+	wk.RegisterWorkflowWithOptions(TaskRunWorkflow,
+		workflow.RegisterOptions{Name: delivery.TaskRunWorkflowName})
 	wk.RegisterActivity(acts)
 }

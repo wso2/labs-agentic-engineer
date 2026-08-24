@@ -34,7 +34,7 @@ const dialRetryInterval = 15 * time.Second
 // dialing Temporal in a retry loop and then running the run-supervisor worker
 // until shutdown. aep-api boots normally with Temporal down — the watcher just
 // keeps retrying, and a build click that lands meanwhile settles its run row
-// with a plan-failed reason rather than wedging the project's spec mutex.
+// with a plan-failed reason rather than wedging the project's build mutex.
 //
 // There is ONE worker on the task queue and it belongs to this package now: a
 // task queue must be served by one worker that knows every workflow on it, and

@@ -401,3 +401,39 @@ func TestExecWatcher_BuildAuthBudgetExhausted_FinishErrorSkipsObserver(t *testin
 		t.Fatalf("row must stay running after Finish error, got %q", got.Status)
 	}
 }
+
+// TestExecWatcher_NeverPollsAProvisionRowAsAWorkflowRun: a `provision` row's
+// RunName is a RELEASEBINDING name, not an OpenChoreo WorkflowRun, and the
+// vocabulary says so — taskmeta.KindProvision is documented "No PR/build …
+// Finished by the resource-readiness watcher".
+//
+// Polling it asked GetWorkflowRun for a binding name, which answers not-found by
+// construction: one WARN per dependency on every sweep pass, for as long as the
+// row was live, reporting a failure that had not happened. A `build` row beside
+// it must still be polled, which is what stops the fix from being a blanket skip.
+func TestExecWatcher_NeverPollsAProvisionRowAsAWorkflowRun(t *testing.T) {
+	provisionRow := &delivery.Execution{ID: "p1", OrgID: "acme", Repo: "acme/widgets", IssueNumber: 1,
+		Kind: string(taskmeta.KindProvision), Status: string(taskmeta.ExecRunning),
+		RunName: "widgets-orders-db-development"} // a ReleaseBinding, not a WorkflowRun
+	opsRow := &delivery.Execution{ID: "o1", OrgID: "acme", Repo: "acme/widgets", IssueNumber: 2,
+		Kind: string(taskmeta.KindOps), Status: string(taskmeta.ExecRunning), RunName: "some-op"}
+	buildRow := &delivery.Execution{ID: "b1", OrgID: "acme", Repo: "acme/widgets", IssueNumber: 3,
+		Kind: string(taskmeta.KindBuild), Status: string(taskmeta.ExecRunning), RunName: "wf-build-1"}
+	repo := newFakeExecRepo(provisionRow, opsRow, buildRow)
+
+	var polled []string
+	oc := &ocmocks.ComponentClientMock{
+		GetWorkflowRunFunc: func(_ context.Context, _, runName string) (*gen.WorkflowRun, error) {
+			polled = append(polled, runName)
+			return &gen.WorkflowRun{Name: runName, Completed: false}, nil
+		},
+	}
+
+	if err := NewExecWatcher(oc, repo, nil, 0).Sweep(context.Background()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+	if len(polled) != 1 || polled[0] != "wf-build-1" {
+		t.Fatalf("polled %v, want only the build row — a provision RunName is a "+
+			"ReleaseBinding and an ops row has no run at all", polled)
+	}
+}

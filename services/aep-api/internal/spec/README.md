@@ -42,7 +42,7 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
 | `resourceTypeCatalog` (returns `CRTType`) | needs | `dependencies` — the PE-authored CRT markers + declared outputs, projected at the root |
 | `AnthropicKeyResolver` · git-token `Resolver` | needs | `platform/secrets` — per-org keys + sealed git tokens |
 | `ArtifactService` · `ArtifactStore` · `SplitFrontmatter` | offers | `delivery` / `projects` / `dependencies` — design reads, spec-save, status snapshots |
-| `HardConfigEdges` · `HardProvidersFor` | offers | `projects` (deploy order) / `dependencies` (runtime-config compose) — which sibling addresses a component cannot start without |
+| `HardConfigEdges` | offers | `projects` (deploy order) — which sibling addresses a component cannot start without |
 | `DescriptorWriter` | offers | `projects` — stamps `specs/.agentic-engineer.toml` into a repo at project create |
 | `CredentialsRefreshService`-adjacent turn/tag reads | offers | delivery/build (SpecTagger, validation criteria) |
 
@@ -105,13 +105,28 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
 ## Invariants — don't break
 - **Single write-authority** over the git spec-content store and its `v<N>` tags — every save/tag/discard
   runs through this domain's gitfs Workspace engine; no other domain writes spec content.
+- **A `/start` turn carries what the agent cannot read for itself, and nothing more.** Two channels,
+  both best-effort and both silent when empty: the captured idea (from the dot-led descriptor, which
+  every turn snapshot strips) and the reference documents attached at create (paths only). References
+  are NOT git content and there is no base commit to read them from — they are stored off-git and
+  overlaid into the turn's snapshot at `specs/requirements/references/` (console ADR-0017), which is
+  the path listed. Text references land in the turn's text map; binary ones (PDF, images) never do —
+  they reach the agents service as native file attachments instead, which is what keeps a PDF's bytes
+  out of the text channel. Neither steer may fail a kickoff: an unreadable descriptor or an unlistable
+  store degrades to "no steer". When both are empty the turn is byte-identical to one from before
+  either channel existed — which is the path every pre-existing project takes.
+- **The Files API is text-only.** `WriteOp.encoding` and `FileContent.encoding` are gone with the
+  reference-document reversal (ADR-0017): the one binary this platform had to carry now travels the
+  references endpoint, off git, so nothing binary reaches `files/apply` or `read-file` at all. The
+  5 MiB cap measures the bytes as sent. A future binary-in-git need must argue for an encoding field
+  on its own merits rather than inheriting one.
 - **One authority for which wiring edges are HARD** (`wiring_edges.go`). A hard edge is an address the
-  platform stamps into a component's own start-up config — today a web app's sibling *services*, whose
-  URLs land in `env-config.js`. Both consumers read the same rule: `dependencies` composes the file, and
-  `projects` orders the deploy waves around it, so they can never disagree about which addresses are
-  needed. Everything else is soft (it flows consumer→provider: CORS origins, an OIDC callback) and orders
-  nothing. Deliberately NOT hard: service→service, which OpenChoreo resolves through its own connection
-  mechanism — ordering it would refuse two services that call each other. ADR-0019.
+  platform must have before a component can serve its first useful byte — today a web app's sibling
+  *services*, whose cluster Service URLs are injected as pod env for nginx (`<DEP>_URL`). `projects`
+  orders the deploy waves around that rule. Everything else is soft (it flows consumer→provider: an
+  OIDC callback) and orders nothing. Deliberately NOT hard: service→service, which OpenChoreo resolves
+  through its own connection mechanism — ordering it would refuse two services that call each other.
+  ADR-0019.
 - **`CRTType` is a projection, not a re-export.** design-save reads the dependencies resource-type catalog
   through the `resourceTypeCatalog` port in spec's OWN vocabulary (`CRTType`), mapped by a root
   adapter — the spec domain names the dependencies domain nowhere.

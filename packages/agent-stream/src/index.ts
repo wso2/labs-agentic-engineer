@@ -52,18 +52,21 @@ export type {
   PlanScope,
   PlanContextFile,
   TurnJournal,
+  TurnAttachment,
   WorkspaceRef,
   McpConfig,
   CollabConfig,
   ManifestPart,
   TurnUsage,
   Toolset,
+  Surface,
   AgentSseEventType,
 } from "./contracts/sse-events.js";
 export {
   AGENT_SSE_EVENT_TYPES,
   SSE_DONE,
   TOOLSETS,
+  SURFACES,
   TURN_KINDS,
   ASK_QUESTION_TOOL,
   ASK_QUESTIONS_TOOL,
@@ -72,7 +75,10 @@ export {
   buildAnswerInstruction,
   buildAnswersInstruction,
   isToolset,
+  isSurface,
   isTurnSpec,
+  isTurnAttachment,
+  isTurnAttachmentsOrAbsent,
   isCollabConfig,
 } from "./contracts/sse-events.js";
 export type {

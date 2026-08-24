@@ -617,6 +617,12 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/TurnInputBody'
+          multipart/form-data:
+            encoding:
+              files:
+                contentType: application/octet-stream
+            schema:
+              $ref: '#/components/schemas/TurnInputMultipart'
         required: true
       responses:
         '202':
@@ -625,6 +631,14 @@ paths:
               schema:
                 $ref: '#/components/schemas/TurnOutputBody'
           description: Accepted
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Rejected multipart send — unsupported type, a file over 5 MiB, more than
+            10 files, or more than 15 MiB of raw bytes in total. NOTHING is sent and no turn is
+            started, so the client may re-send the same selection after the user drops a file.
         '409':
           content:
             application/json:
@@ -782,6 +796,56 @@ paths:
       security:
       - userJWT: []
       summary: List a version's milestone runs and their cycles
+      tags:
+      - Runs
+  /projects/{projectName}/builds/{tag}/progress:
+    get:
+      operationId: stream-build-progress
+      parameters:
+      - description: Project name (DNS-label slug)
+        in: path
+        name: projectName
+        required: true
+        schema:
+          description: Project name (DNS-label slug)
+          type: string
+      - description: Spec version tag (`v<N>`), resolved to a milestone number through the run rows —
+          never by matching titles against GitHub.
+        in: path
+        name: tag
+        required: true
+        schema:
+          description: Spec version tag
+          type: string
+      responses:
+        '200':
+          content:
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/BuildProgressEvent'
+          description: 'ONE SSE stream stitching every cycle of every run that has worked this version,
+            in chronological run order, so a version reads as one narrative rather than as several
+            executions. The frames are stream-run-progress''s, plus a `run` object on each naming the
+            run the cycle belongs to and its KIND (`dev` | `task` | `validation`) — the section marker
+            the console renders. `line.cycleIndex` stays the cycle''s position WITHIN ITS RUN, so
+            `(run.id, cycleIndex)` is the section key and no cycle is renumbered by being read here.
+            One `data:` JSON frame per event (a BuildProgressEvent discriminated by `type`), each
+            stamped `id: <seq>`; `: keep-alive` comments pace idle waits. The stream holds open while
+            ANY run on the version''s milestone is live and settles with a `done` frame carrying
+            `reason: no_live_run`, `data: [DONE]` and a server close when none is — which is NOT a
+            statement that the version is finished, because a later validation or task run may be
+            admitted on the same milestone; the console reopens the stream when its run-list poll shows
+            one. Reconnects are idempotent — the client upserts cycles by id and dedups lines by
+            cycleId+seq.'
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+      security:
+      - userJWT: []
+      summary: Stream a version's per-cycle agent progress across every run, as SSE
       tags:
       - Runs
   /projects/{projectName}/builds/{tag}/revalidate:
@@ -1413,6 +1477,39 @@ paths:
       summary: List a consumer project's access requests
       tags:
       - Dependencies
+  /projects/{projectName}/dependencies/readiness:
+    get:
+      operationId: get-project-dependency-readiness
+      parameters:
+      - description: Project name (DNS-label slug)
+        in: path
+        name: projectName
+        required: true
+        schema:
+          type: string
+      - description: 'Environment (default: development)'
+        in: query
+        name: environment
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectDependencyReadiness'
+          description: Aggregate external dependency value state
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+      security:
+      - userJWT: []
+      summary: Get project external-dependency configuration readiness
+      tags:
+      - Dependencies
   /projects/{projectName}/dependencies/external-resources/{name}/values:
     post:
       operationId: collect-external-resource-values
@@ -1759,6 +1856,74 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: Error
+  /projects/{projectName}/references:
+    post:
+      description: Store the reference documents attached on the create view. References are
+        TRANSIENT TURN INPUTS, not spec artifacts (console ADR-0017) — they are never committed
+        and never reach GitHub. Bytes live in a per-project directory on the shared workspace
+        volume for the project's lifetime and are overlaid into each turn's snapshot at
+        `specs/requirements/references/`, which is also scaffolded into the repo's `.gitignore`.
+        Deliberately outside the `specs/`-scoped Files API — `files/apply` means "commit to the
+        repo", and this is the opposite. multipart carries raw bytes, so the per-file limit is
+        checked on real bytes with no base64 inflation. Replaces the whole upload for the
+        project — a second call overwrites the stored set.
+      operationId: put-project-references
+      parameters:
+      - description: Project name (DNS-label slug)
+        in: path
+        name: projectName
+        required: true
+        schema:
+          description: Project name (DNS-label slug)
+          type: string
+      requestBody:
+        content:
+          multipart/form-data:
+            encoding:
+              files:
+                contentType: application/octet-stream
+            schema:
+              properties:
+                files:
+                  description: >
+                    Reference documents. Two groups, both readable by the models:
+                    binary read natively as file parts (`.pdf`, `.png`, `.jpg`,
+                    `.jpeg`, `.gif`, `.webp`), and text read as workspace files
+                    (`.md`, `.txt`, `.csv`, `.tsv`, `.json`, `.yaml`, `.yml`,
+                    `.xml`, `.html`, `.rst`). At most 10 documents, each at most
+                    5 MiB measured on the raw bytes. Office formats are not
+                    accepted — the models do not read them natively.
+                  items:
+                    format: binary
+                    type: string
+                  maxItems: 10
+                  type: array
+              required:
+              - files
+              type: object
+        required: true
+      responses:
+        '204':
+          description: References stored
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Rejected — unsupported type, a document over 5 MiB, more than 10
+            documents, an unusable name, or two names that reduce to one stored name.
+            Nothing is stored; the previous set is left intact.
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+      security:
+      - userJWT: []
+      summary: Store a project's reference documents
+      tags:
+      - Projects
   /projects/{projectName}/runs/{runId}/cancel:
     post:
       description: Abandon an increment. Cancel is the only expiry the run's unbounded wait state has.
@@ -1986,10 +2151,12 @@ paths:
       - userJWT: []
       summary: List a project's issues (live from GitHub), optionally scoped to one spec/build version
         tag by milestone membership. Every row carries the label-derived `executorClass` the console
-        sections on — agent work, a dispatch gate, or a bare human ledger issue. The aep:validation
-        issue is excluded (it is a phase of the run, surfaced with the run's verdict on the deployment
-        surface); get-task still serves it by number. Ledger issues have no label to query by, so they
-        are only discoverable through milestone membership and appear only on a `tag`-scoped read.
+        sections on — agent work, a dispatch gate, or a bare human ledger issue — plus the finer
+        `kind` (development | bug | conflict | validation | provision) for the row's own chip. The
+        validation task is excluded (it is a phase of the run, surfaced with the run's verdict on the
+        deployment surface); get-task still serves it by number. Ledger issues carry no label to query
+        by, so they are only discoverable through milestone membership and appear only on a
+        `tag`-scoped read.
       tags:
       - Tasks
   /projects/{projectName}/tasks/{issueNumber}:
@@ -2910,6 +3077,74 @@ components:
       - version
       - status
       type: object
+    BuildProgressEvent:
+      additionalProperties: false
+      description: 'One SSE frame on the VERSION progress stream, which spans every run that has worked
+        the version. `type` discriminates the payload: `cycle` carries a RunCycleView (client upserts by
+        id), `line` one RunProgressLine, and `done` says why the stream ended (the server then closes
+        it). `cycle` and `line` frames also carry `run` — a version''s story spans several executions,
+        so a cycle is only identified once you know which run opened it.'
+      properties:
+        cycle:
+          $ref: '#/components/schemas/RunCycleView'
+        line:
+          $ref: '#/components/schemas/RunProgressLine'
+        reason:
+          description: 'Why the stream ended — present only on the `done` frame, and deliberately NOT
+            a run state. `no_live_run` means no run on the version''s milestone is currently live, so
+            there is nothing further to report RIGHT NOW. It is not a verdict on the version: a later
+            validation or task run may be admitted on the same milestone, and the console reopens the
+            stream when its run-list poll shows one.'
+          enum:
+          - no_live_run
+          type: string
+          x-enum-varnames:
+          - BuildProgressEventReasonNoLiveRun
+        run:
+          $ref: '#/components/schemas/BuildProgressRun'
+        type:
+          enum:
+          - cycle
+          - line
+          - done
+          type: string
+          x-enum-varnames:
+          - BuildProgressEventTypeCycle
+          - BuildProgressEventTypeLine
+          - BuildProgressEventTypeDone
+      required:
+      - type
+      type: object
+    BuildProgressRun:
+      additionalProperties: false
+      description: Which run a frame's cycle belongs to. The version's narrative spans several runs, so
+        the run is the SECTION and the cycle is a step inside it — `RunProgressLine.cycleIndex` stays
+        run-relative and is only unique when paired with `run.id`.
+      properties:
+        id:
+          description: Milestone run id — the same id list-build-runs reports and cancel-run takes.
+          type: string
+        index:
+          description: 1-based chronological position of this run among the version's runs, so the
+            console can label a section without holding the whole run list — the same reason
+            `cycleIndex` exists, one level up. Two runs of one kind are ordinary (a version can be
+            repaired more than once), so the kind alone does not name a section.
+          format: int64
+          type: integer
+        kind:
+          description: What the run DOES, and the section marker the console renders — `dev` delivered
+            the version, `task` worked a defect inside it, `validation` re-judged it. Same vocabulary
+            as MilestoneRunView.kind.
+          enum:
+          - dev
+          - task
+          - validation
+          type: string
+      required:
+      - id
+      - kind
+      - index
+      type: object
     BuildRunList:
       additionalProperties: false
       description: A version's milestone runs. `milestoneNumber` is the platform key the tag resolved
@@ -3491,10 +3726,47 @@ components:
           type: boolean
         status:
           type: string
+        valueState:
+          $ref: '#/components/schemas/ExternalDependencyValueState'
       required:
       - status
       - ready
       - outputs
+      type: object
+    ExternalDependencyReadiness:
+      additionalProperties: false
+      properties:
+        missingKeys:
+          items:
+            type: string
+          type: array
+        name:
+          type: string
+        state:
+          $ref: '#/components/schemas/ExternalDependencyValueState'
+      required:
+      - name
+      - state
+      - missingKeys
+      type: object
+    ExternalDependencyValueState:
+      enum:
+      - not-provisioned
+      - unset
+      - configured
+      type: string
+    ProjectDependencyReadiness:
+      additionalProperties: false
+      properties:
+        configured:
+          type: boolean
+        dependencies:
+          items:
+            $ref: '#/components/schemas/ExternalDependencyReadiness'
+          type: array
+      required:
+      - configured
+      - dependencies
       type: object
     DeployStage:
       additionalProperties: false
@@ -4014,6 +4286,18 @@ components:
           x-go-type: '*time.Time'
         id:
           type: string
+        kind:
+          description: What this run DOES, and the value every platform predicate is written on.
+            `dev` delivers a version — it plans its own milestone, and is the only kind that takes
+            the one-active-build-per-project mutex. `task` works a defect inside a version already
+            delivered; task runs execute concurrently on their own milestones. `validation` asks a
+            shipped version's acceptance criteria again — it has no working set, builds nothing, and
+            is outside the mutex so it never holds up the next build.
+          enum:
+          - dev
+          - task
+          - validation
+          type: string
         milestoneNumber:
           format: int64
           type: integer
@@ -4022,10 +4306,8 @@ components:
             key, and the version this run builds is the list's tag.
           type: string
         origin:
-          description: Why this run was started. `revalidate` asks a version's criteria again against
-            the already-deployed system; it enters the loop at validation rather than at the working
-            set, and is deliberately outside the one-active-spec-run mutex so it never holds up the
-            next build.
+          description: Where this run was started from. A label on the trigger — the behaviour is
+            the run's kind.
           enum:
           - spec-build
           - incident-adoption
@@ -4060,6 +4342,7 @@ components:
           $ref: '#/components/schemas/RunValidation'
       required:
       - id
+      - kind
       - milestoneNumber
       - milestoneTitle
       - origin
@@ -5195,18 +5478,31 @@ components:
           type: object
         executorClass:
           description: >-
-            Label-derived kind of the issue, and the only classification the
-            platform makes of one: `coding` for agent work (the `aep` label),
-            `provision` for a dispatch gate (`aep:provision`), `validation` for
-            the run's validation issue, `ledger` for a bare human issue that
-            joined the milestone carrying none of them. Nothing here is parsed
-            out of the body — issue bodies are prose the platform writes for
-            the agent and never reads back.
+            WHO works this issue, derived from its labels: `coding` for anything
+            a coding agent is dispatched at (planned work, a bug, a merge
+            conflict — all armed with the `aep` label), `provision` for a
+            dispatch gate the platform resolves, `validation` for the version's
+            validation task, `ledger` for a bare human issue that joined the
+            milestone unarmed. Deliberately coarser than `kind`: the three
+            coding kinds are dispatched identically, so they are one class here
+            and are told apart by `kind`. Nothing here is parsed out of the body
+            — issue bodies are prose the platform writes for the agent and never
+            reads back.
           enum:
           - coding
           - provision
           - validation
           - ledger
+          type: string
+        kind:
+          description: >-
+            The issue's raw label kind: `development` for planned work minted
+            from the spec, `bug` for a defect, `conflict` for a pull request
+            that will not merge, `validation` for the version's validation
+            task, `provision` for a dispatch gate. Absent when the issue carries
+            no kind label (a ledger issue, or one a human armed without
+            classifying); a consumer that does not recognise a kind should render
+            the row untagged rather than guess.
           type: string
         hold:
           type: boolean
@@ -5300,18 +5596,31 @@ components:
           type: object
         executorClass:
           description: >-
-            Label-derived kind of the issue, and the only classification the
-            platform makes of one: `coding` for agent work (the `aep` label),
-            `provision` for a dispatch gate (`aep:provision`), `validation` for
-            the run's validation issue, `ledger` for a bare human issue that
-            joined the milestone carrying none of them. Nothing here is parsed
-            out of the body — issue bodies are prose the platform writes for
-            the agent and never reads back.
+            WHO works this issue, derived from its labels: `coding` for anything
+            a coding agent is dispatched at (planned work, a bug, a merge
+            conflict — all armed with the `aep` label), `provision` for a
+            dispatch gate the platform resolves, `validation` for the version's
+            validation task, `ledger` for a bare human issue that joined the
+            milestone unarmed. Deliberately coarser than `kind`: the three
+            coding kinds are dispatched identically, so they are one class here
+            and are told apart by `kind`. Nothing here is parsed out of the body
+            — issue bodies are prose the platform writes for the agent and never
+            reads back.
           enum:
           - coding
           - provision
           - validation
           - ledger
+          type: string
+        kind:
+          description: >-
+            The issue's raw label kind: `development` for planned work minted
+            from the spec, `bug` for a defect, `conflict` for a pull request
+            that will not merge, `validation` for the version's validation
+            task, `provision` for a dispatch gate. Absent when the issue carries
+            no kind label (a ledger issue, or one a human armed without
+            classifying); a consumer that does not recognise a kind should render
+            the row untagged rather than guess.
           type: string
         hold:
           type: boolean
@@ -5468,6 +5777,59 @@ components:
           type: string
         target:
           description: Optional target (e.g. a doc type)
+          type: string
+      required:
+      - instruction
+      type: object
+    TurnInputMultipart:
+      additionalProperties: false
+      description: >
+        The same turn input as `TurnInputBody`, sent as multipart so it can carry chat
+        attachments (#428). The JSON form stays the canonical one — a message with no
+        attachments MUST use it, and every existing caller is unaffected.
+
+
+        Attachments are CONVERSATION-SCOPED MODEL CONTENT (console ADR-0019): the platform
+        never writes them to disk and never commits them. They ride this request into the
+        turn and are durable only as parts of the conversation's history, which is also
+        what makes re-sending one free — the agents service dedupes by file name.
+
+
+        Deliberately NOT the reference-document channel: `POST /projects/{name}/references`
+        REPLACES a project's whole stored set, and the create view is the only door to it.
+        A file attached here never becomes a project reference, even when the instruction
+        is `/start`.
+      properties:
+        collab:
+          description: As `TurnInputBody.collab`.
+          type: boolean
+        files:
+          description: >
+            Chat attachments, two groups and the split matters downstream. Read NATIVELY as
+            file parts: `.pdf`, and the four image media types the Messages API accepts —
+            `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`. Read AS TEXT (sent as `text/plain`,
+            the only text document type the Anthropic provider maps): `.md`, `.txt`, `.csv`,
+            `.tsv`, `.json`, `.yaml`, `.yml`, `.xml`, `.html`, `.rst`. Office formats are
+            not accepted — the models do not read them natively.
+
+
+            Three caps, and all of them restate ONE number: the agents service already
+            enforces a 20 MiB base64-ENCODED per-turn attachment budget (#384), past which
+            it warns and skips. So at most 10 files, each at most 5 MiB, and at most 15 MiB
+            of raw bytes in TOTAL — 15 MiB raw is 20 MiB encoded. The total is the load-
+            bearing one: a per-file cap alone cannot hold the line, since ten 5 MiB files
+            each pass it and together overrun the budget by 3x.
+          items:
+            format: binary
+            type: string
+          maxItems: 10
+          type: array
+        instruction:
+          description: As `TurnInputBody.instruction`. Required — an attachment alone cannot
+            start a turn, and the shared TurnSpec validator rejects an empty chat text.
+          type: string
+        target:
+          description: As `TurnInputBody.target`.
           type: string
       required:
       - instruction

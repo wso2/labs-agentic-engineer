@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strconv"
 	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
@@ -40,31 +39,41 @@ const validationTitle = "Validate the deployed system against its acceptance cri
 // ports; concrete providers are wired at the composition root.
 type Service struct {
 	issues   IssueClient
+	writer   *delivery.IssueWriter
 	criteria CriteriaReader
 }
 
 // Deps is the validation service's collaborator set.
 type Deps struct {
-	Issues   IssueClient
+	Issues IssueClient
+	// Writer is the domain's issue-write surface: the validation issue, its
+	// reopen across attempts, and a failed attempt's repair issues all go
+	// through it rather than being written here.
+	Writer   *delivery.IssueWriter
 	Criteria CriteriaReader
 }
 
 // NewService wires the validation service from its collaborator set.
 func NewService(d Deps) *Service {
-	return &Service{issues: d.Issues, criteria: d.Criteria}
+	return &Service{issues: d.Issues, writer: d.Writer, criteria: d.Criteria}
 }
 
-// EnsureValidationIssue mints ONE aep:validation issue per version — filed into
+// EnsureValidationIssue mints ONE validation task per version — filed into
 // that version's milestone — and returns its number. 0 means there is nothing to
 // validate, which settles the run `skipped`; a missing or malformed criteria file
 // is that clean no-op.
 //
-// It is idempotent ACROSS ATTEMPTS, which is stronger than it sounds. A run may
-// validate more than once (RunMaxValidationAttempts), and every attempt's pull
-// request carries `Closes #<N>`, so by the time a repeat attempt asks, the
-// version's validation issue is CLOSED. This therefore looks for the issue in any
-// state and reopens a closed one rather than filing a second — the previous filter
-// was `state: open`, which was only ever right for a run that validated once.
+// It is idempotent ACROSS ATTEMPTS, which is stronger than it sounds. A version
+// may be judged more than once (RunMaxValidationAttempts), and the PLATFORM closes
+// the task at the end of every attempt (CloseValidationIssue), so by the time a
+// repeat attempt asks, the version's validation issue is CLOSED. This therefore
+// looks for the issue in any state and reopens a closed one rather than filing a
+// second — the previous filter was `state: open`, which was only ever right for a
+// version judged once.
+//
+// An issue found already OPEN is ADOPTED as this attempt's, not re-filed: the task
+// is the version's persistent handle, and a second one would split the thread the
+// attempts comment on and double what the reconcile sweep sees as unworked.
 //
 // The body is NOT rewritten on reopen. It embeds the oracle as rendered at first
 // mint, which is the question this version is being asked; each attempt's own
@@ -82,9 +91,14 @@ func NewService(d Deps) *Service {
 // validation issue" for an issue this call had just filed, and the run reported
 // `skipped` over an oracle it was holding in its hand.
 //
-// The issue is PROSE with ONE label. It deliberately does NOT carry the `aep`
-// working-set label: the validation cycle is dispatched at it by number, and
-// working-set membership would hold the run's settle predicate open forever.
+// The issue is PROSE with two labels: ARMED (`aep`) and of kind `validation`.
+// Armed because it is real agent work — an agent is dispatched at it and opens a
+// pull request the platform must auto-merge — and of a kind no working set
+// includes, which is what keeps it from holding a run's settle predicate open
+// forever. Those two facts used to be one label decision pulling in opposite
+// directions: the issue carried NO arming label so it would stay out of the
+// working set, and the auto-merge policy then had to name it a second time by
+// hand or its pull request never landed. Both now read the kind.
 func (s *Service) EnsureValidationIssue(ctx context.Context, orgID, projectID string, milestoneNumber int) (int, error) {
 	if milestoneNumber <= 0 {
 		// A validation issue with no version is the state this refuses to create:
@@ -118,7 +132,7 @@ func (s *Service) EnsureValidationIssue(ctx context.Context, orgID, projectID st
 	if existing > 0 {
 		if !open {
 			// A repeat attempt: the previous attempt's pull request closed it.
-			if rerr := s.issues.ReopenIssue(ctx, orgID, projectID, existing); rerr != nil {
+			if rerr := s.writer.Reopen(ctx, orgID, projectID, existing); rerr != nil {
 				return 0, fmt.Errorf("validation: reopen issue #%d: %w", existing, rerr)
 			}
 			slog.InfoContext(ctx, "validation: reopened validation issue for a repeat attempt",
@@ -127,36 +141,84 @@ func (s *Service) EnsureValidationIssue(ctx context.Context, orgID, projectID st
 		return existing, nil
 	}
 
-	req := sourcecontrol.CreateIssueRequest{
+	number, _, cerr := s.writer.Mint(ctx, orgID, projectID, delivery.IssueSpec{
 		Title:  validationTitle,
 		Body:   rationale(doc.summarize()) + "\n\n" + renderScope(doc),
-		Labels: []string{delivery.LabelValidationWork},
+		Labels: []string{delivery.LabelAgentWork, delivery.KindValidation},
 		// The version pin RIDES the create — one call, so the issue is never
 		// versionless, not even for the beat a follow-up patch would take.
-		Milestone: &milestoneNumber,
+		Milestone: milestoneNumber,
 		// Version-scoped so a later version's mint is never deduped against this
 		// one. Mirrors the provision gate's gate:<project>:<tag>:<dep>.
-		DedupeKey: "validation:" + projectID + ":" + strconv.Itoa(milestoneNumber),
-	}
-	res, cerr := s.issues.CreateIssue(ctx, orgID, projectID, req)
+		DedupeKey: delivery.DedupeKeyValidationIssue(projectID, milestoneNumber),
+	})
 	if cerr != nil {
 		return 0, fmt.Errorf("validation: create issue: %w", cerr)
 	}
-	if res == nil || res.Number == 0 {
+	if number == 0 {
 		// An issue exists somewhere and we cannot name it. Returning 0 here would
 		// read as "no oracle" and settle the run `skipped`; an error retries the
 		// activity, and the retry finds the open issue above.
 		return 0, fmt.Errorf("validation: created the validation issue but got no number back")
 	}
-	slog.InfoContext(ctx, "validation: minted validation issue",
-		"project", projectID, "milestone", milestoneNumber, "issue", res.Number)
-	return res.Number, nil
+	return number, nil
 }
 
-// findValidationIssue returns the number of the milestone's aep:validation issue
+// CloseValidationIssue closes the version's validation task, leaving a comment
+// that names the verdict the attempt reached — or its absence.
+//
+// The platform owns this close, and that ownership is the whole reason the method
+// exists. The validation pull request references its issue with `Validates #N`,
+// which is deliberately not one of GitHub's closing keywords, so merging links the
+// two without ending the task. Letting the merge close it instead put the
+// lifecycle in two hands: the platform reopens the task for the next attempt, and
+// a reopen racing GitHub's own close is indistinguishable from a human reopening
+// it.
+//
+// Single ownership is also what lets a run close the task on an ending where NO
+// pull request ever merged — an agent that died through its whole re-dispatch
+// budget. That matters more than tidiness: the reconcile sweep starts a validation
+// run BECAUSE this issue is open, so a task left open after a dead dispatch would
+// be picked up again within a tick, forever, with nothing outside the workflow
+// able to repair it.
+//
+// The comment is prose and nothing parses it. It exists so a human opening the
+// closed task can see which attempt closed it and why, without reading the run
+// timeline.
+func (s *Service) CloseValidationIssue(ctx context.Context, orgID, projectID string, issue int, verdict string) error {
+	if issue <= 0 {
+		return nil
+	}
+	if err := s.writer.Close(ctx, orgID, projectID, issue, closeComment(verdict)); err != nil {
+		return fmt.Errorf("validation: close issue #%d: %w", issue, err)
+	}
+	slog.InfoContext(ctx, "validation: closed the version's validation task",
+		"project", projectID, "issue", issue, "verdict", verdict)
+	return nil
+}
+
+// closeComment is what the platform says when it closes the task. An empty
+// verdict is its own sentence rather than a blank: the attempt ended without one,
+// which is a different thing from a verdict of `inconclusive` and the reader has
+// to be able to tell them apart.
+func closeComment(verdict string) string {
+	if verdict == "" {
+		return "Closing this validation task: the attempt ended without reaching a verdict. " +
+			"The version is deployed and unjudged — trigger validation again to ask its criteria."
+	}
+	return fmt.Sprintf("Closing this validation task: the attempt concluded `%s`. "+
+		"Reopened automatically if the version is judged again.", verdict)
+}
+
+// findValidationIssue returns the number of the milestone's validation task
 // and whether it is currently open, or (0, false) when that version has none. The
-// milestone and the LABEL are the whole query — nothing parses a body, and nothing
-// looks outside the version.
+// milestone and the LABELS are the whole query — nothing parses a body, and
+// nothing looks outside the version.
+//
+// Both labels are listed because this filter is the REST one, whose `?labels=a,b`
+// is AND: it demands an armed issue of kind `validation`, which is exactly the
+// validation task and nothing else. (The GraphQL argument spelled the same way
+// is a UNION and would have matched every armed issue in the version.)
 //
 // State is `all` rather than `open` on purpose: a closed validation issue is the
 // NORMAL state between attempts, because every attempt's pull request closes it.
@@ -166,7 +228,7 @@ func (s *Service) findValidationIssue(ctx context.Context, orgID, projectID stri
 	issues, err := s.issues.ListMilestoneIssues(ctx, orgID, projectID, sourcecontrol.MilestoneIssuesFilter{
 		Number: milestoneNumber,
 		State:  "all",
-		Labels: []string{delivery.LabelValidationWork},
+		Labels: []string{delivery.LabelAgentWork, delivery.KindValidation},
 	})
 	if err != nil {
 		return 0, false, fmt.Errorf("validation: list milestone issues: %w", err)
@@ -243,7 +305,7 @@ func renderScope(doc *criteriaDoc) string {
 		"- Post a summary comment on this issue when done.",
 		"",
 		"---",
-		"Open one PR whose body includes `Closes #<this issue's number>` so the platform links it back. One PR; tests and report only.",
+		"Open one PR whose body includes `Validates #<this issue's number>` so the platform links it back. `Validates` is deliberately NOT one of GitHub's closing keywords: the platform owns this task's close, so that merging the PR links it without ending the task. One PR; tests and report only.",
 	)
 
 	return strings.TrimRight(b.String(), "\n")

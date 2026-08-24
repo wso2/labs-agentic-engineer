@@ -25,33 +25,44 @@ import { PrototypePage } from "../features/spec/components/PrototypePage";
 // header (#348).
 //
 // `?screen=<Name>` deep-links to a specific screen of the component's
-// prototype (e.g. a link shared mid-review). `PrototypeView` drives screen
-// navigation internally and calls back on every change via `onScreenChange`;
-// this route syncs that back into the URL with a REPLACE navigation (not
-// push), so clicking through screens doesn't pile up history entries — the
-// browser back button leaves the prototype rather than stepping screen by
-// screen.
+// prototype (e.g. a link shared mid-review), and `?flow=<Name>` deep-links
+// the persona/flow alongside it. `PrototypeView` drives screen and flow
+// navigation internally and calls back on every change via `onScreenChange`
+// / `onFlowChange`; this route syncs both back into the URL with a REPLACE
+// navigation (not push), so clicking through screens doesn't pile up history
+// entries — the browser back button leaves the prototype rather than
+// stepping screen by screen. Both params are merged onto the previous search
+// on every sync so changing one never drops the other.
 export const Route = createFileRoute(
   "/projects/$projectName_/prototype/$component",
 )({
-  validateSearch: (search: Record<string, unknown>): { screen?: string } => ({
+  validateSearch: (search: Record<string, unknown>): { screen?: string; flow?: string } => ({
     ...(typeof search.screen === "string" && search.screen
       ? { screen: search.screen }
       : {}),
+    ...(typeof search.flow === "string" && search.flow ? { flow: search.flow } : {}),
   }),
   component: PrototypeRoute,
 });
 
 function PrototypeRoute() {
   const { projectName, component } = Route.useParams();
-  const { screen } = Route.useSearch();
+  const { screen, flow } = Route.useSearch();
   const navigate = Route.useNavigate();
   return (
     <PrototypePage
       projectName={projectName}
       component={component}
-      onScreenChange={(s) => void navigate({ search: { screen: s }, replace: true })}
+      // Both params are preserved on every sync: a shared link restores the
+      // persona AND the screen, and changing one must not drop the other.
+      onScreenChange={(s) =>
+        void navigate({ search: (prev) => ({ ...prev, screen: s }), replace: true })
+      }
+      onFlowChange={(f) =>
+        void navigate({ search: (prev) => ({ ...prev, flow: f }), replace: true })
+      }
       {...(screen ? { screen } : {})}
+      {...(flow ? { flow } : {})}
     />
   );
 }

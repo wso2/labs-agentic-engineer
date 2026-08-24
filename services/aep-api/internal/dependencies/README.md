@@ -3,10 +3,10 @@
 > **L2 · a domain.** Part of the [aep-api architecture](../../README.md).
 
 Discover the platform-resource catalog and resource-type markers, provision the platform + external
-resources a Spec declares, broker cross-project org-service access, coordinate the `aep:provision` gate,
+resources a Spec declares, broker cross-project org-service access, coordinate the `provision` gate,
 and wire the resulting runtime config onto deployed apps. **The two halves of OpenChoreo's
 `Workload.spec.dependencies[]` — resources (external / platform-resource) and endpoints (component /
-org-service) — live here; provisioning mints the milestone's `aep:provision` gates and keeps their
+org-service) — live here; provisioning mints the milestone's `provision` gates and keeps their
 execution rows.**
 
 ```mermaid
@@ -16,7 +16,7 @@ flowchart LR
   subgraph dependencies
     HTTP["httpapi — provisioning · mcpdiscovery(resource-types)"]
     ROOT["root (kernel) — provisioner cores (external+platform) · resource-type catalog · markers · endpoint catalog"]
-    PROV["provisioning — aep:provision gate lifecycle"]
+    PROV["provisioning — provision gate lifecycle"]
     RC["runtimeconfig — SPA env-config convergence"]
     DISC["mcpdiscovery — MCP discovery server + resource-type/endpoint reads"]
     HTTP --> PROV
@@ -28,7 +28,7 @@ flowchart LR
   ROOT -->|Resource/Binding CRs · resource-type discovery| OC[[OpenChoreo]]
   ROOT -->|secret values| SM[[platform/secrets · SM-API]]
   PROV -->|admit/finish provision executions| DEL[[delivery]]
-  PROV -->|aep:provision gate issues| SC[[sourcecontrol]]
+  PROV -->|provision gate issues| SC[[sourcecontrol]]
   RC -->|design at HEAD| SPEC[[spec]]
 ```
 
@@ -43,7 +43,7 @@ three services are sub-package slices that import only that root.
 
 | Slice | Ops / role | Reaches |
 |---|---|---|
-| `provisioning` | 7 HTTP ops: list/delete/collect-values external resources, provision-platform, dependency-status, request/list org-service access + the aep:provision gate lifecycle, watcher, teardown | root cores; delivery (provision execution rows); sourcecontrol (gate issues) |
+| `provisioning` | 8 HTTP ops: list/delete/collect-values external resources, project readiness, provision-platform, dependency-status, request/list org-service access + the `provision` gate lifecycle, watcher, teardown | root cores; delivery (provision execution rows); sourcecontrol (gate issues) |
 | `mcpdiscovery` | the MCP discovery server + `ListPlatformResourceTypes` HTTP read | root `ResourceTypeLister` / endpoint catalog |
 | `runtimeconfig` | the SPA `env-config.js` convergence service + its watcher (no HTTP op) | root naming/markers; spec (design at HEAD); repositories (execution enumerate) |
 
@@ -58,14 +58,14 @@ slices.
 | SecretWriter | needs | `platform/secrets` — SM-API vault writes for external-resource secret values |
 | OC `Resource`/`ResourceReleaseBinding` CRUD · `ClusterResourceType` discovery | needs | `openchoreo` client — OC is the store |
 | ExecutionStore (admit/finish) | needs | `delivery` — a gate's provisioning run is the last remaining execution row, and this is its write surface |
-| IssueClient (aep:provision gate · endpoint-wiring comment) | needs | `sourcecontrol` — gate issues closed via a no-secrets reference, and the ADR-0004 endpoint comment + its `aep:wired` completeness marker on the working set |
+| IssueClient (provision gate · endpoint-wiring comment) | needs | `sourcecontrol` — gate issues closed via a no-secrets reference, and the ADR-0004 endpoint comment + its `aep:wired` completeness marker on the working set |
 | ProviderResolver (endpoint targets) | needs | root `Catalog` — any-visibility provider lookup for an access request, namespace/project-visible resolves for the wiring block |
 | DesignReader / DesignBundleReader | needs | `spec` — design at HEAD (what to provision) + provider design bundles |
 | the 8 public ops | offers | the edge (`dependenciesHandlers`) |
 
 ## Owns
 - `ExternalResource` (an in-memory definition, NOT a DB row — see Persistence), `AccessRequest`, the
-  authored OC external Resource model + provisioned binding values, the `aep:provision` gate issues
+  authored OC external Resource model + provisioned binding values, the `provision` gate issues
   (via `sourcecontrol`), the **resolved `endpoints:` half** of the consumer-side `dependencies:` block the
   coding agent copies into `workload.yaml` (ADR-0004 — resolved here, never patched onto a Workload CR; the
   `resources:` half is derived in `spec` at design save, ADR-0013), and the resource-type catalog projection.
@@ -86,11 +86,16 @@ slices.
 - **Secret values never leave the SecretWriter port.** External-resource secret values route through SM-API;
   issue bodies, comments, and API responses carry only names / paths / refs — never secret material. The
   domain imports no secret-backend SDK (the fence holds via `platform/secrets`).
-- **A gate issue is PROSE plus two labels.** `aep:provision` marks it as a dispatch gate; `aep:dep/<slug>`
+- **A gate issue is PROSE plus two labels.** `provision` is its KIND — and it deliberately carries no `aep`
+  arming label, so nothing works it and it is never subtracted from a working set; `aep:dep/<slug>`
   keys it to the dependency it holds. That pair is the whole index: both the mint-time dedupe and the
   drawer's resolve are LABEL queries, never a body read (bodies are prose a human may rewrite) and never a
   title match. A gate deliberately does not carry `aep` — it is a hold on the next dispatch, never agent
   work — and it holds only DISPATCH: an open gate never blocks a run from settling.
+- **External values are authored unset and never mint a provision gate.** Build derives every external
+  dependency from the design's union schema, seeds plain defaults, authors other plain values plus
+  `secretStorePath` empty, and preserves non-empty values already saved on a rebuild. Project readiness
+  iterates that same design schema; stale binding keys cannot make a dependency configured.
 - **A gate's provisioning run keeps an execution row.** It is the one execution kind the milestone model
   still writes: admitted when the drawer submits, finished by the readiness watcher, and its terminal state
   is what closes the gate issue.

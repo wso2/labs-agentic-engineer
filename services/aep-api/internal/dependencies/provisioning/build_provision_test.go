@@ -30,9 +30,9 @@ import (
 )
 
 // TestProvisionForBuild_ByKind is the Task-3 contract: the workflow's provision
-// step mints the gate issues once, then authors each dependency BY KIND —
-// external via AuthorWithSecretRef (the no-SM-write author half, gate closed
-// synchronously) and platform-resource via the async Provision (gate left open
+// step mints platform-resource gate issues once, then authors each dependency
+// BY KIND — external via AuthorPreparedValues (with no collection gate) and
+// platform-resource via the async Provision (gate left open
 // for the readiness watcher). It must NOT route external through Provision (that
 // would re-write secrets).
 func TestProvisionForBuild_ByKind(t *testing.T) {
@@ -55,21 +55,21 @@ func TestProvisionForBuild_ByKind(t *testing.T) {
 		t.Fatalf("want no failures, got %+v", fails)
 	}
 
-	// EnsureProvisionIssues minted a gate per distinct external + platform dep.
-	if len(issues.created) != 2 {
-		t.Fatalf("want 2 minted gate issues (stripe + orders-db), got %d", len(issues.created))
+	// Only the platform resource gets a build-time provision gate.
+	if len(issues.created) != 1 {
+		t.Fatalf("want 1 minted gate issue (orders-db), got %d", len(issues.created))
 	}
 
-	// External authored via AuthorWithSecretRef — NOT via Provision (no SM write).
-	if ext.authorRefCalls != 1 {
-		t.Fatalf("external dep must be authored via AuthorWithSecretRef once, got %d", ext.authorRefCalls)
+	// External authored from the design — NOT from the carried request payload,
+	// and NOT via Provision (which would write secrets).
+	if ext.authorPreparedCalls != 1 {
+		t.Fatalf("external dep must be authored via AuthorPreparedValues once, got %d", ext.authorPreparedCalls)
 	}
 	if ext.calls != 0 {
 		t.Fatalf("external dep must NOT go through Provision (that re-writes secrets), got %d Provision calls", ext.calls)
 	}
-	// The staged reference + plain config reach the author call verbatim.
-	if got := ext.authorByEnv["development"]; got.SecretStorePath != "sm://x" || got.Plain["region"] != "us" {
-		t.Fatalf("author byEnv wrong: %+v", got)
+	if got := ext.authorByEnv["development"]; got.SecretStorePath != "" || got.Plain["region"] != "" {
+		t.Fatalf("author must ignore request config/ref and use empty design values: %+v", got)
 	}
 
 	// Platform-resource authored via the async Provision path.
@@ -80,10 +80,8 @@ func TestProvisionForBuild_ByKind(t *testing.T) {
 		t.Fatalf("platform-resource params must flow through, got %+v", plat.params)
 	}
 
-	// The external gate closed synchronously; the platform gate stays open (async).
-	extGate := gateNumber(issues, "stripe")
-	if _, closed := issues.closed[extGate]; !closed {
-		t.Fatalf("external gate #%d must be closed synchronously", extGate)
+	if extGate := gateNumber(issues, "stripe"); extGate != 0 {
+		t.Fatalf("external dependency must not mint a config-collection gate, got #%d", extGate)
 	}
 	platGate := gateNumber(issues, "orders-db")
 	if _, closed := issues.closed[platGate]; closed {
@@ -91,16 +89,14 @@ func TestProvisionForBuild_ByKind(t *testing.T) {
 	}
 }
 
-// TestProvisionForBuild_UsesMintedGateDespiteListRace is the #164 race regression:
+// TestProvisionForBuild_UsesMintedPlatformGateDespiteListRace is the #164 race regression:
 // EnsureProvisionIssues CREATES the gate, but GitHub's label-filtered issue LIST is
 // eventually consistent — a just-minted gate is often NOT yet in ListIssues. The old
 // code re-looked-up the gate via that racy list (findProvisionIssue → 0) so NO
-// provision run was admitted: the OC binding got authored Ready but the gate was
-// never completed → stranded Pending forever. The fix threads the gate number the
-// CreateIssue result RETURNS. Here the fake hides just-created issues from ListIssues
-// (simulating the lag); the external gate must STILL be admitted+completed via the
-// captured number.
-func TestProvisionForBuild_UsesMintedGateDespiteListRace(t *testing.T) {
+// platform provision run would miss its gate. The fix threads the number the
+// CreateIssue result returns. Here the fake hides just-created issues from
+// ListIssues; platform provisioning must still receive the captured number.
+func TestProvisionForBuild_UsesMintedPlatformGateDespiteListRace(t *testing.T) {
 	issues := newFakeIssues(nil)
 	issues.raceNewIssues = true // just-minted gates are invisible to ListIssues (the race)
 	execs := &fakeExecStore{}
@@ -109,8 +105,8 @@ func TestProvisionForBuild_UsesMintedGateDespiteListRace(t *testing.T) {
 	svc := newTestService(issues, execs, fakeDesign{comps: designWithDeps()}, ext, plat, &fakeBindings{})
 
 	fails, err := svc.ProvisionForBuild(context.Background(), "acme", "acme", "proj", "v3", 0, []BuildProvisionInput{
-		{Component: "orders", Dependency: "stripe", Kind: "external-config",
-			Config: map[string]string{"region": "us"}, SecretRefByEnv: map[string]string{"development": "sm://x"}},
+		{Component: "orders", Dependency: "orders-db", Kind: "platform-resource",
+			Parameters: map[string]any{"instances": 1}},
 	})
 	if err != nil {
 		t.Fatalf("ProvisionForBuild: %v", err)
@@ -118,17 +114,12 @@ func TestProvisionForBuild_UsesMintedGateDespiteListRace(t *testing.T) {
 	if len(fails) != 0 {
 		t.Fatalf("want no failures, got %+v", fails)
 	}
-	// The external gate was minted (its number came back from CreateIssue) even though
-	// ListIssues would not return it — it MUST be admitted+completed via that number.
-	extGate := gateNumber(issues, "stripe")
-	if extGate == 0 {
+	platformGate := gateNumber(issues, "orders-db")
+	if platformGate == 0 {
 		t.Fatalf("gate must have been minted")
 	}
-	if _, closed := issues.closed[extGate]; !closed {
-		t.Fatalf("external gate #%d must be completed via the minted number despite the list race", extGate)
-	}
-	if r := provisionRowFor(execs, "stripe"); r == nil || r.Status != string(taskmeta.ExecSucceeded) {
-		t.Fatalf("a succeeded provision run must be admitted+completed via the captured gate number, got %+v", r)
+	if row := provisionRowFor(execs, "orders-db"); row == nil || row.IssueNumber != platformGate {
+		t.Fatalf("platform provision row = %+v, want captured gate #%d", row, platformGate)
 	}
 }
 
@@ -181,7 +172,7 @@ func TestProvisionForBuild_OrgServiceUnapprovedIsNoop(t *testing.T) {
 	if err != nil || len(fails) != 0 {
 		t.Fatalf("unapproved org-service must be a silent no-op, got fails=%+v err=%v", fails, err)
 	}
-	if ext.authorRefCalls != 0 || plat.calls != 0 {
+	if ext.authorPreparedCalls != 0 || plat.calls != 0 {
 		t.Fatalf("org-service must author nothing")
 	}
 	if len(issues.created) != 0 {
@@ -252,7 +243,8 @@ func TestProvisionForBuild_SettlesReadyGateNotInInputs(t *testing.T) {
 	bindings := &fakeBindings{byName: map[string]*openchoreo.ResourceReleaseBinding{
 		ocname.ExternalResourceBindingName("proj", "orders-db", "development"): readyBinding("host", "port"),
 	}}
-	svc := newTestService(issues, execs, fakeDesign{comps: designWithDeps()}, ext, plat, bindings)
+	design := &countingDesign{comps: designWithDeps()}
+	svc := newTestService(issues, execs, design, ext, plat, bindings)
 
 	fails, err := svc.ProvisionForBuild(context.Background(), "acme", "acme", "proj", "v3", 0, []BuildProvisionInput{
 		{Component: "orders", Dependency: "stripe", Kind: "external-config",
@@ -278,9 +270,14 @@ func TestProvisionForBuild_SettlesReadyGateNotInInputs(t *testing.T) {
 	if plat.calls != 0 {
 		t.Fatalf("settle must NOT re-author the already-ready resource, got %d Provision calls", plat.calls)
 	}
-	// The provisioned dep (stripe, in inputs) is driven by the inputs loop, not double-settled.
-	if n := countProvisionRows(execs, "stripe"); n != 1 {
-		t.Fatalf("stripe (in inputs) must have exactly one provision run, got %d", n)
+	// External authoring has no config-collection gate and therefore no provision row.
+	if n := countProvisionRows(execs, "stripe"); n != 0 {
+		t.Fatalf("stripe must not create a provision run, got %d", n)
+	}
+	// EnsureProvisionIssues, external authoring, and gate settlement each read
+	// the design once. Binding status must not trigger a fourth read.
+	if design.calls != 3 {
+		t.Fatalf("design reads = %d, want 3", design.calls)
 	}
 }
 
@@ -386,7 +383,7 @@ func countProvisionRows(execs *fakeExecStore, depName string) int {
 // which is how the platform itself resolves it.
 func gateNumber(issues *fakeIssues, depName string) int {
 	for _, i := range issues.list {
-		if delivery.HasLabel(i.Labels, delivery.LabelProvisionGate) && gateDepFromLabels(i.Labels) == gateDepFromLabels(gateLabels(depName)) {
+		if delivery.IsDispatchGate(i.Labels) && gateDepFromLabels(i.Labels) == gateDepFromLabels(gateLabels(depName)) {
 			return i.Number
 		}
 	}

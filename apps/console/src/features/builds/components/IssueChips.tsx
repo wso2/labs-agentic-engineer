@@ -20,7 +20,7 @@ import { Box, Link as MuiLink, Stack, Typography } from "@wso2/oxygen-ui";
 import { createLink } from "@tanstack/react-router";
 import { StatusChip } from "../../../components/StatusChip";
 import type { components } from "../../../generated/aep-api";
-import { issueStateChip } from "../../tasks/api/status";
+import { issueKindChip, issueStateChip } from "../../tasks/api/status";
 
 type TaskView = components["schemas"]["TaskView"];
 
@@ -70,6 +70,12 @@ export function IssueChips({
       <Stack spacing={0.75}>
         {issues.map((issue) => {
           const chip = issueStateChip(issue.derivedStatus);
+          // The KIND, shown only where it changes how the row should be read.
+          // `development` is the majority of a version's list and renders
+          // untagged — the untagged row IS planned work — so a chip here means
+          // the version picked up something it did not plan: a defect, a pull
+          // request waiting on a rebase, or a gate the PLATFORM works.
+          const kind = issueKindChip(issue.kind);
           return (
             <Stack
               key={issue.issueNumber}
@@ -101,6 +107,7 @@ export function IssueChips({
                 {label ? label(issue) : issue.title}
               </TaskLink>
               <StatusChip label={chip.label} tone={chip.tone} appearance="soft" />
+              {kind && <StatusChip label={kind.label} tone={kind.tone} appearance="soft" />}
             </Stack>
           );
         })}

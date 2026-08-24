@@ -51,12 +51,12 @@ import (
 )
 
 // DesiredApp is the desired state of a Thunder OAuth2 application, as
-// derived from a ThunderApplication CR by the reconciler (Task 3).
+// derived from a ThunderApplication CR by the reconciler.
 type DesiredApp struct {
 	// Name is the Thunder application's unique identifier — it doubles as
-	// the OAuth2 client_id assigned on create — derived by the reconciler
-	// as "aep-<cr-namespace>-<cr-name>". EnsureApplication uses it as the
-	// lookup key to find the same app again across reconciles.
+	// the OAuth2 client_id assigned on create. Set to spec.clientId when
+	// provided, otherwise derived as "aep-<cr-namespace>-<cr-name>".
+	// EnsureApplication uses it as the lookup key across reconciles.
 	Name string
 	// DisplayName is the human-readable label from the CR. Carried on the
 	// CR but NOT sent on the wire in v1: neither of thundersvc's create
@@ -87,8 +87,14 @@ type DesiredApp struct {
 	// were mirrored from, which merges). An empty set is adapted on the
 	// wire to a single unroutable placeholder (see placeholderRedirectURI)
 	// because Thunder rejects an empty list; the field itself stays
-	// honestly empty.
+	// honestly empty. Ignored for confidential (client_credentials) apps.
 	RedirectURIs []string
+	// ClientType is "public" (default) or "confidential". An empty string
+	// is treated as "public" for backwards compatibility.
+	ClientType string
+	// ClientSecret is the pre-generated OAuth client secret for confidential
+	// clients. Ignored for public (PKCE) clients.
+	ClientSecret string
 }
 
 // AdminClient is the operator-local Thunder admin surface consumed by the
@@ -362,6 +368,12 @@ func (c *client) EnsureApplication(ctx context.Context, app DesiredApp) (string,
 	if app.Name == "" {
 		return "", fmt.Errorf("thunder: DesiredApp.Name is required")
 	}
+	switch app.ClientType {
+	case "", "public", "confidential":
+		// valid
+	default:
+		return "", fmt.Errorf("thunder: unsupported ClientType %q — must be \"public\" or \"confidential\"", app.ClientType)
+	}
 	token, err := c.getSystemToken(ctx)
 	if err != nil {
 		return "", fmt.Errorf("getSystemToken: %w", err)
@@ -381,6 +393,13 @@ func (c *client) EnsureApplication(ctx context.Context, app DesiredApp) (string,
 	ouID, err := c.getDefaultOUID(ctx, token)
 	if err != nil {
 		return "", fmt.Errorf("getDefaultOUID: %w", err)
+	}
+	if app.ClientType == "confidential" {
+		clientID, err := c.createConfidentialApp(ctx, token, app, ouID)
+		if err != nil {
+			return "", fmt.Errorf("createConfidentialApp %q: %w", app.Name, err)
+		}
+		return clientID, nil
 	}
 	clientID, err := c.createApp(ctx, token, app, ouID)
 	if err != nil {
@@ -505,11 +524,62 @@ func (c *client) createApp(ctx context.Context, token string, app DesiredApp, ou
 	return clientID, nil
 }
 
-// updateApp implements desired-state semantics: read the full app, replace
-// its redirect URIs with EXACTLY the desired set (not a merge — the CR is
-// the single source of truth; the placeholder stands in when the set is
-// empty, see placeholderRedirectURI), re-assert the platform identity-claim
-// contract, then write the full object back.
+// createConfidentialApp registers a new confidential OAuth2 client using the
+// client_credentials grant. No PKCE, no redirect URIs — the caller supplies
+// the pre-generated secret via app.ClientSecret.
+func (c *client) createConfidentialApp(ctx context.Context, token string, app DesiredApp, ouID string) (string, error) {
+	payload := map[string]any{
+		"name":             app.Name,
+		"ouId":             ouID,
+		"allowedUserTypes": allowedUserTypes,
+		"inboundAuthConfig": []map[string]any{
+			{
+				"type": "oauth2",
+				"config": map[string]any{
+					"clientId":                app.Name,
+					"clientSecret":            app.ClientSecret,
+					"grantTypes":              []string{"client_credentials"},
+					"tokenEndpointAuthMethod": "client_secret_post",
+					"pkceRequired":            false,
+					"publicClient":            false,
+					"token":                   tokenClaimConfig(),
+				},
+			},
+		},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("thunder create confidential app marshal: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/applications", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("thunder create confidential app: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return "", fmt.Errorf("thunder create confidential app returned %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	clientID, cerr := extractClientID(respBody)
+	if cerr != nil {
+		return app.Name, nil
+	}
+	return clientID, nil
+}
+
+// updateApp implements desired-state semantics: read the full app, re-assert
+// the platform identity-claim contract, then write the full object back.
+// For public clients, redirect URIs are also replaced (desired-state). For
+// confidential clients, redirect URIs are left untouched (they have none).
 //
 // The claim contract (token userAttributes + scopeClaims + allowedUserTypes)
 // is re-applied here — not only on create — so apps provisioned before this
@@ -524,7 +594,16 @@ func (c *client) updateApp(ctx context.Context, token, internalID string, app De
 	if err != nil {
 		return fmt.Errorf("app %q: %w", app.Name, err)
 	}
-	cfg["redirectUris"] = wireRedirectURIs(app.RedirectURIs)
+	if app.ClientType != "confidential" {
+		cfg["redirectUris"] = wireRedirectURIs(app.RedirectURIs)
+	} else if app.ClientSecret != "" {
+		// Enforce the desired secret so Thunder's stored value always matches
+		// the one provisioned in OpenBao → K8s Secret. Without this, a prior
+		// bootstrap (values-thunder.yaml 59-aep-oauth-apps.sh) may have set a
+		// different hardcoded secret, causing 401s for services reading the
+		// OpenBao-provisioned value.
+		cfg["clientSecret"] = app.ClientSecret
+	}
 	cfg["token"] = tokenClaimConfig()
 	cfg["scopeClaims"] = scopeClaimConfig()
 	full["allowedUserTypes"] = allowedUserTypes

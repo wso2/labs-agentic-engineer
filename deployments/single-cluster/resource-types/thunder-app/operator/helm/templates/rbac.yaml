@@ -49,3 +49,38 @@ subjects:
   - kind: ServiceAccount
     name: thunder-app-operator
     namespace: {{ .Release.Namespace }}
+---
+# Secrets are intentionally NOT in the ClusterRole above. The operator only
+# reads client secrets that are in the same namespace as the ThunderApplication
+# CR (which is always the platform namespace). A namespace-scoped Role limits
+# the blast radius: no CR can be used to read Secrets from other namespaces.
+# list;watch are required in addition to get because the controller-runtime
+# cache informer must be able to enumerate and subscribe to Secret changes
+# before the manager starts serving reconcile requests.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: thunder-app-operator-secrets
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "thunder-app-operator.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: thunder-app-operator-secrets
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "thunder-app-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: thunder-app-operator-secrets
+subjects:
+  - kind: ServiceAccount
+    name: thunder-app-operator
+    namespace: {{ .Release.Namespace }}

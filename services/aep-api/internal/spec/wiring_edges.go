@@ -23,17 +23,15 @@ package spec
 // the component can serve its first byte, versus which it can supply afterwards.
 //
 //	HARD  the provider's address is stamped into the consumer's own start-up
-//	      configuration. A web app's `window._env_` is the case that exists: the
-//	      bundle reads API_BASE_URL at module load and throws without it, so a
-//	      SPA published before its backend has an address is a blank page. Hard
-//	      edges ORDER the deploy, and they must form a DAG.
+//	      configuration. A web app's nginx reverse-proxy is the case that
+//	      exists: OpenChoreo injects the sibling Service URL as pod env
+//	      `<DEP>_URL`, and `/api` 502s until that Service exists. Hard edges
+//	      ORDER the deploy, and they must form a DAG.
 //
 //	SOFT  the fact flows the other way — a provider learning about its consumer.
-//	      A protected API's CORS allowlist is the project's SPA origins; an OIDC
-//	      resource needs the SPA's callback URL registered. Neither is needed
-//	      before the consumer serves, only before a later browser call or login.
-//	      Soft edges order NOTHING and are free to cycle, which is exactly what
-//	      they do: the SPA needs the API's address, and the API needs the SPA's.
+//	      An OIDC resource needs the SPA's callback URL registered. That is not
+//	      needed before the consumer serves, only before a later login. Soft
+//	      edges order NOTHING and are free to cycle.
 //
 // Collapsing the two is what makes the wiring look circular and therefore
 // unsolvable. Separated, the hard half is a DAG the deploy can walk in waves and
@@ -51,11 +49,10 @@ package spec
 // consumer name. Both sides are DESIGN names (the caller maps to k8s names if
 // it addresses OpenChoreo with them).
 //
-// It is the single authority for that rule. runtimeconfig composes the file
-// these edges exist for, and projects orders the deploy by them; a second
-// spelling would let the writer and the scheduler disagree about which component
-// blocks which — the failure mode being a SPA the scheduler thinks is
-// independent, published with a config the composer could not fill.
+// It is the single authority for that rule. projects orders the deploy by
+// these edges so a SPA is not published before the sibling Service nginx
+// will proxy to. A second spelling would let the writer and the scheduler
+// disagree about which component blocks which.
 //
 // Components named as dependencies but absent from the design are skipped: an
 // edge to a component that does not exist cannot be waited for.
@@ -73,25 +70,6 @@ func HardConfigEdges(design *DesignFile) map[string][]string {
 	return out
 }
 
-// HardProvidersFor is HardConfigEdges for ONE consumer — what the composer wants,
-// since it is filling in a single component's file and has no use for the rest of
-// the project's edges.
-//
-// Both spellings run the same rule (hardProvidersOf), which is the point: the
-// composer that needs an address and the planner that orders around it must never
-// be able to disagree about which addresses are needed.
-func HardProvidersFor(design *DesignFile, componentName string) []string {
-	if design == nil {
-		return nil
-	}
-	for _, c := range design.Components {
-		if c.Name == componentName {
-			return hardProvidersOf(c, componentsByName(design))
-		}
-	}
-	return nil
-}
-
 func componentsByName(design *DesignFile) map[string]DesignComponent {
 	out := make(map[string]DesignComponent, len(design.Components))
 	for _, c := range design.Components {
@@ -102,11 +80,11 @@ func componentsByName(design *DesignFile) map[string]DesignComponent {
 
 // hardProvidersOf lists one component's hard providers in declaration order.
 //
-// Today the only consumer that carries a stamped address is a web app, and the
-// only providers whose address is stamped are its sibling SERVICES — a peer web
+// Today the only consumer that needs a sibling address at start-up is a web
+// app: nginx reverse-proxies `/api` to that sibling's Service URL. A peer web
 // app is not called over HTTP, so its URL is nothing to wait for. When a second
 // stamped-config shape appears (a worker handed a queue's address, say) it is
-// added here, and both the composer and the deploy order follow it at once.
+// added here, and the deploy order follows it.
 func hardProvidersOf(c DesignComponent, byName map[string]DesignComponent) []string {
 	if c.ComponentType != ComponentTypeWebApplication {
 		return nil

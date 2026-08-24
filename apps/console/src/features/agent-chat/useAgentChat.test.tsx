@@ -143,17 +143,26 @@ describe("useAgentChat — the shared thread (#430)", () => {
     await waitFor(() => expect(result.current.conversationReady).toBe(true));
 
     mockStartTurn.mockResolvedValue("turn-1");
-    act(() => result.current.send("hello"));
+    await act(async () => {
+      await result.current.send("hello");
+    });
 
-    await waitFor(() => expect(mockStartTurn).toHaveBeenCalledWith(PROJECT, "conv-1", "hello"));
+    // The 4th arg is the message's chat attachments (#428) — empty for a plain
+    // send, and passed explicitly rather than omitted so the wire shape is one
+    // code path.
+    await waitFor(() =>
+      expect(mockStartTurn).toHaveBeenCalledWith(PROJECT, "conv-1", "hello", []),
+    );
   });
 
-  it("holds sends until the thread id resolves", () => {
+  it("holds sends until the thread id resolves", async () => {
     mockFetchCurrent.mockReturnValue(new Promise(() => {})); // never resolves
     const { result } = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: createWrapper() });
 
     expect(result.current.conversationReady).toBe(false);
-    act(() => result.current.send("too early"));
+    await act(async () => {
+      await result.current.send("too early");
+    });
     expect(mockStartTurn).not.toHaveBeenCalled();
   });
 
@@ -176,7 +185,9 @@ describe("useAgentChat — the shared thread (#430)", () => {
     // A teammate rotated: the send 409s, the re-resolve answers the NEW id.
     mockStartTurn.mockRejectedValue(new ConversationRotatedError());
     mockFetchCurrent.mockResolvedValue("conv-2");
-    act(() => result.current.send("into the demoted thread"));
+    await act(async () => {
+      await result.current.send("into the demoted thread");
+    });
 
     await waitFor(() => {
       const msgs = getMessages(KEY);
@@ -253,7 +264,9 @@ describe("useAgentChat — the shared thread (#430)", () => {
     await waitFor(() => expect(result.current.conversationReady).toBe(true));
 
     mockStartTurn.mockRejectedValue(new Error("502 upstream"));
-    act(() => result.current.send("do not lose me"));
+    await act(async () => {
+      await result.current.send("do not lose me");
+    });
     await waitFor(() =>
       expect(getMessages(KEY).some((m) => m.role === "user" && m.status === "failed")).toBe(true),
     );

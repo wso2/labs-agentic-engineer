@@ -21,7 +21,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { listMirroredSkills, readSkillBodies, resolvePinnedSkills } from "./skills_presence.js";
+import { onDemandSkills } from "./runner.js";
+import { listMirroredSkills, readSkillBodies, resolveSkillPresence } from "./skills_presence.js";
 
 async function tmpTree(files: Record<string, string>): Promise<string> {
   const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "aep-skills-presence-test-"));
@@ -33,23 +34,56 @@ async function tmpTree(files: Record<string, string>): Promise<string> {
   return root;
 }
 
-test("resolvePinnedSkills: all present → all preloaded, none dangling", async () => {
+// The composition oneshot's validation branch performs. Asserted here rather
+// than left to the entrypoint because the empty allowlist that shipped was
+// invisible in exactly this gap: each half was correct alone.
+test("validation allowlist: the mirror's playwright-cli becomes the allowlist", async () => {
+  const ws = await tmpTree({
+    ".claude/skills/playwright-cli/SKILL.md": "---\nname: playwright-cli\n---\n\n# cli\n",
+    ".claude/skills/go/SKILL.md": "---\nname: go\n---\n\n# go\n",
+  });
+  const { present, dangling } = await resolveSkillPresence(ws, onDemandSkills("validation"));
+  // `go` is in the mirror and still NOT allowed: a validation run builds nothing.
+  assert.deepEqual(present, ["playwright-cli"]);
+  assert.deepEqual(dangling, []);
+});
+
+// An org that has the skill disabled gets no mirror copy (skill_mirror.go), so
+// the name can be absent. It must be said out loud — silence is what let the
+// allowlist bug survive weeks of green runs.
+test("validation allowlist: a mirror without playwright-cli warns and allows nothing", async () => {
+  const ws = await tmpTree({
+    ".claude/skills/aep-validation/SKILL.md": "---\nname: aep-validation\n---\n\n# v\n",
+  });
+  const lines: string[] = [];
+  const { present, dangling } = await resolveSkillPresence(ws, onDemandSkills("validation"), (l) =>
+    lines.push(l),
+  );
+  assert.deepEqual(present, []);
+  assert.deepEqual(dangling, ["playwright-cli"]);
+  assert.ok(
+    lines.some((l) => l.includes("playwright-cli") && l.includes("not in the mirror")),
+    `expected a named miss, got ${JSON.stringify(lines)}`,
+  );
+});
+
+test("resolveSkillPresence: all present → all preloaded, none dangling", async () => {
   const ws = await tmpTree({
     ".claude/skills/go/SKILL.md": "---\nname: go\n---\n\n# go\n",
     ".claude/skills/react-webapp/SKILL.md": "---\nname: react-webapp\n---\n\n# react-webapp\n",
   });
-  const out = await resolvePinnedSkills(ws, ["go", "react-webapp"]);
-  assert.deepEqual(out.preload, ["go", "react-webapp"]);
+  const out = await resolveSkillPresence(ws, ["go", "react-webapp"]);
+  assert.deepEqual(out.present, ["go", "react-webapp"]);
   assert.deepEqual(out.dangling, []);
 });
 
-test("resolvePinnedSkills: a missing one is reported and the rest still preload", async () => {
+test("resolveSkillPresence: a missing one is reported and the rest still preload", async () => {
   const ws = await tmpTree({
     ".claude/skills/go/SKILL.md": "---\nname: go\n---\n\n# go\n",
   });
   const lines: string[] = [];
-  const out = await resolvePinnedSkills(ws, ["go", "does-not-exist"], (l) => lines.push(l));
-  assert.deepEqual(out.preload, ["go"]);
+  const out = await resolveSkillPresence(ws, ["go", "does-not-exist"], (l) => lines.push(l));
+  assert.deepEqual(out.present, ["go"]);
   assert.deepEqual(out.dangling, ["does-not-exist"]);
   assert.ok(
     lines.some((l) => l.includes("does-not-exist")),
@@ -57,17 +91,17 @@ test("resolvePinnedSkills: a missing one is reported and the rest still preload"
   );
 });
 
-test("resolvePinnedSkills: no .claude/skills/ at all → everything dangling, no throw", async () => {
+test("resolveSkillPresence: no .claude/skills/ at all → everything dangling, no throw", async () => {
   const ws = await tmpTree({ "README.md": "no skills mirror here" });
-  const out = await resolvePinnedSkills(ws, ["go", "react-webapp"]);
-  assert.deepEqual(out.preload, []);
+  const out = await resolveSkillPresence(ws, ["go", "react-webapp"]);
+  assert.deepEqual(out.present, []);
   assert.deepEqual(out.dangling, ["go", "react-webapp"]);
 });
 
-test("resolvePinnedSkills: empty pin list → empty result, no fs access", async () => {
+test("resolveSkillPresence: empty pin list → empty result, no fs access", async () => {
   const ws = await tmpTree({ "README.md": "no skills mirror here" });
-  const out = await resolvePinnedSkills(ws, []);
-  assert.deepEqual(out, { preload: [], dangling: [] });
+  const out = await resolveSkillPresence(ws, []);
+  assert.deepEqual(out, { present: [], dangling: [] });
 });
 
 // `skills:` is an ALLOWLIST — a mirrored skill omitted from it is rejected by

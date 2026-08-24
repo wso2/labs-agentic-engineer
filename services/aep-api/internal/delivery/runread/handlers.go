@@ -29,7 +29,7 @@ import (
 )
 
 // Handler serves the run read surface on the strict interface: the version's
-// runs, the per-run progress stream, and cancel.
+// runs, the per-run and version-wide progress streams, and cancel.
 type Handler struct {
 	reads       *Reads
 	progress    *ProgressService
@@ -83,6 +83,24 @@ func (h *Handler) StreamRunProgress(ctx context.Context, request gen.StreamRunPr
 	return runProgressStreamResponse{run: run}, nil
 }
 
+// StreamBuildProgress serves GET /projects/{p}/builds/{tag}/progress — the
+// VERSION's narrative, stitched across every run on its milestone.
+//
+// Same fence discipline as StreamRunProgress, and for the same reason: the tag is
+// resolved through the org-and-project-scoped run rows HERE, before any byte is
+// written, so a version of another org or project answers a JSON 404 envelope
+// rather than an empty stream a caller could read as "this version did nothing".
+func (h *Handler) StreamBuildProgress(ctx context.Context, request gen.StreamBuildProgressRequestObject) (gen.StreamBuildProgressResponseObject, error) {
+	if h.progress == nil {
+		return nil, apierr.ServiceUnavailable("build progress stream not configured")
+	}
+	run, err := h.progress.OpenBuildProgressStream(ctx, tenant.BoundOrgFromContext(ctx), request.ProjectName, request.Tag)
+	if err != nil {
+		return nil, mapRunError(err)
+	}
+	return buildProgressStreamResponse{run: run}, nil
+}
+
 // CancelRun serves POST /projects/{p}/runs/{runId}/cancel.
 func (h *Handler) CancelRun(ctx context.Context, request gen.CancelRunRequestObject) (gen.CancelRunResponseObject, error) {
 	if h.commands == nil {
@@ -124,6 +142,19 @@ type runProgressStreamResponse struct {
 }
 
 func (r runProgressStreamResponse) VisitStreamRunProgressResponse(w http.ResponseWriter) error {
+	return sseStream(w, r.run)
+}
+
+// buildProgressStreamResponse is runProgressStreamResponse's twin for the
+// version stream. Two types rather than one generic wrapper because the
+// generated ResponseObject interfaces are per-operation: each declares its own
+// Visit method, and a shared type would have to satisfy both, which would let
+// either handler return the other's stream.
+type buildProgressStreamResponse struct {
+	run func(w io.Writer, flush func())
+}
+
+func (r buildProgressStreamResponse) VisitStreamBuildProgressResponse(w http.ResponseWriter) error {
 	return sseStream(w, r.run)
 }
 

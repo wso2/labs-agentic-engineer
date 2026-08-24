@@ -30,13 +30,20 @@ import (
 
 // codingIssue builds a working-set issue as the plan tap writes one: prose plus
 // the `aep` label, and nothing else.
-func codingIssue(number int, title, state string, extra ...string) sourcecontrol.IssueInfo {
+// codingIssue builds an armed issue. With no kind given it is planned work,
+// which is what the planner mints; a kind passed here replaces that, so a case
+// can seed the validation task without also stamping a second kind on it.
+func codingIssue(number int, title, state string, kind ...string) sourcecontrol.IssueInfo {
+	labels := []string{delivery.LabelAgentWork, delivery.KindDevelopment}
+	if len(kind) > 0 {
+		labels = append([]string{delivery.LabelAgentWork}, kind...)
+	}
 	return sourcecontrol.IssueInfo{
 		Number: number,
 		Title:  title,
 		Body:   "Build it.",
 		State:  state,
-		Labels: append([]string{delivery.LabelAgentWork}, extra...),
+		Labels: labels,
 	}
 }
 
@@ -196,26 +203,36 @@ func TestWiring_CarriesNoResourcesBlock(t *testing.T) {
 }
 
 // Targeting: the run's WORKING SET and nothing else. Gates are platform holds,
-// the validation issue is worked by its own cycle, a closed issue is done, and
-// an issue without `aep` is ledger-only — none of them is agent work.
+// the validation task is worked by its own cycle, a closed issue is done, and an
+// unarmed issue is ledger-only — none of them is a coding cycle's work.
+//
+// The validation task and the gate are the two that matter, because each is
+// excluded for a DIFFERENT reason now: the task is armed and excluded by its
+// KIND, the gate is excluded because it carries no arming label at all. A
+// predicate that tested only one of the two would post the platform's wiring
+// comment onto an issue no agent will ever read.
 func TestWiring_TargetsTheWorkingSetOnly(t *testing.T) {
 	seed := []sourcecontrol.IssueInfo{
 		codingIssue(21, "Implement web", "open"),
 		codingIssue(22, "Implement orders", "open"),
 		codingIssue(23, "Already merged", "closed"),
-		codingIssue(24, "Validate the increment", "open", delivery.LabelValidationWork),
-		{Number: 25, Title: "A human bug report", State: "open"}, // ledger-only: no `aep`
+		codingIssue(24, "Validate the increment", "open", delivery.KindValidation),
+		codingIssue(26, "Fix the failing build for web", "open", delivery.KindBug, delivery.SrcBuild),
+		{Number: 27, Title: "Provide configuration: orders-db", State: "open",
+			Labels: []string{delivery.KindProvision}}, // a gate: never armed
+		{Number: 25, Title: "A human bug report", State: "open"}, // ledger-only: unarmed
 	}
 	issues := publishFor(t, seed, wiringDesign(), siblingResolved())
 
-	for _, n := range []int{21, 22} {
+	// A bug is worked by a coding cycle like planned work, so it is told too.
+	for _, n := range []int{21, 22, 26} {
 		if len(wiringComments(issues, n)) != 1 {
 			t.Errorf("working-set issue #%d: want 1 wiring comment, got %d", n, len(wiringComments(issues, n)))
 		}
 	}
-	for _, n := range []int{11, 23, 24, 25} {
+	for _, n := range []int{11, 23, 24, 25, 27} {
 		if got := wiringComments(issues, n); len(got) != 0 {
-			t.Errorf("issue #%d is not agent work and must not get the wiring comment", n)
+			t.Errorf("issue #%d is not a coding cycle's work and must not get the wiring comment", n)
 		}
 	}
 }

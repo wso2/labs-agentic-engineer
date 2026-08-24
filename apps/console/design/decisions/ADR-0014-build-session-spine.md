@@ -43,7 +43,7 @@ a stage that went wrong says so in the platform's own recorded words.
 
 2. **Provisioning is a RUN-LEVEL stage, first on the rail**, and only when the
    milestone holds gates. This is what the platform's own dispatch predicate
-   says: `OpenProvision == 0 && OpenNonGateWork() > 0`, so an open gate holds
+   says: `OpenProvision == 0 && OpenDevWork() > 0`, so an open gate holds
    *every* session, not the first one. Nesting it inside session 1 would have no
    home for a gate minted mid-run and would force a fix session to either repeat
    the stage or pretend the gate was absent.

@@ -269,10 +269,23 @@ if docker image inspect "$RCA_IMAGE" >/dev/null 2>&1; then
         echo "⚠️  import attempt ${attempt} did not land in the node (transient k3d flake) — retrying..."
     done
     if [ -n "$IMPORTED" ]; then
-        echo "✅ imported $RCA_IMAGE into k3d-$CLUSTER_NAME (verified in node containerd)"
-    else
-        echo "⚠️  k3d import failed twice — switching to registry-direct: the cluster"
-        echo "    will pull ${RCA_IMAGE_PULL} from Docker Hub instead."
+        # The patched tag is built locally and exists in no registry, so an image-GC
+        # eviction would be unrecoverable — pin it (see pin_node_image in utils.sh).
+        # It also re-verifies on EVERY server/agent node, where _rca_image_in_node
+        # above only checks server-0: exit 2 means the import landed on some nodes
+        # but not all, so fall through to the registry-direct path rather than
+        # deploying a pod that cannot start wherever the image is missing.
+        PIN_RC=0
+        pin_node_image "$RCA_IMAGE" || PIN_RC=$?
+        if [ "$PIN_RC" = "2" ]; then
+            IMPORTED=""
+        else
+            echo "✅ imported $RCA_IMAGE into k3d-$CLUSTER_NAME (verified in node containerd)"
+        fi
+    fi
+    if [ -z "$IMPORTED" ]; then
+        echo "⚠️  k3d import did not land on every node — switching to registry-direct:"
+        echo "    the cluster will pull ${RCA_IMAGE_PULL} from Docker Hub instead."
         RCA_IMAGE_REPO="${RCA_IMAGE_PULL%%:*}"
         RCA_IMAGE_TAG="${RCA_IMAGE_PULL##*:}"
     fi

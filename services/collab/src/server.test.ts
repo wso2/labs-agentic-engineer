@@ -212,6 +212,53 @@ test("load seeds from the BFF's Files API with the joiner's token", async () => 
   assert.match(doc.getXmlFragment("requirements/prd.md").toString(), /hi/);
 });
 
+// Reference documents (specs/requirements/references/, #383/#384) are user
+// uploads, not collaboratively-edited spec — and a binary one seeded into a
+// text room gets flushed back as text, destroying the committed file (a real
+// PDF in git became its own base64). They never enter the room.
+test("load never seeds reference documents into the room", async () => {
+  const load = buildLoadDocumentHook(prodConfig, {
+    bff: fakeBff({
+      fetchSpecFiles: async () => [
+        { path: "specs/requirements/prd.md", content: "# PRD\n", sha: "s1" },
+        { path: "specs/requirements/references/rfp.pdf", content: "JVBERi0xLjQK", sha: "s2" },
+        { path: "specs/requirements/references/notes.md", content: "# Notes\n", sha: "s3" },
+      ],
+    }),
+  });
+  const doc = new Y.Doc() as Document;
+  await load({
+    document: doc,
+    documentName: "spec-acme-shop",
+    context: {
+      user: { name: "Jo", email: "j", kind: "user" },
+      token: "jwt-abc",
+      projectName: "shop",
+    },
+  });
+  assert.match(doc.getXmlFragment("specs/requirements/prd.md").toString(), /PRD/);
+  // Neither reference file may exist in the doc — not the binary one, and not
+  // the markdown one either: the whole folder is out of collab's scope. Each
+  // check has to match where the seed would have PUT that kind, or it proves
+  // nothing: a non-markdown file becomes a Y.Text inside the files map, never a
+  // top-level share key, so `share.has(pdf)` is false whether or not the seed
+  // ran. And `share.has` for the markdown is asked BEFORE any getXmlFragment
+  // call on that path, because that call would itself create the entry.
+  assert.ok(
+    !filesMap(doc).has("specs/requirements/references/rfp.pdf"),
+    "pdf seeded into the room",
+  );
+  assert.ok(
+    !doc.share.has("specs/requirements/references/notes.md"),
+    "reference markdown seeded into the room",
+  );
+  assert.equal(
+    doc.getXmlFragment("specs/requirements/references/notes.md").length,
+    0,
+    "reference markdown seeded into the room",
+  );
+});
+
 test("load opens an unseeded doc when the files fetch fails (room must survive)", async () => {
   const load = buildLoadDocumentHook(prodConfig, {
     bff: fakeBff({

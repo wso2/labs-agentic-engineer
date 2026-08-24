@@ -17,6 +17,7 @@
 package organization
 
 import (
+	"strings"
 	"time"
 )
 
@@ -44,18 +45,15 @@ type OrganizationIDPProfile struct {
 	PublisherClientSecret string `gorm:"column:publisher_client_secret" json:"-"`
 	PublisherSecretRef    string `gorm:"column:publisher_secret_ref" json:"publisherSecretRef,omitempty"`
 	// Secret-ref triplet — populated by SecretRefWriter.WritePublisher after
-	// EnsureOrgPublisher provisions the Thunder cc app. The dispatcher
-	// short-circuits the per-run runner-auth ExternalSecret when missing.
-	// secret_ref_* is the provider-neutral name (EXPAND); sm_api_* is kept
-	// for dual-write until phase 09 CONTRACT.
+	// EnsureOrgPublisher, RegenerateClientSecret, or ProvisionPublisherForBuild
+	// (POST /build, actor build-provision) provisions the Thunder cc app.
+	// Dispatch fails loud when secret_ref_name is empty; it mounts client_id
+	// and client_secret from the SecretReference, never publisher_client_secret
+	// from this row.
 	SecretRefName      *string    `gorm:"type:text;column:secret_ref_name" json:"-"`
 	SecretRefKVPath    *string    `gorm:"type:text;column:secret_ref_kv_path" json:"-"`
 	SecretRefProperty  *string    `gorm:"type:text;column:secret_ref_property" json:"-"`
 	SecretRefWrittenAt *time.Time `gorm:"column:secret_ref_written_at" json:"-"`
-	SMAPISecretRefName *string    `gorm:"type:text;column:sm_api_secret_ref_name" json:"-"`
-	SMAPIKVPath        *string    `gorm:"type:text;column:sm_api_kv_path" json:"-"`
-	SMAPIProperty      *string    `gorm:"type:text;column:sm_api_property" json:"-"`
-	SMAPIWrittenAt     *time.Time `gorm:"column:sm_api_written_at" json:"-"`
 	CreatedAt          time.Time  `gorm:"column:created_at" json:"createdAt"`
 	UpdatedAt          time.Time  `gorm:"column:updated_at" json:"updatedAt"`
 }
@@ -64,6 +62,12 @@ type OrganizationIDPProfile struct {
 // produce `organization_idp_profiles` already, but we make it explicit
 // to survive any future model package reshuffles).
 func (OrganizationIDPProfile) TableName() string { return "organization_idp_profiles" }
+
+// HasPublisherSecretRef is true when the profile carries a non-empty
+// SecretReference name the coding Job can mount.
+func HasPublisherSecretRef(row *OrganizationIDPProfile) bool {
+	return row != nil && row.SecretRefName != nil && strings.TrimSpace(*row.SecretRefName) != ""
+}
 
 // IDPAuditEvent is one row in the append-only audit log of
 // publisher-lifecycle operations. Used by the console "Audit" view

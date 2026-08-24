@@ -22,10 +22,16 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/wso2/aep/aep-api/internal/clients/thundersvc"
 )
+
+// PublisherBuildActor is the audit actor for
+// IDPService.ProvisionPublisherForBuild — the POST /build request path,
+// distinct from the "deployment" actor EnsureOrgPublisher otherwise uses.
+const PublisherBuildActor = "build-provision"
 
 // IDPService manages per-organisation IDP profiles + the matching
 // Thunder publisher OAuth apps. See
@@ -60,6 +66,12 @@ type IDPService interface {
 	// and the secret is already in the DB; use RegenerateClientSecret
 	// to rotate if it was lost).
 	EnsureOrgPublisher(ctx context.Context, orgID, actor string) (clientID, clientSecret string, created bool, err error)
+
+	// ProvisionPublisherForBuild is the POST /build provisioner: ensure
+	// Thunder publisher exists and secret_ref_name is stamped. Actor is
+	// PublisherBuildActor. Rotates once if the app exists without a
+	// SecretReference. WritePublisher errors fail the call.
+	ProvisionPublisherForBuild(ctx context.Context, orgID string) error
 
 	// RevokeOrgPublisher deletes the Thunder publisher app + clears
 	// the profile row's publisher_* columns. Idempotent.
@@ -306,6 +318,63 @@ func (s *idpService) EnsureOrgPublisher(ctx context.Context, orgID, actor string
 	return clientID, clientSecret, created, nil
 }
 
+// ProvisionPublisherForBuild is the fail-closed counterpart to
+// EnsureOrgPublisher's best-effort SM-API mirror, called from the
+// POST /projects/{projectName}/build handler (user JWT in ctx, so
+// WritePublisher can resolve the SM-API vault key). EnsureOrgPublisher
+// itself already attempts the SM-API write on fresh creation; this method
+// only steps in when that attempt didn't leave a usable secret_ref_name —
+// either because Ensure's write failed/was skipped, or because the app
+// already existed without ever having been mirrored (rotate once to
+// recover a usable triplet). Every failure path here fails the Build.
+func (s *idpService) ProvisionPublisherForBuild(ctx context.Context, orgID string) error {
+	if orgID == "" {
+		return fmt.Errorf("orgID required")
+	}
+	// Fail closed BEFORE touching Thunder: a disabled writer can never stamp
+	// secret_ref_name, so letting EnsureOrgPublisher/RegenerateClientSecret
+	// run anyway would rotate the Thunder client secret on every single
+	// Build (each call retries the same never-stamped ref) and report
+	// success in the exact state this method exists to prevent.
+	if s.secretRefWriter == nil || !s.secretRefWriter.Enabled() {
+		return fmt.Errorf("publisher SecretReference requires a SecretsProvider (secrets delivery is off)")
+	}
+	clientID, clientSecret, _, err := s.EnsureOrgPublisher(ctx, orgID, PublisherBuildActor)
+	if err != nil {
+		return err
+	}
+	row, err := s.GetProfile(ctx, orgID)
+	if err != nil {
+		return err
+	}
+	if HasPublisherSecretRef(row) {
+		return nil
+	}
+	if strings.TrimSpace(clientSecret) != "" {
+		if _, werr := s.secretRefWriter.WritePublisher(ctx, orgID, clientID, clientSecret); werr != nil {
+			return fmt.Errorf("idp_service: SM-API publisher write: %w", werr)
+		}
+		return nil
+	}
+	if row != nil && strings.TrimSpace(row.PublisherClientID) != "" {
+		if _, rerr := s.RegenerateClientSecret(ctx, orgID, PublisherBuildActor); rerr != nil {
+			return rerr
+		}
+		// spec P1 step 4: rotate is a one-shot recovery, not a retry loop —
+		// require the rotated secret actually landed a SecretReference
+		// rather than reporting success while the ref stays null.
+		after, aerr := s.GetProfile(ctx, orgID)
+		if aerr != nil {
+			return aerr
+		}
+		if !HasPublisherSecretRef(after) {
+			return fmt.Errorf("publisher SecretReference still missing after rotate")
+		}
+		return nil
+	}
+	return fmt.Errorf("publisher SecretReference missing after provision")
+}
+
 func (s *idpService) RevokeOrgPublisher(ctx context.Context, orgID, actor string) (bool, error) {
 	if orgID == "" {
 		return false, fmt.Errorf("orgID required")
@@ -390,12 +459,22 @@ func (s *idpService) RegenerateClientSecret(ctx context.Context, orgID, actor st
 	}
 
 	// Mirror the rotated secret to SM-API; runner pods picking up from
-	// the next dispatch will receive the new secret via ExternalSecret
-	// refresh. Best-effort.
+	// the next dispatch receive the new secret via ExternalSecret refresh.
+	// Fail-closed: a stale secret_ref_name after rotation would hand a
+	// runner pod credentials Thunder already invalidated, so a write
+	// failure here fails the caller instead of swallowing it.
 	if s.secretRefWriter != nil && s.secretRefWriter.Enabled() {
 		if _, smerr := s.secretRefWriter.WritePublisher(ctx, orgID, profile.PublisherClientID, newSecret); smerr != nil {
-			slog.WarnContext(ctx, "idp_service: SM-API publisher rewrite failed (continuing)",
-				"orgID", orgID, "error", smerr)
+			s.audit(ctx, orgID, IDPAuditRegenerateSecret, actor, beforeJSON, nil, smerr)
+			// Thunder and the DB row already hold the new secret; the vault
+			// still holds the old one. A non-empty secret_ref_name would look
+			// healthy to ProvisionPublisherForBuild. Clear it so the next
+			// Build re-provisions instead of mounting invalidated credentials.
+			if cerr := s.repo.UpdateProfileColumns(ctx, profile, orgID, clearSecretRefTripletWithWrittenAt()); cerr != nil {
+				slog.ErrorContext(ctx, "idp_service: clear secret_ref after failed SM-API rewrite",
+					"orgID", orgID, "error", cerr)
+			}
+			return "", fmt.Errorf("idp_service: SM-API publisher rewrite: %w", smerr)
 		}
 	}
 

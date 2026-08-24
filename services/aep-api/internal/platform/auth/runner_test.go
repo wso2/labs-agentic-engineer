@@ -38,7 +38,7 @@ import (
 )
 
 // newRunnerTaskManager builds a TaskTokenManager backed by a freshly generated
-// RSA key so tests can mint real BFF Task-JWTs.
+// RSA key so tests can mint real BFF-signed identity JWTs.
 func newRunnerTaskManager(t *testing.T) *TaskTokenManager {
 	t.Helper()
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -68,46 +68,29 @@ func statusOf(err error) int {
 	return 0
 }
 
-func TestRunnerAuthorizer_TaskJWT(t *testing.T) {
+// Task JWTs are not a runner-callback credential. A still-valid BFF-signed
+// token must 401 the same as garbage — otherwise an old Job silently keeps
+// working after publisher CC became the only path.
+func TestRunnerAuthorizer_TaskJWTRejected(t *testing.T) {
 	mgr := newRunnerTaskManager(t)
-	// taskOrg lookup should never be hit on the Task-JWT path; fail loudly if it is.
-	taskOrg := func(context.Context, string) (string, error) {
-		t.Fatal("task-org lookup must not run for Task-JWT")
+	verifier, _ := newPublisherVerifier(t)
+	a := NewRunnerAuthorizer(verifier, func(context.Context, string) (string, error) {
+		t.Fatal("cycle lookup must not run for a Task JWT")
 		return "", nil
-	}
-	a := NewRunnerAuthorizer(mgr, nil, taskOrg)
+	})
 
-	tok, err := mgr.Issue("task-1", "org-a", "proj-1")
+	tok, err := mgr.IssueServiceToken("git-service", "org-a", time.Hour)
 	if err != nil {
-		t.Fatalf("Issue: %v", err)
+		t.Fatalf("IssueServiceToken: %v", err)
 	}
-
-	t.Run("valid + matching task → ok, org bound", func(t *testing.T) {
-		caller, err := a.Authorize(context.Background(), "Bearer "+tok, "task-1")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if caller.Org != tenant.OrgHandle("org-a") {
-			t.Errorf("org = %q, want org-a", caller.Org)
-		}
-		if caller.Source != tenant.SourceTaskJWT {
-			t.Errorf("source = %v, want SourceTaskJWT", caller.Source)
-		}
-		if caller.Subject != "task-1" {
-			t.Errorf("subject = %q, want task-1", caller.Subject)
-		}
-	})
-
-	t.Run("task mismatch → 403 (INT-6 fence)", func(t *testing.T) {
-		_, err := a.Authorize(context.Background(), "Bearer "+tok, "task-2")
-		if got := statusOf(err); got != 403 {
-			t.Fatalf("status = %d, want 403 (err=%v)", got, err)
-		}
-	})
+	_, err = a.Authorize(context.Background(), "Bearer "+tok, "task-1")
+	if got := statusOf(err); got != 401 {
+		t.Fatalf("status = %d, want 401 (err=%v)", got, err)
+	}
 }
 
 func TestRunnerAuthorizer_BadBearer(t *testing.T) {
-	a := NewRunnerAuthorizer(newRunnerTaskManager(t), nil, func(context.Context, string) (string, error) {
+	a := NewRunnerAuthorizer(nil, func(context.Context, string) (string, error) {
 		return "", nil
 	})
 
@@ -115,7 +98,6 @@ func TestRunnerAuthorizer_BadBearer(t *testing.T) {
 		"absent":       "",
 		"wrong scheme": "Token abc.def.ghi",
 		"too short":    "Bearer",
-		"garbage jwt":  "Bearer not-a-real-token",
 	}
 	for name, header := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -124,6 +106,18 @@ func TestRunnerAuthorizer_BadBearer(t *testing.T) {
 				t.Fatalf("status = %d, want 401 (err=%v)", got, err)
 			}
 		})
+	}
+}
+
+func TestRunnerAuthorizer_GarbageJWT(t *testing.T) {
+	verifier, _ := newPublisherVerifier(t)
+	a := NewRunnerAuthorizer(verifier, func(context.Context, string) (string, error) {
+		t.Fatal("cycle lookup must not run for garbage jwt")
+		return "", nil
+	})
+	_, err := a.Authorize(context.Background(), "Bearer not-a-real-token", "task-1")
+	if got := statusOf(err); got != 401 {
+		t.Fatalf("status = %d, want 401 (err=%v)", got, err)
 	}
 }
 
@@ -172,14 +166,14 @@ func newPublisherVerifier(t *testing.T) (*PublisherTokenVerifier, func(org, ouHa
 	return v, mint
 }
 
-// Publisher-cc fallback: no BFF Task-JWT, so the org-bound publisher token is
-// tried second. The token's org MUST match the task's owning org (runner.go's
-// cross-org fence) — org-A's token cannot refresh an org-B task it names.
+// Publisher CC is the only runner-callback credential. The token's org MUST
+// match the cycle's owning org (runner.go's cross-org fence) — org-A's token
+// cannot refresh an org-B cycle it names.
 func TestRunnerAuthorizer_PublisherCC(t *testing.T) {
 	verifier, mint := newPublisherVerifier(t)
 
 	t.Run("valid + task-org matches → ok, publisher source", func(t *testing.T) {
-		a := NewRunnerAuthorizer(newRunnerTaskManager(t), verifier,
+		a := NewRunnerAuthorizer(verifier,
 			func(context.Context, string) (string, error) { return "org-a", nil })
 		caller, err := a.Authorize(context.Background(), "Bearer "+mint("org-a", "org-a"), "task-1")
 		if err != nil {
@@ -194,7 +188,7 @@ func TestRunnerAuthorizer_PublisherCC(t *testing.T) {
 	})
 
 	t.Run("token org ≠ task org → 403 (cross-org fence)", func(t *testing.T) {
-		a := NewRunnerAuthorizer(newRunnerTaskManager(t), verifier,
+		a := NewRunnerAuthorizer(verifier,
 			func(context.Context, string) (string, error) { return "org-b", nil })
 		_, err := a.Authorize(context.Background(), "Bearer "+mint("org-a", "org-a"), "task-1")
 		if got := statusOf(err); got != 403 {
@@ -203,7 +197,7 @@ func TestRunnerAuthorizer_PublisherCC(t *testing.T) {
 	})
 
 	t.Run("task lookup fails → 403", func(t *testing.T) {
-		a := NewRunnerAuthorizer(newRunnerTaskManager(t), verifier,
+		a := NewRunnerAuthorizer(verifier,
 			func(context.Context, string) (string, error) { return "", errors.New("not found") })
 		_, err := a.Authorize(context.Background(), "Bearer "+mint("org-a", "org-a"), "task-1")
 		if got := statusOf(err); got != 403 {
@@ -219,7 +213,7 @@ func TestRunnerAuthorizer_PublisherCC(t *testing.T) {
 	// only the log may tell them apart.
 	t.Run("another org's cycle is indistinguishable from a missing one", func(t *testing.T) {
 		answer := func(lookup CycleOrgLookup) (int, string) {
-			a := NewRunnerAuthorizer(newRunnerTaskManager(t), verifier, lookup)
+			a := NewRunnerAuthorizer(verifier, lookup)
 			_, err := a.Authorize(context.Background(), "Bearer "+mint("org-a", "org-a"), "cycle-1")
 			var he *HTTPError
 			if !errors.As(err, &he) {
@@ -239,18 +233,19 @@ func TestRunnerAuthorizer_PublisherCC(t *testing.T) {
 	})
 }
 
-// A Task-JWT minted for a different org still authenticates (signature is
-// valid) but the INT-6 fence binds the path task to the claim, so the org is
-// taken from the verified claim — never from anything the caller could spoof.
+// Org is taken from the verified publisher token — never from anything the
+// caller could spoof in the request.
 func TestRunnerAuthorizer_OrgFromClaimNotInput(t *testing.T) {
-	mgr := newRunnerTaskManager(t)
-	a := NewRunnerAuthorizer(mgr, nil, func(context.Context, string) (string, error) { return "", nil })
-	tok, _ := mgr.Issue("task-9", "org-zed", "")
-	caller, err := a.Authorize(context.Background(), "Bearer "+tok, "task-9")
+	verifier, mint := newPublisherVerifier(t)
+	a := NewRunnerAuthorizer(verifier, func(context.Context, string) (string, error) { return "org-zed", nil })
+	caller, err := a.Authorize(context.Background(), "Bearer "+mint("org-zed", "org-zed"), "task-9")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if caller.Org != tenant.OrgHandle("org-zed") {
 		t.Errorf("org = %q, want org-zed (from the signed claim)", caller.Org)
+	}
+	if caller.Source != tenant.SourcePublisherCC {
+		t.Errorf("source = %v, want SourcePublisherCC", caller.Source)
 	}
 }

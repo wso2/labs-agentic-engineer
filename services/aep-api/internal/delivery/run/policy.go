@@ -27,17 +27,53 @@ import (
 // a workflow environment — and so the arithmetic behind a terminal reason is
 // one short function rather than a branch buried in a select.
 
-// MilestoneSnapshot is one cycle-boundary poll of the milestone: the two
-// populations the predicate is computed over, plus the total that says whether
-// the version still holds anything at all.
+// MilestoneSnapshot is one cycle-boundary poll of the milestone: every
+// population the boundary's predicates are computed over, in ONE round trip.
 //
-// Work is the WORKING SET — open, `aep`-labelled, not a gate, not the
-// validation issue — which is deliberately narrower than "some issue is open":
-// a milestone holding only ledger issues has nothing to work.
+// It carries BOTH working sets rather than "the working set", because two
+// species of run poll the same milestone through the same activity and they work
+// different populations — a dev run works planned work too, a task run must
+// never touch it. Answering both here is free: the host returns every count in
+// one GraphQL call, so the alternative would be a second activity or a second
+// round trip on the loop's hottest read, and a snapshot that answered only the
+// caller's own set would have to be told which caller it was.
+//
+// A working set is deliberately narrower than "some issue is open": a milestone
+// holding only ledger issues has nothing to work, and its gates and validation
+// task are worked by something other than a coding cycle.
 type MilestoneSnapshot struct {
-	Work  int `json:"work"`
-	Gates int `json:"gates"`
-	Total int `json:"total"`
+	// DevWork is a DEV run's working set — armed issues of kind development, bug
+	// or conflict (delivery.InDevWorkingSet, counted as OpenDevWork).
+	//
+	// The wire name stays `work`, and that is deliberate rather than lazy. An
+	// activity RESULT lives in Temporal history, so a run in flight across an
+	// upgrade decodes the snapshot its old worker recorded. The field this
+	// replaced held exactly this population — armed, minus gates, minus the
+	// validation task — so keeping the name means old history decodes into the
+	// right field. Renaming it would have decoded to ZERO, and a boundary that
+	// reads an empty working set settles the version DELIVERED without building
+	// it. Same rule as RunInput's zero-value fields: a value a replay cannot
+	// find must mean the pre-existing behaviour.
+	DevWork int `json:"work"`
+	// TaskWork is a TASK run's working set — the same minus planned work
+	// (delivery.InTaskWorkingSet, counted as OpenTaskWork).
+	//
+	// New, so it decodes to zero from history a previous worker wrote. That is
+	// survivable only because the workflow TYPE and the id grammar changed with
+	// the split (ADR-0020): no pre-split execution can be continued at all, so
+	// there is no run in flight for which this field could read zero and matter.
+	// Drain, not migrate — which is a property of that release, not of this
+	// struct, and worth re-checking before the next field lands here.
+	TaskWork int `json:"taskWork"`
+	Gates    int `json:"gates"`
+	Total    int `json:"total"`
+	// ValidationRepairs is how many open issues carry `src/validation`: the
+	// repair work a failed verdict filed. It is not a working set and nothing is
+	// dispatched off it — it answers the ONE question the task run's bookend
+	// asks, whether the defects in this milestone came from a verdict, and
+	// therefore whether draining the working set should reopen the version's
+	// validation task.
+	ValidationRepairs int `json:"validationRepairs"`
 }
 
 // Dispatchable is the dispatch predicate, and it guards EVERY cycle boundary:
@@ -48,9 +84,29 @@ type MilestoneSnapshot struct {
 // settle, because settle is reached through the empty-working-set branch that
 // runs before this one: gates hold dispatch, and with nothing to dispatch they
 // hold nothing.
-func Dispatchable(s MilestoneSnapshot) bool {
-	return s.Gates == 0 && s.Work > 0
+//
+// The rule is delivery.MilestoneWork.Dispatchable, and this is the supervisor's
+// adapter onto it. The event plane asks the same question of the same milestone
+// (eventcore.dispatchable) to decide whether a webhook is worth waking a waiting
+// run for, and it may not import this package — so the rule lives at the domain
+// root both can reach. A run woken by a predicate its own boundary then rejects
+// is a wasted cycle; the reverse is a version nobody wakes.
+func Dispatchable(s MilestoneSnapshot, work int) bool {
+	return delivery.MilestoneWork{Gates: s.Gates, Work: work}.Dispatchable()
 }
+
+// The two working-set selectors a run's bookends hand the boundary. They are
+// the COUNT half of the rule whose per-issue half is delivery.InDevWorkingSet /
+// InTaskWorkingSet, and the two halves are checked against each other by
+// delivery.TestWorkingSetsAgreeWithTheHostCounts.
+//
+// Written as named functions rather than as a `kind` switch inside the loop
+// because the loop must not be able to guess: the working set is what settles a
+// version and what a dispatch is spent on, so the workflow that owns those
+// consequences states it (see bookends).
+func devWorkingSet(s MilestoneSnapshot) int { return s.DevWork }
+
+func taskWorkingSet(s MilestoneSnapshot) int { return s.TaskWork }
 
 // nextCycleKind picks what the next cycle is for, from what the previous one
 // produced. Recovery cycles are ordinary cycles — the fix or conflict issue is
@@ -91,6 +147,21 @@ func budgetRefusal(kind string, cyclesTotal, fixCycles, conflictCycles, ceiling 
 	}
 	return ""
 }
+
+// maxUnreportedDispatches bounds how many validation CYCLES one validation run
+// opens after an agent merged its pull request without committing a report.
+//
+// It is a separate budget from the cycle's re-dispatch allowance
+// (RunMaxRedispatchPerCycle) because it answers a different failure: that one is
+// an agent that never landed a pull request at all, this one is an agent that
+// landed one and broke the report half of the runner contract. The remedy is the
+// same — dispatch again — but nothing else can supply it: no criterion asserted,
+// so there is no repair issue to file, and nothing was deployed, so there is
+// nothing outside the workflow to fix.
+//
+// Two, because an agent that ignored the contract twice will ignore it a third
+// time, and every dispatch is a paid agent run.
+const maxUnreportedDispatches = 2
 
 // noProgress is the rule that stops a run looping forever on work it cannot
 // finish: a GREEN cycle that closed no issue and minted no platform issue has

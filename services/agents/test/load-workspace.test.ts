@@ -18,7 +18,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, symlinkSync, writeFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -26,6 +26,9 @@ import {
   filterTurnSnapshot,
   keepInTurnSnapshot,
   loadSkillsFromSnapshot,
+  readReferenceAttachments,
+  overlayReferenceTexts,
+  MAX_REFERENCE_ATTACHMENT_ENCODED_BYTES,
   SkillReadError,
 } from "../src/conversation/load-workspace.js";
 import { buildSkillCatalog } from "../src/agents/main/prompt.js";
@@ -111,6 +114,36 @@ test("filterTurnSnapshot mirrors the walk's rules over an in-memory map", () => 
   ]);
 });
 
+// A user-uploaded reference is not an agent-authored spec artifact, so the
+// extension allow-list is the wrong test for it: it admits a .md reference and
+// drops a .txt or .csv one, which then sits in the snapshot with nothing
+// putting it in front of the model. The folder decides.
+test("keepInTurnSnapshot admits text references whatever their extension", () => {
+  for (const ext of ["md", "txt", "csv", "tsv", "json", "yaml", "yml", "xml", "html", "rst"]) {
+    assert.equal(
+      keepInTurnSnapshot(`specs/requirements/references/brief.${ext}`),
+      true,
+      `.${ext} reference should be readable as text`,
+    );
+  }
+  // Outside the references folder the old rules still hold — admitting these
+  // globally would put arbitrary yaml and json into every turn.
+  assert.equal(keepInTurnSnapshot("specs/design/workload.yaml"), false);
+  assert.equal(keepInTurnSnapshot("specs/requirements/rows.csv"), false);
+});
+
+// Natively-read binaries ride as file PARTS. Admitting one here would pour a
+// PDF's bytes into the text map — the failure that channel exists to avoid.
+test("keepInTurnSnapshot keeps natively-read binary references OUT of the text map", () => {
+  for (const ext of ["pdf", "png", "jpg", "jpeg", "gif", "webp"]) {
+    assert.equal(
+      keepInTurnSnapshot(`specs/requirements/references/doc.${ext}`),
+      false,
+      `.${ext} reference must ride as a file part, not as text`,
+    );
+  }
+});
+
 test("keepInTurnSnapshot admits the two OpenAPI contract shapes but still rejects arbitrary yaml", () => {
   // Produced contract: specs/design/components/<c>/openapi.yaml
   assert.equal(keepInTurnSnapshot("specs/design/components/orders/openapi.yaml"), true);
@@ -123,6 +156,170 @@ test("keepInTurnSnapshot admits the two OpenAPI contract shapes but still reject
   assert.equal(keepInTurnSnapshot("specs/design/components/orders/openapi.yml"), false);
   // A `*` must not cross a path segment: nesting the dep name breaks the shape.
   assert.equal(keepInTurnSnapshot("specs/design/components/orders/dependencies/nested/stripe.openapi.yaml"), false);
+});
+
+// --- Reference PDF attachments (#384) -----------------------------------------
+
+const REF_DIR = "specs/requirements/references";
+
+test("readReferenceAttachments: a .pdf reference becomes a native file part with its exact bytes", () => {
+  const pdfBytes = Buffer.from("%PDF-1.4 fake but binary-ish bytes \x00\x01\x02");
+  const root = makeTree({ [`${REF_DIR}/brief.pdf`]: pdfBytes });
+  try {
+    const parts = readReferenceAttachments(root, [`${REF_DIR}/brief.pdf`]);
+    assert.equal(parts.length, 1);
+    const part = parts[0]!;
+    assert.equal(part.type, "file");
+    assert.equal(part.mediaType, "application/pdf");
+    assert.equal(Buffer.from(part.data as string, "base64").toString("hex"), pdfBytes.toString("hex"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("readReferenceAttachments: the .pdf match is case-insensitive", () => {
+  const pdfBytes = Buffer.from("upper-case extension");
+  const root = makeTree({ [`${REF_DIR}/BRIEF.PDF`]: pdfBytes });
+  try {
+    const parts = readReferenceAttachments(root, [`${REF_DIR}/BRIEF.PDF`]);
+    assert.equal(parts.length, 1);
+    assert.equal(parts[0]?.mediaType, "application/pdf");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("readReferenceAttachments: non-pdf references are ignored — they are already in the text snapshot", () => {
+  const root = makeTree({ [`${REF_DIR}/notes.md`]: "# Notes\n", [`${REF_DIR}/notes.txt`]: "plain\n" });
+  try {
+    assert.deepEqual(readReferenceAttachments(root, [`${REF_DIR}/notes.md`, `${REF_DIR}/notes.txt`]), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("readReferenceAttachments: a missing pdf is skipped, never throws", () => {
+  const root = mkdtempSync(join(tmpdir(), "aep-refs-"));
+  try {
+    assert.deepEqual(readReferenceAttachments(root, [`${REF_DIR}/absent.pdf`]), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("readReferenceAttachments: absent/empty references list yields no parts", () => {
+  const root = mkdtempSync(join(tmpdir(), "aep-refs-"));
+  try {
+    assert.deepEqual(readReferenceAttachments(root, undefined), []);
+    assert.deepEqual(readReferenceAttachments(root, []), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// The largest raw file that can fit the ENCODED budget — derived here rather
+// than exported from the module, which has no production consumer for it.
+const MAX_RAW_BYTES = Math.floor(MAX_REFERENCE_ATTACHMENT_ENCODED_BYTES / 4) * 3;
+
+test("readReferenceAttachments: a file over the cap is skipped, not truncated or thrown", () => {
+  const big = Buffer.alloc(MAX_RAW_BYTES + 1, 1);
+  const root = makeTree({ [`${REF_DIR}/huge.pdf`]: big });
+  try {
+    assert.deepEqual(readReferenceAttachments(root, [`${REF_DIR}/huge.pdf`]), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// The cap is on ENCODED bytes, and base64 costs 4 wire bytes per 3 raw. A file
+// just under the budget in raw bytes is already over it once encoded — the
+// request Anthropic sees is what has to fit.
+test("readReferenceAttachments: the cap counts base64 bytes, not raw ones", () => {
+  const rawJustUnderBudget = Buffer.alloc(MAX_REFERENCE_ATTACHMENT_ENCODED_BYTES - 1, 1);
+  const root = makeTree({ [`${REF_DIR}/wide.pdf`]: rawJustUnderBudget });
+  try {
+    assert.deepEqual(readReferenceAttachments(root, [`${REF_DIR}/wide.pdf`]), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// One budget for the whole turn: two PDFs that each pass on their own must not
+// overrun the request together. The one that does not fit is dropped; the ones
+// already attached stay.
+test("readReferenceAttachments: the budget is spent across the turn's references", () => {
+  const half = Buffer.alloc(Math.floor((MAX_REFERENCE_ATTACHMENT_ENCODED_BYTES / 4) * 3 * 0.6), 1);
+  const root = makeTree({
+    [`${REF_DIR}/first.pdf`]: half,
+    [`${REF_DIR}/second.pdf`]: half,
+    [`${REF_DIR}/tiny.pdf`]: Buffer.from("%PDF-1.4 small"),
+  });
+  try {
+    const parts = readReferenceAttachments(root, [
+      `${REF_DIR}/first.pdf`,
+      `${REF_DIR}/second.pdf`,
+      `${REF_DIR}/tiny.pdf`,
+    ]);
+    // first fits; second would blow the budget; tiny still gets its chance
+    // behind it — one oversized document must not starve the rest.
+    assert.deepEqual(
+      parts.map((p) => p.filename),
+      [`${REF_DIR}/first.pdf`, `${REF_DIR}/tiny.pdf`],
+    );
+    const encoded = parts.reduce((n, p) => n + (p.data as string).length, 0);
+    assert.ok(
+      encoded <= MAX_REFERENCE_ATTACHMENT_ENCODED_BYTES,
+      `attachments encoded to ${encoded} bytes, over the ${MAX_REFERENCE_ATTACHMENT_ENCODED_BYTES} budget`,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// The snapshot is a checkout of a user's repo, so a reference can be a committed
+// symlink. `resolve` alone cannot see that — the path is textually in bounds —
+// so the file's real path is what gets fenced.
+test("readReferenceAttachments: a symlinked reference pointing out of the snapshot is refused", () => {
+  const root = makeTree({ [`${REF_DIR}/brief.pdf`]: Buffer.from("in bounds") });
+  const outside = makeTree({ "secret.pdf": Buffer.from("must never be read") });
+  try {
+    symlinkSync(join(outside, "secret.pdf"), join(root, REF_DIR, "escape.pdf"));
+    assert.deepEqual(readReferenceAttachments(root, [`${REF_DIR}/escape.pdf`]), []);
+    // The honest neighbour in the same dir still reads.
+    assert.equal(readReferenceAttachments(root, [`${REF_DIR}/brief.pdf`]).length, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+// A PDF reaches the model through exactly one channel. It is not in the text
+// snapshot because `keepInTurnSnapshot` admits no `.pdf` — not because of the
+// walk's NUL-byte skip — so even a PDF whose bytes happen to carry no NUL stays
+// out of `files` and cannot ride the turn twice.
+test("readSnapshot: a NUL-free PDF is still not in the text snapshot", () => {
+  const root = makeTree({
+    [`${REF_DIR}/brief.pdf`]: Buffer.from("%PDF-1.4 no nul bytes in here at all"),
+    [`${REF_DIR}/notes.md`]: "# Notes\n",
+  });
+  try {
+    assert.deepEqual(Object.keys(readSnapshot(root)), [`${REF_DIR}/notes.md`]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("readReferenceAttachments: a reference that would escape the snapshot dir is refused, never read", () => {
+  const root = makeTree({ [`${REF_DIR}/brief.pdf`]: Buffer.from("in bounds") });
+  const outside = makeTree({ "secret.pdf": Buffer.from("must never be read") });
+  try {
+    const outsideName = outside.split("/").pop();
+    const parts = readReferenceAttachments(root, [`../${outsideName}/secret.pdf`]);
+    assert.deepEqual(parts, []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
 });
 
 const SKILL_MD = (name: string, description: string, body: string): string =>
@@ -364,6 +561,54 @@ test("listReferences throws SkillReadError when an aux dir is unreadable", () =>
     } catch {
       /* restore best-effort */
     }
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// A room-scoped turn's CURRENT STATE comes from the collab room, and the room
+// (correctly) excludes reference documents — so text references must ride in
+// from the GIT snapshot, or a room turn silently loses the user's brief. A
+// live /start did exactly that: claim.md was listed in the steer, present in
+// the snapshot, and absent from the prompt.
+test("overlayReferenceTexts: git reference texts join the room files", () => {
+  const room = { "specs/requirements/prd.md": "# PRD (room)" };
+  const git = {
+    "specs/requirements/prd.md": "# PRD (git, stale)",
+    [`${REF_DIR}/claim.md`]: "Single web app.",
+    "README.md": "root",
+  };
+  const merged = overlayReferenceTexts(room, git);
+  assert.equal(merged[`${REF_DIR}/claim.md`], "Single web app.");
+  // The room stays the authority for everything that is not a reference.
+  assert.equal(merged["specs/requirements/prd.md"], "# PRD (room)");
+  assert.equal(merged["README.md"], undefined);
+});
+
+test("overlayReferenceTexts: git wins over a stale room copy of a reference", () => {
+  // Rooms seeded before the exclusion existed may still carry reference
+  // entries (possibly doubled or mangled) — git is the authority for them.
+  const room = { [`${REF_DIR}/claim.md`]: "poisoned room copy" };
+  const git = { [`${REF_DIR}/claim.md`]: "the real content" };
+  assert.equal(overlayReferenceTexts(room, git)[`${REF_DIR}/claim.md`], "the real content");
+});
+
+test("overlayReferenceTexts: no references → the room files return unchanged", () => {
+  const room = { "specs/requirements/prd.md": "# PRD" };
+  const merged = overlayReferenceTexts(room, { "README.md": "hi" });
+  assert.deepEqual(merged, room);
+});
+
+test("readReferenceAttachments: image references become native image-typed file parts (#383 follow-up)", () => {
+  const png = Buffer.from("89504e470d0a1a0a0000", "hex"); // PNG magic + padding
+  const jpg = Buffer.from("ffd8ffe000104a464946", "hex"); // JPEG magic
+  const root = makeTree({ [`${REF_DIR}/mockup.png`]: png, [`${REF_DIR}/photo.JPG`]: jpg });
+  try {
+    const parts = readReferenceAttachments(root, [`${REF_DIR}/mockup.png`, `${REF_DIR}/photo.JPG`]);
+    assert.equal(parts.length, 2);
+    assert.equal(parts[0]?.mediaType, "image/png");
+    assert.equal(Buffer.from(parts[0]?.data as string, "base64").toString("hex"), png.toString("hex"));
+    assert.equal(parts[1]?.mediaType, "image/jpeg");
+  } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });

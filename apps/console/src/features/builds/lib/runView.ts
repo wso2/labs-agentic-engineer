@@ -63,6 +63,29 @@ export function isTerminalRun(state: string): boolean {
 }
 
 /**
+ * The kind each retired origin implied — the console's mirror of
+ * delivery.RunKindForOrigin, and the only thing `origin` is still read for.
+ *
+ * A run row recorded before the kind existed carries an origin and nothing else,
+ * so falling back to it is what keeps a version's history legible across the
+ * change rather than showing every old run as an unrecognised kind.
+ */
+const KIND_FOR_ORIGIN: Record<string, string> = {
+  "spec-build": "dev",
+  "incident-adoption": "task",
+  revalidate: "validation",
+};
+
+/**
+ * What this run DOES: `dev` delivers a version, `task` works a defect inside one
+ * already delivered, `validation` re-judges a shipped version. Every predicate on
+ * this page is written on it, because the origin only says where a run came from.
+ */
+export function runKind(run: MilestoneRunView): string {
+  return run.kind || (KIND_FOR_ORIGIN[run.origin] ?? "");
+}
+
+/**
  * Does this run belong on the BUILD rail — is it part of how the version was
  * delivered, rather than a re-judgement of it?
  *
@@ -74,17 +97,19 @@ export function isTerminalRun(state: string): boolean {
  * run that died before dispatching, and false here, because a validation cycle was
  * dispatched, ran, and merged.
  *
- * Not a plain origin test, and that is the whole subtlety: a revalidation left at
+ * Not a plain kind test, and that is the whole subtlety: a validation run left at
  * the default attempt allowance REPAIRS what it finds — one issue per failed
  * criterion, then an ordinary coding cycle, then builds. Once it has done that it
  * is a build story like any other, so it is judged on what it actually did.
  *
- * The converse also has to hold: a spec build that died before dispatching has no
+ * The converse also has to hold: a dev run that died before dispatching has no
  * build sessions either, and it MUST stay — "nothing was ever dispatched" is the
- * true and useful thing to say about it. Hence the origin clause first.
+ * true and useful thing to say about it. Hence the kind clause first.
  */
 export function isDeliveryRun(run: MilestoneRunView): boolean {
-  return run.origin !== "revalidate" || buildCycles(run.cycles ?? []).length > 0;
+  return (
+    runKind(run) !== "validation" || buildCycles(run.cycles ?? []).length > 0
+  );
 }
 
 /**
@@ -276,19 +301,21 @@ export function buildSessionLabel(cycle: RunCycleView, index: number): string {
 }
 
 /**
- * What started this run. A milestone can see several SEQUENTIAL runs — the
- * spec build, then an incident adoption — and every run card is titled with the
- * same milestone title, so the origin is the only thing that tells them apart.
- * An origin this build predates is shown raw rather than mislabelled.
+ * What this run is. A milestone can see several SEQUENTIAL runs — the build that
+ * delivered it, then an incident fix, then a re-judgement — and every run card is
+ * titled with the same milestone title, so the kind is the only thing that tells
+ * them apart. A kind this build predates is shown raw rather than mislabelled.
  */
-export function runOriginLabel(origin: string): string {
-  switch (origin) {
-    case "spec-build":
+export function runKindLabel(kind: string): string {
+  switch (kind) {
+    case "dev":
       return "Spec build";
-    case "incident-adoption":
+    case "task":
       return "Incident";
+    case "validation":
+      return "Revalidation";
     default:
-      return origin;
+      return kind;
   }
 }
 

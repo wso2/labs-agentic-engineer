@@ -21,6 +21,8 @@ import (
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/clients/agentsvc"
+	"github.com/wso2/aep/aep-api/internal/platform/gitfs"
+	"github.com/wso2/aep/aep-api/internal/platform/gitfs/workspacetest"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
@@ -45,7 +47,27 @@ func descriptorTOML(t *testing.T, idea string) string {
 // so its interview answers land in the same history.
 func startTurnSpec(t *testing.T, seed map[string]string, msg string) agentsvc.TurnSpec {
 	t.Helper()
+	return startTurnSpecWithReferences(t, seed, nil, msg)
+}
+
+// startTurnSpecWithReferences is startTurnSpec with reference documents in the
+// project's STORE. They are seeded there and not into `seed` (the git tree) on
+// purpose: references are never committed (console ADR-0017), so the store is
+// the only place a turn can learn about them.
+func startTurnSpecWithReferences(t *testing.T, seed map[string]string, refs []gitfs.ReferenceDoc, msg string) agentsvc.TurnSpec {
+	t.Helper()
 	r := newGenaiRig(t, seed)
+	if len(refs) > 0 {
+		// The store is addressed by the ref the SERVICE resolves from the repo
+		// row (testOrg/testProj), not the fixture's own default path key —
+		// seeding fx.Ref writes a store the turn never looks at.
+		ref := r.fx.Ref
+		ref.OrgID, ref.ProjectID = testOrg, testProj
+		ref.RepoSlug = workspacetest.DefaultSlug
+		if err := r.fx.Engine.PutReferences(t.Context(), ref, refs); err != nil {
+			t.Fatalf("seed reference store: %v", err)
+		}
+	}
 	r.fake.parts = []string{addFilePart("specs/requirements/prd.md", "# Reqs\n")}
 	m := manifestPart(map[string]string{"specs/requirements/prd.md": "# Reqs\n"}, nil)
 	r.fake.manifest = &m

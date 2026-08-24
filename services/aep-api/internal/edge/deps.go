@@ -36,6 +36,10 @@ import (
 type Deps struct {
 	TaskTokens *auth.TaskTokenManager
 
+	// PublisherTokens verifies Thunder publisher CC JWTs on the MCP mount
+	// (AgentsScopedVerifier fallback). Nil keeps MCP BFF-only (local/tests).
+	PublisherTokens *auth.PublisherTokenVerifier
+
 	// DesignSvc is the narrow design-dependency reader backing the edge's own
 	// GET /projects/{name}/design/dependencies handler (handlers_design.go) —
 	// the one op the edge serves directly rather than promoting from a domain

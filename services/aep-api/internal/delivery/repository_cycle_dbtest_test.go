@@ -27,11 +27,11 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/modelcost"
 )
 
-// admitRun inserts a spec-build run and returns it, failing the test if the
+// admitRun inserts a dev run and returns it, failing the test if the
 // mutex rejects it.
 func admitRun(t *testing.T, repo delivery.MilestoneRunRepository, org, project string, n int, title string) *delivery.MilestoneRun {
 	t.Helper()
-	ok, row, err := repo.TryAdmit(context.Background(), specRun(org, project, n, title))
+	ok, row, err := repo.TryAdmit(context.Background(), devRun(org, project, n, title))
 	if err != nil || !ok || row == nil {
 		t.Fatalf("TryAdmit(%s/%s) = (%v, %v)", org, project, ok, err)
 	}
@@ -563,17 +563,22 @@ func TestRunCycleRepository_SetValidationVerdictIsWriteOnceAfterClose(t *testing
 	}
 
 	// A CLOSED cycle still accepts its verdict — the point of the different fence.
-	got, err := cycles.SetValidationVerdict(ctx, cycle.ID, delivery.ValidationVerdictFailed, 77)
+	// The DIGEST rides the same write, and must: the fence below would reject any
+	// later attempt to add it.
+	got, err := cycles.SetValidationVerdict(ctx, cycle.ID, delivery.ValidationVerdictFailed, 77, "digest-one")
 	if err != nil || got == nil {
 		t.Fatalf("SetValidationVerdict on a closed cycle = (%+v, %v), want the row back", got, err)
 	}
 	if got.ValidationVerdict != delivery.ValidationVerdictFailed || got.ValidationIssue != 77 {
 		t.Fatalf("recorded (%q, %d), want (failed, 77)", got.ValidationVerdict, got.ValidationIssue)
 	}
+	if got.ValidationDigest != "digest-one" {
+		t.Fatalf("digest = %q, want digest-one — the next attempt compares against it", got.ValidationDigest)
+	}
 
 	// A second write is a no-op, not a rewrite: an attempt concludes once, so a
 	// repeat can only be an activity retry. (nil, nil) is the no-op contract.
-	again, err := cycles.SetValidationVerdict(ctx, cycle.ID, delivery.ValidationVerdictPassed, 77)
+	again, err := cycles.SetValidationVerdict(ctx, cycle.ID, delivery.ValidationVerdictPassed, 77, "digest-two")
 	if err != nil {
 		t.Fatalf("SetValidationVerdict(retry): %v", err)
 	}
@@ -587,9 +592,25 @@ func TestRunCycleRepository_SetValidationVerdictIsWriteOnceAfterClose(t *testing
 	if reread.ValidationVerdict != delivery.ValidationVerdictFailed {
 		t.Fatalf("verdict was overwritten to %q; an attempt's answer is final", reread.ValidationVerdict)
 	}
+	if reread.ValidationDigest != "digest-one" {
+		t.Fatalf("digest was overwritten to %q; it is fenced with the verdict it belongs to", reread.ValidationDigest)
+	}
+
+	// And it is readable as the milestone's newest digest — the read one validation
+	// run makes of the PREVIOUS run's answer.
+	digest, err := cycles.LatestValidationDigest(ctx, run.OrgID, []string{run.ID})
+	if err != nil || digest != "digest-one" {
+		t.Fatalf("LatestValidationDigest = (%q, %v), want digest-one", digest, err)
+	}
+	// No prior runs is not an error: a version's first attempt has nothing to
+	// compare against.
+	empty, err := cycles.LatestValidationDigest(ctx, run.OrgID, nil)
+	if err != nil || empty != "" {
+		t.Fatalf("LatestValidationDigest(no runs) = (%q, %v), want the empty no-op", empty, err)
+	}
 
 	// The closed vocabulary is enforced here too, so a typo cannot reach the column.
-	if _, err := cycles.SetValidationVerdict(ctx, cycle.ID, "kinda-passed", 77); err == nil {
+	if _, err := cycles.SetValidationVerdict(ctx, cycle.ID, "kinda-passed", 77, ""); err == nil {
 		t.Fatal("SetValidationVerdict accepted an unknown verdict")
 	}
 }

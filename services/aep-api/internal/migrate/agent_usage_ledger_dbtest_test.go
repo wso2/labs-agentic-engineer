@@ -43,7 +43,7 @@ func TestAgentUsageLedger_BacksfillsSpendCapturedBeforeTheLedgerExisted(t *testi
 	runs := delivery.NewMilestoneRunRepository(db)
 	admitted, run, err := runs.TryAdmit(ctx, &delivery.MilestoneRun{
 		OrgID: "orgb", ProjectID: "shop", MilestoneNumber: 4, MilestoneTitle: "v4", Tag: "v4",
-		Origin: delivery.RunOriginSpecBuild, State: delivery.RunStateWaiting,
+		Kind: delivery.RunKindDev, Origin: delivery.RunOriginSpecBuild, State: delivery.RunStateWaiting,
 	})
 	if err != nil || !admitted {
 		t.Fatalf("TryAdmit = (%v, %v)", admitted, err)

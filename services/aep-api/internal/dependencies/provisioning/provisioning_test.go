@@ -170,6 +170,17 @@ func (f fakeDesign) ReadDesignComponents(context.Context, string, string) ([]spe
 	return f.comps, f.err
 }
 
+type countingDesign struct {
+	comps []spec.DesignComponent
+	err   error
+	calls int
+}
+
+func (f *countingDesign) ReadDesignComponents(context.Context, string, string) ([]spec.DesignComponent, error) {
+	f.calls++
+	return f.comps, f.err
+}
+
 type fakeRepos struct{}
 
 func (fakeRepos) RepoFullName(context.Context, string, string) (string, error) { return "o/r", nil }
@@ -212,12 +223,12 @@ type fakeExtProv struct {
 	// (name/description/config schema) rather than fetched from the catalog.
 	lastER *dependencies.ExternalResource
 
-	// AuthorWithSecretRef spies (the build path's no-SM-write author half).
-	authorRefCalls int
-	authorByEnv    map[string]dependencies.PreparedEnvValues
-	authorResult   *dependencies.ProvisionResult
-	authorErr      error
-	// authorLastER is the *dependencies.ExternalResource the last AuthorWithSecretRef
+	// AuthorPreparedValues spies (the build path's no-SM-write author half).
+	authorPreparedCalls int
+	authorByEnv         map[string]dependencies.PreparedEnvValues
+	authorResult        *dependencies.ProvisionResult
+	authorErr           error
+	// authorLastER is the *dependencies.ExternalResource the last AuthorPreparedValues
 	// call received — same purpose as lastER, for the build author path.
 	authorLastER *dependencies.ExternalResource
 }
@@ -234,8 +245,8 @@ func (f *fakeExtProv) Provision(_ context.Context, _, _, _ string, er *dependenc
 	}
 	return &dependencies.ProvisionResult{ResourceName: "o-ext", BindingByEnv: map[string]string{"development": "o-ext-development"}}, nil
 }
-func (f *fakeExtProv) AuthorWithSecretRef(_ context.Context, _, _ string, er *dependencies.ExternalResource, byEnv map[string]dependencies.PreparedEnvValues) (*dependencies.ProvisionResult, error) {
-	f.authorRefCalls++
+func (f *fakeExtProv) AuthorPreparedValues(_ context.Context, _, _ string, er *dependencies.ExternalResource, byEnv map[string]dependencies.PreparedEnvValues) (*dependencies.ProvisionResult, error) {
+	f.authorPreparedCalls++
 	f.authorByEnv = byEnv
 	f.authorLastER = er
 	if f.authorErr != nil {
@@ -450,22 +461,22 @@ func TestEnsureProvisionIssues_MintsPerDepDeduped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnsureProvisionIssues: %v", err)
 	}
-	if len(issues.created) != 2 {
-		t.Fatalf("want 2 gate issues (stripe + orders-db), got %d", len(issues.created))
+	if len(issues.created) != 1 {
+		t.Fatalf("want 1 platform-resource gate issue, got %d", len(issues.created))
 	}
 	// The returned map carries the minted gate number for each distinct dep — the
 	// read-your-write the build path threads past the racy list.
-	if gateByDep["stripe"] == 0 || gateByDep["orders-db"] == 0 {
+	if gateByDep["stripe"] != 0 || gateByDep["orders-db"] == 0 {
 		t.Fatalf("EnsureProvisionIssues must return the minted gate number per dep, got %+v", gateByDep)
 	}
-	// A gate is PROSE plus two labels: the aep:provision marker and the
+	// A gate is PROSE plus two labels: the `provision` kind and the
 	// aep:dep/<slug> that keys it to its dependency. It never carries the `aep`
 	// working-set label — it is a hold on dispatch, never agent work — and its
 	// body carries no machine block, because nothing parses it.
 	var deps []string
 	for _, req := range issues.created {
-		if !contains(req.Labels, delivery.LabelProvisionGate) {
-			t.Errorf("gate issue missing aep:provision label: %v", req.Labels)
+		if !contains(req.Labels, delivery.KindProvision) {
+			t.Errorf("gate issue missing the provision kind: %v", req.Labels)
 		}
 		if contains(req.Labels, delivery.LabelAgentWork) {
 			t.Errorf("a gate must never be agent work: %v", req.Labels)
@@ -476,8 +487,8 @@ func TestEnsureProvisionIssues_MintsPerDepDeduped(t *testing.T) {
 		deps = append(deps, gateDepFromLabels(req.Labels))
 	}
 	sort.Strings(deps)
-	if !reflect.DeepEqual(deps, []string{"orders-db", "stripe"}) {
-		t.Fatalf("gate dep labels = %v, want [orders-db stripe]", deps)
+	if !reflect.DeepEqual(deps, []string{"orders-db"}) {
+		t.Fatalf("gate dep labels = %v, want [orders-db]", deps)
 	}
 
 	// Idempotent: a second call mints nothing new (the deps already have open issues).
@@ -490,13 +501,13 @@ func TestEnsureProvisionIssues_MintsPerDepDeduped(t *testing.T) {
 		t.Fatalf("second mint must be a no-op, created %d", len(issues.created))
 	}
 	// The map still resolves the pre-existing open gates (from openProvisionDeps).
-	if gateByDep2["stripe"] == 0 || gateByDep2["orders-db"] == 0 {
+	if gateByDep2["stripe"] != 0 || gateByDep2["orders-db"] == 0 {
 		t.Fatalf("second call must still return the existing gate numbers, got %+v", gateByDep2)
 	}
 }
 
 // A gate must land IN the version's milestone, or the run's dispatch predicate
-// ("no open aep:provision issue in this milestone") can never see the hold. The
+// ("no open `provision` issue in this milestone") can never see the hold. The
 // number rides the CREATE — one call, no follow-up PATCH. A gate deliberately
 // does not carry the `aep` working-set label: it is a dispatch hold, never
 // agent work.
@@ -760,8 +771,8 @@ func TestRequestAccess_CreatesRequestAndProviderIssue(t *testing.T) {
 	if got := gateDepFromLabels(issues.created[0].Labels); got != "inventory" {
 		t.Fatalf("org-publish gate dep label = %q, want inventory", got)
 	}
-	if !contains(issues.created[0].Labels, delivery.LabelProvisionGate) {
-		t.Fatalf("org-publish gate missing the aep:provision marker: %v", issues.created[0].Labels)
+	if !contains(issues.created[0].Labels, delivery.KindProvision) {
+		t.Fatalf("org-publish gate missing the provision kind: %v", issues.created[0].Labels)
 	}
 	if ar.ProviderIssueNumber == 0 {
 		t.Fatalf("access request must link the provider issue number")
@@ -875,7 +886,7 @@ func TestSaveValues_WrongKind400(t *testing.T) {
 // ---- helpers ---------------------------------------------------------------
 
 // provisionGateIssue builds a seeded gate issue exactly as the platform mints
-// one: prose, the aep:provision marker, and the aep:dep/<slug> label that keys
+// one: prose, the `provision` kind, and the aep:dep/<slug> label that keys
 // it to its dependency. That label pair IS the index — nothing reads the body.
 func provisionGateIssue(number int, depName string) sourcecontrol.IssueInfo {
 	return sourcecontrol.IssueInfo{

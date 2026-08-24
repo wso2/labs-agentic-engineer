@@ -36,6 +36,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -479,21 +480,17 @@ func TestSecretRefWriter_ResolveVaultKey_NoClaimsInContext(t *testing.T) {
 // --- DeleteAnthropic (DB) -----------------------------------------------------
 
 // seedAnthropicRow inserts a minimal valid org_anthropic_credentials row,
-// optionally with the secret-ref triplet populated on BOTH column sets
-// (EXPAND dual-write shape).
+// optionally with the secret-ref triplet populated.
 func seedAnthropicRow(t testing.TB, db *gorm.DB, ocOrgID string, refName, kvPath, prop *string) {
 	t.Helper()
 	row := organization.OrgAnthropicCredential{
-		OcOrgID:            ocOrgID,
-		KeyPrefix:          "sk-ant-api03-",
-		KeyLast4:           "wxyz",
-		Status:             "active",
-		SecretRefName:      refName,
-		SecretRefKVPath:    kvPath,
-		SecretRefProperty:  prop,
-		SMAPISecretRefName: refName,
-		SMAPIKVPath:        kvPath,
-		SMAPIProperty:      prop,
+		OcOrgID:           ocOrgID,
+		KeyPrefix:         "sk-ant-api03-",
+		KeyLast4:          "wxyz",
+		Status:            "active",
+		SecretRefName:     refName,
+		SecretRefKVPath:   kvPath,
+		SecretRefProperty: prop,
 	}
 	if err := db.Create(&row).Error; err != nil {
 		t.Fatalf("seed anthropic row %s: %v", ocOrgID, err)
@@ -546,13 +543,12 @@ func TestSecretRefWriter_DeleteAnthropic_DB(t *testing.T) {
 		if err := db.Where("oc_org_id = ?", "acme").First(&got).Error; err != nil {
 			t.Fatalf("reload: %v", err)
 		}
-		if got.SecretRefName != nil || got.SecretRefKVPath != nil || got.SecretRefProperty != nil ||
-			got.SMAPISecretRefName != nil || got.SMAPIKVPath != nil || got.SMAPIProperty != nil {
-			t.Fatalf("triplet not cleared on both column sets: %+v", got)
+		if got.SecretRefName != nil || got.SecretRefKVPath != nil || got.SecretRefProperty != nil {
+			t.Fatalf("triplet not cleared: %+v", got)
 		}
 	})
 
-	t.Run("nil SMAPISecretRefName on the row passes an empty refName to DeleteSecret", func(t *testing.T) {
+	t.Run("nil SecretRefName on the row passes an empty refName to DeleteSecret", func(t *testing.T) {
 		t.Parallel()
 		db := dbtest.New(t)
 		seedAnthropicRow(t, db, "acme", nil, nil, nil)
@@ -581,7 +577,7 @@ func TestSecretRefWriter_DeleteAnthropic_DB(t *testing.T) {
 		if err := db.Where("oc_org_id = ?", "acme").First(&got).Error; err != nil {
 			t.Fatalf("reload: %v", err)
 		}
-		if got.SMAPISecretRefName == nil || *got.SMAPISecretRefName != "acme-anthropic-secrets" {
+		if got.SecretRefName == nil || *got.SecretRefName != "acme-anthropic-secrets" {
 			t.Fatalf("row must be untouched on delete error: %+v", got)
 		}
 	})
@@ -590,23 +586,22 @@ func TestSecretRefWriter_DeleteAnthropic_DB(t *testing.T) {
 // --- DeletePublisher (DB) -----------------------------------------------------
 
 // seedIDPProfileRow inserts a minimal valid organization_idp_profiles row,
-// optionally with the secret-ref triplet populated on BOTH column sets.
+// optionally with the secret-ref triplet populated.
 func seedIDPProfileRow(t testing.TB, db *gorm.DB, orgID string, refName, kvPath *string) {
 	t.Helper()
 	row := organization.OrganizationIDPProfile{
-		OrgID:              orgID,
-		Kind:               "custom",
-		Issuer:             "https://idp.test",
-		JWKSURL:            "https://idp.test/jwks",
-		PublisherClientID:  "aep-publisher-" + orgID,
-		SecretRefName:      refName,
-		SecretRefKVPath:    kvPath,
-		SMAPISecretRefName: refName,
-		SMAPIKVPath:        kvPath,
+		OrgID:             orgID,
+		Kind:              "custom",
+		Issuer:            "https://idp.test",
+		JWKSURL:           "https://idp.test/jwks",
+		PublisherClientID: "aep-publisher-" + orgID,
+		SecretRefName:     refName,
+		SecretRefKVPath:   kvPath,
 	}
 	if refName != nil {
 		row.SecretRefProperty = strPtr("publisher")
-		row.SMAPIProperty = strPtr("publisher")
+		written := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+		row.SecretRefWrittenAt = &written
 	}
 	if err := db.Create(&row).Error; err != nil {
 		t.Fatalf("seed idp profile row %s: %v", orgID, err)
@@ -658,13 +653,12 @@ func TestSecretRefWriter_DeletePublisher_DB(t *testing.T) {
 		if err := db.Where("org_id = ?", "acme").First(&got).Error; err != nil {
 			t.Fatalf("reload: %v", err)
 		}
-		if got.SecretRefName != nil || got.SecretRefKVPath != nil || got.SecretRefProperty != nil || got.SecretRefWrittenAt != nil ||
-			got.SMAPISecretRefName != nil || got.SMAPIKVPath != nil || got.SMAPIProperty != nil || got.SMAPIWrittenAt != nil {
-			t.Fatalf("triplet not cleared on both column sets: %+v", got)
+		if got.SecretRefName != nil || got.SecretRefKVPath != nil || got.SecretRefProperty != nil || got.SecretRefWrittenAt != nil {
+			t.Fatalf("triplet not cleared: %+v", got)
 		}
 	})
 
-	t.Run("nil SMAPISecretRefName on the row passes an empty refName to DeleteSecret", func(t *testing.T) {
+	t.Run("nil SecretRefName on the row passes an empty refName to DeleteSecret", func(t *testing.T) {
 		t.Parallel()
 		db := dbtest.New(t)
 		seedIDPProfileRow(t, db, "acme", nil, nil)
@@ -693,8 +687,11 @@ func TestSecretRefWriter_DeletePublisher_DB(t *testing.T) {
 		if err := db.Where("org_id = ?", "acme").First(&got).Error; err != nil {
 			t.Fatalf("reload: %v", err)
 		}
-		if got.SMAPISecretRefName == nil || *got.SMAPISecretRefName != "acme-publisher-secrets" {
+		if got.SecretRefName == nil || *got.SecretRefName != "acme-publisher-secrets" {
 			t.Fatalf("row must be untouched on delete error: %+v", got)
+		}
+		if got.SecretRefWrittenAt == nil {
+			t.Fatalf("written_at must be untouched on delete error")
 		}
 	})
 }
@@ -704,25 +701,24 @@ func TestSecretRefWriter_DeletePublisher_DB(t *testing.T) {
 // seedUserPATRow inserts a minimal valid org_credentials row of kind
 // user-pat (the CHECK constraints require webhook_secrets to be a non-empty
 // array for this kind, and installation_id/selected_repos to be NULL).
-// When refName is set, both secret_ref_* and sm_api_* column sets are stamped.
+// When refName is set, secret_ref_* columns are stamped.
 func seedUserPATRow(t testing.TB, db *gorm.DB, ocOrgID string, refName, kvPath *string) {
 	t.Helper()
 	row := organization.OrgCredential{
-		OcOrgID:            ocOrgID,
-		Kind:               "user-pat",
-		GitHubLogin:        "ada",
-		IdentityName:       "Ada Lovelace",
-		IdentityEmail:      "ada@example.com",
-		IdentityLogin:      "ada",
-		WebhookSecrets:     organization.WebhookSecrets{{Secret: "seed-secret"}},
-		SecretRefName:      refName,
-		SecretRefKVPath:    kvPath,
-		SMAPISecretRefName: refName,
-		SMAPIKVPath:        kvPath,
+		OcOrgID:         ocOrgID,
+		Kind:            "user-pat",
+		GitHubLogin:     "ada",
+		IdentityName:    "Ada Lovelace",
+		IdentityEmail:   "ada@example.com",
+		IdentityLogin:   "ada",
+		WebhookSecrets:  organization.WebhookSecrets{{Secret: "seed-secret"}},
+		SecretRefName:   refName,
+		SecretRefKVPath: kvPath,
 	}
 	if refName != nil {
 		row.SecretRefProperty = strPtr("api-key")
-		row.SMAPIProperty = strPtr("api-key")
+		written := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+		row.SecretRefWrittenAt = &written
 	}
 	if err := db.Create(&row).Error; err != nil {
 		t.Fatalf("seed user-pat row %s: %v", ocOrgID, err)
@@ -773,13 +769,12 @@ func TestSecretRefWriter_DeleteGitHubPAT_DB(t *testing.T) {
 		if err := db.Where("oc_org_id = ?", "acme").First(&got).Error; err != nil {
 			t.Fatalf("reload: %v", err)
 		}
-		if got.SecretRefName != nil || got.SecretRefKVPath != nil || got.SecretRefProperty != nil || got.SecretRefWrittenAt != nil ||
-			got.SMAPISecretRefName != nil || got.SMAPIKVPath != nil || got.SMAPIProperty != nil || got.SMAPIWrittenAt != nil {
-			t.Fatalf("triplet not cleared on both column sets: %+v", got)
+		if got.SecretRefName != nil || got.SecretRefKVPath != nil || got.SecretRefProperty != nil || got.SecretRefWrittenAt != nil {
+			t.Fatalf("triplet not cleared: %+v", got)
 		}
 	})
 
-	t.Run("nil SMAPISecretRefName on the row passes an empty refName to DeleteSecret", func(t *testing.T) {
+	t.Run("nil SecretRefName on the row passes an empty refName to DeleteSecret", func(t *testing.T) {
 		t.Parallel()
 		db := dbtest.New(t)
 		seedUserPATRow(t, db, "acme", nil, nil)
@@ -808,21 +803,24 @@ func TestSecretRefWriter_DeleteGitHubPAT_DB(t *testing.T) {
 		if err := db.Where("oc_org_id = ?", "acme").First(&got).Error; err != nil {
 			t.Fatalf("reload: %v", err)
 		}
-		if got.SMAPISecretRefName == nil || *got.SMAPISecretRefName != "acme-github-pat-secrets" {
+		if got.SecretRefName == nil || *got.SecretRefName != "acme-github-pat-secrets" {
 			t.Fatalf("row must be untouched on delete error: %+v", got)
+		}
+		if got.SecretRefWrittenAt == nil {
+			t.Fatalf("written_at must be untouched on delete error")
 		}
 	})
 }
 
-// --- Write* dual-write (DB) ---------------------------------------------------
+// --- Write* stamps secret_ref_* (DB) ------------------------------------------
 
 func claimsCtx(ouID string) context.Context {
 	return jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: ouID})
 }
 
-// TestSecretRefWriter_WriteAnthropic_DualWrite proves UpdateColumns stamps
-// BOTH secret_ref_* and sm_api_* column sets (EXPAND dual-write).
-func TestSecretRefWriter_WriteAnthropic_DualWrite(t *testing.T) {
+// TestSecretRefWriter_WriteAnthropic_StampsSecretRef proves UpdateColumns
+// stamps secret_ref_* only.
+func TestSecretRefWriter_WriteAnthropic_StampsSecretRef(t *testing.T) {
 	t.Parallel()
 	db := dbtest.New(t)
 	seedAnthropicRow(t, db, "acme", nil, nil, nil)
@@ -842,23 +840,20 @@ func TestSecretRefWriter_WriteAnthropic_DualWrite(t *testing.T) {
 		t.Fatalf("reload: %v", err)
 	}
 	wantPath := "user-app-secrets/" // prefix; full path includes OrgBaseNamespace(ouId)
-	if got.SecretRefName == nil || *got.SecretRefName != "acme-anthropic-secrets" ||
-		got.SMAPISecretRefName == nil || *got.SMAPISecretRefName != "acme-anthropic-secrets" {
-		t.Fatalf("dual-write name: secret_ref=%v sm_api=%v", got.SecretRefName, got.SMAPISecretRefName)
+	if got.SecretRefName == nil || *got.SecretRefName != "acme-anthropic-secrets" {
+		t.Fatalf("secret_ref_name: %v", got.SecretRefName)
 	}
-	if got.SecretRefKVPath == nil || got.SMAPIKVPath == nil ||
-		*got.SecretRefKVPath != *got.SMAPIKVPath ||
+	if got.SecretRefKVPath == nil ||
 		!strings.HasPrefix(*got.SecretRefKVPath, wantPath) ||
 		!strings.HasSuffix(*got.SecretRefKVPath, "/acme-anthropic-secrets") {
-		t.Fatalf("dual-write kv_path: secret_ref=%v sm_api=%v", got.SecretRefKVPath, got.SMAPIKVPath)
+		t.Fatalf("secret_ref_kv_path: %v", got.SecretRefKVPath)
 	}
-	if got.SecretRefProperty == nil || got.SMAPIProperty == nil ||
-		*got.SecretRefProperty != "api-key" || *got.SMAPIProperty != "api-key" {
-		t.Fatalf("dual-write property: secret_ref=%v sm_api=%v", got.SecretRefProperty, got.SMAPIProperty)
+	if got.SecretRefProperty == nil || *got.SecretRefProperty != "api-key" {
+		t.Fatalf("secret_ref_property: %v", got.SecretRefProperty)
 	}
 }
 
-func TestSecretRefWriter_WriteGitHubPAT_DualWrite(t *testing.T) {
+func TestSecretRefWriter_WriteGitHubPAT_StampsSecretRef(t *testing.T) {
 	t.Parallel()
 	db := dbtest.New(t)
 	seedUserPATRow(t, db, "acme", nil, nil)
@@ -877,36 +872,13 @@ func TestSecretRefWriter_WriteGitHubPAT_DualWrite(t *testing.T) {
 	if err := db.Where("oc_org_id = ?", "acme").First(&got).Error; err != nil {
 		t.Fatalf("reload: %v", err)
 	}
-	if got.SecretRefName == nil || *got.SecretRefName != "acme-github-pat-secrets" ||
-		got.SMAPISecretRefName == nil || *got.SMAPISecretRefName != "acme-github-pat-secrets" {
-		t.Fatalf("dual-write name: secret_ref=%v sm_api=%v", got.SecretRefName, got.SMAPISecretRefName)
+	if got.SecretRefName == nil || *got.SecretRefName != "acme-github-pat-secrets" {
+		t.Fatalf("secret_ref_name: %v", got.SecretRefName)
 	}
-	if got.SecretRefKVPath == nil || got.SMAPIKVPath == nil || *got.SecretRefKVPath != *got.SMAPIKVPath {
-		t.Fatalf("dual-write kv_path: secret_ref=%v sm_api=%v", got.SecretRefKVPath, got.SMAPIKVPath)
+	if got.SecretRefKVPath == nil || !strings.Contains(*got.SecretRefKVPath, "acme-github-pat-secrets") {
+		t.Fatalf("secret_ref_kv_path: %v", got.SecretRefKVPath)
 	}
-	if got.SecretRefWrittenAt == nil || got.SMAPIWrittenAt == nil {
-		t.Fatalf("dual-write written_at: secret_ref=%v sm_api=%v", got.SecretRefWrittenAt, got.SMAPIWrittenAt)
-	}
-}
-
-func TestResolvedSecretRef_PreferNewFallBackOld(t *testing.T) {
-	t.Parallel()
-	newName, oldName := "new-ref", "old-ref"
-	row := organization.OrgAnthropicCredential{
-		SMAPISecretRefName: &oldName,
-		SMAPIKVPath:        strPtr("old/path"),
-		SMAPIProperty:      strPtr("old-prop"),
-	}
-	if got := row.ResolvedSecretRefName(); got == nil || *got != "old-ref" {
-		t.Fatalf("fallback to sm_api: got %v", got)
-	}
-	row.SecretRefName = &newName
-	row.SecretRefKVPath = strPtr("new/path")
-	row.SecretRefProperty = strPtr("new-prop")
-	if got := row.ResolvedSecretRefName(); got == nil || *got != "new-ref" {
-		t.Fatalf("prefer secret_ref: got %v", got)
-	}
-	if got := row.ResolvedSecretRefKVPath(); got == nil || *got != "new/path" {
-		t.Fatalf("prefer kv_path: got %v", got)
+	if got.SecretRefWrittenAt == nil {
+		t.Fatalf("secret_ref_written_at: %v", got.SecretRefWrittenAt)
 	}
 }

@@ -90,20 +90,33 @@ gh issue list --milestone "<milestone title>" --state open \
 index lags by up to a minute, so a fix issue the platform minted seconds ago, the
 very issue this cycle exists to work, is invisible to it.
 
-Your working set is every issue **carrying the `aep` label** and carrying neither
-`aep:provision` (a platform gate — the run does not start while one is open, and
-you never touch them) nor `aep:validation` (a separate validation run works
-those).
+Two labels decide this, and they do different jobs. **`aep` arms an issue** — it
+says something may work it at all. **A kind says what it is**, and there is
+exactly one per issue:
 
-Any open issue in the milestone **without** the `aep` label is a **ledger**
-issue — a human's note. **Never touch one**: don't work it, comment on it, or
-reference it in your PR body. A human adopts it by adding `aep`, and it joins the
-working set on your next re-list.
+| Kind | What it is | Yours? |
+|---|---|---|
+| `development` | planned work from the spec | **yes** |
+| `bug` | a defect — a red build, a failed deploy, a failed criterion, a human's report | **yes** |
+| `conflict` | a pull request of yours that will not merge | **yes** |
+| `validation` | judging the deployed system | no — a separate validation run works it |
+| `provision` | a platform gate | no — never touch one; the run does not start while one is open |
+
+**Your working set is every open issue carrying `aep` whose kind is
+`development`, `bug` or `conflict`.** An armed issue carrying no kind at all is
+yours too — a human handed it over without classifying it.
+
+Any open issue **without** `aep` is a **ledger** issue — a human's note, or an
+incident nobody has picked up. **Never touch one**: don't work it, comment on it,
+or reference it in your PR body. That includes an unarmed issue labelled `bug`:
+being classified is not being handed to you. A human adopts it by adding `aep`,
+and it joins the working set on your next re-list.
 
 > ⚠ `--milestone` resolves **by title** and only sees **OPEN** milestones, so once
-> the platform closes it at settle `gh` fails with "no milestone found". That
-> means the milestone is finished: treat the working set as empty and go to
-> Finish — never fall back to the search API, never guess issue numbers.
+> the platform closes it `gh` fails with "no milestone found". That means the
+> version is finished — it closes on a green ending, never while work or a verdict
+> is still owed: treat the working set as empty and go to Finish. Never fall back
+> to the search API, never guess issue numbers.
 
 **The bodies.** Fetch your whole working set's bodies up front with
 `gh issue view <number> --json number,title,body,labels` — you need them to plan
@@ -374,7 +387,7 @@ web search. The rest belongs to the run:
   cannot link it and will not merge it. Or open more than one for this cycle.
 - Run `gh pr merge`, `gh pr close`, `gh repo create`, `gh repo delete`,
   `gh repo fork`, or `gh repo edit`.
-- Touch a ledger issue, an `aep:provision` gate, or an `aep:validation` issue.
+- Touch a ledger issue (no `aep`), a `provision` gate, or a `validation` issue.
 - Delete remote branches (`git push --delete`, `git push origin :branch`).
 - Modify branch protection, secrets, repository settings, collaborators, or
   webhooks.

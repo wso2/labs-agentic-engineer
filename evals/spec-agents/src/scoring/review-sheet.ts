@@ -24,8 +24,8 @@
  */
 
 import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { REVIEWS_DIR } from "../config.js";
+import { join, relative } from "node:path";
+import { REPO_ROOT, REVIEWS_DIR } from "../config.js";
 import type { SectionVerdict } from "./bands.js";
 import type { JudgeReport } from "./judge.js";
 import type { StructuralReport } from "./structural.js";
@@ -41,6 +41,20 @@ export function needsReview(sections: ReviewSection[]): boolean {
   return sections.some((s) => !s.skipped && s.verdict.band !== "pass");
 }
 
+/**
+ * A run artifact's path as the repository sees it.
+ *
+ * The sheet is COMMITTED — it is the human verdict record for a run — so an
+ * absolute path bakes the machine and account that happened to run the eval
+ * into the repo, and reads as a dead link on anyone else's checkout.
+ */
+function repoRelative(path: string): string {
+  const rel = relative(REPO_ROOT, path);
+  // Outside the repo entirely (a caller pointing at a scratch dir): the
+  // absolute path is still the only useful thing to say.
+  return rel && !rel.startsWith("..") ? rel : path;
+}
+
 export function renderReviewSheet(input: {
   scenario: string;
   evalName: string;
@@ -53,8 +67,8 @@ export function renderReviewSheet(input: {
     `# Eval review — ${input.evalName} / ${input.scenario}`,
     "",
     `- Run: ${input.when}`,
-    `- Transcript: ${input.transcriptPath}`,
-    `- Raw trace: ${input.tracePath}`,
+    `- Transcript: ${repoRelative(input.transcriptPath)}`,
+    `- Raw trace: ${repoRelative(input.tracePath)}`,
     "",
   ];
   for (const s of input.sections) {

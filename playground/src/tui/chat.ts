@@ -41,6 +41,7 @@ import { buildChatBanner, commandGuide } from "./banner.js";
 import { classifyChatInput, type ChatIntent } from "./chat-commands.js";
 import { confirmCodingDir } from "./consent.js";
 import { chatSpec, startSpec } from "../engine/turn-spec.js";
+import { readReferences } from "../state/references.js";
 import { readIdea } from "../state/descriptor.js";
 import type { PlaygroundSession } from "../engine/session.js";
 
@@ -130,7 +131,7 @@ export async function chatLoop(session: PlaygroundSession, opts: PhaseOptions): 
       // asking for one.
       const turn =
         intent.kind === "start"
-          ? startSpec(intent.inlineIdea ?? readIdea(session.projectDir))
+          ? startSpec(intent.inlineIdea ?? readIdea(session.projectDir), readReferences(session.projectDir))
           : intent.turn;
 
       // A skill-load (`/spec`, `/design`, `/<skill>`) or a plain chat turn.

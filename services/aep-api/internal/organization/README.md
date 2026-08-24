@@ -68,6 +68,11 @@ services, the raw connect-callback controller, and the S2S credentials-refresh.*
 - `ResolveCodingSecretRef` is the **single** statement of the coding→default fallback, and it fails
   closed: a configured-but-unusable coding credential aborts the dispatch rather than quietly billing
   the default key. Every other reader (`EffectiveKey`, the RCA push) is default-only by construction.
+- **Publisher SecretReference for coding Jobs is fail-closed on `POST /build`.**
+  `ProvisionPublisherForBuild` (actor `build-provision`) ensures the Thunder publisher app and stamps
+  `secret_ref_name` while the console JWT is on ctx. A missing or disabled `SecretRefWriter` returns
+  an error (Build 503) and does not touch Thunder. `EnsureOrgPublisher` on the deployment path still
+  swallows SM-API errors. Coding dispatch reads `secret_ref_name` only.
 - Org config wire types (`ConfigProjection`/`ConfigPatch`/`*Projection`) are hand-written pure DTOs in
   `models/` (codegen can't express them) — referenced directly, **not** a wire/domain split.
 - The `ListOrganizations` op is the one tenant-gate carve-out (it carries no org context). Platform-wide

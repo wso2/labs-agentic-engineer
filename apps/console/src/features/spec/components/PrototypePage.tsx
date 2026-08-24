@@ -46,19 +46,25 @@ function Centered({ children }: { children: React.ReactNode }) {
  * (#348). Mirrors WireframePanel's inline "Prototype" mode, but as the
  * whole page: resolve the component's `.dsl` via `buildDesignSection` (the
  * same tree WireframePanel/SpecView use for the sidebar), derive the model,
- * and hand off to `PrototypeView` with the deep-linked `screen` — the route
- * wrapper syncs `onScreenChange` back into `?screen=` via replace-navigation.
+ * and hand off to `PrototypeView` with the deep-linked `screen` and `flow` —
+ * the route wrapper syncs `onScreenChange`/`onFlowChange` back into
+ * `?screen=`/`?flow=` via replace-navigation, so a shared link restores both
+ * the screen and the persona.
  */
 export function PrototypePage({
   projectName,
   component,
   screen,
+  flow,
   onScreenChange,
+  onFlowChange,
 }: {
   projectName: string;
   component: string;
   screen?: string;
+  flow?: string;
   onScreenChange: (screen: string) => void;
+  onFlowChange: (flow: string) => void;
 }) {
   const filesQuery = useSpecFiles(projectName);
   const node = useMemo(() => {
@@ -109,7 +115,9 @@ export function PrototypePage({
         model={model}
         fillHeight
         onScreenChange={onScreenChange}
+        onFlowChange={onFlowChange}
         {...(screen ? { initialScreen: screen } : {})}
+        {...(flow ? { initialFlow: flow } : {})}
       />
     );
   }

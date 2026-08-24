@@ -15,7 +15,7 @@
 // under the License.
 
 // Package validation owns the VALIDATION phase's platform side: it mints the
-// validation issue (aep:validation) that the milestone run's validation cycle is
+// validation task (armed, kind `validation`) that the milestone run's validation cycle is
 // dispatched at.
 //
 // ONE issue per VERSION, filed into that version's milestone by the create

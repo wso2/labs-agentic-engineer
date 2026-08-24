@@ -105,11 +105,13 @@ Rules of thumb:
 
 - Name the screen for its role and put the role in the description:
   `screen ReviewQueue "Manager reviews and approves pending requests"`.
-- **A role screen is the SAME app — keep the identical `navbar` and `sidebar`
-  every other screen uses**, with the same items in the same order. The role
-  changes what's *inside* the screen — which buttons, columns, rows — not the
-  shell. Never give a scoped role its own smaller sidebar; that reads as a
-  different app.
+- **Scope the chrome to the role.** An admin screen's `sidebar` lists the
+  admin's destinations; a customer screen's lists the customer's. Real
+  permissioned apps do not show people links they cannot use, and a prototype
+  that does sends the reviewer down another persona's path.
+- **Keep the overlap identical.** Items both roles have use the same label,
+  the same order, and the same `navbar` brand, so the screens still read as one
+  product rather than two. Only the role-specific entries differ.
 - Reflect the real difference in **actions and data** — a role that can't
   approve/assign/delete simply doesn't have that button or column. Don't reskin
   one layout and call it two. The role difference should be legible from the
@@ -168,10 +170,10 @@ automatically. Keep each comment `text` SHORT (a phrase, not a sentence).
 Line-oriented, nested by 2-space indentation. **No coordinates anywhere** —
 position comes from structure:
 
-```
+```text
 screen <Name> ["what this view is for"]   // one per view; description renders as a subtitle
   navbar "App | Nav1 -> Screen | Nav2"    // top bar; first item is the brand; bell+avatar automatic
-  sidebar "Item1 -> Screen | Item2"       // left rail; same items on every screen of the app
+  sidebar "Item1 -> Screen | Item2"       // left rail; same items on every screen a role sees
   <kind> "<label>" [WxH] [variant] [-> Screen]   // a block: stacks below the previous one
   row                            // children go side by side (equal shares, 16px gaps)
     <kind> "<label>" …
@@ -231,6 +233,45 @@ screen should be reachable by clicking — or be a landing screen whose
 description says which role it serves. Not every control needs an arrow; what
 matters is that no view is stranded.
 
+### Flows — one per role or journey
+
+The screens say what exists; a **flow** says who walks which ones, in what
+order. The prototype's top-level control is the flow picker, so a wireframe set
+without flows offers the reviewer no way to ask for the admin's journey.
+
+Declare one `flow` block per role or journey named in `design.md` (or in
+`specs/requirements/` when the design doc is absent), listing that
+role's screens in walkthrough order, **entry screen first**. Name the flow for
+its **task** ("Approval queue", "Log a risk"), and carry the persona on a
+`role` line — not in the name:
+
+```text
+flow "Approval queue"
+  role "Admin"
+  description "An admin reviews queued items and audits the outcome"
+  Login
+  AdminQueue
+  AuditDetail
+
+flow "My orders"
+  role "Customer"
+  description "A signed-in customer checks a placed order"
+  Login          // a reference, not a copy — one screen, two memberships
+  Orders
+```
+
+- A flow **references** screens by name; screens stay declared once. List a
+  shared screen (sign-in, a sign-out landing) in every flow that reaches it.
+- The name is quoted and must be unique — declaring one flow twice rejects the
+  write.
+- A name that matches no `screen` rejects the write with its line number.
+- `role "…"` names the persona who walks the flow; `description "…"` says what
+  the journey is, like a screen's description says what the view is. Both are
+  keyword lines inside the block, at most one of each (a duplicate rejects the
+  write). Give every role-serving flow its `role`; a genuinely role-less
+  journey (a public checkout) may omit it.
+- A screen in no flow is allowed, but ask yourself who reaches it.
+
 Syntax is validated at write time: an unknown keyword, a misplaced
 `left`/`right`/table-`row`, or old-style x,y coordinates rejects the write with
 line numbers (`INVALID_DSL`) — fix every listed line and re-emit the file.
@@ -286,44 +327,67 @@ stops communicating.
   dashboard app) uses the `sidebar` for section links and a brand-only
   `navbar` (`navbar "Acme"`). A simple public flow (storefront, checkout) uses
   a link-carrying `navbar` and **no sidebar**. Never both on one screen.
-- Repeat the SAME `navbar` (and `sidebar`) verbatim on every screen of one app
-  — consistent chrome is what makes screens read as one product.
+- Repeat the SAME `navbar` on every screen of one app. Repeat the SAME
+  `sidebar` too, EXCEPT where a role's screens scope it to that role's
+  destinations — the items both roles share still keep the same label and
+  order, so the screens read as one product even when the rail isn't
+  word-for-word identical.
 - Comments start with `//`. Every screen should be reachable from some
   control's `-> Screen`.
 
 ## Worked example — risk register webapp wireframes
 
-A complete `wireframes.dsl` for a three-screen desktop flow. Note the rhythm:
-every screen repeats the same `navbar` + `sidebar` (consistent chrome); blocks
-stack in reading order; `row` groups things side by side; the primary action is
-the one `primary` button per screen; status is carried by `badge`s, not prose.
-No coordinates anywhere — the compiler computes every position.
+A complete `wireframes.dsl` for a two-role desktop flow. The manager and the
+owner each get their own dashboard and detail screen — a shared `RiskDetail`
+would need two different sidebars, and a screen can only carry one, so each
+role's landing view and remediation view are split in two. `navbar` stays
+brand-only and identical everywhere; each `sidebar` lists only that role's
+destinations, and the items both roles have (Overview, All Registers, Audits,
+Settings) keep the same label and the same order — only the role-specific
+entry (Review Queue vs. My Risks) differs. Note the rest of the rhythm: blocks
+stack in reading order; `row` groups things side by side; the primary action
+is the one `primary` button per screen; status is carried by `badge`s, not
+prose. No coordinates anywhere — the compiler computes every position.
 
-```
-// Risk register — three screens, desktop
+```text
+// Risk register — two roles, five screens, desktop
 
-screen RiskDashboard "Managers monitor open risk and act on what's overdue"
+screen RiskQueue "Manager monitors open risk across registers and acts on what's overdue"
   navbar "RiskHub"
-  sidebar "Overview | My Risks | All Registers | Audits | Settings"
+  sidebar "Overview | Review Queue -> RiskQueue | All Registers | Audits | Settings"
   row
-    heading "Risk Overview"
+    heading "Risk Queue"
     right
-    button "New risk" primary -> NewRisk
+    select "Register: All"
   row
     card "Open risks | 24 | across 6 registers"
     card "Overdue actions | 6 | need follow-up"
     card "High severity | 3 | review this week"
-  heading "Recent activity"
-  tabs "All | Mine | Watching"
-  table "Risk | Owner | Severity | Status | Updated" -> RiskDetail
+  row
+    heading "Needs review"
+    right
+    button "Review next" primary -> QueueRiskDetail
+  tabs "All | Overdue | High severity"
+  table "Risk | Owner | Severity | Status | Updated" -> QueueRiskDetail
     row "Unpatched edge servers | Platform team | High | Open | 2h ago"
     row "Stale access keys | Security | Medium | In review | 1d ago"
     row "Vendor SOC2 lapse | Compliance | High | Overdue | 3d ago"
 
+screen MyRisks "Owner tracks the risks they own and logs new ones"
+  navbar "RiskHub"
+  sidebar "Overview | My Risks -> MyRisks | All Registers | Audits | Settings"
+  row
+    heading "My Risks"
+    right
+    button "New risk" primary -> NewRisk
+  table "Risk | Severity | Status | Updated" -> RiskDetail
+    row "Unpatched edge servers | High | Open | 2h ago"
+    row "Rotate edge certs | Medium | In progress | 1d ago"
+
 screen NewRisk "An owner logs a new risk into a register"
   navbar "RiskHub"
-  sidebar "Overview | My Risks | All Registers | Audits | Settings"
-  breadcrumb "Risks / New risk"
+  sidebar "Overview | My Risks -> MyRisks | All Registers | Audits | Settings"
+  breadcrumb "My Risks / New risk"
   heading "New Risk"
   input "Title — e.g. Unpatched edge servers"
   textarea "What is the risk and why does it matter?"
@@ -337,12 +401,45 @@ screen NewRisk "An owner logs a new risk into a register"
   row
     right
     button "Cancel"
-    button "Create risk" primary -> RiskDashboard
+    button "Create risk" primary -> MyRisks
 
-screen RiskDetail "The owner tracks remediation for one risk"
+screen QueueRiskDetail "Manager reviews progress and escalates risks that stall"
   navbar "RiskHub"
-  sidebar "Overview | My Risks | All Registers | Audits | Settings"
-  breadcrumb "Risks / Unpatched edge servers"
+  sidebar "Overview | Review Queue -> RiskQueue | All Registers | Audits | Settings"
+  breadcrumb "Risk Queue / Unpatched edge servers"
+  row
+    heading "Unpatched edge servers"
+    badge "High" danger
+    badge "Open" info
+  text "Owner: Platform team — Updated 2h ago"
+  split 60/40
+    left
+      heading "Remediation"
+      progress "60%" info
+      text "6 of 10 actions complete"
+      table "Action | Assignee | Due | Status"
+        row "Patch kernel CVE-2026-1 | A. Chen | Fri | Done"
+        row "Rotate edge certs | M. Diaz | Mon | In progress"
+        row "Close inbound 8443 | Platform | Tue | To do"
+      row
+        right
+        button "Reassign owner"
+        button "Escalate" primary
+    right
+      card "Review notes"
+        text "You · 3d: second week overdue — needs a date."
+        text "R. Osei · 1d: agreed, escalate if Monday slips."
+        row
+          textarea "Add a review note…"
+          button "Post note"
+      heading "Review history"
+      text "1d ago — You flagged this risk for review"
+      text "6d ago — R. Osei reassigned it to Platform team"
+
+screen RiskDetail "The owner tracks remediation for the risks they own"
+  navbar "RiskHub"
+  sidebar "Overview | My Risks -> MyRisks | All Registers | Audits | Settings"
+  breadcrumb "My Risks / Unpatched edge servers"
   row
     heading "Unpatched edge servers"
     badge "High" danger
@@ -366,11 +463,34 @@ screen RiskDetail "The owner tracks remediation for one risk"
         text "M. Diaz · 1d: Monday, after the freeze."
         row
           textarea "Add a comment…"
-          button "Post" primary
+          button "Post"
       heading "Activity"
       text "2h ago — A. Chen closed CVE-2026-1"
       text "1d ago — M. Diaz started cert rotation"
+
+flow "Approval queue"
+  role "Manager"
+  description "A manager triages queued risks and reviews each in detail"
+  RiskQueue
+  QueueRiskDetail
+
+flow "Log a risk"
+  role "Risk owner"
+  description "An owner records a new risk and tracks its remediation"
+  MyRisks
+  NewRisk
+  RiskDetail
 ```
+
+The two `flow` blocks close the file: each names its task, carries its `role`
+and a one-line `description`, and lists only its own role's screens, entry
+screen first. Each screen is reachable by clicking from somewhere in its own
+flow — `RiskQueue`'s "Review next" CTA and its table both lead to
+`QueueRiskDetail`; `MyRisks`'s button leads to `NewRisk` and its table leads to
+`RiskDetail`. They are what the prototype's flow picker offers the reviewer —
+the Manager's "Approval queue" walks queue-then-escalate, the Risk owner's
+"Log a risk" walks log-then-remediate — and neither flow references a screen
+the other role can't reach.
 
 Checklist before finishing a wireframe file:
 
@@ -378,7 +498,11 @@ Checklist before finishing a wireframe file:
   duplicate takes on the same screen. Where a role changes the view, there's a
   screen per role, named and described for it.
 - Every screen has a one-line description saying what it's for.
-- Chrome (`navbar`, `sidebar`) is identical across screens of the same app.
+- `navbar` is identical across every screen of the app; `sidebar` is scoped
+  to each role's destinations, with shared items kept at the same label and
+  order across roles.
+- Each role or journey named in `design.md` has its own `flow "<name>"` block,
+  entry screen first, referencing existing screens by name.
 - Labels are content-bearing ("Open risks | 24 | across 6 registers",
   "Platform team", "Overdue"), never placeholders like "text" or "label".
 - The right primitive does each job — `badge` for status, `tabs` for section

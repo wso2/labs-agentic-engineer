@@ -33,7 +33,8 @@ vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children?: React.ReactNode }) => <a>{children}</a>,
   // The delivered result routes on to the deployments and validation boards.
   useNavigate: () => navigate,
-  createLink: (Component: React.ElementType) =>
+  createLink:
+    (Component: React.ElementType) =>
     ({
       to,
       params,
@@ -52,7 +53,11 @@ vi.mock("@tanstack/react-router", () => ({
       );
       const query = new URLSearchParams(search ?? {}).toString();
       return (
-        <Component {...rest} component="a" href={query ? `${path}?${query}` : path}>
+        <Component
+          {...rest}
+          component="a"
+          href={query ? `${path}?${query}` : path}
+        >
           {children}
         </Component>
       );
@@ -98,7 +103,11 @@ let mockCycleBuilds: {
   completed: boolean;
 }[] = [];
 const cancelMutate = vi.fn();
-const cancelState = { isPending: false, isError: false, error: null as unknown };
+const cancelState = {
+  isPending: false,
+  isError: false,
+  error: null as unknown,
+};
 
 vi.mock("../api/queries", () => ({
   useBuilds: () => ({
@@ -135,6 +144,7 @@ function run(over: Partial<MilestoneRunView> = {}): MilestoneRunView {
     id: "run-1",
     milestoneNumber: 2,
     milestoneTitle: "v2",
+    kind: "dev",
     origin: "spec-build",
     state: "running",
     budgets: {
@@ -203,9 +213,7 @@ afterEach(() => {
 });
 
 function renderPage(tag?: string, onTagChange = vi.fn()) {
-  render(
-    <BuildsPage projectName="acme" tag={tag} onTagChange={onTagChange} />,
-  );
+  render(<BuildsPage projectName="acme" tag={tag} onTagChange={onTagChange} />);
   return onTagChange;
 }
 
@@ -244,13 +252,21 @@ describe("BuildsPage — one version's story", () => {
     renderPage();
 
     // The strip narrates the CURRENT session's five stages…
-    for (const stage of ["Coding agent", "Pull request", "Merge", "Builds", "Deployment"]) {
+    for (const stage of [
+      "Coding agent",
+      "Pull request",
+      "Merge",
+      "Builds",
+      "Deployment",
+    ]) {
       expect(screen.getAllByText(stage).length).toBeGreaterThan(0);
     }
     // …and the session behind it stays visible, because the re-entry loop is
     // the thing a reader of a multi-session run is trying to understand.
     // …below the card, not inside it — the card is the strip and the NOW.
-    expect(screen.getByText("EARLIER BUILD SESSIONS IN THIS RUN")).toBeInTheDocument();
+    expect(
+      screen.getByText("EARLIER BUILD SESSIONS IN THIS RUN"),
+    ).toBeInTheDocument();
     expect(screen.getByText("Build session 1 · coding")).toBeInTheDocument();
     expect(screen.getByText(/merged .* as dcb1edc5/)).toBeInTheDocument();
   });
@@ -281,7 +297,9 @@ describe("BuildsPage — one version's story", () => {
     ];
     renderPage();
     // Rendered as one line next to the terminal reason: "Budget spent: …".
-    expect(screen.getByText(/Budget spent: Build sessions 8 \/ 8/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Budget spent: Build sessions 8 \/ 8/),
+    ).toBeInTheDocument();
     // The fix-session allowance is still unspent, so it is not listed.
     expect(screen.queryByText(/Fix sessions/)).not.toBeInTheDocument();
   });
@@ -417,7 +435,12 @@ describe("BuildsPage — one version's story", () => {
     // A milestone sees SEQUENTIAL runs: the spec build, then an incident.
     mockBuilds = [build("v2", "completed")];
     mockRuns = [
-      run({ id: "run-2", origin: "incident-adoption", state: "succeeded" }),
+      run({
+        id: "run-2",
+        kind: "task",
+        origin: "incident-adoption",
+        state: "succeeded",
+      }),
       run({ id: "run-1", state: "succeeded" }),
     ];
     renderPage();
@@ -466,7 +489,9 @@ describe("BuildsPage — one version's story", () => {
     ];
     renderPage();
 
-    expect(screen.getByText("All agent work for v2 is done")).toBeInTheDocument();
+    expect(
+      screen.getByText("All agent work for v2 is done"),
+    ).toBeInTheDocument();
     expect(screen.getByText("View deployment status")).toBeInTheDocument();
   });
 
@@ -520,7 +545,9 @@ describe("BuildsPage — one version's story", () => {
     ];
     renderPage();
 
-    expect(screen.getByText("All agent work for v2 is done")).toBeInTheDocument();
+    expect(
+      screen.getByText("All agent work for v2 is done"),
+    ).toBeInTheDocument();
     expect(
       screen.getByText(/Validation is running against the deployed system/),
     ).toBeInTheDocument();
@@ -567,7 +594,9 @@ describe("BuildsPage — one version's story", () => {
     // #3 is claimed by the open cycle; #4 is not — it stays open rather than
     // being guessed into motion.
     expect(screen.getByText("1 in progress")).toBeInTheDocument();
-    expect(screen.getByText("Claimed by build session 1 · coding")).toBeInTheDocument();
+    expect(
+      screen.getByText("Claimed by build session 1 · coding"),
+    ).toBeInTheDocument();
     expect(screen.getByText("1 open")).toBeInTheDocument();
   });
 
@@ -596,9 +625,7 @@ describe("BuildsPage — one version's story", () => {
     renderPage();
 
     expect(screen.getByText("2 in progress")).toBeInTheDocument();
-    expect(
-      screen.getAllByText("With build session 1 · coding").length,
-    ).toBe(2);
+    expect(screen.getAllByText("With build session 1 · coding").length).toBe(2);
     expect(screen.queryByText(/^\d+ open$/)).not.toBeInTheDocument();
   });
 
@@ -709,7 +736,7 @@ describe("BuildsPage — one version's story", () => {
   it("keeps an earlier session collapsed until asked, then shows its cycles", () => {
     mockBuilds = [build("v2", "in_progress")];
     mockRuns = [
-      run({ id: "run-2", origin: "incident-adoption" }),
+      run({ id: "run-2", kind: "task", origin: "incident-adoption" }),
       run({ id: "run-1", state: "cancelled", endedAt: "2026-07-10T09:42:00Z" }),
     ];
     mockIssues = withOpenWork();
@@ -745,7 +772,9 @@ describe("BuildsPage — one version's story", () => {
     mockCycleBuilds = [];
     renderPage();
 
-    expect(screen.queryByText(/All agent work for .* is done/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/All agent work for .* is done/),
+    ).not.toBeInTheDocument();
     expect(screen.getByText("NOW")).toBeInTheDocument();
   });
 
@@ -778,7 +807,9 @@ describe("BuildsPage — one version's story", () => {
     ];
     renderPage();
 
-    expect(screen.getByText("All agent work for v2 is done")).toBeInTheDocument();
+    expect(
+      screen.getByText("All agent work for v2 is done"),
+    ).toBeInTheDocument();
     // The way out: the board that actually knows what is running.
     expect(screen.getByText("View deployment status")).toBeInTheDocument();
     // Nothing is happening, so there is no "now" to narrate.
@@ -821,9 +852,12 @@ describe("BuildsPage — one version's story", () => {
 // validation cycles are already filtered out of it, on the grounds that a verdict
 // shown twice invites the two to disagree.
 describe("BuildsPage — a revalidation is not a build story", () => {
-  const revalidateRun = (over: Partial<MilestoneRunView> = {}): MilestoneRunView => ({
+  const revalidateRun = (
+    over: Partial<MilestoneRunView> = {},
+  ): MilestoneRunView => ({
     ...run(),
     id: "run-revalidate",
+    kind: "validation",
     origin: "revalidate",
     state: "failed",
     terminalReason: "validation-failed",
@@ -858,7 +892,7 @@ describe("BuildsPage — a revalidation is not a build story", () => {
     expect(screen.getByText(/Build session/)).toBeInTheDocument();
   });
 
-  // The converse, and why the test is on what the run DID rather than its origin:
+  // The converse, and why the test is on what the run DID rather than its kind:
   // left at the default attempt allowance a revalidation repairs what it finds —
   // an issue per failed criterion, an ordinary coding cycle, then builds.
   it("keeps a revalidation that went on to repair and rebuild", () => {
@@ -885,6 +919,7 @@ describe("BuildsPage — a revalidation is not a build story", () => {
     expect(
       screen.queryByText(/No build session was ever dispatched/),
     ).not.toBeInTheDocument();
-    expect(screen.getByText(/Revalidate/i)).toBeInTheDocument();
+    // And it is chipped as what it is — the kind label, not a raw enum value.
+    expect(screen.getByText(/Revalidation/i)).toBeInTheDocument();
   });
 });

@@ -30,8 +30,8 @@ import (
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
-func newTestTap(issues IssueClient) *planTap {
-	tap := newPlanTap(context.Background(), "org1", "proj1", issues)
+func newTestTap(issues *fakeIssues) *planTap {
+	tap := newPlanTap(context.Background(), "org1", "proj1", issues, issues.writer())
 	// Every plan turn the build click drives plans INTO a milestone; 5 is this
 	// version's.
 	tap.milestone = 5
@@ -63,7 +63,8 @@ type failWriter struct{}
 
 func (failWriter) Write([]byte) (int, error) { return 0, fmt.Errorf("client gone") }
 
-// A planned Task is ONE call: prose body, the `aep` working-set label, and the
+// A planned Task is ONE call: prose body, the arming label + the `development`
+// kind, and the
 // milestone assigned at creation. Nothing structured is written into the body —
 // the milestone is the version pin and the label is the population marker, so a
 // machine block would be a second source of truth nobody reads.
@@ -81,8 +82,16 @@ func TestPlanTap_PlanMintsProseIssueIntoTheMilestone(t *testing.T) {
 		t.Fatalf("expected 1 issue created, got %d", len(issues.created))
 	}
 	got := issues.created[0]
-	if len(got.Labels) != 1 || got.Labels[0] != delivery.LabelAgentWork {
-		t.Errorf("labels = %v, want exactly [%s]", got.Labels, delivery.LabelAgentWork)
+	// Armed, and PLANNED work. The kind is what keeps a bug-fix run — which works
+	// the DEPLOYED version — off the work of the version still being built.
+	if !delivery.InDevWorkingSet(got.Labels) {
+		t.Errorf("labels = %v, want a planned Task in the dev working set", got.Labels)
+	}
+	if delivery.InTaskWorkingSet(got.Labels) {
+		t.Errorf("labels = %v — planned work must never be in a bug-fix run's working set", got.Labels)
+	}
+	if got.Labels[0] != delivery.LabelAgentWork || delivery.KindOf(got.Labels) != delivery.KindDevelopment {
+		t.Errorf("labels = %v, want [%s %s]", got.Labels, delivery.LabelAgentWork, delivery.KindDevelopment)
 	}
 	if got.Milestone == nil || *got.Milestone != 5 {
 		t.Errorf("milestone = %v, want 5 assigned at creation (1+N, not create-then-patch)", got.Milestone)

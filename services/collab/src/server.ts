@@ -29,7 +29,7 @@ import type {
 import type { CollabConfig } from "./env.js";
 import type { BffClient } from "./bff.js";
 import { isSpecRoom } from "./room.js";
-import { seedDocument } from "./seed.js";
+import { isReferenceDocPath, seedDocument } from "./seed.js";
 import { devSeedFiles } from "./fixtures.js";
 import { flushAllRooms, flushRoom } from "./committer.js";
 import {
@@ -209,10 +209,13 @@ export function buildLoadDocumentHook(config: CollabConfig, deps: CollabDeps) {
     // by the oracle, and an unseeded-but-live doc beats a dead connection
     // (transient BFF errors would otherwise hard-fail every join).
     try {
-      const files = await deps.bff.fetchSpecFiles(
+      const fetched = await deps.bff.fetchSpecFiles(
         context.token,
         context.projectName,
       );
+      // Reference documents never enter the room — not seeded, not baselined
+      // (the committer filters its side too; see isReferenceDocPath).
+      const files = fetched.filter((f) => !isReferenceDocPath(f.path));
       seedDocument(document, files, onAnomaly);
       // Committer baseline (#133): the flush diffs the live doc against what
       // was seeded (content) and preconditions on the shas we read.

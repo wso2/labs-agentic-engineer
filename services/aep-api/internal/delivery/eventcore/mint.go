@@ -23,7 +23,6 @@ import (
 	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
-	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // Issue minting — the uniform rule: EVERY platform-detected failure becomes an
@@ -37,15 +36,23 @@ import (
 // reference for the AGENT (it derives its rebase target from it), not a field
 // the platform reads back.
 //
-// Every mint passes a DedupeKey, which the issue service resolves against the
-// OPEN issues already carrying the derived dedupe label. That is what makes
-// minting safe under webhook redelivery: the second pass finds the first
-// issue and files nothing. (The key never reaches GitHub — the service strips
-// it and encodes it as a label.)
+// What lives HERE is the detection and the prose. The write itself belongs to
+// delivery.IssueWriter, the domain's one issue-write surface, so the label
+// vocabulary and the mint logging are decided once for the whole domain rather
+// than once per minter. Every mint below passes a DedupeKey from the root's
+// key vocabulary, which the issue service resolves against the OPEN issues
+// already carrying the derived dedupe label: that is what makes minting safe
+// under webhook redelivery, because the second pass finds the first issue and
+// files nothing. (The key never reaches GitHub — the service strips it and
+// encodes it as a label.)
 
-// mintFixIssue files the fix issue for a component whose build stayed red
+// mintFixIssue files the bug issue for a component whose build stayed red
 // through its automatic re-trigger. It carries the three facts a coding agent
 // needs to start: which component, which commit, and what the build said.
+//
+// It is a `bug` sourced `src/build`, which is what puts it in both working sets:
+// a red build is worth fixing whether the version is still being built or is
+// already deployed.
 func (e *Events) mintFixIssue(ctx context.Context, run *delivery.MilestoneRun, ev delivery.BuildTerminal) (int, error) {
 	body := fmt.Sprintf(
 		"The build for component **%s** failed at merge commit `%s`, and failed again on an automatic re-trigger at the same commit. It is not a flake — the code needs a fix.\n\n"+
@@ -57,13 +64,14 @@ func (e *Events) mintFixIssue(ctx context.Context, run *delivery.MilestoneRun, e
 			"Fix the component so it builds, then include this issue in your pull request's Resolves list.",
 		ev.Component, delivery.ShortSHA(ev.CommitSHA), ev.Component, ev.CommitSHA, orNone(ev.RunName), orNone(ev.Reason))
 
-	return e.mint(ctx, run.OrgID, run.ProjectID, sourcecontrol.CreateIssueRequest{
+	number, _, err := e.p.Writer.Mint(ctx, run.OrgID, run.ProjectID, delivery.IssueSpec{
 		Title:     fmt.Sprintf("Fix the failing build for %s", ev.Component),
 		Body:      body,
-		Labels:    []string{delivery.LabelAgentWork},
-		Milestone: &run.MilestoneNumber,
-		DedupeKey: fmt.Sprintf("aep fix %s %s", ev.Component, delivery.ShortSHA(ev.CommitSHA)),
+		Labels:    []string{delivery.LabelAgentWork, delivery.KindBug, delivery.SrcBuild},
+		Milestone: run.MilestoneNumber,
+		DedupeKey: delivery.DedupeKeyFix(ev.Component, delivery.ShortSHA(ev.CommitSHA)),
 	})
+	return number, err
 }
 
 // MintDeployFixIssues files one issue per component whose deployment never came
@@ -100,12 +108,12 @@ func (e *Events) MintDeployFixIssues(ctx context.Context, orgID, projectID strin
 			component, delivery.ShortSHA(commitSHA), component, commitSHA,
 			openchoreoDevEnvironment, orNone(reason))
 
-		number, err := e.mint(ctx, orgID, projectID, sourcecontrol.CreateIssueRequest{
+		number, _, err := e.p.Writer.Mint(ctx, orgID, projectID, delivery.IssueSpec{
 			Title:     fmt.Sprintf("Fix the failed deployment for %s", component),
 			Body:      body,
-			Labels:    []string{delivery.LabelAgentWork},
-			Milestone: &milestoneNumber,
-			DedupeKey: fmt.Sprintf("aep deploy %s %s", component, delivery.ShortSHA(commitSHA)),
+			Labels:    []string{delivery.LabelAgentWork, delivery.KindBug, delivery.SrcDeploy},
+			Milestone: milestoneNumber,
+			DedupeKey: delivery.DedupeKeyDeploy(component, delivery.ShortSHA(commitSHA)),
 		})
 		if err != nil {
 			return filed, err
@@ -136,22 +144,25 @@ func (e *Events) mintConflictIssue(ctx context.Context, orgID, projectID string,
 			"The host reported:\n\n```\n%s\n```",
 		prNumber, prNumber, orNone(branch), orNone(errText(mergeErr)))
 
-	return e.mint(ctx, orgID, projectID, sourcecontrol.CreateIssueRequest{
+	number, _, err := e.p.Writer.Mint(ctx, orgID, projectID, delivery.IssueSpec{
 		Title:     fmt.Sprintf("Resolve the merge conflict on pull request #%d", prNumber),
 		Body:      body,
-		Labels:    []string{delivery.LabelAgentWork},
-		Milestone: &run.MilestoneNumber,
-		DedupeKey: fmt.Sprintf("aep conflict pr-%d", prNumber),
+		Labels:    []string{delivery.LabelAgentWork, delivery.KindConflict},
+		Milestone: run.MilestoneNumber,
+		DedupeKey: delivery.DedupeKeyConflict(prNumber),
 	})
+	return number, err
 }
 
 // mintRedMainIssue files the incident issue for a component whose build went
 // red on main outside any run — the deployed version regressing.
 //
 // It is filed into the DEPLOYED version's milestone (that is the version that
-// broke) and, alone among platform-minted issues, carries NO agent-work label:
-// a red main is a human's call. Nobody is dispatched for it until somebody
-// adopts it.
+// broke) and, alone among platform-minted issues, carries NO ARMING LABEL: a red
+// main is a human's call. It is classified — a `bug` sourced `src/incident`, so
+// the console and a triaging human see what it is — but classification is not
+// permission, and nothing is dispatched for it until somebody arms it with the
+// agent-work label.
 //
 // Resolving the deployed version through run rows is also what keeps this path
 // inert until the platform has actually shipped a version.
@@ -176,39 +187,17 @@ func (e *Events) mintRedMainIssue(ctx context.Context, ev delivery.BuildTerminal
 			"Failure output:\n\n```\n%s\n```\n\n"+
 			"This issue is a ledger entry: no agent is dispatched for it. Add the `%s` label to hand it to the coding agent.",
 		ev.Component, orNone(deployed.SpecTag()), ev.Component, ev.CommitSHA, orNone(ev.RunName),
-		orNone(ev.Reason), delivery.LabelAdopt)
+		orNone(ev.Reason), delivery.LabelAgentWork)
 
-	_, err = e.mint(ctx, deployed.OrgID, deployed.ProjectID, sourcecontrol.CreateIssueRequest{
+	_, _, err = e.p.Writer.Mint(ctx, deployed.OrgID, deployed.ProjectID, delivery.IssueSpec{
 		Title: fmt.Sprintf("Red main: %s", ev.Component),
 		Body:  body,
-		// No agent-work label, deliberately: never auto-dispatched.
-		Milestone: &deployed.MilestoneNumber,
-		DedupeKey: fmt.Sprintf("aep red-main %s %s", ev.Component, delivery.ShortSHA(ev.CommitSHA)),
+		// Classified but NOT armed, deliberately: never auto-dispatched.
+		Labels:    []string{delivery.KindBug, delivery.SrcIncident},
+		Milestone: deployed.MilestoneNumber,
+		DedupeKey: delivery.DedupeKeyRedMain(ev.Component, delivery.ShortSHA(ev.CommitSHA)),
 	})
 	return err
-}
-
-// mint is the one call into the issue service, so the dedupe contract and the
-// logging are written once.
-func (e *Events) mint(ctx context.Context, orgID, projectID string, req sourcecontrol.CreateIssueRequest) (int, error) {
-	if e.p.Issues == nil {
-		return 0, nil
-	}
-	res, err := e.p.Issues.CreateIssue(ctx, orgID, projectID, req)
-	if err != nil {
-		return 0, err
-	}
-	if res == nil {
-		return 0, nil
-	}
-	if res.Deduped {
-		slog.DebugContext(ctx, "eventcore: issue already open — not minting a second",
-			"issue", res.Number, "title", req.Title)
-		return res.Number, nil
-	}
-	slog.InfoContext(ctx, "eventcore: minted a platform issue",
-		"issue", res.Number, "title", req.Title, "milestone", req.Milestone)
-	return res.Number, nil
 }
 
 // orNone keeps a body readable when a fact is missing rather than leaving a

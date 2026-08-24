@@ -18,6 +18,7 @@ package delivery_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -25,28 +26,33 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/dbtest"
 )
 
-// specRun builds a spec-build run row for (org, project) on milestone number n.
-func specRun(org, project string, n int, title string) *delivery.MilestoneRun {
+// devRun builds a dev run row for (org, project) on milestone number n — the
+// only kind the per-project build mutex covers.
+func devRun(org, project string, n int, title string) *delivery.MilestoneRun {
 	return &delivery.MilestoneRun{
 		OrgID:           org,
 		ProjectID:       project,
 		MilestoneNumber: n,
 		MilestoneTitle:  title,
+		Kind:            delivery.RunKindDev,
 		Origin:          delivery.RunOriginSpecBuild,
 	}
 }
 
-// incidentRun builds an incident-adoption run row — the species deliberately
-// left outside the spec-run mutex.
-func incidentRun(org, project string, n int, title string) *delivery.MilestoneRun {
-	r := specRun(org, project, n, title)
-	r.Origin = delivery.RunOriginIncidentAdoption
+// taskRun builds a task run row — the kind deliberately left OUTSIDE the build
+// mutex, so several of them work their own milestones concurrently.
+func taskRun(org, project string, n int, title string) *delivery.MilestoneRun {
+	r := devRun(org, project, n, title)
+	r.Kind, r.Origin = delivery.RunKindTask, delivery.RunOriginIncidentAdoption
 	return r
 }
 
-func revalidateRun(org, project string, n int, title string) *delivery.MilestoneRun {
-	r := specRun(org, project, n, title)
-	r.Origin = delivery.RunOriginRevalidate
+// validationRun builds a validation run row — also outside the build mutex: it
+// re-judges a version that already shipped, so it must not hold up the next
+// build.
+func validationRun(org, project string, n int, title string) *delivery.MilestoneRun {
+	r := devRun(org, project, n, title)
+	r.Kind, r.Origin = delivery.RunKindValidation, delivery.RunOriginRevalidate
 	return r
 }
 
@@ -54,9 +60,9 @@ func revalidateRun(org, project string, n int, title string) *delivery.Milestone
 // index — the one that makes "only the newest run can be live" true rather than
 // merely assumed.
 //
-// The spec-run mutex cannot express it: it is keyed on (org, project) and
-// narrowed to spec-build, which is a rule about starting a new VERSION. Every
-// other origin sat outside it, so the only guard against a second run on one
+// The build mutex cannot express it: it is keyed on (org, project) and
+// narrowed to dev runs, which is a rule about starting a new VERSION. Every
+// other kind sat outside it, so the only guard against a second run on one
 // milestone was a read-then-insert in application code — a check two concurrent
 // requests both pass. The loser's row was then admitted with no workflow behind
 // it (Temporal answers AlreadyStarted on the reused id), and being non-terminal
@@ -68,22 +74,22 @@ func TestMilestoneRunRepository_OneLiveRunPerMilestone(t *testing.T) {
 	repo := delivery.NewMilestoneRunRepository(db)
 	ctx := context.Background()
 
-	if ok, _, err := repo.TryAdmit(ctx, specRun("orga", "proj", 1, "v1")); err != nil || !ok {
+	if ok, _, err := repo.TryAdmit(ctx, devRun("orga", "proj", 1, "v1")); err != nil || !ok {
 		t.Fatalf("TryAdmit(spec) = (%v, %v), want admitted", ok, err)
 	}
-	// A revalidation of the SAME milestone while that run is live — the race the
+	// A validation run over the SAME milestone while that run is live — the race the
 	// pre-check narrows but cannot close.
-	if ok, row, err := repo.TryAdmit(ctx, revalidateRun("orga", "proj", 1, "v1")); err != nil || ok {
-		t.Fatalf("TryAdmit(revalidate on a live milestone) = (%v, %+v, %v), want refused", ok, row, err)
+	if ok, row, err := repo.TryAdmit(ctx, validationRun("orga", "proj", 1, "v1")); err != nil || ok {
+		t.Fatalf("TryAdmit(validation on a live milestone) = (%v, %+v, %v), want refused", ok, row, err)
 	}
-	// An incident adoption is refused for the same reason: two agents on one
-	// branch is the thing every origin is guarded against.
-	if ok, row, err := repo.TryAdmit(ctx, incidentRun("orga", "proj", 1, "v1")); err != nil || ok {
-		t.Fatalf("TryAdmit(incident on a live milestone) = (%v, %+v, %v), want refused", ok, row, err)
+	// A task run is refused for the same reason: two agents on one branch is the
+	// thing every kind is guarded against.
+	if ok, row, err := repo.TryAdmit(ctx, taskRun("orga", "proj", 1, "v1")); err != nil || ok {
+		t.Fatalf("TryAdmit(task on a live milestone) = (%v, %+v, %v), want refused", ok, row, err)
 	}
 	// A DIFFERENT milestone is untouched — the rule is per-milestone, not
-	// per-project, so incident runs still work their own versions concurrently.
-	if ok, _, err := repo.TryAdmit(ctx, incidentRun("orga", "proj", 2, "v2")); err != nil || !ok {
+	// per-project, so task runs still work their own versions concurrently.
+	if ok, _, err := repo.TryAdmit(ctx, taskRun("orga", "proj", 2, "v2")); err != nil || !ok {
 		t.Fatalf("TryAdmit(other milestone) = (%v, %v), want admitted", ok, err)
 	}
 
@@ -96,8 +102,8 @@ func TestMilestoneRunRepository_OneLiveRunPerMilestone(t *testing.T) {
 	if _, err := repo.Settle(ctx, rows[0].ID, delivery.RunStateFailed, delivery.RunReasonValidationFailed); err != nil {
 		t.Fatalf("Settle: %v", err)
 	}
-	if ok, _, err := repo.TryAdmit(ctx, revalidateRun("orga", "proj", 1, "v1")); err != nil || !ok {
-		t.Fatalf("TryAdmit(revalidate after settle) = (%v, %v), want admitted", ok, err)
+	if ok, _, err := repo.TryAdmit(ctx, validationRun("orga", "proj", 1, "v1")); err != nil || !ok {
+		t.Fatalf("TryAdmit(validation after settle) = (%v, %v), want admitted", ok, err)
 	}
 }
 
@@ -110,7 +116,7 @@ func TestMilestoneRunRepository_AdmitAndReadBack(t *testing.T) {
 	repo := delivery.NewMilestoneRunRepository(db)
 	ctx := context.Background()
 
-	ok, row, err := repo.TryAdmit(ctx, specRun("orga", "proj", 7, "v3"))
+	ok, row, err := repo.TryAdmit(ctx, devRun("orga", "proj", 7, "v3"))
 	if err != nil || !ok || row == nil {
 		t.Fatalf("TryAdmit = (%v, %+v, %v), want admitted", ok, row, err)
 	}
@@ -142,112 +148,130 @@ func TestMilestoneRunRepository_AdmitAndReadBack(t *testing.T) {
 		t.Fatalf("milestone identity = (%d, %q), want (7, \"v3\")", got.MilestoneNumber, got.MilestoneTitle)
 	}
 
-	// An unknown origin never reaches the table: the mutex is keyed on
-	// origin = 'spec-build', so a typo would silently escape it.
+	// An unknown KIND never reaches the table: the mutex is keyed on
+	// kind = 'dev', so a typo would silently escape it — the insert would
+	// succeed and the project would carry two live builds.
 	if ok, _, err := repo.TryAdmit(ctx, &delivery.MilestoneRun{
-		OrgID: "orga", ProjectID: "proj", MilestoneNumber: 8, MilestoneTitle: "v4", Origin: "typo",
+		OrgID: "orga", ProjectID: "proj", MilestoneNumber: 8, MilestoneTitle: "v4",
+		Kind: "typo", Origin: delivery.RunOriginSpecBuild,
+	}); err == nil || ok {
+		t.Fatalf("TryAdmit(unknown kind) = (%v, %v), want a rejection", ok, err)
+	}
+	// An empty kind is the same hazard with a likelier cause — a writer that
+	// simply forgot the column.
+	if ok, _, err := repo.TryAdmit(ctx, &delivery.MilestoneRun{
+		OrgID: "orga", ProjectID: "proj", MilestoneNumber: 8, MilestoneTitle: "v4",
+		Origin: delivery.RunOriginSpecBuild,
+	}); err == nil || ok {
+		t.Fatalf("TryAdmit(no kind) = (%v, %v), want a rejection", ok, err)
+	}
+	// And an unknown ORIGIN is refused too: it is a NOT NULL closed enum the
+	// read model renders.
+	if ok, _, err := repo.TryAdmit(ctx, &delivery.MilestoneRun{
+		OrgID: "orga", ProjectID: "proj", MilestoneNumber: 8, MilestoneTitle: "v4",
+		Kind: delivery.RunKindDev, Origin: "typo",
 	}); err == nil || ok {
 		t.Fatalf("TryAdmit(unknown origin) = (%v, %v), want a rejection", ok, err)
 	}
 }
 
-// TestMilestoneRunRepository_SpecRunMutex is the §7 Concurrency invariant: at
-// most ONE non-terminal spec-build run per project, while incident-adoption
-// runs on other milestones execute concurrently. The DB index is the authority;
-// ActiveSpecRunByProject is the read the 409 answers from.
-func TestMilestoneRunRepository_SpecRunMutex(t *testing.T) {
+// TestMilestoneRunRepository_DevRunMutex is the §7 Concurrency invariant: at
+// most ONE non-terminal DEV run per project, while task runs on other milestones
+// execute concurrently. The DB index is the authority; ActiveDevRunByProject is
+// the read the 409 answers from.
+func TestMilestoneRunRepository_DevRunMutex(t *testing.T) {
 	t.Parallel()
 	db := dbtest.New(t)
 	repo := delivery.NewMilestoneRunRepository(db)
 	ctx := context.Background()
 
-	ok, first, err := repo.TryAdmit(ctx, specRun("orga", "proj", 1, "v1"))
+	ok, first, err := repo.TryAdmit(ctx, devRun("orga", "proj", 1, "v1"))
 	if err != nil || !ok {
-		t.Fatalf("TryAdmit(first spec run) = (%v, %v), want admitted", ok, err)
+		t.Fatalf("TryAdmit(first dev run) = (%v, %v), want admitted", ok, err)
 	}
 
-	// A second spec-build run for the same project — even on a DIFFERENT
-	// milestone — loses the mutex.
-	ok, row, err := repo.TryAdmit(ctx, specRun("orga", "proj", 2, "v2"))
+	// A second dev run for the same project — even on a DIFFERENT milestone —
+	// loses the mutex.
+	ok, row, err := repo.TryAdmit(ctx, devRun("orga", "proj", 2, "v2"))
 	if err != nil {
-		t.Fatalf("TryAdmit(second spec run): %v", err)
+		t.Fatalf("TryAdmit(second dev run): %v", err)
 	}
 	if ok || row != nil {
-		t.Fatalf("second active spec run admitted (%+v) — the spec-run mutex is breached", row)
+		t.Fatalf("second active dev run admitted (%+v) — the build mutex is breached", row)
 	}
 
-	// An incident-adoption run on another milestone runs concurrently. The
-	// milestone must DIFFER from the spec run's: this said "another milestone" and
-	// passed the spec run's own, which nothing caught while the only index was
+	// A task run on another milestone runs concurrently. The milestone must
+	// DIFFER from the dev run's: this said "another milestone" and passed the dev
+	// run's own, which nothing caught while the only index was
 	// keyed on (org, project). One live run per milestone is now enforced, so the
 	// case the comment always described is the case it now exercises.
-	ok, incident, err := repo.TryAdmit(ctx, incidentRun("orga", "proj", 5, "v5"))
+	ok, incident, err := repo.TryAdmit(ctx, taskRun("orga", "proj", 5, "v5"))
 	if err != nil || !ok || incident == nil {
-		t.Fatalf("TryAdmit(incident) = (%v, %+v, %v), want admitted alongside the spec run", ok, incident, err)
+		t.Fatalf("TryAdmit(task) = (%v, %+v, %v), want admitted alongside the dev run", ok, incident, err)
 	}
-	// And so does a second incident run on yet another milestone.
-	if ok, _, err := repo.TryAdmit(ctx, incidentRun("orga", "proj", 9, "v9")); err != nil || !ok {
-		t.Fatalf("TryAdmit(second incident) = (%v, %v), want admitted", ok, err)
+	// And so does a second task run on yet another milestone.
+	if ok, _, err := repo.TryAdmit(ctx, taskRun("orga", "proj", 9, "v9")); err != nil || !ok {
+		t.Fatalf("TryAdmit(second task) = (%v, %v), want admitted", ok, err)
 	}
 
 	// A different project in the same org is unaffected.
-	if ok, _, err := repo.TryAdmit(ctx, specRun("orga", "other", 1, "v1")); err != nil || !ok {
+	if ok, _, err := repo.TryAdmit(ctx, devRun("orga", "other", 1, "v1")); err != nil || !ok {
 		t.Fatalf("TryAdmit(other project) = (%v, %v), want admitted", ok, err)
 	}
 	// So is the same project slug in a different org.
-	if ok, _, err := repo.TryAdmit(ctx, specRun("orgb", "proj", 1, "v1")); err != nil || !ok {
+	if ok, _, err := repo.TryAdmit(ctx, devRun("orgb", "proj", 1, "v1")); err != nil || !ok {
 		t.Fatalf("TryAdmit(other org) = (%v, %v), want admitted", ok, err)
 	}
 
-	// The 409 read sees the spec run, never the incidents.
-	active, err := repo.ActiveSpecRunByProject(ctx, "orga", "proj")
+	// The 409 read sees the dev run, never the task runs.
+	active, err := repo.ActiveDevRunByProject(ctx, "orga", "proj")
 	if err != nil || active == nil {
-		t.Fatalf("ActiveSpecRunByProject = (%+v, %v), want the live spec run", active, err)
+		t.Fatalf("ActiveDevRunByProject = (%+v, %v), want the live dev run", active, err)
 	}
 	if active.ID != first.ID {
-		t.Fatalf("ActiveSpecRunByProject returned %s, want the spec run %s", active.ID, first.ID)
+		t.Fatalf("ActiveDevRunByProject returned %s, want the dev run %s", active.ID, first.ID)
 	}
 
-	// Settling the spec run frees the project for the next build; the still-live
-	// incident runs must not hold the mutex.
+	// Settling the dev run frees the project for the next build; the still-live
+	// task runs must not hold the mutex.
 	if _, err := repo.Settle(ctx, first.ID, delivery.RunStateSucceeded, ""); err != nil {
 		t.Fatalf("Settle: %v", err)
 	}
-	if active, err := repo.ActiveSpecRunByProject(ctx, "orga", "proj"); err != nil || active != nil {
-		t.Fatalf("ActiveSpecRunByProject after settle = (%+v, %v), want (nil, nil)", active, err)
+	if active, err := repo.ActiveDevRunByProject(ctx, "orga", "proj"); err != nil || active != nil {
+		t.Fatalf("ActiveDevRunByProject after settle = (%+v, %v), want (nil, nil)", active, err)
 	}
-	if ok, _, err := repo.TryAdmit(ctx, specRun("orga", "proj", 2, "v2")); err != nil || !ok {
+	if ok, _, err := repo.TryAdmit(ctx, devRun("orga", "proj", 2, "v2")); err != nil || !ok {
 		t.Fatalf("TryAdmit(next build) = (%v, %v), want admitted after the previous run settled", ok, err)
 	}
 }
 
-// TestMilestoneRunRepository_SpecRunMutexCoversPlanning pins the widened index
+// TestMilestoneRunRepository_DevRunMutexCoversPlanning pins the widened index
 // predicate. The plan path admits PLANNING and only leaves it minutes later,
 // once the milestone is filled — which is precisely the window a double-click
 // lands in, so a mutex that did not cover the state would be unarmed for the
 // whole of it. This is the one invariant the new state could have broken.
-func TestMilestoneRunRepository_SpecRunMutexCoversPlanning(t *testing.T) {
+func TestMilestoneRunRepository_DevRunMutexCoversPlanning(t *testing.T) {
 	t.Parallel()
 	db := dbtest.New(t)
 	repo := delivery.NewMilestoneRunRepository(db)
 	ctx := context.Background()
 
-	planning := specRun("orga", "proj", 1, "v1")
+	planning := devRun("orga", "proj", 1, "v1")
 	planning.State = delivery.RunStatePlanning
 	ok, first, err := repo.TryAdmit(ctx, planning)
 	if err != nil || !ok || first == nil {
 		t.Fatalf("TryAdmit(planning) = (%v, %+v, %v), want admitted", ok, first, err)
 	}
 
-	if ok, row, err := repo.TryAdmit(ctx, specRun("orga", "proj", 2, "v2")); err != nil || ok {
-		t.Fatalf("a second spec run was admitted while one is planning (%+v, %v) — the mutex is unarmed across the plan window", row, err)
+	if ok, row, err := repo.TryAdmit(ctx, devRun("orga", "proj", 2, "v2")); err != nil || ok {
+		t.Fatalf("a second dev run was admitted while one is planning (%+v, %v) — the mutex is unarmed across the plan window", row, err)
 	}
 
 	// The 409 read has to agree with the index, or the endpoint would answer
 	// "free" for a project the database will refuse.
-	active, err := repo.ActiveSpecRunByProject(ctx, "orga", "proj")
+	active, err := repo.ActiveDevRunByProject(ctx, "orga", "proj")
 	if err != nil || active == nil || active.ID != first.ID {
-		t.Fatalf("ActiveSpecRunByProject = (%+v, %v), want the planning run %s", active, err, first.ID)
+		t.Fatalf("ActiveDevRunByProject = (%+v, %v), want the planning run %s", active, err, first.ID)
 	}
 
 	// The supervisor's first pass leaves planning; nothing moves back into it.
@@ -256,6 +280,122 @@ func TestMilestoneRunRepository_SpecRunMutexCoversPlanning(t *testing.T) {
 	}
 	if _, err := repo.SetState(ctx, first.ID, delivery.RunStatePlanning); err == nil {
 		t.Fatal("SetState(planning) was accepted — planning is written once, at admission")
+	}
+}
+
+// TestMilestoneRunRepository_DevRunMutexUnderConcurrency is the invariant the
+// endpoint's pre-check CANNOT establish.
+//
+// The pre-check is a read followed by an insert, and two build clicks arriving
+// together both pass the read. What actually refuses the loser is the partial
+// unique index the insert races against, so the only honest test of it starts
+// every entrant at once and counts how many rows landed.
+//
+// The failure this guards is silent, which is why it is worth a goroutine fan-out
+// rather than a sequential pair: nothing errors when the mutex is unarmed. Both
+// clicks succeed, both rows are admitted, and the symptom is two agents working
+// one branch some hours later.
+func TestMilestoneRunRepository_DevRunMutexUnderConcurrency(t *testing.T) {
+	t.Parallel()
+	db := dbtest.New(t)
+	repo := delivery.NewMilestoneRunRepository(db)
+	ctx := context.Background()
+
+	const entrants = 8
+	var (
+		start    sync.WaitGroup
+		done     sync.WaitGroup
+		mu       sync.Mutex
+		admitted []string
+	)
+	start.Add(1)
+	for i := 0; i < entrants; i++ {
+		done.Add(1)
+		go func(n int) {
+			defer done.Done()
+			start.Wait() // every entrant leaves the gate together
+			// A DIFFERENT milestone each: the mutex is per-project, so this cannot
+			// pass by way of the per-milestone index instead.
+			ok, row, err := repo.TryAdmit(ctx, devRun("orga", "proj", n+1, "v1"))
+			if err != nil || !ok {
+				return
+			}
+			mu.Lock()
+			admitted = append(admitted, row.ID)
+			mu.Unlock()
+		}(i)
+	}
+	start.Done()
+	done.Wait()
+
+	if len(admitted) != 1 {
+		t.Fatalf("%d of %d concurrent dev runs were admitted (%v), want exactly 1 — the build mutex is unarmed",
+			len(admitted), entrants, admitted)
+	}
+	active, err := repo.ActiveDevRunByProject(ctx, "orga", "proj")
+	if err != nil || active == nil || active.ID != admitted[0] {
+		t.Fatalf("ActiveDevRunByProject = (%+v, %v), want the one admitted run %s", active, err, admitted[0])
+	}
+}
+
+// TestMilestoneRunRepository_NonDevKindsAreNotSerialised is the proof the mutex
+// did not WIDEN when it moved from origin to kind.
+//
+// Task runs work their own milestones and must execute concurrently: serialising
+// them per project would put every incident in a queue behind the next build,
+// which is the exact opposite of the invariant. So the test is the mirror of the
+// one above — the same simultaneous fan-out, and every entrant admitted.
+func TestMilestoneRunRepository_NonDevKindsAreNotSerialised(t *testing.T) {
+	t.Parallel()
+	db := dbtest.New(t)
+	repo := delivery.NewMilestoneRunRepository(db)
+	ctx := context.Background()
+
+	// A live dev run on its own milestone, which the task runs must not queue
+	// behind either.
+	if ok, _, err := repo.TryAdmit(ctx, devRun("orga", "proj", 100, "v9")); err != nil || !ok {
+		t.Fatalf("TryAdmit(dev) = (%v, %v), want admitted", ok, err)
+	}
+
+	const entrants = 6
+	var (
+		start sync.WaitGroup
+		done  sync.WaitGroup
+		mu    sync.Mutex
+		count int
+	)
+	start.Add(1)
+	for i := 0; i < entrants; i++ {
+		done.Add(1)
+		go func(n int) {
+			defer done.Done()
+			start.Wait()
+			// Alternating kinds, one milestone each: neither task nor validation
+			// takes the project mutex.
+			row := taskRun("orga", "proj", n+1, "v1")
+			if n%2 == 1 {
+				row = validationRun("orga", "proj", n+1, "v1")
+			}
+			ok, _, err := repo.TryAdmit(ctx, row)
+			if err != nil || !ok {
+				return
+			}
+			mu.Lock()
+			count++
+			mu.Unlock()
+		}(i)
+	}
+	start.Done()
+	done.Wait()
+
+	if count != entrants {
+		t.Fatalf("%d of %d concurrent non-dev runs were admitted, want all of them — the mutex widened and is now serialising incidents",
+			count, entrants)
+	}
+	// And the project's build mutex is still held by the dev run alone.
+	active, err := repo.ActiveDevRunByProject(ctx, "orga", "proj")
+	if err != nil || active == nil || active.MilestoneNumber != 100 {
+		t.Fatalf("ActiveDevRunByProject = (%+v, %v), want the dev run on milestone 100", active, err)
 	}
 }
 
@@ -269,7 +409,7 @@ func TestMilestoneRunRepository_Transitions(t *testing.T) {
 	repo := delivery.NewMilestoneRunRepository(db)
 	ctx := context.Background()
 
-	_, run, err := repo.TryAdmit(ctx, specRun("orga", "proj", 1, "v1"))
+	_, run, err := repo.TryAdmit(ctx, devRun("orga", "proj", 1, "v1"))
 	if err != nil || run == nil {
 		t.Fatalf("TryAdmit: (%+v, %v)", run, err)
 	}
@@ -354,7 +494,7 @@ func TestMilestoneRunRepository_Budgets(t *testing.T) {
 	repo := delivery.NewMilestoneRunRepository(db)
 	ctx := context.Background()
 
-	_, run, err := repo.TryAdmit(ctx, specRun("orga", "proj", 1, "v1"))
+	_, run, err := repo.TryAdmit(ctx, devRun("orga", "proj", 1, "v1"))
 	if err != nil || run == nil {
 		t.Fatalf("TryAdmit: (%+v, %v)", run, err)
 	}
@@ -403,7 +543,7 @@ func TestMilestoneRunRepository_Budgets(t *testing.T) {
 	if verdicted.ValidationIssue != 77 {
 		t.Fatalf("validation issue = %d, want 77", verdicted.ValidationIssue)
 	}
-	// Issue 0 means "nothing to name" (an incident run, or a skip decided before
+	// Issue 0 means "nothing to name" (a task run, or a skip decided before
 	// minting) and must not blank a number already recorded.
 	kept, err := repo.SetValidationVerdict(ctx, run.ID, delivery.ValidationVerdictPartial, 0)
 	if err != nil || kept == nil {
@@ -442,13 +582,13 @@ func TestMilestoneRunRepository_ReadsAndTagResolution(t *testing.T) {
 		return row
 	}
 
-	v1 := mk(specRun("orga", "proj", 11, "v1"), 0)
+	v1 := mk(devRun("orga", "proj", 11, "v1"), 0)
 	if _, err := repo.Settle(ctx, v1.ID, delivery.RunStateSucceeded, ""); err != nil {
 		t.Fatalf("Settle v1: %v", err)
 	}
-	// A later incident adopts into v1's milestone — same milestone, second run.
-	v1Incident := mk(incidentRun("orga", "proj", 11, "v1"), time.Minute)
-	v2 := mk(specRun("orga", "proj", 12, "v2"), 2*time.Minute)
+	// A later task run adopts into v1's milestone — same milestone, second run.
+	v1Incident := mk(taskRun("orga", "proj", 11, "v1"), time.Minute)
+	v2 := mk(devRun("orga", "proj", 12, "v2"), 2*time.Minute)
 
 	rows, err := repo.ListByProject(ctx, "orga", "proj")
 	if err != nil {
@@ -489,9 +629,9 @@ func TestMilestoneRunRepository_ReadsAndTagResolution(t *testing.T) {
 	// TAG, and its title is not a version: matching the title unconditionally is
 	// what made the console's version read 404 on a phase-titled milestone.
 	if _, err := repo.Settle(ctx, v2.ID, delivery.RunStateSucceeded, ""); err != nil {
-		t.Fatalf("Settle v2: %v", err) // the spec mutex admits one live run at a time
+		t.Fatalf("Settle v2: %v", err) // the build mutex admits one live run at a time
 	}
-	phased := specRun("orga", "proj", 20, "Phase 1")
+	phased := devRun("orga", "proj", 20, "Phase 1")
 	phased.Tag = "v7"
 	mk(phased, 3*time.Minute)
 	if num, found, err := repo.MilestoneNumberForTag(ctx, "orga", "proj", "v7"); err != nil || !found || num != 20 {
@@ -515,8 +655,8 @@ func TestMilestoneRunRepository_ReadsAndTagResolution(t *testing.T) {
 	if _, found, err := repo.MilestoneNumberForTag(ctx, "orgb", "proj", "v2"); err != nil || found {
 		t.Fatalf("MilestoneNumberForTag(cross-org) found = %v, want false", found)
 	}
-	if got, err := repo.ActiveSpecRunByProject(ctx, "orgb", "proj"); err != nil || got != nil {
-		t.Fatalf("ActiveSpecRunByProject(cross-org) = (%+v, %v), want (nil, nil)", got, err)
+	if got, err := repo.ActiveDevRunByProject(ctx, "orgb", "proj"); err != nil || got != nil {
+		t.Fatalf("ActiveDevRunByProject(cross-org) = (%+v, %v), want (nil, nil)", got, err)
 	}
 
 	// The project-delete cascade leaves nothing behind, so a recreated
@@ -529,5 +669,59 @@ func TestMilestoneRunRepository_ReadsAndTagResolution(t *testing.T) {
 	}
 	if _, found, err := repo.MilestoneNumberForTag(ctx, "orga", "proj", "v2"); err != nil || found {
 		t.Fatalf("MilestoneNumberForTag after purge found = %v, want false", found)
+	}
+}
+
+// TestMilestoneRunRepository_RequestCancel pins the durable half of cancel: the
+// stamp lands, the FIRST request is the one that stands, and a settled run
+// refuses it the way every other guarded mutator does.
+//
+// The first-request-wins rule is what makes a double-click harmless. The
+// terminal fence is what keeps cancel from rewriting a run that already
+// recorded its outcome — a cancel arriving after the run finished changed
+// nothing, and (nil, nil) is how this repository says so.
+func TestMilestoneRunRepository_RequestCancel(t *testing.T) {
+	t.Parallel()
+	db := dbtest.New(t)
+	repo := delivery.NewMilestoneRunRepository(db)
+	ctx := context.Background()
+
+	_, run, err := repo.TryAdmit(ctx, devRun("orgcancel", "proj", 1, "v1"))
+	if err != nil || run == nil {
+		t.Fatalf("TryAdmit: (%+v, %v)", run, err)
+	}
+	if run.CancelRequestedAt != nil {
+		t.Fatalf("a fresh run carries a cancellation stamp: %v", run.CancelRequestedAt)
+	}
+
+	stamped, err := repo.RequestCancel(ctx, run.ID)
+	if err != nil || stamped == nil {
+		t.Fatalf("RequestCancel = (%+v, %v)", stamped, err)
+	}
+	if stamped.CancelRequestedAt == nil {
+		t.Fatalf("RequestCancel did not stamp cancel_requested_at: %+v", stamped)
+	}
+	first := *stamped.CancelRequestedAt
+
+	// A second click must not move the stamp: the column records when a person
+	// FIRST asked, which is the fact a timeline renders.
+	again, err := repo.RequestCancel(ctx, run.ID)
+	if err != nil || again == nil {
+		t.Fatalf("RequestCancel (second) = (%+v, %v)", again, err)
+	}
+	if again.CancelRequestedAt == nil || !again.CancelRequestedAt.Equal(first) {
+		t.Fatalf("a second cancel moved the stamp: %v, want %v", again.CancelRequestedAt, first)
+	}
+
+	// The run settles — and from here the request is frozen with everything else.
+	if _, err := repo.Settle(ctx, run.ID, delivery.RunStateCancelled, ""); err != nil {
+		t.Fatalf("Settle: %v", err)
+	}
+	settled, err := repo.RequestCancel(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("RequestCancel on a settled run errored: %v", err)
+	}
+	if settled != nil {
+		t.Fatalf("RequestCancel changed a settled run: %+v", settled)
 	}
 }

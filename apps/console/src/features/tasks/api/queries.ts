@@ -82,5 +82,10 @@ export function useTask(projectName: string, issueNumber: number) {
       return data;
     },
     staleTime: 30_000,
+    // A caller that holds no number yet holds 0, which is never an issue: the
+    // validation surface reads the number off a run cycle that has not minted one
+    // until it validates. Fetching anyway costs a live GitHub read that 404s by
+    // construction, so the invariant lives here rather than in every caller.
+    enabled: issueNumber > 0,
   });
 }

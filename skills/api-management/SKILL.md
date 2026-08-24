@@ -51,7 +51,7 @@ gateway gives you: stamp it on every row this service creates, and gate every
 per-user query on it.
 
 **CORS.** The `api-configuration` ClusterTrait attaches an Envoy CORS filter per
-`visibility: external` HTTPRoute, so a managed API must not add its own.
+`visibility: external` HTTPRoute.
 
 **Document the injected header.** In the OpenAPI you author for a protected
 service, list `X-User-Id` under `parameters` so consumers know it is
@@ -84,5 +84,5 @@ inbound `Authorization` header verbatim — never re-issue or mint a token.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| CORS error in the browser when calling this API | The service ships its own CORS middleware (doubled headers), or its `workload.yaml` lacks `visibility: external` | Remove the middleware; confirm `visibility: external`. |
+| CORS error in the browser when calling this API | This service ships its own CORS middleware (doubled headers) | Remove the middleware. |
 | Every protected request 401s in tests | Test calls carry no `X-User-Id` — in production the gateway sets it | Set `X-User-Id` directly on the request in tests; don't try to mint a JWT. |

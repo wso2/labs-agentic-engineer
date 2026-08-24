@@ -1,8 +1,8 @@
 # Eval review — chain / lunch-coordinator
 
 - Run: 2026-08-02T09:21:37.381Z
-- Transcript: /home/jo/workspace/labs-agentic-engineer/playground/.projects/spec-agent-evals/chain-lunch-coordinator.transcript.md
-- Raw trace: /home/jo/workspace/labs-agentic-engineer/playground/.projects/spec-agent-evals/chain-lunch-coordinator.trace.json
+- Transcript: playground/.projects/spec-agent-evals/chain-lunch-coordinator.transcript.md
+- Raw trace: playground/.projects/spec-agent-evals/chain-lunch-coordinator.trace.json
 
 ## requirements — PASS (81)
 

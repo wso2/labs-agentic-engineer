@@ -50,12 +50,13 @@ func mustStatus(t *testing.T, fx statusFixture) *gen.ProjectStatus {
 	return st
 }
 
-// specRun builds a spec-build milestone run for the version `tag` in `state`.
-// A version's delivery IS its run, so these rows are the whole build stage.
-func specRun(tag, state string) delivery.MilestoneRun {
+// devRun builds a dev milestone run for the version `tag` in `state`. A
+// version's delivery IS its run, so these rows are the whole build stage.
+func devRun(tag, state string) delivery.MilestoneRun {
 	return delivery.MilestoneRun{
 		MilestoneNumber: len(tag),
 		MilestoneTitle:  tag,
+		Kind:            delivery.RunKindDev,
 		Origin:          delivery.RunOriginSpecBuild,
 		State:           state,
 	}
@@ -73,8 +74,8 @@ func TestStageDerivation_FullPipeline(t *testing.T) {
 			SpecDirty:   true,
 		},
 		runs: []delivery.MilestoneRun{
-			specRun("v2", delivery.RunStateRunning),
-			specRun("v1", delivery.RunStateSucceeded),
+			devRun("v2", delivery.RunStateRunning),
+			devRun("v1", delivery.RunStateSucceeded),
 		},
 		bindings: []openchoreo.ReleaseBindingSummary{
 			devBinding("api", "True", "Ready"),
@@ -116,13 +117,13 @@ func TestStageDerivation_FullPipeline(t *testing.T) {
 // the overview backwards and reports the project as being on v1.
 func TestBuildStage_IgnoresRunsOnOlderVersions(t *testing.T) {
 	t.Parallel()
-	old := specRun("v1", delivery.RunStateSucceeded)
+	old := devRun("v1", delivery.RunStateSucceeded)
 	// A revalidation of the OLD version, started after the newer build shipped.
-	revalidate := specRun("v1", delivery.RunStateRunning)
-	revalidate.Origin = delivery.RunOriginRevalidate
+	revalidate := devRun("v1", delivery.RunStateRunning)
+	revalidate.Kind, revalidate.Origin = delivery.RunKindValidation, delivery.RunOriginRevalidate
 
 	st := mustStatus(t, statusFixture{
-		runs:   []delivery.MilestoneRun{revalidate, specRun("v3", delivery.RunStateSucceeded), old},
+		runs:   []delivery.MilestoneRun{revalidate, devRun("v3", delivery.RunStateSucceeded), old},
 		counts: map[string]int{"v3": 4},
 	})
 	if st.Build.Version != "v3" {
@@ -142,12 +143,12 @@ func TestBuildStage_IgnoresRunsOnOlderVersions(t *testing.T) {
 // genuinely PASSED as unvalidated. One adopted issue was enough.
 func TestValidationStage_IncidentRunDoesNotEraseTheVerdict(t *testing.T) {
 	t.Parallel()
-	build := specRun("v3", delivery.RunStateSucceeded)
+	build := devRun("v3", delivery.RunStateSucceeded)
 	build.ValidationVerdict = delivery.ValidationVerdictPassed
 	// An issue adopted into the delivered version's milestone afterwards. It never
 	// validates, so its own verdict is `skipped`.
-	incident := specRun("v3", delivery.RunStateSucceeded)
-	incident.Origin = delivery.RunOriginIncidentAdoption
+	incident := devRun("v3", delivery.RunStateSucceeded)
+	incident.Kind, incident.Origin = delivery.RunKindTask, delivery.RunOriginIncidentAdoption
 	incident.ValidationVerdict = delivery.ValidationVerdictSkipped
 
 	st := mustStatus(t, statusFixture{
@@ -163,16 +164,16 @@ func TestValidationStage_IncidentRunDoesNotEraseTheVerdict(t *testing.T) {
 // version CAN be re-judged, and the answer is then the later run's.
 //
 // So the chip is scoped to the milestone the build stage named — not to the
-// spec-build row (which would pin the verdict to the first judgement forever) and
+// dev row (which would pin the verdict to the first judgement forever) and
 // not to the project (which would let an older version answer for this one).
 func TestValidationStage_FollowsTheNewestRunOnTheVersion(t *testing.T) {
 	t.Parallel()
-	build := specRun("v3", delivery.RunStateSucceeded)
+	build := devRun("v3", delivery.RunStateSucceeded)
 	build.ValidationVerdict = delivery.ValidationVerdictFailed
 	build.TerminalReason = delivery.RunReasonValidationFailed
 	// A revalidation of the SAME version that has since passed.
-	revalidate := specRun("v3", delivery.RunStateSucceeded)
-	revalidate.Origin = delivery.RunOriginRevalidate
+	revalidate := devRun("v3", delivery.RunStateSucceeded)
+	revalidate.Kind, revalidate.Origin = delivery.RunKindValidation, delivery.RunOriginRevalidate
 	revalidate.ValidationVerdict = delivery.ValidationVerdictPassed
 
 	st := mustStatus(t, statusFixture{
@@ -199,11 +200,11 @@ func TestBuildStage_RunStateMapping(t *testing.T) {
 		wantStatus string
 	}{
 		{name: "no rows → idle", wantStatus: "idle"},
-		{name: "succeeded", runs: []delivery.MilestoneRun{specRun("v3", delivery.RunStateSucceeded)}, wantVer: "v3", wantStatus: "succeeded"},
-		{name: "failed", runs: []delivery.MilestoneRun{specRun("v3", delivery.RunStateFailed)}, wantVer: "v3", wantStatus: "failed"},
-		{name: "cancelled → failed", runs: []delivery.MilestoneRun{specRun("v3", delivery.RunStateCancelled)}, wantVer: "v3", wantStatus: "failed"},
-		{name: "running", runs: []delivery.MilestoneRun{specRun("v3", delivery.RunStateRunning)}, wantVer: "v3", wantStatus: "running"},
-		{name: "waiting between cycles is still running", runs: []delivery.MilestoneRun{specRun("v3", delivery.RunStateWaiting)}, wantVer: "v3", wantStatus: "running"},
+		{name: "succeeded", runs: []delivery.MilestoneRun{devRun("v3", delivery.RunStateSucceeded)}, wantVer: "v3", wantStatus: "succeeded"},
+		{name: "failed", runs: []delivery.MilestoneRun{devRun("v3", delivery.RunStateFailed)}, wantVer: "v3", wantStatus: "failed"},
+		{name: "cancelled → failed", runs: []delivery.MilestoneRun{devRun("v3", delivery.RunStateCancelled)}, wantVer: "v3", wantStatus: "failed"},
+		{name: "running", runs: []delivery.MilestoneRun{devRun("v3", delivery.RunStateRunning)}, wantVer: "v3", wantStatus: "running"},
+		{name: "waiting between cycles is still running", runs: []delivery.MilestoneRun{devRun("v3", delivery.RunStateWaiting)}, wantVer: "v3", wantStatus: "running"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -225,7 +226,7 @@ func TestBuildStage_RunStateMapping(t *testing.T) {
 func TestBuildStage_ValidationFailureAttribution(t *testing.T) {
 	t.Parallel()
 	failedForVerdict := func(reason, verdict string) []delivery.MilestoneRun {
-		run := specRun("v1", delivery.RunStateFailed)
+		run := devRun("v1", delivery.RunStateFailed)
 		run.TerminalReason = reason
 		run.ValidationVerdict = verdict
 		return []delivery.MilestoneRun{run}
@@ -263,7 +264,7 @@ func TestBuildStage_ValidationFailureAttribution(t *testing.T) {
 		},
 		{
 			name:      "a cancelled run is never carved out",
-			runs:      []delivery.MilestoneRun{specRun("v1", delivery.RunStateCancelled)},
+			runs:      []delivery.MilestoneRun{devRun("v1", delivery.RunStateCancelled)},
 			wantBuild: "failed", wantValidation: "none",
 		},
 	}
@@ -362,7 +363,7 @@ func TestDeployStage_ConditionMatrix(t *testing.T) {
 func TestDeployStage_VanishedTagDegrades(t *testing.T) {
 	t.Parallel()
 	fx := statusFixture{
-		runs:     []delivery.MilestoneRun{specRun("v1", delivery.RunStateSucceeded)},
+		runs:     []delivery.MilestoneRun{devRun("v1", delivery.RunStateSucceeded)},
 		countErr: fmt.Errorf("wrapped: %w", spec.ErrSpecTagNotFound),
 		bindings: []openchoreo.ReleaseBindingSummary{devBinding("api", "True", "Ready")},
 	}
@@ -381,7 +382,7 @@ func TestDeployStage_VanishedTagDegrades(t *testing.T) {
 func TestDeployStage_VersionlessSkipsDenominator(t *testing.T) {
 	t.Parallel()
 	fx := statusFixture{
-		runs: []delivery.MilestoneRun{specRun("v1", delivery.RunStateRunning)},
+		runs: []delivery.MilestoneRun{devRun("v1", delivery.RunStateRunning)},
 	}
 	st := mustStatus(t, fx)
 	if st.Deploy.Version != "" {
@@ -402,7 +403,7 @@ func TestDeployStage_ValidationDerivation(t *testing.T) {
 	// Keep the run live (not succeeded) so this test stays about validation
 	// rather than the deploy denominator.
 	withVerdict := func(state, verdict string) []delivery.MilestoneRun {
-		run := specRun("v1", state)
+		run := devRun("v1", state)
 		run.ValidationVerdict = verdict
 		return []delivery.MilestoneRun{run}
 	}

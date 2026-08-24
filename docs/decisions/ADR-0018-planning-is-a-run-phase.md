@@ -7,7 +7,7 @@
 
 Cutting a version ran in two halves. The build click did the fast, ordered work
 synchronously — supersede, mint the milestone, admit the run row (which arms the
-spec-run mutex) — and then handed the rest to a **detached goroutine**:
+build mutex) — and then handed the rest to a **detached goroutine**:
 
 ```go
 detached := context.WithoutCancel(ctx)

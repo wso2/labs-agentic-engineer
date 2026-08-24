@@ -35,23 +35,59 @@ export class ConversationRotatedError extends Error {
 }
 
 /**
+ * The multipart body for a send that carries attachments. `collab` goes over the
+ * wire as the string "true" because a form field has no other representation —
+ * the server parses it, and the JSON path is unaffected.
+ */
+function turnFormData(instruction: string, files: File[]): FormData {
+  const form = new FormData();
+  form.append("instruction", instruction);
+  form.append("collab", "true");
+  for (const file of files) form.append("files", file);
+  return form;
+}
+
+/**
  * Start a room-scoped agent turn (#86 phase 4 / #130): `collab: true` — the
  * agent joins the project's spec room as a live peer and edits the shared
  * doc; the panel only receives narration + tool results.
+ *
+ * `files` (#428) are chat attachments: conversation-scoped model content that
+ * rides THIS message and is never stored server-side or committed (ADR-0019).
+ * With none attached the request is the same JSON body as before — the
+ * multipart form is built only when there is something to put in it, so the
+ * overwhelmingly common send is byte-identical to the pre-feature one.
  */
 export async function startCollabTurn(
   projectName: string,
   conversationId: string,
   instruction: string,
+  files: File[] = [],
 ): Promise<string> {
   const { data, error, response } = await client.POST(
     "/projects/{projectName}/agents/{conversationId}/messages",
     {
       params: { path: { projectName, conversationId } },
-      body: {
-        instruction,
-        collab: true,
-      },
+      ...(files.length > 0
+        ? {
+            // Raw bytes, not base64-in-JSON: base64 inflates ~33% and would
+            // silently shave the real 15 MB budget the composer screens against
+            // (ADR-0017 decision 6 made the same call for references).
+            //
+            // Same cast as useUploadReferences: openapi-fetch passes FormData
+            // through its default bodySerializer untouched (the browser sets the
+            // multipart boundary), but the generated request type describes the
+            // JSON Schema shape, not the wire.
+            body: turnFormData(instruction, files) as unknown as {
+              instruction: string;
+            },
+          }
+        : {
+            body: {
+              instruction,
+              collab: true,
+            },
+          }),
     },
   );
   if (error || data === undefined) {
@@ -79,6 +115,10 @@ export interface ConversationMessage {
   /** Who sent this message (#130 multi-user threads) — absent for the agent
    *  and for logs from before attribution existed. */
   author?: ConversationMessageAuthor;
+  /** File NAMES attached to this message (#428), from the turn journal — never
+   *  bytes (ADR-0019). Absent for every message without attachments, and for
+   *  history from before the journal carried them. */
+  attachments?: string[];
 }
 
 // The rehydrate response's schema is currently untyped in the contract
@@ -110,7 +150,30 @@ export function mapConversationMessage(raw: unknown): ConversationMessage | null
   const r = raw as { role?: unknown; content?: unknown };
   if (typeof r.role !== "string") return null;
   const author = mapAuthor(raw);
-  return { role: r.role, content: r.content, ...(author ? { author } : {}) };
+  const attachments = mapAttachments(raw);
+  return {
+    role: r.role,
+    content: r.content,
+    ...(author ? { author } : {}),
+    ...(attachments ? { attachments } : {}),
+  };
+}
+
+/**
+ * Attachment NAMES off a rehydrated message (#428), from the turn journal.
+ *
+ * Filtered rather than trusted: this is an untyped extension field in the
+ * contract (`schema: {}` for get-conversation), so a malformed entry must drop
+ * out instead of reaching the UI as a blank chip. Returns null — not [] — when
+ * there is nothing, so the caller can omit the property entirely under
+ * `exactOptionalPropertyTypes` and a message without attachments keeps the row
+ * shape it had before this feature.
+ */
+function mapAttachments(raw: unknown): string[] | null {
+  const value = (raw as { attachments?: unknown }).attachments;
+  if (!Array.isArray(value)) return null;
+  const names = value.filter((n): n is string => typeof n === "string" && n.trim() !== "");
+  return names.length > 0 ? names : null;
 }
 
 /** Text-only rehydrate of a conversation's server-side history. */

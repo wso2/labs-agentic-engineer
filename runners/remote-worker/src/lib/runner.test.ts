@@ -28,6 +28,7 @@ import {
   buildMcpOptions,
   contractReferencePath,
   debugQueryOptions,
+  onDemandSkills,
   promptWithProjectRoot,
 } from "./runner.js";
 import { MissingWorkflowSkillError, requireWorkflowBodies } from "./skills_presence.js";
@@ -134,6 +135,22 @@ test("alwaysOnSkills: an implementation run is steered by aep, a validation run 
 // every validation run is what NOT listing it here buys.
 test("alwaysOnSkills: playwright-cli is left to on-demand loading", () => {
   assert.ok(!alwaysOnSkills("validation").includes("playwright-cli"));
+});
+
+// The other half of that sentence. `skills:` is an allowlist, so a skill in
+// NEITHER list is not deferred — it is unreachable, and the Skill tool rejects
+// the load `aep-validation` instructs. Absent from always-on AND present here is
+// the pair that means "loadable, but not on every turn".
+test("onDemandSkills: a validation run may load playwright-cli", () => {
+  assert.deepEqual(onDemandSkills("validation"), ["playwright-cli"]);
+  assert.ok(!alwaysOnSkills("validation").includes("playwright-cli"));
+});
+
+// An implementation run gets the whole mirror instead (oneshot's else branch):
+// it may need any stack skill a design.json pinned, which is not a list this
+// module can know. Naming anything here would be a second, competing source.
+test("onDemandSkills: an implementation run names nothing", () => {
+  assert.deepEqual(onDemandSkills("implementation"), []);
 });
 
 // --- requireWorkflowBodies: a run with no procedure must not start -----------

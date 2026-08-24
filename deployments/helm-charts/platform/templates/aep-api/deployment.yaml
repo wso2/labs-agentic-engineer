@@ -147,11 +147,11 @@ spec:
             # OpenBao-direct secrets delivery (local-only). Cloud injects a
             # different SecretsProvider via the overlay; OPENBAO_* must be
             # absent there.
-            {{- if .Values.codingAgentDispatch.localStubs.enabled }}
+            {{- if .Values.codingAgentDispatch.openBaoDirect.enabled }}
             - name: OPENBAO_ADDR
               value: {{ .Values.openbao.addr | quote }}
             - name: OPENBAO_TOKEN
-              value: "root"
+              value: {{ .Values.openbao.token | default "root" | quote }}
             {{- end }}
             # GitHub webhook delivery URL registered on each repo. Local → smee.io
             # channel (forwarded in-cluster by the smee-client); prod → the real

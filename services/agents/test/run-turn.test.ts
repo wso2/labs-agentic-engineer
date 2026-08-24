@@ -18,7 +18,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import type { ModelMessage } from "ai";
+import type { FilePart, ModelMessage } from "ai";
 import { runTurn } from "../src/agents/main/run-turn.js";
 import { buildFileTools } from "../src/agents/main/tools/files.js";
 import { FileBundle, type StreamPart } from "@aep/agent-stream";
@@ -96,4 +96,59 @@ test("runTurn appends only (history grows across turns)", async () => {
   assert.ok(messages.length > afterFirst);
   assert.equal(messages[0]?.role, "user");
   assert.equal((messages[afterFirst] as ModelMessage | undefined)?.role, "user");
+});
+
+// --- Reference PDF attachments (#384) ----------------------------------------
+
+test("runTurn attaches file parts alongside the text prompt when fileParts is given", async () => {
+  const bundle = new FileBundle(SEED_FILES);
+  const messages: ModelMessage[] = [];
+  const filePart: FilePart = { type: "file", data: "JVBERi0xLjQ=", mediaType: "application/pdf", filename: "brief.pdf" };
+
+  await runTurn({
+    model: mockModel([{ kind: "text", text: "ok" }]),
+    instructions: "t",
+    tools: buildFileTools(bundle),
+    messages,
+    prompt: "read the brief",
+    fileParts: [filePart],
+  });
+
+  const first = messages[0];
+  assert.equal(first?.role, "user");
+  assert.ok(Array.isArray(first?.content), "content becomes an array when a file part rides along");
+  const content = first!.content as unknown as Array<Record<string, unknown>>;
+  assert.deepEqual(content[0], { type: "text", text: "read the brief" });
+  assert.deepEqual(content[1], filePart);
+});
+
+test("runTurn with no fileParts keeps the plain string content (byte-identical to before this feature)", async () => {
+  const bundle = new FileBundle(SEED_FILES);
+  const messages: ModelMessage[] = [];
+
+  await runTurn({
+    model: mockModel([{ kind: "text", text: "ok" }]),
+    instructions: "t",
+    tools: buildFileTools(bundle),
+    messages,
+    prompt: "change it",
+  });
+
+  assert.equal(messages[0]?.content, "change it");
+});
+
+test("runTurn with an EMPTY fileParts array also keeps the plain string content", async () => {
+  const bundle = new FileBundle(SEED_FILES);
+  const messages: ModelMessage[] = [];
+
+  await runTurn({
+    model: mockModel([{ kind: "text", text: "ok" }]),
+    instructions: "t",
+    tools: buildFileTools(bundle),
+    messages,
+    prompt: "change it",
+    fileParts: [],
+  });
+
+  assert.equal(messages[0]?.content, "change it");
 });

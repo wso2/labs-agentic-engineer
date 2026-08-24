@@ -19,7 +19,6 @@ package codingagent
 import (
 	"context"
 	"sync"
-	"time"
 
 	"github.com/wso2/aep/aep-api/internal/contracts"
 	"github.com/wso2/aep/aep-api/internal/delivery"
@@ -79,20 +78,12 @@ func (f *fakeRuntimeConfig) calls() [][3]string {
 	return append([][3]string{}, f.args...)
 }
 
-// fakeIdentities / fakeTokens satisfy the coding-dispatch ports for the
+// fakeIdentities satisfies the coding-dispatch Identities port for the
 // OpenChoreo Component path.
 type fakeIdentities struct{}
 
 func (fakeIdentities) IdentityFor(context.Context, string) (string, string, string, error) {
 	return "aep-bot", "bot@aep.dev", "aep-bot", nil
-}
-
-type fakeTokens struct{}
-
-func (fakeTokens) Issue(string, string, string) (string, error) { return "bearer-xyz", nil }
-
-func (fakeTokens) IssueServiceToken(string, string, time.Duration) (string, error) {
-	return "mcp-token-xyz", nil
 }
 
 // fakeRetrier records RetryAuthFailedBuild calls and returns a scripted result.

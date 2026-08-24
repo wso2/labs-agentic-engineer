@@ -126,23 +126,19 @@ type OrgAnthropicCredential struct {
 	OcOrgID         string                  `gorm:"primaryKey;type:text" json:"ocOrgId"`
 	Role            AnthropicRole           `gorm:"primaryKey;type:text;not null;default:default" json:"role"`
 	CredentialKind  AnthropicCredentialKind `gorm:"type:text;not null;default:api_key;column:credential_kind" json:"credentialKind"`
-	KeyPrefix       string     `gorm:"type:text;not null;column:key_prefix" json:"keyPrefix"`
-	KeyLast4        string     `gorm:"type:text;not null;column:key_last4" json:"keyLast4"`
-	Status          string     `gorm:"type:text;not null;default:active;column:status" json:"status"`
-	ConnectedAt     time.Time  `gorm:"column:connected_at;not null;default:now()" json:"connectedAt"`
-	LastValidatedAt *time.Time `gorm:"column:last_validated_at" json:"lastValidatedAt,omitempty"`
-	ValidationError *string    `gorm:"type:text;column:validation_error" json:"validationError,omitempty"`
+	KeyPrefix       string                  `gorm:"type:text;not null;column:key_prefix" json:"keyPrefix"`
+	KeyLast4        string                  `gorm:"type:text;not null;column:key_last4" json:"keyLast4"`
+	Status          string                  `gorm:"type:text;not null;default:active;column:status" json:"status"`
+	ConnectedAt     time.Time               `gorm:"column:connected_at;not null;default:now()" json:"connectedAt"`
+	LastValidatedAt *time.Time              `gorm:"column:last_validated_at" json:"lastValidatedAt,omitempty"`
+	ValidationError *string                 `gorm:"type:text;column:validation_error" json:"validationError,omitempty"`
 
 	// Secret-ref triplet. Populated by Connect when a secrets provider is
 	// configured; NULL when unset. Dispatch short-circuits the refs path
-	// when NULL. secret_ref_* is the provider-neutral name (EXPAND);
-	// sm_api_* is kept for dual-write until phase 09 CONTRACT.
-	SecretRefName      *string `gorm:"type:text;column:secret_ref_name" json:"-"`
-	SecretRefKVPath    *string `gorm:"type:text;column:secret_ref_kv_path" json:"-"`
-	SecretRefProperty  *string `gorm:"type:text;column:secret_ref_property" json:"-"`
-	SMAPISecretRefName *string `gorm:"type:text;column:sm_api_secret_ref_name" json:"-"`
-	SMAPIKVPath        *string `gorm:"type:text;column:sm_api_kv_path" json:"-"`
-	SMAPIProperty      *string `gorm:"type:text;column:sm_api_property" json:"-"`
+	// when NULL.
+	SecretRefName     *string `gorm:"type:text;column:secret_ref_name" json:"-"`
+	SecretRefKVPath   *string `gorm:"type:text;column:secret_ref_kv_path" json:"-"`
+	SecretRefProperty *string `gorm:"type:text;column:secret_ref_property" json:"-"`
 }
 
 func (OrgAnthropicCredential) TableName() string { return "org_anthropic_credentials" }

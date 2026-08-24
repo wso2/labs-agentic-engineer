@@ -29,11 +29,7 @@ download a toolchain and will not compile C.
    ```
    Commit the `go.sum` this produces. A stdlib-only service produces none —
    correct and expected; never hand-write one.
-4. **Check CORS**, if a web-app calls this service directly (see Constraints):
-   `curl -i -X OPTIONS <one endpoint>` returns `204` **and** shows
-   `Access-Control-Allow-Origin`. Serving the raw mux is an incomplete task —
-   the deployed web-app fails every fetch.
-5. **PR** — only once step 3 exits 0 and step 4 (when it applies) passed.
+4. **PR** — only once step 3 exits 0.
 
 ## Constraints
 
@@ -65,10 +61,6 @@ NULL DEFAULT '{}'`) 500s at runtime. Normalize before insert
 or middleware chains. Not Gin/Echo/Fiber — large dep trees, little gain at
 5–20 endpoints.
 
-**CORS.** Only when this service has no `exposesAPI` and a browser calls it
-directly — wrapper below. A managed API relies on the gateway; adding your own
-doubles the headers.
-
 **Upstreams.** `url.JoinPath(base, "path")`, never `base + "/path"` — an
 injected address can end in `/`.
 
@@ -89,6 +81,18 @@ injected address can end in `/`.
 ├── Dockerfile
 └── workload.yaml
 ```
+
+`workload.yaml` HTTP endpoint when a sibling SPA calls this service:
+
+```yaml
+    visibility:
+      - project
+      - external
+```
+
+**Done when:** both list items are present. A single-item `project` list is
+wrong even though the SPA uses `/api`. Never put `external` on a
+*dependency* entry.
 
 `Dockerfile` — multi-stage, pinned builder, slim runtime:
 
@@ -119,25 +123,6 @@ import "github.com/jackc/pgx/v5/pgxpool"
 pool, err := pgxpool.New(ctx, os.Getenv("<DB_URL_ENV_VAR>"))
 ```
 
-CORS wrapper — headers on every response, `OPTIONS` answered with 204:
-
-```go
-func withCORS(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-// serve it: http.ListenAndServe(":9090", withCORS(mux))
-```
-
 ## Pitfalls
 
 | Symptom | Cause | Fix |
@@ -150,6 +135,6 @@ func withCORS(next http.Handler) http.Handler {
 | `checksum mismatch … SECURITY ERROR` at build | `go.sum` stale or hand-edited | `go mod tidy` locally; commit the result |
 | Build fails `COPY go.mod go.sum ./ … go.sum: no such file or directory` | Dockerfile names `go.sum`, stdlib-only service has none | `COPY go.mod ./` only |
 | Pod won't start; `panic: listen tcp :8080` | Wrong port | Listen on 9090 |
-| Every browser call to the service fails, curl works | Raw mux served with no CORS wrapper | Wrap in `withCORS`; verify `OPTIONS` → 204 |
 | `POST` to an injected upstream returns `405` (or a `301` then a `GET`) | Address ended in `/`, so `base + "/path"` built `//path`; `ServeMux` 301s to the clean path and the client re-issues it as `GET` | `url.JoinPath(base, "path")` |
 | Create/POST 500s only when an optional list field is omitted (`[]` works) | Nil slice bound as `NULL` into a `NOT NULL` array column; its `DEFAULT` skipped because the INSERT lists it | Normalize nil→empty, or omit the column |
+| API reachable via SPA `/api` but not curl-able on the public gateway | Provider `visibility` is only `project` (misread "not `external`" as the endpoint list) | List both `- project` and `- external` on the service's own endpoint |

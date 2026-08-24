@@ -120,10 +120,34 @@ func (h *Handler) GetDependencyStatus(ctx context.Context, request gen.GetDepend
 	if err != nil {
 		return nil, mapProvisionError(err)
 	}
-	return gen.GetDependencyStatus200JSONResponse(gen.DependencyStatus{
+	response := gen.DependencyStatus{
 		Status:  st.Status,
 		Ready:   st.Ready,
 		Outputs: st.Outputs,
+	}
+	if st.ValueState != "" {
+		response.ValueState = gen.ExternalDependencyValueState(st.ValueState)
+	}
+	return gen.GetDependencyStatus200JSONResponse(response), nil
+}
+
+func (h *Handler) GetProjectDependencyReadiness(ctx context.Context, request gen.GetProjectDependencyReadinessRequestObject) (gen.GetProjectDependencyReadinessResponseObject, error) {
+	org := tenant.BoundOrgFromContext(ctx)
+	if h.svc == nil {
+		return nil, errProvisioningUnavailable()
+	}
+	readiness, err := h.svc.ConfigurationReadiness(ctx, org, request.ProjectName, request.Params.Environment)
+	if err != nil {
+		return nil, mapProvisionError(err)
+	}
+	deps := make([]gen.ExternalDependencyReadiness, 0, len(readiness.Dependencies))
+	for _, dep := range readiness.Dependencies {
+		deps = append(deps, gen.ExternalDependencyReadiness{
+			Name: dep.Name, State: gen.ExternalDependencyValueState(dep.State), MissingKeys: dep.MissingKeys,
+		})
+	}
+	return gen.GetProjectDependencyReadiness200JSONResponse(gen.ProjectDependencyReadiness{
+		Configured: readiness.Configured, Dependencies: deps,
 	}), nil
 }
 

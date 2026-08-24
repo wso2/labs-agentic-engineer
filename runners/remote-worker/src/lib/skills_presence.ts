@@ -16,20 +16,27 @@
  * under the License.
  */
 
-// Resolves pinned skill NAMES (from skills_resolver.ts) against the
-// `.claude/skills/` mirror the BFF already wrote into the project clone —
-// zero network, a filesystem check only.
+// Resolves skill NAMES against the `.claude/skills/` mirror the BFF already
+// wrote into the project clone — zero network, a filesystem check only.
 //
-// A pinned name with no `.claude/skills/<name>/SKILL.md` is DANGLING, not an
-// error: the caller warns and carries on with the rest. Missing guidance
-// degrades a build; aborting the run over it loses the build entirely.
+// Whose names depends on the caller, and the module deliberately does not care:
+// a coding run brings the pins from skills_resolver.ts, a validation run brings
+// the on-demand set from runner.ts. Both are asking one question — is this in
+// the mirror — so the answer is `present` / `dangling` and nothing about why the
+// caller wanted it. Naming the pin case in here is what let an empty allowlist
+// look correct: "nothing is pinned" and "nothing may be loaded" are different
+// facts, and one identifier was carrying both.
+//
+// A name with no `.claude/skills/<name>/SKILL.md` is DANGLING, not an error: the
+// caller warns and carries on with the rest. Missing guidance degrades a build;
+// aborting the run over it loses the build entirely.
 //
 // Two jobs, because the SDK draws the line in a place the design did not
 // anticipate. `skills:` is an ALLOWLIST — a mirrored skill absent from it is
 // rejected outright by the Skill tool ("not in this session's skills
-// allowlist"), so listing only the pins would leave the rest of the mirror as
-// inert files on disk. Hence `listMirroredSkills`: everything the BFF decided
-// this build may use is what the session allows.
+// allowlist"), so for a coding run, listing only the pins would leave the rest
+// of the mirror as inert files on disk. Hence `listMirroredSkills`: everything
+// the BFF decided that build may use is what its session allows.
 //
 // And nothing in that array is "preloaded" in the sense of arriving in context
 // — the model gets each skill's name and description, and the body only on
@@ -42,43 +49,49 @@
 import fs from "node:fs";
 import path from "node:path";
 
-export interface PinnedSkillsResolution {
-  /** Bare skill names with a readable .claude/skills/<name>/SKILL.md — preload these, kind-agnostic. */
-  preload: string[];
-  /** Pinned names with no matching copy on disk. */
+export interface SkillPresence {
+  /** Requested names with a readable .claude/skills/<name>/SKILL.md. */
+  present: string[];
+  /** Requested names with no matching copy on disk. */
   dangling: string[];
 }
 
 export const SKILLS_MIRROR_DIR = path.join(".claude", "skills");
 
 /**
- * Partition `names` into present (preload) vs dangling, checked against
+ * Partition `names` into present vs dangling, checked against
  * `<workspace>/.claude/skills/<name>/SKILL.md`. Never throws — an absent
  * `.claude/skills/` directory simply means every name is dangling.
+ *
+ * Caller-agnostic on purpose. Two callers ask the same question of different
+ * lists: a coding run checks the pins it will inject as bodies, a validation run
+ * checks the skills it will allow the Skill tool to load. So the warning names
+ * the mirror and the path, not the reason the caller wanted the name — the
+ * mechanism is "is this in the mirror", and only the label differed.
  */
-export async function resolvePinnedSkills(
+export async function resolveSkillPresence(
   workspace: string,
   names: string[],
   log: (line: string) => void = () => {},
-): Promise<PinnedSkillsResolution> {
-  const preload: string[] = [];
+): Promise<SkillPresence> {
+  const present: string[] = [];
   const dangling: string[] = [];
 
   for (const name of names) {
     const skillMdPath = path.join(workspace, SKILLS_MIRROR_DIR, name, "SKILL.md");
     try {
       await fs.promises.access(skillMdPath, fs.constants.R_OK);
-      preload.push(name);
+      present.push(name);
     } catch {
       dangling.push(name);
       log(
-        `[skills-presence] ⚠️  pinned skill ${JSON.stringify(name)} not found at ` +
+        `[skills-presence] ⚠️  skill ${JSON.stringify(name)} is not in the mirror — no ` +
           `.claude/skills/${name}/SKILL.md — skipping (guidance degraded, build continues)`,
       );
     }
   }
 
-  return { preload, dangling };
+  return { present, dangling };
 }
 
 /**
@@ -130,7 +143,7 @@ export async function readSkillBodies(workspace: string, names: readonly string[
       );
       sections.push(`<skill name="${name}">\n${body.trim()}\n</skill>`);
     } catch {
-      continue; // dangling — already warned by resolvePinnedSkills
+      continue; // dangling — already warned by resolveSkillPresence
     }
   }
   if (sections.length === 0) return "";

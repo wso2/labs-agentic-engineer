@@ -37,7 +37,7 @@ import (
 //  1. finds the consumer component that declares this org-service dep,
 //  2. records the AccessRequest + mints/reuses the PROVIDER-side org-publish gate
 //     issue (shared with the interactive RequestAccess flow via recordAccessRequest),
-//  3. mints a CONSUMER-side aep:provision gate issue keyed by the dep name — the
+//  3. mints a CONSUMER-side `provision` gate issue keyed by the dep name — the
 //     funnel's provisionByDep[dep] picks it up and holds the consumer's coding
 //     task (funnel depsGate gates org-service ONLY when this gate exists), and
 //  4. best-effort triggers the provider project's build so it deploys (and, on

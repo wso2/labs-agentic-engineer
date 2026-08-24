@@ -27,6 +27,7 @@ import (
 // through the org-scoped read first, then hand off.
 type Commands struct {
 	runs       RunReader
+	record     CancelRequester
 	cancel     RunCanceller
 	revalidate Revalidator
 	// reaper stops the cancelled cycle's agent pod by deleting its Component.
@@ -36,8 +37,8 @@ type Commands struct {
 
 // NewCommands wires the command service. A nil collaborator leaves its own
 // command answering "not configured" rather than panicking.
-func NewCommands(runs RunReader, cancel RunCanceller, revalidate Revalidator) *Commands {
-	return &Commands{runs: runs, cancel: cancel, revalidate: revalidate}
+func NewCommands(runs RunReader, record CancelRequester, cancel RunCanceller, revalidate Revalidator) *Commands {
+	return &Commands{runs: runs, record: record, cancel: cancel, revalidate: revalidate}
 }
 
 // WithCycleReaper enables reaping the cancelled run's agent Component. Returns
@@ -50,13 +51,26 @@ func (c *Commands) WithCycleReaper(r CycleReaper) *Commands {
 // Cancel abandons an increment — the only expiry the run's unbounded wait state
 // has.
 //
+// Three writes, in an order that is the whole design: RECORD, then SIGNAL, then
+// REAP.
+//
+//	record  the request lands on the run row first, so from here on a lost
+//	        signal costs latency rather than correctness. Cancel is the one fact
+//	        the loop cannot re-derive from the world — a pod the reap killed and
+//	        an agent that died on its own are indistinguishable from inside the
+//	        workflow — so it is given the same shape as every other fact the loop
+//	        acts on: durable state the loop re-reads, with the signal as the
+//	        wake-up rather than the evidence.
+//	signal  the run stops at its next safe point instead of at its next poll.
+//	reap    the agent's Component goes, best-effort.
+//
 // It resolves the run through the org-scoped read FIRST, so a run in another org
-// or another project is a 404 before any signal is sent, and then hands off to
-// the supervisor. It does NOT write the run row: the run settles its own row on
-// the ordinary code path once it receives the signal, which is the whole reason
-// cancel is a signal rather than a workflow cancellation.
+// or another project is a 404 before anything is written. The run still settles
+// its OWN row — cancel is a signal and not a workflow cancellation precisely so
+// the loop can run the activities that record the outcome — and this write is a
+// request, never the outcome.
 func (c *Commands) Cancel(ctx context.Context, orgID, projectID, runID string) error {
-	if c == nil || c.runs == nil || c.cancel == nil {
+	if c == nil || c.runs == nil || c.cancel == nil || c.record == nil {
 		return fmt.Errorf("runread: cancel not configured")
 	}
 	row, err := c.runs.GetByIDScoped(ctx, orgID, runID)
@@ -66,13 +80,18 @@ func (c *Commands) Cancel(ctx context.Context, orgID, projectID, runID string) e
 	if row == nil || row.ProjectID != projectID {
 		return ErrRunNotFound
 	}
+	// A settled run answers (nil, nil) — nothing to cancel, and nothing below
+	// changes that, so the signal and the reap still run harmlessly against a
+	// workflow that has already finished.
+	if _, err := c.record.RequestCancel(ctx, row.ID); err != nil {
+		return err
+	}
 	if err := c.cancel.CancelRun(ctx, row); err != nil {
 		return err
 	}
-	// The signal settles the RUN; this stops the POD. Ordered after the signal
-	// deliberately: if the signal failed nothing was cancelled and the caller
-	// retries, so killing the agent first would abandon a run that is about to
-	// carry on.
+	// The signal settles the RUN; this stops the POD. Ordered last deliberately:
+	// until the request is recorded nothing is cancelled and the caller retries,
+	// so killing the agent first would abandon a run that is about to carry on.
 	//
 	// A failed reap does NOT fail the cancel: the run is already stopping, and
 	// the only cost is a component that keeps holding a billing slot until it

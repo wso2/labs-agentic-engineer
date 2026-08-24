@@ -22,7 +22,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
 import type { components } from "../../../generated/aep-api";
-import { chatKeyFor, notifyTurnEnd } from "../../agent-chat/chatStore";
+import { chatKeyFor, notifyTurnEnd, replaceMessages } from "../../agent-chat/chatStore";
 import { SpecView } from "./SpecView";
 
 type PreflightItem = components["schemas"]["PreflightItem"];
@@ -57,6 +57,9 @@ vi.mock("@wso2/oxygen-ui", async () => {
 const mockFlush = vi.fn().mockResolvedValue(undefined);
 const soloCollab = () => ({
   status: "offline",
+  // No room doc offline — tests that need one (the question-form block below)
+  // assign a real Y.Doc over this.
+  doc: null as Y.Doc | null,
   peers: [] as { clientId: number; name: string; color: string; kind: string }[],
   getFileText: (() => null) as (path: string) => Y.Text | null,
   getFileFragment: () => null,
@@ -274,6 +277,67 @@ beforeEach(() => {
     isPending: false,
     isError: false,
     error: null,
+  });
+});
+
+describe("SpecView never opens a reference document (#383)", () => {
+  // References are transient turn inputs and are never committed (ADR-0017),
+  // so `toSpecEntry` drops them and they cannot reach the file list from git.
+  // The room is the other way in: a project created under the feature's v1 has
+  // them in git, so a room seeded from that HEAD still carries the paths. This
+  // exercises SpecView's own collab-union call to `toSpecEntry` — the union is
+  // where a room path becomes an entry — and pins that a reference path never
+  // becomes one, and so never reaches the pane as base64 editor text.
+  it("drops a reference path arriving from the collab room", () => {
+    mockCollab = {
+      ...soloCollab(),
+      docPaths: ["specs/requirements/references/claim-form.pdf"],
+    };
+    mockUseSpecFiles.mockReturnValue({
+      data: [],
+      isPending: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    render(<SpecView projectName="proj1" />);
+
+    expect(
+      screen.queryByText("claim-form.pdf"),
+    ).not.toBeInTheDocument();
+    // The content hook is disabled (empty path) rather than pointed at it.
+    const requestedPaths = mockUseSpecFileContent.mock.calls.map(
+      (c) => (c[1] as { path: string } | null)?.path ?? null,
+    );
+    expect(requestedPaths).not.toContain(
+      "specs/requirements/references/claim-form.pdf",
+    );
+  });
+
+  it("a requirements file still wins the default as before", () => {
+    mockUseSpecFiles.mockReturnValue({
+      data: [
+        {
+          path: "specs/requirements/references/claim-form.pdf",
+          sha: "r1",
+          group: "references",
+          size: 868409,
+        },
+        { path: "specs/requirements/prd.md", sha: "p1", group: "requirements" },
+      ],
+      isPending: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    render(<SpecView projectName="proj1" />);
+    const requestedPaths = mockUseSpecFileContent.mock.calls.map(
+      (c) => (c[1] as { path: string } | null)?.path ?? null,
+    );
+    expect(requestedPaths).toContain("specs/requirements/prd.md");
+    expect(requestedPaths).not.toContain(
+      "specs/requirements/references/claim-form.pdf",
+    );
   });
 });
 
@@ -770,5 +834,77 @@ describe("SpecView header metadata (soft version chips)", () => {
     expect(
       screen.queryByRole("button", { name: /solo|published/i }),
     ).not.toBeInTheDocument();
+  });
+});
+
+// The interview is uncapped (#578), so the PRD is written in the FIRST round
+// and every later round asks over a populated spec view. That flipped a state
+// that used to be unreachable: requirements files exist while a question form
+// is standing, which is exactly when the header's requirements-gated launchers
+// light up. Firing one supersedes the live questions — the agent then answers
+// its own questions from assumptions — so they stand down until the form is
+// answered. `agentBusy` cannot cover this: the agent's turn ENDED on the
+// question, so no agent peer is in the room.
+describe("SpecView while the agent is waiting on answers", () => {
+  const CHAT_KEY = chatKeyFor("acme", "proj1");
+  const REQUIREMENTS_FILES = [
+    { path: "specs/requirements/prd.md", sha: "p1", group: "requirements" },
+  ];
+
+  /** Seed the log with one live question card and give the room a real doc. */
+  function askQuestion(): void {
+    mockCollab = { ...soloCollab(), doc: new Y.Doc() };
+    replaceMessages(CHAT_KEY, [
+      {
+        id: "m1",
+        role: "question",
+        turnId: "t1",
+        toolCallId: "call-1",
+        questions: [{ question: "Which of these did I get wrong?", options: [] }],
+      },
+    ]);
+  }
+
+  beforeEach(() => {
+    replaceMessages(CHAT_KEY, []);
+    mockUseSpecFiles.mockReturnValue({
+      data: REQUIREMENTS_FILES,
+      isPending: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+  });
+
+  it("offers the launchers and Generate design once the questions are answered", () => {
+    render(<SpecView projectName="proj1" />);
+
+    expect(screen.getByRole("button", { name: "+ Feature" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Generate design/ })).toBeEnabled();
+  });
+
+  it("stands them down while a question form is open", () => {
+    askQuestion();
+    render(<SpecView projectName="proj1" />);
+
+    expect(screen.getByTestId("spec-question-form")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "+ Feature" })).toBeNull();
+    expect(screen.getByRole("button", { name: /Generate design/ })).toBeDisabled();
+  });
+
+  // A seeded command does NOT go through the composer: `AgentChatPanel` sends
+  // a pending seed as soon as the conversation is ready, without the
+  // `inputDisabled` guard that stops a user typing mid-turn. So an ungated
+  // launcher delivers `/feature` into a running turn — the thing the composer
+  // beside it refuses.
+  it("stands + Feature down while an agent holds the turn", () => {
+    mockCollab = {
+      ...soloCollab(),
+      peers: [{ clientId: 1, name: "Agent", color: "#fff", kind: "agent" }],
+    };
+    render(<SpecView projectName="proj1" />);
+
+    expect(screen.getByRole("button", { name: "+ Feature" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Generate design/ })).toBeDisabled();
   });
 });

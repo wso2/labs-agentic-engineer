@@ -39,7 +39,8 @@ import {
   buildCycles,
   isTerminalRun,
   runHold,
-  runOriginLabel,
+  runKind,
+  runKindLabel,
   runStateChip,
   spentBudgets,
   terminalReasonText,
@@ -55,7 +56,6 @@ import { RunNowPanel } from "./RunNowPanel";
 
 type MilestoneRunView = components["schemas"]["MilestoneRunView"];
 type TaskView = components["schemas"]["TaskView"];
-
 
 /**
  * The platform working, said quietly: a spinner sized to the title on a soft
@@ -131,8 +131,7 @@ export function RunStory({
   // released only by an error, which is the one case where clicking again is
   // the right thing to do.
   const [cancelRequested, setCancelRequested] = useState(false);
-  const cancelling =
-    cancel.isPending || (cancelRequested && !cancel.isError);
+  const cancelling = cancel.isPending || (cancelRequested && !cancel.isError);
   const chip = runStateChip(run);
   const terminal = isTerminalRun(run.state);
   const planning = run.state === "planning";
@@ -144,13 +143,15 @@ export function RunStory({
   // mounts ProvisioningGates itself whenever a gate is not yet resolved;
   // without this, a run stalled on a connection reads as a routine wait.
   const gateStage = provisioningStage(gates);
-  const openGateStory = gateStage && gateStage.state !== "done" ? gateStage : null;
+  const openGateStory =
+    gateStage && gateStage.state !== "done" ? gateStage : null;
 
   const hold = runHold(
     run,
     milestone && {
       gates: milestone.gates,
-      openWork: milestone.work.filter((t) => t.derivedStatus === "pending").length,
+      openWork: milestone.work.filter((t) => t.derivedStatus === "pending")
+        .length,
     },
   );
   const reason = terminalReasonText(run.terminalReason ?? "");
@@ -203,14 +204,14 @@ export function RunStory({
   // a cycle exists; the "never dispatched" line on a settled run; the gate
   // story when a connection is unresolved; the waiting notice otherwise —
   // unless a hold above is already saying it.
-  const hasBody = Boolean(current) || terminal || Boolean(openGateStory) || !hold;
+  const hasBody =
+    Boolean(current) || terminal || Boolean(openGateStory) || !hold;
 
   // The card carries state in its EDGE, not a fill — but only for the two
   // states worth a ring: something is moving (info), or something broke
   // (error). Ringing a merely-waiting run in amber painted the whole card
   // orange for a state that is not an alarm, and the chip already says it.
-  const edge =
-    chip.tone === "info" || chip.tone === "error" ? chip.tone : null;
+  const edge = chip.tone === "info" || chip.tone === "error" ? chip.tone : null;
 
   return (
     <Card
@@ -230,8 +231,17 @@ export function RunStory({
         >
           {/* No version here either — the page header's picker owns it, and
               every run on this page belongs to that version by construction. */}
-          <StatusChip label={chip.label} tone={chip.tone} appearance="soft" dot />
-          <StatusChip label={runOriginLabel(run.origin)} tone="neutral" appearance="soft" />
+          <StatusChip
+            label={chip.label}
+            tone={chip.tone}
+            appearance="soft"
+            dot
+          />
+          <StatusChip
+            label={runKindLabel(runKind(run))}
+            tone="neutral"
+            appearance="soft"
+          />
           <Typography variant="body2" color="text.secondary">
             {started ? `Started ${started}` : ""}
             {ended ? ` → ${ended}` : ""}
@@ -279,12 +289,18 @@ export function RunStory({
               <RunBusy title={hold.title} body={hold.body} />
             </Box>
           ) : (
-            <RunHoldNotice tone={hold.tone} title={hold.title} body={hold.body} />
+            <RunHoldNotice
+              tone={hold.tone}
+              title={hold.title}
+              body={hold.body}
+            />
           ))}
 
         {cancel.isError && (
           <Alert severity="error" sx={{ mt: 2 }}>
-            {cancel.error instanceof Error ? cancel.error.message : "Failed to cancel the run"}
+            {cancel.error instanceof Error
+              ? cancel.error.message
+              : "Failed to cancel the run"}
             . Nothing was cancelled — you can retry.
           </Alert>
         )}
@@ -297,7 +313,11 @@ export function RunStory({
               </Typography>
             )}
             {spent.length > 0 && (
-              <Typography variant="caption" color={tone} sx={{ fontVariantNumeric: "tabular-nums" }}>
+              <Typography
+                variant="caption"
+                color={tone}
+                sx={{ fontVariantNumeric: "tabular-nums" }}
+              >
                 {`Budget spent: ${spent.map((b) => `${b.label} ${b.text}`).join(" · ")}`}
               </Typography>
             )}
@@ -314,7 +334,10 @@ export function RunStory({
 
             {current ? (
               <Stack spacing={2}>
-                <RunGlanceStrip stages={glance.stages} nowIndex={glance.nowIndex} />
+                <RunGlanceStrip
+                  stages={glance.stages}
+                  nowIndex={glance.nowIndex}
+                />
                 {/* Once every stage of the cycle is done AND the milestone has
                     nothing left, the result is the whole story — true the
                     moment deployment goes green, BEFORE the supervisor settles
@@ -350,7 +373,9 @@ export function RunStory({
                     projectName={projectName}
                     glance={glance}
                     issues={issues?.issues ?? []}
-                    {...(issues?.caption ? { issuesCaption: issues.caption } : {})}
+                    {...(issues?.caption
+                      ? { issuesCaption: issues.caption }
+                      : {})}
                     lines={lines}
                     logPhase={progress.phase}
                     showLog={showLog}

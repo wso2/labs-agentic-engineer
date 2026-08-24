@@ -41,7 +41,12 @@ const KEY = chatKeyFor(ORG, PROJECT);
 // pendingSeed consume-once + turn-end fallback wiring this task added, not
 // the panel's own send/stream-fold behavior (untested before this task and
 // out of scope here). ------------------------------------------------------
-const mockSend = vi.fn();
+// Resolves TRUE (turn accepted) by default — `send` reports acceptance so the
+// composer knows whether to clear (#428). A test that needs the refused path
+// overrides it with `mockSend.mockResolvedValueOnce(false)`.
+const mockSend = vi.fn<(instruction: string, files?: File[]) => Promise<boolean>>(
+  async () => true,
+);
 const mockNewConversation = vi.fn();
 // Messages the mocked hook serves — set per test (the rotation dialog's
 // wording reads them); reset in each describe's beforeEach.
@@ -324,17 +329,80 @@ describe("AgentChatPanel — /<skill> composer shortcut", () => {
   // commands verbatim, so a typed command and a CTA are byte-identical turns.
   it("sends /spec with follow-up text verbatim for the server to expand", () => {
     typeAndSubmit("/spec an expense tracker");
-    expect(mockSend).toHaveBeenCalledWith("/spec an expense tracker");
+    expect(mockSend).toHaveBeenCalledWith("/spec an expense tracker", []);
   });
 
   it("sends a bare /design verbatim for the server to expand", () => {
     typeAndSubmit("/design");
-    expect(mockSend).toHaveBeenCalledWith("/design");
+    expect(mockSend).toHaveBeenCalledWith("/design", []);
   });
 
   it("sends a plain chat message verbatim", () => {
     typeAndSubmit("please regenerate the design");
-    expect(mockSend).toHaveBeenCalledWith("please regenerate the design");
+    expect(mockSend).toHaveBeenCalledWith("please regenerate the design", []);
+  });
+
+  // --- Chat attachments (#428) ---------------------------------------------
+
+  /** A File of a given size without allocating the bytes. */
+  function fileOf(name: string, size = 16): File {
+    const file = new File(["x"], name);
+    Object.defineProperty(file, "size", { value: size });
+    return file;
+  }
+
+  function attach(names: string[]) {
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: names.map((n) => fileOf(n)) } });
+  }
+
+  it("sends the attached files alongside the typed message", () => {
+    renderPanel();
+    attach(["error.png", "rows.csv"]);
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "what is wrong?" } });
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+    const [instruction, files] = mockSend.mock.calls[0] as [string, File[]];
+    expect(instruction).toBe("what is wrong?");
+    expect(files.map((f) => f.name)).toEqual(["error.png", "rows.csv"]);
+  });
+
+  it("carries attachments on a slash command too — a sketch can ride /design", () => {
+    // The composer does not inspect what was typed (ADR-0019 decision 3).
+    renderPanel();
+    attach(["sketch.png"]);
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "/design" } });
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+    const [instruction, files] = mockSend.mock.calls[0] as [string, File[]];
+    expect(instruction).toBe("/design");
+    expect(files.map((f) => f.name)).toEqual(["sketch.png"]);
+  });
+
+  it("clears text and cards once the turn is accepted", async () => {
+    renderPanel();
+    attach(["error.png"]);
+    // An image attachment draws no name, so its identity in the DOM is the alt
+    // text on the thumbnail.
+    expect(screen.getByAltText("error.png")).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "look" } });
+    await act(async () => {
+      fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+    });
+    expect(screen.getByRole("textbox")).toHaveValue("");
+    expect(screen.queryByAltText("error.png")).not.toBeInTheDocument();
+  });
+
+  it("KEEPS text and cards when the send is refused", async () => {
+    // The bytes exist nowhere but the browser (ADR-0019), so clearing on a
+    // routine 409 would cost the user a re-pick of every file from disk.
+    mockSend.mockResolvedValueOnce(false);
+    renderPanel();
+    attach(["error.png"]);
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "look" } });
+    await act(async () => {
+      fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+    });
+    expect(screen.getByRole("textbox")).toHaveValue("look");
+    expect(screen.getByAltText("error.png")).toBeInTheDocument();
   });
 
   // `/start` is the ONE command the server expands: only it can append the idea
@@ -343,12 +411,12 @@ describe("AgentChatPanel — /<skill> composer shortcut", () => {
   // command and the idea would silently never arrive.
   it("sends /start UNEXPANDED so the server can attach the captured idea", () => {
     typeAndSubmit("/start");
-    expect(mockSend).toHaveBeenCalledWith("/start");
+    expect(mockSend).toHaveBeenCalledWith("/start", []);
   });
 
   it("sends /start with an inline idea unexpanded too", () => {
     typeAndSubmit("/start a rota planner for nurses");
-    expect(mockSend).toHaveBeenCalledWith("/start a rota planner for nurses");
+    expect(mockSend).toHaveBeenCalledWith("/start a rota planner for nurses", []);
   });
 });
 
@@ -377,5 +445,26 @@ describe("AgentChatPanel — generation CTAs", () => {
     const { rerender } = renderPanel({ autoGenerate: "requirements" });
     rerender(withProviders(<AgentChatPanel {...panelProps({ autoGenerate: "requirements" })} />));
     expect(mockSend).toHaveBeenCalledTimes(1);
+  });
+});
+
+// The scoped launchers are gone from the composer (#579): each one changes a
+// specific place in the PRD and is now offered there, as a code lens on the
+// section it changes. The gate they carried — inert while a question form is
+// live, since firing one is not an answer and would supersede everyone's form —
+// moved with them (`SpecMdEditor`'s `lenses` binding, `SpecView`'s
+// `lensBusyReason`).
+describe("AgentChatPanel — the composer offers no flow launchers", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    consumePendingSeed(KEY);
+    replaceMessages(KEY, []);
+    mockMessages = [];
+    mockConversationReady = true;
+  });
+
+  it("has no Actions menu", () => {
+    renderPanel();
+    expect(screen.queryByRole("button", { name: /Actions/ })).toBeNull();
   });
 });

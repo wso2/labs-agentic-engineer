@@ -41,7 +41,3 @@ spec:
               value: {{ .Values.console.thunder.clientId | quote }}
             - name: VITE_THUNDER_SCOPES
               value: {{ .Values.console.thunder.scopes | quote }}
-            - name: VITE_SIGN_IN_REDIRECT_URL
-              value: {{ .Values.console.publicURL | quote }}
-            - name: VITE_SIGN_OUT_REDIRECT_URL
-              value: "{{ .Values.console.publicURL }}/login"

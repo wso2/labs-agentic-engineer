@@ -2,10 +2,10 @@
 
 > **L2 · a domain.** Part of the [aep-api architecture](../../README.md).
 
-Take a versioned Spec end-to-end: cut the version, plan its Tasks into a GitHub MILESTONE, and run one
-supervised loop that dispatches the coding agent at that milestone until it settles — merging, building,
-deploying and validating along the way. **Single write-authority over the milestone-run store and the one
-Temporal workflow that drives it.**
+Take a versioned Spec end-to-end: cut the version, plan its Tasks into a GitHub MILESTONE, and run a
+supervised loop that dispatches the coding agent at that milestone until it settles — merging, building
+and deploying along the way — then judge what was deployed against the version's acceptance criteria.
+**Single write-authority over the milestone-run store and the three Temporal workflows that drive it.**
 
 ```mermaid
 flowchart LR
@@ -19,13 +19,14 @@ flowchart LR
       K2["milestone model — labels · run signals · StartRunRequest · RunStatus · workflow id"]
       K3["read DTOs — TaskView · ExecutionView · Lineage · TaskDetail"]
       K4["merge→builds contract — DiffComponents · BuildRunName · BuildTerminalObserver · MilestoneDispatcher"]
+      K5["IssueWriter — the ONE issue-write surface: mint · close · reopen · comment · label + dedupe keys"]
     end
     BUILD["build (buildpipe)"] --> ROOT
     TASK["task (taskflow)"] --> ROOT
     EXEC["execution — the executions READ surface + task-log stream"] --> ROOT
     EVENT["eventcore — merge policy · build fan-out · issue minting · sweep"] --> ROOT
-    RUN["run — the milestone run supervisor (one Temporal workflow + its worker)"] --> ROOT
-    RREAD["runread — the run read surface: version runs · progress SSE · cancel"] --> ROOT
+    RUN["run — the milestone run supervisor (dev · task · validation workflows + one worker)"] --> ROOT
+    RREAD["runread — the run read surface: version runs · run + version progress SSE · cancel"] --> ROOT
     CODE["codingagent"] --> ROOT
     VAL["validation — S2S context/credentials · report verdict"] --> ROOT
     HTTP --> BUILD & TASK & EXEC & RREAD
@@ -64,14 +65,25 @@ that lives in the ROOT; the feature logic that uses it lives in a sub-package im
 `task` and `run` are then peer sub-packages that never import each other (`TestTaskRunSplit` re-asserts
 it), and every former feature→feature edge becomes a legal slice→root type reference.
 
+The root holds one piece of BEHAVIOUR beside those types: **`IssueWriter` (`issue_writer.go`), the one
+surface every issue this domain writes passes through** — mint, close, reopen, comment, label — together
+with the dedupe-key vocabulary it mints against. Four sub-packages file issues (`eventcore` detects and
+mints, `task` mints a planned Task, `validation` mints the version's validation issue and its repair
+issues, `build` closes a superseded version's leftovers) and none of them may import another, so the
+choice is the root or four copies of the label and dedupe policy. It is legal here for the same reason
+the labels are, and it is deliberately decision-free: it holds no rule about WHEN an issue is filed, and
+never invents or rewrites a caller's labels or key. In particular it does **not** pre-check for a
+duplicate — the host's create holds a per-repo lock that makes check-then-create atomic, and a check
+outside that lock is the duplicate-issue race the lock exists to close.
+
 | Sub-package | Owns | Reaches the root for |
 |---|---|---|
-| `build` (buildpipe) | the whole-spec gate + `v<N>` tag cut, **the milestone plan path** (supersede the previous version, mint `v<N>`'s milestone, admit the run row, then plan its Tasks and mint its gates), the version ledger, dep-drawer preflight | `MilestoneRun`/`StartRunRequest`, and the planner via `SpecPlanner` |
+| `build` (buildpipe) | the whole-spec gate + `v<N>` tag cut, **the milestone plan path** (mint `v<N>`'s milestone, supersede the previous version into it, admit the run row, then plan its Tasks and mint its gates), the version ledger, dep-drawer preflight | `MilestoneRun`/`StartRunRequest`, and the planner via `SpecPlanner` |
 | `task` (taskflow) | the GitHub-native Task READ surface (list/get, scoped to a version by milestone membership) + the plan turn, which mints one **prose** issue per Task **into the version's milestone**, assigned at creation; plus the SRE/RCA handoff's adoption leg | the read DTOs, the milestone label vocabulary, and the run rows (via `MilestoneResolver`) |
 | `execution` | the executions READ surface: the per-Task progress endpoint, the task-log SSE stream, `OpsExecutionReader`. It writes nothing and dispatches nothing — the only execution rows left are the provisioning gates' | `TaskStreamHub`, the executions kernel |
-| `eventcore` | the event plane of the milestone-run loop: the auto-merge policy seam, the merged-PR path-diff build fan-out + per-`(component, SHA)` re-trigger budget, fix/conflict/red-main issue minting, milestone-matched predicate re-evaluation, adoption, the reconcile sweep, and the build sweep that observes those builds reaching terminal | the milestone model (labels, `MilestoneRun`/`RunCycle`, run signals), `DiffComponents`/`BuildRunName` and `BuildTerminalObserver`; **no Temporal** — it reaches the supervisor only through the `RunSignaler`/`RunStarter` ports |
-| `run` | the milestone run SUPERVISOR: the wait state + dispatch predicate, the cycle loop, the four budgets + no-progress + ceiling, the validation cycle, settle, and cancel. Plus the `Supervisor` handle the event plane and the build click signal and start runs through | `Runtime`, the milestone model, `RunStatus`/`MilestoneRunWorkflowID`, `MilestoneDispatch`, `DiffComponents`/`BuildRunNamePrefix`; **no GitHub client, no gorm** |
-| `runread` | the run READ surface: a version's runs + their cycles, ONE SSE stream stitching the per-cycle agent logs, and the two writes beside them — cancel, and revalidate. Owns no state and decides nothing: both writes resolve their target through the org-scoped read, then hand off | the run/cycle entities and `IsTerminalRunState`; reaches the pod log through `CycleLogReader` (OC API while the Component lives, observer archive while retained), the supervisor through `RunCanceller` and the event plane through `Revalidator`, so it drags in neither a cluster client, a workflow engine nor GitHub |
+| `eventcore` | the event plane of the milestone-run loop: the auto-merge policy seam, the merged-PR path-diff build fan-out + per-`(component, SHA)` re-trigger budget, fix/conflict/red-main issue minting, the halt of a failed run's unfinished work and the close of a cancelled run's in-flight work, milestone-matched predicate re-evaluation, adoption, the reconcile sweep (trigger router; halted-aware, and blind to cancelled increments), and the build sweep that observes those builds reaching terminal | the milestone model (labels, `MilestoneRun`/`RunCycle`, run signals), `DiffComponents`/`BuildRunName` and `BuildTerminalObserver`; **no Temporal** — it reaches the supervisor only through the `RunSignaler`/`RunStarter` ports |
+| `run` | the milestone run SUPERVISOR — three workflows over one shared loop: the wait state + dispatch predicate, the cycle loop, the four budgets + no-progress + ceiling, the version's judgement, settle, and cancel. Plus the `Supervisor` handle the event plane and the build click signal and start runs through | `Runtime`, the milestone model, `RunStatus`/`MilestoneRunWorkflowID`, `MilestoneDispatch`, `DiffComponents`/`BuildRunNamePrefix`; **no GitHub client, no gorm** |
+| `runread` | the run READ surface: a version's runs + their cycles, TWO SSE streams over the per-cycle agent logs (one per run, one per version), and the two writes beside them — cancel, and revalidate. Owns no state and decides nothing: both writes resolve their target through the org-scoped read, then hand off | the run/cycle entities and `IsTerminalRunState`; reaches the pod log through `CycleLogReader` (OC API while the Component lives, observer archive while retained), the supervisor through `RunCanceller` and the event plane through `Revalidator`, so it drags in neither a cluster client, a workflow engine nor GitHub |
 | `codingagent` | the CodingExecutor (ONE dispatch entry point: dispatch a run cycle as an ephemeral OpenChoreo `coding-agent` job Component), the build-auth retry, the pod-truth watcher, retention/LRU and the cancel-time delete. Design: [`codingagent/design/oc-job-dispatch.md`](codingagent/design/oc-job-dispatch.md) | `MilestoneDispatch`/`MilestoneDispatcher`, `TaskStreamHub`, `BuildTerminalObserver` |
 | `validation` | the two S2S validation runner callbacks (context / test-credentials), the per-version validation issue, and the report → verdict rule | — (no cross-edges; least entangled) |
 | `httpapi` | the aggregator: embeds build/task/execution/runread handlers; **holds `Deps`** (see below) | imports the sub-packages (the exempt aggregator) |
@@ -99,24 +111,30 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
 | `DeployIssueMinter` | needs | `run` → the event plane. The ONE recovery issue the plane cannot mint on its own initiative: every other one has a webhook behind it, and a ReleaseBinding that never becomes Ready delivers nothing. The supervisor observes it and asks; the plane still owns the write, the labels and the dedupe key |
 | `RunSignaler` · `RunStarter` | needs | `eventcore` and `build` → the run supervisor. Signal a run, start one. Interfaces, which is what keeps both the event plane and the build click free of a workflow engine; both are declared over the root `StartRunRequest`, and `*run.Supervisor` satisfies both |
 | `RunStore` · `CycleStore` · `MilestoneReader` · `PRReader` · `DesignReader` · `BuildReader` · `ValidationCoordinator` | needs | `run` → the root repositories, `sourcecontrol`, the design reader, `clients/openchoreo` and `delivery/validation`. Every I/O the loop performs, named once; `BuildReader` is read-ONLY because the supervisor never triggers a build |
-| `MilestoneClient` (mint · list a milestone's issues · close issue · close milestone) | needs | `build` → `sourcecontrol`. The plan path's whole GitHub surface: create `v<N>` idempotently, and supersede `v<N-1>` |
-| `MilestoneRunStore` (active-run read · admit · settle · list) | needs | `build` → the root run repository. The 409 pre-check and the admission that arms the spec-run mutex |
+| `MilestoneClient` (mint a milestone · list a milestone's issues · close milestone) | needs | `build` → `sourcecontrol`. The plan path's MILESTONE surface: create `v<N>` idempotently, and read `v<N-1>`'s leftovers. Closing those leftovers is an issue write, so it goes through the root `IssueWriter` instead |
+| `MilestoneRunStore` (active-run read · admit · settle · list) | needs | `build` → the root run repository. The 409 pre-check and the admission that arms the build mutex |
 | `SpecPlanner` (`PlanIntoMilestone`) | needs | `build` → `task`. The planning turn, reached through the root exactly as `TaskReader` is, so `build` names no sibling |
 | `GateResolver` (author dependencies + mint gates into a milestone) | needs | `build` → `dependencies/provisioning`. Gates are dispatch holds, never agent work |
 | `BuildTrigger` (stage the org clone credential · trigger at commit · list a component's runs) | needs | `clients/openchoreo` — the fan-out, and the run list the re-trigger budget is derived from. Staging is its own verb because the credential is per-ORG while a trigger is per-component: a caller building N components stages once and reuses the reference |
-| `IssueClient` (mint · milestone membership · milestone counts · assign) · `PRReader` · `PRMerger` | needs | `sourcecontrol` — every GitHub write the event plane makes, on the org's own credential |
+| `IssueClient` (milestone membership · milestone counts · assign) · `PRReader` · `PRMerger` | needs | `sourcecontrol` — the event plane's issue READS and its pull-request surface, on the org's own credential. Minting is absent by design: it goes through the root `IssueWriter`, which is what stops a second dedupe convention appearing here |
+| `IssueOps` (create · close · reopen · comment · add/remove label · set milestone) | needs | the root `IssueWriter` → `sourcecontrol`. The complete list of what delivery is allowed to do to an issue; anything absent is a write this domain does not make. `set milestone` is the supersede's carry-forward of an open bug into the new version, and adoption's move of a bare issue into the deployed one |
 | `ValidationContext` · `ValidationCredentials` | offers | the S2S runner callbacks (`/internal/v1/validation/{cycleId}/…`, via the internalServer — not the public edge). Keyed by the CYCLE the pod was dispatched for, which is the only identity a runner has |
 
 ## Owns
-- The **executions** store (now provisioning gates only) and the Temporal `Runtime` + the one workflow on it.
+- The **executions** store (now provisioning gates only) and the Temporal `Runtime` + the three workflows on it.
 - The **build click's whole sequence** (`build`): mutex → repo → drawer pre-tag work → dependency hard
-  gate → whole-spec gate + `v<N>` tag cut → supersede → milestone → run row → plan. The ORDER is the
+  gate → whole-spec gate + `v<N>` tag cut → milestone → supersede → run row → plan. The ORDER is the
   domain fact `build` owns; the two halves it does not own (the planning turn, the gate resolvers) are
   root ports.
 - The **event plane** (`eventcore`): the platform's whole reaction to a pull request, a milestone-matched
   issue and a build terminal. It merges, mints and signals — the supervisor decides. Its three GitHub
-  effects are a squash-merge, an issue in a milestone, and a build pinned to a merge SHA.
-- The **milestone run** store: a run row per (org, project, milestone) — origin, small state, terminal
+  effects are a squash-merge, an issue in a milestone, and a build pinned to a merge SHA. It owns the
+  DETECTION and the prose of the issues it files; the write itself is the root's `IssueWriter`.
+- **Every issue write the domain makes** (`IssueWriter`, root): the label vocabulary, the milestone
+  assignment that rides each create (and the one deliberate re-assignment, supersede's carry-forward), the dedupe-key vocabulary and the mint logging, decided once for
+  four sub-packages. A key is frozen against its literal by `TestIssueDedupeKeysAreFrozen`, because a
+  changed key does not fail — it silently re-files issues instead of deduping onto the open one.
+- The **milestone run** store: a run row per (org, project, milestone) — kind, origin, small state, terminal
   reason, budget counters, validation verdict — and one **cycle record per dispatch** under it (kind,
   attempts, Job ref, branch, the pull request's number AND its page on the host, merge SHA). The pull
   request URL is stored as the webhook reported it, never composed from the repo row and the number:
@@ -139,10 +157,13 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   promotes a release. It promotes WAVE BY WAVE (providers before the consumers whose start-up config
   carries their address) and finishes with one converge for the facts that flow the other way — see
   the invariant below and ADR-0019.
-- The **run loop** (`run`): one Temporal workflow per milestone, `run-<org>-<project>-<milestoneNumber>`,
-  whose id is REUSED after a terminal run because a milestone sees sequential runs across its life. It
-  owns the four budgets, the no-progress rule, the cycle ceiling, the validation cycle and settle — and
-  nothing else: it detects no event and writes no issue.
+- The **run loop** (`run`): one Temporal workflow per SPECIES per milestone —
+  `<kind>-<org>-<project>-<milestoneNumber>`, whose id is REUSED after a terminal run because a
+  milestone sees sequential runs of one kind across its life. `dev` and `task` are the same cycle loop
+  with different bookends; `validation` is its own shape and shares no boundary. Between them they own
+  the four budgets, the no-progress rule, the cycle ceiling, the version's judgement and settle — and
+  nothing else: they detect no event, and the only issue they write is the one nothing else can
+  (see the invariants). ADR-0020.
 - **Persistence**: every gorm in this domain sits at the ROOT (the fence `TestGormFencedToDomainRepository`
   draws), as single write-authority — `repository_execution.go` · `repository_coding_agent_log.go` ·
   `repository_run.go` · `repository_cycle.go` · `repository_usage_ledger.go` over the `execution.go` /
@@ -157,13 +178,22 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   import each other, in either direction. Dispatch has exactly ONE door — a run works a milestone — so a
   `task` that could reach the supervisor would be a second door with the run's budgets bypassed.
   `TestTaskRunSplit` + `slice ⊥ sibling` both enforce it.
-- **One active spec run per project.** At most one non-terminal (`planning`/`waiting`/`running`) `spec-build`
-  milestone run exists per (org, project) — a partial unique index (`ux_milestone_runs_spec_active_v2`, created
-  by the `milestone_runs` migration; AutoMigrate cannot express one) that admission hits with
+- **A run's KIND is what the platform decides on.** Three kinds — `dev` (delivers a version: plans its own
+  milestone, works it, judges it), `task` (works a defect inside a version already delivered) and
+  `validation` (re-judges a shipped version; no working set, builds nothing). Every predicate is written on
+  the kind: which run takes the build mutex, which one is the project's version, which fills its own
+  milestone, which reads an empty working set as evidence, and which validates. `origin` (`spec-build` /
+  `incident-adoption` / `revalidate`) records where a run came from and nothing branches on it.
+- **One active dev run per project.** At most one non-terminal (`planning`/`waiting`/`running`) `dev`
+  milestone run exists per (org, project) — a partial unique index (`ux_milestone_runs_dev_active_v3`, created
+  by the `milestone_run_kind` migration; AutoMigrate cannot express one) that admission hits with
   `INSERT … ON CONFLICT DO NOTHING`, so the invariant holds under concurrency and not merely under the
-  endpoint's pre-check. Both answers are the same 409. `incident-adoption` runs sit deliberately outside
-  the index and execute concurrently on their own milestones.
-- **The version is claimed before it is planned, and the RUN does the planning.** The run row IS the spec
+  endpoint's pre-check. Both answers are the same 409. `task` and `validation` runs sit deliberately outside
+  the index and execute concurrently on their own milestones; what bounds them is the other partial index,
+  `ux_milestone_runs_active_per_milestone_v1` — one live run per milestone, of any kind. A kind is a literal
+  inside a partial predicate, so admission validates it (`IsRunKind`): a typo'd kind would not fail the
+  insert, it would silently escape the mutex.
+- **The version is claimed before it is planned, and the RUN does the planning.** The run row IS the build
   mutex, so the build click admits it synchronously — supersede, mint the milestone, admit — before
   anything slow happens. Admitting after planning would leave the mutex unarmed for the minutes an LLM
   turn takes, which is exactly the window a double-click lands in.
@@ -178,25 +208,74 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   armed rather than leaving a non-terminal row with no workflow behind it. That state is unhealable by
   construction — a non-terminal row makes `LiveRunForMilestone` answer forever, so the reconcile sweep
   skips it while the partial indexes refuse every later build on the project.
-- **A version supersedes its predecessor, found through the run rows.** Before `v<N+1>`'s milestone exists,
-  `v<N>`'s still-open issues are closed with a `Superseded by v<N+1>` comment — the agent work first, then
-  the gates that were holding it — and then the milestone. The previous milestone is located by the NUMBER
-  recorded on a run row, never by matching titles against GitHub (titles are renamable, and title filters
-  are case-insensitive while create-uniqueness is not). This is what keeps the reconcile sweep sound: a
-  superseded milestone holds no open `aep` issue, so the sweep's trigger never fires on it.
+- **A version supersedes its predecessor: a PLAN is replaced, a DEFECT is carried forward.** Cutting
+  `v<N+1>` empties `v<N>`'s milestone and then closes it. `development` and `provision` are CLOSED with a
+  `Superseded by v<N+1>` comment — the new plan replaces the old one and re-mints its gates — and so are
+  the validation task and any ledger-only note. `conflict` is CLOSED too, not carried: it names a branch of
+  the version being superseded, which is about to be irrelevant. But every open `bug` is MOVED into the new
+  milestone, because a defect is not superseded by anything — it is still broken, and the new version is
+  what will ship the fix. "Bug" here is `delivery.WorkKindOf`, the same reader the WORKING SETS use, which
+  reads an ARMED issue carrying no kind as a defect: that is the common human hand-over (adoption stamps
+  the arming switch and deliberately no kind), so reading plain `KindOf` instead silently closed every
+  adopted defect the moment the next version was cut. Moving is not ARMING: an unadopted incident arrives still unarmed and still
+  ledger-only. The new milestone is therefore minted BEFORE the supersede runs, since the move needs a
+  destination; the guard that a milestone never supersedes ITSELF is a comparison of platform-recorded
+  titles and holds whatever the order. The previous milestone is located by the NUMBER recorded on a run
+  row, never by matching titles against GitHub (titles are renamable, and title filters are
+  case-insensitive while create-uniqueness is not). Every step is best-effort and logged: a failed close or
+  move leaves one stale issue behind, where failing the build would strand the whole next version.
+  This is half of what keeps the reconcile sweep sound — a superseded milestone holds nothing workable,
+  because the plan is closed and the bugs have LEFT. A build that resolves to the SAME title supersedes
+  nothing (the title guard skips it) and takes the rebuild path below instead: the same milestone,
+  reopened.
 - **Every issue body is prose; nothing platform-side parses one.** That holds for planned Tasks, for
-  dispatch gates and for the validation issue alike: the milestone is the version pin, LABELS carry every
+  dispatch gates and for the validation task alike: the milestone is the version pin, LABELS carry every
   routable fact, and ordering is the "Depends on #N" lines the AGENT honours. Dedupe on re-plan is the
   title slug against the milestone's own issues, which makes reconcile additive-only and a crash re-run a
-  no-op. Gates (`aep:provision` + `aep:dep/<slug>`, minted by `dependencies/provisioning`) and the
-  validation issue (`aep:validation`) deliberately do NOT carry `aep` — a gate is a dispatch hold and the
-  validation issue is a phase of the run, and neither may hold the settle predicate open.
-  The corollary, and the trap: a read that NARROWS on `aep` cannot see either of them. So a decision that
-  must weigh them (the auto-merge policy, which merges the validation cycle's pull request) reads the
+  no-op.
+- **Two label axes: an issue is ARMED or not, and has exactly one KIND** (`labels.go`). `aep` arms it —
+  something may work it — and is also the human's adoption trigger; the kind (`development`, `bug`,
+  `conflict`, `validation`, `provision`) says which loop, and a `bug` carries a `src/*` source saying who
+  found it. Every routing predicate is then a POSITIVE membership test on the kind, which is what removed
+  the old model's subtraction of exclusions — a rule stated as what it is not, where a single mis-stated
+  exclusion emptied a live working set. A **gate** (`provision` + `aep:dep/<slug>`, minted by
+  `dependencies/provisioning`) is deliberately NOT armed: a dispatch hold is nobody's work, and its absence
+  from the armed population is what lets it be counted on its own rather than subtracted from the work
+  waiting behind it. The **validation task** IS armed and excluded by its kind instead — it is real agent
+  work whose pull request the platform must auto-merge, while no working set may include it or settle would
+  never come.
+- **The working set is PER SPECIES, and planned work is dev-workflow's alone.** `development` + `bug` +
+  `conflict` for a dev run; `bug` + `conflict` for a task run, never `development`. That narrowing is not
+  tidiness: a dev run owns the version and holds the project's build mutex, so planned issues left open by
+  a build that gave up must wait for another build rather than be continued by a run that never planned
+  them, works the DEPLOYED version instead of the one being built, and carries different budgets. Each
+  rule is written TWICE by design — per issue from its labels (`InDevWorkingSet` / `InTaskWorkingSet`,
+  mapped from a run kind by `InWorkingSet`) and as a COUNT in one host round trip (`OpenDevWork` /
+  `OpenTaskWork`), because no host call can both count cheaply and hand back labels — and the two are
+  tested against each other over every population a milestone can hold. Both counts ride ONE
+  cycle-boundary poll, since the host returns every population in the same GraphQL response.
+- **A `src/*` source is provenance, and routes exactly one thing.** It says who found a defect, for a
+  human and for the coding agent reading the issue. The single exception is the task run's bookend:
+  draining a working set that held `src/validation` work REOPENS the version's validation task, so the
+  reconcile sweep starts another validation run and the same oracle judges the repair. That is the edge
+  that closes the repair chain — bounded by the version's attempt allowance and the identical-digest rule.
+  `src/incident` and `src/user` do NOT reopen it: an incident is not priced like a release, and a verdict
+  is a statement about a VERSION rather than a commit, so `v3 passed` may describe code that shipped after
+  the verdict was recorded. The attribution is a LATCHED flag over the run's own boundary polls, never a
+  settle-time read — by settle the repair issues are closed, and asking whether a CLOSED `src/validation`
+  issue exists is true forever after the first repair, which would reopen the task after every later run,
+  which validation then closes, without end.
+- **A read that narrows on a label cannot see what does not carry it.** So a decision that must weigh
+  several populations — the auto-merge policy, which merges the validation cycle's pull request — reads the
   milestone's open issues UNFILTERED and decides on the labels itself. `?labels=` on the REST issues
-  endpoint is AND, so there is no filter that returns both populations anyway — and a label predicate split
-  across the fetch and the decision is one rule in two places, which is how the validation cycle's pull
-  request once ended up declined as "not this run's work".
+  endpoint is AND, so a filter naming two labels demands an issue carrying both and returns nothing; and a
+  label predicate split across the fetch and the decision is one rule in two places, which is how the
+  validation cycle's pull request once ended up declined as "not this run's work".
+  The policy admits a pull request TWO ways, and the two lists never merge: a CLOSING keyword on any
+  armed issue (the coding cycles' path, where the matched list is also `RunCycle.Resolves`, the durable
+  record of what the cycle finished), or `Validates #N` on the milestone's `validation`-kind task —
+  scoped to that kind, because otherwise `Validates` would become a general-purpose way to merge a pull
+  request while closing nothing and no working set would ever empty.
 - **Milestone assignment rides issue creation.** A plan costs `1+N` content-generating requests against
   GitHub's 80-per-minute ceiling: one milestone create plus one issue create per Task. Never
   create-then-PATCH, and never a label pre-create per issue (`sourcecontrol` memoises the ensure).
@@ -209,6 +288,63 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   emits any web-app runtime config) per component, then triggers — without it a first-ever component's
   build fails "Component not found". An unensurable component is not built: triggering a build for a CR
   that does not exist only fails later, and less clearly.
+- **A run's WORKFLOW ID carries its kind, and the run ROW is the routing table.**
+  `<kind>-<org>-<project>-<milestone>`. Ids are reused under `ALLOW_DUPLICATE`, because a milestone sees
+  sequential runs of one kind, so a single grammar would let the three species claim one id in turn — and
+  a stale merge signal aimed at a settled dev run would be delivered to the validation run that claimed
+  it afterwards, which would act on a merge that was never its own. The event plane already resolves a
+  run row before it signals anything, and the row's kind gives both the prefix and the workflow type
+  (`RoutableRunKind` → `RunWorkflowName` / `MilestoneRunWorkflowID`), so independence costs no lookup
+  table. A row is routable when its kind is VALID, or when its kind is empty and its origin implies one —
+  the pre-column case. Anything else is refused, by the start and by the signal alike: the only reading
+  available to a corrupt row is `dev`, and that is the kind which takes the build mutex and plans a
+  version, so guessing it would start a build nobody asked for and hold every later one behind it. A row
+  the start refuses has no execution under any id, which is why refusing to signal it loses nothing.
+  `AbandonRun` (project delete) therefore terminates ALL THREE ids: the rows are purged in the same
+  teardown, so there is nothing left to ask which ever existed, and a kind missed leaves a supervisor
+  retrying forever against a repository that is gone.
+- **The reconcile sweep is the TRIGGER ROUTER, it reads ISSUES, and it skips HALTED work and CANCELLED
+  increments.** For a known milestone with no live run: a milestone whose NEWEST run settled `cancelled`
+  is skipped whole, before its issues are even fetched; otherwise it routes on the TRIGGER PREDICATES
+  themselves — an open armed `validation`-kind issue starts a validation run, open task working-set work
+  (`aep` + `bug`/`conflict`) starts a task run, and anything else starts NOTHING. That last clause is a
+  real population and the reason the routing is not "something is open": a milestone holding only a
+  ledger note, only a `provision` gate, or only planned work a build gave up on would otherwise start a
+  paid agent run whose working set is empty by construction, which parks and is re-offered every pass. A
+  gate holds the next DISPATCH, so with no work behind it there is nothing to hold; `development` is
+  dev-workflow's alone and only the build click may start a dev run. An issue carrying `aep:halted` is
+  dropped before either decision, so a milestone holding nothing but halted work is quiet. The cancelled
+  skip is a decision about the MILESTONE rather than about its issues, and that is forced: a closed
+  milestone still accepts issues, so one reopened or freshly filed inside an abandoned increment carries
+  no mark and would otherwise start a run that builds and deploys a version nobody is shipping. It
+  clears itself — a rebuild admits a new row on the same milestone, so the newest run stops being the
+  cancelled one — which is why it reads the newest run of ANY kind rather than hunting for a cancel
+  anywhere in the history. It fetches the milestone's OPEN issues (REST, NO
+  label filter) and decides in Go, because both of those are intersections GraphQL's union-valued
+  `labels:` argument cannot count ("armed AND of kind X", "armed AND halted") and the complement of the
+  second is a negative label query the host cannot express at all — the same shape, and the same reason,
+  as the auto-merge policy: the fetch stays wide and the policy is the only place labels are read. That is
+  one REST call per known milestone per pass, replacing one GraphQL call, and neither decision costs a
+  round trip. The cycle-boundary poll keeps its COUNTS, because that read runs at every boundary and is
+  the loop's hottest; `aep:halted` deliberately does not reach it, since a halted issue in a LIVE run's
+  milestone is a contradiction — the run that halted them is terminal by construction.
+- **A FAILED run HALTS the work it could not finish, or every budget is defeated.** On every failed
+  settle the run comments the terminal reason on each working-set issue it could not finish — the recovery
+  bugs it filed itself included, which are the newest things in the milestone and therefore the first a
+  restarted run would pick up — and stamps `aep:halted`. It must, because a failed run leaves that work
+  OPEN (the milestone stays open too: the way forward is more work in the same version) and the sweep's
+  trigger cannot tell "given up on" from "not started". Without the mark the run that just exhausted
+  `fix-chain-budget` is replaced within a tick by a fresh run with a fresh budget, on the same issues,
+  forever — every budget in the platform defeated at once, with a cloud bill for a symptom rather than a
+  failing test. The reach is the RUN's working set and nothing beside it: a dev run must not halt a bug a
+  concurrent task run is working, and a task run must not halt planned work it was never allowed to
+  touch. A VALIDATION run halts nothing — its own work is the task it closes on every ending, and the
+  repair issues a failed verdict files and the conflict issue a stuck validation pull request produces are
+  deliberately a task run's work, so halting them would break the repair chain instead of protecting a
+  budget. Two things clear it, and both are somebody DECIDING the work is worth another attempt — which is
+  the decision the sweep must not make on its own: a person removing the label, and the next build, which
+  strips it from the bugs it carries forward. The write goes through the
+  event plane like `MintDeployFixIssues`, so the supervisor still writes no issue of its own.
 - **Every event-plane handler keys off a milestone run row.** It resolves the run first — by the agent's
   `aep/m<milestone#>-…` branch, by the milestone a payload embeds, by the cycle that landed a commit, or
   (for incidents and adoption) by the deployed version's run — and returns having written nothing when
@@ -273,30 +409,104 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   reasons do not already name.
 - **The supervisor mints exactly one kind of issue, and only because nothing else can.** A deployment
   produces no webhook, so the event plane never learns that one failed. `MintDeployFixIssues` is
-  therefore reached through a port INTO the event plane rather than written by the supervisor, which
-  keeps every issue this platform files under one dedupe convention and one label vocabulary.
-- **Settle closes the milestone; nothing branches on that.** Milestone state is display only, closed
-  milestones still accept new issues, and a failed or cancelled increment leaves its milestone OPEN
-  because the way forward from it is more work in the same version. A stray gate never blocks settle:
-  gates hold dispatch, and with an empty working set they hold nothing.
-- **A run that planned nothing settles DELIVERED, and does not validate.** An empty working set with zero
-  cycles behind it used to park in the unbounded wait, because the click admitted the row before its
-  planning turn and a poll could legitimately land mid-plan — "not planned yet" and "nothing to do" were
-  the same reading. Planning is the workflow's own first phase now, so by the time anything is polled the
-  plan has either landed or settled the run, and the ambiguity is gone. It is also the right answer for a
-  re-build of a version whose Tasks all already exist and are closed, where planning legitimately mints
-  nothing. It does NOT validate: validation asserts against what a run landed, and this one landed
-  nothing. A revalidation is the exception and always was — an empty working set is its expected state.
-- **One task queue, one worker.** `run.WorkerWatcher` owns it: a task queue must be served by ONE worker
-  that knows every workflow on it, and the run supervisor is the only workflow left. Two workers polling
-  one queue with disjoint registrations would fail whichever tasks each picked up by accident.
-- **Cancel is a signal, not a Temporal cancellation.** A cancelled context could not run the activities
-  that record the outcome, so the run settles its own row and closes its own cycle on the ordinary path.
-  Stopping the agent is the HTTP cancel surface's job: `runread.Commands.Cancel` signals the supervisor
-  and then best-effort reaps the cycle's OpenChoreo Component via `CycleReaper` (immediate
-  `DeleteComponent`, no retention — phase-08 Cancel B1). A failed reap does not fail the cancel; a BFF
-  crash mid-cancel can leave the pod until the retention sweep. Natural finishes are NOT reaped on that
-  path — retention/LRU owns those.
+  therefore reached through a port INTO the event plane rather than written by the supervisor: the plane
+  owns the detection story and the prose, and — like every other minter in the domain — writes it through
+  the root's `IssueWriter`, which is what keeps every issue this platform files under one dedupe
+  convention and one label vocabulary.
+- **A milestone closes on a GREEN ENDING, never merely on a settle** (`delivery.SettleClosesTheMilestone`,
+  one predicate for all three workflows). A **dev** run settling succeeded leaves it OPEN: the version is
+  deployed and UNJUDGED, and the validation task the run just filed is what will judge it — unless it
+  filed none (no acceptance oracle, or a plan that minted nothing), where nothing is coming and the
+  milestone has nothing left to wait for. A **validation** run settling succeeded CLOSES it: the version
+  has its verdict, and a succeeded validation run is a green ending by construction, since every fatal
+  verdict settles the run `failed`. A **task** run never closes one — a defect fixed inside a version
+  somebody else delivered says nothing about that version. FAILED never closes it, of any kind, because
+  the way forward from a failed increment is more work in the same version; CANCELLED closes it for a DEV
+  run alone, because that increment is abandoned outright; BLOCKED is a wait somebody else clears.
+  Closing at the dev run's HAND-OFF does not merely read wrong, it breaks the hand-off: the validation
+  agent finds its work with `gh issue list --milestone`, which resolves by title and sees only OPEN
+  milestones, so the task would be undiscoverable by the only agent meant to work it. (Otherwise
+  milestone state is display only, and closed milestones still accept new issues.)
+  A stray gate never blocks settle: gates hold dispatch, and with an empty working set they hold nothing.
+  Each terminal state's issue consequence (`haltUnfinishedWork` · `closeCancelledWork`) runs BEFORE the
+  row is settled and before the milestone close, so a write that fails stalls a non-terminal run under
+  Temporal's retries rather than leaving a terminal row whose issues nobody treated — and the container
+  closes last, for the reason supersede closes it last: a milestone closing ahead of the work inside it
+  reads as a resolution rather than an abandonment.
+- **A run that planned nothing settles DELIVERED, and files no validation task.** An empty working set
+  with zero cycles behind it used to park in the unbounded wait, because the click admitted the row
+  before its planning turn and a poll could legitimately land mid-plan — "not planned yet" and "nothing
+  to do" were the same reading. Planning is the dev workflow's own first phase now, so by the time
+  anything is polled the plan has either landed or settled the run, and the ambiguity is gone. It is
+  also the right answer for a re-build of a version whose Tasks all already exist and are closed, where
+  planning legitimately mints nothing. It files NO validation task: a judgement asserts against what a
+  run landed, and this one landed nothing — so it records `skipped`, because nothing will ever judge it
+  and an empty verdict would read as "any moment now" forever. Filing none is also what makes this one of
+  the two dev endings that CLOSE the milestone: with no verdict owed, there is nothing left to wait for. A run that adopted somebody else's
+  milestone reads an empty working set as evidence of nothing at all and PARKS instead
+  (`plansItsOwnMilestone` is the one predicate both sides of that are written on).
+- **One task queue, one worker, one `Activities` struct.** `run.WorkerWatcher` owns the queue: it must be
+  served by ONE worker that knows every workflow on it, because two workers polling one queue with
+  disjoint registrations would fail whichever tasks each picked up by accident. The three run workflows
+  therefore share it — three `RegisterWorkflow` calls and exactly ONE `RegisterActivity`. That asymmetry
+  is forced: Temporal registers an activity by its reflected METHOD NAME, so two activity structs sharing
+  any method name panic the worker at Start, and three structs carved out of one loop would share a great
+  many. Three workflows taking method expressions off one struct is the only shape that cannot break that
+  way.
+- **Cancel is DURABLE first and a signal second.** `runread.Commands.Cancel` writes the request to the
+  run row (`cancel_requested_at`, first request wins), THEN signals the supervisor, THEN best-effort
+  reaps the cycle's OpenChoreo Component via `CycleReaper` (immediate `DeleteComponent`, no retention).
+  The order is the design: signal delivery is deliberately best-effort — the supervisor swallows a failed
+  `SignalWorkflow` so a dead engine cannot wedge the console — and the reap kills the agent's pod, which
+  from inside the workflow is indistinguishable from the agent dying on its own. A cancel that lived only
+  in a lost signal therefore read as agent death, spent a re-dispatch, and opened a fresh cycle over a run
+  the user had just stopped. The row is now the evidence and the signal is only the wake-up, so the loop
+  re-derives cancel exactly as it re-derives every other fact: at the cycle boundary, and again in the
+  landing wait, both off `ReadCycleFacts` — the ground-truth read those waits already perform. A lost
+  signal costs latency, not correctness. It stays a signal and not a Temporal cancellation because a
+  cancelled context could not run the activities that record the outcome, so the run settles its own row
+  and closes its own cycle on the ordinary path. A failed reap does not fail the cancel; a BFF crash
+  mid-cancel can leave the pod until the retention sweep. Natural finishes are NOT reaped on that path —
+  retention/LRU owns those.
+- **A CANCEL CLOSES the work it had in flight, or it does not stick.** The sweep starts a run for any
+  open workable kind on a milestone with no live run, so a cancel that only recorded itself would be
+  undone within a tick: the button would stop the run and pay for its replacement a minute later. So a
+  cancelled settle comments on, stamps `aep:cancelled` on and CLOSES the issues it abandons — the same
+  shape as the halt, reached from the other ending, and written by the event plane through the same
+  ports so the supervisor still files no issue of its own. What it abandons is per SPECIES
+  (`delivery.InCancelledWork`): a DEV run's cancel takes everything the INCREMENT was carrying — the
+  working set and the dispatch gates — and closes the milestone behind them, because the increment is
+  abandoned. That is the asymmetry with the halt, which leaves the gates alone precisely because a failed
+  run may be retried in the same version and its gates still name dependencies somebody must resolve. Two
+  populations survive even a build's cancel: the version's VALIDATION TASK, a handle on software still
+  deployed, and the LEDGER — a human's unarmed note is never the platform's to close, and a machine
+  comment on somebody's own record is not suppression of anything (the sweep skips a cancelled increment
+  whole, and a note is not work to it in any case). A TASK run's cancel reaches only the bugs and
+  conflicts it was working and leaves the milestone open: the version it works is the DEPLOYED one and is
+  not being withdrawn. A VALIDATION run closes nothing through this path — its own consequence is the
+  task it ADOPTED, closed on every ending by `settleJudged`, and that scoping is what keeps a cancel
+  arriving before the first read from closing a task the run never adopted. Nothing is REVERTED by any of it:
+  merged commits stay on `main` and promoted components keep serving, so closing the milestone is a
+  statement about the INCREMENT, never about what is deployed.
+- **Only issues OPEN at cancel time are marked, and that is what the marker is for.** Work a cycle
+  genuinely FINISHED is already closed, so it is neither touched nor stamped — and a rebuild therefore
+  cannot resurrect it. Reopening a cancelled milestone's issues wholesale would dispatch an agent at code
+  that is already merged and serving, which is why the way back is a marked SET rather than a milestone.
+- **The way back from a cancelled build is decided by the SPEC-SAVE STATUS alone.** There is no
+  "was it cancelled" read anywhere. `spec.SpecSaveApproved` means a new tag: the ordinary build path,
+  which supersedes the predecessor (finding nothing to do — the cancel already emptied and closed that
+  milestone) and plans the new version fresh. `spec.SpecSaveUnchanged` means the SAME tag, so the same
+  milestone: the click REOPENS it and exactly the issues carrying `aep:cancelled`, CLEARS the label as it
+  goes (it records one abandoned attempt, not a property of the issue), and sets `Rebuild` on the start
+  request. The run then mints its gates — they dedupe onto the reopened ones, so a dependency resolved
+  since the cancel is re-read rather than assumed — and **SKIPS `planTasks`**. It must: plan dedupe is
+  the title slug against the milestone's issues in ANY state, which is what makes re-planning
+  additive-only and a crash re-run a no-op, so a re-plan after a cancel that closed everything would
+  recognise every slug, mint NOTHING, and the loop would read the empty working set as "delivered" and
+  settle a version it never built. Reopening is the only path that restores the working set without
+  breaking additive-only dedupe, and it is cheaper: no LLM turn. `Rebuild` rides the REQUEST beside
+  `Tag`, for the same reason and under the same replay rule — the zero value is the pre-existing
+  behaviour, so a re-offer from the sweep can never claim a milestone was refilled for it.
 - **Echo suppression is `issues.*`-only.** Every label, comment and milestone assignment the platform
   writes fires an `issues.*` delivery straight back, so those handlers drop self-sender deliveries. It is
   deliberately NOT applied to `pull_request.*`: in App mode the coding runner opens its PR as the same
@@ -323,7 +533,7 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
 - **`*run.Supervisor` stays a nil-safe concrete type**, not an interface, at the composition root — the
   event plane and the build click both hold it unconditionally, and a degraded boot (Temporal down) has to
   be a logged no-op rather than a nil check at each call site.
-- **The run progress stream is ONE connection over every cycle, and only a terminal run settles it.**
+- **A run's progress is ONE connection over every cycle, and only a terminal run settles it.**
   `stream-run-progress` (`GET .../runs/{runId}/progress`, `text/event-stream`) carries a `cycle` frame per
   cycle record and a `line` frame per agent-log entry, each line stamped with its cycle id, its 1-based
   cycle index and an **emitter chip** (`main` | `subagent`) so the console renders one accordion section
@@ -331,7 +541,23 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   kind rides in a `type` field inside the `data:` payload so it passes the shared agent-stream parser.
   A live run — including one parked in `waiting` — holds the stream open indefinitely; a terminal run
   streams its history, sends `done` + `[DONE]`, and the server closes. The server keeps no cursor; the
-  client dedups by cycle id and `(cycleId, seq)`.
+  client dedups by cycle id and `(cycleId, seq)`. This is the read for ONE EXECUTION.
+- **A VERSION's progress is one connection across its RUNS, and it settles only while no run is live.**
+  `stream-build-progress` (`GET .../builds/{tag}/progress`, `text/event-stream`) is the same frames plus a
+  `run` object — id, kind, and the run's 1-based chronological index — because a version's story is spread
+  across several executions and a cycle is not identified until you know which run opened it. The tag
+  resolves to a milestone through the run rows, which IS the tenant fence: another org's or another
+  project's version is a 404 before a byte. Runs are emitted OLDEST FIRST, sorted here rather than
+  inherited from the newest-first list read, so the narrative reads forwards and a run's printed index is
+  stable. `cycleIndex` stays RUN-relative — the same cycle carries the same number on both streams, and
+  the collision across runs is resolved by the key becoming `(run.id, cycleIndex)`, never by renumbering.
+  **"The version is finished" is not a fact either stream can state**: the newest run going terminal does
+  not mean no further run will be admitted on that milestone, and that is the ordinary case
+  (a dev run settles; a validation run starts when a validation issue opens, possibly much later,
+  possibly never). So it holds while ANY run on the milestone is non-terminal and settles with
+  `done { reason: "no_live_run" }` + `[DONE]` when none is — `reason`, never `state`, which is
+  contract-defined as one RUN's terminal state. The console reopens it from the run-list poll it already
+  makes every 5s. A milestone whose runs are purged mid-stream needs no second ending: no row is live.
 - **Agent logs are read, never stored.** Three sources answer, in order: live OpenChoreo pod logs while
   the Component exists, the observability archive while the Component is retained, and a synthetic
   `logs_unavailable` line when the Component is gone or no observability plane is configured. An empty
@@ -355,38 +581,86 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   `execution` / `line` / `done` frames, the frame kind in a `type` field inside the `data:` payload so it
   rides the shared agent-stream parser. The server buffers no history and keeps no cursor; the client
   dedups and a reconnect re-derives. It settles when the Task's ISSUE closes, because nothing further will
-  arrive on it. It is the per-ISSUE view; a run's own feed is `stream-run-progress`.
+  arrive on it. It is the per-ISSUE view; a run's own feed is `stream-run-progress` and a version's is
+  `stream-build-progress`.
 - **`derivedStatus` is the issue's own state, and only that.** Two values — `pending` (open) and `merged`
   (closed) — both deliberately members of the retired ten-value vocabulary, because the console consumes
   the field UNTYPED and a chip keyed on an unknown string renders as nothing. Anything richer belongs on
   the run's cycle timeline, which is where the loop's real position lives.
-- **Validation is the run's last CYCLE and never builds.** The supervisor mints the validation issue at
-  deployed-green (never at plan time — an issue nothing can work until every component deploys would hold
-  every cycle boundary open), dispatches one cycle at it with `AEP_TASK_KIND=validation`, and reads the
-  committed report back as the run's VERDICT. The acceptance oracle
+- **A DEV run settles at deployed-green having MINTED the validation task, and never validates.** It
+  mints at deployed-green and never at plan time — an issue nothing can work until every component
+  deploys would sit in the working set and hold every cycle boundary open, a version that could never
+  settle — and minting last is also what makes the coverage honest, because mid-run adoption postpones
+  deployed-green by construction. It then settles SUCCEEDED with an EMPTY verdict, which is the honest
+  reading of "delivered, not yet judged". The one exception is a project with no acceptance oracle: no
+  task is filed, nothing will ever judge the version, and `skipped` says so. The acceptance oracle
   `specs/validation/validation-criteria.json` is read-only input authored in the design phase (spec domain).
   **ONE validation issue per version, filed into the version's milestone by the create itself** — like a
   Task, it carries no version label, because the milestone is the pin. Per version and not per project:
   the body embeds the criteria as they stood at mint time, so adopting an older version's issue would
   hand this version's agent the wrong oracle, and re-filing it would erase it from the ledger of the
-  version it actually validated. The version's own open issue is looked up by milestone, and only there.
-- **A version can be judged more than once, and the NEWEST run owns its verdict.** `revalidate` is the
-  third run origin (`POST .../builds/{tag}/revalidate`): a fresh run over an already-shipped version's
-  milestone that ENTERS THE LOOP AT VALIDATION, because its working set is already empty. Nothing is
-  rebuilt to ask the question. What follows the verdict is the loop's ordinary behaviour, selected by ONE
-  number — the run's validation-attempt allowance: at 1 the allowance is spent by the first fatal verdict,
-  which settles the run *before* it reaches the repair mint, so no work is filed and nothing is rebuilt;
-  at the default the full chain runs (issue per failed criterion → coding cycle → builds → validate
-  again). There is deliberately no separate "should it repair" flag — that ordering is the switch.
-  Three guards refuse it up front, each beside the collaborator that can answer it: a live run on the
-  milestone (409 — unlike adoption there is nothing to hand off to it, and the revalidate origin sits
-  outside the spec-run mutex so nothing in the database would refuse a second row), open work in the
-  working set (409 — the loop would build it, not re-check it), and no acceptance oracle (422 — a run
-  with nothing to validate concludes `skipped`, which would overwrite a real verdict).
-- **The overview's build stage reads the newest SPEC BUILD; its validation chip reads the newest run on
-  THAT milestone.** Only a spec build advances the project's version, and the other two origins work an
-  existing milestone that may be any version's — so picking the newest row outright let a revalidation
-  (or an incident adoption) on an older version walk the reported version backwards. Both are in-memory
+  version it actually validated. The version's own issue is looked up by milestone, and only there — in
+  ANY state, because a closed task is the normal state between attempts, and adopt-or-reopen-or-mint is
+  also how a task run REOPENS it after a verdict-sourced repair.
+- **The VALIDATION run is a separate workflow, it polls no working set, and it builds and deploys
+  nothing.** Its pull request touches only `tests/`, so the merge's path diff yields no components and
+  both later stages were already silent no-ops for it; skipping them outright is the honest form of that.
+  Its shape is: adopt-or-mint the version's task → one agent stage anchored at that issue with
+  `AEP_TASK_KIND=validation` → read the verdict at the cycle's OWN merge SHA → on `failed`, one repair
+  issue per failed criterion → close the task → settle. The merge-SHA pin is load-bearing rather than
+  defensive: the report lives at one fixed path every run overwrites, so a read of the branch tip
+  returns the newest run's results whoever is asking, and a run whose agent shipped no report would
+  inherit its predecessor's verdict. `unreported` is the one failure it remedies itself — nothing was
+  deployed and no criterion asserted, so another dispatch is the whole remedy — bounded, because an agent
+  that ignored the report contract twice will ignore it a third time. Why this is not a cycle of the
+  delivery loop is ADR-0020.
+- **The validation task's close is the PLATFORM's, and every ending performs it.** The pull request
+  references its issue with `Validates #N`, deliberately not one of GitHub's closing keywords, so the
+  host closes nothing and there is exactly one owner. That is what lets the run close the task on an
+  ending where no verdict was reached at all — an agent that died through its whole re-dispatch budget —
+  and it must: the reconcile sweep starts a validation run BECAUSE that issue is open, so a task left
+  open after a dead dispatch would be picked up again within a tick, forever, with nothing outside the
+  workflow able to repair it. What that leaves is a version deployed and unjudged, which is honest, and
+  one click from being asked again. Dropping the reference entirely is the trap: the auto-merge policy
+  requires a pull request to name an armed issue in the milestone, so a body referencing nothing is read
+  as somebody else's work, never merges, and every judgement settles `unreported`.
+- **One repair issue per failed criterion, never one omnibus issue.** The no-progress rule compares
+  working-set SIZES, so repairing two of three failures has to read as progress; a single issue holding
+  three failures could only be open or closed. They are `bug` + `src/validation`, dedupe-keyed on the
+  ATTEMPT's cycle id, so a retry within one attempt files nothing new while the next attempt files
+  fresh work. The `src/validation` source is what makes the chain CLOSE: the ordinary run that fixes them
+  reopens the version's validation task when its working set drains, so the same oracle judges the repair
+  without a human asking.
+- **A version can be judged more than once, and the NEWEST validating run owns its verdict.** Each
+  attempt is its own validation run — started by the reconcile sweep off the open task, whether a dev run
+  filed it at deployed-green or a task run REOPENED it having delivered a verdict-sourced repair, or by a
+  human (`POST .../builds/{tag}/revalidate`). Nothing is rebuilt to ask the question. What follows a fatal
+  verdict is selected by ONE number, the version's validation-attempt allowance: at 1 it is spent by the
+  first fatal verdict, which settles the run *before* the repair mint, so no work is filed and nothing is
+  rebuilt; at the default the failure becomes one issue per failed criterion for an ordinary run to work.
+  There is deliberately no separate "should it repair" flag — that ordering is the switch.
+  The allowance and the previous report's DIGEST are the two facts that span runs, and both are DERIVED
+  from the milestone's own validation runs rather than carried: attempts is how many `kind = validation`
+  runs it has, and the digest is the newest prior validation cycle's. Nothing could carry them — each
+  attempt is its own execution, so the previous one's state is gone. Two consecutive identical digests
+  prove the repair moved nothing and stop the chain even with allowance left. The digest is written by
+  the SAME activity as the verdict, and must be: that cycle write is fenced write-once on an empty
+  verdict, so a digest recorded afterwards could never land on the cycle it belongs to.
+  Three guards refuse a human's request up front, each beside the collaborator that can answer it: a live
+  run on the milestone (409 — unlike adoption there is nothing to hand off to it, and a validation run
+  sits outside the build mutex so nothing in the database would refuse a second row), open work in the
+  working set (409 — an ordinary run would build it, not re-check it), and no acceptance oracle (422 — a
+  run with nothing to validate concludes `skipped`, which would overwrite a real verdict).
+- **A BUILD is refused while a live `kind = validation` run exists on the project** — 409, the same shape
+  as the build mutex's own refusal. A delivery run merging and promoting while validation asserts against
+  the deployment would be judging a moving target: the verdict would name criteria true of neither the old
+  release nor the new one. A validation run deliberately sits outside the build mutex (it re-judges a
+  version that already shipped, so holding up the next build for its duration would be wrong), so this
+  refusal is an explicit read and not an index. The way past it is to cancel the validation, one click.
+- **The overview's build stage reads the newest DEV RUN; its validation chip reads the newest run on
+  THAT milestone.** Only a dev run advances the project's version, and the other two kinds work an
+  existing milestone that may be any version's — so picking the newest row outright let a validation run
+  (or a task run) on an older version walk the reported version backwards. Both are in-memory
   scans of the run list the status poll already holds, so neither costs a query.
 - **The list read returns three populations, and hides one** (`task/reads.go` `ListByTag`, the read-model
   boundary). Every row carries the label-derived `executorClass` the console sections on: `coding` (agent

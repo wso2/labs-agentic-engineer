@@ -32,8 +32,8 @@ import (
 // alone, made against the labels it can see.
 //
 // Narrowing here by label is what broke validation auto-merge: the fetch asked
-// for `aep` only, so the milestone's validation issue — labelled `aep:validation`
-// and nothing else — was gone before the policy could accept it, and every
+// for `aep` only, so the milestone's validation task — which then carried no
+// arming label at all — was gone before the policy could accept it, and every
 // validation pull request was declined with "no resolved issue is this run's
 // work". Two copies of one predicate, and the hidden copy won.
 //

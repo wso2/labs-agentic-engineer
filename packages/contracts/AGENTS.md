@@ -14,9 +14,10 @@
   validation failures are `400`.
 - The `path` parameter of `read-file` is a trailing wildcard (may contain
   slashes); the server registers the extra catch-all route for it.
-- `commands/` holds the `/<skill>` chat grammar and nothing else. **No prompt
-  text lives in this package** — a command parses into FACTS (which skill, which
-  idea) that a caller puts on a `TurnSpec`; the wording those become belongs to
+- `commands/` holds the `/<command>` chat grammar and nothing else. **No prompt
+  text lives in this package** — a command parses into FACTS (which token, which
+  idea) that a caller puts on a `TurnSpec`. The sentences those facts become —
+  including which skill a token loads, and which branch of it — belong to
   `services/agents/src/prompts/` (see that service's ADR-0003). A `strings.json`
   → Go/TS codegen pipeline used to live here; it is gone, and so is this
   package's `gen` script.

@@ -77,7 +77,17 @@ type TaskView struct {
 	// A task carries no pull request of its own: agent work is claimed by a BUILD
 	// SESSION's pull request, whose identity lives on the run's cycle record
 	// (delivery.RunCycle) because that is what the merge policy decided about.
-	ExecutorClass string                   `json:"executorClass"`
+	ExecutorClass string `json:"executorClass"`
+	// Kind is the issue's LABEL KIND, raw (labels.go): development, bug,
+	// conflict, validation, provision, or empty when the issue carries none.
+	//
+	// It exists because ExecutorClass is coarser on purpose — planned work, a
+	// bug and a merge conflict are all `coding` there, since all three are
+	// dispatched the same way — and the read DTO carries no raw labels, so
+	// without this the console cannot tell a defect from planned work. Optional:
+	// a row whose kind this console has not learned renders untagged rather than
+	// guessing.
+	Kind          string                   `json:"kind,omitempty"`
 	Origin        string                   `json:"origin,omitempty"`
 	Component     string                   `json:"component,omitempty"`
 	Operation     string                   `json:"operation,omitempty"`

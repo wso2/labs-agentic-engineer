@@ -143,10 +143,10 @@ func TestAnthropicProjectionFromRow(t *testing.T) {
 		ConnectedAt:     now,
 		LastValidatedAt: &now,
 		ValidationError: &valErr,
-		// The SM-API triplet is row-internal; the projection must not carry it.
-		SMAPISecretRefName: &smRef,
-		SMAPIKVPath:        &smRef,
-		SMAPIProperty:      &smRef,
+		// The secret-ref triplet is row-internal; the projection must not carry it.
+		SecretRefName:     &smRef,
+		SecretRefKVPath:   &smRef,
+		SecretRefProperty: &smRef,
 	}
 
 	p := projectionFromAnthropicRow(row)

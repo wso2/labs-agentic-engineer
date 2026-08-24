@@ -23,7 +23,8 @@
 //
 // The form is driven by the room's shared Yjs `questions` map, so EVERY collab
 // participant sees the questions and each other's selections live — and ANY
-// member submits or skips (#430 D5). The conversation is one shared project
+// member submits, or hands the questions back for the agent's own recommended
+// answers (#430 D5). The conversation is one shared project
 // thread, so form-submit and a composer reply are the same act; the answer
 // travels through the submitter's pendingSeed exactly like their typed reply
 // would.
@@ -258,14 +259,50 @@ export function SpecQuestionForm({
     closeRoomQuestion(doc, entry.toolCallId);
   };
 
-  // Skip: close the form for the WHOLE room and tell the agent to stop asking
-  // and proceed — otherwise the turn sits waiting on an answer that isn't
-  // coming. Any member, same as submit (#430 D5).
-  const skip = () => {
-    setPendingSeed(
-      chatKeyFor(org, projectName),
-      "Skip these questions — stop interviewing and proceed with your best assumptions, stating them.",
-    );
+  // The other exit: close the form for the WHOLE room and hand the questions
+  // back to the agent to answer itself — otherwise the turn sits waiting on an
+  // answer that isn't coming. Any member, same as submit (#430 D5).
+  //
+  // It is NOT "stop interviewing" (#578): the interview is uncapped, so this
+  // defers THESE questions rather than ending the conversation. What it asks
+  // for is the flag — an assumption the user can see in the document is a
+  // decision they can overturn; a silent one is an invention.
+  //
+  // It hands back only what is still UNANSWERED. The caption invites partial
+  // use — answer the ones you have opinions about, let the agent take the rest
+  // — and a room can have co-authored several answers already; sending them all
+  // back would overwrite real decisions with guesses and flag them `*assumed*`,
+  // which reads as the agent's invention rather than the user's overwritten
+  // answer. The `grilling` skill sets the same bound: "apply your recommended
+  // answer to every REMAINING decision".
+  const useRecommended = () => {
+    const answered = entry.questions.filter((q, i) => isQuestionAnswered(q, answers[i]));
+    const remaining = entry.questions.filter((q, i) => !isQuestionAnswered(q, answers[i]));
+    // Nothing left to hand back is the Continue case exactly: asking the agent
+    // to "decide the rest" of an empty set invites it to invent decisions and
+    // flag them `*assumed*`, which is the one thing this exit must never cause.
+    const ask =
+      remaining.length === 0
+        ? ""
+        : remaining.length === entry.questions.length
+          ? "Use your recommended answers for these questions — decide them yourself and flag each one as assumed where it lands in the document, so I can change it later."
+          : `Decide the rest yourself using your recommended answers, and flag each one as assumed where it lands in the document, so I can change it later:\n` +
+            remaining.map((q) => `- "${q.question}"`).join("\n");
+    // The answered half rides first, serialized exactly as Continue would send
+    // it, so the agent reads one message carrying both decisions and deferrals.
+    const decided = answered.length
+      ? serializeQuestionAnswer(
+          answered,
+          entry.questions
+            .map((q, i) => ({ q, a: answers[i] }))
+            .filter(({ q, a }) => isQuestionAnswered(q, a))
+            .map(({ a }) => ({
+              selected: a?.selected ?? [],
+              ...(a?.freeText?.trim() ? { freeText: a.freeText.trim() } : {}),
+            })),
+        ) + "\n\n"
+      : "";
+    setPendingSeed(chatKeyFor(org, projectName), (decided + ask).trimEnd());
     closeRoomQuestion(doc, entry.toolCallId);
   };
 
@@ -312,13 +349,16 @@ export function SpecQuestionForm({
         </Box>
       </Box>
 
-      {/* Sticky footer — Continue sits bottom-right, open to any member. */}
+      {/* Sticky footer — Continue sits bottom-right, open to any member. The
+          caption is the other exit's meaning, stated before it is clicked:
+          the control decides nothing away, it hands the decision to the agent
+          and keeps it flagged. */}
       <Stack
         direction="row"
         spacing={2}
         sx={{
           alignItems: "center",
-          justifyContent: "flex-end",
+          justifyContent: "space-between",
           px: 5,
           py: 2,
           borderTop: 1,
@@ -326,12 +366,18 @@ export function SpecQuestionForm({
           flexShrink: 0,
         }}
       >
-        <Button variant="text" color="inherit" disabled={streaming} onClick={skip}>
-          Skip questions
-        </Button>
-        <Button variant="contained" disabled={!canSubmit} onClick={submit}>
-          Continue
-        </Button>
+        <Typography variant="caption" color="text.secondary" sx={{ minWidth: 0 }}>
+          The agent can answer these itself — each decision lands flagged <em>assumed</em> in your
+          spec, so you can change it later.
+        </Typography>
+        <Stack direction="row" spacing={2} sx={{ alignItems: "center", flexShrink: 0 }}>
+          <Button variant="text" color="inherit" disabled={streaming} onClick={useRecommended}>
+            Use recommended answers
+          </Button>
+          <Button variant="contained" disabled={!canSubmit} onClick={submit}>
+            Continue
+          </Button>
+        </Stack>
       </Stack>
     </Box>
   );

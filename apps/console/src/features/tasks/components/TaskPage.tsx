@@ -31,7 +31,7 @@ import { StatusChip } from "../../../components/StatusChip";
 import { useTask } from "../api/queries";
 import { issueStateChip } from "../api/status";
 import { useTaskLog } from "../hooks/useTaskLog";
-import { GitHubIssueLink } from "./GitHubIssueLink";
+import { GitHubRefChip } from "../../../components/GitHubRefChip";
 import { TaskLogView } from "./TaskLogView";
 
 // Seconds elapsed since resetKey last changed, while `active`. Used to age the
@@ -166,7 +166,7 @@ export function TaskPage({
         }
         backTo={backTo}
         actions={
-          <GitHubIssueLink issueNumber={issueNumber} issueUrl={issueUrl} />
+          <GitHubRefChip kind="issue" number={issueNumber} url={issueUrl} />
         }
       />
       <Box

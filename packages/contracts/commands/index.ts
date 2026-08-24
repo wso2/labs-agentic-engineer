@@ -20,7 +20,7 @@
  * The `/<skill>` chat-command grammar, shared by every TS surface.
  *
  * This module holds NO prompt text. A command is a keyboard shortcut for "this
- * turn is a flow", and parsing it yields FACTS — which skill, which trailing
+ * turn is a flow", and parsing it yields FACTS — which token, which trailing
  * text, which idea — that a caller puts on a `TurnSpec`. The wording those
  * facts become lives in the agents service
  * (`services/agents/src/prompts/turn.ts`), the only thing here that talks to a
@@ -80,7 +80,12 @@ export function parseStartCommand(line: string): { inlineIdea: string } | null {
 }
 
 /**
- * Parse `/<skill> [text]` into the flow it names, or null for ordinary chat.
+ * Parse `/<command> [text]` into the flow it names, or null for ordinary chat.
+ *
+ * The token comes back as `skill` because that is the `TurnSpec` field it
+ * fills. Most tokens ARE the skill name; the few that name a branch of one
+ * (`/feature` → the amend skill's add-a-feature branch) resolve in the agents
+ * service, since which playbook a user's intent means is wording.
  *
  * Deliberately narrow, so real chat is never eaten: a single leading `/`, then
  * a skill-name token (`[a-z0-9-]+`) that must end at whitespace or the message

@@ -29,16 +29,43 @@ import (
 type fakeReaper struct {
 	calls [][3]string
 	err   error
+	order *[]string
 }
 
 func (f *fakeReaper) ReapRunCycle(_ context.Context, orgID, projectID, runID string) error {
+	if f.order != nil {
+		*f.order = append(*f.order, "reap")
+	}
 	f.calls = append(f.calls, [3]string{orgID, projectID, runID})
 	return f.err
 }
 
+// fakeRecorder is the durable half of cancel: it records that the request was
+// written, and in what ORDER relative to the signal and the reap.
+type fakeRecorder struct {
+	ids   []string
+	err   error
+	order *[]string
+}
+
+func (f *fakeRecorder) RequestCancel(_ context.Context, runID string) (*delivery.MilestoneRun, error) {
+	if f.order != nil {
+		*f.order = append(*f.order, "record")
+	}
+	if f.err != nil {
+		return nil, f.err
+	}
+	f.ids = append(f.ids, runID)
+	return &delivery.MilestoneRun{ID: runID}, nil
+}
+
 func cancelCommands(canceller runread.RunCanceller, reaper runread.CycleReaper) *runread.Commands {
+	return cancelCommandsWith(&fakeRecorder{}, canceller, reaper)
+}
+
+func cancelCommandsWith(rec runread.CancelRequester, canceller runread.RunCanceller, reaper runread.CycleReaper) *runread.Commands {
 	runs := fakeRuns{org: "acme", rows: []delivery.MilestoneRun{specRun("r1", delivery.RunStateRunning)}}
-	return runread.NewCommands(runs, canceller, nil).WithCycleReaper(reaper)
+	return runread.NewCommands(runs, rec, canceller, nil).WithCycleReaper(reaper)
 }
 
 // TestCancel_ReapsTheCyclesComponentAfterSignalling is the cancel contract this
@@ -98,10 +125,58 @@ func TestCancel_ReapFailureStillCancels(t *testing.T) {
 func TestCancel_WithoutAReaperStillCancels(t *testing.T) {
 	canceller := &fakeCanceller{}
 	runs := fakeRuns{org: "acme", rows: []delivery.MilestoneRun{specRun("r1", delivery.RunStateRunning)}}
-	if err := runread.NewCommands(runs, canceller, nil).Cancel(context.Background(), "acme", "widgets", "r1"); err != nil {
+	if err := runread.NewCommands(runs, &fakeRecorder{}, canceller, nil).Cancel(context.Background(), "acme", "widgets", "r1"); err != nil {
 		t.Fatalf("Cancel: %v", err)
 	}
 	if canceller.cancels != 1 {
 		t.Errorf("supervisor signalled %d times, want 1", canceller.cancels)
+	}
+}
+
+// TestCancel_RecordsTheRequestBeforeSignalling is the ordering the whole fix
+// rests on. Signal delivery is best-effort — the supervisor swallows a failed
+// SignalWorkflow so a dead engine cannot wedge the console — so a cancel that
+// signalled first and crashed would have killed an agent with nothing durable
+// saying why. Record, signal, reap; in that order, always.
+func TestCancel_RecordsTheRequestBeforeSignalling(t *testing.T) {
+	var order []string
+	rec := &fakeRecorder{order: &order}
+	canceller := &fakeCanceller{order: &order}
+	reaper := &fakeReaper{order: &order}
+
+	if err := cancelCommandsWith(rec, canceller, reaper).Cancel(context.Background(), "acme", "widgets", "r1"); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	want := []string{"record", "signal", "reap"}
+	if len(order) != len(want) {
+		t.Fatalf("order = %v, want %v", order, want)
+	}
+	for i := range want {
+		if order[i] != want[i] {
+			t.Fatalf("order = %v, want %v", order, want)
+		}
+	}
+	if len(rec.ids) != 1 || rec.ids[0] != "r1" {
+		t.Errorf("recorded %v, want one request for r1", rec.ids)
+	}
+}
+
+// TestCancel_NeverSignalsWhenTheRequestCouldNotBeRecorded: without the durable
+// stamp the loop has no way to re-derive the cancel, so a signal that raced a
+// dead database would be the only record of it — exactly the fragility the
+// stamp exists to remove. Nothing is signalled and nothing is reaped.
+func TestCancel_NeverSignalsWhenTheRequestCouldNotBeRecorded(t *testing.T) {
+	rec := &fakeRecorder{err: errors.New("database down")}
+	canceller := &fakeCanceller{}
+	reaper := &fakeReaper{}
+
+	if err := cancelCommandsWith(rec, canceller, reaper).Cancel(context.Background(), "acme", "widgets", "r1"); err == nil {
+		t.Fatal("Cancel must fail when the request could not be recorded")
+	}
+	if canceller.cancels != 0 {
+		t.Errorf("signalled %d times after a failed record, want 0", canceller.cancels)
+	}
+	if len(reaper.calls) != 0 {
+		t.Errorf("reaped %v after a failed record", reaper.calls)
 	}
 }

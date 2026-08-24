@@ -16,10 +16,10 @@
 
 // Component-tier coverage for the contract-first internal S2S surface: the
 // runner credentials-refresh exchange through the REAL handler graph
-// (mountSurfaces → runnerAuthGate → strict handler), with a real RS256
-// Task-JWT minted by a test TaskTokenManager. Pins the RUNNER-LOCKSTEP wire
-// shape: exact top-level body keys and the capitalized Identity keys — the
-// runner must work unchanged against this surface.
+// (mountSurfaces → runnerAuthGate → strict handler), with a Thunder
+// publisher-cc token. Pins the RUNNER-LOCKSTEP wire shape: exact top-level
+// body keys and the capitalized Identity keys — the runner must work unchanged
+// against this surface.
 
 package edge
 
@@ -27,10 +27,10 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
-	"encoding/pem"
 	"maps"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -38,9 +38,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
+
 	"github.com/wso2/aep/aep-api/internal/delivery/validation"
 	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
+	"github.com/wso2/aep/aep-api/internal/platform/auth/jwtassertion"
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
@@ -83,17 +86,19 @@ func (f *fakeValidationCreds) RequestCredentials(_ context.Context, cycleID, org
 
 type internalStack struct {
 	handler http.Handler
-	tokens  *auth.TaskTokenManager
+	mint    func(org string) string
 	refresh *fakeCredsRefresh
 	context *fakeValidationContext
 	creds   *fakeValidationCreds
 }
 
-func newInternalTestStack(t *testing.T) (http.Handler, *auth.TaskTokenManager, *fakeCredsRefresh) {
+func newInternalTestStack(t *testing.T) (http.Handler, func(org string) string, *fakeCredsRefresh) {
 	t.Helper()
 	s := newInternalStack(t)
-	return s.handler, s.tokens, s.refresh
+	return s.handler, s.mint, s.refresh
 }
+
+const pubIssuer, pubAudPrefix = "platform-idp", "aep-publisher-"
 
 func newInternalStack(t *testing.T) internalStack {
 	t.Helper()
@@ -101,15 +106,44 @@ func newInternalStack(t *testing.T) internalStack {
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
 	}
-	pemKey := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv)})
-	mgr, err := auth.NewTaskTokenManager(auth.TaskTokenConfig{
-		PrivateKey: string(pemKey), Issuer: "aep-bff", Audience: "git-service", TTL: time.Hour,
-	})
-	if err != nil {
-		t.Fatalf("NewTaskTokenManager: %v", err)
+	const kid = "test-kid"
+	jwks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(jwtassertion.JWKS{Keys: []jwtassertion.JSONWebKey{{
+			Kty: "RSA", Kid: kid, Use: "sig", Alg: "RS256",
+			N: base64.RawURLEncoding.EncodeToString(priv.N.Bytes()),
+			E: base64.RawURLEncoding.EncodeToString(big.NewInt(int64(priv.E)).Bytes()),
+		}}})
+	}))
+	t.Cleanup(jwks.Close)
+	verifier := auth.NewPublisherTokenVerifier(jwtassertion.NewJWKSCache(jwks.URL), pubIssuer, pubAudPrefix)
+	if verifier == nil {
+		t.Fatal("NewPublisherTokenVerifier returned nil")
+	}
+	mint := func(org string) string {
+		claims := auth.PublisherClaims{
+			RegisteredClaims: jwt.RegisteredClaims{
+				Issuer:    pubIssuer,
+				Audience:  jwt.ClaimStrings{pubAudPrefix + org},
+				ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+			},
+			OuHandle: org,
+		}
+		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+		tok.Header["kid"] = kid
+		signed, err := tok.SignedString(priv)
+		if err != nil {
+			t.Fatalf("sign publisher token: %v", err)
+		}
+		return signed
+	}
+	lookup := func(_ context.Context, cycleID string) (string, error) {
+		if strings.HasPrefix(cycleID, "other-org-") {
+			return "org-other", nil
+		}
+		return "org-acme", nil
 	}
 	stack := internalStack{
-		tokens:  mgr,
+		mint:    mint,
 		refresh: &fakeCredsRefresh{},
 		context: &fakeValidationContext{},
 		creds:   &fakeValidationCreds{},
@@ -117,7 +151,7 @@ func newInternalStack(t *testing.T) internalStack {
 	stack.handler = NewHandler(AppParams{
 		InternalDeps: InternalDeps{
 			CredsRefresh:          stack.refresh,
-			RunnerAuth:            auth.NewRunnerAuthorizer(mgr, nil, nil),
+			RunnerAuth:            auth.NewRunnerAuthorizer(verifier, lookup),
 			ValidationContext:     stack.context,
 			ValidationCredentials: stack.creds,
 		},
@@ -127,12 +161,9 @@ func newInternalStack(t *testing.T) internalStack {
 
 func TestInternalSurface_RunnerRefresh_Lockstep(t *testing.T) {
 	t.Parallel()
-	h, mgr, svc := newInternalTestStack(t)
+	h, mint, svc := newInternalTestStack(t)
 
-	tok, err := mgr.Issue("exec-42", "org-acme", "proj-1")
-	if err != nil {
-		t.Fatalf("issue task token: %v", err)
-	}
+	tok := mint("org-acme")
 	req := httptest.NewRequest(http.MethodPost, "/internal/v1/executions/exec-42/credentials/refresh", strings.NewReader(""))
 	req.Header.Set("Authorization", "Bearer "+tok)
 	rec := httptest.NewRecorder()
@@ -171,10 +202,7 @@ func TestInternalSurface_ValidationCallbacksAreRoutedAndCycleKeyed(t *testing.T)
 	s := newInternalStack(t)
 	const cycle = "9d90f001-67bb-4c51-a5f3-7fd808c06c36"
 
-	tok, err := s.tokens.Issue(cycle, "org-acme", "proj-1")
-	if err != nil {
-		t.Fatalf("issue task token: %v", err)
-	}
+	tok := s.mint("org-acme")
 
 	t.Run("context", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/internal/v1/validation/"+cycle+"/context", nil)
@@ -217,10 +245,9 @@ func TestInternalSurface_ValidationCallbacksAreRoutedAndCycleKeyed(t *testing.T)
 		}
 	})
 
-	// The INT-6 fence covers the new prefix too: a bearer minted for a different
-	// cycle cannot read this one's endpoints or ask for its credentials.
-	t.Run("bearer bound to another cycle → 403", func(t *testing.T) {
-		other, _ := s.tokens.Issue("some-other-cycle", "org-acme", "proj-1")
+	// Org fence: a publisher token for another org cannot read this cycle.
+	t.Run("bearer bound to another org → 403", func(t *testing.T) {
+		other := s.mint("org-other")
 		req := httptest.NewRequest(http.MethodGet, "/internal/v1/validation/"+cycle+"/context", nil)
 		req.Header.Set("Authorization", "Bearer "+other)
 		rec := httptest.NewRecorder()
@@ -233,7 +260,7 @@ func TestInternalSurface_ValidationCallbacksAreRoutedAndCycleKeyed(t *testing.T)
 
 func TestInternalSurface_AuthPosture(t *testing.T) {
 	t.Parallel()
-	h, mgr, _ := newInternalTestStack(t)
+	h, mint, _ := newInternalTestStack(t)
 
 	// No bearer → 401 envelope.
 	req := httptest.NewRequest(http.MethodPost, "/internal/v1/executions/exec-42/credentials/refresh", strings.NewReader(""))
@@ -243,13 +270,13 @@ func TestInternalSurface_AuthPosture(t *testing.T) {
 		t.Fatalf("no bearer: want 401 envelope, got %d body=%s", rec.Code, rec.Body.String())
 	}
 
-	// Bearer bound to a DIFFERENT execution → 403 (the INT-6 fence).
-	tok, _ := mgr.Issue("exec-OTHER", "org-acme", "proj-1")
+	// Publisher token for another org → 403 (org fence).
+	tok := mint("org-other")
 	req = httptest.NewRequest(http.MethodPost, "/internal/v1/executions/exec-42/credentials/refresh", strings.NewReader(""))
 	req.Header.Set("Authorization", "Bearer "+tok)
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != 403 {
-		t.Fatalf("mismatched execution: want 403, got %d body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("other org: want 403, got %d body=%s", rec.Code, rec.Body.String())
 	}
 }

@@ -64,18 +64,15 @@ func TestTaskTokenRoundtrip(t *testing.T) {
 			t.Error("GetTokenClaims returned nil — middleware did not attach claims")
 			return
 		}
-		if claims.TaskID != "task-abc" {
-			t.Errorf("taskId claim = %q, want task-abc", claims.TaskID)
-		}
 		if claims.OcOrgID != "org-xyz" {
 			t.Errorf("ocOrgId claim = %q, want org-xyz", claims.OcOrgID)
 		}
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	tok, err := mgr.Issue("task-abc", "org-xyz", "proj-1")
+	tok, err := mgr.IssueServiceToken("git-service", "org-xyz", 0)
 	if err != nil {
-		t.Fatalf("Issue: %v", err)
+		t.Fatalf("IssueServiceToken: %v", err)
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/internal/v1/executions/task-abc/credentials/refresh", nil)
@@ -125,7 +122,7 @@ func TestTaskTokenRoundtrip_KidRotation(t *testing.T) {
 	}))
 
 	// Warm the cache with mgr1's JWKS via a successful verify.
-	tok1, _ := mgr1.Issue("t1", "o1", "")
+	tok1, _ := mgr1.IssueServiceToken("git-service", "o1", 0)
 	rec1 := httptest.NewRecorder()
 	req1 := httptest.NewRequest(http.MethodGet, "/x", nil)
 	req1.Header.Set("Authorization", "Bearer "+tok1)
@@ -148,7 +145,7 @@ func TestTaskTokenRoundtrip_KidRotation(t *testing.T) {
 	}
 	active.Store(mgr2)
 
-	tok2, _ := mgr2.Issue("t2", "o2", "")
+	tok2, _ := mgr2.IssueServiceToken("git-service", "o2", 0)
 	rec2 := httptest.NewRecorder()
 	req2 := httptest.NewRequest(http.MethodGet, "/x", nil)
 	req2.Header.Set("Authorization", "Bearer "+tok2)
@@ -181,7 +178,7 @@ func TestTaskTokenRoundtrip_WrongAudience(t *testing.T) {
 		t.Error("handler must not run for wrong-audience token")
 	}))
 
-	tok, _ := mgr.Issue("t", "o", "")
+	tok, _ := mgr.IssueServiceToken("git-service", "o", 0)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/x", nil)
 	req.Header.Set("Authorization", "Bearer "+tok)
@@ -219,7 +216,7 @@ func TestTaskTokenRoundtrip_ExpiredToken(t *testing.T) {
 		t.Error("handler must not run for expired token")
 	}))
 
-	tok, _ := mgr.Issue("t", "o", "")
+	tok, _ := mgr.IssueServiceToken("git-service", "o", 0)
 	time.Sleep(10 * time.Millisecond) // outlive the 1ms TTL
 
 	rec := httptest.NewRecorder()

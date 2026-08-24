@@ -56,7 +56,6 @@
 
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runClaudeQuery } from "./lib/runner.js";
@@ -66,7 +65,7 @@ import type { WorkspaceLayout } from "./lib/workspace.js";
 import { emit, primeScrubber } from "./lib/progress/emitter.js";
 import { installConsoleScrubber } from "./lib/progress/console_scrub.js";
 import { resolveTaskSkills } from "./lib/skills_resolver.js";
-import { listMirroredSkills, readSkillBodies, resolvePinnedSkills } from "./lib/skills_presence.js";
+import { listMirroredSkills, readSkillBodies, resolveSkillPresence } from "./lib/skills_presence.js";
 import { mirrorLocalSkillLibrary } from "./lib/local_skill_mirror.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -195,16 +194,16 @@ async function main(): Promise<number> {
       log: (l) => console.log(l),
     });
     await mirrorLocalSkillLibrary(run.libraryDir, run.projectDir, new Set(pinned), "local", (l) => console.log(l));
-    const { preload, dangling } = await resolvePinnedSkills(run.projectDir, pinned, (l) => console.log(l));
+    const { present, dangling } = await resolveSkillPresence(run.projectDir, pinned, (l) => console.log(l));
     if (dangling.length > 0) {
       console.warn(`[local] ⚠️  pinned skill(s) missing from .claude/skills/ — proceeding without them: ${dangling.join(", ")}`);
     }
     // The whole mirror is allowed (the SDK rejects anything unlisted); the
     // pinned subset additionally rides in on the system prompt.
     availableSkillNames = await listMirroredSkills(run.projectDir);
-    pinnedBodies = await readSkillBodies(run.projectDir, preload);
+    pinnedBodies = await readSkillBodies(run.projectDir, present);
     console.log(
-      `[local] ${availableSkillNames.length} skill(s) available, ${preload.length} pinned into context`,
+      `[local] ${availableSkillNames.length} skill(s) available, ${present.length} pinned into context`,
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -241,7 +240,7 @@ async function main(): Promise<number> {
   const log = openTaskLog(run.runDir);
   let completion: Promise<{ exitCode: number }>;
   try {
-    ({ completion } = runClaudeQuery(req, layout, log, { availableSkillNames, pinnedBodies }));
+    ({ completion } = await runClaudeQuery(req, layout, log, { availableSkillNames, pinnedBodies }));
   } catch (err) {
     // The mirror carries no workflow skill, so there is no procedure to run —
     // see requireWorkflowBodies. In the playground that means the library or the

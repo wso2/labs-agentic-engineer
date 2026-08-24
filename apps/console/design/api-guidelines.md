@@ -79,5 +79,6 @@ The console is fully developable without a backend.
 - **Mode switch:** `VITE_API_MODE=mock` enables MSW in dev. Mock code is
   dev-only — excluded from production builds (dynamic import guarded by the
   flag; verify with a bundle check).
-- **Testing:** Playwright/component tests run against mocks. A small smoke
-  suite runs against the real BFF before ship (`development-flow.md` step 7).
+- **Testing:** Playwright/component tests run against mocks. Running the
+  feature against the real BFF on the local setup *is* the ship validation,
+  and it happens before the merge (`development-flow.md` step 7).

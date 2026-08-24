@@ -34,7 +34,7 @@ import (
 // parity: the two naming schemes are deliberately identical).
 const defaultEnv = openchoreo.DevEnvironmentName
 
-// Service coordinates dependency provisioning on the aep:provision funnel: it
+// Service coordinates dependency provisioning on the `provision` gate funnel: it
 // mints gate issues, collects external values, provisions platform resources,
 // tracks cross-project access requests, and drives each provision Execution
 // through the store while closing the gate issue with a no-secrets reference.
@@ -165,7 +165,7 @@ func (s *Service) findProvisionIssue(ctx context.Context, orgID, projectID, depN
 	if want == "" {
 		return 0, false, nil
 	}
-	issues, err := s.issues.ListIssues(ctx, orgID, projectID, []string{delivery.LabelProvisionGate, want})
+	issues, err := s.issues.ListIssues(ctx, orgID, projectID, []string{delivery.KindProvision, want})
 	if err != nil {
 		return 0, false, fmt.Errorf("provisioning: list issues: %w", err)
 	}

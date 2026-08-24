@@ -70,8 +70,11 @@ the rest.
   runs it containerized, never bare on the host.
 - Scope `GITHUB_PAT` to a single throwaway test repo (fine-grained PAT).
 - The stub only releases the PAT to callers presenting the per-run
-  `AEP_BEARER` (a fresh random value each run, passed automatically as
-  `STUB_BEARER`). Still keep `STUB_BIND=127.0.0.1` (default); on a Linux
+  access token (a fresh random value each run, minted by the stub's
+  `/oauth2/token` and required as `Authorization: Bearer` on refresh).
+  `PUBLISHER_CLIENT_ID` / `PUBLISHER_CLIENT_SECRET` / `PUBLISHER_TOKEN_URL`
+  are set automatically so oneshot can mint that token the same way a
+  cluster Job does. Still keep `STUB_BIND=127.0.0.1` (default); on a Linux
   host `host-gateway` cannot reach loopback, so you would need
   `STUB_BIND=0.0.0.0` — the bearer check is what keeps that tolerable.
 - `.env.local` and `workspace/` are gitignored; `local/` is dockerignored

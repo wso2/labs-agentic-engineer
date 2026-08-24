@@ -458,9 +458,9 @@ func (s *AnthropicCredentialService) ResolveCodingSecretRef(ctx context.Context,
 // one is missing so a half-mirrored row is diagnosable from the error alone.
 func tripletFrom(row *OrgAnthropicCredential) (SecretRefTriplet, error) {
 	ref := SecretRefTriplet{
-		Name:     derefOrEmpty(row.ResolvedSecretRefName()),
-		KVPath:   derefOrEmpty(row.ResolvedSecretRefKVPath()),
-		Property: derefOrEmpty(row.ResolvedSecretRefProperty()),
+		Name:     derefOrEmpty(row.SecretRefName),
+		KVPath:   derefOrEmpty(row.SecretRefKVPath),
+		Property: derefOrEmpty(row.SecretRefProperty),
 		EnvVar:   row.CredentialKind.RunnerEnvVar(),
 	}
 	switch {
@@ -522,8 +522,8 @@ func (s *AnthropicCredentialService) resyncRole(ctx context.Context, ocOrgID str
 	if row.Status != "active" {
 		return false, nil
 	}
-	kvPath := row.ResolvedSecretRefKVPath()
-	prop := row.ResolvedSecretRefProperty()
+	kvPath := row.SecretRefKVPath
+	prop := row.SecretRefProperty
 	if kvPath == nil || prop == nil || *kvPath == "" || *prop == "" {
 		return false, nil
 	}

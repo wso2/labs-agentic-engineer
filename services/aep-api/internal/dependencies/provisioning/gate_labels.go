@@ -27,7 +27,7 @@ import (
 // and nothing platform-side parses it, so the one structured fact the platform
 // still needs from a gate — WHICH DEPENDENCY it holds — rides a label:
 //
-//	aep:provision      the gate marker (delivery.LabelProvisionGate)
+//	provision          the gate KIND (delivery.KindProvision)
 //	aep:dep/<slug>     the dependency this gate is for
 //
 // That pair is the whole index. Both the mint-time dedupe ("does this dep
@@ -75,12 +75,15 @@ func gateDepLabel(depName string) string {
 	return gateDepLabelPrefix + slug
 }
 
-
 // gateLabels is the full label set a gate issue is minted with. A gate
-// deliberately does NOT carry the `aep` working-set label: it is never agent
-// work, only a hold on the next dispatch.
+// deliberately does NOT carry the `aep` ARMING label: it is never agent work,
+// only a hold on the next dispatch. That absence is also what keeps the gate
+// count independent of every working set — the counts query counts gates on
+// their own alias precisely because they are not a subset of the armed
+// population, so an open gate holds the next dispatch without ever subtracting
+// from the work behind it.
 func gateLabels(depName string) []string {
-	labels := []string{delivery.LabelProvisionGate}
+	labels := []string{delivery.KindProvision}
 	if l := gateDepLabel(depName); l != "" {
 		labels = append(labels, l)
 	}

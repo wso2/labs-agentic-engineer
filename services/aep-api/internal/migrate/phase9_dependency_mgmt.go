@@ -40,7 +40,7 @@ import (
 // typed-task-graph columns (type + three JSONB depends_on_* lists + two
 // single-target columns) — is deliberately DROPPED: our GitHub-native task model
 // has NO component_tasks table (see docs/design/dependency-management-migration.md
-// §3.5/§3.6). Dependency gating lives on `aep:provision` GitHub issues + the
+// §3.5/§3.6). Dependency gating lives on `provision` GitHub issues + the
 // execution funnel's depsGate, not DB columns. Only the two net-new CREATE TABLEs
 // are ported.
 //

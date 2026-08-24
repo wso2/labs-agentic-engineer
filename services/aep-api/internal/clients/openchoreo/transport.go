@@ -36,6 +36,26 @@ import (
 type Config struct {
 	BaseURL      string
 	HostHeader   string
+	// PreferPlainHTTPEndpoints picks the http external URL over the https one
+	// when a ReleaseBinding advertises BOTH.
+	//
+	// OpenChoreo advertises a binding's external URLs from the endpoint's SHAPE
+	// rather than from what its gateway serves, so a plane whose gateway does not
+	// terminate TLS still advertises an https URL beside the http one — and only
+	// the http one answers. Preferring https unconditionally therefore hands out
+	// a dead URL there.
+	//
+	// That was survivable while the URL only reached a console link, and stopped
+	// being survivable when the runner gained a reachability gate: it probes the
+	// deployed endpoints BEFORE starting the agent and refuses to run when they
+	// do not answer, so an unreachable advertised URL blocks VALIDATION rather
+	// than merely rendering a bad link.
+	//
+	// Set at the composition root from config.PlatformAPIConfig.DataPlaneGatewayTLS
+	// — the stated fact, not the deployment tier, which is the wrong one: a
+	// dev-tier plane WITH TLS would be told to prefer plain http, the same bug
+	// mirrored.
+	PreferPlainHTTPEndpoints bool
 	AuthProvider ocauth.AuthProvider
 	RetryConfig  requests.RequestRetryConfig
 

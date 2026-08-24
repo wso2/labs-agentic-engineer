@@ -1,5 +1,8 @@
 # ADR-0011 — A GitHub milestone is the unit of execution
 
+**Status:** Accepted · **Refined by:** [ADR-0020](ADR-0020-a-run-species-is-a-workflow.md) (a run
+species is its own workflow; the milestone is still the unit of execution)
+
 Delivery used to execute a spec version **task by task**. The planner wrote each
 task issue with an embedded `aep:task/v1` machine block naming its component and
 its `dependsOn` edges; two independent layers then re-derived a dependency
@@ -19,8 +22,14 @@ sequence its own work.
 
 ## Decision
 
-**One spec version is one GitHub milestone, and one supervised run works that
+**One spec version is one GitHub milestone, and supervised runs work that
 milestone until it settles.**
+
+A milestone is worked by ONE live run at a time, of one of three SPECIES — `dev`
+delivers the version, `task` works a defect inside a version already delivered,
+and `validation` judges a deployed version against its acceptance criteria. Each
+species is its own top-level workflow ([ADR-0020][adr20]); every predicate in the
+platform is written on the run's `kind`.
 
 - **The milestone is the version.** It is titled after the `v<N>` tag, and its
   **number** is the platform key everywhere. `aep:spec/<tag>` is dead; a
@@ -30,32 +39,57 @@ milestone until it settles.**
   over its life.
 - **Nothing platform-side parses an issue body.** Bodies are prose the platform
   writes *for the agent*: what to build, its App Path, and "Depends on #N" lines
-  the **agent** honours. Every routable fact is a LABEL (`aep` = agent work,
-  `aep:provision` = a dispatch gate, `aep:validation`, `aep:codingagent` =
-  adoption). Re-plan dedupes on the title slug against the milestone's own
-  issues, which makes reconcile additive-only.
+  the **agent** honours. Every routable fact is a LABEL, on two axes: `aep`
+  **arms** an issue (and is the adoption trigger), and one KIND says what it is
+  — `development`, `bug`, `conflict`, `validation`, `provision`. Every routing
+  predicate is then a positive membership test on the kind rather than a
+  subtraction of exclusions. Re-plan dedupes on the title slug against the
+  milestone's own issues, which makes reconcile additive-only.
 - **One agent per cycle, not per issue.** The dispatch prompt is a milestone
   reference; the runner discovers its own working set, orders it, fans out to
   Task subagents where the work is genuinely independent, and ships **one
   agent-validated pull request per cycle** carrying `Resolves #N` for every
-  issue it finished. Both task kinds run on one Debian runner image.
+  issue it finished. Both task kinds run on one Debian runner image. A
+  **validation** cycle is the exception on both counts: it is anchored to one
+  issue rather than a working set, and its pull request references that issue
+  with the deliberately NON-closing `Validates #N`, because the platform owns
+  the validation task's lifecycle ([ADR-0020][adr20]).
 - **The event plane detects; the supervisor decides.** Webhooks and OpenChoreo
   polls auto-merge the pull request, fan a merge out to a build per changed
   component by path-diff, mint fix / conflict / red-main issues, and *signal*.
-  A slim per-run Temporal workflow (`run-<org>-<project>-<milestoneNumber>`)
-  owns the wait state, the cycle loop, the budgets, the validation cycle and
-  settle — and imports no GitHub client. That dependency direction is a compiled
-  package boundary, not a convention.
+  A slim per-run Temporal workflow — `<kind>-<org>-<project>-<milestoneNumber>`,
+  one per species — owns the wait state, the cycle loop, the budgets and settle,
+  and imports no GitHub client. That dependency direction is a compiled package
+  boundary, not a convention. The **kind prefix** is load-bearing: ids are reused
+  after a terminal run, so without it a stale signal aimed at a settled dev run
+  would be delivered to the validation run that later claimed the same id. The
+  run ROW is the routing table — the event plane resolves a row before it signals
+  anything, and the row's kind gives the prefix.
 - **A signal is a wake-up, never evidence.** The supervisor re-reads ground
   truth before acting, so a lost webhook costs latency rather than correctness —
   which is what lets the wait state be unbounded with cancel as its only expiry.
 - **Every budget names exactly one failure class**, so a terminal reason is an
-  explanation: `redispatch-budget`, `build-retrigger-budget`, `fix-chain-budget`,
-  `conflict-budget`, `no-progress`, `cycle-ceiling`, `validation-failed`.
-- **Re-planning is supersede-on-next-build.** The next build closes the previous
-  version's still-open issues with a `Superseded by v<N+1>` comment and then the
-  milestone itself, and plans `v<N+1>` fresh from the new spec. Cancel abandons
-  an increment; the only way forward is the next build.
+  explanation: `redispatch-budget`, `build-retrigger-budget`, `deploy-budget`,
+  `fix-chain-budget`, `conflict-budget`, `no-progress`, `cycle-ceiling`,
+  `validation-failed`, `validation-unreported`, `plan-failed`. The reason is read
+  together with the run's SPECIES, which is what keeps it honest across the
+  split: `redispatch-budget` on a dev run means the delivery agent died, while on
+  a validation run it means the judge did and the version is still delivered.
+  The two validating reasons belong to a validation run alone.
+- **A verdict is a fact about a VERSION, not a step in delivering one.** A dev
+  run settles at deployed-green having minted the version's validation task, and
+  never validates; the validation run started off that task produces the answer.
+  The newest *validating* run on a milestone owns that version's verdict, so a
+  dev run's empty verdict means "not judged yet" rather than "judged and fine".
+  Why the two cannot share one workflow — different lifetimes, different failure
+  classes — is [ADR-0020][adr20].
+- **Re-planning is supersede-on-next-build.** The next build empties the previous
+  version's milestone and then closes it, and plans `v<N+1>` fresh from the new
+  spec. A plan is replaced by a plan, so its `development` issues and its gates are
+  closed with a `Superseded by v<N+1>` comment; a DEFECT is not superseded by
+  anything, so its open `bug` issues are moved into the new milestone, which is why
+  that milestone is minted first. Cancel abandons an increment; the only way
+  forward is the next build.
 
 The mechanism — package shape, ports, and the full invariant list — is
 documented where it is enforced: [`internal/delivery/README.md`][delivery] (L2)
@@ -127,6 +161,7 @@ The mechanism a cycle is dispatched by — one ephemeral `coding-agent` job
 Component per cycle — is documented in
 [`codingagent/design/oc-job-dispatch.md`](../../services/aep-api/internal/delivery/codingagent/design/oc-job-dispatch.md).
 
+[adr20]: ADR-0020-a-run-species-is-a-workflow.md
 [delivery]: ../../services/aep-api/internal/delivery/README.md
 [adr8]: ADR-0008-architecture-in-readme-ladder.md
 [console-adr]: ../../apps/console/design/decisions/ADR-0013-version-run-surface.md

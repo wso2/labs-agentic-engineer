@@ -31,8 +31,9 @@
 //   1. Env token (cloud Jobs mount a PAT as GITHUB_TOKEN): clone and every later
 //      git op use `gh auth git-credential` (same helper `gh auth setup-git`
 //      installs), pinned to the real `gh` binary. No credentials/refresh call.
-//   2. Otherwise: AEP credhelper (lib/credhelper.ts) exchanges AEP_BEARER for a
-//      GitHub token via credentials/refresh — used when no env token is mounted.
+//   2. Otherwise: AEP credhelper (lib/credhelper.ts) exchanges the publisher CC
+//      token for a GitHub token via credentials/refresh — used when no env token
+//      is mounted.
 //
 // Layout inside the workspace:
 //
@@ -40,13 +41,14 @@
 //     .git/                     ← cloned repo, default branch checked out
 //     .gh-config/hosts.yml      ← gh's auth config (refresh-wrapper mode only)
 //     .aep/
-//       bearer                  ← chmod 600 — per-task JWT (platform callbacks)
+//       bearer                  ← chmod 600 — publisher CC access token snapshot
 //       credhelper.sh           ← chmod 700 — only in refresh mode
 //       gh                      ← chmod 755 — on PATH (passthrough or refresh wrap)
 //
 // The agent runs with cwd=<workspace> and PATH prefixed with <workspace>/.aep
 // so `gh ...` resolves to the wrapper.
 
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { exec } from "node:child_process";
 import path from "node:path";
@@ -84,10 +86,26 @@ export interface ProvisionRequest {
   correlationId?: string;
   // WS2.6 — full refresh URL, set by oneshot.ts to the path-scoped
   // `${platformUrl}/internal/v1/executions/{executionId}/credentials/refresh`
-  // (accepts both publisher-cc and legacy Task-JWT; taskId carries the
-  // execution id, §9.2). Falls back to a path-scoped URL built from
+  // (publisher CC; taskId carries the execution id, §9.2). Falls back to a path-scoped URL built from
   // gitServiceUrl below when unset. Only used when GITHUB_TOKEN/GH_TOKEN is unset.
   refreshUrl?: string;
+}
+
+// writeBearerFile persists the platform access token for credhelper/skill
+// readers. Temp-file + rename so a concurrent `cat` never sees a truncated
+// file. No-op when the value is unchanged (MCP proxy calls this per request).
+export async function writeBearerFile(file: string, token: string, previous?: string): Promise<string> {
+  if (previous !== undefined && token === previous) {
+    return token;
+  }
+  const tmp = `${file}.${randomUUID()}.tmp`;
+  try {
+    await fs.promises.writeFile(tmp, token, { mode: 0o600 });
+    await fs.promises.rename(tmp, file);
+  } finally {
+    await fs.promises.unlink(tmp).catch(() => undefined);
+  }
+  return token;
 }
 
 // computeLayout names every path the dispatch flow touches. Pure function
@@ -201,7 +219,7 @@ export async function provisionWorkspace(req: ProvisionRequest): Promise<Workspa
     await fs.promises.mkdir(layout.aepDir, { recursive: true, mode: 0o755 });
     await fs.promises.mkdir(layout.ghConfigDir, { recursive: true, mode: 0o755 });
     if (req.bearer !== "") {
-      await fs.promises.writeFile(layout.bearerFile, req.bearer, { mode: 0o600 });
+      await writeBearerFile(layout.bearerFile, req.bearer);
     }
 
     // gh on PATH: passthrough when env token auth is active; otherwise the

@@ -29,7 +29,7 @@ import (
 )
 
 // RequestAccess records a consumer's request to consume a cross-project
-// org-service and ensures a provider-side aep:provision org-publish gate issue
+// org-service and ensures a provider-side `provision` org-publish gate issue
 // exists (deduped: a second consumer of the same provider component rides the
 // existing issue). It re-keys upstream's ProviderTaskID (a component_tasks row)
 // to the provider org-publish ISSUE (dependency-management §3.2 item 5). The
@@ -162,7 +162,7 @@ func (s *Service) GrantByProviderComponent(ctx context.Context, orgID, providerP
 			slog.WarnContext(ctx, "provisioning: grant access request failed", "id", rows[i].ID, "error", uerr)
 		}
 		// Resolve the CONSUMER-side visibility gate (issue #164, Task 4): the
-		// automated build flow minted an aep:provision gate in the consumer project
+		// automated build flow minted a `provision` gate in the consumer project
 		// keyed by this org-service dep. Complete a provision run on it so it derives
 		// deployed and the consumer's held coding task dispatches. A rider from the
 		// interactive RequestAccess flow has no consumer gate — that resolves to a

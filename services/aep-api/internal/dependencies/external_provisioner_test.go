@@ -46,6 +46,9 @@ func newFakeRC(latest string) *ocmocks.ResourceClientMock {
 				Status:   &openchoreo.ResourceStatus{LatestRelease: &openchoreo.ResourceLatestRelease{Name: latest}},
 			}, nil
 		},
+		GetBindingFunc: func(_ context.Context, _, _ string) (*openchoreo.ResourceReleaseBinding, error) {
+			return nil, nil
+		},
 		EnsureBindingFunc: func(_ context.Context, _ string, b *openchoreo.ResourceReleaseBinding) (*openchoreo.ResourceReleaseBinding, error) {
 			return b, nil
 		},
@@ -207,10 +210,10 @@ func TestProvision_SecretValuesWithoutSMAPI_Fails(t *testing.T) {
 	}
 }
 
-// TestAuthorWithSecretRef_UsesStagedRefNoSMWrite pins the build path's author
+// TestAuthorPreparedValues_UsesStagedRefNoSMWrite pins the value authoring path
 // half (issue #164): it authors the per-env binding pinned to the PASSED
 // SecretStorePath (staged pre-tag by POST /build) and NEVER writes to SM-API.
-func TestAuthorWithSecretRef_UsesStagedRefNoSMWrite(t *testing.T) {
+func TestAuthorPreparedValues_UsesStagedRefNoSMWrite(t *testing.T) {
 	t.Parallel()
 
 	rc := newFakeRC("openweather-proj-abc123")
@@ -231,13 +234,13 @@ func TestAuthorWithSecretRef_UsesStagedRefNoSMWrite(t *testing.T) {
 		},
 	}
 
-	res, err := p.AuthorWithSecretRef(context.Background(), "default", "weatherproj", er, byEnv)
+	res, err := p.AuthorPreparedValues(context.Background(), "default", "weatherproj", er, byEnv)
 	if err != nil {
-		t.Fatalf("AuthorWithSecretRef: %v", err)
+		t.Fatalf("AuthorPreparedValues: %v", err)
 	}
 	// The SM-API writer is NEVER touched — the secret was staged pre-tag.
 	if len(sw.wrote) != 0 {
-		t.Fatalf("AuthorWithSecretRef must not write to SM-API, wrote: %v", sw.wrote)
+		t.Fatalf("AuthorPreparedValues must not write to SM-API, wrote: %v", sw.wrote)
 	}
 	// One binding, pinned to the release, carrying the PASSED secretStorePath.
 	bindings := rc.EnsureBindingCalls()
@@ -263,6 +266,115 @@ func TestAuthorWithSecretRef_UsesStagedRefNoSMWrite(t *testing.T) {
 	}
 	if res.BindingByEnv["development"] != "weatherproj-openweather-development" {
 		t.Errorf("BindingByEnv wrong: %+v", res.BindingByEnv)
+	}
+}
+
+// TestAuthorPreparedValues_PreservesConfiguredBindingValues is the rebuild
+// regression for issue #441: authoring an unset/default-only design must not
+// replace values a developer has already saved on the binding.
+func TestAuthorPreparedValues_PreservesConfiguredBindingValues(t *testing.T) {
+	t.Parallel()
+
+	rc := newFakeRC("openweather-proj-next")
+	existing, err := json.Marshal(map[string]string{
+		"OPENWEATHER_BASE_URL":          "https://configured.example",
+		"OPENWEATHER_REGION":            "eu-west-1",
+		"OPENWEATHER_API_KEY":           "plaintext-that-must-not-survive",
+		"DROPPED":                       "stale-value",
+		openchoreo.SecretStorePathField: "user-app-secrets/wc-org/configured-ref",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc.GetBindingFunc = func(_ context.Context, _, name string) (*openchoreo.ResourceReleaseBinding, error) {
+		if name != "weatherproj-openweather-development" {
+			t.Fatalf("GetBinding name = %q", name)
+		}
+		return &openchoreo.ResourceReleaseBinding{
+			Spec: openchoreo.ResourceReleaseBindingSpec{ResourceTypeEnvironmentConfigs: existing},
+		}, nil
+	}
+	p := newTestProvisioner(nil, rc, &fakeSecretWriter{})
+	er := &ExternalResource{Name: "openweather", ConfigKeys: []spec.ConfigKey{
+		{Key: "OPENWEATHER_BASE_URL"},
+		{Key: "OPENWEATHER_REGION", DefaultValue: "us-east-1"},
+		{Key: "OPENWEATHER_API_KEY", Secret: true},
+	}}
+
+	_, err = p.AuthorPreparedValues(context.Background(), "default", "weatherproj", er,
+		map[string]PreparedEnvValues{"development": {
+			Plain: map[string]string{
+				"OPENWEATHER_BASE_URL": "",
+				"OPENWEATHER_REGION":   "us-east-1",
+			},
+			SecretStorePath: "",
+		}})
+	if err != nil {
+		t.Fatalf("AuthorPreparedValues: %v", err)
+	}
+
+	calls := rc.EnsureBindingCalls()
+	if len(calls) != 1 {
+		t.Fatalf("EnsureBinding calls = %d, want 1", len(calls))
+	}
+	var got map[string]string
+	if err := json.Unmarshal(calls[0].B.Spec.ResourceTypeEnvironmentConfigs, &got); err != nil {
+		t.Fatalf("decode authored binding: %v", err)
+	}
+	want := map[string]string{
+		"OPENWEATHER_BASE_URL":          "https://configured.example",
+		"OPENWEATHER_REGION":            "eu-west-1",
+		openchoreo.SecretStorePathField: "user-app-secrets/wc-org/configured-ref",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("authored config = %v, want %v", got, want)
+	}
+	for key, value := range want {
+		if got[key] != value {
+			t.Errorf("authored config[%q] = %q, want %q", key, got[key], value)
+		}
+	}
+	if _, exists := got["OPENWEATHER_API_KEY"]; exists {
+		t.Fatal("a key now classified secret must not survive as plaintext")
+	}
+	if _, exists := got["DROPPED"]; exists {
+		t.Fatal("a key dropped from the design must not survive rebuild authoring")
+	}
+}
+
+func TestAuthorPreparedValues_AuthorsUnsetKeysAndEmptySecretStorePath(t *testing.T) {
+	t.Parallel()
+
+	rc := newFakeRC("stripe-proj-next")
+	p := newTestProvisioner(nil, rc, &fakeSecretWriter{})
+	er := &ExternalResource{Name: "stripe", ConfigKeys: []spec.ConfigKey{
+		{Key: "STRIPE_URL"},
+		{Key: "STRIPE_REGION", DefaultValue: "us-east-1"},
+		{Key: "STRIPE_KEY", Secret: true},
+	}}
+	_, err := p.AuthorPreparedValues(context.Background(), "default", "shop", er,
+		map[string]PreparedEnvValues{"development": {Plain: map[string]string{
+			"STRIPE_URL": "", "STRIPE_REGION": "us-east-1",
+		}}})
+	if err != nil {
+		t.Fatalf("AuthorPreparedValues: %v", err)
+	}
+
+	var got map[string]string
+	if err := json.Unmarshal(rc.EnsureBindingCalls()[0].B.Spec.ResourceTypeEnvironmentConfigs, &got); err != nil {
+		t.Fatal(err)
+	}
+	if value, present := got["STRIPE_URL"]; !present || value != "" {
+		t.Errorf("STRIPE_URL = %q present=%v, want present and empty", value, present)
+	}
+	if got["STRIPE_REGION"] != "us-east-1" {
+		t.Errorf("STRIPE_REGION = %q", got["STRIPE_REGION"])
+	}
+	if value, present := got[openchoreo.SecretStorePathField]; !present || value != "" {
+		t.Errorf("secretStorePath = %q present=%v, want present and empty", value, present)
+	}
+	if _, leaked := got["STRIPE_KEY"]; leaked {
+		t.Fatal("secret key must never be authored as a plain binding value")
 	}
 }
 

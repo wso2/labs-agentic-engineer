@@ -17,12 +17,12 @@
 // Package provisioning is the coordinating feature for dependency provisioning
 // on our GitHub-native funnel (dependency-management §3.6). It rebuilds the
 // value/param-collection surface upstream expressed as component_tasks + a
-// projector, re-based onto aep:provision GitHub issues + a provision Execution
+// projector, re-based onto `provision` GitHub issues + a provision Execution
 // kind + the funnel's dependency-kind-aware gate.
 //
 // It owns:
 //
-//   - EnsureProvisionIssues — mint one aep:provision gate issue per distinct
+//   - EnsureProvisionIssues — mint one `provision` gate issue per distinct
 //     external / platform-resource dependency in the approved design (deduped
 //     per project). The consumer coding task holds until each derives deployed.
 //   - ValueService — external value collection: split values by the registered

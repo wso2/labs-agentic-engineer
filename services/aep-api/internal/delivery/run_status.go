@@ -23,22 +23,64 @@ import "fmt"
 // between the supervisor and everything that reaches it, not a private detail
 // of the supervisor.
 
-// MilestoneRunWorkflowName is the registered workflow type of the run
-// supervisor.
-const MilestoneRunWorkflowName = "MilestoneRunWorkflow"
+// The registered workflow types. THREE of them, one per run kind: a version is
+// delivered, a defect is worked, and a shipped version is judged. They share one
+// task queue, one worker and one Activities struct — what differs is the
+// bookends, so the split is three registrations rather than three packages.
+const (
+	// DevRunWorkflowName delivers a version: fill the milestone, work it to
+	// deployed-green, mint the validation task, settle.
+	DevRunWorkflowName = "DevRunWorkflow"
+	// ValidationRunWorkflowName judges a deployed version against its acceptance
+	// criteria. It has no working set and builds nothing.
+	ValidationRunWorkflowName = "ValidationRunWorkflow"
+	// TaskRunWorkflowName works a defect inside a version somebody already
+	// delivered.
+	TaskRunWorkflowName = "TaskRunWorkflow"
+)
+
+// RunWorkflowName is the registered workflow type a run of this kind executes.
+// An unknown kind yields "" — nothing may silently become a dev run.
+func RunWorkflowName(kind string) string {
+	switch kind {
+	case RunKindDev:
+		return DevRunWorkflowName
+	case RunKindValidation:
+		return ValidationRunWorkflowName
+	case RunKindTask:
+		return TaskRunWorkflowName
+	default:
+		return ""
+	}
+}
 
 // QueryRunStatus is the query name a live run answers with RunStatus.
 const QueryRunStatus = "run-status"
 
-// MilestoneRunWorkflowID is a run's Temporal workflow id.
+// MilestoneRunWorkflowID is a run's Temporal workflow id: its KIND, then the
+// milestone it works.
 //
-// There is ONE run species and it is keyed by the milestone, not by a tag and
-// not by an attempt: "work the open issues in milestone M". A milestone sees
-// SEQUENTIAL runs across its life (the spec build that created it, then later
-// incident adoptions into the same version), which is why the id is reused
+// The milestone is the key — "work milestone M" — and a milestone sees
+// SEQUENTIAL runs of one kind across its life, which is why the id is reused
 // after a terminal run rather than made unique per run.
-func MilestoneRunWorkflowID(orgID, projectID string, milestoneNumber int) string {
-	return fmt.Sprintf("run-%s-%s-%d", orgID, projectID, milestoneNumber)
+//
+// The KIND PREFIX is not cosmetic. Ids are reused under
+// WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE, so a single grammar would let three
+// executions on one milestone claim the same id in turn: a stale signal aimed at
+// a settled dev run would land on the validation run that claimed the id
+// afterwards, and the validation run would act on a merge that was never its
+// own. The run ROW is the routing table — the event plane resolves a row before
+// signalling anything, and the row's kind gives the prefix.
+//
+// An empty kind is read as dev, which is the migration-safe reading: it is the
+// only kind a row could have carried before the column existed (see
+// RunKindForOrigin), and it is the kind whose id a pre-split execution already
+// answers to.
+func MilestoneRunWorkflowID(kind, orgID, projectID string, milestoneNumber int) string {
+	if kind == "" {
+		kind = RunKindDev
+	}
+	return fmt.Sprintf("%s-%s-%s-%d", kind, orgID, projectID, milestoneNumber)
 }
 
 // RunStatus is a live run's self-report — the loop position no database column
@@ -49,7 +91,11 @@ func MilestoneRunWorkflowID(orgID, projectID string, milestoneNumber int) string
 type RunStatus struct {
 	RunID           string `json:"runId"`
 	MilestoneNumber int    `json:"milestoneNumber"`
-	Origin          string `json:"origin"`
+	// Kind is what the run does (dev | task | validation) — the thing every
+	// branch below was taken on. Origin is where it came from, carried so a live
+	// status reads the same as the row.
+	Kind   string `json:"kind"`
+	Origin string `json:"origin"`
 
 	// State is one of the RunState* values; TerminalReason is a RunReason* and
 	// is empty until the run settles into a non-success terminal state.
@@ -72,9 +118,12 @@ type RunStatus struct {
 	FixCycles      int `json:"fixCycles"`
 	ConflictCycles int `json:"conflictCycles"`
 
-	// ValidationIssue is the validation issue this run minted (0 until
-	// deployed-green, and on every incident run); ValidationVerdict is the run
-	// property the deployment surface reads.
+	// ValidationIssue is the version's validation task, as this run knows it: a
+	// DEV run learns it at deployed-green when it files it, and a VALIDATION run
+	// when it adopts it. 0 on a task run, and on a project with no acceptance
+	// oracle. ValidationVerdict is the property the deployment surface reads, and
+	// only a validation run ever sets it — an empty one on a settled dev run means
+	// "delivered, not yet judged".
 	ValidationIssue   int    `json:"validationIssue,omitempty"`
 	ValidationVerdict string `json:"validationVerdict,omitempty"`
 }

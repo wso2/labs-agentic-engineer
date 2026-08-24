@@ -49,7 +49,7 @@ type visibilitySpies struct {
 	build  *fakeProviderBuild
 }
 
-// A gate issue no longer declares its kind: it is prose with the aep:provision
+// A gate issue no longer declares its dependency kind: it is prose with the `provision`
 // marker and its aep:dep/<slug> label, and no platform code branches on which
 // flavour of gate it is (resolving one is always the same act). The two
 // flavours are told apart here by the platform-authored TITLE — which is what a

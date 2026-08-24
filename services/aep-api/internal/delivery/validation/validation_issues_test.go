@@ -18,6 +18,7 @@ package validation
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -52,6 +53,63 @@ type fakeIssues struct {
 	// number — the one create outcome the minter must not read as "nothing to
 	// validate".
 	numberless bool
+	// closed and labelled record the writes this package never makes. The fake
+	// wears delivery.IssueOps — the domain's WHOLE issue-write surface — so an
+	// unexpected write has somewhere to land instead of failing to compile.
+	closed        []int
+	closeComments []string
+	labelled      []string
+	// lifecycle records close/reopen in the order they happened. The ORDER is the
+	// whole assertion in the race tests below: which of the two landed last is
+	// what decides whether the reconcile sweep starts another validation run.
+	lifecycle []string
+}
+
+// writer is the fake wearing the domain's issue-write surface, which is what
+// the validation and repair mints go through.
+func (f *fakeIssues) writer() *delivery.IssueWriter { return delivery.NewIssueWriter(f) }
+
+func (f *fakeIssues) CloseIssue(_ context.Context, _, _ string, number int, comment string) error {
+	f.closed = append(f.closed, number)
+	f.closeComments = append(f.closeComments, comment)
+	f.lifecycle = append(f.lifecycle, fmt.Sprintf("close:%d", number))
+	f.setState(number, "closed")
+	return nil
+}
+
+// setState mirrors the host: a close and a reopen move the issue's state, so a
+// test can drive a whole task lifecycle through the real service instead of
+// hand-editing the index between calls.
+func (f *fakeIssues) setState(number int, state string) {
+	for milestone := range f.byMilestone {
+		for i := range f.byMilestone[milestone] {
+			if f.byMilestone[milestone][i].Number == number {
+				f.byMilestone[milestone][i].State = state
+			}
+		}
+	}
+}
+
+func (f *fakeIssues) CommentIssue(context.Context, string, string, int, string) error { return nil }
+
+func (f *fakeIssues) AddLabels(_ context.Context, _, _ string, number int, labels []string) error {
+	for _, l := range labels {
+		f.labelled = append(f.labelled, fmt.Sprintf("%d+%s", number, l))
+	}
+	return nil
+}
+
+func (f *fakeIssues) RemoveLabel(_ context.Context, _, _ string, number int, label string) error {
+	f.labelled = append(f.labelled, fmt.Sprintf("%d-%s", number, label))
+	return nil
+}
+
+// SetIssueMilestone exists only so the fake satisfies delivery.IssueOps: the
+// writer's port is the domain's WHOLE issue-write surface, and moving an issue
+// between versions belongs to the build's supersede, never to this minter.
+func (f *fakeIssues) SetIssueMilestone(_ context.Context, _, _ string, number, milestoneNumber int) error {
+	f.labelled = append(f.labelled, fmt.Sprintf("%d>m%d", number, milestoneNumber))
+	return nil
 }
 
 func (f *fakeIssues) ListMilestoneIssues(_ context.Context, _, _ string, filter sourcecontrol.MilestoneIssuesFilter) ([]sourcecontrol.IssueInfo, error) {
@@ -85,14 +143,21 @@ func (f *fakeIssues) CreateIssue(_ context.Context, _, _ string, req sourcecontr
 
 func (f *fakeIssues) ReopenIssue(_ context.Context, _, _ string, number int) error {
 	f.reopened = append(f.reopened, number)
+	f.lifecycle = append(f.lifecycle, fmt.Sprintf("reopen:%d", number))
+	f.setState(number, "open")
+	return nil
+}
+
+// stateOf reports an issue's current state in the fake's index.
+func (f *fakeIssues) stateOf(number int) string {
 	for milestone := range f.byMilestone {
-		for i := range f.byMilestone[milestone] {
-			if f.byMilestone[milestone][i].Number == number {
-				f.byMilestone[milestone][i].State = "open"
+		for _, issue := range f.byMilestone[milestone] {
+			if issue.Number == number {
+				return issue.State
 			}
 		}
 	}
-	return nil
+	return ""
 }
 
 func hasEveryLabel(have, want []string) bool {
@@ -126,13 +191,14 @@ const sampleCriteria = `{
 }`
 
 func newSvc(iss *fakeIssues, crit fakeCriteria) *Service {
-	return NewService(Deps{Issues: iss, Criteria: crit})
+	return NewService(Deps{Issues: iss, Writer: iss.writer(), Criteria: crit})
 }
 
-// validationIssue is an open aep:validation issue as the host would report it.
+// validationIssue is the open validation task as the host would report it:
+// armed, and of kind `validation`.
 func validationIssue(number int) sourcecontrol.IssueInfo {
 	return sourcecontrol.IssueInfo{
-		Number: number, State: "open", Labels: []string{delivery.LabelValidationWork},
+		Number: number, State: "open", Labels: []string{delivery.LabelAgentWork, delivery.KindValidation},
 	}
 }
 
@@ -153,7 +219,7 @@ func TestEnsureValidationIssue_CreatesFormattedIssue(t *testing.T) {
 	// ONE label, and deliberately not the `aep` working-set one: the validation
 	// cycle is dispatched at this issue by number, and working-set membership
 	// would hold the run's settle predicate open forever.
-	wantLabels := []string{delivery.LabelValidationWork}
+	wantLabels := []string{delivery.LabelAgentWork, delivery.KindValidation}
 	if !reflect.DeepEqual(got.Labels, wantLabels) {
 		t.Errorf("labels = %v; want %v", got.Labels, wantLabels)
 	}
@@ -254,14 +320,14 @@ func TestEnsureValidationIssue_ReusesTheVersionsOwnOpenIssue(t *testing.T) {
 
 	// The QUESTION matters as much as the answer: scoped to this milestone, narrowed
 	// to the validation label, and deliberately state-BLIND. `all` rather than `open`
-	// because a closed validation issue is the normal state between attempts — every
-	// attempt's pull request closes it with `Closes #<N>` — so asking only for open
-	// ones made a repeat attempt file a second issue for the same version.
+	// because a closed validation task is the normal state between attempts — the
+	// PLATFORM closes it at the end of every attempt — so asking only for open ones
+	// made a repeat attempt file a second issue for the same version.
 	if len(iss.filters) != 1 {
 		t.Fatalf("want 1 milestone read, got %d", len(iss.filters))
 	}
 	want := sourcecontrol.MilestoneIssuesFilter{
-		Number: thisMilestone, State: "all", Labels: []string{delivery.LabelValidationWork},
+		Number: thisMilestone, State: "all", Labels: []string{delivery.LabelAgentWork, delivery.KindValidation},
 	}
 	if !reflect.DeepEqual(iss.filters[0], want) {
 		t.Errorf("filter = %+v; want %+v", iss.filters[0], want)
@@ -271,9 +337,9 @@ func TestEnsureValidationIssue_ReusesTheVersionsOwnOpenIssue(t *testing.T) {
 	}
 }
 
-// The repeat attempt: the previous attempt's pull request closed the version's
-// validation issue, and this call must find and reopen THAT issue rather than file
-// a second one. Two validation issues for one version would each embed their own
+// The repeat attempt: the platform closed the version's validation task at the end
+// of the previous attempt, and this call must find and reopen THAT issue rather
+// than file a second one. Two validation issues for one version would each embed their own
 // snapshot of the oracle, and the run's ValidationIssue would name whichever was
 // newest.
 func TestEnsureValidationIssue_ReopensTheClosedIssueForARepeatAttempt(t *testing.T) {
@@ -370,5 +436,154 @@ func TestEnsureValidationIssue_SkipsWhenCriteriaMalformed(t *testing.T) {
 	}
 	if number != 0 {
 		t.Errorf("number = %d; want 0", number)
+	}
+}
+
+// ---- the task's lifecycle races ---------------------------------------------
+//
+// The validation task is the version's PERSISTENT HANDLE, and the platform owns
+// its close: the pull request says `Validates #N`, which GitHub does not treat as
+// a closing keyword, so nothing but this package moves the issue's state. That
+// single ownership is what these three tests are about — each is a way the
+// lifecycle went wrong while the merge and the platform were both writing it.
+
+// RACE 1 — reopen, then close. A version judged twice must walk the same ONE
+// issue through reopen → close → reopen → close, never accumulate a second.
+//
+// With two owners this was the sequence that produced duplicates: the merge
+// closed the issue, the platform reopened it for the next attempt, and a reopen
+// racing the host's own close left the issue open with the run already settled —
+// which the reconcile sweep reads as unworked and turns into another validation
+// run.
+func TestValidationTaskLifecycle_ReopenThenCloseWalksOneIssue(t *testing.T) {
+	ctx := context.Background()
+	iss := &fakeIssues{}
+	svc := newSvc(iss, fakeCriteria{raw: []byte(sampleCriteria), found: true})
+
+	// Attempt 1: mint, judge, close.
+	first, err := svc.EnsureValidationIssue(ctx, "org", "proj", thisMilestone)
+	if err != nil || first == 0 {
+		t.Fatalf("EnsureValidationIssue(attempt 1) = (%d, %v)", first, err)
+	}
+	// The mint has to land in the fake's index, or the second attempt is looking at
+	// a milestone the platform never filed into.
+	iss.byMilestone = map[int][]sourcecontrol.IssueInfo{thisMilestone: {validationIssue(first)}}
+	if err := svc.CloseValidationIssue(ctx, "org", "proj", first, delivery.ValidationVerdictFailed); err != nil {
+		t.Fatalf("CloseValidationIssue(attempt 1): %v", err)
+	}
+
+	// Attempt 2: the same issue, reopened.
+	second, err := svc.EnsureValidationIssue(ctx, "org", "proj", thisMilestone)
+	if err != nil {
+		t.Fatalf("EnsureValidationIssue(attempt 2): %v", err)
+	}
+	if second != first {
+		t.Fatalf("attempt 2 judged issue %d, attempt 1 judged %d — the task is the VERSION's handle", second, first)
+	}
+	if err := svc.CloseValidationIssue(ctx, "org", "proj", second, delivery.ValidationVerdictPassed); err != nil {
+		t.Fatalf("CloseValidationIssue(attempt 2): %v", err)
+	}
+
+	if len(iss.created) != 1 {
+		t.Fatalf("filed %d validation tasks across two attempts, want 1 — each extra one embeds "+
+			"its own snapshot of the oracle", len(iss.created))
+	}
+	want := []string{
+		fmt.Sprintf("close:%d", first),
+		fmt.Sprintf("reopen:%d", first),
+		fmt.Sprintf("close:%d", first),
+	}
+	if !reflect.DeepEqual(iss.lifecycle, want) {
+		t.Fatalf("lifecycle = %v, want %v", iss.lifecycle, want)
+	}
+	// It ends CLOSED. An open task after a settled run is exactly what the sweep
+	// reads as a version nobody has judged.
+	if state := iss.stateOf(first); !strings.EqualFold(state, "closed") {
+		t.Fatalf("the task is %q after the last attempt settled, want closed", state)
+	}
+}
+
+// RACE 2 — the close fires before the pull request merges.
+//
+// It happens on the ordinary path: the platform closes the task the moment the
+// run settles, and a redelivered `pull_request` webhook can arrive afterwards.
+// With a closing keyword in the body that late delivery was a second write to the
+// same issue from a second owner. With `Validates #N` the merge moves nothing, so
+// the close stands and the next attempt still finds ONE issue to reopen.
+//
+// The assertion is that the platform's close is idempotent and does not push the
+// task into a state a later attempt reads as "no validation task": that reading
+// is what settles a run `skipped` over an oracle it is holding in its hand.
+func TestValidationTaskLifecycle_CloseBeforeTheMergeStandsAndDoesNotDuplicate(t *testing.T) {
+	ctx := context.Background()
+	iss := &fakeIssues{byMilestone: map[int][]sourcecontrol.IssueInfo{
+		thisMilestone: {validationIssue(7)},
+	}}
+	svc := newSvc(iss, fakeCriteria{raw: []byte(sampleCriteria), found: true})
+
+	// The run settles and closes the task…
+	if err := svc.CloseValidationIssue(ctx, "org", "proj", 7, ""); err != nil {
+		t.Fatalf("CloseValidationIssue: %v", err)
+	}
+	// …and the same close is delivered again (an activity retry).
+	if err := svc.CloseValidationIssue(ctx, "org", "proj", 7, ""); err != nil {
+		t.Fatalf("CloseValidationIssue(retry): %v", err)
+	}
+
+	// The next attempt reopens the ONE issue rather than filing a second.
+	number, err := svc.EnsureValidationIssue(ctx, "org", "proj", thisMilestone)
+	if err != nil {
+		t.Fatalf("EnsureValidationIssue after a close: %v", err)
+	}
+	if number != 7 {
+		t.Fatalf("next attempt judged issue %d, want the version's own 7", number)
+	}
+	if len(iss.created) != 0 {
+		t.Fatalf("filed %d issues; a closed task must be reopened, not re-filed", len(iss.created))
+	}
+	if !reflect.DeepEqual(iss.reopened, []int{7}) {
+		t.Fatalf("reopened = %v, want [7]", iss.reopened)
+	}
+	// A close with no verdict says so, rather than inventing one: "the attempt
+	// ended without reaching a verdict" is a different fact from `inconclusive`,
+	// and a human reading the closed task has to be able to tell them apart.
+	if len(iss.closeComments) == 0 || !strings.Contains(iss.closeComments[0], "without reaching a verdict") {
+		t.Fatalf("close comment = %q, want it to say no verdict was reached", iss.closeComments)
+	}
+}
+
+// RACE 3 — a re-file where a reopen was correct.
+//
+// This is the defect the state-blind lookup exists to prevent, and it is worth
+// its own test because it fails SILENTLY: the second task is a valid-looking
+// issue, so the run judges the version against an oracle rendered at a different
+// moment, and the first task disappears from the version's ledger.
+//
+// The only thing standing between the two behaviours is the filter's `state:
+// "all"`, so the test pins the question as well as the answer.
+func TestValidationTaskLifecycle_AClosedTaskIsReopenedNotRefiled(t *testing.T) {
+	ctx := context.Background()
+	closed := validationIssue(7)
+	closed.State = "closed"
+	iss := &fakeIssues{byMilestone: map[int][]sourcecontrol.IssueInfo{thisMilestone: {closed}}}
+	svc := newSvc(iss, fakeCriteria{raw: []byte(sampleCriteria), found: true})
+
+	number, err := svc.EnsureValidationIssue(ctx, "org", "proj", thisMilestone)
+	if err != nil {
+		t.Fatalf("EnsureValidationIssue: %v", err)
+	}
+	if number != 7 || len(iss.created) != 0 {
+		t.Fatalf("EnsureValidationIssue = %d with %d creates; want the closed task 7 reopened",
+			number, len(iss.created))
+	}
+	if len(iss.filters) != 1 || !strings.EqualFold(iss.filters[0].State, "all") {
+		t.Fatalf("lookup state = %q, want `all` — asking only for OPEN issues is what re-files",
+			iss.filters[0].State)
+	}
+	// The body is NOT rewritten on reopen: it embeds the oracle as rendered at
+	// first mint, which is the question THIS version is being asked. Each attempt's
+	// own summary comment is what makes the thread readable across attempts.
+	if len(iss.created) != 0 {
+		t.Fatal("the reopen rewrote the task's body")
 	}
 }

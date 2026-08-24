@@ -350,6 +350,28 @@ test("credhelper: names the missing bearer instead of failing mutely", async () 
     assert.notEqual(r.code, 0);
     assert.equal(r.stdout, "");
     assert.match(r.stderr, /no platform credential/);
+    assert.match(r.stderr, /PUBLISHER_\* unset/);
+    assert.equal(stub.requests(), 0);
+  } finally {
+    await stub.close();
+  }
+});
+
+test("credhelper: names a failed publisher mint when PUBLISHER_* is set", async () => {
+  const stub = await startStub({ token: GH_TOKEN, taskId: TASK_ID });
+  const f = await fixture(stub.url, { bearer: "" });
+  try {
+    const r = await run(withStdin(f.helper, "get"), {
+      ...f.env,
+      PUBLISHER_CLIENT_ID: "id",
+      PUBLISHER_CLIENT_SECRET: "sec",
+      PUBLISHER_TOKEN_URL: "http://aep-token.invalid/oauth2/token",
+    });
+
+    assert.notEqual(r.code, 0);
+    assert.equal(r.stdout, "");
+    assert.match(r.stderr, /PUBLISHER_\* mint failed/);
+    assert.doesNotMatch(r.stderr, /PUBLISHER_\* unset/);
     assert.equal(stub.requests(), 0);
   } finally {
     await stub.close();

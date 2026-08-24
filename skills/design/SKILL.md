@@ -17,13 +17,41 @@ way to a clean Build is to follow the order below.
 
 ## The PRD is the brief
 
-Design FROM `specs/requirements/prd.md`. Do not interview the user again and
-do not widen or narrow the scope: what the PRD says is what gets designed. A
-missing or empty PRD means the user needs `/start` first — stop and say so.
+Design FROM `specs/requirements/prd.md`, and do not widen or narrow the scope:
+what the PRD says is what gets designed. A missing or empty PRD means the user
+needs `/start` first — stop and say so.
 
-**Open questions gate:** any PRD Open Question neither answered nor marked
-"deferred" blocks design — stop and point the user at the amend flow's
-resolve-open-questions branch. Deferred questions never block.
+**Ask at design altitude.** A call this step has to make and only the user can
+settle — which provider, which of two shapes the PRD deliberately left open —
+is an ordinary question, asked when it arises rather than assumed silently or
+deferred to a review that never happens. `grilling` carries the mechanics and
+the pacing. The PRD's own answers are settled: asking one back reads as the
+document being ignored.
+
+**Open questions never block design.** They are recorded gaps, not corruption:
+design what the PRD does say, and where one genuinely decides a call you are
+about to make, ask it as an ordinary question — the same way you ask anything
+else at design altitude. An entry marked "deferred" is one the user has already
+declined for now; leave it alone.
+
+## Reference documents ground the design
+
+The kickoff may have attached reference documents — and for design, the ones
+that matter most are the user's own sketches: a drawn wireframe, a form
+screenshot, a mockup image. They are attached to this conversation natively
+(images and PDFs) or in your workspace files (text). When any exist:
+
+- **A user-drawn wireframe sketch is the layout brief.** `wireframes.dsl`
+  follows what the user drew — screen structure, navigation, the controls
+  they placed — refined, not reinvented. Look at the image before writing a
+  single screen.
+- A form document (paper form, PDF) is the field inventory: the screens that
+  digitize it carry its fields and sections.
+- Where a sketch and the PRD disagree, the PRD's scope wins, but the sketch's
+  layout intent survives inside that scope — and the discrepancy is worth a
+  line in the design notes.
+
+No documents attached is the ordinary case: design from the PRD alone.
 
 ## The lineup
 

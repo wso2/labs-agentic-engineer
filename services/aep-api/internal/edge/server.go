@@ -165,10 +165,18 @@ func dependenciesOrEmpty(h *dependenciesHandlers) *dependenciesHandlers {
 	return empty
 }
 
-// maxBodyBytes is the edge-wide request-body ceiling (413 beyond it). 10 MiB
-// was the largest of the retired per-op caps (the files batch apply);
-// import-skill keeps its own tighter in-handler limit.
-const maxBodyBytes = 10 << 20
+// maxBodyBytes is the edge-wide request-body ceiling (413 beyond it), sized to
+// the largest legitimate request: the reference-document upload (#383) — 10
+// files × 5 MiB as multipart, so 50 MiB of raw bytes plus part headers. It was
+// ~67 MiB while that upload rode base64 JSON; the ceiling stays at 80 MiB
+// rather than tracking the drop, because shrinking a limit nobody is hitting
+// only buys a future 413. body_cap_test.go pins the arithmetic so it can never
+// quietly sink below the contract again. Per-file limits stay with the handlers
+// (5 MiB in the references handler and the files service; import-skill keeps
+// its own tighter one). The console's nginx proxy carries a matching
+// client_max_body_size — the transport admits what the contract permits, at
+// every hop.
+const maxBodyBytes = 80 << 20
 
 // capRequestBody bounds every request body before the validator (the first
 // reader) touches it; an oversized body surfaces as *http.MaxBytesError and

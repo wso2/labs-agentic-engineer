@@ -74,11 +74,15 @@ func (h *Handler) ReadFile(ctx context.Context, request gen.ReadFileRequestObjec
 	if err != nil {
 		return nil, mapFilesError(err)
 	}
-	return gen.ReadFile200JSONResponse(gen.FileContent{
-		Path:    fc.Path,
-		Content: fc.Content,
-		Sha:     fc.SHA,
-	}), nil
+	return gen.ReadFile200JSONResponse(fileContentToWire(fc)), nil
+}
+
+// fileContentToWire converts a read into its wire shape. The Files API is
+// text-only: reference documents — the one binary this platform ever had to
+// serve — are transient turn inputs now, stored off-git and never readable
+// here (console ADR-0017), so there is no base64 half to pair with.
+func fileContentToWire(fc *spec.FileContent) gen.FileContent {
+	return gen.FileContent{Path: fc.Path, Content: fc.Content, Sha: fc.SHA}
 }
 
 // ReadFileBundle serves the whole-prefix read. It is registered under the
@@ -107,7 +111,8 @@ func (h *Handler) ApplyFiles(ctx context.Context, request gen.ApplyFilesRequestO
 	if request.Body == nil {
 		return nil, apierr.BadRequest("request body required")
 	}
-	res, conflicts, err := h.files.Apply(ctx, org, request.ProjectName, applyRequestFromWire(*request.Body))
+	applyReq := applyRequestFromWire(*request.Body)
+	res, conflicts, err := h.files.Apply(ctx, org, request.ProjectName, applyReq)
 	if err != nil {
 		if errors.Is(err, spec.ErrApplyConflict) {
 			return applyConflictsToWire(conflicts), nil
@@ -151,6 +156,8 @@ func appliedPaths(body gen.ApplyRequest, res *spec.ApplyResult) []string {
 }
 
 // applyRequestFromWire converts the generated body into the service's shape.
+// Writes carry text and nothing else — see fileContentToWire for why the
+// binary half is gone.
 func applyRequestFromWire(in gen.ApplyRequest) spec.ApplyRequest {
 	out := spec.ApplyRequest{Message: in.Message}
 	for _, w := range in.Writes {

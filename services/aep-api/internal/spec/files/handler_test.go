@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/wso2/aep/aep-api/internal/gen"
 	"github.com/wso2/aep/aep-api/internal/platform/apierr"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
@@ -39,5 +40,24 @@ func TestMapFilesError_CASExhaustionMapsTo409(t *testing.T) {
 	if ae.Status != http.StatusConflict || ae.Code != apierr.CodeConflict {
 		t.Fatalf("status/code = %d/%s, want 409/%s (CAS exhaustion is a retryable conflict)",
 			ae.Status, ae.Code, apierr.CodeConflict)
+	}
+}
+
+// The Files API is text-only: content is already the file's bytes and must
+// survive byte-identically. The base64 half that once rode here went out with
+// reference documents (console ADR-0017) — they are stored off-git now, so
+// nothing binary reaches this endpoint at all.
+func TestApplyRequestFromWire_PassesContentThroughUnchanged(t *testing.T) {
+	const content = "# Requirements\n\nplain markdown — with unicode ✅\n"
+	body := gen.ApplyRequest{Writes: []gen.WriteOp{{
+		Path: "specs/requirements/requirements.md", Content: content,
+	}}}
+
+	got := applyRequestFromWire(body)
+	if len(got.Writes) != 1 {
+		t.Fatalf("got %d writes, want 1", len(got.Writes))
+	}
+	if got.Writes[0].Content != content {
+		t.Fatalf("content = %q, want it unchanged %q", got.Writes[0].Content, content)
 	}
 }

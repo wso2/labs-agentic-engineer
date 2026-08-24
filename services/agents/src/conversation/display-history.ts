@@ -36,7 +36,13 @@ import type { Conversation, TurnJournalEntry } from "../store/conversation-store
 /** A transcript message as served on the wire: user rows may carry an author. */
 export type DisplayMessage =
   | ModelMessage
-  | { role: "user"; content: string; author?: TurnJournalEntry["author"] };
+  | {
+      role: "user";
+      content: string;
+      author?: TurnJournalEntry["author"];
+      /** File NAMES that rode this message (#428) — never bytes. */
+      attachments?: string[];
+    };
 
 export function projectDisplayHistory(conv: Conversation): DisplayMessage[] {
   const byIndex = new Map<number, TurnJournalEntry>();
@@ -49,6 +55,9 @@ export function projectDisplayHistory(conv: Conversation): DisplayMessage[] {
       role: "user",
       content: entry.text,
       ...(entry.author ? { author: entry.author } : {}),
+      ...(entry.attachments && entry.attachments.length > 0
+        ? { attachments: entry.attachments }
+        : {}),
     };
   });
 }

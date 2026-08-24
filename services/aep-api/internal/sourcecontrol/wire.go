@@ -127,56 +127,98 @@ type MilestoneIssuesFilter struct {
 // OPEN-issue populations of one milestone, gathered in a single host round trip
 // so the per-cycle-boundary predicate stays one call.
 //
-// A milestone holds three populations, told apart by label: agent work ("aep"),
-// dispatch gates ("aep:provision") and ledger-only human issues (no "aep"). The
-// run's WORKING SET is the first minus the gates and minus the validation issue
-// — read it through OpenNonGateWork, never by subtracting fields by hand.
+// Each field is the count of ONE label — never a union of several, and never an
+// intersection. That is what the host can answer honestly: its GraphQL labels:
+// argument is a UNION filter, so a multi-label alias counts issues carrying ANY
+// of them, and an intersection cannot be expressed at all.
 //
-// The label kinds are NOT assumed disjoint: a gate may also carry "aep". The
-// populations are therefore expressed as UNIONS, because the host's labels:
-// argument is a union filter — an issue matches when it carries ANY of the
-// listed labels, not all of them. A union filter cannot express an
-// intersection, so the working set is taken as a set DIFFERENCE of two unions
-// instead, which needs no intersection term at all.
+// The working sets are then plain SUBTRACTION, and it is exact because every
+// workable kind carries "aep": each excluded kind is a strict SUBSET of the
+// "aep" population, so subtracting its count removes each member exactly once.
+// Read them through OpenDevWork / OpenTaskWork, never by subtracting fields by
+// hand — the arithmetic lives in one place so the dispatch predicate and the
+// settle check cannot drift apart on what "work" means.
+//
+// The one population that is NOT a subset is the gates: they carry no "aep" at
+// all, so they are counted on their own field and are never subtracted from
+// anything. A gate holds the next dispatch; it must never erase the work behind
+// it, which is the live failure the old inclusion-exclusion arithmetic caused.
 //
 // These are issue counts, never pull-request counts — the reason the predicate
 // is a GraphQL query over milestone.issues rather than the REST milestone's
 // open_issues field, which counts PRs too.
 type MilestoneIssueCounts struct {
-	// OpenProvision is every open gate, whether or not it also carries "aep".
-	// One open gate holds the next dispatch.
+	// OpenProvision is every open dispatch gate ("provision"). One open gate
+	// holds the next dispatch. Gates carry no "aep", so this count overlaps
+	// nothing else here.
 	OpenProvision int
 	// OpenTotal is every open issue in the milestone, ledger included. It says
 	// whether the milestone is finished, not whether it is workable.
 	OpenTotal int
-	// OpenWorkOrExcluded is |"aep" ∪ "aep:provision" ∪ "aep:validation"|: every
-	// open issue that is agent work or an exclusion from it.
-	OpenWorkOrExcluded int
-	// OpenExcluded is |"aep:provision" ∪ "aep:validation"|: the exclusions on
-	// their own. Gates are never a coding cycle's work, and the validation issue
-	// is the validation cycle's.
-	OpenExcluded int
+	// OpenAgentWork is every open ARMED issue ("aep"): planned work, bugs,
+	// conflicts and the validation task together. Every working set is this
+	// population minus one or more of the kinds below.
+	OpenAgentWork int
+	// OpenDevelopment is every open planned-work issue ("development") — the
+	// planner's output. A subset of OpenAgentWork.
+	OpenDevelopment int
+	// OpenValidation is every open validation task ("validation"). A subset of
+	// OpenAgentWork: the validation task IS armed, it is simply worked by the
+	// validation loop rather than by a coding cycle.
+	OpenValidation int
+	// OpenValidationRepairs is every open issue carrying the `src/validation`
+	// SOURCE — the repair work a failed verdict filed, one issue per failed
+	// criterion.
+	//
+	// It is the only source counted here, and it is a SIGNAL rather than a
+	// population: nothing subtracts it, and it overlaps the working sets freely
+	// (a repair issue is an ordinary armed bug and is counted as one above).
+	// It exists because a bug-fix run has to know whether the defects it worked
+	// came from a verdict — that is what decides whether the version's validation
+	// task is reopened when the run drains its working set — and answering it
+	// from the counts is what keeps the cycle-boundary poll ONE round trip.
+	OpenValidationRepairs int
 }
 
-// OpenNonGateWork is the size of the run's working set: open, "aep"-labelled,
-// not a gate, not the validation issue. It is the ONE place the exclusions are
-// computed, so the dispatch predicate and any later settle check cannot drift
-// apart on what "work" means.
+// OpenDevWork is the size of a DEV run's working set: armed issues that are not
+// the validation task — planned work, plus the bugs and conflicts that working
+// it threw up.
 //
-// The set difference (A ∪ E) \ E, which is exactly the "aep" issues carrying
-// neither exclusion label — exact even when an issue carries several label
-// kinds at once, and without needing an intersection the host cannot count.
-// Nil-tolerant: an unknown milestone has no work.
-func (c *MilestoneIssueCounts) OpenNonGateWork() int {
+// This is the count whose reaching zero SETTLES a version, so the failure it
+// must not have is undercounting. Nil-tolerant: an unknown milestone has no
+// work.
+func (c *MilestoneIssueCounts) OpenDevWork() int {
 	if c == nil {
 		return 0
 	}
-	n := c.OpenWorkOrExcluded - c.OpenExcluded
+	return clampWork(c.OpenAgentWork - c.OpenValidation)
+}
+
+// OpenTaskWork is the size of a TASK run's working set: armed issues that are
+// neither the validation task nor planned work.
+//
+// A bug-fix run works the DEPLOYED version, so planned work for the version
+// currently being built is deliberately not its business — subtracting it here
+// is what keeps two live runs on one repository from picking up each other's
+// issues. It is also what makes a budget mean something: a dev run that gave up
+// leaves its planned work OPEN, and a task run that could continue it would be
+// the same work restarted with fresh budgets by a run that never planned it.
+func (c *MilestoneIssueCounts) OpenTaskWork() int {
+	if c == nil {
+		return 0
+	}
+	return clampWork(c.OpenAgentWork - c.OpenValidation - c.OpenDevelopment)
+}
+
+// clampWork floors a working set at zero.
+//
+// Unreachable against a consistent host: every kind subtracted above is a subset
+// of the armed population, so the difference cannot go negative. Clamped anyway
+// so a host that answers inconsistently degrades to "nothing to work" rather
+// than inventing a negative working set that would read as workable in one
+// comparison and empty in another.
+func clampWork(n int) int {
 	if n < 0 {
-		// Unreachable against a consistent host: OpenExcluded counts a subset of
-		// what OpenWorkOrExcluded counts. Clamped anyway so a host that answers
-		// inconsistently degrades to "nothing to work" instead of inventing a
-		// negative working set.
 		return 0
 	}
 	return n

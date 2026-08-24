@@ -29,13 +29,14 @@
  * preserved across turns.
  */
 
-import { hasToolCall, isStepCount, type LanguageModel, type ModelMessage, type ToolSet } from "ai";
+import { hasToolCall, isStepCount, type FilePart, type LanguageModel, type ModelMessage, type ToolSet } from "ai";
 import {
   FileBundle,
   ASK_QUESTION_TOOL,
   ASK_QUESTIONS_TOOL,
   type McpConfig,
   type StreamPart,
+  type Surface,
   type Toolset,
 } from "@aep/agent-stream";
 import { DocFileBundle } from "../collab/doc-bundle.js";
@@ -48,6 +49,7 @@ import { TaskPlan } from "../agents/main/task-plan-accumulator.js";
 import { buildInstructions, buildTaskPlanInstructions, buildPrompt, buildEagerSkillsBlock } from "../agents/main/prompt.js";
 import type { SkillSource } from "../agents/main/skill-source.js";
 import { buildManifestPart, toTurnUsage } from "./manifest.js";
+import { attachmentsNote } from "../prompts/turn.js";
 import { config } from "../shared/config.js";
 import {
   isAnthropicModel,
@@ -129,6 +131,27 @@ export interface RunConversationTurnInput {
    */
   skillSource?: SkillSource;
   /**
+   * Native file parts (currently: `.pdf` reference documents, #384) attached to
+   * THIS turn's user message alongside `instruction` — resolved by the caller
+   * from `TurnSpec.references` against the snapshot dir (`load-workspace.ts`'s
+   * `readReferenceAttachments`), since this function only sees `files`/
+   * `instruction`, never the raw `TurnSpec` or a filesystem path. Absent/empty
+   * → the message stays a plain string, byte-identical to a turn without it.
+   */
+  referenceAttachments?: FilePart[];
+  /**
+   * Native file parts for the files the user attached to THIS message (#428).
+   *
+   * Separate from `referenceAttachments` — NOT merely for wording, but because
+   * they must NOT be deduped against history. That dedupe exists for
+   * references, which a flow re-lists automatically with unchanged content, so
+   * re-sending them is pure waste. A chat attachment is the opposite: a
+   * deliberate per-message act. Someone who revises a PDF, keeps its name and
+   * re-attaches it means the new bytes — filtering those out would silently
+   * serve the model the stale copy from history.
+   */
+  chatAttachments?: FilePart[];
+  /**
    * Skill names to inline into THIS turn's prompt up front (#335 latency):
    * bodies resolve through `skillSource` and ride the user prompt — never the
    * system prompt, whose cacheable prefix must stay byte-stable across turns.
@@ -166,6 +189,14 @@ export interface RunConversationTurnInput {
    * non-Anthropic model, → the tool map is byte-identical to a turn without it.
    */
   webSearch?: boolean;
+  /**
+   * Where the person reading this turn's prose is sitting (#580). Present → the
+   * surface's narration skill is inlined into the SYSTEM prompt as standing
+   * policy, outranking any narration a loaded flow skill defines for itself.
+   * Absent (a local playground run) → no policy block, and the prompt is
+   * byte-identical to today.
+   */
+  surface?: Surface;
   /** Injected at the composition root (createModel is called ONCE there, not per turn). */
   model: LanguageModel;
   /**
@@ -216,13 +247,13 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
       // Read-only context: `files` mutates nothing; the accumulator validates
       // planTask/updateTask against it (known components + existing Tasks).
       tools = buildTaskPlanTools(new TaskPlan(input.files), skills);
-      instructions = buildTaskPlanInstructions(skills);
+      instructions = buildTaskPlanInstructions(skills, input.surface);
     } else {
       bundle = input.collabPeer
         ? new DocFileBundle(input.collabPeer, input.files)
         : new FileBundle(input.files);
       tools = buildFileTools(bundle, skills);
-      instructions = buildInstructions(skills);
+      instructions = buildInstructions(skills, input.surface);
     }
 
     // 3b. MCP discovery (dependency-management migration Phase 5): best-effort —
@@ -280,17 +311,45 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
     // of the instruction — the model applies them in its FIRST step instead of
     // spending a whole model call on loadSkill. Unknown names skip silently
     // (the snapshot is the authority on what exists).
-    const eagerBlock = buildEagerSkillsBlock(skills, input.eagerSkills);
+    const eagerBlock = buildEagerSkillsBlock(skills, input.eagerSkills, input.surface);
     const cacheBreakpoint = modelCacheBreakpoint();
     // Stamps this turn's steps with the conversation they belong to, so two
     // projects generating at once are attributable in the trace UI.
     const telemetry = turnTelemetry(conv.id);
+    // REFERENCE attachments dedupe against history by filename: a flow naming
+    // the same document a kickoff already attached must not re-enter it — one
+    // copy of a 5MB PDF per conversation, not one per flow invocation. The model
+    // reads the history copy either way, because a reference's content is
+    // whatever the store holds and re-listing it says nothing new.
+    //
+    // Chat attachments (#428) are deliberately EXEMPT — see `chatAttachments`.
+    const attachedAlready = new Set(
+      conv.messages.flatMap((m) =>
+        Array.isArray(m.content)
+          ? m.content.flatMap((part) => {
+              const f = part as { type?: string; filename?: string };
+              return f.type === "file" && f.filename ? [f.filename] : [];
+            })
+          : [],
+      ),
+    );
+    const freshReferences = (input.referenceAttachments ?? []).filter(
+      (part) => !part.filename || !attachedAlready.has(part.filename),
+    );
+    // Attachments last so a re-attached file is the LATER copy in the message,
+    // which is the one the model reads as current.
+    const freshAttachments = [...freshReferences, ...(input.chatAttachments ?? [])];
     const startLen = conv.messages.length;
     const res = await runTurn({
       model: input.model,
       instructions,
-      prompt: note + eagerBlock + buildPrompt(input.files, input.instruction),
+      prompt:
+        note +
+        attachmentsNote((input.chatAttachments ?? []).flatMap((p) => (p.filename ? [p.filename] : []))) +
+        eagerBlock +
+        buildPrompt(input.files, input.instruction),
       messages: conv.messages, // appended in place by runTurn
+      ...(freshAttachments.length ? { fileParts: freshAttachments } : {}),
       tools,
       // End the turn at a HITL question call (the question tools live on the
       // `files` set only, so these never fire on a task-plan turn).

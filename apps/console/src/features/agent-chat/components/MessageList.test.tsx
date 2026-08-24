@@ -78,4 +78,40 @@ describe("MessageList", () => {
     );
     expect(screen.getByTestId("working")).toBeInTheDocument();
   });
+
+  // --- Chat attachments (#428) ---------------------------------------------
+
+  it("shows a chip per attachment on the sent message", () => {
+    renderFeed([
+      {
+        id: "m1",
+        role: "user",
+        content: "what is wrong here?",
+        status: "completed",
+        attachments: ["error.png", "rows.csv"],
+      },
+    ]);
+    const chips = screen.getByTestId("user-message-attachments");
+    expect(chips).toHaveTextContent("error.png");
+    expect(chips).toHaveTextContent("rows.csv");
+  });
+
+  it("renders no attachment row for a message without any", () => {
+    renderFeed([{ id: "m1", role: "user", content: "hello", status: "completed" }]);
+    expect(screen.queryByTestId("user-message-attachments")).not.toBeInTheDocument();
+  });
+
+  it("keeps the chips on a failed message, dimmed with its text", () => {
+    // The user still needs to see what they tried to send.
+    renderFeed([
+      {
+        id: "m1",
+        role: "user",
+        content: "look at this",
+        status: "failed",
+        attachments: ["error.png"],
+      },
+    ]);
+    expect(screen.getByTestId("user-message-attachments")).toHaveTextContent("error.png");
+  });
 });

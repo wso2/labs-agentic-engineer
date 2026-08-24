@@ -47,6 +47,8 @@ type Activities struct {
 	deployer   Deployer
 	deployRead DeploymentReader
 	deployMint DeployIssueMinter
+	halter     WorkHalter
+	canceller  WorkCanceller
 	gates      Gates
 	planner    Planner
 }
@@ -65,6 +67,8 @@ type Deps struct {
 	Deploy       Deployer
 	Deployments  DeploymentReader
 	DeployIssues DeployIssueMinter
+	Halter       WorkHalter
+	Canceller    WorkCanceller
 	Gates        Gates
 	Planner      Planner
 }
@@ -83,6 +87,8 @@ func NewActivities(d Deps) *Activities {
 		deployer:   d.Deploy,
 		deployRead: d.Deployments,
 		deployMint: d.DeployIssues,
+		halter:     d.Halter,
+		canceller:  d.Canceller,
 		gates:      d.Gates,
 		planner:    d.Planner,
 	}
@@ -138,21 +144,28 @@ func (a *Activities) BumpRunBudget(ctx context.Context, in BumpRunBudgetInput) e
 	return a.runs.BumpBudget(ctx, in.RunID, delivery.RunBudget(in.Counter))
 }
 
-// SetValidationVerdictInput records one validation ATTEMPT's outcome and the issue
-// it came from. Issue is 0 when there is no validation issue to name (an incident
-// run, or a skip decided before minting). CycleID is empty for a verdict that
-// belongs to no cycle — `skipped`, decided before any validation cycle opens.
+// SetValidationVerdictInput records one validation ATTEMPT's outcome, the issue
+// it came from, and the digest of the evidence behind it. Issue is 0 when there is
+// no validation issue to name (a skip decided before minting). CycleID is empty
+// for a verdict that belongs to no cycle — `skipped`, decided before any
+// validation cycle opens.
 type SetValidationVerdictInput struct {
 	RunID   string `json:"runId"`
 	CycleID string `json:"cycleId,omitempty"`
 	Verdict string `json:"verdict"`
 	Issue   int    `json:"issue,omitempty"`
+	// Digest fingerprints what the attempt CONCLUDED, and is what the NEXT
+	// attempt compares against to tell a repair that moved something from one
+	// that did not. It rides this input rather than a write of its own because
+	// the cycle write is fenced write-once on an empty verdict: a digest written
+	// afterwards could never land on the cycle it belongs to.
+	Digest string `json:"digest,omitempty"`
 }
 
 // SetValidationVerdict records the attempt's verdict in the two places that need
 // it, in one activity so they cannot drift: the CYCLE row, which keeps this
-// attempt's own answer for good, and the RUN row, which carries the latest
-// attempt's answer because that is what the deployment surface reads.
+// attempt's own answer and its digest for good, and the RUN row, which carries
+// the latest attempt's answer because that is what the deployment surface reads.
 //
 // The cycle write comes first. If only one of the two lands, the run row lagging
 // its cycle ledger is the recoverable direction — the workflow retries and the
@@ -166,7 +179,7 @@ func (a *Activities) SetValidationVerdict(ctx context.Context, in SetValidationV
 		if a.cycles == nil {
 			return errNotConfigured
 		}
-		if err := a.cycles.SetValidationVerdict(ctx, in.CycleID, in.Verdict, in.Issue); err != nil {
+		if err := a.cycles.SetValidationVerdict(ctx, in.CycleID, in.Verdict, in.Issue, in.Digest); err != nil {
 			return err
 		}
 	}
@@ -235,8 +248,14 @@ type CycleFactsInput struct {
 	RunID string `json:"runId"`
 }
 
-// CycleFacts is what the EVENT PLANE learned about the cycle from webhooks —
-// the supervisor's ground truth for "did this cycle land?".
+// CycleFacts is the loop's GROUND TRUTH about a wait it is currently in: what
+// the event plane learned about the cycle from webhooks, plus whether a person
+// has asked the run to stop.
+//
+// The two travel together because they answer the same question at the same
+// moment — "should this wait carry on?" — and because reading them in one
+// activity is what lets cancel be honoured with no round trip the loop was not
+// already making.
 type CycleFacts struct {
 	CycleID  string `json:"cycleId"`
 	Attempts int    `json:"attempts"`
@@ -244,30 +263,43 @@ type CycleFacts struct {
 	PRNumber int    `json:"prNumber,omitempty"`
 	MergeSHA string `json:"mergeSha,omitempty"`
 	Ended    bool   `json:"ended"`
+	// CancelRequested is the run row's cancellation stamp, not the signal. The
+	// signal is a wake-up; this is the evidence — which is what stops a reaped
+	// agent pod from reading as agent death and buying a re-dispatch.
+	CancelRequested bool `json:"cancelRequested,omitempty"`
 }
 
-// ReadCycleFacts reads the cycle record back.
+// ReadCycleFacts reads the cycle record and the run's cancel stamp back.
 //
 // This is the poll behind "never trust the signal payload alone": a merge
 // signal wakes the loop, and THIS is what tells it a merge really happened —
 // which is also how a cycle whose merge webhook was lost still finishes, off
-// the deadline path.
+// the deadline path. Cancel rides it for the same reason and gains the same
+// property: a cancel whose signal never arrived costs latency, not correctness.
+//
+// The cancel read comes FIRST and is independent of the cycle row, because the
+// boundary consults this before a run has dispatched anything — a milestone run
+// with no cycle yet must still be able to notice it was cancelled.
 func (a *Activities) ReadCycleFacts(ctx context.Context, in CycleFactsInput) (CycleFacts, error) {
-	if a.cycles == nil {
+	if a.cycles == nil || a.runs == nil {
 		return CycleFacts{}, errNotConfigured
 	}
-	row, err := a.cycles.Latest(ctx, in.OrgID, in.RunID)
-	if err != nil || row == nil {
+	cancelled, err := a.runs.CancelRequested(ctx, in.OrgID, in.RunID)
+	if err != nil {
 		return CycleFacts{}, err
 	}
-	return CycleFacts{
-		CycleID:  row.ID,
-		Attempts: row.Attempts,
-		Branch:   row.Branch,
-		PRNumber: row.PRNumber,
-		MergeSHA: row.MergeSHA,
-		Ended:    row.EndedAt != nil,
-	}, nil
+	facts := CycleFacts{CancelRequested: cancelled}
+	row, err := a.cycles.Latest(ctx, in.OrgID, in.RunID)
+	if err != nil || row == nil {
+		return facts, err
+	}
+	facts.CycleID = row.ID
+	facts.Attempts = row.Attempts
+	facts.Branch = row.Branch
+	facts.PRNumber = row.PRNumber
+	facts.MergeSHA = row.MergeSHA
+	facts.Ended = row.EndedAt != nil
+	return facts, nil
 }
 
 // ---- milestone -------------------------------------------------------------
@@ -280,11 +312,18 @@ type MilestoneRef struct {
 }
 
 // PollMilestone is the cycle-boundary read of ground truth — ONE GraphQL round
-// trip returning the gate count, the working set and the total.
+// trip returning the gate count, BOTH working sets, the total, and how much
+// verdict-sourced repair work is open.
 //
 // Every boundary decision is made from this and nothing else: whether to
-// dispatch, whether a gate is holding, whether the version is finished, and
-// whether the last cycle made progress.
+// dispatch, whether a gate is holding, whether the version is finished, whether
+// the last cycle made progress, and — for a task run — whether draining the
+// milestone should reopen the version's validation task.
+//
+// Both working sets ride one answer rather than the caller's own. The counts all
+// arrive in the same GraphQL response, so computing only one of them would save
+// nothing and would put the choice of population in the activity, which is the
+// workflow's to make (see bookends).
 func (a *Activities) PollMilestone(ctx context.Context, in MilestoneRef) (MilestoneSnapshot, error) {
 	if a.milestones == nil {
 		return MilestoneSnapshot{}, errNotConfigured
@@ -297,9 +336,11 @@ func (a *Activities) PollMilestone(ctx context.Context, in MilestoneRef) (Milest
 		return MilestoneSnapshot{}, nil
 	}
 	return MilestoneSnapshot{
-		Work:  counts.OpenNonGateWork(),
-		Gates: counts.OpenProvision,
-		Total: counts.OpenTotal,
+		DevWork:           counts.OpenDevWork(),
+		TaskWork:          counts.OpenTaskWork(),
+		Gates:             counts.OpenProvision,
+		Total:             counts.OpenTotal,
+		ValidationRepairs: counts.OpenValidationRepairs,
 	}, nil
 }
 
@@ -519,6 +560,86 @@ func (a *Activities) MintDeployFixIssues(ctx context.Context, in MintDeployFixIs
 	return filed, sourceControlErr(err)
 }
 
+// HaltWorkInput names the milestone whose unfinished work a failed run is giving
+// up on, and why.
+type HaltWorkInput struct {
+	OrgID           string `json:"orgId"`
+	ProjectID       string `json:"projectId"`
+	MilestoneNumber int    `json:"milestoneNumber"`
+	// Kind is the RUN's kind, which selects the working set — the population this
+	// run was responsible for and no other. A dev run's halt must not reach a bug
+	// a concurrent task run is working, and a task run's must not reach the
+	// planned work it was never allowed to touch.
+	Kind string `json:"kind"`
+	// Reason is the run's terminal reason, quoted verbatim into each comment so a
+	// human reading the issue learns which budget ran out without opening the run.
+	Reason string `json:"reason"`
+}
+
+// HaltUnfinishedWork stamps `aep:halted` and a comment on every working-set issue
+// a FAILED run could not finish, and returns their numbers.
+//
+// It is what keeps a budget meaning something. A run that exhausts one settles
+// `failed` with its issues still OPEN, and the reconcile sweep's rule is "open
+// work of this kind on a milestone with no live run starts a workflow" — so
+// without this the sweep restarts, within a tick, exactly the work the run just
+// gave up on, with fresh budgets, forever. The symptom is a cloud bill rather
+// than a failing test, which is why the halt is not left to a later pass.
+//
+// The write goes through the event plane like MintDeployFixIssues, for the same
+// reason: the supervisor still writes no issue of its own, and the plane owns the
+// label vocabulary and the prose.
+//
+// Unwired is a NO-OP rather than an error — the same posture as every optional
+// collaborator — and the cost is the same restart loop described above, so it is
+// not optional in a real deployment.
+func (a *Activities) HaltUnfinishedWork(ctx context.Context, in HaltWorkInput) ([]int, error) {
+	if a.halter == nil {
+		return nil, nil
+	}
+	halted, err := a.halter.HaltUnfinishedWork(ctx, in.OrgID, in.ProjectID, in.MilestoneNumber, in.Kind, in.Reason)
+	return halted, sourceControlErr(err)
+}
+
+// CloseCancelledWorkInput names the milestone whose in-flight work a cancelled
+// run is closing.
+//
+// No reason field, unlike HaltWorkInput: a cancel has exactly one cause — a
+// person asked for it — so there is no failure class to quote onto the issues.
+type CloseCancelledWorkInput struct {
+	OrgID           string `json:"orgId"`
+	ProjectID       string `json:"projectId"`
+	MilestoneNumber int    `json:"milestoneNumber"`
+	// Kind is the RUN's kind, which selects what the cancel abandons: a dev run's
+	// whole milestone, a task run's bugs and conflicts, and nothing at all for a
+	// validation run (whose own task close is the workflow's).
+	Kind string `json:"kind"`
+}
+
+// CloseCancelledWork comments on, stamps `aep:cancelled` on, and closes every open
+// issue a cancel abandons, and returns their numbers.
+//
+// It is what makes a cancel STICK. The reconcile sweep's trigger is "open work of
+// this kind on a milestone with no live run starts a workflow", so leaving the
+// issues open would have the sweep restart, within a tick, exactly the run the
+// person just stopped — the same mechanism the halt exists to defeat, reached from
+// the other ending.
+//
+// The write goes through the event plane like HaltUnfinishedWork and
+// MintDeployFixIssues, for the same reason: the supervisor writes no issue of its
+// own, and the plane owns the label vocabulary and the prose.
+//
+// Unwired is a NO-OP rather than an error — the same posture as every optional
+// collaborator — and the cost is the restart loop above, so it is not optional in
+// a real deployment.
+func (a *Activities) CloseCancelledWork(ctx context.Context, in CloseCancelledWorkInput) ([]int, error) {
+	if a.canceller == nil {
+		return nil, nil
+	}
+	closed, err := a.canceller.CloseCancelledWork(ctx, in.OrgID, in.ProjectID, in.MilestoneNumber, in.Kind)
+	return closed, sourceControlErr(err)
+}
+
 // ---- validation ------------------------------------------------------------
 
 // EnsureValidationIssue mints the run's validation issue into the milestone and
@@ -576,6 +697,102 @@ func (a *Activities) ReadValidationVerdict(ctx context.Context, in ValidationRep
 	return ValidationOutcome{Verdict: verdict, Digest: digest}, nil
 }
 
+// ValidationHistoryInput asks what this milestone's earlier validation runs
+// concluded. RunID is the run ASKING, excluded from the digest read so an attempt
+// never compares itself against itself.
+type ValidationHistoryInput struct {
+	OrgID           string `json:"orgId"`
+	ProjectID       string `json:"projectId"`
+	MilestoneNumber int    `json:"milestoneNumber"`
+	RunID           string `json:"runId"`
+}
+
+// ValidationHistory is how many times this version has been judged and what the
+// previous judgement concluded — the two facts that SPAN validation runs.
+type ValidationHistory struct {
+	// Attempts counts the milestone's `validation` runs INCLUDING the one asking,
+	// which is why the asking run compares `>=` against its allowance: it is the
+	// attempt being spent.
+	Attempts int `json:"attempts"`
+	// Digest is the newest digest recorded by an EARLIER attempt, or "" for a
+	// first one. Two consecutive identical digests prove the repair moved nothing.
+	Digest string `json:"digest,omitempty"`
+}
+
+// ReadValidationHistory derives the version's attempt count and its previous
+// report digest from the ledger.
+//
+// Derived rather than carried, because there is nothing to carry them IN: each
+// attempt is its own run and its own workflow execution, so the previous
+// attempt's state is gone by the time this one starts, and a value threaded
+// through the run row would have to be written by a run that is ending and read
+// by one that does not exist yet. The rows already say both things.
+//
+// An unwired store answers a first attempt with no history — the same reading a
+// genuinely first attempt gets, which is the safe direction: it spends an attempt
+// and files repair work, where a wrongly-large count would refuse to repair
+// anything.
+func (a *Activities) ReadValidationHistory(ctx context.Context, in ValidationHistoryInput) (ValidationHistory, error) {
+	if a.runs == nil || a.cycles == nil {
+		return ValidationHistory{Attempts: 1}, nil
+	}
+	rows, err := a.runs.ListByMilestone(ctx, in.OrgID, in.ProjectID, in.MilestoneNumber)
+	if err != nil {
+		return ValidationHistory{}, err
+	}
+	out := ValidationHistory{}
+	priors := make([]string, 0, len(rows))
+	for i := range rows {
+		if rows[i].Kind != delivery.RunKindValidation {
+			continue
+		}
+		out.Attempts++
+		if rows[i].ID != in.RunID {
+			priors = append(priors, rows[i].ID)
+		}
+	}
+	if out.Attempts == 0 {
+		// The asking run's own row was not in the list — it can only have been
+		// deleted underneath a live workflow. Count this attempt anyway: the
+		// alternative is an allowance that never depletes.
+		out.Attempts = 1
+	}
+	digest, err := a.cycles.LatestValidationDigest(ctx, in.OrgID, priors)
+	if err != nil {
+		return ValidationHistory{}, err
+	}
+	out.Digest = digest
+	return out, nil
+}
+
+// CloseValidationIssueInput closes the version's validation task. Verdict is
+// carried only for the comment the close leaves behind.
+type CloseValidationIssueInput struct {
+	OrgID     string `json:"orgId"`
+	ProjectID string `json:"projectId"`
+	Issue     int    `json:"issue"`
+	Verdict   string `json:"verdict,omitempty"`
+}
+
+// CloseValidationIssue closes the validation task the run adopted.
+//
+// The PLATFORM owns this close, which is why it is an activity at all: the
+// validation pull request references its issue with `Validates #N` — not a GitHub
+// closing keyword — so merging leaves the issue open and this is the only thing
+// that shuts it. Two owners would race on every attempt, and the loser's reopen
+// would be indistinguishable from a human's.
+//
+// An unwired coordinator is a no-op, like the other optional collaborators. Note
+// what that costs: with nothing closing the task, the reconcile sweep sees an
+// open `validation` issue and starts another validation run every pass. Wiring it
+// is not optional in any real deployment.
+func (a *Activities) CloseValidationIssue(ctx context.Context, in CloseValidationIssueInput) error {
+	if a.validation == nil || in.Issue == 0 {
+		return nil
+	}
+	return sourceControlErr(a.validation.CloseValidationIssue(ctx, in.OrgID, in.ProjectID, in.Issue, in.Verdict))
+}
+
 // MintValidationRepairIssuesInput names the attempt whose failures become work.
 type MintValidationRepairIssuesInput struct {
 	OrgID           string `json:"orgId"`
@@ -606,11 +823,10 @@ func (a *Activities) MintValidationRepairIssues(ctx context.Context, in MintVali
 
 // DispatchAgent launches the cycle's agent run and returns the Job reference.
 //
-// Two non-retryable failure classes are stamped here (Temporal must not retry
-// either): agent death — a launch that did not happen, answered by the cycle's
-// re-dispatch budget — and quota blocked — entitlement refused, not death.
-// Letting Temporal retry agent death would spend that budget invisibly; quota
-// blocked cannot be cleared by retry.
+// Three non-retryable failure classes are stamped here (Temporal must not
+// retry any): agent death — a launch that did not happen, answered by the
+// cycle's re-dispatch budget; quota blocked — entitlement refused, not death;
+// publisher credentials missing — Job create cannot stamp the SecretReference.
 func (a *Activities) DispatchAgent(ctx context.Context, in delivery.MilestoneDispatch) (string, error) {
 	if a.dispatcher == nil {
 		return "", errNotConfigured
@@ -623,6 +839,10 @@ func (a *Activities) DispatchAgent(ctx context.Context, in delivery.MilestoneDis
 		// Non-retryable because no retry can free a billing slot.
 		return "", temporal.NewNonRetryableApplicationError(
 			err.Error(), delivery.ErrTypeAgentQuotaBlocked, err)
+	}
+	if errors.Is(err, delivery.ErrPublisherCredentialsMissing) {
+		return "", temporal.NewNonRetryableApplicationError(
+			delivery.PublisherCredentialsMissingMessage, delivery.ErrTypePublisherCredentialsMissing, err)
 	}
 	return jobRef, err
 }

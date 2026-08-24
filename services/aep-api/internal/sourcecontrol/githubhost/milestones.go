@@ -30,8 +30,8 @@ package githubhost
 //     issues, so nothing here reads it. Issue counts come from GraphQL, where
 //     milestone.issues is a pure-issue connection.
 //   - Milestone state has no side effects: closing one leaves its issues
-//     untouched, and a closed milestone still accepts new ones. Close is
-//     display only.
+//     untouched, and a closed milestone still accepts new ones. Close and reopen
+//     are display only.
 
 import (
 	"bytes"
@@ -186,6 +186,20 @@ func (c *Client) CloseMilestone(ctx context.Context, owner, repo string, cred se
 		map[string]string{"state": "closed"}, nil, http.StatusOK)
 }
 
+// ReopenMilestone sets a milestone's state back to open, the same PATCH as the
+// close. Display only in the same way: a closed milestone never stopped
+// accepting issues, so this changes nothing but what a reader sees.
+//
+// It exists because a milestone OUTLIVES the run that closed it. A build of an
+// unchanged spec works the same version again — the same milestone a cancel
+// closed — and leaving it closed would show a version being actively worked
+// under a heading that says it is finished.
+func (c *Client) ReopenMilestone(ctx context.Context, owner, repo string, cred secrets.Credential, number int) error {
+	url := fmt.Sprintf(c.apiBase+"/repos/%s/%s/milestones/%d", owner, repo, number)
+	return c.doJSON(ctx, http.MethodPatch, url, "milestone reopen", cred,
+		map[string]string{"state": "open"}, nil, http.StatusOK)
+}
+
 // ListMilestones returns every milestone on the repo in the given state
 // ("open" | "closed" | "all"; empty ⇒ "all"), following pagination to the end.
 // The walk must be complete — a truncated list would let CreateMilestone's
@@ -298,24 +312,43 @@ func (c *Client) ListMilestoneIssues(ctx context.Context, owner, repo string, cr
 // populations out into a query per label would multiply the rate-limit cost of
 // the loop's hottest read.
 //
-// The labels: argument is a UNION filter — an issue matches when it carries ANY
-// of the listed labels. It cannot express an intersection, so the aliases here
-// are unions and the working set is their DIFFERENCE:
+// EVERY ALIAS FILTERS ON ONE LABEL. The labels: argument is a UNION filter — an
+// issue matches when it carries ANY of the listed labels — so a multi-label
+// alias counts a WIDER population than its name suggests, and an intersection
+// cannot be expressed here at all. With one label per alias there is no
+// inclusion-exclusion subtlety left to get wrong, and the working sets are plain
+// subtraction in Go (sourcecontrol.MilestoneIssueCounts, which owns the
+// arithmetic):
 //
-//	|"aep" ∪ exclusions| - |exclusions| = the "aep" issues carrying neither
+//	dev working set  = aep - validation
+//	task working set = aep - validation - development
 //
-// which is exact without an intersection term, and stays one round trip. Do not
-// "fix" an alias by listing several labels expecting an AND — that widens the
-// population and silently empties the working set. The label literals mirror
+// Both are exact because every workable kind carries "aep", so each subtracted
+// kind is a strict SUBSET of the aep population. Gates are the deliberate
+// exception: they carry no "aep", so they are counted on their own alias and
+// subtracted from nothing — a gate holds the next dispatch, it must never erase
+// the work behind it.
+//
+// The `src/validation` alias is not a population at all and nothing subtracts
+// it: it answers ONE question a bug-fix run asks at its boundary — did any of
+// the defects in this milestone come from a verdict — because that is what
+// decides whether draining the working set reopens the version's validation
+// task. It rides this query rather than a second call for the same reason
+// everything else here does: this is the loop's hottest read.
+//
+// Do not "fix" an alias by listing several labels expecting an AND; that widens
+// the population and silently empties a working set. The label literals mirror
 // internal/delivery's vocabulary; they are spelled here because the host adapter
 // may not import a domain.
 const milestoneIssueCountsQuery = `query($owner: String!, $repo: String!, $m: Int!) {
   repository(owner: $owner, name: $repo) {
     milestone(number: $m) {
-      provision:      issues(states: [OPEN], labels: ["aep:provision"], first: 1) { totalCount }
-      allOpen:        issues(states: [OPEN], first: 1) { totalCount }
-      workOrExcluded: issues(states: [OPEN], labels: ["aep", "aep:provision", "aep:validation"], first: 1) { totalCount }
-      excluded:       issues(states: [OPEN], labels: ["aep:provision", "aep:validation"], first: 1) { totalCount }
+      provision:     issues(states: [OPEN], labels: ["provision"], first: 1) { totalCount }
+      allOpen:       issues(states: [OPEN], first: 1) { totalCount }
+      agentWork:     issues(states: [OPEN], labels: ["aep"], first: 1) { totalCount }
+      development:   issues(states: [OPEN], labels: ["development"], first: 1) { totalCount }
+      validation:    issues(states: [OPEN], labels: ["validation"], first: 1) { totalCount }
+      srcValidation: issues(states: [OPEN], labels: ["src/validation"], first: 1) { totalCount }
     }
   }
 }`
@@ -332,10 +365,12 @@ func (c *Client) MilestoneIssueCounts(ctx context.Context, owner, repo string, c
 	var data struct {
 		Repository *struct {
 			Milestone *struct {
-				Provision      countAlias `json:"provision"`
-				AllOpen        countAlias `json:"allOpen"`
-				WorkOrExcluded countAlias `json:"workOrExcluded"`
-				Excluded       countAlias `json:"excluded"`
+				Provision     countAlias `json:"provision"`
+				AllOpen       countAlias `json:"allOpen"`
+				AgentWork     countAlias `json:"agentWork"`
+				Development   countAlias `json:"development"`
+				Validation    countAlias `json:"validation"`
+				SrcValidation countAlias `json:"srcValidation"`
 			} `json:"milestone"`
 		} `json:"repository"`
 	}
@@ -348,9 +383,11 @@ func (c *Client) MilestoneIssueCounts(ctx context.Context, owner, repo string, c
 	}
 	ms := data.Repository.Milestone
 	return &sourcecontrol.MilestoneIssueCounts{
-		OpenProvision:      ms.Provision.TotalCount,
-		OpenTotal:          ms.AllOpen.TotalCount,
-		OpenWorkOrExcluded: ms.WorkOrExcluded.TotalCount,
-		OpenExcluded:       ms.Excluded.TotalCount,
+		OpenProvision:         ms.Provision.TotalCount,
+		OpenTotal:             ms.AllOpen.TotalCount,
+		OpenAgentWork:         ms.AgentWork.TotalCount,
+		OpenDevelopment:       ms.Development.TotalCount,
+		OpenValidation:        ms.Validation.TotalCount,
+		OpenValidationRepairs: ms.SrcValidation.TotalCount,
 	}, nil
 }

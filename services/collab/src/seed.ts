@@ -31,6 +31,27 @@ import type { SpecFile } from "./bff.js";
 export { FILES_MAP, filesMap } from "@aep/collab-doc";
 
 /**
+ * Reference documents (#383) are user uploads under this folder — inputs to the
+ * spec, never collaboratively-edited spec content. They stay out of the room in
+ * BOTH directions: never seeded (a binary file seeded as text renders as
+ * garbage), and never flushed (writing one back as text destroys the file — a
+ * real PDF in git became its own base64 this way).
+ *
+ * Still needed after ADR-0017 took references out of git, for two reasons that
+ * do not overlap. The repo's specs/.gitignore covers a WORKING TREE; this
+ * committer builds writes from the ROOM, so no ignore rule reaches it. And
+ * projects created under the feature's v1 really do have these paths committed
+ * — this is what keeps a room seeded from one of them from flushing a PDF back
+ * as text.
+ */
+export const REFERENCE_DOCS_PREFIX = "specs/requirements/references/";
+
+/** True for a path inside the reference-documents folder. */
+export function isReferenceDocPath(path: string): boolean {
+  return path.startsWith(REFERENCE_DOCS_PREFIX);
+}
+
+/**
  * SEEDING IS IDEMPOTENT ACROSS PROCESSES, and that is the whole point of this
  * module rather than an incidental nicety.
  *

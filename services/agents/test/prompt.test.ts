@@ -28,6 +28,7 @@ import {
   buildSkillCatalog,
   buildEagerSkillsBlock,
   buildOrgDefaultsBlock,
+  buildNarrationBlock,
 } from "../src/agents/main/prompt.js";
 
 const SKILL_LIST: TestSkill[] = [
@@ -172,4 +173,80 @@ test("the task planner gets the org defaults too", () => {
   assert.match(out, /# Organization defaults/);
   assert.match(out, /Use Thunder\./);
   assert.ok(out.startsWith(taskPlanInstructions), "the planner's own charter still leads");
+});
+
+// --- Narration policy (#580) ------------------------------------------------
+//
+// The right vocabulary belongs to the SURFACE, not to the skill: the shared
+// flow skills are byte-identical everywhere, and the console's caller names its
+// surface so the console's narration rules ride that turn's system prompt.
+
+const CONSOLE: TestSkill = {
+  name: "console",
+  description: "How the agent speaks to someone working in the console.",
+  content: "## Never quote a repo path\n\nName the artifact instead.",
+};
+
+const WITH_CONSOLE = testSkillSource([...SKILL_LIST, CONSOLE]);
+
+test("a surface-free turn is byte-identical to one composed before surfaces existed", () => {
+  assert.equal(buildNarrationBlock(WITH_CONSOLE, undefined), "");
+  assert.equal(buildInstructions(WITH_CONSOLE), instructions + buildSkillCatalog(WITH_CONSOLE));
+  assert.equal(buildTaskPlanInstructions(WITH_CONSOLE), taskPlanInstructions + buildSkillCatalog(WITH_CONSOLE));
+});
+
+test("a console turn inlines the console skill's body as standing policy", () => {
+  const out = buildInstructions(WITH_CONSOLE, "console");
+  assert.match(out, /# Narration policy/);
+  assert.match(out, /Never quote a repo path/, "the BODY is inlined — the agent must not have to load it");
+  assert.equal(out.match(/# Narration policy/g)?.length, 1, "the heading is the composer's alone");
+});
+
+test("the narration policy is LAST, so it outranks a loaded skill's own narration", () => {
+  const skills = testSkillSource([...SKILL_LIST, ORG, CONSOLE]);
+  const out = buildInstructions(skills, "console");
+  assert.equal(out, instructions + buildSkillCatalog(skills) + buildOrgDefaultsBlock(skills) + buildNarrationBlock(skills, "console"));
+  assert.ok(out.indexOf("# Narration policy") > out.indexOf("# Organization defaults"));
+  // The base meta-rule is what yields to it; without that clause the block is
+  // just one more voice arguing with the loaded skill.
+  assert.match(instructions, /unless a standing narration policy in this prompt overrides it/);
+});
+
+test("the plan turn gets the policy too — its closing note is read on the same screen", () => {
+  assert.match(buildTaskPlanInstructions(WITH_CONSOLE, "console"), /# Narration policy/);
+});
+
+test("a narration skill is never catalogued, on any surface", () => {
+  // Its body is standing policy, not guidance for a task: a catalog line would
+  // offer a round-trip returning either text the agent holds (console turn) or
+  // rules addressed to somebody else's user (a local run).
+  assert.ok(!buildSkillCatalog(WITH_CONSOLE).includes("console"));
+  assert.equal(buildSkillCatalog(testSkillSource([CONSOLE])), "");
+});
+
+test("a surface whose skill is missing, refused or empty leaves the prompt untouched", () => {
+  assert.equal(buildNarrationBlock(SKILLS, "console"), "", "missing name");
+  assert.equal(buildNarrationBlock(undefined, "console"), "", "no skill source at all");
+  assert.equal(buildNarrationBlock(testSkillSource([{ ...CONSOLE, content: "   " }]), "console"), "", "empty body");
+  const refusing: SkillSource = {
+    catalog: () => [],
+    load: () => ({ refused: true }),
+    loadReference: () => undefined,
+  };
+  assert.equal(buildNarrationBlock(refusing, "console"), "", "an audience refusal is not a body");
+});
+
+test("the eager block carries the override, in the same message as the text it overrides", () => {
+  // `design` and `architecture` still mandate a `specs/design/` pointer, and
+  // they arrive in the USER prompt — more recent and more specific than the
+  // system-prompt policy. The override has to be stated where they are.
+  const withSurface = buildEagerSkillsBlock(SKILLS, ["a-skill"], "console");
+  assert.match(withSurface, /Narration policy in your system instructions overrides it/);
+  assert.ok(
+    withSurface.indexOf("Narration policy") > withSurface.indexOf("BODY A"),
+    "the override is the block's last word, after the guidance it outranks",
+  );
+  // A local run gets the block it always got.
+  assert.equal(buildEagerSkillsBlock(SKILLS, ["a-skill"]), buildEagerSkillsBlock(SKILLS, ["a-skill"], undefined));
+  assert.doesNotMatch(buildEagerSkillsBlock(SKILLS, ["a-skill"]), /Narration policy/);
 });

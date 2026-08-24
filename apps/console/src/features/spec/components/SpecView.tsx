@@ -49,11 +49,10 @@ import {
   useProjectTags,
 } from "../../projects/api/queries";
 import { useDesignDependencies, useSpecFileContent, useSpecFiles } from "../api/queries";
-import { toSpecEntry } from "../api/mapping";
+import { PRD_PATH, toSpecEntry } from "../api/mapping";
 import { computeDependencyUsedBy } from "../lib/dependencyUsedBy";
 import { useCollabSpec } from "../collab/useCollabSpec";
 import { SpecQuestionForm } from "./SpecQuestionForm";
-import { countBlockingOpenQuestions } from "../lib/openQuestions";
 import { nextVersionLabel, parsePrdStories } from "../lib/buildScope";
 import { useRoomQuestion } from "../../agent-chat/useRoomQuestion";
 import { CollabTextArea } from "../collab/CollabTextArea";
@@ -194,6 +193,10 @@ export function SpecView({ projectName }: { projectName: string }) {
       .filter((e): e is NonNullable<typeof e> => e !== null)
       .sort((a, b) => a.path.localeCompare(b.path));
   }, [spec.data, collab.docPaths]);
+  // Which references resolve is decided against this list. `files` is rebuilt
+  // on every render (`collab.docPaths` is derived, not memoized), so the editor
+  // compares it BY VALUE rather than by identity — see `knownPaths` there.
+  const specPaths = useMemo(() => files.map((f) => f.path), [files]);
   // A live design turn is signalled by `?generate=design` (the Generate-design
   // CTA) and, more durably, by an agent peer streaming design.cell into the
   // room. In either case the Architecture (cell-diagram) tab is where the user
@@ -250,14 +253,25 @@ export function SpecView({ projectName }: { projectName: string }) {
   // requirements file (the seeded PRD). A manual click sets `selection` and
   // always wins over this default.
   const firstRequirements = files.find((f) => f.group === "requirements");
+  // A fresh project may hold no requirements file yet; fall back to whatever
+  // the spec view does list. Named for what it IS — any listed entry, which may
+  // be a structured path (`openapi.yaml`, a component `design.json`,
+  // `validation-criteria.json`) that renders as a read-only structured view
+  // rather than in the editor. That is the right fallback: showing the one
+  // artifact a bare project has beats showing an empty pane, and every path
+  // reaching here has a renderer.
+  //
+  // What must never reach it is a REFERENCE — `toSpecEntry` drops those, which
+  // is what keeps a v1 project's committed PDF out of the editor pane.
+  const firstListed = files[0];
   const effectiveSelection: SpecSelection =
     selection ??
     (agentInRoom && hasDesignCell
       ? { kind: "cell-diagram" }
       : firstRequirements
         ? { kind: "file", path: firstRequirements.path }
-        : files[0]
-          ? { kind: "file", path: files[0].path }
+        : firstListed
+          ? { kind: "file", path: firstListed.path }
           : { kind: "file", path: "" });
 
   // The concrete file entry when the selection is a file (else null: the
@@ -441,16 +455,14 @@ export function SpecView({ projectName }: { projectName: string }) {
   const failed = specStatus === "failed";
   // The design gate: Build arms once design files are generated (#80).
   const hasDesignFiles = files.some((f) => f.group === "designs");
-  // The PRD's Open Questions gate (#365/#372): undeferred questions block
-  // Generate design, and the header says why instead of a mystery-grey button.
-  const prdEntry = files.find((f) => f.path === "specs/requirements/prd.md") ?? null;
+  // The committed PRD, read for the Build drawer's story preview. It used to
+  // also feed an Open Questions gate on Generate design (#365/#372); open
+  // questions gate nothing now (#539), and the launchers that answered them
+  // live on the document itself (#579).
+  const prdEntry = files.find((f) => f.path === PRD_PATH) ?? null;
   const prdContent = useSpecFileContent(
     projectName,
     prdEntry ? { path: prdEntry.path, sha: prdEntry.sha } : null,
-  );
-  const openQuestions = useMemo(
-    () => (prdContent.data ? countBlockingOpenQuestions(prdContent.data.content) : 0),
-    [prdContent.data],
   );
   const cutPreview = useMemo(() => {
     const stories = prdContent.data ? parsePrdStories(prdContent.data.content) : [];
@@ -475,6 +487,22 @@ export function SpecView({ projectName }: { projectName: string }) {
   // renders them with kind:"agent"). Building a half-written design is wrong,
   // so Build is disabled — with a tooltip — while one is working (#162).
   const agentBusy = collab.peers.some((p) => p.kind === "agent");
+  // A standing question form owns the turn: the agent's turn ended ON the
+  // question, so `agentBusy` is false while the work is very much unfinished.
+  // Since the interview is uncapped (#578) the PRD now exists from the first
+  // round on, which is what makes the header's requirements-gated launchers
+  // reachable mid-interview — and firing one supersedes the live questions,
+  // handing the agent's own assumptions back as the user's answers.
+  const awaitingAnswers = Boolean(roomQuestion && roomDoc);
+  // A lens fired while the agent already holds the turn would be refused by the
+  // composer anyway, and firing one mid-interview supersedes the live question
+  // form for the whole room — so the lenses go inert for the same two reasons
+  // the header's launchers do, and say which one.
+  const lensBusyReason = agentBusy
+    ? "An agent is still working — this is available once it finishes"
+    : awaitingAnswers
+      ? "The agent is waiting on your answers — finish the questions below first"
+      : "";
 
   // Build (#162, #164): commit the room's live edits FIRST (POST /build tags
   // HEAD), then check preflight — a project with unresolved dependencies
@@ -722,30 +750,43 @@ export function SpecView({ projectName }: { projectName: string }) {
             </>
           ) : (
             <>
-            {/* Hand-picked flow launchers (#372): only the two that matter at
-                this gate ride the header; the full set lives in the chat's
-                Actions menu. Both seed the scoped /amend flow. */}
-            {hasRequirementsFiles && (
-              <Button size="small" variant="outlined" onClick={() => seedChat("/amend Add a feature")}>
-                + Feature
-              </Button>
-            )}
-            {openQuestions > 0 && (
-              <Button
-                size="small"
-                variant="outlined"
-                color="warning"
-                onClick={() => seedChat("/amend Resolve the open questions")}
+            {/* The one launcher that is not on the document (#579): every
+                other command is offered by the PRD section it changes, but
+                "add a feature" has to be reachable while another artifact is
+                open, so it keeps its place beside the primary CTA.
+
+                Gated on `agentBusy` like its neighbour: `seedChat` writes into
+                the pending-seed slot, and `AgentChatPanel` sends a seed the
+                moment the conversation is ready WITHOUT the composer's
+                `inputDisabled` guard — so an ungated click delivers `/feature`
+                mid-turn, which the composer itself would have refused. */}
+            {hasRequirementsFiles && !awaitingAnswers && (
+              <Tooltip
+                title={
+                  agentBusy
+                    ? "An agent is still working — add a feature once it finishes"
+                    : "Describe a feature to add to the requirements"
+                }
               >
-                Resolve open questions ({openQuestions})
-              </Button>
+                {/* span so the tooltip works while the button is disabled */}
+                <span>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    disabled={agentBusy}
+                    onClick={() => seedChat("/feature")}
+                  >
+                    + Feature
+                  </Button>
+                </span>
+              </Tooltip>
             )}
             <Tooltip
               title={
                 agentBusy
                   ? "An agent is still working — Generate design is available once it finishes"
-                  : openQuestions > 0
-                    ? `${openQuestions} open question${openQuestions === 1 ? "" : "s"} block design — answer or defer them first`
+                  : awaitingAnswers
+                    ? "The agent is waiting on your answers — finish the questions below first"
                     : hasRequirementsFiles
                       ? "Derive the component design from your requirements"
                       : "Generate requirements first"
@@ -756,7 +797,7 @@ export function SpecView({ projectName }: { projectName: string }) {
                 <Button
                   variant="contained"
                   startIcon={<Sparkles size={18} />}
-                  disabled={!hasRequirementsFiles || agentBusy || openQuestions > 0}
+                  disabled={!hasRequirementsFiles || agentBusy || awaitingAnswers}
                   onClick={generateDesign}
                 >
                   Generate design
@@ -886,8 +927,8 @@ export function SpecView({ projectName }: { projectName: string }) {
           </Box>
         ) : roomQuestion && roomDoc ? (
           /* Collab question form (spike): a LIST of agent questions takes over
-             the body — every room participant sees it and co-authors; only the
-             user who asked can submit. */
+             the body — every room participant sees it and co-authors, and any
+             of them submits (#430 D5). */
           <SpecQuestionForm
             doc={roomDoc}
             entry={roomQuestion}
@@ -1027,6 +1068,16 @@ export function SpecView({ projectName }: { projectName: string }) {
                     provider={collab.provider}
                     self={collab.self}
                     agentStreaming={agentBusy}
+                    lenses={
+                      selectedFile.path === PRD_PATH
+                        ? { run: seedChat, busyReason: lensBusyReason }
+                        : undefined
+                    }
+                    links={{
+                      path: selectedFile.path,
+                      knownPaths: specPaths,
+                      open: (path) => setSelection({ kind: "file", path }),
+                    }}
                   />
                 ) : ytext ? (
                   <CollabTextArea

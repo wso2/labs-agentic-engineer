@@ -161,7 +161,7 @@ function renderBody(doc, issueNumber) {
     "- Post a summary comment on this issue when done.",
     "",
     "---",
-    `When you open the PR, include \`Closes #${issueNumber}\` in its body so the platform links the PR back to this task. One PR; tests and report only.`
+    `When you open the PR, include \`Validates #${issueNumber}\` in its body so the platform links the PR back to this task. \`Validates\` is deliberately NOT one of GitHub's closing keywords: the platform owns this task's close. One PR; tests and report only.`
   );
 
   return lines.join("\n");

@@ -25,6 +25,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo/mocks"
@@ -765,6 +766,120 @@ func TestMCP_GetRemoteGitFileContents_Directory(t *testing.T) {
 	}
 	if !payload.IsDirectory || len(payload.Entries) != 1 || payload.Entries[0].Path != "specs/openapi.yaml" {
 		t.Errorf("unexpected directory payload: %+v", payload)
+	}
+}
+
+// Binary content never rides a tool result as text. A real turn died on this:
+// the model fetched an 868KB PDF through this tool, the raw bytes became ~1.5M
+// junk tokens per model step, and the NUL bytes the read carried then killed the
+// conversation's jsonb persist (Postgres rejects U+0000 anywhere in a jsonb
+// document). The tool answers with the file's facts and a refusal instead — the
+// model can still reason about the file existing.
+func TestMCP_GetRemoteGitFileContents_BinaryIsRefusedAsFacts(t *testing.T) {
+	pdf := "%PDF-1.4\n\x00\x00binary\xff\xfe"
+	rg := &fakeRemoteGit{file: &RemoteGitFile{Content: pdf, SHA: "abc"}}
+	h := NewMCPHandler(newExternalCatalogFixture(nil), nil, nil, rg, nil, nil, nil)
+	resp := decodeRPC(t, postRPC(t, h, "org-1",
+		callBody("get_remote_git_file_contents", `{"owner":"acme","repo":"billing-svc","path":"specs/requirements/references/form.pdf"}`)))
+	text := toolText(t, resp, false)
+
+	var payload remoteGitFileView
+	if err := json.Unmarshal([]byte(text), &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if payload.Content != "" {
+		t.Fatalf("binary content leaked into the tool result (%d bytes) — must be empty", len(payload.Content))
+	}
+	if payload.SHA != "abc" {
+		t.Errorf("sha = %q, want abc (the facts still ride)", payload.SHA)
+	}
+	if payload.Note == "" || !strings.Contains(payload.Note, "binary") {
+		t.Errorf("note = %q, want an explanation naming the file as binary", payload.Note)
+	}
+}
+
+// A NUL byte alone is enough to withhold the content, and it is the byte that
+// actually killed the persist. U+0000 IS valid UTF-8, so the UTF-8 half of the
+// check cannot catch this one — the fixture is otherwise perfectly ordinary
+// text, and the refusal must still fire.
+func TestMCP_GetRemoteGitFileContents_ValidUTF8WithNULIsRefused(t *testing.T) {
+	withNUL := "openapi: 3.0.3" + string(rune(0)) + "\ninfo:\n  title: still valid utf-8\n"
+	if !utf8.ValidString(withNUL) {
+		t.Fatal("fixture is not valid UTF-8 — it would exercise the wrong branch")
+	}
+	rg := &fakeRemoteGit{file: &RemoteGitFile{Content: withNUL, SHA: "def"}}
+	h := NewMCPHandler(newExternalCatalogFixture(nil), nil, nil, rg, nil, nil, nil)
+	resp := decodeRPC(t, postRPC(t, h, "org-1",
+		callBody("get_remote_git_file_contents", `{"owner":"acme","repo":"billing-svc","path":"specs/openapi.yaml"}`)))
+	text := toolText(t, resp, false)
+
+	var payload remoteGitFileView
+	if err := json.Unmarshal([]byte(text), &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if payload.Content != "" {
+		t.Fatalf("NUL-bearing content leaked into the tool result (%q) — must be empty", payload.Content)
+	}
+	if payload.SHA != "def" {
+		t.Errorf("sha = %q, want def (the facts still ride)", payload.SHA)
+	}
+	if payload.Note == "" || !strings.Contains(payload.Note, "binary") {
+		t.Errorf("note = %q, want an explanation naming the file as binary", payload.Note)
+	}
+}
+
+// Oversized text is truncated with a note, not returned whole: a tool result
+// is prompt input, and an unbounded file becomes an unbounded prompt.
+func TestMCP_GetRemoteGitFileContents_OversizedTextIsTruncated(t *testing.T) {
+	huge := strings.Repeat("line of an enormous but honest yaml file\n", 10000) // ~420KB
+	rg := &fakeRemoteGit{file: &RemoteGitFile{Content: huge, SHA: "abc"}}
+	h := NewMCPHandler(newExternalCatalogFixture(nil), nil, nil, rg, nil, nil, nil)
+	resp := decodeRPC(t, postRPC(t, h, "org-1",
+		callBody("get_remote_git_file_contents", `{"owner":"acme","repo":"billing-svc","path":"specs/openapi.yaml"}`)))
+	text := toolText(t, resp, false)
+
+	var payload remoteGitFileView
+	if err := json.Unmarshal([]byte(text), &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if len(payload.Content) >= len(huge) {
+		t.Fatalf("content not truncated: %d bytes returned", len(payload.Content))
+	}
+	if len(payload.Content) == 0 {
+		t.Fatal("truncation must keep a leading slice, not drop the file")
+	}
+	if payload.Note == "" || !strings.Contains(payload.Note, "truncated") {
+		t.Errorf("note = %q, want a truncation notice", payload.Note)
+	}
+}
+
+// The truncation walks back to a rune boundary, and an ASCII fixture cannot
+// prove that: every byte is a rune start, so the walk-back loop never runs.
+// This one puts a 3-byte rune straddling the cut, so a naive slice at
+// maxToolFileBytes would hand the model a half-rune — invalid UTF-8 riding a
+// prompt, and a jsonb persist that Postgres may well refuse.
+func TestMCP_GetRemoteGitFileContents_TruncationNeverSplitsARune(t *testing.T) {
+	// Land one byte short of the cap, then straddle it with "…" (E2 80 A6).
+	huge := strings.Repeat("a", maxToolFileBytes-1) + "…" + strings.Repeat("b", 1024)
+	rg := &fakeRemoteGit{file: &RemoteGitFile{Content: huge, SHA: "abc"}}
+	h := NewMCPHandler(newExternalCatalogFixture(nil), nil, nil, rg, nil, nil, nil)
+	resp := decodeRPC(t, postRPC(t, h, "org-1",
+		callBody("get_remote_git_file_contents", `{"owner":"acme","repo":"billing-svc","path":"specs/openapi.yaml"}`)))
+	text := toolText(t, resp, false)
+
+	var payload remoteGitFileView
+	if err := json.Unmarshal([]byte(text), &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if !utf8.ValidString(payload.Content) {
+		t.Error("truncated content is not valid UTF-8 — a rune was split at the cut")
+	}
+	if len(payload.Content) > maxToolFileBytes {
+		t.Errorf("content is %d bytes, over the %d cap", len(payload.Content), maxToolFileBytes)
+	}
+	// The straddling rune is dropped whole rather than half-kept.
+	if strings.HasSuffix(payload.Content, "\ufffd") {
+		t.Error("truncation kept a replacement char — the rune was split, not dropped")
 	}
 }
 

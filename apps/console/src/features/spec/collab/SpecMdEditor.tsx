@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { alpha, Box, Button, Paper, Stack, Typography } from "@wso2/oxygen-ui";
 import { Check, Sparkles, X } from "@wso2/oxygen-ui-icons-react";
 import { EditorContent, useEditor } from "@tiptap/react";
@@ -39,6 +39,8 @@ import {
   rejectRange,
 } from "./agentReview";
 import { SpecMdToolbar } from "./SpecMdToolbar";
+import { PrdLenses, refreshPrdLenses, type PrdLensBinding } from "./prdLensPlugin";
+import { SpecLinks, refreshSpecLinks, type SpecLinkBinding } from "./specLinkPlugin";
 
 // Collaborative WYSIWYG editor for markdown spec files (#86 phase 6).
 // The shared source of truth is the file's Y.XmlFragment (seeded server-side
@@ -52,6 +54,8 @@ export function SpecMdEditor({
   provider,
   self,
   agentStreaming,
+  lenses,
+  links,
 }: {
   fragment: Y.XmlFragment;
   provider: HocuspocusProvider;
@@ -59,7 +63,20 @@ export function SpecMdEditor({
   // True while an agent peer is writing into the room. Drives tail-following:
   // the document area follows the streamed text only while this is set.
   agentStreaming: boolean;
+  /** The PRD's code lenses (#579) — passed for that file only, absent elsewhere. */
+  lenses?: PrdLensBinding | undefined;
+  /** Cross-references to sibling spec documents; every markdown file carries them. */
+  links?: SpecLinkBinding | undefined;
 }) {
+  // The extension list is built once per (fragment, provider) — a file swap
+  // remounts this component under a new key — so the plugin reaches the CURRENT
+  // binding through a ref rather than the closure it was configured with.
+  const lensRef = useRef(lenses);
+  const linkRef = useRef(links);
+  useEffect(() => {
+    lensRef.current = lenses;
+    linkRef.current = links;
+  });
   const editor = useEditor(
     {
       extensions: [
@@ -71,10 +88,38 @@ export function SpecMdEditor({
         AgentInsertion,
         Collaboration.configure({ fragment }),
         CollaborationCaret.configure({ provider, user: self }),
+        SpecLinks.configure({ binding: () => linkRef.current }),
+        ...(lenses
+          ? [
+              PrdLenses.configure({
+                run: (command: string) => lensRef.current?.run(command),
+                isBusy: () => Boolean(lensRef.current?.busyReason),
+                busyReason: () => lensRef.current?.busyReason ?? "",
+              }),
+            ]
+          : []),
       ],
     },
     [fragment, provider],
   );
+
+  // Whether a lens is clickable is console state, not document state, so a
+  // change to it has to ask ProseMirror to re-render the widgets. The ref
+  // effect above is declared first, so it has already landed by the time this
+  // rebuild reads the binding.
+  const busyReason = lenses?.busyReason ?? "";
+  useEffect(() => {
+    if (editor && lensRef.current) refreshPrdLenses(editor.view);
+  }, [editor, busyReason]);
+
+  // Same for the project's file list: which references resolve is console
+  // state, and a feature doc the agent just wrote makes one more of them live.
+  // Compared by value — the caller rebuilds the array on every render, and a
+  // rebuild per keystroke would be a decoration sweep for nothing.
+  const knownPaths = (links?.knownPaths ?? []).join("\n");
+  useEffect(() => {
+    if (editor && linkRef.current) refreshSpecLinks(editor.view);
+  }, [editor, knownPaths]);
 
   // Pending-review count, refreshed on every document change.
   const [pending, setPending] = useState(0);
@@ -226,6 +271,70 @@ export function SpecMdEditor({
             borderColor: "divider",
             px: 1,
             py: 0.5,
+          },
+          // The PRD's code lenses (#579). A SECTION lens is always on show —
+          // it is how the command is discovered at all — while a LINE lens
+          // appears on its entry's hover (or focus, for the keyboard), so a
+          // twenty-story list carries three visible controls rather than
+          // twenty-three.
+          "& .prd-lens": {
+            all: "unset",
+            cursor: "pointer",
+            userSelect: "none",
+            whiteSpace: "nowrap",
+            verticalAlign: "baseline",
+            display: "inline-block",
+            ml: 1,
+            px: 0.75,
+            py: 0.125,
+            // Same size as the remote-caret label below: the smallest thing
+            // this editor already asks anyone to read.
+            fontSize: "0.7rem",
+            lineHeight: 1.6,
+            fontStyle: "normal",
+            fontWeight: 500,
+            borderRadius: "999px",
+            border: "1px solid",
+            borderColor: "divider",
+            color: "text.secondary",
+            transition: "opacity 120ms, color 120ms, border-color 120ms",
+          },
+          "& .prd-lens:hover:not(:disabled)": {
+            color: "primary.main",
+            borderColor: "primary.main",
+            bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08),
+          },
+          "& .prd-lens:disabled": { cursor: "default", opacity: 0.4 },
+          "& .prd-lens--line": { opacity: 0 },
+          "& .tiptap li:hover .prd-lens--line, & .tiptap p:hover .prd-lens--line, & .prd-lens--line:focus-visible":
+            { opacity: 1 },
+          // A reference to a sibling spec document reads as a link and acts
+          // like one; an ordinary external link keeps the editor's default.
+          "& .spec-link": {
+            cursor: "pointer",
+            color: "primary.main",
+            textDecoration: "underline",
+            textUnderlineOffset: "2px",
+          },
+          // The two kinds of unsettled read differently because they ARE
+          // different: an assumption is one word of an otherwise-settled
+          // decision, an open question is a whole entry nobody has answered.
+          // A deferred one keeps its entry but drops to a resting grey.
+          "& .prd-flag--assumed": {
+            borderRadius: "2px",
+            px: 0.25,
+            bgcolor: (theme) => alpha(theme.palette.warning.main, 0.16),
+            borderBottom: "1px dashed",
+            borderBottomColor: "warning.main",
+          },
+          "& .tiptap .prd-flag--question, & .tiptap .prd-flag--deferred": {
+            pl: 1,
+            borderLeft: "3px solid",
+          },
+          "& .tiptap .prd-flag--question": { borderLeftColor: "info.main" },
+          "& .tiptap .prd-flag--deferred": {
+            borderLeftColor: "divider",
+            color: "text.secondary",
           },
           // Unreviewed agent insertions (#86 ph6) — soft primary wash until
           // accepted (mark removed) or rejected (range deleted).

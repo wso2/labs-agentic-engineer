@@ -3,15 +3,15 @@
 > **What this is:** the stable product picture of the console — who it's for,
 > how it's organized, and what it does. Purpose, loop, personas, IA, and
 > non-goals describe the **target product** (baseline set 2026-07-02, before
-> any feature shipped); the **feature inventory** is what's actually shipped,
-> and **In flight** lists features currently being built.
+> any feature shipped); the **feature inventory** is what's actually shipped.
 >
-> **Update rules:** a feature entering build adds one line to *In flight*
-> (flow step 6); shipping a feature moves that line into the feature
-> inventory and amends any affected sections (flow step 8) — both are
-> required steps, not courtesies. Keep entries to one line/paragraph + a
-> link; detail lives in the feature's GitHub issue (see
-> `design/development-flow.md`, ADR-0001).
+> **Update rules:** the feature's own PR adds its inventory entry and amends
+> any section the feature changes — part of the PR, not a follow-up, since
+> merging the PR is what ships it (flow step 6). Keep entries to one
+> line/paragraph + a link; detail lives in the feature's GitHub issue (see
+> `design/development-flow.md`, ADR-0001). Work **in progress** isn't
+> tracked here — the open issues are: `gh issue list --repo
+> wso2/labs-agentic-engineer --label console --label feature`.
 
 ## Purpose
 
@@ -67,22 +67,51 @@ Approved at section level; per-section detail is defined feature-by-feature.
 - **Project view** — inside a project the sidebar nav swaps to its sections
   (ADR-0010; no back-item, home is the header brand / project switcher):
   - **Overview** — component map + status, deployment state, recent activity.
-  - **Specs & Design** — the requirement, derived design + validation files;
-    the blocking design review lives here.
+  - **Spec** — the requirement, derived design + acceptance criteria.
   - **Builds** — per-version build history: the selected build's summary +
     its tag-scoped coding-agent task list (Version autocomplete for older
     tags), per-task console log; PRs and issues link out to GitHub.
   - **Deployments** — dev environment state and URLs.
+  - **Validations** — the runs checking a build against the spec's acceptance
+    criteria.
   - **Issues** — issues the SRE agent raises against the running project
     (placeholder until its feature lands).
 - **Admin** — agent customization (instructions, skills). Architect/SRE only.
 
-## In flight
+## Feature inventory
 
-Features currently being built. One line each; **must be emptied on ship**
-(the line moves to the inventory below). If a line sits here for weeks,
-that's a stalled feature — investigate, don't ignore.
+One entry per **shipped** feature — a feature is shipped when its PR merges,
+which is also what closes its issue. Newest first; links go to the feature's
+GitHub issue plus any ADRs it produced. Features still being built aren't
+here: they're the open `console` + `feature` issues.
 
+- Spec view — the PRD is the interface: each PRD section carries a **code
+  lens** firing the command that belongs there — `/actor` on Actors,
+  `/feature` on the story list, `/expand` on each story, `/settle` over Open
+  Questions — and every flagged line (an `*assumed*` decision, an open
+  question) carries its own `/settle`, so the subject comes from what the user
+  clicked instead of their memory. Section lenses show at rest, line lenses on
+  hover, and all of them go inert while an agent holds the turn. Retires the
+  composer's `Actions ▾` menu of raw slash commands. **Open questions no longer
+  block Generate design** on either side — the console disable and the two
+  skill clauses both go — since a recorded gap is information, not corruption
+  (the reasoning that already settled dependencies in
+  [#526](https://github.com/wso2/labs-agentic-engineer/issues/526)); `deferred`
+  survives as the user's *"stop asking"*. A command names the user's intent and
+  resolves to a skill server-side, so `amend` stops being what a user reads and
+  `/settle` arrives as its own skill, because revision propagates. No contract
+  change —
+  [#579](https://github.com/wso2/labs-agentic-engineer/issues/579)
+- Create flow — says what's about to happen: the subtitle answers only *how
+  much detail?* (*"Describe it in your own words — rough is fine."*), the
+  repository field states that Agentic Engineer **creates** it in the user's
+  organization, a taken repository name resolves to a field-level error naming
+  the org rather than a raw alert, the wait reads **Creating your project…**,
+  and the examples carry the enterprise persona (expense approval, employee
+  onboarding, a support triage agent). Retires **AEP** from user-facing copy in
+  favour of **Agentic Engineer**. First feature to draw on the console lexicon
+  (ADR-0019) —
+  [#561](https://github.com/wso2/labs-agentic-engineer/issues/561)
 - Deployments page — one-story rail + environment panel: Development /
   Validation / Production as one numbered rail (Builds-spine vocabulary,
   ADR-0014) with a side panel (version, rollout, endpoints, production
@@ -99,6 +128,52 @@ that's a stalled feature — investigate, don't ignore.
   route. `@aep/excalidraw-dsl`'s `tryDslToPrototype` compiles per-screen
   scenes client-side (no BE handshake, no contract change; ADR-0008) —
   [#348](https://github.com/wso2/labs-agentic-engineer/issues/348)
+- Spec view — readable wireframe canvas: screens compile into a single column
+  instead of a two-across grid, and the canvas opens focused on the first
+  screen at a legible size with the top of the second peeking below; while an
+  agent edits, the viewport pans to the screen being changed instead of
+  refitting the whole board, and stays put when nothing identifiable changed.
+  `@aep/excalidraw-dsl` stamps each element with its screen so the viewer can
+  group per screen; no contract change —
+  [#552](https://github.com/wso2/labs-agentic-engineer/issues/552)
+- Project create — reference document upload on the "What do you want to
+  build?" view. Two groups, both readable by the models: `.pdf`/`.png`/`.jpg`/
+  `.jpeg`/`.gif`/`.webp` read natively as file parts, and `.md`/`.txt`/`.csv`/
+  `.tsv`/`.json`/`.yaml`/`.yml`/`.xml`/`.html`/`.rst` read as text (≤10 files,
+  ≤5 MB each) — attached in a chat-style composer and uploaded post-create over
+  multipart to `POST /projects/{name}/references`. References are **transient
+  turn inputs, never committed** (ADR-0017): bytes live on the shared
+  `/workspaces` volume for the project's life and are overlaid into each turn's
+  snapshot at `specs/requirements/references/`, surfaced to the `/start` kickoff
+  through the idea-steer channel. No console surface after create —
+  [#383](https://github.com/wso2/labs-agentic-engineer/issues/383)
+  (BE handshake: [#384](https://github.com/wso2/labs-agentic-engineer/issues/384))
+- Agent chat — attach files to a message: the composer takes a paperclip and a
+  drop target, the same cards and accepted set as the create view, and chips on
+  the sent message that survive a reload. Attachments are **conversation-scoped
+  model content** (ADR-0019): attachment BYTES are never written to disk and
+  never committed, and the file names are retained as message metadata so the
+  chips survive a reload — the bytes ride one multipart `POST
+  /projects/{p}/agents/{conversationId}/messages` into the turn and are durable
+  only as parts of the conversation's history, which is what makes re-sending
+  one free (the agents service dedupes by file name). The agent reads them
+  natively — a PDF as a document, an image as an image, every text format as
+  text — and the turn prompt NAMES them, so "add this as a separate form"
+  resolves to the file the user just attached rather than drawing a clarifying
+  question. Caps all restate the
+  model's own 20 MiB encoded per-turn budget: ≤10 files, ≤5 MB each, ≤15 MB raw
+  in total. Any turn started from the composer carries them — chat, flow and
+  `/start` alike — and the create view stays the only door to the project
+  reference store —
+  [#428](https://github.com/wso2/labs-agentic-engineer/issues/428)
+- Spec view — prototype user flows: `wireframes.dsl` declares named
+  `flow "<name>"` blocks (optional `role`/`description` lines) listing each
+  persona's screens in walkthrough order; the prototype toolbar leads with a
+  **User flow** picker that scopes the screen picker to the chosen flow, the
+  canvas marks each screen's membership (`Approval queue · Screen 2`,
+  `Common · Screen 1`), and `?flow=<Name>` joins `?screen=` on the full-screen
+  route. Same client-side derivation, no contract change —
+  [#491](https://github.com/wso2/labs-agentic-engineer/issues/491)
 - Agent chat — structured question cards: `ask_question` (single) +
   `ask_questions` (batch form) tool-calls rendered as native Oxygen UI cards
   in the activity stream (answer returns as the next turn's plain text);
@@ -224,10 +299,10 @@ that's a stalled feature — investigate, don't ignore.
   [#107](https://github.com/wso2/labs-agentic-engineer/issues/107) (BE
   handshake: [#108](https://github.com/wso2/labs-agentic-engineer/issues/108))
 
-## Feature inventory
+### Earlier features, with ship dates
 
-One row per **shipped** feature. Newest first. Links go to the feature's
-GitHub issue plus any ADRs it produced.
+Recorded in table form before the inventory settled on the entry format
+above. Same meaning: one row per shipped feature.
 
 | Feature | Shipped | Summary | Links |
 |---|---|---|---|

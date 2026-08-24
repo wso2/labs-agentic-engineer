@@ -16,20 +16,23 @@
 
 // Command thunder-app-operator reconciles ThunderApplication custom resources
 // into OAuth clients on the platform Thunder IdP. It runs a single-replica
-// controller-runtime manager (leader election off) that watches all
-// namespaces, drives each CR toward its Thunder application via the operator's
-// system OAuth2 client, and publishes the assigned client_id back as a
-// ConfigMap.
+// controller-runtime manager (leader election off) watching ThunderApplications
+// in ALL namespaces, drives each CR toward its Thunder application via the
+// operator's system OAuth2 client, and publishes the assigned client_id back as
+// a ConfigMap.
 package main
 
 import (
 	"os"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -75,6 +78,17 @@ func main() {
 		os.Exit(1)
 	}
 
+	// POD_NAMESPACE scopes the SECRET informer only (see the cache options
+	// below). Every other informer stays cluster-wide, because the CRs this
+	// operator exists to reconcile are rendered by OpenChoreo into the consuming
+	// project's data-plane namespace (dp-<org>-<project>-<env>), never into the
+	// operator's own release namespace.
+	podNamespace := os.Getenv("POD_NAMESPACE")
+	if podNamespace == "" {
+		setupLog.Error(nil, "POD_NAMESPACE is not set — inject it via the downward API")
+		os.Exit(1)
+	}
+
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme: scheme,
 		// Single replica by design — leader election off keeps the pod from
@@ -84,6 +98,27 @@ func main() {
 		// exposing a port would only add surface. Re-enable per real cluster.
 		Metrics:                metricsserver.Options{BindAddress: "0"},
 		HealthProbeBindAddress: ":8081",
+		// Only the Secret informer is namespace-restricted. The operator reads
+		// Thunder admin credentials from its own namespace and the SA holds just
+		// a namespace-scoped Role on Secrets, so a cluster-wide Secret
+		// list/watch would be forbidden and the cache sync would time out.
+		// ThunderApplication and ConfigMap deliberately stay cluster-wide —
+		// restricting them (via DefaultNamespaces) silently starves the
+		// workqueue, since the CRs live in dp-* namespaces.
+		//
+		// LIMIT: a CR with spec.secretRef (clientType=confidential) outside this
+		// namespace cannot have its secret read. No such CR exists today — the
+		// thunder-app ResourceType renders only public PKCE clients, and the
+		// confidential platform clients are provisioned by aectl, not here.
+		// Supporting one would need a cluster-wide Secret grant, which the
+		// namespace-scoped Role deliberately withholds.
+		Cache: cache.Options{
+			ByObject: map[client.Object]cache.ByObject{
+				&corev1.Secret{}: {
+					Namespaces: map[string]cache.Config{podNamespace: {}},
+				},
+			},
+		},
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")

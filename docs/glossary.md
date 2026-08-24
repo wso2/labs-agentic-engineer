@@ -181,9 +181,10 @@ Pre-provisioned Thunder OAuth2 M2M client (client_credentials grant) in
 cloud's platform-idp, secret in Vault as
 `aep-bff-to-remote-worker-client-secret`. **Provisioned for the
 now-removed long-lived `remote-worker` service component**; not used by the OC
-job-Component dispatch that replaced it — a cycle pod authenticates to aep-api
-with a per-cycle bearer subject, and app-factory calls no proxy. Kept in the
-deployment configs as historical bookkeeping; consider for cleanup later.
+job-Component dispatch that replaced it. A cycle pod authenticates to aep-api
+with the org's publisher `client_credentials` token (MCP and internal
+callbacks); app-factory calls no proxy. Kept in the deployment configs as
+historical bookkeeping; consider for cleanup later.
 
 ---
 
@@ -224,13 +225,21 @@ service auth (e.g. `AEP_BFF_TO_PLATFORM_API`,
 `aep-bff-to-remote-worker-client-secret`). Stored as a SecretReference
 sourced from Vault on cloud; a literal env var locally.
 
+### `Publisher client`
+The organization's Thunder confidential OAuth app (`aep-publisher-{org}`).
+The coding-agent Job authenticates to aep-api as this client
+(`client_credentials`) for platform callbacks and MCP — local and cloud.
+Distinct from other M2M clients and from the design
+agent's BFF MCP token.
+
 ### `Task JWT`
-The short-lived RS256 bearer the BFF mints once per cycle at dispatch, with
-the cycle id as subject. Injected as `AEP_BEARER` on the ephemeral
-`coding-agent` job Component; the runner pod presents it back to aep-api for
-platform callbacks (credential refresh, MCP). Verifiers fetch the BFF's public
-key from `/auth/external/jwks.json`. Distinct from Thunder user/M2M tokens and
-from the retired `AEP_BFF_TO_REMOTE_WORKER` client.
+Retired as the coding-agent Job's callback credential (that is the
+publisher client). The BFF still mints short-lived RS256 identity JWTs
+(`IssueServiceToken` / `IssueMCPToken`) for design-agent MCP and outbound
+S2S; they carry org in `ocOrgId` and do not use the cycle id as subject.
+Verifiers fetch the BFF's public key from `/auth/external/jwks.json`.
+Distinct from Thunder user/M2M tokens and from the retired
+`AEP_BFF_TO_REMOTE_WORKER` client.
 
 ---
 
@@ -284,6 +293,16 @@ exact registered name. Values are per-project, per-environment; secret values
 live in OpenBao via SM-API (`extres-<name>-<env>` entities) and reach pods
 through ResourceReleaseBinding → ExternalSecret → env.
 
+### Unset
+A declared external dependency config key authored on its binding with an empty
+value. Nothing stands in for the value, so do not call it a placeholder. For a
+secret key, the corresponding empty value is the binding's `secretStorePath`.
+
+### Configured
+Every config key the design currently declares for an external dependency has a
+non-empty value. This is distinct from OpenChoreo binding **Ready**, which remains
+true while values are unset; use `configured` for the AEP value state.
+
 ### Proceed-gate
 `design/save` refuses (409) while any dependency is unresolved, naming the
 component, dependency, and reason.
@@ -305,7 +324,10 @@ resolves number-through-run-rows and never matches a title.
 
 ### Milestone run
 One supervised pass over one milestone — the platform's single dispatch door.
-Origin is `spec-build` or `incident-adoption`; state is
+Kind is `dev` (delivers a version), `task` (a defect inside a delivered version)
+or `validation` (re-judges a shipped one) — every platform predicate is written on
+it, and only `dev` takes the one-build-per-project mutex. Origin (`spec-build`,
+`incident-adoption`, `revalidate`) records where the run came from. State is
 `planning | waiting | running | succeeded | failed | cancelled | blocked`.
 `planning` is the fill window — the row is admitted (arming the mutex) before its
 milestone is written, so it names work the platform is doing; `waiting` is the
@@ -349,21 +371,82 @@ supervisor dispatches on returns counts), and `mergeVerdict` +`mergeReason` when
 something decided against merging (`declined` by the policy, `refused` by the
 host).
 
+### Arming label
+`aep`, and it says one thing: something may work this issue. It carries no
+meaning about WHAT the work is — that is the kind — and it is also the
+GitHub-side **adoption** trigger, so a human stamping it hands an issue to the
+agent. Platform-written labels come back as webhook echoes and are dropped by
+sender, which is what keeps arming a human act.
+
+### Kind
+Exactly one per issue, and the axis every routing predicate tests **positively**:
+`development` (planned work from the spec), `bug` (a defect, from anywhere),
+`conflict` (a pull request that will not merge), `validation` (judge the deployed
+system), `provision` (a dispatch gate). A `bug` also carries a **source** —
+`src/user`, `src/incident`, `src/validation`, `src/build`, `src/deploy`, absence
+reading as `src/user` — which says who found it.
+
 ### Working set
-Open, `aep`-labelled issues in the milestone, excluding `aep:provision` gates
-and the `aep:validation` issue. A run settles when it is empty and validation
-has a verdict.
+Open, armed issues in the milestone whose kind the loop works: `development`,
+`bug` or `conflict` for a build run; `bug` or `conflict` alone for a bug-fix run,
+which works the deployed version and must never pick up the work of the version
+being built — a build that gave up leaves its plan open, and only another build
+may continue it. A **validation** run has none at all. A run settles when its own
+working set is empty; the verdict is a separate run's answer about the version.
+
+### Halted issue
+Work a FAILED run could not finish, stamped `aep:halted` with a comment naming
+the terminal reason. The reconcile sweep skips it, which is what makes a budget
+mean something: open work on a milestone with no live run is otherwise
+indistinguishable from work nobody started, so the run that gave up would be
+replaced within a tick by one with fresh budgets. Cleared by a rebuild, or by a
+person removing the label.
+
+### Green ending
+The only thing that CLOSES a milestone: zero open working-set issues **and** a
+terminal verdict on the version's newest validation run. A **build** settling at
+deployed-green therefore leaves the milestone OPEN — the version is deployed and
+unjudged, and the validation task it just filed is what judges it; the exception is
+a version with no acceptance oracle, where no task is filed, nothing is coming, and
+the milestone closes. A **validation** run settling succeeded closes it. A **bug-fix**
+run never does, and no FAILED run of any kind does, because the way forward from a
+failure is more work in the same version. Milestone state is display only —
+nothing branches on it — except through one agent-side read: the validation agent
+finds its work with `gh issue list --milestone`, which resolves by title and sees
+only OPEN milestones, so a milestone closed at the hand-off hides the very task it
+was closed over.
+
+### Cancelled issue
+Work a CANCELLED run had in flight, closed with a comment and stamped
+`aep:cancelled`. Closing it is what makes the cancel stick: the reconcile sweep
+starts a run over a milestone's open WORK when no run is live on it, so an issue
+left open would have the run restarted within a tick. What a cancel reaches is per
+run species — a **build**'s takes everything the increment was carrying, its
+dispatch gates included, and closes the milestone with them, because the increment
+is abandoned; a **bug-fix** run's takes only its bugs and conflicts and leaves the
+version standing. Two populations survive even a build's cancel: the version's
+**validation task**, because cancel reverts nothing and that task is a handle on
+software still deployed, and the **ledger**, which the platform never touches at
+all. Only issues that were OPEN at cancel time are marked,
+which is what the marker is for: a build of an UNCHANGED spec reopens exactly them
+and clears the label, while work a cycle genuinely finished stays closed. Nothing
+is reverted — merged commits stay on `main` and promoted components keep serving.
+Compare a **halted issue**, which stays open because that run may be retried.
 
 ### Dispatch gate
-An `aep:provision` issue. Never agent work — a **dispatch hold**: while one is
-open the run dispatches nothing, and a hand-filed one mid-run is a deliberate
-human brake. Gates are minted and resolved by `dependencies/provisioning`, and
-carry no `aep` label so they cannot hold the settle predicate open.
+A `provision` issue. Never agent work — a **dispatch hold**: while one is open
+the run dispatches nothing, and a hand-filed one mid-run is a deliberate human
+brake. Gates are minted and resolved by `dependencies/provisioning`, and carry no
+arming label, which is both why nothing works them and why they are counted on
+their own rather than subtracted from the work waiting behind them.
 
 ### Ledger issue
-A bare human issue that joined a milestone carrying none of the platform's
-labels. Part of the version's record; never worked, never stalling settle.
-Labelling one `aep:codingagent` **adopts** it into the next cycle.
+An issue in a milestone that is **not armed**. Part of the version's record;
+never worked, never stalling settle, and never written to — a cancel does not
+close it and the sweep does not start a run for it, because it is nobody's work
+until a human arms it. It may still be classified — a red-main
+incident is filed as a `bug` so a human can see what it is — because
+classification is not permission. Adding `aep` **adopts** it into the next cycle.
 
 ### Terminal reason
 Why a non-succeeded run stopped. Each value names exactly ONE failure class —
@@ -373,10 +456,17 @@ reason is an explanation rather than a label. A run that settles for anything
 outside this list is a bug in the loop, not a new state.
 
 ### Supersede
-What the next build does to the previous version: close `v<N>`'s still-open
-issues with a `Superseded by v<N+1>` comment, then the milestone, then plan
-`v<N+1>` fresh from the new spec. It is also what keeps the reconcile sweep
-sound — a superseded milestone holds no open `aep` issue.
+What the next build does to the previous version. A **plan** is replaced by a
+plan: `v<N>`'s open `development` and `provision` issues are closed with a
+`Superseded by v<N+1>` comment, and so is a `conflict`, which names a branch of
+the version being superseded. A **defect** is not superseded by anything: open
+`bug` issues are MOVED into `v<N+1>`'s milestone, because they are still broken
+and the new version is what will ship the fix — "bug" read the way the working
+sets read it, so an ARMED issue carrying no kind (the human hand-over) moves too. Then the old milestone is closed
+and `v<N+1>` is planned fresh from the new spec. Moving is not arming — an
+unadopted bug arrives still ledger-only. It is also half of what keeps the
+reconcile sweep sound: a superseded milestone holds nothing workable, because its
+plan is closed and its bugs have left.
 
 ## aep-api platform concepts
 

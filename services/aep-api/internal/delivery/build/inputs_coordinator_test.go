@@ -30,21 +30,6 @@ var ctx = context.Background()
 
 // ----- coordinator fakes -----------------------------------------------------
 
-// recordingStager captures the secret map + dep it was handed and returns a
-// canned reference-per-env — proving the coordinator hands the raw secret to
-// the stager (SM-API) and threads back only the reference.
-type recordingStager struct {
-	refByEnv    map[string]string
-	lastSecrets map[string]map[string]string
-	lastDep     string
-}
-
-func (s *recordingStager) StageExternalSecrets(_ context.Context, _, _, _, depName string, secretsByEnv map[string]map[string]string) (map[string]string, error) {
-	s.lastDep = depName
-	s.lastSecrets = secretsByEnv
-	return s.refByEnv, nil
-}
-
 // (fakeDesign — the canned design-component reader whose ConfigKey.Secret flags
 // are the secret-vs-nonsecret source of truth the coordinator splits on — is
 // declared in preflight_test.go.)
@@ -60,7 +45,7 @@ func stripeExternal() []spec.DesignComponent {
 			Name: "stripe",
 			Config: []spec.ConfigKey{
 				{Key: "STRIPE_KEY", Secret: true},
-				{Key: "STRIPE_ORG", Secret: false},
+				{Key: "STRIPE_ORG", Secret: false, DefaultValue: "org_default"},
 			},
 		}},
 	}}
@@ -96,26 +81,25 @@ func (a *recordingAuth) DerivePlatformResourceFactsAtHead(context.Context, strin
 
 // ----- BuildProvisionInputs --------------------------------------------------
 
-func TestBuildProvisionInputs_StagesSecretsAndSplits(t *testing.T) {
-	stager := &recordingStager{refByEnv: map[string]string{"development": "sm://acme/shop/stripe"}}
-	c := &InputsCoordinator{stager: stager, design: fakeDesign{comps: stripeExternal()}}
-	pins, fails, err := c.BuildProvisionInputs(ctx, "acme", "acme", "shop", []BuildInputItem{
+func TestBuildProvisionInputs_DerivesUnsetExternalConfigFromDesign(t *testing.T) {
+	c := &InputsCoordinator{design: fakeDesign{comps: stripeExternal()}}
+	pins, fails, err := c.BuildProvisionInputs(ctx, "acme", "shop", []BuildInputItem{
 		{Component: "o", Dependency: "stripe", Kind: "external-config",
 			Values: []ConfigValue{{Key: "STRIPE_KEY", Value: "sk_live"}, {Key: "STRIPE_ORG", Value: "org_1"}}}})
 	require.NoError(t, err)
 	require.Empty(t, fails)
 	require.Len(t, pins, 1)
-	require.Equal(t, map[string]string{"STRIPE_ORG": "org_1"}, pins[0].Config) // non-secret only
-	require.Equal(t, map[string]string{"development": "sm://acme/shop/stripe"}, pins[0].SecretRefByEnv)
-	require.Equal(t, map[string]string{"STRIPE_KEY": "sk_live"}, stager.lastSecrets["development"]) // secret staged, not returned
+	require.Equal(t, "external-config", pins[0].Kind)
+	require.Equal(t, "stripe", pins[0].Dependency)
+	require.Equal(t, map[string]string{"STRIPE_ORG": "org_default"}, pins[0].Config)
+	require.Empty(t, pins[0].SecretRefByEnv)
 }
 
 // A platform-resource input carries its params + approval through verbatim and
 // never touches the secret stager.
 func TestBuildProvisionInputs_PlatformResourcePassThrough(t *testing.T) {
-	stager := &recordingStager{}
-	c := &InputsCoordinator{stager: stager, design: fakeDesign{comps: nil}}
-	pins, fails, err := c.BuildProvisionInputs(ctx, "acme", "acme", "shop", []BuildInputItem{
+	c := &InputsCoordinator{design: fakeDesign{comps: nil}}
+	pins, fails, err := c.BuildProvisionInputs(ctx, "acme", "shop", []BuildInputItem{
 		{Component: "api", Dependency: "orders-db", Kind: "platform-resource",
 			Parameters: map[string]any{"instances": 2, "storage": "10Gi"}, Approved: true}})
 	require.NoError(t, err)
@@ -123,7 +107,12 @@ func TestBuildProvisionInputs_PlatformResourcePassThrough(t *testing.T) {
 	require.Len(t, pins, 1)
 	require.Equal(t, map[string]any{"instances": 2, "storage": "10Gi"}, pins[0].Parameters)
 	require.True(t, pins[0].Approved)
-	require.Nil(t, stager.lastSecrets) // stager untouched for platform-resource
+}
+
+func TestBuildProvisionInputs_MissingDesignReaderReturnsError(t *testing.T) {
+	c := &InputsCoordinator{}
+	_, _, err := c.BuildProvisionInputs(ctx, "acme", "shop", nil)
+	require.Error(t, err)
 }
 
 // ----- ApplyPreTag -----------------------------------------------------------

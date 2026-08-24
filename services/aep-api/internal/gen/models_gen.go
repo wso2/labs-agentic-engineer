@@ -40,6 +40,63 @@ func (e BuildInputItemKind) Valid() bool {
 	}
 }
 
+// Defines values for BuildProgressEventReason.
+const (
+	BuildProgressEventReasonNoLiveRun BuildProgressEventReason = "no_live_run"
+)
+
+// Valid indicates whether the value is a known member of the BuildProgressEventReason enum.
+func (e BuildProgressEventReason) Valid() bool {
+	switch e {
+	case BuildProgressEventReasonNoLiveRun:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BuildProgressEventType.
+const (
+	BuildProgressEventTypeCycle BuildProgressEventType = "cycle"
+	BuildProgressEventTypeDone  BuildProgressEventType = "done"
+	BuildProgressEventTypeLine  BuildProgressEventType = "line"
+)
+
+// Valid indicates whether the value is a known member of the BuildProgressEventType enum.
+func (e BuildProgressEventType) Valid() bool {
+	switch e {
+	case BuildProgressEventTypeCycle:
+		return true
+	case BuildProgressEventTypeDone:
+		return true
+	case BuildProgressEventTypeLine:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BuildProgressRunKind.
+const (
+	BuildProgressRunKindDev        BuildProgressRunKind = "dev"
+	BuildProgressRunKindTask       BuildProgressRunKind = "task"
+	BuildProgressRunKindValidation BuildProgressRunKind = "validation"
+)
+
+// Valid indicates whether the value is a known member of the BuildProgressRunKind enum.
+func (e BuildProgressRunKind) Valid() bool {
+	switch e {
+	case BuildProgressRunKindDev:
+		return true
+	case BuildProgressRunKindTask:
+		return true
+	case BuildProgressRunKindValidation:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for BuildSummaryStatus.
 const (
 	BuildSummaryStatusCompleted  BuildSummaryStatus = "completed"
@@ -97,6 +154,48 @@ func (e DeployStageValidation) Valid() bool {
 	case DeployStageValidationSkipped:
 		return true
 	case DeployStageValidationUnreported:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ExternalDependencyValueState.
+const (
+	Configured     ExternalDependencyValueState = "configured"
+	NotProvisioned ExternalDependencyValueState = "not-provisioned"
+	Unset          ExternalDependencyValueState = "unset"
+)
+
+// Valid indicates whether the value is a known member of the ExternalDependencyValueState enum.
+func (e ExternalDependencyValueState) Valid() bool {
+	switch e {
+	case Configured:
+		return true
+	case NotProvisioned:
+		return true
+	case Unset:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for MilestoneRunViewKind.
+const (
+	MilestoneRunViewKindDev        MilestoneRunViewKind = "dev"
+	MilestoneRunViewKindTask       MilestoneRunViewKind = "task"
+	MilestoneRunViewKindValidation MilestoneRunViewKind = "validation"
+)
+
+// Valid indicates whether the value is a known member of the MilestoneRunViewKind enum.
+func (e MilestoneRunViewKind) Valid() bool {
+	switch e {
+	case MilestoneRunViewKindDev:
+		return true
+	case MilestoneRunViewKindTask:
+		return true
+	case MilestoneRunViewKindValidation:
 		return true
 	default:
 		return false
@@ -615,6 +714,43 @@ type BuildPreflight struct {
 	NeedsInput bool            `json:"needsInput"`
 }
 
+// BuildProgressEvent One SSE frame on the VERSION progress stream, which spans every run that has worked the version. `type` discriminates the payload: `cycle` carries a RunCycleView (client upserts by id), `line` one RunProgressLine, and `done` says why the stream ended (the server then closes it). `cycle` and `line` frames also carry `run` — a version's story spans several executions, so a cycle is only identified once you know which run opened it.
+type BuildProgressEvent struct {
+	// Cycle One dispatch within a run. Branch, pull request (number and URL) and merge SHA are LEARNED FROM WEBHOOKS — the agent derives its own branch identity — so they stay empty on a cycle whose agent died before opening a pull request.
+	Cycle RunCycleView `json:"cycle,omitempty"`
+
+	// Line One line of a cycle's agent log: the runner's progress envelope (phase | tool_use | git_commit | git_push | gh_action | log | result) plus the attribution the console groups on — which cycle produced it, and whether the main agent or one of its Task subagents did.
+	Line RunProgressLine `json:"line,omitempty"`
+
+	// Reason Why the stream ended — present only on the `done` frame, and deliberately NOT a run state. `no_live_run` means no run on the version's milestone is currently live, so there is nothing further to report RIGHT NOW. It is not a verdict on the version: a later validation or task run may be admitted on the same milestone, and the console reopens the stream when its run-list poll shows one.
+	Reason BuildProgressEventReason `json:"reason,omitempty"`
+
+	// Run Which run a frame's cycle belongs to. The version's narrative spans several runs, so the run is the SECTION and the cycle is a step inside it — `RunProgressLine.cycleIndex` stays run-relative and is only unique when paired with `run.id`.
+	Run  BuildProgressRun       `json:"run,omitempty"`
+	Type BuildProgressEventType `json:"type"`
+}
+
+// BuildProgressEventReason Why the stream ended — present only on the `done` frame, and deliberately NOT a run state. `no_live_run` means no run on the version's milestone is currently live, so there is nothing further to report RIGHT NOW. It is not a verdict on the version: a later validation or task run may be admitted on the same milestone, and the console reopens the stream when its run-list poll shows one.
+type BuildProgressEventReason string
+
+// BuildProgressEventType defines model for BuildProgressEvent.Type.
+type BuildProgressEventType string
+
+// BuildProgressRun Which run a frame's cycle belongs to. The version's narrative spans several runs, so the run is the SECTION and the cycle is a step inside it — `RunProgressLine.cycleIndex` stays run-relative and is only unique when paired with `run.id`.
+type BuildProgressRun struct {
+	// ID Milestone run id — the same id list-build-runs reports and cancel-run takes.
+	ID string `json:"id"`
+
+	// Index 1-based chronological position of this run among the version's runs, so the console can label a section without holding the whole run list — the same reason `cycleIndex` exists, one level up. Two runs of one kind are ordinary (a version can be repaired more than once), so the kind alone does not name a section.
+	Index int64 `json:"index"`
+
+	// Kind What the run DOES, and the section marker the console renders — `dev` delivered the version, `task` worked a defect inside it, `validation` re-judged it. Same vocabulary as MilestoneRunView.kind.
+	Kind BuildProgressRunKind `json:"kind"`
+}
+
+// BuildProgressRunKind What the run DOES, and the section marker the console renders — `dev` delivered the version, `task` worked a defect inside it, `validation` re-judged it. Same vocabulary as MilestoneRunView.kind.
+type BuildProgressRunKind string
+
 // BuildRequest defines model for BuildRequest.
 type BuildRequest struct {
 	Inputs []BuildInputItem `json:"inputs,omitempty"`
@@ -850,9 +986,10 @@ type DependencyCandidate = contracts.DependencyCandidate
 
 // DependencyStatus defines model for DependencyStatus.
 type DependencyStatus struct {
-	Outputs []string `json:"outputs"`
-	Ready   bool     `json:"ready"`
-	Status  string   `json:"status"`
+	Outputs    []string                     `json:"outputs"`
+	Ready      bool                         `json:"ready"`
+	Status     string                       `json:"status"`
+	ValueState ExternalDependencyValueState `json:"valueState,omitempty"`
 }
 
 // DeployStage Deploy-stage aggregate on ProjectStatus (#184) — what's live in dev and rollout progress.
@@ -948,6 +1085,16 @@ type ExecutionView struct {
 	Status    string     `json:"status"`
 }
 
+// ExternalDependencyReadiness defines model for ExternalDependencyReadiness.
+type ExternalDependencyReadiness struct {
+	MissingKeys []string                     `json:"missingKeys"`
+	Name        string                       `json:"name"`
+	State       ExternalDependencyValueState `json:"state"`
+}
+
+// ExternalDependencyValueState defines model for ExternalDependencyValueState.
+type ExternalDependencyValueState string
+
 // ExternalResourceDTO defines model for ExternalResourceDTO.
 type ExternalResourceDTO struct {
 	Config      []ConfigKeyDTO `json:"config"`
@@ -1033,15 +1180,18 @@ type MilestoneRunView struct {
 	CreatedAt time.Time  `json:"createdAt"`
 
 	// Cycles Oldest first — one record per dispatch.
-	Cycles          []RunCycleView `json:"cycles"`
-	EndedAt         *time.Time     `json:"endedAt,omitempty"`
-	ID              string         `json:"id"`
-	MilestoneNumber int64          `json:"milestoneNumber"`
+	Cycles  []RunCycleView `json:"cycles"`
+	EndedAt *time.Time     `json:"endedAt,omitempty"`
+	ID      string         `json:"id"`
+
+	// Kind What this run DOES, and the value every platform predicate is written on. `dev` delivers a version — it plans its own milestone, and is the only kind that takes the one-active-build-per-project mutex. `task` works a defect inside a version already delivered; task runs execute concurrently on their own milestones. `validation` asks a shipped version's acceptance criteria again — it has no working set, builds nothing, and is outside the mutex so it never holds up the next build.
+	Kind            MilestoneRunViewKind `json:"kind"`
+	MilestoneNumber int64                `json:"milestoneNumber"`
 
 	// MilestoneTitle The milestone's GitHub title at creation. Display only — the number is the key, and the version this run builds is the list's tag.
 	MilestoneTitle string `json:"milestoneTitle"`
 
-	// Origin Why this run was started. `revalidate` asks a version's criteria again against the already-deployed system; it enters the loop at validation rather than at the working set, and is deliberately outside the one-active-spec-run mutex so it never holds up the next build.
+	// Origin Where this run was started from. A label on the trigger — the behaviour is the run's kind.
 	Origin    MilestoneRunViewOrigin `json:"origin"`
 	StartedAt *time.Time             `json:"startedAt,omitempty"`
 
@@ -1055,7 +1205,10 @@ type MilestoneRunView struct {
 	Validation RunValidation `json:"validation"`
 }
 
-// MilestoneRunViewOrigin Why this run was started. `revalidate` asks a version's criteria again against the already-deployed system; it enters the loop at validation rather than at the working set, and is deliberately outside the one-active-spec-run mutex so it never holds up the next build.
+// MilestoneRunViewKind What this run DOES, and the value every platform predicate is written on. `dev` delivers a version — it plans its own milestone, and is the only kind that takes the one-active-build-per-project mutex. `task` works a defect inside a version already delivered; task runs execute concurrently on their own milestones. `validation` asks a shipped version's acceptance criteria again — it has no working set, builds nothing, and is outside the mutex so it never holds up the next build.
+type MilestoneRunViewKind string
+
+// MilestoneRunViewOrigin Where this run was started from. A label on the trigger — the behaviour is the run's kind.
 type MilestoneRunViewOrigin string
 
 // MilestoneRunViewState planning is the fill window — the version's milestone is still being written (gates minted, then issues planned in). waiting is the unbounded wait between cycles, where something outside the platform is needed. blocked is terminal and is NOT a failure — the org has no agent concurrency slot left, so the cycle was never launched (see terminalReason agent-quota-blocked).
@@ -1195,6 +1348,12 @@ type ProjectConversationView struct {
 	CreatedAt      time.Time `json:"createdAt"`
 	CreatedBy      string    `json:"createdBy,omitempty"`
 	Current        bool      `json:"current"`
+}
+
+// ProjectDependencyReadiness defines model for ProjectDependencyReadiness.
+type ProjectDependencyReadiness struct {
+	Configured   bool                          `json:"configured"`
+	Dependencies []ExternalDependencyReadiness `json:"dependencies"`
 }
 
 // ProjectList defines model for ProjectList.
@@ -1624,19 +1783,22 @@ type TaskDetail struct {
 	ExecutionHistory []ExecutionView          `json:"executionHistory"`
 	Executions       map[string]ExecutionView `json:"executions"`
 
-	// ExecutorClass Label-derived kind of the issue, and the only classification the platform makes of one: `coding` for agent work (the `aep` label), `provision` for a dispatch gate (`aep:provision`), `validation` for the run's validation issue, `ledger` for a bare human issue that joined the milestone carrying none of them. Nothing here is parsed out of the body — issue bodies are prose the platform writes for the agent and never reads back.
+	// ExecutorClass WHO works this issue, derived from its labels: `coding` for anything a coding agent is dispatched at (planned work, a bug, a merge conflict — all armed with the `aep` label), `provision` for a dispatch gate the platform resolves, `validation` for the version's validation task, `ledger` for a bare human issue that joined the milestone unarmed. Deliberately coarser than `kind`: the three coding kinds are dispatched identically, so they are one class here and are told apart by `kind`. Nothing here is parsed out of the body — issue bodies are prose the platform writes for the agent and never reads back.
 	ExecutorClass TaskDetailExecutorClass `json:"executorClass"`
 	Hold          bool                    `json:"hold"`
 	IssueNumber   int64                   `json:"issueNumber"`
 	IssueURL      string                  `json:"issueUrl"`
-	Lineage       Lineage                 `json:"lineage"`
-	Operation     string                  `json:"operation,omitempty"`
-	Origin        string                  `json:"origin,omitempty"`
-	Rationale     string                  `json:"rationale,omitempty"`
-	Title         string                  `json:"title"`
+
+	// Kind The issue's raw label kind: `development` for planned work minted from the spec, `bug` for a defect, `conflict` for a pull request that will not merge, `validation` for the version's validation task, `provision` for a dispatch gate. Absent when the issue carries no kind label (a ledger issue, or one a human armed without classifying); a consumer that does not recognise a kind should render the row untagged rather than guess.
+	Kind      string  `json:"kind,omitempty"`
+	Lineage   Lineage `json:"lineage"`
+	Operation string  `json:"operation,omitempty"`
+	Origin    string  `json:"origin,omitempty"`
+	Rationale string  `json:"rationale,omitempty"`
+	Title     string  `json:"title"`
 }
 
-// TaskDetailExecutorClass Label-derived kind of the issue, and the only classification the platform makes of one: `coding` for agent work (the `aep` label), `provision` for a dispatch gate (`aep:provision`), `validation` for the run's validation issue, `ledger` for a bare human issue that joined the milestone carrying none of them. Nothing here is parsed out of the body — issue bodies are prose the platform writes for the agent and never reads back.
+// TaskDetailExecutorClass WHO works this issue, derived from its labels: `coding` for anything a coding agent is dispatched at (planned work, a bug, a merge conflict — all armed with the `aep` label), `provision` for a dispatch gate the platform resolves, `validation` for the version's validation task, `ledger` for a bare human issue that joined the milestone unarmed. Deliberately coarser than `kind`: the three coding kinds are dispatched identically, so they are one class here and are told apart by `kind`. Nothing here is parsed out of the body — issue bodies are prose the platform writes for the agent and never reads back.
 type TaskDetailExecutorClass string
 
 // TaskStreamEvent One SSE frame on the task-log stream. `type` discriminates the payload: `task` carries the full TaskView (client upserts by issue), `execution` one ExecutionView (client upserts by id), `line` one TimelineEvent (client appends, deduped by executionId+seq), and `done` the settled derivedStatus (the server then closes the stream).
@@ -1666,22 +1828,25 @@ type TaskView struct {
 	DerivedStatus string                   `json:"derivedStatus"`
 	Executions    map[string]ExecutionView `json:"executions"`
 
-	// ExecutorClass Label-derived kind of the issue, and the only classification the platform makes of one: `coding` for agent work (the `aep` label), `provision` for a dispatch gate (`aep:provision`), `validation` for the run's validation issue, `ledger` for a bare human issue that joined the milestone carrying none of them. Nothing here is parsed out of the body — issue bodies are prose the platform writes for the agent and never reads back.
+	// ExecutorClass WHO works this issue, derived from its labels: `coding` for anything a coding agent is dispatched at (planned work, a bug, a merge conflict — all armed with the `aep` label), `provision` for a dispatch gate the platform resolves, `validation` for the version's validation task, `ledger` for a bare human issue that joined the milestone unarmed. Deliberately coarser than `kind`: the three coding kinds are dispatched identically, so they are one class here and are told apart by `kind`. Nothing here is parsed out of the body — issue bodies are prose the platform writes for the agent and never reads back.
 	ExecutorClass TaskViewExecutorClass `json:"executorClass"`
 	Hold          bool                  `json:"hold"`
 	IssueNumber   int64                 `json:"issueNumber"`
 	IssueURL      string                `json:"issueUrl"`
-	Lineage       Lineage               `json:"lineage"`
-	Operation     string                `json:"operation,omitempty"`
-	Origin        string                `json:"origin,omitempty"`
-	Rationale     string                `json:"rationale,omitempty"`
-	Title         string                `json:"title"`
+
+	// Kind The issue's raw label kind: `development` for planned work minted from the spec, `bug` for a defect, `conflict` for a pull request that will not merge, `validation` for the version's validation task, `provision` for a dispatch gate. Absent when the issue carries no kind label (a ledger issue, or one a human armed without classifying); a consumer that does not recognise a kind should render the row untagged rather than guess.
+	Kind      string  `json:"kind,omitempty"`
+	Lineage   Lineage `json:"lineage"`
+	Operation string  `json:"operation,omitempty"`
+	Origin    string  `json:"origin,omitempty"`
+	Rationale string  `json:"rationale,omitempty"`
+	Title     string  `json:"title"`
 
 	// Usage Actual token usage for one unit of agent work or an aggregate (#245,
 	Usage Usage `json:"usage,omitempty"`
 }
 
-// TaskViewExecutorClass Label-derived kind of the issue, and the only classification the platform makes of one: `coding` for agent work (the `aep` label), `provision` for a dispatch gate (`aep:provision`), `validation` for the run's validation issue, `ledger` for a bare human issue that joined the milestone carrying none of them. Nothing here is parsed out of the body — issue bodies are prose the platform writes for the agent and never reads back.
+// TaskViewExecutorClass WHO works this issue, derived from its labels: `coding` for anything a coding agent is dispatched at (planned work, a bug, a merge conflict — all armed with the `aep` label), `provision` for a dispatch gate the platform resolves, `validation` for the version's validation task, `ledger` for a bare human issue that joined the milestone unarmed. Deliberately coarser than `kind`: the three coding kinds are dispatched identically, so they are one class here and are told apart by `kind`. Nothing here is parsed out of the body — issue bodies are prose the platform writes for the agent and never reads back.
 type TaskViewExecutorClass string
 
 // TimelineEvent A unified-timeline entry: today's ProgressEvent (phase | tool_use | git_commit | git_push | gh_action | build_step | log | result) plus its attribution — which execution attempt it came from. This is the per-row shape the console renders; the FE groups rows by executionId/kind.
@@ -1763,6 +1928,27 @@ type TurnInputBody struct {
 	Instruction string `json:"instruction"`
 
 	// Target Optional target (e.g. a doc type)
+	Target string `json:"target,omitempty"`
+}
+
+// TurnInputMultipart The same turn input as `TurnInputBody`, sent as multipart so it can carry chat attachments (#428). The JSON form stays the canonical one — a message with no attachments MUST use it, and every existing caller is unaffected.
+//
+// Attachments are CONVERSATION-SCOPED MODEL CONTENT (console ADR-0019): the platform never writes them to disk and never commits them. They ride this request into the turn and are durable only as parts of the conversation's history, which is also what makes re-sending one free — the agents service dedupes by file name.
+//
+// Deliberately NOT the reference-document channel: `POST /projects/{name}/references` REPLACES a project's whole stored set, and the create view is the only door to it. A file attached here never becomes a project reference, even when the instruction is `/start`.
+type TurnInputMultipart struct {
+	// Collab As `TurnInputBody.collab`.
+	Collab bool `json:"collab,omitempty"`
+
+	// Files Chat attachments, two groups and the split matters downstream. Read NATIVELY as file parts: `.pdf`, and the four image media types the Messages API accepts — `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`. Read AS TEXT (sent as `text/plain`, the only text document type the Anthropic provider maps): `.md`, `.txt`, `.csv`, `.tsv`, `.json`, `.yaml`, `.yml`, `.xml`, `.html`, `.rst`. Office formats are not accepted — the models do not read them natively.
+	//
+	// Three caps, and all of them restate ONE number: the agents service already enforces a 20 MiB base64-ENCODED per-turn attachment budget (#384), past which it warns and skips. So at most 10 files, each at most 5 MiB, and at most 15 MiB of raw bytes in TOTAL — 15 MiB raw is 20 MiB encoded. The total is the load- bearing one: a per-file cap alone cannot hold the line, since ten 5 MiB files each pass it and together overrun the budget by 3x.
+	Files []openapi_types.File `json:"files,omitempty"`
+
+	// Instruction As `TurnInputBody.instruction`. Required — an attachment alone cannot start a turn, and the shared TurnSpec validator rejects an empty chat text.
+	Instruction string `json:"instruction"`
+
+	// Target As `TurnInputBody.target`.
 	Target string `json:"target,omitempty"`
 }
 
@@ -1919,6 +2105,12 @@ type GetDependencyStatusParams struct {
 	Environment string `form:"environment,omitempty" json:"environment,omitempty"`
 }
 
+// GetProjectDependencyReadinessParams defines parameters for GetProjectDependencyReadiness.
+type GetProjectDependencyReadinessParams struct {
+	// Environment Environment (default: development)
+	Environment string `form:"environment,omitempty" json:"environment,omitempty"`
+}
+
 // ListFilesParams defines parameters for ListFiles.
 type ListFilesParams struct {
 	// Prefix Only list paths under this prefix (e.g. specs/design/)
@@ -1949,6 +2141,12 @@ type ListIssuesParams struct {
 
 	// Q Keyword search over issue title/body, ranked by distinct-term overlap (title weighted double), capped at 25. Recall-biased — used to surface related issues before filing a new one.
 	Q string `form:"q,omitempty" json:"q,omitempty"`
+}
+
+// PutProjectReferencesMultipartBody defines parameters for PutProjectReferences.
+type PutProjectReferencesMultipartBody struct {
+	// Files Reference documents. Two groups, both readable by the models: binary read natively as file parts (`.pdf`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`), and text read as workspace files (`.md`, `.txt`, `.csv`, `.tsv`, `.json`, `.yaml`, `.yml`, `.xml`, `.html`, `.rst`). At most 10 documents, each at most 5 MiB measured on the raw bytes. Office formats are not accepted — the models do not read them natively.
+	Files []openapi_types.File `json:"files"`
 }
 
 // GetSpecCollabSessionParams defines parameters for GetSpecCollabSession.
@@ -2010,6 +2208,9 @@ type CreateProjectJSONRequestBody = CreateProjectRequest
 // CreateTurnJSONRequestBody defines body for CreateTurn for application/json ContentType.
 type CreateTurnJSONRequestBody = TurnInputBody
 
+// CreateTurnMultipartRequestBody defines body for CreateTurn for multipart/form-data ContentType.
+type CreateTurnMultipartRequestBody = TurnInputMultipart
+
 // BuildProjectJSONRequestBody defines body for BuildProject for application/json ContentType.
 type BuildProjectJSONRequestBody = BuildRequest
 
@@ -2030,6 +2231,9 @@ type ApplyFilesJSONRequestBody = ApplyRequest
 
 // CreateIssueJSONRequestBody defines body for CreateIssue for application/json ContentType.
 type CreateIssueJSONRequestBody = CreateIssueRequest
+
+// PutProjectReferencesMultipartRequestBody defines body for PutProjectReferences for multipart/form-data ContentType.
+type PutProjectReferencesMultipartRequestBody PutProjectReferencesMultipartBody
 
 // PromoteTaskFromIssueJSONRequestBody defines body for PromoteTaskFromIssue for application/json ContentType.
 type PromoteTaskFromIssueJSONRequestBody = PromoteFromIssueRequest

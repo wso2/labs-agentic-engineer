@@ -263,6 +263,48 @@ func TestProvisioningComponent_DependencyStatus(t *testing.T) {
 	}
 }
 
+func TestProvisioningComponent_ProjectDependencyReadiness(t *testing.T) {
+	t.Parallel()
+	raw, err := json.Marshal(map[string]string{"region": "", openchoreo.SecretStorePathField: ""})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := provisioning.NewService(provisioning.Deps{
+		Design: cDesign{comps: stripeConsumerDesign()},
+		Bindings: &cBindings{byName: map[string]*openchoreo.ResourceReleaseBinding{
+			"proj-stripe-development": {Spec: openchoreo.ResourceReleaseBindingSpec{ResourceTypeEnvironmentConfigs: raw}},
+		}},
+	})
+	h := newProvHarness(t, svc)
+
+	resp := h.AsOrg("acme").Get("/api/v1/projects/proj/dependencies/readiness?environment=development")
+	if resp.Code != 200 {
+		t.Fatalf("readiness: got %d body=%s", resp.Code, resp.Body.String())
+	}
+	var got gen.ProjectDependencyReadiness
+	if err := json.Unmarshal(resp.Body.Bytes(), &got); err != nil {
+		t.Fatalf("body: %v", err)
+	}
+	if got.Configured || len(got.Dependencies) != 1 || got.Dependencies[0].State != "unset" {
+		t.Fatalf("readiness = %+v", got)
+	}
+	if len(got.Dependencies[0].MissingKeys) != 2 {
+		t.Fatalf("missing keys = %v", got.Dependencies[0].MissingKeys)
+	}
+
+	status := h.AsOrg("acme").Get("/api/v1/projects/proj/components/orders/dependencies/stripe/status?environment=development")
+	if status.Code != 200 {
+		t.Fatalf("status: got %d body=%s", status.Code, status.Body.String())
+	}
+	var dependencyStatus gen.DependencyStatus
+	if err := json.Unmarshal(status.Body.Bytes(), &dependencyStatus); err != nil {
+		t.Fatalf("status body: %v", err)
+	}
+	if dependencyStatus.ValueState != "unset" {
+		t.Fatalf("dependency valueState = %q, want unset", dependencyStatus.ValueState)
+	}
+}
+
 // provision-platform-resource on an external dependency is wrong-kind → 400
 // bad_request carrying the sentinel text.
 func TestProvisioningComponent_ProvisionWrongKind400(t *testing.T) {

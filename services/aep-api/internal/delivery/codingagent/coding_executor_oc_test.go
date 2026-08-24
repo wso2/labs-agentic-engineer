@@ -96,12 +96,9 @@ func fullSecretRefs() (fakeCodingKey, *organization.OrgCredential) {
 			Property: "api-key",
 			EnvVar:   "ANTHROPIC_API_KEY",
 		}}, &organization.OrgCredential{
-			SecretRefName:      strPtr("acme-github-pat-secrets"),
-			SecretRefKVPath:    strPtr("user-app-secrets/wc-acme/acme-github-pat-secrets"),
-			SecretRefProperty:  strPtr("token"),
-			SMAPISecretRefName: strPtr("acme-github-pat-secrets"),
-			SMAPIKVPath:        strPtr("user-app-secrets/wc-acme/acme-github-pat-secrets"),
-			SMAPIProperty:      strPtr("token"),
+			SecretRefName:     strPtr("acme-github-pat-secrets"),
+			SecretRefKVPath:   strPtr("user-app-secrets/wc-acme/acme-github-pat-secrets"),
+			SecretRefProperty: strPtr("token"),
 		}
 }
 
@@ -111,7 +108,6 @@ func newCodingDispatchExecutor(anthropic fakeCodingKey, github *organization.Org
 		nil,
 		fakeRepos{repo: &sourcecontrol.GitRepository{RepoURL: "https://github.com/acme/widgets", RepoSlug: "acme-widgets"}},
 		fakeIdentities{},
-		fakeTokens{},
 		newFakeExecRepo(),
 		"http://git",
 		"http://platform",
@@ -135,6 +131,7 @@ func codingMilestoneDispatch() delivery.MilestoneDispatch {
 func newOCDispatchExecutor(rec *chainRecorder) *CodingExecutor {
 	anthropic, github := fullSecretRefs()
 	e := newCodingDispatchExecutor(anthropic, github)
+	e.WithPublisherCredentials(fakePublisher{name: "acme-publisher-secrets"}, "http://thunder.example/oauth2/token")
 	e.WithOCDispatch(NewOCDispatcher(rec.client()).WithImage("ghcr.io/wso2/aep/remote-worker:latest"))
 	return e
 }
@@ -182,6 +179,7 @@ func TestDispatch_AnthropicAPIKey_MountsAsAnthropicAPIKeyEnvVar(t *testing.T) {
 	anthropic, github := fullSecretRefs()
 	anthropic.ref.EnvVar = "ANTHROPIC_API_KEY"
 	e := newCodingDispatchExecutor(anthropic, github)
+	e.WithPublisherCredentials(fakePublisher{name: "acme-publisher-secrets"}, "http://thunder.example/oauth2/token")
 	e.WithOCDispatch(NewOCDispatcher(rec.client()).WithImage("ghcr.io/wso2/aep/remote-worker:latest"))
 
 	if _, err := e.Dispatch(context.Background(), codingMilestoneDispatch()); err != nil {
@@ -203,6 +201,7 @@ func TestDispatch_AnthropicOAuthToken_MountsAsClaudeCodeOAuthTokenEnvVar(t *test
 	anthropic, github := fullSecretRefs()
 	anthropic.ref.EnvVar = "CLAUDE_CODE_OAUTH_TOKEN"
 	e := newCodingDispatchExecutor(anthropic, github)
+	e.WithPublisherCredentials(fakePublisher{name: "acme-publisher-secrets"}, "http://thunder.example/oauth2/token")
 	e.WithOCDispatch(NewOCDispatcher(rec.client()).WithImage("ghcr.io/wso2/aep/remote-worker:latest"))
 
 	if _, err := e.Dispatch(context.Background(), codingMilestoneDispatch()); err != nil {
@@ -229,6 +228,7 @@ func TestDispatch_UnresolvableAnthropicKey_ErrorsNoFallback(t *testing.T) {
 	anthropic := fakeCodingKey{err: errors.New(
 		"coding-agent Anthropic key for org \"acme\" is configured but secret_ref_kv_path is not populated")}
 	e := newCodingDispatchExecutor(anthropic, github)
+	e.WithPublisherCredentials(fakePublisher{name: "acme-publisher-secrets"}, "http://thunder.example/oauth2/token")
 	e.WithOCDispatch(NewOCDispatcher(rec.client()).WithImage("ghcr.io/wso2/aep/remote-worker:latest"))
 
 	_, err := e.Dispatch(context.Background(), codingMilestoneDispatch())
@@ -296,7 +296,6 @@ func TestDispatch_OCPathStillRequiresTheOrgsSecretRefs(t *testing.T) {
 	rec := &chainRecorder{}
 	anthropic, github := fullSecretRefs()
 	github.SecretRefName = nil
-	github.SMAPISecretRefName = nil
 	e := newCodingDispatchExecutor(anthropic, github)
 	e.WithOCDispatch(NewOCDispatcher(rec.client()).WithImage("runner:1"))
 
@@ -309,5 +308,176 @@ func TestDispatch_OCPathStillRequiresTheOrgsSecretRefs(t *testing.T) {
 	}
 	if len(rec.calls) != 0 {
 		t.Errorf("nothing may be created before the refs resolve, saw %v", rec.calls)
+	}
+}
+
+type fakePublisher struct {
+	name string
+	err  error
+}
+
+func (f fakePublisher) SecretRefName(context.Context, string) (string, error) {
+	return f.name, f.err
+}
+
+func secretEnvByKey(t *testing.T, in openchoreo.WorkloadInput, key string) openchoreo.WorkflowEnvVarRef {
+	t.Helper()
+	for _, ev := range in.Env {
+		if ev.Key == key {
+			return ev
+		}
+	}
+	t.Fatalf("no env/secretEnv entry %q in %+v", key, in.Env)
+	return openchoreo.WorkflowEnvVarRef{}
+}
+
+func TestDispatch_MountsPublisherSecretEnvAndTokenURL(t *testing.T) {
+	rec := &chainRecorder{}
+	anthropic, github := fullSecretRefs()
+	e := newCodingDispatchExecutor(anthropic, github)
+	e.platformURL = "https://gateway.example/app-factory-api"
+	e.WithPublisherCredentials(fakePublisher{name: "acme-publisher-secrets"}, "https://platform-idp.example/oauth2/token")
+	e.WithOCDispatch(NewOCDispatcher(rec.client()).WithImage("ghcr.io/wso2/aep/remote-worker:latest"))
+
+	if _, err := e.Dispatch(context.Background(), codingMilestoneDispatch()); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	id := secretEnvByKey(t, rec.load, "PUBLISHER_CLIENT_ID")
+	sec := secretEnvByKey(t, rec.load, "PUBLISHER_CLIENT_SECRET")
+	if id.ValueFrom == nil || id.ValueFrom.SecretKeyRef == nil {
+		t.Fatalf("PUBLISHER_CLIENT_ID must be secretKeyRef, got %+v", id)
+	}
+	if id.ValueFrom.SecretKeyRef.Name != "acme-publisher-secrets" {
+		t.Errorf("client_id secret name = %q", id.ValueFrom.SecretKeyRef.Name)
+	}
+	if id.ValueFrom.SecretKeyRef.Key != organization.PublisherSecretFieldClientID {
+		t.Errorf("client_id field = %q, want %q", id.ValueFrom.SecretKeyRef.Key, organization.PublisherSecretFieldClientID)
+	}
+	if sec.ValueFrom.SecretKeyRef.Name != "acme-publisher-secrets" {
+		t.Errorf("client_secret must share the SecretReference, got %q", sec.ValueFrom.SecretKeyRef.Name)
+	}
+	if sec.ValueFrom.SecretKeyRef.Key != organization.PublisherSecretFieldClientSecret {
+		t.Errorf("client_secret field = %q, want %q", sec.ValueFrom.SecretKeyRef.Key, organization.PublisherSecretFieldClientSecret)
+	}
+	if sec.ValueFrom.SecretKeyRef.Key == "publisher" {
+		t.Fatal("must not use triplet Property 'publisher' as SecretKey")
+	}
+	tok := secretEnvByKey(t, rec.load, "PUBLISHER_TOKEN_URL")
+	if tok.Value != "https://platform-idp.example/oauth2/token" {
+		t.Errorf("PUBLISHER_TOKEN_URL = %q (must be plain env, not a secret)", tok.Value)
+	}
+	if tok.ValueFrom != nil {
+		t.Errorf("PUBLISHER_TOKEN_URL must not be secretKeyRef, got %+v", tok.ValueFrom)
+	}
+}
+
+func TestDispatch_MissingPublisher_ErrorsNoCreate(t *testing.T) {
+	rec := &chainRecorder{}
+	anthropic, github := fullSecretRefs()
+	e := newCodingDispatchExecutor(anthropic, github)
+	e.platformURL = "https://gateway.example/app-factory-api"
+	e.WithOCDispatch(NewOCDispatcher(rec.client()).WithImage("ghcr.io/wso2/aep/remote-worker:latest"))
+
+	_, err := e.Dispatch(context.Background(), codingMilestoneDispatch())
+	if err == nil {
+		t.Fatal("expected error when publisher credentials are not wired")
+	}
+	if !strings.Contains(err.Error(), "publisher") {
+		t.Fatalf("error must name publisher, got: %v", err)
+	}
+	if len(rec.calls) != 0 {
+		t.Errorf("nothing may be created before publisher creds resolve, saw %v", rec.calls)
+	}
+}
+
+func TestDispatch_EmptyTokenURL_ErrorsNoCreate(t *testing.T) {
+	rec := &chainRecorder{}
+	anthropic, github := fullSecretRefs()
+	e := newCodingDispatchExecutor(anthropic, github)
+	e.platformURL = "https://gateway.example/app-factory-api"
+	e.WithPublisherCredentials(fakePublisher{name: "acme-publisher-secrets"}, "")
+	e.WithOCDispatch(NewOCDispatcher(rec.client()).WithImage("ghcr.io/wso2/aep/remote-worker:latest"))
+
+	_, err := e.Dispatch(context.Background(), codingMilestoneDispatch())
+	if err == nil {
+		t.Fatal("expected error when publisher token URL cannot be derived")
+	}
+	if !strings.Contains(err.Error(), "JWKS") && !strings.Contains(strings.ToLower(err.Error()), "token") {
+		t.Fatalf("error must name JWKS/token URL, got: %v", err)
+	}
+	if len(rec.calls) != 0 {
+		t.Errorf("nothing may be created, saw %v", rec.calls)
+	}
+}
+
+func TestDispatch_ProfileLoadError_ErrorsNoCreate(t *testing.T) {
+	rec := &chainRecorder{}
+	anthropic, github := fullSecretRefs()
+	e := newCodingDispatchExecutor(anthropic, github)
+	e.platformURL = "https://gateway.example/app-factory-api"
+	e.WithPublisherCredentials(fakePublisher{err: errors.New("db down")}, "https://idp.example/oauth2/token")
+	e.WithOCDispatch(NewOCDispatcher(rec.client()).WithImage("ghcr.io/wso2/aep/remote-worker:latest"))
+
+	_, err := e.Dispatch(context.Background(), codingMilestoneDispatch())
+	if err == nil {
+		t.Fatal("expected error when profile load fails")
+	}
+	if !strings.Contains(err.Error(), "db down") {
+		t.Fatalf("error must wrap the resolver diagnosis, got: %v", err)
+	}
+	if len(rec.calls) != 0 {
+		t.Errorf("nothing may be created, saw %v", rec.calls)
+	}
+}
+
+func TestDispatch_EmptySecretRef_ErrorsNoCreate(t *testing.T) {
+	rec := &chainRecorder{}
+	anthropic, github := fullSecretRefs()
+	e := newCodingDispatchExecutor(anthropic, github)
+	e.platformURL = "https://gateway.example/app-factory-api"
+	e.WithPublisherCredentials(fakePublisher{name: "  "}, "https://idp.example/oauth2/token")
+	e.WithOCDispatch(NewOCDispatcher(rec.client()).WithImage("ghcr.io/wso2/aep/remote-worker:latest"))
+
+	_, err := e.Dispatch(context.Background(), codingMilestoneDispatch())
+	if err == nil {
+		t.Fatal("expected error when SecretReference name is empty")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "secret") {
+		t.Fatalf("error must name SecretReference, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "RegenerateClientSecret") {
+		t.Fatalf("dispatch must not tell operators to rotate, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "SecretReference is not stamped") {
+		t.Fatalf("empty SecretReference must name the missing stamp, got: %v", err)
+	}
+	if len(rec.calls) != 0 {
+		t.Errorf("nothing may be created, saw %v", rec.calls)
+	}
+}
+
+func TestDispatch_HTTPPlatformURL_MountsPublisher(t *testing.T) {
+	rec := &chainRecorder{}
+	anthropic, github := fullSecretRefs()
+	e := newCodingDispatchExecutor(anthropic, github)
+	e.platformURL = "http://host.k3d.internal:9090"
+	e.WithPublisherCredentials(fakePublisher{name: "acme-publisher-secrets"}, "http://thunder-service.thunder.svc.cluster.local:8090/oauth2/token")
+	e.WithOCDispatch(NewOCDispatcher(rec.client()).WithImage("ghcr.io/wso2/aep/remote-worker:latest"))
+
+	if _, err := e.Dispatch(context.Background(), codingMilestoneDispatch()); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	id := secretEnvByKey(t, rec.load, "PUBLISHER_CLIENT_ID")
+	if id.ValueFrom == nil || id.ValueFrom.SecretKeyRef == nil || id.ValueFrom.SecretKeyRef.Name != "acme-publisher-secrets" {
+		t.Fatalf("http dispatch must mount PUBLISHER_CLIENT_ID from the SecretReference, got %+v", id)
+	}
+	tok := secretEnvByKey(t, rec.load, "PUBLISHER_TOKEN_URL")
+	if tok.Value != "http://thunder-service.thunder.svc.cluster.local:8090/oauth2/token" {
+		t.Errorf("PUBLISHER_TOKEN_URL = %q", tok.Value)
+	}
+	for _, ev := range rec.load.Env {
+		if ev.Key == "AEP_BEARER" || ev.Key == "AEP_MCP_TOKEN" {
+			t.Errorf("coding-agent Job must not inject %s", ev.Key)
+		}
 	}
 }

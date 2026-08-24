@@ -34,20 +34,3 @@ func ResolveAPISecurityEnabled(comp DesignComponent) bool {
 	}
 	return false
 }
-
-// ResolveAPISecurityCallerKind returns the auth flavor for sibling-CORS
-// gating. Only `end-user-required` APIs should advertise SPA origins in
-// their CORS allowlist (service-to-service APIs have no browser caller).
-// Returns "" when API security is not enabled.
-func ResolveAPISecurityCallerKind(comp DesignComponent) string {
-	if comp.ExposesAPI == nil {
-		return ""
-	}
-	switch strings.ToLower(strings.TrimSpace(comp.ExposesAPI.Auth)) {
-	case "end-user-required":
-		return "end-user"
-	case "service-required":
-		return "service"
-	}
-	return ""
-}

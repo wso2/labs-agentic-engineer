@@ -27,6 +27,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { fetchWith401Retry, staticTokenSource, type AccessTokenSource } from "./auth_retry.js";
 
 // The file the aep-validation skill reads. Deliberately under /tmp and NOT under
 // the workspace's `.aep/` — the base skill forbids the agent from looking in
@@ -51,6 +52,9 @@ export interface FetchValidationContextOptions {
   /** The dispatched CYCLE id — AEP_TASK_ID, and the subject its bearer is bound to. */
   cycleId: string;
   bearer: string;
+  /** When set, GET uses fetchWith401Retry (remint once on 401). */
+  source?: AccessTokenSource;
+  canRefresh?: boolean;
   /** Overridable for tests; defaults to VALIDATION_CONTEXT_FILE. */
   file?: string;
   fetchImpl?: typeof fetch;
@@ -78,15 +82,23 @@ export async function fetchValidationContext(
   if (platformUrl === "") {
     throw new Error("AEP_PLATFORM_URL is unset — the deployed endpoints cannot be resolved");
   }
-  if (bearer === "") {
+  const source = opts.source ?? (bearer !== "" ? staticTokenSource(bearer) : undefined);
+  if (source === undefined) {
     throw new Error("no bearer token for the validation-context callback");
   }
   const url = validationContextUrl(platformUrl, cycleId);
-  const doFetch = opts.fetchImpl ?? fetch;
 
   let res: Response;
   try {
-    res = await doFetch(url, { headers: { Authorization: `Bearer ${bearer}` } });
+    res = await fetchWith401Retry(
+      url,
+      { headers: { Accept: "application/json" } },
+      {
+        source,
+        canRefresh: opts.canRefresh ?? false,
+        fetchImpl: opts.fetchImpl,
+      },
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(`GET ${url}: ${msg}`);

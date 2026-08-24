@@ -1,7 +1,7 @@
-# SRE (RCA) agent on the aepctl/Helm install path
+# SRE (RCA) agent on the aectl/Helm install path
 
 Final-state notes for how the OpenChoreo SRE/RCA agent is brought up on the
-Helm/`aepctl` install, at parity with the local docker-compose path
+Helm/`aectl` install, at parity with the local docker-compose path
 (`deployments/scripts/setup-observability.sh`).
 
 ## What runs where
@@ -13,10 +13,10 @@ Helm/`aepctl` install, at parity with the local docker-compose path
   caller's bearer to `aep-api` (`AEP_API_BASE_URL=http://aep-api:9090`), which
   enforces org-scoped auth.
 - **Observability plane + RCA agent** — installed on demand by
-  `aep sre install` (the OpenChoreo `openchoreo-observability-plane` and
-  `observability-logs-opensearch` charts). Not part of `aep init`.
+  `aectl sre install` (the OpenChoreo `openchoreo-observability-plane` and
+  `observability-logs-opensearch` charts). Not part of `aectl init`.
 
-## `aep sre install`
+## `aectl sre install`
 
 Detects the observability plane (looks for the `observer` Deployment in the obs
 namespace); warns if absent, then installs/upgrades (idempotent). It then:
@@ -35,7 +35,7 @@ namespace); warns if absent, then installs/upgrades (idempotent). It then:
 
 ### Prerequisite
 
-`aep init` must run first. It registers the `openchoreo-rca-agent` Thunder
+`aectl init` must run first. It registers the `openchoreo-rca-agent` Thunder
 confidential client and seeds OpenBao — including the OpenSearch admin
 credentials (`aep/opensearch-username` / `-password`), which must be written
 while the OpenBao root token is still held (init revokes it at the end).
@@ -50,7 +50,7 @@ The `aep-secret-reader` policy already covers the new `aep/opensearch-*` paths.
 
 ## In-cluster vs docker-compose
 
-| | docker-compose (setup.sh) | aepctl/Helm |
+| | docker-compose (setup.sh) | aectl/Helm |
 |---|---|---|
 | `AE_API_URL` | `http://host.k3d.internal:3401` | `http://aep-mcp-server.<ns>.svc.cluster.local:3400` |
 | `AEP_API_URL` | `http://host.k3d.internal:9090` | `http://aep-api.<ns>.svc.cluster.local:9090` |

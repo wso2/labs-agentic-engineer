@@ -76,6 +76,7 @@ func newHarness(t *testing.T, rows ...delivery.MilestoneRun) *harness {
 		Runs:           h.runs,
 		Cycles:         h.cycles,
 		Issues:         h.issues,
+		Writer:         h.issues.writer(),
 		PRs:            h.prs,
 		Merger:         h.merger,
 		Repos:          fakeRepoLookup{},
@@ -128,11 +129,33 @@ func issueBody(action string, issue, milestone int, label, sender string, topLev
 	return []byte(fmt.Sprintf(`{
 	  "action": %q,
 	  %s
-	  "issue": {"number": %d, "state": "open", "title": "a task", "milestone": %s},
+	  "issue": {"number": %d, "state": "open", "title": "a task", "milestone": %s, "labels": [{"name": %q}]},
 	  "label": {"name": %q},
 	  "repository": {"full_name": %q},
 	  "sender": {"login": %q}
-	}`, action, top, issue, ms, label, testRepo, sender))
+	}`, action, top, issue, ms, label, label, testRepo, sender))
+}
+
+// issueBodyWithLabels is issueBody where the issue's WHOLE label set differs
+// from the one label that fired the delivery. That gap is the whole subject of
+// the adoption-routing tests: arming an issue that is ALREADY classified sends
+// `aep` as the fired label while the kind sits in the issue's own set.
+func issueBodyWithLabels(action string, issue, milestone int, fired string, labels []string, sender string) []byte {
+	ms := "null"
+	if milestone > 0 {
+		ms = fmt.Sprintf(`{"number": %d, "title": "v%d"}`, milestone, milestone)
+	}
+	quoted := make([]string, 0, len(labels))
+	for _, l := range labels {
+		quoted = append(quoted, fmt.Sprintf(`{"name": %q}`, l))
+	}
+	return []byte(fmt.Sprintf(`{
+	  "action": %q,
+	  "issue": {"number": %d, "state": "open", "title": "a task", "milestone": %s, "labels": [%s]},
+	  "label": {"name": %q},
+	  "repository": {"full_name": %q},
+	  "sender": {"login": %q}
+	}`, action, issue, ms, strings.Join(quoted, ","), fired, testRepo, sender))
 }
 
 // ---- §8 row 1: auto-merge policy seam -------------------------------------
@@ -161,13 +184,14 @@ func TestPullRequestOpened_MergesWhenItResolvesMilestoneWork(t *testing.T) {
 }
 
 // The validation cycle's pull request must merge too, and this asserts it through
-// the REAL fetch rather than against a hand-built issue list. decideAutoMerge
-// accepting `aep:validation` is not enough on its own: the fetch used to narrow
-// on `aep`, so the validation issue never reached the policy and every validation
-// pull request was declined with "no resolved issue is this run's work" — a green
-// agent, a report in the branch, and a run that sat at its landing deadline until
-// a human merged by hand. The policy_test cases cannot see that, because they
-// call the pure function with the population already in hand.
+// the REAL fetch rather than against a hand-built issue list. A policy that
+// accepts the validation task is not enough on its own: the fetch used to narrow
+// on a label the task did not carry, so it never reached the policy and every
+// validation pull request was declined with "no resolved issue is this run's
+// work" — a green agent, a report in the branch, and a run that sat at its
+// landing deadline until a human merged by hand. The policy_test cases cannot
+// see that, because they call the pure function with the population already in
+// hand.
 func TestPullRequestOpened_MergesTheValidationCyclesPullRequest(t *testing.T) {
 	h := newHarness(t, aRun("run-1", 7, delivery.RunStateRunning))
 	h.cycles.latest = aCycle("cycle-1", "run-1")
@@ -628,13 +652,13 @@ func TestAdoption_BareIssueJoinsTheDeployedVersionAndStartsAnIncidentRun(t *test
 	deployed := aRun("run-old", 5, delivery.RunStateSucceeded)
 	h := newHarness(t, deployed)
 
-	if err := h.deliver(t, "issues", issueBody("labeled", 31, 0, delivery.LabelAdopt, "human", false)); err != nil {
+	if err := h.deliver(t, "issues", issueBody("labeled", 31, 0, delivery.LabelAgentWork, "human", false)); err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
 	if len(h.issues.assigned) != 1 || h.issues.assigned[0] != "31->5" {
 		t.Fatalf("a bare adopted issue must join the deployed version's milestone, got %v", h.issues.assigned)
 	}
-	if len(h.sup.started) != 1 || h.sup.started[0].Origin != delivery.RunOriginIncidentAdoption ||
+	if len(h.sup.started) != 1 || h.sup.started[0].Kind != delivery.RunKindTask ||
 		h.sup.started[0].MilestoneNumber != 5 {
 		t.Fatalf("an incident run must start over the deployed milestone, got %+v", h.sup.started)
 	}
@@ -643,7 +667,7 @@ func TestAdoption_BareIssueJoinsTheDeployedVersionAndStartsAnIncidentRun(t *test
 func TestAdoption_ExistingMilestoneIsRespected(t *testing.T) {
 	h := newHarness(t, aRun("run-old", 5, delivery.RunStateSucceeded))
 
-	if err := h.deliver(t, "issues", issueBody("labeled", 31, 9, delivery.LabelAdopt, "human", false)); err != nil {
+	if err := h.deliver(t, "issues", issueBody("labeled", 31, 9, delivery.LabelAgentWork, "human", false)); err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
 	if len(h.issues.assigned) != 0 {
@@ -657,7 +681,7 @@ func TestAdoption_ExistingMilestoneIsRespected(t *testing.T) {
 func TestAdoption_IntoALiveRunIsANoOp(t *testing.T) {
 	h := newHarness(t, aRun("run-1", 7, delivery.RunStateRunning))
 
-	if err := h.deliver(t, "issues", issueBody("labeled", 31, 7, delivery.LabelAdopt, "human", false)); err != nil {
+	if err := h.deliver(t, "issues", issueBody("labeled", 31, 7, delivery.LabelAgentWork, "human", false)); err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
 	if len(h.sup.started) != 0 {
@@ -682,7 +706,7 @@ func TestAdoption_NeverDeployedProjectRefusesClearly(t *testing.T) {
 // TestRevalidate_StartsARunOverTheVersionsMilestone is the happy path, and the
 // assertion that matters is the ORIGIN: it is what carries the run past the
 // boundary's park guard and into validation, and what keeps it out of the
-// spec-run mutex so a re-check never holds up the next build.
+// build mutex so a re-check never holds up the next build.
 func TestRevalidate_StartsARunOverTheVersionsMilestone(t *testing.T) {
 	h := newHarness(t, aRun("run-old", 5, delivery.RunStateSucceeded))
 
@@ -695,7 +719,7 @@ func TestRevalidate_StartsARunOverTheVersionsMilestone(t *testing.T) {
 		t.Fatalf("exactly one run must start, got %+v", h.sup.started)
 	}
 	got := h.sup.started[0]
-	if got.Origin != delivery.RunOriginRevalidate || got.MilestoneNumber != 5 {
+	if got.Kind != delivery.RunKindValidation || got.MilestoneNumber != 5 {
 		t.Fatalf("a revalidate run must start over the version's own milestone, got %+v", got)
 	}
 	if got.ValidationAttempts != 1 || got.CycleCeiling != 4 {
@@ -719,7 +743,7 @@ func TestRevalidate_StartsARunOverTheVersionsMilestone(t *testing.T) {
 // nothing to hand off, so a silent success would answer nothing.
 //
 // The guard also has to run BEFORE admission: the revalidate origin is outside
-// the spec-run partial index, so nothing in the database would refuse a second
+// the per-project build mutex, so nothing in the database would refuse a second
 // row — the supervisor would admit one, find the workflow id taken, and return
 // successfully, leaving a row nobody drives.
 func TestRevalidate_RefusesWhileARunIsLive(t *testing.T) {
@@ -755,15 +779,17 @@ func TestRevalidate_RefusesWhileWorkIsOpen(t *testing.T) {
 }
 
 // TestRevalidate_GateOrValidationIssueIsNotOpenWork guards the WORKING-SET
-// reading of that refusal. A dispatch gate and the version's own validation
-// issue are both open issues in the milestone and neither is work a coding cycle
-// would pick up — counting them would make a version permanently unrevalidatable,
-// since the validation issue is reopened by every attempt.
+// reading of that refusal. A dispatch gate and the version's own validation task
+// are both open issues in the milestone and neither is work a coding cycle would
+// pick up — counting them would make a version permanently unrevalidatable, since
+// the validation task is reopened by every attempt. Note the task IS armed now,
+// so only the KIND test keeps it out; a predicate reading the arming label alone
+// would refuse every revalidation.
 func TestRevalidate_GateOrValidationIssueIsNotOpenWork(t *testing.T) {
 	h := newHarness(t, aRun("run-old", 5, delivery.RunStateSucceeded))
 	h.issues.withOpenIssues(5,
-		[]string{delivery.LabelProvisionGate},
-		[]string{delivery.LabelValidationWork})
+		[]string{delivery.KindProvision},
+		[]string{delivery.LabelAgentWork, delivery.KindValidation})
 
 	if _, err := h.events.Revalidate(context.Background(), testOrg, testProject,
 		MilestoneRef{Number: 5, Title: "v3"}, 1, 0); err != nil {
@@ -810,7 +836,7 @@ func TestNoRunRow_EveryHandlerIsInert(t *testing.T) {
 		{"pull_request", prBody("closed", "aep/m7-c1", "Resolves #12", 42, false, true, "abc123")},
 		{"issues", issueBody("closed", 12, 7, "aep", "human", false)},
 		{"issues", issueBody("milestoned", 12, 7, "aep", "human", true)},
-		{"issues", issueBody("labeled", 12, 0, delivery.LabelAdopt, "human", false)},
+		{"issues", issueBody("labeled", 12, 0, delivery.LabelAgentWork, "human", false)},
 	}
 	for _, d := range deliveries {
 		if err := h.deliver(t, d.event, d.payload); err != nil {
@@ -844,5 +870,65 @@ func TestNoRunRow_EveryHandlerIsInert(t *testing.T) {
 	}
 	if len(h.cycles.notedPR) != 0 || len(h.cycles.closed) != 0 {
 		t.Errorf("no run row must mean no cycle write, got %v / %v", h.cycles.notedPR, h.cycles.closed)
+	}
+}
+
+// TestAdoption_NeverAdoptsThePlatformsOwnValidationTask is the live failure this
+// guard exists for, and it is a webhook-level test on purpose: the defect was
+// invisible at the unit level because it depended on WHO GitHub said the sender
+// was.
+//
+// The platform mints the version's validation task with `aep` + `validation`.
+// On an install with a GitHub App that create returns as a self-sender delivery
+// and echo suppression drops it — but an install with no App writes through a
+// human PAT, so the same delivery arrives indistinguishable from a human arming
+// an issue. Adoption then started a bug-fix run over the milestone, that run
+// parked on an empty working set, and because it was non-terminal it held the
+// per-milestone live-run index — so the validation run could never be admitted
+// and the version was never judged.
+//
+// The sender here is a HUMAN precisely so suppression cannot be what saves it.
+func TestAdoption_NeverAdoptsThePlatformsOwnValidationTask(t *testing.T) {
+	h := newHarness(t, aRun("run-old", 5, delivery.RunStateSucceeded))
+
+	body := issueBodyWithLabels("labeled", 6, 5, delivery.LabelAgentWork,
+		[]string{delivery.LabelAgentWork, delivery.KindValidation}, "a-human-pat")
+	if err := h.deliver(t, "issues", body); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if len(h.sup.started) != 0 {
+		t.Fatalf("the platform's own validation task started a run: %+v — it is the "+
+			"reconcile sweep's to route, as a validation run", h.sup.started)
+	}
+}
+
+// TestAdoption_NeverAdoptsPlannedWork: a dev run owns the version's planned work
+// and holds its build mutex. A task run picking it up would work it with
+// different budgets, and the two would be on one branch.
+func TestAdoption_NeverAdoptsPlannedWork(t *testing.T) {
+	h := newHarness(t, aRun("run-old", 5, delivery.RunStateSucceeded))
+
+	body := issueBodyWithLabels("labeled", 9, 5, delivery.LabelAgentWork,
+		[]string{delivery.LabelAgentWork, delivery.KindDevelopment}, "a-human-pat")
+	if err := h.deliver(t, "issues", body); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if len(h.sup.started) != 0 {
+		t.Fatalf("planned work started a bug-fix run: %+v", h.sup.started)
+	}
+}
+
+// TestAdoption_StillAdoptsARealDefect is the other half — the guard must not
+// have closed the door on the path adoption exists for.
+func TestAdoption_StillAdoptsARealDefect(t *testing.T) {
+	h := newHarness(t, aRun("run-old", 5, delivery.RunStateSucceeded))
+
+	body := issueBodyWithLabels("labeled", 12, 0, delivery.LabelAgentWork,
+		[]string{delivery.LabelAgentWork, delivery.KindBug, delivery.SrcIncident}, "a-human-pat")
+	if err := h.deliver(t, "issues", body); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if len(h.sup.started) != 1 || h.sup.started[0].Kind != delivery.RunKindTask {
+		t.Fatalf("a real defect must still start a task run, got %+v", h.sup.started)
 	}
 }

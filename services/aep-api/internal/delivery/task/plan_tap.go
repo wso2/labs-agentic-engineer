@@ -30,7 +30,6 @@ import (
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/platform/taskplan"
-	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // planDrainIdleTimeout aborts the upstream drain if no bytes arrive for this
@@ -64,6 +63,11 @@ type planTap struct {
 	orgID     string
 	projectID string
 	issues    IssueClient
+	// writer mints the Task issues. The planner's own updateTask edits (title,
+	// body, the write-failure comment) stay on `issues`: those are the agent's
+	// tool surface acting on an issue that already exists, not platform mints,
+	// and they carry none of the label or dedupe policy the writer owns.
+	writer *delivery.IssueWriter
 
 	// milestone is the version's milestone NUMBER, assigned at issue creation.
 	// Zero leaves creations unassigned (no milestone was minted for this turn).
@@ -113,12 +117,13 @@ func (t *planTap) storiesFor(component string) []int {
 	return t.componentStories[strings.ToLower(strings.TrimSpace(component))]
 }
 
-func newPlanTap(ctx context.Context, orgID, projectID string, issues IssueClient) *planTap {
+func newPlanTap(ctx context.Context, orgID, projectID string, issues IssueClient, writer *delivery.IssueWriter) *planTap {
 	return &planTap{
 		ctx:               ctx,
 		orgID:             orgID,
 		projectID:         projectID,
 		issues:            issues,
+		writer:            writer,
 		state:             map[int]plannedTask{},
 		contextNumbers:    map[int]bool{},
 		titleToNumber:     map[string]int{},
@@ -311,37 +316,45 @@ func (t *planTap) handlePlan(out *taskplan.PlanTaskOk) {
 		DependsOn: out.DependsOn,
 		Rationale: out.Rationale,
 	}
-	req := sourcecontrol.CreateIssueRequest{
+	// Milestone assignment RIDES the create — one call, which is what keeps the
+	// plan's API cost at 1+N rather than 1+2N. No DedupeKey, deliberately: this
+	// is the ONE mint in the domain that dedupes client-side, on the title slug
+	// above, because a re-plan legitimately re-proposes a Task under a title the
+	// agent may have reworded and the milestone's own membership is the set to
+	// reconcile against.
+	number, _, err := t.writer.Mint(t.ctx, t.orgID, t.projectID, delivery.IssueSpec{
 		Title: out.Title,
 		// The Serves-stories stamp is platform-authored from the design's
 		// citations (#369) — the planner has zero discretion over it.
 		Body: delivery.StampServesStories(composeTaskBody(planned, t.issueForComponent), t.storiesFor(out.Component)),
-		// The working-set marker, and nothing else: a Task is agent work. Gates
-		// (aep:provision) and the validation Task (aep:validation) are minted
-		// elsewhere and are deliberately not this population.
-		Labels: []string{delivery.LabelAgentWork},
-	}
-	// Milestone assignment RIDES the create — one call, which is what keeps the
-	// plan's API cost at 1+N rather than 1+2N.
-	if t.milestone > 0 {
-		n := t.milestone
-		req.Milestone = &n
-	}
-	issue, err := t.issues.CreateIssue(t.ctx, t.orgID, t.projectID, req)
-	if err != nil {
+		// Armed, and PLANNED work: a Task is what the spec asked for. The kind is
+		// what keeps a bug-fix run off it — that loop works the deployed version
+		// and must never pick up planned work for a version still being built.
+		// Gates and the validation task are minted elsewhere and are deliberately
+		// not this population.
+		Labels:    []string{delivery.LabelAgentWork, delivery.KindDevelopment},
+		Milestone: t.milestone,
+	})
+	if err != nil || number == 0 {
 		// No issue exists to flag — record for the terminal in-band surface.
+		//
+		// A zero number counts as a failure for the same reason an error does:
+		// nothing was filed that a later `updateTask` could address. Recording it
+		// would put issue 0 in the slug and component maps, which is worse than
+		// recording nothing — the next Task naming the same component would then
+		// render a "Depends on #0" line into an agent's prose.
 		t.failures++
-		slog.WarnContext(t.ctx, "plan tap: create issue failed", "title", out.Title, "error", err)
+		slog.WarnContext(t.ctx, "plan tap: create issue filed nothing", "title", out.Title, "error", err)
 		return
 	}
 	if slug != "" {
 		t.createdSlugs[slug] = true
 	}
-	t.titleToNumber[norm] = issue.Number
+	t.titleToNumber[norm] = number
 	if c := strings.ToLower(strings.TrimSpace(out.Component)); c != "" {
-		t.componentToNumber[c] = issue.Number
+		t.componentToNumber[c] = number
 	}
-	t.state[issue.Number] = planned
+	t.state[number] = planned
 }
 
 // appPathFor resolves a component's source directory from the design, or ""

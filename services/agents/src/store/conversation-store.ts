@@ -46,6 +46,12 @@ export interface TurnJournalEntry {
    */
   author?: { id: string; displayName: string };
   /**
+   * File NAMES that rode this message (#428) — never bytes. The display read
+   * replaces a user row's content with `text`, so without these a reload would
+   * show the agent discussing a document that appears nowhere in the thread.
+   */
+  attachments?: string[];
+  /**
    * Index into `messages` of the user message this turn appended — stamped at
    * write time (the append site knows it exactly), so the display read pairs
    * entry↔message by position stated as fact, never inferred. Journal-less

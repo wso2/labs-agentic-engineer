@@ -20,6 +20,7 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import type { SectionVerdict } from "../src/scoring/bands.js";
 import { needsReview, renderReviewSheet, type ReviewSection } from "../src/scoring/review-sheet.js";
+import { REPO_ROOT } from "../src/config.js";
 
 const verdict = (band: SectionVerdict["band"], score: number): SectionVerdict => ({
   section: "requirements",
@@ -58,4 +59,36 @@ test("renderReviewSheet carries verdicts, checks, and the blank human section", 
   assert.match(sheet, /\[x\] exists/);
   assert.match(sheet, /## Human verdict/);
   assert.match(sheet, /\/tmp\/t\.md/);
+});
+
+// The sheet is committed as the human verdict record for a run, so an absolute
+// artifact path would bake the machine and account that ran the eval into the
+// repository and read as a dead link on anyone else's checkout.
+test("renderReviewSheet: artifact paths are repo-relative, never absolute", () => {
+  const sheet = renderReviewSheet({
+    scenario: "lunch-coordinator",
+    evalName: "requirements-section",
+    when: "2026-08-21T00:00:00.000Z",
+    sections: [section("review", 60)],
+    transcriptPath: `${REPO_ROOT}/playground/.projects/spec-agent-evals/req.transcript.md`,
+    tracePath: `${REPO_ROOT}/playground/.projects/spec-agent-evals/req.trace.json`,
+  });
+
+  assert.match(sheet, /- Transcript: playground\/\.projects\/spec-agent-evals\/req\.transcript\.md/);
+  assert.match(sheet, /- Raw trace: playground\/\.projects\/spec-agent-evals\/req\.trace\.json/);
+  assert.equal(sheet.includes(REPO_ROOT), false);
+});
+
+test("renderReviewSheet: a path outside the repo is left absolute", () => {
+  // Nothing better to say — a relative path would climb out of the tree.
+  const sheet = renderReviewSheet({
+    scenario: "lunch-coordinator",
+    evalName: "requirements-section",
+    when: "2026-08-21T00:00:00.000Z",
+    sections: [section("review", 60)],
+    transcriptPath: "/tmp/scratch/req.transcript.md",
+    tracePath: "/tmp/scratch/req.trace.json",
+  });
+
+  assert.match(sheet, /- Transcript: \/tmp\/scratch\/req\.transcript\.md/);
 });

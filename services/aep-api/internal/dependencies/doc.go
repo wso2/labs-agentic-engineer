@@ -50,7 +50,7 @@
 // component; endpoint_naming.go derives the `<UPPER_SNAKE>_URL` env var OC binds
 // a resolved org-service address to.
 //
-// The value/param collection surface, the aep:provision gate issues, the
+// The value/param collection surface, the `provision` gate issues, the
 // provision-Execution lifecycle and the readiness/convergence watchers that
 // DRIVE these cores live in the domain's slices (provisioning/, runtimeconfig/);
 // the MCP discovery surface + the resource-type/endpoint HTTP reads live in

@@ -185,7 +185,7 @@ export function ProjectsList() {
     <PageContent>
       <PageHeader
         title="Projects"
-        subtitle="Everything AEP is building for you, one project per app."
+        subtitle="Everything Agentic Engineer is building for you, one project per app."
         {...(!isTrueEmpty && {
           actions: (
             <Button
@@ -216,7 +216,7 @@ export function ProjectsList() {
         <EmptyState
           icon={<Folder size={48} />}
           title="No projects yet"
-          description="Tell AEP what you want to build and it becomes your first project."
+          description="Tell Agentic Engineer what you want to build and it becomes your first project."
           action={
             <Button
               variant="contained"

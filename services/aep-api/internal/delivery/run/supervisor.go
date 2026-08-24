@@ -65,7 +65,7 @@ func NewSupervisor(rt *delivery.Runtime, runs RunStore, dispatcher delivery.Mile
 // supervisor over its milestone.
 //
 // Idempotent by construction, because its callers re-offer the same milestone:
-// adoption fires on every `aep:codingagent` label, and the reconcile sweep
+// adoption fires on every `aep` label a human adds, and the reconcile sweep
 // re-offers every pass. A milestone that already has a live run reuses its row,
 // and a workflow that is already running answers AlreadyStarted, which is
 // success.
@@ -75,7 +75,7 @@ func NewSupervisor(rt *delivery.Runtime, runs RunStore, dispatcher delivery.Mile
 // that the run workflow owns planning: a caller that returns success without
 // starting anything leaves the row non-terminal with nothing behind it, and a
 // non-terminal row answers LiveRunForMilestone forever, so the sweep skips it
-// and the spec mutex never releases. Callers that re-offer on a timer swallow
+// and the build mutex never releases. Callers that re-offer on a timer swallow
 // the sentinel; the build click, which has no timer, settles the row on it.
 func (s *Supervisor) StartRun(ctx context.Context, req delivery.StartRunRequest) error {
 	if s == nil {
@@ -83,7 +83,7 @@ func (s *Supervisor) StartRun(ctx context.Context, req delivery.StartRunRequest)
 	}
 	if s.dispatcher == nil {
 		slog.WarnContext(ctx, "run: no agent dispatcher wired — the run row waits",
-			"project", req.ProjectID, "milestone", req.MilestoneNumber, "origin", req.Origin)
+			"project", req.ProjectID, "milestone", req.MilestoneNumber, "kind", req.Kind)
 		return delivery.ErrRunNotStarted
 	}
 	if s.rt == nil || !s.rt.Available() {
@@ -104,19 +104,38 @@ func (s *Supervisor) StartRun(ctx context.Context, req delivery.StartRunRequest)
 	if err != nil {
 		return nil // raced with a client teardown — best-effort, the sweep re-offers
 	}
+	// The ROW is the routing table: its kind selects both the workflow type and
+	// the id prefix, so the three species cannot be confused for one another by
+	// anything that later signals or cancels this run.
+	//
+	// An unroutable row is REFUSED rather than guessed at, and the guard is real
+	// rather than defensive: a row is routable only when its kind is valid, or its
+	// kind is empty and its origin implies one (see delivery.RoutableRunKind).
+	// Anything else — garbage in both — would have to be read as `dev`, and
+	// starting a dev workflow over it would take the project's build mutex on
+	// behalf of a run nobody asked for, then hold every later build behind it.
+	kind, routable := delivery.RoutableRunKind(row.Kind, row.Origin)
+	if !routable {
+		slog.ErrorContext(ctx, "run: run row has no routable kind — not started",
+			"run", row.ID, "kind", row.Kind, "origin", row.Origin)
+		return delivery.ErrRunNotStarted
+	}
+	workflowType := delivery.RunWorkflowName(kind)
 	_, err = c.ExecuteWorkflow(ctx, client.StartWorkflowOptions{
-		ID:        delivery.MilestoneRunWorkflowID(row.OrgID, row.ProjectID, row.MilestoneNumber),
+		ID:        delivery.MilestoneRunWorkflowID(kind, row.OrgID, row.ProjectID, row.MilestoneNumber),
 		TaskQueue: s.rt.TaskQueue(),
-		// A milestone sees SEQUENTIAL runs across its life, so the id is reused
-		// once the previous run is terminal. Concurrency is prevented by the run
-		// row (the spec mutex) and by AlreadyStarted below, not by the id.
+		// A milestone sees SEQUENTIAL runs OF ONE KIND across its life, so the id is
+		// reused once the previous run is terminal. Concurrency is prevented by the
+		// run row (the build mutex, and the per-milestone index) and by
+		// AlreadyStarted below, not by the id.
 		WorkflowIDReusePolicy: enumspb.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
-	}, delivery.MilestoneRunWorkflowName, RunInput{
+	}, workflowType, RunInput{
 		RunID:           row.ID,
 		OrgID:           row.OrgID,
 		ProjectID:       row.ProjectID,
 		MilestoneNumber: row.MilestoneNumber,
 		MilestoneTitle:  row.MilestoneTitle,
+		Kind:            row.Kind,
 		Origin:          row.Origin,
 		// Planning inputs come off the REQUEST, never the row — the inverse of the
 		// budgets below, and for the mirror-image reason. The row says which run
@@ -125,6 +144,7 @@ func (s *Supervisor) StartRun(ctx context.Context, req delivery.StartRunRequest)
 		// adoption). Reading a tag off the row would make every re-offer re-plan.
 		Tag:             req.Tag,
 		ProvisionInputs: req.ProvisionInputs,
+		Rebuild:         req.Rebuild,
 		// Budgets come off the ROW, never the request: a run the sweep re-offers is
 		// an existing row, and reading the re-offer's (default) values would quietly
 		// widen a run that was admitted narrower.
@@ -140,13 +160,14 @@ func (s *Supervisor) StartRun(ctx context.Context, req delivery.StartRunRequest)
 		return err
 	}
 	slog.InfoContext(ctx, "run: supervising a milestone",
-		"run", row.ID, "project", row.ProjectID, "milestone", row.MilestoneNumber, "origin", row.Origin)
+		"run", row.ID, "project", row.ProjectID, "milestone", row.MilestoneNumber, "kind", row.Kind)
 	return nil
 }
 
 // admit resolves the run row this request supervises: the caller's own (the
-// plan path admits before planning, so the spec mutex is armed across the
-// planning turn), the milestone's existing live run, or a fresh incident row.
+// plan path admits before planning, so the build mutex is armed across the
+// planning turn), the milestone's existing live run, or a fresh row of the
+// request's kind.
 //
 // It returns (nil, nil) when the mutex refused a new row — somebody else won,
 // and they are the one being supervised.
@@ -162,6 +183,7 @@ func (s *Supervisor) admit(ctx context.Context, req delivery.StartRunRequest) (*
 			ProjectID:          req.ProjectID,
 			MilestoneNumber:    req.MilestoneNumber,
 			MilestoneTitle:     req.MilestoneTitle,
+			Kind:               req.Kind,
 			Origin:             req.Origin,
 			CycleCeiling:       ceiling,
 			ValidationAttempts: req.ValidationAttempts,
@@ -180,11 +202,11 @@ func (s *Supervisor) admit(ctx context.Context, req delivery.StartRunRequest) (*
 		// which is precisely the reconcile sweep's job.
 		return live, nil
 	}
-	// The incident row inherits the milestone's version. Best-effort: a read
-	// failure costs the ledger this run's version label, never the run.
+	// The new row inherits the milestone's version. Best-effort: a read failure
+	// costs the ledger this run's version label, never the run.
 	tag, err := s.runs.MilestoneSpecTag(ctx, req.OrgID, req.ProjectID, req.MilestoneNumber)
 	if err != nil {
-		slog.WarnContext(ctx, "run: milestone version read failed — admitting the incident run untagged",
+		slog.WarnContext(ctx, "run: milestone version read failed — admitting the run untagged",
 			"project", req.ProjectID, "milestone", req.MilestoneNumber, "error", err)
 	}
 	admitted, row, err := s.runs.TryAdmit(ctx, &delivery.MilestoneRun{
@@ -193,6 +215,7 @@ func (s *Supervisor) admit(ctx context.Context, req delivery.StartRunRequest) (*
 		MilestoneNumber:    req.MilestoneNumber,
 		MilestoneTitle:     req.MilestoneTitle,
 		Tag:                tag,
+		Kind:               req.Kind,
 		Origin:             req.Origin,
 		State:              delivery.RunStateWaiting,
 		CycleCeiling:       req.CycleCeiling,
@@ -214,7 +237,7 @@ func (s *Supervisor) SignalRun(ctx context.Context, row *delivery.MilestoneRun, 
 	if s == nil || row == nil || s.rt == nil || !s.rt.Available() {
 		return nil
 	}
-	return s.signal(ctx, row.OrgID, row.ProjectID, row.MilestoneNumber, name, payload)
+	return s.signal(ctx, row, name, payload)
 }
 
 // CancelRun abandons an increment. It is the write behind the console's cancel,
@@ -230,7 +253,7 @@ func (s *Supervisor) CancelRun(ctx context.Context, row *delivery.MilestoneRun) 
 	if s.rt == nil || !s.rt.Available() {
 		return delivery.ErrTemporalUnavailable
 	}
-	return s.signal(ctx, row.OrgID, row.ProjectID, row.MilestoneNumber, delivery.SigRunCancel, delivery.RunSignal{
+	return s.signal(ctx, row, delivery.SigRunCancel, delivery.RunSignal{
 		Signal:          delivery.SigRunCancel,
 		MilestoneNumber: row.MilestoneNumber,
 	})
@@ -270,19 +293,48 @@ func (s *Supervisor) AbandonRun(ctx context.Context, orgID, projectID string, mi
 	if err != nil {
 		return nil // raced with a client teardown
 	}
-	workflowID := delivery.MilestoneRunWorkflowID(orgID, projectID, milestoneNumber)
 	ctx, cancel := context.WithTimeout(ctx, signalTimeout)
 	defer cancel()
-	if terr := c.TerminateWorkflow(ctx, workflowID, "", abandonReason); terr != nil {
+	// EVERY kind, not the one that happens to be live. A milestone can be worked
+	// by three workflow ids across its life and there is no row left to ask which
+	// ones ever existed — the rows are purged in the same teardown. A kind missed
+	// here leaves a supervisor retrying its milestone poll forever (Temporal's
+	// default policy is unbounded) against a repository that is gone, and holding
+	// an id any later same-named project's first run would be refused as
+	// AlreadyStarted on.
+	var errs []error
+	for _, workflowID := range abandonWorkflowIDs(orgID, projectID, milestoneNumber) {
+		terr := c.TerminateWorkflow(ctx, workflowID, "", abandonReason)
 		var notFound *serviceerror.NotFound
-		if errors.As(terr, &notFound) {
-			return nil
+		if terr == nil {
+			slog.InfoContext(ctx, "run: abandoned a supervisor whose project was deleted",
+				"workflowId", workflowID, "project", projectID, "milestone", milestoneNumber)
+			continue
 		}
-		return terr
+		if errors.As(terr, &notFound) {
+			// The id may never have been started, and terminating a settled
+			// execution is the same no-op. Temporal reports both as NotFound.
+			continue
+		}
+		errs = append(errs, terr)
 	}
-	slog.InfoContext(ctx, "run: abandoned a supervisor whose project was deleted",
-		"workflowId", workflowID, "project", projectID, "milestone", milestoneNumber)
-	return nil
+	return errors.Join(errs...)
+}
+
+// abandonWorkflowIDs is every workflow id a milestone could be supervised under.
+//
+// It is a named function rather than a loop inline in AbandonRun because WHICH
+// ids get terminated is the thing that can silently go wrong, and it is the only
+// part of the abandon path testable without a Temporal server. A kind missing
+// from this list leaves a supervisor retrying its milestone poll forever against
+// a repository that is gone, and holding an id that any later same-named
+// project's first run is then refused as AlreadyStarted on.
+func abandonWorkflowIDs(orgID, projectID string, milestoneNumber int) []string {
+	out := make([]string, 0, len(delivery.RunKinds))
+	for _, kind := range delivery.RunKinds {
+		out = append(out, delivery.MilestoneRunWorkflowID(kind, orgID, projectID, milestoneNumber))
+	}
+	return out
 }
 
 // abandonReason is what a terminated run's history records. It is a sentence
@@ -290,12 +342,35 @@ func (s *Supervisor) AbandonRun(ctx context.Context, orgID, projectID string, mi
 // workflow stopped.
 const abandonReason = "the project was deleted — its run rows are purged and its repository is gone"
 
-func (s *Supervisor) signal(ctx context.Context, orgID, projectID string, milestoneNumber int, name string, payload delivery.RunSignal) error {
+// signal addresses a run by its ROW, which is the routing table: the row's kind
+// gives the workflow id's prefix.
+//
+// Resolving the prefix from the row rather than from the milestone alone is what
+// makes a stale signal harmless. Ids are reused, so one grammar for all three
+// kinds would let a merge signal aimed at a settled dev run land on the
+// validation run that claimed the same id afterwards — and that run would read
+// the cycle facts of a merge that was never its own.
+//
+// A row that is not routable is not signalled AT ALL, and that is exactly right
+// rather than a gap: StartRun refuses the same rows on the same predicate, so an
+// unroutable row has no execution under any id — there is nothing to wake. Naming
+// an id anyway would mean guessing a species, and the guess would deliver this
+// row's signal to whichever OTHER run holds that id on the milestone. Cancel
+// rides this path too and loses nothing: the request is already durable on the
+// row, so a run that does exist honours it at its next boundary either way.
+func (s *Supervisor) signal(ctx context.Context, row *delivery.MilestoneRun, name string, payload delivery.RunSignal) error {
 	c, err := s.rt.Client()
 	if err != nil {
 		return nil
 	}
-	workflowID := delivery.MilestoneRunWorkflowID(orgID, projectID, milestoneNumber)
+	kind, routable := delivery.RoutableRunKind(row.Kind, row.Origin)
+	if !routable {
+		slog.ErrorContext(ctx, "run: run row has no routable kind — not signalled",
+			"run", row.ID, "kind", row.Kind, "origin", row.Origin, "signal", name)
+		return nil
+	}
+	workflowID := delivery.MilestoneRunWorkflowID(
+		kind, row.OrgID, row.ProjectID, row.MilestoneNumber)
 	ctx, cancel := context.WithTimeout(ctx, signalTimeout)
 	defer cancel()
 	if serr := c.SignalWorkflow(ctx, workflowID, "", name, payload); serr != nil {

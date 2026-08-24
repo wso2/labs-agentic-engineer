@@ -36,17 +36,20 @@ Every actor cited by a story is defined here first.>
 <policy choices at product altitude: sign-in approach, notification channels,
 which external services the product depends on (by capability, e.g.
 "transactional email" — binding to a concrete provider happens at design).
-Decisions taken from org defaults or the skip valve are ordinary entries;
-skip-valve entries carry the *assumed* tag.>
+Decisions taken from an org default are ordinary entries; a decision the agent
+made itself, because the user has not answered it yet, carries the *assumed*
+tag.>
 
 ## Out of Scope
 <what this project deliberately does not do>
 
 ## Open Questions
-<numbered; each is something nobody could answer yet — marked, never guessed.
-An open question is resolved (answered, and its answer moved to the right
-section) or explicitly deferred ("deferred — does not block design") before
-/design proceeds.>
+<numbered; each is a fact only the user holds — marked, never guessed. It is
+resolved when its answer moves to the section it belongs in and the entry
+leaves this list. An entry the user has declined for now is marked
+"deferred — the user will decide later", which tells you to stop raising it.
+Open questions gate nothing: the document is readable, designable and
+buildable with them outstanding.>
 
 ## Further Notes
 <anything real that fits nowhere above; omit the section when empty>
@@ -68,6 +71,11 @@ section) or explicitly deferred ("deferred — does not block design") before
 - **No acceptance criteria.** Validation criteria live in
   `specs/validation/validation-criteria.json` — the single acceptance oracle.
   The PRD never duplicates them.
-- **Depth lives in feature files.** When a feature needs more than its stories
-  can carry, write `specs/requirements/features/<slug>.md` and keep the PRD
-  body lean; the feature file elaborates, it never contradicts.
+- **Depth lives in feature files, and the PRD links to it.** When a feature
+  needs more than its stories can carry, write
+  `specs/requirements/features/<slug>.md` and keep the PRD body lean; the
+  feature file elaborates, it never contradicts. Name it from the PRD as a
+  markdown link on the story it deepens — `[<feature name>](features/<slug>.md)`
+  — so a reader following the document arrives at the depth instead of being
+  told it exists somewhere. The link text is the feature's NAME, never the
+  path: the console renders the PRD, and it opens the file in place.

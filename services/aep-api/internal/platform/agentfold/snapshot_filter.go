@@ -66,11 +66,49 @@ func KeepInTurnSnapshot(path string) bool {
 	if isAdmittedSpecPath(path) {
 		return true
 	}
+	if isTextReferencePath(path) {
+		return true
+	}
 	base := path
 	if i := strings.LastIndexByte(path, '/'); i >= 0 {
 		base = path[i+1:]
 	}
 	return base == "design.json" || base == "validation-criteria.json"
+}
+
+// referencesPrefix is where a user-uploaded reference appears inside a turn's
+// snapshot. Not a repo path — nothing is committed there (console ADR-0017);
+// the engine overlays the off-git store into the extracted snapshot at this
+// prefix.
+const referencesPrefix = "specs/requirements/references/"
+
+// nativeReferenceExts are the reference types the model reads NATIVELY, as file
+// parts rather than as text. Mirrors NATIVE_MEDIA_BY_EXT in the agents service.
+var nativeReferenceExts = map[string]bool{
+	".pdf": true, ".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".webp": true,
+}
+
+// isTextReferencePath mirrors isTextReferencePath in the agents service: a
+// user-uploaded reference the model should read as TEXT.
+//
+// References are the one input here the agent did not author, so the extension
+// allow-list above — built for agent-authored spec artifacts — is the wrong
+// test for them: it admits a .md reference and silently drops a .txt or .csv
+// one, which then reaches the turn as a file on disk that nothing puts in front
+// of the model. The rule is the folder, not the extension.
+//
+// Natively-read binaries are excluded deliberately: they ride as file parts,
+// and admitting them here would pour a PDF's bytes into the text map — the
+// failure that channel exists to avoid.
+func isTextReferencePath(p string) bool {
+	if !strings.HasPrefix(p, referencesPrefix) {
+		return false
+	}
+	dot := strings.LastIndexByte(p, '.')
+	if dot < 0 {
+		return true
+	}
+	return !nativeReferenceExts[strings.ToLower(p[dot:])]
 }
 
 // InTurnSnapshot is the complete per-file predicate the agents-side snapshot

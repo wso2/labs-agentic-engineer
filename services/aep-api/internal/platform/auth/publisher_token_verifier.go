@@ -35,7 +35,7 @@ import (
 // MUST match the ouHandle claim).
 //
 // Used by the runner-callback handlers (Skills, Refresh) to accept
-// per-org publisher cc tokens alongside the BFF-signed TaskJWT.
+// per-org publisher cc tokens.
 type PublisherTokenVerifier struct {
 	jwks           *jwtassertion.JWKSCache
 	expectedIssuer string

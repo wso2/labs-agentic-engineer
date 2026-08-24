@@ -45,14 +45,18 @@
 
 import express from "express";
 import type { Express, Request, Response, NextFunction } from "express";
-import type { LanguageModel } from "ai";
+import type { FilePart, LanguageModel } from "ai";
 import {
   SSE_DONE,
   isTurnSpec,
   isCollabConfig,
+  isSurface,
+  isTurnAttachmentsOrAbsent,
+  SURFACES,
   type CollabConfig,
   type McpConfig,
   type StreamPart,
+  type Surface,
   type Toolset,
   type TurnJournal,
   type TurnSpec,
@@ -63,7 +67,13 @@ import { runConversationTurn, TurnGuard, ConcurrentTurnError } from "./conversat
 import { projectDisplayHistory } from "./conversation/display-history.js";
 import { joinRoom, type RoomPeer } from "./collab/room-peer.js";
 import type { SkillSource } from "./agents/main/skill-source.js";
-import { readSnapshot, loadSkillsFromSnapshot } from "./conversation/load-workspace.js";
+import {
+  readSnapshot,
+  loadSkillsFromSnapshot,
+  readReferenceAttachments,
+  overlayReferenceTexts,
+  toAttachmentParts,
+} from "./conversation/load-workspace.js";
 import { conversationOrgId, resolveWorkspace, WorkspaceRefError } from "./shared/snapshot-path.js";
 import { createAuthMiddleware, type AgentsAuthConfig } from "./shared/auth.js";
 import { startKeepAlive } from "./shared/keepalive.js";
@@ -99,6 +109,14 @@ function isJournal(v: unknown): v is TurnJournal {
   if (typeof v !== "object" || v === null) return false;
   const j = v as Record<string, unknown>;
   if (typeof j.text !== "string" || j.text.trim() === "") return false;
+  // Attachment NAMES (#428) — never bytes. Checked for type when present, so a
+  // malformed list is a clean 400 rather than a blank chip in someone's thread.
+  if (
+    j.attachments !== undefined &&
+    !(Array.isArray(j.attachments) && j.attachments.every((n) => typeof n === "string"))
+  ) {
+    return false;
+  }
   if (j.author === undefined) return true;
   if (typeof j.author !== "object" || j.author === null) return false;
   const a = j.author as Record<string, unknown>;
@@ -117,8 +135,16 @@ function startSSE(res: Response): void {
 export function createApp(deps: CreateAppDeps): Express {
   const app = express();
   const guard = new TurnGuard(); // one in-flight guard per app (serializes turns per id)
-  // A workspace turn body is a few hundred bytes of IDs + shas; 256kb is generous headroom.
-  const jsonParser = express.json({ limit: "256kb" });
+  // A workspace turn body used to be a few hundred bytes of IDs + shas. Chat
+  // attachments (#428) now ride it INLINE as base64, so the ceiling has to admit
+  // them — and the number is derived, not chosen: the per-turn attachment budget
+  // is 20 MiB ENCODED (MAX_REFERENCE_ATTACHMENT_ENCODED_BYTES), so 24 MiB leaves
+  // 4 MiB for the prompt, the refs and the JSON framing around them.
+  //
+  // Raising an authenticated internal endpoint's ceiling ~94x is not free, which
+  // is why it is pinned to that budget: any future request to widen it further
+  // has to widen the budget first.
+  const jsonParser = express.json({ limit: "24mb" });
   const requireAuth = createAuthMiddleware(deps.auth);
   const keepAliveMs = deps.keepAliveMs ?? config.keepAliveMs;
 
@@ -158,8 +184,10 @@ export function createApp(deps: CreateAppDeps): Express {
       toolset?: unknown;
       mcp?: unknown;
       journal?: unknown;
+      attachments?: unknown;
       collab?: unknown;
       webSearch?: unknown;
+      surface?: unknown;
       eagerSkills?: unknown;
     };
 
@@ -196,6 +224,19 @@ export function createApp(deps: CreateAppDeps): Express {
       res.status(400).json({ error: "target must be a string" });
       return;
     }
+
+    // The caller's surface (#580): who is reading this turn's prose. The one
+    // turn property that cannot be derived — it is who is asking, not what is
+    // being asked for — so an unknown value is a 400 rather than a silent
+    // fallback that would narrate to the wrong audience.
+    let surface: Surface | undefined;
+    if (body.surface !== undefined) {
+      if (!isSurface(body.surface)) {
+        res.status(400).json({ error: `surface must be one of: ${SURFACES.join(", ")}` });
+        return;
+      }
+      surface = body.surface;
+    }
     const instruction = composeInstruction(turn, {
       target: typeof body.target === "string" ? body.target : undefined,
       previousTurnFailed: body.previousTurnFailed === true,
@@ -221,6 +262,13 @@ export function createApp(deps: CreateAppDeps): Express {
     // read the files and the lazy skill source from the mount.
     let files: Record<string, string>;
     let skillSource: SkillSource;
+    // Reference PDFs (#384): a `start` turn's TurnSpec.references may name
+    // `.pdf` documents. They are never in `files` — the snapshot filter admits
+    // no `.pdf`, whatever the bytes look like — so no document can ride one turn
+    // as both prompt text and a file part. Attached separately as native file
+    // parts (see run-conversation-turn.ts / run-turn.ts); every other kind, and
+    // a start turn with no PDF references, leaves this empty.
+    let referenceAttachments: FilePart[] = [];
     let turnId: string;
     try {
       const ws = resolveWorkspace({
@@ -231,6 +279,12 @@ export function createApp(deps: CreateAppDeps): Express {
       });
       files = readSnapshot(ws.snapshotDir);
       skillSource = loadSkillsFromSnapshot(ws.skillsSnapshotDir);
+      if (turn.kind === "start" || turn.kind === "flow") {
+        // Flows generate artifacts that must be grounded in the attachments
+        // (a sketch is the wireframe brief); run-conversation-turn dedupes
+        // against history, so re-naming a document never re-stores it.
+        referenceAttachments = readReferenceAttachments(ws.snapshotDir, turn.references);
+      }
       turnId = ws.turnId;
     } catch (err) {
       if (err instanceof WorkspaceRefError) {
@@ -260,6 +314,30 @@ export function createApp(deps: CreateAppDeps): Express {
       mcp = body.mcp;
     }
 
+    // Chat attachments (#428): bytes INLINE on the body, because nothing stores
+    // them (console ADR-0019). Converted to native file parts and appended to the
+    // reference parts — the per-turn encoded budget is SHARED between the two
+    // channels rather than doubled, since the ceiling belongs to the model
+    // request, not to either channel.
+    if (!isTurnAttachmentsOrAbsent(body.attachments)) {
+      res.status(400).json({
+        error: "attachments must be an array of { name: string, mediaType: string, data: string }",
+      });
+      return;
+    }
+    // Kept SEPARATE from referenceAttachments, not merged: chat attachments must
+    // not be deduped against history (see run-conversation-turn). The encoded
+    // budget is still shared — that ceiling belongs to the model request, not to
+    // either channel — which is why the reference parts' cost is passed in.
+    let chatAttachments: FilePart[] = [];
+    if (body.attachments && body.attachments.length > 0) {
+      const spent = referenceAttachments.reduce(
+        (n, part) => n + (typeof part.data === "string" ? part.data.length : 0),
+        0,
+      );
+      chatAttachments = toAttachmentParts(body.attachments, spent);
+    }
+
     // journal (#463): the turn's display record — raw client-sent text + acting
     // user. Optional (older callers/evals journal nothing); malformed → clean
     // 400. Rebuilt field-by-field: the body object is untrusted, and a spread
@@ -274,6 +352,15 @@ export function createApp(deps: CreateAppDeps): Express {
         text: body.journal.text,
         ...(body.journal.author
           ? { author: { id: body.journal.author.id, displayName: body.journal.author.displayName } }
+          : {}),
+        // NAMES OF WHAT SURVIVED, not what the caller sent. The two differ
+        // whenever reference parts exhaust the shared encoded budget and a chat
+        // attachment is skipped: persisting the caller's list would put a chip
+        // on a file the model never received — the exact confusion the chips
+        // exist to prevent, inverted. Derived from the parts for the same reason
+        // the prompt's file list is.
+        ...(chatAttachments.length > 0
+          ? { attachments: chatAttachments.flatMap((p) => (p.filename ? [p.filename] : [])) }
           : {}),
       };
     }
@@ -359,7 +446,10 @@ export function createApp(deps: CreateAppDeps): Express {
           roomId: collab.roomId,
           token: collab.token,
         });
-        files = roomPeer.files();
+        // The room excludes reference documents by design — text references
+        // ride in from the turn's snapshot instead, which is their authority
+        // (aep-api overlays the off-git store into it).
+        files = overlayReferenceTexts(roomPeer.files(), files);
       } catch (err) {
         res.status(502).json({
           error: err instanceof Error ? err.message : "collab room join failed",
@@ -375,11 +465,14 @@ export function createApp(deps: CreateAppDeps): Express {
         files,
         filesChangedExternally: body.filesChangedExternally === true,
         skillSource,
+        ...(referenceAttachments.length ? { referenceAttachments } : {}),
+        ...(chatAttachments.length ? { chatAttachments } : {}),
         ...(toolset ? { toolset } : {}),
         ...(mcp ? { mcp } : {}),
         ...(journal ? { journal: { ...journal, turnId } } : {}),
         ...(eagerSkills ? { eagerSkills } : {}),
         webSearch: body.webSearch === true,
+        ...(surface ? { surface } : {}),
         ...(roomPeer ? { collabPeer: roomPeer } : {}),
         model,
         ...(deps.modelId ? { modelId: deps.modelId } : {}),

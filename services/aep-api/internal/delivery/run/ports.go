@@ -35,8 +35,15 @@ import (
 // its own budgets deterministically and writes them outwards for the read
 // model — reading them back would make the loop's control flow depend on a
 // database round trip that a replay cannot reproduce.
+//
+// CancelRequested is the deliberate exception, and it is not the same kind of
+// read. A budget is the workflow's OWN arithmetic, so reading it back would let
+// a database disagree with a replay. A cancellation is somebody ELSE's fact
+// about the run, which is exactly the shape of every other thing the loop polls
+// — the milestone's issues, the cycle's merge — and it goes through an activity
+// like all of them, so history records the answer and a replay reproduces it.
 type RunStore interface {
-	// TryAdmit inserts the run row unless the spec-run mutex refuses it. Used
+	// TryAdmit inserts the run row unless the build mutex refuses it. Used
 	// only by the adoption/sweep start path, which must admit and supervise
 	// together; the plan path admits its own row before planning.
 	TryAdmit(ctx context.Context, row *delivery.MilestoneRun) (admitted bool, out *delivery.MilestoneRun, err error)
@@ -50,6 +57,18 @@ type RunStore interface {
 	// own — without inheriting one it would surface in the version ledger under
 	// the milestone's GitHub name instead of a version.
 	MilestoneSpecTag(ctx context.Context, orgID, projectID string, milestoneNumber int) (string, error)
+	// ListByMilestone returns the milestone's runs, newest first. It is how a
+	// validation run learns how many times this VERSION has already been judged:
+	// the allowance is per version and each attempt is its own run, so the count
+	// lives in the ledger and nowhere else.
+	//
+	// It is not a read of the loop's own arithmetic — the thing this port
+	// deliberately does not offer. A budget the workflow counts itself must never
+	// be read back, because a replay has to reproduce the same decisions without a
+	// database; how many runs a milestone has had is somebody ELSE's fact, the
+	// same shape as the milestone poll, and it goes through an activity like all
+	// of them so history records the answer.
+	ListByMilestone(ctx context.Context, orgID, projectID string, milestoneNumber int) ([]delivery.MilestoneRun, error)
 	// SetState moves the run between waiting and running.
 	SetState(ctx context.Context, id, state string) error
 	// Settle writes the terminal state and its reason, once.
@@ -61,6 +80,18 @@ type RunStore interface {
 	// together with the validation issue that produced it so a settled run stays
 	// navigable to its criteria. An issue of 0 leaves the stored one untouched.
 	SetValidationVerdict(ctx context.Context, id, verdict string, issue int) error
+	// CancelRequested reports whether a person has asked this run to stop.
+	//
+	// The DURABLE half of cancel. The cancel signal is the fast path — it stops
+	// the loop at its next safe point rather than at its next poll — and this is
+	// the evidence: a signal whose delivery failed, or one that arrived while the
+	// workflow was mid-activity and got drained by a wait the loop has since left,
+	// is still recoverable from here. Without it a pod the cancel REAPED is
+	// indistinguishable from an agent that died on its own, so the loop spends a
+	// re-dispatch and opens a fresh cycle over a run the user just stopped.
+	//
+	// A run that no longer exists answers false: there is nothing left to cancel.
+	CancelRequested(ctx context.Context, orgID, runID string) (bool, error)
 }
 
 // CycleStore is the cycle-record surface: one row per dispatch. Satisfied by an
@@ -75,10 +106,19 @@ type CycleStore interface {
 	NoteDispatch(ctx context.Context, cycleID, jobRef string) error
 	Finish(ctx context.Context, cycleID, mergeSHA string) error
 	// SetValidationVerdict records one validation ATTEMPT's outcome on its own cycle
-	// row, so a run that validated more than once keeps every attempt's answer
-	// rather than only the last. Written after Finish — the verdict comes from the
+	// row — the verdict, the issue it was dispatched at, and the DIGEST of the
+	// evidence — so a version judged more than once keeps every attempt's answer
+	// rather than only the last. Written after Finish: the verdict comes from the
 	// report at the cycle's merge commit, which does not exist until it has one.
-	SetValidationVerdict(ctx context.Context, cycleID, verdict string, issue int) error
+	//
+	// The digest rides this call because the underlying write is fenced write-once
+	// on an empty verdict, so nothing recorded afterwards could ever land.
+	SetValidationVerdict(ctx context.Context, cycleID, verdict string, issue int, digest string) error
+	// LatestValidationDigest returns the newest digest recorded by any of these
+	// runs' validation cycles, or "" when none did. This is how one attempt reads
+	// what the PREVIOUS attempt concluded — the comparison spans runs, so it
+	// cannot live in workflow state.
+	LatestValidationDigest(ctx context.Context, orgID string, runIDs []string) (string, error)
 	Latest(ctx context.Context, orgID, runID string) (*delivery.RunCycle, error)
 }
 
@@ -168,6 +208,18 @@ type ValidationCoordinator interface {
 	// is the attempt's identity and becomes the issues' dedupe key, so a retry
 	// within one attempt files nothing new while the next attempt files fresh work.
 	MintRepairIssues(ctx context.Context, orgID, projectID string, milestoneNumber int, at, cycleID string) ([]int, error)
+
+	// CloseValidationIssue closes the version's validation task, leaving a comment
+	// that names the verdict (or its absence).
+	//
+	// The PLATFORM owns this close. The validation pull request references its
+	// issue with `Validates #N`, which is deliberately NOT one of GitHub's closing
+	// keywords, so merging does not close it and this call is the only thing that
+	// does. That single ownership is what lets the run close the task on endings
+	// where no verdict was reached at all — an agent that died through its whole
+	// re-dispatch budget — which is the loop's only termination guarantee: the
+	// sweep starts a validation run because the task is OPEN.
+	CloseValidationIssue(ctx context.Context, orgID, projectID string, issue int, verdict string) error
 }
 
 // Dispatcher launches one agent run over the milestone. It is the locally
@@ -205,7 +257,7 @@ type Deployer interface {
 	PlanDeploymentWaves(ctx context.Context, orgID, projectID string, components []string) ([][]string, error)
 }
 
-// Gates authors the version's dependencies and mints its `aep:provision` gate
+// Gates authors the version's dependencies and mints its `provision` gate
 // issues into the milestone. Satisfied by an app-root adapter over the
 // provisioning service — `run` names no sibling, exactly as `build` reaches the
 // same capability through its own GateResolver port.
@@ -235,6 +287,40 @@ type Planner interface {
 // deployPollInterval until the answer settles.
 type DeploymentReader interface {
 	DeploymentState(ctx context.Context, orgID, projectID string, components []string) ([]delivery.ComponentDeploy, error)
+}
+
+// WorkHalter marks the working-set issues a FAILED run could not finish, so the
+// reconcile sweep does not restart them. Satisfied by the event plane, reached
+// through this port for the same reason DeployIssueMinter is: the supervisor
+// observes, the plane owns every issue write, its labels and its prose.
+//
+// It takes the RUN's kind because the working set is per species, and the halt
+// must never reach outside the population this run was responsible for — a dev
+// run halting a bug a concurrent task run is working would abandon live work.
+//
+// Returns the issues it marked. The supervisor logs them and nothing else: the
+// halt is a fact about the milestone, not about the run row.
+type WorkHalter interface {
+	HaltUnfinishedWork(ctx context.Context, orgID, projectID string, milestoneNumber int,
+		runKind, reason string) (halted []int, err error)
+}
+
+// WorkCanceller closes the issues a CANCELLED run had in flight, so the reconcile
+// sweep does not restart the very run the user just abandoned. Satisfied by the
+// event plane, reached through this port for the same reason WorkHalter is: the
+// supervisor observes, the plane owns every issue write, its labels and its prose.
+//
+// It is the sibling of the halt and takes the same shape — the RUN's kind, because
+// what a cancel abandons is per species: a build's cancel abandons the whole
+// increment, a bug-fix run's abandons only the defects it was working, and a
+// validation run's own consequence (closing the task it adopted) is already
+// performed by the workflow that adopted it.
+//
+// Returns the issues it closed. The supervisor logs them and nothing else: the
+// closes are a fact about the milestone, not about the run row.
+type WorkCanceller interface {
+	CloseCancelledWork(ctx context.Context, orgID, projectID string, milestoneNumber int,
+		runKind string) (closed []int, err error)
 }
 
 // DeployIssueMinter files the fix work for components whose deployment did not

@@ -39,8 +39,9 @@ of step.
 
 `TurnRequest.turn` is a `TurnSpec` (`@aep/agent-stream`): a discriminated union
 over `chat` · `flow` · `start` · `plan`, carrying only what the caller knows —
-the user's text, the flow's skill, the captured project idea, the milestone
-scope and existing-Task renders. Turn-level facts ride beside it: `target`,
+the user's text, the flow's skill, the captured project idea, the paths of any
+reference documents attached at project create, the milestone scope and
+existing-Task renders. Turn-level facts ride beside it: `target`,
 `previousTurnFailed`, `headless`. `src/prompts/turn.ts` turns that into
 instruction text and is the only place any of that text exists.
 

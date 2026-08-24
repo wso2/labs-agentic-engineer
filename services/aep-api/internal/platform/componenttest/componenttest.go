@@ -35,6 +35,7 @@
 package componenttest
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -143,6 +144,30 @@ func (r *Req) Patch(path, jsonBody string) *httptest.ResponseRecorder {
 	return r.do(http.MethodPatch, path, jsonBody)
 }
 
+// PostRaw issues a POST with a caller-chosen Content-Type and raw bytes, for
+// the operations whose body is not JSON (multipart uploads).
+func (r *Req) PostRaw(path, contentType string, body []byte) *httptest.ResponseRecorder {
+	r.h.t.Helper()
+	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
+	req.Header.Set("Content-Type", contentType)
+	r.stampClaims(req)
+	rec := httptest.NewRecorder()
+	r.h.Handler.ServeHTTP(rec, req)
+	return rec
+}
+
+// stampClaims attaches the request's tenant claims header, if any.
+func (r *Req) stampClaims(req *http.Request) {
+	if r.claims == nil {
+		return
+	}
+	raw, err := json.Marshal(r.claims)
+	if err != nil {
+		r.h.t.Fatalf("componenttest: marshal claims: %v", err)
+	}
+	req.Header.Set(hdrClaims, string(raw))
+}
+
 func (r *Req) do(method, path, body string) *httptest.ResponseRecorder {
 	r.h.t.Helper()
 	var reqBody *strings.Reader
@@ -155,13 +180,7 @@ func (r *Req) do(method, path, body string) *httptest.ResponseRecorder {
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if r.claims != nil {
-		raw, err := json.Marshal(r.claims)
-		if err != nil {
-			r.h.t.Fatalf("componenttest: marshal claims: %v", err)
-		}
-		req.Header.Set(hdrClaims, string(raw))
-	}
+	r.stampClaims(req)
 	rec := httptest.NewRecorder()
 	r.h.Handler.ServeHTTP(rec, req)
 	return rec

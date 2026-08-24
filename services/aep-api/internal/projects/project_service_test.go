@@ -879,7 +879,7 @@ func TestGetProjectStatus_StrictSourceFailures(t *testing.T) {
 
 	// The deploy denominator read joins strictly too.
 	cnt := base
-	cnt.runs = []delivery.MilestoneRun{specRun("v1", delivery.RunStateSucceeded)}
+	cnt.runs = []delivery.MilestoneRun{devRun("v1", delivery.RunStateSucceeded)}
 	cnt.countErr = errors.New("tag missing from mirror")
 	if _, err := cnt.service().GetProjectStatus(context.Background(), "acme", "web"); err == nil {
 		t.Fatal("component-count failure must fail the status read")

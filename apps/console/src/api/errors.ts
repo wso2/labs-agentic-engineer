@@ -29,3 +29,34 @@ export function apiErrorMessage(error: unknown, fallback: string): string {
   }
   return fallback;
 }
+
+/**
+ * The envelope's machine-readable `code`, when the failure carried one. Lets a
+ * caller branch on the KIND of failure without string-matching a `message` the
+ * BFF owns and may reword.
+ */
+export function apiErrorCode(error: unknown): string | undefined {
+  if (error && typeof error === "object") {
+    const v = (error as Record<string, unknown>).code;
+    if (typeof v === "string" && v.length > 0) return v;
+  }
+  return undefined;
+}
+
+/**
+ * An `Error` that keeps the envelope's `code` alongside its message (#561).
+ * Mutations that rewrap a failed call as `new Error(message)` throw the status
+ * and the code away, which leaves a caller wanting to react to one specific
+ * failure — a name conflict, say — with nothing but the message to match on.
+ * Throw this instead: `err.message` still reads the same for every existing
+ * consumer, and `err.code` is there for the one that needs it.
+ */
+export class ApiRequestError extends Error {
+  readonly code: string | undefined;
+
+  constructor(error: unknown, fallback: string) {
+    super(apiErrorMessage(error, fallback));
+    this.name = "ApiRequestError";
+    this.code = apiErrorCode(error);
+  }
+}

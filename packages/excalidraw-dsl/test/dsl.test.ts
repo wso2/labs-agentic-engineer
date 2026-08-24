@@ -333,3 +333,60 @@ test("a short text line is left untouched (no ellipsis)", () => {
   const t = els.find((e) => e.type === "text" && /Owner/.test(e.text ?? ""))!;
   assert.equal(t.text, "Owner: Platform team");
 });
+
+// ---------- navigation markers must never overprint ----------
+
+/** Axis-aligned overlap between two boxes, with a small tolerance. */
+function overlaps(a: El, b: El): boolean {
+  return (
+    a.x < b.x + b.width - 1 &&
+    a.x + a.width > b.x + 1 &&
+    a.y < b.y + b.height - 1 &&
+    a.y + a.height > b.y + 1
+  );
+}
+
+test("a navigation marker never overprints a neighbouring control in the same row", () => {
+  // Two buttons side by side, the LEFT one navigating. Its marker must not be
+  // drawn across the right one — that made both unreadable.
+  const els = compile(`screen Confirm
+  row
+    right
+    button "Go back" -> Chat
+    button "Confirm booking" primary -> Booked
+screen Chat
+  heading "c"
+screen Booked
+  heading "b"`);
+  const marker = els.find((e) => e.type === "text" && /Screen 2 · Chat/.test(e.text ?? ""))!;
+  assert.ok(marker, "marker missing");
+  const confirmBtn = els.find((e) => e.type === "rectangle" && e.backgroundColor === "#fa7b3f")!;
+  assert.ok(confirmBtn, "primary button missing");
+  assert.ok(!overlaps(marker, confirmBtn), "marker drawn over the neighbouring button");
+});
+
+test("a navigation marker never runs past the screen's right edge", () => {
+  const els = compile(`screen Confirm
+  row
+    right
+    button "Confirm booking" primary -> Booked
+screen Booked
+  heading "b"`);
+  const marker = els.find((e) => e.type === "text" && /Screen 2 · Booked/.test(e.text ?? ""))!;
+  assert.ok(marker, "marker missing");
+  assert.ok(marker.x + marker.width <= 1280 + 1, `marker ends at ${marker.x + marker.width}, past 1280`);
+});
+
+test("a navigation marker with room to its right still sits beside its control", () => {
+  const els = compile(`screen Catalog
+  button "View product" -> ProductDetail
+screen ProductDetail
+  heading "Details"`);
+  const btn = els.find((e) => e.type === "rectangle" && e.width < 400 && e.height < 60)!;
+  const marker = els.find((e) => e.type === "text" && /Screen 2 · ProductDetail/.test(e.text ?? ""))!;
+  assert.ok(marker.x >= btn.x + btn.width, "marker should be to the right when there is room");
+  assert.ok(
+    Math.abs(marker.y + marker.height / 2 - (btn.y + btn.height / 2)) < 12,
+    "vertically centred on the control",
+  );
+});

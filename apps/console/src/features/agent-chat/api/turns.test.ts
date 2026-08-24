@@ -53,6 +53,43 @@ describe("mapConversationMessage", () => {
     ).toEqual({ role: "user", content: "hi" });
   });
 
+  it("carries attachment names off the journal (#428)", () => {
+    expect(
+      mapConversationMessage({
+        role: "user",
+        content: "what is wrong here?",
+        attachments: ["error.png", "rows.csv"],
+      }),
+    ).toEqual({
+      role: "user",
+      content: "what is wrong here?",
+      attachments: ["error.png", "rows.csv"],
+    });
+  });
+
+  it("omits attachments entirely when the payload has none", () => {
+    // A message without attachments must keep the exact row shape it had
+    // before the feature existed — not gain an empty array.
+    expect(mapConversationMessage({ role: "user", content: "hi" })).toEqual({
+      role: "user",
+      content: "hi",
+    });
+  });
+
+  it("drops malformed attachment entries rather than rendering blank chips", () => {
+    // Untyped extension field in the contract, so this is untrusted input.
+    expect(
+      mapConversationMessage({
+        role: "user",
+        content: "hi",
+        attachments: ["ok.pdf", 42, "", "   ", null],
+      }),
+    ).toEqual({ role: "user", content: "hi", attachments: ["ok.pdf"] });
+    expect(
+      mapConversationMessage({ role: "user", content: "hi", attachments: "nope" }),
+    ).toEqual({ role: "user", content: "hi" });
+  });
+
   it("returns null for a non-object entry", () => {
     expect(mapConversationMessage("nope")).toBeNull();
     expect(mapConversationMessage(null)).toBeNull();

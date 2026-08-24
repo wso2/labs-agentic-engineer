@@ -156,15 +156,16 @@ func (s *Service) PublishResolvedWiring(ctx context.Context, orgID, projectID st
 		"project", projectID, "issues", len(pending), "complete", complete)
 }
 
-// openWorkingSet is the run's working set: the project's OPEN `aep` issues minus
-// the dispatch gates and the validation issue — exactly the population a coding
-// cycle works.
+// openWorkingSet is the run's working set: the project's OPEN issues that a
+// coding cycle works — armed, and of a kind the dev loop picks up.
 //
 // It is not milestone-scoped, and does not need to be: cutting a version closes
-// the previous milestone's still-open issues, so the project's open `aep` issues
+// the previous milestone's still-open issues, so the project's open armed issues
 // ARE the current increment's. The `aep` label rides the host's AND-semantics
-// ?labels= filter, and is re-checked here because a label filter is the server's
-// promise, not this code's.
+// ?labels= filter to narrow the fetch, and membership is then decided by
+// delivery.InDevWorkingSet — the one place that rule lives — because a label
+// filter is the server's promise, not this code's, and because the kind test the
+// filter cannot express is the half that matters.
 func (s *Service) openWorkingSet(ctx context.Context, orgID, projectID string) ([]sourcecontrol.IssueInfo, error) {
 	issues, err := s.issues.ListIssues(ctx, orgID, projectID, []string{delivery.LabelAgentWork})
 	if err != nil {
@@ -175,11 +176,7 @@ func (s *Service) openWorkingSet(ctx context.Context, orgID, projectID string) (
 		if !strings.EqualFold(issue.State, "open") {
 			continue
 		}
-		if !delivery.HasLabel(issue.Labels, delivery.LabelAgentWork) {
-			continue
-		}
-		if delivery.HasLabel(issue.Labels, delivery.LabelProvisionGate) ||
-			delivery.HasLabel(issue.Labels, delivery.LabelValidationWork) {
+		if !delivery.InDevWorkingSet(issue.Labels) {
 			continue
 		}
 		out = append(out, issue)

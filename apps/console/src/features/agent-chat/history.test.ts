@@ -83,6 +83,30 @@ describe("projectableHistory", () => {
     expect(out[2]).toMatchObject({ role: "question", toolCallId: "tc-9", questions: [q] });
   });
 
+  it("carries attachment names onto a rehydrated user row (#428)", () => {
+    // The point of putting names on the journal: without this, a reload shows
+    // the agent discussing a document that appears nowhere in the thread.
+    const history: ConversationMessage[] = [
+      { role: "user", content: "what is wrong here?", attachments: ["error.png"] },
+    ];
+    expect(projectableHistory(history)).toEqual([
+      {
+        id: "h0",
+        role: "user",
+        content: "what is wrong here?",
+        status: "completed",
+        attachments: ["error.png"],
+      },
+    ]);
+  });
+
+  it("leaves a message without attachments in its pre-feature shape", () => {
+    const history: ConversationMessage[] = [{ role: "user", content: "hi" }];
+    expect(projectableHistory(history)).toEqual([
+      { id: "h0", role: "user", content: "hi", status: "completed" },
+    ]);
+  });
+
   it("reconstructs a batch form from an ask_questions tool-call, even with no narration text", () => {
     const input = {
       questions: [

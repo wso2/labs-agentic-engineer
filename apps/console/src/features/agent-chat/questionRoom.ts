@@ -19,8 +19,8 @@
 // Collab question cards spike (2026-07-23): the shared `questions` map on the
 // project's Yjs room — how agent questions surface on the MAIN spec panel for
 // every participant to see and co-author. Written by useRoomQuestion (which
-// mirrors this client's chat log into the doc) and by the form's answer/skip
-// actions; observed by the form for live updates.
+// mirrors this client's chat log into the doc) and by the form's submit and
+// recommended-answers actions; observed by the form for live updates.
 
 import type { Doc, Map as YMap } from "yjs";
 import type { AskQuestionInput, QuestionAnswer } from "@aep/agent-stream";
@@ -36,13 +36,13 @@ export interface RoomQuestion {
   /**
    * Legacy (#430 D5 removed ownership): pre-#430 entries carry the id of the
    * user whose client mirrored them first. Never written any more and never
-   * read — any project member submits or skips; kept in the type so old room
+   * read — any project member closes the form; kept in the type so old room
    * entries still parse.
    */
   ownerId?: string;
   /** The shared draft answer, co-edited by the room; null until first touched. */
   answers: QuestionAnswer[] | null;
-  /** Set once the asker submits or skips — the form closes for the whole room. */
+  /** Set once any member closes it — the form closes for the whole room. */
   submitted?: boolean;
   /**
    * True while the batch is still streaming (#270 latency): `questions` is the
@@ -120,9 +120,10 @@ export function updateRoomAnswer(
 }
 
 /**
- * Close a question for the WHOLE room — used both when the asker submits the
- * answers and when they skip the questions. The form disappears for everyone
- * and the spec body returns to the files.
+ * Close a question for the WHOLE room — used both when a member submits the
+ * answers and when they hand the questions back for the agent's own
+ * recommended answers. The form disappears for everyone and the spec body
+ * returns to the files.
  */
 export function closeRoomQuestion(doc: Doc, toolCallId: string): void {
   const map = questionsMap(doc);

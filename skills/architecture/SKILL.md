@@ -177,7 +177,7 @@ to nothing is worse than an absent one.
 ```json
 "dependencies": [
   { "kind": "component", "name": "expense-api" },
-  { "kind": "platform-resource", "name": "orders-db", "resourceType": "postgres" },
+  { "kind": "platform-resource", "name": "orders-db", "resourceType": "postgres-cnpg" },
   { "kind": "external", "name": "stripe", "style": "sdk", "package": "npm:stripe@^14",
     "config": [ { "key": "STRIPE_API_KEY", "secret": true, "description": "Your Stripe secret API key" } ] },
   { "kind": "external", "name": "github", "style": "rest-api",

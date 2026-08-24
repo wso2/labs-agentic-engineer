@@ -124,19 +124,6 @@ type CodingKeyResolver interface {
 	ResolveCodingSecretRef(ctx context.Context, ocOrgID string) (organization.SecretRefTriplet, error)
 }
 
-// TokenIssuer mints the runner's bearer (§9.2: the id it carries is the
-// dispatching CYCLE's id). Wired from auth.TaskTokenManager.
-type TokenIssuer interface {
-	Issue(id, ocOrgID, projectID string) (string, error)
-
-	// IssueServiceToken mints a dedicated BFF-signed identity token for a given
-	// audience (e.g. auth.AudienceMCP) — used to mint the coding runner's
-	// AEP_MCP_TOKEN, since the runner bearer above (aud git-service) is
-	// rejected by the MCP verifier. ttl <= 0 falls back to the manager's
-	// configured task TTL. Wired from auth.TaskTokenManager.IssueServiceToken.
-	IssueServiceToken(audience, ocOrgID string, ttl time.Duration) (string, error)
-}
-
 // ProjectRepos resolves a project's git repo row (RepoURL/RepoSlug). Wired from
 // sourcecontrol.RepoService.
 type ProjectRepos interface {

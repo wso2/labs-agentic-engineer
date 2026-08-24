@@ -42,6 +42,12 @@ type Ports struct {
 	Runs   RunStore
 	Cycles CycleStore
 	Issues IssueClient
+	// Writer is the domain's issue-WRITE surface — every fix, deploy-fix,
+	// conflict, red-main and wiring-conformance issue this package files. Nil is
+	// tolerated (the writer degrades to filing nothing) for the same reason the
+	// Issues port is checked before use: a partially wired root must not panic
+	// on a webhook.
+	Writer *delivery.IssueWriter
 	PRs    PRReader
 	Merger PRMerger
 	Repos  RepoLookup
@@ -157,6 +163,13 @@ type issuesPayload struct {
 			Number int    `json:"number"`
 			Title  string `json:"title"`
 		} `json:"milestone"`
+		// Labels is the issue's WHOLE label set, not just the one that fired the
+		// delivery. Adoption routes on the KIND the issue carries, and the label
+		// being applied is not it — arming an issue that is already classified
+		// sends `aep` in Label while the kind sits here.
+		Labels []struct {
+			Name string `json:"name"`
+		} `json:"labels"`
 	} `json:"issue"`
 	// Milestone is the TOP-LEVEL milestone object GitHub adds on milestoned and
 	// demilestoned. It is the only place a demilestone event names the
@@ -180,6 +193,16 @@ type issuesPayload struct {
 // when GitHub sends one (milestoned / demilestoned), otherwise the issue's
 // own. Every issues payload embeds the full issue, so keying an event to a run
 // costs no extra read.
+// issueLabels flattens the payload's label objects to the names every label
+// predicate takes.
+func (p issuesPayload) issueLabels() []string {
+	out := make([]string, 0, len(p.Issue.Labels))
+	for _, l := range p.Issue.Labels {
+		out = append(out, l.Name)
+	}
+	return out
+}
+
 func (p issuesPayload) milestone() (MilestoneRef, bool) {
 	if p.Milestone != nil && p.Milestone.Number > 0 {
 		return MilestoneRef{Number: p.Milestone.Number, Title: p.Milestone.Title}, true
@@ -226,12 +249,16 @@ func (e *Events) OnPullRequest(ctx context.Context, _, _ string, payload []byte)
 		return nil
 	}
 
+	// Two parses, kept apart all the way into the policy: closing keywords are
+	// what a coding cycle finishes, `Validates #N` is what a validation cycle
+	// judges without ending. See decideAutoMerge.
 	refs := parseResolvesRefs(p.PullRequest.Body)
+	validates := parseValidatesRefs(p.PullRequest.Body)
 	work, err := e.p.Issues.ListMilestoneIssues(ctx, owner.orgID, owner.projectID, milestoneOpenIssuesFilter(owner.run.MilestoneNumber))
 	if err != nil {
 		return err
 	}
-	decision := decideAutoMerge(refs, work)
+	decision := decideAutoMerge(refs, validates, work)
 	// The verdict is recorded for the AGENT's pull request whichever way it went:
 	// a declined merge is the loudest silence this loop has — the cycle sits at
 	// its landing deadline with a green agent log and nothing else to say.
@@ -295,9 +322,11 @@ type prOwner struct {
 //
 // The branch is the first key: the agent works `aep/m<milestone#>-c<k>`, so
 // the milestone travels in every payload for free. A branch that names no
-// milestone falls back to the project's live SPEC run — that is what makes the
+// milestone falls back to the project's live DEV run — that is what makes the
 // merge path generic over a human's pull request, which lands in the same
-// increment even though it followed none of the agent's conventions.
+// increment even though it followed none of the agent's conventions. The dev run
+// is the only honest fallback: it is the one working the version the project is
+// currently on, while a task or validation run works some older milestone.
 func (e *Events) resolvePRRun(ctx context.Context, repoFullName, headRef string) (prOwner, error) {
 	if e.p.Repos == nil || e.p.Runs == nil {
 		return prOwner{}, nil
@@ -321,7 +350,7 @@ func (e *Events) resolvePRRun(ctx context.Context, repoFullName, headRef string)
 		return owner, rerr
 	}
 	for i := range live {
-		if live[i].Origin == delivery.RunOriginSpecBuild {
+		if live[i].Kind == delivery.RunKindDev {
 			owner.run = &live[i]
 			return owner, nil
 		}
@@ -356,8 +385,21 @@ func (e *Events) OnIssues(ctx context.Context, _, action string, payload []byte)
 		return nil
 	}
 
-	if action == "labeled" && strings.EqualFold(p.Label.Name, delivery.LabelAdopt) {
-		target := AdoptTarget{Number: p.Issue.Number}
+	// The ARMING SWITCH is the adoption trigger: a human adding `aep` to an issue
+	// hands it to the agent. Platform-written labels never reach here — the echo
+	// suppression above drops any delivery this platform's own sender caused —
+	// so every arming that arrives is a human's act, which is what makes "who
+	// adopted this" answerable from the issue timeline alone.
+	//
+	// Adoption does NOT short-circuit the predicate below, and that matters: the
+	// two jobs answer different states of the same milestone. Adoption starts a
+	// run where there is none and is a deliberate no-op where one is already
+	// live — but a live run PARKED IN WAITING has no next cycle boundary at
+	// which to notice, so the arming that just made its milestone workable is
+	// exactly the event that has to wake it. Returning here would leave a run
+	// asleep on work a human had just handed it.
+	if action == "labeled" && strings.EqualFold(p.Label.Name, delivery.LabelAgentWork) {
+		target := AdoptTarget{Number: p.Issue.Number, Labels: p.issueLabels()}
 		if ms, ok := p.milestone(); ok {
 			target.MilestoneNumber, target.MilestoneTitle = ms.Number, ms.Title
 		}
@@ -367,8 +409,8 @@ func (e *Events) OnIssues(ctx context.Context, _, action string, payload []byte)
 			// make GitHub redeliver a label that is already applied.
 			slog.WarnContext(ctx, "eventcore: adoption declined", "repo", p.Repository.FullName,
 				"issue", p.Issue.Number, "error", aerr)
+			return nil
 		}
-		return nil
 	}
 
 	ms, ok := p.milestone()

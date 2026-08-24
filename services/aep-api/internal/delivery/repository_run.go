@@ -43,11 +43,11 @@ const (
 	// RunBudgetBuildRetriggers tallies automatic build re-triggers
 	// (RunReasonBuildRetriggerBudget).
 	RunBudgetBuildRetriggers RunBudget = "build_retriggers"
-	// RunBudgetValidationCycles counts VALIDATION ATTEMPTS, bounding the
-	// repair-and-re-validate loop (RunMaxValidationAttempts). Unlike the other
-	// three it names no terminal reason of its own: exhausting it settles the run
-	// on the verdict the last attempt already produced, so `validation-failed`
-	// means "still failing after every attempt".
+	// RunBudgetValidationCycles counts the validation cycles a run opened — one on
+	// the ordinary path, more when an agent merged without committing a report and
+	// was re-dispatched. Read-model bookkeeping only: the VERSION's attempt
+	// allowance (RunMaxValidationAttempts) is counted from the milestone's
+	// validation runs, not from this column.
 	RunBudgetValidationCycles RunBudget = "validation_cycles"
 )
 
@@ -71,22 +71,42 @@ var runBudgetColumns = map[RunBudget]bool{
 // run through facts (repo, milestone, job) that were already resolved to an org.
 // The reads that serve the HTTP surface all take an orgID and fence on it.
 type MilestoneRunRepository interface {
-	// TryAdmit is the spec-run mutex in DB form (the §5 409's twin): it INSERTs
-	// the run unless a non-terminal spec-build run already exists for the same
-	// (org, project), via INSERT … ON CONFLICT DO NOTHING against the partial
-	// unique index. It returns admitted=true with the populated row on success,
-	// or admitted=false and nil when another entrant won the race.
+	// TryAdmit is the build mutex in DB form (the §5 409's twin): it INSERTs the
+	// run unless a non-terminal DEV run already exists for the same (org,
+	// project), via INSERT … ON CONFLICT DO NOTHING against the partial unique
+	// index. It returns admitted=true with the populated row on success, or
+	// admitted=false and nil when another entrant won the race.
 	//
-	// Incident-adoption runs sit outside the index and are always admitted —
-	// they execute concurrently on their own milestones. The row's State
-	// defaults to waiting and CycleCeiling to RunDefaultCycleCeiling when unset.
+	// Task and validation runs sit outside that index and are refused only by the
+	// per-milestone one — they execute concurrently on their own milestones. The
+	// row's State defaults to waiting and CycleCeiling to RunDefaultCycleCeiling
+	// when unset.
 	TryAdmit(ctx context.Context, run *MilestoneRun) (admitted bool, row *MilestoneRun, err error)
 
-	// ActiveSpecRunByProject returns the project's live spec-build run — the
-	// lookup behind the build endpoint's 409 — or (nil, nil) when the project is
-	// free. The DB index is the authority; this read exists so the API can
-	// answer with a useful conflict instead of a bare insert failure.
-	ActiveSpecRunByProject(ctx context.Context, orgID, projectID string) (*MilestoneRun, error)
+	// ActiveDevRunByProject returns the project's live dev run — the lookup
+	// behind the build endpoint's 409 — or (nil, nil) when the project is free.
+	// The DB index is the authority; this read exists so the API can answer with
+	// a useful conflict instead of a bare insert failure.
+	//
+	// It is the Go twin of that index's predicate, which is why it filters on the
+	// same kind literal: a read narrowed differently from the index would either
+	// refuse a build the database would have admitted, or promise one it will
+	// then reject.
+	ActiveDevRunByProject(ctx context.Context, orgID, projectID string) (*MilestoneRun, error)
+
+	// ActiveValidationRunByProject returns a live VALIDATION run anywhere in the
+	// project, or (nil, nil) when there is none. It is the second half of the
+	// build endpoint's 409.
+	//
+	// It is a project-wide read where the mutex index is per-project-and-dev,
+	// because there is no index to lean on here: a validation run deliberately
+	// sits outside the build mutex (it re-judges a version that already shipped,
+	// so holding up the next build for its duration would be wrong). What must not
+	// happen is a delivery run merging and promoting WHILE validation asserts
+	// against the deployment — that judges a moving target. The refusal is
+	// therefore a read, and the way past it is to cancel the validation, which is
+	// one click.
+	ActiveValidationRunByProject(ctx context.Context, orgID, projectID string) (*MilestoneRun, error)
 
 	// SetState moves a non-terminal run between waiting and running (the loop
 	// oscillates across cycle boundaries) and stamps started_at on the first
@@ -105,10 +125,22 @@ type MilestoneRunRepository interface {
 	// matching Run* limit to decide whether the budget is now exhausted.
 	BumpBudget(ctx context.Context, id string, counter RunBudget) (*MilestoneRun, error)
 
-	// SetValidationVerdict records the validation cycle's outcome on the run
-	// (the verdict is a run property, not a per-issue one) together with the
-	// validation issue that produced it, guarded on the run being non-terminal so
-	// a settled run's verdict is frozen. An issue of 0 leaves the column as-is.
+	// RequestCancel stamps a human's cancellation request on the run, guarded on
+	// the run being non-terminal, and returns (nil, nil) when it has already
+	// settled — a cancel arriving after the run finished changed nothing, and is
+	// not an error.
+	//
+	// This is the DURABLE half of cancel. The signal that follows it is the fast
+	// path; this row is the evidence the loop re-derives from, which is what
+	// stops a reaped agent pod from reading as agent death and buying a
+	// re-dispatch. The FIRST request wins: a second click cannot move the stamp.
+	RequestCancel(ctx context.Context, id string) (*MilestoneRun, error)
+
+	// SetValidationVerdict records the judgement on the run (the verdict is a run
+	// property, not a per-issue one) together with the validation task that produced
+	// it, guarded on the run being non-terminal so a settled run's verdict is
+	// frozen. An issue of 0 leaves the column as-is. Written by a validation run,
+	// and by a dev run only to record `skipped` for a version with no oracle.
 	SetValidationVerdict(ctx context.Context, id, verdict string, issue int) (*MilestoneRun, error)
 
 	// GetByIDScoped returns the run only when it belongs to orgID — the store
@@ -121,8 +153,8 @@ type MilestoneRunRepository interface {
 	ListByProject(ctx context.Context, orgID, projectID string) ([]MilestoneRun, error)
 
 	// ListByMilestone returns the runs of ONE milestone, newest first: a
-	// milestone sees sequential runs across its life (a spec build, then later
-	// incident adoptions), and the builds detail read shows all of them.
+	// milestone sees sequential runs across its life (a dev run, then later task
+	// and validation runs), and the builds detail read shows all of them.
 	ListByMilestone(ctx context.Context, orgID, projectID string, milestoneNumber int) ([]MilestoneRun, error)
 
 	// MilestoneNumberForTag resolves a `?tag=v<N>` query to a milestone number
@@ -147,9 +179,16 @@ func NewMilestoneRunRepository(db *gorm.DB) MilestoneRunRepository {
 }
 
 func (r *milestoneRunRepository) TryAdmit(ctx context.Context, run *MilestoneRun) (bool, *MilestoneRun, error) {
-	// Validate the origin rather than trusting it: the mutex is a partial index
-	// keyed on origin = 'spec-build', so a typo'd origin would silently escape
-	// the one-active-spec-run-per-project invariant.
+	// Validate the kind rather than trusting it: the mutex is a partial index
+	// keyed on kind = 'dev', so a typo'd kind would not fail the insert — it
+	// would silently escape the one-active-build-per-project invariant and land
+	// a second agent on the branch.
+	if !IsRunKind(run.Kind) {
+		return false, nil, fmt.Errorf("milestone run: unknown kind %q", run.Kind)
+	}
+	// Origin is validated for the ordinary reason: it is a NOT NULL closed enum
+	// the read model renders, so a value the reader rejects must never be
+	// written.
 	if !IsRunOrigin(run.Origin) {
 		return false, nil, fmt.Errorf("milestone run: unknown origin %q", run.Origin)
 	}
@@ -162,9 +201,9 @@ func (r *milestoneRunRepository) TryAdmit(ctx context.Context, run *MilestoneRun
 	if run.CycleCeiling <= 0 {
 		run.CycleCeiling = RunDefaultCycleCeiling
 	}
-	// ON CONFLICT DO NOTHING against the partial spec-run mutex: the losing
-	// racer inserts zero rows. No conflict target is named — a plain DO NOTHING
-	// catches the partial unique violation, and the uuid PK never collides.
+	// ON CONFLICT DO NOTHING against the partial build mutex: the losing racer
+	// inserts zero rows. No conflict target is named — a plain DO NOTHING
+	// catches either partial unique violation, and the uuid PK never collides.
 	res := r.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(run)
 	if res.Error != nil {
 		return false, nil, res.Error
@@ -175,11 +214,23 @@ func (r *milestoneRunRepository) TryAdmit(ctx context.Context, run *MilestoneRun
 	return true, run, nil
 }
 
-func (r *milestoneRunRepository) ActiveSpecRunByProject(ctx context.Context, orgID, projectID string) (*MilestoneRun, error) {
+func (r *milestoneRunRepository) ActiveDevRunByProject(ctx context.Context, orgID, projectID string) (*MilestoneRun, error) {
+	return r.activeRunByKind(ctx, orgID, projectID, RunKindDev)
+}
+
+func (r *milestoneRunRepository) ActiveValidationRunByProject(ctx context.Context, orgID, projectID string) (*MilestoneRun, error) {
+	return r.activeRunByKind(ctx, orgID, projectID, RunKindValidation)
+}
+
+// activeRunByKind is the one query behind both project-wide "is a run of this
+// kind live?" reads. Written once because the two differ only in the kind
+// literal, and a second spelling of the predicate is a second chance to narrow
+// it differently from the index it mirrors.
+func (r *milestoneRunRepository) activeRunByKind(ctx context.Context, orgID, projectID, kind string) (*MilestoneRun, error) {
 	var row MilestoneRun
 	err := r.db.WithContext(ctx).
-		Where("org_id = ? AND project_id = ? AND origin = ? AND state IN ?",
-			orgID, projectID, RunOriginSpecBuild, nonTerminalRunStates).
+		Where("org_id = ? AND project_id = ? AND kind = ? AND state IN ?",
+			orgID, projectID, kind, nonTerminalRunStates).
 		Order("created_at DESC").
 		First(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -228,13 +279,21 @@ func (r *milestoneRunRepository) BumpBudget(ctx context.Context, id string, coun
 	})
 }
 
+func (r *milestoneRunRepository) RequestCancel(ctx context.Context, id string) (*MilestoneRun, error) {
+	// COALESCE for the same reason SetState uses it on started_at: the column
+	// records WHEN a person first asked, and a second click must not move it.
+	return r.updateNonTerminal(ctx, id, map[string]any{
+		"cancel_requested_at": gorm.Expr("COALESCE(cancel_requested_at, ?)", time.Now().UTC()),
+	})
+}
+
 func (r *milestoneRunRepository) SetValidationVerdict(ctx context.Context, id, verdict string, issue int) (*MilestoneRun, error) {
 	if !ValidationVerdicts[verdict] {
 		return nil, fmt.Errorf("milestone run: unknown validation verdict %q", verdict)
 	}
 	// One write for both: the supervisor knows the verdict and the issue that
 	// produced it at the same instant, and a settled run needs the issue to stay
-	// navigable. Issue 0 (an incident run, or a skip before minting) leaves the
+	// navigable. Issue 0 (a task run, or a skip before minting) leaves the
 	// column alone rather than overwriting a real number with zero.
 	fields := map[string]any{"validation_verdict": verdict}
 	if issue > 0 {

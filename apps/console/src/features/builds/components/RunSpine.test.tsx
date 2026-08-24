@@ -21,7 +21,10 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { components } from "../../../generated/aep-api";
-import type { RunProgressCycle, RunProgressPhase } from "../hooks/useRunProgress";
+import type {
+  RunProgressCycle,
+  RunProgressPhase,
+} from "../hooks/useRunProgress";
 
 type MilestoneRunView = components["schemas"]["MilestoneRunView"];
 type RunCycleView = components["schemas"]["RunCycleView"];
@@ -31,7 +34,8 @@ type CycleBuild = components["schemas"]["CycleBuild"];
 // Router stubbed to plain anchors — no RouterProvider needed. createLink is what
 // the provisioning stage's way out uses, so it has to survive the stub.
 vi.mock("@tanstack/react-router", () => ({
-  createLink: (Component: React.ElementType) =>
+  createLink:
+    (Component: React.ElementType) =>
     ({
       to,
       params,
@@ -50,7 +54,11 @@ vi.mock("@tanstack/react-router", () => ({
       );
       const query = new URLSearchParams(search ?? {}).toString();
       return (
-        <Component {...rest} component="a" href={query ? `${path}?${query}` : path}>
+        <Component
+          {...rest}
+          component="a"
+          href={query ? `${path}?${query}` : path}
+        >
           {children}
         </Component>
       );
@@ -67,7 +75,8 @@ let buildCalls: Array<{ cycleId: string; enabled: boolean }> = [];
 let mockBuilds: CycleBuild[] = [];
 
 vi.mock("../hooks/useRunProgress", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../hooks/useRunProgress")>();
+  const actual =
+    await importOriginal<typeof import("../hooks/useRunProgress")>();
   return {
     ...actual,
     useRunProgress: (_p: string, _r: string | undefined, enabled = true) => {
@@ -93,7 +102,9 @@ vi.mock("../api/queries", () => ({
 // handed the same read the stage above them was derived from.
 vi.mock("./CycleBuilds", () => ({
   CycleBuilds: ({ builds }: { builds: CycleBuild[] | undefined }) => (
-    <div data-testid="build-rows">{(builds ?? []).map((b) => b.component).join(",")}</div>
+    <div data-testid="build-rows">
+      {(builds ?? []).map((b) => b.component).join(",")}
+    </div>
   ),
 }));
 
@@ -137,6 +148,7 @@ function run(
     id: "run-1",
     milestoneNumber: 2,
     milestoneTitle: "v2",
+    kind: "dev",
     origin: "spec-build",
     state,
     budgets: {
@@ -192,7 +204,9 @@ function renderSpine(
   work: TaskView[] = [],
   gates: TaskView[] = [],
 ) {
-  render(<RunSpine projectName="acme" tag="v2" run={r} gates={gates} work={work} />);
+  render(
+    <RunSpine projectName="acme" tag="v2" run={r} gates={gates} work={work} />,
+  );
 }
 
 /**
@@ -241,13 +255,23 @@ describe("RunSpine", () => {
         ],
       },
     ];
-    renderSpine(run([live]), [task({ issueNumber: 2, title: "workout-api Go backend" })]);
+    renderSpine(run([live]), [
+      task({ issueNumber: 2, title: "workout-api Go backend" }),
+    ]);
 
     // A run with ONE session is just the flow — no session boundary to announce.
-    expect(screen.queryByText("Build session 1 · coding")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Build session 1 · coding"),
+    ).not.toBeInTheDocument();
     // Every stage is named and present, in order — including the two the old
     // surface drew nowhere at all.
-    for (const stage of ["Coding agent", "Pull request", "Merge", "Builds", "Deployment"]) {
+    for (const stage of [
+      "Coding agent",
+      "Pull request",
+      "Merge",
+      "Builds",
+      "Deployment",
+    ]) {
       expect(screen.getByText(stage)).toBeInTheDocument();
     }
     // The facts are attached to the stage that learned them — and the pull
@@ -271,10 +295,18 @@ describe("RunSpine", () => {
     const live = cycle({ id: "c1", branch: "aep/m2-c1" });
     renderSpine(run([live]));
 
-    expect(screen.getByText(/The agent opens one when its work builds/)).toBeInTheDocument();
-    expect(screen.getByText(/Runs as soon as a pull request is ready/)).toBeInTheDocument();
-    expect(screen.getByText(/The merge is what triggers them/)).toBeInTheDocument();
-    expect(screen.getByText(/A green build deploys itself/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/The agent opens one when its work builds/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Runs as soon as a pull request is ready/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/The merge is what triggers them/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/A green build deploys itself/),
+    ).toBeInTheDocument();
   });
 
   // The silent stalls. Each one used to look exactly like a session still
@@ -316,7 +348,9 @@ describe("RunSpine", () => {
     mockBuilds = [build({ status: "Failed" })];
     renderSpine(run([live]));
 
-    expect(screen.getByText(/workout-api did not go green/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/workout-api did not go green/),
+    ).toBeInTheDocument();
     expect(screen.getByTestId("deployment")).toHaveTextContent("failed");
   });
 
@@ -337,13 +371,19 @@ describe("RunSpine", () => {
       endedAt: "2026-07-10T09:40:00Z",
     });
     renderSpine(run([done]), [
-      task({ issueNumber: 2, title: "workout-api Go backend", derivedStatus: "merged" }),
+      task({
+        issueNumber: 2,
+        title: "workout-api Go backend",
+        derivedStatus: "merged",
+      }),
       // Later work, closed by a LATER session. It must not be attributed here.
       task({ issueNumber: 9, title: "later work", derivedStatus: "merged" }),
     ]);
     expect(screen.getByText("workout-api Go backend")).toBeInTheDocument();
     expect(screen.queryByText("later work")).not.toBeInTheDocument();
-    expect(screen.getByText(/Resolved by pull request #12/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Resolved by pull request #12/),
+    ).toBeInTheDocument();
   });
 
   // Validation belongs to the deployment surface: the deployment is what gets
@@ -366,7 +406,9 @@ describe("RunSpine", () => {
     // what needs announcing — otherwise the rail reads as the agent going
     // backwards.
     expect(screen.getByText("Build session 2 · fix")).toBeInTheDocument();
-    expect(screen.queryByText("Build session 1 · coding")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Build session 1 · coding"),
+    ).not.toBeInTheDocument();
     // Two sessions, five stages each, counted straight through from 1.
     expect(stepsOnScreen()).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   });
@@ -402,7 +444,9 @@ describe("RunSpine", () => {
 
     expect(screen.getByText("2 of 2 open")).toBeInTheDocument();
     expect(screen.getByText(/nothing is held on you/)).toBeInTheDocument();
-    expect(screen.queryByText(/Supply the configuration/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Supply the configuration/),
+    ).not.toBeInTheDocument();
     // Nothing to go and do, so no way out is offered.
     expect(
       screen.queryByRole("link", { name: /Resolve connections/ }),
@@ -415,7 +459,10 @@ describe("RunSpine", () => {
     renderSpine(
       run([cycle({ id: "c1" })]),
       [],
-      [provisioningGate(1, "Provision resource: db"), gate(2, "Provide configuration: stripe")],
+      [
+        provisioningGate(1, "Provision resource: db"),
+        gate(2, "Provide configuration: stripe"),
+      ],
     );
 
     // The stalled one speaks for the STAGE, but BOTH connections are listed —
@@ -437,7 +484,14 @@ describe("RunSpine", () => {
     renderSpine(
       run([cycle({ id: "c1" })]),
       [],
-      [task({ issueNumber: 1, title: "Provision resource: db", executorClass: "provision", derivedStatus: "merged" })],
+      [
+        task({
+          issueNumber: 1,
+          title: "Provision resource: db",
+          executorClass: "provision",
+          derivedStatus: "merged",
+        }),
+      ],
     );
 
     expect(screen.getByText("1 resolved")).toBeInTheDocument();
@@ -472,7 +526,8 @@ describe("RunSpine", () => {
     });
     renderSpine(run([first, second]));
 
-    const asked = (id: string) => buildCalls.filter((c) => c.enabled && c.cycleId === id);
+    const asked = (id: string) =>
+      buildCalls.filter((c) => c.enabled && c.cycleId === id);
     expect(asked("c1").length).toBeGreaterThan(0);
     expect(asked("c2").length).toBeGreaterThan(0);
   });
@@ -480,7 +535,11 @@ describe("RunSpine", () => {
   // The one thing still behind a click. Attaching replays every session's
   // history, which is not worth doing to a finished version nobody asked to read.
   it("opens no stream on a SETTLED run until the log is asked for", () => {
-    const done = cycle({ id: "c1", prNumber: 4, endedAt: "2026-07-10T09:40:00Z" });
+    const done = cycle({
+      id: "c1",
+      prNumber: 4,
+      endedAt: "2026-07-10T09:40:00Z",
+    });
     renderSpine(run([done], "succeeded"));
 
     expect(enabledCalls.every((e) => e === false)).toBe(true);
@@ -512,7 +571,9 @@ describe("RunSpine", () => {
     renderSpine(run([live]));
 
     expect(screen.getByText("↑ push aep/m2-c1")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Show agent log" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Show agent log" }),
+    ).not.toBeInTheDocument();
     expect(enabledCalls.at(-1)).toBe(true);
   });
 
@@ -521,10 +582,16 @@ describe("RunSpine", () => {
   // connection-free page claiming it was "attaching to the run feed" forever.
   it("says nothing about the feed while no log has been asked for", () => {
     mockPhase = "idle";
-    const done = cycle({ id: "c1", prNumber: 4, endedAt: "2026-07-10T09:40:00Z" });
+    const done = cycle({
+      id: "c1",
+      prNumber: 4,
+      endedAt: "2026-07-10T09:40:00Z",
+    });
     renderSpine(run([done], "succeeded"));
 
-    expect(screen.queryByText(/attaching to the run feed/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/attaching to the run feed/),
+    ).not.toBeInTheDocument();
     expect(enabledCalls.every((e) => e === false)).toBe(true);
   });
 
@@ -538,6 +605,8 @@ describe("RunSpine", () => {
 
   it("says so when the run has not dispatched a build session yet", () => {
     renderSpine(run([]));
-    expect(screen.getByText(/No build session has been dispatched yet/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/No build session has been dispatched yet/),
+    ).toBeInTheDocument();
   });
 });

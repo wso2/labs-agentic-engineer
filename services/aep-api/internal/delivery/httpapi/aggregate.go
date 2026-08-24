@@ -43,6 +43,10 @@ type Deps struct {
 	RunProgress    *runread.ProgressService
 	RunCommands    *runread.Commands
 	RunCycleBuilds *runread.CycleBuilds
+
+	// PublisherProvisioner is nil in tests that do not care. Wired on
+	// Handler via WithPublisherProvisioner so StartProjectBuild cannot see it.
+	PublisherProvisioner build.PublisherProvisioner
 }
 
 // Every slice names its type Handler, so embedding them directly would be
@@ -67,8 +71,12 @@ type Handlers struct {
 // handlers are fail-LOUD on a wired-but-nil service and 503 on an entirely
 // unwired one (each slice's nil guard), matching the pre-migration edge.
 func New(d Deps) (*Handlers, error) {
+	bh := build.NewHandler(d.BuildSvc, d.PreflightSvc, d.BuildActivity)
+	if d.PublisherProvisioner != nil {
+		bh = bh.WithPublisherProvisioner(d.PublisherProvisioner)
+	}
 	return &Handlers{
-		buildHandler:     build.NewHandler(d.BuildSvc, d.PreflightSvc, d.BuildActivity),
+		buildHandler:     bh,
 		taskHandler:      task.NewHandler(d.TaskReads, d.TaskCommands),
 		executionHandler: execution.NewHandler(d.TaskStream),
 		runreadHandler:   runread.NewHandler(d.RunReads, d.RunProgress, d.RunCommands, d.RunCycleBuilds),

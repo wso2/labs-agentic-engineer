@@ -41,25 +41,3 @@ func TestResolveAPISecurityEnabled(t *testing.T) {
 		})
 	}
 }
-
-func TestResolveAPISecurityCallerKind(t *testing.T) {
-	cases := []struct {
-		name    string
-		exposes *ExposesAPI
-		want    string
-	}{
-		{"nil block", nil, ""},
-		{"none", &ExposesAPI{Auth: "none"}, ""},
-		{"end-user-required", &ExposesAPI{Auth: "end-user-required"}, "end-user"},
-		{"service-required", &ExposesAPI{Auth: "service-required"}, "service"},
-		{"unrecognised", &ExposesAPI{Auth: "yes"}, ""},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got := ResolveAPISecurityCallerKind(DesignComponent{ExposesAPI: c.exposes})
-			if got != c.want {
-				t.Fatalf("got %q, want %q", got, c.want)
-			}
-		})
-	}
-}

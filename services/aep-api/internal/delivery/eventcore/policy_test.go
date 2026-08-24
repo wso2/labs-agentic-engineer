@@ -72,39 +72,105 @@ func TestMilestoneFromBranch(t *testing.T) {
 
 func TestDecideAutoMerge(t *testing.T) {
 	work := []sourcecontrol.IssueInfo{
-		{Number: 12, State: "open", Labels: []string{delivery.LabelAgentWork}},
-		{Number: 13, State: "open", Labels: []string{delivery.LabelAgentWork, delivery.LabelProvisionGate}},
-		// A ledger issue: in the milestone, but not agent work.
+		{Number: 12, State: "open", Labels: []string{delivery.LabelAgentWork, delivery.KindDevelopment}},
+		{Number: 13, State: "open", Labels: []string{delivery.LabelAgentWork, delivery.KindBug, delivery.SrcBuild}},
+		// A ledger issue: in the milestone, but unarmed — nobody works it.
 		{Number: 14, State: "open", Labels: []string{"question"}},
-		// The validation issue: the run's own work, and deliberately WITHOUT the
-		// `aep` label (it must not sit in the working set).
-		{Number: 15, State: "open", Labels: []string{delivery.LabelValidationWork}},
+		// The validation task: armed like any other agent work, and of a kind no
+		// working set includes.
+		{Number: 15, State: "open", Labels: []string{delivery.LabelAgentWork, delivery.KindValidation}},
+		// A dispatch gate: the platform's, never claimable by a pull request.
+		{Number: 16, State: "open", Labels: []string{delivery.KindProvision}},
+		// A red-main incident: classified as a bug, but NOT armed. Classification
+		// is not permission — nobody may claim it until a human arms it.
+		{Number: 17, State: "open", Labels: []string{delivery.KindBug, delivery.SrcIncident}},
 	}
 	cases := []struct {
-		name     string
-		resolves []int
-		want     bool
-		matched  []int
+		name string
+		// resolves is what a CLOSING keyword claimed; validates is what the
+		// non-closing `Validates #N` claimed. They are separate arguments because
+		// they are separate lists all the way through the policy — see
+		// decideAutoMerge.
+		resolves  []int
+		validates []int
+		want      bool
+		matched   []int
+		validated []int
 	}{
-		{"one agent-work issue is enough", []int{12}, true, []int{12}},
-		{"several", []int{12, 13}, true, []int{12, 13}},
-		{"a claim outside the milestone decides nothing", []int{99}, false, nil},
-		{"a ledger issue is not agent work", []int{14}, false, nil},
-		{"partial match still merges", []int{99, 12}, true, []int{12}},
-		{"claiming nothing never merges", nil, false, nil},
-		// The validation cycle's pull request IS this run's work. Declining it —
-		// which is what reading `aep` alone did — strands the tests and the report
-		// unmerged, so the run can never read a verdict from them.
-		{"the validation issue is this run's work", []int{15}, true, []int{15}},
+		{"one armed issue is enough", []int{12}, nil, true, []int{12}, nil},
+		{"several", []int{12, 13}, nil, true, []int{12, 13}, nil},
+		{"a claim outside the milestone decides nothing", []int{99}, nil, false, nil, nil},
+		{"a ledger issue is not agent work", []int{14}, nil, false, nil, nil},
+		{"partial match still merges", []int{99, 12}, nil, true, []int{12}, nil},
+		{"claiming nothing never merges", nil, nil, false, nil, nil},
+		// The validation cycle's pull request IS this run's work. It reaches the
+		// policy through the NON-closing reference, because the platform owns the
+		// task's close — and declining it strands the tests and the report
+		// unmerged, so no run could ever read a verdict from them.
+		{"a validation PR carrying only Validates #N merges", nil, []int{15}, true, nil, []int{15}},
+		// The scope is what stops `Validates` becoming a general-purpose way to get
+		// a pull request merged while closing nothing: the working set would never
+		// empty, because the issues it claimed would still be open.
+		{"a coding PR carrying only Validates #N is declined", nil, []int{12}, false, nil, nil},
+		{"Validates on a ledger issue is declined", nil, []int{14}, false, nil, nil},
+		{"Validates on a gate is declined", nil, []int{16}, false, nil, nil},
+		// A closing keyword aimed at the validation task still merges — the arming
+		// label admits it — but the platform's close is what actually ends the task.
+		{"the validation task is still claimable by a closing keyword", []int{15}, nil, true, []int{15}, nil},
+		{"a dispatch gate is not claimable", []int{16}, nil, false, nil, nil},
+		{"an unarmed bug is not this run's work", []int{17}, nil, false, nil, nil},
+		// Both lists populated: each is matched against its own population, and
+		// neither is folded into the other.
+		{"both references are kept apart", []int{12}, []int{15}, true, []int{12}, []int{15}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := decideAutoMerge(c.resolves, work)
+			got := decideAutoMerge(c.resolves, c.validates, work)
 			if got.Merge != c.want {
 				t.Fatalf("Merge = %v (%s), want %v", got.Merge, got.Reason, c.want)
 			}
 			if !reflect.DeepEqual(got.Matched, c.matched) {
 				t.Fatalf("Matched = %v, want %v", got.Matched, c.matched)
+			}
+			if !reflect.DeepEqual(got.Validated, c.validated) {
+				t.Fatalf("Validated = %v, want %v", got.Validated, c.validated)
+			}
+		})
+	}
+}
+
+// TestParseValidatesRefs pins the non-closing reference the validation cycle
+// carries, and — the half that matters — that it stays OUT of the Resolves list.
+//
+// The two parses must never merge: a coding pull request's Resolves list is the
+// durable record of what that cycle finished (RunCycle.Resolves), so folding a
+// reference nothing closed into it would claim work that is still open.
+func TestParseValidatesRefs(t *testing.T) {
+	cases := []struct {
+		name      string
+		body      string
+		validates []int
+		resolves  []int
+	}{
+		{"the canonical form", "Validates #15", []int{15}, nil},
+		{"present tense", "validate #15", []int{15}, nil},
+		{"past tense", "Validated #15", []int{15}, nil},
+		{"colon form", "Validates: #15", []int{15}, nil},
+		{"deduplicated, first-seen order", "Validates #15\nValidates #9\nValidates #15", []int{15, 9}, nil},
+		{"a cross-repo reference is not a milestone member", "Validates owner/repo#15", nil, nil},
+		{"no reference at all", "just some prose", nil, nil},
+		// The load-bearing separation, both ways.
+		{"Validates never enters the Resolves list", "Validates #15", []int{15}, nil},
+		{"Closes never enters the Validates list", "Closes #15", nil, []int{15}},
+		{"a body carrying both keeps them apart", "Closes #12\nValidates #15", []int{15}, []int{12}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := parseValidatesRefs(c.body); !reflect.DeepEqual(got, c.validates) {
+				t.Errorf("parseValidatesRefs = %v, want %v", got, c.validates)
+			}
+			if got := parseResolvesRefs(c.body); !reflect.DeepEqual(got, c.resolves) {
+				t.Errorf("parseResolvesRefs = %v, want %v", got, c.resolves)
 			}
 		})
 	}
@@ -118,15 +184,15 @@ func TestDecideAutoMerge(t *testing.T) {
 //
 // The cases that matter are the ones where "some issue is open" and "there is
 // work to do" part company: a ledger-only milestone, a milestone whose only
-// open work is the validation issue, and a gate that also carries the
-// agent-work label.
+// open work is the validation task, and an open gate.
 func TestDispatchable(t *testing.T) {
 	var (
-		task     = []string{delivery.LabelAgentWork}
-		gate     = []string{delivery.LabelProvisionGate}
-		valid    = []string{delivery.LabelAgentWork, delivery.LabelValidationWork}
-		ledger   = []string(nil)
-		workGate = []string{delivery.LabelAgentWork, delivery.LabelProvisionGate}
+		task   = []string{delivery.LabelAgentWork, delivery.KindDevelopment}
+		bug    = []string{delivery.LabelAgentWork, delivery.KindBug, delivery.SrcBuild}
+		gate   = []string{delivery.KindProvision}
+		valid  = []string{delivery.LabelAgentWork, delivery.KindValidation}
+		ledger = []string(nil)
+		armed  = []string{delivery.LabelAgentWork} // armed by a human, unclassified
 	)
 	cases := []struct {
 		name   string
@@ -134,17 +200,25 @@ func TestDispatchable(t *testing.T) {
 		want   bool
 	}{
 		{"one open task, no gate", hostCounts(task), true},
+		{"one open bug, no gate", hostCounts(bug), true},
 		{
-			// The regression this predicate exists to prevent: human-filed issues
-			// with no "aep" label are the milestone's LEDGER. They are never worked,
-			// so a milestone holding nothing else has an empty working set.
+			// The regression this predicate exists to prevent: unarmed human-filed
+			// issues are the milestone's LEDGER. They are never worked, so a
+			// milestone holding nothing else has an empty working set.
 			"only ledger issues are open",
 			hostCounts(ledger, ledger, ledger, ledger), false,
 		},
 		{
-			// The validation issue belongs to the run's validation cycle, not to a
-			// coding cycle, so it is not work a dispatch can pick up.
-			"only the validation issue is open", hostCounts(valid), false,
+			// The validation task belongs to the run's validation cycle, not to a
+			// coding cycle, so it is not work a dispatch can pick up — even though
+			// it is armed.
+			"only the validation task is open", hostCounts(valid), false,
+		},
+		{
+			// A human armed a bare issue and classified nothing. It IS work: the
+			// counts and delivery.InDevWorkingSet must give the same answer, and a
+			// stall is visible where a silent settle is not.
+			"an armed issue with no kind is dispatchable", hostCounts(armed), true,
 		},
 		{
 			// THE LIVE FAILURE. One planned task alongside one provision gate: the
@@ -164,9 +238,9 @@ func TestDispatchable(t *testing.T) {
 			hostCounts(task, task, task, gate), false,
 		},
 		{
-			// A gate carrying "aep" too: the gate clause already holds dispatch, and
-			// the gate must not be double-counted into the working set either.
-			"a gate that also carries the work label", hostCounts(workGate), false,
+			// A gate alone: it holds dispatch AND is not work, so neither clause of
+			// the predicate can be satisfied by it.
+			"only a gate is open", hostCounts(gate), false,
 		},
 		{"everything closed", hostCounts(), false},
 		{"unknown milestone", nil, false},
@@ -184,10 +258,10 @@ func TestDispatchable(t *testing.T) {
 // Its working set is one issue throughout — before the gate resolves and after.
 func TestDispatchable_TheGateIsTheOnlyThingHolding(t *testing.T) {
 	gated := hostCounts(
-		[]string{delivery.LabelAgentWork},     // the planned task
-		[]string{delivery.LabelProvisionGate}, // the dependency gate
+		[]string{delivery.LabelAgentWork, delivery.KindDevelopment}, // the planned task
+		[]string{delivery.KindProvision},                            // the dependency gate
 	)
-	if got, want := gated.OpenNonGateWork(), 1; got != want {
+	if got, want := gated.OpenDevWork(), 1; got != want {
 		t.Fatalf("working set behind the gate = %d, want %d (counts %+v)", got, want, gated)
 	}
 	if gated.OpenProvision != 1 {
@@ -197,8 +271,8 @@ func TestDispatchable_TheGateIsTheOnlyThingHolding(t *testing.T) {
 		t.Fatal("an open gate must hold the dispatch")
 	}
 
-	released := hostCounts([]string{delivery.LabelAgentWork})
-	if got, want := released.OpenNonGateWork(), 1; got != want {
+	released := hostCounts([]string{delivery.LabelAgentWork, delivery.KindDevelopment})
+	if got, want := released.OpenDevWork(), 1; got != want {
 		t.Fatalf("working set after the gate closed = %d, want %d", got, want)
 	}
 	if !dispatchable(released) {

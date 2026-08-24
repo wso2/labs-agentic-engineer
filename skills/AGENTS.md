@@ -36,9 +36,10 @@ piping. An instruction about *which command to run* does.
 An absent kind means `org`, which is a real decision, not a default to lean on:
 
 - **`platform`** — AE-owned, read-only in the console. The design-flow skills
-  (`start`, `amend`, `grilling`, `prd-contract`, `design`, `cell-design`,
-  `architecture`, `security-design`, `openapi-conventions`, `wireframes`,
-  `validation-criteria`, `task-planning`) and the coding run's own workflow skills (`aep`,
+  (`start`, `amend`, `settle`, `grilling`, `prd-contract`, `design`,
+  `cell-design`, `architecture`, `security-design`, `openapi-conventions`,
+  `wireframes`, `validation-criteria`, `task-planning`), the `console`
+  narration policy, and the coding run's own workflow skills (`aep`,
   `aep-validation`, `playwright-cli`).
 - **`org`** — the org-visible stack skills (`go`, `ballerina`, `react-webapp`,
   `api-management`, `thunder-authentication`). Editable and deletable by an org.
@@ -116,6 +117,12 @@ one was `go`'s, and it was invisible for as long as `go` was preloaded regardles
   long (the branch-identity procedure is there for this reason alone).
   `workflow_skill.test.ts` fails on platform mechanics in a reference, so this is
   caught at CI, not in a local run.
+- **A mechanics library is not an entry point.** `grilling` owns the question
+  tools and `prd-contract` owns the PRD's shape; neither writes a document, so
+  neither is a flow a user can usefully fire — a flow skill (`start`, `amend`,
+  `settle`, `design`) owns the artifact and loads them for the mechanics. Nothing enforces
+  that: the catalog offers every name, so a skill with no artifact contract says
+  so in its own body and names the flow to fire instead.
 - **Instructions are as short as they can be and stay unambiguous.** State the
   rule and the failure it prevents; the maintainer's history behind it goes in
   this file or an ADR, not into every run's context.
@@ -166,9 +173,17 @@ which is exactly what your own Claude Code reads.
   warns and **skips** a mismatch, so the skill silently disappears from every org.
 - Keep a description to one sentence that names when to load the skill, not what
   it contains. It is the only part of a skill most agents ever see.
-- `organization` is the one skill nothing loads: the design service inlines its
-  body into every system prompt and keeps it out of the catalog (ADR-0003). It
-  therefore carries no `#` title — the composer supplies the heading, and a
-  second one in the file renders it twice.
+- Two skills are never loaded, because the design service inlines their bodies
+  into the system prompt and keeps them out of the catalog: `organization` (the
+  org's standing defaults, on every turn) and `console` (the narration policy,
+  on turns whose caller named the console surface). Both therefore carry no `#`
+  title — the composer supplies the heading, and a second one in the file
+  renders it twice.
+- `console` is the surface's vocabulary, not a flow's. It exists because the
+  same flow skills run in the console and in a terminal, where a repo path is
+  the right word: the trunk stays byte-identical everywhere and the difference
+  rides this one skill. Its artifact-name table pins
+  `apps/console/design/lexicon.md`, which remains the source — a disagreement is
+  settled there, not here.
 - A skill is prose for a model, so the usual writing rules apply harder: state
   the rule and the reason it exists, never both halves of a choice.

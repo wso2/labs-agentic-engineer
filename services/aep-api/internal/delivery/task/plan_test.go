@@ -18,8 +18,8 @@ package task
 
 import (
 	"context"
-	"fmt"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"slices"
@@ -121,6 +121,7 @@ func newPlanRig(t *testing.T, seed map[string]string, specTag string) *planRig {
 		func(context.Context, string) (string, error) { return "sk-test", nil },
 		turn,
 		issues,
+		issues.writer(),
 		fx.Engine,
 		func(context.Context, string) (*sourcecontrol.GitRepository, error) { return skillsRow, nil },
 	)
@@ -146,7 +147,7 @@ func TestPlanIntoMilestone_DispatchesWorkspaceShape(t *testing.T) {
 	r := newPlanRig(t, map[string]string{
 		"specs/design/design.md":                              "# design",
 		"specs/design/components/hello-world-api/design.json": `{"name":"hello-world-api"}`,
-		"specs/requirements/prd.md":                  "# reqs",
+		"specs/requirements/prd.md":                           "# reqs",
 	}, "v1")
 	req := r.start(t)
 
@@ -202,7 +203,7 @@ func TestPlanIntoMilestone_SkillsRepoGone_TypedError(t *testing.T) {
 	fx := workspacetest.New(t, map[string]string{
 		"specs/design/design.md":                              "# design",
 		"specs/design/components/hello-world-api/design.json": `{"name":"hello-world-api"}`,
-		"specs/requirements/prd.md":                  "# reqs",
+		"specs/requirements/prd.md":                           "# reqs",
 	})
 	repoRow := &sourcecontrol.GitRepository{OrgID: "org1", ProjectID: "proj1", RepoURL: fx.Origin.URL(),
 		DefaultBranch: "main", RepoSlug: workspacetest.DefaultSlug, Status: "ready"}
@@ -210,13 +211,15 @@ func TestPlanIntoMilestone_SkillsRepoGone_TypedError(t *testing.T) {
 		RepoURL: "file:///nonexistent/skills-repo-gone.git", DefaultBranch: "main", RepoSlug: "org-skills", Status: "ready"}
 
 	turn := &capturingTurn{}
+	planIssues := newFakeIssues()
 	svc := NewPlanService(
 		fakeRepos{repo: repoRow},
 		planVersions{specTag: "v1"},
 		sourcecontrol.NewGitOpsService(nilResolver{}, fx.Engine),
 		func(context.Context, string) (string, error) { return "sk-test", nil },
 		turn,
-		newFakeIssues(),
+		planIssues,
+		planIssues.writer(),
 		fx.Engine,
 		func(context.Context, string) (*sourcecontrol.GitRepository, error) { return staleSkills, nil },
 	)
@@ -238,34 +241,50 @@ func TestPlanIntoMilestone_ContextIsTheMilestonesOwnWork(t *testing.T) {
 	r := newPlanRig(t, map[string]string{"specs/design/design.md": "# design\n"}, "v2")
 
 	// The version's own milestone: one Task already planned (a re-plan or a
-	// crash re-run), one gate, one ledger-only human issue.
+	// crash re-run), one gate, one ledger-only human issue, and the version's
+	// validation task — which is ARMED like every other issue an agent works, so
+	// only the KIND test keeps it out of the planner's context set.
 	r.issues.seedInMilestone(sourcecontrol.IssueInfo{
 		Number: 201, Title: "Implement hello-world-api", Body: "Build the API.",
-		State: "open", Labels: []string{delivery.LabelAgentWork},
+		State: "open", Labels: []string{delivery.LabelAgentWork, delivery.KindDevelopment},
 	}, 7)
 	r.issues.seedInMilestone(sourcecontrol.IssueInfo{
 		Number: 202, Title: "Provision orders-db", Body: "Waiting on the drawer.",
-		State: "open", Labels: []string{delivery.LabelProvisionGate},
+		State: "open", Labels: []string{delivery.KindProvision},
 	}, 7)
 	r.issues.seedInMilestone(sourcecontrol.IssueInfo{
 		Number: 203, Title: "Flaky checkout", Body: "Sometimes 500s.",
 		State: "open", Labels: nil,
 	}, 7)
+	r.issues.seedInMilestone(sourcecontrol.IssueInfo{
+		Number: 204, Title: "Validate hello-world against its acceptance criteria",
+		Body:  "Author e2e tests.",
+		State: "open", Labels: []string{delivery.LabelAgentWork, delivery.KindValidation},
+	}, 7)
+	// A bug the platform minted into this version IS the planner's context: a
+	// re-plan must be able to see it and must not re-propose it under a new
+	// title.
+	r.issues.seedInMilestone(sourcecontrol.IssueInfo{
+		Number: 205, Title: "Fix the failing build for hello-world-api", Body: "It went red.",
+		State: "open", Labels: []string{delivery.LabelAgentWork, delivery.KindBug, delivery.SrcBuild},
+	}, 7)
 	// A Task of the PREVIOUS version, in another milestone: superseded, and
 	// therefore not context for this one.
 	r.issues.seedInMilestone(sourcecontrol.IssueInfo{
 		Number: 199, Title: "Implement legacy-thing", Body: "Old.",
-		State: "open", Labels: []string{delivery.LabelAgentWork},
+		State: "open", Labels: []string{delivery.LabelAgentWork, delivery.KindDevelopment},
 	}, 6)
 
 	if err := r.svc.PlanIntoMilestone(context.Background(), "org1", "proj1", 7); err != nil {
 		t.Fatalf("PlanIntoMilestone: %v", err)
 	}
 	paths := contextPaths(r.turn.req.Turn)
-	if !slices.Contains(paths, "tasks/201.md") {
-		t.Errorf("the milestone's own Task is missing from the plan context: %v", paths)
+	for _, want := range []string{"tasks/201.md", "tasks/205.md"} {
+		if !slices.Contains(paths, want) {
+			t.Errorf("%s is the milestone's own work and is missing from the plan context: %v", want, paths)
+		}
 	}
-	for _, leaked := range []string{"tasks/202.md", "tasks/203.md", "tasks/199.md"} {
+	for _, leaked := range []string{"tasks/202.md", "tasks/203.md", "tasks/204.md", "tasks/199.md"} {
 		if slices.Contains(paths, leaked) {
 			t.Errorf("%s leaked into the plan context — only the milestone's agent work is context: %v", leaked, paths)
 		}

@@ -33,7 +33,7 @@ import {
 import { ChevronRight } from "@wso2/oxygen-ui-icons-react";
 import { StatusChip } from "../../../components/StatusChip";
 import type { components } from "../../../generated/aep-api";
-import { GitHubIssueLink } from "../../tasks/components/GitHubIssueLink";
+import { GitHubRefChip } from "../../../components/GitHubRefChip";
 import { gateSubject } from "../../tasks/lib/issueRows";
 import { bucketMilestone } from "../lib/milestoneBuckets";
 import { gateRows } from "../lib/provisioning";
@@ -313,7 +313,7 @@ function IssueRow({
           </Typography>
         )}
       </Box>
-      <GitHubIssueLink issueNumber={issue.issueNumber} issueUrl={issue.issueUrl} />
+      <GitHubRefChip kind="issue" number={issue.issueNumber} url={issue.issueUrl} />
     </Stack>
   );
 }

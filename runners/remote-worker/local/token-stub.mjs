@@ -60,6 +60,8 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
 }
 const bind = process.env.STUB_BIND || "127.0.0.1";
 const expectedBearer = process.env.STUB_BEARER ?? "";
+const stubClientId = process.env.STUB_CLIENT_ID ?? "local-publisher";
+const stubClientSecret = process.env.STUB_CLIENT_SECRET ?? "local-publisher-secret";
 
 // Both scopings: the runner uses tasks/{id} when AEP_PLATFORM_URL is unset
 // (git-service fallback) and executions/{id} when it is set (the current
@@ -87,6 +89,20 @@ const server = http.createServer((req, res) => {
   const url = new URL(req.url ?? "/", "http://localhost");
   if (req.method === "GET" && url.pathname === "/healthz") {
     res.writeHead(200).end("ok");
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/oauth2/token") {
+    const expected =
+      "Basic " + Buffer.from(`${stubClientId}:${stubClientSecret}`, "utf8").toString("base64");
+    if (req.headers.authorization !== expected) {
+      console.error("[token-stub] 401 oauth2/token bad client credentials");
+      res.writeHead(401, JSON_HEADERS).end('{"error":"invalid_client"}');
+      return;
+    }
+    const accessToken = expectedBearer !== "" ? expectedBearer : "stub-access-token";
+    console.error("[token-stub] 200 oauth2/token");
+    res.writeHead(200, JSON_HEADERS);
+    res.end(JSON.stringify({ access_token: accessToken, token_type: "bearer", expires_in: 3600 }));
     return;
   }
   // Runner callbacks that require the per-run bearer: credentials/refresh

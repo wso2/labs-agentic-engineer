@@ -39,10 +39,9 @@ type RefreshResponse struct {
 // CredentialsRefreshService returns a fresh GitHub token + identity for the
 // execution named in a verified runner bearer.
 //
-// The bearer is verified at the edge via auth.ExecutionScopedInput (JWKS-backed
-// RS256 Task-JWT or publisher-cc). Its claims are trusted because the signature
-// originates from the BFF's RSA private key (or the platform IDP) — the token
-// itself carries all the org context needed.
+// The bearer is verified at the edge via auth.RunnerAuthorizer (Thunder
+// publisher-cc). Claims are trusted because the signature originates from
+// the platform IDP — the token itself carries the org context.
 type CredentialsRefreshService interface {
 	Refresh(ctx context.Context, executionID, ocOrgID string) (*RefreshResponse, error)
 }

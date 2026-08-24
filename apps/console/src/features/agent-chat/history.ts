@@ -44,12 +44,14 @@ export function projectableHistory(history: ConversationMessage[]): ChatMessage[
     const text = contentText(m.content);
     if (m.role === "user") {
       if (!text) continue;
+      const attachments = attachmentNamesOf(m);
       out.push({
         id: `h${out.length}`,
         role: "user",
         content: text,
         status: "completed",
         ...(m.author ? { author: m.author } : {}),
+        ...(attachments.length > 0 ? { attachments } : {}),
       });
     } else if (m.role === "assistant") {
       if (text) out.push({ id: `h${out.length}`, role: "assistant", turnId: "history", content: text });
@@ -57,6 +59,27 @@ export function projectableHistory(history: ConversationMessage[]): ChatMessage[
     }
   }
   return out;
+}
+
+/**
+ * Attachment names on a rehydrated user row (#428).
+ *
+ * Sourced from the turn JOURNAL, which the display projection serves alongside
+ * the raw text — NOT from the stored transcript's file parts. Those two are not
+ * interchangeable: `projectDisplayHistory` replaces a user row's content with
+ * the journal's text precisely because the transcript version is a composed
+ * model prompt, so by the time the row reaches this function its parts are gone.
+ * Without the journal carrying names, a reload would show the agent discussing a
+ * document that appears nowhere in the thread.
+ *
+ * Names only, never bytes (ADR-0019) — there is nothing to render from, and a
+ * chip is not a download.
+ *
+ * `mapConversationMessage` has already dropped malformed entries, so this only
+ * has to decide present-or-absent.
+ */
+function attachmentNamesOf(m: ConversationMessage): string[] {
+  return m.attachments ?? [];
 }
 
 /** Reconstruct question cards from an assistant message's tool-call parts. */

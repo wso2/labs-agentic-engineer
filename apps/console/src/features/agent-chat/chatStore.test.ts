@@ -48,6 +48,7 @@ import {
   subscribeSeed,
   subscribeTurnEnd,
   upsertToolMessage,
+  clearFailedSends,
 } from "./chatStore";
 
 let n = 0;
@@ -319,5 +320,49 @@ describe("deterministic-flush registration", () => {
     expect(hasDeterministicFlush(key)).toBe(true); // one registration still live
     unregisterB();
     expect(hasDeterministicFlush(key)).toBe(false);
+  });
+});
+
+describe("clearFailedSends", () => {
+  // A fresh key per case: the store caches logs in a module-level Map, so
+  // clearing localStorage alone would not reset it.
+  let n = 0;
+  let KEY = "";
+  beforeEach(() => {
+    n += 1;
+    KEY = `aep.chat.v1.acme.failed-sends-${n}`;
+  });
+
+  it("drops the failed user row and the error row a refused send left", () => {
+    // Both are LOCAL-ONLY: the rehydrate re-appends them after the server
+    // history on every refocus, so without a bound a failure stays pinned below
+    // newer turns forever and reads as a retry.
+    addMessage(KEY, { role: "user", content: "went nowhere", status: "failed" });
+    addMessage(KEY, { role: "error", content: "Failed to reach the agent." });
+    clearFailedSends(KEY);
+    expect(getMessages(KEY)).toEqual([]);
+  });
+
+  it("keeps delivered rows — only the failure is history", () => {
+    addMessage(KEY, { role: "user", content: "landed", turnId: "t1", status: "completed" });
+    addMessage(KEY, { role: "assistant", turnId: "t1", content: "done" });
+    addMessage(KEY, { role: "user", content: "went nowhere", status: "failed" });
+    clearFailedSends(KEY);
+    expect(getMessages(KEY).map((m) => m.role)).toEqual(["user", "assistant"]);
+    expect(getMessages(KEY)[0]).toMatchObject({ content: "landed" });
+  });
+
+  it("keeps an in-flight row, which has not failed", () => {
+    addMessage(KEY, { role: "user", content: "running", turnId: "t2", status: "in_flight" });
+    clearFailedSends(KEY);
+    expect(getMessages(KEY)).toHaveLength(1);
+  });
+
+  it("is a no-op when there is nothing to drop", () => {
+    addMessage(KEY, { role: "user", content: "landed", turnId: "t1", status: "completed" });
+    const before = getMessages(KEY);
+    clearFailedSends(KEY);
+    // Same array identity: a needless persist would remount the whole log.
+    expect(getMessages(KEY)).toBe(before);
   });
 });

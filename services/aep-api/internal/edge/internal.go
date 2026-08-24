@@ -31,8 +31,8 @@ import (
 // The internal service-to-service surface (/internal/v1), served CONTRACT-FIRST
 // from packages/contracts/api/internal/v1 (generated strict server in
 // internal/igen). It is NOT wrapped by the user-JWT middleware: every
-// operation passes runnerAuthGate, which verifies the caller's BFF Task-JWT or
-// publisher-cc bearer against the execution named in the path (the INT-6
+// operation passes runnerAuthGate, which verifies the caller's publisher-cc
+// bearer against the execution named in the path (the INT-6
 // fence) and binds the verified org into the context. The spec is non-public —
 // never gateway-advertised.
 //
@@ -45,7 +45,7 @@ import (
 // need. main.go (internal/app) fills it with real instances.
 type InternalDeps struct {
 	CredsRefresh organization.CredentialsRefreshService
-	// RunnerAuth verifies runner bearers (Task-JWT / publisher-cc) against the
+	// RunnerAuth verifies runner publisher-cc bearers against the
 	// path execution id. nil fails closed: every internal op answers 503.
 	RunnerAuth *auth.RunnerAuthorizer
 	// ValidationContext + ValidationCredentials back the two validation runner

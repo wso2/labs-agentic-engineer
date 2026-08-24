@@ -39,18 +39,27 @@ export function chatSpec(text: string): TurnSpec {
   return { kind: "chat", text };
 }
 
-/** A `/<skill>` flow, with any trailing text the user typed after it. */
-export function flowSpec(skill: string, text?: string): TurnSpec {
-  return text?.trim() ? { kind: "flow", skill, text: text.trim() } : { kind: "flow", skill };
+/**
+ * A `/<skill>` flow, with any trailing text the user typed after it. References
+ * ride exactly as on `startSpec` — a flow generates artifacts that must be
+ * grounded in an attached sketch or document; no documents, no key.
+ */
+export function flowSpec(skill: string, text?: string, references?: string[]): TurnSpec {
+  const spec: TurnSpec = text?.trim() ? { kind: "flow", skill, text: text.trim() } : { kind: "flow", skill };
+  return references?.length ? { ...spec, references } : spec;
 }
 
 /**
  * The kickoff. A blank idea carries nothing — the start skill then opens by
- * asking for one, exactly as it does for a project with no descriptor.
+ * asking for one, exactly as it does for a project with no descriptor. The
+ * attached reference documents ride the same way: no documents, no key, so the
+ * turn is byte-identical to one from before that channel existed (aep-api's
+ * `references` field is `omitempty` for the same reason).
  */
-export function startSpec(idea: string | null | undefined): TurnSpec {
+export function startSpec(idea: string | null | undefined, references?: string[]): TurnSpec {
   const trimmed = (idea ?? "").trim();
-  return trimmed === "" ? { kind: "start" } : { kind: "start", idea: trimmed };
+  const spec: TurnSpec = trimmed === "" ? { kind: "start" } : { kind: "start", idea: trimmed };
+  return references?.length ? { ...spec, references } : spec;
 }
 
 /**

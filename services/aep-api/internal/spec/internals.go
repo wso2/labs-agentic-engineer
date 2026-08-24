@@ -21,6 +21,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"path"
+	"regexp"
 	"strings"
 )
 
@@ -80,11 +81,41 @@ var readAllowList = map[string]bool{
 	"tests/validation/report.json": true,
 }
 
-// validateReadPath gates the read side: an exact readAllowList entry passes,
-// otherwise it defers to the specs/-only validatePath. Exact-match is
-// traversal-safe — a path bearing ".." can never equal a literal allow-list key.
+// workloadReadRE is the second read escape hatch, and unlike the list above it
+// has to be a SHAPE: a component's `workload.yaml` sits at its App Path, which is
+// per-component design data rather than a literal this package could enumerate.
+//
+// It exists because the wiring-conformance check reads what a component actually
+// shipped — "does the workload consume the resources the design declares?" — and
+// that file is repo content outside specs/ by construction. Fenced to a single
+// path segment, so it reaches a component directory and nothing deeper, and the
+// canonical/traversal checks in validateReadPath run BEFORE it is consulted.
+var workloadReadRE = regexp.MustCompile(`^(?:[A-Za-z0-9._-]+/)?workload\.yaml$`)
+
+// validateReadPath gates the read side: a canonical, traversal-free path passes
+// when it is an exact readAllowList entry or a component workload.yaml;
+// otherwise it defers to the specs/-only validatePath.
+//
+// The shared checks come FIRST and are not optional. Exact-match was
+// traversal-safe on its own — a path bearing ".." can never equal a literal key —
+// but a PATTERN is not, so the escape hatches are only ever consulted for a path
+// already known to be repo-relative and canonical.
 func validateReadPath(p string) error {
-	if readAllowList[p] {
+	if p == "" {
+		return fmt.Errorf("%w: empty path", ErrPathInvalid)
+	}
+	if clean := path.Clean(p); clean != p {
+		return fmt.Errorf("%w: non-canonical path %q", ErrPathInvalid, p)
+	}
+	if strings.HasPrefix(p, "/") {
+		return fmt.Errorf("%w: must be repo-relative", ErrPathInvalid)
+	}
+	for _, seg := range strings.Split(p, "/") {
+		if seg == ".." {
+			return fmt.Errorf("%w: traversal in path", ErrPathInvalid)
+		}
+	}
+	if readAllowList[p] || workloadReadRE.MatchString(p) {
 		return nil
 	}
 	return validatePath(p)

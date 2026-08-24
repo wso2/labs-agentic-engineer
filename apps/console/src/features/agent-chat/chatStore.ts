@@ -43,6 +43,17 @@ export type ChatMessage =
        * and logs from before this field simply render without a time.
        */
       createdAt?: number;
+      /**
+       * File NAMES attached to this message (#428) — never bytes. The bytes are
+       * conversation-scoped model content the platform never stores (ADR-0019),
+       * so there is nothing here to re-send or re-render from; these names exist
+       * only to say what went with the message.
+       *
+       * Optional and absent for every message without attachments, so logs
+       * persisted before this field still parse. On rehydrate they come from the
+       * turn journal, which is why chips survive a reload.
+       */
+      attachments?: string[];
     }
   | { id: string; role: "assistant"; turnId: string; content: string }
   | {
@@ -266,6 +277,36 @@ export function dropTurnOutput(key: string, turnId: string): void {
       (m) => m.role === "user" || !("turnId" in m) || m.turnId !== turnId,
     ),
   );
+}
+
+/**
+ * Drop the local-only rows a failed send left behind — the `failed` user row and
+ * any `error` rows.
+ *
+ * Those rows exist nowhere server-side, so the D6 rehydrate deliberately
+ * re-appends them after the server history on every mount, refocus and foreign
+ * turn (see useAgentChat). That preserved a message the user still needed, but
+ * it had no expiry: a failure stayed pinned to the BOTTOM of the thread
+ * forever, rendering after newer successful turns and reading as though
+ * something were retrying.
+ *
+ * A successful send is the signal that the failure is history — the user
+ * demonstrably got their message through — so the caller clears them there. It
+ * is also safe to lose them by then: a refused send keeps the typed text AND the
+ * attachment cards in the composer (ADR-0019), so the failed row stopped being
+ * the only copy.
+ *
+ * Only clears rows this client recorded; server history is untouched. A no-op
+ * when there is nothing to drop, so it never triggers a needless persist or a
+ * React remount of the whole log.
+ */
+export function clearFailedSends(key: string): void {
+  const current = load(key);
+  const kept = current.filter(
+    (m) => !(m.role === "error" || (m.role === "user" && m.status === "failed")),
+  );
+  if (kept.length === current.length) return;
+  persist(key, kept);
 }
 
 export function replaceMessages(key: string, messages: ChatMessage[]): void {

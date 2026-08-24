@@ -119,21 +119,14 @@ func (s *DeploymentService) Deploy(ctx context.Context, orgID, projectID string,
 		return nil, nil
 	}
 
-	// Resolved ONCE for the pass: both are project-wide facts, and asking per
+	// Resolved ONCE for the pass: a project-wide fact, and asking per
 	// component would issue the same reads N times for the same answer.
 	issuers := s.resolveIssuers(ctx, orgID, design)
-	origins, originsErr := s.siblingSPAOrigins(ctx, orgID, projectID, design)
-	if originsErr != nil {
-		// A partial allowlist silently blocks the missing SPA's preflight, so a
-		// transient lookup failure must fail the pass rather than commit a CORS
-		// list that is wrong in a way nothing will report.
-		return nil, fmt.Errorf("deployment: sibling SPA origins: %w", originsErr)
-	}
 
 	out := make([]delivery.ComponentDeploy, 0, len(components))
 	var failures []error
 	for _, name := range components {
-		outcome, derr := s.deployOne(ctx, orgID, projectID, name, commitSHA, design, issuers, origins)
+		outcome, derr := s.deployOne(ctx, orgID, projectID, name, commitSHA, design, issuers)
 		out = append(out, outcome)
 		if derr != nil {
 			failures = append(failures, fmt.Errorf("component %q: %w", name, derr))
@@ -208,7 +201,7 @@ func (s *DeploymentService) Converge(ctx context.Context, orgID, projectID strin
 
 // deployOne cuts the release and writes the binding for a single component.
 func (s *DeploymentService) deployOne(ctx context.Context, orgID, projectID, componentName, commitSHA string,
-	design *spec.DesignFile, issuers, origins []string) (delivery.ComponentDeploy, error) {
+	design *spec.DesignFile, issuers []string) (delivery.ComponentDeploy, error) {
 	outcome := delivery.ComponentDeploy{Component: componentName, Environment: openchoreo.DevEnvironmentName}
 
 	comp := findDesignComponent(design, componentName)
@@ -238,14 +231,13 @@ func (s *DeploymentService) deployOne(ctx context.Context, orgID, projectID, com
 	}
 
 	desired := DesiredDeploymentFor(DeploymentInputs{
-		Component:      *comp,
-		ComponentName:  componentName,
-		Environment:    openchoreo.DevEnvironmentName,
-		ReleaseName:    releaseName,
-		Issuers:        issuers,
-		AllowedOrigins: origins,
-		EnvVars:        s.envVarsFor(ctx, orgID, projectID, componentName),
-		Files:          s.filesFor(ctx, orgID, projectID, componentName),
+		Component:     *comp,
+		ComponentName: componentName,
+		Environment:   openchoreo.DevEnvironmentName,
+		ReleaseName:   releaseName,
+		Issuers:       issuers,
+		EnvVars:       s.envVarsFor(ctx, orgID, projectID, componentName),
+		Files:         s.filesFor(ctx, orgID, projectID, componentName),
 	})
 	if err := s.components.ApplyReleaseBinding(ctx, orgID, projectID, desired.Binding); err != nil {
 		return outcome, fmt.Errorf("apply release binding: %w", permanentIfMissing(err))
@@ -404,65 +396,6 @@ func (s *DeploymentService) DeleteComponentCascade(ctx context.Context, orgID, p
 	slog.InfoContext(ctx, "deployment: component deleted; OC RenderedRelease finalizer GCs trait resources",
 		"orgID", orgID, "projectID", projectID, "componentName", componentName)
 	return nil
-}
-
-// siblingSPAOrigins returns the external origins of every web-app component in
-// the project — the CORS allowlist a protected API's gateway echoes.
-//
-// A transient lookup failure is returned, never swallowed: a partial allowlist
-// commits a CORS list that blocks the missing SPA's preflight, and a browser
-// reports that as a blanket failure with nothing in the access log to diagnose.
-// A SPA that simply has not deployed yet contributes nothing and is picked up by
-// the converge pass once it is Ready.
-func (s *DeploymentService) siblingSPAOrigins(ctx context.Context, orgID, projectID string, design *spec.DesignFile) ([]string, error) {
-	if s.components == nil || design == nil {
-		return nil, nil
-	}
-	origins := make([]string, 0, len(design.Components))
-	seen := make(map[string]struct{}, len(design.Components))
-	for _, c := range design.Components {
-		if c.ComponentType != spec.ComponentTypeWebApplication {
-			continue
-		}
-		list, err := s.components.ListDeployments(ctx, orgID, projectID, k8sname.ToK8sName(c.Name))
-		if err != nil {
-			return nil, fmt.Errorf("list deployments for %q: %w", c.Name, err)
-		}
-		if list == nil {
-			continue
-		}
-		for _, d := range list.Items {
-			origin := originFromEndpointURL(d.EndpointURL)
-			if origin == "" {
-				continue
-			}
-			if _, ok := seen[origin]; ok {
-				continue
-			}
-			seen[origin] = struct{}{}
-			origins = append(origins, origin)
-		}
-	}
-	return origins, nil
-}
-
-// originFromEndpointURL extracts scheme+host+port from a deployment URL.
-// Returns "" when parsing fails — callers skip empty origins.
-func originFromEndpointURL(u string) string {
-	if u == "" {
-		return ""
-	}
-	const sep = "://"
-	i := strings.Index(u, sep)
-	if i < 0 {
-		return ""
-	}
-	rest := u[i+len(sep):]
-	end := strings.IndexAny(rest, "/?#")
-	if end < 0 {
-		return u
-	}
-	return u[:i+len(sep)+end]
 }
 
 // resolveIssuers ensures the org's publisher app exists and returns the issuer

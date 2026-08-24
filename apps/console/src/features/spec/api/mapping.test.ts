@@ -32,6 +32,29 @@ describe("toSpecEntry", () => {
     ).toEqual({ path: "specs/validation/plan.md", sha: "c3", group: "validation" });
   });
 
+  // References are transient turn inputs, never committed (ADR-0017), so no
+  // project created from here on has them in git at all. The guard exists for
+  // the ones created under the feature's v1, which DID commit them: without it
+  // they fall through to the `requirements` group, become selectable, and pour
+  // a PDF's bytes into the editor pane.
+  it("hides reference documents from the spec view entirely (#383)", () => {
+    expect(
+      toSpecEntry({ path: "specs/requirements/references/prd.pdf", sha: "e5" }),
+    ).toBeNull();
+    expect(
+      toSpecEntry({ path: "specs/requirements/references/notes.md", sha: "e6" }),
+    ).toBeNull();
+    // Only the references folder itself — a requirements file in any other
+    // subfolder stays a requirement.
+    expect(
+      toSpecEntry({ path: "specs/requirements/drafts/old.md", sha: "f6" }),
+    ).toEqual({
+      path: "specs/requirements/drafts/old.md",
+      sha: "f6",
+      group: "requirements",
+    });
+  });
+
   it("keeps nested paths intact", () => {
     expect(
       toSpecEntry({ path: "specs/design/components/orders/design.json", sha: "d4" }),
@@ -48,6 +71,16 @@ describe("toSpecEntry", () => {
     expect(toSpecEntry({ path: "README.md", sha: "x" })).toBeNull();
     // A file literally named like a group folder has no content path.
     expect(toSpecEntry({ path: "specs/requirements", sha: "x" })).toBeNull();
+  });
+
+  // A trailing slash names a directory, and its empty last segment clears the
+  // length check — it must not become a selectable entry with no file name.
+  it("hides directory-like paths", () => {
+    expect(
+      toSpecEntry({ path: "specs/requirements/references/", sha: "x" }),
+    ).toBeNull();
+    expect(toSpecEntry({ path: "specs/requirements/", sha: "x" })).toBeNull();
+    expect(toSpecEntry({ path: "specs/design/components/", sha: "x" })).toBeNull();
   });
 });
 

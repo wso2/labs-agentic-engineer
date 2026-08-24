@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/dependencies"
@@ -92,6 +93,9 @@ type remoteGitFileView struct {
 	SHA         string               `json:"sha,omitempty"`
 	IsDirectory bool                 `json:"isDirectory"`
 	Entries     []remoteGitEntryView `json:"entries,omitempty"`
+	// Note explains a withheld or shortened Content: binary refusal, or text
+	// truncation. Empty when Content is the whole file.
+	Note string `json:"note,omitempty"`
 }
 
 type remoteGitEntryView struct {
@@ -190,7 +194,9 @@ func mcpTools() []mcpTool {
 				"`spec.availability` is `repo`: pass that row's owner/repo plus the spec path to read the real " +
 				"OpenAPI document. A file returns decoded `content` + `sha`; a directory returns `entries[]` " +
 				"(each with path/type/sha) so you can drill down. `ref` is optional (branch/tag/commit; " +
-				"defaults to the repo's default branch). Read-only, and restricted to your own organization's " +
+				"defaults to the repo's default branch). TEXT ONLY: a binary file (PDF, image, …) answers with " +
+				"its sha and a `note` instead of content — do not retry, it will never return bytes; oversized " +
+				"text is truncated with a note. Read-only, and restricted to your own organization's " +
 				"repos — a request for any other owner is refused.",
 			InputSchema: map[string]any{
 				"type": "object",
@@ -464,12 +470,36 @@ func toExternalResourceView(er *openchoreo.ExternalResourceDefinition) externalR
 	return externalResourceView{Name: er.Name, Description: er.Description, ConfigKeys: keys}
 }
 
-// toRemoteGitFileView projects a Contents API read to the agent-facing shape.
+// maxToolFileBytes caps the file content one tool result may carry. A tool
+// result is prompt input: an 868KB PDF fetched through this tool once rode a
+// live turn as ~1.5M junk tokens per model step, then killed the conversation's
+// jsonb persist — Postgres rejects U+0000 anywhere in a jsonb document, and the
+// PDF's bytes carried plenty. 128KB of text is far beyond any OpenAPI document
+// this tool exists to read.
+const maxToolFileBytes = 128 << 10
+
+// toRemoteGitFileView projects a Contents API read to the agent-facing shape,
+// guarding what may ride a prompt: binary content is withheld (its facts —
+// path, sha, size — still answer), oversized text is truncated with a note.
 func toRemoteGitFileView(f *RemoteGitFile) remoteGitFileView {
 	v := remoteGitFileView{
 		Content:     f.Content,
 		SHA:         f.SHA,
 		IsDirectory: f.IsDirectory,
+	}
+	switch {
+	// NUL is checked separately: it IS valid UTF-8, but Postgres jsonb refuses
+	// it, and no text document this tool exists to read contains one.
+	case !f.IsDirectory && (!utf8.ValidString(f.Content) || strings.ContainsRune(f.Content, 0)):
+		v.Content = ""
+		v.Note = fmt.Sprintf("binary file (%d bytes) — content withheld; this tool reads text documents", len(f.Content))
+	case !f.IsDirectory && len(f.Content) > maxToolFileBytes:
+		cut := maxToolFileBytes
+		for cut > 0 && !utf8.RuneStart(f.Content[cut]) {
+			cut-- // never split a rune mid-sequence
+		}
+		v.Content = f.Content[:cut]
+		v.Note = fmt.Sprintf("truncated to the first %d of %d bytes", cut, len(f.Content))
 	}
 	if len(f.Entries) > 0 {
 		v.Entries = make([]remoteGitEntryView, 0, len(f.Entries))

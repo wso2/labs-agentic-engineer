@@ -33,8 +33,8 @@ import (
 	"github.com/wso2/aep/aep-api/internal/clients/agentsvc"
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/platform/taskplan"
-	"github.com/wso2/aep/aep-api/internal/spec"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
+	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
 // PlanService assembles the plan-turn context, starts the upstream turn, and
@@ -50,6 +50,7 @@ type PlanService struct {
 	keys       AnthropicKeyResolver
 	client     TurnClient
 	issues     IssueClient
+	writer     *delivery.IssueWriter
 	snapshots  sourcecontrol.SnapshotProvider
 	skillsRepo SkillsRepoResolver
 	// paths resolves each component's appPath for the planned Task's body.
@@ -65,9 +66,11 @@ type PlanService struct {
 func (s *PlanService) SetComponentPaths(r ComponentPathReader) { s.paths = r }
 
 // NewPlanService wires the plan service. git/snapshots/skillsRepo back the
-// workspace dispatch (snapshot refs + lineage diffs).
-func NewPlanService(repos RepoResolver, versions VersionReader, git GitReader, keys AnthropicKeyResolver, client TurnClient, issues IssueClient, snapshots sourcecontrol.SnapshotProvider, skillsRepo SkillsRepoResolver) *PlanService {
-	return &PlanService{repos: repos, versions: versions, git: git, keys: keys, client: client, issues: issues, snapshots: snapshots, skillsRepo: skillsRepo}
+// workspace dispatch (snapshot refs + lineage diffs); issues is the READ half
+// the turn's context is assembled from and writer is the domain's issue-write
+// surface, which is what the tap mints each planned Task through.
+func NewPlanService(repos RepoResolver, versions VersionReader, git GitReader, keys AnthropicKeyResolver, client TurnClient, issues IssueClient, writer *delivery.IssueWriter, snapshots sourcecontrol.SnapshotProvider, skillsRepo SkillsRepoResolver) *PlanService {
+	return &PlanService{repos: repos, versions: versions, git: git, keys: keys, client: client, issues: issues, writer: writer, snapshots: snapshots, skillsRepo: skillsRepo}
 }
 
 // planSession is a started plan turn: the raw upstream SSE body, the tap that
@@ -254,12 +257,13 @@ func (s *PlanService) startPlanLocked(ctx context.Context, orgID, projectID stri
 			Ref:            baseRef,
 			SkillsRef:      skillsRef,
 		},
+		Surface: agentsvc.SurfaceConsole,
 	})
 	if err != nil {
 		return nil, err // typed *agentsvc.UpstreamError (409 → plan_in_progress passthrough)
 	}
 
-	tap := newPlanTap(detached, orgID, projectID, s.issues)
+	tap := newPlanTap(detached, orgID, projectID, s.issues, s.writer)
 	tap.milestone = milestoneNumber
 	tap.componentStories = scope.ComponentStories
 	tap.appPaths = s.componentPaths(ctx, orgID, projectID)
@@ -309,12 +313,11 @@ func (s *PlanService) assembleMilestoneTasks(ctx context.Context, orgID, project
 		if slug := titleSlug(issue.Title); slug != "" {
 			slugs[slug] = true
 		}
-		// Gates and the validation issue are not the planner's to touch, and a
-		// ledger-only human issue is not a Task — none of them belong in the
-		// context set an updateTask ref is fenced to.
-		if delivery.HasLabel(issue.Labels, delivery.LabelProvisionGate) ||
-			delivery.HasLabel(issue.Labels, delivery.LabelValidationWork) ||
-			!delivery.HasLabel(issue.Labels, delivery.LabelAgentWork) {
+		// The planner's context set is the DEV working set and nothing else: a
+		// gate is the platform's, the validation task is the validation loop's,
+		// and a ledger-only human issue is not a Task at all — none of them
+		// belong in the set an updateTask ref is fenced to.
+		if !delivery.InDevWorkingSet(issue.Labels) {
 			continue
 		}
 		if !strings.EqualFold(issue.State, "open") {

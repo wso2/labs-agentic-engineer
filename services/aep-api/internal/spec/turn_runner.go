@@ -67,14 +67,19 @@ type turnJob struct {
 	turn             agentsvc.TurnSpec // what this turn is FOR (the agents service composes the text)
 	target           string            // spec-bundle path this turn should write to, when pinned
 	summary          string            // raw user instruction (feed line subject + journal display, #463)
+	// attachments are this message's chat attachments (#428), captured at POST
+	// time like everything else here (D20). They live ONLY in this struct
+	// between the POST and the dispatch — nothing writes them to disk (ADR-0019)
+	// — which is why the turn is the only thing that can carry them.
+	attachments []agentsvc.TurnAttachment
 	// author is the acting user for the journal (#463), nil when the bearer
 	// carries no human identity — an M2M token journals no author rather than
 	// a bare subject claim.
-	author *agentsvc.JournalAuthor
-	repoRef          sourcecontrol.RepoRef
-	baseRef          string
-	skillsRef        string
-	anthropicKey     string
+	author       *agentsvc.JournalAuthor
+	repoRef      sourcecontrol.RepoRef
+	baseRef      string
+	skillsRef    string
+	anthropicKey string
 	// Room-scoped turn (#86 phase 4): non-empty collabRoomID makes the agents
 	// service a live peer of this room (joining with collabToken, the
 	// prompting user's bearer). The doc is the write surface — the runner
@@ -145,7 +150,28 @@ func journalFor(job turnJob) *agentsvc.JournalBlock {
 	if strings.TrimSpace(job.summary) == "" {
 		return nil
 	}
-	return &agentsvc.JournalBlock{Text: job.summary, Author: job.author}
+	return &agentsvc.JournalBlock{
+		Text:        job.summary,
+		Author:      job.author,
+		Attachments: attachmentNames(job.attachments),
+	}
+}
+
+// attachmentNames lists an attachment set's names for the journal — names only,
+// never bytes (ADR-0019). Nil for an empty set, so a message without attachments
+// journals exactly the shape it did before this feature.
+//
+// Local to this package rather than shared with the handler that parses them:
+// genaiturns imports spec, so spec cannot import genaiturns back.
+func attachmentNames(as []agentsvc.TurnAttachment) []string {
+	if len(as) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(as))
+	for _, a := range as {
+		names = append(names, a.Name)
+	}
+	return names
 }
 
 // journalAuthorFrom projects the request bearer onto the journal's author
@@ -215,6 +241,34 @@ func (s *Service) executeTurn(ctx context.Context, job turnJob) TurnTerminal {
 		previousTurnFailed = last.Status == turnStatusFailed
 	}
 
+	// Heartbeat the row for the WHOLE run, starting BEFORE dispatch (D17).
+	// The agents service opens its SSE stream lazily on the first model event,
+	// so Dispatch blocks until then — and a turn carrying a large PDF or image
+	// can spend well past the 60s stale threshold being read before the model
+	// emits anything. Heartbeating only after Dispatch returned left that
+	// window unguarded, and the sweep failed healthy turns as "replica crashed
+	// or hung".
+	hbEvery := s.heartbeatEvery
+	if hbEvery <= 0 {
+		hbEvery = turnHeartbeatEvery
+	}
+	hbStop := make(chan struct{})
+	defer close(hbStop)
+	go func() {
+		ticker := time.NewTicker(hbEvery)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-hbStop:
+				return
+			case <-ticker.C:
+				if err := s.turns.Heartbeat(ctx, job.turnID); err != nil {
+					slog.WarnContext(ctx, "genai: turn heartbeat failed", "turn", job.turnID, "error", err)
+				}
+			}
+		}
+	}()
+
 	var collab *agentsvc.CollabBlock
 	if job.collabRoomID != "" {
 		collab = &agentsvc.CollabBlock{RoomID: job.collabRoomID, Token: job.collabToken}
@@ -235,30 +289,19 @@ func (s *Service) executeTurn(ctx context.Context, job turnJob) TurnTerminal {
 		WebSearch:              designOrCollabTurn(job),
 		Collab:                 collab,
 		Journal:                journalFor(job),
+		Surface:                agentsvc.SurfaceConsole,
+		// The attachments themselves, not just their names on the journal. Both
+		// are needed and they are NOT the same thing: the journal drives the
+		// chips a reader sees, this is what the MODEL reads. Omitting it made a
+		// turn look entirely successful — 202, chips rendered, journal correct —
+		// while the agent truthfully reported seeing no file.
+		Attachments: job.attachments,
 	})
 	if err != nil {
 		slog.WarnContext(ctx, "genai: turn dispatch failed", "turn", job.turnID, "error", err)
 		return failedTerminal(turnReasonDispatchFailed, "agents dispatch failed: "+err.Error(), nil)
 	}
 	defer body.Close()
-
-	// Heartbeat the row while the stream runs (D17).
-	hbStop := make(chan struct{})
-	defer close(hbStop)
-	go func() {
-		ticker := time.NewTicker(turnHeartbeatEvery)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-hbStop:
-				return
-			case <-ticker.C:
-				if err := s.turns.Heartbeat(ctx, job.turnID); err != nil {
-					slog.WarnContext(ctx, "genai: turn heartbeat failed", "turn", job.turnID, "error", err)
-				}
-			}
-		}
-	}()
 
 	// Idle watchdog (plan_tap precedent): any read pulses activity; silence
 	// past the deadline closes body to unblock the pending read.

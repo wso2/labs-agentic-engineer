@@ -23,30 +23,32 @@ import (
 	"gorm.io/gorm"
 )
 
-// RunMilestoneRuns creates the spec-run mutex on the milestone_runs table: a
-// partial unique index admitting at most ONE non-terminal spec-build run per
-// (org_id, project_id). It is the database twin of the build endpoint's 409 —
-// the endpoint answers the user, the index makes the invariant true under
-// concurrency, because dispatch inserts with ON CONFLICT DO NOTHING against it
-// and the losing racer writes zero rows.
+// RunMilestoneRuns enforces ONE LIVE RUN PER MILESTONE, whatever its kind: a
+// partial unique index on (org_id, project_id, milestone_number) covering only
+// the non-terminal states.
 //
-// Incident-adoption runs are deliberately OUTSIDE the index: they work their
-// own milestones and execute concurrently with each other and with a live spec
-// run. Only the non-terminal states are covered, so a settled run never blocks
-// the next build. The predicate must list exactly delivery's
-// nonTerminalRunStates — a state in one and not the other lets a second spec
-// run in.
+// This is not a new rule — it is the one the whole loop already assumes and
+// nothing enforced. The workflow id is per-milestone, the read model states that
+// only the newest run can be live, and adoption refuses to start a second. Two
+// live runs on one milestone would put two agents on one branch.
+//
+// The per-project build mutex cannot express it: that one is keyed on (org,
+// project) and narrowed to dev runs, which is a rule about starting a new
+// VERSION (milestone_run_kind.go). Every other kind sits outside it, so the
+// guard against a second run on one milestone was a read-then-insert in
+// application code — a check two concurrent requests both pass. The loser's row
+// is then admitted with no workflow behind it (Temporal answers AlreadyStarted
+// on the reused id), and because it is non-terminal it makes LiveRunForMilestone
+// answer forever: every later revalidation of that version is refused until
+// somebody cancels a run that was never running.
+//
+// Insertion goes through INSERT … ON CONFLICT DO NOTHING, which names no
+// conflict target and so catches this index as well as the build mutex — the
+// losing racer writes zero rows and TryAdmit reports admitted=false.
 //
 // AutoMigrate creates the milestone_runs and run_cycles tables from the models
 // (migrate.BaseModels) but cannot express a partial (WHERE-clause) index, so it
 // is added here.
-//
-// The index is VERSIONED IN ITS NAME because a predicate cannot be altered in
-// place: CREATE UNIQUE INDEX IF NOT EXISTS matches on the name alone, so an
-// existing index with the old predicate would be silently kept. Widening it is
-// therefore create-then-drop, in that order — dropping first would leave the
-// mutex unenforced for the width of the migration, which is exactly the window
-// a double-click lands in.
 //
 // Idempotent: CREATE … IF NOT EXISTS and DROP … IF EXISTS are both no-ops on
 // re-run, and the step no-ops entirely if the table is not present yet.
@@ -54,39 +56,13 @@ func RunMilestoneRuns(ctx context.Context, db *gorm.DB) error {
 	if !hasTable(db, "milestone_runs") {
 		return nil
 	}
-	if err := db.WithContext(ctx).Exec(`
-		CREATE UNIQUE INDEX IF NOT EXISTS ux_milestone_runs_spec_active_v2
-		ON milestone_runs (org_id, project_id)
-		WHERE origin = 'spec-build' AND state IN ('planning', 'waiting', 'running')`).Error; err != nil {
-		return fmt.Errorf("milestone_runs spec-run mutex index: %w", err)
-	}
-	// The narrower predecessor. It only ever refused a subset of what the new
-	// index refuses, so by here the invariant has never been unguarded.
+	// The retired origin-keyed mutex, from before the predicate was widened to
+	// cover the planning state. Its successor is dropped by milestone_run_kind,
+	// which replaces it with the kind-keyed index.
 	if err := db.WithContext(ctx).Exec(
 		`DROP INDEX IF EXISTS ux_milestone_runs_spec_active`).Error; err != nil {
 		return fmt.Errorf("milestone_runs drop superseded mutex index: %w", err)
 	}
-	// ONE LIVE RUN PER MILESTONE, whatever its origin.
-	//
-	// This is not a new rule — it is the one the whole loop already assumes and
-	// nothing enforced. The workflow id is per-milestone
-	// (run-<org>-<project>-<milestone>), the read model states that only the
-	// newest run can be live, and adoption refuses to start a second. Two live
-	// runs on one milestone would put two agents on one branch.
-	//
-	// The mutex above cannot express it: it is keyed on (org, project) and
-	// narrowed to spec-build, which is a per-PROJECT rule about starting a new
-	// version. Every other origin sat outside it, so the guard against a second
-	// run was a read-then-insert in application code — a check two concurrent
-	// requests both pass. The loser's row is then admitted with no workflow behind
-	// it (Temporal answers AlreadyStarted on the reused id), and because it is
-	// non-terminal it makes LiveRunForMilestone answer forever: every later
-	// revalidation of that version is refused until somebody cancels a run that
-	// was never running.
-	//
-	// Insertion goes through the same ON CONFLICT DO NOTHING, which names no
-	// conflict target and so catches this index too — the losing racer writes
-	// zero rows and TryAdmit reports admitted=false, unchanged.
 	if err := db.WithContext(ctx).Exec(`
 		CREATE UNIQUE INDEX IF NOT EXISTS ux_milestone_runs_active_per_milestone_v1
 		ON milestone_runs (org_id, project_id, milestone_number)

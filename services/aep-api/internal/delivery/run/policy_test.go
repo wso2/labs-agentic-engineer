@@ -30,16 +30,22 @@ func TestDispatchable(t *testing.T) {
 	cases := []struct {
 		name string
 		snap MilestoneSnapshot
+		work func(MilestoneSnapshot) int
 		want bool
 	}{
-		{"work, no gate", MilestoneSnapshot{Work: 2, Total: 2}, true},
-		{"a gate holds the dispatch", MilestoneSnapshot{Work: 2, Gates: 1, Total: 3}, false},
-		{"ledger only — open issues, nothing to work", MilestoneSnapshot{Work: 0, Total: 4}, false},
-		{"empty milestone", MilestoneSnapshot{}, false},
-		{"a gate with nothing to hold", MilestoneSnapshot{Work: 0, Gates: 1, Total: 1}, false},
+		{"work, no gate", MilestoneSnapshot{DevWork: 2, TaskWork: 2, Total: 2}, devWorkingSet, true},
+		{"a gate holds the dispatch", MilestoneSnapshot{DevWork: 2, TaskWork: 2, Gates: 1, Total: 3}, devWorkingSet, false},
+		{"ledger only — open issues, nothing to work", MilestoneSnapshot{Total: 4}, devWorkingSet, false},
+		{"empty milestone", MilestoneSnapshot{}, devWorkingSet, false},
+		{"a gate with nothing to hold", MilestoneSnapshot{Gates: 1, Total: 1}, devWorkingSet, false},
+		// The predicate is computed over the CALLER's working set, so the same
+		// milestone answers differently for the two species. A build that gave up
+		// left planned work open; a task run sees none of it and dispatches nothing.
+		{"planned work is a dev dispatch", MilestoneSnapshot{DevWork: 2, TaskWork: 0, Total: 2}, devWorkingSet, true},
+		{"planned work is not a task dispatch", MilestoneSnapshot{DevWork: 2, TaskWork: 0, Total: 2}, taskWorkingSet, false},
 	}
 	for _, c := range cases {
-		if got := Dispatchable(c.snap); got != c.want {
+		if got := Dispatchable(c.snap, c.work(c.snap)); got != c.want {
 			t.Errorf("Dispatchable(%s) = %v, want %v", c.name, got, c.want)
 		}
 	}

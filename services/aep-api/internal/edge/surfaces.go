@@ -35,11 +35,12 @@ import (
 //	───────────────────────────────────────────────────────────────────────────────────────────────────
 //	public         /api/v1              Thunder user JWT + org gate                handlers_*.go · tenant_gate.go
 //	               (jwt → orgensure)    (org from the verified token, never input)  ← packages/contracts/api/v1 (source of truth)
-//	internal S2S   /internal/v1/validation/, BFF Task-JWT or publisher-cc          internal.go · runnerAuthGate
-//	               /internal/v1/executions/  (dual-token verify + INT-6 fence,      ← packages/contracts/api/internal/v1 (non-public)
-//	               (deny-by-default gate)     both keyed to the run CYCLE id)
-//	internal MCP   /internal/v1/mcp     BFF-signed JWT, aud aep-api-mcp            dependencies/mcp_server.go ·
-//	               (POST, JSON-RPC)     (org from ocOrgId claim, never input)       auth.AgentsScopedVerifier (no spec — JSON-RPC)
+//	internal S2S   /internal/v1/validation/, publisher-cc (iss platform-idp)        internal.go · runnerAuthGate
+//	               /internal/v1/executions/  (INT-6 fence keyed to the run CYCLE     ← packages/contracts/api/internal/v1 (non-public)
+//	               (deny-by-default gate)     id)
+//	internal MCP   /internal/v1/mcp     BFF JWT aud=aep-api-mcp or Thunder          dependencies/mcp_server.go ·
+//	               (POST, JSON-RPC)     publisher CC (org from ocOrgId or           auth.AgentsScopedVerifier (no spec — JSON-RPC)
+//	                                    PublisherClaims.OrgHandle, never request)
 //	               /mcp/playground-token  NONE — flag-gated only                   dependencies/playground_token.go
 //	               (POST, local dev)      (PLAYGROUND_TOKEN_ENABLED, off by         (mounted only when the flag is true —
 //	                                      default; docker-compose sets it)          404 by absence otherwise)
@@ -50,11 +51,11 @@ import (
 //
 //	discovery: /healthz (liveness), /readyz (workspace readiness), /auth/external/jwks.json — public, no auth.
 //
-// The reusable identity primitive underneath both S2S directions: the BFF is the
-// single issuer of org-bearing RS256 tokens (internal/platform/auth.TaskTokenManager
-// — Issue inbound, IssueServiceToken outbound), all verified against the one
-// JWKS at /auth/external/jwks.json. Org always travels in a verified claim,
-// never a trusted header.
+// The reusable identity primitive underneath S2S: the BFF issues MCP tokens
+// (internal/platform/auth.TaskTokenManager.IssueServiceToken), verified against
+// the one JWKS at /auth/external/jwks.json. Runner callbacks accept Thunder
+// publisher CC tokens (iss platform-idp) only. Org always travels in a
+// verified claim, never a trusted header.
 //
 // "Where do I change X?" → credential verify/mint: internal/platform/auth ·
 // who-may-touch-what gates: tenant_gate.go (public) + internal.go runnerAuthGate (internal) ·
@@ -80,10 +81,12 @@ func mountSurfaces(params AppParams) *http.ServeMux {
 		w.Write([]byte(`{"status":"ok"}`)) //nolint:errcheck
 	})
 
-	// Task-JWT public key set (JWKS) — unauthenticated discovery, fetched by
-	// every verifier before any auth. A plain handler (not a contract op) so it
-	// stays off the /api/v1 server base path: the public contract is base-pathed
-	// at /api/v1, and this endpoint deliberately lives outside that subtree.
+	// Task-JWT public key set (JWKS) — unauthenticated discovery for BFF-signed
+	// tokens (design-agent MCP / IssueServiceToken). Publisher CC tokens verify
+	// against platform-idp JWKS, not this endpoint. A plain handler (not a
+	// contract op) so it stays off the /api/v1 server base path: the public
+	// contract is base-pathed at /api/v1, and this endpoint deliberately lives
+	// outside that subtree.
 	mux.HandleFunc("GET /auth/external/jwks.json", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if tt := params.Deps.TaskTokens; tt != nil {
@@ -130,7 +133,7 @@ func mountSurfaces(params AppParams) *http.ServeMux {
 	// Served contract-first from packages/contracts/api/internal/v1 (strict
 	// server in internal/igen), NOT wrapped by the /api/ user-JWT
 	// middleware. Every operation passes the deny-by-default runnerAuthGate
-	// (BFF Task-JWT or publisher-cc verified against the path id) and is never
+	// (publisher-cc verified against the path id) and is never
 	// gateway-advertised. Every runner callback is keyed to the run CYCLE the
 	// platform dispatched the pod for — the id it carries as AEP_TASK_ID.
 	//
@@ -149,14 +152,15 @@ func mountSurfaces(params AppParams) *http.ServeMux {
 	// designing LLM queries for the org's registered external resources,
 	// published endpoints, and platform resource types. Gated by
 	// auth.AgentsScopedVerifier — the caller presents a BFF-signed token with
-	// aud aep-api-mcp and the acting org is bound from its ocOrgId claim, never
-	// from the request. Mounted only when the token manager exists (same
-	// conditional posture as the internal S2S mount): without it nothing could
-	// verify a caller, so the path 404s instead of 503-ing forever. A nil
-	// MCPExternalResources/OrgEndpoints/ResourceTypes degrades the corresponding
-	// tool to an empty result (see dependencies.NewMCPHandler).
+	// aud aep-api-mcp or a Thunder publisher CC token; the acting org is bound
+	// from ocOrgId or PublisherClaims.OrgHandle, never from the request.
+	// Mounted only when the token manager exists (same conditional posture as
+	// the internal S2S mount): without it nothing could verify a caller, so the
+	// path 404s instead of 503-ing forever. Without PublisherTokens wired, only
+	// BFF-signed MCP tokens are accepted. A nil MCPExternalResources/OrgEndpoints/ResourceTypes degrades
+	// the corresponding tool to an empty result (see dependencies.NewMCPHandler).
 	if params.Deps.TaskTokens != nil {
-		mcpVerifier := auth.NewAgentsScopedVerifier(params.Deps.TaskTokens)
+		mcpVerifier := auth.NewAgentsScopedVerifier(params.Deps.TaskTokens, params.Deps.PublisherTokens)
 		mcpHandler := mcpdiscovery.NewMCPHandler(
 			params.MCPExternalResources, params.MCPOrgEndpoints, params.MCPResourceTypes, params.MCPRemoteGit,
 			params.MCPSpecValidator, params.MCPSpecNormalizer, params.MCPSpecFetcher)

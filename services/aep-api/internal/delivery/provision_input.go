@@ -20,7 +20,7 @@ package delivery
 // the build click from the drawer inputs and handed to the gate resolver. It is
 // the wire contract between POST /build (which stages secrets to SM-API and
 // derives references) and `dependencies/provisioning` (which authors the OC
-// Resource model + the milestone's aep:provision gate issues).
+// Resource model + the milestone's `provision` gate issues).
 //
 // It lives at the domain ROOT because the two ends may not name each other: the
 // build slice produces it and another domain consumes it through the build's

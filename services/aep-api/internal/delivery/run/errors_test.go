@@ -82,19 +82,24 @@ func pollEnv(t *testing.T, script ...error) (*testsuite.TestWorkflowEnvironment,
 	env.RegisterActivity(acts)
 	env.OnActivity(acts.SetRunState, mock.Anything, mock.Anything).Return(nil)
 	env.OnActivity(acts.SettleRun, mock.Anything, mock.Anything).Return(nil)
-	// A run that plans nothing now SETTLES rather than parking, and settling
-	// stamps a `skipped` verdict on the way out.
+	// A run that plans nothing SETTLES rather than parking, and records `skipped`
+	// on the way out: it landed nothing, so nothing will ever judge it and an empty
+	// verdict would read as "any moment now" forever.
 	env.OnActivity(acts.SetValidationVerdict, mock.Anything, mock.Anything).Return(nil)
+	// The boundary asks whether the run was cancelled before it polls. Nobody
+	// cancelled these runs; what is being measured is the poll's retry shape.
+	env.OnActivity(acts.ReadCycleFacts, mock.Anything, mock.Anything).Return(CycleFacts{}, nil)
 	return env, port
 }
 
 func executePoll(env *testsuite.TestWorkflowEnvironment) {
-	env.ExecuteWorkflow(MilestoneRunWorkflow, RunInput{
+	env.ExecuteWorkflow(DevRunWorkflow, RunInput{
 		RunID:           testRunID,
 		OrgID:           testOrg,
 		ProjectID:       testProject,
 		MilestoneNumber: testMilepost,
 		MilestoneTitle:  "v3",
+		Kind:            delivery.RunKindDev,
 		Origin:          delivery.RunOriginSpecBuild,
 		// A spec build always carries the tag it claimed — it is what tells the loop
 		// this run OWNS the version and therefore plans its own milestone. Omitting
@@ -207,16 +212,18 @@ func planEnv(t *testing.T, script ...error) (*testsuite.TestWorkflowEnvironment,
 	env.OnActivity(acts.SetRunState, mock.Anything, mock.Anything).Return(nil)
 	env.OnActivity(acts.SettleRun, mock.Anything, mock.Anything).Return(nil)
 	env.OnActivity(acts.SetValidationVerdict, mock.Anything, mock.Anything).Return(nil)
+	env.OnActivity(acts.ReadCycleFacts, mock.Anything, mock.Anything).Return(CycleFacts{}, nil)
 	return env, planner
 }
 
 func executePlan(env *testsuite.TestWorkflowEnvironment) {
-	env.ExecuteWorkflow(MilestoneRunWorkflow, RunInput{
+	env.ExecuteWorkflow(DevRunWorkflow, RunInput{
 		RunID:           testRunID,
 		OrgID:           testOrg,
 		ProjectID:       testProject,
 		MilestoneNumber: testMilepost,
 		MilestoneTitle:  "v3",
+		Kind:            delivery.RunKindDev,
 		Origin:          delivery.RunOriginSpecBuild,
 		Tag:             "v3",
 	})

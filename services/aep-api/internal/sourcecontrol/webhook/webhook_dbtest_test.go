@@ -268,6 +268,10 @@ func (f *fakeIssueSvc) ListPullRequestFiles(context.Context, string, string, int
 func (f *fakeIssueSvc) CreateMilestone(context.Context, string, string, sourcecontrol.CreateMilestoneRequest) (*sourcecontrol.MilestoneResult, error) {
 	panic("fakeIssueSvc: CreateMilestone not expected")
 }
+func (f *fakeIssueSvc) ReopenMilestone(context.Context, string, string, int) error {
+	return nil
+}
+
 func (f *fakeIssueSvc) CloseMilestone(context.Context, string, string, int) error {
 	panic("fakeIssueSvc: CloseMilestone not expected")
 }

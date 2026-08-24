@@ -41,6 +41,19 @@ spec:
             description: ThunderApplicationSpec — desired OAuth application on the
               platform Thunder.
             properties:
+              clientId:
+                description: ClientID overrides the derived aep-<namespace>-<name>
+                  identity. Use this for platform clients that must have a stable,
+                  well-known client ID.
+                type: string
+              clientType:
+                description: ClientType is "public" (default, PKCE authorization_code)
+                  or "confidential" (client_credentials). SecretRef is required when
+                  clientType=confidential.
+                enum:
+                - public
+                - confidential
+                type: string
               displayName:
                 description: DisplayName shown in the Thunder console. Defaults to
                   the CR name.
@@ -50,11 +63,27 @@ spec:
                   RedirectURIs is a comma-separated list of allowed OAuth redirect URIs.
                   Platform-managed: aep-api patches it via binding environmentConfigs once
                   the consuming SPA's public URL resolves. May be empty at creation.
+                  Ignored for confidential (client_credentials) clients.
                 type: string
               scopes:
                 description: Scopes is the space-separated OIDC scope set (e.g. "openid
                   profile email").
                 type: string
+              secretRef:
+                description: SecretRef points to the Kubernetes Secret key holding
+                  the pre-generated OAuth client secret. Required when clientType=confidential.
+                  The Secret must be in the same namespace as the ThunderApplication CR.
+                properties:
+                  key:
+                    description: Key within the secret.
+                    type: string
+                  name:
+                    description: Name of the secret.
+                    type: string
+                required:
+                - key
+                - name
+                type: object
             type: object
           status:
             description: ThunderApplicationStatus reports the observed state of a

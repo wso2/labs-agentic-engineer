@@ -32,7 +32,7 @@ import (
 // {dependencies/resources, gitrepo} — everything else is a local port.
 
 // IssueClient is the GitHub issue surface: list Task issues (to find/dedup
-// aep:provision gate issues and to reach the run's working set), create a gate
+// `provision` gate issues and to reach the run's working set), create a gate
 // issue, close it with a reference, comment (a failure, or the ADR-0004
 // resolved-wiring block), and stamp the aep:wired/<slug> marker that keeps that
 // comment idempotent. sourcecontrol.IssueService satisfies it.
@@ -66,7 +66,7 @@ type DesignReader interface {
 }
 
 // RepoLocator resolves an org+project to its GitHub repo full name ("owner/name").
-// The provision Execution row's Repo MUST match the aep:provision issue's repo
+// The provision Execution row's Repo MUST match the gate issue's repo
 // full name, or the funnel gate's LatestPerKind(repo, issue) cannot resolve the
 // run and the consumer never releases. Wired from repositories.
 type RepoLocator interface {
@@ -112,11 +112,11 @@ type ProjectLister interface {
 // *resources.ExternalResourceProvisioner satisfies it.
 type ExternalProvisioner interface {
 	Provision(ctx context.Context, orgHandle, ocOrgID, projectName string, er *dependencies.ExternalResource, byEnv map[string]dependencies.EnvValues) (*dependencies.ProvisionResult, error)
-	// AuthorWithSecretRef authors the OC external Resource model from
-	// already-staged secret references (the build path, issue #164) — no SM-API
-	// write. Mirrors Provision's resource/binding authoring using the passed
-	// per-env secretStorePath.
-	AuthorWithSecretRef(ctx context.Context, orgHandle, projectName string, er *dependencies.ExternalResource, byEnv map[string]dependencies.PreparedEnvValues) (*dependencies.ProvisionResult, error)
+	// AuthorPreparedValues authors the OC external Resource model from
+	// prepared plain values plus an optional secret reference — no SM-API write.
+	// Builds use it to author empty/defaulted bindings and preserve any existing
+	// configured values.
+	AuthorPreparedValues(ctx context.Context, orgHandle, projectName string, er *dependencies.ExternalResource, byEnv map[string]dependencies.PreparedEnvValues) (*dependencies.ProvisionResult, error)
 	Deprovision(ctx context.Context, orgHandle, projectName, name string, envs []string) error
 	// ResolveRunnerSecrets returns the SM-API vault path + secret-key list for
 	// each named external resource, read back off its per-env binding — the

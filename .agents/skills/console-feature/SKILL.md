@@ -1,135 +1,129 @@
 ---
 name: console-feature
-description: Drive a console feature through the issue-driven cycle — create the issue, grill it, record decisions, build, ship — with a checkpoint at each stage.
-disable-model-invocation: true
-argument-hint: <feature idea in plain words, or an existing issue number to resume>
+description: Drive a console (frontend) feature through its issue-driven cycle, grilled before any code. Use when the user wants a console feature built or changed, or names an existing console feature issue; bug fixes and polish are exempt.
+argument-hint: <feature idea in plain words, or an existing issue number>
 ---
 
 # Console feature cycle
 
-Orchestrate the console's issue-driven feature flow. The **spec** is
-`apps/console/design/development-flow.md` — read it first and follow its
-rules and template; this skill only sequences the steps and checkpoints.
+The **entry point for frontend feature work**: a feature goes through this
+skill — grilled first, then built. It takes either end — a raw **idea** (no
+issue yet), or an **issue number** for one already open.
 
-Non-negotiables (from the spec):
+`apps/console/design/development-flow.md` is the **spec**: it defines every
+stage, every rule, and the issue template. **Read it now**, before anything
+else. This skill carries only what the spec doesn't — which mode to route
+into, where each pause sits, and the commands to run. Console work requires
+`gh` auth.
 
-- Every `gh issue` / `gh pr` command gets `--repo wso2/labs-agentic-engineer`
-  — issues and PRs live upstream, never in forks. `gh` auth is required.
-- Closed issues and merged PRs are frozen history: never edit or push to
-  them. ADRs are the current truth.
-- `packages/contracts/api/v1/openapi.yaml` is the **source of truth** for
-  the API (issue #76): editing it *is* the contract change. Regenerate with
-  the console-scoped gen (`pnpm --filter @aep/console gen`), not root
-  `make gen`.
-- Stopping at any checkpoint is a normal exit, not a failure. Tell the user
-  they can pick the feature back up with `/console-feature <issue-number>`.
+Stopping at any pause is a normal exit, not a failure. Say that the feature
+resumes with `/console-feature <issue-number>`; a stop mid-interview restarts
+it, since nothing is recorded until the issue or the comment exists.
 
-## Checkpoint classes
+## On silence
 
-Three kinds of pause, with different behavior when the user doesn't answer:
+Three kinds of pause, each named for what it does when the user doesn't
+answer:
 
-- **Hard-wait** — the issue-draft confirmation and every grilling question.
-  User input is the entire point: on timeout, re-ask and wait. Never answer
-  a grilling question on the user's behalf.
-- **Auto-proceed** — the recording stages (decisions comment, ADR
-  graduation, handshake issue, PRD in-flight). They only transcribe
-  decisions the user already made: offer the checkpoint, and on timeout
-  proceed.
-- **Hard gate** — Build and Ship. On timeout or anything short of a clear
-  yes, stop the session cleanly and print the resume command. Never build
-  or ship on silence.
+- **Re-ask** — every interview question, and the issue-draft confirmation.
+  User input is the whole point: ask again and wait. Answering a grilling
+  question on the user's behalf voids the interview.
+- **Auto-proceed** — the recording pauses (decisions comment, ADR
+  graduation, handshake issue). They transcribe decisions the user already
+  made: offer, and on silence proceed.
+- **Halt** — Build and Ship. On silence, or anything short of a clear yes,
+  end the session cleanly and print the resume command.
 
-## Parse the arguments
+## Route on the argument
 
-- A bare number (`42`, `#42`) or issue URL → **resume mode**.
-- Anything else → **new-feature mode**, treating the text as the feature
-  idea.
-- No arguments → ask the user what the feature is, then new-feature mode.
+- A bare number (`42`, `#42`) or an issue URL → **issue mode**.
+- Anything else → **idea mode**, the text being the feature idea.
+- Nothing → ask which of the two they have, then the matching mode.
 
-## New-feature mode
+## The interview
 
-1. **Gather context.** Read `apps/console/PRD.md` and the ADRs in
-   `apps/console/design/decisions/`. If the idea overlaps existing work,
-   check `gh issue list --repo wso2/labs-agentic-engineer --label console
-   --label feature` (add `--state closed` for history). The feature must fit
-   the product picture or explicitly change it.
-2. **Draft the issue.** Fill the feature-issue body template from the spec
-   (Problem / Users / Experience walkthrough / Scope / Contract changes /
-   States to design / Open questions). Show the user the full draft — title
-   and body — and get an explicit yes before creating anything
-   (**hard-wait**).
-3. **Create it.** `gh issue create --repo wso2/labs-agentic-engineer
-   --label console --label feature` with the agreed title and body. Print
-   the issue number, URL, and final body.
-4. Continue to the stage walk below, starting at **Grill**.
+First read `apps/console/PRD.md` and the ADRs in
+`apps/console/design/decisions/` — the interview is only as sharp as the
+product picture behind it.
 
-## Resume mode
+Run the `grill-me` skill on the subject — the raw idea in idea mode, the
+issue as written in issue mode. If it isn't invocable in this session, run
+the interview yourself in its spirit: relentless rounds of pointed questions
+(AskUserQuestion) attacking the walkthrough's weak points, ending only when
+**every unknown is decided**. Every question is a **re-ask** pause.
 
-1. Fetch the issue and its comments:
-   `gh issue view <n> --repo wso2/labs-agentic-engineer --comments`.
-   If it's **closed**, stop: the feature shipped (or was abandoned); a
-   follow-up needs a new issue.
-2. Check for the feature's PR:
-   `gh pr list --repo wso2/labs-agentic-engineer --search "<n>" --state all`.
-   - PR **merged** → the build round is frozen; new requests become a new
-     issue referencing this one. Say so and stop (or offer to draft the
-     follow-up issue).
-   - PR **open** → feedback lives on the PR; enter the Build stage's
-     feedback loop.
-3. Otherwise detect the furthest completed stage — decisions comment
-   posted? in-flight line in `apps/console/PRD.md`? contract change,
-   mocks, UI landed? — report what you detected, and continue the stage
+Keep the running outcome — decided / why / rejected — as you go. Where it
+gets written down is the one thing the two modes don't share, and spec step 1
+says which goes where.
+
+## Idea mode (no issue yet)
+
+1. **Check for overlap.** Where the idea touches existing work, `gh issue
+   list --repo wso2/labs-agentic-engineer --label console --label feature`
+   (`--state closed` for history).
+2. **Grill the idea.** Nothing is written down until step 4.
+3. **Draft the issue** (**re-ask**). Fill the spec's issue template from the
+   interview outcome. Show the user the full draft — title and body — and
+   get an explicit yes.
+4. **Create it.** `gh issue create --repo wso2/labs-agentic-engineer
+   --label console --label feature`, with the agreed title and body.
+5. Continue to the stage walk at **ADR graduation**.
+
+## Issue mode (the issue exists)
+
+Covers both an issue someone filed by hand and a feature this skill started
+earlier; step 3 tells them apart.
+
+1. **Fetch it**, comments included: `gh issue view <n> --repo
+   wso2/labs-agentic-engineer --comments`. **Closed** → the feature shipped
+   or was abandoned, and a follow-up needs its own issue: say so and stop.
+   Anything that isn't a console feature (a bug, a chore, another component)
+   is exempt from this cycle: say so and stop.
+2. **Find its PR**: `gh pr list --repo wso2/labs-agentic-engineer --search
+   "<n>" --state all`.
+   - **Merged** → frozen; further requests become a new issue referencing
+     this one. Say so and stop, or offer to draft it.
+   - **Open** → feedback lives on the PR; enter the Build stage's feedback
+     loop.
+3. **Is it grilled?** Yes if the body has a filled Decisions section, or a
+   decisions comment exists. If not, grill it now, before anything else:
+   - Read the discussion already on the issue — it is part of the subject,
+     and points settled there get confirmed rather than re-litigated.
+   - Run the interview on the issue as written.
+   - **Post the decisions comment** (**auto-proceed**), showing it first.
+   - Edit the body for whatever the interview changed, per spec step 1, and
+     add the `console` and `feature` labels if the filer didn't.
+4. **Detect the furthest completed stage** — ADR in
+   `apps/console/design/decisions/`? contract change, mocks, UI, PRD entry
+   on the feature branch? handshake issue open, and have its backend changes
+   landed on that branch? — report what you found, then continue the stage
    walk from the next incomplete stage.
 
 ## Stage walk
 
-Work through the stages in order, honoring each one's checkpoint class.
+Each stage **runs the spec's step of the same number** (flow steps 4–7) —
+read what to do there. What follows is only the pause, the completion
+criterion, and the commands. Keep the issue body current with
+`gh issue edit` while it is open.
 
-1. **Grill** (hard-wait per question). Run the `grill-me` skill on the
-   issue. If it isn't invocable in this session, conduct the interview
-   yourself in its spirit: relentless rounds of pointed questions
-   (AskUserQuestion) attacking the walkthrough's weak points and every Open
-   question until each is decided — never answer one on the user's behalf,
-   and on a timeout re-ask rather than defaulting. While the issue is open,
-   edit the body in place (`gh issue edit`) so it always reflects the
-   current shape of the feature.
-2. **Decisions comment** (auto-proceed). Post the grilling outcome as a
-   comment on the issue: what was decided, why, what was rejected.
-3. **ADR graduation** (auto-proceed). Apply the spec's ADR rule: a decision
-   earns an ADR in `apps/console/design/decisions/ADR-NNNN-*.md` only if it
-   sets a cross-feature convention, changes the PRD, or rejects a
-   re-proposable approach. Feature-local choices stay in the issue.
-4. **BE handshake** (auto-proceed) — only if the issue's Contract changes
-   section is non-empty. Open a separate `aep-api` issue whose body is the
-   request: the proposed spec diff, rationale, link to the feature issue.
-   The handshake issue must **exist before Build**; explicit BE agreement
-   is required **before Ship**, not before Build (mock-mode FE work can't
-   break anyone).
-5. **PRD in-flight** (auto-proceed). Add one line + issue link to the **In
-   flight** section of `apps/console/PRD.md`.
-6. **Build** (hard gate to enter).
-   - Contract diff in `packages/contracts/api/v1/openapi.yaml` (the source
-     of truth) → `pnpm --filter @aep/console gen` → typed MSW mocks covering
-     the scenarios from the decisions comment → UI in mock mode
-     (`VITE_API_MODE=mock`). Use the `oxygen-ui` skill for all UI work;
-     follow `apps/console/design/design-system.md` and
-     `apps/console/design/api-guidelines.md`.
-   - **PR.** Push a feature branch upstream and open the PR against the
-     working branch. Save UI screenshots to a local folder, print their
-     paths, and ask the user to drag-and-drop them into the PR — never push
-     screenshots to a git branch. Then post a comment on the feature issue
-     linking the PR and redirecting all further feedback to the PR — the
-     issue stops collecting comments once a PR exists.
-   - **Feedback loop.** Review comments on the PR re-enter this stage:
-     implement, verify, push. Before *every* push, check
-     `gh pr view --json state` — if the PR merged meanwhile, do not push to
-     its branch; further changes need a new issue (and its own PR). Contract
-     deltas discovered here go to the handshake issue; spec-level changes to
-     the feature also update the issue body.
-7. **Ship** (hard gate to enter; entry condition: the BE handshake issue is
-   agreed and implemented). **Validate the feature** — the validation
-   procedure is defined by the user; ask how they want to validate until
-   the flow spec defines it. Then move the PRD in-flight line into the
-   feature inventory (linking the issue + any ADRs), amend affected PRD
-   sections, and close the issue. A feature PR without the PRD update is
-   incomplete.
+1. **ADR graduation** (**auto-proceed**). Test **every** decision the issue
+   carries against the spec's three-part rule — the ones that fail it stay
+   with the issue.
+2. **Build the frontend on mocks** (**halt** to enter). Use the `oxygen-ui`
+   skill for all UI work. Save screenshots to a local folder, print the
+   paths, and ask the user to drag-and-drop them into the PR. Review
+   comments re-enter this stage: implement,
+   verify, push, checking `gh pr view --json state` before *every* push so a
+   PR that merged meanwhile is never pushed to. Ends on the user confirming
+   the feature in mock mode (**halt**) — that confirmation is what unlocks
+   the handshake.
+3. **BE handshake** (**auto-proceed**) — only if the issue's Contract
+   changes section is non-empty. Open the `aep-api` issue per spec step 6,
+   then stop and tell the user the feature waits on it: Ship can't start
+   until the backend changes are on the branch.
+4. **Ship** (**halt** to enter; entry condition: backend changes are on the
+   feature branch, or the feature changed no contract). The user's
+   confirmation from the local-setup test is what unlocks the merge. Before
+   merging, check that the PR carries the PRD entry and closes the feature
+   issue — plus the handshake issue, if stage 3 opened one. The merge is the
+   last act: anything found afterward is a new issue.

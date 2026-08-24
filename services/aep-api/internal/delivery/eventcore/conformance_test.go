@@ -66,7 +66,7 @@ func declaringDesign() fakeDesign {
 
 func conformanceEvents(design fakeDesign, workloads fakeWorkloads) (*Events, *fakeIssues) {
 	issues := newFakeIssues()
-	return New(Ports{Issues: issues, Design: design, Workloads: workloads}), issues
+	return New(Ports{Issues: issues, Writer: issues.writer(), Design: design, Workloads: workloads}), issues
 }
 
 func mintedTitles(f *fakeIssues) []string {
@@ -139,8 +139,11 @@ func TestConformance_DedupesAcrossRedelivery(t *testing.T) {
 	if len(issues.created) != 1 {
 		t.Errorf("three passes must file one issue, got %d: %v", len(issues.created), mintedTitles(issues))
 	}
-	if issues.created[0].DedupeKey == "" {
-		t.Error("the mint must carry a dedupe key — that is what makes redelivery safe")
+	// The key is the domain's, spelled once in delivery and frozen there: what
+	// makes redelivery safe is that all three passes derive the SAME one.
+	if got, want := issues.created[0].DedupeKey,
+		delivery.DedupeKeyUnwiredResources("todo-api", []string{"todo-webapp-todo-db"}); got != want {
+		t.Errorf("unwired-resource dedupe key = %q; want the domain's %q", got, want)
 	}
 }
 
@@ -196,9 +199,9 @@ func TestConformance_DegradesToNoOp(t *testing.T) {
 
 // An unwired port must not turn the check into a panic on the fan-out path.
 func TestConformance_UnwiredPortsAreSafe(t *testing.T) {
-	New(Ports{Issues: newFakeIssues()}).
+	New(Ports{Writer: newFakeIssues().writer()}).
 		checkWiringConformance(context.Background(), conformanceRun(), "todo-api")
-	New(Ports{Issues: newFakeIssues(), Design: declaringDesign()}).
+	New(Ports{Writer: newFakeIssues().writer(), Design: declaringDesign()}).
 		checkWiringConformance(context.Background(), conformanceRun(), "todo-api")
 	New(Ports{}).checkWiringConformance(context.Background(), nil, "todo-api")
 }

@@ -20,16 +20,19 @@ package auth
 // MCP discovery mount (POST /internal/v1/mcp) — the middleware analogue of
 // RunnerScopedInput. Where RunnerScopedInput binds the org from a verified
 // runner credential on the internal Huma surface, AgentsScopedVerifier binds it
-// from a BFF-signed identity JWT (aud AudienceMCP) on the raw MCP mount. Both
-// derive the acting org SOLELY from a verified claim — never a trusted
-// path/body/header. The source mounted its MCP server UNGATED under an
-// {orgHandle} path; that trusted-path posture is banned here, so the org travels
-// only in the signed ocOrgId claim. The verifier reuses the TaskTokenManager key
-// material (the same JWKS at /auth/external/jwks.json), so an MCP token is
-// verified exactly like every other BFF-signed S2S token.
+// from a BFF-signed identity JWT (aud AudienceMCP) or a Thunder publisher CC
+// token on the raw MCP mount. Both derive the acting org SOLELY from a verified
+// claim — never a trusted path/body/header. The source mounted its MCP server
+// UNGATED under an {orgHandle} path; that trusted-path posture is banned here,
+// so the org travels only in the signed ocOrgId claim (BFF) or OrgHandle claim
+// (publisher). The verifier reuses the TaskTokenManager key material (the same
+// JWKS at /auth/external/jwks.json) for BFF tokens, so an MCP token is verified
+// exactly like every other BFF-signed S2S token; publisher tokens are verified
+// via PublisherTokenVerifier when wired.
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -60,26 +63,31 @@ func MCPOrgFromContext(ctx context.Context) (string, bool) {
 // mount and binds the verified org onto the request context. It is the inbound
 // half of the symmetric S2S identity model for the MCP surface — the analogue of
 // the user-JWT verifier on the public edge and RunnerAuthorizer on the internal
-// Huma surface.
+// Huma surface (dual-accept BFF MCP token, then Thunder publisher CC).
 type AgentsScopedVerifier struct {
-	tokens *TaskTokenManager
+	tokens    *TaskTokenManager
+	publisher *PublisherTokenVerifier
 }
 
-// NewAgentsScopedVerifier builds the verifier over the BFF's token manager. A
-// nil manager yields a verifier whose Middleware fails closed (503) — the mount
-// site should simply not mount when the manager is absent.
-func NewAgentsScopedVerifier(tokens *TaskTokenManager) *AgentsScopedVerifier {
-	return &AgentsScopedVerifier{tokens: tokens}
+// NewAgentsScopedVerifier builds the verifier over the BFF's token manager and
+// an optional publisher verifier. A nil manager yields a verifier whose
+// Middleware fails closed (503) — the mount site should simply not mount when
+// the manager is absent. A nil publisher means BFF-only acceptance.
+func NewAgentsScopedVerifier(tokens *TaskTokenManager, publisher *PublisherTokenVerifier) *AgentsScopedVerifier {
+	return &AgentsScopedVerifier{tokens: tokens, publisher: publisher}
 }
 
 // Middleware verifies Authorization: Bearer <token> as a BFF-signed token with
-// aud AudienceMCP, binds the org from the ocOrgId claim onto the request context,
-// and calls next. Every failure — missing/garbage token, bad signature, wrong
-// aud, expired — is a 401 with a generic body (no leak of why). An unconfigured
-// verifier is a 503 wiring guard, never a hot path.
+// aud AudienceMCP or a Thunder publisher CC token, binds the org from the
+// ocOrgId or OrgHandle claim onto the request context, and calls next. Every
+// failure — missing/garbage token, bad signature, wrong aud, expired — is a 401
+// with a generic body (no leak of why). An unconfigured verifier is a 503 wiring
+// guard, never a hot path.
 func (v *AgentsScopedVerifier) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if v == nil || v.tokens == nil {
+			// Publisher-only MCP is unreachable: BFF MCP tokens need this
+			// manager. A nil publisher still accepts BFF-signed MCP tokens.
 			http.Error(w, "mcp auth not configured", http.StatusServiceUnavailable)
 			return
 		}
@@ -93,29 +101,35 @@ func (v *AgentsScopedVerifier) Middleware(next http.Handler) http.Handler {
 	})
 }
 
-// resolveOrg verifies the bearer and returns the org from the ocOrgId claim.
+// resolveOrg verifies the bearer and returns the org from the ocOrgId claim
+// (BFF MCP token) or OrgHandle claim (publisher CC token).
 func (v *AgentsScopedVerifier) resolveOrg(authHeader string) (string, error) {
 	const prefix = "Bearer "
 	if len(authHeader) <= len(prefix) || !strings.EqualFold(authHeader[:len(prefix)], prefix) {
 		return "", fmt.Errorf("bearer token required")
 	}
-	// Verify checks signature + issuer + exp/nbf; it deliberately does NOT
-	// enforce aud (the BFF is the issuer). This surface DOES require aud
-	// AudienceMCP so a token minted for another service can't be replayed here.
-	claims, err := v.tokens.Verify(authHeader[len(prefix):])
-	if err != nil {
-		return "", err
+	raw := authHeader[len(prefix):]
+	claims, err := v.tokens.Verify(raw)
+	if err == nil {
+		if !hasAudience(claims.Audience, AudienceMCP) {
+			return "", fmt.Errorf("token audience %v is not %q", claims.Audience, AudienceMCP)
+		}
+		if claims.OcOrgID == "" {
+			return "", fmt.Errorf("token has no ocOrgId claim")
+		}
+		return claims.OcOrgID, nil
 	}
-	if !hasAudience(claims.Audience, AudienceMCP) {
-		return "", fmt.Errorf("token audience %v is not %q", claims.Audience, AudienceMCP)
+	if v.publisher != nil {
+		pub, perr := v.publisher.Verify(raw)
+		if perr == nil {
+			if pub.OrgHandle == "" {
+				return "", fmt.Errorf("publisher token has no org")
+			}
+			return pub.OrgHandle, nil
+		}
+		return "", errors.Join(err, perr)
 	}
-	// Every MCP tool is org-scoped, so a token without an org claim is useless
-	// here — fail closed rather than bind an empty org (IssueServiceToken allows
-	// org-less tokens for other surfaces; this one requires the claim).
-	if claims.OcOrgID == "" {
-		return "", fmt.Errorf("token has no ocOrgId claim")
-	}
-	return claims.OcOrgID, nil
+	return "", err
 }
 
 // hasAudience reports whether want is present in the token's aud claim.

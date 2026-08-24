@@ -115,7 +115,7 @@ test("AC-001-a: a name text box is visible", async ({ page }) => {
   is the contract. Extra assertions turn unrelated changes into false
   failures; missing assertions make the test vacuous.
 - **Independence:** each spec must pass when run alone
-  (`npx playwright test specs/AC-001-a.spec.ts`). No ordering
+  (`npm test --prefix tests/e2e -- specs/AC-001-a.spec.ts`). No ordering
   dependencies, no state left behind for the next spec.
 - **Unique test data:** the deployed environment persists between runs.
   Suffix created entities with a run marker

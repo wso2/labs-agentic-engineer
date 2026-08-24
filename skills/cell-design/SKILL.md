@@ -45,7 +45,7 @@ what kind of thing it is:
 | What it is | design.json signal | Where it goes |
 |---|---|---|
 | Your own component (service, web-app, worker) | a `components/<name>/` folder | INSIDE the cell — `component …` |
-| Project-scoped resource (db, cache, object store) | `platform-resource` (postgres/redis/…) | INSIDE the cell — `component <id> … database` |
+| Project-scoped resource (db, cache, object store) | `platform-resource` (postgres-cnpg/redis/…) | INSIDE the cell — `component <id> … database` |
 | Auth (Thunder) | `platform-resource` `thunder-app` | **east** — `east <id> as "Thunder Auth" identity-server` |
 | Another project's / org service | `org-service` | **east** |
 | Third-party SaaS / external system | `external` | **south** |

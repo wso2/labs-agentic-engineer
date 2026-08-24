@@ -139,6 +139,12 @@ func TestBuildTerminal_SecondRedMintsTheFixIssueOnce(t *testing.T) {
 	if !delivery.HasLabel(h.issues.created[0].Labels, delivery.LabelAgentWork) {
 		t.Fatalf("the fix issue must be agent work so it joins the next cycle, got %v", h.issues.created[0].Labels)
 	}
+	// The key is the domain's, not this package's: an inlined spelling here
+	// would drift from the frozen vocabulary without failing anything.
+	if got, want := h.issues.created[0].DedupeKey,
+		delivery.DedupeKeyFix("order-service", delivery.ShortSHA(testMergeSHA)); got != want {
+		t.Fatalf("fix dedupe key = %q; want the domain's %q", got, want)
+	}
 	sigs := h.sup.named(delivery.SigRunBuildTerminal)
 	if len(sigs) != 2 || sigs[0].Succeeded {
 		t.Fatalf("each terminal report must reach the supervisor as red, got %+v", sigs)
@@ -171,9 +177,24 @@ func TestBuildTerminal_RedMainOutsideARunMintsAnIncident(t *testing.T) {
 	if ms := h.issues.created[0].Milestone; ms == nil || *ms != 5 {
 		t.Fatalf("the incident belongs to the deployed version's milestone, got %v", ms)
 	}
-	if len(h.issues.created[0].Labels) != 0 {
-		t.Fatalf("a red-main incident carries NO agent-work label — it is never auto-dispatched, got %v",
+	// CLASSIFIED but NOT ARMED. The kind and its source are how a human reading
+	// the milestone knows what this is; the missing arming label is why nothing
+	// is dispatched at it until that human decides. Classification is not
+	// permission — arming an issue is the only thing that grants it.
+	if delivery.HasLabel(h.issues.created[0].Labels, delivery.LabelAgentWork) {
+		t.Fatalf("a red-main incident must not be armed — it is never auto-dispatched, got %v",
 			h.issues.created[0].Labels)
+	}
+	if got := delivery.KindOf(h.issues.created[0].Labels); got != delivery.KindBug {
+		t.Fatalf("a red-main incident is a bug, got kind %q from %v", got, h.issues.created[0].Labels)
+	}
+	if !delivery.HasLabel(h.issues.created[0].Labels, delivery.SrcIncident) {
+		t.Fatalf("a red-main incident is sourced from an incident, got %v",
+			h.issues.created[0].Labels)
+	}
+	if got, want := h.issues.created[0].DedupeKey,
+		delivery.DedupeKeyRedMain("web", delivery.ShortSHA(ev.CommitSHA)); got != want {
+		t.Fatalf("red-main dedupe key = %q; want the domain's %q", got, want)
 	}
 	if len(h.builds.triggered) != 0 {
 		t.Fatalf("a red main outside a run is not re-triggered, got %v", h.builds.triggered)

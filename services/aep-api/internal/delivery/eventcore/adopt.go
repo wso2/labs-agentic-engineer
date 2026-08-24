@@ -39,12 +39,20 @@ type AdoptTarget struct {
 	Number          int
 	MilestoneNumber int
 	MilestoneTitle  string
+	// Labels is the issue's label set, when the caller has it. Adoption starts a
+	// TASK run, so it routes on the KIND these carry and refuses an issue that
+	// belongs to another species (delivery.AdoptableByATaskRun).
+	//
+	// Empty means "unclassified", which adopts — the console's dispatch button
+	// hands over a bare issue a human has not labelled at all, and that is the
+	// ordinary path rather than a missing check.
+	Labels []string
 }
 
 // AdoptIssue hands one issue to the coding agent, from either of the two
-// adoption routes: the `aep:codingagent` label arriving by webhook, and the
-// console's dispatch button (which calls this directly, because a label the
-// platform stamps itself comes back as an echo and is dropped).
+// adoption routes: the `aep` arming label arriving by webhook, and the console's
+// dispatch button (which calls this directly, because a label the platform
+// stamps itself comes back as an echo and is dropped).
 //
 // The rules, in order:
 //
@@ -58,12 +66,25 @@ type AdoptTarget struct {
 //     one branch.
 //   - Otherwise an incident run starts over that milestone.
 //
-// Adoption does NOT stamp the agent-work label. The working set is read from
-// the milestone, and the labelling is the human's act of adoption — inventing
-// a second, platform-authored path to the same state would make "who adopted
-// this" unanswerable.
+// Adoption does NOT stamp the arming label. The working set is read from the
+// milestone, and arming IS the human's act of adoption — inventing a second,
+// platform-authored path to the same state would make "who adopted this"
+// unanswerable.
+//
+// Nor does it stamp a KIND. An armed issue carrying none reads as a bug to every
+// working-set predicate (delivery.InDevWorkingSet), which is what a human
+// handing over an unclassified issue means, and it is the same answer the host's
+// counts give — the two must not disagree about one issue.
 func (e *Events) AdoptIssue(ctx context.Context, orgID, projectID string, target AdoptTarget) error {
 	if target.Number == 0 || e.p.Runs == nil {
+		return nil
+	}
+	// Route on the kind BEFORE anything is written. An issue that belongs to
+	// another species must not be pulled into a bug-fix run, and it must not be
+	// moved into the deployed version's milestone on the way there either.
+	if !delivery.AdoptableByATaskRun(target.Labels) {
+		slog.DebugContext(ctx, "eventcore: not adopting — this issue is another run species' work",
+			"issue", target.Number, "kind", delivery.KindOf(target.Labels))
 		return nil
 	}
 	milestone := MilestoneRef{Number: target.MilestoneNumber, Title: target.MilestoneTitle}
@@ -90,36 +111,71 @@ func (e *Events) AdoptIssue(ctx context.Context, orgID, projectID string, target
 		return err
 	}
 	if live != nil {
-		slog.DebugContext(ctx, "eventcore: adoption into a milestone with a live run — the next cycle picks it up",
-			"issue", target.Number, "milestone", milestone.Number, "run", live.ID)
+		// A no-op, and what makes it safe is the run's next CYCLE BOUNDARY: a dev
+		// or task run re-reads its milestone there and picks the issue up.
+		//
+		// A live VALIDATION run has no such boundary — it polls no working set —
+		// so an issue adopted while one is judging is picked up by the reconcile
+		// sweep instead, once that run settles. Starting a second run here would be
+		// worse than the wait: the per-milestone index refuses it, and two agents on
+		// one branch is what the index exists to prevent.
+		slog.DebugContext(ctx, "eventcore: adoption into a milestone with a live run — picked up at its next boundary",
+			"issue", target.Number, "milestone", milestone.Number, "run", live.ID, "kind", live.Kind)
 		return nil
 	}
 	return e.startRun(ctx, orgID, projectID, milestone)
 }
 
-// startRun asks the supervisor for an incident run over a milestone. Every run
-// this package starts BY DETECTION is an incident adoption — the spec-build
-// origin belongs to the plan path alone, where the version mutex lives, and the
-// revalidate origin is only ever asked for by a human (Revalidate below).
+// startRun asks the supervisor for a TASK run over a milestone: work the
+// milestone's open defects. A dev run belongs to the plan path alone, where the
+// version mutex lives.
 func (e *Events) startRun(ctx context.Context, orgID, projectID string, milestone MilestoneRef) error {
-	if e.p.Starter == nil {
-		slog.DebugContext(ctx, "eventcore: no run starter wired — nothing to start",
-			"project", projectID, "milestone", milestone.Number)
-		return nil
-	}
-	err := e.p.Starter.StartRun(ctx, delivery.StartRunRequest{
+	return e.start(ctx, projectID, delivery.StartRunRequest{
 		OrgID:           orgID,
 		ProjectID:       projectID,
 		MilestoneNumber: milestone.Number,
 		MilestoneTitle:  milestone.Title,
+		Kind:            delivery.RunKindTask,
 		Origin:          delivery.RunOriginIncidentAdoption,
 	})
+}
+
+// startValidationRun asks the supervisor to JUDGE a version, because its
+// validation task is open.
+//
+// The reconcile sweep is its caller, which makes this the platform's own trigger
+// rather than a human's: a dev run settles having filed the task, and this is
+// what turns that task into a run. The `revalidate` origin is honest either way —
+// an origin is a label on the trigger, and what the run DOES is its kind.
+//
+// It carries no attempt allowance, so the run resolves the platform default. The
+// per-version allowance is spent by the milestone's validation runs, counted from
+// the ledger, so a sweep-started attempt cannot widen what a version is allowed.
+func (e *Events) startValidationRun(ctx context.Context, orgID, projectID string, milestone MilestoneRef) error {
+	return e.start(ctx, projectID, delivery.StartRunRequest{
+		OrgID:           orgID,
+		ProjectID:       projectID,
+		MilestoneNumber: milestone.Number,
+		MilestoneTitle:  milestone.Title,
+		Kind:            delivery.RunKindValidation,
+		Origin:          delivery.RunOriginRevalidate,
+	})
+}
+
+// start is the shared ask, and the shared reading of a degraded boot.
+func (e *Events) start(ctx context.Context, projectID string, req delivery.StartRunRequest) error {
+	if e.p.Starter == nil {
+		slog.DebugContext(ctx, "eventcore: no run starter wired — nothing to start",
+			"project", projectID, "milestone", req.MilestoneNumber)
+		return nil
+	}
+	err := e.p.Starter.StartRun(ctx, req)
 	if errors.Is(err, delivery.ErrRunNotStarted) {
 		// A degraded boot. This package re-offers on a timer — the reconcile
 		// sweep runs every pass — so "not started yet" is nothing to report. The
 		// callers that have no timer are the ones the sentinel exists for.
 		slog.DebugContext(ctx, "eventcore: platform not ready to start a run — the sweep will re-offer",
-			"project", projectID, "milestone", milestone.Number)
+			"project", projectID, "milestone", req.MilestoneNumber)
 		return nil
 	}
 	return err
@@ -171,9 +227,9 @@ func (e *Events) Revalidate(ctx context.Context, orgID, projectID string, milest
 		return "", err
 	}
 	// The WORKING SET, not every open issue: a stray gate or the version's own
-	// validation issue must not read as unfinished work, and neither is something
+	// validation task must not read as unfinished work, and neither is something
 	// a coding cycle would pick up.
-	if counts != nil && counts.OpenNonGateWork() > 0 {
+	if counts != nil && counts.OpenDevWork() > 0 {
 		return "", delivery.ErrMilestoneHasOpenWork
 	}
 	hasCriteria, cerr := e.p.Criteria.HasValidationCriteria(ctx, orgID, projectID)
@@ -192,6 +248,7 @@ func (e *Events) Revalidate(ctx context.Context, orgID, projectID string, milest
 		ProjectID:          projectID,
 		MilestoneNumber:    milestone.Number,
 		MilestoneTitle:     milestone.Title,
+		Kind:               delivery.RunKindValidation,
 		Origin:             delivery.RunOriginRevalidate,
 		ValidationAttempts: attempts,
 		CycleCeiling:       ceiling,

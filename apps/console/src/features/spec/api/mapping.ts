@@ -29,6 +29,13 @@ type FileMeta = components["schemas"]["FileMeta"];
 
 export type SpecGroup = "requirements" | "designs" | "validation";
 
+/**
+ * The PRD. Named here because more than one surface has to recognise it: the
+ * file list pins it to the top of its group, and the editor carries the code
+ * lenses for this path alone.
+ */
+export const PRD_PATH = "specs/requirements/prd.md";
+
 export interface SpecFileEntry {
   /** Full repo-relative path (e.g. specs/requirements/prd.md) — also the
    *  collab doc key and the Files API read path. */
@@ -46,11 +53,24 @@ const GROUP_BY_FOLDER: Record<string, SpecGroup> = {
   validation: "validation",
 };
 
+// Reference documents (#383) are transient turn inputs, never committed
+// (ADR-0017), so nothing under here should ever reach the spec view. The guard
+// stays anyway: projects created under the feature's v1 DID commit them, and
+// without it those paths fall through to the `requirements` group, become
+// selectable, and pour a PDF's bytes into the editor pane — the exact incident
+// #427 was opened to fix.
+const REFERENCES_PREFIX = "specs/requirements/references/";
+
 export function toSpecEntry(meta: FileMeta): SpecFileEntry | null {
   // specs/<folder>/<…file>: needs the prefix, a known folder, and a file name
-  // beyond it (segments.length >= 3).
+  // beyond it (segments.length >= 3). A trailing slash means the path names a
+  // DIRECTORY, not a file: it clears the length check (the empty last segment
+  // counts) and would otherwise become a selectable entry with no file name.
+  // Checked before the references branch below, so it holds for every group.
   const segments = meta.path.split("/");
   if (segments[0] !== "specs" || segments.length < 3) return null;
+  if (segments[segments.length - 1] === "") return null;
+  if (meta.path.startsWith(REFERENCES_PREFIX)) return null;
   const group = GROUP_BY_FOLDER[segments[1] ?? ""];
   if (!group) return null;
   return { path: meta.path, sha: meta.sha, group };

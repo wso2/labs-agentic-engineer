@@ -1,14 +1,13 @@
 # Default values for the thunder-app-operator chart.
 
 image:
-  # Container image for the operator manager. The local stack builds and imports
-  # `thunder-app-operator:local` (see deployments/scripts/setup-aep.sh) and
-  # overrides repository/tag/pullPolicy on install.
-  repository: thunder-app-operator
-  tag: local
-  # Never: local dev imports the image into the k3d nodes directly, so the
-  # kubelet must not try to pull from a registry. Real clusters set IfNotPresent
-  # or Always against a published image.
+  repository: ghcr.io/wso2/aep/thunder-app-operator
+  # Empty by default so the deployment falls back to the chart's appVersion — an
+  # immutable, version-pinned tag rather than a mutable `latest` (which pairs
+  # badly with IfNotPresent: a cached `latest` node image is never refreshed).
+  # The release workflow overrides this with the concrete release version at
+  # package time; local/source installs get the appVersion (0.0.0-dev).
+  tag: ""
   pullPolicy: IfNotPresent
 
 # Number of manager replicas. Keep at 1 — the manager runs with leader election

@@ -18,39 +18,59 @@ package delivery
 
 import "time"
 
-// MilestoneRun origins, states, terminal reasons and validation verdicts
+// MilestoneRun kinds, origins, states, terminal reasons and validation verdicts
 // (plain strings, matching the model convention — canonical values here, no
 // separate enum package).
 const (
-	// RunOriginSpecBuild is a run started by the build click: the plan path cut
-	// a v<N> tag, minted the milestone, and started the supervisor. At most one
-	// non-terminal spec-build run exists per project (the mutex below).
+	// RunKindDev is a run that DELIVERS A VERSION: it fills its own milestone
+	// (gates, then the planning turn), works the version's development, bug and
+	// conflict issues, and judges the result against the version's acceptance
+	// criteria. It is the only kind that takes the per-project build mutex, and
+	// the only kind whose version is "the version this project is on".
+	RunKindDev = "dev"
+	// RunKindTask is a run that works a DEFECT inside a version somebody else
+	// already delivered — a bug or a merge conflict adopted into an
+	// already-deployed milestone. Task runs are deliberately OUTSIDE the project
+	// mutex: each works its own milestone, they execute concurrently with each
+	// other and with a live dev run, and serialising them per project would turn
+	// every incident into a queue behind the next build.
+	RunKindTask = "task"
+	// RunKindValidation is a run that asks a version's acceptance criteria again,
+	// against the system already deployed. It has NO WORKING SET — an empty
+	// milestone is its expected starting state — and it builds and deploys
+	// nothing, so it enters the loop at validation rather than at the working set.
+	//
+	// Also outside the project mutex: it re-judges a version that already
+	// shipped, so holding up the next build for its duration would be wrong. The
+	// cost is that the database does not serialise two of them, which is why the
+	// trigger checks LiveRunForMilestone before admitting one.
+	RunKindValidation = "validation"
+
+	// Run origins name WHERE a run came from. What a run DOES is its kind above,
+	// and every predicate in the platform is written on the kind — an origin is
+	// only ever a label on the trigger.
+	//
+	// RunOriginSpecBuild is a run started by the build click: the plan path cut a
+	// v<N> tag, minted the milestone, and started the supervisor. Kind dev.
 	RunOriginSpecBuild = "spec-build"
 	// RunOriginIncidentAdoption is a run started by adopting an issue into an
-	// already-deployed version's milestone. Incident runs on other milestones
-	// execute concurrently with each other and with a live spec run.
+	// already-deployed version's milestone. Kind task.
 	RunOriginIncidentAdoption = "incident-adoption"
-	// RunOriginRevalidate is a run started to ask a version's acceptance criteria
-	// again, against the system already deployed. It is the only origin that
-	// ENTERS THE LOOP AT VALIDATION rather than at the working set: its milestone
-	// has no work left, so the boundary would otherwise park it forever.
+	// RunOriginRevalidate is a run that asks a version's acceptance criteria again,
+	// against the system already deployed. Kind validation. Both triggers wear it:
+	// a human clicking revalidate, and the reconcile sweep finding the version's
+	// validation task open — an origin is a label on the trigger, and what the run
+	// DOES is its kind.
 	//
-	// What it does after the verdict is the loop's ordinary behaviour, chosen by
-	// the run's ValidationAttempts. One attempt reports and settles — the
-	// allowance is spent before the loop reaches the point where it would file
-	// repair work, so nothing is rebuilt. The default attempts give the full
-	// repair chain: issues per failed criterion, a coding cycle, builds, and a
-	// second validation.
-	//
-	// Deliberately OUTSIDE the spec-run mutex (its partial index names
-	// `spec-build` alone): a revalidate re-judges a version that already shipped,
-	// so holding up the next build for its duration would be wrong. The cost is
-	// that the database does not serialise two of them, which is why the trigger
-	// checks LiveRunForMilestone before admitting one.
+	// What follows the verdict is chosen by the version's attempt allowance. One
+	// attempt reports and settles — the allowance is spent before the run reaches
+	// the point where it would file repair work, so nothing is rebuilt. The default
+	// gives the repair chain: one issue per failed criterion, which an ordinary run
+	// then works.
 	RunOriginRevalidate = "revalidate"
 
 	// RunStatePlanning is the FILL WINDOW: the row has been admitted (so the
-	// spec mutex is armed) but the milestone it works is still being written —
+	// build mutex is armed) but the milestone it works is still being written —
 	// gates minted, then the planning turn streaming issues into GitHub. It is
 	// bounded work the platform is actively doing, which is exactly what
 	// separates it from RunStateWaiting: nothing is held, nobody is needed.
@@ -73,7 +93,7 @@ const (
 	// user acts on — "wait or stop a run" versus "something went wrong" — and
 	// because a failed run reads as the platform's fault.
 	//
-	// Terminal, so the run row releases the spec-run mutex and the user can
+	// Terminal, so the run row releases the build mutex and the user can
 	// start the version again once a slot frees; the run is never resurrected
 	// in place.
 	RunStateBlocked = "blocked"
@@ -106,7 +126,7 @@ const (
 	// nothing.
 	RunReasonValidationUnreported = "validation-unreported"
 	// RunReasonPlanFailed is the plan path's own failure class: the run row is
-	// admitted BEFORE the planning turn (so the spec-run mutex is armed for the
+	// admitted BEFORE the planning turn (so the build mutex is armed for the
 	// whole of it), which means a planning turn that cannot finish must settle
 	// the row it armed. Without it a failed plan would wedge the project behind
 	// its own mutex until a human cancelled.
@@ -115,6 +135,10 @@ const (
 	// refused the cycle's component create (HTTP 402). The actionable text the
 	// console shows is AgentQuotaBlockedMessage (agent_quota.go).
 	RunReasonAgentQuotaBlocked = "agent-quota-blocked"
+	// RunReasonPublisherCredentials explains RunStateBlocked: coding dispatch
+	// had no publisher SecretReference to mount. Retrying the Job cannot stamp
+	// it. The console text is PublisherCredentialsMissingMessage.
+	RunReasonPublisherCredentials = "publisher-credentials-missing"
 
 	// Validation verdicts — what the run learned about the deployed system. Empty
 	// until the validation cycle settles.
@@ -179,12 +203,11 @@ func IsValidationTerminalReason(reason string) bool {
 // increment — telling "the oracle had nothing automatable" apart from "the agent
 // ran nothing" is deferred to internal-agent-error handling.
 //
-// "Fatal" is now about the END of the loop, not the first occurrence. The two
-// fatal verdicts are exactly the two the run REPAIRS: `failed` mints an issue per
-// failed criterion and re-validates, `unreported` re-dispatches validation. This
-// only settles a run once RunMaxValidationAttempts is spent — which is also why
-// the same predicate tells the read model when a live run should read
-// `awaiting-fix` instead of its verdict.
+// "Fatal" is about the END of the chain, not the first occurrence. The two fatal
+// verdicts are exactly the two that get another go: `failed` mints an issue per
+// failed criterion for an ordinary run to work, and `unreported` re-dispatches
+// inside the validation workflow. Which is also why the same predicate tells the
+// read model when a live run should read `awaiting-fix` instead of its verdict.
 func ValidationVerdictFailsRun(verdict string) (reason string, fatal bool) {
 	switch verdict {
 	case ValidationVerdictFailed:
@@ -211,20 +234,26 @@ const (
 	// RunMaxFixCycles / RunMaxConflictCycles bound the two recovery chains.
 	RunMaxFixCycles      = 2
 	RunMaxConflictCycles = 2
-	// RunMaxValidationAttempts bounds the repair-and-re-validate loop: how many
-	// times ONE run may validate before it accepts the answer it keeps getting.
+	// RunMaxValidationAttempts bounds the repair-and-re-judge chain: how many times
+	// a VERSION may be judged before the answer it keeps giving is accepted.
 	//
-	// It counts validation ATTEMPTS rather than the coding cycles between them,
-	// because attempts are the thing being repeated — the repair cycles are
-	// ordinary work and are already bounded by the cycle ceiling. Alone among the
-	// budgets it names no failure class: spending it settles the run on the verdict
-	// the last attempt produced (see ValidationVerdictFailsRun), which is why
-	// `validation-failed` now means "still failing after every attempt".
+	// Per version and not per run, because each attempt IS its own validation run:
+	// the count is how many `kind = validation` runs the milestone has, read from
+	// the ledger. Nothing carries it — the previous attempt's execution has ended —
+	// and a per-run counter would let a version buy unlimited attempts by being
+	// re-triggered.
+	//
+	// It counts ATTEMPTS rather than the coding cycles between them, because
+	// attempts are the thing being repeated — the repair work is ordinary work and
+	// is already bounded by the cycle ceiling. Alone among the budgets it names no
+	// failure class: spending it settles the run on the verdict the attempt already
+	// produced (see ValidationVerdictFailsRun), which is why `validation-failed`
+	// means "still failing after every attempt".
 	//
 	// This is the DEFAULT. A run may pin its own (MilestoneRun.ValidationAttempts),
 	// and one attempt is what turns a revalidation into a pure re-check: the
 	// allowance is exhausted at the first fatal verdict, which settles the run
-	// before the loop reaches the mint, so no repair work is filed and nothing is
+	// before it reaches the repair mint, so no work is filed and nothing is
 	// rebuilt.
 	RunMaxValidationAttempts = 2
 	// RunDefaultCycleCeiling is the total-cycle ceiling a run starts with when
@@ -233,10 +262,12 @@ const (
 )
 
 // MilestoneRun is one run of the milestone loop: "work the open issues in
-// milestone M until it settles". There is exactly ONE run species — a spec
-// build and an incident adoption differ only in Origin (and in whether the run
-// gets a validation cycle) — so this single row carries every run's small
-// state, its budgets and its validation verdict.
+// milestone M until it settles". Every run of every kind is this one row, which
+// carries the run's small state, its budgets and its validation verdict.
+//
+// Kind is what the platform decides on — which runs take the project mutex,
+// which one owns the project's version, which fills its own milestone, and
+// which reads an empty working set as evidence.
 //
 // Identity is (OrgID, ProjectID, MilestoneNumber). **The milestone NUMBER is
 // the platform key, never the title**: GitHub milestone titles are freely
@@ -251,12 +282,13 @@ const (
 // flat phase enum would lie mid-loop. Per-component build/deploy status is
 // likewise absent — it is derived from OpenChoreo on read, never stored.
 //
-// The spec-run mutex (§5's 409, in DB form) is a partial unique index on
-// (org_id, project_id) WHERE origin = 'spec-build' AND state IN
-// ('planning','waiting','running'), created by the milestone_runs migration —
-// AutoMigrate cannot express a partial index. Incident-adoption runs are
+// The build mutex (§5's 409, in DB form) is a partial unique index on
+// (org_id, project_id) WHERE kind = 'dev' AND state IN
+// ('planning','waiting','running'), created by the milestone_run_kind migration
+// — AutoMigrate cannot express a partial index. Task and validation runs are
 // deliberately outside the index, so they run concurrently on their own
-// milestones.
+// milestones. A second partial index, on (org_id, project_id,
+// milestone_number), makes "one live run per milestone, of ANY kind" true.
 type MilestoneRun struct {
 	ID        string `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
 	OrgID     string `gorm:"index;not null" json:"-"`
@@ -275,8 +307,20 @@ type MilestoneRun struct {
 	// SpecTag, never directly.
 	Tag string `gorm:"index" json:"tag,omitempty"`
 
-	Origin string `gorm:"not null;index" json:"origin"`                // spec-build | incident-adoption
-	State  string `gorm:"not null;index;default:waiting" json:"state"` // planning | waiting | running | succeeded | failed | cancelled
+	// Kind is what this run DOES: dev | task | validation. Every predicate in
+	// the platform reads it, including the partial index above — which is why
+	// TryAdmit validates it against IsRunKind rather than trusting the caller.
+	//
+	// The `dev` column default exists only so the AutoMigrate that ADDS this
+	// column to a populated table can make it NOT NULL. It is never a semantic
+	// default: the migration's backfill immediately re-derives every existing
+	// row's kind from its origin, and no writer may insert without one.
+	Kind string `gorm:"not null;index;default:dev" json:"kind"` // dev | task | validation
+	// Origin is WHERE the run came from: spec-build | incident-adoption |
+	// revalidate. It is a label on the trigger and nothing branches on it.
+	Origin string `gorm:"not null;index" json:"origin"`
+	// State is the run's position between admission and settling.
+	State string `gorm:"not null;index;default:waiting" json:"state"` // planning | waiting | running | succeeded | failed | cancelled | blocked
 	// TerminalReason is set exactly once, when the run settles into a non-success
 	// terminal state. Empty while non-terminal and on a succeeded run.
 	TerminalReason string `gorm:"type:text" json:"terminalReason,omitempty"`
@@ -291,9 +335,11 @@ type MilestoneRun struct {
 	FixCycles       int `gorm:"not null;default:0" json:"fixCycles"`
 	ConflictCycles  int `gorm:"not null;default:0" json:"conflictCycles"`
 	BuildRetriggers int `gorm:"not null;default:0" json:"buildRetriggers"`
-	// ValidationCycles is the number of validation ATTEMPTS this run has opened,
-	// bounded by RunMaxValidationAttempts. More than one means the run repaired a
-	// failed validation and tried again.
+	// ValidationCycles is the number of validation cycles this run has opened.
+	// A validation run normally opens exactly one; more than one means its agent
+	// merged without committing a report and was re-dispatched. The VERSION's
+	// attempt allowance is counted from the milestone's validation runs, not from
+	// this column.
 	ValidationCycles int `gorm:"not null;default:0" json:"validationCycles"`
 	// CycleCeiling is the run's total-cycle ceiling, snapshotted at start so a
 	// config change cannot retroactively fail (or rescue) a live run.
@@ -313,18 +359,36 @@ type MilestoneRun struct {
 	// ValidationVerdict is a run property, not a per-issue one: the LATEST
 	// validation attempt's outcome. Empty until the first attempt settles.
 	//
-	// A run may validate more than once (see RunMaxValidationAttempts), and each
-	// attempt records its own verdict on its RunCycle. This column is the run's
-	// answer — the last thing validation concluded — so a self-healed run reads
-	// `passed` here while its cycle ledger still shows the attempt that failed.
+	// Only a VALIDATION run sets it. A settled dev run leaves it empty, which reads
+	// as "delivered, not yet judged" — the exception being a version with no
+	// acceptance oracle, where nothing will ever judge it and `skipped` says so.
+	// Readers take the newest VALIDATING run on a milestone (RunValidates), so a
+	// task run's silence here cannot make a passed version read as unvalidated.
 	ValidationVerdict string `gorm:"type:text" json:"validationVerdict,omitempty"`
-	// ValidationIssue is the validation issue this run minted, persisted so a
-	// SETTLED run stays navigable to its criteria. It is otherwise only in live
-	// workflow state, which means that once Temporal retention lapses the platform
-	// can no longer say which issue produced a run's verdict — leaving a verdict
-	// with no way to reach the criteria, the PR, or the runner's own summary.
-	// Zero until the validation cycle mints it, and on incident runs.
+	// ValidationIssue is the version's validation task, persisted alongside the
+	// verdict so a SETTLED run stays navigable to its criteria. It is otherwise only
+	// in live workflow state, which means that once Temporal retention lapses the
+	// platform can no longer say which issue produced a run's verdict — leaving a
+	// verdict with no way to reach the criteria, the PR, or the runner's own summary.
+	// Written by the run that JUDGED, so it is zero on a dev run (which files the
+	// task but records no judgement) and on a task run.
 	ValidationIssue int `gorm:"not null;default:0" json:"validationIssue,omitempty"`
+
+	// CancelRequestedAt is when a human asked for this run to stop — the DURABLE
+	// half of cancel, written by the cancel surface before it signals.
+	//
+	// Cancel is the one fact the loop cannot re-derive from the world: a pod the
+	// cancel reaped and a pod that died on its own look identical from inside the
+	// workflow, so a loop that knew only "the agent is gone" would spend a
+	// re-dispatch and open a fresh cycle over a run the user just stopped. Every
+	// other fact the loop acts on is a wake-up it re-reads ground truth for, and
+	// this column is what lets cancel work the same way: the signal becomes the
+	// fast path, and this becomes the evidence.
+	//
+	// Set once — the FIRST request stands, so a second click cannot move the
+	// stamp — and never cleared: a run is cancelled or it is not, and the row is
+	// terminal soon after. Nil on every run nobody cancelled.
+	CancelRequestedAt *time.Time `json:"cancelRequestedAt,omitempty"`
 
 	CreatedAt time.Time  `json:"createdAt"`
 	UpdatedAt time.Time  `json:"updatedAt"`
@@ -351,11 +415,33 @@ func (r MilestoneRun) SpecTag() string {
 	return r.MilestoneTitle
 }
 
-// IsRunOrigin reports whether a string is one of the three run origins. It is
-// the admission guard's predicate, kept beside the constants because the reason
-// origins are validated at all is the spec-run mutex: that index is a partial
-// one keyed on the literal `spec-build`, so a typo'd origin would not fail — it
-// would silently escape the one-active-spec-run-per-project invariant.
+// RunKinds is the closed set of run kinds, in no significant order. It exists
+// for the callers that must act on ALL of them rather than on one: a project
+// delete has to terminate every workflow id a milestone could have, and a kind
+// missing from that sweep leaves a supervisor retrying forever against a
+// repository that is gone.
+var RunKinds = []string{RunKindDev, RunKindTask, RunKindValidation}
+
+// IsRunKind reports whether a string is one of the three run kinds. It is the
+// admission guard's predicate, kept beside the constants because the reason
+// kinds are validated at all is the build mutex: that index is a PARTIAL one
+// keyed on the literal `dev`, so a typo'd kind would not fail — it would
+// silently escape the one-active-build-per-project invariant, and two agents
+// would end up on one branch with nothing having reported an error.
+func IsRunKind(kind string) bool {
+	switch kind {
+	case RunKindDev, RunKindTask, RunKindValidation:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsRunOrigin reports whether a string is one of the three run origins. Origin
+// is a label on the trigger, but it is a NOT NULL closed enum on the wire and
+// on the row, so admission validates it for the same reason it validates
+// everything else it writes: a value the reader rejects and the writer accepted
+// is a row nobody can render.
 func IsRunOrigin(origin string) bool {
 	switch origin {
 	case RunOriginSpecBuild, RunOriginIncidentAdoption, RunOriginRevalidate:
@@ -365,24 +451,155 @@ func IsRunOrigin(origin string) bool {
 	}
 }
 
-// RunValidates reports whether a run of this origin asks the version's
-// acceptance criteria at all.
+// RunKindForOrigin maps a run's origin onto the kind it implies. It is the Go
+// twin of the migration's backfill, and the ONE place the mapping is written
+// outside SQL.
 //
-// Validation is a SPEC-run property plus the revalidation that exists to repeat
-// it. An incident run fixes one thing in an already-validated version, and
-// re-validating the whole system for it would price every incident like a
-// release.
+// It exists for facts that were recorded before the kind column did: a run row
+// backfilled from a deployment that predates it, and — the case that cannot be
+// backfilled — a Temporal workflow input, which lives in history and replays
+// with whatever fields existed when the execution started. A live dev run
+// replaying with an empty kind would read as "not dev", skip its validation
+// phase, and settle succeeded without ever asking the version's criteria.
 //
-// It lives here rather than inline in the loop so the supervisor and anything
-// that later needs to explain a `skipped` verdict cannot disagree about which
-// runs were ever going to produce one.
-func RunValidates(origin string) bool {
-	return origin == RunOriginSpecBuild || origin == RunOriginRevalidate
+// An unknown origin yields the empty string rather than a guess: nothing may
+// silently become `dev` and take the project mutex.
+func RunKindForOrigin(origin string) string {
+	switch origin {
+	case RunOriginSpecBuild:
+		return RunKindDev
+	case RunOriginIncidentAdoption:
+		return RunKindTask
+	case RunOriginRevalidate:
+		return RunKindValidation
+	default:
+		return ""
+	}
+}
+
+// RoutableRunKind resolves the kind a run row is ADDRESSED by — the workflow
+// type a start executes, and the workflow id a signal is aimed at — and reports
+// whether the row can be addressed at all.
+//
+// It is the ONE place that resolution is written, because its two callers are the
+// two that fail SILENTLY rather than loudly: a start with the wrong type runs the
+// wrong loop, and a signal with the wrong id is swallowed as NotFound.
+//
+// Two rows are routable, and only two:
+//
+//	a VALID kind        the ordinary case; the kind is what the row says it is.
+//	an EMPTY kind whose ORIGIN implies one. That is the pre-column history and
+//	                    nothing else: origin has always been NOT NULL and every
+//	                    writer sets both from one decision, so an empty kind
+//	                    beside a known origin is a fact recorded before the column
+//	                    existed — a backfilled row, or a Temporal input replaying
+//	                    out of history with only the fields that existed when the
+//	                    execution started.
+//
+// Everything else is REFUSED, and the refusal is the point. A non-empty kind this
+// package does not recognise is not history, it is corruption — admission
+// validates against IsRunKind, so no writer can produce one — and neither can an
+// empty kind beside an unknown origin. Reading either as `dev` is what the guard
+// exists to stop: dev is the kind that takes the project's build mutex and plans
+// a version, so guessing it starts a build nobody asked for and blocks every
+// later one behind it. Refusing costs a visible error and a run that never
+// starts, which is the direction a corrupt row must fail in.
+func RoutableRunKind(kind, origin string) (string, bool) {
+	if IsRunKind(kind) {
+		return kind, true
+	}
+	if kind == "" {
+		if implied := RunKindForOrigin(origin); implied != "" {
+			return implied, true
+		}
+	}
+	return "", false
+}
+
+// SettleClosesTheMilestone reports whether a run of this KIND settling into this
+// STATE finishes the VERSION — and therefore closes its milestone.
+//
+// It is the whole of the rule, in one place, because the two halves of it are
+// each other's failure mode: closing too late leaves a finished version's
+// milestone open forever, and closing too EARLY breaks the hand-off the three
+// workflows exist to create.
+//
+//	validation  succeeded → CLOSES. The version has its verdict, and a green
+//	            ending is what a succeeded validation run IS: every fatal verdict
+//	            settles the run `failed` (ValidationVerdictFailsRun), so there is
+//	            no succeeded validation run over a version that did not stand.
+//	dev         succeeded → closes ONLY if it filed no validation task. Filing one
+//	            means the version is DEPLOYED AND UNJUDGED and the milestone is not
+//	            finished; filing none (no acceptance oracle, or a plan that minted
+//	            nothing) means nothing will ever judge it, and leaving the milestone
+//	            open would strand the version in "any moment now" forever.
+//	task        never. It fixes one defect inside a version somebody else
+//	            delivered; finishing that says nothing about the version.
+//	failed      never, of any kind. The way forward from a failed increment is
+//	            more work in the same version.
+//	cancelled   per CancelClosesTheMilestone — a dev run's cancel abandons the
+//	            increment, and nothing else's does.
+//	blocked     never. A quota block is a wait somebody else clears.
+//
+// Why a dev run must NOT close on the hand-off is concrete rather than tidy. The
+// validation agent discovers its own work with `gh issue list --milestone`, which
+// resolves the milestone BY TITLE and only sees OPEN milestones (skills/aep says
+// so in as many words). A dev run that closed the milestone over the validation
+// task it had just minted would leave that task unfindable by the only agent
+// meant to work it — the version deployed, the task open, and the run that could
+// judge it unable to see the milestone it lives in.
+//
+// Milestone state is display only and nothing branches on it, which is what makes
+// getting it right a documentation problem rather than a correctness one — except
+// through that one agent-side read, which is why the rule is stated here instead
+// of being left to each settle site.
+//
+// awaitingVerdict says a validation task now stands open over this version,
+// waiting for somebody to judge it. Only the dev arm reads it: a validation run
+// closes the task on every ending, and a task run's reopen is the thing that
+// hands the version BACK to validation, so for both of them the answer is already
+// decided by the kind.
+func SettleClosesTheMilestone(runKind, state string, awaitingVerdict bool) bool {
+	switch state {
+	case RunStateSucceeded:
+		switch runKind {
+		case RunKindValidation:
+			return true
+		case RunKindDev:
+			return !awaitingVerdict
+		default:
+			return false
+		}
+	case RunStateCancelled:
+		return CancelClosesTheMilestone(runKind)
+	default:
+		return false
+	}
+}
+
+// RunValidates reports whether a run of this kind produces a VERDICT about the
+// deployed system.
+//
+// Exactly one kind does. A validation run is the judgement — it is the whole
+// reason the kind exists. A dev run delivers a version and MINTS the validation
+// task at deployed-green, but it never asks the criteria itself: judging inside
+// the delivery loop meant one workflow owned both "is the increment built" and
+// "does it hold", and the two answers have different lifetimes (a version is
+// re-judged long after it shipped) and different failure classes. A task run
+// fixes one thing in an already-judged version, and re-validating the whole
+// system for it would price every incident like a release.
+//
+// It lives here rather than inline in a read model so nothing has to re-derive
+// which rows can carry a verdict: the newest VALIDATING run on a milestone owns
+// that version's answer, and a dev run's empty verdict means "not judged yet",
+// never "judged and fine".
+func RunValidates(kind string) bool {
+	return kind == RunKindValidation
 }
 
 // IsTerminalRunState reports whether a run state is settled. Terminal rows are
 // never resurrected: every guarded transition in MilestoneRunRepository is
-// fenced on the state NOT being terminal, and the spec-run mutex only counts
+// fenced on the state NOT being terminal, and the build mutex only counts
 // non-terminal rows.
 func IsTerminalRunState(state string) bool {
 	switch state {
@@ -396,5 +613,5 @@ func IsTerminalRunState(state string) bool {
 // nonTerminalRunStates is the WHERE-clause form of !IsTerminalRunState, shared
 // by the guarded transitions and the mutex lookup so the two can never disagree.
 // It must stay in step with the migration's partial index predicate — a state
-// missing from one and present in the other would let a second spec run in.
+// missing from one and present in the other would let a second dev run in.
 var nonTerminalRunStates = []string{RunStatePlanning, RunStateWaiting, RunStateRunning}

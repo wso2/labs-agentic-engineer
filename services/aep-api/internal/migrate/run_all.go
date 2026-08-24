@@ -106,7 +106,6 @@ func Steps(db *gorm.DB, deploymentTier string, credKey []byte) []database.Step {
 		ctxStep("org_secrets", RunOrgSecretsMigration),
 		ctxStep("per_org_secret_name", RunPerOrgSecretName),
 		ctxStep("org_anthropic_credentials", RunOrgAnthropicCredentialsMigration),
-		ctxStep("phase3_sm_api_columns", RunPhase3SMAPIColumns),
 		ctxStep("phase3_thunder_org_uuid", RunPhase3ThunderOrgUUID),
 		ctxStep("phase3_coding_agent_logs", RunPhase3CodingAgentLogs),
 		// GitRepository table from the model tag (creates the new composite index).
@@ -115,7 +114,6 @@ func Steps(db *gorm.DB, deploymentTier string, credKey []byte) []database.Step {
 		// which creates the new index from the tag but never drops the old one.
 		ctxStep("git_repositories_composite_unique", RunGitRepoCompositeUnique),
 		dbStep("phase7_skills", RunPhase7Skills),
-		ctxStep("phase8_idp_sm_api_columns", RunPhase8IDPSMAPIColumns),
 		// Executions table (AutoMigrated from the model) gains its partial
 		// admission-mutex unique index, which AutoMigrate cannot express.
 		ctxStep("executions", RunExecutions),
@@ -129,7 +127,7 @@ func Steps(db *gorm.DB, deploymentTier string, credKey []byte) []database.Step {
 		dbStep("tasks_github_native", RunTasksGitHubNative),
 		// dependency-management (§3.6): the external-resource catalog +
 		// cross-project access-request tables. Two idempotent CREATE TABLEs only —
-		// no component_tasks ALTER (dependency gating lives on aep:provision GitHub
+		// no component_tasks ALTER (dependency gating lives on `provision` GitHub
 		// issues + the funnel depsGate, not DB columns).
 		ctxStep("phase9_dependency_mgmt", RunPhase9DependencyMgmt),
 		// workflow_runs: the retired devflow lookup index. Its model is gone and
@@ -147,10 +145,9 @@ func Steps(db *gorm.DB, deploymentTier string, credKey []byte) []database.Step {
 		// (issues #154, #155, BE handshake #156). One idempotent CREATE TABLE
 		// + its (org_id, created_at) list index.
 		ctxStep("phase10_rca_agent_reports", RunPhase10RcaAgentReports),
-		// milestone_runs (AutoMigrated from the model) gains the spec-run mutex:
-		// a partial unique index admitting one non-terminal spec-build run per
-		// (org, project). Fresh schema — nothing to backfill from the legacy
-		// executions/workflow_runs tables.
+		// milestone_runs (AutoMigrated from the model) gains the one-live-run-
+		// per-milestone partial unique index, which AutoMigrate cannot express.
+		// The per-project build mutex is milestone_run_kind's, below.
 		ctxStep("milestone_runs", RunMilestoneRuns),
 		// run_cycle_logs: RETIRED tombstone. Writers deleted (grill Q2); step
 		// kept for frozen order and no longer creates the table (see
@@ -166,8 +163,8 @@ func Steps(db *gorm.DB, deploymentTier string, credKey []byte) []database.Step {
 		// step inserts the claude-sonnet-5 row so write-time USD stamping has
 		// a price card to resolve against. Ops-managed thereafter.
 		ctxStep("model_rates_seed", RunModelRatesSeed),
-		// EXPAND: provider-neutral secret_ref_* columns alongside sm_api_*
-		// (phase-03 item 14). CONTRACT (drop sm_api_*) waits for phase 09.
+		// secret_ref_* columns, backfilled from leftover sm_api_* if present.
+		// Do not ADD sm_api_* here — phase14 drops leftovers that already exist.
 		ctxStep("phase11_secret_ref_columns", RunPhase11SecretRefColumns),
 		// Encrypt publisher_client_secret + webhook_secrets in place
 		// (phase-03 items 15–16). Uses the same credential-encryption-key.
@@ -183,6 +180,14 @@ func Steps(db *gorm.DB, deploymentTier string, credKey []byte) []database.Step {
 		// one-current-thread-per-scope partial unique index — the admission
 		// fence lazy create and rotation race against.
 		ctxStep("project_conversations", RunProjectConversations),
+		// Drop leftover sm_api_* columns. secret_ref_* stay.
+		ctxStep("phase14_drop_sm_api_columns", RunPhase14DropSMAPIColumns),
+		// milestone_runs.kind: backfill the kind from the origin, then move the
+		// per-project build mutex onto it. Ordered AFTER the milestone_runs step
+		// that owns the per-milestone index, and last overall because the list is
+		// append-only. The backfill MUST precede the index creation — see
+		// milestone_run_kind.go.
+		ctxStep("milestone_run_kind", RunMilestoneRunKind),
 	}
 }
 

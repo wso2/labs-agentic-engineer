@@ -81,8 +81,9 @@ type RunCycleRepository interface {
 	// either fence rejects, which is the ordinary outcome of a re-tick.
 	FinishAgentFailed(ctx context.Context, id, reason string) (*RunCycle, error)
 
-	// SetValidationVerdict records what one validation ATTEMPT concluded, and the
-	// issue it was dispatched at.
+	// SetValidationVerdict records what one validation ATTEMPT concluded: the
+	// verdict, the issue it was dispatched at, and the DIGEST of the evidence
+	// behind it.
 	//
 	// It is the ONE mutator not fenced on the cycle being open, and deliberately:
 	// the verdict is derived from the report at the cycle's own merge commit, which
@@ -91,8 +92,25 @@ type RunCycleRepository interface {
 	// once and a second write could only be a retry or a bug. Guarded that way, a
 	// redelivered activity is a no-op rather than a rewrite.
 	//
+	// The digest rides THIS call rather than one of its own for exactly that
+	// reason: the write-once fence would reject any later write, so a digest
+	// recorded separately could never land on a cycle that already has a verdict.
+	//
 	// Returns (nil, nil) when the cycle is absent or already carries a verdict.
-	SetValidationVerdict(ctx context.Context, id, verdict string, issue int) (*RunCycle, error)
+	SetValidationVerdict(ctx context.Context, id, verdict string, issue int, digest string) (*RunCycle, error)
+
+	// LatestValidationDigest returns the newest recorded report digest among the
+	// given runs' validation cycles, or "" when none of them recorded one.
+	//
+	// It is how one validation attempt reads what the PREVIOUS attempt concluded.
+	// Attempts are separate runs, so the comparison cannot live in workflow state,
+	// and it is keyed on run ids rather than on a milestone because run_cycles
+	// carries no milestone column — the caller resolves the milestone's validation
+	// runs first, which it must do anyway to count the attempts.
+	//
+	// An empty runIDs is not an error: a milestone's first validation attempt has
+	// nothing to compare against.
+	LatestValidationDigest(ctx context.Context, orgID string, runIDs []string) (string, error)
 
 	// Latest returns a run's newest cycle, or (nil, nil) when the run has not
 	// dispatched yet. This is how loop POSITION is read — never from a stored
@@ -235,7 +253,7 @@ func (r *runCycleRepository) FinishAgentFailed(ctx context.Context, id, reason s
 	return r.getByID(ctx, id)
 }
 
-func (r *runCycleRepository) SetValidationVerdict(ctx context.Context, id, verdict string, issue int) (*RunCycle, error) {
+func (r *runCycleRepository) SetValidationVerdict(ctx context.Context, id, verdict string, issue int, digest string) (*RunCycle, error) {
 	if !ValidationVerdicts[verdict] {
 		return nil, fmt.Errorf("run cycle: unknown validation verdict %q", verdict)
 	}
@@ -247,6 +265,7 @@ func (r *runCycleRepository) SetValidationVerdict(ctx context.Context, id, verdi
 		Updates(map[string]any{
 			"validation_verdict": verdict,
 			"validation_issue":   issue,
+			"validation_digest":  digest,
 		})
 	if res.Error != nil {
 		return nil, res.Error
@@ -255,6 +274,25 @@ func (r *runCycleRepository) SetValidationVerdict(ctx context.Context, id, verdi
 		return nil, nil
 	}
 	return r.getByID(ctx, id)
+}
+
+func (r *runCycleRepository) LatestValidationDigest(ctx context.Context, orgID string, runIDs []string) (string, error) {
+	if len(runIDs) == 0 {
+		return "", nil
+	}
+	var row RunCycle
+	err := r.db.WithContext(ctx).
+		Where("org_id = ? AND run_id IN ? AND kind = ? AND validation_digest <> ''",
+			orgID, runIDs, CycleKindValidation).
+		Order("created_at DESC").
+		First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return row.ValidationDigest, nil
 }
 
 func (r *runCycleRepository) Latest(ctx context.Context, orgID, runID string) (*RunCycle, error) {

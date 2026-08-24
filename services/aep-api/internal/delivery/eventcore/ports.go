@@ -39,18 +39,31 @@ type RunStore interface {
 	// handler returns without a single write.
 	LiveRunForMilestone(ctx context.Context, orgID, projectID string, milestoneNumber int) (*delivery.MilestoneRun, error)
 	// LiveRunsForProject returns every non-terminal run of the project, newest
-	// first — at most one spec build (the mutex) plus any concurrent incident
-	// adoptions. The event plane narrows them itself: by origin for a pull
+	// first — at most one dev run (the mutex) plus any concurrent task and
+	// validation runs. The event plane narrows them itself: by KIND for a pull
 	// request whose branch names no milestone, by cycle merge SHA for a build
 	// terminal. Keeping the narrowing here rather than in the adapter is what
 	// makes it testable without a database.
 	LiveRunsForProject(ctx context.Context, orgID, projectID string) ([]delivery.MilestoneRun, error)
-	// DeployedMilestoneRun returns the run of the project's most recently
-	// SUCCEEDED spec build — the deployed version, whose milestone is where
+	// DeployedMilestoneRun returns the project's most recently SUCCEEDED DEV
+	// run — the deployed version, whose milestone is where
 	// incidents and adopted bare issues belong. Nil when the project has never
 	// completed a version, which is what makes "no milestone for the deployed
 	// version — trigger a build" an honest error rather than a guess.
 	DeployedMilestoneRun(ctx context.Context, orgID, projectID string) (*delivery.MilestoneRun, error)
+	// NewestRunForMilestone returns the milestone's most recent run of ANY kind
+	// and any state, or (nil, nil) for a milestone with none.
+	//
+	// The reconcile sweep asks it one question: did the newest run settle
+	// `cancelled`? A cancelled increment is abandoned, but a closed milestone
+	// still accepts issues, so an issue reopened inside one would otherwise start
+	// a task run that builds and deploys against a version nobody is shipping.
+	//
+	// NEWEST, of any kind, is what makes the rule self-clearing: a rebuild admits
+	// a fresh row on the SAME milestone, so the answer stops being "cancelled" the
+	// moment somebody decides to work the version again — no flag to set, and
+	// nothing to clear.
+	NewestRunForMilestone(ctx context.Context, orgID, projectID string, milestoneNumber int) (*delivery.MilestoneRun, error)
 	// KnownMilestones returns every milestone the platform has ever run for this
 	// project, newest first. The reconcile sweep walks these rather than
 	// enumerating GitHub's milestones: a milestone the platform never ran is not
@@ -90,15 +103,16 @@ type CycleStore interface {
 	FinishCycle(ctx context.Context, cycleID, mergeSHA string) error
 }
 
-// IssueClient is the GitHub issue + milestone surface the event plane needs:
-// mint platform issues into a milestone, read a milestone's membership for the
-// auto-merge predicate, count it for the dispatch predicate, and move an
-// adopted issue into the deployed version's milestone.
-// sourcecontrol.IssueService satisfies it.
+// IssueClient is the GitHub issue + milestone READ surface the event plane
+// needs: read a milestone's membership for the auto-merge predicate, count it
+// for the dispatch predicate, and move an adopted issue into the deployed
+// version's milestone. sourcecontrol.IssueService satisfies it.
+//
+// Minting is deliberately absent. Every issue this package files goes through
+// delivery.IssueWriter (Ports.Writer), the domain's one issue-write surface, so
+// a label-vocabulary or dedupe change is one edit rather than eight — and this
+// port cannot be used to route around it.
 type IssueClient interface {
-	// CreateIssue mints an issue. Every call from this package passes a
-	// DedupeKey — that is what makes minting redelivery-safe.
-	CreateIssue(ctx context.Context, orgID, projectID string, req sourcecontrol.CreateIssueRequest) (*sourcecontrol.IssueResult, error)
 	// ListMilestoneIssues reads a milestone's issues, filtered by state and
 	// label. Pull requests are excluded by the host.
 	ListMilestoneIssues(ctx context.Context, orgID, projectID string, filter sourcecontrol.MilestoneIssuesFilter) ([]sourcecontrol.IssueInfo, error)
@@ -289,9 +303,9 @@ type ValidationOracle interface {
 
 // RunStarter starts a run over a milestone that has work and no live run: the
 // adoption path and the reconcile sweep's backstop. Everything this package
-// starts BY DETECTION carries delivery.RunOriginIncidentAdoption — the spec-build
-// origin belongs to the plan path alone, and the revalidate origin only ever
-// comes from a human asking (Revalidate).
+// starts BY DETECTION is a delivery.RunKindTask run — a dev run belongs to the
+// plan path alone, and a validation run only ever comes from a human asking
+// (Revalidate).
 //
 // Admission (the run row) and supervision (the workflow) must happen together
 // or a run row exists that nobody is driving, so both live behind this one

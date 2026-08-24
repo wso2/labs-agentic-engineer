@@ -69,6 +69,7 @@ func TestTurn_SendsExactRequestAndHeaders(t *testing.T) {
 			SkillsRef:      strings.Repeat("b", 40),
 		},
 		FilesChangedExternally: true,
+		Surface:                SurfaceConsole,
 	}
 	body, err := c.Turn(context.Background(), "org_o--proj_p--design-generate--uuid1", "org-o", "sk-ant-123", req)
 	if err != nil {
@@ -145,12 +146,45 @@ func TestTurn_SendsExactRequestAndHeaders(t *testing.T) {
 			t.Errorf("workspace[%q] = %q, want %q", k, ws[k], v)
 		}
 	}
+	// The surface rides the wire under the name the agents service validates
+	// (#580); a typo here is a 400 on every turn, not a quiet loss of narration.
+	if got := string(raw["surface"]); got != `"console"` {
+		t.Errorf("surface = %s, want \"console\"", got)
+	}
 	var sent TurnRequest
 	if err := json.Unmarshal([]byte(srv.body), &sent); err != nil {
 		t.Fatalf("unmarshal sent body: %v", err)
 	}
 	if sent.Turn.Kind != req.Turn.Kind || sent.Turn.Skill != req.Turn.Skill || !sent.FilesChangedExternally {
 		t.Errorf("turn/flag mismatch: %+v", sent)
+	}
+	if sent.Surface != SurfaceConsole {
+		t.Errorf("surface = %q, want %q", sent.Surface, SurfaceConsole)
+	}
+}
+
+// A caller that names no surface sends no key at all — the agents service then
+// composes a prompt byte-identical to one from before surfaces existed, which
+// is what keeps a local run reading the shared skills unchanged.
+func TestTurn_UnsetSurfaceIsAbsentFromTheBody(t *testing.T) {
+	srv := newRecordingServer(t, http.StatusOK, "data: [DONE]\n\n", "text/event-stream")
+	c := New(Config{BaseURL: srv.URL, Secret: "shh"})
+	body, err := c.Turn(context.Background(), "org_o--proj_p--general--uuid1", "org-o", "sk-ant-123", TurnRequest{
+		Turn:      TurnSpec{Kind: TurnKindChat, Text: "hi"},
+		Workspace: WorkspaceRef{ConversationID: "org_o--proj_p--general--uuid1"},
+	})
+	if err != nil {
+		t.Fatalf("Turn: %v", err)
+	}
+	defer body.Close()
+	io.ReadAll(body)
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(srv.body), &raw); err != nil {
+		t.Fatalf("unmarshal sent body: %v", err)
+	}
+	if _, ok := raw["surface"]; ok {
+		t.Errorf("body carries a surface key when none was set: %s", srv.body)
 	}
 }
 

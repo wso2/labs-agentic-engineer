@@ -21,14 +21,12 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"time"
 
 	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/delivery"
-	"github.com/wso2/aep/aep-api/internal/platform/auth"
 )
 
 // CodingExecutor launches the coding agent. Its one dispatch entry point is
@@ -47,7 +45,6 @@ type CodingExecutor struct {
 	oc            openchoreo.ComponentClient
 	repos         ProjectRepos
 	identities    Identities
-	tokens        TokenIssuer
 	execRows      delivery.ExecutionRepository
 	gitServiceURL string
 	platformURL   string
@@ -66,6 +63,11 @@ type CodingExecutor struct {
 	anthropicKey CodingKeyResolver
 	githubCreds  organization.OrgCredentialRepository
 	idpProfiles  organization.IDPRepository
+
+	// publisher is the Thunder publisher SecretReference resolver. Every
+	// dispatch mounts PUBLISHER_* from it (local and cloud). Nil fail-louds.
+	publisher         PublisherCredentialResolver
+	publisherTokenURL string
 
 	// Build-secret staging (nil → unauthenticated clone, correct for public
 	// repos). buildSecrets pre-stages the org's build git credential so a build's
@@ -90,7 +92,6 @@ func NewCodingExecutor(
 	oc openchoreo.ComponentClient,
 	repos ProjectRepos,
 	identities Identities,
-	tokens TokenIssuer,
 	execRows delivery.ExecutionRepository,
 	gitServiceURL, platformURL string,
 	orgs organization.OrganizationRepository,
@@ -100,7 +101,7 @@ func NewCodingExecutor(
 ) *CodingExecutor {
 	return &CodingExecutor{
 		oc: oc, repos: repos, identities: identities,
-		tokens: tokens, execRows: execRows, gitServiceURL: gitServiceURL, platformURL: platformURL,
+		execRows: execRows, gitServiceURL: gitServiceURL, platformURL: platformURL,
 		orgs: orgs, anthropicKey: anthropicKey, githubCreds: githubCreds, idpProfiles: idpProfiles,
 	}
 }
@@ -212,39 +213,27 @@ func (e *CodingExecutor) launchAgent(ctx context.Context, in agentLaunch) (strin
 	if err != nil {
 		return "", fmt.Errorf("resolve git identity: %w", err)
 	}
-	bearer, err := e.tokens.Issue(in.correlationID, in.orgID, in.projectID)
-	if err != nil {
-		return "", fmt.Errorf("mint runner bearer: %w", err)
-	}
-	// Dedicated MCP identity token (aud aep-api-mcp): the runner bearer above
-	// (aud git-service) is pinned-rejected by the MCP verifier, so the pod needs
-	// a separate token to call the BFF's internal MCP surface (list endpoints /
-	// read remote file / search remote code). One token stamped at dispatch,
-	// TTL matching the runner bearer's 24h Job lifetime — no refresh route.
-	mcpToken, err := e.tokens.IssueServiceToken(auth.AudienceMCP, in.orgID, 24*time.Hour)
-	if err != nil {
-		return "", fmt.Errorf("mint MCP token: %w", err)
-	}
 	// OpenChoreo Component dispatch: the only agent path. One Component per run
 	// cycle in the milestone's own project.
 	if e.ocJobs == nil {
 		return "", fmt.Errorf("no coding-agent dispatch path configured: set AGENT_RUNNER_IMAGE")
 	}
-	return e.dispatchViaOC(ctx, in, repo, name, email, login, bearer, mcpToken)
+	return e.dispatchViaOC(ctx, in, repo, name, email, login)
 }
 
 // dispatchViaOC launches one cycle through the OpenChoreo Component chain.
 //
 // The executor's job here is credential and identity resolution — the org's
-// refs-only secret triplets, the runner bearer, the MCP token — and the
+// refs-only secret triplets and the publisher SecretReference — and the
 // dispatcher's job is the OC chain. The run name is derived from the CYCLE id,
 // deterministically within a dispatch attempt, so a crashed dispatch resumes
 // over the same Component instead of orphaning it.
 //
 // Credentials reach the pod through the ComponentType's ExternalSecret /
-// Workload secretEnv (refs only).
+// Workload secretEnv (refs only). Publisher client_credentials are the Job's
+// only platform credential (local and cloud).
 func (e *CodingExecutor) dispatchViaOC(ctx context.Context, in agentLaunch, repo *sourcecontrol.GitRepository,
-	name, email, login, bearer, mcpToken string) (string, error) {
+	name, email, login string) (string, error) {
 	anthropicSR, githubSR, err := e.resolveRunnerSecretRefs(ctx, in.orgID)
 	if err != nil {
 		return "", err
@@ -268,12 +257,16 @@ func (e *CodingExecutor) dispatchViaOC(ctx context.Context, in agentLaunch, repo
 		"AEP_TASK_KIND":       taskKindOrDefault(disp.taskKind),
 		"WORKSPACE_BASE_PATH": codingAgentWorkspacePath,
 	}
-	if bearer != "" {
-		env["AEP_BEARER"] = bearer
+	secretEnv := []SecretEnvRef{
+		{Key: anthropicEnvVarOrDefault(anthropicSR.EnvVar), SecretName: anthropicSR.SecretRefName, SecretKey: anthropicSR.Property},
+		{Key: envGitHubToken, SecretName: githubSR.SecretRefName, SecretKey: githubSR.Property},
 	}
-	if mcpToken != "" {
-		env["AEP_MCP_TOKEN"] = mcpToken
+	pub, tokenURL, err := e.publisherSecretEnv(ctx, in.orgID)
+	if err != nil {
+		return "", err
 	}
+	env[envPublisherTokenURL] = tokenURL
+	secretEnv = append(secretEnv, pub...)
 	return e.ocJobs.Dispatch(ctx, OCDispatchInputs{
 		OrgID:                 in.orgID,
 		ProjectID:             in.projectID,
@@ -285,10 +278,7 @@ func (e *CodingExecutor) dispatchViaOC(ctx context.Context, in agentLaunch, repo
 		RunName:               codingAgentRunNameFor(in.projectID, in.correlationID),
 		ActiveDeadlineSeconds: int(disp.deadline),
 		Env:                   env,
-		SecretEnv: []SecretEnvRef{
-			{Key: anthropicEnvVarOrDefault(anthropicSR.EnvVar), SecretName: anthropicSR.SecretRefName, SecretKey: anthropicSR.Property},
-			{Key: envGitHubToken, SecretName: githubSR.SecretRefName, SecretKey: githubSR.Property},
-		},
+		SecretEnv:             secretEnv,
 	})
 }
 
@@ -378,9 +368,9 @@ func (e *CodingExecutor) resolveRunnerSecretRefs(ctx context.Context, orgID stri
 		return SecretRef{}, SecretRef{}, fmt.Errorf("coding dispatch: github secret reference missing for org %q: org_credentials row not found", orgID)
 	}
 	githubSR := SecretRef{
-		SecretRefName: derefStr(githubRow.ResolvedSecretRefName()),
-		KVPath:        derefStr(githubRow.ResolvedSecretRefKVPath()),
-		Property:      derefStr(githubRow.ResolvedSecretRefProperty()),
+		SecretRefName: derefStr(githubRow.SecretRefName),
+		KVPath:        derefStr(githubRow.SecretRefKVPath),
+		Property:      derefStr(githubRow.SecretRefProperty),
 	}
 	if err := validateSecretRefTriplet("github", orgID, githubSR); err != nil {
 		return SecretRef{}, SecretRef{}, fmt.Errorf("coding dispatch: %w", err)
@@ -448,7 +438,7 @@ func derefStr(s *string) string {
 // carries no procedure in the prompt, so the workflow versions with the skill
 // rather than with the BFF binary.
 func buildPrompt(milestoneNumber int, milestoneTitle string) string {
-	return fmt.Sprintf("Work the issues for milestone %d (%q). Follow the `aep` skill loaded in your session — it defines discovery, ordering, fan-out, branch identity, verification, the PR contract and the deny-list.", milestoneNumber, milestoneTitle)
+	return fmt.Sprintf("Work the issues for milestone %d (%q). External credentials may not yet be configured; their environment variables may be empty, so live calls may not succeed. Follow the `aep` skill loaded in your session — it defines discovery, ordering, fan-out, branch identity, verification, the PR contract and the deny-list.", milestoneNumber, milestoneTitle)
 }
 
 // validationComponentSentinel is the AEP_COMPONENT_NAME a validation Job carries.
@@ -498,6 +488,14 @@ type dispatchShape struct {
 // needs the milestone for its branch identity (the platform keys a merged pull
 // request back to its run by an `aep/m<milestone#>-…` branch); it reads it off
 // the issue, which is filed under that milestone at mint time.
+//
+// The reference is `Validates #N` and NOT a GitHub closing keyword. The platform
+// owns the validation task's lifecycle — it reopens the task for the next attempt
+// and must close it even on an ending where no pull request merged at all — and a
+// closing keyword would put two owners on one issue. The reference still has to
+// be there: the auto-merge policy requires a pull request to name an armed issue
+// in the milestone, so a body referencing nothing is read as somebody else's work
+// and never merges. See eventcore/resolves.go.
 func buildValidationPrompt(issueURL string, issueNumber int) string {
-	return fmt.Sprintf("This is a validation task. Work on this GitHub validation issue: %s\n\nFollow the `aep-validation` skill's workflow: read the validation context, author and run the e2e tests against the deployed system, commit the tests and report, and open a PR whose body includes `Closes #%d` so the platform links it back.", issueURL, issueNumber)
+	return fmt.Sprintf("This is a validation task. Work on this GitHub validation issue: %s\n\nFollow the `aep-validation` skill's workflow: read the validation context, author and run the e2e tests against the deployed system, commit the tests and report, and open a PR whose body includes `Validates #%d` so the platform links it back. Use `Validates`, never a closing keyword such as `Closes` or `Fixes`: the platform closes this task itself.", issueURL, issueNumber)
 }

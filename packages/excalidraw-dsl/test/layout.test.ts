@@ -25,12 +25,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  compileWireframes,
   dslToExcalidraw,
   validateWireframeLayout,
   validateWireframeSyntax,
 } from "../src/index.js";
 
 type El = {
+  id: string;
   type: string;
   x: number;
   y: number;
@@ -301,4 +303,143 @@ test("row-in-card passes the syntax gate and the layout oracle", () => {
 `;
   assert.deepEqual(validateWireframeSyntax(dsl), []);
   assert.deepEqual(validateWireframeLayout(dsl), []);
+});
+
+
+test("screens stack vertically: every screen frame shares x=0 and each starts below the previous", () => {
+  const els = compile(`screen One
+  heading "First"
+screen Two
+  heading "Second"
+screen Three
+  heading "Third"
+`);
+  const frames = els
+    .filter((e) => e.type === "rectangle" && e.width === 1280)
+    .sort((a, b) => a.y - b.y);
+  assert.equal(frames.length, 3);
+  assert.ok(frames.every((f) => f.x === 0), "all frames at x=0");
+  assert.ok(frames[1]!.y >= frames[0]!.y + frames[0]!.height, "second below first");
+  assert.ok(frames[2]!.y >= frames[1]!.y + frames[1]!.height, "third below second");
+});
+
+test("a screen's element ids survive an earlier screen growing taller", () => {
+  // Screens stack in one column, so growing an earlier screen moves every
+  // later one down the canvas. Identity is screen-relative precisely so that
+  // move does not re-id untouched elements — a viewer diffing two scenes
+  // would otherwise read every screen below the edit as wholly replaced.
+  const filler = Array.from({ length: 20 }, (_, i) => `  text "line ${i}"`).join("\n");
+  const idsOfTwo = (dsl: string) =>
+    compile(dsl)
+      .filter((e) => (e as { customData?: { screen?: string } }).customData?.screen === "Two")
+      .map((e) => e.id)
+      .sort();
+
+  const before = idsOfTwo(`screen One\n  heading "A"\nscreen Two\n  heading "B"\n`);
+  const after = idsOfTwo(`screen One\n  heading "A"\n${filler}\nscreen Two\n  heading "B"\n`);
+  assert.ok(before.length > 0);
+  assert.deepEqual(after, before, "screen Two's ids must not change when screen One grows");
+});
+
+test("every element carries customData.screen naming the screen it belongs to", () => {
+  const els = compile(`screen Login "Sign in"
+  button "Go" primary
+screen Home "Landing"
+  heading "Welcome"
+`);
+  const byScreen = new Map<string, number>();
+  for (const e of els) {
+    const s = (e as { customData?: { screen?: string } }).customData?.screen;
+    assert.ok(s, `element ${e.id} lacks customData.screen`);
+    byScreen.set(s!, (byScreen.get(s!) ?? 0) + 1);
+  }
+  assert.ok((byScreen.get("Login") ?? 0) > 0);
+  assert.ok((byScreen.get("Home") ?? 0) > 0);
+  assert.equal(byScreen.size, 2);
+});
+
+
+// ---------- compileWireframes: the compiler reports which screens changed ----------
+
+const SHOP = `screen One
+  heading "A"
+screen Two
+  button "Go"
+screen Three
+  heading "C"
+`;
+
+test("compileWireframes with no previous result reports no changed screens", () => {
+  const r = compileWireframes(SHOP, null);
+  assert.ok(r.ok);
+  assert.deepEqual(r.changedScreens, []);
+  assert.ok(JSON.parse(r.json).elements.length > 0);
+});
+
+test("compileWireframes reports only the screen whose content changed", () => {
+  const first = compileWireframes(SHOP, null);
+  assert.ok(first.ok);
+  const second = compileWireframes(SHOP.replace('button "Go"', 'button "Go" primary'), first);
+  assert.ok(second.ok);
+  assert.deepEqual(second.changedScreens, ["Two"]);
+});
+
+test("compileWireframes does not report screens that merely moved down", () => {
+  const first = compileWireframes(SHOP, null);
+  assert.ok(first.ok);
+  const filler = Array.from({ length: 20 }, (_, i) => `  text "line ${i}"`).join("\n");
+  const grown = SHOP.replace('  heading "A"', `  heading "A"\n${filler}`);
+  const second = compileWireframes(grown, first);
+  assert.ok(second.ok);
+  assert.deepEqual(second.changedScreens, ["One"], "Two and Three shifted but did not change");
+});
+
+test("compileWireframes reports an added screen and a removed screen", () => {
+  const first = compileWireframes(SHOP, null);
+  assert.ok(first.ok);
+  const added = compileWireframes(SHOP + 'screen Four\n  heading "D"\n', first);
+  assert.ok(added.ok);
+  assert.deepEqual(added.changedScreens, ["Four"]);
+  const removed = compileWireframes(SHOP.replace('screen Three\n  heading "C"\n', ""), first);
+  assert.ok(removed.ok);
+  assert.deepEqual(removed.changedScreens, ["Three"]);
+});
+
+test("compileWireframes ranks a removed screen by where it USED to sit", () => {
+  // Remove Two and edit Three in one step. Two is gone from the new compile, so
+  // its position is only knowable from the previous one — without that it sorts
+  // last and the report claims Three changed before Two, contradicting the
+  // canvas the reader was looking at.
+  const first = compileWireframes(SHOP, null);
+  assert.ok(first.ok);
+  const next = compileWireframes(
+    SHOP.replace('screen Two\n  button "Go"\n', "").replace('heading "C"', 'heading "C2"'),
+    first,
+  );
+  assert.ok(next.ok);
+  assert.deepEqual(next.changedScreens, ["Two", "Three"]);
+});
+
+test("compileWireframes reports nothing when the source is unchanged", () => {
+  const first = compileWireframes(SHOP, null);
+  assert.ok(first.ok);
+  const again = compileWireframes(SHOP, first);
+  assert.ok(again.ok);
+  assert.deepEqual(again.changedScreens, []);
+});
+
+test("compileWireframes reports changed screens in canvas order", () => {
+  const first = compileWireframes(SHOP, null);
+  assert.ok(first.ok);
+  const both = compileWireframes(
+    SHOP.replace('heading "C"', 'heading "C2"').replace('heading "A"', 'heading "A2"'),
+    first,
+  );
+  assert.ok(both.ok);
+  assert.deepEqual(both.changedScreens, ["One", "Three"]);
+});
+
+test("compileWireframes fails like tryDslToExcalidraw on an empty source", () => {
+  const r = compileWireframes("", null);
+  assert.equal(r.ok, false);
 });

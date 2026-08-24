@@ -37,11 +37,17 @@ let prototypeMountCount = 0;
 
 // The heavy lazy canvas is irrelevant here — record what model/initialScreen it receives.
 vi.mock("@aep/ui-excalidraw-view", () => ({
-  PrototypeView: (p: { model: { screens: unknown[] }; initialScreen?: string }) => {
+  PrototypeView: (p: { model: { screens: unknown[] }; initialScreen?: string; initialFlow?: string }) => {
     useEffect(() => {
       prototypeMountCount += 1;
     }, []);
-    return <div data-testid="prototype" data-initial={p.initialScreen ?? ""} />;
+    return (
+      <div
+        data-testid="prototype"
+        data-initial={p.initialScreen ?? ""}
+        data-flow={p.initialFlow ?? ""}
+      />
+    );
   },
 }));
 
@@ -60,6 +66,7 @@ const FILES = [
 ];
 const MODEL = {
   screens: [{ name: "Login", width: 1280, height: 800, sceneJson: "{}", hotspots: [] }],
+  flows: [{ name: "Admin path", screens: ["Login"] }],
 };
 
 beforeEach(() => {
@@ -73,7 +80,13 @@ describe("PrototypePage", () => {
     mockFiles.mockReturnValue({ data: FILES, isPending: false, isError: false });
     mockDerivedPrototype.mockReturnValue({ model: MODEL, isPending: false, isError: false });
     render(
-      <PrototypePage projectName="p" component="shop" screen="Login" onScreenChange={vi.fn()} />,
+      <PrototypePage
+        projectName="p"
+        component="shop"
+        screen="Login"
+        onScreenChange={vi.fn()}
+        onFlowChange={vi.fn()}
+      />,
     );
     expect(screen.getByTestId("prototype")).toHaveAttribute("data-initial", "Login");
   });
@@ -81,35 +94,70 @@ describe("PrototypePage", () => {
   it("explains when the component has no wireframes", () => {
     mockFiles.mockReturnValue({ data: [], isPending: false, isError: false });
     mockDerivedPrototype.mockReturnValue({ model: null, isPending: false, isError: false });
-    render(<PrototypePage projectName="p" component="shop" onScreenChange={vi.fn()} />);
+    render(
+      <PrototypePage
+        projectName="p"
+        component="shop"
+        onScreenChange={vi.fn()}
+        onFlowChange={vi.fn()}
+      />,
+    );
     expect(screen.getByText(/no wireframes/i)).toBeInTheDocument();
   });
 
   it("shows a spinner while the spec files are loading", () => {
     mockFiles.mockReturnValue({ data: undefined, isPending: true, isError: false });
     mockDerivedPrototype.mockReturnValue({ model: null, isPending: false, isError: false });
-    render(<PrototypePage projectName="p" component="shop" onScreenChange={vi.fn()} />);
+    render(
+      <PrototypePage
+        projectName="p"
+        component="shop"
+        onScreenChange={vi.fn()}
+        onFlowChange={vi.fn()}
+      />,
+    );
     expect(screen.getByLabelText(/loading/i)).toBeInTheDocument();
   });
 
   it("shows an error alert when the spec files fail to load", () => {
     mockFiles.mockReturnValue({ data: undefined, isPending: false, isError: true });
     mockDerivedPrototype.mockReturnValue({ model: null, isPending: false, isError: false });
-    render(<PrototypePage projectName="p" component="shop" onScreenChange={vi.fn()} />);
+    render(
+      <PrototypePage
+        projectName="p"
+        component="shop"
+        onScreenChange={vi.fn()}
+        onFlowChange={vi.fn()}
+      />,
+    );
     expect(screen.getByRole("alert")).toBeInTheDocument();
   });
 
   it("shows a spinner while the prototype model is deriving", () => {
     mockFiles.mockReturnValue({ data: FILES, isPending: false, isError: false });
     mockDerivedPrototype.mockReturnValue({ model: null, isPending: true, isError: false });
-    render(<PrototypePage projectName="p" component="shop" onScreenChange={vi.fn()} />);
+    render(
+      <PrototypePage
+        projectName="p"
+        component="shop"
+        onScreenChange={vi.fn()}
+        onFlowChange={vi.fn()}
+      />,
+    );
     expect(screen.getByLabelText(/loading/i)).toBeInTheDocument();
   });
 
   it("explains when the wireframe could not be rendered as a prototype", () => {
     mockFiles.mockReturnValue({ data: FILES, isPending: false, isError: false });
     mockDerivedPrototype.mockReturnValue({ model: null, isPending: false, isError: false });
-    render(<PrototypePage projectName="p" component="shop" onScreenChange={vi.fn()} />);
+    render(
+      <PrototypePage
+        projectName="p"
+        component="shop"
+        onScreenChange={vi.fn()}
+        onFlowChange={vi.fn()}
+      />,
+    );
     expect(screen.getByText(/could not be rendered/i)).toBeInTheDocument();
   });
 
@@ -117,7 +165,12 @@ describe("PrototypePage", () => {
     mockFiles.mockReturnValue({ data: FILES, isPending: false, isError: false });
     mockDerivedPrototype.mockReturnValue({ model: MODEL, isPending: false, isError: false });
     const { rerender } = render(
-      <PrototypePage projectName="p" component="shop" onScreenChange={vi.fn()} />,
+      <PrototypePage
+        projectName="p"
+        component="shop"
+        onScreenChange={vi.fn()}
+        onFlowChange={vi.fn()}
+      />,
     );
     expect(prototypeMountCount).toBe(1);
 
@@ -128,12 +181,48 @@ describe("PrototypePage", () => {
       isError: false,
     });
     mockDerivedPrototype.mockReturnValue({
-      model: { screens: [...MODEL.screens] },
+      model: { screens: [...MODEL.screens], flows: [...MODEL.flows] },
       isPending: false,
       isError: false,
     });
-    rerender(<PrototypePage projectName="p" component="shop" onScreenChange={vi.fn()} />);
+    rerender(
+      <PrototypePage
+        projectName="p"
+        component="shop"
+        onScreenChange={vi.fn()}
+        onFlowChange={vi.fn()}
+      />,
+    );
 
     expect(prototypeMountCount).toBe(2);
+  });
+
+  it("passes the deep-linked flow through to the prototype", () => {
+    mockFiles.mockReturnValue({ data: FILES, isPending: false, isError: false });
+    mockDerivedPrototype.mockReturnValue({ model: MODEL, isPending: false, isError: false });
+    render(
+      <PrototypePage
+        projectName="p"
+        component="shop"
+        flow="Admin path"
+        onScreenChange={vi.fn()}
+        onFlowChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId("prototype")).toHaveAttribute("data-flow", "Admin path");
+  });
+
+  it("omits the flow when the link carries none, letting the viewer pick the first", () => {
+    mockFiles.mockReturnValue({ data: FILES, isPending: false, isError: false });
+    mockDerivedPrototype.mockReturnValue({ model: MODEL, isPending: false, isError: false });
+    render(
+      <PrototypePage
+        projectName="p"
+        component="shop"
+        onScreenChange={vi.fn()}
+        onFlowChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId("prototype")).toHaveAttribute("data-flow", "");
   });
 });

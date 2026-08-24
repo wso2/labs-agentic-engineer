@@ -26,10 +26,20 @@
 //   "teammate-turn"  — same history, plus a running turn a teammate started
 //                      (its triggering message is in the history; the reply
 //                      streams from the same scripted SSE builder below).
-//   unset            — unchanged: empty rehydrate, no active turn.
+//   unset            — unchanged: empty rehydrate, no active turn, EXCEPT that
+//                      messages sent in this session are echoed back on
+//                      rehydrate so chat attachments (#428) can be verified
+//                      surviving a reload — the real journal does this
+//                      server-side.
 
 import { http, HttpResponse } from "msw";
 import { ANSWER_PREFIX, ANSWERS_PREFIX } from "@aep/agent-stream";
+import {
+  MAX_ATTACHMENT_FILES,
+  MAX_ATTACHMENT_FILE_BYTES,
+  MAX_CHAT_ATTACHMENT_TOTAL_BYTES,
+} from "../../features/agent-chat/lib/chatAttachments";
+import { isAcceptedAttachment } from "../../lib/attachments";
 import {
   activeTeammateTurn,
   multiuserHistory,
@@ -44,6 +54,71 @@ let turnCounter = 0;
 // shared Yjs map (and a closed one would suppress a fresh ask).
 const instanceId = Math.random().toString(36).slice(2, 8);
 const turnInstruction = new Map<string, string>();
+
+/**
+ * Messages sent in this browser, per conversation — the mock stand-in for the
+ * server's turn journal (#428/#463). It exists so the rehydrate GET can echo a
+ * sent message back with its attachment NAMES. Names only, never bytes: that is
+ * exactly the journal's contract (ADR-0019).
+ *
+ * PERSISTED to localStorage, for the same reason handlers/settings.ts persists
+ * the org connection: the worker's memory dies with a reload, and the one thing
+ * this map exists to demonstrate is that attachment chips SURVIVE a reload. An
+ * in-memory map makes the feature look broken in mock mode while it is correct
+ * in production — the worst possible mock.
+ */
+interface JournalMessage {
+  role: string;
+  content: string;
+  attachments?: string[];
+}
+
+const JOURNAL_KEY = "aep:mock:chat-journal";
+
+function readJournal(): Record<string, JournalMessage[]> {
+  try {
+    const raw = localStorage.getItem(JOURNAL_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, JournalMessage[]>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function appendToJournal(conversationId: string, message: JournalMessage): void {
+  const journal = readJournal();
+  journal[conversationId] = [...(journal[conversationId] ?? []), message];
+  try {
+    localStorage.setItem(JOURNAL_KEY, JSON.stringify(journal));
+  } catch {
+    /* quota — non-fatal in mock mode */
+  }
+}
+
+/**
+ * The server's attachment guard, mirrored for mock mode. Returns the rejection
+ * message, or null when the set is admissible. Order matches the real handler:
+ * count, then per-file type and size, then the whole message's total.
+ */
+function rejectAttachments(files: File[]): string | null {
+  if (files.length === 0) return "no files in the multipart request";
+  if (files.length > MAX_ATTACHMENT_FILES) {
+    return `at most ${MAX_ATTACHMENT_FILES} files per message`;
+  }
+  let total = 0;
+  for (const file of files) {
+    if (!isAcceptedAttachment(file.name)) {
+      return `${file.name}: unsupported type`;
+    }
+    if (file.size > MAX_ATTACHMENT_FILE_BYTES) {
+      return `${file.name} exceeds the 5 MiB per-file limit`;
+    }
+    total += file.size;
+  }
+  if (total > MAX_CHAT_ATTACHMENT_TOTAL_BYTES) {
+    return `attachments total ${total} bytes, over the 15 MiB per-message limit`;
+  }
+  return null;
+}
 
 function chatScenario(): ChatScenario | null {
   return localStorage.getItem("aep:mock:chat") as ChatScenario | null;
@@ -72,17 +147,40 @@ function sse(frames: unknown[]): Response {
 
 // Project-scoped threads (#430): the console resolves the current thread
 // before it can send or rehydrate ANYTHING, so without these two handlers the
-// whole mock-mode chat surface is dead (composer disabled forever). One
-// stable id per project per page instance; rotation mints a fresh one.
-const currentThread = new Map<string, string>();
+// whole mock-mode chat surface is dead (composer disabled forever).
+//
+// One stable id per project, PERSISTED — rotation mints a fresh one. Persisted
+// because the real BFF owns thread existence in `project_conversations`, so a
+// reload lands on the SAME thread; an id minted per page instance meant the
+// rehydrate path could not be exercised in mock mode AT ALL, since every reload
+// addressed a thread nothing had ever been sent to. (`instanceId` still varies
+// per instance for TURN ids, which is deliberate — see its comment above.)
+const THREADS_KEY = "aep:mock:chat-threads";
+
+function readThreads(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(THREADS_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeThread(projectName: string, id: string): void {
+  try {
+    localStorage.setItem(THREADS_KEY, JSON.stringify({ ...readThreads(), [projectName]: id }));
+  } catch {
+    /* quota — non-fatal in mock mode */
+  }
+}
+
 let threadCounter = 0;
 function threadFor(projectName: string): string {
-  let id = currentThread.get(projectName);
-  if (!id) {
-    threadCounter += 1;
-    id = `mock-thread-${instanceId}-${threadCounter}`;
-    currentThread.set(projectName, id);
-  }
+  const existing = readThreads()[projectName];
+  if (existing) return existing;
+  threadCounter += 1;
+  const id = `mock-thread-${instanceId}-${threadCounter}`;
+  writeThread(projectName, id);
   return id;
 }
 function threadView(id: string) {
@@ -105,19 +203,60 @@ export const agentChatHandlers = [
     const projectName = params.projectName as string;
     threadCounter += 1;
     const fresh = `mock-thread-${instanceId}-${threadCounter}`;
-    currentThread.set(projectName, fresh);
+    // Persisted like the initial mint, so the rotation survives a reload the way
+    // a server-side rotation does. The journal is keyed by conversation id, so
+    // the fresh thread starts empty with no separate clear — which is also the
+    // real guarantee: attachments are conversation-scoped (ADR-0019).
+    writeThread(projectName, fresh);
     return HttpResponse.json(threadView(fresh), { status: 201 });
   }),
 
-  http.post("*/api/v1/projects/:projectName/agents/:conversationId/messages", async ({ request }) => {
-    const body = (await request.json()) as { instruction?: string };
+  http.post("*/api/v1/projects/:projectName/agents/:conversationId/messages", async ({ request, params }) => {
+    // Two content types (#428): JSON as before, multipart when the message
+    // carries attachments. Reading `request.json()` unconditionally would throw
+    // on the multipart body, so the branch is on the header, not a try/catch.
+    const isMultipart = (request.headers.get("content-type") ?? "").includes("multipart/form-data");
+    let instruction = "";
+    let attachments: string[] = [];
+    if (isMultipart) {
+      const form = await request.formData();
+      instruction = String(form.get("instruction") ?? "");
+      const files = form.getAll("files").filter((f): f is File => f instanceof File);
+      // The server's own guard, mirrored: the console screens first, so a
+      // rejection reaching here means a hostile or buggy client. Modelled so the
+      // 400 path is exercisable in mock mode rather than only in production.
+      const rejection = rejectAttachments(files);
+      if (rejection) {
+        return HttpResponse.json({ code: "invalid_request", message: rejection }, { status: 400 });
+      }
+      attachments = files.map((f) => f.name);
+    } else {
+      const body = (await request.json()) as { instruction?: string };
+      instruction = body.instruction ?? "";
+    }
+    // The real server refuses a blank instruction BEFORE the turn row exists
+    // (the shared TurnSpec validator rejects an empty chat turn), so mock mode
+    // must too — otherwise an attachment-only send looks supported here and
+    // 400s in production.
+    if (instruction.trim() === "") {
+      return HttpResponse.json(
+        { code: "invalid_request", message: "instruction is required" },
+        { status: 400 },
+      );
+    }
     turnCounter += 1;
     const turnId = `mock-turn-${instanceId}-${turnCounter}`;
-    turnInstruction.set(turnId, body.instruction ?? "");
+    turnInstruction.set(turnId, instruction);
+    // Record it the way the journal would, so a reload shows the chips again.
+    appendToJournal(params.conversationId as string, {
+      role: "user",
+      content: instruction,
+      ...(attachments.length > 0 ? { attachments } : {}),
+    });
     return HttpResponse.json({ turnId }, { status: 202 });
   }),
 
-  http.get("*/api/v1/projects/:projectName/agents/:conversationId/messages", () => {
+  http.get("*/api/v1/projects/:projectName/agents/:conversationId/messages", ({ params }) => {
     const scenario = chatScenario();
     if (scenario === "multiuser") {
       return HttpResponse.json({ status: "done", messages: multiuserHistory });
@@ -125,7 +264,13 @@ export const agentChatHandlers = [
     if (scenario === "teammate-turn") {
       return HttpResponse.json({ status: "done", messages: teammateTurnHistory });
     }
-    return HttpResponse.json({ status: "done", messages: [] });
+    // Echo this session's own sends, attachment names included — the journal's
+    // job in production. Empty for a conversation nothing was sent to, which is
+    // the pre-#428 behaviour unchanged.
+    return HttpResponse.json({
+      status: "done",
+      messages: readJournal()[params.conversationId as string] ?? [],
+    });
   }),
 
   http.get("*/api/v1/projects/:projectName/turns/active", () => {

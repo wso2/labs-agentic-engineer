@@ -23,7 +23,7 @@ import (
 )
 
 // TestIsTerminalRunState pins the settled/unsettled split every guarded run
-// transition and the spec-run mutex are written against. The two must agree: a
+// transition and the build mutex are written against. The two must agree: a
 // state the helper calls terminal is a state the mutex index must NOT count and
 // no mutator may write through.
 func TestIsTerminalRunState(t *testing.T) {
@@ -74,6 +74,66 @@ func TestRunBudgetLimits(t *testing.T) {
 	for _, c := range cases {
 		if c.got != c.want {
 			t.Errorf("%s budget = %d, want %d", c.name, c.got, c.want)
+		}
+	}
+}
+
+// TestSettleClosesTheMilestone pins the LIFE OF A VERSION in one table: which
+// ending finishes the version, and which one merely finishes a run.
+//
+// The rule is here rather than at each settle site because one function settles
+// all three workflows, and a plain "succeeded closes it" closed the milestone at
+// the dev run's HAND-OFF — over the validation task it had just minted. That is
+// not cosmetic: the validation agent discovers its work with `gh issue list
+// --milestone`, which resolves by title and sees only OPEN milestones, so the one
+// agent meant to work that task could not find it.
+func TestSettleClosesTheMilestone(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name            string
+		kind, state     string
+		awaitingVerdict bool
+		want            bool
+	}{
+		// The HAND-OFF. Deployed and unjudged is not finished.
+		{"a dev run that filed the validation task leaves the milestone open",
+			delivery.RunKindDev, delivery.RunStateSucceeded, true, false},
+		// The one dev ending that finishes a version: nothing will ever judge it,
+		// so nothing is being waited for.
+		{"a dev run with no oracle to ask closes it",
+			delivery.RunKindDev, delivery.RunStateSucceeded, false, true},
+		// The GREEN ENDING. A succeeded validation run is one by construction —
+		// every fatal verdict settles the run failed.
+		{"a validation run's green ending closes it",
+			delivery.RunKindValidation, delivery.RunStateSucceeded, true, true},
+		// A defect fixed inside a version somebody else delivered says nothing
+		// about that version.
+		{"a task run never closes it",
+			delivery.RunKindTask, delivery.RunStateSucceeded, false, false},
+		{"a task run that reopened the validation task still never closes it",
+			delivery.RunKindTask, delivery.RunStateSucceeded, true, false},
+		// FAILED stays open, of every kind: the way forward is more work in the
+		// same version.
+		{"a failed build leaves it open", delivery.RunKindDev, delivery.RunStateFailed, false, false},
+		{"a failing verdict leaves it open", delivery.RunKindValidation, delivery.RunStateFailed, true, false},
+		{"a failed bug-fix run leaves it open", delivery.RunKindTask, delivery.RunStateFailed, false, false},
+		// CANCEL is the abandonment rule, and only a build's abandons the increment.
+		{"a cancelled build abandons the increment", delivery.RunKindDev, delivery.RunStateCancelled, false, true},
+		{"a cancelled validation run withdraws no release",
+			delivery.RunKindValidation, delivery.RunStateCancelled, true, false},
+		{"a cancelled bug-fix run withdraws no release",
+			delivery.RunKindTask, delivery.RunStateCancelled, false, false},
+		// BLOCKED is a wait somebody else clears, not an ending.
+		{"a quota block is not an ending", delivery.RunKindDev, delivery.RunStateBlocked, false, false},
+		// A non-terminal state never reaches this, and answers the safe way if it
+		// somehow does.
+		{"a running run finishes nothing", delivery.RunKindDev, delivery.RunStateRunning, false, false},
+	}
+	for _, c := range cases {
+		if got := delivery.SettleClosesTheMilestone(c.kind, c.state, c.awaitingVerdict); got != c.want {
+			t.Errorf("%s: SettleClosesTheMilestone(%q, %q, %v) = %v, want %v",
+				c.name, c.kind, c.state, c.awaitingVerdict, got, c.want)
 		}
 	}
 }

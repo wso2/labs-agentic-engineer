@@ -31,4 +31,15 @@
 // The root is intentionally near-empty today: `validation` (S2S validation
 // context/credentials, no cross-edges) is the first feature to land and needs
 // no shared kernel. The kernel fills in as execution/devflow arrive.
+//
+// # The issue-write surface
+//
+// One piece of the kernel is BEHAVIOUR rather than a type: IssueWriter
+// (issue_writer.go), through which every issue the domain mints, closes,
+// reopens, comments on or labels is written. It is here for the same reason the
+// label vocabulary is — the event plane, the plan turn, the build click and
+// validation all file issues, and no two of them may import each other — and
+// keeping it here is what makes a change to the label vocabulary or the dedupe
+// contract one edit instead of one per sub-package. Detection stays with the
+// detector; only the write moved.
 package delivery

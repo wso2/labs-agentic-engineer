@@ -156,6 +156,23 @@ func (w *ExecWatcher) Sweep(ctx context.Context) error {
 			w.finishLegacyCodingExecution(ctx, row)
 			continue
 		}
+		// `provision` and `ops` name no WorkflowRun, and their vocabulary says so:
+		// both are documented "No PR/build", and a provision row is "Finished by
+		// the resource-readiness watcher" (taskmeta.KindProvision). Its RunName is
+		// a ReleaseBinding name — a different sort of object entirely.
+		//
+		// Without this the watcher asked GetWorkflowRun for a binding name, which
+		// answers not-found by construction: a WARN per dependency on every pass
+		// for as long as the row was live, describing a failure that had not
+		// happened. Skipping is not merely quieter — reconcile() would otherwise be
+		// one API shape away from settling a row this watcher does not own.
+		//
+		// `coding` stays IN: a pre-migration coding execution really was a
+		// WorkflowRun, and the `ca-` branch above is what separates the current
+		// Job-Component dispatch from it.
+		if row.Kind == string(taskmeta.KindProvision) || row.Kind == string(taskmeta.KindOps) {
+			continue
+		}
 		run, gerr := w.oc.GetWorkflowRun(ctx, row.OrgID, row.RunName)
 		if gerr != nil {
 			slog.WarnContext(ctx, "exec watcher: get workflow run failed", "run", row.RunName, "error", gerr)

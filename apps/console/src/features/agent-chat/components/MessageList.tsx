@@ -16,7 +16,8 @@
  * under the License.
  */
 
-import { Avatar, Box, Stack, Typography, alpha } from "@wso2/oxygen-ui";
+import { Avatar, Box, Chip, Stack, Typography, alpha } from "@wso2/oxygen-ui";
+import { Paperclip } from "@wso2/oxygen-ui-icons-react";
 import type { FeedBlock } from "../feed";
 import { TurnBlock } from "./TurnBlock";
 import { WorkingIndicator } from "./WorkingIndicator";
@@ -104,6 +105,37 @@ function UserBlock({ block }: { block: Extract<FeedBlock, { kind: "user" }> }) {
         >
           {message.content}
         </Typography>
+        {/* What went up with this message (#428). Names only — the bytes are
+            conversation-scoped model content the platform never stores
+            (ADR-0019), so a chip is a record, not a download link. Wraps rather
+            than scrolls: a sent message is history and may be any height, unlike
+            the composer, which must not grow. */}
+        {message.attachments && message.attachments.length > 0 && (
+          <Stack
+            direction="row"
+            spacing={0.5}
+            useFlexGap
+            sx={{ flexWrap: "wrap", mt: 1 }}
+            data-testid="user-message-attachments"
+          >
+            {message.attachments.map((name) => (
+              <Chip
+                key={name}
+                size="small"
+                variant="outlined"
+                icon={<Paperclip size={12} />}
+                label={name}
+                title={name}
+                sx={{
+                  maxWidth: "100%",
+                  opacity: failed ? 0.6 : 1,
+                  "& .MuiChip-icon": { ml: 0.75, mr: -0.25, flexShrink: 0 },
+                  "& .MuiChip-label": { overflow: "hidden", textOverflow: "ellipsis" },
+                }}
+              />
+            ))}
+          </Stack>
+        )}
       </Box>
     </Box>
   );

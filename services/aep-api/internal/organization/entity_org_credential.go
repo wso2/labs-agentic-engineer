@@ -51,16 +51,11 @@ type OrgCredential struct {
 	PrevIdentityLogin *string        `gorm:"type:text;column:prev_identity_login" json:"prevIdentityLogin,omitempty"`
 
 	// Secret-ref triplet + write timestamp. See OrgAnthropicCredential for
-	// lifecycle. secret_ref_* is the provider-neutral name (EXPAND);
-	// sm_api_* is kept for dual-write until phase 09 CONTRACT.
+	// lifecycle.
 	SecretRefName      *string    `gorm:"type:text;column:secret_ref_name" json:"-"`
 	SecretRefKVPath    *string    `gorm:"type:text;column:secret_ref_kv_path" json:"-"`
 	SecretRefProperty  *string    `gorm:"type:text;column:secret_ref_property" json:"-"`
 	SecretRefWrittenAt *time.Time `gorm:"column:secret_ref_written_at" json:"-"`
-	SMAPISecretRefName *string    `gorm:"type:text;column:sm_api_secret_ref_name" json:"-"`
-	SMAPIKVPath        *string    `gorm:"type:text;column:sm_api_kv_path" json:"-"`
-	SMAPIProperty      *string    `gorm:"type:text;column:sm_api_property" json:"-"`
-	SMAPIWrittenAt     *time.Time `gorm:"column:sm_api_written_at" json:"-"`
 }
 
 // TableName pins the underlying table to org_credentials. Without this

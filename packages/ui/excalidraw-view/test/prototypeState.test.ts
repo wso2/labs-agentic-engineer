@@ -39,3 +39,13 @@ test("back on an empty stack is a no-op", () => {
   const before = { current: "Login", stack: [] };
   assert.equal(prototypeNavReducer(before, { type: "back" }), before);
 });
+
+test("reset jumps to a screen and clears the back stack — a flow switch starts a fresh walkthrough", () => {
+  const s = prototypeNavReducer({ current: "Detail", stack: ["Login", "List"] }, { type: "reset", to: "AdminQueue" });
+  assert.deepEqual(s, { current: "AdminQueue", stack: [] });
+});
+
+test("reset to the screen already shown still clears the stack", () => {
+  const s = prototypeNavReducer({ current: "Login", stack: ["Home"] }, { type: "reset", to: "Login" });
+  assert.deepEqual(s, { current: "Login", stack: [] });
+});

@@ -334,6 +334,24 @@ type ObservabilityConfig struct {
 type PlatformAPIConfig struct {
 	BaseURL    string
 	HostHeader string
+	// DataPlaneGatewayTLS says whether the DATA-PLANE gateway terminates TLS —
+	// not whether this API does, and not which tier this is.
+	//
+	// It exists because OpenChoreo advertises a ReleaseBinding's external URLs
+	// from the endpoint's SHAPE, not from what its gateway serves: a local plane
+	// advertises BOTH an https and an http URL while `gateway.tls.enabled: false`
+	// leaves http as its only listener. A consumer that prefers https then hands
+	// out a URL nothing answers.
+	//
+	// It is stated rather than inferred on purpose. The tier was the obvious
+	// proxy and is the wrong fact: a dev-tier plane WITH TLS would be told to
+	// prefer plain http, which is the same bug mirrored. The single-cluster
+	// values file (deployments/single-cluster/values-dp.yaml) is what this must
+	// agree with, so the two are one edit apart.
+	//
+	// Defaults TRUE — every plane whose gateway fronts TLS, which is every one
+	// but local dev.
+	DataPlaneGatewayTLS bool
 }
 
 // TemporalConfig holds connection settings for the Temporal server that runs

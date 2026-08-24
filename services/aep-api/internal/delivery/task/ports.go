@@ -32,9 +32,14 @@ import (
 // providers and tests supply fakes.
 
 // IssueClient is the GitHub issue surface the read path and the plan tap use:
-// list, fetch, create and edit. sourcecontrol.IssueService satisfies it.
+// list, fetch and edit. sourcecontrol.IssueService satisfies it.
+//
+// It does NOT mint. A planned Task is a platform mint like any other and goes
+// through delivery.IssueWriter, so the `aep` label and the milestone assignment
+// are decided in one place for the whole domain. What stays here is the
+// planner's own updateTask surface — retitle, rewrite the body, comment — which
+// acts on issues that already exist and carries no such policy.
 type IssueClient interface {
-	CreateIssue(ctx context.Context, orgID, projectID string, req sourcecontrol.CreateIssueRequest) (*sourcecontrol.IssueResult, error)
 	ListIssues(ctx context.Context, orgID, projectID string, labels []string) ([]sourcecontrol.IssueInfo, error)
 	// GetIssue fetches one issue by number (O(1)); returns sourcecontrol.ErrIssueNotFound
 	// when it doesn't exist. Preferred over ListIssues when the number is known.
@@ -42,7 +47,6 @@ type IssueClient interface {
 	CommentIssue(ctx context.Context, orgID, projectID string, number int, body string) error
 	EditIssueBody(ctx context.Context, orgID, projectID string, number int, body string) error
 	EditIssueTitle(ctx context.Context, orgID, projectID string, number int, title string) error
-	AddLabels(ctx context.Context, orgID, projectID string, number int, labels []string) error
 	// ListMilestoneIssues reads one milestone's issues (pull requests excluded).
 	// The plan turn reads the milestone it is planning INTO so a re-plan and a
 	// crash re-run dedupe against what is already there — the milestone, not a

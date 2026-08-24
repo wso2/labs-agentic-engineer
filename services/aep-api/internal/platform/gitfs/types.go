@@ -106,6 +106,16 @@ type Workspace interface {
 	// Diff is the local `git diff base...head` (three-dot: merge-base to
 	// head), replacing the remote CompareRefs.
 	Diff(ctx context.Context, ref RepoRef, base, head string) (*CompareResult, error)
+
+	// PutReferences replaces the project's stored reference documents — the
+	// files attached on the create view, which are never committed and are
+	// overlaid into each snapshot instead (references.go / console ADR-0017).
+	// A bad name, an oversized document, or too many of them is
+	// ErrReferenceRejected, which handlers map to 400.
+	PutReferences(ctx context.Context, ref RepoRef, docs []ReferenceDoc) error
+	// ListReferences returns the stored document names, sorted. No store —
+	// the ordinary case, since most projects attach nothing — is (nil, nil).
+	ListReferences(ctx context.Context, ref RepoRef) ([]string, error)
 }
 
 // Tx is the staged overlay handed to a Mutate fn. Write/Delete record

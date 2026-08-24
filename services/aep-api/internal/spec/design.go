@@ -221,7 +221,7 @@ func (c DesignComponent) OrgServiceDependsOn() []string {
 // (config-collection) and platform-resource (resource-provisioning). org-service
 // is gated at PROCEED, not dispatch, so it is excluded. Used by the funnel's
 // dependency-kind-aware gate to hold a consumer coding task until each provision
-// dependency's aep:provision issue derives deployed.
+// dependency's `provision` gate issue derives deployed.
 func (c DesignComponent) ProvisionDependsOn() []string {
 	out := make([]string, 0, len(c.Dependencies))
 	for _, d := range c.Dependencies {
@@ -273,12 +273,9 @@ type ExposesAPI struct {
 // two components declaring "the same" external dependency cannot split it
 // into two separate map entries.
 //
-// This is the single source of truth two request-time classification paths
-// read (provisioning.SaveValues and dependencies/resources'
-// secretKeysByName). It MUST stay behaviorally identical to the build path's
-// independently-implemented secretKeysByDep
-// (internal/feature/build/inputs_coordinator.go), which performs the same
-// union-merge, secret-wins accumulation in its own package.
+// This is the single source of truth for build-time authoring, value saving,
+// runner secret resolution, and readiness classification. Keeping every
+// consumer on this helper prevents schema drift between those paths.
 func UnionExternalConfigKeys(comps []DesignComponent) map[string][]ConfigKey {
 	out := map[string][]ConfigKey{}
 	canonName := map[string]string{}        // lower(name) -> first-seen exact name
@@ -315,16 +312,17 @@ func UnionExternalConfigKeys(comps []DesignComponent) map[string][]ConfigKey {
 
 // UnionExternalConfigFor returns the UNION Config[] schema (see
 // UnionExternalConfigKeys) for the external dependency matching depName
-// case-insensitively, or nil when no component in comps declares it. Callers
-// that already know the exact dependency name they want (e.g. SaveValues)
-// use this instead of scanning UnionExternalConfigKeys's full map themselves.
-func UnionExternalConfigFor(comps []DesignComponent, depName string) []ConfigKey {
+// case-insensitively. The boolean distinguishes an external dependency with an
+// empty schema from a dependency that is not declared as external. Callers that
+// already know the exact dependency name they want use this instead of scanning
+// UnionExternalConfigKeys's full map themselves.
+func UnionExternalConfigFor(comps []DesignComponent, depName string) ([]ConfigKey, bool) {
 	for name, cfg := range UnionExternalConfigKeys(comps) {
 		if strings.EqualFold(name, depName) {
-			return cfg
+			return cfg, true
 		}
 	}
-	return nil
+	return nil, false
 }
 
 // DesignComponents is a slice of DesignComponent.

@@ -98,10 +98,22 @@ describe("verdictSentence", () => {
   // otherwise read as the current state of the system. The fix being deployed is a
   // fact: a repeat attempt only exists once the repair shipped.
   it("failed marks its numbers stale while a repeat attempt runs", () => {
-    const s = verdictSentence("failed", counts({ failed: 2, passed: 38 }), "running");
+    const s = verdictSentence("failed", counts({ failed: 2, passed: 38 }), "running", true);
     expect(s).toBe(
       "2 of 40 criteria failed in the last attempt. The implementation has been fixed and deployed. Validation is running again.",
     );
+  });
+
+  // "has been fixed and deployed" is a fact about a REPAIR. A revalidation re-asks
+  // the same question with nothing changed in between, so claiming a fix there would
+  // be false — the clause is said only when the run holding the verdict is the one
+  // running again.
+  it("failed claims no fix when the attempt is a revalidation, not a repair", () => {
+    const s = verdictSentence("failed", counts({ failed: 2, passed: 38 }), "running");
+    expect(s).toBe(
+      "2 of 40 criteria failed in the last attempt. Validation is running again.",
+    );
+    expect(s).not.toContain("fixed and deployed");
   });
 
   // `unreported` gets its OWN live sentences rather than the failed one's ending: the
@@ -128,15 +140,52 @@ describe("verdictSentence", () => {
     expect(s).not.toContain("validation-unreported");
   });
 
-  // A state is only honoured for the two verdicts the loop repeats. Everything else
-  // is final the moment it is written, so its copy must not acquire a mid-loop
-  // ending from a lifecycle value that could only be stale.
-  it("leaves a final verdict's sentence alone whatever state it is given", () => {
+  // `awaiting-fix` can only sit over a fatal verdict, so a green one beside it is
+  // skew — its settled sentence must survive untouched.
+  it("leaves a final verdict's sentence alone under awaiting-fix", () => {
     for (const v of ["passed", "partial", "inconclusive"]) {
       const c = counts({ passed: 35, uncovered: 5 });
       expect(verdictSentence(v, c, "awaiting-fix"), `${v} changed mid-loop`).toBe(
         verdictSentence(v, c),
       );
+    }
+  });
+
+  // A REVALIDATION re-asks a settled version, so a non-fatal verdict can sit under
+  // `running` after all — and its settled sentence would report the last attempt's
+  // result as the current one. Short stale summaries, deliberately WITHOUT the
+  // settled copy's "please validate them manually": the attempt in flight may change
+  // what is left to do by hand.
+  it("marks a green verdict as the last attempt's while a revalidation runs", () => {
+    expect(verdictSentence("passed", counts({ passed: 6, total: 6 }), "running")).toBe(
+      "All 6 criteria passed in the last attempt. Validation is running again.",
+    );
+    expect(
+      verdictSentence("partial", counts({ passed: 4, uncovered: 2, total: 6 }), "running"),
+    ).toBe(
+      "2 of 6 criteria were never covered in the last attempt. Validation is running again.",
+    );
+    expect(
+      verdictSentence("inconclusive", counts({ uncovered: 6, total: 6 }), "running"),
+    ).toBe("No criteria could be automated in the last attempt. Validation is running again.");
+  });
+
+  it("gives the stale summaries a count-free form too", () => {
+    expect(verdictSentence("passed", undefined, "running")).toBe(
+      "Every criterion passed in the last attempt. Validation is running again.",
+    );
+    expect(verdictSentence("partial", undefined, "running")).toBe(
+      "Some criteria were never covered in the last attempt. Validation is running again.",
+    );
+  });
+
+  // None of them advises manual work while the answer is being re-computed.
+  it("drops the manual-validation ask while an attempt is in flight", () => {
+    for (const v of ["partial", "inconclusive"]) {
+      expect(
+        verdictSentence(v, counts({ passed: 4, uncovered: 2, total: 6 }), "running"),
+        `${v} advised manual work mid-attempt`,
+      ).not.toContain("manually");
     }
   });
 
@@ -162,7 +211,7 @@ describe("verdictSentence", () => {
     expect(verdictSentence("failed", undefined, "awaiting-fix")).toBe(
       "At least one criterion failed. The implementation is being fixed. Validation will run again.",
     );
-    expect(verdictSentence("failed", undefined, "running")).toBe(
+    expect(verdictSentence("failed", undefined, "running", true)).toBe(
       "At least one criterion failed in the last attempt. The implementation has been fixed and deployed. Validation is running again.",
     );
   });
@@ -173,6 +222,23 @@ describe("verdictSentence", () => {
     expect(verdictSentence("passed", counts({ total: 1, passed: 1 }))).toBe(
       "Every criterion was covered by a test and passed.",
     );
+  });
+
+  // A FIRST attempt has no verdict yet. Returning "" sent the deployments banner to
+  // its verdict-naming fallback, which rendered "This deployment's verdict:
+  // validating." — a lifecycle value announced as a verdict, the exact defect this
+  // shared copy exists to stop.
+  it("speaks for a first attempt, which has no verdict yet", () => {
+    expect(verdictSentence("", undefined, "running")).toBe(
+      "Nothing reported yet — the validation attempt is still running.",
+    );
+  });
+
+  // `awaiting-fix` cannot reach this path — it requires a fatal verdict — and a
+  // settled state with no verdict has nothing to say.
+  it("still says nothing with no verdict and no lifecycle state", () => {
+    expect(verdictSentence("", undefined, "awaiting-fix")).toBe("");
+    expect(verdictSentence("", undefined)).toBe("");
   });
 
   it("is empty for a verdict it does not speak for", () => {

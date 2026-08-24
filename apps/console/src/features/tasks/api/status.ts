@@ -46,15 +46,28 @@ export function issueStateChip(derivedStatus: string): TaskChip {
 }
 
 // The row's KIND, shown only where it changes how the row should be read.
-// A version's issue list is mostly agent work, so tagging every coding row
-// "Coding" would be noise; a provisioning gate in the same list is not, because
-// it is worked by the PLATFORM rather than by the agent and closes without a
-// pull request. Anything else — including a kind this console has not learned —
-// renders untagged rather than guessing a label for it.
+//
+// It reads the raw `kind` rather than `executorClass`, which is deliberately
+// coarser: planned work, a defect and a merge conflict are all `coding` there
+// because all three are dispatched the same way, and that is exactly the
+// distinction a reader of the list wants back.
+//
+// `development` is the majority of any version's list, so tagging it would be
+// noise — the untagged row IS planned work. The three tagged here each change
+// what the row means: a defect is unplanned work the version picked up, a
+// conflict is a pull request waiting on a rebase rather than on code, and a
+// provisioning gate is worked by the PLATFORM rather than by the agent and
+// closes without a pull request.
+//
+// Anything else — a kind this console has not learned, or an issue carrying
+// none — renders untagged rather than guessing a label for it. That is what
+// lets the platform add a kind without shipping a console change first.
 const CHIP_BY_KIND: Record<string, TaskChip> = {
+  bug: { label: "Defect", tone: "error" },
+  conflict: { label: "Conflict", tone: "warning" },
   provision: { label: "Provisioning", tone: "info" },
 };
 
-export function issueKindChip(executorClass: string): TaskChip | null {
-  return CHIP_BY_KIND[executorClass] ?? null;
+export function issueKindChip(kind: string | undefined): TaskChip | null {
+  return kind ? (CHIP_BY_KIND[kind] ?? null) : null;
 }

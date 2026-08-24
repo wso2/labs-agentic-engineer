@@ -88,6 +88,13 @@ func TestSaveSpec_TagsAtHead(t *testing.T) {
 }
 
 func TestSaveSpec_GateRequirementsMissing(t *testing.T) {
+	// The gate these assert is switched OFF (specGateDisabled), so it refuses
+	// nothing and every assertion below would fail. Skipped by the SAME constant
+	// rather than deleted or weakened: flipping the constant back re-arms the gate
+	// and its tests together, which is what stops the gate returning unguarded.
+	if specGateDisabled {
+		t.Skip("whole-spec gate disabled (specGateDisabled)")
+	}
 	t.Parallel()
 	seed := validSpecSeed()
 	delete(seed, "specs/requirements/prd.md")
@@ -104,6 +111,13 @@ func TestSaveSpec_GateRequirementsMissing(t *testing.T) {
 }
 
 func TestSaveSpec_GateDesignMissing(t *testing.T) {
+	// The gate these assert is switched OFF (specGateDisabled), so it refuses
+	// nothing and every assertion below would fail. Skipped by the SAME constant
+	// rather than deleted or weakened: flipping the constant back re-arms the gate
+	// and its tests together, which is what stops the gate returning unguarded.
+	if specGateDisabled {
+		t.Skip("whole-spec gate disabled (specGateDisabled)")
+	}
 	t.Parallel()
 	r := newRig(t, map[string]string{"specs/requirements/prd.md": "the spec\n"})
 
@@ -118,6 +132,13 @@ func TestSaveSpec_GateDesignMissing(t *testing.T) {
 }
 
 func TestSaveSpec_GateDesignInvalid(t *testing.T) {
+	// The gate these assert is switched OFF (specGateDisabled), so it refuses
+	// nothing and every assertion below would fail. Skipped by the SAME constant
+	// rather than deleted or weakened: flipping the constant back re-arms the gate
+	// and its tests together, which is what stops the gate returning unguarded.
+	if specGateDisabled {
+		t.Skip("whole-spec gate disabled (specGateDisabled)")
+	}
 	t.Parallel()
 	seed := validSpecSeed()
 	// design.json missing the required "description" → SCHEMA_VIOLATION.
@@ -136,6 +157,13 @@ func TestSaveSpec_GateDesignInvalid(t *testing.T) {
 }
 
 func TestSaveSpec_GateAggregatesRequirementsAndDesign(t *testing.T) {
+	// The gate these assert is switched OFF (specGateDisabled), so it refuses
+	// nothing and every assertion below would fail. Skipped by the SAME constant
+	// rather than deleted or weakened: flipping the constant back re-arms the gate
+	// and its tests together, which is what stops the gate returning unguarded.
+	if specGateDisabled {
+		t.Skip("whole-spec gate disabled (specGateDisabled)")
+	}
 	t.Parallel()
 	// Both gates fail at once → ONE SpecValidationError carrying both entries.
 	r := newRig(t, map[string]string{
@@ -253,6 +281,13 @@ func TestValidateSpecAtTag(t *testing.T) {
 }
 
 func TestValidateSpecAtTag_InvalidSpecAtTag(t *testing.T) {
+	// The gate these assert is switched OFF (specGateDisabled), so it refuses
+	// nothing and every assertion below would fail. Skipped by the SAME constant
+	// rather than deleted or weakened: flipping the constant back re-arms the gate
+	// and its tests together, which is what stops the gate returning unguarded.
+	if specGateDisabled {
+		t.Skip("whole-spec gate disabled (specGateDisabled)")
+	}
 	t.Parallel()
 	// A tag cut externally over a design-less tree fails re-validation.
 	r := newRig(t, map[string]string{"specs/requirements/prd.md": "the spec\n"})

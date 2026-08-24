@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Box,
@@ -28,7 +28,7 @@ import {
 } from "@wso2/oxygen-ui";
 import { ExcalidrawView, PrototypeView } from "@aep/ui-excalidraw-view";
 import { useDerivedPrototype, useDerivedWireframe } from "../api/useDerivedDesign";
-import { deriveWireframeScene } from "../derive/deriveWireframe";
+import { deriveLiveWireframe, focusTargets, type LiveCompile } from "../derive/deriveWireframe";
 import { derivePrototypeModel } from "../derive/derivePrototype";
 import type { SpecFileEntry } from "../api/mapping";
 import type { CollabSpec } from "../collab/useCollabSpec";
@@ -65,13 +65,29 @@ export function WireframePanel({
   // from: SpecView renders this panel unkeyed, so the ref survives a move to
   // another component, and untagged it would let component A's last good render
   // stand in for component B's uncompilable source.
-  const lastGoodLive = useRef<{ path: string; scene: string } | null>(null);
-  const liveScene = useMemo(() => {
+  //
+  // The held compile is also the PREVIOUS compile the next one is measured
+  // against: `deriveLiveWireframe` reports which screens changed since it, and
+  // that report is what steers the canvas to the agent's edit (#552). A
+  // failed mid-stream compile leaves the held one in place AND reports no
+  // change, so a half-written frame never moves the viewport.
+  const lastGoodLive = useRef<{ path: string; result: LiveCompile } | null>(null);
+  const live = useMemo(() => {
     if (typeof liveSource !== "string" || liveSource.trim().length === 0) return null;
-    const compiled = deriveWireframeScene(dslPath, liveSource);
-    if (compiled) lastGoodLive.current = { path: dslPath, scene: compiled };
-    return lastGoodLive.current?.path === dslPath ? lastGoodLive.current.scene : null;
+    const previous = lastGoodLive.current?.path === dslPath ? lastGoodLive.current.result : null;
+    const compiled = deriveLiveWireframe(dslPath, liveSource, previous);
+    if (compiled) {
+      lastGoodLive.current = { path: dslPath, result: compiled };
+      return {
+        scene: compiled.json,
+        focusScreens: focusTargets(compiled, previous),
+        screenOrder: compiled.screenOrder,
+      };
+    }
+    const held = lastGoodLive.current?.path === dslPath ? lastGoodLive.current.result : null;
+    return held ? { scene: held.json, focusScreens: [] as string[], screenOrder: held.screenOrder } : null;
   }, [dslPath, liveSource]);
+  const liveScene = live?.scene ?? null;
 
   // Two independent facts, deliberately NOT one flag:
   //   hasLiveContent — the doc has something renderable, so the doc is the
@@ -82,6 +98,40 @@ export function WireframePanel({
   // used to keep the view switch permanently hidden (#348).
   const hasLiveContent = liveScene != null;
   const agentBusy = collab.peers.some((p) => p.kind === "agent");
+
+  // A turn that begins with NO renderable screens is a generation; one that
+  // begins with screens is an edit. Decided at the moment the agent arrives,
+  // because by the time it leaves the doc is full either way.
+  const turnStartedEmpty = useRef<boolean | null>(null);
+  // Starts false, not `agentBusy`: a panel that MOUNTS mid-turn must still
+  // see that turn as having started, or a generation opened mid-draw would
+  // never return to its first screen.
+  const wasBusy = useRef(false);
+  if (agentBusy && !wasBusy.current) turnStartedEmpty.current = !hasLiveContent;
+  // Generation draws top to bottom and the camera follows each new screen, so
+  // it ends on the LAST one — an accident of arrival order. Completing a
+  // generation should read like opening the wireframe: return to the first
+  // screen. An edit turn does NOT: follow-the-edit already put the camera
+  // where the change is, and snapping back would undo that.
+  const generationJustEnded = wasBusy.current && !agentBusy && turnStartedEmpty.current === true;
+  // A turn beginning while the reader is in the prototype takes them to the
+  // canvas — the editing view, and the only one where every kind of change
+  // (content, a new screen, a reshaped flow) is visible and followed. It is a
+  // real mode change, not a render guard: when the turn ends the reader STAYS
+  // on canvas and returns to the prototype by choice. Returning for them is
+  // what used to bounce a mid-review reader back to screen 1.
+  const turnJustStarted = agentBusy && !wasBusy.current;
+  wasBusy.current = agentBusy;
+  useEffect(() => {
+    if (turnJustStarted) setMode("canvas");
+  }, [turnJustStarted]);
+  const focusScreens = useMemo(() => {
+    if (generationJustEnded && live) {
+      const first = live.screenOrder[0];
+      return first ? [first] : [];
+    }
+    return live?.focusScreens ?? [];
+  }, [generationJustEnded, live]);
 
   // Committed fetch: the collab-less base path only (mirrors `usesCollab`
   // disabling the content query for markdown) — passing "" disables it. An
@@ -165,7 +215,13 @@ export function WireframePanel({
           border: 0,
           borderRadius: 999,
           px: 1.5,
-          minHeight: 28,
+          py: 0,
+          // Exact, not a floor: the small ToggleButton's own padding makes its
+          // natural height ~37px, which pushed the settled header to ~57px
+          // while the Drawing-chip header pinned at 48px — an ~8px canvas jump
+          // at every turn boundary. 28px + the pill's 4px + row padding = 48px
+          // in BOTH states.
+          height: 28,
           textTransform: "none",
           fontSize: "0.8125rem",
           color: "text.secondary",
@@ -196,7 +252,12 @@ export function WireframePanel({
   // (fillHeight) sets `flex: 1` on its own root inside the flex column.
   return (
     <Box sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-      {agentBusy && hasLiveContent && (
+      {(showOwnHeader || (agentBusy && hasLiveContent)) && (
+        // ONE header row for both states, at a constant height. The drawing
+        // chip (~24px) and the view switch (~32px) used to live in separate
+        // rows with only their content setting the height, so entering and
+        // leaving a turn resized the header by ~8px and the whole canvas
+        // jumped with it. minHeight pins the row; only the content swaps.
         // The chip means "actively being generated", not "rendered from the
         // live doc" — the doc is ALWAYS the source while collab is up (rooms
         // are seeded), so it MUST key on the peer, not on the live text.
@@ -204,28 +265,19 @@ export function WireframePanel({
           sx={{
             px: 1.5,
             py: 1,
+            minHeight: 48,
             display: "flex",
             alignItems: "center",
+            justifyContent: agentBusy ? "flex-start" : "flex-end",
             borderBottom: 1,
             borderColor: "divider",
           }}
         >
-          <Chip size="small" color="primary" variant="outlined" label="Drawing…" />
-        </Box>
-      )}
-      {showOwnHeader && (
-        <Box
-          sx={{
-            px: 1.5,
-            py: 1,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "flex-end",
-            borderBottom: 1,
-            borderColor: "divider",
-          }}
-        >
-          {viewSwitch}
+          {agentBusy && hasLiveContent ? (
+            <Chip size="small" color="primary" variant="outlined" label="Drawing…" />
+          ) : (
+            viewSwitch
+          )}
         </Box>
       )}
       {mode === "prototype" && showToggle ? (
@@ -241,7 +293,7 @@ export function WireframePanel({
           </Typography>
         )
       ) : hasLiveContent ? (
-        <ExcalidrawView scene={liveScene!} fillHeight />
+        <ExcalidrawView scene={liveScene!} focusScreens={focusScreens} fillHeight />
       ) : (
         <ExcalidrawView key={sha} scene={scene!} fillHeight />
       )}

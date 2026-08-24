@@ -43,8 +43,10 @@ var (
 // RunReader is the run rows this surface serves. Satisfied by
 // delivery.MilestoneRunRepository.
 //
-// Note what is NOT here: no writes. Cancel goes through the supervisor, not the
-// row, because a run's state is the workflow's to change.
+// Note what is NOT here: no state writes. A run's STATE is the workflow's to
+// change, so cancel reaches it through the supervisor's signal; the durable
+// cancellation REQUEST is a different fact and has its own port
+// (CancelRequester).
 type RunReader interface {
 	// MilestoneNumberForTag resolves a `?tag=v<N>` to a milestone number THROUGH
 	// THE RUN ROWS, never by title-matching against GitHub — titles are
@@ -96,6 +98,23 @@ type CycleLogReader interface {
 // cancelled and the caller may retry.
 type RunCanceller interface {
 	CancelRun(ctx context.Context, row *delivery.MilestoneRun) error
+}
+
+// CancelRequester makes a cancellation DURABLE, before it is signalled.
+// Satisfied by delivery.MilestoneRunRepository.
+//
+// It is a separate port from RunCanceller because the two do different things
+// to different stores, in an order that matters: this one records that a person
+// asked, and the supervisor's signal only makes the run notice sooner. Signal
+// delivery is best-effort by construction — the supervisor swallows a failed
+// SignalWorkflow so a dead engine cannot wedge the console — so a cancel that
+// existed ONLY as a signal could vanish silently while the reaper went on to
+// kill the agent, which the loop then reads as agent death.
+//
+// A run that already settled is not an error: it answers (nil, nil), and the
+// cancel is a no-op on work that is already over.
+type CancelRequester interface {
+	RequestCancel(ctx context.Context, runID string) (*delivery.MilestoneRun, error)
 }
 
 // CycleReaper deletes the cancelled run's in-flight agent Component. Satisfied

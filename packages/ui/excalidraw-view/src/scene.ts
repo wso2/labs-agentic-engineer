@@ -17,6 +17,11 @@
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
+// Type-only imports: erased at compile time, so the lazy runtime load of
+// @excalidraw/excalidraw (lazyExcalidraw.ts) is unaffected.
+import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
+import type { ExcalidrawElement } from "@aep/excalidraw-dsl";
+
 export type Scene = { elements?: any; appState?: any; files?: any };
 
 // appState.collaborators is a Map at runtime; a JSON round-trip turns it into a
@@ -46,6 +51,37 @@ export function fitContentToViewport(api: any, elements: any) {
   requestAnimationFrame(() => {
     try {
       api.scrollToContent(elements, { fitToContent: true, viewportZoomFactor: 0.9, animate: false });
+    } catch {
+      /* api torn down */
+    }
+  });
+}
+
+/**
+ * Bring a subset of the scene into view — one screen, or the screens an edit
+ * touched. A slightly tighter zoom factor than the whole-board fit, so a single
+ * screen fills the viewport with a small margin rather than floating in space.
+ *
+ * Typed against Excalidraw's own imperative API (type-only import — erased at
+ * compile time, so the runtime lazy-load is unaffected). The elements are our
+ * compiler's — runtime-compatible with what `scrollToContent` reads (it only
+ * takes bounds), but declared independently, so the library call needs an
+ * explicit unknown-bridge. The cast localises that single seam instead of
+ * untyping the whole signature.
+ */
+export function focusElements(
+  api: ExcalidrawImperativeAPI,
+  elements: readonly ExcalidrawElement[],
+  animate: boolean,
+): void {
+  if (!elements.length) return;
+  requestAnimationFrame(() => {
+    try {
+      api.scrollToContent(elements as unknown as Parameters<ExcalidrawImperativeAPI["scrollToContent"]>[0], {
+        fitToContent: true,
+        viewportZoomFactor: 0.85,
+        animate,
+      });
     } catch {
       /* api torn down */
     }

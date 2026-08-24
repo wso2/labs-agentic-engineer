@@ -28,6 +28,7 @@ import {
   Avatar,
   AvatarGroup,
   Box,
+  Button,
   Chip,
   Dialog,
   DialogActions,
@@ -61,7 +62,6 @@ import { buildFeed, participantsOf, type FeedBlock } from "../feed";
 import { answerableQuestionIds } from "../questionCards";
 import { MessageList } from "./MessageList";
 import { ChatInput } from "./ChatInput";
-import { Button, Menu, MenuItem } from "@wso2/oxygen-ui";
 import {
   DESIGN_COMMAND,
   START_COMMAND,
@@ -77,10 +77,17 @@ const WIDTH_KEY = "aep.chat.panelWidth";
 
 // Empty-state starter prompts — one click prefills the composer (mirrors
 // ProjectCreate's example-prompt pattern, scaled to a chip).
+/**
+ * The empty state is reachable only after **New conversation** (#522 fires the
+ * kickoff at project creation, so the first transcript is never empty), which
+ * means the project already HAS a spec by the time anyone reads this. The
+ * suggestions therefore open a conversation ABOUT that spec rather than offer
+ * to draft one.
+ */
 const SUGGESTIONS = [
-  "Draft the requirements for this project",
-  "Add acceptance criteria to the spec",
-  "Add a returns-policy section",
+  "What's still assumed in this spec?",
+  "Add a feature to this project",
+  "Walk me through the design",
 ] as const;
 
 const clampWidth = (n: number): number =>
@@ -143,6 +150,12 @@ export function AgentChatPanel({
   const author = useCurrentAuthor();
   const navigate = useNavigate();
   const [draft, setDraft] = useState("");
+  // Files attached to the message being composed (#428). Held here, beside the
+  // draft, because they share its lifecycle exactly: both clear on an accepted
+  // send and both SURVIVE a refused one. The bytes exist nowhere but this array
+  // (ADR-0019), so dropping them on a routine 409 would cost the user a re-pick
+  // of every file from disk.
+  const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
 
   const feed = useMemo(
     () => buildFeed(messages, { currentUserId: author.id, activeTurnId }),
@@ -156,13 +169,6 @@ export function AgentChatPanel({
   // delivered user message. One O(n) pass per log change.
   const answerableIds = useMemo(() => answerableQuestionIds(messages), [messages]);
 
-  // The Actions menu (#372): the complete scoped-flow set behind one button.
-  const [actionsAnchor, setActionsAnchor] = useState<HTMLElement | null>(null);
-  const runAction = (instruction: string | null, prefill?: string) => {
-    setActionsAnchor(null);
-    if (instruction) send(instruction);
-    else if (prefill) setDraft(prefill);
-  };
   const awaiting = !isSending && answerableIds.size > 0;
 
   // A teammate's running turn locks the composer (a concurrent send 409s
@@ -353,8 +359,19 @@ export function AgentChatPanel({
     // /start with the captured idea; the agents service owns the wording and
     // the flow's eager skills. Unknown skills surface as the agent's loadSkill
     // not-found (client-side validation is parked, #325).
-    send(draft.trim());
-    setDraft("");
+    //
+    // Attachments ride whatever was typed — the composer does not inspect it, so
+    // a sketch can accompany `/design` (ADR-0019 decision 3). They stay
+    // conversation-scoped in every case, including on `/start`: the create view
+    // remains the only door to the project reference store.
+    void send(draft.trim(), attachedFiles).then((started) => {
+      // Clear ONLY on acceptance. A refused send leaves text and cards exactly
+      // as they were, so retry is one click.
+      if (started) {
+        setDraft("");
+        setAttachedFiles([]);
+      }
+    });
   };
 
   // Rotation is a PROJECT-WIDE act now (#430 D4): it demotes the thread for
@@ -374,6 +391,10 @@ export function AgentChatPanel({
     setConfirmNewOpen(false);
     newConversation();
     setDraft("");
+    // A fresh thread starts clean: attachments are conversation-scoped, so
+    // carrying them into a new one would contradict the only guarantee the
+    // feature makes.
+    setAttachedFiles([]);
   };
 
   return (
@@ -484,8 +505,9 @@ export function AgentChatPanel({
               </Avatar>
               <Typography variant="subtitle2">Hi! I&apos;m your Agent.</Typography>
               <Typography variant="body2" color="text.secondary">
-                Ask me to edit this project&apos;s spec — I join the shared
-                workspace and you can watch the files change live.
+                This is where we talk through what you&apos;re building. Ask
+                about a decision, change what&apos;s in scope, or take up
+                anything I marked as assumed.
               </Typography>
               <Stack
                 direction="row"
@@ -517,45 +539,20 @@ export function AgentChatPanel({
         </Box>
       </Box>
 
-      {/* Composer — the Actions menu (#372) leads the context row, so every
-          scoped launcher sits with the input it feeds. Direct-send items start
-          their interview immediately; prefill items need the user's subject
-          first. */}
+      {/* Composer. The scoped launchers used to sit here behind an `Actions ▾`
+          menu of raw slash commands (#372); each one changes a specific place
+          in the PRD, so each is now offered AT that place as a code lens
+          (#579) — where the subject comes from the line the user clicked
+          rather than from their memory. */}
       <ChatInput
         value={draft}
         onChange={setDraft}
         onSubmit={submit}
+        files={attachedFiles}
+        onFilesChange={setAttachedFiles}
         disabled={inputDisabled}
         contextLabel={displayName ?? projectName}
         hint={hint}
-        actions={
-          <>
-            <Button
-              size="small"
-              variant="outlined"
-              onClick={(e: React.MouseEvent<HTMLElement>) => setActionsAnchor(e.currentTarget)}
-              disabled={inputDisabled}
-              sx={{ flexShrink: 0 }}
-            >
-              Actions ▾
-            </Button>
-            <Menu
-              anchorEl={actionsAnchor}
-              open={actionsAnchor !== null}
-              onClose={() => setActionsAnchor(null)}
-            >
-              <MenuItem onClick={() => runAction("/amend Add a feature")}>+ Feature</MenuItem>
-              <MenuItem onClick={() => runAction("/amend Add an actor")}>+ Actor</MenuItem>
-              <MenuItem onClick={() => runAction(null, "/amend Go deeper on ")}>Go deeper on…</MenuItem>
-              <MenuItem onClick={() => runAction("/amend Resolve the open questions")}>
-                Resolve open questions
-              </MenuItem>
-              <MenuItem onClick={() => runAction("/design Start the next phase — delta pass, protect shipped components")}>
-                Start next phase
-              </MenuItem>
-            </Menu>
-          </>
-        }
       />
       <Dialog open={confirmNewOpen} onClose={() => setConfirmNewOpen(false)} maxWidth="xs" fullWidth>
         <DialogTitle>Start a new conversation?</DialogTitle>

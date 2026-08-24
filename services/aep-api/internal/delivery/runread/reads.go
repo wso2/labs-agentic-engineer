@@ -89,6 +89,7 @@ func runView(row *delivery.MilestoneRun, cycles []delivery.RunCycle) gen.Milesto
 		ID:              row.ID,
 		MilestoneNumber: int64(row.MilestoneNumber),
 		MilestoneTitle:  row.MilestoneTitle,
+		Kind:            gen.MilestoneRunViewKind(row.Kind),
 		Origin:          gen.MilestoneRunViewOrigin(row.Origin),
 		State:           gen.MilestoneRunViewState(row.State),
 		TerminalReason:  row.TerminalReason,

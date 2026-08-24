@@ -49,13 +49,11 @@ var goldenStepOrder = []string{
 	"org_secrets",
 	"per_org_secret_name",
 	"org_anthropic_credentials",
-	"phase3_sm_api_columns",
 	"phase3_thunder_org_uuid",
 	"phase3_coding_agent_logs",
 	"automigrate_git_repository",
 	"git_repositories_composite_unique",
 	"phase7_skills",
-	"phase8_idp_sm_api_columns",
 	"executions",
 	"agent_turns",
 	"tasks_github_native",
@@ -71,6 +69,8 @@ var goldenStepOrder = []string{
 	"phase12_encrypt_credential_columns",
 	"phase13_anthropic_credential_role",
 	"project_conversations",
+	"phase14_drop_sm_api_columns",
+	"milestone_run_kind",
 }
 
 // TestStepOrderGolden pins the ordered list. Steps is a pure builder, so this
@@ -94,6 +94,34 @@ func TestStepOrderGolden(t *testing.T) {
 			t.Errorf("step %d is %q, golden says %q — migration order is load-bearing; "+
 				"if a step moved package, move its call-site, not its position", i, got[i], goldenStepOrder[i])
 		}
+	}
+}
+
+// TestMilestoneRunKindFollowsMilestoneRuns names the ONE ordering constraint the
+// golden list only encodes by position.
+//
+// The kind step backfills milestone_runs and re-keys the build mutex onto the
+// backfilled column, so it must follow the step that owns the table's other
+// partial index — and, more importantly, it must run after AutoMigrate has added
+// the column, which every step in this list does. Stated separately from the
+// golden list because a reader who reorders is told WHY it cannot move, rather
+// than only that it did.
+func TestMilestoneRunKindFollowsMilestoneRuns(t *testing.T) {
+	var runs, kind = -1, -1
+	for i, s := range Steps(nil, "dev", nil) {
+		switch s.Name {
+		case "milestone_runs":
+			runs = i
+		case "milestone_run_kind":
+			kind = i
+		}
+	}
+	if runs < 0 || kind < 0 {
+		t.Fatalf("expected both milestone steps in the list, got indexes (%d, %d)", runs, kind)
+	}
+	if kind <= runs {
+		t.Errorf("milestone_run_kind is at %d and milestone_runs at %d — the kind step re-keys the "+
+			"mutex on a column the earlier steps assume exists", kind, runs)
 	}
 }
 

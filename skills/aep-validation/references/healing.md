@@ -51,10 +51,10 @@ validation phase.
 ## Budget
 
 - Max **2 heal attempts per criterion**; each followed by a focused
-  re-run: `npx playwright test specs/<AC-ID>.spec.ts`.
+  re-run: `npm test --prefix tests/e2e -- specs/<AC-ID>.spec.ts`.
 - Max **2 focused re-run waves** after the initial full run.
-- Then **one final full run** (`npx playwright test`) so
-  `test-results/results.json` — the input to the report — reflects the
+- Then **one final full run** (`npm test --prefix tests/e2e`) so
+  `tests/e2e/test-results/results.json` — the report's input — reflects the
   authoritative end state.
 - Still failing after the budget: leave it failing. In the plan/PR
   notes, mark it `genuine` or `unresolved (possibly brittle)`.

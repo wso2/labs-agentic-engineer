@@ -145,6 +145,13 @@ services:
       # bundle handed to agents in the generation turn so it can call back to
       # <this>/internal/v1/mcp with a BFF-signed MCP token. (Inert until the
       # dependencies feature lands — Phase 4.)
+      # This single-cluster data plane runs its gateway with TLS disabled
+      # (single-cluster/values-dp.yaml), so plain http on 19080 is its only
+      # listener. OpenChoreo advertises an https URL beside it regardless, and
+      # nothing answers there — the runner's reachability gate probes deployed
+      # endpoints before starting a validation agent, so preferring the
+      # unserved scheme blocks validation outright.
+      DATA_PLANE_GATEWAY_TLS: "false"
       AEP_API_INTERNAL_BASE_URL: "http://aep-api:9090"
 
       # ── GitHub webhook validation + connect-state HMAC.

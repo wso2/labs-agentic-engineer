@@ -28,23 +28,20 @@ import (
 // reads are adapted from artifacts/files by the composition root so this package
 // imports neither.
 
-// IssueClient is the GitHub issue surface this package needs: read one
-// MILESTONE's issues (to find the version's own aep:validation issue), create
-// issues into that milestone (the validation issue, and the repair issues a failed
-// attempt files), and reopen the validation issue for a repeat attempt.
-// sourcecontrol.IssueService satisfies it.
+// IssueClient is the GitHub issue READ surface this package needs: one
+// MILESTONE's issues, which is how the version's own validation task is
+// found. sourcecontrol.IssueService satisfies it.
 //
 // The read is milestone-scoped rather than project-wide because the milestone is
 // the version pin: a project-wide question would answer with another version's
 // issue.
+//
+// The writes beside it — minting the validation issue, reopening it for a repeat
+// attempt, and filing a failed attempt's repair issues — are NOT here: they go
+// through delivery.IssueWriter, the domain's one issue-write surface, so this
+// package holds no second opinion about labels or dedupe keys.
 type IssueClient interface {
 	ListMilestoneIssues(ctx context.Context, orgID, projectID string, filter sourcecontrol.MilestoneIssuesFilter) ([]sourcecontrol.IssueInfo, error)
-	CreateIssue(ctx context.Context, orgID, projectID string, req sourcecontrol.CreateIssueRequest) (*sourcecontrol.IssueResult, error)
-	// ReopenIssue is needed because every validation attempt's pull request closes
-	// the validation issue with `Closes #<N>`. A repeat attempt must find that same
-	// issue and reopen it — re-filing would erase the version's oracle from the
-	// ledger and hand the next attempt a second issue to disagree with.
-	ReopenIssue(ctx context.Context, orgID, projectID string, number int) error
 }
 
 // CriteriaReader reads the acceptance oracle (specs/validation/validation-criteria.json)

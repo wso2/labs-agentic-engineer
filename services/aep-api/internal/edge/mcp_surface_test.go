@@ -19,18 +19,24 @@ package edge
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/base64"
 	"encoding/json"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo/mocks"
 	"github.com/wso2/aep/aep-api/internal/config"
 	"github.com/wso2/aep/aep-api/internal/dependencies"
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
+	"github.com/wso2/aep/aep-api/internal/platform/auth/jwtassertion"
 )
 
 // Component test for the mounted MCP discovery surface: the real outer mux
@@ -260,5 +266,90 @@ func TestMCPSurface_NoTokenManager404(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 (surface unmounted without a token manager)", resp.StatusCode)
+	}
+}
+
+func newMCPPublisherPair(t *testing.T) (*auth.PublisherTokenVerifier, func(org, ouHandle string) string) {
+	t.Helper()
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	const kid = "mcp-pub-kid"
+	const issuer = "platform-idp"
+	const audPrefix = "aep-publisher-"
+	jwksSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(jwtassertion.JWKS{Keys: []jwtassertion.JSONWebKey{{
+			Kty: "RSA", Kid: kid, Use: "sig", Alg: "RS256",
+			N: base64.RawURLEncoding.EncodeToString(priv.N.Bytes()),
+			E: base64.RawURLEncoding.EncodeToString(big.NewInt(int64(priv.E)).Bytes()),
+		}}})
+	}))
+	t.Cleanup(jwksSrv.Close)
+	v := auth.NewPublisherTokenVerifier(jwtassertion.NewJWKSCache(jwksSrv.URL), issuer, audPrefix)
+	if v == nil {
+		t.Fatal("NewPublisherTokenVerifier returned nil")
+	}
+	mint := func(org, ouHandle string) string {
+		claims := auth.PublisherClaims{
+			RegisteredClaims: jwt.RegisteredClaims{
+				Issuer:    issuer,
+				Audience:  jwt.ClaimStrings{audPrefix + org},
+				ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+			},
+			OuHandle: ouHandle,
+		}
+		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+		tok.Header["kid"] = kid
+		signed, err := tok.SignedString(priv)
+		if err != nil {
+			t.Fatalf("sign publisher token: %v", err)
+		}
+		return signed
+	}
+	return v, mint
+}
+
+func TestMCPSurface_PublisherCCFullRoundTrip(t *testing.T) {
+	priv := mustGenerateRSAKey(t)
+	mgr, err := auth.NewTaskTokenManager(auth.TaskTokenConfig{
+		PrivateKey: string(encodePKCS1(t, priv)),
+		Issuer:     "aep-bff",
+		Audience:   "git-service",
+		TTL:        time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("NewTaskTokenManager: %v", err)
+	}
+	salesforceRT, err := openchoreo.BuildExternalResourceType("salesforce", "CRM",
+		[]openchoreo.ExternalResourceConfigKey{{Key: "SALESFORCE_TOKEN", Secret: true}})
+	if err != nil {
+		t.Fatalf("build salesforce RT fixture: %v", err)
+	}
+	reader := newMCPTestReader(*salesforceRT)
+	pub, mint := newMCPPublisherPair(t)
+	handler := NewHandler(AppParams{
+		Config:               config.Config{},
+		Deps:                 Deps{TaskTokens: mgr, PublisherTokens: pub},
+		MCPExternalResources: reader,
+	})
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+
+	tok := mint("org-round-trip", "org-round-trip")
+
+	result := rpcResult(t, postMCP(t, srv, tok, `{"jsonrpc":"2.0","id":1,"method":"initialize"}`))
+	if result["protocolVersion"] != "2024-11-05" {
+		t.Fatalf("protocolVersion = %v, want 2024-11-05", result["protocolVersion"])
+	}
+	result = rpcResult(t, postMCP(t, srv, tok, `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`))
+	tools, _ := result["tools"].([]any)
+	if len(tools) == 0 {
+		t.Fatal("tools/list returned no tools")
+	}
+	callBody := `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_external_resources","arguments":{}}}`
+	_ = rpcResult(t, postMCP(t, srv, tok, callBody))
+	if reader.lastOrg != "org-round-trip" {
+		t.Fatalf("port org = %q, want org-round-trip", reader.lastOrg)
 	}
 }

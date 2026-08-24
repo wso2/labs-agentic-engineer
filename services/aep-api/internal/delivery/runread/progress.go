@@ -31,6 +31,12 @@ package runread
 // makes the endpoint testable, because a terminal run's stream is finite and an
 // httptest recorder can capture the whole of it.
 //
+// This is the read for ONE EXECUTION and stays that. A VERSION's story spans
+// several runs, and that read is
+// build_progress.go — which shares this file's frame walk (frames.go) and
+// settles on a different rule, because a terminal run says nothing about whether
+// the version is done.
+//
 // The one other ending is a run row that STOPS EXISTING — a project delete purges
 // its runs — because such a run never goes terminal and the stream would otherwise
 // tick forever. It settles with a `done` frame carrying no state: the platform has
@@ -38,7 +44,6 @@ package runread
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"time"
@@ -140,23 +145,11 @@ func (s *ProgressService) OpenRunProgressStream(ctx context.Context, orgID, proj
 // All dedup state is per-connection; a reconnect re-derives from scratch and the
 // client dedups by cycle id and (cycleId, seq).
 func (s *ProgressService) run(ctx context.Context, w io.Writer, flush func(), orgID string, first *delivery.MilestoneRun) {
-	seq := 0
-	writeFrame := func(f *runFrame) bool {
-		b, err := json.Marshal(f)
-		if err != nil {
-			return true // skip one bad frame, keep the stream alive
-		}
-		if _, err := fmt.Fprintf(w, "id: %d\ndata: %s\n\n", seq, b); err != nil {
-			return false // client gone
-		}
-		seq++
-		flush()
-		return true
-	}
+	out := &frameWriter{w: w, flush: flush}
+	writeFrame := func(f *runFrame) bool { return out.write(f) }
 	writeDone := func(state string) {
-		_ = writeFrame(&runFrame{Type: "done", State: state})
-		_, _ = io.WriteString(w, "data: [DONE]\n\n")
-		flush()
+		_ = writeFrame(&runFrame{Type: frameTypeDone, State: state})
+		out.sentinel()
 	}
 
 	// Per-connection dedup + cursor state.
@@ -188,21 +181,10 @@ func (s *ProgressService) run(ctx context.Context, w io.Writer, flush func(), or
 		if err != nil {
 			return row.State, false, true
 		}
-		for i := range cycles {
-			c := &cycles[i]
-			view := CycleView(c)
-			b, _ := json.Marshal(view)
-			if lastCycleJSON[c.ID] != string(b) {
-				lastCycleJSON[c.ID] = string(b)
-				if !writeFrame(&runFrame{Type: "cycle", Cycle: &view}) {
-					return row.State, false, false
-				}
-			}
-			if !s.emitLines(ctx, c, i+1, cursor, writeFrame) {
-				return row.State, false, false
-			}
-		}
-		return row.State, false, true
+		alive = s.emitCycles(ctx, cycles, lastCycleJSON, cursor,
+			func(v *gen.RunCycleView) bool { return writeFrame(&runFrame{Type: frameTypeCycle, Cycle: v}) },
+			func(l *runLine) bool { return writeFrame(&runFrame{Type: frameTypeLine, Line: l}) })
+		return row.State, false, alive
 	}
 
 	// settled reports whether this pass ends the stream, and closes it when it
@@ -244,10 +226,9 @@ func (s *ProgressService) run(ctx context.Context, w io.Writer, flush func(), or
 		case <-ctx.Done():
 			return // client disconnected
 		case <-keepAlive.C:
-			if _, err := io.WriteString(w, ": keep-alive\n\n"); err != nil {
+			if !out.keepAlive() {
 				return
 			}
-			flush()
 		case <-tick.C:
 			state, gone, alive := derive(nil)
 			if !alive {
@@ -266,7 +247,7 @@ func (s *ProgressService) run(ctx context.Context, w io.Writer, flush func(), or
 // cycle and to whichever agent produced them. A source hiccup degrades to no new
 // lines — it never kills the stream, because a run's cycle timeline is worth
 // more to the reader than its pod tail.
-func (s *ProgressService) emitLines(ctx context.Context, c *delivery.RunCycle, index int, cursor map[string]int64, writeFrame func(*runFrame) bool) bool {
+func (s *ProgressService) emitLines(ctx context.Context, c *delivery.RunCycle, index int, cursor map[string]int64, emit func(*runLine) bool) bool {
 	if s.logs == nil || c.JobRef == "" {
 		return true
 	}
@@ -284,7 +265,7 @@ func (s *ProgressService) emitLines(ctx context.Context, c *delivery.RunCycle, i
 		}
 		// The attribution is carried on the wrapper, not twice.
 		line.ProgressEvent.Emitter = ""
-		if !writeFrame(&runFrame{Type: "line", Line: line}) {
+		if !emit(line) {
 			return false
 		}
 	}

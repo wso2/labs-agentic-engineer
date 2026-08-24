@@ -44,7 +44,7 @@ type SecretWriter interface {
 // RedispatchFunc — were removed here at the merge along with their only
 // consumers (external_values.go / resources_service.go, git-rm'd). Phase 6
 // rebuilt the value/param surface in internal/feature/provisioning on our
-// GitHub-native aep:provision funnel; the completion port it uses there is
+// GitHub-native `provision` gate funnel; the completion port it uses there is
 // "close the provision issue" (consumer release via gate-close webhook +
 // eventcore sweep), not a component_tasks
 // projector. The org-level external-resource catalog (list/delete + the

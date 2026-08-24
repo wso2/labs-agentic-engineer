@@ -16,6 +16,7 @@
  * under the License.
  */
 
+import { SURFACES, type Surface } from "@aep/agent-stream";
 import {
   EMPTY_SKILL_SOURCE,
   SERVICE_AUDIENCE,
@@ -70,8 +71,8 @@ Reacting to tool results (each result tells you the next move):
   from coordinates.
 
 Narration: keep prose outside tool calls to a single short sentence by default. A LOADED skill may define
-the narration for its own flow (what to say as you work, and how to close) — when one does, follow the skill.
-When the instruction is fully applied, stop.`;
+the narration for its own flow (what to say as you work, and how to close) — when one does, follow the skill,
+unless a standing narration policy in this prompt overrides it. When the instruction is fully applied, stop.`;
 
 /**
  * The name of the org-defaults skill, inlined into EVERY turn's system prompt.
@@ -83,6 +84,15 @@ When the instruction is fully applied, stop.`;
 const ORG_DEFAULTS_SKILL = "organization";
 
 /**
+ * Skill names that are never offered in the catalog. The org defaults are
+ * inlined below it; a surface's narration skill is inlined too, on the turns
+ * whose caller named that surface. Neither is "guidance for a task", so a
+ * catalog line would advertise a round-trip that returns either text the agent
+ * is already holding or policy addressed to somebody else's user.
+ */
+const UNCATALOGUED_SKILLS: readonly string[] = [ORG_DEFAULTS_SKILL, ...SURFACES];
+
+/**
  * The skill catalog appended to the END of the system prompt (ADR-0002): skill
  * names + one-line descriptions only, never bodies. It is identical across a
  * conversation's turns (the `_skills` snapshot pins the same catalog), so the
@@ -91,10 +101,7 @@ const ORG_DEFAULTS_SKILL = "organization";
  * byte-identical to a skill-free turn.
  */
 export function buildSkillCatalog(skills: SkillSource | undefined): string {
-  // The org skill never appears here: its body is already inlined below the
-  // catalog, so a line offering it as loadable advertises a round-trip that
-  // would return text the agent is holding — and paid for its description twice.
-  const entries = (skills ?? EMPTY_SKILL_SOURCE).catalog().filter((e) => e.name !== ORG_DEFAULTS_SKILL);
+  const entries = (skills ?? EMPTY_SKILL_SOURCE).catalog().filter((e) => !UNCATALOGUED_SKILLS.includes(e.name));
   if (entries.length === 0) return "";
   // Audience split (ADR-0013): `loadable` is this service's own (design) rows —
   // the catalog and reference note below are built from those ONLY, so a
@@ -179,13 +186,45 @@ ${content}`;
 }
 
 /**
- * Base instructions + the skill catalog + the org's standing defaults (each
- * empty when its source is). The catalog stays immediately after the base
- * instructions so its "call loadSkill" invitation reads against the skill list
- * it introduces, with the org block last.
+ * The surface's narration policy, appended to the system prompt of every turn
+ * whose caller named a surface (#580).
+ *
+ * The right vocabulary belongs to the SURFACE, not to the skill: `design.cell`
+ * is exactly the right word for someone standing in the repo and names nothing
+ * on a console user's screen. So the difference rides a skill the console's
+ * caller asks for, and the shared flow skills stay byte-identical everywhere.
+ *
+ * Standing policy rather than a catalog entry, for the reason the org defaults
+ * are: an agent that has to remember to load its narration rules will forget
+ * one and quote a path. It is also why the block is LAST — the base
+ * instructions let a loaded skill define its own flow's narration, and this is
+ * the standing policy that clause yields to.
+ *
+ * A surface names its own skill (`console` → `skills/console/`). An absent or
+ * empty body → "", leaving the prompt byte-identical to a surface-free turn,
+ * the same graceful absence the org block has.
  */
-export function buildInstructions(skills?: SkillSource): string {
-  return instructions + buildSkillCatalog(skills) + buildOrgDefaultsBlock(skills);
+export function buildNarrationBlock(skills: SkillSource | undefined, surface: Surface | undefined): string {
+  if (surface === undefined) return "";
+  const body = (skills ?? EMPTY_SKILL_SOURCE).load(surface);
+  if (body === undefined || !("content" in body)) return "";
+  const content = body.content.trim();
+  if (content === "") return "";
+  return `
+
+# Narration policy
+
+${content}`;
+}
+
+/**
+ * Base instructions + the skill catalog + the org's standing defaults + the
+ * surface's narration policy (each empty when its source is). The catalog stays
+ * immediately after the base instructions so its "call loadSkill" invitation
+ * reads against the skill list it introduces.
+ */
+export function buildInstructions(skills?: SkillSource, surface?: Surface): string {
+  return instructions + buildSkillCatalog(skills) + buildOrgDefaultsBlock(skills) + buildNarrationBlock(skills, surface);
 }
 
 /**
@@ -203,8 +242,21 @@ export function buildInstructions(skills?: SkillSource): string {
  * pin targets for the coding agent as much as guidance for this one. Narrowing on
  * `!== undefined` alone let a refusal through to `body.content.trim()` and threw,
  * failing the whole turn over guidance it could simply have gone without.
+ *
+ * `surface` re-states the narration precedence INSIDE this block (#580). The
+ * policy itself rides the system prompt, but the bodies inlined here are what
+ * argue with it — `design` and `architecture` both close on a one-line pointer
+ * to `specs/design/`, which a console user cannot open. Those mandates are
+ * deliberately kept (a path pointer is genuinely useful in a terminal), so the
+ * override has to reach the model in the same message as the text it overrides,
+ * not only in the standing instructions above it. No surface → no line, and the
+ * block is byte-identical to an eager block composed before surfaces existed.
  */
-export function buildEagerSkillsBlock(skills: SkillSource | undefined, names?: string[]): string {
+export function buildEagerSkillsBlock(
+  skills: SkillSource | undefined,
+  names?: string[],
+  surface?: Surface,
+): string {
   if (!names?.length || !skills) return "";
   const bodies = names
     .map((name) => ({ name, body: skills.load(name) }))
@@ -213,9 +265,14 @@ export function buildEagerSkillsBlock(skills: SkillSource | undefined, names?: s
   const blocks = bodies
     .map(({ name, body }) => `## Skill: ${name}\n\n${body.content.trim()}`)
     .join("\n\n");
+  const precedence =
+    surface === undefined
+      ? ""
+      : `\n\nWhere any skill above defines narration for its own flow — what to say as you work, how to close — ` +
+        `the Narration policy in your system instructions overrides it.`;
   return `The following skill guidance is ALREADY LOADED for this turn — apply it directly and do NOT call loadSkill for these names:
 
-${blocks}
+${blocks}${precedence}
 
 ---
 
@@ -257,13 +314,17 @@ Keep prose outside tool calls to a single short sentence, except a final note fl
 (e.g. a requirement no component covers).`;
 
 /**
- * Task-plan instructions + the skill catalog + the org's standing defaults.
- * The planner gets the org block for the same reason the editing agent does:
- * a filled entry pins a provider or a stack, which is exactly what the Tasks it
- * writes will be built against.
+ * Task-plan instructions + the skill catalog + the org's standing defaults +
+ * the surface's narration policy. The planner gets the org block for the same
+ * reason the editing agent does: a filled entry pins a provider or a stack,
+ * which is exactly what the Tasks it writes will be built against. It gets the
+ * narration policy because its closing note — the requirement no component
+ * covers — is read by the same person, on the same screen.
  */
-export function buildTaskPlanInstructions(skills?: SkillSource): string {
-  return taskPlanInstructions + buildSkillCatalog(skills) + buildOrgDefaultsBlock(skills);
+export function buildTaskPlanInstructions(skills?: SkillSource, surface?: Surface): string {
+  return (
+    taskPlanInstructions + buildSkillCatalog(skills) + buildOrgDefaultsBlock(skills) + buildNarrationBlock(skills, surface)
+  );
 }
 
 /** Build the user prompt: the current bundle inlined + the mutation instruction. */

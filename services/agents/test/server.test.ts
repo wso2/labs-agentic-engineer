@@ -68,13 +68,13 @@ const WS_SKILLS_REF = "2".repeat(40);
 const WS_CONV = `org_${WS_ORG}--proj_${WS_PROJ}--requirements-generate--conv1`;
 
 /** Materialize a fake mount: one repo snapshot (given files) + one skills snapshot. */
-function makeMountRoot(files: Record<string, string>, skillMd?: { dir: string; content: string }): string {
+function makeMountRoot(files: Record<string, string | Buffer>, skillMd?: { dir: string; content: string }): string {
   const root = mkdtempSync(join(tmpdir(), "aep-srv-ws-"));
   const snapDir = join(root, "repos", WS_ORG, WS_PROJ, WS_SLUG, "snapshots", WS_REF);
   for (const [rel, content] of Object.entries(files)) {
     const abs = join(snapDir, rel);
     mkdirSync(dirname(abs), { recursive: true });
-    writeFileSync(abs, content, "utf8");
+    writeFileSync(abs, content);
   }
   const skillsDir = join(root, "repos", WS_ORG, "_skills", "org-skills", "snapshots", WS_SKILLS_REF);
   mkdirSync(skillsDir, { recursive: true });
@@ -279,6 +279,12 @@ test("400 when the turn or workspace is missing; retired body shapes are rejecte
     const noWorkspace = await post({ turn: { kind: "chat", text: "x" } });
     assert.equal(noWorkspace.status, 400);
     assert.match(((await noWorkspace.json()) as { error: string }).error, /workspace is required/);
+
+    // An unknown surface is a 400, never a silent fallback: the wrong answer
+    // here narrates repo paths at someone who cannot see a file tree.
+    const badSurface = await post(wsBody({ surface: "terminal" }));
+    assert.equal(badSurface.status, 400);
+    assert.match(((await badSurface.json()) as { error: string }).error, /surface must be one of: console/);
   } finally {
     await close();
   }
@@ -337,6 +343,134 @@ test("a turn spec is composed server-side and streams like any turn", async () =
     );
     assert.equal(res.status, 200);
     assert.match(await res.text(), /done\./);
+  } finally {
+    await close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// --- Reference PDF attachments (#384) ----------------------------------------
+
+test("start turn: a .pdf reference is attached to the model as a native file part", async () => {
+  const pdfBytes = Buffer.from("%PDF-1.4 minimal pdf\n");
+  const refPath = "specs/requirements/references/brief.pdf";
+  const root = makeMountRoot({ [REQUIREMENTS]: "# Req\n", [refPath]: pdfBytes });
+  const { baseUrl, close, store } = await boot(mockModel([{ kind: "text", text: "ok" }]), root);
+  try {
+    const token = await mintToken();
+    const res = await fetch(
+      `${baseUrl}/conversations/${WS_CONV}/turns`,
+      turnPost(wsBody({ turn: { kind: "start", idea: "an app", references: [refPath] } }), { token, org: WS_ORG }),
+    );
+    assert.equal(res.status, 200);
+    await res.text();
+
+    const stored = await store.get(WS_CONV);
+    const firstUser = stored!.messages.find((m) => m.role === "user")!;
+    assert.ok(Array.isArray(firstUser.content), "the user message became a content array");
+    const parts = firstUser.content as unknown as Array<Record<string, unknown>>;
+    const filePart = parts.find((p) => p.type === "file");
+    assert.ok(filePart, "expected a file part on the user message");
+    assert.equal(filePart!.mediaType, "application/pdf");
+    assert.equal(Buffer.from(filePart!.data as string, "base64").toString("hex"), pdfBytes.toString("hex"));
+  } finally {
+    await close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("start turn: only .md references produce no file parts (byte-identical message shape)", async () => {
+  const root = makeMountRoot({ [REQUIREMENTS]: "# Req\n" });
+  const { baseUrl, close, store } = await boot(mockModel([{ kind: "text", text: "ok" }]), root);
+  try {
+    const token = await mintToken();
+    const res = await fetch(
+      `${baseUrl}/conversations/${WS_CONV}/turns`,
+      turnPost(wsBody({ turn: { kind: "start", idea: "an app", references: [REQUIREMENTS] } }), { token, org: WS_ORG }),
+    );
+    assert.equal(res.status, 200);
+    await res.text();
+
+    const stored = await store.get(WS_CONV);
+    const firstUser = stored!.messages.find((m) => m.role === "user")!;
+    assert.equal(typeof firstUser.content, "string", "no PDF references ⇒ the message content stays a plain string");
+  } finally {
+    await close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// --- Chat attachments (#428) -------------------------------------------------
+
+test("chat turn: an attachment rides the user message and the journal records its name", async () => {
+  const root = makeMountRoot({ [REQUIREMENTS]: "# Req\n" });
+  const { baseUrl, close, store } = await boot(mockModel([{ kind: "text", text: "ok" }]), root);
+  try {
+    const token = await mintToken();
+    const res = await fetch(
+      `${baseUrl}/conversations/${WS_CONV}/turns`,
+      turnPost(
+        wsBody({
+          turn: { kind: "chat", text: "add this form as well" },
+          journal: { text: "add this form as well", attachments: ["claim-form.pdf"] },
+          attachments: [
+            { name: "claim-form.pdf", mediaType: "application/pdf", data: Buffer.from("%PDF-1.7 x").toString("base64") },
+          ],
+        }),
+        { token, org: WS_ORG },
+      ),
+    );
+    assert.equal(res.status, 200);
+    await res.text();
+
+    const stored = await store.get(WS_CONV);
+    const firstUser = stored!.messages.find((m) => m.role === "user")!;
+    const parts = firstUser.content as unknown as Array<Record<string, unknown>>;
+    const filePart = parts.find((p) => p.type === "file");
+    assert.ok(filePart, "the attachment must reach the model as a file part");
+    assert.equal(filePart!.filename, "claim-form.pdf");
+    assert.equal(filePart!.mediaType, "application/pdf");
+    // And the chip's source of truth.
+    assert.deepEqual(stored!.turns[0]?.attachments, ["claim-form.pdf"]);
+  } finally {
+    await close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("chat turn: a name is journaled ONLY if its bytes actually reached the model", async () => {
+  // The failure this pins: the journal used to record whatever names the caller
+  // sent. When the shared encoded budget skips an attachment, that puts a chip on
+  // a file the model never received — the confusion chips exist to prevent,
+  // inverted. Names are derived from the surviving parts instead.
+  const root = makeMountRoot({ [REQUIREMENTS]: "# Req\n" });
+  const { baseUrl, close, store } = await boot(mockModel([{ kind: "text", text: "ok" }]), root);
+  try {
+    const token = await mintToken();
+    // One byte past the whole per-turn encoded budget, so it cannot be included.
+    const tooBig = "A".repeat(20 * 1024 * 1024 + 4);
+    const res = await fetch(
+      `${baseUrl}/conversations/${WS_CONV}/turns`,
+      turnPost(
+        wsBody({
+          turn: { kind: "chat", text: "read this" },
+          journal: { text: "read this", attachments: ["huge.pdf"] },
+          attachments: [{ name: "huge.pdf", mediaType: "application/pdf", data: tooBig }],
+        }),
+        { token, org: WS_ORG },
+      ),
+    );
+    assert.equal(res.status, 200);
+    await res.text();
+
+    const stored = await store.get(WS_CONV);
+    const firstUser = stored!.messages.find((m) => m.role === "user")!;
+    assert.equal(typeof firstUser.content, "string", "nothing was attachable, so the message stays a plain string");
+    assert.equal(
+      stored!.turns[0]?.attachments,
+      undefined,
+      "and no chip is promised for a file the model never got",
+    );
   } finally {
     await close();
     rmSync(root, { recursive: true, force: true });
@@ -542,6 +676,60 @@ test("409 when a turn is already in flight for the id", async () => {
     assert.deepEqual([s1, s2].sort(), [200, 409]);
   } finally {
     await close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// --- Narration policy (#580) ---------------------------------------------------
+
+const CONSOLE_SKILL_MD = `---
+name: console
+description: How the agent speaks to someone working in the console.
+metadata:
+  aep:
+    kind: platform
+    audience: [design]
+---
+
+## Never quote a repo path
+
+Name the artifact instead.
+`;
+
+/** The system instructions the model actually received for the turn's first step. */
+function systemPrompt(model: ReturnType<typeof mockModel>): string {
+  const prompt = model.doStreamCalls[0]!.prompt as unknown as { role: string; content: unknown }[];
+  const system = prompt.find((m) => m.role === "system");
+  return typeof system?.content === "string" ? system.content : JSON.stringify(system?.content ?? "");
+}
+
+test("a console turn carries the narration policy; the same turn without a surface does not", async () => {
+  const root = makeMountRoot({ [REQUIREMENTS]: "# Req\n" }, { dir: "console", content: CONSOLE_SKILL_MD });
+  const consoleModel = mockModel([{ kind: "text", text: "ok" }]);
+  const localModel = mockModel([{ kind: "text", text: "ok" }]);
+  const consoleRun = await boot(consoleModel, root);
+  const localRun = await boot(localModel, root);
+  try {
+    const token = await mintToken();
+    const post = (baseUrl: string, body: unknown) =>
+      fetch(`${baseUrl}/conversations/${WS_CONV}/turns`, turnPost(body, { token, org: WS_ORG }));
+
+    assert.equal((await post(consoleRun.baseUrl, wsBody({ surface: "console" }))).status, 200);
+    const consolePrompt = systemPrompt(consoleModel);
+    assert.match(consolePrompt, /# Narration policy/);
+    assert.match(consolePrompt, /Never quote a repo path/, "the BODY rides the prompt — nothing loads it");
+    // Standing policy, not a task: offering it in the catalog would invite a
+    // round-trip returning text the agent is already holding.
+    assert.doesNotMatch(consolePrompt, /- console:/);
+
+    // The local run reads the SAME skills snapshot and names no surface, so the
+    // rules stay absent — which is what keeps the shared flow skills usable in
+    // a terminal, where a repo path is the right word.
+    assert.equal((await post(localRun.baseUrl, wsBody())).status, 200);
+    assert.doesNotMatch(systemPrompt(localModel), /Narration policy/);
+  } finally {
+    await consoleRun.close();
+    await localRun.close();
     rmSync(root, { recursive: true, force: true });
   }
 });

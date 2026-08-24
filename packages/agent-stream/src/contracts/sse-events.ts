@@ -396,20 +396,30 @@ export interface WorkspaceRef {
  * prompt wording — that is the whole point of this type.
  *
  *  - `chat`  — an ordinary user message, sent verbatim.
- *  - `flow`  — a `/<skill>` command: load that skill and follow it, with the
- *              user's trailing text (if any) riding along.
+ *  - `flow`  — a `/<command>`: load a skill and follow it, with the user's
+ *              trailing text (if any) riding along. `skill` carries the
+ *              command's TOKEN as typed; most tokens are the skill name, and
+ *              the few that name a branch of one instead resolve in the agents
+ *              service, which is where wording lives. `references` names the
+ *              attached reference documents exactly as on `start` — a flow
+ *              generates artifacts (wireframes above all) that must be
+ *              grounded in an attached sketch or spec.
  *  - `start` — the project kickoff. `idea` is what the user asked for, read by
  *              the BFF from `specs/.agentic-engineer.toml` — a dot-led path
  *              stripped from every turn snapshot, so the agent cannot read it
  *              itself. Absent/blank → the start skill asks the user instead.
+ *              `references` names the documents attached at project create
+ *              (paths under `specs/requirements/references/`, listed by the
+ *              BFF). Paths only: they are ordinary spec content the agent
+ *              reads from its own snapshot. Absent/empty → nothing is said.
  *  - `plan`  — Task planning. `scope` is the milestone's story coverage and
  *              `taskContext` the existing-Task renders; both are platform
  *              state, not repository files, so they cannot ride the snapshot.
  */
 export type TurnSpec =
   | { kind: "chat"; text: string }
-  | { kind: "flow"; skill: string; text?: string }
-  | { kind: "start"; idea?: string }
+  | { kind: "flow"; skill: string; text?: string; references?: string[] }
+  | { kind: "start"; idea?: string; references?: string[] }
   | { kind: "plan"; scope?: PlanScope; taskContext?: PlanContextFile[] };
 
 /** The turn kinds a `TurnSpec` may declare (the server's pre-stream 400 check). */
@@ -427,6 +437,60 @@ export type TurnKind = (typeof TURN_KINDS)[number];
 export interface TurnJournal {
   text: string;
   author?: { id: string; displayName: string };
+  /**
+   * File NAMES attached to this message (#428) — never bytes. The display read
+   * replaces a user row's content with `text`, so without these a reload would
+   * show the agent discussing a document that appears nowhere in the thread.
+   * Names only: the journal is a DISPLAY record, and a chip is not a download.
+   */
+  attachments?: string[];
+}
+
+/**
+ * One chat attachment (#428): conversation-scoped model content the user
+ * attached to a single message.
+ *
+ * Carried INLINE on the turn request rather than by path, which is the whole
+ * difference from `TurnSpec.references`. A reference is stored and overlaid into
+ * the turn's snapshot, so it can be named by path; an attachment is never
+ * written to disk anywhere (console ADR-0019), so the bytes have to travel with
+ * the request that carries them. Once the turn runs they are durable as parts of
+ * the conversation's history, and nothing needs to keep a second copy.
+ */
+export interface TurnAttachment {
+  /**
+   * The original file name. Also the DEDUPE KEY: the turn loop drops an
+   * attachment whose name the conversation history already holds, so re-sending
+   * one costs nothing.
+   */
+  name: string;
+  /**
+   * The media type the model reads it as — `application/pdf`, one of the four
+   * image types, or `text/plain` for every text format. Those are the only
+   * document types the Anthropic provider maps, so a `.csv` arrives as
+   * `text/plain` rather than `text/csv`.
+   */
+  mediaType: string;
+  /** base64 of the raw bytes. */
+  data: string;
+}
+
+/** Runtime guard for one untrusted `TurnAttachment`. */
+export function isTurnAttachment(v: unknown): v is TurnAttachment {
+  if (v === null || typeof v !== "object") return false;
+  const a = v as Record<string, unknown>;
+  return (
+    typeof a.name === "string" &&
+    a.name.trim() !== "" &&
+    typeof a.mediaType === "string" &&
+    a.mediaType.trim() !== "" &&
+    typeof a.data === "string"
+  );
+}
+
+/** Runtime guard for an absent-or-valid `attachments` array. */
+export function isTurnAttachmentsOrAbsent(v: unknown): v is TurnAttachment[] | undefined {
+  return v === undefined || (Array.isArray(v) && v.every(isTurnAttachment));
 }
 
 /** The milestone a plan turn is scoped to, and which of its stories already have Tasks. */
@@ -513,6 +577,39 @@ export interface TurnRequest {
    * the tool map is byte-identical to a turn without it.
    */
   webSearch?: boolean;
+  /**
+   * Chat attachments for THIS turn (#428) — bytes inline, see `TurnAttachment`.
+   * Absent/empty → the turn's messages are byte-identical to one built before
+   * this field existed.
+   */
+  attachments?: TurnAttachment[];
+  /**
+   * Where the person reading this turn's prose is sitting (#580). The right
+   * vocabulary belongs to the SURFACE, not to the skill: in a local run the
+   * user is standing in the repo, so `design.cell` is the right word; in the
+   * console it names nothing on screen. The agents service inlines the
+   * surface's narration skill into the system prompt — see
+   * `buildNarrationBlock`. Omitted → no narration policy, and the prompt is
+   * byte-identical to a turn without it (the playground's case).
+   *
+   * This is the one turn property that genuinely cannot be derived: it is who
+   * is asking, not what is being asked for.
+   */
+  surface?: Surface;
+}
+
+/**
+ * The surfaces a turn's prose can be read on. A surface's narration policy is
+ * the skill of the SAME NAME (`skills/console/`), so there is no second table
+ * mapping one to the other.
+ */
+export const SURFACES = ["console"] as const;
+
+export type Surface = (typeof SURFACES)[number];
+
+/** Runtime guard for a `Surface` value. */
+export function isSurface(v: unknown): v is Surface {
+  return (SURFACES as readonly unknown[]).includes(v);
 }
 
 /**
@@ -543,13 +640,14 @@ export function isTurnSpec(v: unknown): v is TurnSpec {
   const t = v as Record<string, unknown>;
   const str = (x: unknown): boolean => typeof x === "string";
   const optStr = (x: unknown): boolean => x === undefined || typeof x === "string";
+  const optStrArr = (x: unknown): boolean => x === undefined || (Array.isArray(x) && x.every(str));
   switch (t.kind) {
     case "chat":
       return str(t.text) && (t.text as string).trim() !== "";
     case "flow":
-      return str(t.skill) && (t.skill as string).trim() !== "" && optStr(t.text);
+      return str(t.skill) && (t.skill as string).trim() !== "" && optStr(t.text) && optStrArr(t.references);
     case "start":
-      return optStr(t.idea);
+      return optStr(t.idea) && optStrArr(t.references);
     case "plan":
       return isPlanScopeOrAbsent(t.scope) && isPlanContextOrAbsent(t.taskContext);
     default:

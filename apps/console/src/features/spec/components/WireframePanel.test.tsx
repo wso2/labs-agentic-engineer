@@ -26,10 +26,11 @@ import type { CollabSpec } from "../collab/useCollabSpec";
 
 // The heavy lazy canvas is irrelevant here — record what scene/model it receives.
 vi.mock("@aep/ui-excalidraw-view", () => ({
-  ExcalidrawView: ({ scene }: { scene: string }) => (
+  ExcalidrawView: ({ scene, focusScreens }: { scene: string; focusScreens?: readonly string[] }) => (
     <div
       data-testid="excalidraw"
       data-elements={String(JSON.parse(scene).elements?.length ?? 0)}
+      data-focus={(focusScreens ?? []).join(",")}
     />
   ),
   PrototypeView: (p: { model: { screens: unknown[] }; trailingSlot?: unknown }) => (
@@ -94,6 +95,41 @@ describe("WireframePanel streaming", () => {
     });
     const grown = Number(screen.getByTestId("excalidraw").dataset.elements);
     expect(grown).toBeGreaterThan(first);
+  });
+
+  it("returns to the first screen when a GENERATION turn ends", () => {
+    // A fresh wireframe is drawn top to bottom; the camera follows each new
+    // screen and would be left on the last one. Completing a generation should
+    // read like opening the wireframe: start at the first screen.
+    mockDerived.mockReturnValue({ scene: null, isPending: false, isError: true });
+    const doc = new Y.Doc();
+    const ytext = doc.getText(DSL_PATH);
+    const { rerender } = renderPanel(makeCollab(ytext, true));
+    act(() => {
+      ytext.insert(0, 'screen First "a"\n  heading "A"\nscreen Second "b"\n  heading "B"\n');
+    });
+    // Agent leaves the room: the turn is over.
+    rerender(<WireframePanel projectName="p" dslPath={DSL_PATH} files={[]} collab={makeCollab(ytext, false)} />);
+    expect(screen.getByTestId("excalidraw").dataset.focus).toBe("First");
+  });
+
+  it("does NOT return to the first screen when an EDIT turn ends", () => {
+    // The reader was somewhere; follow-the-edit already put the camera where
+    // the change is. Snapping back to the first screen would undo that.
+    mockDerived.mockReturnValue({ scene: null, isPending: false, isError: true });
+    const doc = new Y.Doc();
+    const ytext = doc.getText(DSL_PATH);
+    // Screens exist BEFORE the agent arrives — this is an edit, not a generation.
+    ytext.insert(0, 'screen First "a"\n  heading "A"\nscreen Second "b"\n  heading "B"\n');
+    const { rerender } = renderPanel(makeCollab(ytext, false));
+    rerender(<WireframePanel projectName="p" dslPath={DSL_PATH} files={[]} collab={makeCollab(ytext, true)} />);
+    act(() => {
+      ytext.insert(ytext.length, '  button "Go"\n');
+    });
+    rerender(<WireframePanel projectName="p" dslPath={DSL_PATH} files={[]} collab={makeCollab(ytext, false)} />);
+    // Exactly the edited screen — "not First" would also pass on an empty
+    // focus, which would mean the camera moved nowhere at all.
+    expect(screen.getByTestId("excalidraw").dataset.focus).toBe("Second");
   });
 
   it("holds the last good scene when an intermediate compile fails", () => {
@@ -190,7 +226,10 @@ describe("WireframePanel streaming", () => {
 
 describe("WireframePanel prototype toggle", () => {
   const SCENE = JSON.stringify({ elements: [{ type: "rectangle" }] });
-  const MODEL = { screens: [{ name: "Login", width: 1280, height: 800, sceneJson: SCENE, hotspots: [] }] };
+  const MODEL = {
+    screens: [{ name: "Login", width: 1280, height: 800, sceneJson: SCENE, hotspots: [] }],
+    flows: [],
+  };
 
   it("shows the toggle only when settled, and swaps to PrototypeView", () => {
     mockDerived.mockReturnValue({ scene: SCENE, isPending: false, isError: false });
@@ -249,6 +288,36 @@ describe("WireframePanel prototype toggle", () => {
       expect(screen.queryByText(/failed to load/i)).not.toBeInTheDocument();
       expect(Number(screen.getByTestId("excalidraw").dataset.elements)).toBeGreaterThan(0);
     });
+  });
+
+  it("an agent turn switches a prototype reader to canvas, and leaves them there afterwards", () => {
+    // The canvas is the editing view: it is the only place every kind of change
+    // — content, a new screen, a reshaped flow — is visible, and it follows the
+    // edit. So a turn starting while the reader is in the prototype takes them
+    // to canvas. And it STAYS there when the turn ends: returning to the
+    // prototype by itself is what bounced readers back to screen 1 mid-review.
+    mockDerived.mockReturnValue({ scene: null, isPending: true, isError: false });
+    mockDerivedPrototype.mockReturnValue({ model: null, isPending: true, isError: false });
+    const doc = new Y.Doc();
+    const ytext = doc.getText(DSL_PATH);
+    ytext.insert(0, 'screen Catalog "Seeded"\n  heading "Browse"\n');
+    const { rerender } = renderPanel(makeCollab(ytext, false));
+
+    fireEvent.click(screen.getByRole("button", { name: /prototype/i }));
+    expect(screen.getByTestId("prototype")).toBeInTheDocument();
+
+    // Agent arrives: a turn begins.
+    rerender(<WireframePanel projectName="p" dslPath={DSL_PATH} files={[]} collab={makeCollab(ytext, true)} />);
+    expect(screen.queryByTestId("prototype")).not.toBeInTheDocument();
+    expect(screen.getByTestId("excalidraw")).toBeInTheDocument();
+
+    // Agent leaves: the turn is over. Still canvas — no silent return.
+    rerender(<WireframePanel projectName="p" dslPath={DSL_PATH} files={[]} collab={makeCollab(ytext, false)} />);
+    expect(screen.queryByTestId("prototype")).not.toBeInTheDocument();
+    expect(screen.getByTestId("excalidraw")).toBeInTheDocument();
+    // …and the reader can go back by choice.
+    fireEvent.click(screen.getByRole("button", { name: /prototype/i }));
+    expect(screen.getByTestId("prototype")).toBeInTheDocument();
   });
 
   it("hides the toggle while the agent is drawing", () => {

@@ -8,10 +8,9 @@ this file defines what terms *mean*, not how anything works.
 **Skill**:
 A unit of procedural guidance — a `SKILL.md` (frontmatter `name` + `description`,
 markdown body) — that the main agent may follow while editing a spec bundle. The
-caller passes the candidate Skills (`name`, `description`, `content`) in the turn
-request payload. A Skill is *guidance*, not code: never executed, never uploaded
-to a model provider, never read from disk by the service (the caller — the eval —
-resolves Skills from the repo).
+turn's Skills come from the workspace's immutable skills snapshot, which the
+caller names by ref; bodies never cross the wire. A Skill is *guidance*, not
+code: never executed, never uploaded to a model provider.
 _Avoid_: plugin, capability, tool (a tool is the agent's executable action, e.g. `editFile`).
 
 **Skill catalog**:
@@ -23,7 +22,19 @@ the body is fetched on demand.
 **`loadSkill`**:
 The tool the agent calls to fetch a Skill's full `content` by name. The body enters
 context only when loaded, and then persists as a tool result in message history.
-This is the only way a Skill body reaches the model.
+This is the only way a *catalogued* Skill body reaches the model — the standing
+blocks (the org's defaults, the Surface's narration policy) are inlined instead,
+and are kept out of the catalog precisely because nothing needs to load them.
+
+**Surface**:
+Where the person reading a turn's prose is sitting — the console, or a terminal
+in the repository. The right vocabulary belongs to the Surface, not to the Skill:
+`design.cell` is exactly the right word for someone standing in the repo and
+names nothing on a console user's screen. A Surface names the narration policy
+its callers' turns carry, so the shared flow Skills stay byte-identical wherever
+they run.
+_Avoid_: client, channel, caller (the caller is who dispatches a turn; the
+Surface is who reads it).
 
 **Spec bundle**:
 The in-memory set of files (a snapshot, keyed by path) the main agent reads and
@@ -95,8 +106,17 @@ inside a skill's body, not the agent).
 
 **Coding agent**:
 The agent that implements a component — it builds, verifies, and opens the pull
-request. It reads skills as guidance for construction.
+request. It reads skills as guidance for construction. When it calls the
+platform, it is the organization's **publisher client**, not a per-cycle token
+and not the design agent.
 _Avoid_: builder, implementer agent, runner (the runner is the pod it executes in).
+
+**Publisher client**:
+The organization's confidential Thunder OAuth application. The coding agent is
+this client when it calls the platform. One per organization, reused across
+cycles.
+_Avoid_: Task JWT (a per-cycle bearer, not this identity), M2M client (other
+service-to-service apps), design-agent token.
 
 ## LLM credentials (`services/aep-api`)
 
@@ -288,6 +308,15 @@ The `v<N>` tag: a snapshot of a validated requirements+design pair, cut at the
 moment a build starts. Implementation lands *after* the version is cut; the
 version names what the build implements, not the resulting code state.
 _Avoid_: release, build number.
+
+**Open question**:
+A numbered entry under `## Open Questions` in the PRD — a recorded gap in the spec, and
+specifically one the agent may not close by assuming: a fact only the user holds. Deliberately
+a property of the *document*, not of any conversation. It **gates nothing** — design and build
+both proceed with open questions outstanding. An entry marked *deferred* is one the user has
+declined for now, which tells the agent to stop raising it rather than releasing any gate.
+_Avoid_: interview question (the agent's live request for the user's input, which is a
+mechanism for closing an open question, not the thing itself); blocker (it blocks nothing).
 
 **Dirty (spec)**:
 The spec content has moved past the latest spec version in committed truth.

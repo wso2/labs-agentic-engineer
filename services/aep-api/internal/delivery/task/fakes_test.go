@@ -40,7 +40,15 @@ type fakeIssues struct {
 	// milestoneOf records the milestone each seeded issue belongs to, so
 	// ListMilestoneIssues can answer the plan turn's membership read.
 	milestoneOf map[int]int
+	// closed/reopened/moved record the three writes the plan path must never make.
+	closed   []int
+	reopened []int
+	moved    []string
 }
+
+// writer is the fake wearing the domain's issue-write surface, which is how the
+// plan tap mints through it.
+func (f *fakeIssues) writer() *delivery.IssueWriter { return delivery.NewIssueWriter(f) }
 
 func newFakeIssues() *fakeIssues {
 	return &fakeIssues{byNumber: map[int]*sourcecontrol.IssueInfo{}, nextNum: 100, comments: map[int][]string{}, milestoneOf: map[int]int{}}
@@ -178,6 +186,43 @@ func (f *fakeIssues) RemoveLabel(_ context.Context, _, _ string, number int, lab
 	return nil
 }
 
+// SetIssueMilestone exists so the fake satisfies delivery.IssueOps. The plan tap
+// assigns a milestone by RIDING the create, never by a follow-up move, so a
+// planner that called this would be spending a second GitHub request per Task.
+func (f *fakeIssues) SetIssueMilestone(_ context.Context, _, _ string, number, milestoneNumber int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.moved = append(f.moved, fmt.Sprintf("%d>m%d", number, milestoneNumber))
+	return nil
+}
+
+// CloseIssue and ReopenIssue exist so the fake satisfies delivery.IssueOps —
+// the writer's port is the domain's WHOLE issue-write surface, while the plan
+// tap only ever mints and edits. Both record their calls so a test can assert
+// the planner never closes or reopens anything.
+func (f *fakeIssues) CloseIssue(_ context.Context, _, _ string, number int, comment string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.closed = append(f.closed, number)
+	if comment != "" {
+		f.comments[number] = append(f.comments[number], comment)
+	}
+	if i := f.byNumber[number]; i != nil {
+		i.State = "closed"
+	}
+	return nil
+}
+
+func (f *fakeIssues) ReopenIssue(_ context.Context, _, _ string, number int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.reopened = append(f.reopened, number)
+	if i := f.byNumber[number]; i != nil {
+		i.State = "open"
+	}
+	return nil
+}
+
 func (f *fakeIssues) labelsOf(number int) []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -306,11 +351,12 @@ func agentIssue(number int, title, body string) sourcecontrol.IssueInfo {
 		Body:   body,
 		State:  "open",
 		URL:    fmt.Sprintf("https://github.com/o/r/issues/%d", number),
-		Labels: []string{delivery.LabelAgentWork},
+		Labels: []string{delivery.LabelAgentWork, delivery.KindDevelopment},
 	}
 }
 
-// gateIssue builds a seeded dispatch gate: the aep:provision label, no `aep`.
+// gateIssue builds a seeded dispatch gate: kind `provision`, and deliberately
+// NOT armed — nothing may work a gate.
 func gateIssue(number int, depName string) sourcecontrol.IssueInfo {
 	return sourcecontrol.IssueInfo{
 		Number: number,
@@ -318,12 +364,12 @@ func gateIssue(number int, depName string) sourcecontrol.IssueInfo {
 		Body:   "Provide this dependency's configuration values in the architecture drawer.",
 		State:  "open",
 		URL:    fmt.Sprintf("https://github.com/o/r/issues/%d", number),
-		Labels: []string{delivery.LabelProvisionGate},
+		Labels: []string{delivery.KindProvision},
 	}
 }
 
-// validationIssue builds the project's seeded validation issue: one label, and
-// deliberately NOT the `aep` working-set one.
+// validationIssue builds the project's seeded validation task: ARMED like any
+// other agent work, and of a kind no working set includes.
 func validationIssue(number int) sourcecontrol.IssueInfo {
 	return sourcecontrol.IssueInfo{
 		Number: number,
@@ -331,7 +377,21 @@ func validationIssue(number int) sourcecontrol.IssueInfo {
 		Body:   "Author e2e tests and run them against the deployed system.",
 		State:  "open",
 		URL:    fmt.Sprintf("https://github.com/o/r/issues/%d", number),
-		Labels: []string{delivery.LabelValidationWork},
+		Labels: []string{delivery.LabelAgentWork, delivery.KindValidation},
+	}
+}
+
+// bugIssue builds a platform-minted defect: armed, kind `bug`, sourced from the
+// build that found it. It is `coding` to the console like planned work, and
+// tells itself apart from it only by its kind.
+func bugIssue(number int, title string) sourcecontrol.IssueInfo {
+	return sourcecontrol.IssueInfo{
+		Number: number,
+		Title:  title,
+		Body:   "The build failed and failed again on a re-trigger.",
+		State:  "open",
+		URL:    fmt.Sprintf("https://github.com/o/r/issues/%d", number),
+		Labels: []string{delivery.LabelAgentWork, delivery.KindBug, delivery.SrcBuild},
 	}
 }
 

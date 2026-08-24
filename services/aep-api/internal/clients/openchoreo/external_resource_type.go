@@ -298,9 +298,10 @@ func BuildExternalResourceType(name, description string, keys []ExternalResource
 			// default). We do NOT gate on the ExternalSecret's own Ready condition:
 			// OC's `applied.<id>.status` snapshot does not reflect ESO's live status
 			// for a foreign CRD (it reads empty/stale → the CEL strands the binding).
-			// `${true}` makes the binding Ready once applied; the binding's outputs
-			// still resolve the Secret, and ESO materialises it in ~1s — well before
-			// the consumer (gated separately by the config-collection task) renders.
+			// `${true}` makes the binding Ready once applied. This is deliberate even
+			// while secretStorePath is empty: external value readiness is the AEP
+			// `configured` state, not the binding's Ready condition, and builds must
+			// not wait for credentials. ESO materialises the Secret after values are saved.
 			ReadyWhen: "${true}",
 			Template:  esTemplate,
 		})

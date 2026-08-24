@@ -17,7 +17,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { deriveWireframeScene } from "./deriveWireframe";
+import { deriveLiveWireframe, deriveWireframeScene, focusTargets } from "./deriveWireframe";
 
 const dsl = `screen Home
   heading "Welcome"
@@ -69,5 +69,72 @@ screen Cart "Review and check out"
     const texts = scene.elements.filter((e: { type: string }) => e.type === "text");
     expect(texts.some((t: { text?: string }) => t.text === "Catalog")).toBe(true);
     expect(texts.some((t: { text?: string }) => t.text === "Cart")).toBe(true);
+  });
+});
+
+describe("deriveLiveWireframe", () => {
+  const path = "design/components/web/wireframes.dsl";
+  const two = `screen Home\n  heading "Welcome"\nscreen Cart\n  button "Pay"\n`;
+
+  it("compiles and reports no changed screens when there is nothing to compare against", () => {
+    const r = deriveLiveWireframe(path, two, null);
+    expect(r).not.toBeNull();
+    expect(r!.changedScreens).toEqual([]);
+    expect(JSON.parse(r!.json).elements.length).toBeGreaterThan(0);
+  });
+
+  it("reports only the screen the edit touched, given the previous compile", () => {
+    const first = deriveLiveWireframe(path, two, null);
+    const second = deriveLiveWireframe(path, two.replace('button "Pay"', 'button "Pay" primary'), first);
+    expect(second!.changedScreens).toEqual(["Cart"]);
+  });
+
+  it("returns null for an uncompilable source, leaving the caller's held compile in place", () => {
+    const first = deriveLiveWireframe(path, two, null);
+    expect(deriveLiveWireframe(path, "garbage {{{", first)).toBeNull();
+    expect(deriveLiveWireframe(path, "", first)).toBeNull();
+  });
+
+  it("treats a domain-model DSL as a plain compile with no screens to report", () => {
+    const r = deriveLiveWireframe("design/erd.dsl", `entity User\n  id: uuid\n`, null);
+    expect(r).not.toBeNull();
+    expect(r!.changedScreens).toEqual([]);
+  });
+});
+
+describe("focusTargets", () => {
+  const path = "design/components/web/wireframes.dsl";
+  const three = `screen One\n  heading "A"\nscreen Two\n  button "Go"\nscreen Three\n  heading "C"\n`;
+  const filler = Array.from({ length: 20 }, (_, i) => `  text "line ${i}"`).join("\n");
+
+  it("follows a surgical edit live: one screen changed out of three is a target", () => {
+    const base = deriveLiveWireframe(path, three, null)!;
+    const edited = deriveLiveWireframe(path, three.replace('heading "A"', `heading "A"\n${filler}`), base)!;
+    expect(focusTargets(edited, base)).toEqual(["One"]);
+  });
+
+  it("holds still mid-rewrite: a flush missing most screens is not a target", () => {
+    // An agent rewriting the file emits a flush where Two and Three are not
+    // yet written back. The compiler honestly reports all three as changed;
+    // panning there would fit the whole board.
+    const base = deriveLiveWireframe(path, three, null)!;
+    const midRewrite = deriveLiveWireframe(path, `screen One\n  heading "A"\n${filler}\n`, base)!;
+    expect(midRewrite.changedScreens).toEqual(["One", "Two", "Three"]);
+    expect(focusTargets(midRewrite, base)).toEqual([]);
+  });
+
+  it("measures breadth against the larger compile, so a shrunken flush cannot look narrow", () => {
+    // Mid-rewrite the new compile holds ONE screen; measured against itself,
+    // 'One changed of one' would wrongly count as a narrow edit.
+    const base = deriveLiveWireframe(path, three, null)!;
+    const shrunken = deriveLiveWireframe(path, `screen One\n  heading "A"\n${filler}\n`, base)!;
+    expect(Object.keys(shrunken.fingerprints)).toEqual(["One"]);
+    expect(focusTargets(shrunken, base)).toEqual([]);
+  });
+
+  it("reports nothing when nothing changed", () => {
+    const base = deriveLiveWireframe(path, three, null)!;
+    const same = deriveLiveWireframe(path, three, base)!;
+    expect(focusTargets(same, base)).toEqual([]);
   });
 });

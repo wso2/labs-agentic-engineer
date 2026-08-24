@@ -32,7 +32,8 @@ import type { components } from "../../../generated/aep-api";
 import { runStamp } from "../lib/format";
 import {
   buildCycles,
-  runOriginLabel,
+  runKind,
+  runKindLabel,
   runStateChip,
   spentBudgets,
   terminalReasonText,
@@ -119,9 +120,14 @@ function RunRow({ run }: { run: MilestoneRunView }) {
             textAlign: "left",
           }}
         >
-          <StatusChip label={chip.label} tone={chip.tone} appearance="soft" dot />
           <StatusChip
-            label={runOriginLabel(run.origin)}
+            label={chip.label}
+            tone={chip.tone}
+            appearance="soft"
+            dot
+          />
+          <StatusChip
+            label={runKindLabel(runKind(run))}
             tone="neutral"
             appearance="soft"
           />
@@ -166,7 +172,11 @@ function RunRow({ run }: { run: MilestoneRunView }) {
             <Typography
               variant="caption"
               color="text.secondary"
-              sx={{ display: "block", mt: 1.5, fontVariantNumeric: "tabular-nums" }}
+              sx={{
+                display: "block",
+                mt: 1.5,
+                fontVariantNumeric: "tabular-nums",
+              }}
             >
               {`Budget spent: ${spent
                 .map((budget) => `${budget.label} ${budget.text}`)

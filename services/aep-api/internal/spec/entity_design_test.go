@@ -243,11 +243,11 @@ func TestUnionExternalConfigFor(t *testing.T) {
 		{Kind: DependencyKindExternal, Name: "stripe", Config: []ConfigKey{{Key: "api_key", Secret: true}}},
 	}}}
 	// case-insensitive lookup
-	if cfg := UnionExternalConfigFor(comps, "STRIPE"); len(cfg) != 1 || cfg[0].Key != "api_key" || !cfg[0].Secret {
+	if cfg, ok := UnionExternalConfigFor(comps, "STRIPE"); !ok || len(cfg) != 1 || cfg[0].Key != "api_key" || !cfg[0].Secret {
 		t.Fatalf("case-insensitive lookup failed: %v", cfg)
 	}
 	// absent name → nil
-	if cfg := UnionExternalConfigFor(comps, "nope"); cfg != nil {
+	if cfg, ok := UnionExternalConfigFor(comps, "nope"); ok || cfg != nil {
 		t.Fatalf("absent dependency must yield nil, got %v", cfg)
 	}
 }

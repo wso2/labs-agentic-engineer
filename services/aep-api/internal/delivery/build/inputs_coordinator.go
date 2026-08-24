@@ -18,6 +18,7 @@ package build
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 
@@ -25,25 +26,18 @@ import (
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
-// defaultInputEnv is the environment the build drawer's single value set is
-// staged under. The drawer collects one set of values (not per-env), so we pin
-// them to "development" — the codebase's default environment (see the resources
-// provisioner tests, which key every byEnv on "development").
-const defaultInputEnv = "development"
-
 // InputsCoordinator turns the build drawer's inputs into the pre-tag side
 // effects a build requires: it collects external specs and runs the design
 // derivations (end-user auth + dependency wiring — ADR-0013) BEFORE the tag-cut
 // (ApplyPreTag, which runs on EVERY build, drawer inputs or not, because the
-// derivations depend on the design rather than on the inputs), and splits/stages external-config
-// values into non-secret config + SM-API secret references, passing platform
-// resource params + approvals through (BuildProvisionInputs). It is a thin
-// orchestrator over four ports — it holds no state and authors no OC resources
+// derivations depend on the design rather than on the inputs), derives unset
+// external-config authoring from that design, and passes platform resource
+// params + approvals through (BuildProvisionInputs). It is a thin
+// orchestrator — it holds no state and authors no OC resources
 // (that is the workflow's job, Task 3).
 type InputsCoordinator struct {
 	spec   SpecCollector
 	auth   DesignFactDeriver
-	stager SecretStager
 	design PreflightDesignReader
 	skills SkillMirror
 }
@@ -56,8 +50,8 @@ type SkillMirror interface {
 }
 
 // NewInputsCoordinator wires the coordinator.
-func NewInputsCoordinator(spec SpecCollector, auth DesignFactDeriver, stager SecretStager, design PreflightDesignReader) *InputsCoordinator {
-	return &InputsCoordinator{spec: spec, auth: auth, stager: stager, design: design}
+func NewInputsCoordinator(spec SpecCollector, auth DesignFactDeriver, design PreflightDesignReader) *InputsCoordinator {
+	return &InputsCoordinator{spec: spec, auth: auth, design: design}
 }
 
 // WithSkillMirror enables the pre-tag skills refresh (nil → skipped). Returns
@@ -123,15 +117,15 @@ func (c *InputsCoordinator) ApplyPreTag(ctx context.Context, orgID, projectID st
 	return failures, nil
 }
 
-// BuildProvisionInputs turns the drawer inputs into the provision payload the
-// version's gate resolver consumes. For external-config it splits each input's values into non-secret
-// Config and a secret map (keyed by the design's ConfigKey.Secret flag at
-// HEAD), stages the secret map to SM-API, and lands only the returned reference
-// in SecretRefByEnv — a raw secret value never enters a ProvisionInput. For
-// platform-resource / org-service it passes Parameters + Approved through.
-// external-spec inputs carry no provision payload (handled in ApplyPreTag).
-func (c *InputsCoordinator) BuildProvisionInputs(ctx context.Context, orgID, ocOrgID, projectID string, inputs []BuildInputItem) ([]delivery.ProvisionInput, []InputFailure, error) {
-	secretKeys, err := c.secretKeysByDep(ctx, orgID, projectID)
+// BuildProvisionInputs derives one unset external-config payload per external
+// dependency from the design's union schema. Request external-config entries are
+// ignored: builds no longer collect or stage user values. Platform-resource and
+// org-service inputs still pass through; external-spec is handled pre-tag.
+func (c *InputsCoordinator) BuildProvisionInputs(ctx context.Context, orgID, projectID string, inputs []BuildInputItem) ([]delivery.ProvisionInput, []InputFailure, error) {
+	if c.design == nil {
+		return nil, nil, fmt.Errorf("build inputs: design reader is not configured")
+	}
+	comps, err := c.design.ReadDesignComponents(ctx, orgID, projectID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -140,14 +134,41 @@ func (c *InputsCoordinator) BuildProvisionInputs(ctx context.Context, orgID, ocO
 		out      []delivery.ProvisionInput
 		failures []InputFailure
 	)
+	union := spec.UnionExternalConfigKeys(comps)
+	unionByName := make(map[string][]spec.ConfigKey, len(union))
+	for name, keys := range union {
+		unionByName[strings.ToLower(name)] = keys
+	}
+	seenExternal := map[string]bool{}
+	for _, component := range comps {
+		for _, dep := range component.Dependencies {
+			if dep.Kind != spec.DependencyKindExternal {
+				continue
+			}
+			nameKey := strings.ToLower(dep.Name)
+			if seenExternal[nameKey] {
+				continue
+			}
+			seenExternal[nameKey] = true
+			config := map[string]string{}
+			keys := unionByName[nameKey]
+			for _, key := range keys {
+				if !key.Secret {
+					config[key.Key] = key.DefaultValue
+				}
+			}
+			out = append(out, delivery.ProvisionInput{
+				Component:  component.Name,
+				Dependency: dep.Name,
+				Kind:       "external-config",
+				Config:     config,
+			})
+		}
+	}
 	for _, in := range inputs {
 		switch in.Kind {
 		case "external-config":
-			pin, err := c.externalConfigInput(ctx, orgID, ocOrgID, projectID, in, secretKeys[strings.ToLower(in.Dependency)])
-			if err != nil {
-				return nil, nil, err
-			}
-			out = append(out, pin)
+			// Ignored. The design-derived entry above is authoritative.
 		case "platform-resource", "org-service":
 			out = append(out, delivery.ProvisionInput{
 				Component:  in.Component,
@@ -161,63 +182,4 @@ func (c *InputsCoordinator) BuildProvisionInputs(ctx context.Context, orgID, ocO
 		}
 	}
 	return out, failures, nil
-}
-
-// externalConfigInput splits one external-config input into non-secret config +
-// staged secret references, consulting isSecret (key → secret flag from the
-// design) to route each value.
-func (c *InputsCoordinator) externalConfigInput(ctx context.Context, orgID, ocOrgID, projectID string, in BuildInputItem, isSecret map[string]bool) (delivery.ProvisionInput, error) {
-	config := map[string]string{}
-	secret := map[string]string{}
-	for _, v := range in.Values {
-		if isSecret[v.Key] {
-			secret[v.Key] = v.Value
-			continue
-		}
-		config[v.Key] = v.Value
-	}
-
-	pin := delivery.ProvisionInput{
-		Component:  in.Component,
-		Dependency: in.Dependency,
-		Kind:       in.Kind,
-		Config:     config,
-	}
-	if len(secret) > 0 {
-		refByEnv, err := c.stager.StageExternalSecrets(ctx, orgID, ocOrgID, projectID, in.Dependency,
-			map[string]map[string]string{defaultInputEnv: secret})
-		if err != nil {
-			return delivery.ProvisionInput{}, err
-		}
-		pin.SecretRefByEnv = refByEnv
-	}
-	return pin, nil
-}
-
-// secretKeysByDep reads the design at HEAD and returns, per external dependency
-// name (lowercased), the map of config key → secret flag — the source of truth
-// for the secret/non-secret split. It unions each external's config across
-// every declaring component with SECRET WINNING on conflict, via the shared
-// spec.UnionExternalConfigKeys — the exact same classifier the provision +
-// runner-secret paths use — so a key marked secret by ANY component is never
-// staged as a plaintext ConfigMap value because a different component declared
-// it plain. A nil design reader (degraded/absent) yields an empty map (the
-// handler never reaches here without a design).
-func (c *InputsCoordinator) secretKeysByDep(ctx context.Context, orgID, projectID string) (map[string]map[string]bool, error) {
-	out := map[string]map[string]bool{}
-	if c.design == nil {
-		return out, nil
-	}
-	comps, err := c.design.ReadDesignComponents(ctx, orgID, projectID)
-	if err != nil {
-		return nil, err
-	}
-	for name, cfg := range spec.UnionExternalConfigKeys(comps) {
-		flags := map[string]bool{}
-		for _, k := range cfg {
-			flags[k.Key] = k.Secret
-		}
-		out[strings.ToLower(name)] = flags
-	}
-	return out, nil
 }

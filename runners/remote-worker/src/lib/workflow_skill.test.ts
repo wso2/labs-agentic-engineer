@@ -193,7 +193,8 @@ const REFERENCE_RULES: Record<string, string[]> = {
     "**Copy a `wiring` object verbatim**",
     "A `platform-resource` with no `wiring` is broken input",
     "**One that already exists is edited, never regenerated.**",
-    "**Every service component with dependents MUST list `external`.**",
+    "**A sibling SPA reaches a service through same-origin `/api`, not `external`.**",
+    "**Provider endpoint visibility:** a service a sibling SPA calls lists",
   ],
 };
 
@@ -445,6 +446,95 @@ test("no library skill hardcodes a runner path", () => {
       `${skill} hardcodes /app/skills — use $AEP_SKILLS_DIR, which is right in every mode`,
     );
   }
+});
+
+// The Bash tool keeps ONE shell for a whole run, so a bare relative `cd` is
+// correct exactly once. #49: the RUN block was re-entered after a heal wave and
+// `cd tests/e2e` landed in `tests/e2e/tests/e2e`. Every other path the
+// validation workflow names is repo-root relative, so the one command that
+// moves the shell has to be self-locating. Scoped to aep-validation on purpose:
+// `cd <project-name>` in the ballerina skill is a placeholder after `bal new`,
+// not a fixed path.
+// From the repo root a bare `npx playwright test` is the QUIET failure: it
+// discovers the specs, passes, and exits 0 without loading the config — so no
+// reporter, no results.json, and none of the launch args the deployed endpoints
+// need. Verified against the pinned 1.61.1. Every invocation therefore goes
+// through the package's own `test` script, which `npm --prefix` runs with the
+// package as its working directory — that is what removed the last `cd` from
+// this workflow.
+test("the validation workflow never runs playwright test bare", () => {
+  const docs = ["SKILL.md", "references/authoring.md", "references/healing.md"].map(
+    (rel) => [rel, fs.readFileSync(path.join(LIBRARY, "aep-validation", rel), "utf8")] as const,
+  );
+  for (const [rel, body] of docs) {
+    for (const line of body.split("\n")) {
+      // Start-of-line only: prose may name the form it is warning against.
+      if (!/^\s*npx\s+playwright\s+test\b/.test(line)) continue;
+      assert.ok(
+        line.includes("--config"),
+        `aep-validation/${rel}: \`${line.trim()}\` — bare from the repo root this ` +
+          `passes and writes no results.json; use \`npm test --prefix tests/e2e\``,
+      );
+    }
+  }
+  const skill = docs[0][1];
+  assert.match(
+    skill,
+    /"scripts":\s*\{\s*"test":\s*"playwright test"\s*\}/,
+    "the scaffolded package.json lost its `test` script — every invocation depends on it",
+  );
+  assert.ok(
+    skill.includes("npm test --prefix tests/e2e"),
+    "SKILL.md no longer runs the suite through the package script",
+  );
+});
+
+test("the validation workflow never cds to a bare relative path", () => {
+  for (const rel of ["SKILL.md", "references/authoring.md", "references/healing.md"]) {
+    const body = fs.readFileSync(path.join(LIBRARY, "aep-validation", rel), "utf8");
+    for (const line of body.split("\n")) {
+      // The whole argument, not the first token: `cd "$(git rev-parse …)/x"`
+      // contains spaces, and splitting on them would read as a bare path.
+      const target = /^\s*cd\s+(.+)$/.exec(line)?.[1]?.trim();
+      if (!target) continue;
+      assert.ok(
+        target.replace(/^["']/, "").startsWith("/") ||
+          target.includes("$(git rev-parse --show-toplevel)"),
+        `aep-validation/${rel}: \`${line.trim()}\` — the shell persists across calls, so a ` +
+          `cd must be self-locating (absolute, or rooted at $(git rev-parse --show-toplevel))`,
+      );
+    }
+  }
+});
+
+// #137/#140: the validation deny-list summarised the rules as a flat "no
+// force-push" while step 10 needed one, and the agent resolved the
+// contradiction by ignoring its own skill. A validation branch name repeats
+// every cycle, so the push must force — but never the form that ignores what
+// the remote says.
+test("no skill licenses a force-push without the lease", () => {
+  for (const rel of fs.readdirSync(LIBRARY, { recursive: true, encoding: "utf8" })) {
+    if (!rel.endsWith(".md")) continue;
+    const full = path.join(LIBRARY, rel);
+    if (!fs.statSync(full).isFile()) continue;
+    for (const line of fs.readFileSync(full, "utf8").split("\n")) {
+      if (!line.includes("push") || !line.includes("--force")) continue;
+      assert.ok(
+        line.includes("--force-with-lease"),
+        `${rel}: \`${line.trim()}\` — a force-push must carry --force-with-lease`,
+      );
+    }
+  }
+});
+
+// The half a reader misses: the deny-list can go on governing a force-push
+// after the step that needed one has lost it.
+test("aep-validation still names the force-push its push step needs", () => {
+  const body = fs.readFileSync(path.join(LIBRARY, "aep-validation", "SKILL.md"), "utf8");
+  assert.ok(
+    body.includes("git push --force-with-lease"),
+    "step 10 lost its lease form while the deny-list still governs one",
+  );
 });
 
 test("re-mirroring the same workspace replaces the previous mode's body", async () => {

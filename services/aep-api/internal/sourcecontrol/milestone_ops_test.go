@@ -209,7 +209,7 @@ func TestListMilestoneIssues_FiltersByNumberAndPages(t *testing.T) {
 	svc := newIssueSvcOnStub(t, stub)
 
 	got, err := svc.ListMilestoneIssues(testContext(), "org1", "proj1", sourcecontrol.MilestoneIssuesFilter{
-		Number: 9, State: "open", Labels: []string{"aep", "aep:provision"},
+		Number: 9, State: "open", Labels: []string{"aep", "development"},
 	})
 	if err != nil {
 		t.Fatalf("ListMilestoneIssues: %v", err)
@@ -225,7 +225,7 @@ func TestListMilestoneIssues_FiltersByNumberAndPages(t *testing.T) {
 	if len(reqs) != 2 {
 		t.Fatalf("issue list calls = %d, want 2", len(reqs))
 	}
-	for _, want := range []string{"milestone=9", "state=open", "labels=aep%2Caep%3Aprovision", "page=1"} {
+	for _, want := range []string{"milestone=9", "state=open", "labels=aep%2Cdevelopment", "page=1"} {
 		if !strings.Contains(reqs[0].Query, want) {
 			t.Fatalf("page-1 query = %q, want it to contain %q", reqs[0].Query, want)
 		}
@@ -268,10 +268,10 @@ func TestListMilestoneIssues_NumberRequired(t *testing.T) {
 // predicate: ONE GraphQL round trip carrying every aliased population, and
 // never a read of the REST milestone's PR-contaminated open_issues.
 //
-// The label UNIONS are the point. The labels: argument matches an issue
-// carrying ANY of the listed labels, so the working set rides one milestone
-// selection as a difference of two unions rather than a query per label — and
-// the per-cycle-boundary predicate must stay one call.
+// One label per alias is the point. The labels: argument matches an issue
+// carrying ANY of the listed labels, so a multi-label alias is a union wearing
+// a narrower name; with one label each there is no union left to misread, and
+// the working sets are plain subtraction in Go.
 func TestMilestoneIssueCounts_SendsAliasedQueryAndParsesCounts(t *testing.T) {
 	t.Parallel()
 	stub := gittest.NewStub(t)
@@ -279,8 +279,10 @@ func TestMilestoneIssueCounts_SendsAliasedQueryAndParsesCounts(t *testing.T) {
 		`{"data":{"repository":{"milestone":{
 			"provision":{"totalCount":1},
 			"allOpen":{"totalCount":9},
-			"workOrExcluded":{"totalCount":5},
-			"excluded":{"totalCount":2}
+			"agentWork":{"totalCount":5},
+			"development":{"totalCount":2},
+			"validation":{"totalCount":1},
+			"srcValidation":{"totalCount":1}
 		}}}}`)
 	svc := newIssueSvcOnStub(t, stub)
 
@@ -290,15 +292,19 @@ func TestMilestoneIssueCounts_SendsAliasedQueryAndParsesCounts(t *testing.T) {
 	}
 	want := sourcecontrol.MilestoneIssueCounts{
 		OpenProvision: 1, OpenTotal: 9,
-		OpenWorkOrExcluded: 5, OpenExcluded: 2,
+		OpenAgentWork: 5, OpenDevelopment: 2, OpenValidation: 1,
+		OpenValidationRepairs: 1,
 	}
 	if *counts != want {
 		t.Fatalf("counts = %+v, want %+v", *counts, want)
 	}
-	// 5 issues are work-or-excluded, of which 2 are exclusions (a gate and the
-	// validation issue), leaving 3 workable.
-	if got := counts.OpenNonGateWork(); got != 3 {
-		t.Fatalf("OpenNonGateWork = %d, want 3", got)
+	// 5 armed issues, one of which is the validation task: 4 for the dev loop,
+	// and 2 once the milestone's planned work is taken out as well.
+	if got := counts.OpenDevWork(); got != 4 {
+		t.Fatalf("OpenDevWork = %d, want 4", got)
+	}
+	if got := counts.OpenTaskWork(); got != 2 {
+		t.Fatalf("OpenTaskWork = %d, want 2", got)
 	}
 
 	req := onlyRequest(t, stub.Requests(), http.MethodPost, "/graphql")
@@ -315,10 +321,12 @@ func TestMilestoneIssueCounts_SendsAliasedQueryAndParsesCounts(t *testing.T) {
 		t.Fatalf("variables = %+v, want {acme widgets 9}", payload.Variables)
 	}
 	for _, want := range []string{
-		`provision:      issues(states: [OPEN], labels: ["aep:provision"], first: 1)`,
-		`allOpen:        issues(states: [OPEN], first: 1)`,
-		`workOrExcluded: issues(states: [OPEN], labels: ["aep", "aep:provision", "aep:validation"], first: 1)`,
-		`excluded:       issues(states: [OPEN], labels: ["aep:provision", "aep:validation"], first: 1)`,
+		`provision:     issues(states: [OPEN], labels: ["provision"], first: 1)`,
+		`allOpen:       issues(states: [OPEN], first: 1)`,
+		`agentWork:     issues(states: [OPEN], labels: ["aep"], first: 1)`,
+		`development:   issues(states: [OPEN], labels: ["development"], first: 1)`,
+		`validation:    issues(states: [OPEN], labels: ["validation"], first: 1)`,
+		`srcValidation: issues(states: [OPEN], labels: ["src/validation"], first: 1)`,
 		"milestone(number: $m)",
 	} {
 		if !strings.Contains(payload.Query, want) {
@@ -328,13 +336,15 @@ func TestMilestoneIssueCounts_SendsAliasedQueryAndParsesCounts(t *testing.T) {
 	if strings.Contains(payload.Query, "open_issues") || strings.Contains(payload.Query, "openIssueCount") {
 		t.Fatalf("query reads a PR-contaminated count:\n%s", payload.Query)
 	}
-	// Exactly four aliased populations. A fifth would mean somebody re-added an
-	// INTERSECTION alias — the "aep" ∩ gate overlap the old inclusion-exclusion
-	// arithmetic needed. The argument cannot express an intersection, so such an
-	// alias is a WIDER union wearing an overlap's name, and it silently empties
-	// the working set.
-	if got := strings.Count(payload.Query, "issues(states: [OPEN]"); got != 4 {
-		t.Fatalf("query has %d aliased populations, want exactly 4:\n%s", got, payload.Query)
+	// Exactly six aliased populations, ONE LABEL EACH. A seventh would mean
+	// somebody re-added a COMPOSITE alias — the union the old inclusion-exclusion
+	// arithmetic needed. Any alias listing more than one label is a wider union
+	// than its name claims, and it silently empties a working set.
+	if got := strings.Count(payload.Query, "issues(states: [OPEN]"); got != 6 {
+		t.Fatalf("query has %d aliased populations, want exactly 6:\n%s", got, payload.Query)
+	}
+	if got := strings.Count(payload.Query, `", "`); got != 0 {
+		t.Fatalf("an alias lists more than one label (%d multi-label alias separators):\n%s", got, payload.Query)
 	}
 	if req.Header.Get("Authorization") != "Bearer test-token" {
 		t.Fatalf("graphql Authorization = %q, want the credential's bearer token", req.Header.Get("Authorization"))
@@ -346,95 +356,131 @@ func TestMilestoneIssueCounts_SendsAliasedQueryAndParsesCounts(t *testing.T) {
 // milestoneIssueCountsQuery embeds, which is the coupling under test.
 const (
 	labelWork  = "aep"
-	labelGate  = "aep:provision"
-	labelValid = "aep:validation"
+	labelDev   = "development"
+	labelBug   = "bug"
+	labelGate  = "provision"
+	labelValid = "validation"
+	// srcValidation is the SOURCE a failed verdict stamps on the repair work it
+	// files. It is counted like a kind and subtracted like nothing: the bug-fix
+	// loop reads it to decide whether draining its working set reopens the
+	// version's validation task, and no working set is defined by it.
+	labelSrcValid = "src/validation"
 )
 
 // hostCounts answers the populations the REAL host would report for a milestone
 // holding these open issues.
 //
-// It exists because the shipped arithmetic was wrong for exactly one reason: a
-// belief that GraphQL's `labels:` argument intersects. It UNIONS — an issue
-// matches when it carries ANY listed label. (The AND-semantics filter is the
-// REST `?labels=a,b` parameter, a different API over the same resource.) Every
-// case below is therefore stated as issues-and-labels and counted through this
-// function, so no case can assert against a population GitHub cannot produce.
+// It exists because the shipped arithmetic was once wrong for exactly one
+// reason: a belief that GraphQL's `labels:` argument intersects. It UNIONS — an
+// issue matches when it carries ANY listed label. (The AND-semantics filter is
+// the REST `?labels=a,b` parameter, a different API over the same resource.)
+// Every case below is therefore stated as issues-and-labels and counted through
+// this function, so no case can assert against a population GitHub cannot
+// produce.
+//
+// Each field counts ONE label, exactly as each alias in the query filters on
+// one — so this fake would still be honest if the argument were an intersection.
+// That is deliberate: the query no longer depends on which of the two it is.
 func hostCounts(issues ...[]string) *sourcecontrol.MilestoneIssueCounts {
-	anyOf := func(want ...string) int {
+	carrying := func(want string) int {
 		n := 0
 		for _, have := range issues {
-			for _, w := range want {
-				if slices.Contains(have, w) {
-					n++
-					break
-				}
+			if slices.Contains(have, want) {
+				n++
 			}
 		}
 		return n
 	}
 	return &sourcecontrol.MilestoneIssueCounts{
-		OpenProvision:      anyOf(labelGate),
-		OpenWorkOrExcluded: anyOf(labelWork, labelGate, labelValid),
-		OpenExcluded:       anyOf(labelGate, labelValid),
-		OpenTotal:          len(issues),
+		OpenProvision:         carrying(labelGate),
+		OpenAgentWork:         carrying(labelWork),
+		OpenDevelopment:       carrying(labelDev),
+		OpenValidation:        carrying(labelValid),
+		OpenValidationRepairs: carrying(labelSrcValid),
+		OpenTotal:             len(issues),
 	}
 }
 
-// TestMilestoneIssueCounts_WorkingSetArithmetic pins the ONE place the working
-// set is computed, over the populations a UNION-filtering host actually
-// returns. It is the difference of two unions, so an issue carrying several
-// label kinds is excluded exactly once — the label kinds are not assumed
-// disjoint, because nothing on GitHub stops a gate from also carrying the
-// agent-work label.
+// TestMilestoneIssueCounts_WorkingSetArithmetic pins the ONE place each working
+// set is computed, over the populations the host actually returns.
+//
+// Subtraction is exact here where inclusion-exclusion was not, because every
+// subtracted kind is a strict SUBSET of the armed population: an armed issue
+// carries exactly one kind, so it is counted once and removed at most once.
 func TestMilestoneIssueCounts_WorkingSetArithmetic(t *testing.T) {
 	t.Parallel()
 	var (
-		task   = []string{labelWork}
-		gate   = []string{labelGate}
-		valid  = []string{labelWork, labelValid}
-		ledger = []string(nil)
+		planned = []string{labelWork, labelDev}
+		bug     = []string{labelWork, labelBug}
+		gate    = []string{labelGate}
+		valid   = []string{labelWork, labelValid}
+		armed   = []string{labelWork} // armed by a human, not yet classified
+		ledger  = []string(nil)
+		// A failed verdict's repair work: an ordinary armed bug whose SOURCE
+		// records where it came from.
+		repair = []string{labelWork, labelBug, labelSrcValid}
 	)
 	cases := []struct {
-		name   string
-		counts *sourcecontrol.MilestoneIssueCounts
-		want   int
+		name     string
+		counts   *sourcecontrol.MilestoneIssueCounts
+		wantDev  int
+		wantTask int
 	}{
-		{"a milestone of plain agent work", hostCounts(task, task, task), 3},
+		{"a milestone of planned work", hostCounts(planned, planned, planned), 3, 0},
 		{
-			// Human-filed issues with no "aep" label are the milestone's LEDGER:
-			// they inflate the total and are never work.
+			// Human-filed issues carrying no arming label are the milestone's
+			// LEDGER: they inflate the total and are never work.
 			"ledger issues are not work",
-			hostCounts(ledger, ledger, ledger, ledger), 0,
+			hostCounts(ledger, ledger, ledger, ledger), 0, 0,
 		},
 		{
-			// THE LIVE FAILURE, exactly as it stood: one coding task alongside one
-			// provision gate. The gate is excluded; the task is NOT. Read as an
-			// empty working set, the run settles a version nobody built.
+			// THE LIVE FAILURE, exactly as it stood: one task alongside one
+			// provision gate. Read as an empty working set, the run settles a
+			// version nobody built. A gate carries no arming label at all now, so
+			// there is nothing left for it to be subtracted from.
 			"a gate alongside real work leaves the work visible",
-			hostCounts(task, gate), 1,
+			hostCounts(planned, gate), 1, 0,
 		},
 		{
-			"gates and the validation issue come out of the working set",
-			hostCounts(task, task, task, gate, valid, ledger, ledger), 3,
+			"the validation task is nobody's working set",
+			hostCounts(planned, planned, planned, gate, valid, ledger, ledger), 3, 0,
 		},
 		{
-			// One issue carrying BOTH exclusion labels is one member of the
-			// exclusion union, so it comes out exactly once.
-			"an issue in both exclusions is not subtracted twice",
-			hostCounts(task, []string{labelWork, labelGate, labelValid}), 1,
+			// The whole reason the task working set exists: a bug-fix run works the
+			// deployed version and must not pick up the build's planned work.
+			"a bug is in both working sets, planned work only in dev",
+			hostCounts(planned, planned, bug), 3, 1,
+		},
+		{
+			// An armed issue with no kind is what a human's adoption produces. It
+			// counts as work in BOTH sets — which is what delivery.InDevWorkingSet
+			// answers for the same issue, and the safe direction besides: a stall
+			// is visible where a silent settle is not.
+			"an armed issue with no kind is work",
+			hostCounts(armed, valid), 1, 1,
 		},
 		{
 			// Not producible by hostCounts, and that is the point: the clamp guards
 			// against a host that answers inconsistently, not against a milestone.
 			"an inconsistent host cannot produce negative work",
-			&sourcecontrol.MilestoneIssueCounts{OpenWorkOrExcluded: 0, OpenExcluded: 2},
-			0,
+			&sourcecontrol.MilestoneIssueCounts{OpenAgentWork: 0, OpenValidation: 2, OpenDevelopment: 1},
+			0, 0,
 		},
-		{"an unknown milestone has no work", nil, 0},
+		{
+			// A source is not a kind and NOTHING subtracts it: a repair bug is an
+			// ordinary bug in both working sets, counted once. Reading the source as
+			// an exclusion would empty the very working set the repair created.
+			"verdict-sourced repair work is ordinary work",
+			hostCounts(repair, repair, planned), 3, 2,
+		},
+		{"an unknown milestone has no work", nil, 0, 0},
 	}
 	for _, c := range cases {
-		if got := c.counts.OpenNonGateWork(); got != c.want {
-			t.Errorf("OpenNonGateWork(%s) = %d, want %d (counts %+v)", c.name, got, c.want, c.counts)
+		if got := c.counts.OpenDevWork(); got != c.wantDev {
+			t.Errorf("OpenDevWork(%s) = %d, want %d (counts %+v)", c.name, got, c.wantDev, c.counts)
+		}
+		if got := c.counts.OpenTaskWork(); got != c.wantTask {
+			t.Errorf("OpenTaskWork(%s) = %d, want %d (counts %+v)", c.name, got, c.wantTask, c.counts)
 		}
 	}
 }
@@ -444,17 +490,25 @@ func TestMilestoneIssueCounts_WorkingSetArithmetic(t *testing.T) {
 // task whether or not its provision gate is still open. The gate holds the
 // dispatch (the predicate's other clause, in `delivery`); it must never make
 // the milestone read as empty, because empty is what closes the version.
+//
+// It also pins the case a naive "just arm everything" would break: a gate
+// carries NO arming label, so the gate count is the ONLY read that can see it.
+// Counting gates through the armed population would make an open gate invisible
+// and the run would dispatch straight past its own hold.
 func TestMilestoneIssueCounts_AGateHoldsWorkItDoesNotErase(t *testing.T) {
 	t.Parallel()
-	gated := hostCounts([]string{labelWork}, []string{labelGate})
-	if got := gated.OpenNonGateWork(); got != 1 {
+	gated := hostCounts([]string{labelWork, labelDev}, []string{labelGate})
+	if got := gated.OpenDevWork(); got != 1 {
 		t.Fatalf("working set behind an open gate = %d, want 1 (counts %+v)", got, gated)
 	}
 	if gated.OpenProvision != 1 {
 		t.Fatalf("gates = %d, want 1", gated.OpenProvision)
 	}
-	released := hostCounts([]string{labelWork})
-	if got := released.OpenNonGateWork(); got != 1 {
+	if gated.OpenAgentWork != 1 {
+		t.Fatalf("armed issues = %d, want 1 — a gate is not armed", gated.OpenAgentWork)
+	}
+	released := hostCounts([]string{labelWork, labelDev})
+	if got := released.OpenDevWork(); got != 1 {
 		t.Fatalf("working set after the gate closed = %d, want 1 (counts %+v)", got, released)
 	}
 	if released.OpenProvision != 0 {

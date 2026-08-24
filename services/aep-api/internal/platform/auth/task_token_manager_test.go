@@ -61,9 +61,9 @@ func TestTaskTokenManager_PKCS1(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewTaskTokenManager: %v", err)
 	}
-	tok, err := mgr.Issue("task-123", "org-456", "proj-789")
+	tok, err := mgr.IssueServiceToken("git-service", "org-456", 0)
 	if err != nil {
-		t.Fatalf("Issue: %v", err)
+		t.Fatalf("IssueServiceToken: %v", err)
 	}
 
 	// Parse and verify with the manager's public key.
@@ -80,7 +80,7 @@ func TestTaskTokenManager_PKCS1(t *testing.T) {
 	if !ok {
 		t.Fatalf("wrong claim type: %T", parsed.Claims)
 	}
-	if claims.TaskID != "task-123" || claims.OcOrgID != "org-456" || claims.ProjectID != "proj-789" {
+	if claims.OcOrgID != "org-456" {
 		t.Errorf("claims wrong: %+v", claims)
 	}
 	if claims.Issuer != "aep-bff" {
@@ -105,8 +105,8 @@ func TestTaskTokenManager_PKCS8(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewTaskTokenManager: %v", err)
 	}
-	if _, err := mgr.Issue("task-1", "org-1", ""); err != nil {
-		t.Errorf("Issue: %v", err)
+	if _, err := mgr.IssueServiceToken("git-service", "org-1", 0); err != nil {
+		t.Errorf("IssueServiceToken: %v", err)
 	}
 }
 

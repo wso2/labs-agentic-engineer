@@ -68,12 +68,14 @@ func NewReads(issues IssueClient, repos RepoResolver, execs ExecutionReader, run
 // built has no Tasks by definition.
 //
 // An empty tag returns every version, which costs two label-scoped queries
-// because GitHub's `labels=` is AND-semantics and the two populations (agent
-// work, dispatch gates) carry disjoint labels.
+// because GitHub's `labels=` is AND-semantics and the two populations (armed
+// work, dispatch gates) carry disjoint labels — a gate deliberately carries no
+// arming label, so no single query can reach both.
 //
-// The validation issue is excluded at this boundary, as it always was: it is a
+// The validation task is excluded at this boundary, as it always was: it is a
 // phase of the run, not an implementation Task, and it surfaces on the
-// deployment surface with the run's verdict.
+// deployment surface with the run's verdict. It is excluded by KIND now that it
+// carries the arming label like any other agent work.
 //
 // Bare LEDGER issues — human-filed issues that joined the milestone carrying
 // none of the platform's labels — are returned by the tag-scoped read and only
@@ -177,15 +179,20 @@ func (r *Reads) taskIssues(ctx context.Context, orgID, projectID, tag string) ([
 	return issues, tag, err
 }
 
-// allVersionIssues is the untagged query: agent work plus dispatch gates across
+// allVersionIssues is the untagged query: armed work plus dispatch gates across
 // every milestone. Two calls, because the two populations carry disjoint labels
-// and GitHub's label filter is AND-semantics.
+// and GitHub's label filter is AND-semantics — one query naming both would
+// demand an issue carrying both and return nothing.
+//
+// The armed query reaches every workable kind at once (planned work, bugs,
+// conflicts, the validation task) because the arming label is what they share;
+// the kinds are then told apart per issue, in taskKind.
 func (r *Reads) allVersionIssues(ctx context.Context, orgID, projectID string) ([]sourcecontrol.IssueInfo, error) {
 	work, err := r.issues.ListIssues(ctx, orgID, projectID, []string{delivery.LabelAgentWork})
 	if err != nil {
 		return nil, err
 	}
-	gates, err := r.issues.ListIssues(ctx, orgID, projectID, []string{delivery.LabelProvisionGate})
+	gates, err := r.issues.ListIssues(ctx, orgID, projectID, []string{delivery.KindProvision})
 	if err != nil {
 		return nil, err
 	}
@@ -204,16 +211,18 @@ func (r *Reads) allVersionIssues(ctx context.Context, orgID, projectID string) (
 }
 
 // buildView projects one live issue onto a TaskView. ok is false when the issue
-// is not part of the requested population: the validation issue is always
-// hidden, and a bare ledger issue is included only when the caller scoped the
-// read to one milestone, which is the only way a ledger issue is discoverable
-// at all.
+// is not part of the requested population: the validation task is always hidden,
+// and a bare ledger issue is included only when the caller scoped the read to
+// one milestone, which is the only way a ledger issue is discoverable at all.
+//
+// The validation task is hidden on its KIND, not on the absence of an arming
+// label — it carries one, like every other issue an agent is dispatched at.
 func buildView(issue sourcecontrol.IssueInfo, specTag string, execs map[string]*delivery.Execution, milestoneScoped bool) (delivery.TaskView, bool) {
-	if delivery.HasLabel(issue.Labels, delivery.LabelValidationWork) {
+	if delivery.IsValidationWork(issue.Labels) {
 		return delivery.TaskView{}, false
 	}
 	if !delivery.HasLabel(issue.Labels, delivery.LabelAgentWork) &&
-		!delivery.HasLabel(issue.Labels, delivery.LabelProvisionGate) &&
+		!delivery.IsDispatchGate(issue.Labels) &&
 		!milestoneScoped {
 		return delivery.TaskView{}, false
 	}
@@ -231,7 +240,8 @@ func bareView(issue sourcecontrol.IssueInfo, specTag string) delivery.TaskView {
 		IssueNumber:   issue.Number,
 		Title:         issue.Title,
 		IssueURL:      issue.URL,
-		ExecutorClass: taskKind(issue.Labels),
+		ExecutorClass: executorClass(issue.Labels),
+		Kind:          delivery.KindOf(issue.Labels),
 		Body:          issue.Body,
 		DependsOn:     []string{},
 		Lineage:       delivery.Lineage{SpecTag: specTag},
@@ -243,14 +253,24 @@ func bareView(issue sourcecontrol.IssueInfo, specTag string) delivery.TaskView {
 	}
 }
 
-// taskKind is the label-derived kind chip, and the only classification the
-// platform makes of an issue: a dispatch gate, the validation issue, agent
-// work, or a bare human issue that carries none of those labels — the ledger.
-func taskKind(labels []string) string {
+// executorClass says WHO works an issue, which is the axis the console sections
+// its issue list on: the platform (a dispatch gate), the validation loop, a
+// coding agent, or nobody at all (a bare human issue — the ledger).
+//
+// It is deliberately COARSER than the issue's kind. Planned work, a bug and a
+// merge conflict are all `coding`: they are dispatched the same way, into the
+// same cycle, and a console section per kind would split one population three
+// ways for no reader's benefit. The finer fact travels beside it as Kind, for
+// the row's own chip.
+//
+// An issue with no kind but an arming label is `coding` — the same reading every
+// working-set predicate gives it (delivery.InDevWorkingSet), so a row cannot
+// claim to be un-worked while the loop is working it.
+func executorClass(labels []string) string {
 	switch {
-	case delivery.HasLabel(labels, delivery.LabelProvisionGate):
+	case delivery.IsDispatchGate(labels):
 		return "provision"
-	case delivery.HasLabel(labels, delivery.LabelValidationWork):
+	case delivery.IsValidationWork(labels):
 		return "validation"
 	case delivery.HasLabel(labels, delivery.LabelAgentWork):
 		return "coding"

@@ -565,6 +565,19 @@ echo ""
 echo "🔧 Building + installing thunder-app-operator..."
 docker build -t thunder-app-operator:local "${SCRIPT_DIR}/../single-cluster/resource-types/thunder-app/operator"
 k3d image import thunder-app-operator:local -c "${CLUSTER_NAME}"
+# pullPolicy=Never below means an image-GC eviction of this local-only tag is fatal
+# (ErrImageNeverPull, no registry to recover from) — pin it. See utils.sh.
+# Exit 2 means the import silently did not land, which `set -e` already treats as
+# fatal when the import command itself fails; the helm install below would otherwise
+# deploy an operator whose pod can never start. Exit 1 leaves the image usable but
+# collectible, which is a warning, not a reason to abort setup.
+PIN_RC=0
+pin_node_image thunder-app-operator:local || PIN_RC=$?
+if [ "$PIN_RC" = "2" ]; then
+    echo "❌ thunder-app-operator:local did not land in the node — the operator would"
+    echo "   stay ErrImageNeverPull (pullPolicy: Never, no registry). Re-run setup-aep.sh."
+    exit 1
+fi
 helm upgrade --install thunder-app-operator \
     "${SCRIPT_DIR}/../single-cluster/resource-types/thunder-app/operator/helm" \
     -n thunder-app-operator-system --create-namespace \

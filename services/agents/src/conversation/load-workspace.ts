@@ -18,7 +18,7 @@
 
 /**
  * Workspace-shape input loading (shared-workspace-volume, D4): the ONLY module
- * that reads the shared mount. Both readers take a directory that
+ * that reads the shared mount. All three readers take a directory that
  * `snapshot-path.ts` derived and stat-checked — nothing here touches untrusted
  * paths, and nothing here writes.
  *
@@ -37,10 +37,26 @@
  *    drop any skill an org admin has DISABLED — such a skill never becomes a
  *    row, so it is absent from the catalog and `load`/`loadReference` return
  *    `undefined` for it, same as an unknown name.
+ *  - `readReferenceAttachments(dir, references)` reads the natively-readable
+ *    binary entries (`.pdf` and the four image types the models read natively —
+ *    `.png`, `.jpg`/`.jpeg`, `.gif`, `.webp`) of a `start` turn's
+ *    `TurnSpec.references` as native AI SDK file parts (#384).
+ *    None of them is ever in the text `files` map — `keepInTurnSnapshot` admits
+ *    none of those extensions, whatever the bytes look like, and the walk's
+ *    NUL-byte skip is a second line behind that — so the two channels cannot
+ *    double up on one document. Without this reader the model's only way to see
+ *    a PDF was
+ *    pulling it through a tool as "text", which is how a real turn died (an
+ *    868KB PDF read as ~1.5M junk tokens, then the turn failed at history
+ *    persistence on the NUL bytes that trip carried). Every failure mode here
+ *    is best-effort: a missing/unreadable/oversized file is warned and skipped,
+ *    never thrown — same posture as the skill readers above for ENOENT.
  */
 
-import { existsSync, readFileSync, readdirSync, type Dirent } from "node:fs";
-import { basename, join } from "node:path";
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync, type Dirent } from "node:fs";
+import { basename, join, resolve, sep } from "node:path";
+import type { FilePart } from "ai";
+import type { TurnAttachment } from "@aep/agent-stream";
 import { parse as parseYaml } from "yaml";
 // Reuse the bundle's single frontmatter grammar + LF canonicalizer so SKILL.md
 // fence parsing cannot drift from the spec-file fence parsing (same approach as
@@ -125,8 +141,35 @@ function isAdmittedSpecPath(path: string): boolean {
 export function keepInTurnSnapshot(path: string): boolean {
   if (path.endsWith(".md") || path.endsWith(".dsl") || path.endsWith(".cell")) return true;
   if (isAdmittedSpecPath(path)) return true;
+  if (isTextReferencePath(path)) return true;
   const base = basename(path);
   return base === "design.json" || base === "validation-criteria.json";
+}
+
+/**
+ * A user-uploaded reference the model should read AS TEXT.
+ *
+ * References are the one input here the agent did not author, so the
+ * extension allow-list above — built for agent-authored spec artifacts — is the
+ * wrong test for them: it admits a `.md` reference and silently drops a `.txt`
+ * or `.csv` one, which then reaches the turn as a file on disk that nothing
+ * puts in front of the model. The rule is the folder, not the extension.
+ *
+ * Natively-read binaries are excluded deliberately: they ride as file PARTS
+ * (`readReferenceAttachments`), and admitting them here would either double
+ * them up or, worse, pour a PDF's bytes into the text map — the failure this
+ * channel exists to avoid.
+ */
+/**
+ * Where reference documents appear inside a turn's snapshot (#383). NOT a repo
+ * path: nothing is committed there any more — aep-api stores the documents off
+ * git and overlays them into the extracted snapshot at this prefix (console
+ * ADR-0017), which is exactly why nothing in this file had to change.
+ */
+export const REFERENCES_PREFIX = "specs/requirements/references/";
+
+function isTextReferencePath(path: string): boolean {
+  return path.startsWith(REFERENCES_PREFIX) && nativeMediaTypeFor(path) === undefined;
 }
 
 /**
@@ -171,6 +214,248 @@ export function readSnapshot(snapshotDir: string): Record<string, string> {
   const out: Record<string, string> = {};
   walk(snapshotDir, "", out);
   return out;
+}
+
+// --- Reference PDFs → native AI SDK file parts (#384) -------------------------
+
+/**
+ * What one turn's attachments may add to the request, measured in ENCODED
+ * bytes. Anthropic caps a Messages request at 32MB and an attachment rides it
+ * base64 — 4 wire bytes per 3 raw — while the prompt, the text snapshot and the
+ * whole conversation history share that same request. So attachments get a
+ * budget, not the limit: 20MB encoded (~15MB of PDF) leaves ~12MB for
+ * everything else.
+ *
+ * The budget is per TURN, not per file. A per-file cap alone cannot hold the
+ * line twice over: a single 30MB PDF encodes to 40MB and blows the request on
+ * its own, and three 8MB PDFs each pass any per-file check and still overrun it
+ * together.
+ */
+export const MAX_REFERENCE_ATTACHMENT_ENCODED_BYTES = 20 * 1024 * 1024;
+
+/** Base64 length of `rawBytes` bytes: 4 chars per 3 bytes, rounded up with padding. */
+function encodedLength(rawBytes: number): number {
+  return Math.ceil(rawBytes / 3) * 4;
+}
+
+/**
+ * The binary reference types the model reads natively, by extension: PDFs as
+ * document blocks, images as image blocks. Anything else binary has no native
+ * representation and is skipped (it is also invisible to the text snapshot,
+ * which is exactly why these ride as parts at all).
+ */
+const NATIVE_MEDIA_BY_EXT: Record<string, string> = {
+  pdf: "application/pdf",
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+};
+
+function nativeMediaTypeFor(path: string): string | undefined {
+  const ext = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
+  return NATIVE_MEDIA_BY_EXT[ext];
+}
+
+interface ReferenceAttachment {
+  part: FilePart;
+  /** What this part costs the turn's budget — its base64 length, exactly. */
+  encodedBytes: number;
+}
+
+/**
+ * The snapshot dir under both spellings. `resolved` fences the requested path
+ * before any I/O; `real` fences it again after symlinks are followed. They
+ * differ whenever the mount itself sits behind a link (`/var` → `/private/var`
+ * on macOS, and the shared workspace volume in the cluster), so a check against
+ * the wrong one refuses every honest reference.
+ */
+interface SnapshotBounds {
+  resolved: string;
+  real: string;
+}
+
+/**
+ * Read one reference's bytes as a `FilePart` of `mediaType`, or `undefined` on
+ * any best-effort skip (never throws): outside the snapshot dir (a hostile or
+ * malformed path, or a symlink pointing out of it — see below), missing,
+ * unreadable, or more encoded bytes than `remainingEncodedBudget` still allows.
+ * `data` is base64 — the AI SDK accepts a bare base64 string as `DataContent`,
+ * and it keeps the eventual conversation-history JSON compact (a `Buffer` would
+ * serialize as a giant `{type:"Buffer",data:[...]}` byte array instead).
+ *
+ * The bounds check runs twice, on purpose. `resolve` collapses `..` without
+ * touching the filesystem, so a hostile path is refused before any I/O; then
+ * `realpathSync` resolves every symlink on the way down, because the snapshot is
+ * a checkout of a user's repo and a committed symlink — the file itself, or any
+ * parent dir — would otherwise pass a textual prefix check and hand the model a
+ * file from outside the snapshot.
+ */
+function readOneReferenceAttachment(
+  snapshotDir: string,
+  refPath: string,
+  bounds: SnapshotBounds,
+  mediaType: string,
+  remainingEncodedBudget: number,
+): ReferenceAttachment | undefined {
+  const abs = resolve(snapshotDir, refPath);
+  if (!isWithin(abs, bounds.resolved)) {
+    console.warn(`[references] skipping reference outside the snapshot: ${refPath}`);
+    return undefined;
+  }
+  let real: string;
+  let size: number;
+  try {
+    real = realpathSync(abs);
+    size = statSync(real).size;
+  } catch (err) {
+    console.warn(`[references] skipping unreadable reference ${refPath}: ${err instanceof Error ? err.message : String(err)}`);
+    return undefined;
+  }
+  if (!isWithin(real, bounds.real)) {
+    console.warn(`[references] skipping reference that links outside the snapshot: ${refPath}`);
+    return undefined;
+  }
+  const encodedBytes = encodedLength(size);
+  if (encodedBytes > remainingEncodedBudget) {
+    console.warn(
+      `[references] skipping oversized reference ${refPath}: ${size} bytes (${encodedBytes} encoded) > ${remainingEncodedBudget} bytes left of the turn's ${MAX_REFERENCE_ATTACHMENT_ENCODED_BYTES} encoded budget`,
+    );
+    return undefined;
+  }
+  let bytes: Buffer;
+  try {
+    bytes = readFileSync(real);
+  } catch (err) {
+    console.warn(`[references] failed to read reference ${refPath}: ${err instanceof Error ? err.message : String(err)}`);
+    return undefined;
+  }
+  const data = bytes.toString("base64");
+  return {
+    part: { type: "file", data, mediaType, filename: refPath },
+    encodedBytes: data.length,
+  };
+}
+
+/** Is `abs` the snapshot root itself, or something under it? */
+function isWithin(abs: string, root: string): boolean {
+  return abs === root || abs.startsWith(root + sep);
+}
+
+function snapshotBounds(snapshotDir: string): SnapshotBounds {
+  const resolved = resolve(snapshotDir);
+  try {
+    return { resolved, real: realpathSync(resolved) };
+  } catch {
+    // An unreadable root is not this function's error to raise: every reference
+    // under it then fails its own read and is warned and skipped.
+    return { resolved, real: resolved };
+  }
+}
+
+/**
+ * Attach every natively-readable binary reference (case-insensitive `.pdf`,
+ * `.png`, `.jpg`/`.jpeg`) in a `start` turn's `TurnSpec.references` as a
+ * native AI SDK file part — Anthropic reads PDFs as document blocks and
+ * images as image blocks, so the model sees the actual mockup or form rather
+ * than pulling bytes through a tool as "text" (see the module doc for why
+ * that mattered). Text references (`.md`/`.txt`) are already inlined by
+ * `readSnapshot` and are left alone here. Absent/empty `references` → `[]`,
+ * so a turn with no attachable references builds byte-identical messages to
+ * before this existed.
+ *
+ * References are attached in the order given until the turn's encoded budget
+ * runs out; each one that does not fit is warned and skipped, and the rest still
+ * get their chance (a 40MB PDF listed first must not starve the 200KB brief
+ * behind it).
+ */
+export function readReferenceAttachments(snapshotDir: string, references: string[] | undefined): FilePart[] {
+  const bounds = snapshotBounds(snapshotDir);
+  const parts: FilePart[] = [];
+  let spent = 0;
+  for (const raw of references ?? []) {
+    const refPath = raw.trim();
+    if (refPath === "") continue;
+    const mediaType = nativeMediaTypeFor(refPath);
+    if (mediaType === undefined) continue;
+    const attachment = readOneReferenceAttachment(
+      snapshotDir,
+      refPath,
+      bounds,
+      mediaType,
+      MAX_REFERENCE_ATTACHMENT_ENCODED_BYTES - spent,
+    );
+    if (attachment === undefined) continue;
+    parts.push(attachment.part);
+    spent += attachment.encodedBytes;
+  }
+  return parts;
+}
+
+/**
+ * Overlay the SNAPSHOT's reference-document texts onto a room-scoped turn's
+ * files. The collab room deliberately excludes reference documents (they are
+ * inputs, not collaboratively-edited spec), so a turn whose CURRENT STATE comes
+ * from the room would silently lose the user's text references — a live /start
+ * did exactly that: the steer listed claim.md, the snapshot held it, and the
+ * prompt never saw it. The snapshot is the authority for references, so a stale
+ * room copy (seeded before the exclusion existed, or from a project created
+ * under the feature's v1) is overwritten, and the room stays the authority for
+ * everything else.
+ */
+export function overlayReferenceTexts(
+  roomFiles: Record<string, string>,
+  snapshotFiles: Record<string, string>,
+): Record<string, string> {
+  const refs = Object.entries(snapshotFiles).filter(([path]) => path.startsWith(REFERENCES_PREFIX));
+  if (refs.length === 0) return roomFiles;
+  const out = { ...roomFiles };
+  for (const [path, content] of refs) out[path] = content;
+  return out;
+}
+
+/**
+ * Chat attachments (#428) → native AI SDK file parts.
+ *
+ * The sibling of `readReferenceAttachments`, and the difference is where the
+ * bytes come from: a reference is READ FROM THE SNAPSHOT by path, because the
+ * platform stored it and overlaid it there. An attachment is never stored at all
+ * (console ADR-0019), so its bytes arrive INLINE on the turn request and this
+ * touches no filesystem — no path to fence, no symlink to resolve, no ENOENT to
+ * survive.
+ *
+ * The same per-turn budget applies, and it is shared with the reference parts
+ * rather than doubled: `spent` carries over, because the ceiling is a property of
+ * the MODEL REQUEST, not of either channel. Attachments are taken in order until
+ * the budget runs out; each one that does not fit is warned and skipped, and the
+ * rest still get their chance.
+ *
+ * Best-effort per item, like every other reader here: a malformed base64 payload
+ * is warned and skipped rather than failing the whole turn.
+ */
+export function toAttachmentParts(
+  attachments: TurnAttachment[] | undefined,
+  alreadySpentEncodedBytes = 0,
+): FilePart[] {
+  const parts: FilePart[] = [];
+  let spent = alreadySpentEncodedBytes;
+  for (const a of attachments ?? []) {
+    const name = a.name.trim();
+    if (name === "") continue;
+    // `data` IS the encoded form, so its length is exactly what this costs the
+    // budget — no need to decode to measure.
+    const encodedBytes = a.data.length;
+    if (spent + encodedBytes > MAX_REFERENCE_ATTACHMENT_ENCODED_BYTES) {
+      console.warn(
+        `[attachments] skipping oversized attachment ${name}: ${encodedBytes} encoded bytes exceeds the ${MAX_REFERENCE_ATTACHMENT_ENCODED_BYTES - spent} left of the turn's budget`,
+      );
+      continue;
+    }
+    parts.push({ type: "file", data: a.data, mediaType: a.mediaType, filename: name });
+    spent += encodedBytes;
+  }
+  return parts;
 }
 
 // --- The `_skills` snapshot → lazy SkillSource --------------------------------

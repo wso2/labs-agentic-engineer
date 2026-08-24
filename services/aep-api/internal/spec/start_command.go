@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// `/<skill>` flow commands — RECOGNISED by the server, for every token (#373).
+// `/<command>` flow commands — RECOGNISED by the server, for every token (#373).
 //
 // Clients send commands VERBATIM, and the server turns one into a TurnSpec: a
 // statement of what the turn is for. It does not compose the instruction text —
@@ -41,10 +41,13 @@ package spec
 
 import (
 	"context"
+	"log/slog"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/clients/agentsvc"
+	"github.com/wso2/aep/aep-api/internal/platform/gitfs"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
@@ -65,10 +68,12 @@ const startCommand = "/start"
 var slashCommandPattern = regexp.MustCompile(`^/([a-z0-9-]+)(?:\s+([\s\S]+))?$`)
 
 // turnSpecFor classifies a raw instruction. Non-command text is an ordinary
-// chat turn with an empty flow. A `/<skill>` command names the skill; `/start`
-// additionally carries the project idea (typed inline wins, else read from the
-// descriptor at `at` — best-effort: no descriptor, no idea, and the start skill
-// asks the user instead).
+// chat turn with an empty flow. A `/<command>` rides on as its token — most
+// tokens ARE a skill name, and the few that name a branch of one (`/feature`)
+// resolve in the agents service, where wording lives. `/start` additionally
+// carries the project idea (typed inline wins, else read from the descriptor at
+// `at` — best-effort: no descriptor, no idea, and the start skill asks the user
+// instead).
 func (s *Service) turnSpecFor(ctx context.Context, ref sourcecontrol.RepoRef, at, raw string) (agentsvc.TurnSpec, string) {
 	m := slashCommandPattern.FindStringSubmatch(strings.TrimSpace(raw))
 	if m == nil {
@@ -81,8 +86,60 @@ func (s *Service) turnSpecFor(ctx context.Context, ref sourcecontrol.RepoRef, at
 		if idea == "" {
 			idea = s.readProjectIdea(ctx, ref, at)
 		}
-		return agentsvc.TurnSpec{Kind: agentsvc.TurnKindStart, Idea: strings.TrimSpace(idea)}, token
+		return agentsvc.TurnSpec{
+			Kind:       agentsvc.TurnKindStart,
+			Idea:       strings.TrimSpace(idea),
+			References: s.listReferenceDocs(ctx, ref),
+		}, token
 	}
 
-	return agentsvc.TurnSpec{Kind: agentsvc.TurnKindFlow, Skill: token, Text: rest}, token
+	// Flow turns carry the reference paths too: a flow generates artifacts
+	// (wireframes.dsl from /design most of all) that must be grounded in what
+	// the user attached — a drawn sketch is the wireframe brief. Chat prose
+	// stays reference-free; the documents already sit in the conversation
+	// history from the kickoff.
+	return agentsvc.TurnSpec{
+		Kind:       agentsvc.TurnKindFlow,
+		Skill:      token,
+		Text:       rest,
+		References: s.listReferenceDocs(ctx, ref),
+	}, token
+}
+
+// ReferencesDir is where a reference document sits INSIDE a turn's snapshot.
+// It is not a repo path: nothing commits there (console ADR-0017). The engine
+// stores the documents beside the mirror and overlays them into each extracted
+// snapshot at this prefix, so the turn can keep carrying only the PATHS and the
+// agent reads them from its own workspace exactly as before.
+const ReferencesDir = gitfs.ReferenceOverlayDir + "/"
+
+// listReferenceDocs lists the project's stored reference documents, sorted, as
+// the paths they will occupy in the turn's snapshot. Nothing stored (the
+// ordinary case — most projects attach none) returns nil, so the field drops
+// out of the turn JSON entirely and the turn is byte-identical to one from
+// before this channel existed.
+//
+// Sourced from the STORE, not the git tree: that is what makes this independent
+// of `at`, and it is why a project created under the feature's v1 — whose
+// documents really are committed — stops steering (decision 9: no migration).
+//
+// Best-effort, exactly like the captured idea: a store we cannot list is not a
+// reason to fail someone's kickoff. Worst case the agent interviews without
+// knowing the documents are there.
+func (s *Service) listReferenceDocs(ctx context.Context, ref sourcecontrol.RepoRef) []string {
+	names, err := s.git.Workspace().ListReferences(ctx, ref)
+	if err != nil {
+		slog.WarnContext(ctx, "references unlistable; turn continues without them",
+			"dir", ReferencesDir, "error", err)
+		return nil
+	}
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		out = append(out, ReferencesDir+name)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	slices.Sort(out)
+	return out
 }

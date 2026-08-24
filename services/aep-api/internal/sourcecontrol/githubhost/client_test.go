@@ -110,12 +110,12 @@ func TestRemoveIssueLabel(t *testing.T) {
 	}
 
 	c404, _ := newFake(t, http.StatusNotFound, `{"message":"Label does not exist"}`)
-	if err := c404.RemoveIssueLabel(context.Background(), "acme", "repo", stubCred{}, 7, "aep:provision"); err != nil {
+	if err := c404.RemoveIssueLabel(context.Background(), "acme", "repo", stubCred{}, 7, "provision"); err != nil {
 		t.Fatalf("404 should be treated as success (label already absent): %v", err)
 	}
 
 	c500, _ := newFake(t, http.StatusInternalServerError, `{"message":"boom"}`)
-	if err := c500.RemoveIssueLabel(context.Background(), "acme", "repo", stubCred{}, 7, "aep:provision"); err == nil {
+	if err := c500.RemoveIssueLabel(context.Background(), "acme", "repo", stubCred{}, 7, "provision"); err == nil {
 		t.Fatalf("expected error on 500")
 	}
 }

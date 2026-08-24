@@ -20,9 +20,13 @@ spec:
         runAsNonRoot: true
       containers:
         - name: manager
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             - name: THUNDER_ADMIN_URL
               value: {{ .Values.thunder.adminURL | quote }}
             - name: THUNDER_SYSTEM_CLIENT_ID

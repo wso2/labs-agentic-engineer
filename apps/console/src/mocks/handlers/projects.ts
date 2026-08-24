@@ -27,6 +27,7 @@ function scenario(): ProjectsScenario {
 // user refreshing) instead of vanishing with module state — otherwise a
 // freshly created project's routes (overview, builds, …) 404 after any reload.
 const CREATED_KEY = "aep:mock:createdProjects";
+const CREATED_REPOS_KEY = "aep:mock:createdRepoNames";
 const DELETED_KEY = "aep:mock:deletedProjects";
 
 function loadJson<T>(key: string, fallback: T): T {
@@ -44,12 +45,36 @@ const createdProjects: Project[] = loadJson<Project[]>(CREATED_KEY, []);
 // Names deleted through the UI — masks seed AND created entries (#107).
 const deletedProjects = new Set<string>(loadJson<string[]>(DELETED_KEY, []));
 
+// project name -> the GitHub repo name it claimed. The contract `Project`
+// carries no repo name, so this cannot ride `createdProjects` — but the BFF
+// conflicts on the REPO name, and two differently-named projects can ask for
+// the same repo. Without this the mock answers 201 where the BFF answers 409.
+// Keyed by project so a deleted project frees its repo name again.
+const createdRepoByProject = loadJson<Record<string, string>>(CREATED_REPOS_KEY, {});
+
 function persistCreated(): void {
   try {
     localStorage.setItem(CREATED_KEY, JSON.stringify(createdProjects));
   } catch {
     /* quota — non-fatal in mock mode */
   }
+}
+
+function persistCreatedRepos(): void {
+  try {
+    localStorage.setItem(CREATED_REPOS_KEY, JSON.stringify(createdRepoByProject));
+  } catch {
+    /* quota — non-fatal in mock mode */
+  }
+}
+
+// Every repo name currently claimed: a project's repo defaults to its own name
+// unless it asked for another. Deleted projects release theirs.
+function takenRepoNames(): Set<string> {
+  const claimed = Object.entries(createdRepoByProject)
+    .filter(([project]) => !deletedProjects.has(project))
+    .map(([, repo]) => repo);
+  return new Set([...currentProjects().map((p) => p.name), ...claimed]);
 }
 
 function persistDeleted(): void {
@@ -102,7 +127,16 @@ export const projectsHandlers = [
 
   http.post("*/api/v1/projects", async ({ request }) => {
     const body = (await request.json()) as CreateProjectRequest;
-    if (currentProjects().some((p) => p.name === body.name)) {
+    // Two distinct 409s in the BFF, mocked as two checks: the OpenChoreo
+    // project name, and the GitHub REPO name (`IsRepoNameConflict`). The repo
+    // arm is what makes the create flow's field-level conflict state (#561)
+    // reachable in mock mode, and it must consider repo names claimed by
+    // EARLIER creates, not just project names.
+    const requestedRepo = body.repoName ?? body.name;
+    if (
+      currentProjects().some((p) => p.name === body.name) ||
+      takenRepoNames().has(requestedRepo)
+    ) {
       return HttpResponse.json(duplicateProjectError, {
         status: 409,
       });
@@ -120,6 +154,8 @@ export const projectsHandlers = [
     };
     createdProjects.push(project);
     persistCreated();
+    createdRepoByProject[body.name] = requestedRepo;
+    persistCreatedRepos();
     return HttpResponse.json(project, { status: 201 });
   }),
 

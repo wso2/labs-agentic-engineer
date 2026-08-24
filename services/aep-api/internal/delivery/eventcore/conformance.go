@@ -60,7 +60,6 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
-	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // workloadPath is where a component's workload descriptor lives, relative to its
@@ -214,13 +213,14 @@ func (e *Events) mintUnwiredResourceIssue(ctx context.Context, run *delivery.Mil
 			"Do not invent a ref or an env-var name, and do not remove the dependency from the design to make this pass.",
 		component, path, list, component, path)
 
-	return e.mint(ctx, run.OrgID, run.ProjectID, sourcecontrol.CreateIssueRequest{
+	number, _, err := e.p.Writer.Mint(ctx, run.OrgID, run.ProjectID, delivery.IssueSpec{
 		Title:     fmt.Sprintf("Wire the declared resources for %s", component),
 		Body:      body,
-		Labels:    []string{delivery.LabelAgentWork},
-		Milestone: &run.MilestoneNumber,
-		DedupeKey: fmt.Sprintf("aep unwired %s %s", component, strings.Join(missing, ",")),
+		Labels:    []string{delivery.LabelAgentWork, delivery.KindBug, delivery.SrcBuild},
+		Milestone: run.MilestoneNumber,
+		DedupeKey: delivery.DedupeKeyUnwiredResources(component, missing),
 	})
+	return number, err
 }
 
 // mintUnwiredEndpointIssue files the fix issue for a component whose shipped
@@ -233,8 +233,9 @@ func (e *Events) mintUnwiredResourceIssue(ctx context.Context, run *delivery.Mil
 // Ready=False with the connection unresolved — is named explicitly so the agent can
 // confirm the defect rather than re-diagnose it.
 //
-// Same policy as the resource half: agent-work label so the next cycle picks it up,
-// dedupe on (component, targets) so a redelivered webhook files nothing new.
+// Same policy as the resource half: an armed `bug` sourced `src/build` so the next
+// cycle picks it up, dedupe on (component, targets) so a redelivered webhook files
+// nothing new.
 func (e *Events) mintUnwiredEndpointIssue(ctx context.Context, run *delivery.MilestoneRun,
 	component, path string, missing []string) (int, error) {
 	list := "`" + strings.Join(missing, "`, `") + "`"
@@ -247,11 +248,12 @@ func (e *Events) mintUnwiredEndpointIssue(ctx context.Context, run *delivery.Mil
 			"Do not invent a component name or an env-var name, and do not remove the dependency from the design to make this pass.",
 		component, path, list, component, path)
 
-	return e.mint(ctx, run.OrgID, run.ProjectID, sourcecontrol.CreateIssueRequest{
+	number, _, err := e.p.Writer.Mint(ctx, run.OrgID, run.ProjectID, delivery.IssueSpec{
 		Title:     fmt.Sprintf("Wire the declared sibling endpoints for %s", component),
 		Body:      body,
-		Labels:    []string{delivery.LabelAgentWork},
-		Milestone: &run.MilestoneNumber,
-		DedupeKey: fmt.Sprintf("aep unwired-endpoints %s %s", component, strings.Join(missing, ",")),
+		Labels:    []string{delivery.LabelAgentWork, delivery.KindBug, delivery.SrcBuild},
+		Milestone: run.MilestoneNumber,
+		DedupeKey: delivery.DedupeKeyUnwiredEndpoints(component, missing),
 	})
+	return number, err
 }

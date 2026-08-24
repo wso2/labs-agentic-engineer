@@ -46,7 +46,7 @@ import (
 // ports, the same way the build already reaches the task reads.
 //
 // WHERE THE SEQUENCE SPLITS, and why: the run row is admitted BEFORE planning,
-// not after. The row IS the spec-run mutex (§5's 409 in DB form); a planning
+// not after. The row IS the build mutex (§5's 409 in DB form); a planning
 // turn is minutes of LLM time, so admitting afterwards would leave the mutex
 // unarmed for exactly the window a double-click lands in. Planning then runs
 // detached from the request — the POST answers with its tag as soon as the
@@ -57,10 +57,13 @@ import (
 // obviously unwired (nil) rather than a Service with half its fields empty.
 type planPath struct {
 	milestones MilestoneClient
-	runs       MilestoneRunStore
-	planner    SpecPlanner
-	gates      GateResolver
-	starter    RunStarter
+	// issues is the domain's issue-write surface, used here for exactly one
+	// write: closing the previous version's leftovers as superseded.
+	issues  *delivery.IssueWriter
+	runs    MilestoneRunStore
+	planner SpecPlanner
+	gates   GateResolver
+	starter RunStarter
 }
 
 // PlanPathDeps wires the milestone plan path. It is set separately from
@@ -69,8 +72,11 @@ type planPath struct {
 // same ordering knot SetProviderBuildTrigger unties in the other direction.
 type PlanPathDeps struct {
 	Milestones MilestoneClient
-	Runs       MilestoneRunStore
-	Planner    SpecPlanner
+	// Issues closes the superseded version's still-open work. The domain's one
+	// issue-write surface, so a supersede comment and a mint share a vocabulary.
+	Issues  *delivery.IssueWriter
+	Runs    MilestoneRunStore
+	Planner SpecPlanner
 	// Gates is optional: a project with no drawer inputs and no design
 	// dependencies mints no gate, and an unwired resolver simply mints none.
 	Gates GateResolver
@@ -86,6 +92,7 @@ type PlanPathDeps struct {
 func (s *Service) SetPlanPath(d PlanPathDeps) {
 	s.plan = &planPath{
 		milestones: d.Milestones,
+		issues:     d.Issues,
 		runs:       d.Runs,
 		planner:    d.Planner,
 		gates:      d.Gates,
@@ -93,20 +100,43 @@ func (s *Service) SetPlanPath(d PlanPathDeps) {
 	}
 }
 
-// activeSpecRun is the endpoint's 409 pre-check: one live spec run per project.
+// activeDevRun is the endpoint's 409 pre-check: one live dev run per project.
 // The DB's partial unique index is the authority (TryAdmit's ON CONFLICT DO
 // NOTHING is the race backstop); this read exists so a user who clicks build
 // twice gets a conflict that names itself instead of a bare insert failure.
-func (s *Service) activeSpecRun(ctx context.Context, orgID, projectID string) error {
+func (s *Service) activeDevRun(ctx context.Context, orgID, projectID string) error {
 	if s.plan == nil || s.plan.runs == nil {
 		return nil
 	}
-	run, err := s.plan.runs.ActiveSpecRunByProject(ctx, orgID, projectID)
+	run, err := s.plan.runs.ActiveDevRunByProject(ctx, orgID, projectID)
 	if err != nil {
-		return &EdgeError{Status: 500, Message: "lookup active spec run"}
+		return &EdgeError{Status: 500, Message: "lookup active dev run"}
 	}
 	if run != nil {
 		return ErrBuildAlreadyRunning
+	}
+	return nil
+}
+
+// activeValidationRun is the endpoint's other 409 pre-check: no live validation
+// run anywhere in the project.
+//
+// Unlike activeDevRun there is no index behind this one — a validation run sits
+// outside the build mutex on purpose — so this read IS the rule and not merely a
+// nicer error for it. Two concurrent clicks can both pass it, and that is
+// accepted: the loss is a build that starts while a verdict is being reached,
+// which the per-milestone index still keeps from putting two agents on one
+// branch.
+func (s *Service) activeValidationRun(ctx context.Context, orgID, projectID string) error {
+	if s.plan == nil || s.plan.runs == nil {
+		return nil
+	}
+	run, err := s.plan.runs.ActiveValidationRunByProject(ctx, orgID, projectID)
+	if err != nil {
+		return &EdgeError{Status: 500, Message: "lookup active validation run"}
+	}
+	if run != nil {
+		return ErrValidationRunLive
 	}
 	return nil
 }
@@ -121,13 +151,11 @@ func (s *Service) activeSpecRun(ctx context.Context, orgID, projectID string) er
 func (s *Service) claimVersion(ctx context.Context, orgID, projectID string, scope spec.BuildScope) (*delivery.MilestoneRun, error) {
 	p := s.plan
 	tag, milestoneTitle := scope.Tag, scope.MilestoneTitle()
-	// Supersede FIRST — but never a milestone of the title being claimed: a
-	// re-tag that lands on the SAME milestone tops it up, and closing its open
-	// work would abandon the very tasks the delta plan is about to extend.
-	s.supersedePreviousMilestone(ctx, orgID, projectID, milestoneTitle)
-
-	// CreateMilestone is get-or-create by title, so a claim that resolves to a
-	// title this project already has reuses it (res.Created=false).
+	// The new milestone FIRST, because supersede now MOVES the previous version's
+	// open bugs and needs somewhere to move them to. Nothing else about the order
+	// changed: CreateMilestone is get-or-create by title, so a claim that resolves
+	// to a title this project already has reuses it (res.Created=false) and the
+	// call is safe to make before anything is superseded.
 	res, err := p.milestones.CreateMilestone(ctx, orgID, projectID, sourcecontrol.CreateMilestoneRequest{
 		Title:       milestoneTitle,
 		Description: "Delivery increment and ledger for spec " + tag + ".",
@@ -135,6 +163,12 @@ func (s *Service) claimVersion(ctx context.Context, orgID, projectID string, sco
 	if err != nil {
 		return nil, &EdgeError{Status: 502, Message: "create milestone: " + err.Error()}
 	}
+	// Supersede BEFORE the run row is admitted, and never a milestone of the title
+	// being claimed: a re-tag that lands on the SAME milestone tops it up, and
+	// closing its open work would abandon the very tasks the delta plan is about
+	// to extend. previousDevMilestone enforces that by title, so it holds whatever
+	// order the milestone is minted in.
+	s.supersedePreviousMilestone(ctx, orgID, projectID, milestoneTitle, res.Number)
 
 	admitted, row, err := p.runs.TryAdmit(ctx, &delivery.MilestoneRun{
 		OrgID:           orgID,
@@ -142,6 +176,7 @@ func (s *Service) claimVersion(ctx context.Context, orgID, projectID string, sco
 		MilestoneNumber: res.Number,
 		MilestoneTitle:  milestoneTitle,
 		Tag:             tag,
+		Kind:            delivery.RunKindDev,
 		Origin:          delivery.RunOriginSpecBuild,
 		// PLANNING, not waiting: the run has not filled its milestone yet, so for the next
 		// minutes this row is a version being written, not a run parked on
@@ -163,17 +198,43 @@ func (s *Service) claimVersion(ctx context.Context, orgID, projectID string, sco
 	return row, nil
 }
 
-// supersedePreviousMilestone closes the previous version's still-open work and
-// then the milestone itself (§6). It is deliberately best-effort per issue: a
-// single close failure leaves one stale issue behind, which the human can close,
-// whereas failing the build would strand the whole next version.
+// supersedePreviousMilestone empties the previous version's milestone and then
+// closes it (§6). A PLAN is replaced by a plan; a DEFECT is not replaced by
+// anything.
+//
+//	development, provision  CLOSED — the new plan supersedes the old one, and a
+//	                        gate names a dependency the new plan re-mints.
+//	bug                     MOVED into the new milestone. It is still broken, and
+//	                        the new version is what will ship the fix.
+//	conflict                CLOSED, not moved: it names a branch of the version
+//	                        being superseded, which is about to be irrelevant.
+//	everything else         CLOSED — the validation task (a verdict about a
+//	                        version nobody is shipping any more) and ledger-only
+//	                        human notes, whose carrying forward would make them
+//	                        part of a version they were never about.
+//
+// Moving a bug is not ARMING it: an unadopted incident arrives in the new
+// milestone still unarmed and still ledger-only, so carrying a defect forward can
+// never turn it into agent work nobody asked for. It DOES clear `aep:halted`,
+// because a new version is a fresh attempt at the defect and the run that gave up
+// on it is long gone.
+//
+// The destination milestone must therefore already exist, which is why
+// claimVersion mints it BEFORE calling this. Superseding first was the older
+// order, and it had nowhere to move a bug to.
+//
+// It is deliberately best-effort per issue: a single close or move failure leaves
+// one stale issue behind, which the human can close, whereas failing the build
+// would strand the whole next version. A bug that failed to move stays open in the
+// superseded milestone and the reconcile sweep will offer it to a task run — the
+// right outcome for a defect, just recorded under the older version.
 //
 // The previous milestone is found through the RUN ROWS, never by title match:
 // GitHub milestone titles are freely renamable and its title filters are
 // case-insensitive while create-uniqueness is not, so the number recorded on the
 // row is the only sound index. Any milestone number this project has ever run a
 // SPEC BUILD on, other than the one being cut now, is a previous version.
-func (s *Service) supersedePreviousMilestone(ctx context.Context, orgID, projectID, milestoneTitle string) {
+func (s *Service) supersedePreviousMilestone(ctx context.Context, orgID, projectID, milestoneTitle string, into int) {
 	p := s.plan
 	rows, err := p.runs.ListByProject(ctx, orgID, projectID)
 	if err != nil {
@@ -181,17 +242,18 @@ func (s *Service) supersedePreviousMilestone(ctx context.Context, orgID, project
 			"project", projectID, "error", err)
 		return
 	}
-	prev, ok := previousSpecMilestone(rows, milestoneTitle)
+	prev, ok := previousDevMilestone(rows, milestoneTitle)
 	if !ok {
 		return // first version of this project: nothing to supersede
 	}
 
 	comment := fmt.Sprintf("Superseded by %s.", milestoneTitle)
-	// Both populations, in the order §6 names them: the agent work first, then
+	carried := fmt.Sprintf("Still open when %s superseded this version — carried forward, because a defect is not superseded by a new plan.", milestoneTitle)
+	// Every population, in the order §6 names them: the agent work first, then
 	// the gates that were holding it. `state: open` is the filter; no label
 	// filter, because a milestone's leftovers are exactly "everything still open
-	// in it" — a ledger-only human issue included, since carrying it into the
-	// next version would make it agent work nobody asked for.
+	// in it" and which of them are carried forward is this function's decision to
+	// make from the labels it can see.
 	issues, err := p.milestones.ListMilestoneIssues(ctx, orgID, projectID, sourcecontrol.MilestoneIssuesFilter{
 		Number: prev.MilestoneNumber,
 		State:  "open",
@@ -200,9 +262,42 @@ func (s *Service) supersedePreviousMilestone(ctx context.Context, orgID, project
 		slog.WarnContext(ctx, "build: list previous milestone issues failed — closing the milestone only",
 			"project", projectID, "milestone", prev.MilestoneNumber, "error", err)
 	}
-	closed := 0
+	closed, moved := 0, 0
 	for _, issue := range gatesLast(issues) {
-		if cerr := p.milestones.CloseIssue(ctx, orgID, projectID, issue.Number, comment); cerr != nil {
+		// delivery.WorkKindOf, never KindOf: the kind a carry-forward decision reads
+		// has to be the kind the WORKING SET reads, or the two disagree about what a
+		// defect is. An ARMED issue carrying no kind is the common human hand-over —
+		// adoption stamps no kind on purpose — and every predicate in the loop works
+		// it as a bug, so KindOf's honest "" put it in the CLOSE arm and the next
+		// version cut silently closed a defect somebody had adopted.
+		if delivery.WorkKindOf(issue.Labels) == delivery.KindBug {
+			// The move FIRST, then the note. A note on an issue that stayed behind
+			// would claim a carry-forward that did not happen.
+			if merr := p.issues.SetMilestone(ctx, orgID, projectID, issue.Number, into); merr != nil {
+				slog.WarnContext(ctx, "build: carry a superseded bug forward failed",
+					"project", projectID, "issue", issue.Number, "into", into, "error", merr)
+				continue
+			}
+			moved++
+			// A new version is a fresh attempt at the defect, so the halt goes with
+			// the old one. `aep:halted` says "a run gave up on this and the
+			// reconcile sweep must not restart it"; carrying it forward would hide
+			// the bug from the sweep for the rest of the project's life, which is
+			// the opposite of what carrying it forward is for. This is the
+			// "cleared by a rebuild" half of the marker's contract.
+			if delivery.HasLabel(issue.Labels, delivery.LabelHalted) {
+				if uerr := p.issues.Unlabel(ctx, orgID, projectID, issue.Number, delivery.LabelHalted); uerr != nil {
+					slog.WarnContext(ctx, "build: clearing the halt on a carried-forward bug failed",
+						"project", projectID, "issue", issue.Number, "error", uerr)
+				}
+			}
+			if cerr := p.issues.Comment(ctx, orgID, projectID, issue.Number, carried); cerr != nil {
+				slog.WarnContext(ctx, "build: comment on a carried-forward bug failed",
+					"project", projectID, "issue", issue.Number, "error", cerr)
+			}
+			continue
+		}
+		if cerr := p.issues.Close(ctx, orgID, projectID, issue.Number, comment); cerr != nil {
 			slog.WarnContext(ctx, "build: close superseded issue failed",
 				"project", projectID, "issue", issue.Number, "error", cerr)
 			continue
@@ -215,20 +310,93 @@ func (s *Service) supersedePreviousMilestone(ctx context.Context, orgID, project
 	}
 	slog.InfoContext(ctx, "build: superseded previous milestone",
 		"project", projectID, "milestone", prev.MilestoneNumber, "title", prev.MilestoneTitle,
-		"issuesClosed", closed, "supersededBy", milestoneTitle)
+		"issuesClosed", closed, "bugsCarriedForward", moved, "supersededBy", milestoneTitle)
 }
 
-// previousSpecMilestone picks the newest spec-build milestone whose title is
-// not the one being claimed. rows arrive newest-first from the repository.
+// reopenIncrement puts the version's milestone — and exactly the issues a CANCEL
+// closed inside it — back into the state the cancel found them in, so the run
+// admitted over it has a working set to work.
+//
+// It runs on the SAME-TAG branch of the build click and only there. The spec-save
+// status is the whole decision: an unchanged spec resolves to the version already
+// on disk, so this build is that version being worked AGAIN rather than a new one
+// being cut. There is no "was it cancelled" question anywhere — the marker on the
+// issues answers it, and a version nobody cancelled simply has none.
+//
+// `aep:cancelled` is the handle, and the reason it exists rather than "reopen
+// everything in the milestone": only issues that were OPEN when the cancel landed
+// carry it, so work a cycle genuinely FINISHED stays closed. Reopening wholesale
+// would resurrect every Task the build had already delivered and dispatch an agent
+// at work that is already merged and serving.
+//
+// The label is CLEARED as it is reopened. It is a record of one abandoned attempt,
+// not a property of the issue: leaving it on would make the NEXT cancel's marked
+// set the union of two attempts, and this reopen would then restore work the
+// second cancel had deliberately left closed.
+//
+// Reopen FIRST, then unlabel. An issue that ended up open with the mark still on
+// is reopened again by the next rebuild (a no-op) and is otherwise ordinary work;
+// an issue unlabelled but still closed is invisible to every future rebuild and
+// its work is silently lost.
+//
+// Best-effort per issue and per step, like supersede, and for the same reason: one
+// issue left behind is a human's one click, where failing the click would strand
+// the whole rebuild. The milestone reopen is unconditional on this branch — a
+// version being worked whose milestone reads closed is a lie the console renders,
+// whether it was a cancel or a delivered run that closed it.
+func (s *Service) reopenIncrement(ctx context.Context, orgID, projectID string, milestoneNumber int) {
+	p := s.plan
+	if rerr := p.milestones.ReopenMilestone(ctx, orgID, projectID, milestoneNumber); rerr != nil {
+		slog.WarnContext(ctx, "build: reopening the rebuilt version's milestone failed",
+			"project", projectID, "milestone", milestoneNumber, "error", rerr)
+	}
+	// The milestone's CLOSED issues, unfiltered by label: which of them this
+	// rebuild owns is decided here, from the labels, exactly as supersede decides
+	// what it carries forward.
+	issues, err := p.milestones.ListMilestoneIssues(ctx, orgID, projectID, sourcecontrol.MilestoneIssuesFilter{
+		Number: milestoneNumber,
+		State:  "closed",
+	})
+	if err != nil {
+		slog.WarnContext(ctx, "build: list the rebuilt milestone's closed issues failed — nothing reopened",
+			"project", projectID, "milestone", milestoneNumber, "error", err)
+		return
+	}
+	reopened := 0
+	for _, issue := range issues {
+		if !delivery.HasLabel(issue.Labels, delivery.LabelCancelled) {
+			continue
+		}
+		if rerr := p.issues.Reopen(ctx, orgID, projectID, issue.Number); rerr != nil {
+			slog.WarnContext(ctx, "build: reopening a cancelled issue failed",
+				"project", projectID, "issue", issue.Number, "error", rerr)
+			continue
+		}
+		if uerr := p.issues.Unlabel(ctx, orgID, projectID, issue.Number, delivery.LabelCancelled); uerr != nil {
+			slog.WarnContext(ctx, "build: clearing the cancel mark on a reopened issue failed",
+				"project", projectID, "issue", issue.Number, "error", uerr)
+		}
+		reopened++
+	}
+	slog.InfoContext(ctx, "build: rebuilding an unchanged version — reopened what the cancel closed",
+		"project", projectID, "milestone", milestoneNumber, "issuesReopened", reopened)
+}
+
+// previousDevMilestone picks the newest DEV run's milestone whose title is not
+// the one being claimed. rows arrive newest-first from the repository.
+//
+// Dev runs only, because only a dev run delivers a version: task and validation
+// runs work an EXISTING milestone that may be any version's, so superseding on
+// the newest row outright would close a milestone the project is still on.
 //
 // Comparing on TITLE here is not a GitHub title match: it compares the
 // platform-recorded milestone title against the title being claimed, both
 // platform-side values. A claim that resolves to a milestone this project
 // already has matches and is skipped — a milestone must never supersede itself.
-func previousSpecMilestone(rows []delivery.MilestoneRun, milestoneTitle string) (delivery.MilestoneRun, bool) {
+func previousDevMilestone(rows []delivery.MilestoneRun, milestoneTitle string) (delivery.MilestoneRun, bool) {
 	for i := range rows {
-		if rows[i].Origin != delivery.RunOriginSpecBuild {
-			continue // incident runs work their own (older) milestones
+		if rows[i].Kind != delivery.RunKindDev {
+			continue // task and validation runs work their own (older) milestones
 		}
 		if rows[i].MilestoneTitle == milestoneTitle {
 			continue
@@ -238,20 +406,20 @@ func previousSpecMilestone(rows []delivery.MilestoneRun, milestoneTitle string) 
 	return delivery.MilestoneRun{}, false
 }
 
-// gatesLast orders a superseded milestone's issues so the agent work closes
-// before the gates that were holding it, matching §6's sequence. It matters
-// only for what an observer sees in the issue timeline — the end state is the
-// same — but a gate closing before the work it gated reads as a resolution
-// rather than an abandonment.
+// gatesLast orders a superseded milestone's issues so the work is dealt with —
+// closed, or carried forward — before the gates that were holding it, matching
+// §6's sequence. It matters only for what an observer sees in the issue timeline
+// — the end state is the same — but a gate closing before the work it gated reads
+// as a resolution rather than an abandonment.
 func gatesLast(issues []sourcecontrol.IssueInfo) []sourcecontrol.IssueInfo {
 	out := make([]sourcecontrol.IssueInfo, 0, len(issues))
 	for _, i := range issues {
-		if !delivery.HasLabel(i.Labels, delivery.LabelProvisionGate) {
+		if !delivery.IsDispatchGate(i.Labels) {
 			out = append(out, i)
 		}
 	}
 	for _, i := range issues {
-		if delivery.HasLabel(i.Labels, delivery.LabelProvisionGate) {
+		if delivery.IsDispatchGate(i.Labels) {
 			out = append(out, i)
 		}
 	}
@@ -266,11 +434,15 @@ func gatesLast(issues []sourcecontrol.IssueInfo) []sourcecontrol.IssueInfo {
 // resumed; the sweep and the adoption paths leave both empty and the workflow
 // skips planning. See delivery.StartRunRequest.
 //
+// `rebuild` rides the same request for the same reason, and narrows the planning
+// phase to its gates: only the click knows the milestone was already filled and
+// that it has just reopened it.
+//
 // A supervisor that cannot start is the one failure this path still settles
 // itself. Everything the run does after this point is the workflow's to fail,
 // with Temporal's retries behind it.
 func (s *Service) startRun(ctx context.Context, orgID, projectID, tag string,
-	run *delivery.MilestoneRun, inputs []delivery.ProvisionInput) error {
+	run *delivery.MilestoneRun, inputs []delivery.ProvisionInput, rebuild bool) error {
 	p := s.plan
 	if p.starter == nil {
 		slog.InfoContext(ctx, "build: no run supervisor wired — run row waits",
@@ -282,10 +454,12 @@ func (s *Service) startRun(ctx context.Context, orgID, projectID, tag string,
 		ProjectID:       projectID,
 		MilestoneNumber: run.MilestoneNumber,
 		MilestoneTitle:  run.MilestoneTitle,
+		Kind:            delivery.RunKindDev,
 		Origin:          delivery.RunOriginSpecBuild,
 		RunID:           run.ID,
 		Tag:             tag,
 		ProvisionInputs: inputs,
+		Rebuild:         rebuild,
 	})
 	if err == nil {
 		return nil
@@ -309,7 +483,7 @@ func (s *Service) startRun(ctx context.Context, orgID, projectID, tag string,
 // own context, and a user who navigates away — or a proxy that times out — while
 // StartRun is in flight would otherwise cancel the one write that makes the row
 // terminal. The row would stay `planning`, which is non-terminal, and the
-// project's spec mutex would stay held: no later build could be admitted, and
+// project's build mutex would stay held: no later build could be admitted, and
 // the reconcile sweep counts `planning` as live so nothing would heal it. A
 // cancelled client must not be able to wedge a project.
 func (s *Service) failRun(ctx context.Context, run *delivery.MilestoneRun, cause error) {
@@ -317,7 +491,7 @@ func (s *Service) failRun(ctx context.Context, run *delivery.MilestoneRun, cause
 		"project", run.ProjectID, "run", run.ID, "milestone", run.MilestoneNumber, "error", cause)
 	settleCtx := context.WithoutCancel(ctx)
 	if _, err := s.plan.runs.Settle(settleCtx, run.ID, delivery.RunStateFailed, delivery.RunReasonPlanFailed); err != nil {
-		slog.ErrorContext(ctx, "build: settling the failed run ALSO failed — the project's spec mutex is held",
+		slog.ErrorContext(ctx, "build: settling the failed run ALSO failed — the project's build mutex is held",
 			"project", run.ProjectID, "run", run.ID, "error", err)
 	}
 }

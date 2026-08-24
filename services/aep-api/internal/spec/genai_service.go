@@ -95,7 +95,6 @@ func (e *TurnInProgressError) Error() string {
 // never inject the namespace separator and escape its tenant scope.
 var conversationIDPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,200}$`)
 
-
 // ---- ports -----------------------------------------------------------------
 
 // RepoResolver looks up the project's git repo row (its OrgID/ProjectID are the
@@ -138,6 +137,10 @@ type TurnInput struct {
 	// joins the project's spec room as a live Yjs peer with the prompting
 	// user's bearer, edits the shared doc, and nothing is committed to git.
 	Collab bool
+	// Attachments are files the user attached to THIS message (#428). Never
+	// stored: they ride the turn request and are durable only as parts of the
+	// conversation's history (ADR-0019).
+	Attachments []agentsvc.TurnAttachment
 }
 
 // TurnStatus is the read view of one turn (the status GET body).
@@ -232,37 +235,41 @@ type TurnActivityRecorder interface {
 // implementation and no test fake (the old GenAIService interface had no
 // substitution; the component tier exercises the real service).
 type Service struct {
-	repos      RepoResolver
-	git        GitReader
-	keys       AnthropicKeyResolver
-	client     agentsvc.Client
-	turns         TurnRepository
-	broker        *TurnBroker
-	snapshots     sourcecontrol.SnapshotProvider
-	skillsRepo    SkillsRepoResolver
-	conversations ConversationRepository
-	mcpTokens     MCPTokenMinter
-	mcpBaseURL    string
-	finishHook    func(ctx context.Context, orgID, projectID, turnID, useCase, outcome string)
-	recorder      TurnActivityRecorder
+	repos  RepoResolver
+	git    GitReader
+	keys   AnthropicKeyResolver
+	client agentsvc.Client
+	turns  TurnRepository
+	broker *TurnBroker
+	// heartbeatEvery is the agent_turns heartbeat cadence. A field rather than
+	// the constant so a component test can drive it faster than 15s.
+	heartbeatEvery time.Duration
+	snapshots      sourcecontrol.SnapshotProvider
+	skillsRepo     SkillsRepoResolver
+	conversations  ConversationRepository
+	mcpTokens      MCPTokenMinter
+	mcpBaseURL     string
+	finishHook     func(ctx context.Context, orgID, projectID, turnID, useCase, outcome string)
+	recorder       TurnActivityRecorder
 }
 
 // NewService wires the genai service.
 func NewService(d ServiceDeps) *Service {
 	return &Service{
-		repos:         d.Repos,
-		git:           d.Git,
-		keys:          d.Keys,
-		client:        d.Client,
-		turns:         d.Turns,
-		broker:        d.Broker,
-		snapshots:     d.Snapshots,
-		skillsRepo:    d.SkillsRepo,
-		conversations: d.Conversations,
-		mcpTokens:     d.MCPTokens,
-		mcpBaseURL:    d.MCPBaseURL,
-		finishHook:    d.TurnFinishHook,
-		recorder:      d.Recorder,
+		repos:          d.Repos,
+		git:            d.Git,
+		keys:           d.Keys,
+		client:         d.Client,
+		turns:          d.Turns,
+		broker:         d.Broker,
+		snapshots:      d.Snapshots,
+		heartbeatEvery: turnHeartbeatEvery,
+		skillsRepo:     d.SkillsRepo,
+		conversations:  d.Conversations,
+		mcpTokens:      d.MCPTokens,
+		mcpBaseURL:     d.MCPBaseURL,
+		finishHook:     d.TurnFinishHook,
+		recorder:       d.Recorder,
 	}
 }
 
@@ -380,15 +387,16 @@ func (s *Service) StartTurn(ctx context.Context, orgID, projectID string, in Tur
 		turn:             turnSpec,
 		target:           in.Target,
 		summary:          in.Instruction,
+		attachments:      in.Attachments,
 		// Captured before the detached goroutine: the identity reads the
 		// request's bearer, and the journal (#463) attributes the turn.
-		author: journalAuthorFrom(ctx),
-		repoRef:          ref,
-		baseRef:          baseRef,
-		skillsRef:        skillsRef,
-		anthropicKey:     key,
-		collabRoomID:     collabRoomID,
-		collabToken:      collabToken,
+		author:       journalAuthorFrom(ctx),
+		repoRef:      ref,
+		baseRef:      baseRef,
+		skillsRef:    skillsRef,
+		anthropicKey: key,
+		collabRoomID: collabRoomID,
+		collabToken:  collabToken,
 	}
 	// Detached: the turn runs to completion (or a terminal failure) server-
 	// side regardless of the client connection (D16). runTurnSafe is the panic

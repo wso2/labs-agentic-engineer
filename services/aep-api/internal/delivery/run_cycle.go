@@ -118,16 +118,37 @@ type RunCycle struct {
 	// attempt settles.
 	//
 	// It lives here as well as on the run for the same reason the loop's position
-	// is read from the latest cycle rather than a stored phase enum: a run may
-	// validate more than once (RunMaxValidationAttempts), so the run's single
-	// column can only hold the LATEST answer. Without a per-cycle copy, attempt 1's
-	// verdict would exist only in Temporal history and vanish with its retention,
-	// leaving a self-healed run indistinguishable from one that passed first time.
+	// is read from the latest cycle rather than a stored phase enum: the run's
+	// single column can only hold the LATEST answer, and a validation run that
+	// re-dispatched an agent which reported nothing has two cycles with two
+	// answers. Without a per-cycle copy the first would exist only in Temporal
+	// history and vanish with its retention, leaving a self-healed run
+	// indistinguishable from one that reported first time.
 	ValidationVerdict string `gorm:"type:text" json:"validationVerdict,omitempty"`
 	// ValidationIssue is the validation issue this cycle was dispatched at. Same
 	// reasoning: the issue is reused across attempts, but which attempt asked is a
 	// per-cycle fact, and it keeps a settled run navigable to its criteria.
 	ValidationIssue int `gorm:"not null;default:0" json:"validationIssue,omitempty"`
+	// ValidationDigest fingerprints WHAT THIS ATTEMPT CONCLUDED — the criteria,
+	// their outcomes and their failure messages, never the file bytes
+	// (validation.ReportDigest). Empty on every other kind, and on an attempt
+	// whose report was absent or unreadable.
+	//
+	// It is stored because the comparison it exists for SPANS RUNS: each attempt
+	// is its own validation run, and a repeat that reached the same answer as the
+	// last one proves the repair moved nothing, so the loop stops instead of
+	// spending the remaining allowance on the same report. Workflow state cannot
+	// carry that — the previous attempt's execution has ended — and Temporal
+	// history is not queryable by milestone, so the ledger row is the only place
+	// the next attempt can read it from.
+	//
+	// It is written by the SAME activity as ValidationVerdict, and must be: that
+	// write is fenced write-once on an empty verdict, so a digest written
+	// separately afterwards could never land.
+	//
+	// Off the wire (`json:"-"`): it is a loop control input, not something a
+	// reader of the timeline can interpret.
+	ValidationDigest string `gorm:"type:text" json:"-"`
 
 	// MergeVerdict is why the pull request did NOT merge, when something decided
 	// so: CycleMergeDeclined (the policy: not this run's work) or

@@ -40,8 +40,12 @@ for what went wrong with that and why this shape is expected to hold.
 
 ## What is NOT here
 
-- **The `/<skill>` grammar** — `@aep/contracts/commands`. Parsing a command is
-  fact extraction; it yields a skill name, not a sentence.
+- **The `/<command>` grammar** — `@aep/contracts/commands`. Parsing a command is
+  fact extraction; it yields a token, not a sentence. Which skill that token
+  loads, and which branch of it, IS wording (`COMMAND_FLOWS` in `turn.ts`): a
+  command names the user's intent, a skill names an engineer-facing playbook,
+  and deciding that `/feature` means "the amend skill, add-a-feature branch" is
+  a sentence about to be written.
 - **Skill bodies** — org-authored, read from the turn's `_skills` snapshot
   (`conversation/load-workspace.ts`). A skill is guidance; this directory is the
   frame around it.

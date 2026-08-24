@@ -28,6 +28,7 @@ import { stdout as output } from "node:process";
 import { renderPart, renderSummary } from "./kit/render.js";
 import type { StreamPart, TurnSpec } from "@aep/agent-stream";
 import { flowSpec, planSpec, startSpec } from "./engine/turn-spec.js";
+import { readReferences } from "./state/references.js";
 import { designGate, requirementsGate, tasksGate, type GateResult } from "./engine/gates.js";
 import { openSession, type OpenOptions, type PlaygroundSession } from "./engine/session.js";
 import { pendingQuestions, type PendingQuestions } from "./engine/questions.js";
@@ -117,14 +118,14 @@ export async function requirementsCommand(
   // and rewriting it would churn createdAt for nothing.
   if (idea && idea !== readIdea(projectDir)) writeDescriptor(projectDir, projectSlug(projectDir), idea);
 
-  return runPhaseTurn(projectDir, startSpec(idea), opts);
+  return runPhaseTurn(projectDir, startSpec(idea, readReferences(projectDir)), opts);
 }
 
 /** Phase 2 — design, derived from the current requirements (§5 phase 2). */
 export async function designCommand(projectDir: string, opts: PhaseOptions): Promise<PhaseOutcome> {
   const gate = designGate(projectDir);
   if (!gate.ok) return gateFail(gate);
-  return runPhaseTurn(projectDir, flowSpec("design"), opts);
+  return runPhaseTurn(projectDir, flowSpec("design", undefined, readReferences(projectDir)), opts);
 }
 
 /**

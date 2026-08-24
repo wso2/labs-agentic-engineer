@@ -32,6 +32,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/platform/gittest"
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
@@ -92,7 +93,7 @@ func TestPlanTap_AgainstRealIssueService_CostsOneCallPerTask(t *testing.T) {
 
 	issues := sourcecontrol.NewIssueService(stubRepoRepo{},
 		githubclient.NewClient(githubclient.WithAPIBase(stub.URL)), stubResolver{})
-	tap := newPlanTap(context.Background(), "org1", "proj1", issues)
+	tap := newPlanTap(context.Background(), "org1", "proj1", issues, delivery.NewIssueWriter(issues))
 	tap.milestone = 9
 	tap.appPaths = map[string]string{"user-service": "src/user", "order-service": "src/order"}
 
@@ -129,11 +130,14 @@ func TestPlanTap_AgainstRealIssueService_CostsOneCallPerTask(t *testing.T) {
 	if patches != 0 {
 		t.Errorf("issue PATCHes = %d, want 0 — the milestone rides the create", patches)
 	}
-	if labelEnsures != 1 {
-		t.Errorf("label ensures = %d, want 1 for the whole batch", labelEnsures)
+	// One ensure per DISTINCT label in the batch's vocabulary, memoised per repo —
+	// two here (the arming label and the `development` kind), not two per task.
+	// The number that must never scale with the plan is this one.
+	if labelEnsures != 2 {
+		t.Errorf("label ensures = %d, want 2 for the whole batch (one per distinct label)", labelEnsures)
 	}
 
-	// Every create carries the milestone NUMBER and the working-set label.
+	// Every create carries the milestone NUMBER, the arming label and the kind.
 	for _, r := range stub.Requests() {
 		if r.Method != http.MethodPost || r.Path != "/repos/acme/widgets/issues" {
 			continue
@@ -151,8 +155,8 @@ func TestPlanTap_AgainstRealIssueService_CostsOneCallPerTask(t *testing.T) {
 		if body.Milestone == nil || *body.Milestone != 9 {
 			t.Errorf("%q: milestone = %v on the wire, want 9", body.Title, body.Milestone)
 		}
-		if len(body.Labels) != 1 || body.Labels[0] != "aep" {
-			t.Errorf("%q: labels = %v, want [aep]", body.Title, body.Labels)
+		if len(body.Labels) != 2 || body.Labels[0] != "aep" || body.Labels[1] != "development" {
+			t.Errorf("%q: labels = %v on the wire, want [aep development]", body.Title, body.Labels)
 		}
 		if body.DedupeKey != "" {
 			t.Errorf("%q: dedupeKey reached GitHub — it is an aep-api-only field", body.Title)

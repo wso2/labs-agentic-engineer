@@ -80,7 +80,7 @@ func postPlaygroundToken(t *testing.T, srv *httptest.Server, body string) *http.
 // JWT scoped to the right org, not just any signed blob.
 func assertVerifiesAsMCPToken(t *testing.T, mgr *auth.TaskTokenManager, token, wantOrg string) {
 	t.Helper()
-	verifier := auth.NewAgentsScopedVerifier(mgr)
+	verifier := auth.NewAgentsScopedVerifier(mgr, nil)
 	var gotOrg string
 	var ok bool
 	h := verifier.Middleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {

@@ -114,9 +114,35 @@ func NewDescriptorWriter(files FilesService) *DescriptorWriter {
 	return &DescriptorWriter{files: files, now: time.Now}
 }
 
+// SpecIgnorePath is the ignore file scaffolded beside the descriptor, and
+// SpecIgnoreContent is what it holds. It lives UNDER specs/ rather than at the
+// repo root for one practical reason: the Files API's write scope is specs/-only
+// (validatePath), so a root .gitignore would need a gate widening, while
+// patterns in specs/.gitignore are already relative to specs/ and say the same
+// thing. Dot-prefixed like the descriptor, so the same rule keeps it invisible
+// to the agent.
+//
+// What it guards: reference documents are overlaid into the turn's snapshot at
+// specs/requirements/references/ (gitfs.ReferenceOverlayDir) and must never be
+// committed back from there. This is the guard that covers the coding-agent
+// runner, which clones for real and stages with git — a path no server-side
+// predicate sees. The collab committer's own reference predicate is NOT made
+// redundant by it: that committer builds writes from the room, not a working
+// tree, so .gitignore does not apply to it at all.
+const (
+	SpecIgnorePath    = "specs/.gitignore"
+	SpecIgnoreContent = "# Reference documents are transient turn inputs, not spec artifacts.\n" +
+		"# The platform overlays them into each turn's workspace; they are never committed.\n" +
+		"requirements/references/\n"
+)
+
 // WriteDescriptor commits specs/.agentic-engineer.toml for a freshly-created
-// project. An empty idea is written as an empty field rather than skipped: the
-// file's other job is to MARK the repo as an Agentic Engineer project.
+// project, plus the ignore file above. An empty idea is written as an empty
+// field rather than skipped: the file's other job is to MARK the repo as an
+// Agentic Engineer project.
+//
+// One apply, so a new repo is never left marked-but-unguarded (or the reverse)
+// by a failure between two commits.
 func (w *DescriptorWriter) WriteDescriptor(ctx context.Context, orgID, projectID, name, idea string) error {
 	if w == nil || w.files == nil {
 		return nil
@@ -126,7 +152,10 @@ func (w *DescriptorWriter) WriteDescriptor(ctx context.Context, orgID, projectID
 		return err
 	}
 	_, _, err = w.files.Apply(ctx, orgID, projectID, ApplyRequest{
-		Writes:  []WriteOp{{Path: DescriptorPath, Content: string(raw)}},
+		Writes: []WriteOp{
+			{Path: DescriptorPath, Content: string(raw)},
+			{Path: SpecIgnorePath, Content: SpecIgnoreContent},
+		},
 		Message: "chore: initialize the agentic-engineer project descriptor",
 	})
 	return err

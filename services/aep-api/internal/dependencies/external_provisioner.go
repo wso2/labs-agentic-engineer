@@ -148,23 +148,22 @@ func (p *ExternalResourceProvisioner) Provision(
 	return result, nil
 }
 
-// PreparedEnvValues are one environment's already-resolved binding inputs for
-// the build author path: the non-secret values (Plain) and the SM-API
-// secretStorePath the secret bundle was ALREADY staged under (pre-tag, by
-// POST /build). No secret VALUE is carried — only the reference.
+// PreparedEnvValues are one environment's binding-authoring inputs: plain
+// design-derived values and an optional SM-API secretStorePath reference. The
+// build path passes an empty reference for unset secrets; no secret value is
+// carried here.
 type PreparedEnvValues struct {
 	Plain           map[string]string
 	SecretStorePath string
 }
 
-// AuthorWithSecretRef authors (idempotently) the external resource's OC Resource
-// model for a project from ALREADY-STAGED secret references — the author half of
-// Provision the thin POST /build path uses (issue #164). It mirrors Provision's
+// AuthorPreparedValues authors (idempotently) the external resource's OC Resource
+// model for a project from prepared values. It mirrors Provision's
 // steps 1-3 (ensure ResourceType → apply Resource → wait for the release change)
-// but its step 4 pins each per-env binding to the PASSED SecretStorePath instead
-// of writing secrets to SM-API — so it never touches p.sm. `orgHandle` is the OC
-// namespace the CRs live in.
-func (p *ExternalResourceProvisioner) AuthorWithSecretRef(
+// but its step 4 pins each binding without writing secrets to SM-API. Existing
+// nonempty values and secretStorePath references win during rebuilds.
+// `orgHandle` is the OC namespace the CRs live in.
+func (p *ExternalResourceProvisioner) AuthorPreparedValues(
 	ctx context.Context,
 	orgHandle, projectName string,
 	er *ExternalResource,
@@ -204,7 +203,16 @@ func (p *ExternalResourceProvisioner) AuthorWithSecretRef(
 	// secretStorePath (no SM-API write — the secret was staged pre-tag).
 	result := &ProvisionResult{ResourceName: res.Metadata.Name, LatestRelease: latest, BindingByEnv: map[string]string{}}
 	for env, vals := range byEnv {
-		binding, berr := buildExternalResourceBinding(projectName, er.Name, env, latest, vals.SecretStorePath, vals.Plain)
+		bindingName := ocname.ExternalResourceBindingName(projectName, er.Name, env)
+		existing, rerr := p.rc.GetBinding(ctx, orgHandle, bindingName)
+		if rerr != nil {
+			return nil, fmt.Errorf("external resources: read binding for env %q: %w", env, rerr)
+		}
+		plain, secretStorePath, merr := mergeConfiguredBindingValues(existing, vals.Plain, vals.SecretStorePath)
+		if merr != nil {
+			return nil, fmt.Errorf("external resources: merge binding for env %q: %w", env, merr)
+		}
+		binding, berr := buildExternalResourceBinding(projectName, er.Name, env, latest, secretStorePath, plain)
 		if berr != nil {
 			return nil, berr
 		}
@@ -216,11 +224,45 @@ func (p *ExternalResourceProvisioner) AuthorWithSecretRef(
 	return result, nil
 }
 
+// mergeConfiguredBindingValues preserves non-empty values already held for
+// currently declared plain keys and fills absent or empty entries from the
+// values being authored. Keys removed from the design, and plaintext values for
+// keys that are now secret, are discarded. This read-then-write is deliberately
+// not atomic: a concurrent value save between GetBinding and EnsureBinding can
+// still be lost (issue #441).
+func mergeConfiguredBindingValues(existing *openchoreo.ResourceReleaseBinding, plain map[string]string, secretStorePath string) (map[string]string, string, error) {
+	merged := make(map[string]string, len(plain))
+	for key, value := range plain {
+		merged[key] = value
+	}
+	if existing == nil || len(existing.Spec.ResourceTypeEnvironmentConfigs) == 0 {
+		return merged, secretStorePath, nil
+	}
+
+	var current map[string]string
+	if err := json.Unmarshal(existing.Spec.ResourceTypeEnvironmentConfigs, &current); err != nil {
+		return nil, "", fmt.Errorf("decode existing environment configs: %w", err)
+	}
+	for key, value := range current {
+		if value == "" {
+			continue
+		}
+		if key == openchoreo.SecretStorePathField {
+			secretStorePath = value
+			continue
+		}
+		if _, declaredPlain := merged[key]; !declaredPlain {
+			continue
+		}
+		merged[key] = value
+	}
+	return merged, secretStorePath, nil
+}
+
 // StageSecrets writes each env's secret values to SM-API and returns the
 // secretStorePath reference per env — ONLY the SM-API write, no OC Resource or
-// binding authoring. It is the pre-tag half of Provision the thin POST /build
-// path reuses (issue #164): the build stages refs before the tag-cut, and the
-// workflow's provisioning step (Task 3) authors bindings from the same refs.
+// binding authoring. Provision and explicit value-saving flows use it before
+// authoring a binding; builds do not collect or stage external values.
 // An env whose secret map is empty yields no write and no ref. Fails closed
 // when secrets exist but SM-API is disabled (mirrors Provision's guard). The
 // returned map holds references, never secret VALUES.
@@ -380,9 +422,10 @@ func buildExternalResourceBinding(projectName, name, env, latestRelease, secretS
 	for k, v := range plain {
 		cfg[k] = v
 	}
-	if secretStorePath != "" {
-		cfg[openchoreo.SecretStorePathField] = secretStorePath
-	}
+	// The external ResourceType schema always declares this key when it renders
+	// an ExternalSecret. Presence is mandatory even before a secret exists: an
+	// absent key has no schema default and makes OpenChoreo rendering fail.
+	cfg[openchoreo.SecretStorePathField] = secretStorePath
 	raw, err := json.Marshal(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("external resources: marshal env configs: %w", err)

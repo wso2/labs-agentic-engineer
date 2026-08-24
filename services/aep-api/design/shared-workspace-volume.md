@@ -25,9 +25,21 @@ bounded retention, and the accepted single-node limitation.
 
 One PersistentVolumeClaim mounts at `/workspaces` on aep-api (read-write) and
 agents (read-only). aep-api is the sole writer: bare mirrors under
-`repos/<org>/<project>/<repoSlug>/`, immutable per-SHA snapshots, `trash/`, and
-`tmp/`. Agents derive snapshot paths from turn `WorkspaceRef` IDs + SHAs and
-never write the mount.
+`repos/<org>/<project>/<repoSlug>/`, immutable per-SHA snapshots, the project's
+reference-document store, `trash/`, and `tmp/`. Agents derive snapshot paths
+from turn `WorkspaceRef` IDs + SHAs and never write the mount.
+
+**Reference documents** (`<repoDir>/references/`, console ADR-0017) are the one
+thing here that is not derived from git. They are the files a user attaches on
+the create view — transient turn inputs, never committed — and a snapshot is
+`git archive` of a tree, so they cannot arrive through it. `Ensure` copies them
+into the extracted snapshot at `specs/requirements/references/` before it is
+published, which is what makes them readable by a turn. Two properties follow
+from the store living *inside* the repo dir rather than in a sibling tree: the
+per-org quota's whole-subtree `duDir` already counts them, and `TrashRepo`
+already deletes them with the project. The overlay is best-effort — a failure
+must not fail a snapshot every turn depends on — so a lost overlay is silent to
+the user and logged at WARN.
 
 Access mode is **ReadWriteOnce**. Size is **10Gi**. Ticket-11 D2 kept the
 shared volume (reversed 2026-07-31); content does not move over HTTP.

@@ -47,6 +47,10 @@ func Load() (Config, error) {
 		PlatformAPI: PlatformAPIConfig{
 			BaseURL:    r.readRequiredString("PLATFORM_API_SERVICE_BASE_URL"),
 			HostHeader: r.readOptionalString("PLATFORM_API_SERVICE_HOST", ""),
+			// True unless a deployment says otherwise: preferring https is right
+			// wherever the gateway actually terminates it, and a plane that does
+			// not must say so (see the field's doc).
+			DataPlaneGatewayTLS: r.readOptionalBool("DATA_PLANE_GATEWAY_TLS", true),
 		},
 		DatabaseURL:               r.databaseURL(),
 		TestMode:                  r.readOptionalBool("TEST_MODE", false),

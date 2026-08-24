@@ -63,7 +63,7 @@ func buildRow(id string) *delivery.Execution {
 }
 
 func newBuildExecutor(oc openchoreo.ComponentClient, repo *sourcecontrol.GitRepository, execRows *fakeExecRepo) *CodingExecutor {
-	return NewCodingExecutor(oc, fakeRepos{repo: repo}, nil, nil, execRows, "http://git", "http://platform", nil, nil, nil, nil)
+	return NewCodingExecutor(oc, fakeRepos{repo: repo}, nil, execRows, "http://git", "http://platform", nil, nil, nil, nil)
 }
 
 // The build path that survives the flip is the exec watcher's git-clone-auth
@@ -112,6 +112,10 @@ func TestBuildPrompt_IsAMilestoneReferenceOnly(t *testing.T) {
 	if !strings.Contains(got, "`aep` skill") {
 		t.Errorf("prompt must defer the procedure to the aep skill, got %q", got)
 	}
+	lowerPrompt := strings.ToLower(got)
+	if !strings.Contains(lowerPrompt, "external credentials may not yet be configured") || !strings.Contains(lowerPrompt, "live calls may not succeed") {
+		t.Errorf("prompt must warn about unset external credentials, got %q", got)
+	}
 	for _, banned := range []string{"issue:", "issues/", "Closes #", "Resolves #", "git checkout", "gh pr create"} {
 		if strings.Contains(got, banned) {
 			t.Errorf("prompt must carry no procedure/issue anchor, but contains %q: %q", banned, got)
@@ -127,8 +131,19 @@ func TestBuildValidationPrompt_StaysIssueAnchored(t *testing.T) {
 	if !strings.Contains(got, "https://github.com/acme/widgets/issues/9") {
 		t.Errorf("validation prompt must name its issue URL, got %q", got)
 	}
-	if !strings.Contains(got, "Closes #9") {
-		t.Errorf("validation prompt must keep its Closes #N link contract, got %q", got)
+	// `Validates #N`, and NOT a closing keyword. The platform owns the validation
+	// task's lifecycle — it reopens the task for the next attempt and closes it even
+	// on an ending where no pull request merged — so a closing keyword would put two
+	// owners on one issue. The reference still has to be there: the auto-merge policy
+	// requires a pull request to name an armed issue in the milestone.
+	if !strings.Contains(got, "Validates #9") {
+		t.Errorf("validation prompt must carry its `Validates #N` link contract, got %q", got)
+	}
+	for _, closing := range []string{"Closes #9", "Fixes #9", "Resolves #9"} {
+		if strings.Contains(got, closing) {
+			t.Errorf("validation prompt must not use a GitHub closing keyword (%q): the platform "+
+				"closes this task itself, got %q", closing, got)
+		}
 	}
 	if strings.Contains(got, "milestone") {
 		t.Errorf("validation dispatch must stay issue-anchored, got %q", got)
