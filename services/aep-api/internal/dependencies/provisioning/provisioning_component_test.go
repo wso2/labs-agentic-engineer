@@ -101,11 +101,18 @@ type cWorkloads struct {
 	listErr   error
 }
 
-func (f *cWorkloads) ListWorkloadConsumerDeps(_ context.Context, _, _ string) ([]openchoreo.WorkloadConsumerDep, error) {
+func (f *cWorkloads) ListWorkloadConsumerDeps(_ context.Context, _, projectName string) ([]openchoreo.WorkloadConsumerDep, error) {
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
-	return f.deps, nil
+	// Mirror ResourceClient: org-scoped list, keep spec.owner.projectName == path.
+	out := make([]openchoreo.WorkloadConsumerDep, 0)
+	for _, d := range f.deps {
+		if d.OwnerProject == projectName {
+			out = append(out, d)
+		}
+	}
+	return out, nil
 }
 
 func (f *cWorkloads) GetResource(_ context.Context, _, name string) (*openchoreo.Resource, error) {
@@ -160,6 +167,21 @@ func stripeConsumerDesign() []spec.DesignComponent {
 			{Kind: spec.DependencyKindExternal, Name: "stripe", Config: []spec.ConfigKey{
 				{Key: "api_key", Secret: true}, {Key: "region"},
 			}},
+		},
+	}}
+}
+
+// designWithUnconsumedGhost is design.json with a unique unresolved name that
+// no deployed Workload carries. Used to pin that workload-dependencies does
+// not consult DesignReader.
+func designWithUnconsumedGhost() []spec.DesignComponent {
+	return []spec.DesignComponent{{
+		Name: "orders",
+		Dependencies: []spec.Dependency{
+			{Kind: spec.DependencyKindExternal, Name: "stripe", Config: []spec.ConfigKey{
+				{Key: "api_key", Secret: true}, {Key: "region"},
+			}},
+			{Kind: spec.DependencyKindExternal, Name: "ghost"},
 		},
 	}}
 }
@@ -401,7 +423,12 @@ func TestProvisioningComponent_ListWorkloadDependencies_NoClaims401(t *testing.T
 
 func TestProvisioningComponent_ListWorkloadDependencies_Empty200(t *testing.T) {
 	t.Parallel()
-	h := newProvHarness(t, provisioning.NewService(provisioning.Deps{}))
+	// Org has deployed workloads, but none owned by path project "shop".
+	// A nil Workloads port short-circuits without listing; this fake must
+	// list-and-filter so other projects' rows cannot leak.
+	h := newProvHarness(t, provisioning.NewService(provisioning.Deps{
+		Workloads: otherProjectWorkloadSource(),
+	}))
 
 	resp := h.AsOrg("acme").Get(workloadDepsPath)
 	if resp.Code != 200 {
@@ -414,7 +441,14 @@ func TestProvisioningComponent_ListWorkloadDependencies_Empty200(t *testing.T) {
 
 func TestProvisioningComponent_ListWorkloadDependencies_UnknownProject200Empty(t *testing.T) {
 	t.Parallel()
-	h := newProvHarness(t, provisioning.NewService(provisioning.Deps{}))
+	// Shop workloads exist in the org. GET a name that was never created must
+	// still be 200 []: listing is org-scoped then filtered by path projectName
+	// (sibling policy to components when OC does not 404). Wiring the shop
+	// source pins that the path name is passed through — an unfiltered fake
+	// would return shop rows.
+	h := newProvHarness(t, provisioning.NewService(provisioning.Deps{
+		Workloads: shopWorkloadSource(),
+	}))
 
 	// Listing org workloads filtered by owner.projectName naturally yields []
 	// when the project has no deployed workloads — including a name that was
@@ -427,6 +461,29 @@ func TestProvisioningComponent_ListWorkloadDependencies_UnknownProject200Empty(t
 	}
 	if body := strings.TrimSpace(resp.Body.String()); body != "[]" {
 		t.Fatalf("unknown project must serialize as [], got %s", body)
+	}
+}
+
+// otherProjectWorkloadSource is deployed Workloads owned by "other", not "shop".
+// GET /projects/shop must list-and-filter to [] — if the fake ignored
+// projectName these rows would leak (platform postgres + org-service).
+func otherProjectWorkloadSource() *cWorkloads {
+	return &cWorkloads{
+		deps: []openchoreo.WorkloadConsumerDep{
+			{
+				OwnerProject:   "other",
+				OwnerComponent: "api",
+				ResourceRefs:   []string{"other-pg"},
+				Endpoints: []openchoreo.WorkloadConsumerEndpoint{
+					{Project: "inventory", Component: "inventory-api", Name: "http", Visibility: "namespace"},
+				},
+			},
+		},
+		resources: map[string]*openchoreo.Resource{
+			"other-pg": {Spec: openchoreo.ResourceSpec{
+				Type: openchoreo.ResourceTypeRef{Kind: "ClusterResourceType", Name: "postgres-cnpg"},
+			}},
+		},
 	}
 }
 
@@ -472,9 +529,11 @@ func TestProvisioningComponent_ListWorkloadDependencies_ResourceAndOrgServiceRow
 	t.Parallel()
 	svc := provisioning.NewService(provisioning.Deps{
 		Workloads: shopWorkloadSource(),
-		// Design declares an extra unresolved dep that no Workload consumes —
-		// it must not appear (source is deployed Workloads, not design.json).
-		Design: cDesign{comps: stripeConsumerDesign()},
+		// Design declares an extra unresolved name ("ghost") that no Workload
+		// consumes — it must not appear (source is deployed Workloads, not
+		// design.json). "stripe" is already a Workload consumer, so it cannot
+		// pin DesignReader absence: a duplicate would collapse under dedup.
+		Design: cDesign{comps: designWithUnconsumedGhost()},
 	})
 	h := newProvHarness(t, svc)
 
