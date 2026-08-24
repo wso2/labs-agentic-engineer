@@ -107,6 +107,7 @@ var opOwner = map[string]string{
 	"ListConversations":             embedSpec,
 	"ListDeployments":               embedProjects,
 	"ListExternalResources":         embedDependencies,
+	"ListOrgEndpoints":              embedDependencies,
 	"ListFiles":                     embedSpec,
 	"ListIssues":                    embedSourceControl,
 	"ListOrganizations":             embedOrganization,

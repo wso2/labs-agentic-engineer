@@ -271,6 +271,30 @@ paths:
       summary: List the platform-provisioned resource types available on the cluster
       tags:
       - Dependencies
+  /dependencies/org-endpoints:
+    get:
+      operationId: list-org-endpoints
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/OrgEndpointDTO'
+                type: array
+                nullable: true
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+      security:
+      - userJWT: []
+      summary: List Marketplace Endpoints (namespace-visible org-service APIs)
+      tags:
+      - Dependencies
   /organizations:
     get:
       operationId: list-organizations
@@ -4016,6 +4040,36 @@ components:
       - name
       - config
       - consumers
+      type: object
+    OrgEndpointDTO:
+      additionalProperties: false
+      description: One Marketplace Endpoint — thin list_org_endpoints item, not the MCP {endpoints:[…]} wrapper.
+      properties:
+        name:
+          description: org-service dependency name = provider component name
+          type: string
+        project:
+          type: string
+        endpoint:
+          type: string
+        type:
+          enum:
+          - HTTP
+          - gRPC
+          - GraphQL
+          - Websocket
+          - TCP
+          - UDP
+          type: string
+        namespaceVisible:
+          description: always true on this operation
+          type: boolean
+      required:
+      - name
+      - project
+      - endpoint
+      - type
+      - namespaceVisible
       type: object
     FileBundle:
       additionalProperties: false

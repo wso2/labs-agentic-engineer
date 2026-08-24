@@ -256,6 +256,36 @@ func (e MilestoneRunViewState) Valid() bool {
 	}
 }
 
+// Defines values for OrgEndpointDTOType.
+const (
+	GRPC      OrgEndpointDTOType = "gRPC"
+	GraphQL   OrgEndpointDTOType = "GraphQL"
+	HTTP      OrgEndpointDTOType = "HTTP"
+	TCP       OrgEndpointDTOType = "TCP"
+	UDP       OrgEndpointDTOType = "UDP"
+	Websocket OrgEndpointDTOType = "Websocket"
+)
+
+// Valid indicates whether the value is a known member of the OrgEndpointDTOType enum.
+func (e OrgEndpointDTOType) Valid() bool {
+	switch e {
+	case GRPC:
+		return true
+	case GraphQL:
+		return true
+	case HTTP:
+		return true
+	case TCP:
+		return true
+	case UDP:
+		return true
+	case Websocket:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for PreflightItemKind.
 const (
 	PreflightItemKindExternalAmbiguous  PreflightItemKind = "external-ambiguous"
@@ -1228,6 +1258,22 @@ type MilestoneRunViewOrigin string
 
 // MilestoneRunViewState planning is the fill window — the version's milestone is still being written (gates minted, then issues planned in). waiting is the unbounded wait between cycles, where something outside the platform is needed. blocked is terminal and is NOT a failure — the org has no agent concurrency slot left, so the cycle was never launched (see terminalReason agent-quota-blocked).
 type MilestoneRunViewState string
+
+// OrgEndpointDTO One Marketplace Endpoint — thin list_org_endpoints item, not the MCP {endpoints:[…]} wrapper.
+type OrgEndpointDTO struct {
+	Endpoint string `json:"endpoint"`
+
+	// Name org-service dependency name = provider component name
+	Name string `json:"name"`
+
+	// NamespaceVisible always true on this operation
+	NamespaceVisible bool               `json:"namespaceVisible"`
+	Project          string             `json:"project"`
+	Type             OrgEndpointDTOType `json:"type"`
+}
+
+// OrgEndpointDTOType defines model for OrgEndpointDTO.Type.
+type OrgEndpointDTOType string
 
 // OrganizationList defines model for OrganizationList.
 type OrganizationList struct {

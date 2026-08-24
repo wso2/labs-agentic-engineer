@@ -1029,6 +1029,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	dependenciesHandlers, err := dephttpapi.New(dephttpapi.Deps{
 		ProvisioningSvc: provisioningSvc,
 		ResourceTypes:   resourceTypeCatalog,
+		OrgEndpoints:    orgEndpointCatalog,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("assemble dependencies domain: %w", err)
