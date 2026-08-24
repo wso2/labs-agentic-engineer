@@ -246,7 +246,13 @@ public class ViewsAgreeTest {
         // `ballerina/crypto` reached 1,177 lines and 64,310 bytes as a signature dump and overflowed the eval
         // harness's cap, which silently substituted a 2.2KB stub. The widest package in this corpus is the same
         // shape of risk, so the bound is asserted rather than described.
-        String document = Overview.render(FixtureCorpus.loadedFixture(slug));
+        //
+        // Measured on the map's OWN text. ADR-0024 uncapped the quotation, so the section carrying it is as long
+        // as the package's readme decided — postgresql's 28 blocks put the document at 365 lines. That is the
+        // package's size and not this tool's, and the two are worth keeping apart: what must stay bounded is
+        // what the tool WRITES, which is the property `theOverviewGeneratesNoSignatureAtAll` states from the
+        // other side. The quotation sits last precisely so its length costs the reader nothing above it.
+        String document = withoutQuotations(Overview.render(FixtureCorpus.loadedFixture(slug)));
         long lines = document.lines().count();
         Assert.assertTrue(lines < 200, slug + ": the map is " + lines + " lines");
     }

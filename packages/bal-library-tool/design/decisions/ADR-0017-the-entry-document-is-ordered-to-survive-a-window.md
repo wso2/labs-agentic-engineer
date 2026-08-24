@@ -1,6 +1,11 @@
 # ADR-0017 — The entry document is ordered to survive a window
 
-Status: accepted, implemented.
+Status: accepted, implemented. **Partly superseded by
+[ADR-0024](ADR-0024-the-quickstart-is-every-ballerina-block.md)**, which keeps the split of readme code
+from readme prose and reverses two things this ADR decided: the Usage section's SELECTION RULE (a
+connector-shaped classifier that reached 0 of 8 blocks for `ballerina/log`) and its POSITION (before
+`## Next`, which only worked while it was capped at forty lines). The "known gap" section at the bottom
+is no longer a gap but a closed decision — quoted code is not name-checked at all.
 
 ## Context
 

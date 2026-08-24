@@ -24,8 +24,8 @@ Typical session:
   find       Packages matching free-text keywords, one line each, in Central's
              relevance order with pull counts. The only verb that needs no package
              name.
-  overview   A bounded map of the package: what it declares, the readme's
-             quickstart, and the command that opens each part. Start here.
+  overview   A map of the package: what it declares, the readme's worked code, and
+             the command that opens each part. Start here.
   client     One client's whole callable surface, or a roster of them. Resource
              functions by path, remote and normal ones by name, the constructor
              included.

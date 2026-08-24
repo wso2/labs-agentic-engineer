@@ -10,11 +10,27 @@
 | Types | 1,227 declarations (1,101 records, 126 type aliases), not listed here — read one with `type` |
 | Guide | 111 lines — `bal library guide ballerinax/github` |
 
+Guide chunks (4): 1. `Step 1: Import the connector`  2. `Step 2: Instantiate a new connector`  3. `Get Private Repositories of Authenticated User`  4. `Create a Private Repository` — `bal library guide ballerinax/github <n>`
+
+## Next
+
+- `bal library client ballerinax/github Client` — the client's whole callable surface
+- `bal library overview ballerinax/github -s "<what you need>"` — search every kind at once when you do not know which verb holds it
+- `bal library type ballerinax/github <Name> [-r]` — a declaration whole, with the types it names
+
+## Clients — 1
+
+- `Client` — 903 resource · `bal library client ballerinax/github Client`
+
 ## Quickstart
 
-*Quoted from the package's own readme and checked against this version's declarations. A line marked `⚠` names something this version does not declare. The signatures the container verbs generate win wherever the two disagree.*
+*Every Ballerina block in the package's own readme, quoted verbatim and in its order. It is Central's text and can be out of date; the signatures the container verbs generate win wherever the two disagree.*
 
 <!-- guide: begin ballerinax/github readme usage -->
+
+```ballerina
+import ballerinax/github;
+```
 
 ```ballerina
 github:ConnectionConfig gitHubConfig = {
@@ -39,15 +55,3 @@ github:Repository createdRepo = check github->/user/repos.post(body);
 ```
 
 <!-- guide: end ballerinax/github readme usage -->
-
-Guide chunks (4): 1. `Step 1: Import the connector`  2. `Step 2: Instantiate a new connector`  3. `Get Private Repositories of Authenticated User`  4. `Create a Private Repository` — `bal library guide ballerinax/github <n>`
-
-## Next
-
-- `bal library client ballerinax/github Client` — the client's whole callable surface
-- `bal library overview ballerinax/github -s "<what you need>"` — search every kind at once when you do not know which verb holds it
-- `bal library type ballerinax/github <Name> [-r]` — a declaration whole, with the types it names
-
-## Clients — 1
-
-- `Client` — 903 resource · `bal library client ballerinax/github Client`

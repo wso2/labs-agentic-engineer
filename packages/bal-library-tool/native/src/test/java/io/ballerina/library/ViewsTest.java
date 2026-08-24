@@ -25,7 +25,6 @@ import io.ballerina.library.symbols.Surface;
 import io.ballerina.library.views.Containers;
 import io.ballerina.library.views.Guide;
 import io.ballerina.library.views.Overview;
-import io.ballerina.library.views.Snippets;
 import io.ballerina.library.views.TypeView;
 import org.testng.Assert;
 import org.testng.annotations.DataProvider;
@@ -94,7 +93,9 @@ public class ViewsTest {
             "ballerinax__kafka", 3,
             "ballerinax__googleapis.gmail", 3,
             "ballerinax__googleapis.sheets", 3,
-            "ballerinax__redis", 1);
+            "ballerinax__redis", 1,
+            "ballerina__xlsx", 11,
+            "ballerina__log", 1);
 
     @DataProvider(name = "fixtures")
     public Object[][] fixtures() {
@@ -925,14 +926,23 @@ public class ViewsTest {
         LoadedPackage context = FixtureCorpus.loadedFixture("ballerinax__postgresql");
         String overview = Overview.render(context);
         Assert.assertFalse(overview.contains("\n## Guide"), "the guide is not in the entry document");
-        Assert.assertTrue(overview.indexOf("\n## Quickstart\n") < overview.indexOf("\n## Next\n"));
+        // ADR-0024 put the quotation LAST. Under ADR-0017 it sat before `## Next` because it was capped at
+        // forty lines; uncapped, the only place an unbounded section can sit without pushing the navigation
+        // behind a pipe is the end.
+        Assert.assertTrue(overview.indexOf("\n## Next\n") < overview.indexOf("\n## Quickstart\n"));
         Assert.assertTrue(overview.contains("dbClient->execute"), overview);
         Assert.assertTrue(overview.contains("`bal library guide ballerinax/postgresql`"), overview);
 
         Result<String> guide = Guide.render(context, Guide.Options.ALL);
         Assert.assertTrue(guide.isOk(), guide.isOk() ? "" : guide.failure().describe());
-        Assert.assertTrue(guide.value().length() > overview.length() * 3,
+        // Asserted as PROSE and not as a size ratio. It used to be `guide > overview * 3`, which stopped holding
+        // when ADR-0024 moved all 28 of postgresql's code blocks into the map — the map is now 13KB of a 24KB
+        // readme, and almost all of the difference is prose. That is the split working, not failing: the code is
+        // in both because the reader needs it in both, and the manual around it has its own verb.
+        Assert.assertTrue(guide.value().length() > overview.length(),
                 "guide " + guide.value().length() + " vs overview " + overview.length());
+        Assert.assertTrue(guide.value().contains("######"), "the guide carries the readme's own sections");
+        Assert.assertFalse(overview.contains("######"), "and the map carries none of them");
         // ADR-0013. The rule that a readme can be stale where the signature cannot was a line of `--help` prose.
         // It is the sentence introducing the readme, so it is read where it applies.
         Assert.assertTrue(guide.value().contains("Where the two disagree, the signature is what compiles."),
@@ -985,88 +995,68 @@ public class ViewsTest {
     // -----------------------------------------------------------------------
 
     @Test
-    public void aQuotedLineThatNamesSomethingThePackageDoesNotDeclareIsMarkedWhereItAppears() {
-        // GMAIL-03. `gmail:MessageListPage` occurs exactly once in the 700KB payload — inside the readme. The
-        // source declares `ListMessagesResponse`; the readme is stale from an earlier major version. The
-        // quickstart is the only worked example in any of gmail's documents, so it is where an agent starts, and
-        // the same tool told it both that this is the type and that no such declaration exists. ADR-0010: a named
-        // gap beats a plausible guess, and the BLOCK is kept because dropping it would also lose the construction
-        // context around it.
-        String gmail = Overview.render(FixtureCorpus.loadedFixture("ballerinax__googleapis.gmail"));
-        int mark = gmail.indexOf("# ⚠ `MessageListPage`");
-        Assert.assertTrue(mark > 0, gmail);
-        Assert.assertTrue(gmail.contains("`ListMessagesResponse`"), gmail);
-        String[] lines = gmail.split("\n", -1);
-        int marked = -1;
-        for (int index = 0; index < lines.length; index++) {
-            if (lines[index].startsWith("gmail:MessageListPage messageList")) {
-                marked = index;
-            }
-        }
-        Assert.assertTrue(marked > 0 && lines[marked - 1].startsWith("# ⚠ `MessageListPage`"),
-                "the mark must be the line directly above the one it marks");
+    public void everyBallerinaBlockInTheReadmeIsQuotedAndNothingElseIs() {
+        // ADR-0024. The fence is the whole rule, and these are the two packages that killed the classifier it
+        // replaced. `ballerina/log` publishes eight worked blocks and none of them constructs a client, calls one
+        // with `->` or attaches a service, so the old rule reached the reader with zero examples for a package
+        // whose entire surface is module-level functions.
+        String log = Overview.render(FixtureCorpus.loadedFixture("ballerina__log"));
+        Assert.assertTrue(log.contains("\n## Quickstart\n"), log);
+        Assert.assertTrue(log.contains("log:printInfo("), log);
 
-        // And it does not cry wolf, which is what the width of the name universe is for. A pass over declarations
-        // alone flagged four packages whose names were annotations (`http:Payload`, `sql:Column`) and enum members
-        // (`postgresql:PGOUTPUT`); a pass that added client methods without de-duplicating them flagged kafka's
-        // `caller->commit()`, which two clients declare and which compiles.
-        for (String slug : FixtureCorpus.listFixtures()) {
-            if (slug.equals("ballerinax__googleapis.gmail")) {
-                continue;
-            }
-            Assert.assertFalse(Overview.render(FixtureCorpus.loadedFixture(slug)).contains("⚠ `"),
-                    slug + " has no undeclared reference in its quoted code");
-        }
-    }
+        // xlsx is the sharper case: the old rule kept exactly one of its thirteen blocks, and kept it because of
+        // `sftp->get` — another package's client — while dropping the `@xlsx:Name` header mapping and every
+        // `xlsx:parseSheet` call as demonstrating nothing.
+        String xlsx = Overview.render(FixtureCorpus.loadedFixture("ballerina__xlsx"));
+        String quoted = xlsx.substring(xlsx.indexOf("\n## Quickstart\n"));
+        Assert.assertTrue(quoted.contains("@xlsx:Name {value: \"Employee Name\"}"), quoted);
+        Assert.assertTrue(quoted.contains("xlsx:parseSheet("), quoted);
 
-    /**
-     * What the quickstart selects, on the package the selection rule was derived from.
-     *
-     * <p>{@code ballerinax/slack}'s four blocks are an import, a client construction, the
-     * {@code chat.postMessage} call and a {@code bal run}. Selection by POSITION — "the first two blocks" — keeps
-     * the import and drops the call form, and the absence of that call form is what caused both of the signature
-     * errors in the 2026-08-15 sweep. So the rule is by content, and this is the case that proves it.
-     */
-    @Test
-    public void theQuickstartSelectsByWhatABlockDemonstratesAndNotByWhereItIs() {
+        // Order is the readme's, not a role order: a readme is written basic-first, and the reader is walking it.
+        // Read off the section and not the document, because the chunk index names `@xlsx:Name` in its title
+        // list and now precedes the quotation.
+        Assert.assertTrue(quoted.indexOf("xlsx:parseSheet(") < quoted.indexOf("@xlsx:Name"), quoted);
+
+        // Nothing else is quoted. slack's fourth block is a `bal run` transcript under a `bash` fence.
         String slack = Overview.render(FixtureCorpus.loadedFixture("ballerinax__slack"));
-        Assert.assertTrue(slack.contains("slack:Client slack = check new"), slack);
-        Assert.assertTrue(slack.contains("->/chat\\.postMessage.post("), slack);
-        Assert.assertFalse(slack.contains("```ballerina\nimport ballerinax/slack;\n```"),
-                "an import-only block demonstrates nothing");
-
-        // kafka is the coverage case: construct, call, attach are three roles and one of each gets in before a
-        // second of any. Filling in role order alone spends the budget on two constructions and loses the
-        // listener service, which is the one shape a consumer author cannot derive from a signature.
-        String kafka = Overview.render(FixtureCorpus.loadedFixture("ballerinax__kafka"));
-        Assert.assertTrue(kafka.contains("acks: \"all\""), "the constant lives behind `type -r`");
-        Assert.assertTrue(kafka.contains("kafkaProducer->send("), kafka);
-        Assert.assertTrue(kafka.contains("service on kafkaListener {"), kafka);
-        Assert.assertTrue(kafka.contains("remote function onConsumerRecord("), "the required method");
-        // WHOLE BLOCKS ONLY. A half-quoted snippet is a paraphrase with the compiler's half missing: the listener
-        // block declares `consumerConfiguration` nine lines above the service that uses it. That is why the
-        // quickstart has no per-block line cap and is bounded by whole-block selection instead.
-        Assert.assertTrue(kafka.indexOf("kafka:ConsumerConfiguration consumerConfiguration")
-                < kafka.indexOf("listener kafka:Listener"), kafka);
-        Assert.assertTrue(kafka.contains("more examples — `bal library guide ballerinax/kafka`"), kafka);
+        String quickstart = slack.substring(slack.indexOf("\n## Quickstart\n"));
+        Assert.assertFalse(quickstart.contains("bal run"), quickstart);
+        // Including the import-only block, which the old rule dropped and this one keeps: it is Ballerina, and
+        // the module alias a package is imported under is a fact the reader needs.
+        Assert.assertTrue(quickstart.contains("import ballerinax/slack;"), quickstart);
     }
 
     @Test(dataProvider = "fixtures")
-    public void theQuickstartBudgetIsWholeBlocksAndIsNeverTruncated(String slug) {
+    public void aQuotedBlockIsNeverEditedTruncatedOrAnnotated(String slug) {
         String document = Overview.render(FixtureCorpus.loadedFixture(slug));
         if (!document.contains("\n## Quickstart\n")) {
             return;
         }
-        String quickstart = document.substring(document.indexOf("\n## Quickstart\n"),
-                document.indexOf("\n## Next\n"));
-        long code = quickstart.lines()
-                .filter(line -> !line.startsWith("```") && !line.startsWith("<!--")
-                        && !line.startsWith("*") && !line.startsWith("## "))
-                .filter(line -> !line.isBlank())
+        String quickstart = document.substring(document.indexOf("\n## Quickstart\n"));
+        // No truncation marker, and no mark on a line. ADR-0024 removed the name check: `overview` quotes the
+        // package's bytes, and a reader who is told the generated signatures win does not also need the tool
+        // arguing with the readme inside the quotation.
+        Assert.assertFalse(quickstart.contains("\u2026 "), slug + ": a quotation was cut");
+        // The MARK this tool used to emit, not the character: a package whose own readme code contains a
+        // "\u26a0" is quoting its own text, and banning the character outright would fail the tool for the
+        // package's content — the exact confusion between our output and theirs that ADR-0024 removed.
+        Assert.assertFalse(quickstart.contains("# \u26a0 `"), slug + ": a quotation was annotated");
+
+        // Every block the readme wrote arrived. Counted against `guide`, which reproduces the readme verbatim,
+        // rather than sampled — because the failure this replaces was SILENT: an ineligible block never reached
+        // the omitted counter, so `overview` dropped ten of xlsx's thirteen blocks while claiming it had left
+        // nothing behind. Two documents of one tool disagreeing about how much code a package published is the
+        // bug, so the assertion is that they agree.
+        Result<String> guide = Guide.render(FixtureCorpus.loadedFixture(slug), Guide.Options.ALL);
+        Assert.assertTrue(guide.isOk(), slug + ": " + (guide.isOk() ? "" : guide.failure().describe()));
+        // Stripped, because `guide` reproduces the readme's own indentation and `ballerinax/postgresql`
+        // indents most of its fences four spaces under a list item.
+        long inReadme = guide.value().lines()
+                .map(String::strip)
+                .filter(line -> line.equals("```ballerina") || line.equals("```bal"))
                 .count();
-        Assert.assertTrue(code <= Snippets.MAX_USAGE_LINES, slug + ": " + code + " lines of quoted code");
-        // No truncation marker anywhere: the budget selects whole blocks and drops one that alone exceeds it.
-        Assert.assertFalse(quickstart.contains("… "), slug + ": a quotation was cut");
+        long quoted = quickstart.lines().filter(line -> line.equals("```ballerina")).count();
+        Assert.assertEquals(quoted, inReadme, slug + ": the readme's block count is not the quoted count");
     }
 
     // -----------------------------------------------------------------------

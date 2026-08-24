@@ -216,7 +216,7 @@ public final class Guide {
                 + Texts.code(chunk.title())));
         facts.add(new Report.Fact("Size", Texts.count(chunk.lines()) + " lines, quoted verbatim"));
         report.facts(facts);
-        report.paragraph(staleWarning(chunk.markdown(), loaded, pkg));
+        report.paragraph(rule(pkg));
 
         report.heading(2, "Next");
         report.bullets(chunkNext(pkg, chunks, chunk));
@@ -317,10 +317,6 @@ public final class Guide {
         boolean single = readmes.size() == 1;
         for (Readmes.ModuleReadme readme : readmes) {
             report.heading(2, single ? "Guide" : "Guide — " + readme.module());
-            String stale = Snippets.staleNames(readme.markdown(), loaded);
-            if (stale != null) {
-                report.paragraph(stale);
-            }
             String label = (single ? pkg : readme.module()) + " readme";
             report.embedded(label, Readmes.demoteHeadings(readme.markdown(), 2));
         }
@@ -381,12 +377,19 @@ public final class Guide {
         return report.toString();
     }
 
-    private static String staleWarning(String markdown, LoadedPackage loaded, String pkg) {
-        String stale = Snippets.staleNames(markdown, loaded);
-        String rule = "*Quoted verbatim from the package's own readme, headings demoted two levels. It is "
+    /**
+     * Where the quotation came from and which half wins, as one paragraph.
+     *
+     * <p>It used to carry a second paragraph naming the readme's own identifiers that this version no longer
+     * declares. ADR-0024 removed the check behind it: {@code guide} reproduces the package's document, and a
+     * name check is an analysis of its contents rather than a property of the reproduction. The sentence that
+     * remains says the same thing at the altitude {@code guide} works at — Central's prose can be stale, and the
+     * generated signatures win.
+     */
+    private static String rule(String pkg) {
+        return "*Quoted verbatim from the package's own readme, headings demoted two levels. It is "
                 + "Central's prose and can be out of date; " + Texts.code("bal library overview " + pkg)
                 + " generates its signatures from the package, and those win where the two disagree.*";
-        return stale == null ? rule : rule + "\n\n" + stale;
     }
 
     private static int lineCount(List<Readmes.ModuleReadme> readmes) {

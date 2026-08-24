@@ -330,10 +330,11 @@ public class RegisterTest {
      * agents actually write.
      *
      * <p>Asserted as a LINE NUMBER rather than as "before the client sections", because the property is about
-     * surviving a cut and a section-order test would pass for a document whose Usage block ran to 300 lines.
-     * The bound is derived rather than picked: the title and facts table are about a dozen lines, and
-     * {@code Snippets.MAX_USAGE_LINES} plus its fences and markers is at most about sixty more. Measured across
-     * this corpus the worst case is 69 ({@code ballerinax/postgresql}), against 421 for kafka before the move.
+     * surviving a cut and a section-order test would pass for a document whose quoted code ran to 300 lines.
+     * ADR-0024 made that a real possibility rather than a hypothetical — postgresql publishes 28 blocks and its
+     * map is 365 lines — and answered it by moving the quotation BEHIND this section rather than by capping it.
+     * So the bound is now on the map's own text, which nothing unbounded precedes: measured across this corpus
+     * the worst case is line 15, against 421 for kafka before any of this.
      */
     @Test(dataProvider = "fixtures")
     public void theOverviewCarriesItsNextSectionInsideTheFirstWindow(String slug) {
@@ -341,11 +342,10 @@ public class RegisterTest {
         List<String> lines = List.of(document.split("\n", -1));
         int next = lines.indexOf("## Next");
         Assert.assertTrue(next > 0, slug + ": no ## Next section");
-        // ADR-0017's measured window is `head -100`, which is what moved this section from the end of the
-        // document to the middle: at the end it survived a `head -200` in 3 packages of 11. The bound is derived
-        // rather than picked — a dozen lines of title and facts, plus at most Snippets.MAX_USAGE_LINES of quoted
-        // code with its fences, markers and rule paragraph, plus the one-line chunk index. Measured across this
-        // corpus the worst case is `ballerinax/postgresql` at 78.
+        // ADR-0017's measured window is `head -100`, which is what moved this section out of the document's
+        // tail: at the end it survived a `head -200` in 3 packages of 11. The bound is derived rather than
+        // picked — a dozen lines of title and facts, plus the one-line chunk index. Under ADR-0024 the quoted
+        // code is no longer ahead of it at all, so measured across this corpus the worst case is line 15.
         Assert.assertTrue(next < 100, slug + ": ## Next is at line " + next);
         // Nothing unbounded may precede it. The map has no unbounded section left at all — the rosters are capped
         // at 20 rows — but the ORDER still has to hold, because a roster placed first would put the navigation

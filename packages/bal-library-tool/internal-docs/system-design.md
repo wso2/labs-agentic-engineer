@@ -16,7 +16,7 @@ are `compileOnly` and no third-party code is redistributed.
 
 ```bash
 bal library find     <keywords...>                              # Central registry search
-bal library overview <org/name>                        [-s <q>]  # a bounded map of the package
+bal library overview <org/name>                        [-s <q>]  # a map of the package
 bal library client   <org/name> [<Name|selector>...]   [-s <q>] [-r]
 bal library class    <org/name> [<Name|member>...]     [-s <q>] [-r]
 bal library funcs    <org/name> [<name|prefix*>...]    [-s <q>] [-r]
@@ -289,7 +289,7 @@ by hand rather than adding a bundled dependency.
 | `ViewsAgreeTest` | **The one that makes the addressed verbs safe.** Every signature a container verb prints appears in the `api` snapshot verbatim, at every tier and under `--all`; `overview` generates none at all; every `type <Name>` body is `renderTypeDef` exactly; every offered path is reachable; every `-r` closure terminates, stays bounded and names what it dropped. |
 | `PointersTest` | **The general form of "a pointer that cannot answer is worse than no pointer".** Extracts every `bal library` command from every document of every fixture and RUNS it through the real CLI, requiring exit 0. Three separate bugs of this shape had three separate assertions written after the fact; a new pointer cannot be added wrong. |
 | `SurfaceTest` | That the three-way split is exhaustive and disjoint, and that a `client object` type Central files as an ordinary declaration is still addressed by `client`. |
-| `ViewsTest` | The report snapshots, and the composition rules that decide their shape — what the quickstart selects and why, where the tier ladder fires, that the errors the map names resolve through `type`. Also where path-tree ORDERING is pinned: a locale collator, not `String::compareTo`, which disagree on real github segments. |
+| `ViewsTest` | The report snapshots, and the composition rules that decide their shape — what the quickstart quotes and in what order, where the tier ladder fires, that the errors the map names resolve through `type`. Also where path-tree ORDERING is pinned: a locale collator, not `String::compareTo`, which disagree on real github segments. |
 | `RegisterTest` | The two-registers rule, mechanically, over every fixture and every verb. |
 | `CliTest` | Parsing, streams and exit codes together, in-process against a recorded payload. |
 | `CacheTest` | Every corruption mode falls through to the network silently; TTL boundaries; concurrency; the offline fallback. |

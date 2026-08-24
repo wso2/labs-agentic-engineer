@@ -10,11 +10,27 @@
 | Types | 278 declarations (212 records, 66 type aliases), not listed here — read one with `type` |
 | Guide | 154 lines — `bal library guide ballerinax/twilio` |
 
+Guide chunks (4): 1. `Step 1 - Import the module`  2. `Step 2 - Create a new connector instance`  3. `Step 3 - Invoke the connector operation`  4. `Step 4: Run the Ballerina application` — `bal library guide ballerinax/twilio <n>`
+
+## Next
+
+- `bal library client ballerinax/twilio Client` — the client's whole callable surface
+- `bal library overview ballerinax/twilio -s "<what you need>"` — search every kind at once when you do not know which verb holds it
+- `bal library type ballerinax/twilio <Name> [-r]` — a declaration whole, with the types it names
+
+## Clients — 1
+
+- `Client` — 199 remote · `bal library client ballerinax/twilio Client`
+
 ## Quickstart
 
-*Quoted from the package's own readme and checked against this version's declarations. A line marked `⚠` names something this version does not declare. The signatures the container verbs generate win wherever the two disagree.*
+*Every Ballerina block in the package's own readme, quoted verbatim and in its order. It is Central's text and can be out of date; the signatures the container verbs generate win wherever the two disagree.*
 
 <!-- guide: begin ballerinax/twilio readme usage -->
+
+```ballerina
+import ballerinax/twilio;
+```
 
 ```ballerina
 configurable string apiKey = ?;
@@ -48,15 +64,3 @@ public function main() returns error? {
 ```
 
 <!-- guide: end ballerinax/twilio readme usage -->
-
-Guide chunks (4): 1. `Step 1 - Import the module`  2. `Step 2 - Create a new connector instance`  3. `Step 3 - Invoke the connector operation`  4. `Step 4: Run the Ballerina application` — `bal library guide ballerinax/twilio <n>`
-
-## Next
-
-- `bal library client ballerinax/twilio Client` — the client's whole callable surface
-- `bal library overview ballerinax/twilio -s "<what you need>"` — search every kind at once when you do not know which verb holds it
-- `bal library type ballerinax/twilio <Name> [-r]` — a declaration whole, with the types it names
-
-## Clients — 1
-
-- `Client` — 199 remote · `bal library client ballerinax/twilio Client`

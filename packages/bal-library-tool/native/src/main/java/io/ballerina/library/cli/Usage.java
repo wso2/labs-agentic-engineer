@@ -156,14 +156,16 @@ final class Usage {
                             + "noun works better than a sentence. Takes no --refresh: a registry query resolves "
                             + "no version and is never cached.");
             case "overview" -> List.of(
-                    "A MAP, not a dump: counts, the readme's quickstart, the guide's chunk index, and a roster "
-                            + "whose every row ends in the command that opens it. No generated signatures — the "
-                            + "container verbs print those, in full, within their own budget.",
+                    "A MAP, not a dump: counts, the guide's chunk index, a roster whose every row ends in the "
+                            + "command that opens it, and last, every Ballerina block the readme published. No "
+                            + "generated signatures — the container verbs print those, in full, within their own "
+                            + "budget.",
                     "With -s it is the CROSS-KIND search, over clients, classes, module functions, declarations "
                             + "and guide chunk titles at once. That is the question no kind-specific verb can "
                             + "answer, because you do not yet know the kind.",
-                    "Ordered so that a window keeps the useful half: facts, then the quickstart, then '## Next', "
-                            + "and only then the rosters.");
+                    "Ordered so that a window keeps the useful half: facts, '## Next' and the rosters first, and "
+                            + "the quoted code last because it is as long as the readme made it. If you cut it "
+                            + "off, line one says so.");
             case "client" -> List.of(
                     "Bare, it lists what the package has: one client is answered whole — constructor, resource "
                             + "functions by path, remote and normal ones by name — and several give a roster with "

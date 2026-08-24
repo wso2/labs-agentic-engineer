@@ -10,35 +10,6 @@
 | Types | 470 declarations (135 records, 32 type aliases, 5 enums, 144 constants, 93 classes and object types, 61 module-level variables), not listed here — read one with `type` |
 | Guide | 109 lines — `bal library guide ballerina/http` |
 
-## Quickstart
-
-*Quoted from the package's own readme and checked against this version's declarations. A line marked `⚠` names something this version does not declare. The signatures the container verbs generate win wherever the two disagree.*
-
-<!-- guide: begin ballerina/http readme usage -->
-
-```ballerina
-http:Client clientEndpoint = check new("https://my-simple-backend.com");
-```
-
-```ballerina
-// Send a GET request to the specified endpoint.
-http:Response response = check clientEndpoint->get("/get?id=123");
-```
-
-```ballerina
-// Retrieve payload as json.
-json payload = check clientEndpoint->post("/backend/Json", "foo");
-```
-
-```ballerina
-// Attributes associated with the `Listener` endpoint are defined here.
-listener http:Listener helloWorldEP = new(9090);
-```
-
-<!-- guide: end ballerina/http readme usage -->
-
-1 more example — `bal library guide ballerina/http`
-
 Guide chunks (2): 1. `Security`  2. `Listener` — `bal library guide ballerina/http <n>`
 
 ## Next
@@ -93,3 +64,41 @@ Guide chunks (2): 1. `Security`  2. `Listener` — `bal library guide ballerina/
 authenticateResource     createHttpCachingClient  createHttpSecureClient   getDefaultListener
 getHeaderMap             getQueryMap              parseHeader
 ```
+
+## Quickstart
+
+*Every Ballerina block in the package's own readme, quoted verbatim and in its order. It is Central's text and can be out of date; the signatures the container verbs generate win wherever the two disagree.*
+
+<!-- guide: begin ballerina/http readme usage -->
+
+```ballerina
+http:Client clientEndpoint = check new("https://my-simple-backend.com");
+```
+
+```ballerina
+// Send a GET request to the specified endpoint.
+http:Response response = check clientEndpoint->get("/get?id=123");
+```
+
+```ballerina
+// Retrieve payload as json.
+json payload = check clientEndpoint->post("/backend/Json", "foo");
+```
+
+```ballerina
+// Attributes associated with the `Listener` endpoint are defined here.
+listener http:Listener helloWorldEP = new(9090);
+```
+
+```ballerina
+// By default, Ballerina assumes that the service is to be exposed via HTTP/1.1.
+service /helloWorld on helloWorldEP {
+
+   resource function post [string name](@http:Payload string message) returns string {
+       // Sends the response back to the client along with a string payload.
+       return "Hello, World! I’m " + name + ". " + message;
+   }
+}
+```
+
+<!-- guide: end ballerina/http readme usage -->

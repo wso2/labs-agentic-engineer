@@ -113,7 +113,6 @@ public final class Overview {
         report.heading(1, pkg + " " + loaded.version().text());
         report.facts(factsOf(loaded, library, pkg));
 
-        quickstart(report, loaded, pkg);
         chunkIndex(report, loaded, pkg);
 
         report.heading(2, "Next");
@@ -122,6 +121,11 @@ public final class Overview {
         roster(report, "Clients", Surface.Scope.CLIENT, library, pkg);
         roster(report, "Classes and object types", Surface.Scope.CLASS, library, pkg);
         roster(report, "Module-level functions", Surface.Scope.MODULE, library, pkg);
+        // LAST, and that is the whole reason the section can be unbounded. ADR-0024 took the cap off the quoted
+        // code, so this is the one part of the map whose length the package decides; everything a reader
+        // navigates by — the facts, the chunk index, `## Next`, the rosters — is already behind them by here, so
+        // a `head -100` loses trailing examples rather than the map.
+        quickstart(report, loaded, pkg);
         return report.toString();
     }
 
@@ -253,35 +257,26 @@ public final class Overview {
     // -----------------------------------------------------------------------
 
     /**
-     * The readme's worked code, quoted and checked. {@link Snippets} decides what that is.
+     * The readme's Ballerina code, quoted whole. {@link Snippets} decides what counts as Ballerina.
      *
      * <p>Marked as a quotation with begin/end markers because it is one: these are the package author's bytes,
      * not this document's claim, and the oracle that checks every signature this view prints has to cut them out
      * by structure rather than by recognising a heading.
      */
     private static void quickstart(Report report, LoadedPackage loaded, String pkg) {
-        Snippets.Usage usage = Snippets.select(loaded);
-        if (usage.isEmpty()) {
+        List<String> blocks = Snippets.select(loaded);
+        if (blocks.isEmpty()) {
             return;
         }
         report.heading(2, "Quickstart");
-        // ADR-0013. Three rules a reader needs at the moment they read quoted code: where it came from, what a
-        // mark on a line means, and which half wins when the two disagree.
-        report.paragraph("*Quoted from the package's own readme and checked against this version's "
-                + "declarations. A line marked " + Texts.code("⚠") + " names something this version does not "
-                + "declare. The signatures the container verbs generate win wherever the two disagree.*");
-        report.embedded(pkg + " readme usage", usage.blocks().stream()
+        // ADR-0013 asked for the rules a reader needs at the moment they read quoted code. ADR-0024 cut that to
+        // two, because the third — what a mark on a line means — described a check that no longer runs.
+        report.paragraph("*Every Ballerina block in the package's own readme, quoted verbatim and in its "
+                + "order. It is Central's text and can be out of date; the signatures the container verbs "
+                + "generate win wherever the two disagree.*");
+        report.embedded(pkg + " readme usage", blocks.stream()
                 .map(block -> "```ballerina\n" + block + "\n```")
                 .collect(Collectors.joining("\n\n")));
-        // NO PER-BLOCK CAP, and that is ADR-0008 rather than an omission: {@link Snippets} selects WHOLE blocks
-        // inside a line budget and drops one that alone exceeds it, because half a snippet is a paraphrase with
-        // the compiler's half missing — kafka's listener example declares its consumerConfiguration nine lines
-        // above the service that uses it. The budget bounds this section; truncation would corrupt it.
-        if (usage.omitted() > 0) {
-            report.paragraph(Texts.count(usage.omitted()) + " more "
-                    + (usage.omitted() == 1 ? "example" : "examples") + " — "
-                    + Texts.code("bal library guide " + pkg));
-        }
     }
 
     /**

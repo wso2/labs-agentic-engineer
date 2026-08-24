@@ -274,7 +274,7 @@ final class Commands {
     }
 
     @CommandLine.Command(name = "overview",
-            description = "A bounded map of the package: what it declares, the readme's quickstart, and the "
+            description = "A map of the package: what it declares, the readme's worked code, and the "
                     + "command that opens each part. Start here.")
     static final class Overview {
 

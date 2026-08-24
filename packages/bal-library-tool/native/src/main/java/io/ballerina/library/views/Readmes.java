@@ -122,17 +122,6 @@ public final class Readmes {
      */
     public record Block(String language, String code) { }
 
-    /**
-     * The contents of every fenced block in a Markdown document.
-     *
-     * <p>Fences are where a readme quotes code, and a reference inside one is a claim about a declaration —
-     * where the same capitalised word in prose is just prose. So a check that cross-references a readme against
-     * a package's declarations has to be scoped to these, or it reports the package's own name as undeclared.
-     */
-    public static List<String> fencedBlocks(String markdown) {
-        return blocks(markdown).stream().map(Block::code).toList();
-    }
-
     /** Every fenced block with its language, in document order. */
     public static List<Block> blocks(String markdown) {
         List<Block> blocks = new ArrayList<>();
