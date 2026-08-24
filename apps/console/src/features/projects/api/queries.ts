@@ -169,6 +169,28 @@ export function useProjectComponents(projectName: string) {
   );
 }
 
+// Deployed-workload dependencies for the project Overview (deduped rows).
+// Null body is a valid empty list — unresolved design declarations are
+// omitted by the BFF, so we must not treat null as a load failure.
+export function useWorkloadDependencies(projectName: string) {
+  return useQuery({
+    queryKey: projectKeys.workloadDependencies(projectName),
+    queryFn: async () => {
+      const { data, error } = await client.GET(
+        "/projects/{projectName}/workload-dependencies",
+        { params: { path: { projectName } } },
+      );
+      if (error) {
+        throw new Error(
+          apiErrorMessage(error, "Failed to load workload dependencies"),
+        );
+      }
+      return data ?? [];
+    },
+    staleTime: 30_000,
+  });
+}
+
 // The Deployments board's pollers (#216): one list-deployments read per
 // component — reusing the endpoint (and cache keys) the overview's
 // "Open app" link already hits, so no new contract surface. Each query
