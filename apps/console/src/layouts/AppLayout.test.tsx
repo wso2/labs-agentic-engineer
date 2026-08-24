@@ -31,13 +31,14 @@ const PROJECT = "expense-approval";
 
 let mockPathname = `/projects/${PROJECT}`;
 let mockSearch: Record<string, unknown> = {};
+let mockParams: { projectName?: string } = { projectName: PROJECT };
 const mockNavigate = vi.fn();
 
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children?: React.ReactNode }) => <a>{children}</a>,
   Outlet: () => <div data-testid="outlet" />,
   useNavigate: () => mockNavigate,
-  useParams: () => ({ projectName: PROJECT }),
+  useParams: () => mockParams,
   useRouterState: ({ select }: { select: (s: unknown) => unknown }) =>
     select({ location: { pathname: mockPathname } }),
   useSearch: () => mockSearch,
@@ -86,6 +87,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockPathname = `/projects/${PROJECT}`;
   mockSearch = {};
+  mockParams = { projectName: PROJECT };
 });
 afterEach(cleanup);
 
@@ -121,5 +123,15 @@ describe("AppLayout — landing from project creation", () => {
 
     expect(screen.queryByTestId("agent-chat-panel")).not.toBeInTheDocument();
     expect(mockNavigate).not.toHaveBeenCalled();
+  });
+});
+
+describe("AppLayout — org nav", () => {
+  it("shows Endpoints in the org sidebar on /endpoints", () => {
+    mockPathname = "/endpoints";
+    mockParams = {};
+    render();
+
+    expect(screen.getByText("Endpoints")).toBeInTheDocument();
   });
 });

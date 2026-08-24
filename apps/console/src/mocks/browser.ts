@@ -5,6 +5,7 @@ import { projectHandlers } from "./handlers/project";
 import { projectsHandlers } from "./handlers/projects";
 import { organizationsHandlers } from "./handlers/organizations";
 import { settingsHandlers } from "./handlers/settings";
+import { marketplaceHandlers } from "./handlers/marketplace";
 import { alertsHandlers } from "./handlers/alerts";
 import { usageHandlers } from "./handlers/usage";
 
@@ -17,6 +18,7 @@ export const worker = setupWorker(
   ...projectsHandlers,
   ...organizationsHandlers,
   ...settingsHandlers,
+  ...marketplaceHandlers,
   ...alertsHandlers,
   ...usageHandlers,
 );
