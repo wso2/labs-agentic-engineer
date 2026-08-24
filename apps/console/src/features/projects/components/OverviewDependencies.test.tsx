@@ -192,6 +192,27 @@ describe("OverviewDependencies", () => {
     fireEvent.click(screen.getByRole("button", { name: /postgres-cnpg/ }));
 
     expect(screen.getAllByText("postgres-cnpg")).toHaveLength(2);
+    expect(screen.getByText("Managed Postgres via CloudNativePG")).toBeInTheDocument();
+    expect(screen.getByLabelText("Close")).toBeInTheDocument();
+  });
+
+  it("opens the resource drawer on an external resource click", () => {
+    resetState();
+    depsState = {
+      data: someDependencies,
+      isPending: false,
+      isError: false,
+      refetch,
+    };
+
+    render(<OverviewDependencies projectName={CURRENT_PROJECT} />);
+
+    expect(screen.queryByLabelText("Close")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /stripe/ }));
+
+    expect(screen.getAllByText("stripe")).toHaveLength(2);
+    expect(screen.getByText("Stripe payments API")).toBeInTheDocument();
     expect(screen.getByLabelText("Close")).toBeInTheDocument();
   });
 
@@ -274,7 +295,7 @@ describe("OverviewDependencies", () => {
     expect(refetch).toHaveBeenCalledTimes(1);
   });
 
-  it("does not open an empty drawer when the catalog has no matching type", () => {
+  it("opens the drawer from the workload row when the catalog has no matching type", () => {
     resetState();
     depsState = {
       data: [
@@ -294,6 +315,7 @@ describe("OverviewDependencies", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /mystery-db/ }));
 
-    expect(screen.queryByLabelText("Close")).not.toBeInTheDocument();
+    expect(screen.getAllByText("mystery-db")).toHaveLength(2);
+    expect(screen.getByLabelText("Close")).toBeInTheDocument();
   });
 });

@@ -89,12 +89,17 @@ export function OverviewDependencies({ projectName }: { projectName: string }) {
     const key = row.ref ?? row.name;
     if (!key) return;
     if (row.tag === "platform") {
-      const resource = platform.data?.find((r) => r.name === key);
-      if (resource) setSelection({ kind: "platform", resource });
+      const resource =
+        platform.data?.find((r) => r.name === key) ?? { name: key };
+      setSelection({ kind: "platform", resource });
       return;
     }
-    const resource = external.data?.find((r) => r.name === key);
-    if (resource) setSelection({ kind: "external", resource });
+    const resource = external.data?.find((r) => r.name === key) ?? {
+      name: key,
+      config: [],
+      consumers: [],
+    };
+    setSelection({ kind: "external", resource });
   };
 
   return (

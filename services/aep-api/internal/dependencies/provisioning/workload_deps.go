@@ -49,12 +49,13 @@ type WorkloadDependencyView struct {
 }
 
 // ListWorkloadDependencies returns the project's deployed-workload dependencies
-// as deduped Overview rows. A nil Workloads port (unwired) is an empty list —
-// no deployed consumer refs. Dangling GetResource 404s are omitted. Lister
-// transport failures propagate so the handler can map them to the default 500.
+// as deduped Overview rows. A nil Workloads port on a non-nil service is a
+// lister failure (the handler maps it to the default 500). Dangling GetResource
+// 404s are omitted. Lister transport failures propagate so the handler can map
+// them to the default 500. A nil handler service stays 503.
 func (s *Service) ListWorkloadDependencies(ctx context.Context, orgID, projectName string) ([]WorkloadDependencyView, error) {
 	if s.workloads == nil {
-		return []WorkloadDependencyView{}, nil
+		return nil, fmt.Errorf("provisioning: list workload consumer deps: workloads port is nil")
 	}
 	consumers, err := s.workloads.ListWorkloadConsumerDeps(ctx, orgID, projectName)
 	if err != nil {
@@ -158,7 +159,7 @@ func (s *Service) resolveResourceRow(ctx context.Context, orgID, instanceName st
 			logical = rt.Metadata.Annotations[annotationExternalName]
 		}
 		if logical == "" {
-			return WorkloadDependencyView{}, false, nil
+			logical = typeName
 		}
 		return WorkloadDependencyView{
 			Kind: depKindResource,

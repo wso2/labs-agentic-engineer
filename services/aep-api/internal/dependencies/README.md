@@ -43,7 +43,7 @@ three services are sub-package slices that import only that root.
 
 | Slice | Ops / role | Reaches |
 |---|---|---|
-| `provisioning` | 8 HTTP ops: list/delete/collect-values external resources, project readiness, provision-platform, dependency-status, request/list org-service access + the `provision` gate lifecycle, watcher, teardown | root cores; delivery (provision execution rows); sourcecontrol (gate issues) |
+| `provisioning` | 9 HTTP ops: list/delete/collect-values external resources, list-workload-dependencies, project readiness, provision-platform, dependency-status, request/list org-service access + the `provision` gate lifecycle, watcher, teardown | root cores; delivery (provision execution rows); sourcecontrol (gate issues); `WorkloadDepSource` (deployed Workload consumer refs) |
 | `mcpdiscovery` | the MCP discovery server + `ListPlatformResourceTypes` and `ListOrgEndpoints` HTTP reads | root `ResourceTypeLister` / endpoint catalog |
 | `runtimeconfig` | the SPA `env-config.js` convergence service + its watcher (no HTTP op) | root naming/markers; spec (design at HEAD); repositories (execution enumerate) |
 
@@ -57,11 +57,12 @@ slices.
 |---|---|---|
 | SecretWriter | needs | `platform/secrets` — SM-API vault writes for external-resource secret values |
 | OC `Resource`/`ResourceReleaseBinding` CRUD · `ClusterResourceType` discovery | needs | `openchoreo` client — OC is the store |
+| WorkloadDepSource | needs | `openchoreo` client — deployed Workload consumer refs (resource + endpoint) for Overview `list-workload-dependencies`; GetResource 404s are dangling and omitted |
 | ExecutionStore (admit/finish) | needs | `delivery` — a gate's provisioning run is the last remaining execution row, and this is its write surface |
 | IssueClient (provision gate · endpoint-wiring comment) | needs | `sourcecontrol` — gate issues closed via a no-secrets reference, and the ADR-0004 endpoint comment + its `aep:wired` completeness marker on the working set |
 | ProviderResolver (endpoint targets) | needs | root `Catalog` — any-visibility provider lookup for an access request, namespace/project-visible resolves for the wiring block |
 | DesignReader / DesignBundleReader | needs | `spec` — design at HEAD (what to provision) + provider design bundles |
-| the 10 public ops (provisioning 8 + mcpdiscovery `ListPlatformResourceTypes` and `ListOrgEndpoints`) | offers | the edge (`dependenciesHandlers`) |
+| the 11 public ops (provisioning 9 + mcpdiscovery `ListPlatformResourceTypes` and `ListOrgEndpoints`) | offers | the edge (`dependenciesHandlers`) |
 
 ## Owns
 - `ExternalResource` (an in-memory definition, NOT a DB row — see Persistence), `AccessRequest`, the

@@ -424,7 +424,7 @@ func TestProvisioningComponent_ListWorkloadDependencies_NoClaims401(t *testing.T
 func TestProvisioningComponent_ListWorkloadDependencies_Empty200(t *testing.T) {
 	t.Parallel()
 	// Org has deployed workloads, but none owned by path project "shop".
-	// A nil Workloads port short-circuits without listing; this fake must
+	// A nil Workloads port is a lister failure, not 200 []; this fake must
 	// list-and-filter so other projects' rows cannot leak.
 	h := newProvHarness(t, provisioning.NewService(provisioning.Deps{
 		Workloads: otherProjectWorkloadSource(),
@@ -616,5 +616,61 @@ func TestProvisioningComponent_ListWorkloadDependencies_ListerFailure500(t *test
 	e := componenttest.DecodeEnvelope(t, resp.Body.String())
 	if e.Code != "internal_error" {
 		t.Fatalf("500 envelope = %+v, want code internal_error", e)
+	}
+}
+
+func TestProvisioningComponent_ListWorkloadDependencies_NilWorkloadsPort500(t *testing.T) {
+	t.Parallel()
+	// Non-nil service, unwired Workloads port: not "nothing deployed" (200 []).
+	h := newProvHarness(t, provisioning.NewService(provisioning.Deps{}))
+
+	resp := h.AsOrg("acme").Get(workloadDepsPath)
+	if resp.Code != 500 {
+		t.Fatalf("nil Workloads port: want 500, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	e := componenttest.DecodeEnvelope(t, resp.Body.String())
+	if e.Code != "internal_error" {
+		t.Fatalf("500 envelope = %+v, want code internal_error", e)
+	}
+}
+
+func TestProvisioningComponent_ListWorkloadDependencies_ExternalFallsBackToTypeName(t *testing.T) {
+	t.Parallel()
+	svc := provisioning.NewService(provisioning.Deps{
+		Workloads: &cWorkloads{
+			deps: []openchoreo.WorkloadConsumerDep{
+				{
+					OwnerProject:   "shop",
+					OwnerComponent: "orders",
+					ResourceRefs:   []string{"shop-custom", "shop-gone"},
+				},
+			},
+			resources: map[string]*openchoreo.Resource{
+				"shop-custom": {Spec: openchoreo.ResourceSpec{
+					Type: openchoreo.ResourceTypeRef{Kind: "ResourceType", Name: "custom-rt"},
+				}},
+			},
+			types: map[string]*openchoreo.ResourceType{
+				"custom-rt": {Metadata: openchoreo.OCObjectMeta{Name: "custom-rt"}},
+			},
+		},
+	})
+	h := newProvHarness(t, svc)
+
+	resp := h.AsOrg("acme").Get(workloadDepsPath)
+	if resp.Code != 200 {
+		t.Fatalf("list: got %d body=%s", resp.Code, resp.Body.String())
+	}
+
+	var got []gen.WorkloadDependencyDTO
+	if err := json.Unmarshal(resp.Body.Bytes(), &got); err != nil {
+		t.Fatalf("body: %v\n%s", err, resp.Body.String())
+	}
+	if len(got) != 1 {
+		t.Fatalf("rows = %+v, want 1 live ResourceType (dangling GetResource 404 omitted)", got)
+	}
+	row := got[0]
+	if row.Kind != gen.Resource || row.Tag != gen.External || row.Ref != "custom-rt" || row.Name != "custom-rt" {
+		t.Fatalf("external without annotation = %+v, want ref/name custom-rt (spec.type.Name)", row)
 	}
 }
