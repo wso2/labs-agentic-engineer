@@ -53,6 +53,9 @@ var _ openchoreo.ResourceClient = &ResourceClientMock{}
 //			ListResourceTypesFunc: func(ctx context.Context, namespace string) ([]openchoreo.ResourceType, error) {
 //				panic("mock out the ListResourceTypes method")
 //			},
+//			ListWorkloadConsumerDepsFunc: func(ctx context.Context, orgHandle string, projectName string) ([]openchoreo.WorkloadConsumerDep, error) {
+//				panic("mock out the ListWorkloadConsumerDeps method")
+//			},
 //			ListWorkloadEndpointsFunc: func(ctx context.Context, orgHandle string) ([]openchoreo.WorkloadEndpointInfo, error) {
 //				panic("mock out the ListWorkloadEndpoints method")
 //			},
@@ -98,6 +101,9 @@ type ResourceClientMock struct {
 
 	// ListResourceTypesFunc mocks the ListResourceTypes method.
 	ListResourceTypesFunc func(ctx context.Context, namespace string) ([]openchoreo.ResourceType, error)
+
+	// ListWorkloadConsumerDepsFunc mocks the ListWorkloadConsumerDeps method.
+	ListWorkloadConsumerDepsFunc func(ctx context.Context, orgHandle string, projectName string) ([]openchoreo.WorkloadConsumerDep, error)
 
 	// ListWorkloadEndpointsFunc mocks the ListWorkloadEndpoints method.
 	ListWorkloadEndpointsFunc func(ctx context.Context, orgHandle string) ([]openchoreo.WorkloadEndpointInfo, error)
@@ -200,6 +206,15 @@ type ResourceClientMock struct {
 			// Namespace is the namespace argument value.
 			Namespace string
 		}
+		// ListWorkloadConsumerDeps holds details about calls to the ListWorkloadConsumerDeps method.
+		ListWorkloadConsumerDeps []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// OrgHandle is the orgHandle argument value.
+			OrgHandle string
+			// ProjectName is the projectName argument value.
+			ProjectName string
+		}
 		// ListWorkloadEndpoints holds details about calls to the ListWorkloadEndpoints method.
 		ListWorkloadEndpoints []struct {
 			// Ctx is the ctx argument value.
@@ -230,6 +245,7 @@ type ResourceClientMock struct {
 	lockGetResourceType                sync.RWMutex
 	lockListClusterResourceTypes       sync.RWMutex
 	lockListResourceTypes              sync.RWMutex
+	lockListWorkloadConsumerDeps       sync.RWMutex
 	lockListWorkloadEndpoints          sync.RWMutex
 	lockPatchBindingEnvironmentConfigs sync.RWMutex
 }
@@ -659,6 +675,46 @@ func (mock *ResourceClientMock) ListResourceTypesCalls() []struct {
 	mock.lockListResourceTypes.RLock()
 	calls = mock.calls.ListResourceTypes
 	mock.lockListResourceTypes.RUnlock()
+	return calls
+}
+
+// ListWorkloadConsumerDeps calls ListWorkloadConsumerDepsFunc.
+func (mock *ResourceClientMock) ListWorkloadConsumerDeps(ctx context.Context, orgHandle string, projectName string) ([]openchoreo.WorkloadConsumerDep, error) {
+	if mock.ListWorkloadConsumerDepsFunc == nil {
+		panic("ResourceClientMock.ListWorkloadConsumerDepsFunc: method is nil but ResourceClient.ListWorkloadConsumerDeps was just called")
+	}
+	callInfo := struct {
+		Ctx         context.Context
+		OrgHandle   string
+		ProjectName string
+	}{
+		Ctx:         ctx,
+		OrgHandle:   orgHandle,
+		ProjectName: projectName,
+	}
+	mock.lockListWorkloadConsumerDeps.Lock()
+	mock.calls.ListWorkloadConsumerDeps = append(mock.calls.ListWorkloadConsumerDeps, callInfo)
+	mock.lockListWorkloadConsumerDeps.Unlock()
+	return mock.ListWorkloadConsumerDepsFunc(ctx, orgHandle, projectName)
+}
+
+// ListWorkloadConsumerDepsCalls gets all the calls that were made to ListWorkloadConsumerDeps.
+// Check the length with:
+//
+//	len(mockedResourceClient.ListWorkloadConsumerDepsCalls())
+func (mock *ResourceClientMock) ListWorkloadConsumerDepsCalls() []struct {
+	Ctx         context.Context
+	OrgHandle   string
+	ProjectName string
+} {
+	var calls []struct {
+		Ctx         context.Context
+		OrgHandle   string
+		ProjectName string
+	}
+	mock.lockListWorkloadConsumerDeps.RLock()
+	calls = mock.calls.ListWorkloadConsumerDeps
+	mock.lockListWorkloadConsumerDeps.RUnlock()
 	return calls
 }
 

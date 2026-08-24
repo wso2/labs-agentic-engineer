@@ -47,6 +47,7 @@ type Service struct {
 	extProv   ExternalProvisioner
 	platProv  PlatformProvisioner
 	bindings  BindingReader
+	workloads WorkloadDepSource
 	projects  ProjectLister
 	access    AccessStore
 	providers ProviderResolver
@@ -90,6 +91,7 @@ type Deps struct {
 	ExtProv   ExternalProvisioner
 	PlatProv  PlatformProvisioner
 	Bindings  BindingReader
+	Workloads WorkloadDepSource
 	Projects  ProjectLister
 	Access    AccessStore
 	Providers ProviderResolver
@@ -106,6 +108,7 @@ func NewService(d Deps) *Service {
 		extProv:   d.ExtProv,
 		platProv:  d.PlatProv,
 		bindings:  d.Bindings,
+		workloads: d.Workloads,
 		projects:  d.Projects,
 		access:    d.Access,
 		providers: d.Providers,

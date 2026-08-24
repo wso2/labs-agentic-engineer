@@ -759,6 +759,106 @@ func TestListWorkloadEndpoints_EmptyList(t *testing.T) {
 	}
 }
 
+func TestListWorkloadConsumerDeps_FiltersProjectAndParsesRefs(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/namespaces/wc-abc/workloads" || r.Method != http.MethodGet {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		fmt.Fprint(w, `{
+			"items": [
+				{
+					"metadata": {"name": "shop-orders"},
+					"spec": {
+						"owner": {"projectName": "shop", "componentName": "orders"},
+						"endpoints": {"http": {"type": "HTTP", "port": 8080}},
+						"dependencies": {
+							"resources": [{"ref": "shop-pg"}, {"ref": "shop-stripe"}],
+							"endpoints": [
+								{"project": "inventory", "component": "inventory-api", "name": "http", "visibility": "namespace"},
+								{"component": "web", "name": "http", "visibility": "project"}
+							]
+						}
+					}
+				},
+				{
+					"metadata": {"name": "other-api"},
+					"spec": {
+						"owner": {"projectName": "other", "componentName": "api"},
+						"dependencies": {"resources": [{"ref": "other-pg"}]}
+					}
+				}
+			]
+		}`)
+	}))
+	defer srv.Close()
+
+	c := newTestResourceClient(t, srv)
+	got, err := c.ListWorkloadConsumerDeps(context.Background(), "wc-abc", "shop")
+	if err != nil {
+		t.Fatalf("ListWorkloadConsumerDeps: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want 1 shop workload, got %+v", got)
+	}
+	w := got[0]
+	if w.OwnerProject != "shop" || w.OwnerComponent != "orders" {
+		t.Errorf("owner = %s/%s", w.OwnerProject, w.OwnerComponent)
+	}
+	if len(w.ResourceRefs) != 2 || w.ResourceRefs[0] != "shop-pg" || w.ResourceRefs[1] != "shop-stripe" {
+		t.Errorf("resource refs = %v", w.ResourceRefs)
+	}
+	if len(w.Endpoints) != 2 {
+		t.Fatalf("endpoints = %+v", w.Endpoints)
+	}
+	if w.Endpoints[0].Project != "inventory" || w.Endpoints[0].Component != "inventory-api" || w.Endpoints[0].Visibility != "namespace" {
+		t.Errorf("cross-project endpoint = %+v", w.Endpoints[0])
+	}
+	if w.Endpoints[1].Project != "" || w.Endpoints[1].Component != "web" || w.Endpoints[1].Visibility != "project" {
+		t.Errorf("same-project endpoint = %+v", w.Endpoints[1])
+	}
+}
+
+func TestListWorkloadConsumerDeps_EmptyList(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, http.StatusOK, map[string]any{"items": []any{}})
+	}))
+	defer srv.Close()
+
+	c := newTestResourceClient(t, srv)
+	got, err := c.ListWorkloadConsumerDeps(context.Background(), "wc-abc", "shop")
+	if err != nil {
+		t.Fatalf("ListWorkloadConsumerDeps: %v", err)
+	}
+	if got == nil || len(got) != 0 {
+		t.Errorf("expected empty slice, got %+v", got)
+	}
+}
+
+func TestListWorkloadEndpoints_IgnoresConsumerDependencies(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{
+			"items": [{
+				"metadata": {"name": "shop-orders"},
+				"spec": {
+					"owner": {"projectName": "shop", "componentName": "orders"},
+					"endpoints": {"http": {"type": "HTTP", "port": 8080, "visibility": ["namespace"]}},
+					"dependencies": {"resources": [{"ref": "shop-pg"}]}
+				}
+			}]
+		}`)
+	}))
+	defer srv.Close()
+
+	c := newTestResourceClient(t, srv)
+	got, err := c.ListWorkloadEndpoints(context.Background(), "wc-abc")
+	if err != nil {
+		t.Fatalf("ListWorkloadEndpoints: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "http" || got[0].Project != "shop" {
+		t.Fatalf("provider endpoints changed when consumer deps present: %+v", got)
+	}
+}
+
 // ---- constructor -------------------------------------------------------------------
 
 func TestNewResourceClient_PanicsWithoutBaseURL(t *testing.T) {

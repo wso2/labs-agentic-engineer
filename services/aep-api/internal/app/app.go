@@ -1019,6 +1019,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		ExtProv:   externalProvisioner,
 		PlatProv:  platformProvisioner,
 		Bindings:  resourceClient,
+		Workloads: resourceClient,
 		Projects:  provisionProjects{repos: repoRepo},
 		Access:    dependencies.NewAccessRequestRepository(db),
 		Providers: orgEndpointCatalog,

@@ -48,11 +48,16 @@ func errProvisioningUnavailable() error {
 	return apierr.ServiceUnavailable("provisioning is not configured")
 }
 
-func (h *Handler) ListWorkloadDependencies(ctx context.Context, _ gen.ListWorkloadDependenciesRequestObject) (gen.ListWorkloadDependenciesResponseObject, error) {
+func (h *Handler) ListWorkloadDependencies(ctx context.Context, request gen.ListWorkloadDependenciesRequestObject) (gen.ListWorkloadDependenciesResponseObject, error) {
 	if h.svc == nil {
 		return nil, errProvisioningUnavailable()
 	}
-	return nil, errProvisioningUnavailable()
+	org := tenant.BoundOrgFromContext(ctx)
+	views, err := h.svc.ListWorkloadDependencies(ctx, org, request.ProjectName)
+	if err != nil {
+		return nil, mapProvisionError(err)
+	}
+	return gen.ListWorkloadDependencies200JSONResponse(toWorkloadDependencyDTOs(views)), nil
 }
 
 func (h *Handler) ListExternalResources(ctx context.Context, _ gen.ListExternalResourcesRequestObject) (gen.ListExternalResourcesResponseObject, error) {
@@ -251,6 +256,21 @@ func toExternalResourceDTOs(views []ExternalResourceView) []gen.ExternalResource
 			Description: v.Description,
 			Config:      keys,
 			Consumers:   consumers,
+		})
+	}
+	return out
+}
+
+func toWorkloadDependencyDTOs(views []WorkloadDependencyView) []gen.WorkloadDependencyDTO {
+	out := make([]gen.WorkloadDependencyDTO, 0, len(views))
+	for _, v := range views {
+		out = append(out, gen.WorkloadDependencyDTO{
+			Kind:      gen.WorkloadDependencyDTOKind(v.Kind),
+			Ref:       v.Ref,
+			Tag:       gen.WorkloadDependencyDTOTag(v.Tag),
+			Name:      v.Name,
+			Project:   v.Project,
+			Component: v.Component,
 		})
 	}
 	return out

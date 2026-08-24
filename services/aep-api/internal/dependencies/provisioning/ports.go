@@ -136,6 +136,17 @@ type BindingReader interface {
 	GetBinding(ctx context.Context, namespace, name string) (*openchoreo.ResourceReleaseBinding, error)
 }
 
+// WorkloadDepSource is the deployed-Workload consumer-dependency reader the
+// Overview list uses. openchoreo.ResourceClient satisfies it (the same client
+// Bindings and the external-resource catalog already share — not a second
+// HTTP stack). List is org-scoped then filtered to projectName; GetResource
+// 404s are dangling refs the service omits.
+type WorkloadDepSource interface {
+	ListWorkloadConsumerDeps(ctx context.Context, orgHandle, projectName string) ([]openchoreo.WorkloadConsumerDep, error)
+	GetResource(ctx context.Context, namespace, name string) (*openchoreo.Resource, error)
+	GetResourceType(ctx context.Context, namespace, name string) (*openchoreo.ResourceType, error)
+}
+
 // ProviderResolver resolves a dependency's provider endpoint in OpenChoreo. It
 // has two readers with different visibility rules, so all three resolves live on
 // one port (*dependencies.Catalog satisfies all of them):
