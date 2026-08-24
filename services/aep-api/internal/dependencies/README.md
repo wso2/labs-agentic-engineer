@@ -61,7 +61,7 @@ slices.
 | IssueClient (provision gate · endpoint-wiring comment) | needs | `sourcecontrol` — gate issues closed via a no-secrets reference, and the ADR-0004 endpoint comment + its `aep:wired` completeness marker on the working set |
 | ProviderResolver (endpoint targets) | needs | root `Catalog` — any-visibility provider lookup for an access request, namespace/project-visible resolves for the wiring block |
 | DesignReader / DesignBundleReader | needs | `spec` — design at HEAD (what to provision) + provider design bundles |
-| the 8 public ops | offers | the edge (`dependenciesHandlers`) |
+| the 10 public ops (provisioning 8 + mcpdiscovery `ListPlatformResourceTypes` and `ListOrgEndpoints`) | offers | the edge (`dependenciesHandlers`) |
 
 ## Owns
 - `ExternalResource` (an in-memory definition, NOT a DB row — see Persistence), `AccessRequest`, the
