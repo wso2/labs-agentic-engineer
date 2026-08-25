@@ -18,6 +18,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readAgentBuilds } from "../src/metrics/build.js";
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -342,7 +343,25 @@ function withMissing(key: string, missing: number): Summary {
   };
 }
 
-test("scratch: an attempt runs outside the repo and is archived back afterwards", () => {
+/**
+ * Why one test here is conditional, when nothing else in this file is.
+ *
+ * `prepareScratch` runs a REAL `bal new` — that is the point of it, since the
+ * scaffold is what an attempt starts from. This package is a HOST-ONLY harness
+ * (evals/ballerina/AGENTS.md): it measures the developer's own toolchain, and
+ * the repo deliberately keeps Ballerina out of CI — even the tool's own job
+ * notes its tests need no distribution. So on a runner this test cannot run.
+ *
+ * ANNOUNCED rather than silent. node:test prints `# SKIP <reason>` into the TAP
+ * output, so a run that skipped it says so and names why; the alternative was a
+ * red build on every push, which is what sent me here.
+ */
+const BAL_MISSING =
+  spawnSync("bal", ["version"], { stdio: "ignore" }).error !== undefined
+    ? "needs `bal` on PATH — host-only eval harness, and CI runners carry no Ballerina distribution"
+    : undefined;
+
+test("scratch: an attempt runs outside the repo and is archived back afterwards", { skip: BAL_MISSING }, () => {
   // B3. When the workspace lived under `.runs/`, `cases/` was a few `..` from the
   // session's cwd — and the claims-fhir attempt of the 2026-08-16 sweep read its own
   // expect.imports and reversed a design decision on the strength of it. What the
