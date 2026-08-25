@@ -334,7 +334,7 @@ check 1 nonsense
 
 ### Packages outside the corpus
 
-`CorpusTest` covers the eleven corpus packages offline and deterministically. What it cannot cover is
+`CorpusTest` covers the thirteen corpus packages offline and deterministically. What it cannot cover is
 a payload shape nothing has snapshotted, so a spot check against Central is worth a minute — a
 collation or a byte-length mistake moves bytes without breaking anything a unit test asserts.
 

@@ -44,7 +44,7 @@ Its history is in the monorepo's git log if a fixture ever needs re-deriving.
 
 What it leaves behind is the corpus. `native/src/test/resources/` began as that reader's
 `test/__fixtures__/*.json.gz` and `test/__snapshots__/*.bal`, and re-recording now happens here
-against Central directly. `CorpusTest` covers the eleven corpus packages offline and deterministically,
+against Central directly. `CorpusTest` covers the thirteen corpus packages offline and deterministically,
 which is what replaced the cross-implementation parity run. Those `.bal` snapshots did not move by a
 byte through the 2026-08-17 interface change, which is what proves that change touched the addressing
 and not the renderer.

@@ -224,11 +224,10 @@ process can observe a partial file.
 ```
 bal-library-tool/
 ├── build.gradle              ← root: plugins + allprojects repos
-├── settings.gradle           ← pluginManagement, includes ':native' and ':ballerina'
+├── settings.gradle           ← includes ':native', and nothing else
 ├── gradle.properties         ← all versions
 ├── install-local.sh          ← local dev install
 ├── build-config/resources/package/{Ballerina,BalTool}.toml   ← templates
-├── ballerina/                ← io.ballerina.plugin subproject for bala packaging
 └── native/
     ├── build.gradle          ← Java subproject; every dependency is compileOnly
     └── src/
@@ -239,20 +238,20 @@ bal-library-tool/
         │   ├── Loader.java, LoadedPackage.java
         │   ├── cache/{DocsCache,DiskCache,CacheLocation,Versions}.java
         │   ├── central/{CentralClient,HttpTransport,JdkHttpTransport,HttpOptions,
-        │   │            Coordinates,DependenciesToml,SearchHit}.java
+        │   │            Coordinates,DependenciesToml,SearchHit,Json}.java
         │   ├── central/schema/{CentralDocs,Schema}.java
         │   ├── model/{Library,TypeDef,Fn,Service,TypeRef,Param,ReturnDef,RecordField,
-        │   │          ClientClass,FromCentral,Patches,Defaults,Pipeline}.java
+        │   │          ClientClass,FromCentral,Patches,Defaults,Pipeline,ModuleRef}.java
         │   ├── render/{Signatures,TypeDefs,Documents,Identifiers,Report}.java
-        │   ├── symbols/{Declarations,Names,PathTree}.java
+        │   ├── symbols/{Declarations,Names,PathTree,Surface,Filter}.java
         │   ├── views/{Find,Overview,Containers,TypeView,Guide,Closure,
         │   │            Snippets,Readmes}.java
-        │   └── cli/{LibraryTool,Cli,Commands,Usage}.java
+        │   └── cli/{LibraryTool,Cli,Commands,Usage,UsageRenderer}.java
         └── test/
-            ├── java/io/ballerina/library/    ← 15 suites, 485 cases
+            ├── java/io/ballerina/library/    ← 17 suites, 715 cases
             └── resources/
-                ├── fixtures/*.json.gz        ← 9 recorded Central payloads
-                ├── snapshots/                ← 11 .bal + 41 .md + keyspace.txt
+                ├── fixtures/*.json.gz        ← 13 recorded Central payloads
+                ├── snapshots/                ← 13 .bal + 50 .md + keyspace.txt
                 └── command-outputs/unix/     ← usage golden files
 ```
 
@@ -281,11 +280,11 @@ by hand rather than adding a bundled dependency.
 
 ## Tests
 
-`./gradlew :native:test` — 574 cases, offline, no network and no `$HOME` access.
+`./gradlew :native:test` — 715 cases, offline, no network and no `$HOME` access.
 
 | Suite | What it holds the line on |
 |---|---|
-| `CorpusTest` | **The one that proves the port.** Eleven recorded payloads render byte-for-byte to eleven committed `.bal` snapshots, which the TypeScript reader produced. Those snapshots are also the interface redesign's own gate: they did not move by a byte, which is what proves the renderer was never touched. |
+| `CorpusTest` | **The one that pins the rendering.** Thirteen recorded payloads render byte-for-byte to thirteen committed `.bal` snapshots. Those snapshots are also the interface redesign's own gate: they did not move by a byte, which is what proves the renderer was never touched. |
 | `ViewsAgreeTest` | **The one that makes the addressed verbs safe.** Every signature a container verb prints appears in the `api` snapshot verbatim, at every tier and under `--all`; `overview` generates none at all; every `type <Name>` body is `renderTypeDef` exactly; every offered path is reachable; every `-r` closure terminates, stays bounded and names what it dropped. |
 | `PointersTest` | **The general form of "a pointer that cannot answer is worse than no pointer".** Extracts every `bal library` command from every document of every fixture and RUNS it through the real CLI, requiring exit 0. Three separate bugs of this shape had three separate assertions written after the fact; a new pointer cannot be added wrong. |
 | `SurfaceTest` | That the three-way split is exhaustive and disjoint, and that a `client object` type Central files as an ordinary declaration is still addressed by `client`. |
