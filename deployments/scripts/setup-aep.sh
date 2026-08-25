@@ -578,6 +578,35 @@ if [ "$PIN_RC" = "2" ]; then
     echo "   stay ErrImageNeverPull (pullPolicy: Never, no registry). Re-run setup-aep.sh."
     exit 1
 fi
+
+# The chart sources THUNDER_SYSTEM_CLIENT_ID/_SECRET exclusively from the
+# `thunder-app-operator-credentials` Secret and manages no credential values of
+# its own. Only the PLATFORM chart creates that Secret, as an ESO ExternalSecret
+# (helm-charts/platform/templates/thunder/operator-credentials.yaml); this script
+# installs the operator chart directly and never installs the platform chart, so
+# it must create the Secret itself — otherwise the manager pod sits in
+# CreateContainerConfigError.
+#
+# The values are the system client the local Thunder bootstrap registers
+# (single-cluster/values-thunder.yaml → "AEP System Client", bound to the Thunder
+# Administrator role by its 60-aep-system-role.sh hook). LOCAL DEV ONLY: a shared
+# Thunder must override these via THUNDER_SYSTEM_CLIENT_ID/_SECRET.
+#
+# KNOWN GAP: setup-aectl.sh and setup-local.sh install the same operator chart
+# the same way and also never install the platform chart, so both still hit the
+# CreateContainerConfigError this fixes. Not fixed here — neither path was
+# exercised by this change. See the PR description.
+#
+# The namespace is created first because the Secret has to exist BEFORE the
+# operator pod starts; `helm --create-namespace` below is too late for that.
+kubectl create namespace thunder-app-operator-system --dry-run=client -o yaml | kubectl apply -f -
+kubectl create secret generic thunder-app-operator-credentials \
+    -n thunder-app-operator-system \
+    --from-literal=client-id="${THUNDER_SYSTEM_CLIENT_ID:-aep-system-client}" \
+    --from-literal=client-secret="${THUNDER_SYSTEM_CLIENT_SECRET:-aep-system-client-secret}" \
+    --dry-run=client -o yaml | kubectl apply -f -
+echo "✅ thunder-app-operator-credentials Secret created"
+
 helm upgrade --install thunder-app-operator \
     "${SCRIPT_DIR}/../single-cluster/resource-types/thunder-app/operator/helm" \
     -n thunder-app-operator-system --create-namespace \
