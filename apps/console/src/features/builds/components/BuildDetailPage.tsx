@@ -349,13 +349,36 @@ function BuildSummaryCard({
           Go to Deployments <ArrowRight size={14} />
         </RouterLink>
         <Typography variant="caption" color="text.secondary">
-          {deploy?.version === build.tag && deploy.status === "deployed"
-            ? `${build.tag} is live in development.`
-            : `${build.tag} deploys as its tasks merge.`}
+          {deploymentNote(build.tag, deploy)}
         </Typography>
       </Stack>
     </Card>
   );
+}
+
+/**
+ * What the summary card says about this version's rollout.
+ *
+ * Every state the header pill can show gets its own sentence. The generic
+ * "deploys as its tasks merge" line is for a version that has not reached an
+ * environment — using it while the header reads "Deploying to development"
+ * put two contradictory claims on one card.
+ */
+function deploymentNote(
+  tag: string,
+  deploy: components["schemas"]["DeployStage"] | undefined,
+): string {
+  if (deploy?.version !== tag) return `${tag} deploys as its tasks merge.`;
+  switch (deploy.status) {
+    case "deployed":
+      return `${tag} is live in development.`;
+    case "deploying":
+      return `${tag} is rolling out to development now.`;
+    case "failed":
+      return `${tag} failed to deploy to development.`;
+    default:
+      return `${tag} deploys as its tasks merge.`;
+  }
 }
 
 /** Cancel / retry / GitHub / copy — the design's overflow menu. */

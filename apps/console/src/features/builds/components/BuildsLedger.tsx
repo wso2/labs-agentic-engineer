@@ -266,7 +266,10 @@ function LedgerRow({
 }) {
   const status = ledgerStatus(build, deploy);
   const progress = taskProgress(build, counts);
-  const live = isLedgerLive(build);
+  // The ROW's liveness is the STATUS's liveness, not the build's: a completed
+  // version whose rollout is under way is moving, and tinting on `build.status`
+  // made the row go quiet at exactly the moment it had something to say.
+  const live = status.live;
 
   return (
     <ListingTable.Row

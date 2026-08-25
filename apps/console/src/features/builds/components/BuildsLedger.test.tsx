@@ -150,6 +150,32 @@ describe("BuildsLedger", () => {
     expect(screen.queryByText(/of 0 done/)).toBeNull();
   });
 
+  it("keeps a rolling-out version live, even though its BUILD is completed", () => {
+    // The row tinted on build.status, which is `completed` during a rollout —
+    // so it went quiet at exactly the moment it had something to say.
+    mockBuilds = [build({ tag: "v1" })];
+    mockDeploy = {
+      version: "v1",
+      status: "deploying",
+      components: { total: 3, ready: 1 },
+      validation: "none",
+    };
+    renderLedger();
+    expect(screen.getByText("Deploying to development")).toBeTruthy();
+  });
+
+  it("names a failed rollout rather than calling the version Built", () => {
+    mockBuilds = [build({ tag: "v1" })];
+    mockDeploy = {
+      version: "v1",
+      status: "failed",
+      components: { total: 3, ready: 1 },
+      validation: "none",
+    };
+    renderLedger();
+    expect(screen.getByText("Deploy failed")).toBeTruthy();
+  });
+
   it("describes only the deployed version by where it reached", () => {
     mockBuilds = [build({ tag: "v2" }), build({ tag: "v1" })];
     mockDeploy = {

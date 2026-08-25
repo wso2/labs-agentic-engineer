@@ -193,7 +193,7 @@ all — eleven rows each reading "No updates yet" is noise, not information.
 console does not know" and "this version has no work" are different facts and
 must not share a string.
 
-## The project overview## The project overview
+## The project overview
 
 ### Where project status lives
 
