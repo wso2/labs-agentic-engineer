@@ -140,34 +140,36 @@ raises "do I need to know git?" at the worst moment), **milestone** (platform bo
 changes nothing about this decision — it stays discoverable on the Builds page), **stories in
 scope** ("in scope" is the jargon; the list is right).
 
-## Builds and Deployments
+## Builds
 
 Decided in [#609](https://github.com/wso2/labs-agentic-engineer/issues/609)
-(ADR-0020). Both pages are lists now, so their status cells are read side by
+(ADR-0020). The Builds page is a list now, so its status cells are read side by
 side — which is exactly why each **names the situation, not the state machine**
 (naming rule 6). The qualifier after the middot is the fact the bare state does
-not carry: who is acting, why it failed, where it got to.
+not carry: who is acting, why it failed.
 
 ### A version's status, on the Builds ledger
 
 | Situation | Says |
 |---|---|
-| Waiting for the running build to finish | **`Queued · next`** |
 | The coding agent is working it | **`Running · Coding agent`** |
 | The run ended badly, and the platform said why | **`Failed · <reason>`** |
 | The run ended badly and left no reason | **`Failed`** |
-| Built, and live in one environment | **`Deployed to <environment>`** |
-| Built, and live in several | **`Deployed to N environments`** |
-| Built, never deployed | **`Built`** |
+| Built, and it is the version running in development | **`Deployed to development`** |
+| Built, and its rollout is under way | **`Deploying to development`** |
+| Built, and its rollout failed | **`Deploy failed`** |
+| Built, everything else | **`Built`** |
 
-**`Deployed to dev` is not a build state the platform holds** — it is the
-ledger joining `deployedTo` onto a completed version, because *where it got to*
-is what a reader wants from a finished build. A version with no environments
-says **`Built`**, never *Completed*: "completed" describes the run, and the row
-is about the version.
+**`Built`, never *Completed*.** "Completed" describes the run; the row is about
+the version.
 
-**A queued row shows `—` for Started and Duration.** Its `startedAt` is an
-enqueue time, and printing it would claim a start that has not happened.
+**Only the deployed version may be described by where it reached.** The platform
+records one deployed version per project, so every other completed version says
+`Built` — saying more would be a guess.
+
+**The Milestone cell reads `Milestone #3`.** The platform records a number, not a
+title. This is the "stays discoverable on the Builds page" the build-confirm
+dialog's copy promises.
 
 ### A task's row, on a build
 
@@ -183,34 +185,15 @@ Counts read **`11 in this build · 5 done · 2 need your attention`**. *Need you
 attention* folds blocked and in-review together deliberately: both are waiting
 on the reader, which is what makes them one number.
 
-**Absent counts render `—`, never `0 of 0 done`.** "The console does not know"
-and "this version has no work" are different facts and must not share a string.
+The row's second line is the issue's **newest comment**, flattened to its first
+non-empty line. A task the agent has said nothing about shows no second line at
+all — eleven rows each reading "No updates yet" is noise, not information.
 
-### A deployment's status
+**A Tasks cell with nothing behind it renders `—`, never `0 of 0 done`.** "The
+console does not know" and "this version has no work" are different facts and
+must not share a string.
 
-| Situation | Says |
-|---|---|
-| Running now | **`Live`** |
-| Rolling out | **`Deploying`** |
-| Being judged against the acceptance criteria | **`Validating`** |
-| Never came up | **`Failed`** |
-| Succeeded, then replaced by a later one | **`Superseded`** |
-| Nothing has ever reached this environment | **`Nothing deployed`** |
-
-Validation reads **`24 / 24 passed`** as a pill when there is a verdict, and
-**`18 of 24 checked`** as plain text while a run is in flight — progress dressed
-as a pill reads as a result. A deployment nobody judged says **`Not run`**,
-never `0 / 0`.
-
-The promotion gate is stated, not merely enforced: **"Only a version whose
-validation has passed can be promoted here."** A disabled button with no
-sentence beside it is what this replaces.
-
-**`Redeploy` and `Promote` both say they are not wired yet** when pressed. The
-platform has no endpoint for either, and a control that silently refetches under
-those labels would look like it worked.
-
-## The project overview
+## The project overview## The project overview
 
 ### Where project status lives
 

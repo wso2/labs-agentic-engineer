@@ -38,18 +38,22 @@ import { EmptyState } from "../../../components/EmptyState";
 import { PageHeader } from "../../../components/PageHeader";
 import { StatusChip } from "../../../components/StatusChip";
 import type { components } from "../../../generated/aep-api";
+import { useAllTasks } from "../../tasks/api/queries";
+import { useProjectStatus } from "../../projects/api/queries";
 import { useBuilds } from "../api/queries";
 import { runStamp } from "../lib/format";
 import {
-  commitLine,
+  countsByTag,
   isLedgerLive,
   ledgerDuration,
-  ledgerStarted,
   ledgerStatus,
+  milestoneLabel,
   taskProgress,
+  type TaskCounts,
 } from "../lib/ledger";
 
 type BuildSummary = components["schemas"]["BuildSummary"];
+type DeployStage = components["schemas"]["DeployStage"];
 
 /**
  * The Builds page: ONE ROW PER VERSION (ADR-0020 §1).
@@ -64,7 +68,6 @@ type BuildSummary = components["schemas"]["BuildSummary"];
 const STATUS_FILTERS = [
   { value: "all", label: "All statuses" },
   { value: "running", label: "Running" },
-  { value: "queued", label: "Queued" },
   { value: "completed", label: "Completed" },
   { value: "failed", label: "Failed" },
 ] as const;
@@ -77,8 +80,6 @@ function matchesFilter(build: BuildSummary, filter: StatusFilter): boolean {
       return true;
     case "running":
       return isLedgerLive(build);
-    case "queued":
-      return build.status === "queued";
     case "completed":
       return build.status === "completed";
     case "failed":
@@ -101,6 +102,21 @@ export function BuildsLedger({ projectName }: { projectName: string }) {
   const builds = useBuilds(projectName);
   const navigate = useNavigate();
   const [filter, setFilter] = useState<StatusFilter>("all");
+
+  // The two reads that fill the cells `BuildSummary` does not carry, both of
+  // which the console already makes:
+  //
+  //   - ONE UNTAGGED list-tasks, grouped by `lineage.specTag`, for the Tasks
+  //     column. Untagged deliberately: a tag-scoped read would be one request
+  //     per row, and an untagged one already returns every version's tasks.
+  //     It also skips the comment round trip, which is tag-scoped only.
+  //   - the project status poll, for which version reached an environment. The
+  //     project layout already holds it, so react-query serves it from cache.
+  const live = (builds.data ?? []).some(isLedgerLive);
+  const tasks = useAllTasks(projectName, undefined, { live });
+  const status = useProjectStatus(projectName);
+  const deploy: DeployStage | undefined = status.data?.deploy;
+  const counts = useMemo(() => countsByTag(tasks.data ?? []), [tasks.data]);
 
   const rows = useMemo(
     () => (builds.data ?? []).filter((b) => matchesFilter(b, filter)),
@@ -219,6 +235,8 @@ export function BuildsLedger({ projectName }: { projectName: string }) {
                 <LedgerRow
                   key={build.tag}
                   build={build}
+                  counts={counts.get(build.tag)}
+                  {...(deploy ? { deploy } : {})}
                   onOpen={() =>
                     void navigate({
                       to: "/projects/$projectName/builds/$tag",
@@ -237,16 +255,18 @@ export function BuildsLedger({ projectName }: { projectName: string }) {
 
 function LedgerRow({
   build,
+  counts,
+  deploy,
   onOpen,
 }: {
   build: BuildSummary;
+  counts: TaskCounts | undefined;
+  deploy?: DeployStage | undefined;
   onOpen: () => void;
 }) {
-  const status = ledgerStatus(build);
-  const progress = taskProgress(build);
+  const status = ledgerStatus(build, deploy);
+  const progress = taskProgress(build, counts);
   const live = isLedgerLive(build);
-  const started = ledgerStarted(build);
-  const commit = commitLine(build);
 
   return (
     <ListingTable.Row
@@ -278,19 +298,9 @@ function LedgerRow({
             overflow: "hidden",
             textOverflow: "ellipsis",
           }}
-          title={build.milestoneTitle ?? undefined}
         >
-          {build.milestoneTitle || `Milestone #${build.milestoneNumber}`}
+          {milestoneLabel(build)}
         </Typography>
-        {commit && (
-          <Typography
-            variant="caption"
-            color="text.secondary"
-            sx={{ fontFamily: "monospace", display: "block", mt: 0.25 }}
-          >
-            {commit}
-          </Typography>
-        )}
       </ListingTable.Cell>
 
       <ListingTable.Cell>
@@ -335,7 +345,7 @@ function LedgerRow({
 
       <ListingTable.Cell>
         <Typography variant="body2" color="text.secondary">
-          {started ? runStamp(started) : "—"}
+          {runStamp(build.startedAt) || "—"}
         </Typography>
       </ListingTable.Cell>
     </ListingTable.Row>

@@ -770,67 +770,44 @@ export const projectTasks: Record<
 // the state of the newest milestone run that has worked it.
 const noBuilds: BuildList = { builds: [] };
 
-// The version ledger (ADR-0020). `building` carries FOUR versions on purpose —
-// one per ledger row state (queued / running / failed / deployed) — because the
+// The version ledger (ADR-0020). THREE versions on purpose — one per row state
+// the page can render (running / failed / built-and-deployed) — because the
 // Builds page renders them side by side and a one-row fixture demos none of the
 // comparison the page exists for. Newest first, as the contract promises.
-const v1Deployed = {
+//
+// Task counts, the milestone title and the commit are deliberately NOT here:
+// `BuildSummary` carries none of them, and the ledger derives what it shows
+// from the list-tasks and project-status reads it already makes. The v3 tasks
+// above are what fill v3's Tasks column.
+const v1Built = {
   tag: "v1",
   milestoneNumber: 1,
-  milestoneTitle: "Browse the catalog and check out",
   status: "completed" as const,
   startedAt: "2026-07-10T09:12:00Z",
   completedAt: "2026-07-10T10:03:00Z",
-  commit: { sha: "4e8a0d61c7b2", branch: "main" },
-  taskCounts: { total: 6, done: 6 },
-  deployedTo: ["development"],
 };
 
 const runningLedger: BuildList = {
   builds: [
     {
-      tag: "v4",
-      milestoneNumber: 4,
-      milestoneTitle: "Saved carts and re-order",
-      status: "queued",
-      // The ENQUEUE time — the version is waiting, not running, and the ledger
-      // renders its Started cell as "—" rather than claiming this as a start.
-      startedAt: minutesAgo(4),
-      commit: { sha: "c3b7e90a41f5", branch: "main" },
-      taskCounts: { total: 4, done: 0 },
-    },
-    {
       tag: "v3",
       milestoneNumber: 3,
-      milestoneTitle: "Order history and returns",
       status: "in_progress",
       startedAt: minutesAgo(18),
-      commit: { sha: "a1c9f2e70b83", branch: "feat/order-history" },
-      taskCounts: {
-        total: 7,
-        done: 3,
-        inProgress: 1,
-        inReview: 1,
-        blocked: 1,
-        pending: 1,
-      },
     },
     {
       tag: "v2",
       milestoneNumber: 2,
-      milestoneTitle: "Payment provider and receipts",
       status: "failed",
       reason: "Merge conflict",
       startedAt: "2026-07-11T09:31:00Z",
       completedAt: "2026-07-11T10:12:12Z",
-      commit: { sha: "7d40b1c9e0a4", branch: "feat/payments" },
-      taskCounts: { total: 5, done: 4, blocked: 1 },
     },
-    v1Deployed,
+    v1Built,
   ],
 };
 
-const completedV1Build: BuildList = { builds: [v1Deployed] };
+const completedV1Build: BuildList = { builds: [v1Built] };
 
 // Milestone runs backing list-build-runs — the version's whole story: run rows
 // and their cycle records, DB-only on the server. Branch, PR number and merge

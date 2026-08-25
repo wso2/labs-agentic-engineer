@@ -20,23 +20,46 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { components } from "../../../generated/aep-api";
 import {
   buildDuration,
-  commitLine,
+  countsByTag,
   isLedgerLive,
   ledgerDuration,
-  ledgerStarted,
   ledgerStatus,
-  secondsDuration,
+  milestoneLabel,
   taskBreakdown,
   taskProgress,
 } from "./ledger";
 
 type BuildSummary = components["schemas"]["BuildSummary"];
+type TaskView = components["schemas"]["TaskView"];
+type DeployStage = components["schemas"]["DeployStage"];
 
 const build = (over: Partial<BuildSummary> = {}): BuildSummary => ({
   tag: "v1",
   milestoneNumber: 1,
   status: "completed",
   startedAt: "2026-08-14T16:20:00Z",
+  ...over,
+});
+
+const task = (tag: string | undefined, over: Partial<TaskView> = {}): TaskView => ({
+  issueNumber: 1,
+  title: "A task",
+  issueUrl: "https://github.com/acme-dev/demo-shop/issues/1",
+  executorClass: "coding",
+  dependsOn: [],
+  lineage: tag ? { specTag: tag } : {},
+  derivedStatus: "pending",
+  hold: false,
+  attention: [],
+  executions: {},
+  ...over,
+});
+
+const deploy = (over: Partial<DeployStage> = {}): DeployStage => ({
+  version: "v1",
+  status: "deployed",
+  components: { total: 3, ready: 3 },
+  validation: "passed",
   ...over,
 });
 
@@ -67,29 +90,31 @@ describe("ledgerStatus", () => {
     expect(ledgerStatus(build({ status: "failed" })).label).toBe("Failed");
   });
 
-  it("describes a completed version by where it reached", () => {
-    expect(ledgerStatus(build({ deployedTo: ["development"] })).label).toBe(
+  it("describes the DEPLOYED version by where it reached", () => {
+    expect(ledgerStatus(build({ tag: "v1" }), deploy()).label).toBe(
       "Deployed to development",
+    );
+    expect(ledgerStatus(build({ tag: "v1" }), deploy({ status: "deploying" })).live).toBe(
+      true,
+    );
+    expect(ledgerStatus(build({ tag: "v1" }), deploy({ status: "failed" })).tone).toBe(
+      "error",
     );
   });
 
-  it("counts environments rather than listing them", () => {
-    expect(
-      ledgerStatus(build({ deployedTo: ["development", "production"] })).label,
-    ).toBe("Deployed to 2 environments");
-  });
-
-  it("says Built for a version that never reached one", () => {
-    expect(ledgerStatus(build({ deployedTo: [] })).label).toBe("Built");
+  it("says Built for every version the deploy aggregate does not name", () => {
+    // The platform records ONE deployed version per project. Describing any
+    // other completed version by where it reached would be a guess.
+    expect(ledgerStatus(build({ tag: "v2" }), deploy({ version: "v1" })).label).toBe(
+      "Built",
+    );
     expect(ledgerStatus(build()).label).toBe("Built");
   });
 
-  it("marks a queued version as waiting, not moving", () => {
-    expect(ledgerStatus(build({ status: "queued" }))).toEqual({
-      label: "Queued · next",
-      tone: "neutral",
-      live: false,
-    });
+  it("says Built when the named version has not reached an environment", () => {
+    expect(ledgerStatus(build({ tag: "v1" }), deploy({ status: "none" })).label).toBe(
+      "Built",
+    );
   });
 });
 
@@ -97,51 +122,62 @@ describe("isLedgerLive", () => {
   it("is true only for the two running states", () => {
     expect(isLedgerLive(build({ status: "in_progress" }))).toBe(true);
     expect(isLedgerLive(build({ status: "started" }))).toBe(true);
-    expect(isLedgerLive(build({ status: "queued" }))).toBe(false);
     expect(isLedgerLive(build({ status: "completed" }))).toBe(false);
     expect(isLedgerLive(build({ status: "failed" }))).toBe(false);
   });
 });
 
+describe("countsByTag", () => {
+  it("groups one untagged read into per-version counts", () => {
+    // The whole point: ONE list-tasks read fills every row, not one per row.
+    const counts = countsByTag([
+      task("v1", { derivedStatus: "merged" }),
+      task("v1", { derivedStatus: "merged" }),
+      task("v1"),
+      task("v2", { hold: true }),
+    ]);
+    expect(counts.get("v1")).toMatchObject({ total: 3, done: 2, pending: 1 });
+    expect(counts.get("v2")).toMatchObject({ total: 1, blocked: 1 });
+  });
+
+  it("drops a task that belongs to no version", () => {
+    // A task with no lineage has no row to be counted on.
+    expect(countsByTag([task(undefined)]).size).toBe(0);
+  });
+
+  it("leaves a version with no tasks ABSENT rather than zeroed", () => {
+    // Absent is what lets the cell say "—" instead of claiming "0 of 0 done".
+    const counts = countsByTag([task("v1")]);
+    expect(counts.has("v2")).toBe(false);
+  });
+});
+
 describe("taskProgress", () => {
   it("renders the bar and the count", () => {
-    const p = taskProgress(build({ taskCounts: { total: 7, done: 3 } }));
+    const p = taskProgress(build(), {
+      total: 7,
+      done: 3,
+      inProgress: 1,
+      inReview: 1,
+      blocked: 1,
+      pending: 1,
+    });
     expect(p.percent).toBe(43);
     expect(p.label).toBe("3 of 7 done");
   });
 
-  it("makes no claim when counts are absent", () => {
-    // The distinction that matters: "the console does not know" must not render
-    // as "this version has no work".
-    const p = taskProgress(build());
+  it("makes no claim when the counts have not arrived", () => {
+    const p = taskProgress(build(), undefined);
     expect(p.label).toBe("—");
     expect(p.percent).toBe(0);
     expect(p.tone).toBe("neutral");
   });
 
-  it("says No tasks when the backend genuinely reports none", () => {
-    expect(taskProgress(build({ taskCounts: { total: 0, done: 0 } })).label).toBe(
-      "No tasks",
-    );
-  });
-
-  it("clamps a bar that double-counted", () => {
-    expect(
-      taskProgress(build({ taskCounts: { total: 2, done: 5 } })).percent,
-    ).toBe(100);
-  });
-
   it("tones the bar by the version's own state", () => {
-    expect(
-      taskProgress(build({ status: "failed", taskCounts: { total: 5, done: 4 } })).tone,
-    ).toBe("error");
-    expect(
-      taskProgress(build({ status: "in_progress", taskCounts: { total: 7, done: 3 } }))
-        .tone,
-    ).toBe("info");
-    expect(taskProgress(build({ taskCounts: { total: 6, done: 6 } })).tone).toBe(
-      "success",
-    );
+    const counts = { total: 5, done: 4, inProgress: 0, inReview: 0, blocked: 0, pending: 1 };
+    expect(taskProgress(build({ status: "failed" }), counts).tone).toBe("error");
+    expect(taskProgress(build({ status: "in_progress" }), counts).tone).toBe("info");
+    expect(taskProgress(build(), counts).tone).toBe("success");
   });
 });
 
@@ -160,11 +196,9 @@ describe("taskBreakdown", () => {
   });
 
   it("drops empty buckets", () => {
-    expect(taskBreakdown({ total: 6, done: 6 })).toBe("6 done");
-  });
-
-  it("falls back to the total when every bucket is empty", () => {
-    expect(taskBreakdown({ total: 4, done: 0 })).toBe("4 total");
+    expect(
+      taskBreakdown({ total: 6, done: 6, inProgress: 0, inReview: 0, blocked: 0, pending: 0 }),
+    ).toBe("6 done");
   });
 
   it("is empty when there are no counts at all", () => {
@@ -186,6 +220,7 @@ describe("buildDuration", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-14T16:23:41Z"));
     expect(buildDuration("2026-08-14T16:20:00Z")).toBe("3m 41s");
+    expect(ledgerDuration(build({ startedAt: "2026-08-14T16:20:00Z" }))).toBe("3m 41s");
   });
 
   it("is empty rather than negative when the clocks disagree", () => {
@@ -193,52 +228,14 @@ describe("buildDuration", () => {
     expect(buildDuration(undefined)).toBe("");
     expect(buildDuration("not-a-date", "also-not")).toBe("");
   });
-});
 
-describe("secondsDuration", () => {
-  it("renders a server-measured span in the same shape as buildDuration", () => {
-    expect(secondsDuration(221)).toBe("3m 41s");
-    expect(secondsDuration(4)).toBe("0m 04s");
-    expect(secondsDuration(2472)).toBe("41m 12s");
-    expect(secondsDuration(4872)).toBe("1h 21m");
-  });
-
-  it("is empty rather than wrong for an absent or nonsense span", () => {
-    expect(secondsDuration(undefined)).toBe("");
-    expect(secondsDuration(null)).toBe("");
-    expect(secondsDuration(-5)).toBe("");
-    expect(secondsDuration(Number.NaN)).toBe("");
-  });
-
-  it("says 0m 00s for a genuinely instant span, not nothing", () => {
-    expect(secondsDuration(0)).toBe("0m 00s");
+  it("shows an em dash rather than an empty cell", () => {
+    expect(ledgerDuration(build({ startedAt: "not-a-date" }))).toBe("—");
   });
 });
 
-describe("ledgerDuration / ledgerStarted", () => {
-  it("shows no span or start for a queued version", () => {
-    // startedAt is the ENQUEUE time on a queued row; rendering it would claim a
-    // start that has not happened.
-    const queued = build({ status: "queued" });
-    expect(ledgerDuration(queued)).toBe("—");
-    expect(ledgerStarted(queued)).toBeNull();
-  });
-
-  it("passes the start through for every other state", () => {
-    expect(ledgerStarted(build())).toBe("2026-08-14T16:20:00Z");
-  });
-});
-
-describe("commitLine", () => {
-  it("abbreviates the sha and names the branch", () => {
-    expect(
-      commitLine(build({ commit: { sha: "a1c9f2e0d4b8", branch: "feat/approval-routing" } })),
-    ).toBe("a1c9f2e · feat/approval-routing");
-  });
-
-  it("degrades to whichever half it has", () => {
-    expect(commitLine(build({ commit: { sha: "a1c9f2e0d4b8" } }))).toBe("a1c9f2e");
-    expect(commitLine(build({ commit: { sha: "", branch: "main" } }))).toBe("main");
-    expect(commitLine(build())).toBe("");
+describe("milestoneLabel", () => {
+  it("names the number, which is all the platform records", () => {
+    expect(milestoneLabel(build({ milestoneNumber: 3 }))).toBe("Milestone #3");
   });
 });

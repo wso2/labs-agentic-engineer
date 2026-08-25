@@ -18,17 +18,26 @@
 
 import type { StatusTone } from "../../../components/StatusChip";
 import type { components } from "../../../generated/aep-api";
+import { taskRowState } from "./taskRow";
 
 type BuildSummary = components["schemas"]["BuildSummary"];
-type TaskCounts = components["schemas"]["TaskCounts"];
+type TaskView = components["schemas"]["TaskView"];
+type DeployStage = components["schemas"]["DeployStage"];
 
 /**
  * Pure derivations for the version ledger (ADR-0020).
  *
- * The ledger renders EVERY version at once, so everything here is a function of
- * one `BuildSummary` and nothing else — no second read, no cross-row state. That
- * constraint is why `taskCounts` and `deployedTo` are carried on the row in the
- * first place.
+ * EVERYTHING here comes from reads the console already makes — the ledger adds
+ * no contract surface of its own. Three sources, and which one answers which
+ * cell is the whole design of this file:
+ *
+ *   - `BuildSummary`      the version, its run state, its span.
+ *   - `list-tasks` (untagged, ONE read) grouped by `lineage.specTag` — the task
+ *     counts. The contract says these are "deliberately absent" from the ledger
+ *     because "the console renders them from the list-tasks response it already
+ *     holds"; this is that.
+ *   - `ProjectStatus.deploy` — which version reached an environment. Already
+ *     polled by the project layout, so react-query serves it from cache.
  */
 
 export interface LedgerStatus {
@@ -43,13 +52,17 @@ export interface LedgerStatus {
  *
  * The label names the reader's SITUATION rather than the state machine's name
  * for it (lexicon naming rule 6) — `Running · Coding agent`, not `in_progress`.
- * The qualifier after the middot is the extra fact the bare state doesn't carry:
- * who is acting, why it failed, where it landed.
+ *
+ * `deploy` is the project's deploy aggregate. Only the version it names can be
+ * described by where it reached; every other completed version says `Built`,
+ * because the platform records ONE deployed version per project and inferring
+ * anything about the others would be a guess.
  */
-export function ledgerStatus(build: BuildSummary): LedgerStatus {
+export function ledgerStatus(
+  build: BuildSummary,
+  deploy?: DeployStage | undefined,
+): LedgerStatus {
   switch (build.status) {
-    case "queued":
-      return { label: "Queued · next", tone: "neutral", live: false };
     case "started":
     case "in_progress":
       return { label: "Running · Coding agent", tone: "info", live: true };
@@ -61,26 +74,20 @@ export function ledgerStatus(build: BuildSummary): LedgerStatus {
         tone: "error",
         live: false,
       };
-    case "completed":
-      // A completed version that reached an environment is described by WHERE
-      // it got to, which is what the reader actually wants to know. One
-      // environment names itself; several are counted, because a row cannot
-      // grow a list.
-      if (build.deployedTo && build.deployedTo.length === 1) {
-        return {
-          label: `Deployed to ${build.deployedTo[0]}`,
-          tone: "success",
-          live: false,
-        };
-      }
-      if (build.deployedTo && build.deployedTo.length > 1) {
-        return {
-          label: `Deployed to ${build.deployedTo.length} environments`,
-          tone: "success",
-          live: false,
-        };
+    case "completed": {
+      if (deploy && deploy.version === build.tag) {
+        if (deploy.status === "deployed") {
+          return { label: "Deployed to development", tone: "success", live: false };
+        }
+        if (deploy.status === "deploying") {
+          return { label: "Deploying to development", tone: "info", live: true };
+        }
+        if (deploy.status === "failed") {
+          return { label: "Deploy failed", tone: "error", live: false };
+        }
       }
       return { label: "Built", tone: "success", live: false };
+    }
     default:
       return { label: "Unknown", tone: "neutral", live: false };
   }
@@ -89,6 +96,53 @@ export function ledgerStatus(build: BuildSummary): LedgerStatus {
 /** Is this version moving? Drives the row tint and the ledger's poll. */
 export function isLedgerLive(build: BuildSummary): boolean {
   return build.status === "started" || build.status === "in_progress";
+}
+
+export interface TaskCounts {
+  total: number;
+  done: number;
+  inProgress: number;
+  inReview: number;
+  blocked: number;
+  pending: number;
+}
+
+/**
+ * Every version's task counts, from ONE untagged list-tasks read.
+ *
+ * Deliberately not a fetch per row: an untagged read already returns every
+ * version's tasks, each carrying the `lineage.specTag` that says which version
+ * it belongs to. A version with no tasks in the response is simply absent from
+ * the map, which is what lets the caller tell "none" apart from "not known".
+ */
+export function countsByTag(tasks: TaskView[]): Map<string, TaskCounts> {
+  const byTag = new Map<string, TaskCounts>();
+  for (const task of tasks) {
+    const tag = task.lineage?.specTag;
+    if (!tag) continue; // a task with no lineage belongs to no version's row
+    const counts =
+      byTag.get(tag) ??
+      { total: 0, done: 0, inProgress: 0, inReview: 0, blocked: 0, pending: 0 };
+    counts.total += 1;
+    switch (taskRowState(task)) {
+      case "done":
+        counts.done += 1;
+        break;
+      case "in_progress":
+        counts.inProgress += 1;
+        break;
+      case "in_review":
+        counts.inReview += 1;
+        break;
+      case "blocked":
+        counts.blocked += 1;
+        break;
+      default:
+        counts.pending += 1;
+    }
+    byTag.set(tag, counts);
+  }
+  return byTag;
 }
 
 export interface TaskProgress {
@@ -102,37 +156,24 @@ export interface TaskProgress {
 /**
  * The Tasks cell: a bar and a count.
  *
- * A version whose counts have not arrived (or whose backend predates them)
- * renders an empty bar and no claim — NOT "0 of 0 done", which reads as a
- * version with no work rather than a fact the console does not have.
+ * `counts` undefined means the task list has not arrived (or this version has
+ * none in it), and the cell says so with `—`. That is NOT the same as "0 of 0
+ * done", which would read as a version with no work rather than a fact the
+ * console does not have.
  */
 export function taskProgress(
   build: BuildSummary,
-  counts: TaskCounts | undefined = build.taskCounts,
+  counts: TaskCounts | undefined,
 ): TaskProgress {
-  const tone: StatusTone =
-    build.status === "failed"
-      ? "error"
-      : isLedgerLive(build)
-        ? "info"
-        // A queued version has done nothing yet — tinting its empty bar green
-        // reads as "finished successfully" at a glance down the column.
-        : build.status === "queued"
-          ? "neutral"
-          : "success";
-
   if (!counts || counts.total === 0) {
-    return {
-      percent: 0,
-      label: counts ? "No tasks" : "—",
-      tone: "neutral",
-    };
+    return { percent: 0, label: "—", tone: "neutral" };
   }
-  const done = counts.done ?? 0;
-  // Clamped: a backend that counts a task in two buckets must not produce a bar
-  // wider than its track.
-  const percent = Math.min(100, Math.round((done / counts.total) * 100));
-  return { percent, label: `${done} of ${counts.total} done`, tone };
+  const tone: StatusTone =
+    build.status === "failed" ? "error" : isLedgerLive(build) ? "info" : "success";
+  // Clamped: a state the console does not group must not produce a bar wider
+  // than its track.
+  const percent = Math.min(100, Math.round((counts.done / counts.total) * 100));
+  return { percent, label: `${counts.done} of ${counts.total} done`, tone };
 }
 
 /**
@@ -143,8 +184,8 @@ export function taskProgress(
 export function taskBreakdown(counts: TaskCounts | undefined): string {
   if (!counts) return "";
   const parts: string[] = [];
-  const push = (n: number | undefined, label: string) => {
-    if (n && n > 0) parts.push(`${n} ${label}`);
+  const push = (n: number, label: string) => {
+    if (n > 0) parts.push(`${n} ${label}`);
   };
   push(counts.done, "done");
   push(counts.inProgress, "in progress");
@@ -159,7 +200,7 @@ export function taskBreakdown(counts: TaskCounts | undefined): string {
  *
  * Deliberately finer than `runDuration`'s "18 min": on this surface the number
  * is a column that gets compared across rows, and rounding to the minute makes
- * a 31s deploy and a 89s one look identical. Seconds are zero-padded so the
+ * a 31s build and an 89s one look identical. Seconds are zero-padded so the
  * column stays aligned under `font-variant-numeric: tabular-nums`.
  *
  * `to` omitted means "still going", measured against now.
@@ -184,50 +225,12 @@ export function buildDuration(
   return `${minutes}m ${pad(seconds)}s`;
 }
 
-/**
- * The same "18m 04s" shape from a span the server already measured.
- *
- * A deployment reports `durationSeconds` rather than two timestamps, and
- * round-tripping that through two Dates to reuse `buildDuration` was a trick,
- * not a design — both callers want one format, so the format is the shared part.
- */
-export function secondsDuration(seconds: number | null | undefined): string {
-  if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) {
-    return "";
-  }
-  if (seconds < 0) return "";
-  const whole = Math.floor(seconds);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const hours = Math.floor(whole / 3600);
-  const minutes = Math.floor((whole % 3600) / 60);
-  if (hours > 0) return `${hours}h ${pad(minutes)}m`;
-  return `${minutes}m ${pad(whole % 60)}s`;
-}
-
-/**
- * The Duration cell. A queued version has no span to show and says so; a live
- * one counts up from `startedAt`.
- */
+/** The Duration cell — a live version counts up from `startedAt`. */
 export function ledgerDuration(build: BuildSummary): string {
-  if (build.status === "queued") return "—";
   return buildDuration(build.startedAt, build.completedAt) || "—";
 }
 
-/**
- * The Started cell. `startedAt` on a QUEUED version is its enqueue time, not a
- * start — saying "Today, 14:02" for a version that has not begun would be a
- * claim the contract explicitly warns against.
- */
-export function ledgerStarted(build: BuildSummary): string | null {
-  return build.status === "queued" ? null : build.startedAt;
-}
-
-/** The row's second line: `a1c9f2e · feat/approval-routing`, abbreviated. */
-export function commitLine(build: BuildSummary): string {
-  const sha = build.commit?.sha?.slice(0, 7);
-  const branch = build.commit?.branch;
-  if (sha && branch) return `${sha} · ${branch}`;
-  // `||`, not `??`: the platform sends "" for an absent sha as readily as it
-  // omits the key, and `??` would return the empty string as if it were a value.
-  return sha || branch || "";
+/** The Milestone cell. The platform records a number, not a title. */
+export function milestoneLabel(build: BuildSummary): string {
+  return `Milestone #${build.milestoneNumber}`;
 }

@@ -71,9 +71,7 @@ Approved at section level; per-section detail is defined feature-by-feature.
   - **Builds** — the version ledger: one row per version, with its milestone,
     status, task progress, duration and start. A row opens that version's
     build — summary card, task list, coding-agent log, build logs (ADR-0020).
-  - **Deployments** — the environment board: Development and Production side
-    by side, with every deployment across both beneath them. A row opens one
-    deployment: its commit, components and their runtime logs (ADR-0020).
+  - **Deployments** — dev environment state and URLs.
   - **Validations** — the runs checking a build against the spec's acceptance
     criteria.
   - **Issues** — issues the SRE agent raises against the running project
@@ -87,21 +85,19 @@ which is also what closes its issue. Newest first; links go to the feature's
 GitHub issue plus any ADRs it produced. Features still being built aren't
 here: they're the open `console` + `feature` issues.
 
-- Build and Deploy, rebuilt ledger-first — **Builds becomes one row per
-  version** (milestone, status, task progress, duration, start), and the
-  now-first run story it replaced moves to its own page at
-  `/builds/$tag`: a summary card, then Tasks, the coding-agent log and the
-  build logs as collapsible sections. Provisioning gates render as **task rows**
-  rather than a separate stage, each with its own way out, which is what retires
-  the stage rail. **Deployments becomes a two-column environment board** —
-  Development and Production as two places with two states — over a table of
-  every deployment in both, including the failed and superseded ones the console
-  previously kept no record of; a **deployment is now addressable**, with its
-  components and their runtime logs. `/builds/:issueNumber` and
-  `/tasks/:issueNumber` swap roles so the version can own the `/builds` segment.
-  Contract: `BuildSummary` gains `milestoneTitle` / `commit` / `taskCounts` /
-  `deployedTo` and a `queued` status, `TaskView` gains `latestComment`, plus
-  `list-project-deployments`, `get-project-deployment` and `get-runtime-logs` —
+- Builds, rebuilt as a version ledger — **one row per version** (milestone,
+  status, task progress, duration, start), and the now-first run story it
+  replaced moves to its own page at `/builds/$tag`: a summary card, then Tasks,
+  the coding-agent log and the build logs as collapsible sections. Provisioning
+  gates render as **task rows** rather than a separate stage, each with its own
+  way out, which is what retires the stage rail. A task row's five states are
+  DERIVED — `derivedStatus` is two-valued, so blocked / in-progress / in-review
+  come from `hold`, `blockedBy` and the newest execution — and its second line is
+  the issue's newest comment. `/builds/:issueNumber` and `/tasks/:issueNumber`
+  swap roles so the version can own the `/builds` segment; old links still
+  resolve. **No contract change**: the ledger's remaining cells are derived from
+  one untagged list-tasks read grouped by `lineage.specTag`, and from the deploy
+  aggregate the layout already polls —
   [#609](https://github.com/wso2/labs-agentic-engineer/issues/609) (ADR-0020,
   superseding ADR-0015)
 - The journey starts itself — creating a project **fires `/start` server-side**,

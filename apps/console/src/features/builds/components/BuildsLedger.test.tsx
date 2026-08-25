@@ -43,6 +43,29 @@ vi.mock("../api/queries", () => ({
   }),
 }));
 
+// The two reads the ledger derives its remaining cells from.
+let mockTasks: components["schemas"]["TaskView"][] = [];
+vi.mock("../../tasks/api/queries", () => ({
+  useAllTasks: () => ({ data: mockTasks, isPending: false, isError: false }),
+}));
+let mockDeploy: components["schemas"]["DeployStage"] | undefined;
+vi.mock("../../projects/api/queries", () => ({
+  useProjectStatus: () => ({ data: mockDeploy ? { deploy: mockDeploy } : undefined }),
+}));
+
+const task = (tag: string, merged = false): components["schemas"]["TaskView"] => ({
+  issueNumber: Math.floor(Math.random() * 1e6),
+  title: "A task",
+  issueUrl: "https://github.com/acme-dev/demo-shop/issues/1",
+  executorClass: "coding",
+  dependsOn: [],
+  lineage: { specTag: tag },
+  derivedStatus: merged ? "merged" : "pending",
+  hold: false,
+  attention: [],
+  executions: {},
+});
+
 import { BuildsLedger } from "./BuildsLedger";
 
 const build = (over: Partial<BuildSummary> = {}): BuildSummary => ({
@@ -58,6 +81,8 @@ const renderLedger = () => render(<BuildsLedger projectName="demo-shop" />);
 
 beforeEach(() => {
   mockBuilds = [];
+  mockTasks = [];
+  mockDeploy = undefined;
   mockState = { isPending: false, isError: false };
   navigate.mockClear();
   refetch.mockClear();
@@ -66,10 +91,16 @@ beforeEach(() => {
 describe("BuildsLedger", () => {
   it("lists every version, newest first as the contract serves them", () => {
     mockBuilds = [
-      build({ tag: "v3", status: "in_progress", milestoneTitle: "Order history" }),
+      build({ tag: "v3", status: "in_progress" }),
       build({ tag: "v2", status: "failed", reason: "Merge conflict" }),
-      build({ tag: "v1", deployedTo: ["development"] }),
+      build({ tag: "v1" }),
     ];
+    mockDeploy = {
+      version: "v1",
+      status: "deployed",
+      components: { total: 3, ready: 3 },
+      validation: "passed",
+    };
     renderLedger();
 
     // ORDER, not membership: newest-first is the contract, and a reversed
@@ -95,26 +126,44 @@ describe("BuildsLedger", () => {
     });
   });
 
-  it("shows a queued version without claiming it started", () => {
-    // `startedAt` on a queued row is the ENQUEUE time; rendering it as a start
-    // would be a claim the contract explicitly warns against.
-    mockBuilds = [build({ tag: "v4", status: "queued" })];
+  it("fills the Tasks column from ONE untagged task read", () => {
+    // Not one fetch per row: the untagged read carries every version's tasks,
+    // each tagged with the version it belongs to.
+    mockBuilds = [build({ tag: "v2" }), build({ tag: "v1" })];
+    mockTasks = [
+      task("v2", true),
+      task("v2"),
+      task("v1", true),
+      task("v1", true),
+      task("v1", true),
+    ];
     renderLedger();
 
-    expect(screen.getByText("Queued · next")).toBeTruthy();
-    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText("1 of 2 done")).toBeTruthy();
+    expect(screen.getByText("3 of 3 done")).toBeTruthy();
   });
 
-  it("renders the task count when the ledger carries it", () => {
-    mockBuilds = [build({ taskCounts: { total: 7, done: 3 } })];
-    renderLedger();
-    expect(screen.getByText("3 of 7 done")).toBeTruthy();
-  });
-
-  it("makes no task claim when counts are absent", () => {
-    mockBuilds = [build()];
+  it("makes no task claim for a version the read said nothing about", () => {
+    mockBuilds = [build({ tag: "v9" })];
+    mockTasks = [task("v1", true)];
     renderLedger();
     expect(screen.queryByText(/of 0 done/)).toBeNull();
+  });
+
+  it("describes only the deployed version by where it reached", () => {
+    mockBuilds = [build({ tag: "v2" }), build({ tag: "v1" })];
+    mockDeploy = {
+      version: "v1",
+      status: "deployed",
+      components: { total: 3, ready: 3 },
+      validation: "passed",
+    };
+    renderLedger();
+
+    expect(screen.getByText("Deployed to development")).toBeTruthy();
+    // v2 is completed but is not the deployed version — claiming anything about
+    // where it reached would be a guess.
+    expect(screen.getByText("Built")).toBeTruthy();
   });
 
   it("filters by status, and says so rather than looking empty", () => {

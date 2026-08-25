@@ -6,7 +6,6 @@ import { projectsHandlers } from "./handlers/projects";
 import { organizationsHandlers } from "./handlers/organizations";
 import { settingsHandlers } from "./handlers/settings";
 import { alertsHandlers } from "./handlers/alerts";
-import { deploymentsHandlers } from "./handlers/deployments";
 import { usageHandlers } from "./handlers/usage";
 
 // Order matters: project-scoped routes (/projects/:name/...) are more
@@ -14,9 +13,6 @@ import { usageHandlers } from "./handlers/usage";
 export const worker = setupWorker(
   ...agentChatHandlers,
   ...activityHandlers,
-  // Before projectHandlers: /projects/:name/deployments must not be swallowed
-  // by a broader project-scoped matcher registered earlier.
-  ...deploymentsHandlers,
   ...projectHandlers,
   ...projectsHandlers,
   ...organizationsHandlers,

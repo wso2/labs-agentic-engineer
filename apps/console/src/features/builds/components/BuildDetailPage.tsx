@@ -54,9 +54,10 @@ import { useBuildRuns, useBuilds, useCancelRun } from "../api/queries";
 import { runStamp } from "../lib/format";
 import {
   buildDuration,
-  commitLine,
+  countsByTag,
   isLedgerLive,
   ledgerStatus,
+  milestoneLabel,
   taskBreakdown,
 } from "../lib/ledger";
 import { anyTaskRunning, taskTally } from "../lib/taskRow";
@@ -100,6 +101,9 @@ export function BuildDetailPage({
 
   const issues = useAllTasks(projectName, tag, { live });
   const tasks = issues.data ?? [];
+  // The deploy aggregate names which version reached an environment; the
+  // project layout already polls it, so this is served from cache.
+  const projectStatus = useProjectStatus(projectName);
 
   const backTo = {
     link: <Link to="/projects/$projectName/builds" params={{ projectName }} />,
@@ -160,7 +164,7 @@ export function BuildDetailPage({
     );
   }
 
-  const status = ledgerStatus(build);
+  const status = ledgerStatus(build, projectStatus.data?.deploy);
 
   return (
     <>
@@ -174,7 +178,12 @@ export function BuildDetailPage({
       />
 
       <Stack spacing={2}>
-        <BuildSummaryCard projectName={projectName} build={build} />
+        <BuildSummaryCard
+          projectName={projectName}
+          build={build}
+          tasks={tasks}
+          {...(projectStatus.data?.deploy ? { deploy: projectStatus.data.deploy } : {})}
+        />
 
         <LogSection
           title="Tasks"
@@ -259,24 +268,23 @@ function TasksMeta({
 function BuildSummaryCard({
   projectName,
   build,
+  tasks,
+  deploy,
 }: {
   projectName: string;
   build: BuildSummary;
+  tasks: components["schemas"]["TaskView"][];
+  deploy?: components["schemas"]["DeployStage"] | undefined;
 }) {
   const live = isLedgerLive(build);
   const duration = buildDuration(build.startedAt, build.completedAt);
-  const commit = commitLine(build);
-  const breakdown = taskBreakdown(build.taskCounts);
+  // Derived from the tasks this page already holds — the same read the Tasks
+  // section below renders.
+  const breakdown = taskBreakdown(countsByTag(tasks).get(build.tag));
 
   const cells: Array<{ label: string; value: React.ReactNode }> = [
-    {
-      label: "Milestone",
-      value: build.milestoneTitle || `#${build.milestoneNumber}`,
-    },
-    {
-      label: "Started",
-      value: build.status === "queued" ? "Not started — queued" : runStamp(build.startedAt),
-    },
+    { label: "Milestone", value: milestoneLabel(build) },
+    { label: "Started", value: runStamp(build.startedAt) },
     {
       label: "Duration",
       value: (
@@ -329,16 +337,6 @@ function BuildSummaryCard({
         ))}
       </Box>
 
-      {commit && (
-        <Typography
-          variant="caption"
-          color="text.secondary"
-          sx={{ fontFamily: "monospace", display: "block", mt: 1.5 }}
-        >
-          {commit}
-        </Typography>
-      )}
-
       <Divider sx={{ my: 2 }} />
 
       <Stack direction="row" spacing={1.25} sx={{ alignItems: "center", flexWrap: "wrap" }}>
@@ -351,8 +349,8 @@ function BuildSummaryCard({
           Go to Deployments <ArrowRight size={14} />
         </RouterLink>
         <Typography variant="caption" color="text.secondary">
-          {build.deployedTo && build.deployedTo.length > 0
-            ? `${build.tag} is live in ${build.deployedTo.join(", ")}.`
+          {deploy?.version === build.tag && deploy.status === "deployed"
+            ? `${build.tag} is live in development.`
             : `${build.tag} deploys as its tasks merge.`}
         </Typography>
       </Stack>
