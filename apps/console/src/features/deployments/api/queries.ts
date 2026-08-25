@@ -18,7 +18,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { client } from "../../../api/client";
-import { apiErrorMessage } from "../../../api/errors";
+import { ApiRequestError } from "../../../api/errors";
 import { deploymentKeys } from "./keys";
 import { isDeploymentLive } from "../lib/status";
 
@@ -58,7 +58,7 @@ export function useProjectDeployments(
         },
       );
       if (error || data === undefined) {
-        throw new Error(apiErrorMessage(error, "Failed to load deployments"));
+        throw new ApiRequestError(error, "Failed to load deployments");
       }
       return data.items ?? [];
     },
@@ -91,7 +91,7 @@ export function useProjectDeployment(
         },
       );
       if (error || data === undefined) {
-        throw new Error(apiErrorMessage(error, "Failed to load the deployment"));
+        throw new ApiRequestError(error, "Failed to load the deployment");
       }
       return data;
     },
@@ -142,7 +142,7 @@ export function useRuntimeLogs(
         },
       );
       if (error || data === undefined) {
-        throw new Error(apiErrorMessage(error, "Failed to load the runtime log"));
+        throw new ApiRequestError(error, "Failed to load the runtime log");
       }
       return data;
     },

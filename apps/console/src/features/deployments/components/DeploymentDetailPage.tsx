@@ -45,6 +45,7 @@ import {
   RotateCcw,
 } from "@wso2/oxygen-ui-icons-react";
 import { createLink, Link } from "@tanstack/react-router";
+import { ApiRequestError } from "../../../api/errors";
 import { EmptyState } from "../../../components/EmptyState";
 import { LogLine, LogNote, LogSurface } from "../../../components/LogSection";
 import { PageHeader } from "../../../components/PageHeader";
@@ -117,10 +118,12 @@ export function DeploymentDetailPage({
 
   if (detail.isError) {
     // A 404 here is a dead link, not a broken page — say which of the two it is
-    // rather than showing the same red card for both.
-    const missing = /404|not found/i.test(
-      detail.error instanceof Error ? detail.error.message : "",
-    );
+    // rather than showing the same red card for both. Branching on the
+    // envelope's machine-readable `code`, never on the message: the BFF owns
+    // that sentence and may reword it, and a message match would silently fall
+    // back to the red card the day it does.
+    const missing =
+      detail.error instanceof ApiRequestError && detail.error.code === "not_found";
     return (
       <>
         <PageHeader title="Deployment" backTo={backTo} />

@@ -125,7 +125,10 @@ export function LogSection({
   defaultOpen = true,
   disablePadding = false,
 }: {
-  title: ReactNode;
+  /** Plain text, deliberately NOT ReactNode: it is also the disclosure
+   *  button's accessible name, and `String(<span/>)` is "[object Object]".
+   *  Anything richer belongs in `meta`, which is not part of the label. */
+  title: string;
   /** Counts, pills, or a live badge — sits beside the title. */
   meta?: ReactNode;
   /** Right-aligned controls: pickers, download, expand. */
@@ -153,7 +156,7 @@ export function LogSection({
           size="small"
           onClick={() => setOpen((v) => !v)}
           aria-expanded={open}
-          aria-label={open ? `Collapse ${String(title)}` : `Expand ${String(title)}`}
+          aria-label={open ? `Collapse ${title}` : `Expand ${title}`}
           sx={{ ml: -0.75 }}
         >
           {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}

@@ -84,8 +84,11 @@ export const deploymentsHandlers = [
       if (!detail) {
         // A real 404, so the detail page's unknown-id state is reachable
         // instead of rendering a blank card.
+        // The contract envelope is {code, message, details?} — the console
+        // branches on `code`, so a mock that invented its own shape would let a
+        // real regression through.
         return HttpResponse.json(
-          { title: "Not Found", status: 404, detail: "deployment not found" },
+          { code: "not_found", message: "deployment not found" },
           { status: 404 },
         );
       }
@@ -98,7 +101,7 @@ export const deploymentsHandlers = [
     ({ params, request }) => {
       if (runtimeLogsMissing()) {
         return HttpResponse.json(
-          { title: "Not Found", status: 404, detail: "runtime logs unavailable" },
+          { code: "not_found", message: "runtime logs are not available yet" },
           { status: 404 },
         );
       }

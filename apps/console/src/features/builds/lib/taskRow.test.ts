@@ -211,6 +211,14 @@ describe("taskElapsedFrom / taskSettledAt", () => {
     ).toBe("2026-07-12T04:40:00Z");
   });
 
+  it("gives no elapsed time for a queued execution", () => {
+    // A queued execution has no `endedAt` either, so testing only for that made
+    // a row taskRowState calls `pending` render a counting-up elapsed time.
+    const queued = task({ executions: { a: exec({ status: "queued" }) } });
+    expect(taskRowState(queued)).toBe("pending");
+    expect(taskElapsedFrom(queued)).toBeNull();
+  });
+
   it("gives no elapsed time for a finished task, and a settled stamp instead", () => {
     const finished = task({
       executions: { a: exec({ endedAt: "2026-07-12T05:02:00Z" }) },

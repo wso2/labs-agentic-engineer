@@ -480,16 +480,22 @@ function BuildLogsSection({
   tag: string;
   cycleId: string | undefined;
 }) {
-  // Only a cycle whose merge landed has anything to have built, which is what
-  // `hasMerge` guards — asking earlier spends a cluster read to be told so.
+  // Enabled only once there is a build session to have built anything: asking
+  // earlier spends a cluster read to be told so.
   const builds = useCycleBuilds(projectName, tag, cycleId ?? "", Boolean(cycleId));
   return (
     <LogSection title="Build logs">
-      {!cycleId || builds.isPending ? (
+      {!cycleId ? (
         <EmptyState
           compact
           description="Build logs appear once a build session's work has merged and the components rebuild."
         />
+      ) : builds.isPending ? (
+        // Distinct from the note above: that one states a fact about the
+        // build, and while the read is in flight that fact is not known yet.
+        <Box sx={{ p: 3, display: "flex", justifyContent: "center" }}>
+          <CircularProgress size={24} aria-label="Loading the build logs" />
+        </Box>
       ) : builds.isError ? (
         <Alert
           severity="error"

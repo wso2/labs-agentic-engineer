@@ -141,10 +141,15 @@ export function taskRowNote(task: TaskView): string | null {
 /**
  * How long the agent has been on this task, from the running execution's start.
  * Null for anything that is not currently running.
+ *
+ * The running test is the SAME one `taskRowState` uses, and must stay that way:
+ * a queued execution has no `endedAt` either, so testing only for that made a
+ * row `taskRowState` calls `pending` render a counting-up elapsed time.
  */
 export function taskElapsedFrom(task: TaskView): string | null {
   const execution = latestExecution(task);
   if (!execution || execution.endedAt) return null;
+  if (!RUNNING_EXECUTION.test(execution.status)) return null;
   return execution.startedAt ?? execution.createdAt;
 }
 

@@ -289,11 +289,12 @@ function DeploymentRow({
   const chip = deploymentChip(deployment);
   const verdict = validationCell(deployment.validation);
   const live = isDeploymentLive(deployment);
-  // A settled deployment reports its own span; one still going counts up from
-  // the deploy stamp rather than showing nothing.
+  // A settled deployment reports its own span. Counting up from the deploy
+  // stamp is ONLY valid while it is still moving — on a settled deployment that
+  // reported no span it would render the deployment's age, growing every poll.
   const duration =
     secondsDuration(deployment.durationSeconds) ||
-    buildDuration(deployment.deployedAt) ||
+    (live ? buildDuration(deployment.deployedAt) : "") ||
     "—";
 
   return (

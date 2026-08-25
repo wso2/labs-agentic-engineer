@@ -72,9 +72,11 @@ describe("BuildsLedger", () => {
     ];
     renderLedger();
 
-    expect(screen.getByText("v3")).toBeTruthy();
-    expect(screen.getByText("v2")).toBeTruthy();
-    expect(screen.getByText("v1")).toBeTruthy();
+    // ORDER, not membership: newest-first is the contract, and a reversed
+    // table would satisfy three getByText calls just as happily.
+    expect(
+      screen.getAllByText(/^v[1-9]\d*$/).map((el) => el.textContent),
+    ).toEqual(["v3", "v2", "v1"]);
     // The whole point of the page ADR-0020 introduced: three versions readable
     // at once, which the now-first page could never show.
     expect(screen.getByText("Running · Coding agent")).toBeTruthy();
