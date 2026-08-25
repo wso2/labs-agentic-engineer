@@ -41,7 +41,20 @@ component's build actually needs as a `skillsPinned` array **inside that
 component's `specs/design/components/<name>/design.json`** — use the exact
 catalog names, e.g. a Ballerina API service →
 `["openapi-conventions", "ballerina"]` (a Go one → `["openapi-conventions",
-"go"]`); a web-application → `["wireframes", "react-webapp"]`. Add
+"go"]`); a web-application → `["wireframes", "react-webapp", <design system>]`,
+where `<design system>` is the skill name in the **UI design system** section of
+the Organization defaults block in your instructions. A web app's UI toolkit is
+a settled organization decision, so pin it on **every** web-application rather
+than leaving it to a description to trigger — and read the name from that
+section every time instead of remembering one, because it differs per
+organization. If that section is absent or empty, pin only the two stack skills.
+Never substitute a design system the organization defaults do not name.
+
+**Pinning the design system is not the same as consulting it.** A web-application
+in this design also means LOADING that design-system skill yourself, now: it owns
+theming, and a theme is settled at design time because the built app is themed at
+its first build. Load it by name the moment the design gains a web-application,
+and do what its design-time section says before you call the design done. Add
 `"api-management"` to any service that sits behind the gateway, and
 `"thunder-authentication"` to **both** sides of sign-in — the SPA *and* every
 protected backend it calls, since that skill owns how each resolves the caller's
@@ -121,12 +134,17 @@ violations:
   "exposure": "internet",             // "internet" (public) | "intranet" (internal only)
   "dependencies": [ /* see below — every arrow in Interactions appears here */ ],
   "description": "One paragraph: single responsibility, port/entrypoint expectations, and what it explicitly does NOT do.",
+  "stories": [1, 2, 4],               // PRD story numbers THIS component serves — the build gate refuses the tag while any story is claimed by nobody
+  "skillsPinned": ["openapi-conventions", "ballerina"], // the skills this component's build needs — see the field above
   "endpoint": { "name": "http" } // optional; see below
 }
 ```
 
 `name`, `type`, `version`, `language`, `buildpack`, `appPath`, `entrypoint`,
-`exposure`, `description`, and `dependencies` are required. To CHANGE a
+`exposure`, `description`, `dependencies`, `stories` and `skillsPinned` are
+required — `stories` and `skillsPinned` are as required as the rest, and a
+component missing either fails the build gate, so emit them in the SAME write
+rather than as a follow-up edit. To CHANGE a
 design.json, re-emit the whole corrected file (removeFile + addFile) — never
 patch JSON with anchored edits. On INVALID_JSON or SCHEMA_VIOLATION, fix what
 the message lists and re-emit.
@@ -142,12 +160,11 @@ into `workload.yaml` and the managed-API gateway binds to. The port lives in
 - **Preserved verbatim** where the platform has already written them:
   `exposesAPI`, `componentAgentInstructions`, and any dependency
   `status`/`reason`.
-- **Recomputed and overwritten** on every save: a dependency's `wiring` object,
-  and the component's `stories` array — the platform restamps it from the
-  design.cell citations, so cite stories in the CELL, never here.
+- **Recomputed and overwritten** on every save: a dependency's `wiring` object.
   The platform derives its `ref` and its env-var names from the dependency's name
   and its resource type's declared outputs, so anything you write there is
-  discarded.
+  discarded. `stories` is NOT in this class — it is yours to author, per the
+  **stories** field above.
 
 ### dependencies — one entry per Interactions arrow
 

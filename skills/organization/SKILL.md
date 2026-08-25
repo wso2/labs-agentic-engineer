@@ -25,3 +25,19 @@ Thunder is available as a dependency.
 
 - Web apps: TypeScript + React, single-page app.
 - Services and APIs: Ballerina.
+
+## UI design system
+
+`astryx-design-system`
+
+That is the name of a skill in this library, and it is the single authority for
+this organization's web-app UI — components, layout, styling, theming, and the
+verification step a web-app build owes it. **This section is a pointer, not a
+specification:** what the design system requires is stated in that skill and is
+never restated here, so the two can never disagree.
+
+To adopt a different design system, change the name above and make sure a skill
+by that name exists (see "Swapping the UI design system" in `skills/AGENTS.md`).
+Those are the only edits — nothing else in the library names a design system.
+Leave this section empty to run with no design system at all; web-app builds
+then carry only the stack skills.

@@ -25,10 +25,21 @@ browser config — they are pod env for nginx.
 3. **Verify** — from the app path:
    ```bash
    npm install                   # regenerates package-lock.json
+   # ← the design system's check goes here (see below)
    npx tsc --noEmit              # type-check without emitting
    npm run build                 # actually build
    ```
    Commit the `package-lock.json` this produces. Never commit `node_modules/`.
+
+   **The design-system skill contributes one step to this sequence**, and it is
+   mandatory: run the command its own Verify section names, after `npm install`
+   and before the type-check, and treat a non-zero exit exactly like a failing
+   build. That slot exists because a design system's own wiring — a missing
+   build plugin, an unimported theme, a peer-dependency mismatch — is the one
+   class of fault `tsc` and `vite build` cannot see: it type-checks and builds
+   perfectly clean, then renders an unstyled page in the cluster. If the pinned
+   design-system skill names no such command, the sequence is just the three
+   above.
 
    The `build` script is `tsc --noEmit && vite build` — **not** `tsc -b`, which
    needs a composite project: a `tsconfig.json` that `references` a
@@ -87,6 +98,15 @@ Keep the official `nginx:alpine` `ENTRYPOINT`. The only extra file is
 **Never `exposesAPI`.** That toggle is for backends only; a web-app expresses
 auth through its auth dependency instead.
 
+**The UI comes from the organization's design system.** Every component, layout
+primitive and style under `src/` comes from the design-system skill pinned on
+this component — no raw HTML styling, no second component or styling library.
+That skill owns everything inside `src/`; this skill owns the app around it.
+Where the two appear to disagree — `base`, the `index.html` script tags, nginx,
+`window._env_` — **this skill wins**, because those are deployment facts, not
+style preferences. The data layer is untouched either way: `openapi-fetch` and
+the committed `src/generated/` client stay exactly as specified above.
+
 **Contract-first client, never hand-rolled shapes.** Every dependency has a
 committed OpenAPI contract: `specs/design/components/<component-name>/openapi.yaml`
 for a `component`-kind dependency, or
@@ -111,7 +131,7 @@ per-component Docker build's context is this app's own folder alone.
 │   ├── generated/        # openapi-typescript output, one file per dependency — commit, never hand-edit
 │   ├── api.ts            # openapi-fetch client(s), typed against generated/
 │   ├── auth.ts           # only with an auth dependency — see thunder-authentication
-│   └── pages/
+│   └── pages/            # design-system components only, never raw HTML
 ├── nginx/
 │   ├── default.conf      # copied from the skill assets, then /api locations kept
 │   └── 15-aep-api-proxy.sh

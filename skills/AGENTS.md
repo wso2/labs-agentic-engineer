@@ -32,7 +32,8 @@ An absent kind means `org`, which is a real decision, not a default to lean on:
   narration policy, and the coding run's own workflow skills (`aep`,
   `aep-validation`, `playwright-cli`).
 - **`org`** — the org-visible stack skills (`go`, `ballerina`, `react-webapp`,
-  `api-management`, `thunder-authentication`). Editable and deletable by an org.
+  `astryx-design-system`, `api-management`, `thunder-authentication`). Editable
+  and deletable by an org.
 
 Kind decides console visibility and who may edit a skill, and nothing else. It is
 `audience` that decides who may *read* one, and the two are independent — a skill
@@ -66,6 +67,58 @@ never loaded to author specs/", and `ballerina`'s says "Apply when a component's
 `language` is Ballerina. For a Go service, use `go` instead." A description like
 "Conventions for writing Go applications" names no trigger and is a defect — that
 one was `go`'s, and it was invisible for as long as `go` was preloaded regardless.
+
+## Swapping the UI design system
+
+A web app's UI toolkit is an **organization** decision, and nothing in this
+library hardcodes one. Two edits change it, both in places an org may edit:
+
+1. Add the new design-system skill — author `skills/<name>/SKILL.md`, or import
+   it through Settings → Skills. Delete `astryx-design-system` if the org does
+   not want it available.
+2. Point the **UI design system** section of `organization` at its name.
+
+`architecture` reads the name out of that section rather than holding one of its
+own. It can, because the `organization` body rides the design agent's system
+prompt on **every** turn (`buildOrgDefaultsBlock` in the agents service, not a
+per-flow eager skill), so the name is always in context when a component's
+`design.json` is written. It then pins that skill on every `web-application`, so
+the pin follows the org's choice with **no platform-skill edit** —
+`architecture` is `kind: platform` and read-only in the console, which is exactly
+why the name cannot live there. An empty section means web-app builds carry only
+the stack skills. `astryx-design-system` is the shipped default, nothing more.
+
+A design-system skill must declare four things to work in that slot:
+
+- **`metadata.aep.kind: org` and `metadata.aep.audience: [coding]`.** A design
+  system is built against, not designed with; `[coding]` is what puts it in the
+  project mirror, and `org` is what lets an org edit or delete it.
+- **A `## Verify` section** naming the one command `react-webapp`'s verify
+  sequence should run for it, or nothing if it has none.
+- **Which of its own defaults the platform overrides.** Every vendor's
+  quickstart assumes a project it scaffolded itself; `react-webapp`'s deployment
+  facts (no `base`, the platform's own nginx assets, `window._env_`, one
+  `tsconfig.json`) win, and
+  the skill should say so wherever its own docs would mislead.
+- **Its ownership boundary.** The design system owns UI under `src/`; the data
+  layer (`openapi-fetch` + the committed `src/generated/` client) stays
+  `react-webapp`'s.
+
+Only `organization` and the design-system skill itself may name a design system.
+A vendor name anywhere else in this library is a defect — it is the thing that
+would make a swap need more than the two edits above. That includes
+`references/*.md`: a mirror copies a skill's whole directory, so a vendor name in
+a reference reaches a coding session exactly as a body would. Check it before
+changing a web-app skill:
+
+```bash
+grep -rniE 'astryx|@astryxdesign' skills/ --include='*.md'
+```
+
+Only `skills/organization/SKILL.md`, `skills/astryx-design-system/**` and this
+file should match. A hit anywhere else — especially in `architecture`, which is
+`kind: platform` and read-only in the console — means an org can no longer swap
+its design system without a platform change.
 
 ## Who owns what
 
