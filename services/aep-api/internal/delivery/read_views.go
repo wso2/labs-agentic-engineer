@@ -104,6 +104,34 @@ type TaskView struct {
 	// follow-up). Empty/omitted when the Task is not dependency-gated — the board
 	// reads it to render "On hold — Waiting for X".
 	BlockedBy []string `json:"blockedBy,omitempty"`
+	// Comments is the issue's newest comments, oldest first — the version's live
+	// narrative, read straight from the host on every request.
+	//
+	// It is filled only on a MILESTONE-SCOPED read that asked for it. That is the
+	// same asymmetry ledger issues already have on this list (see the task Reads
+	// service): the comment fetch is anchored on one milestone, so a read
+	// spanning versions has no bounded set to ask for. Omitted therefore means
+	// "not asked for"; an empty slice would have meant "this issue has none", and
+	// keeping the two apart is why this is omitempty rather than always present.
+	Comments []IssueComment `json:"comments,omitempty"`
+}
+
+// IssueComment is one comment on a Task's issue, projected for the read surface.
+//
+// It is a delivery type rather than the host's own so the read DTOs stay a
+// closed set this domain owns — the same reason ExecutionView exists beside the
+// execution row. The projection is total: every field is a passthrough, and the
+// platform stores none of it.
+type IssueComment struct {
+	// ID is the host's node id — stable across reads, and the consumer's list key.
+	ID     string `json:"id"`
+	Author string `json:"author"`
+	Body   string `json:"body"`
+	URL    string `json:"url"`
+	// CreatedAt is when the comment was posted. Edits are not tracked: the host
+	// answers the current body under the original timestamp, which is what a
+	// narrative wants — the moment the note entered the story.
+	CreatedAt time.Time `json:"createdAt"`
 }
 
 // TaskDetail is the Get shape: a TaskView plus the full Execution history.

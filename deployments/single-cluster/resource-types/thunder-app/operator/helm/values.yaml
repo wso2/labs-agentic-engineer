@@ -15,25 +15,12 @@ image:
 replicaCount: 1
 
 thunder:
-  # In-cluster admin API base URL for the platform Thunder. Matches the compose
-  # stack's Thunder service address.
+  # In-cluster admin API base URL for the platform Thunder.
   adminURL: "http://thunder-service.thunder.svc.cluster.local:8090"
-
-  # System OAuth2 client the operator authenticates as (client_credentials,
-  # scope=system) to manage applications on Thunder's admin API.
-  #
-  # LOCAL DEV DEFAULTS ONLY. These match the `aep-system-client` credentials the
-  # local Thunder bootstrap registers (deployments/single-cluster/
-  # values-thunder.yaml → 59-aep-oauth-apps.sh, bound to Administrator by
-  # 60-aep-system-role.sh). REAL CLUSTERS MUST OVERRIDE these — never ship these
-  # defaults to a shared/production Thunder.
-  systemClientID: "aep-system-client"
-  systemClientSecret: "aep-system-client-secret"
-
-  # existingSecret: when set, the deployment sources THUNDER_SYSTEM_CLIENT_ID /
-  # THUNDER_SYSTEM_CLIENT_SECRET from this pre-existing Secret instead of the
-  # chart-managed one above. Keys must be `client-id` and `client-secret`.
-  existingSecret: ""
+  # Credentials (THUNDER_SYSTEM_CLIENT_ID, THUNDER_SYSTEM_CLIENT_SECRET) are
+  # sourced exclusively from the `thunder-app-operator-credentials` Secret,
+  # which is provisioned by ESO before this chart is installed. The chart does
+  # not manage any credential values itself.
 
 resources:
   requests:

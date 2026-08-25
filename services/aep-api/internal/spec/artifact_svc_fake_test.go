@@ -142,9 +142,17 @@ func (f *fakeArtifactSvc) StatusSnapshot(ctx context.Context, orgID, projectID s
 	return f.StatusSnapshotFunc(ctx, orgID, projectID)
 }
 
+func (f *fakeArtifactSvc) RequirementsFingerprintAt(context.Context, string, string, string) (string, error) {
+	return "", nil
+}
+
 func (f *fakeArtifactSvc) ComponentCountAtTag(ctx context.Context, orgID, projectID, tag string) (int, error) {
 	if f.ComponentCountAtTagFunc == nil {
 		panic("spec test: ComponentCountAtTag called but ComponentCountAtTagFunc is not set")
 	}
 	return f.ComponentCountAtTagFunc(ctx, orgID, projectID, tag)
+}
+
+// SetDesignBaselineResolver is wiring, not behaviour — the fakes ignore it.
+func (f *fakeArtifactSvc) SetDesignBaselineResolver(func(ctx context.Context, orgID, projectID string) (string, error)) {
 }

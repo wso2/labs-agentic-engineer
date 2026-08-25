@@ -35,20 +35,21 @@ import (
 // FakeArtifactService implements the GitHub-direct spec.ArtifactService via
 // settable function fields.
 type FakeArtifactService struct {
-	ListDesignFilesFunc          func(ctx context.Context, orgID, projectID string) (map[string]string, error)
-	SaveSpecFunc                 func(ctx context.Context, orgID, projectID string, req spec.SaveRequest) (*spec.SpecSaveResult, error)
-	ValidateSpecAtTagFunc        func(ctx context.Context, orgID, projectID, tag string) error
-	LatestSpecTagFunc            func(ctx context.Context, orgID, projectID string) string
-	SaveRequirementsFunc         func(ctx context.Context, orgID, projectID string, req spec.SaveRequest) (*spec.RequirementsSaveResult, error)
-	SaveDesignFunc               func(ctx context.Context, orgID, projectID string, req spec.SaveRequest) (*spec.DesignSaveResult, error)
-	ListRequirementsVersionsFunc func(ctx context.Context, orgID, projectID string) ([]spec.RequirementsVersionInfo, error)
-	ListDesignVersionsFunc       func(ctx context.Context, orgID, projectID string) ([]spec.DesignVersionInfo, error)
-	ListSpecVersionTagsFunc      func(ctx context.Context, orgID, projectID string) (*spec.TagList, error)
-	GetRequirementsAtTagFunc     func(ctx context.Context, orgID, projectID, tag string) (map[string]string, error)
-	GetDesignAtTagFunc           func(ctx context.Context, orgID, projectID, tag string) (map[string]string, error)
-	GetDesignAtCommitFunc        func(ctx context.Context, orgID, projectID, commitSHA string) (map[string]string, error)
-	StatusSnapshotFunc           func(ctx context.Context, orgID, projectID string) (*spec.StatusSnapshot, error)
-	ComponentCountAtTagFunc      func(ctx context.Context, orgID, projectID, tag string) (int, error)
+	ListDesignFilesFunc           func(ctx context.Context, orgID, projectID string) (map[string]string, error)
+	SaveSpecFunc                  func(ctx context.Context, orgID, projectID string, req spec.SaveRequest) (*spec.SpecSaveResult, error)
+	ValidateSpecAtTagFunc         func(ctx context.Context, orgID, projectID, tag string) error
+	LatestSpecTagFunc             func(ctx context.Context, orgID, projectID string) string
+	SaveRequirementsFunc          func(ctx context.Context, orgID, projectID string, req spec.SaveRequest) (*spec.RequirementsSaveResult, error)
+	SaveDesignFunc                func(ctx context.Context, orgID, projectID string, req spec.SaveRequest) (*spec.DesignSaveResult, error)
+	ListRequirementsVersionsFunc  func(ctx context.Context, orgID, projectID string) ([]spec.RequirementsVersionInfo, error)
+	ListDesignVersionsFunc        func(ctx context.Context, orgID, projectID string) ([]spec.DesignVersionInfo, error)
+	ListSpecVersionTagsFunc       func(ctx context.Context, orgID, projectID string) (*spec.TagList, error)
+	GetRequirementsAtTagFunc      func(ctx context.Context, orgID, projectID, tag string) (map[string]string, error)
+	GetDesignAtTagFunc            func(ctx context.Context, orgID, projectID, tag string) (map[string]string, error)
+	GetDesignAtCommitFunc         func(ctx context.Context, orgID, projectID, commitSHA string) (map[string]string, error)
+	StatusSnapshotFunc            func(ctx context.Context, orgID, projectID string) (*spec.StatusSnapshot, error)
+	RequirementsFingerprintAtFunc func(ctx context.Context, orgID, projectID, at string) (string, error)
+	ComponentCountAtTagFunc       func(ctx context.Context, orgID, projectID, tag string) (int, error)
 }
 
 var _ spec.ArtifactService = (*FakeArtifactService)(nil)
@@ -148,9 +149,24 @@ func (f *FakeArtifactService) StatusSnapshot(ctx context.Context, orgID, project
 	return f.StatusSnapshotFunc(ctx, orgID, projectID)
 }
 
+// RequirementsFingerprintAt defaults to the EMPTY fingerprint rather than
+// panicking: most callers never reach the staleness check (it needs a design
+// run on record), and a fake that panics on an unexercised path would fail
+// tests for a question they never asked.
+func (f *FakeArtifactService) RequirementsFingerprintAt(ctx context.Context, orgID, projectID, at string) (string, error) {
+	if f.RequirementsFingerprintAtFunc == nil {
+		return "", nil
+	}
+	return f.RequirementsFingerprintAtFunc(ctx, orgID, projectID, at)
+}
+
 func (f *FakeArtifactService) ComponentCountAtTag(ctx context.Context, orgID, projectID, tag string) (int, error) {
 	if f.ComponentCountAtTagFunc == nil {
 		panic("artifactstest: ComponentCountAtTag called but ComponentCountAtTagFunc is not set")
 	}
 	return f.ComponentCountAtTagFunc(ctx, orgID, projectID, tag)
+}
+
+// SetDesignBaselineResolver is wiring, not behaviour — the fakes ignore it.
+func (f *FakeArtifactService) SetDesignBaselineResolver(func(ctx context.Context, orgID, projectID string) (string, error)) {
 }

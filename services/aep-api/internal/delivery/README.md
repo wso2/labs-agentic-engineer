@@ -672,4 +672,19 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   A LEDGER issue is returned by the milestone-scoped read and only by it — the untagged read is two label
   queries, and a ledger issue is defined by carrying no label to query on. Milestone membership is the only
   handle there is.
+- **Issue COMMENTS ride the milestone-scoped list, and only it** (`task/reads.go` `ListByTag`,
+  `?comments=` defaulting true). Each row carries its issue's newest comments — the version's live
+  narrative between an agent's dispatch and its pull request. The field is SERVED, not yet rendered: no
+  console surface reads it today. Comments follow the same handle ledger issues do — the fetch is
+  anchored on one milestone, so a read spanning versions has no bounded set to ask for and omits the
+  field entirely.
+  Three properties are load-bearing. **Nothing is stored** — GitHub is the only copy, read live on every
+  request. **The platform's OWN comments are dropped, and not by author** — authorship cannot answer that
+  question here (`sourcecontrol`'s README has the why); the discriminator is the brand that domain stamps
+  on write and reports on read, and DROPPING it is this surface's policy, not the host's, so a later
+  debug or audit view can still ask for them. **The read is ONE GraphQL round trip** running CONCURRENTLY
+  with the REST issue list: the two are independent once the milestone number is known, and sequentially
+  they measured 614ms → 1345ms against 614ms → 775ms together, on a read the console polls at 5s.
+  A comment read that fails costs the caller its comments, never its Tasks — this list also drives the
+  run card's gate-hold vs. empty-working-set distinction.
 - Platform-wide rules (tenant gate, secrets fence, persistence-in-domain) → [../../README.md](../../README.md).

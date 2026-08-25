@@ -60,6 +60,7 @@ var ConfigMapKeys = []string{
 	"openbao.addr",
 	"webhook.delivery_url",
 	"webhook.local_smee.enabled",
+	"gateway.hostname",
 }
 
 // keyKind describes the expected type of a config value for validation.
@@ -95,6 +96,9 @@ var keyRegistry = map[string]configKeyMeta{
 	"openbao.addr":                      {required: false, kind: kindURL},
 	"webhook.delivery_url":              {required: false, kind: kindURL},
 	"webhook.local_smee.enabled":        {required: false, kind: kindBool},
+	// gateway.hostname, when set, lets `aectl platform install` configure the
+	// external gateway ingress non-interactively (CI-friendly path).
+	"gateway.hostname": {required: false, kind: kindString},
 }
 
 // Init sets env-var bindings. All config values must come from the cluster

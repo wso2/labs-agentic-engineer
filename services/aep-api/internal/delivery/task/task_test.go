@@ -89,7 +89,7 @@ func TestReads_DerivedStatusIsIssueStateAlone(t *testing.T) {
 	issues.seed(open).seed(closed)
 
 	views, err := newReads(issues, newFakeExecReader(), nil).
-		ListByTag(context.Background(), "org1", "proj1", "all", "")
+		ListByTag(context.Background(), "org1", "proj1", "all", "", false)
 	if err != nil {
 		t.Fatalf("ListByTag: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestReads_ListPopulations(t *testing.T) {
 	issues.seed(bugIssue(5, "Fix the failing build for user-service"))
 
 	views, err := newReads(issues, newFakeExecReader(), nil).
-		ListByTag(context.Background(), "org1", "proj1", "all", "")
+		ListByTag(context.Background(), "org1", "proj1", "all", "", false)
 	if err != nil {
 		t.Fatalf("ListByTag: %v", err)
 	}
@@ -169,7 +169,7 @@ func TestReads_ListByTag_IncludesTheLedger(t *testing.T) {
 	runs := fakeMilestones{"v3": 7}
 
 	views, err := newReads(issues, newFakeExecReader(), runs).
-		ListByTag(context.Background(), "org1", "proj1", "all", "v3")
+		ListByTag(context.Background(), "org1", "proj1", "all", "v3", false)
 	if err != nil {
 		t.Fatalf("ListByTag(v3): %v", err)
 	}
@@ -199,7 +199,7 @@ func TestReads_ListByTag_IsMilestoneMembership(t *testing.T) {
 	runs := fakeMilestones{"v3": 7, "v2": 6}
 
 	views, err := newReads(issues, newFakeExecReader(), runs).
-		ListByTag(context.Background(), "org1", "proj1", "all", "v3")
+		ListByTag(context.Background(), "org1", "proj1", "all", "v3", false)
 	if err != nil {
 		t.Fatalf("ListByTag(v3): %v", err)
 	}
@@ -213,7 +213,7 @@ func TestReads_ListByTag_IsMilestoneMembership(t *testing.T) {
 	}
 
 	unknown, err := newReads(issues, newFakeExecReader(), runs).
-		ListByTag(context.Background(), "org1", "proj1", "all", "v99")
+		ListByTag(context.Background(), "org1", "proj1", "all", "v99", false)
 	if err != nil {
 		t.Fatalf("ListByTag(v99): %v", err)
 	}
@@ -222,7 +222,7 @@ func TestReads_ListByTag_IsMilestoneMembership(t *testing.T) {
 	}
 
 	all, err := newReads(issues, newFakeExecReader(), runs).
-		ListByTag(context.Background(), "org1", "proj1", "all", "")
+		ListByTag(context.Background(), "org1", "proj1", "all", "", false)
 	if err != nil {
 		t.Fatalf("ListByTag(all): %v", err)
 	}
@@ -237,7 +237,7 @@ func TestReads_CarriesTheProseBody(t *testing.T) {
 	issues.seed(agentIssue(1, "Implement user-service", "## Scope\n\nImplement the login endpoint."))
 
 	views, err := newReads(issues, newFakeExecReader(), nil).
-		ListByTag(context.Background(), "org1", "proj1", "open", "")
+		ListByTag(context.Background(), "org1", "proj1", "open", "", false)
 	if err != nil {
 		t.Fatalf("ListByTag: %v", err)
 	}

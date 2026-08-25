@@ -388,6 +388,7 @@ func (s *Service) StartTurn(ctx context.Context, orgID, projectID string, in Tur
 		ProjectID:         projectID,
 		ConversationID:    in.ConversationID,
 		UseCase:           useCaseGeneral,
+		Flow:              flow,
 		BaseRef:           baseRef,
 		SkillsRef:         skillsRef,
 		Status:            turnStatusRunning,

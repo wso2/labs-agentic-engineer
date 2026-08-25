@@ -37,8 +37,11 @@ Every actor cited by a story is defined here first.>
 which external services the product depends on (by capability, e.g.
 "transactional email" — binding to a concrete provider happens at design).
 Decisions taken from an org default are ordinary entries; a decision the agent
-made itself, because the user has not answered it yet, carries the *assumed*
-tag.>
+made itself, because the user has not answered it yet, ends with the literal
+tag `*assumed*` — that exact emphasised word, no parentheses or brackets around
+it. The console reads the tag to count what is unsettled and to draw the
+Settle control on the line, so a decorated variant costs the user the ability
+to challenge the judgment.>
 
 ## Out of Scope
 <what this project deliberately does not do>

@@ -139,3 +139,58 @@ func TestCreateProject_NilKickoffStarterIsNoOp(t *testing.T) {
 		t.Fatalf("create with no kickoff starter: %v", err)
 	}
 }
+
+// --- ordering ---------------------------------------------------------------
+
+// Two collaborators sharing one tape, so the ASSERTION is about sequence rather
+// than about each having run.
+type tape struct {
+	mu    sync.Mutex
+	steps []string
+}
+
+func (t *tape) mark(step string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.steps = append(t.steps, step)
+}
+
+func (t *tape) read() []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]string(nil), t.steps...)
+}
+
+type tapedDescriptorWriter struct{ tape *tape }
+
+func (w tapedDescriptorWriter) WriteDescriptor(_ context.Context, _, _, _, _ string) error {
+	w.tape.mark("descriptor")
+	return nil
+}
+
+type tapedKickoff struct{ tape *tape }
+
+func (k tapedKickoff) Kickoff(_ context.Context, _, _ string) { k.tape.mark("kickoff") }
+
+// `/start` reads the captured idea out of the descriptor, so the write has to
+// land FIRST. Asserting only that both ran — which is all
+// TestCreateProject_FiresTheKickoff does — would pass a reordered create that
+// interviews against a descriptor which is not there yet.
+func TestCreateProject_WritesTheDescriptorBeforeFiringTheKickoff(t *testing.T) {
+	t.Parallel()
+	tp := &tape{}
+	svc := createSvcWithKickoff(t, tapedKickoff{tape: tp}, tapedDescriptorWriter{tape: tp}, nil)
+
+	if _, err := svc.CreateProject(context.Background(), "acme", &gen.CreateProjectRequest{
+		Name:   "expense-approval",
+		Prompt: "employees submit expense claims",
+	}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	got := tp.read()
+	want := []string{"descriptor", "kickoff"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("order = %v, want %v", got, want)
+	}
+}

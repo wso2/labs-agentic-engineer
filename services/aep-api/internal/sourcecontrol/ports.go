@@ -137,6 +137,15 @@ type IssueOps interface {
 	// predicate input. Returns ErrMilestoneNotFound when no milestone carries
 	// that number.
 	MilestoneIssueCounts(ctx context.Context, owner, repo string, cred secrets.Credential, number int) (*MilestoneIssueCounts, error)
+	// ListMilestoneIssueComments returns the newest perIssue comments of every
+	// issue in one milestone, bucketed by issue number and OLDEST FIRST within
+	// each bucket, in ONE round trip. An issue with no comments is absent from
+	// the map rather than present with an empty slice.
+	//
+	// One call is the whole point: this rides a 5s console poll, and a call per
+	// issue would spend a milestone's worth of rate limit on every tick.
+	// Returns ErrMilestoneNotFound when no milestone carries that number.
+	ListMilestoneIssueComments(ctx context.Context, owner, repo string, cred secrets.Credential, number, perIssue int) (map[int][]IssueComment, error)
 }
 
 // WebhookOps is the repo-webhook surface. Consumed by webhookService.

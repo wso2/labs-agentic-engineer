@@ -1,0 +1,31 @@
+---
+# TrafficPolicy attaches wildcard CORS headers to Thunder's HTTPRoute so
+# browser OIDC flows (discovery-doc fetch + token exchange) succeed on
+# cross-origin requests from the AEP console.
+#
+# This resource intentionally lives outside the Thunder Helm release so it
+# is not overwritten or deleted by `helm upgrade thunder`.
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: thunder-cors
+  namespace: thunder
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/part-of: wso2-agentic-engineer
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: thunder-httproute
+  cors:
+    allowOrigins:
+      - "*"
+    allowMethods:
+      - GET
+      - POST
+      - OPTIONS
+    allowHeaders:
+      - Content-Type
+      - Authorization
+    allowCredentials: false

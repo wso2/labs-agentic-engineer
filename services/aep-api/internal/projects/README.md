@@ -115,9 +115,10 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
 - **`spec.agent` is the one spec field git cannot answer.** exists/version/dirty all read committed truth,
   and a turn writes nothing until it lands — so through the whole kickoff (#562), the busiest moment in a
   project's life, git says the project is untouched. The newest turn row says otherwise, and folds to three
-  values: `""`, `working`, `failed`. A COMPLETED turn folds to `""` rather than a fourth value, because
-  whatever it produced is already in git and a second vocabulary for the same fact could only disagree
-  with the first.
+  values: `never-started`, `""`, `working`, `failed`. A COMPLETED turn folds to `""` rather than to a
+  value of its own, because whatever it produced is already in git and a second vocabulary for the same
+  fact could only disagree with the first. `never-started` is NOT that gap: it says no turn has ever
+  run, which is the one case an empty workspace should offer to start rather than wait on.
 - **The build stage carries NO task counts** — not zeroed ones, none at all. Their only honest source is
   the version's milestone on GitHub, and a 5s poll may not spend GitHub rate, so the field is absent from
   the contract rather than present and always zero; the console renders counts from the list-tasks

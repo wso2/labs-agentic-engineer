@@ -21,6 +21,34 @@ import { Box, Stack, Typography } from "@wso2/oxygen-ui";
 // A subtle "the agent is working" indicator (task 3): a soft pulsing dot plus
 // a label. Replaces the old ThinkingDots — used as a running turn's footer and
 // as the tail placeholder before a turn has produced any content.
+/**
+ * The dot alone — "an agent is working", with nothing said about what.
+ *
+ * Extracted so the spec rail's active section pulses with the SAME animation
+ * rather than growing its own (#575): work in progress should look identical
+ * everywhere it appears, and a second easing curve on a second surface is how
+ * that stops being true.
+ */
+export function WorkingPulse() {
+  return (
+    <Box
+      data-testid="working-pulse"
+      sx={{
+        width: 8,
+        height: 8,
+        flexShrink: 0,
+        borderRadius: "50%",
+        bgcolor: "primary.main",
+        animation: "agentChatWorkingPulse 1.2s ease-in-out infinite",
+        "@keyframes agentChatWorkingPulse": {
+          "0%, 100%": { opacity: 0.3, transform: "scale(0.85)" },
+          "50%": { opacity: 1, transform: "scale(1)" },
+        },
+      }}
+    />
+  );
+}
+
 export function WorkingIndicator({ label = "Working…" }: { label?: string }) {
   return (
     <Stack
@@ -29,19 +57,7 @@ export function WorkingIndicator({ label = "Working…" }: { label?: string }) {
       spacing={1}
       sx={{ alignItems: "center", mt: 0.5, color: "text.secondary" }}
     >
-      <Box
-        sx={{
-          width: 8,
-          height: 8,
-          borderRadius: "50%",
-          bgcolor: "primary.main",
-          animation: "agentChatWorkingPulse 1.2s ease-in-out infinite",
-          "@keyframes agentChatWorkingPulse": {
-            "0%, 100%": { opacity: 0.3, transform: "scale(0.85)" },
-            "50%": { opacity: 1, transform: "scale(1)" },
-          },
-        }}
-      />
+      <WorkingPulse />
       <Typography variant="caption">{label}</Typography>
     </Stack>
   );

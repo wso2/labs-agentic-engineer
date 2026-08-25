@@ -15,15 +15,3 @@ Selector labels — the stable subset used by the Deployment's pod selector.
 app.kubernetes.io/name: thunder-app-operator
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
-
-{{/*
-Name of the Secret holding the Thunder system client credentials: the
-caller-provided existingSecret when set, otherwise the chart-managed one.
-*/}}
-{{- define "thunder-app-operator.credentialsSecret" -}}
-{{- if .Values.thunder.existingSecret -}}
-{{ .Values.thunder.existingSecret }}
-{{- else -}}
-thunder-app-operator-credentials
-{{- end -}}
-{{- end -}}

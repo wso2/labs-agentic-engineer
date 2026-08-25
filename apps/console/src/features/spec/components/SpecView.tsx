@@ -60,12 +60,19 @@ import { SpecMdEditor } from "../collab/SpecMdEditor";
 import { useYTextString } from "../collab/useYTextString";
 import { useTurnEndFlush } from "../collab/useTurnEndFlush";
 import { START_COMMAND } from "@aep/contracts/commands";
+import { fragmentToMarkdown } from "@aep/collab-doc";
+import { prdUnsettled } from "../lib/prdUnsettled";
+import { useYFragmentVersion } from "../collab/useYFragmentVersion";
+import {
+  railSections as buildRailSections,
+  type SectionReason,
+} from "../lib/railSections";
 import { chatKeyFor, setPendingSeed, subscribeTurnEnd } from "../../agent-chat/chatStore";
 import { EmptyState } from "../../../components/EmptyState";
+import { ProblemsDialog } from "./ProblemsDialog";
 import { useResolveDependencyViaChat } from "../../agent-chat/useResolveDependencyViaChat";
 import type { DependencyResolutionIntent } from "../../projects/lib/dependencyResolutionMessage.js";
 import { useDesignCellChangeCount } from "../collab/useDesignCellChange";
-import { AddArtifactDialog } from "./AddArtifactDialog";
 import { BuildDependencyDrawer } from "./BuildDependencyDrawer";
 import { SpecFileList } from "./SpecFileList";
 import { CellDiagramPanel } from "./CellDiagramPanel";
@@ -118,7 +125,6 @@ export function SpecView({ projectName }: { projectName: string }) {
     projectName,
   );
   const [selection, setSelection] = useState<SpecSelection | null>(null);
-  const [addArtifactOpen, setAddArtifactOpen] = useState(false);
   // Build (#162): commit-then-build. buildPhase drives the button label /
   // loading; an agent peer in the room means a turn is writing → block Build.
   const build = useBuildProject(projectName);
@@ -133,6 +139,8 @@ export function SpecView({ projectName }: { projectName: string }) {
   // The build gate's 422 refusal, rendered as an actionable checklist (#372)
   // rather than one flattened alert string.
   const [gateRefusal, setGateRefusal] = useState<Array<{ field?: string; message: string }> | null>(null);
+  /** The warning standing between a design run and unsettled requirements. */
+  const [confirmDesign, setConfirmDesign] = useState(false);
   // The "Cut version" ceremony (#369/#372): Build first shows what the click
   // does — the next version, the stories in scope, the milestone —
   // and only a confirm POSTs. The backend cuts the real tag.
@@ -474,14 +482,6 @@ export function SpecView({ projectName }: { projectName: string }) {
   // failure that leaves the user with nothing and no explanation.
   const noRequirementsYet = !files.some((f) => f.group === "requirements");
   const failed = specAgent === "failed" && noRequirementsYet;
-  // No turn has EVER run for this project (#562 review): a dispatch that never
-  // reached the turn guard — no Anthropic key, an unreachable skills repo — or
-  // an abandoned reference upload the create held the kickoff for. Distinct
-  // from "" (a turn ran and finished), and the distinction is the whole point:
-  // without it this state showed a spinner promising work that was never
-  // coming, with nothing to click, because the way out hangs off `failed` and
-  // there is no turn row to have failed.
-  const neverStarted = specAgent === "never-started";
   // Retrying is a SEND, so it goes where every other send goes: the chat's
   // one-shot seed slot, GUARDED — the panel re-decides after it has rehydrated,
   // which is the first moment "is the agent mid-exchange" is knowable here.
@@ -503,6 +503,63 @@ export function SpecView({ projectName }: { projectName: string }) {
     return { stories, nextVersion: nextVersionLabel(tags.data?.latest) };
   }, [prdContent.data, tags.data?.latest]);
 
+  // What the rail says (#575). Derived here rather than inside the rail so the
+  // rules stay testable without a workspace — and so the two facts the rail
+  // cannot see for itself (whether the requirements have moved since the design
+  // was derived, and how much of the document is still unsettled) arrive as
+  // plain inputs.
+  // Read the LIVE document, not the committed copy. The committed one is a
+  // collab flush behind — so deleting an `*assumed*` flag left the alert up
+  // until the server next wrote, and on the agent's own edits that lag was long
+  // enough to look broken. Falls back to the committed content when the room is
+  // offline, which is the only time it is the freshest thing available.
+  const prdFragment = collab.getFileFragment(PRD_PATH);
+  const prdVersion = useYFragmentVersion(prdFragment);
+  const livePrd = useMemo(() => {
+    // The fragment is mutated IN PLACE, so its identity never changes and only
+    // the counter marks that its content did — reading it here is what makes
+    // that a real dependency rather than one the linter can dismiss.
+    void prdVersion;
+    return prdFragment ? fragmentToMarkdown(prdFragment) : null;
+  }, [prdFragment, prdVersion]);
+  const unsettled = useMemo(
+    () => prdUnsettled(livePrd ?? prdContent.data?.content),
+    [livePrd, prdContent.data],
+  );
+  const railSections = useMemo(
+    () =>
+      buildRailSections({
+        hasRequirements: files.some((f) => f.group === "requirements"),
+        hasDesign: files.some((f) => f.group === "designs"),
+        hasValidation: files.some((f) => f.group === "validation"),
+        agentWorking: deriving,
+        agentFlow: status.data?.spec.agentFlow ?? "",
+        designOutdated: status.data?.spec.designOutdated ?? false,
+        assumptions: unsettled.assumptions,
+        openQuestions: unsettled.openQuestions,
+      }),
+    [files, deriving, status.data?.spec.agentFlow, status.data?.spec.designOutdated, unsettled],
+  );
+  // The rail's own answer to "is an agent writing the requirements", reused so
+  // the workspace body cannot contradict the rail beside it — and its reasons,
+  // reused so the warning before a design run cannot drift from the rail's own
+  // account of what is unsettled.
+  const requirementsSection = railSections.find((sec) => sec.id === "requirements");
+  const requirementsActive = requirementsSection?.state === "active";
+  // Written nothing, and nothing on the way.
+  const nothingToShow = files.length === 0 && !requirementsActive && !failed;
+
+  // A reason row is a pointer to where the work already happens: the settle
+  // controls live on the requirements document's own flagged lines, and a stale
+  // design is repaired by the same re-derivation the header offers.
+  const onRailReason = (action: SectionReason["action"]) => {
+    if (action === "update-design") {
+      generateDesign();
+      return;
+    }
+    setSelection({ kind: "file", path: PRD_PATH });
+  };
+
   const seedChat = (message: string) =>
     setPendingSeed(chatKeyFor(orgHandle ?? "default", projectName), message);
   // #159: design is derived FROM requirements, so its CTA needs them first.
@@ -510,12 +567,28 @@ export function SpecView({ projectName }: { projectName: string }) {
 
   // Generate/Re-generate design (#159): open the agent panel and auto-send the
   // design turn via the shared ?generate=design signal (AppLayout + the panel).
-  const generateDesign = () =>
+  const runDesign = () =>
     void navigate({
       to: "/projects/$projectName/spec",
       params: { projectName },
       search: { generate: "design" },
     });
+
+  // Deriving a design from requirements the agent is still guessing at is
+  // allowed — it is how this product is meant to be used, and gating it was
+  // tried and removed (#539). But it has a cost the user cannot see from the
+  // button: the design is built on those guesses, and overturning one later
+  // means deriving again. So the click WARNS and goes on, rather than asking
+  // for permission. The rail already says the same thing at rest; this is the
+  // moment it becomes consequential.
+  const unsettledReasons = requirementsSection?.reasons ?? [];
+  const generateDesign = () => {
+    if (unsettledReasons.length === 0) {
+      runDesign();
+      return;
+    }
+    setConfirmDesign(true);
+  };
 
   // An agent turn is in flight iff an agent peer is present in the room (#86 d7
   // renders them with kind:"agent"). Building a half-written design is wrong,
@@ -868,39 +941,60 @@ export function SpecView({ projectName }: { projectName: string }) {
           </Alert>
         )}
 
-        {/* The build gate's refusal, as an actionable checklist (#372): each
-            unmet condition with the file it names, and one handoff to the
-            agent. Build stays available — the same click re-checks. */}
-        {gateRefusal && (
-          <Alert
-            severity="warning"
-            sx={{ borderRadius: 0 }}
-            onClose={() => setGateRefusal(null)}
-            action={
-              <Button
-                color="inherit"
-                size="small"
-                onClick={() => {
-                  seedChat(
-                    "/design Fix these build-gate refusals:\n" +
-                      gateRefusal.map((d) => `- ${d.field ? `${d.field}: ` : ""}${d.message}`).join("\n"),
-                  );
-                  setGateRefusal(null);
-                }}
-              >
-                Fix via chat
-              </Button>
-            }
-          >
-            <AlertTitle>Build refused — the design isn&apos;t complete</AlertTitle>
-            {gateRefusal.map((d, i) => (
-              <Typography key={i} variant="body2">
-                • {d.field ? `${d.field}: ` : ""}
-                {d.message}
-              </Typography>
-            ))}
-          </Alert>
-        )}
+        {/* Deriving a design from requirements that are still full of the
+            agent's own guesses. Same component as the build refusal below, and
+            deliberately NOT the same kind of thing: that one enforces and this
+            one informs, which is the whole reason it carries a way past. */}
+        <ProblemsDialog
+          open={confirmDesign}
+          title="Your requirements aren't settled yet"
+          intro={
+            "The design will be derived from what the requirements say now, " +
+            "including the agent's own judgments. Overturning one later means deriving again."
+          }
+          // No per-row fix here, unlike the build refusal: every one of these is
+          // settled in the same place, and `Resolve issues` already goes there.
+          // A row link beside it would be a second button to the same document.
+          problems={unsettledReasons.map((reason) => ({
+            key: reason.key,
+            label: reason.label,
+          }))}
+          resolve={{ label: "Resolve issues", run: () => onRailReason("document") }}
+          proceed={{ label: "Generate anyway", run: runDesign }}
+          onClose={() => setConfirmDesign(false)}
+        />
+
+        {/* The build gate's refusal (#372) now reads the way the rail's amber
+            sections do (#575): one dialog listing what is unmet, each with the
+            way to fix it. Same kind of thing, same presentation — and these
+            lists run long enough (several components, each missing something)
+            that a header strip pushed the workspace down to hold them.
+            Build stays available; the same click re-checks. */}
+        <ProblemsDialog
+          open={gateRefusal !== null}
+          title="Not ready to build yet"
+          problems={(gateRefusal ?? []).map((d, i) => ({
+            key: `${d.field ?? ""}:${i}`,
+            label: d.field ? `${d.field}: ${d.message}` : d.message,
+            // One handoff for the whole list rather than per row: these
+            // conditions are derived from each other, so the repair is a design
+            // pass over the set, not a fix per line.
+            fix:
+              i === 0
+                ? {
+                    label: "Fix via chat",
+                    run: () =>
+                      seedChat(
+                        "/design Fix these build-gate refusals:\n" +
+                          (gateRefusal ?? [])
+                            .map((r) => `- ${r.field ? `${r.field}: ` : ""}${r.message}`)
+                            .join("\n"),
+                      ),
+                  }
+                : undefined,
+          }))}
+          onClose={() => setGateRefusal(null)}
+        />
 
         {/* The "Cut version" ceremony (#369/#372): what the Build click does,
             before it does it. The version shown is predictive — the BACKEND
@@ -1002,11 +1096,10 @@ export function SpecView({ projectName }: { projectName: string }) {
                 files={files}
                 selection={effectiveSelection}
                 onSelect={setSelection}
-                onAddArtifact={() => setAddArtifactOpen(true)}
                 onRegenerateDesign={generateDesign}
                 regenerateDisabled={agentBusy}
-                deriving={deriving}
-                failed={failed}
+                sections={railSections}
+                onReason={onRailReason}
               />
             </Box>
             <Box
@@ -1181,10 +1274,17 @@ export function SpecView({ projectName }: { projectName: string }) {
                     />
                   </Box>
                 )
-              ) : neverStarted ? (
-                /* Nothing has run and nothing will until someone asks. The
-                   same Retry the failure banner offers — one way out, one
-                   word for it. */
+              ) : failed ? null : /* The alert above owns this case: it names the
+                   failure and carries the one Retry. A body beneath it would
+                   either repeat that offer or, as it did, invite the user to
+                   "select a file" in a workspace that has none. */
+              nothingToShow ? (
+                /* Nothing written and nothing running — a project whose
+                   kickoff never landed, or one sitting between turns with no
+                   document yet. Either way the workspace will not fill itself,
+                   so it offers the same Retry the failure banner does: one way
+                   out, one word for it. Guarded, so the panel drops it if the
+                   agent turns out to be mid-exchange. */
                 <EmptyState
                   title="Nothing written yet"
                   description="Your requirements and design appear here as the agent writes them."
@@ -1194,17 +1294,13 @@ export function SpecView({ projectName }: { projectName: string }) {
                     </Button>
                   }
                 />
-              ) : files.length === 0 ? (
-                /* An EMPTY workspace — the whole of the kickoff, before the
-                   agent's first write lands. "Select a file to view its
-                   content" is meaningless with no files to select, and that is
-                   what the user met whenever `spec.agent` was momentarily not
-                   "working": the gap between turns, or a status read older
-                   than the turn that started since.
-                   Keyed on the file list rather than on that status, so it
-                   cannot flap: a failure has its own banner above, so an empty
-                   workspace with no banner means the agent's work is pending or
-                   in flight either way. Same centred-spinner shape the
+              ) : requirementsActive ? (
+                /* An agent is writing the requirements right now — the same
+                   fact the rail pulses on, so the two surfaces cannot
+                   disagree. They did: this said "Agent is working on the
+                   requirements document" whenever the workspace was empty,
+                   including between turns when the rail correctly showed the
+                   section as not started. Same centred-spinner shape the
                    architecture pane uses while a design turn runs. */
                 failed ? null : (
                   <Box
@@ -1217,7 +1313,7 @@ export function SpecView({ projectName }: { projectName: string }) {
                       justifyContent: "center",
                     }}
                   >
-                    <CircularProgress aria-label="Agent is writing the requirements" />
+                    <CircularProgress size={28} aria-label="Agent is writing the requirements" />
                     <Typography variant="body2" color="text.secondary">
                       Agent is working on the requirements document
                     </Typography>
@@ -1236,10 +1332,6 @@ export function SpecView({ projectName }: { projectName: string }) {
         )}
       </Box>
 
-      <AddArtifactDialog
-        open={addArtifactOpen}
-        onClose={() => setAddArtifactOpen(false)}
-      />
 
       <BuildDependencyDrawer
         open={dependencyDrawerOpen}

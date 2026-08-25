@@ -460,6 +460,17 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// …and the status poll reports whether it is still running, which is the
 	// one thing the git-derived spec fields cannot say.
 	projectService.SetSpecTurnSource(turnRepo)
+	// The build gate's staleness input (#575): the commit the newest successful
+	// design run read the project at. A build whose requirements have moved
+	// past its design is refused with the rest of the gate's conditions — the
+	// one refusal that is about the design being WRONG rather than incomplete.
+	artifactSvcGit.SetDesignBaselineResolver(func(ctx context.Context, orgID, projectID string) (string, error) {
+		last, err := turnRepo.NewestCompletedFlow(ctx, orgID, projectID, "design")
+		if err != nil || last == nil {
+			return "", err
+		}
+		return last.BaseRef, nil
+	})
 
 	// The Task-keyed log endpoint (issue number → newest execution by default,
 	// executionId query pins one for history browsing). (The runner skills-pull

@@ -18,11 +18,27 @@
 
 // @vitest-environment jsdom
 
-import { describe, expect, it } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { OxygenTheme, OxygenUIThemeProvider } from "@wso2/oxygen-ui";
 import type { SpecFileEntry } from "../api/mapping";
 import { SpecFileList } from "./SpecFileList";
+import { railSections, type RailInput, type RailSection } from "../lib/railSections";
+
+// A settled project: the rail states are exercised in railSections.test.ts, so
+// these render tests only need it out of the way.
+afterEach(cleanup);
+
+const RAIL_INPUT: RailInput = {
+  hasRequirements: true,
+  hasDesign: true,
+  hasValidation: true,
+  agentWorking: false,
+  agentFlow: "",
+  designOutdated: false,
+  assumptions: 0,
+  openQuestions: 0,
+};
 
 /** The list as `SpecView` hands it over: deduped and sorted by path. */
 function entries(...paths: string[]): SpecFileEntry[] {
@@ -31,17 +47,16 @@ function entries(...paths: string[]): SpecFileEntry[] {
     .sort((a, b) => a.path.localeCompare(b.path));
 }
 
-function renderList(files: SpecFileEntry[]) {
+function renderList(files: SpecFileEntry[], sections?: RailSection[], onReason = () => {}) {
   render(
     <OxygenUIThemeProvider theme={OxygenTheme}>
       <SpecFileList
         files={files}
         selection={null}
         onSelect={() => {}}
-        onAddArtifact={() => {}}
         onRegenerateDesign={() => {}}
-        deriving={false}
-        failed={false}
+        sections={sections ?? railSections(RAIL_INPUT)}
+        onReason={onReason}
       />
     </OxygenUIThemeProvider>,
   );
@@ -62,7 +77,7 @@ describe("SpecFileList — the PRD leads Requirements", () => {
         "specs/requirements/features/receipts.md",
       ),
     );
-    expect(rows.slice(0, 3)).toEqual(["prd.md", "approvals.md", "receipts.md"]);
+    expect(rows.slice(0, 3)).toEqual(["Product requirements", "approvals", "receipts"]);
   });
 
   it("keeps the rest in path order behind it", () => {
@@ -73,11 +88,109 @@ describe("SpecFileList — the PRD leads Requirements", () => {
         "specs/requirements/alpha.md",
       ),
     );
-    expect(rows.slice(0, 3)).toEqual(["prd.md", "alpha.md", "zebra.md"]);
+    expect(rows.slice(0, 3)).toEqual(["Product requirements", "alpha", "zebra"]);
   });
 
   it("is untroubled by a project whose PRD has not been written yet", () => {
     const rows = renderList(entries("specs/requirements/features/receipts.md"));
-    expect(rows[0]).toBe("receipts.md");
+    expect(rows[0]).toBe("receipts");
+  });
+});
+
+// The rail is the flow (#575): the sections carry state, and an amber one
+// explains itself in rows rather than a hover.
+describe("SpecFileList — the rail carries state", () => {
+  function renderWith(over: Partial<RailInput>, onReason = vi.fn()) {
+    const files = entries("specs/requirements/prd.md");
+    render(
+      <OxygenUIThemeProvider theme={OxygenTheme}>
+        <SpecFileList
+          files={files}
+          selection={null}
+          onSelect={() => {}}
+            onRegenerateDesign={() => {}}
+          sections={railSections({ ...RAIL_INPUT, ...over })}
+          onReason={onReason}
+        />
+      </OxygenUIThemeProvider>,
+    );
+    return onReason;
+  }
+
+  // One design, written across several documents.
+  it("names the design section in the singular", () => {
+    renderWith({});
+    expect(screen.getByText("Design")).toBeInTheDocument();
+    expect(screen.queryByText("Designs")).not.toBeInTheDocument();
+  });
+
+  // The old note claimed agents were "being derived…" over sections nobody had
+  // asked for yet — stating something untrue about what the platform was doing.
+  it("says a section is not created rather than being derived", () => {
+    renderWith({ hasDesign: false, hasValidation: false });
+    expect(screen.getAllByText("Not created yet").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Being derived…")).not.toBeInTheDocument();
+  });
+
+  // Work in progress is the app's existing pulse, not a second animation.
+  it("pulses the section an agent is working on", () => {
+    renderWith({ hasDesign: false, agentWorking: true, agentFlow: "design" });
+    expect(screen.getAllByTestId("working-pulse").length).toBeGreaterThan(0);
+  });
+
+  // An agent re-deriving a stale design is already resolving it, so warning
+  // about the thing being fixed while it is being fixed reads as a fault. The
+  // model still CARRIES the reasons here — SpecView reads them for the design
+  // warning — so the rail has to gate on the state rather than on their count.
+  it("shows no warning chip on the section an agent is working on", () => {
+    renderWith({ designOutdated: true, agentWorking: true, agentFlow: "design" });
+
+    expect(screen.getAllByTestId("working-pulse").length).toBeGreaterThan(0);
+    expect(screen.queryByLabelText(/Design: \d+ to resolve/)).not.toBeInTheDocument();
+  });
+
+  // The same rule on the other section, reached by a different flow: settling
+  // an assumption must not leave the requirements looking unattended.
+  it("shows no warning chip while the requirements are being settled", () => {
+    renderWith({ assumptions: 3, agentWorking: true, agentFlow: "settle" });
+
+    expect(screen.queryByLabelText(/Requirements: \d+ to resolve/)).not.toBeInTheDocument();
+  });
+
+  // A count, not just a mark: three assumptions and one would otherwise look
+  // identical, and "how much" is what a glance is for.
+  it("counts what a section has to resolve", () => {
+    renderWith({ assumptions: 2, openQuestions: 1 });
+    expect(
+      screen.getByRole("button", { name: "Requirements: 3 to resolve" }),
+    ).toBeInTheDocument();
+  });
+
+  it("opens the problems in a dialog, and each one carries its fix", () => {
+    const onReason = renderWith({ assumptions: 2, openQuestions: 1 });
+
+    fireEvent.click(screen.getByRole("button", { name: "Requirements: 3 to resolve" }));
+    expect(screen.getByText("1 open question")).toBeInTheDocument();
+    expect(screen.getByText("2 assumptions to challenge")).toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Open the document" })[0]!);
+    expect(onReason).toHaveBeenCalledWith("document");
+  });
+
+  // The acceptance criteria are written against the same stories, so they go
+  // stale with the design and clear with it — two amber sections, one reason
+  // each, one repair.
+  it("marks design and validation together", () => {
+    renderWith({ designOutdated: true });
+    expect(screen.getByRole("button", { name: "Design: 1 to resolve" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Validation: 1 to resolve" })).toBeInTheDocument();
+  });
+
+  it("offers the re-derivation from the design's dialog", () => {
+    const onReason = renderWith({ designOutdated: true });
+
+    fireEvent.click(screen.getByRole("button", { name: "Design: 1 to resolve" }));
+    fireEvent.click(screen.getByRole("button", { name: "Update the design" }));
+    expect(onReason).toHaveBeenCalledWith("update-design");
   });
 });

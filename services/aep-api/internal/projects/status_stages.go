@@ -99,6 +99,46 @@ type bindingsReader interface {
 // no record of.
 type specTurnRows interface {
 	Newest(ctx context.Context, orgID, projectID string) (*spec.AgentTurn, error)
+	// NewestCompletedFlow finds the newest successful run of one flow — the
+	// staleness check (#575) needs the last DESIGN run, so it can read the
+	// requirements as that run saw them.
+	NewestCompletedFlow(ctx context.Context, orgID, projectID, flow string) (*spec.AgentTurn, error)
+}
+
+// designFlow is the `/<skill>` token a design re-derivation runs under. Only a
+// full re-derivation counts as reconciling the design with the requirements: a
+// targeted edit to one document leaves the SET inconsistent, so clearing the
+// staleness flag on one would drop the warning while the problem stood.
+const designFlow = "design"
+
+// designOutdated answers whether the requirements have moved since the design
+// was last derived from them.
+//
+// nowFingerprint is the requirements as they stand; the baseline is the same
+// reduction taken at the commit the newest successful design run read. No
+// design run on record means there is nothing for the design to be behind —
+// including the ordinary case of a project that has never designed at all.
+//
+// A baseline that cannot be read is reported as an ERROR rather than as
+// "unchanged". The two failures are not symmetric: a spurious warning costs one
+// re-derivation, while a swallowed one lets the coding agents implement a
+// design the user has already changed their mind about.
+func (s *Service) designOutdated(ctx context.Context, orgName, projectName, nowFingerprint string) (bool, error) {
+	if s.specTurns == nil {
+		return false, nil
+	}
+	lastDesign, err := s.specTurns.NewestCompletedFlow(ctx, orgName, projectName, designFlow)
+	if err != nil {
+		return false, fmt.Errorf("newest design turn: %w", err)
+	}
+	if lastDesign == nil || lastDesign.BaseRef == "" {
+		return false, nil
+	}
+	was, err := s.artifactSvc.RequirementsFingerprintAt(ctx, orgName, projectName, lastDesign.BaseRef)
+	if err != nil {
+		return false, fmt.Errorf("requirements at the last design run's base: %w", err)
+	}
+	return was != nowFingerprint, nil
 }
 
 // SetStageSources wires the build/deploy stage inputs at the composition
@@ -147,6 +187,19 @@ func specAgentOf(source specTurnRows, newest *spec.AgentTurn) string {
 		return specAgentIdle
 	}
 	return specAgentState(newest)
+}
+
+// runningFlowOf reports WHICH work is in flight, for the spec rail to pulse the
+// right section (#575).
+//
+// Only a RUNNING turn has one. A finished turn's flow says nothing about what is
+// happening now, and reporting it would leave the rail pulsing whatever the last
+// run happened to be long after it ended.
+func runningFlowOf(newest *spec.AgentTurn) string {
+	if newest == nil || newest.Status != spec.TurnStatusRunning {
+		return ""
+	}
+	return newest.Flow
 }
 
 func specAgentState(newest *spec.AgentTurn) string {
@@ -250,12 +303,25 @@ func (s *Service) populateStages(ctx context.Context, orgName, projectName strin
 
 	// Spec stage + flat artifact fields: one snapshot, same semantics as the
 	// retired per-call reads — minus their per-poll origin fetches.
+	// Staleness is checked only when a design exists — nothing can be behind
+	// the requirements before it has been written, and this keeps the extra
+	// tree read off every pre-design poll.
+	outdated := false
+	if snap.HasDesign {
+		stale, err := s.designOutdated(ctx, orgName, projectName, snap.RequirementsFingerprint)
+		if err != nil {
+			return err
+		}
+		outdated = stale
+	}
 	status.Spec = gen.SpecStage{
-		Exists:  snap.HasSpec,
-		Version: snap.SpecVersion,
-		Dirty:   snap.SpecDirty,
-		Design:  snap.HasDesign,
-		Agent:   specAgentOf(s.specTurns, newestTurn),
+		Exists:         snap.HasSpec,
+		Version:        snap.SpecVersion,
+		Dirty:          snap.SpecDirty,
+		Design:         snap.HasDesign,
+		Agent:          specAgentOf(s.specTurns, newestTurn),
+		AgentFlow:      runningFlowOf(newestTurn),
+		DesignOutdated: outdated,
 	}
 	applyFlatArtifactFields(status, snap)
 

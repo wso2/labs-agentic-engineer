@@ -101,7 +101,7 @@ describe("SpecQuestionForm", () => {
 
       const seed = consumePendingSeed(KEY)?.message ?? "";
       expect(seed).toMatch(/recommended answer/i);
-      expect(seed).toMatch(/assumed/i);
+      expect(seed).toContain("`*assumed*`");
       expect(seed).not.toMatch(/stop interviewing/i);
       expect(readRoomQuestions(doc)[0]!.submitted).toBe(true);
     });
@@ -126,7 +126,7 @@ describe("SpecQuestionForm", () => {
       // Only the unanswered question is handed back.
       expect(seed).toMatch(/Decide the rest yourself/i);
       expect(seed).toContain("What is the approval limit?");
-      expect(seed).toMatch(/assumed/i);
+      expect(seed).toContain("`*assumed*`");
     });
 
     it("defers nothing when the room answered everything", () => {
@@ -170,5 +170,36 @@ describe("SpecQuestionForm", () => {
 
     expect(screen.getByRole("button", { name: "Use recommended answers" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+  });
+});
+
+// This message is the instruction closest to the act of writing an assumption,
+// and the path that produces most of them. Saying only "flag each one as
+// assumed" left the agent to invent a rendering: it wrote `*(assumed)*` about
+// one time in four, which the reader did not recognise — no count in the rail,
+// no Settle control on the line, so the judgment could not be challenged.
+describe("the seeded command names the assumption tag literally", () => {
+  const KEY2 = chatKeyFor(ORG, PROJECT);
+
+  it.each([
+    ["every question handed back", false],
+    ["only the remaining ones", true],
+  ])("%s", (_name, answerOne) => {
+    const { doc, entry } = room();
+    const { rerender } = renderForm(doc, entry);
+    if (answerOne) {
+      fireEvent.click(screen.getByRole("radio", { name: /submitter's own manager/i }));
+      rerender(
+        <SpecQuestionForm doc={doc} entry={readRoomQuestions(doc)[0]!} org={ORG} projectName={PROJECT} />,
+      );
+    }
+
+    fireEvent.click(screen.getByRole("button", { name: "Use recommended answers" }));
+
+    const seed = consumePendingSeed(KEY2)?.message ?? "";
+    // The exact token the reader matches — not a description of it.
+    expect(seed).toContain("`*assumed*`");
+    // The bare word alone is what drifted; it must not stand on its own.
+    expect(seed).not.toMatch(/flag each one as assumed\b/i);
   });
 });

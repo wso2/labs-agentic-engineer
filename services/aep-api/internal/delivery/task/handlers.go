@@ -60,7 +60,17 @@ func (h *Handler) ListTasks(ctx context.Context, request gen.ListTasksRequestObj
 	if request.Params.Tag != "" {
 		tag = request.Params.Tag
 	}
-	views, err := h.reads.ListByTag(ctx, org, request.ProjectName, state, tag)
+	// Comments ride the read by default. The default is true rather than false
+	// because the version-scoped read is the one surface that wants them, and
+	// every other caller of this list is tag-less — where the read ignores the
+	// flag anyway, so defaulting on costs those callers nothing. An explicit
+	// false is the way out for a caller that wants the Tasks without the GitHub
+	// round trip.
+	comments := true
+	if request.Params.Comments != nil {
+		comments = *request.Params.Comments
+	}
+	views, err := h.reads.ListByTag(ctx, org, request.ProjectName, state, tag, comments)
 	if err != nil {
 		return nil, mapTaskReadError(err)
 	}

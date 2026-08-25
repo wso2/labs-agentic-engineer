@@ -106,3 +106,72 @@ func TestLoadThunderSecretFromCluster_EnvOverridesDefault(t *testing.T) {
 		t.Errorf("thunder.admin_client_secret = %q, want %q (SetDefault must not clobber existing value)", got, "override-secret")
 	}
 }
+
+func TestGatewayHostname_InConfigMapKeys(t *testing.T) {
+	found := false
+	for _, k := range ConfigMapKeys {
+		if k == "gateway.hostname" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("gateway.hostname must be present in ConfigMapKeys")
+	}
+}
+
+func TestGatewayHostname_InKeyRegistry(t *testing.T) {
+	meta, ok := keyRegistry["gateway.hostname"]
+	if !ok {
+		t.Fatal("gateway.hostname must be present in keyRegistry")
+	}
+	if meta.required {
+		t.Error("gateway.hostname must be optional (required=false)")
+	}
+	if meta.kind != kindString {
+		t.Errorf("gateway.hostname kind = %v, want kindString", meta.kind)
+	}
+}
+
+func TestLoadFromCluster_GatewayHostname_Populated(t *testing.T) {
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: ConfigMapName, Namespace: "aep"},
+		Data:       map[string]string{"gateway.hostname": "myapis.example.com"},
+	}
+	client := fake.NewSimpleClientset(cm)
+	viper.Reset()
+
+	n, err := LoadFromCluster(context.Background(), client, "aep")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n == 0 {
+		t.Error("LoadFromCluster should report at least one key loaded")
+	}
+	if got := viper.GetString("gateway.hostname"); got != "myapis.example.com" {
+		t.Errorf("gateway.hostname = %q, want %q", got, "myapis.example.com")
+	}
+}
+
+func TestLoadFromCluster_GatewayHostname_Absent(t *testing.T) {
+	// ConfigMap exists but does not include gateway.hostname.
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: ConfigMapName, Namespace: "aep"},
+		Data:       map[string]string{"thunder.namespace": "wso2-thunder"},
+	}
+	client := fake.NewSimpleClientset(cm)
+	viper.Reset()
+
+	if _, err := LoadFromCluster(context.Background(), client, "aep"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := viper.GetString("gateway.hostname"); got != "" {
+		t.Errorf("gateway.hostname should be empty when absent from ConfigMap, got %q", got)
+	}
+	// Optional key absence must not surface as a validation error.
+	for _, e := range ValidateLoaded() {
+		if strings.Contains(e, "gateway.hostname") {
+			t.Errorf("optional gateway.hostname must not cause a validation error, got: %s", e)
+		}
+	}
+}

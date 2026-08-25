@@ -20,25 +20,36 @@ import type React from "react";
 import { useState } from "react";
 import {
   Box,
+  Chip,
   Collapse,
   IconButton,
   List,
   ListItemButton,
   ListItemIcon,
   ListItemText,
+  Stack,
   Tooltip,
   Typography,
 } from "@wso2/oxygen-ui";
 import {
+  Check,
   ChevronDown,
   ChevronRight,
   FileText,
-  Plus,
   RefreshCw,
   Network,
   LayoutDashboard,
+  TriangleAlert,
 } from "@wso2/oxygen-ui-icons-react";
+import { WorkingPulse } from "../../agent-chat/components/WorkingIndicator";
 import { PRD_PATH, type SpecFileEntry } from "../api/mapping";
+import {
+  mostSignificant,
+  reasonCount,
+  type RailSection,
+  type SectionReason,
+} from "../lib/railSections";
+import { ProblemsDialog } from "./ProblemsDialog";
 import {
   buildDesignSection,
   selectionKey,
@@ -52,11 +63,38 @@ function basename(path: string): string {
 const OPENAPI_RE = /\/openapi\.ya?ml$/;
 const COMPONENT_DESIGN_RE = /^specs\/design\/components\/[^/]+\/design\.json$/;
 const VALIDATION_CRITERIA_RE = /^specs\/validation\/validation-criteria\.json$/;
+const DESIGN_ROOT = "specs/design/design.md";
+const SECURITY = "specs/design/security.md";
+
+/**
+ * A document's NAME, never its filename (#575).
+ *
+ * The user is reading a document tree, not a repository — `prd.md` and
+ * `security.md` are storage details that leaked into the one surface they read
+ * throughout the journey. The repo paths deliberately do not change; this is
+ * the mapping, and the lexicon holds the same table in words.
+ *
+ * A file with no entry here falls back to its filename, which keeps an
+ * agent-invented document readable rather than blank. Feature files land there
+ * on purpose: their filename IS the feature's name, so the fallback is already
+ * the right answer.
+ */
+const TITLES: Record<string, string> = {
+  [PRD_PATH]: "Product requirements",
+  [DESIGN_ROOT]: "Design overview",
+  [SECURITY]: "Security",
+};
+
 function fileLabel(path: string): string {
-  if (OPENAPI_RE.test(path)) return "API Spec";
-  if (COMPONENT_DESIGN_RE.test(path)) return "Design Overview";
-  if (VALIDATION_CRITERIA_RE.test(path)) return "Validation Criteria";
-  return basename(path);
+  if (Object.hasOwn(TITLES, path)) return TITLES[path] as string;
+  if (OPENAPI_RE.test(path)) return "API";
+  if (COMPONENT_DESIGN_RE.test(path)) return "Design overview";
+  if (VALIDATION_CRITERIA_RE.test(path)) return "Acceptance criteria";
+  // A document nothing above names — a feature file most of the time, where
+  // the filename IS the feature's name once the extension is off it. Keeping
+  // `.md` would leave the one surface the user reads throughout still showing
+  // them a file.
+  return basename(path).replace(/\.md$/, "");
 }
 
 function fileSel(path: string): SpecSelection {
@@ -67,26 +105,32 @@ export function SpecFileList({
   files,
   selection,
   onSelect,
-  onAddArtifact,
   onRegenerateDesign,
   regenerateDisabled,
-  deriving,
-  failed,
+  sections,
+  onReason,
 }: {
   files: SpecFileEntry[];
   selection: SpecSelection | null;
   onSelect: (sel: SpecSelection) => void;
-  onAddArtifact: () => void;
   /** Re-generate the design (#159) — shown in the Designs header once a design
    *  exists; fires the same design-generation room turn as the header CTA. */
   onRegenerateDesign: () => void;
   /** Disabled while an agent turn runs — a re-generate would be dropped mid-turn. */
   regenerateDisabled?: boolean;
-  /** Agents are still shaping the spec — empty groups say so. */
-  deriving: boolean;
-  /** Derivation failed — empty groups say that instead. */
-  failed: boolean;
+  /** The rail's own state per section (#575) — what is ready, being worked on,
+   *  wanting attention, or not begun, plus why. */
+  sections: RailSection[];
+  /** A reason row was clicked: open the requirements document, or re-derive. */
+  onReason: (action: SectionReason["action"]) => void;
 }) {
+  const sectionOf = (id: RailSection["id"]) =>
+    sections.find((sec) => sec.id === id) ?? {
+      id,
+      title: id,
+      state: "not-started" as const,
+      reasons: [],
+    };
   const selKey = selection ? selectionKey(selection) : null;
   const isSel = (sel: SpecSelection) => selKey === selectionKey(sel);
 
@@ -115,11 +159,96 @@ export function SpecFileList({
     });
   };
 
-  const emptyNote = failed
-    ? "Derivation failed"
-    : deriving
-      ? "Being derived…"
-      : "No files yet";
+  // "Not created yet" — flat, and true. The old note claimed agents were
+  // "being derived…" over sections nobody had asked for yet, which stated
+  // something untrue about what the platform was doing. Active wording now
+  // lives in the section's own state, where it is earned.
+  const emptyNote = "Not created yet";
+
+  // The section header's ornament. Work in progress is the app's existing
+  // pulse — the same 8px dot the chat uses — so "working" looks identical
+  // everywhere rather than growing a second animation per surface.
+  // Colour comes from the THEME, through `currentColor` on a wrapper — not from
+  // MUI's palette CSS variables, which this theme does not define at all
+  // (`--mui-palette-success-main` resolves to nothing here). Passing them as an
+  // icon `color` silently produced an unstyled mark, so every state read the
+  // same shade and the rail's states were not distinguishable.
+  const ornament = (state: RailSection["state"]) => {
+    if (state === "active") return <WorkingPulse />;
+    // Nothing for `attention`: that state always carries a chip, and the chip
+    // already leads with a warning triangle. Both together put two identical
+    // marks a few pixels apart, which reads as two problems rather than one.
+    if (state !== "ready") return null;
+    return (
+      <Box sx={{ display: "flex", flexShrink: 0, color: "success.main" }}>
+        <Check size={14} />
+      </Box>
+    );
+  };
+
+  const sectionHeader = (section: RailSection, action?: React.ReactNode) => (
+    <Box
+      sx={{
+        px: 2,
+        py: 0.5,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 1,
+      }}
+    >
+      <Stack direction="row" spacing={0.75} sx={{ alignItems: "center", minWidth: 0 }}>
+        <Typography
+          variant="overline"
+          color={
+            section.state === "attention"
+              ? "warning.main"
+              : section.state === "active"
+                ? "primary.main"
+                : section.state === "not-started"
+                  ? "text.disabled"
+                  : "text.secondary"
+          }
+          noWrap
+        >
+          {section.title}
+        </Typography>
+        {ornament(section.state)}
+        {/* The count, not just the mark: three assumptions and one would
+            otherwise look identical, and "how much" is the thing a glance is
+            for. The hover carries the most significant one so a peek costs no
+            click; the click carries all of them. */}
+        {/* Gated on the STATE, not on `reasons.length`. The model keeps a
+            section's reasons while an agent works on it — SpecView reads them
+            for the design warning — but the rail must not show them: an agent
+            re-deriving a stale design is already resolving it, and warning
+            about the thing being fixed while it is being fixed reads as a
+            fault. `attention` is the only state this chip belongs to; the other
+            three carry no reasons or, when active, deliberately do not show
+            them. */}
+        {section.state === "attention" && section.reasons.length > 0 && (
+          <Tooltip title={mostSignificant(section.reasons)?.label ?? ""}>
+            <Chip
+              size="small"
+              color="warning"
+              variant="outlined"
+              icon={<TriangleAlert size={12} />}
+              label={reasonCount(section.reasons)}
+              onClick={() => setProblemsFor(section)}
+              aria-label={`${section.title}: ${reasonCount(section.reasons)} to resolve`}
+              sx={{ height: 20, cursor: "pointer" }}
+            />
+          </Tooltip>
+        )}
+      </Stack>
+      {action}
+    </Box>
+  );
+
+  // Which section's problems are open, if any. Local: the dialog is a detail of
+  // reading the rail, and lifting it would make every consumer of this list
+  // carry state it has no other use for.
+  const [problemsFor, setProblemsFor] = useState<RailSection | null>(null);
 
   // `indent` bumps a row one level deeper than the top-level tree (matching
   // the old console's depth-based pl: files inside an expanded component sit
@@ -141,36 +270,9 @@ export function SpecFileList({
     </ListItemButton>
   );
 
-  const flatGroup = (
-    title: string,
-    groupFiles: SpecFileEntry[],
-    addBtn?: boolean,
-  ) => (
+  const flatGroup = (section: RailSection, groupFiles: SpecFileEntry[]) => (
     <Box sx={{ mb: 1 }}>
-      <Box
-        sx={{
-          px: 2,
-          py: 0.5,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-        }}
-      >
-        <Typography variant="overline" color="text.secondary">
-          {title}
-        </Typography>
-        {addBtn && (
-          <Tooltip title="Add requirement artifact">
-            <IconButton
-              size="small"
-              aria-label="Add requirement artifact"
-              onClick={onAddArtifact}
-            >
-              <Plus size={16} />
-            </IconButton>
-          </Tooltip>
-        )}
-      </Box>
+      {sectionHeader(section)}
       {groupFiles.length > 0 ? (
         <List dense disablePadding>
           {groupFiles.map((f) =>
@@ -191,23 +293,13 @@ export function SpecFileList({
 
   return (
     <Box component="nav" aria-label="Spec files" sx={{ py: 1 }}>
-      {flatGroup("Requirements", requirements, true)}
+      {flatGroup(sectionOf("requirements"), requirements)}
 
-      {/* Designs — grouped by component, with synthetic diagram entries. */}
+      {/* Design — grouped by component, with synthetic diagram entries. */}
       <Box sx={{ mb: 1 }}>
-        <Box
-          sx={{
-            px: 2,
-            py: 0.5,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-          }}
-        >
-          <Typography variant="overline" color="text.secondary">
-            Designs
-          </Typography>
-          {(design.hasComponents || design.overview.length > 0) && (
+        {sectionHeader(
+          sectionOf("design"),
+          (design.hasComponents || design.overview.length > 0) && (
             <Tooltip
               title={
                 regenerateDisabled
@@ -227,18 +319,14 @@ export function SpecFileList({
                 </IconButton>
               </span>
             </Tooltip>
-          )}
-        </Box>
+          ),
+        )}
         {design.hasComponents || design.hasCellDsl || design.overview.length > 0 ? (
           <List dense disablePadding>
             {design.hasCellDsl &&
               row({ kind: "cell-diagram" }, "Architecture", <Network size={16} />)}
             {design.overview.map((f) =>
-              row(
-                fileSel(f.path),
-                basename(f.path),
-                <LayoutDashboard size={16} />,
-              ),
+              row(fileSel(f.path), fileLabel(f.path), <LayoutDashboard size={16} />),
             )}
             {design.components.map((c) => {
               const collapsed = collapsedComponents.has(c.name);
@@ -299,8 +387,21 @@ export function SpecFileList({
         )}
       </Box>
 
-      {flatGroup("Validation", validation)}
+      {flatGroup(sectionOf("validation"), validation)}
 
+      <ProblemsDialog
+        open={problemsFor !== null}
+        title={problemsFor ? `${problemsFor.title} — to resolve` : ""}
+        problems={(problemsFor?.reasons ?? []).map((reason) => ({
+          key: reason.key,
+          label: reason.label,
+          fix: {
+            label: reason.action === "update-design" ? "Update the design" : "Open the document",
+            run: () => onReason(reason.action),
+          },
+        }))}
+        onClose={() => setProblemsFor(null)}
+      />
     </Box>
   );
 }

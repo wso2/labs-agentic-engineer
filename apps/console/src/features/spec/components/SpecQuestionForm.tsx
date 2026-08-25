@@ -275,6 +275,13 @@ export function SpecQuestionForm({
   // which reads as the agent's invention rather than the user's overwritten
   // answer. The `grilling` skill sets the same bound: "apply your recommended
   // answer to every REMAINING decision".
+  // NAMES THE TAG LITERALLY. This message is the instruction closest to the act
+  // of writing an assumption — it is the path that produces most of them — and
+  // it used to say only "flag each one as assumed", leaving the agent to invent
+  // a rendering. It invented `*(assumed)*` about one time in four, which the
+  // reader then did not recognise: no count in the rail, and no Settle control
+  // on the line, so the user could not challenge the judgment. Same wording as
+  // the `grilling` skill, so the two instructions cannot disagree.
   const useRecommended = () => {
     const answered = entry.questions.filter((q, i) => isQuestionAnswered(q, answers[i]));
     const remaining = entry.questions.filter((q, i) => !isQuestionAnswered(q, answers[i]));
@@ -285,8 +292,8 @@ export function SpecQuestionForm({
       remaining.length === 0
         ? ""
         : remaining.length === entry.questions.length
-          ? "Use your recommended answers for these questions — decide them yourself and flag each one as assumed where it lands in the document, so I can change it later."
-          : `Decide the rest yourself using your recommended answers, and flag each one as assumed where it lands in the document, so I can change it later:\n` +
+          ? "Use your recommended answers for these questions — decide them yourself and tag each one `*assumed*` where it lands in the document, so I can change it later."
+          : "Decide the rest yourself using your recommended answers, and tag each one `*assumed*` where it lands in the document, so I can change it later:\n" +
             remaining.map((q) => `- "${q.question}"`).join("\n");
     // The answered half rides first, serialized exactly as Continue would send
     // it, so the agent reads one message carrying both decisions and deferrals.

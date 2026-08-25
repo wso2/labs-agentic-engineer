@@ -32,12 +32,12 @@ spec:
             - name: THUNDER_SYSTEM_CLIENT_ID
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "thunder-app-operator.credentialsSecret" . }}
+                  name: thunder-app-operator-credentials
                   key: client-id
             - name: THUNDER_SYSTEM_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "thunder-app-operator.credentialsSecret" . }}
+                  name: thunder-app-operator-credentials
                   key: client-secret
           livenessProbe:
             httpGet:

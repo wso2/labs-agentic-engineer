@@ -349,6 +349,22 @@ func (m *memTurnRepo) GetActive(_ context.Context, orgID, projectID string) (*sp
 	return nil, nil
 }
 
+func (m *memTurnRepo) NewestCompletedFlow(_ context.Context, orgID, projectID, flow string) (*spec.AgentTurn, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var newest *spec.AgentTurn
+	for _, r := range m.rows { // insertion order == creation order
+		if r.OrgID == orgID && r.ProjectID == projectID && r.Flow == flow && r.Status == "completed" {
+			newest = r
+		}
+	}
+	if newest == nil {
+		return nil, nil
+	}
+	cp := *newest
+	return &cp, nil
+}
+
 func (m *memTurnRepo) Newest(_ context.Context, orgID, projectID string) (*spec.AgentTurn, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

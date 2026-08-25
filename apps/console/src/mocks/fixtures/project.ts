@@ -551,7 +551,15 @@ function v3Task(
 const v3Tasks: TaskView[] = [
   v3Task(120, "Order history list for a customer", "merged", {
     component: "storefront",
-    latestComment: "Merged into main · 6 files · 24 tests passing",
+    comments: [
+      {
+        id: "c-120-1",
+        author: "aep-bot",
+        body: "Merged into main · 6 files · 24 tests passing",
+        createdAt: minutesAgo(5),
+        url: `${BOARD_URL}/120#issuecomment-1`,
+      },
+    ],
     executions: {
       coding: {
         id: "exec-120",
@@ -565,7 +573,15 @@ const v3Tasks: TaskView[] = [
   }),
   v3Task(121, "Re-order a past order", "merged", {
     component: "orders-api",
-    latestComment: "Merged into main · 3 files",
+    comments: [
+      {
+        id: "c-121-1",
+        author: "aep-bot",
+        body: "Merged into main · 3 files",
+        createdAt: minutesAgo(5),
+        url: `${BOARD_URL}/121#issuecomment-1`,
+      },
+    ],
     executions: {
       coding: {
         id: "exec-121",
@@ -579,7 +595,15 @@ const v3Tasks: TaskView[] = [
   }),
   v3Task(122, "Returns request with a reason code", "merged", {
     component: "orders-api",
-    latestComment: "Merged into main · 9 files",
+    comments: [
+      {
+        id: "c-122-1",
+        author: "aep-bot",
+        body: "Merged into main · 9 files",
+        createdAt: minutesAgo(5),
+        url: `${BOARD_URL}/122#issuecomment-1`,
+      },
+    ],
     executions: {
       coding: {
         id: "exec-122",
@@ -595,8 +619,15 @@ const v3Tasks: TaskView[] = [
   // the row tints, counts up, and carries its shimmer.
   v3Task(123, "Refund a returned order to the original card", "pending", {
     component: "orders-api",
-    latestComment:
-      "Writing tests for the refund path — added the reversal call in payments.go and regenerated the storefront client after the contract check failed once",
+    comments: [
+      {
+        id: "c-123-1",
+        author: "aep-bot",
+        body: "Writing tests for the refund path — added the reversal call in payments.go and regenerated the storefront client after the contract check failed once",
+        createdAt: minutesAgo(5),
+        url: `${BOARD_URL}/123#issuecomment-1`,
+      },
+    ],
     executions: {
       coding: {
         id: "exec-123",
@@ -611,7 +642,15 @@ const v3Tasks: TaskView[] = [
   // human. Derived, not a platform state — see taskRow.ts.
   v3Task(124, "Email the customer when a return is approved", "pending", {
     component: "notifier",
-    latestComment: "Ready for review — waiting on your approval before it merges",
+    comments: [
+      {
+        id: "c-124-1",
+        author: "aep-bot",
+        body: "Ready for review — waiting on your approval before it merges",
+        createdAt: minutesAgo(5),
+        url: `${BOARD_URL}/124#issuecomment-1`,
+      },
+    ],
     executions: {
       coding: {
         id: "exec-124",
@@ -633,8 +672,15 @@ const v3Tasks: TaskView[] = [
     component: "Shippo",
     hold: true,
     blockedBy: ["Shippo API key"],
-    latestComment:
-      "Blocking task #123 — the agent cannot start until this dependency is configured",
+    comments: [
+      {
+        id: "c-126-1",
+        author: "aep-bot",
+        body: "Blocking task #123 — the agent cannot start until this dependency is configured",
+        createdAt: minutesAgo(5),
+        url: `${BOARD_URL}/126#issuecomment-1`,
+      },
+    ],
   },
 ];
 

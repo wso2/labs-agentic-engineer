@@ -41,6 +41,15 @@ type AgentTurn struct {
 	ConversationID string `gorm:"index;not null" json:"conversationId"`
 	UseCase        string `gorm:"not null" json:"useCase"`
 
+	// Flow is the `/<skill>` token this turn ran ("design", "start", …); "" for
+	// plain chat. Recorded (#575) because the status read has to find "the
+	// newest successful DESIGN run" to answer whether the requirements have
+	// moved since — and a turn is otherwise indistinguishable from any other
+	// once it has finished. NOT a conversation-identity dimension (see
+	// useCaseGeneral): every turn of a project shares one thread whatever its
+	// flow, and this column only ever narrows a lookup.
+	Flow string `gorm:"type:text;index" json:"-"`
+
 	// BaseRef is the main-tip commit SHA the turn ran against (its snapshot
 	// ref); SkillsRef is the _skills head the skill catalog was read at.
 	BaseRef   string `gorm:"not null" json:"baseRef"`

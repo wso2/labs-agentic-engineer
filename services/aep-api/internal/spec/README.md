@@ -101,10 +101,20 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
   carrying the creating user's bearer (which is what lets the agent join the spec room), on the project's
   current thread. Idempotent on "has this project ever run a turn", because it has two triggers: project
   create, and the references upload a create with `referencesPending` held it for. Runs INLINE, so the
-  create answers only once the turn row exists — that is what keeps `spec.agent == ""` meaning
-  "never started" rather than also "starting right now", which no surface could tell apart. Bounded
+  create answers only once the turn row exists — that is what keeps `spec.agent == "never-started"`
+  meaning "no turn has ever run" rather than also "starting right now", which no surface could tell
+  apart. (`""` is a different fact: a turn HAS run and the newest one completed.) Bounded
   (20s) and error-swallowing: a kickoff that cannot start never fails the creation, and the spec
   view's empty state offers it instead.
+- **Design staleness is derived, never stored** (#575). "Have the requirements moved since the
+  design was written?" is answered by reading the requirements at the commit the newest successful
+  `/design` turn recorded reading the project at, and comparing that reduction against today's —
+  `RequirementsFingerprint` over a tree listing (path + blob sha, so no content is read). Nothing is
+  stamped, so nothing falls out of sync, and the question is answerable for projects predating the
+  check. A stored fingerprint was rejected because a turn NEVER commits: its file changes stream to
+  the collab doc and the collab server commits them later, carrying no turn id and no author — there
+  is no moment the platform controls, and no way to tell that flush from a hand edit. The build gate
+  refuses on it (`DESIGN_OUTDATED`), which is what makes it a block rather than a display.
 - **A running turn carries its own display record** (#562). `agent_turns` stores the transcript
   line the turn started from plus its author, and `TurnStatus` serves them. Not redundant with the
   journal that rides to the agents service: that store persists a turn's transcript only when the

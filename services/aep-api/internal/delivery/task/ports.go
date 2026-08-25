@@ -52,6 +52,11 @@ type IssueClient interface {
 	// crash re-run dedupe against what is already there — the milestone, not a
 	// label query, is the version's membership.
 	ListMilestoneIssues(ctx context.Context, orgID, projectID string, filter sourcecontrol.MilestoneIssuesFilter) ([]sourcecontrol.IssueInfo, error)
+	// ListMilestoneIssueComments reads the newest perIssue comments of every
+	// issue in one milestone, bucketed by issue number and oldest first, in ONE
+	// round trip. Milestone-scoped because that is the only bounded set of
+	// issues this surface can name — see ListByTag.
+	ListMilestoneIssueComments(ctx context.Context, orgID, projectID string, number, perIssue int) (map[int][]sourcecontrol.IssueComment, error)
 }
 
 // ComponentPathReader maps a design component to its source directory (appPath)

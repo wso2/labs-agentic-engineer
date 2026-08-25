@@ -51,7 +51,8 @@ migration for every existing project. This table *is* the mapping — keep it, s
 path, which requires the agent to stop quoting them
 ([#530](https://github.com/wso2/labs-agentic-engineer/issues/530)).
 
-Placeholder for an artifact class with nothing in it: **"Not created yet"**. Active wording is
+Placeholder for an artifact class with nothing in it: **"Not created yet"** — shipped in
+[#575](https://github.com/wso2/labs-agentic-engineer/issues/575). Active wording is
 reserved for when an agent is genuinely working — the old *"Being derived…"* claimed work that
 was not happening.
 
@@ -417,9 +418,77 @@ lens on every story; the list pins the PRD instead, and everything behind it kee
 | outdated | amber warning, section name amber |
 | not started | dim, no ornament |
 
-**Outdated is the load-bearing one.** Edit requirements after a design exists and Requirements
-goes *active* while Design and Validation go *outdated* — the same rail that reported progress
-reports staleness, with no second mechanism to learn.
+**Outdated is the load-bearing one.** Edit requirements after a design exists and Design and
+Validation go *outdated* — the same rail that reported progress reports staleness, with no second
+mechanism to learn.
+
+**An amber section carries a COUNTED alert chip beside its title**, and clicking it opens a dialog
+listing what there is to resolve, each with the way to resolve it. Hovering shows the most
+significant one, so a peek costs no click.
+
+Rows beneath the title were tried first and cost the rail up to three extra lines before the user
+reached the documents, in a column 280px wide; one chip costs one slot however many problems there
+are. It is a chip rather than a bare tooltip because it is discoverable at rest — the hover is a
+shortcut on top of an affordance, not a replacement for one. And it carries the **count**, because
+three assumptions and one otherwise look identical and *how much* is what a glance is for.
+
+| section | what the dialog lists | its fix |
+|---|---|---|
+| Requirements | *N open questions* | **Open the document**, where the settle controls already are |
+| Requirements | *N assumptions to challenge* | **Open the document** |
+| Design · Validation | *The requirements have changed since* | **Update the design** |
+
+**Ordered by how badly it hurts to ignore**, which is what makes the hover's pick meaningful rather
+than arbitrary: a design behind its requirements blocks the build and ships the wrong software if
+forced; an open question is a hole only the user can fill, so nothing else can resolve it; an
+assumption already *has* an answer standing, which the user may or may not disagree with.
+
+**Build refuses the same way.** Its unmet conditions are the same kind of thing — a list the user can
+act on — so they read identically rather than one being a strip under the header and the other a
+sidebar. Acting from either dialog closes it and goes, so it is never dismissed twice.
+
+Assumptions and open questions are counted **apart** — one is a judgment the agent made and you may
+overturn, the other a hole only you can fill — and neither GATES anything. Designing against
+assumptions is deliberate: the requirements arrive early, full of them, and are refined in place. The
+rail reports; Design stays clickable throughout.
+
+**But Generate design warns first when they stand.** The rail says the same thing at rest; the click
+is the moment it becomes consequential, because the design is derived from those guesses and
+overturning one afterwards means deriving again. So the dialog names what is unsettled and offers
+both ways: *Resolve issues* returns to the requirements document, where the settle controls already
+live on the flagged lines, and *Generate anyway* goes on.
+
+This is where the dialog's two moods separate, and the distinction is the point:
+
+| | says | way past |
+|---|---|---|
+| **refusal** — Build | the platform will not do this yet | none; Close |
+| **warning** — Generate design | this will cost you if you are wrong | the primary action |
+
+A warning that cannot be dismissed is a gate wearing a warning's clothes, and gating a design run on
+settled requirements was tried and removed. So the way past is the *primary* button, not a buried
+link — the user is being informed, not asked for permission.
+
+**Active follows the WORK in flight, not which sections happen to be empty.** The running turn's
+flow says what it is for — settling an assumption is requirements work, a design run is design work
+— and that maps straight onto the section that will change. Guessing from emptiness was wrong in
+both directions: settling an assumption lit Design, because Design was the first empty section; and
+the moment a design run wrote its first file the pulse jumped to Validation, while the rest of the
+design was still being written.
+
+Work the rail cannot place — a plain chat turn, an org's own skill — pulses **nothing**. An agent is
+working, but a pulse on the wrong section is worse than a still rail.
+
+**The counts read the LIVE document, not the committed one.** Deleting an `*assumed*` flag clears
+the alert as you delete it; the committed copy is a collab flush behind, and on the agent's own
+edits that lag was long enough to look broken.
+
+**How staleness is known.** Every commit is a permanent snapshot, and every agent turn records the
+commit it read the project at — so the requirements *as the last design run saw them* are still
+there to compare against. Nothing is stored, so nothing can fall out of sync, and the question is
+answerable for projects that predate the check. Coarse on purpose: it reports that the requirements
+moved, never which components are affected. Over-marking costs one re-derivation the agent mostly
+no-ops through; under-marking ships a design the user has already changed their mind about.
 
 ### Artifact state
 
@@ -444,12 +513,21 @@ Work in progress is the app's existing `agentChatWorkingPulse` — an 8px `prima
 opacity .3→1, scale .85→1, 1.2s ease-in-out, from `WorkingIndicator.tsx`. Not a spinner, and not a
 second animation: "working" looks the same everywhere it appears.
 
-### Build, at the foot of the rail
+### Build stays in the header
 
-| situation | Build says |
-|---|---|
-| design not written yet | *after the design is written* |
-| design outdated | **blocked** — *The design is behind your requirements.* + **Update the design** |
+Build was drawn at the foot of the rail as its terminal step. It stays where it is: a call to
+action at the bottom of a scrolling list is not where a user looks for it, and the header button is
+visible from every part of the workspace rather than only once you have reached the end of a list.
+
+**An outdated design still blocks it**, as one more entry in the refusal Build shows on click —
+*"the requirements have changed since this design was written — update the design before building"*.
+The refusal is a **dialog**, headed *"Not ready to build yet"*, the same one the rail's alert chip
+opens. The button stays live and the same click re-checks, exactly as it does for a missing
+dependency. No disabled control and no tooltip.
+
+The refusal is enforced by the **build gate on the server**, not by the console: a block the client
+draws is not a block. The rail's amber Design row carries the same repair for anyone who meets it
+there first.
 
 **An outdated design blocks Build.** Building it would implement something the user has already
 changed their mind about. This is the one gate that survives the map's general "progress with

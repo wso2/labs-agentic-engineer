@@ -20,6 +20,7 @@ import { describe, expect, it } from "vitest";
 import type { components } from "../../../generated/aep-api";
 import {
   anyTaskRunning,
+  latestComment,
   latestExecution,
   taskElapsedFrom,
   taskRowChip,
@@ -132,11 +133,41 @@ describe("taskRowChip", () => {
   });
 });
 
+const comment = (body: string, id = "c1") => ({
+  id,
+  author: "aep-bot",
+  body,
+  createdAt: "2026-07-12T04:50:00Z",
+  url: "https://github.com/acme-dev/demo-shop/issues/121#issuecomment-1",
+});
+
 describe("taskRowNote", () => {
   it("prefers the agent's own words", () => {
     expect(
-      taskRowNote(task({ latestComment: "Writing tests for the routing rule" })),
+      taskRowNote(task({ comments: [comment("Writing tests for the routing rule")] })),
     ).toBe("Writing tests for the routing rule");
+  });
+
+  it("takes the NEWEST comment — the list arrives oldest first", () => {
+    expect(
+      taskRowNote(
+        task({ comments: [comment("Starting", "c1"), comment("Nearly done", "c2")] }),
+      ),
+    ).toBe("Nearly done");
+  });
+
+  it("flattens a markdown body to its first real line", () => {
+    // A comment body is markdown over an unbounded textarea; the row is one
+    // dense line. Leading blank lines must not render as an empty note.
+    expect(
+      taskRowNote(task({ comments: [comment("\n\n  Rebased onto main\n\nthen re-ran the suite")] })),
+    ).toBe("Rebased onto main");
+  });
+
+  it("falls through when a comment body is entirely whitespace", () => {
+    expect(
+      taskRowNote(task({ comments: [comment("   \n  ")], rationale: "Minted from the spec" })),
+    ).toBe("Minted from the spec");
   });
 
   it("names the blocker when the agent has said nothing", () => {
@@ -154,6 +185,14 @@ describe("taskRowNote", () => {
   it("is null rather than a placeholder when there is nothing to say", () => {
     // Eleven rows each reading "No updates yet" is noise, not information.
     expect(taskRowNote(task())).toBeNull();
+  });
+});
+
+describe("latestComment", () => {
+  it("is the last element, and undefined when the field is absent", () => {
+    // The contract never sends an empty array — absence covers every empty case.
+    expect(latestComment(task({ comments: [comment("a", "c1"), comment("b", "c2")] }))?.id).toBe("c2");
+    expect(latestComment(task())).toBeUndefined();
   });
 });
 

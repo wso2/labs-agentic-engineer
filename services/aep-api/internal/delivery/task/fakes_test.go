@@ -22,6 +22,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
@@ -44,6 +45,28 @@ type fakeIssues struct {
 	closed   []int
 	reopened []int
 	moved    []string
+	// hostComments is what the HOST holds on each issue — the read side, as
+	// distinct from `comments`, which records the bodies this fake was asked to
+	// write. commentReads/lastCommentPerIssue prove whether the read happened at
+	// all and what cap it asked for; failComments makes it fail.
+	hostComments        map[int][]sourcecontrol.IssueComment
+	commentReads        int
+	lastCommentPerIssue int
+	failComments        bool
+	// The overlap probe (see the two milestone reads below): the comment read
+	// closes commentStarted on entry, and the issue list waits on
+	// awaitCommentStart. Both nil unless a test wires them with overlapProbe.
+	commentStarted    chan struct{}
+	awaitCommentStart chan struct{}
+}
+
+// overlapProbe makes the issue list block until the comment read has started,
+// so a test can assert the two host reads OVERLAP without measuring time.
+func (f *fakeIssues) overlapProbe() *fakeIssues {
+	ch := make(chan struct{})
+	f.commentStarted = ch
+	f.awaitCommentStart = ch
+	return f
 }
 
 // writer is the fake wearing the domain's issue-write surface, which is how the
@@ -103,6 +126,17 @@ func (f *fakeIssues) seedInMilestone(issue sourcecontrol.IssueInfo, milestone in
 }
 
 func (f *fakeIssues) ListMilestoneIssues(_ context.Context, _, _ string, filter sourcecontrol.MilestoneIssuesFilter) ([]sourcecontrol.IssueInfo, error) {
+	// The concurrency probe: block the issue list until the comment read has
+	// STARTED. Sequential reads would leave this waiting forever, so the test
+	// asserting overlap fails by timing out rather than by a stopwatch. Waited
+	// on before the lock is taken — the comment read needs it too.
+	if f.awaitCommentStart != nil {
+		select {
+		case <-f.awaitCommentStart:
+		case <-time.After(2 * time.Second):
+			return nil, fmt.Errorf("comment read never started: the two host reads are sequential")
+		}
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []sourcecontrol.IssueInfo
@@ -119,6 +153,46 @@ func (f *fakeIssues) ListMilestoneIssues(_ context.Context, _, _ string, filter 
 		out = append(out, *issue)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Number < out[j].Number })
+	return out, nil
+}
+
+// seedComment appends a host comment to an issue, in thread order.
+func (f *fakeIssues) seedComment(number int, c sourcecontrol.IssueComment) *fakeIssues {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.hostComments == nil {
+		f.hostComments = map[int][]sourcecontrol.IssueComment{}
+	}
+	f.hostComments[number] = append(f.hostComments[number], c)
+	return f
+}
+
+func (f *fakeIssues) ListMilestoneIssueComments(_ context.Context, _, _ string, number, perIssue int) (map[int][]sourcecontrol.IssueComment, error) {
+	// Announce the start before contending for the lock, so the issue list this
+	// releases is not waiting on a lock this call is about to take.
+	if f.commentStarted != nil {
+		close(f.commentStarted)
+		f.commentStarted = nil
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.commentReads++
+	f.lastCommentPerIssue = perIssue
+	if f.failComments {
+		return nil, fmt.Errorf("boom: comment read failed")
+	}
+	out := map[int][]sourcecontrol.IssueComment{}
+	for n, cs := range f.hostComments {
+		if f.milestoneOf[n] != number || len(cs) == 0 {
+			continue
+		}
+		// The host answers the NEWEST perIssue, still in thread order — mirror
+		// that here so a test can prove the tail is what survives the cap.
+		if perIssue > 0 && len(cs) > perIssue {
+			cs = cs[len(cs)-perIssue:]
+		}
+		out[n] = append([]sourcecontrol.IssueComment(nil), cs...)
+	}
 	return out, nil
 }
 

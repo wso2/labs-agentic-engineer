@@ -108,9 +108,10 @@ here: they're the open `console` + `feature` issues.
   so the user lands on the overview with the agent chat already open, the
   transcript showing `/start` beside their own idea (cropped), and the Spec card
   reading **Writing requirements** with **Open spec** as its CTA: generation is
-  already underway, so there is nothing left to ask for. A create that attached
-  reference documents declares `referencesPending` and the platform holds the
-  kickoff until the upload lands — they are the primary brief. The spec view,
+  already underway, so there is nothing left to ask for. A project created WITH
+  reference documents declares `referencesPending`, and the platform holds the
+  kickoff until the upload lands — they are the primary brief, and an interview
+  started before they arrive is conducted blind. The spec view,
   opened before the interview has asked anything, says *"Agent is working on the
   requirements document"*. **Nothing auto-navigates**, and the `?generate=`
   handshake between the overview CTA and the spec view is retired: the CTA that
@@ -119,13 +120,28 @@ here: they're the open `console` + `feature` issues.
   died, **Generate spec** on a project nothing ever started —
   [#562](https://github.com/wso2/labs-agentic-engineer/issues/562)
   (contract: `SpecStage.agent`, `CreateProjectRequest.referencesPending`)
+- Spec view — the rail is the flow: **Requirements · Design · Validation**
+  each carrying state (ready · being worked on · needs attention · not begun),
+  documents named as documents rather than files (*Product requirements*,
+  *Design overview*, *Acceptance criteria*), and the app's existing pulse on a
+  section an agent is writing. An amber section explains itself in **rows** —
+  *N assumptions to challenge*, *N open questions*, *The requirements have
+  changed since* — each going where the work already happens. Staleness is
+  derived by comparing the requirements against the snapshot the last design run
+  read, so nothing is stored and nothing can fall out of sync; **an outdated
+  design is refused by the build gate**, joining the refusal Build already shows
+  on click. Retires *"Being derived…"*, which claimed work over sections nobody
+  had asked for —
+  [#575](https://github.com/wso2/labs-agentic-engineer/issues/575)
+  (contract: `SpecStage.designOutdated`)
 - Overview — the spec card stops rewriting itself: **one button** (*Open spec*)
   in every state instead of three captions walked during a single kickoff with
   no user input, and **one line that always says something** instead of blanking
-  the moment the agent asked a question. Starting moves to the spec view's empty
-  failure alert — the only state that can be *known* rather than inferred, so
-  the button can never appear mid-kickoff — as **Retry**; an empty workspace
-  offers nothing at all, and the card is a destination and never a send. The kickoff now fires **inline** with `POST /projects`, so
+  the moment the agent asked a question. The card is a destination and never a
+  send — every way of STARTING work moved to the spec view, which offers
+  **Retry** in exactly two states: under the failure alert when a kickoff died
+  (the only state that can be *known* rather than inferred, so the button can
+  never appear mid-kickoff), and on an empty workspace with nothing running. The kickoff now fires **inline** with `POST /projects`, so
   the create answers only once the turn exists — which is what makes
   `spec.agent == ""` mean *never started* rather than also *starting right now* —
   [#562](https://github.com/wso2/labs-agentic-engineer/issues/562)

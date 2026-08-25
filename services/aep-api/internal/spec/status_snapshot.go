@@ -55,6 +55,11 @@ type StatusSnapshot struct {
 	// HasDesignTag: any legacy v<N>-<M> design tag exists — the flat
 	// designStatus="approved" predicate.
 	HasDesignTag bool
+	// RequirementsFingerprint is the requirements AS THEY STAND, reduced to one
+	// comparable value (#575). Computed from the head listing this snapshot
+	// already walks, so it costs nothing extra; the staleness check compares it
+	// against the same value at the last design run's base commit.
+	RequirementsFingerprint string
 }
 
 // StatusSnapshot implements ArtifactService: the status poll's git source
@@ -103,6 +108,7 @@ func (s *artifactService) StatusSnapshot(ctx context.Context, orgID, projectID s
 		snap.HasDesign = strings.TrimSpace(string(content)) != ""
 	}
 
+	snap.RequirementsFingerprint = RequirementsFingerprint(headEntries)
 	snap.HasDesignTag = latestDesignTag(tags) != ""
 	if latest, _, ok := latestRequirementsTagInfo(tags); ok {
 		snap.SpecVersion = latest.Name
@@ -114,6 +120,21 @@ func (s *artifactService) StatusSnapshot(ctx context.Context, orgID, projectID s
 		snap.SpecDirty = !specTreesEqual(headEntries, tagEntries)
 	}
 	return snap, nil
+}
+
+// RequirementsFingerprintAt implements ArtifactService: the same reduction as
+// the snapshot's, taken at an arbitrary commit. One SHA-addressed tree listing
+// against the local mirror — no fetch, matching the status poll's budget.
+func (s *artifactService) RequirementsFingerprintAt(ctx context.Context, orgID, projectID, at string) (string, error) {
+	_, ref, err := s.readyRef(ctx, orgID, projectID)
+	if err != nil {
+		return "", err
+	}
+	entries, _, err := s.git.Workspace().List(ctx, ref, at)
+	if err != nil {
+		return "", fmt.Errorf("list tree at %s: %w", at, err)
+	}
+	return RequirementsFingerprint(entries), nil
 }
 
 // ComponentCountAtTag implements ArtifactService: the deploy stage's

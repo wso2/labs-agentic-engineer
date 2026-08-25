@@ -67,7 +67,7 @@ func runSecretImport(cmd *cobra.Command, args []string) error {
 		}
 		value = strings.TrimSpace(string(b))
 	} else {
-		v, err := readMaskedInput("Secret value")
+		v, err := ui.PromptSecret("Secret value")
 		if err != nil {
 			return fmt.Errorf("read secret value: %w", err)
 		}

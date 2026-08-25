@@ -39,6 +39,10 @@ const (
 	// codeMissingDesign — the design layout gate failed at its root
 	// (specs/design/design.md absent).
 	codeMissingDesign = "MISSING_DESIGN"
+	// codeDesignOutdated — the requirements moved after this design was
+	// derived from them (#575). The only gate that refuses a design for being
+	// WRONG rather than incomplete.
+	codeDesignOutdated = "DESIGN_OUTDATED"
 )
 
 // SpecValidationError is the aggregate build-gate rejection: the spec at the
@@ -115,6 +119,18 @@ func (s *artifactService) SaveSpec(ctx context.Context, orgID, projectID string,
 	if verr := validateSpecBundles(reqFiles, designFiles); verr != nil {
 		slog.WarnContext(ctx, "spec save: hard gate failed",
 			"project", projectID, "commit", commit, "error", verr)
+		return nil, verr
+	}
+
+	// …and it must be the design the user actually asked for (#575). An
+	// outdated design is the one thing that blocks a build on grounds of being
+	// WRONG rather than incomplete: building it hands the coding agents
+	// something the user has already changed their mind about. It joins the
+	// same refusal list every other unmet condition uses, so the console
+	// renders it with the rest and Build stays clickable — the click re-checks.
+	if verr := s.staleDesignRefusal(ctx, ref, orgID, projectID, commit); verr != nil {
+		slog.WarnContext(ctx, "spec save: the design is behind the requirements",
+			"project", projectID, "commit", commit)
 		return nil, verr
 	}
 
@@ -254,6 +270,50 @@ func validateSpecBundles(reqFiles, designFiles map[string]string) error {
 		return &SpecValidationError{Files: files}
 	}
 	return nil
+}
+
+// staleDesignRefusal refuses a build whose design predates the requirements it
+// was derived from, as an ordinary gate failure.
+//
+// Nothing is stored to answer this: every commit is a permanent snapshot and
+// every agent turn records the commit it read the project at, so the
+// requirements as the last design run saw them are still there to compare
+// against. That is what makes the answer available for projects that predate
+// the check entirely, and leaves nothing to fall out of sync.
+//
+// Silent when the resolver is unwired, when no design run is on record, or when
+// the baseline commit is unreadable. The first two mean the question does not
+// apply; the third is the one judgment call — a build refused because an old
+// commit has been garbage-collected would be unfixable by the user, and the
+// staleness it might have caught is visible in the rail either way.
+func (s *artifactService) staleDesignRefusal(
+	ctx context.Context, ref sourcecontrol.RepoRef, orgID, projectID, commit string,
+) error {
+	if s.designBaseline == nil {
+		return nil
+	}
+	base, err := s.designBaseline(ctx, orgID, projectID)
+	if err != nil || base == "" {
+		return nil
+	}
+	wasEntries, _, err := s.git.Workspace().List(ctx, ref, base)
+	if err != nil {
+		slog.WarnContext(ctx, "spec save: the last design run's commit is unreadable; staleness unchecked",
+			"project", projectID, "base", base, "error", err)
+		return nil
+	}
+	nowEntries, _, err := s.git.Workspace().List(ctx, ref, commit)
+	if err != nil {
+		return fmt.Errorf("list tree at %s: %w", commit, err)
+	}
+	if RequirementsFingerprint(wasEntries) == RequirementsFingerprint(nowEntries) {
+		return nil
+	}
+	return &SpecValidationError{Files: []FileValidationError{{
+		Path:    DesignDir + "/" + designRootFile,
+		Code:    codeDesignOutdated,
+		Message: "the requirements have changed since this design was written — update the design before building",
+	}}}
 }
 
 // specTreeUnchanged reports whether the specs/ subtrees at the two commits are

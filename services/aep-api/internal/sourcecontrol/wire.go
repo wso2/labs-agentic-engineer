@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/wso2/aep/aep-api/internal/platform/gitfs"
 )
@@ -121,6 +122,51 @@ type MilestoneIssuesFilter struct {
 	Number int
 	State  string
 	Labels []string
+}
+
+// MachineCommentMarker brands a comment as WRITTEN BY THE PLATFORM.
+//
+// It exists because authorship cannot answer that question. The platform
+// comments through the org's own credential, and that same credential is handed
+// to the coding runner as GITHUB_TOKEN — so a machine comment and an agent's
+// progress note arrive under one identity and no `author` test can separate
+// them. The only durable discriminator is one the writer puts in the body
+// itself, which is what this is.
+//
+// It is an HTML comment so it renders as nothing on the host: a person reading
+// the issue sees the prose and never the brand. It is stamped in exactly one
+// place — issueService, the single adapter every platform issue-comment write
+// passes through — and stripped on read, so it never reaches a consumer.
+//
+// A comment written BEFORE this shipped carries no marker and therefore reads as
+// human. That is a known and accepted gap: the alternative was pattern-matching
+// the openers of five different writers, which drifts the first time one is
+// reworded.
+const MachineCommentMarker = "<!-- aep:machine -->"
+
+// IssueComment is one comment on an issue, exactly as the host holds it.
+//
+// It carries no issue number: the read that produces these buckets them by
+// issue (map[int][]IssueComment), so a number on the row would be a second copy
+// of the map key, free to disagree with it.
+//
+// Author is a LOGIN, and empty is a real answer — the host reports a null author
+// for a comment whose account is gone.
+type IssueComment struct {
+	// ID is the host's node id — stable across reads, and the consumer's list key.
+	ID        string
+	Author    string
+	Body      string
+	URL       string
+	CreatedAt time.Time
+	// Machine reports that the PLATFORM wrote this comment (MachineCommentMarker).
+	//
+	// It is a fact the host reports, not a decision it acts on: what a given read
+	// surface does with a machine comment is that surface's policy, and the task
+	// list drops them. Reporting rather than filtering here is what keeps a future
+	// reader — a debug view, an audit — able to ask for them without the host
+	// changing.
+	Machine bool
 }
 
 // MilestoneIssueCounts is the run supervisor's dispatch predicate input: the

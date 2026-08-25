@@ -94,6 +94,10 @@ type IssueService interface {
 	// working set and total — in ONE call, the run supervisor's dispatch
 	// predicate input.
 	MilestoneIssueCounts(ctx context.Context, orgID, projectID string, number int) (*MilestoneIssueCounts, error)
+	// ListMilestoneIssueComments returns the newest perIssue comments of every
+	// issue in one milestone, bucketed by issue number, oldest first — the
+	// version ledger's live narrative, in ONE round trip.
+	ListMilestoneIssueComments(ctx context.Context, orgID, projectID string, number, perIssue int) (map[int][]IssueComment, error)
 }
 
 type issueService struct {
@@ -301,7 +305,7 @@ func (s *issueService) CloseIssue(ctx context.Context, orgID, projectID string, 
 
 	// Post the closing comment first (best-effort: log and continue on failure).
 	if strings.TrimSpace(comment) != "" {
-		if commentErr := s.github.CommentIssue(ctx, owner, repoName, cred, number, comment); commentErr != nil {
+		if commentErr := s.github.CommentIssue(ctx, owner, repoName, cred, number, markMachineComment(comment)); commentErr != nil {
 			slog.WarnContext(ctx, "failed to post closing comment", "project", projectID, "issue", number, "error", commentErr)
 		}
 	}
@@ -327,7 +331,31 @@ func (s *issueService) CommentIssue(ctx context.Context, orgID, projectID string
 		return err
 	}
 
-	return s.github.CommentIssue(ctx, owner, repoName, cred, number, body)
+	return s.github.CommentIssue(ctx, owner, repoName, cred, number, markMachineComment(body))
+}
+
+// markMachineComment brands a body as platform-written (MachineCommentMarker).
+//
+// EVERY platform issue comment passes through this service — the delivery
+// domain's IssueWriter, the provisioning wiring and failure notes, the plan tap,
+// and the closing comment above all reach the host here — and there is no
+// user-facing comment write on the API at all. So stamping at this one point is
+// exactly the statement "the platform wrote this", and no call site can forget
+// it. Stamping at the five call sites instead is the duplication IssueWriter was
+// created to end.
+//
+// The marker LEADS, and the idempotence check is a prefix test to match — the
+// read side detects on the prefix too (githubhost.isMachineComment), so a body
+// that merely mentions the marker further down is not already branded and must
+// still get one. Checking with Contains here would leave a comment that QUOTES a
+// platform comment unbranded while the reader also declines to hide it: the two
+// looser tests would agree, and the platform's own text would surface in a feed
+// that exists to exclude it.
+func markMachineComment(body string) string {
+	if strings.HasPrefix(strings.TrimLeft(body, " \t\r\n"), MachineCommentMarker) {
+		return body
+	}
+	return MachineCommentMarker + "\n" + body
 }
 
 func (s *issueService) EditIssueBody(ctx context.Context, orgID, projectID string, number int, body string) error {
