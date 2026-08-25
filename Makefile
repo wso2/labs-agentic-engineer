@@ -133,10 +133,13 @@ build-runner:
 	FORCE=$(FORCE) bash deployments/scripts/build-runner.sh
 
 # Build the `bal library` tool jar into its working tree, which is what the
-# playground and evals bind-mount over the image's installed copy — so this is
-# the whole edit-run loop for the tool, with no image rebuild (ADR-0008). Needs
-# JDK 21 and a token with `read:packages` (see the tool's README).
+# playground bind-mounts over the image's installed copy — so this is the whole
+# edit-run loop for the tool, with no image rebuild (ADR-0008). Needs JDK 21 and
+# a token with `read:packages` (see the tool's README).
 # The runner image builds its own copy; nothing here feeds it.
+# NOT the loop for host runs (`make eval-bal`, `pnpm play <dir> code --host`): those resolve
+# `bal library` out of your own ~/.ballerina, which only install-local.sh writes.
+# The evals read this jar too, but only to compare mtimes and refuse a stale sweep.
 bal-library-tool:
 	cd packages/bal-library-tool && ./gradlew :native:jar
 

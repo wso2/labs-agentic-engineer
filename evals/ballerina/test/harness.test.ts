@@ -21,11 +21,11 @@ import assert from "node:assert/strict";
 import { readAgentBuilds } from "../src/metrics/build.js";
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { discoverCases, selectCases } from "../src/cases.js";
 import { archive, prepareScratch, readSources } from "../src/scratch.js";
 import { compare, pickBaseline, stat, METRIC_KEYS, type Summary } from "../src/report.js";
-import { hostEnv } from "../src/preflight.js";
+import { hostEnv, workingTreeToolJars } from "../src/preflight.js";
 import { DEFAULTS, PATH_METRICS, PATHS, REPORTED_METRICS, SESSION } from "../src/config.js";
 
 function casesTree(suites: Record<string, Record<string, string>>): string {
@@ -384,4 +384,41 @@ test("scratch: source assertions read the package's own .bal, not the mirrored s
   assert.match(sources, /http:RetryConfig/);
   assert.doesNotMatch(sources, /SKILL_EXAMPLE_MARKER/);
   assert.doesNotMatch(sources, /BUILD_OUTPUT_MARKER/);
+});
+
+test("preflight: the built jar is found by looking, so a version bump cannot silence the stale check", () => {
+  // The filename carries the tool's version. Spelling it here (or in config.ts)
+  // is a second copy of a value whose only home is the tool's gradle.properties:
+  // a bump would make the lookup miss, and a miss disables the stale-jar refusal
+  // WITHOUT SAYING SO — the sweep would quietly measure the previous CLI.
+  const libs = mkdtempSync(join(tmpdir(), "bal-eval-libs-"));
+  assert.deepEqual(workingTreeToolJars(libs), [], "an empty output directory is not a build");
+
+  writeFileSync(join(libs, "native-9.9.9-SNAPSHOT.jar"), "jar");
+  assert.deepEqual(
+    workingTreeToolJars(libs),
+    [join(libs, "native-9.9.9-SNAPSHOT.jar")],
+    "a version this repo has never pinned is still found",
+  );
+});
+
+test("preflight: a stale jar from a previous version is REPORTED, not silently skipped", () => {
+  // `gradlew :native:jar` does not clean, so a version bump leaves both jars
+  // behind. Answering "no working-tree build" there would drop the stale check
+  // without a word — the silent outcome preflight exists to prevent. The caller
+  // turns a length > 1 into a blocker, so both have to reach it.
+  const libs = mkdtempSync(join(tmpdir(), "bal-eval-bumped-"));
+  writeFileSync(join(libs, "native-0.1.0-SNAPSHOT.jar"), "old");
+  writeFileSync(join(libs, "native-0.2.0-SNAPSHOT.jar"), "new");
+
+  const found = workingTreeToolJars(libs);
+  assert.equal(found.length, 2, "both jars are reported so the caller can refuse");
+  assert.deepEqual(found.map((jar) => basename(jar)), [
+    "native-0.1.0-SNAPSHOT.jar",
+    "native-0.2.0-SNAPSHOT.jar",
+  ]);
+});
+
+test("preflight: a non-existent output directory is not a build", () => {
+  assert.deepEqual(workingTreeToolJars(join(tmpdir(), `bal-eval-absent-${process.pid}`)), []);
 });

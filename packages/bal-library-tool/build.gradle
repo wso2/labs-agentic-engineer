@@ -38,7 +38,10 @@ allprojects {
 // `:native` is the only project, so the root `build` is its build. What used to
 // be here — a `jballerina-tools` configuration, a `-SNAPSHOT`/timestamp version
 // regex and a second name for `:native:build` — all served the `:ballerina`
-// subproject that packaged a bala for Ballerina Central. ADR-0008 deleted it.
+// subproject that packaged a bala for Ballerina Central. Deleted by
+// runners/remote-worker/design/decisions/ADR-0008-the-bal-library-tool-is-built-in-the-image.md
+// (spelled out because this package has an ADR-0008 of its own, about registers
+// and views — the deletion belongs to the runner's, which owns how the tool ships).
 tasks.register('build') {
     dependsOn(":native:build")
 }

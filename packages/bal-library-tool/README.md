@@ -70,27 +70,43 @@ Five behaviours worth knowing because no signature shows them:
   trouble is not the caller's problem, and failing there would send an agent into the argument-error
   advice in a loop it can never escape.
 
-## Install a Released Version
+## Installing It
 
-Grab the latest `bal-library-tool-<version>.zip` from the
-[Releases page](https://github.com/RNViththagan/bal-library-tool/releases), unzip it, and run the
-installer for your platform.
+The tool is **not on Ballerina Central**, so `bal tool pull library` does not resolve it, and this
+repository publishes no release of it either — the source moved here on 2026-08-24 and the release
+half stayed with the tool's previous upstream, where it no longer builds against this tree. Treat the
+zip as a layout rather than as a download: `./make-dist.sh` assembles `dist/` in exactly that shape.
+
+There are three ways it reaches a machine, and which one you want depends on what runs it.
+
+| You are | After a tool change, run | What it does |
+|---|---|---|
+| developing the tool, or running anything on the **host** (`make eval-bal`, `pnpm play <dir> code --host`) | `./install-local.sh` | Builds the jar and installs it into your `~/.ballerina`, which is where a host run resolves `bal library` from. |
+| running the **playground** in docker | `make bal-library-tool` | Builds the jar only. The run bind-mounts it over the image's installed copy, so there is no install and no image rebuild. |
+| running a **dispatched / cluster** task | `make build-runner FORCE=1` | Rebuilds the runner image, whose first stage compiles the tool from source and installs it. The build is skipped when the tag already exists, so `FORCE=1` is the part that matters. |
+
+To put a built distribution on a machine that cannot build one — a container image, or a repository
+that vendors the tool — run `./make-dist.sh` to assemble `dist/`, copy that directory to the target,
+and run the installer beside it there.
 
 **macOS / Linux:**
 ```bash
-unzip bal-library-tool-<version>.zip
-cd bal-library-tool-<version>
-./install.sh
+./make-dist.sh                 # on a machine with JDK 21 — produces dist/
+cd dist && ./install.sh        # on the target
 ```
 
 **Windows (PowerShell):**
 ```powershell
-Expand-Archive bal-library-tool-<version>.zip -DestinationPath .
-Set-Location bal-library-tool-<version>
+# `make-dist.sh` is bash, so dist/ is produced elsewhere and copied here.
+Set-Location dist
 .\install.ps1
 ```
 
-Both installers are fully offline and only need `bal` on your `PATH`.
+Both installers are fully offline and only need `bal` on your `PATH`. The install has to happen
+**where the tool will run**: `install.sh` stamps the bala's `package.json` with the distribution the
+adjacent `bal` reports, and `bal` refuses a tool stamped newer than the distribution running it — so
+a bala tree built on one machine and copied into an image with a different distribution can be
+rejected. See `internal-docs/distribution.md`.
 
 ## Building from the Source
 
@@ -359,8 +375,9 @@ document registers.
 
 As an open-source project, Ballerina welcomes contributions from the community.
 
-You can also check for [open issues](https://github.com/RNViththagan/bal-library-tool/issues) that
-interest you. We look forward to receiving your contributions.
+You can also check for
+[open issues](https://github.com/wso2/labs-agentic-engineer/issues) that interest you. We look
+forward to receiving your contributions.
 
 For more information, go to the [contribution guidelines](https://github.com/ballerina-platform/ballerina-lang/blob/master/CONTRIBUTING.md).
 

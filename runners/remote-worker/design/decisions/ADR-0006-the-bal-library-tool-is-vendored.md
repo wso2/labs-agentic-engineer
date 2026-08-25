@@ -25,9 +25,11 @@ straight substitution of the old wiring.
 - **It is not on Ballerina Central**, so `bal tool pull library` does not
   resolve and the image has nothing to pull. When this ADR was written the source
   was not here either, in a repository of its own; it moved in on 2026-08-24 and
-  now lives at `packages/bal-library-tool`. That closes only half the gap — the
-  runner image is not a JDK/Gradle build host, so it still installs a
-  **prebuilt** distribution rather than compiling the tool at image build.
+  now lives at `packages/bal-library-tool`. This ADR then reasoned that the gap
+  was only half closed, because the runner image is not a JDK/Gradle build host
+  and would still install a **prebuilt** distribution. [ADR-0008](ADR-0008-the-bal-library-tool-is-built-in-the-image.md)
+  overturned exactly that: a first stage on `eclipse-temurin:21-jdk` compiles the
+  tool, so the image builds what it installs and nothing prebuilt is carried.
 - **`bal` version-gates a tool.** The bala's `package.json` records the
   distribution it was installed against, and `bal` refuses a tool stamped
   **newer** than the distribution running it:

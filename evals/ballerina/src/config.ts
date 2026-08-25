@@ -53,8 +53,12 @@ export const PATHS = {
   skillsDir: join(PACKAGE_ROOT, "..", "..", "skills"),
   /** Where `bal` resolves an installed tool from — what a host run actually executes. */
   installedToolDir: join(homedir(), ".ballerina", "repositories", "local", "bala", "ballerinax", "tool_library"),
-  /** The working-tree jar, compared against the installed one to catch a stale sweep. */
-  workingTreeJar: join(
+  /**
+   * Where the tool's own build leaves its jars, compared against the installed
+   * one to catch a stale sweep. A DIRECTORY, never a filename — `preflight.ts`'s
+   * `workingTreeToolJars` says why.
+   */
+  workingTreeToolLibs: join(
     PACKAGE_ROOT,
     "..",
     "..",
@@ -63,7 +67,6 @@ export const PATHS = {
     "native",
     "build",
     "libs",
-    "native-0.1.0-SNAPSHOT.jar",
   ),
 } as const;
 

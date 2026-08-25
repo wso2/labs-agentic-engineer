@@ -29,8 +29,8 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { basename, join } from "node:path";
 import { PATHS, SKILL_NAME } from "./config.js";
 
 export interface Preflight {
@@ -57,13 +57,23 @@ export function preflight(): Preflight {
   // copies it in. A sweep against a stale tool reports the OLD CLI's numbers
   // under the new CLI's name, and nothing downstream can tell.
   const installed = installedToolJar();
-  const built = builtToolJar();
+  const built = workingTreeToolJars();
   if (!installed) {
     blockers.push(
       "`bal library` is not installed — the ballerina skill's lookups would all fail and the run would " +
         "measure the fallback path. Install it: packages/bal-library-tool/install-local.sh",
     );
-  } else if (built && statSync(built).mtimeMs > statSync(installed).mtimeMs) {
+  } else if (built.length > 1) {
+    // REFUSED rather than skipped. Picking one would be a guess, and skipping
+    // the comparison would drop the stale check without saying so — the silent
+    // outcome this file is written to avoid.
+    blockers.push(
+      `more than one jar in ${PATHS.workingTreeToolLibs} (${built.map((jar) => basename(jar)).join(", ")}) — ` +
+        "`gradlew :native:jar` does not clean, so a version bump leaves the old one behind and this sweep " +
+        "cannot tell which build it would be measured against. Run `./gradlew clean :native:jar` in " +
+        "packages/bal-library-tool, then re-run install-local.sh",
+    );
+  } else if (built.length === 1 && statSync(built[0]!).mtimeMs > statSync(installed).mtimeMs) {
     blockers.push(
       "`bal library` resolves to an installed jar OLDER than your working-tree build — this sweep would " +
         "measure the previous CLI. Re-run packages/bal-library-tool/install-local.sh",
@@ -181,8 +191,27 @@ function installedToolJar(): string | undefined {
   return found?.split("\n").filter(Boolean)[0];
 }
 
-function builtToolJar(): string | undefined {
-  return existsSync(PATHS.workingTreeJar) ? PATHS.workingTreeJar : undefined;
+/**
+ * Every jar the tool's own build has left behind, found by LOOKING rather than
+ * by composing a version into a filename.
+ *
+ * ALL of them, not the single one: `gradlew :native:jar` does not clean, so a
+ * version bump leaves the previous jar beside the new one. Answering `undefined`
+ * to that — "no working-tree build" — would turn the ambiguity into a SILENTLY
+ * skipped stale check, which is the failure this whole file exists to prevent.
+ * The caller refuses on it instead. The playground's twin can return undefined
+ * safely because there it only skips a bind-mount; here it would remove a guard.
+ *
+ * The directory is a parameter so a test can point it at a real one. Exported
+ * for that test: `evals/*` is outside the knip gate (`knip.jsonc`), so this does
+ * not read as dead code.
+ */
+export function workingTreeToolJars(libs: string = PATHS.workingTreeToolLibs): string[] {
+  if (!existsSync(libs)) return [];
+  return readdirSync(libs)
+    .filter((entry) => entry.endsWith(".jar"))
+    .sort()
+    .map((entry) => join(libs, entry));
 }
 
 function which(cmd: string): string | undefined {
