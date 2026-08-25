@@ -69,7 +69,7 @@ Approved at section level; per-section detail is defined feature-by-feature.
   - **Overview** — component map + status, deployment state, recent activity.
   - **Spec** — the requirement, derived design + acceptance criteria.
   - **Builds** — the version ledger: one row per version, with its milestone,
-    status, task progress, duration and start. A row opens that version's
+    status, duration and start. A row opens that version's
     build — summary card, task list, coding-agent log, build logs (ADR-0020).
   - **Deployments** — dev environment state and URLs.
   - **Validations** — the runs checking a build against the spec's acceptance
@@ -86,7 +86,7 @@ GitHub issue plus any ADRs it produced. Features still being built aren't
 here: they're the open `console` + `feature` issues.
 
 - Builds, rebuilt as a version ledger — **one row per version** (milestone,
-  status, task progress, duration, start), and the now-first run story it
+  status, duration, start), and the now-first run story it
   replaced moves to its own page at `/builds/$tag`: a summary card, then Tasks,
   the coding-agent log and the build logs as collapsible sections. Provisioning
   gates render as **task rows** rather than a separate stage, each with its own
@@ -95,9 +95,10 @@ here: they're the open `console` + `feature` issues.
   come from `hold`, `blockedBy` and the newest execution — and its second line is
   the issue's newest comment. `/builds/:issueNumber` and `/tasks/:issueNumber`
   swap roles so the version can own the `/builds` segment; old links still
-  resolve. **No contract change**: the ledger's remaining cells are derived from
-  one untagged list-tasks read grouped by `lineage.specTag`, and from the deploy
-  aggregate the layout already polls —
+  resolve. **No contract change**: the ledger's remaining cells come from the
+  deploy aggregate the layout already polls. It carries no task counts, because
+  an untagged list-tasks response cannot be attributed to versions and a
+  tag-scoped one would be a GitHub-backed request per row —
   [#609](https://github.com/wso2/labs-agentic-engineer/issues/609) (ADR-0020,
   superseding ADR-0015)
 - The journey starts itself — creating a project **fires `/start` server-side**,

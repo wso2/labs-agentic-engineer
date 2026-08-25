@@ -20,13 +20,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { components } from "../../../generated/aep-api";
 import {
   buildDuration,
-  countsByTag,
+  countTasks,
   isLedgerLive,
   ledgerDuration,
   ledgerStatus,
   milestoneLabel,
   taskBreakdown,
-  taskProgress,
 } from "./ledger";
 
 type BuildSummary = components["schemas"]["BuildSummary"];
@@ -127,57 +126,29 @@ describe("isLedgerLive", () => {
   });
 });
 
-describe("countsByTag", () => {
-  it("groups one untagged read into per-version counts", () => {
-    // The whole point: ONE list-tasks read fills every row, not one per row.
-    const counts = countsByTag([
-      task("v1", { derivedStatus: "merged" }),
-      task("v1", { derivedStatus: "merged" }),
-      task("v1"),
-      task("v2", { hold: true }),
-    ]);
-    expect(counts.get("v1")).toMatchObject({ total: 3, done: 2, pending: 1 });
-    expect(counts.get("v2")).toMatchObject({ total: 1, blocked: 1 });
+describe("countTasks", () => {
+  it("counts a version-scoped list by row state", () => {
+    expect(
+      countTasks([
+        task("v1", { derivedStatus: "merged" }),
+        task("v1", { derivedStatus: "merged" }),
+        task("v1", { hold: true }),
+        task("v1"),
+      ]),
+    ).toEqual({ total: 4, done: 2, inProgress: 0, inReview: 0, blocked: 1, pending: 1 });
   });
 
-  it("drops a task that belongs to no version", () => {
-    // A task with no lineage has no row to be counted on.
-    expect(countsByTag([task(undefined)]).size).toBe(0);
-  });
-
-  it("leaves a version with no tasks ABSENT rather than zeroed", () => {
-    // Absent is what lets the cell say "—" instead of claiming "0 of 0 done".
-    const counts = countsByTag([task("v1")]);
-    expect(counts.has("v2")).toBe(false);
-  });
-});
-
-describe("taskProgress", () => {
-  it("renders the bar and the count", () => {
-    const p = taskProgress(build(), {
-      total: 7,
-      done: 3,
-      inProgress: 1,
-      inReview: 1,
-      blocked: 1,
-      pending: 1,
+  it("is all zeroes for an empty build", () => {
+    expect(countTasks([])).toEqual({
+      total: 0, done: 0, inProgress: 0, inReview: 0, blocked: 0, pending: 0,
     });
-    expect(p.percent).toBe(43);
-    expect(p.label).toBe("3 of 7 done");
   });
 
-  it("makes no claim when the counts have not arrived", () => {
-    const p = taskProgress(build(), undefined);
-    expect(p.label).toBe("—");
-    expect(p.percent).toBe(0);
-    expect(p.tone).toBe("neutral");
-  });
-
-  it("tones the bar by the version's own state", () => {
-    const counts = { total: 5, done: 4, inProgress: 0, inReview: 0, blocked: 0, pending: 1 };
-    expect(taskProgress(build({ status: "failed" }), counts).tone).toBe("error");
-    expect(taskProgress(build({ status: "in_progress" }), counts).tone).toBe("info");
-    expect(taskProgress(build(), counts).tone).toBe("success");
+  it("does not look at lineage at all", () => {
+    // The caller scopes the list. Grouping BY lineage is impossible on an
+    // untagged read — the server leaves specTag empty when the query spans
+    // versions — which is why the ledger has no Tasks column.
+    expect(countTasks([task(undefined, { derivedStatus: "merged" })]).done).toBe(1);
   });
 });
 

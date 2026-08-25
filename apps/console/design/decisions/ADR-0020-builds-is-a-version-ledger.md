@@ -23,7 +23,7 @@ dropdown, reading it, remembering it, and selecting the next one.
 ## Decisions
 
 1. **Builds is a version ledger — one row per version, newest first.** Version ·
-   Milestone · Status · Tasks · Duration · Started, dense, every row clickable. A
+   Milestone · Status · Duration · Started, dense, every row clickable. A
    live row tints and its status dot pulses, so the now-first reader still sees
    at a glance that something is moving and is one click from it.
    *Supersedes ADR-0015's premise and its title.*
@@ -66,16 +66,22 @@ dropdown, reading it, remembering it, and selecting the next one.
    | Cell | Source |
    |---|---|
    | Version, Status, Duration, Started | `BuildSummary` |
-   | Tasks | **one untagged `list-tasks`**, grouped by `lineage.specTag` |
    | Milestone | `milestoneNumber` — the platform records no title |
    | "Deployed to development" | `ProjectStatus.deploy`, already polled by the layout |
 
-   The untagged read is the point: a tag-scoped one would be a request **per
-   row**, while an untagged read already returns every version's tasks and skips
-   the comment round trip, which is tag-scoped only. This is what the contract's
-   own note prescribes — task counts are "deliberately absent" from the ledger
-   because "the console renders them from the list-tasks response it already
-   holds".
+   **There is no Tasks column, and the reason is a fact about the API rather
+   than a preference.** An untagged `list-tasks` response cannot be attributed
+   to versions: the server sets `lineage.specTag` only on a TAG-SCOPED read and
+   leaves it empty when the query spans versions (`reads.go` — *"the version tag
+   every returned issue belongs to (empty when the query spans versions)"*), and
+   nothing else on a `TaskView` names its version. The only alternative is a
+   tag-scoped read **per row**, each one GitHub-backed, which is precisely the
+   cost the ledger exists to avoid. The per-version breakdown therefore lives on
+   the build page, one click away, where the read is scoped to begin with.
+
+   This was found by deploying and looking: against mocks the column filled,
+   because the fixtures set `specTag` on every task regardless of which read
+   returned it. Against the real API it was empty on every row.
 
 7. **Only the version the deploy aggregate names may be described by where it
    reached.** The platform records ONE deployed version per project, so every

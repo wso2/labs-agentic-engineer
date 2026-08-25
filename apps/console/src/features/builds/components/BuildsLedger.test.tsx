@@ -43,28 +43,12 @@ vi.mock("../api/queries", () => ({
   }),
 }));
 
-// The two reads the ledger derives its remaining cells from.
-let mockTasks: components["schemas"]["TaskView"][] = [];
-vi.mock("../../tasks/api/queries", () => ({
-  useAllTasks: () => ({ data: mockTasks, isPending: false, isError: false }),
-}));
+// The one read the ledger derives its remaining cells from.
 let mockDeploy: components["schemas"]["DeployStage"] | undefined;
 vi.mock("../../projects/api/queries", () => ({
   useProjectStatus: () => ({ data: mockDeploy ? { deploy: mockDeploy } : undefined }),
 }));
 
-const task = (tag: string, merged = false): components["schemas"]["TaskView"] => ({
-  issueNumber: Math.floor(Math.random() * 1e6),
-  title: "A task",
-  issueUrl: "https://github.com/acme-dev/demo-shop/issues/1",
-  executorClass: "coding",
-  dependsOn: [],
-  lineage: { specTag: tag },
-  derivedStatus: merged ? "merged" : "pending",
-  hold: false,
-  attention: [],
-  executions: {},
-});
 
 import { BuildsLedger } from "./BuildsLedger";
 
@@ -81,7 +65,6 @@ const renderLedger = () => render(<BuildsLedger projectName="demo-shop" />);
 
 beforeEach(() => {
   mockBuilds = [];
-  mockTasks = [];
   mockDeploy = undefined;
   mockState = { isPending: false, isError: false };
   navigate.mockClear();
@@ -126,28 +109,15 @@ describe("BuildsLedger", () => {
     });
   });
 
-  it("fills the Tasks column from ONE untagged task read", () => {
-    // Not one fetch per row: the untagged read carries every version's tasks,
-    // each tagged with the version it belongs to.
-    mockBuilds = [build({ tag: "v2" }), build({ tag: "v1" })];
-    mockTasks = [
-      task("v2", true),
-      task("v2"),
-      task("v1", true),
-      task("v1", true),
-      task("v1", true),
-    ];
+  it("shows no Tasks column at all", () => {
+    // An untagged list-tasks response cannot be attributed to versions (the
+    // server leaves `lineage.specTag` empty when the query spans versions), and
+    // a tag-scoped read would be one GitHub-backed request PER ROW. The
+    // breakdown lives on the build page, where the read is already scoped.
+    mockBuilds = [build({ tag: "v1" })];
     renderLedger();
-
-    expect(screen.getByText("1 of 2 done")).toBeTruthy();
-    expect(screen.getByText("3 of 3 done")).toBeTruthy();
-  });
-
-  it("makes no task claim for a version the read said nothing about", () => {
-    mockBuilds = [build({ tag: "v9" })];
-    mockTasks = [task("v1", true)];
-    renderLedger();
-    expect(screen.queryByText(/of 0 done/)).toBeNull();
+    expect(screen.queryByText("Tasks")).toBeNull();
+    expect(screen.queryByText(/of \d+ done/)).toBeNull();
   });
 
   it("keeps a rolling-out version live, even though its BUILD is completed", () => {

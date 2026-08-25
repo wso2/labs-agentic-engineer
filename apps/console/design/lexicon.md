@@ -189,9 +189,10 @@ The row's second line is the issue's **newest comment**, flattened to its first
 non-empty line. A task the agent has said nothing about shows no second line at
 all — eleven rows each reading "No updates yet" is noise, not information.
 
-**A Tasks cell with nothing behind it renders `—`, never `0 of 0 done`.** "The
-console does not know" and "this version has no work" are different facts and
-must not share a string.
+**The ledger has no Tasks column.** A version's task counts cannot be attributed
+from a read that spans versions, and asking per row would be one GitHub-backed
+request each. The breakdown is on the build page, where the read is already
+scoped to one version.
 
 ## The project overview
 

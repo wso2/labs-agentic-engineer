@@ -22,7 +22,6 @@ import {
   Box,
   Button,
   CircularProgress,
-  LinearProgress,
   ListingTable,
   MenuItem,
   Skeleton,
@@ -38,18 +37,14 @@ import { EmptyState } from "../../../components/EmptyState";
 import { PageHeader } from "../../../components/PageHeader";
 import { StatusChip } from "../../../components/StatusChip";
 import type { components } from "../../../generated/aep-api";
-import { useAllTasks } from "../../tasks/api/queries";
 import { useProjectStatus } from "../../projects/api/queries";
 import { useBuilds } from "../api/queries";
 import { runStamp } from "../lib/format";
 import {
-  countsByTag,
   isLedgerLive,
   ledgerDuration,
   ledgerStatus,
   milestoneLabel,
-  taskProgress,
-  type TaskCounts,
 } from "../lib/ledger";
 
 type BuildSummary = components["schemas"]["BuildSummary"];
@@ -93,7 +88,6 @@ const COLUMNS = [
   { key: "version", label: "Version", width: 104 },
   { key: "milestone", label: "Milestone" },
   { key: "status", label: "Status", width: 190 },
-  { key: "tasks", label: "Tasks", width: 140 },
   { key: "duration", label: "Duration", width: 110 },
   { key: "started", label: "Started", width: 150 },
 ];
@@ -103,20 +97,17 @@ export function BuildsLedger({ projectName }: { projectName: string }) {
   const navigate = useNavigate();
   const [filter, setFilter] = useState<StatusFilter>("all");
 
-  // The two reads that fill the cells `BuildSummary` does not carry, both of
-  // which the console already makes:
+  // Which version reached an environment. The project layout already polls
+  // this, so react-query serves it from cache.
   //
-  //   - ONE UNTAGGED list-tasks, grouped by `lineage.specTag`, for the Tasks
-  //     column. Untagged deliberately: a tag-scoped read would be one request
-  //     per row, and an untagged one already returns every version's tasks.
-  //     It also skips the comment round trip, which is tag-scoped only.
-  //   - the project status poll, for which version reached an environment. The
-  //     project layout already holds it, so react-query serves it from cache.
-  const live = (builds.data ?? []).some(isLedgerLive);
-  const tasks = useAllTasks(projectName, undefined, { live });
+  // There is deliberately NO task read here, and so no Tasks column: an
+  // untagged list-tasks response cannot be attributed to versions (the server
+  // leaves `lineage.specTag` empty when the query spans versions, and nothing
+  // else on a task names its version), and a tag-scoped read would be one
+  // GitHub-backed request PER ROW. The per-version breakdown lives on the build
+  // page, one click away, where the read is scoped to begin with.
   const status = useProjectStatus(projectName);
   const deploy: DeployStage | undefined = status.data?.deploy;
-  const counts = useMemo(() => countsByTag(tasks.data ?? []), [tasks.data]);
 
   const rows = useMemo(
     () => (builds.data ?? []).filter((b) => matchesFilter(b, filter)),
@@ -235,7 +226,6 @@ export function BuildsLedger({ projectName }: { projectName: string }) {
                 <LedgerRow
                   key={build.tag}
                   build={build}
-                  counts={counts.get(build.tag)}
                   {...(deploy ? { deploy } : {})}
                   onOpen={() =>
                     void navigate({
@@ -255,17 +245,14 @@ export function BuildsLedger({ projectName }: { projectName: string }) {
 
 function LedgerRow({
   build,
-  counts,
   deploy,
   onOpen,
 }: {
   build: BuildSummary;
-  counts: TaskCounts | undefined;
   deploy?: DeployStage | undefined;
   onOpen: () => void;
 }) {
   const status = ledgerStatus(build, deploy);
-  const progress = taskProgress(build, counts);
   // The ROW's liveness is the STATUS's liveness, not the build's: a completed
   // version whose rollout is under way is moving, and tinting on `build.status`
   // made the row go quiet at exactly the moment it had something to say.
@@ -313,31 +300,6 @@ function LedgerRow({
           appearance="soft"
           dot
         />
-      </ListingTable.Cell>
-
-      <ListingTable.Cell>
-        <LinearProgress
-          variant="determinate"
-          value={progress.percent}
-          color={
-            progress.tone === "error"
-              ? "error"
-              : progress.tone === "info"
-                ? "info"
-                : progress.tone === "success"
-                  ? "success"
-                  : "inherit"
-          }
-          sx={{ height: 6, borderRadius: 3 }}
-          aria-label={`Tasks: ${progress.label}`}
-        />
-        <Typography
-          variant="caption"
-          color="text.secondary"
-          sx={{ display: "block", mt: 0.5, fontVariantNumeric: "tabular-nums" }}
-        >
-          {progress.label}
-        </Typography>
       </ListingTable.Cell>
 
       <ListingTable.Cell>

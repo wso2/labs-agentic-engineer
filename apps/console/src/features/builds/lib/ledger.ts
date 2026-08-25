@@ -28,16 +28,15 @@ type DeployStage = components["schemas"]["DeployStage"];
  * Pure derivations for the version ledger (ADR-0020).
  *
  * EVERYTHING here comes from reads the console already makes — the ledger adds
- * no contract surface of its own. Three sources, and which one answers which
- * cell is the whole design of this file:
+ * no contract surface of its own. Two sources, and which one answers which cell
+ * is the whole design of this file:
  *
  *   - `BuildSummary`      the version, its run state, its span.
- *   - `list-tasks` (untagged, ONE read) grouped by `lineage.specTag` — the task
- *     counts. The contract says these are "deliberately absent" from the ledger
- *     because "the console renders them from the list-tasks response it already
- *     holds"; this is that.
  *   - `ProjectStatus.deploy` — which version reached an environment. Already
  *     polled by the project layout, so react-query serves it from cache.
+ *
+ * Task counts are NOT among them, and `countTasks` explains why: they cannot be
+ * attributed to versions from any read the ledger can afford.
  */
 
 export interface LedgerStatus {
@@ -108,22 +107,27 @@ export interface TaskCounts {
 }
 
 /**
- * Every version's task counts, from ONE untagged list-tasks read.
+ * Count a list of tasks that is ALREADY scoped to one version.
  *
- * Deliberately not a fetch per row: an untagged read already returns every
- * version's tasks, each carrying the `lineage.specTag` that says which version
- * it belongs to. A version with no tasks in the response is simply absent from
- * the map, which is what lets the caller tell "none" apart from "not known".
+ * Deliberately not a group-by-version helper. The obvious one — take an
+ * untagged list-tasks read and group by `lineage.specTag` — cannot work: the
+ * server sets that field only on a TAG-SCOPED read and leaves it empty when the
+ * query spans versions (`reads.go`: *"the version tag every returned issue
+ * belongs to (empty when the query spans versions)"*). Nothing else on
+ * `TaskView` identifies the version either, so an untagged read cannot be
+ * attributed to versions at all, and the Builds ledger has no Tasks column
+ * because of it. This runs on the build page, where the read is tag-scoped.
  */
-export function countsByTag(tasks: TaskView[]): Map<string, TaskCounts> {
-  const byTag = new Map<string, TaskCounts>();
+export function countTasks(tasks: TaskView[]): TaskCounts {
+  const counts: TaskCounts = {
+    total: tasks.length,
+    done: 0,
+    inProgress: 0,
+    inReview: 0,
+    blocked: 0,
+    pending: 0,
+  };
   for (const task of tasks) {
-    const tag = task.lineage?.specTag;
-    if (!tag) continue; // a task with no lineage belongs to no version's row
-    const counts =
-      byTag.get(tag) ??
-      { total: 0, done: 0, inProgress: 0, inReview: 0, blocked: 0, pending: 0 };
-    counts.total += 1;
     switch (taskRowState(task)) {
       case "done":
         counts.done += 1;
@@ -140,40 +144,8 @@ export function countsByTag(tasks: TaskView[]): Map<string, TaskCounts> {
       default:
         counts.pending += 1;
     }
-    byTag.set(tag, counts);
   }
-  return byTag;
-}
-
-export interface TaskProgress {
-  /** 0–100, for the bar. */
-  percent: number;
-  /** "3 of 7 done" — or the honest absence when nothing is known. */
-  label: string;
-  tone: StatusTone;
-}
-
-/**
- * The Tasks cell: a bar and a count.
- *
- * `counts` undefined means the task list has not arrived (or this version has
- * none in it), and the cell says so with `—`. That is NOT the same as "0 of 0
- * done", which would read as a version with no work rather than a fact the
- * console does not have.
- */
-export function taskProgress(
-  build: BuildSummary,
-  counts: TaskCounts | undefined,
-): TaskProgress {
-  if (!counts || counts.total === 0) {
-    return { percent: 0, label: "—", tone: "neutral" };
-  }
-  const tone: StatusTone =
-    build.status === "failed" ? "error" : isLedgerLive(build) ? "info" : "success";
-  // Clamped: a state the console does not group must not produce a bar wider
-  // than its track.
-  const percent = Math.min(100, Math.round((counts.done / counts.total) * 100));
-  return { percent, label: `${counts.done} of ${counts.total} done`, tone };
+  return counts;
 }
 
 /**

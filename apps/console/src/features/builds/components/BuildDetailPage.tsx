@@ -54,7 +54,7 @@ import { useBuildRuns, useBuilds, useCancelRun } from "../api/queries";
 import { runStamp } from "../lib/format";
 import {
   buildDuration,
-  countsByTag,
+  countTasks,
   isLedgerLive,
   ledgerStatus,
   milestoneLabel,
@@ -278,9 +278,9 @@ function BuildSummaryCard({
 }) {
   const live = isLedgerLive(build);
   const duration = buildDuration(build.startedAt, build.completedAt);
-  // Derived from the tasks this page already holds — the same read the Tasks
-  // section below renders.
-  const breakdown = taskBreakdown(countsByTag(tasks).get(build.tag));
+  // Derived from the tasks this page already holds — the same TAG-SCOPED read
+  // the Tasks section below renders.
+  const breakdown = taskBreakdown(countTasks(tasks));
 
   const cells: Array<{ label: string; value: React.ReactNode }> = [
     { label: "Milestone", value: milestoneLabel(build) },
