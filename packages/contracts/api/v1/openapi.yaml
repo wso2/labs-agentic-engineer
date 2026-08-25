@@ -727,8 +727,8 @@ paths:
       description: The version ledger — one entry per built spec version tag, newest first, each
         carrying the state of the newest milestone run that has worked it. DB-only (no GitHub, no
         cluster), so the console may fetch it on demand and poll it while a run is live. Task counts
-        are deliberately absent; the console renders them from the list-tasks response it already
-        holds.
+        ARE carried here (ADR-0020) — the Builds page renders every version at once, so deriving them
+        from list-tasks would cost one GitHub-backed read per row.
       operationId: list-project-builds
       parameters:
       - description: Project name (DNS-label slug)
@@ -1445,6 +1445,62 @@ paths:
       summary: Get a component's OpenAPI spec
       tags:
       - Components
+  /projects/{projectName}/components/{componentName}/runtime-logs:
+    get:
+      description: A running component's log over a bounded window. This is the RUNTIME log — what
+        the workload has printed since it started — not get-build-logs, which is what the build
+        printed. Deliberately a window rather than a stream, because the reader is given a
+        time-range control and a tail would need a reconnect policy this surface has no use for.
+      operationId: get-runtime-logs
+      parameters:
+      - description: Project name (DNS-label slug)
+        in: path
+        name: projectName
+        required: true
+        schema:
+          description: Project name (DNS-label slug)
+          type: string
+      - description: Component name (DNS-label slug)
+        in: path
+        name: componentName
+        required: true
+        schema:
+          description: Component name (DNS-label slug)
+          type: string
+      - description: Which environment's running instance to read. Required — the same component
+          runs in more than one, and defaulting would silently show the wrong one.
+        in: query
+        name: environment
+        required: true
+        schema:
+          type: string
+      - description: Window size in seconds, counting back from now. Absent defaults to 3600 — the
+          console's "Last 1h". The server may serve a smaller window and says so in
+          `windowSeconds`.
+        in: query
+        name: windowSeconds
+        required: false
+        schema:
+          format: int64
+          type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeLogs'
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+      security:
+      - userJWT: []
+      summary: Get runtime logs
+      tags:
+      - Components
   /projects/{projectName}/dependencies/access-requests:
     get:
       operationId: list-access-requests
@@ -1551,6 +1607,91 @@ paths:
       summary: Collect an external dependency's values and provision it
       tags:
       - Dependencies
+  /projects/{projectName}/deployments:
+    get:
+      description: Every deployment across every environment, newest first — the record the
+        Deployments table lists. Distinct from list-deployments, which is scoped to one component and
+        returns only what is currently released. A deployment that failed, or was later superseded,
+        stays in this list; before it, the console could show only what was running right now.
+      operationId: list-project-deployments
+      parameters:
+      - description: Project name (DNS-label slug)
+        in: path
+        name: projectName
+        required: true
+        schema:
+          description: Project name (DNS-label slug)
+          type: string
+      - description: Restrict to one environment. Absent returns all of them.
+        in: query
+        name: environment
+        required: false
+        schema:
+          type: string
+      - description: How far back to look, in days. Absent defaults to 30 — the window the console
+          labels its table with.
+        in: query
+        name: days
+        required: false
+        schema:
+          format: int64
+          type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectDeploymentList'
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+      security:
+      - userJWT: []
+      summary: List project deployments
+      tags:
+      - Projects
+  /projects/{projectName}/deployments/{deploymentId}:
+    get:
+      description: One deployment and the components it put in the environment, each with its
+        release, its condition and the action it affords.
+      operationId: get-project-deployment
+      parameters:
+      - description: Project name (DNS-label slug)
+        in: path
+        name: projectName
+        required: true
+        schema:
+          description: Project name (DNS-label slug)
+          type: string
+      - description: Deployment id, from list-project-deployments
+        in: path
+        name: deploymentId
+        required: true
+        schema:
+          description: Deployment id, from list-project-deployments
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectDeploymentDetail'
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+      security:
+      - userJWT: []
+      summary: Get project deployment
+      tags:
+      - Projects
   /projects/{projectName}/design/dependencies:
     get:
       operationId: list-design-dependencies
@@ -3172,25 +3313,52 @@ components:
         milestone run that has worked it. A ledger read has no live workflow query, so "started"
         never occurs here.
       properties:
+        commit:
+          allOf:
+          - $ref: '#/components/schemas/CommitRef'
+          description: The commit this version was tagged at, and the branch its work landed on —
+            the ledger row's second line.
         completedAt:
           format: date-time
           type: string
           nullable: true
           x-go-type: '*time.Time'
+        deployedTo:
+          description: Environments this version is currently live in, so the ledger can say
+            "Deployed to dev" without a per-row deployment read. Empty for a version that has never
+            reached an environment.
+          items:
+            type: string
+          type: array
+          nullable: true
         milestoneNumber:
           description: The GitHub milestone this version's work lives in — the platform key the tag
             resolves to, and the handle list-build-runs is read by.
           format: int64
           type: integer
+        milestoneTitle:
+          description: The milestone's human title, shown as the ledger row's headline. The number
+            alone names nothing a reader recognises.
+          type: string
+        taskCounts:
+          allOf:
+          - $ref: '#/components/schemas/TaskCounts'
+          description: This version's task breakdown. Carried here rather than derived from
+            list-tasks because the ledger renders EVERY version at once, and deriving would cost one
+            GitHub-backed read per row.
         reason:
           description: The run's terminal reason for a failed version (empty otherwise), surfaced
             beside the Failed badge in the console.
           type: string
         startedAt:
+          description: When the run began. For a `queued` version this is the ENQUEUE time — the
+            version is waiting, not running — and the console renders its Started cell as "—"
+            rather than claiming a start that has not happened.
           format: date-time
           type: string
         status:
           enum:
+          - queued
           - started
           - in_progress
           - completed
@@ -3203,6 +3371,48 @@ components:
       - milestoneNumber
       - status
       - startedAt
+      type: object
+    CommitRef:
+      additionalProperties: false
+      description: A commit and the branch it landed on. Shared by the version ledger and the
+        deployment record so both name a build the same way.
+      properties:
+        branch:
+          type: string
+        sha:
+          description: Full SHA. The console abbreviates for display; truncating here would lose the
+            only handle a GitHub link needs.
+          type: string
+      required:
+      - sha
+      type: object
+    TaskCounts:
+      additionalProperties: false
+      description: One version's tasks by state. `total` is authoritative and is NOT required to
+        equal the sum of the buckets — a task in a state the console does not group still counts.
+      properties:
+        blocked:
+          description: Waiting on a dependency the user must configure.
+          format: int64
+          type: integer
+        done:
+          format: int64
+          type: integer
+        inProgress:
+          format: int64
+          type: integer
+        inReview:
+          format: int64
+          type: integer
+        pending:
+          format: int64
+          type: integer
+        total:
+          format: int64
+          type: integer
+      required:
+      - total
+      - done
       type: object
     ClientSecretOutputBody:
       additionalProperties: false
@@ -3880,6 +4090,166 @@ components:
           nullable: true
       required:
       - items
+      type: object
+    DeploymentComponent:
+      additionalProperties: false
+      description: One component inside a deployment. `kind` is what decides the action the console
+        offers — a service gets "Try API", a web app "Visit", an agent "Try agent" — so it is
+        carried rather than guessed from the endpoint's shape.
+      properties:
+        endpointUrl:
+          description: Absent for a component that exposes nothing (a worker, or a service still
+            starting). The console shows the row without a link rather than a dead one.
+          type: string
+        kind:
+          enum:
+          - service
+          - webapp
+          - agent
+          - worker
+          type: string
+        name:
+          type: string
+        releaseName:
+          type: string
+        status:
+          description: The release's condition reason, in OpenChoreo's own vocabulary — the words
+            operators already read in the cluster.
+          type: string
+      required:
+      - name
+      - kind
+      - status
+      type: object
+    ProjectDeployment:
+      additionalProperties: false
+      description: One deployment of one version into one environment — the unit the Deployments
+        table lists. Distinct from `Deployment`, which is a component's release and carries no
+        version, duration or verdict.
+      properties:
+        commit:
+          $ref: '#/components/schemas/CommitRef'
+        deployedAt:
+          format: date-time
+          type: string
+        durationSeconds:
+          description: Absent while the deployment is still running — the console counts up from
+            `deployedAt` instead of showing a duration that is not yet a fact.
+          format: int64
+          type: integer
+        environment:
+          type: string
+        id:
+          type: string
+        milestoneTitle:
+          type: string
+        status:
+          description: '`superseded` is join-derived: a deployment that succeeded and was later
+            replaced in the same environment. It is not a state the platform ever writes.'
+          enum:
+          - live
+          - deploying
+          - validating
+          - failed
+          - superseded
+          type: string
+        tag:
+          description: The spec version this deployment shipped, e.g. `v1`.
+          type: string
+        validation:
+          $ref: '#/components/schemas/ValidationSummary'
+      required:
+      - id
+      - tag
+      - environment
+      - status
+      - deployedAt
+      type: object
+    ProjectDeploymentDetail:
+      additionalProperties: false
+      description: get-project-deployment response — one deployment and the components it put in the
+        environment.
+      properties:
+        components:
+          items:
+            $ref: '#/components/schemas/DeploymentComponent'
+          type: array
+          nullable: true
+        deployment:
+          $ref: '#/components/schemas/ProjectDeployment'
+      required:
+      - deployment
+      - components
+      type: object
+    ProjectDeploymentList:
+      additionalProperties: false
+      description: list-project-deployments response — every deployment across every environment,
+        newest first.
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/ProjectDeployment'
+          type: array
+          nullable: true
+      required:
+      - items
+      type: object
+    RuntimeLogEntry:
+      additionalProperties: false
+      properties:
+        level:
+          type: string
+        message:
+          type: string
+        timestamp:
+          format: date-time
+          type: string
+      required:
+      - message
+      type: object
+    RuntimeLogs:
+      additionalProperties: false
+      description: One read of a running component's log over a bounded window. Deliberately NOT a
+        stream — the window is the control the reader is given, and a tail would need a reconnect
+        policy this surface has no use for. An empty list is the honest "nothing in this window"
+        answer, not an error.
+      properties:
+        entries:
+          items:
+            $ref: '#/components/schemas/RuntimeLogEntry'
+          type: array
+          nullable: true
+        truncated:
+          description: True when the window held more than the server would return, so the console
+            can say so instead of implying the log stops there.
+          type: boolean
+        windowSeconds:
+          description: The window actually served, which may be smaller than the one asked for.
+          format: int64
+          type: integer
+      required:
+      - entries
+      type: object
+    ValidationSummary:
+      additionalProperties: false
+      description: What the validation agent concluded about a deployment. `state` is the verdict;
+        the counts are only meaningful once it has started.
+      properties:
+        passed:
+          format: int64
+          type: integer
+        state:
+          enum:
+          - passed
+          - running
+          - failed
+          - not_run
+          type: string
+        total:
+          format: int64
+          type: integer
+      required:
+      - state
       type: object
     DisconnectOutputBody:
       additionalProperties: false
@@ -5599,6 +5969,13 @@ components:
             type: string
           type: array
           nullable: true
+        latestComment:
+          description: The agent's most recent note on this issue, one line — what the build page's
+            task row says beneath the title (ADR-0020 §3). It is the only part of a task row that
+            cannot be derived from what the console already holds, so it is carried rather than
+            computed. Absent while the agent has said nothing, in which case the row shows no
+            second line at all rather than inventing one.
+          type: string
         blockedBy:
           description: Names of the dependencies this task is waiting on; present when derivedStatus is
             on_hold.

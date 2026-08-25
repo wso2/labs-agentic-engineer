@@ -16,34 +16,33 @@
  * under the License.
  */
 
-import { createFileRoute } from "@tanstack/react-router";
-import { BuildsPage } from "../features/builds/components/BuildsPage";
+import { createFileRoute, redirect } from "@tanstack/react-router";
+import { BuildsLedger } from "../features/builds/components/BuildsLedger";
 
-// ?tag=vN selects a previous build; absent = the newest build (#185). The
-// param is validated as "a non-empty string" only — an unknown tag falls
-// back to newest inside BuildsPage rather than erroring the route.
+// The version ledger (ADR-0020 §1). One version's story is its own page now.
+//
+// `?tag=vN` used to select which version this page told the story of. That
+// surface moved, so an old link carrying the search param is redirected to the
+// version's page rather than silently dropping the tag and landing the reader
+// on a list — the link named a version, and it still resolves to one.
 export const Route = createFileRoute("/projects/$projectName/builds/")({
   validateSearch: (search: Record<string, unknown>): { tag?: string } => {
     const tag = search.tag;
     return typeof tag === "string" && tag !== "" ? { tag } : {};
+  },
+  beforeLoad: ({ params, search }) => {
+    if (search.tag) {
+      throw redirect({
+        to: "/projects/$projectName/builds/$tag",
+        params: { projectName: params.projectName, tag: search.tag },
+        replace: true,
+      });
+    }
   },
   component: BuildsRoute,
 });
 
 function BuildsRoute() {
   const { projectName } = Route.useParams();
-  const { tag } = Route.useSearch();
-  const navigate = Route.useNavigate();
-  return (
-    <BuildsPage
-      projectName={projectName}
-      tag={tag}
-      onTagChange={(next) =>
-        void navigate({
-          search: next ? { tag: next } : {},
-          replace: true,
-        })
-      }
-    />
-  );
+  return <BuildsLedger projectName={projectName} />;
 }

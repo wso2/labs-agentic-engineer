@@ -258,3 +258,34 @@ func toBuildPreflight(pf BuildPreflight) gen.BuildPreflight {
 	}
 	return gen.BuildPreflight{NeedsInput: pf.NeedsInput, Items: items}
 }
+
+// --- Project deployments (not yet implemented) --------------------------------
+// The contract carries list-project-deployments and get-project-deployment
+// (ADR-0020 §5, §6) so the console can be built and validated against them, but
+// the deployment RECORD they read — every deployment across every environment,
+// including the failed and superseded ones — does not exist yet. Today's
+// `Deployment` is a component's current release binding and carries no version,
+// duration or verdict.
+//
+// 501 rather than an empty list, for the same reason as get-runtime-logs: an
+// empty list is a meaningful answer on this endpoint ("this project has never
+// deployed"), and the console renders it as exactly that. Returning one here
+// would be indistinguishable from the truth. See the BE handshake on #609.
+
+func (h *Handler) ListProjectDeployments(ctx context.Context, request gen.ListProjectDeploymentsRequestObject) (gen.ListProjectDeploymentsResponseObject, error) {
+	return nil, apierr.New(
+		http.StatusNotImplemented,
+		"not_implemented",
+		"the project deployment record is not available yet",
+		nil,
+	)
+}
+
+func (h *Handler) GetProjectDeployment(ctx context.Context, request gen.GetProjectDeploymentRequestObject) (gen.GetProjectDeploymentResponseObject, error) {
+	return nil, apierr.New(
+		http.StatusNotImplemented,
+		"not_implemented",
+		"the project deployment record is not available yet",
+		nil,
+	)
+}

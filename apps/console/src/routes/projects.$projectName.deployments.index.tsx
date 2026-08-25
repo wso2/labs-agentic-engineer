@@ -17,9 +17,9 @@
  */
 
 import { createFileRoute } from "@tanstack/react-router";
-import { DeploymentsPage } from "../features/projects/components/DeploymentsPage";
+import { DeploymentsPage } from "../features/deployments/components/DeploymentsPage";
 
-export const Route = createFileRoute("/projects/$projectName/deployments")({
+export const Route = createFileRoute("/projects/$projectName/deployments/")({
   component: DeploymentsRoute,
 });
 

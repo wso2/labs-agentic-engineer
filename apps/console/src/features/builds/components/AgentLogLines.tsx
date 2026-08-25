@@ -72,40 +72,14 @@ export function EmitterChip({ emitter, label }: { emitter: string; label?: strin
   );
 }
 
-/** The log surface every machine-written line in this feature renders on. */
-export function LogSurface({
-  children,
-  maxHeight = 420,
-}: {
-  children: React.ReactNode;
-  maxHeight?: number;
-}) {
-  return (
-    <Box
-      sx={{
-        bgcolor: "grey.900",
-        borderRadius: 1,
-        p: 2,
-        maxHeight,
-        overflowY: "auto",
-        fontFamily: "monospace",
-        fontSize: "0.8125rem",
-        lineHeight: 1.7,
-      }}
-    >
-      {children}
-    </Box>
-  );
-}
+// The log surface moved to components/LogSection (ADR-0020): three surfaces now
+// render logs and one definition keeps them identical. Re-exported here so the
+// feature's existing importers are untouched.
+// Imported as well as re-exported: a bare `export … from` does not bind the
+// names in this module's own scope, and the renderers below use both.
+import { LogNote, LogSurface } from "../../../components/LogSection";
 
-/** A line of dimmed monospace on the log surface — empty states and notes. */
-export function LogNote({ children }: { children: React.ReactNode }) {
-  return (
-    <Typography component="div" sx={{ font: "inherit", color: "grey.500" }}>
-      {children}
-    </Typography>
-  );
-}
+export { LogNote, LogSurface };
 
 /**
  * Empty-state copy for the agent log panel. Distinguishes attaching to a

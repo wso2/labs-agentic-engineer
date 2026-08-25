@@ -17,28 +17,19 @@
  */
 
 import { createFileRoute } from "@tanstack/react-router";
-import { TaskPage } from "../features/tasks/components/TaskPage";
+import { DeploymentDetailPage } from "../features/deployments/components/DeploymentDetailPage";
 
+// One deployment (ADR-0020 §6) — the first time a deployment has been an
+// addressable thing rather than whatever happens to be running now.
 export const Route = createFileRoute(
-  "/projects/$projectName/builds/$issueNumber",
+  "/projects/$projectName/deployments/$deploymentId",
 )({
-  params: {
-    parse: (params) => {
-      const issueNumber = Number(params.issueNumber);
-      if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
-        throw new Error(`invalid issue number: ${params.issueNumber}`);
-      }
-      return { ...params, issueNumber };
-    },
-    stringify: (params) => ({
-      ...params,
-      issueNumber: String(params.issueNumber),
-    }),
-  },
-  component: TaskRoute,
+  component: DeploymentDetailRoute,
 });
 
-function TaskRoute() {
-  const { projectName, issueNumber } = Route.useParams();
-  return <TaskPage projectName={projectName} issueNumber={issueNumber} />;
+function DeploymentDetailRoute() {
+  const { projectName, deploymentId } = Route.useParams();
+  return (
+    <DeploymentDetailPage projectName={projectName} deploymentId={deploymentId} />
+  );
 }

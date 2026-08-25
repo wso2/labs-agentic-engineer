@@ -102,6 +102,7 @@ const (
 	BuildSummaryStatusCompleted  BuildSummaryStatus = "completed"
 	BuildSummaryStatusFailed     BuildSummaryStatus = "failed"
 	BuildSummaryStatusInProgress BuildSummaryStatus = "in_progress"
+	BuildSummaryStatusQueued     BuildSummaryStatus = "queued"
 	BuildSummaryStatusStarted    BuildSummaryStatus = "started"
 )
 
@@ -113,6 +114,8 @@ func (e BuildSummaryStatus) Valid() bool {
 	case BuildSummaryStatusFailed:
 		return true
 	case BuildSummaryStatusInProgress:
+		return true
+	case BuildSummaryStatusQueued:
 		return true
 	case BuildSummaryStatusStarted:
 		return true
@@ -154,6 +157,30 @@ func (e DeployStageValidation) Valid() bool {
 	case DeployStageValidationSkipped:
 		return true
 	case DeployStageValidationUnreported:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DeploymentComponentKind.
+const (
+	Agent   DeploymentComponentKind = "agent"
+	Service DeploymentComponentKind = "service"
+	Webapp  DeploymentComponentKind = "webapp"
+	Worker  DeploymentComponentKind = "worker"
+)
+
+// Valid indicates whether the value is a known member of the DeploymentComponentKind enum.
+func (e DeploymentComponentKind) Valid() bool {
+	switch e {
+	case Agent:
+		return true
+	case Service:
+		return true
+	case Webapp:
+		return true
+	case Worker:
 		return true
 	default:
 		return false
@@ -304,6 +331,33 @@ func (e ProgressEventEmitter) Valid() bool {
 	}
 }
 
+// Defines values for ProjectDeploymentStatus.
+const (
+	ProjectDeploymentStatusDeploying  ProjectDeploymentStatus = "deploying"
+	ProjectDeploymentStatusFailed     ProjectDeploymentStatus = "failed"
+	ProjectDeploymentStatusLive       ProjectDeploymentStatus = "live"
+	ProjectDeploymentStatusSuperseded ProjectDeploymentStatus = "superseded"
+	ProjectDeploymentStatusValidating ProjectDeploymentStatus = "validating"
+)
+
+// Valid indicates whether the value is a known member of the ProjectDeploymentStatus enum.
+func (e ProjectDeploymentStatus) Valid() bool {
+	switch e {
+	case ProjectDeploymentStatusDeploying:
+		return true
+	case ProjectDeploymentStatusFailed:
+		return true
+	case ProjectDeploymentStatusLive:
+		return true
+	case ProjectDeploymentStatusSuperseded:
+		return true
+	case ProjectDeploymentStatusValidating:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for RunCycleViewKind.
 const (
 	RunCycleViewKindCoding     RunCycleViewKind = "coding"
@@ -417,28 +471,28 @@ func (e RunProgressLineEmitter) Valid() bool {
 
 // Defines values for RunValidationVerdict.
 const (
-	Failed       RunValidationVerdict = "failed"
-	Inconclusive RunValidationVerdict = "inconclusive"
-	Partial      RunValidationVerdict = "partial"
-	Passed       RunValidationVerdict = "passed"
-	Skipped      RunValidationVerdict = "skipped"
-	Unreported   RunValidationVerdict = "unreported"
+	RunValidationVerdictFailed       RunValidationVerdict = "failed"
+	RunValidationVerdictInconclusive RunValidationVerdict = "inconclusive"
+	RunValidationVerdictPartial      RunValidationVerdict = "partial"
+	RunValidationVerdictPassed       RunValidationVerdict = "passed"
+	RunValidationVerdictSkipped      RunValidationVerdict = "skipped"
+	RunValidationVerdictUnreported   RunValidationVerdict = "unreported"
 )
 
 // Valid indicates whether the value is a known member of the RunValidationVerdict enum.
 func (e RunValidationVerdict) Valid() bool {
 	switch e {
-	case Failed:
+	case RunValidationVerdictFailed:
 		return true
-	case Inconclusive:
+	case RunValidationVerdictInconclusive:
 		return true
-	case Partial:
+	case RunValidationVerdictPartial:
 		return true
-	case Passed:
+	case RunValidationVerdictPassed:
 		return true
-	case Skipped:
+	case RunValidationVerdictSkipped:
 		return true
-	case Unreported:
+	case RunValidationVerdictUnreported:
 		return true
 	default:
 		return false
@@ -571,6 +625,30 @@ func (e TurnConflictCode) Valid() bool {
 	case RequirementsMissing:
 		return true
 	case TurnInProgress:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ValidationSummaryState.
+const (
+	Failed  ValidationSummaryState = "failed"
+	NotRun  ValidationSummaryState = "not_run"
+	Passed  ValidationSummaryState = "passed"
+	Running ValidationSummaryState = "running"
+)
+
+// Valid indicates whether the value is a known member of the ValidationSummaryState enum.
+func (e ValidationSummaryState) Valid() bool {
+	switch e {
+	case Failed:
+		return true
+	case NotRun:
+		return true
+	case Passed:
+		return true
+	case Running:
 		return true
 	default:
 		return false
@@ -782,16 +860,29 @@ type BuildStage struct {
 
 // BuildSummary One entry of the version ledger — a spec version tag and the state of the newest milestone run that has worked it. A ledger read has no live workflow query, so "started" never occurs here.
 type BuildSummary struct {
+	// Commit The commit this version was tagged at, and the branch its work landed on — the ledger row's second line.
+	Commit      CommitRef  `json:"commit,omitempty"`
 	CompletedAt *time.Time `json:"completedAt,omitempty"`
+
+	// DeployedTo Environments this version is currently live in, so the ledger can say "Deployed to dev" without a per-row deployment read. Empty for a version that has never reached an environment.
+	DeployedTo []string `json:"deployedTo,omitempty"`
 
 	// MilestoneNumber The GitHub milestone this version's work lives in — the platform key the tag resolves to, and the handle list-build-runs is read by.
 	MilestoneNumber int64 `json:"milestoneNumber"`
 
+	// MilestoneTitle The milestone's human title, shown as the ledger row's headline. The number alone names nothing a reader recognises.
+	MilestoneTitle string `json:"milestoneTitle,omitempty"`
+
 	// Reason The run's terminal reason for a failed version (empty otherwise), surfaced beside the Failed badge in the console.
-	Reason    string             `json:"reason,omitempty"`
+	Reason string `json:"reason,omitempty"`
+
+	// StartedAt When the run began. For a `queued` version this is the ENQUEUE time — the version is waiting, not running — and the console renders its Started cell as "—" rather than claiming a start that has not happened.
 	StartedAt time.Time          `json:"startedAt"`
 	Status    BuildSummaryStatus `json:"status"`
 	Tag       string             `json:"tag"`
+
+	// TaskCounts This version's task breakdown. Carried here rather than derived from list-tasks because the ledger renders EVERY version at once, and deriving would cost one GitHub-backed read per row.
+	TaskCounts TaskCounts `json:"taskCounts,omitempty"`
 }
 
 // BuildSummaryStatus defines model for BuildSummary.Status.
@@ -817,6 +908,14 @@ type CollabValidateOutputBody struct {
 
 	// ProjectName The room's project, resolved by the oracle from `spec-<org>-<project>`; the collab service uses it for the seed read (#114).
 	ProjectName string `json:"projectName"`
+}
+
+// CommitRef A commit and the branch it landed on. Shared by the version ledger and the deployment record so both name a build the same way.
+type CommitRef struct {
+	Branch string `json:"branch,omitempty"`
+
+	// Sha Full SHA. The console abbreviates for display; truncating here would lose the only handle a GitHub link needs.
+	Sha string `json:"sha"`
 }
 
 // Component defines model for Component.
@@ -1032,6 +1131,21 @@ type Deployment struct {
 	ReleaseName   string `json:"releaseName,omitempty"`
 	Status        string `json:"status,omitempty"`
 }
+
+// DeploymentComponent One component inside a deployment. `kind` is what decides the action the console offers — a service gets "Try API", a web app "Visit", an agent "Try agent" — so it is carried rather than guessed from the endpoint's shape.
+type DeploymentComponent struct {
+	// EndpointURL Absent for a component that exposes nothing (a worker, or a service still starting). The console shows the row without a link rather than a dead one.
+	EndpointURL string                  `json:"endpointUrl,omitempty"`
+	Kind        DeploymentComponentKind `json:"kind"`
+	Name        string                  `json:"name"`
+	ReleaseName string                  `json:"releaseName,omitempty"`
+
+	// Status The release's condition reason, in OpenChoreo's own vocabulary — the words operators already read in the cluster.
+	Status string `json:"status"`
+}
+
+// DeploymentComponentKind defines model for DeploymentComponent.Kind.
+type DeploymentComponentKind string
 
 // DeploymentList defines model for DeploymentList.
 type DeploymentList struct {
@@ -1359,6 +1473,44 @@ type ProjectDependencyReadiness struct {
 	Dependencies []ExternalDependencyReadiness `json:"dependencies"`
 }
 
+// ProjectDeployment One deployment of one version into one environment — the unit the Deployments table lists. Distinct from `Deployment`, which is a component's release and carries no version, duration or verdict.
+type ProjectDeployment struct {
+	// Commit A commit and the branch it landed on. Shared by the version ledger and the deployment record so both name a build the same way.
+	Commit     CommitRef `json:"commit,omitempty"`
+	DeployedAt time.Time `json:"deployedAt"`
+
+	// DurationSeconds Absent while the deployment is still running — the console counts up from `deployedAt` instead of showing a duration that is not yet a fact.
+	DurationSeconds int64  `json:"durationSeconds,omitempty"`
+	Environment     string `json:"environment"`
+	ID              string `json:"id"`
+	MilestoneTitle  string `json:"milestoneTitle,omitempty"`
+
+	// Status `superseded` is join-derived: a deployment that succeeded and was later replaced in the same environment. It is not a state the platform ever writes.
+	Status ProjectDeploymentStatus `json:"status"`
+
+	// Tag The spec version this deployment shipped, e.g. `v1`.
+	Tag string `json:"tag"`
+
+	// Validation What the validation agent concluded about a deployment. `state` is the verdict; the counts are only meaningful once it has started.
+	Validation ValidationSummary `json:"validation,omitempty"`
+}
+
+// ProjectDeploymentStatus `superseded` is join-derived: a deployment that succeeded and was later replaced in the same environment. It is not a state the platform ever writes.
+type ProjectDeploymentStatus string
+
+// ProjectDeploymentDetail get-project-deployment response — one deployment and the components it put in the environment.
+type ProjectDeploymentDetail struct {
+	Components []DeploymentComponent `json:"components"`
+
+	// Deployment One deployment of one version into one environment — the unit the Deployments table lists. Distinct from `Deployment`, which is a component's release and carries no version, duration or verdict.
+	Deployment ProjectDeployment `json:"deployment"`
+}
+
+// ProjectDeploymentList list-project-deployments response — every deployment across every environment, newest first.
+type ProjectDeploymentList struct {
+	Items []ProjectDeployment `json:"items"`
+}
+
 // ProjectList defines model for ProjectList.
 type ProjectList struct {
 	Items []Project `json:"items"`
@@ -1652,6 +1804,24 @@ type RunValidation struct {
 // `failed` and `unreported` fail the run ONCE ITS VALIDATION ATTEMPTS ARE SPENT, under terminal reasons validation-failed and validation-unreported respectively; while attempts remain the run repairs and validates again, so this field can hold a fatal verdict on a run that is still live and about to try once more. A client rendering it as the run's answer therefore needs the lifecycle too — that is DeployStage.validation, which reports awaiting-fix for exactly that state. The rest settle succeeded.
 type RunValidationVerdict string
 
+// RuntimeLogEntry defines model for RuntimeLogEntry.
+type RuntimeLogEntry struct {
+	Level     string    `json:"level,omitempty"`
+	Message   string    `json:"message"`
+	Timestamp time.Time `json:"timestamp,omitempty"`
+}
+
+// RuntimeLogs One read of a running component's log over a bounded window. Deliberately NOT a stream — the window is the control the reader is given, and a tail would need a reconnect policy this surface has no use for. An empty list is the honest "nothing in this window" answer, not an error.
+type RuntimeLogs struct {
+	Entries []RuntimeLogEntry `json:"entries"`
+
+	// Truncated True when the window held more than the server would return, so the console can say so instead of implying the log stops there.
+	Truncated bool `json:"truncated,omitempty"`
+
+	// WindowSeconds The window actually served, which may be smaller than the one asked for.
+	WindowSeconds int64 `json:"windowSeconds,omitempty"`
+}
+
 // SaveValuesBody defines model for SaveValuesBody.
 type SaveValuesBody struct {
 	// Environments Per-environment { configKey: value } maps. Secret keys are routed to the secret manager by the registered schema.
@@ -1776,6 +1946,17 @@ type TagList struct {
 	Tags []string `json:"tags"`
 }
 
+// TaskCounts One version's tasks by state. `total` is authoritative and is NOT required to equal the sum of the buckets — a task in a state the console does not group still counts.
+type TaskCounts struct {
+	// Blocked Waiting on a dependency the user must configure.
+	Blocked    int64 `json:"blocked,omitempty"`
+	Done       int64 `json:"done"`
+	InProgress int64 `json:"inProgress,omitempty"`
+	InReview   int64 `json:"inReview,omitempty"`
+	Pending    int64 `json:"pending,omitempty"`
+	Total      int64 `json:"total"`
+}
+
 // TaskDetail defines model for TaskDetail.
 type TaskDetail struct {
 	Attention []string `json:"attention"`
@@ -1841,12 +2022,15 @@ type TaskView struct {
 	IssueURL      string                `json:"issueUrl"`
 
 	// Kind The issue's raw label kind: `development` for planned work minted from the spec, `bug` for a defect, `conflict` for a pull request that will not merge, `validation` for the version's validation task, `provision` for a dispatch gate. Absent when the issue carries no kind label (a ledger issue, or one a human armed without classifying); a consumer that does not recognise a kind should render the row untagged rather than guess.
-	Kind      string  `json:"kind,omitempty"`
-	Lineage   Lineage `json:"lineage"`
-	Operation string  `json:"operation,omitempty"`
-	Origin    string  `json:"origin,omitempty"`
-	Rationale string  `json:"rationale,omitempty"`
-	Title     string  `json:"title"`
+	Kind string `json:"kind,omitempty"`
+
+	// LatestComment The agent's most recent note on this issue, one line — what the build page's task row says beneath the title (ADR-0020 §3). It is the only part of a task row that cannot be derived from what the console already holds, so it is carried rather than computed. Absent while the agent has said nothing, in which case the row shows no second line at all rather than inventing one.
+	LatestComment string  `json:"latestComment,omitempty"`
+	Lineage       Lineage `json:"lineage"`
+	Operation     string  `json:"operation,omitempty"`
+	Origin        string  `json:"origin,omitempty"`
+	Rationale     string  `json:"rationale,omitempty"`
+	Title         string  `json:"title"`
 
 	// Usage Actual token usage for one unit of agent work or an aggregate (#245,
 	Usage Usage `json:"usage,omitempty"`
@@ -2014,6 +2198,16 @@ type Usage struct {
 	OutputTokens int64  `json:"outputTokens"`
 }
 
+// ValidationSummary What the validation agent concluded about a deployment. `state` is the verdict; the counts are only meaningful once it has started.
+type ValidationSummary struct {
+	Passed int64                  `json:"passed,omitempty"`
+	State  ValidationSummaryState `json:"state"`
+	Total  int64                  `json:"total,omitempty"`
+}
+
+// ValidationSummaryState defines model for ValidationSummary.State.
+type ValidationSummaryState string
+
 // Warning defines model for Warning.
 type Warning struct {
 	Code    string `json:"code"`
@@ -2119,10 +2313,28 @@ type GetDependencyStatusParams struct {
 	Environment string `form:"environment,omitempty" json:"environment,omitempty"`
 }
 
+// GetRuntimeLogsParams defines parameters for GetRuntimeLogs.
+type GetRuntimeLogsParams struct {
+	// Environment Which environment's running instance to read. Required — the same component runs in more than one, and defaulting would silently show the wrong one.
+	Environment string `form:"environment" json:"environment"`
+
+	// WindowSeconds Window size in seconds, counting back from now. Absent defaults to 3600 — the console's "Last 1h". The server may serve a smaller window and says so in `windowSeconds`.
+	WindowSeconds int64 `form:"windowSeconds,omitempty" json:"windowSeconds,omitempty"`
+}
+
 // GetProjectDependencyReadinessParams defines parameters for GetProjectDependencyReadiness.
 type GetProjectDependencyReadinessParams struct {
 	// Environment Environment (default: development)
 	Environment string `form:"environment,omitempty" json:"environment,omitempty"`
+}
+
+// ListProjectDeploymentsParams defines parameters for ListProjectDeployments.
+type ListProjectDeploymentsParams struct {
+	// Environment Restrict to one environment. Absent returns all of them.
+	Environment string `form:"environment,omitempty" json:"environment,omitempty"`
+
+	// Days How far back to look, in days. Absent defaults to 30 — the window the console labels its table with.
+	Days int64 `form:"days,omitempty" json:"days,omitempty"`
 }
 
 // ListFilesParams defines parameters for ListFiles.

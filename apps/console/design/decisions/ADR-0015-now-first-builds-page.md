@@ -1,6 +1,13 @@
 # ADR-0015: The Builds page is now-first — a glance strip, one narrated stage, and the milestone beside the run
 
-Status: Accepted. Amends ADR-0013 (version-run-surface) and ADR-0014
+Status: **Superseded by
+[ADR-0020](./ADR-0020-build-and-deploy-are-ledger-first.md)** — Builds is a
+version ledger and the run story moved to a build detail page. §4 ("in progress"
+is derived, in two strengths) survives and still governs task-row copy; §1, §3,
+§5 and §6 do not. ADR-0020 also records what happens to this ADR's amendments to
+ADR-0013 and ADR-0014: they do **not** revert.
+
+Originally: Accepted. Amends ADR-0013 (version-run-surface) and ADR-0014
 (build-session-spine); both remain in force except where named below.
 
 ## Context

@@ -16,22 +16,36 @@
  * under the License.
  */
 
-import { createFileRoute, redirect } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
+import { TaskPage } from "../features/tasks/components/TaskPage";
 
-// The Tasks section became the Builds page (#185); old task links keep
-// working. The issue number passes through untouched (string is fine — the
-// builds detail route re-parses it).
+/**
+ * One task (ADR-0020 §7).
+ *
+ * This route used to redirect INTO `/builds/:issueNumber` (#185, when the Tasks
+ * section became the Builds page). `/builds/:tag` is now the version's page, so
+ * the redirect runs the other way and this is where a task actually renders.
+ */
 export const Route = createFileRoute(
   "/projects/$projectName/tasks/$issueNumber",
 )({
-  beforeLoad: ({ params }) => {
-    throw redirect({
-      to: "/projects/$projectName/builds/$issueNumber",
-      params: {
-        projectName: params.projectName,
-        issueNumber: Number(params.issueNumber),
-      },
-      replace: true,
-    });
+  params: {
+    parse: (params) => {
+      const issueNumber = Number(params.issueNumber);
+      if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
+        throw new Error(`invalid issue number: ${params.issueNumber}`);
+      }
+      return { ...params, issueNumber };
+    },
+    stringify: (params) => ({
+      ...params,
+      issueNumber: String(params.issueNumber),
+    }),
   },
+  component: TaskRoute,
 });
+
+function TaskRoute() {
+  const { projectName, issueNumber } = Route.useParams();
+  return <TaskPage projectName={projectName} issueNumber={issueNumber} />;
+}

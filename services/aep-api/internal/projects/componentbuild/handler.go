@@ -19,6 +19,7 @@ package componentbuild
 import (
 	"context"
 	"errors"
+	"net/http"
 
 	"github.com/wso2/aep/aep-api/internal/gen"
 	"github.com/wso2/aep/aep-api/internal/platform/apierr"
@@ -126,4 +127,26 @@ func (h *Handler) GetComponentOpenapi(ctx context.Context, request gen.GetCompon
 		return nil, projects.MapComponentError(err, "failed to get OpenAPI spec")
 	}
 	return gen.GetComponentOpenapi200JSONResponse(*spec), nil
+}
+
+// --- Runtime logs (not yet implemented) ---------------------------------------
+// The contract carries get-runtime-logs (ADR-0020 §8) so the console can be
+// built and validated against it, but reading a running workload's log is not
+// wired to the cluster yet — see the BE handshake on #609.
+//
+// 501 rather than a silent empty list: an empty `entries` array is a MEANINGFUL
+// answer on this endpoint ("nothing in this window"), so returning one here
+// would tell the console a lie it cannot detect. The console renders a
+// not-available note for this status and keeps the rest of the page working.
+
+func (h *Handler) GetRuntimeLogs(ctx context.Context, request gen.GetRuntimeLogsRequestObject) (gen.GetRuntimeLogsResponseObject, error) {
+	if err := projects.RequireComponentSlugs(request.ProjectName, request.ComponentName); err != nil {
+		return nil, err
+	}
+	return nil, apierr.New(
+		http.StatusNotImplemented,
+		"not_implemented",
+		"runtime logs are not available yet",
+		nil,
+	)
 }

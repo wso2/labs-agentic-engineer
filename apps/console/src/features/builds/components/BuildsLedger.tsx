@@ -1,0 +1,352 @@
+/**
+ * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+ *
+ * WSO2 LLC. licenses this file to you under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+import { useMemo, useState } from "react";
+import {
+  Alert,
+  Box,
+  Button,
+  CircularProgress,
+  LinearProgress,
+  ListingTable,
+  MenuItem,
+  Skeleton,
+  Stack,
+  TextField,
+  Typography,
+  alpha,
+  type Theme,
+} from "@wso2/oxygen-ui";
+import { ListChecks } from "@wso2/oxygen-ui-icons-react";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { EmptyState } from "../../../components/EmptyState";
+import { PageHeader } from "../../../components/PageHeader";
+import { StatusChip } from "../../../components/StatusChip";
+import type { components } from "../../../generated/aep-api";
+import { useBuilds } from "../api/queries";
+import { runStamp } from "../lib/format";
+import {
+  commitLine,
+  isLedgerLive,
+  ledgerDuration,
+  ledgerStarted,
+  ledgerStatus,
+  taskProgress,
+} from "../lib/ledger";
+
+type BuildSummary = components["schemas"]["BuildSummary"];
+
+/**
+ * The Builds page: ONE ROW PER VERSION (ADR-0020 §1).
+ *
+ * This replaced the now-first landing page, which opened on the newest
+ * version's live run and offered no way to see two versions at once. The live
+ * row is still one click from that surface — it is the build detail page now —
+ * and it tints and pulses here so a reader arriving mid-run still lands on the
+ * moving thing.
+ */
+
+const STATUS_FILTERS = [
+  { value: "all", label: "All statuses" },
+  { value: "running", label: "Running" },
+  { value: "queued", label: "Queued" },
+  { value: "completed", label: "Completed" },
+  { value: "failed", label: "Failed" },
+] as const;
+
+type StatusFilter = (typeof STATUS_FILTERS)[number]["value"];
+
+function matchesFilter(build: BuildSummary, filter: StatusFilter): boolean {
+  switch (filter) {
+    case "all":
+      return true;
+    case "running":
+      return isLedgerLive(build);
+    case "queued":
+      return build.status === "queued";
+    case "completed":
+      return build.status === "completed";
+    case "failed":
+      return build.status === "failed";
+    default:
+      return true;
+  }
+}
+
+const COLUMNS = [
+  { key: "version", label: "Version", width: 104 },
+  { key: "milestone", label: "Milestone" },
+  { key: "status", label: "Status", width: 190 },
+  { key: "tasks", label: "Tasks", width: 140 },
+  { key: "duration", label: "Duration", width: 110 },
+  { key: "started", label: "Started", width: 150 },
+];
+
+export function BuildsLedger({ projectName }: { projectName: string }) {
+  const builds = useBuilds(projectName);
+  const navigate = useNavigate();
+  const [filter, setFilter] = useState<StatusFilter>("all");
+
+  const rows = useMemo(
+    () => (builds.data ?? []).filter((b) => matchesFilter(b, filter)),
+    [builds.data, filter],
+  );
+
+  // The header renders through every state below so the back link stays
+  // reachable while builds load or fail — the pattern every adopted page uses.
+  const backTo = {
+    link: <Link to="/projects/$projectName" params={{ projectName }} />,
+    label: "Back to Overview",
+  };
+
+  const header = (actions?: React.ReactNode) => (
+    <PageHeader
+      title="Builds"
+      subtitle="Every version of your spec that was handed to the coding agents. One build runs at a time — the rest wait in order."
+      backTo={backTo}
+      {...(actions ? { actions } : {})}
+    />
+  );
+
+  if (builds.isPending) {
+    return (
+      <>
+        {header()}
+        {/* Skeleton ROWS, not a spinner: the reader knows a table is coming and
+            the page does not jump when it arrives. */}
+        <Stack spacing={1} sx={{ mt: 2 }}>
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} variant="rounded" height={64} />
+          ))}
+        </Stack>
+      </>
+    );
+  }
+
+  if (builds.isError) {
+    return (
+      <>
+        {header()}
+        <Alert
+          severity="error"
+          action={<Button onClick={() => void builds.refetch()}>Retry</Button>}
+        >
+          Failed to load builds
+          {builds.error instanceof Error && builds.error.message
+            ? `: ${builds.error.message}`
+            : ""}
+        </Alert>
+      </>
+    );
+  }
+
+  if ((builds.data ?? []).length === 0) {
+    return (
+      <>
+        {header()}
+        <EmptyState
+          icon={<ListChecks size={48} />}
+          title="No builds yet"
+          description="Publish your spec and click Build in the spec view to start the first one."
+        />
+      </>
+    );
+  }
+
+  const statusFilter = (
+    <TextField
+      select
+      size="small"
+      value={filter}
+      onChange={(e) => setFilter(e.target.value as StatusFilter)}
+      label="Status"
+      sx={{ width: 180 }}
+    >
+      {STATUS_FILTERS.map((o) => (
+        <MenuItem key={o.value} value={o.value}>
+          {o.label}
+        </MenuItem>
+      ))}
+    </TextField>
+  );
+
+  return (
+    <>
+      {header(statusFilter)}
+
+      {rows.length === 0 ? (
+        // Filtered to nothing is NOT the same as having no builds, and must not
+        // borrow the "no builds yet" copy — the reader would think they had lost
+        // their history.
+        <EmptyState
+          compact
+          bordered
+          description={`No ${filter} builds. Clear the filter to see every version.`}
+          action={<Button onClick={() => setFilter("all")}>Clear filter</Button>}
+        />
+      ) : (
+        <ListingTable.Container sx={{ width: "100%" }}>
+          <ListingTable density="standard">
+            <ListingTable.Head>
+              <ListingTable.Row>
+                {COLUMNS.map((c) => (
+                  <ListingTable.Cell
+                    key={c.key}
+                    {...(c.width ? { sx: { width: c.width } } : {})}
+                  >
+                    {c.label}
+                  </ListingTable.Cell>
+                ))}
+              </ListingTable.Row>
+            </ListingTable.Head>
+            <ListingTable.Body>
+              {rows.map((build) => (
+                <LedgerRow
+                  key={build.tag}
+                  build={build}
+                  onOpen={() =>
+                    void navigate({
+                      to: "/projects/$projectName/builds/$tag",
+                      params: { projectName, tag: build.tag },
+                    })
+                  }
+                />
+              ))}
+            </ListingTable.Body>
+          </ListingTable>
+        </ListingTable.Container>
+      )}
+    </>
+  );
+}
+
+function LedgerRow({
+  build,
+  onOpen,
+}: {
+  build: BuildSummary;
+  onOpen: () => void;
+}) {
+  const status = ledgerStatus(build);
+  const progress = taskProgress(build);
+  const live = isLedgerLive(build);
+  const started = ledgerStarted(build);
+  const commit = commitLine(build);
+
+  return (
+    <ListingTable.Row
+      hover
+      clickable
+      onClick={onOpen}
+      // A live row tints so the moving version is findable without reading
+      // every status cell. alpha() over a theme colour, so it holds in both
+      // schemes — a hardcoded near-white tint would vanish in dark mode.
+      {...(live
+        ? { sx: { bgcolor: (t: Theme) => alpha(t.palette.info.main, 0.06) } }
+        : {})}
+    >
+      <ListingTable.Cell>
+        <Typography
+          variant="subtitle2"
+          sx={{ fontWeight: 600, fontVariantNumeric: "tabular-nums" }}
+        >
+          {build.tag}
+        </Typography>
+      </ListingTable.Cell>
+
+      <ListingTable.Cell sx={{ minWidth: 0 }}>
+        <Typography
+          variant="body2"
+          sx={{
+            fontWeight: 500,
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+          title={build.milestoneTitle ?? undefined}
+        >
+          {build.milestoneTitle || `Milestone #${build.milestoneNumber}`}
+        </Typography>
+        {commit && (
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ fontFamily: "monospace", display: "block", mt: 0.25 }}
+          >
+            {commit}
+          </Typography>
+        )}
+      </ListingTable.Cell>
+
+      <ListingTable.Cell>
+        <StatusChip
+          label={status.label}
+          tone={status.tone}
+          appearance="soft"
+          dot
+        />
+      </ListingTable.Cell>
+
+      <ListingTable.Cell>
+        <LinearProgress
+          variant="determinate"
+          value={progress.percent}
+          color={
+            progress.tone === "error"
+              ? "error"
+              : progress.tone === "info"
+                ? "info"
+                : progress.tone === "success"
+                  ? "success"
+                  : "inherit"
+          }
+          sx={{ height: 6, borderRadius: 3 }}
+          aria-label={`Tasks: ${progress.label}`}
+        />
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{ display: "block", mt: 0.5, fontVariantNumeric: "tabular-nums" }}
+        >
+          {progress.label}
+        </Typography>
+      </ListingTable.Cell>
+
+      <ListingTable.Cell>
+        <Typography variant="body2" sx={{ fontVariantNumeric: "tabular-nums" }}>
+          {ledgerDuration(build)}
+        </Typography>
+      </ListingTable.Cell>
+
+      <ListingTable.Cell>
+        <Typography variant="body2" color="text.secondary">
+          {started ? runStamp(started) : "—"}
+        </Typography>
+      </ListingTable.Cell>
+    </ListingTable.Row>
+  );
+}
+
+/** Kept for the loading state's sake — a spinner the router can mount. */
+export function BuildsLedgerFallback() {
+  return (
+    <Box sx={{ display: "flex", justifyContent: "center", p: 6 }}>
+      <CircularProgress aria-label="Loading builds" />
+    </Box>
+  );
+}

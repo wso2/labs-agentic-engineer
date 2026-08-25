@@ -1,6 +1,9 @@
 # ADR-0014: A run is ONE numbered flow — provisioning, then every build session's stages
 
-- **Status:** Accepted
+- **Status:** Historical as of
+  [ADR-0020](./ADR-0020-build-and-deploy-are-ledger-first.md) — nothing renders
+  the numbered rail this ADR designed. §9's fetch-on-demand policy survives as
+  the build page's log-section behaviour. Previously: Accepted
 - **Date:** 2026-07-28
 - **Supersedes in part:** [ADR-0013](./ADR-0013-version-run-surface.md)
   decisions 3, 4b, 6 and 9.
