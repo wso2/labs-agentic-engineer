@@ -358,7 +358,7 @@ public class ViewsTest {
     public void aClientWithBothHalvesIsAnsweredWithBothSplitByCallForm() {
         // `ballerina/http`'s `Client` declares 7 resource functions and 19 named ones. The shipped view printed
         // the 7 under a fact row reading `(7 of 7)` and said nothing about `execute`, `forward`, `submit`, the
-        // promise set or the circuit-breaker controls — reachable from no verb in the tool (ADR-0016).
+        // promise set or the circuit-breaker controls — reachable from no verb in the tool (ADR-0019).
         LoadedPackage http = FixtureCorpus.loadedFixture("ballerina__http");
         Result<String> view = Containers.render(http, Surface.Scope.CLIENT,
                 new Containers.Options(List.of("Client")));
@@ -635,7 +635,7 @@ public class ViewsTest {
 
     @Test
     public void aRosterRowIsNeverADeadEnd() {
-        // ADR-0016: `overview`'s old unconditional `ops <pkg> <path>` pointer answered "none in any client" on
+        // ADR-0019: `overview`'s old unconditional `ops <pkg> <path>` pointer answered "none in any client" on
         // `ballerinax/aws.s3` and pointed back at `overview`, a two-call loop carrying no information. Every row
         // now ends in the command that opens it, and PointersTest re-runs all of them.
         for (String slug : FixtureCorpus.listFixtures()) {

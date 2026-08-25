@@ -107,7 +107,7 @@ public final class Containers {
     /**
      * The shortest camelCase prefix that may name a cluster.
      *
-     * <p>ADR-0016 measured what happens without it: splitting names into segments reads beautifully on
+     * <p>ADR-0019 measured what happens without it: splitting names into segments reads beautifully on
      * {@code twilio} ({@code list} 61, {@code fetch} 43, {@code create} 35) and produces {@code z} 20,
      * {@code s} 14, {@code h} 14, {@code l} 10 on {@code ballerinax/redis}, where the leading run of
      * {@code zAdd}/{@code hGet}/{@code lPush} is one letter. That is structure in the tokenizer rather than in the
@@ -395,7 +395,7 @@ public final class Containers {
     /**
      * Several containers and nothing to choose between them yet.
      *
-     * <p>Every row ends in the command that OPENS it (ADR-0016): {@code overview}'s old unconditional pointer
+     * <p>Every row ends in the command that OPENS it (ADR-0019): {@code overview}'s old unconditional pointer
      * returned "none in any client" on {@code ballerinax/aws.s3} and pointed back at {@code overview}, a two-call
      * loop carrying no information.
      */
@@ -1015,7 +1015,7 @@ public final class Containers {
     /**
      * Signatures, split by call form, because {@code ->} versus {@code .} is the fact a caller came for.
      *
-     * <p>A client declaring both halves is answered with BOTH (ADR-0016). {@code ballerina/http}'s {@code Client}
+     * <p>A client declaring both halves is answered with BOTH (ADR-0019). {@code ballerina/http}'s {@code Client}
      * is 7 resource functions and 20 named ones, and the shipped view printed the 7 under a fact row reading
      * {@code (7 of 7)} — {@code execute}, {@code forward}, {@code submit}, the promise set and the circuit-breaker
      * controls were reachable from no verb at all.
@@ -1046,7 +1046,7 @@ public final class Containers {
     /**
      * Too many even to name: path roots, or camelCase clusters.
      *
-     * <p>A cluster needs a prefix of at least {@value #MIN_CLUSTER_PREFIX} characters, which is the guard ADR-0016's
+     * <p>A cluster needs a prefix of at least {@value #MIN_CLUSTER_PREFIX} characters, which is the guard ADR-0019's
      * {@code redis} measurement demands: {@code z}, {@code s}, {@code h} and {@code l} are what a segment splitter
      * finds in {@code zAdd}/{@code hGet}/{@code lPush}, and they are structure in the tokenizer rather than in the
      * domain. Where clustering does not cover most of the names the flat list wins, capped and honest about it.

@@ -32,10 +32,10 @@ in one place and "No other types — they are 80% of a large package" in the oth
   badly.
 - One-line prose moves into the annotation next to what it describes — `@Command(description)` and
   `@Option(description)` — and is rendered into **both** the root list and the verb's own text.
-  `--client` is a mixin shared by `overview` and `ops` for the same reason: one flag, one sentence.
+  A flag shared by two verbs is a mixin for the same reason: one flag, one sentence.
 - `Usage` keeps the paragraphs, stored as sentences and wrapped on the way out. Nothing in the
   package is hand-wrapped; re-flowing after an edit is the upkeep that gets skipped.
-- `FLAG_OWNERS` and `KNOWN_FLAGS` are derived from the same model.
+- `flagOwners()` and the known-flag list are derived from the same model.
 
 **picocli's own renderer is not used.** Measured against 4.0.1, the version on the Ballerina
 distribution's classpath: it sorts options alphabetically and emits them *before* the positionals, in
@@ -57,8 +57,8 @@ refuses everywhere else, and it was caught by `CliTest.aFlagTheVerbDoesNotTakeIs
 Those two keep an emptiness check in `Cli`, and the renderer treats a variadic slot as required
 because in this grammar it always is.
 
-**Flags are listed narrowest-first** — `--sigs` and `--deps` belong to one verb each, `--client` to
-two, the resolution flags to every verb that reads a package. The ordering is computed, so the
+**Flags are listed narrowest-first** — a flag one verb declares before one two verbs share, and the
+resolution flags, which every verb that reads a package takes, last. The ordering is computed, so the
 unknown-flag suggestion changed order with it.
 
 **The usage goldens are now captured through `Cli.run`** rather than by calling the text builder, so

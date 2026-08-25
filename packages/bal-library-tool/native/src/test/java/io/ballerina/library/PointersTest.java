@@ -39,7 +39,7 @@ import java.util.regex.Pattern;
 /**
  * Every command a document prints is RUN, and has to answer.
  *
- * <p>"A pointer that cannot answer is worse than no pointer" (ADR-0016) was a rule enforced by three separate
+ * <p>"A pointer that cannot answer is worse than no pointer" (ADR-0019) was a rule enforced by three separate
  * assertions about three separate bugs, each written after the fact: {@code overview} offered
  * {@code ops <pkg> <path>} to a package with no paths and got "none in any client" back, a two-call loop;
  * {@code ops}' signature bullet interpolated {@code (root)} — a DISPLAY token — into a command, so following the

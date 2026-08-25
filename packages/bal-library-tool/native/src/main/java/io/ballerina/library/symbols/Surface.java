@@ -105,7 +105,7 @@ public final class Surface {
         /**
          * The resource functions, with their paths in the display spelling the tree navigates by.
          *
-         * <p>Whether this is empty is what decides the SELECTOR GRAMMAR (ADR-0016's finding, kept): a container
+         * <p>Whether this is empty is what decides the SELECTOR GRAMMAR (ADR-0019): a container
          * that declares resource functions parses {@code get}/{@code post}/{@code delete} as an accessor, and one
          * that does not parses the same token as a member name.
          */

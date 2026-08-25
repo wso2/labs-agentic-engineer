@@ -48,7 +48,7 @@ import java.util.stream.Collectors;
  *
  * <p>What remains is what a map is for: the counts, the readme's quickstart, the guide's chunk index, where to go
  * next, and a roster whose every row ends in the command that opens it. A roster row that dead-ends is the one
- * shape this document never ships (ADR-0016) — {@code overview}'s old unconditional {@code ops <pkg> <path>}
+ * shape this document never ships (ADR-0019) — {@code overview}'s old unconditional {@code ops <pkg> <path>}
  * pointer answered "none in any client" on {@code ballerinax/aws.s3} and pointed back here, a two-call loop
  * carrying no information.
  *
@@ -304,7 +304,7 @@ public final class Overview {
     /**
      * Where to go, DERIVED from what the package declares rather than asserted.
      *
-     * <p>ADR-0016: a pointer that cannot answer is worse than no pointer. The old bullet said {@code <path>}
+     * <p>ADR-0019: a pointer that cannot answer is worse than no pointer. The old bullet said {@code <path>}
      * unconditionally, and an agent following it on {@code ballerinax/aws.s3} spent a call to arrive back here.
      */
     private static List<String> nextBullets(Library library, String pkg) {

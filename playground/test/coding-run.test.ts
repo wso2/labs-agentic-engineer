@@ -477,16 +477,13 @@ test("host mode leaves the developer's own environment alone", () => {
   assert.equal(env.HOME, process.env.HOME);
 });
 
-// The vendored distribution is what the image installs, and it is CHECKED IN —
-// the tool is in its own repository and not on Ballerina Central, so a fresh
-// clone can neither build nor pull it. A partial refresh therefore fails here
-// rather than 300 layers into a docker build, and the coordinates the container
-// path is composed from are held to the payload's own metadata.
+// The image installs what its first stage BUILDS from these files (ADR-0008), and
+// the coordinates the container path is composed from are held to the tool's own
+// metadata — a rename lands here rather than 300 layers into a docker build.
 test("the bal library tool's source carries what the image install needs", () => {
-  // Asserted against the SOURCE and not a built artifact: ADR-0008 deleted the
-  // checked-in distribution, so the image's first stage runs `make-dist.sh` over
-  // exactly these files. A rename here fails this test instead of failing a
-  // docker build 300 layers in, or — worse — silently disabling the jar overlay.
+  // Asserted against the SOURCE and not a built artifact: there is no checked-in
+  // distribution any more, so the image's first stage runs `make-dist.sh` over
+  // exactly these files. Getting this wrong silently disables the jar overlay.
   const tool = join(REPO_ROOT, "packages", "bal-library-tool");
   const version = /^version=(.+)$/m.exec(readFileSync(join(tool, "gradle.properties"), "utf8"))?.[1]?.trim();
   assert.ok(version && version.length > 0, "gradle.properties names the version install.sh registers");

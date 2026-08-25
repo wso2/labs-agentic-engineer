@@ -2,8 +2,8 @@
 
 Status: accepted · 2026-08-24
 
-Supersedes the selection rule and the position of ADR-0017's Usage section, and removes the name check
-ADR-0017 ran over quoted readme code.
+Supersedes the selection rule and the position [ADR-0017](ADR-0017-the-entry-document-is-ordered-to-survive-a-window.md)
+gave the quoted readme code, and removes the name check it ran over it.
 
 Not a supersede of [ADR-0010](ADR-0010-a-named-gap-beats-a-plausible-guess.md), which is about signatures
 this tool GENERATES from a payload and stands unchanged. The distinction is the whole argument under **Decision** below: naming a gap in your own output is honesty, and annotating someone else's quoted
@@ -61,8 +61,8 @@ claim about a document this tool QUOTES. The reader is already told, in the sent
 quotation, that this is Central's text and that the generated signatures win where the two disagree —
 which is the general form of what each mark said about one line. What the marks added on top was the
 tool arguing with the package's own readme inside the quotation, on a check that had a known blind spot
-of its own: ADR-0017 recorded `ballerinax/redis`'s `string value = check redis->get("key")` as
-uncheckable, because `get` is declared and the error is in the union arithmetic. Names were never the
+of its own, recorded when it was built: `ballerinax/redis`'s `string value = check redis->get("key")` is
+uncheckable by it, because `get` IS declared and the error is in the union arithmetic. Names were never the
 axis on which quoted code fails.
 
 ## Consequences

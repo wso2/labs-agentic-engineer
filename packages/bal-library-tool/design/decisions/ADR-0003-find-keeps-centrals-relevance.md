@@ -1,11 +1,12 @@
-# ADR-0003 — `search` keeps Central's relevance and demotes unadopted packages
+# ADR-0003 — `find` keeps Central's relevance and demotes unadopted packages
 
-**Status:** Accepted
+**Status:** Accepted. The verb was called `search` when this was written and is `find` since the
+2026-08-17 kind split (ADR-0019); the ranking decision is unchanged, and `views/Find` says so.
 
 ## Context
 
-`search` is the one verb the four addressed verbs cannot cover: every other verb needs `org/name` before
-it can say anything. Central serves it at `registry/search-packages?q=`, live rather than as a baked
+`find` is the one verb the addressed verbs cannot cover: every other verb needs `org/name` before it can
+say anything. Central serves it at `registry/search-packages?q=`, live rather than as a baked
 index.
 
 Central's ordering is relevance-based, and it has one defect. Measured on `q=http client`, which returns
@@ -81,7 +82,7 @@ judgement it is reading, in a document whose whole purpose is to be trustworthy.
 
 ## Consequences
 
-`search` never reads or writes the cache: the query space is unbounded and the answer is the one thing
+`find` never reads or writes the cache: the query space is unbounded and the answer is the one thing
 about Central that genuinely changes.
 
 The floor is a hand-maintained claim about Central's population, so it can rot. Three tests pin it in both

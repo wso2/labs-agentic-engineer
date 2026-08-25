@@ -2,12 +2,13 @@
 
 Status: accepted · 2026-08-17
 
-Supersedes [ADR-0016](ADR-0016-ops-addresses-the-whole-callable-surface.md).
+Supersedes the `ops` verb, whose own ADR is deleted with it; the measurements that decided it are the
+appendix at the bottom of this one.
 
 ## Context
 
-`ops` addressed the whole callable surface through one verb with two addressing modes (ADR-0016). It
-worked, and the 2026-08-16 sweep scored 17/17 green with it. What it did not do was tell a caller
+`ops` addressed the whole callable surface through one verb with two addressing modes — by path, or by
+name in the same slot. It worked, and the 2026-08-16 sweep scored 17/17 green with it. What it did not do was tell a caller
 **how to call** what it found, and that is the fact the tool exists to supply: both signature errors in
 the 2026-08-15 sweep came from `->` versus `.` being absent, and a database client declaring
 `remote function close()` is a real case where `dbClient.close()` does not compile.
@@ -54,7 +55,7 @@ for an agent, and without it the split would be strictly worse than one verb:
 
 **The selector grammar is a property of the resolved CONTAINER, not of the verb.** A container that
 declares resource functions reads `get`/`post`/`delete` as an accessor and the token after it as a path;
-one that does not reads the same token as a member name. This corrects ADR-0016's claim that HTTP-verb
+one that does not reads the same token as a member name. This corrects `ops`'s claim that HTTP-verb
 parsing could be confined to one verb: in Ballerina a client IS a class, so `ballerina/http:Client` is a
 legal argument to both `client` and `class` and declares seven resource functions either way. The
 consequence for the implementation is that the container is resolved **before** the remaining positionals
@@ -107,3 +108,30 @@ survived longest.
 
 Verified against the 27-command session path: every existing match set is byte-identical apart from the
 ADR-0023 length stamp.
+
+
+## Appendix — what the superseded `ops` decision leaves behind
+
+`ops` addressed the whole callable surface through one verb with two addressing modes, by path or by
+name, and the 2026-08-16 sweep scored 17/17 green with it. Its ADR is not kept — the verb never shipped
+outside that fortnight — but its measurements are not reversed by the split, and they are what the three
+verbs are held to:
+
+- **Both halves of a client are answered.** `ballerina/http`'s `Client` still prints its 7 resource
+  functions and its 19 named ones, split by call form, under one command.
+- **Addressing is derived from what the package declares**, never asked for as a flag. What used to be
+  "two modes chosen by what the client declares" is now "the selector grammar is a property of the
+  resolved container" — which is the same rule, extended to cover the case `ops` got wrong: it
+  claimed HTTP-verb parsing could be confined to one verb, and in Ballerina a client IS a class, so
+  `ballerina/http:Client` is a legal argument to both.
+- **No camelCase hierarchy is invented.** The `ballerinax/redis` measurement — `z` 20, `s` 14, `h` 14,
+  `l` 10, single letters cut off `zAdd`/`hGet`/`lPush` — still stands, and it is now enforced rather
+  than only recorded: the grouped tier requires a prefix of at least three characters, which is exactly
+  the guard that measurement demands.
+- **A wildcard discloses the branches it did not take**, because `--all` (which replaced `--sigs`)
+  promises completeness.
+- **A roster row never dead-ends.** `overview` used to offer `ops <pkg> <path>` unconditionally, so on
+  `ballerinax/aws.s3` it returned "Resource functions | none in any client" and pointed back at
+  `overview` — a two-call loop with zero information, from a document that had already printed
+  `Remote functions — 19`. Every row now ends in the command that opens it, and `PointersTest` RUNS
+  every command every document prints.

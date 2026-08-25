@@ -90,7 +90,7 @@ const RUNNER_IMAGE = process.env.AGENT_RUNNER_IMAGE || "aep-runner:dev";
 const BAL_TOOL_REPO = join(REPO_ROOT, "packages", "bal-library-tool");
 
 // The tool's coordinates, which its bala path is built out of. Pinned here rather
-// than parsed out of the vendored `Ballerina.toml`: that file is the source of
+// than parsed out of the tool's `Ballerina.toml`: that file is the source of
 // truth and a test holds these two to it, so a rename fails a test instead of
 // silently mounting over a path no image has.
 const TOOL_ORG = "ballerinax";

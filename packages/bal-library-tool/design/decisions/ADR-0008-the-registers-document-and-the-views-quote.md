@@ -11,8 +11,8 @@ method — rendered none of them. So the same fact appeared in one section of a 
 for no reason anybody had written down.
 
 Wiring the rows into `renderMemberFunction` is the obvious repair and it has a cost that is not obvious.
-`renderMemberFunction` is shared: `api` and `type` print declarations with it, and `overview` and
-`ops --sigs` QUOTE it, which is what makes their agreement structural rather than merely tested.
+`renderMemberFunction` is shared: `api` and `type` print declarations with it, and the compact views
+QUOTE it, which is what makes their agreement structural rather than merely tested.
 `Overview.resourceSection` lists a client's resource functions inline only while they fit under
 `MAX_INLINE_SIGNATURE_BYTES` (20,000) and `MAX_INLINE_OPERATIONS` (100); past either it prints a path
 summary instead. `ballerinax/googleapis.gmail` sits inside that budget today at 32 operations and 15.3KB,
@@ -28,7 +28,8 @@ as `Signatures.Detail`:
   Used by `TypeDefs.renderMembers`, which is the body of every object, client and service template the
   `api` document and the `type` verb print.
 - **`Detail.SIGNATURE`** — the description and the declaration. Used by `Signatures.renderSignature`, which
-  is what `overview` and `ops` quote.
+  is what the container verbs quote (`views/Containers`; `overview` generates no signature at all since
+  ADR-0017).
 
 `renderStandaloneFunction` stays separate and keeps its rows, because a module-level function's declaration
 differs from a member's in a way a mode cannot express: it carries `public`, and no member does.

@@ -2,16 +2,16 @@
 
 Status: accepted · 2026-08-24
 
-Supersedes [ADR-0006 (the `bal library` tool is vendored)](ADR-0006-the-bal-library-tool-is-vendored.md)
-on the question of WHERE the distribution comes from. Its other two decisions stand: the tool is still
-installed by running its own installer in-image, and the playground still mounts a working-tree jar over
-that install.
-
 ## Context
 
-ADR-0006 checked a built distribution into `runners/remote-worker/vendor/bal-library-tool/` — a jar plus
-the two installers — because the tool lived in a separate repository, so a fresh clone of this repo had
-nothing to build. On 2026-08-24 the tool's source moved into this monorepo at
+`bal library` is not a command on `PATH`. A Ballerina CLI tool installs into the local bala repository
+under the user's home, registers itself in `~/.ballerina/.config/bal-tools.toml`, and `bal` dispatches the
+`library` verb to it. It is not on Ballerina Central either, so `bal tool pull library` does not resolve
+and the image has nothing to pull.
+
+While the tool lived in a repository of its own, the image installed a distribution **checked in** at
+`runners/remote-worker/vendor/bal-library-tool/` — a jar plus the two installers — because a fresh clone
+of this repo had nothing to build. On 2026-08-24 the tool's source moved into this monorepo at
 `packages/bal-library-tool`, which removed that premise. The copy stayed, and the seam it left is the
 reason for this ADR.
 
@@ -67,6 +67,22 @@ publishes the builder stages to a public GHCR buildcache, so a token in a build 
 published with them. Verified after the change — the token appears in no layer, no image config and no
 file, and `/run/secrets` does not exist in the built stage.
 
+**The installer runs inside the image, as `aep`, rather than a bala tree being copied in.** `bal`
+version-gates a tool: the bala's `package.json` records the distribution it was installed against, and
+`bal` refuses one stamped **newer** than the distribution running it —
+
+```
+error: tool 'library:0.1.0-SNAPSHOT' is not compatible with the current
+Ballerina distribution '2201.12.3'.
+```
+
+— measured directly, by installing into a synthetic `HOME` whose recorded distribution differed from the
+installer's. So the stamp has to be written where the tool will run, by the `bal` that will run it, which
+also ties the tool to this image's pinned distribution. `aep` and not root because the tool resolves out
+of that user's own home and `bal` keeps writing there at task time — its central cache, and
+`bal tool pull openapi` appending to the very `bal-tools.toml` this install writes. A root install would
+leave the whole tree needing a recursive chown to keep both working.
+
 **The install is smoke-tested.** `install.sh` writes a bala tree and a `bal-tools.toml` entry and exits 0
 without asking `bal` whether the result loads. `bal library --help` after it turns a jar/version mismatch,
 a tool stamped for the wrong distribution and a missing service registration into a failed build instead of
@@ -93,5 +109,11 @@ a failure inside a task pod.
   build at *configuration* time, before the classpath was even reached. Publishing to Central happens
   upstream. `maven-publish` and `net.researchgate.release` went with it: both were applied, neither was
   configured.
+- **Host mode reports instead of repairing.** On a developer's machine `bal` resolves the tool out of
+  their own `~/.ballerina`, so there is nothing to overlay. The playground harness and the eval preflight
+  ask whether the working-tree jar was **built after** the installed one and name the gap; neither writes
+  into someone's home. Deliberately mtime and not a byte comparison: a gradle jar is not
+  byte-reproducible (the zip carries entry timestamps), so comparing content calls an unchanged rebuild
+  stale and the advice becomes noise nobody reads.
 - **The tool's edit-run loop is unchanged and now has a name:** `make bal-library-tool` builds the jar, the
   playground mounts it, no image rebuild.

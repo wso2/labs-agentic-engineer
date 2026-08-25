@@ -24,7 +24,7 @@ right sizes in the wrong scope:
 
 | Document | Budget |
 |---|---|
-| `overview` | bounded by CONSTRUCTION — it generates no signature (see ADR-0017's amendment) |
+| `overview` | bounded by CONSTRUCTION — it generates no signature (ADR-0017) |
 | a container listing | 20,000 bytes |
 | a filtered response (`-s`, or a selector) | 6,000 bytes |
 | a `-r` closure | 20,000 bytes, breadth-first, with an omission list |
@@ -61,7 +61,7 @@ for it before trying a selector, which is the behaviour the budgets exist to pre
 - Measured tier placement on the corpus, asserted in `ViewsTest` so a budget change shows up as a change
   to that table: `sap` 15, `gmail` 33, `sheets` 44 and `redis` 113 signatures print in full; `slack` 175
   and `twilio` 200 fall to names; `github` 903 falls to path roots.
-- The grouped tier requires a prefix of at least three characters, which is ADR-0016's `redis`
+- The grouped tier requires a prefix of at least three characters, which is ADR-0019's `redis`
   measurement (`z` 20, `s` 14, `h` 14, `l` 10) turned from a recorded finding into a guard.
 - A `-r` closure that hits the budget NAMES every type it dropped, because a name is a legal `type`
   argument and a count is not.
