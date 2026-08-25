@@ -44,6 +44,8 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
 | `ArtifactService` · `ArtifactStore` · `SplitFrontmatter` | offers | `delivery` / `projects` / `dependencies` — design reads, spec-save, status snapshots |
 | `HardConfigEdges` | offers | `projects` (deploy order) — which sibling addresses a component cannot start without |
 | `DescriptorWriter` | offers | `projects` — stamps `specs/.agentic-engineer.toml` into a repo at project create |
+| `Kickoff` | offers | `projects` (create) · `spec/files` (references upload) — fires the project's opening `/start` turn |
+| `TurnRepository.Newest` | offers | `projects` — the status poll's `spec.agent`: is an agent working on the spec right now |
 | `CredentialsRefreshService`-adjacent turn/tag reads | offers | delivery/build (SpecTagger, validation criteria) |
 
 ## Owns
@@ -94,6 +96,32 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
   the instruction and derives the flow's eager skills from the spec, so a console CTA, a typed command and
   a playground run produce identical turns (services/agents/design/ADR-0003). This domain holds NO prompt
   text; the flow token is kept here because it also gates web search and MCP minting for design turns.
+- **The kickoff** (`kickoff.go`) — the project's opening `/start`, fired server-side at creation so the
+  journey starts itself instead of waiting on a Generate-spec click. Room-scoped like every console turn,
+  carrying the creating user's bearer (which is what lets the agent join the spec room), on the project's
+  current thread. Idempotent on "has this project ever run a turn", because it has two triggers: project
+  create, and the references upload a create with `referencesPending` held it for. Runs INLINE, so the
+  create answers only once the turn row exists — that is what keeps `spec.agent == "never-started"`
+  meaning "no turn has ever run" rather than also "starting right now", which no surface could tell
+  apart. (`""` is a different fact: a turn HAS run and the newest one completed.) Bounded
+  (20s) and error-swallowing: a kickoff that cannot start never fails the creation, and the spec
+  view's empty state offers it instead.
+- **Design staleness is derived, never stored** (#575). "Have the requirements moved since the
+  design was written?" is answered by reading the requirements at the commit the newest successful
+  `/design` turn recorded reading the project at, and comparing that reduction against today's —
+  `RequirementsFingerprint` over a tree listing (path + blob sha, so no content is read). Nothing is
+  stamped, so nothing falls out of sync, and the question is answerable for projects predating the
+  check. A stored fingerprint was rejected because a turn NEVER commits: its file changes stream to
+  the collab doc and the collab server commits them later, carrying no turn id and no author — there
+  is no moment the platform controls, and no way to tell that flush from a hand edit. The build gate
+  refuses on it (`DESIGN_OUTDATED`), which is what makes it a block rather than a display.
+- **A running turn carries its own display record** (#562). `agent_turns` stores the transcript
+  line the turn started from plus its author, and `TurnStatus` serves them. Not redundant with the
+  journal that rides to the agents service: that store persists a turn's transcript only when the
+  turn ENDS, so between dispatch and landing there is nowhere else to read them from — and that
+  window is the whole of a kickoff, which no browser sent and none has a local copy of. Empty for
+  an unattributable turn (an M2M token) and for every row written before the record existed, which
+  the console renders as "paint nothing" rather than an empty bubble.
 - **Persistence**: the `agent_turns` gorm lives in this domain (`repository_turn.go` over the
   `agent_turn.go` entity), single write-authority — as does `project_conversations`
   (`repository_conversation.go`): the project's CURRENT chat thread pointer (#430), server-minted,

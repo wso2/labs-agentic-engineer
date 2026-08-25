@@ -30,10 +30,14 @@ import (
 type fakeApplier struct {
 	applied  []string        // YAML strings passed to ApplyYAML, in order
 	existing map[string]bool // "Kind/Name" → whether Exists returns true
+	onApply  func(manifest string)
 }
 
 func (f *fakeApplier) ApplyYAML(_ context.Context, _, _, manifest string) error {
 	f.applied = append(f.applied, manifest)
+	if f.onApply != nil {
+		f.onApply(manifest)
+	}
 	return nil
 }
 
@@ -118,7 +122,6 @@ func TestRunAddonInstall_OperatorFailureSkipsAddon(t *testing.T) {
 
 	fa := &fakeApplier{existing: existingForAddon(first)}
 	installCalled := false
-	newApplierCalls := 0
 	deps := addonDeps{
 		multiSelect: selectByID(t, "thunder-app"),
 		confirm:     func(string) bool { return true },
@@ -127,7 +130,6 @@ func TestRunAddonInstall_OperatorFailureSkipsAddon(t *testing.T) {
 			return errors.New("simulated operator install failure")
 		},
 		newApplier: func(string) (manifestApplier, error) {
-			newApplierCalls++
 			return fa, nil
 		},
 	}
@@ -138,26 +140,31 @@ func TestRunAddonInstall_OperatorFailureSkipsAddon(t *testing.T) {
 	if !installCalled {
 		t.Error("installOperator must be called")
 	}
-	if newApplierCalls != 0 {
-		t.Errorf("newApplier called %d time(s), want 0 — applier must not be built when all operators fail", newApplierCalls)
-	}
-	if len(fa.applied) != 0 {
-		t.Errorf("expected no manifests applied after operator failure, got %d", len(fa.applied))
+	// When operator fails, only pre-manifests are applied (zero for thunder-app
+	// since credentials are now provisioned by the platform chart, not PreManifests).
+	if got, want := len(fa.applied), len(first.Operator.PreManifests); got != want {
+		t.Errorf("applied %d manifest(s), want %d (pre-manifests only)", got, want)
 	}
 }
 
 // TestRunAddonInstall_SuccessAppliesManifests verifies that when the operator
-// installs successfully, all manifests for the selected addon are applied.
+// installs successfully, all manifests for the selected addon are applied and
+// that every PreManifests apply event occurs before installOperator is called.
 func TestRunAddonInstall_SuccessAppliesManifests(t *testing.T) {
 	first := addonByID(t, "thunder-app")
 
-	fa := &fakeApplier{existing: existingForAddon(first)}
+	var events []string
+	fa := &fakeApplier{
+		existing: existingForAddon(first),
+		onApply:  func(_ string) { events = append(events, "apply") },
+	}
 	installCalled := false
 	deps := addonDeps{
 		multiSelect: selectByID(t, "thunder-app"),
 		confirm:     func(string) bool { return true },
 		installOperator: func(context.Context, string, addons.OperatorSpec) error {
 			installCalled = true
+			events = append(events, "install")
 			return nil
 		},
 		newApplier: func(string) (manifestApplier, error) {
@@ -171,8 +178,111 @@ func TestRunAddonInstall_SuccessAppliesManifests(t *testing.T) {
 	if !installCalled {
 		t.Error("installOperator must be called on the success path")
 	}
-	if got, want := len(fa.applied), len(first.Manifests); got != want {
-		t.Errorf("applied %d manifests, want %d", got, want)
+	wantApplied := len(first.Operator.PreManifests) + len(first.Manifests)
+	if got := len(fa.applied); got != wantApplied {
+		t.Errorf("applied %d manifests, want %d (pre-manifests + addon manifests)", got, wantApplied)
+	}
+
+	// Assert ordering: every PreManifests apply event precedes the install event.
+	installIdx := -1
+	for i, e := range events {
+		if e == "install" {
+			installIdx = i
+			break
+		}
+	}
+	if installIdx == -1 {
+		t.Fatal("install event not found in event log")
+	}
+	preApplyCount := 0
+	for i := 0; i < installIdx; i++ {
+		if events[i] == "apply" {
+			preApplyCount++
+		}
+	}
+	if preApplyCount != len(first.Operator.PreManifests) {
+		t.Errorf("pre-manifest applies before install = %d, want %d", preApplyCount, len(first.Operator.PreManifests))
+	}
+}
+
+// TestRunAddonInstall_OperatorWaitsForSecrets verifies that when an operator's
+// OperatorSpec.WaitForSecrets is non-empty, deps.waitForSecrets is called before
+// installOperator and a successful sync allows the operator to install.
+func TestRunAddonInstall_OperatorWaitsForSecrets(t *testing.T) {
+	first := addonByID(t, "thunder-app")
+	fa := &fakeApplier{existing: existingForAddon(first)}
+
+	var events []string
+	deps := addonDeps{
+		multiSelect: selectByID(t, "thunder-app"),
+		confirm:     func(string) bool { return true },
+		waitForSecrets: func(_ context.Context, namespace string, names []string) error {
+			events = append(events, "wait")
+			return nil
+		},
+		installOperator: func(context.Context, string, addons.OperatorSpec) error {
+			events = append(events, "install")
+			return nil
+		},
+		newApplier: func(string) (manifestApplier, error) { return fa, nil },
+	}
+
+	if err := runAddonInstall(context.Background(), "", deps); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	waitIdx, installIdx := -1, -1
+	for i, e := range events {
+		if e == "wait" && waitIdx == -1 {
+			waitIdx = i
+		}
+		if e == "install" && installIdx == -1 {
+			installIdx = i
+		}
+	}
+	if waitIdx == -1 {
+		t.Error("waitForSecrets must be called when WaitForSecrets is non-empty")
+	}
+	if installIdx == -1 {
+		t.Error("installOperator must be called on the success path")
+	}
+	if waitIdx != -1 && installIdx != -1 && waitIdx > installIdx {
+		t.Error("waitForSecrets must be called before installOperator")
+	}
+}
+
+// TestRunAddonInstall_SecretSyncTimeout verifies that when waitForSecrets
+// returns an error (e.g. ESO sync timed out), installOperator is not called
+// and the failure is recorded in operatorFailed so the addon is skipped.
+func TestRunAddonInstall_SecretSyncTimeout(t *testing.T) {
+	first := addonByID(t, "thunder-app")
+	fa := &fakeApplier{existing: existingForAddon(first)}
+	installCalled := false
+
+	deps := addonDeps{
+		multiSelect: selectByID(t, "thunder-app"),
+		confirm:     func(string) bool { return true },
+		waitForSecrets: func(_ context.Context, _ string, _ []string) error {
+			return errors.New("timed out waiting for thunder-app-operator-credentials")
+		},
+		installOperator: func(context.Context, string, addons.OperatorSpec) error {
+			installCalled = true
+			return nil
+		},
+		newApplier: func(string) (manifestApplier, error) { return fa, nil },
+	}
+
+	// A secret sync failure is non-fatal to the overall install — operatorFailed
+	// records it and the addon is skipped, but the function returns nil.
+	if err := runAddonInstall(context.Background(), "", deps); err != nil {
+		t.Fatalf("expected nil (sync failure is non-fatal), got %v", err)
+	}
+	if installCalled {
+		t.Error("installOperator must not be called when secret sync fails")
+	}
+	// No addon manifests should have been applied either (operator failed → addon skipped).
+	if len(fa.applied) != 0 {
+		t.Errorf("applied %d manifests, want 0 (addon skipped after sync failure)", len(fa.applied))
 	}
 }
 

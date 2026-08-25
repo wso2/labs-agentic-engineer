@@ -32,7 +32,6 @@ import {
   FileText,
   ListChecks,
   Rocket,
-  Sparkles,
 } from "@wso2/oxygen-ui-icons-react";
 import { useNavigate } from "@tanstack/react-router";
 import type { components } from "../../../generated/aep-api";
@@ -114,30 +113,25 @@ function StageCard({
   );
 }
 
-// The spec stage as a call-to-action: when no spec exists yet (#150 behavior
-// preserved) Generate spec opens the Spec view and auto-sends the first
-// requirements turn, and when the agent is mid-exchange the same stage offers
-// the way back into it.
+// The spec stage: one line that always says something, and one button that
+// never changes (#562 retest).
 //
-// "Continue spec" NEVER carries `?generate`. Injecting a second `/start` into
-// an open exchange is the whole bug: landing on an unanswered question form, it
-// reads to the start skill as the user's skip valve, so the interview is
-// silently replaced by the agent's own answers (see `agentEngaged`). Dropping
-// the param also keeps AppLayout from auto-opening the chat panel, so the
-// pending question form owns the spec body on arrival — which is the thing the
-// user actually came back for.
+// The button was three buttons — Generate spec, then Open spec, then Continue
+// spec — and it walked all three during a single kickoff with no input from the
+// user, because each state was inferred from a different signal that moved on
+// its own. A control that renames itself while you read it cannot be learned.
+// The destination never actually varied, so neither does the caption now.
 //
-// One button, two labels, one destination: "Edit spec" would be the wrong third
-// word, since a spec the user could edit is exactly what an open exchange has
-// not produced yet.
+// STARTING moved out with it. The card no longer fires anything: a project
+// whose kickoff never ran is started from the spec view's empty state, which is
+// exactly where this button lands, so the one control here can stay a
+// destination rather than sometimes being a destination and sometimes a send.
 function SpecActionStage({
   projectName,
   view,
-  engaged,
 }: {
   projectName: string;
   view: StageView;
-  engaged: boolean;
 }) {
   const navigate = useNavigate();
   return (
@@ -151,8 +145,8 @@ function SpecActionStage({
           <Typography variant="subtitle2" color="text.secondary">
             Spec
           </Typography>
-          {/* An amendment runs against a spec that already has a version —
-              keep its chip, so continuing doesn't look like starting over. */}
+          {/* The version is a separate fact from what is happening right now —
+              an amendment interview on v2 still reads as v2. */}
           {view.version && (
             <>
               <Box sx={{ flexGrow: 1 }} />
@@ -165,33 +159,25 @@ function SpecActionStage({
             </>
           )}
         </Stack>
-        {/* The state line the plain stage card would have shown. An amendment
-            replaces that card, and the spec's status ("published", "draft
-            changes") is true throughout — losing it would make an open
-            exchange look like a project with no spec at all. Empty on the
-            cold-start CTA, where there is no spec to have a status. */}
-        {view.line && (
-          <Typography
-            variant="body2"
-            color={view.tone === "error" ? "error.main" : "text.secondary"}
-            sx={{ mb: 1.5 }}
-          >
-            {view.line}
-          </Typography>
-        )}
+        <Typography
+          variant="body2"
+          color={view.tone === "error" ? "error.main" : "text.secondary"}
+          sx={{ mb: 1.5 }}
+        >
+          {view.line}
+        </Typography>
         <Button
           variant="contained"
           size="small"
-          startIcon={<Sparkles size={16} />}
+          startIcon={<ChevronRight size={16} />}
           onClick={() =>
             void navigate({
               to: "/projects/$projectName/spec",
               params: { projectName },
-              ...(engaged ? {} : { search: { generate: "requirements" as const } }),
             })
           }
         >
-          {engaged ? "Continue spec" : "Generate spec"}
+          Open spec
         </Button>
       </CardContent>
     </Card>
@@ -207,15 +193,14 @@ export function OverviewPipeline({
   projectName: string;
   status: ProjectStatus;
 }) {
-  const spec = specStageView(status);
+  // "The agent is waiting on you" has no server-side source: `spec.agent` folds
+  // a completed turn to "", and a turn that ends ON a question is exactly that.
+  // The local chat log is the only thing that knows.
+  const org = useSession().orgHandle ?? "default";
+  const engaged = useAgentEngaged(org, projectName);
+  const spec = specStageView(status, engaged);
   const build = buildStageView(status);
   const deploy = deployStageView(status);
-  // An open exchange turns the spec stage back into an action, whether or not a
-  // spec exists: `/start` on an existing PRD is an amendment interview, which
-  // asks questions the same way and is skipped by a stray start the same way —
-  // and the overview otherwise gives no sign one is open.
-  const { orgHandle } = useSession();
-  const engaged = useAgentEngaged(orgHandle ?? "default", projectName);
 
   return (
     <Stack
@@ -223,17 +208,7 @@ export function OverviewPipeline({
       spacing={1}
       sx={{ alignItems: { xs: "stretch", md: "center" } }}
     >
-      {spec.cta || engaged ? (
-        <SpecActionStage projectName={projectName} view={spec} engaged={engaged} />
-      ) : (
-        <StageCard
-          icon={<FileText size={18} />}
-          title="Spec"
-          view={spec}
-          to="spec"
-          projectName={projectName}
-        />
-      )}
+      <SpecActionStage projectName={projectName} view={spec} />
       <ChevronRight
         size={20}
         style={{ flexShrink: 0, alignSelf: "center", opacity: 0.4 }}

@@ -22,7 +22,13 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
 import type { components } from "../../../generated/aep-api";
-import { chatKeyFor, notifyTurnEnd, replaceMessages } from "../../agent-chat/chatStore";
+import { START_COMMAND } from "@aep/contracts/commands";
+import {
+  chatKeyFor,
+  consumePendingSeed,
+  notifyTurnEnd,
+  replaceMessages,
+} from "../../agent-chat/chatStore";
 import { SpecView } from "./SpecView";
 
 type PreflightItem = components["schemas"]["PreflightItem"];
@@ -79,6 +85,8 @@ vi.mock("../collab/useCollabSpec", () => ({
 
 beforeEach(() => {
   mockCollab = soloCollab();
+  mockSpecAgent = "";
+  mockSpecFlow = "";
 });
 
 // --- CellDiagramPanel: its own behavior is covered by
@@ -160,9 +168,19 @@ vi.mock("@aep/ui-design-view", () => ({
 // QueryClientProvider nor MSW — only the Build routing under test is real. -
 const mockMutateAsync = vi.fn();
 const mockPreflightRefetch = vi.fn();
+let mockSpecAgent = "";
+let mockSpecFlow = "";
 vi.mock("../../projects/api/queries", () => ({
   useProject: () => ({ data: { displayName: "Test Project" } }),
-  useProjectStatus: () => ({ data: { specStatus: "approved" } }),
+  // `spec.agent` (#562) is what tells the workspace whether an agent is working
+  // right now. Mutable so the kickoff block below can drive it; the global
+  // beforeEach resets it to idle, which is what every other test wants.
+  useProjectStatus: () => ({
+    data: {
+      specStatus: "approved",
+      spec: { agent: mockSpecAgent, agentFlow: mockSpecFlow, designOutdated: false },
+    },
+  }),
   useProjectTags: () => ({ data: { latest: "v1", specDirty: false } }),
   useBuildProject: () => ({ mutateAsync: mockMutateAsync }),
   useBuildPreflight: () => ({ refetch: mockPreflightRefetch }),
@@ -277,6 +295,178 @@ beforeEach(() => {
     isPending: false,
     isError: false,
     error: null,
+  });
+});
+
+// Opening the spec before the interview has asked anything (#562). The kickoff
+// fires at project creation, so this is a real arrival — the user clicks
+// through from the overview while the agent is still writing.
+describe("SpecView while the kickoff is still writing", () => {
+  const withFiles = (data: { path: string; sha: string; group: string }[]) =>
+    mockUseSpecFiles.mockReturnValue({
+      data,
+      isPending: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+  // Nothing written yet — the state a kickoff occupies for its whole first turn.
+  const empty = () => withFiles([]);
+  // A project past its kickoff: the PRD exists, so nothing here is about
+  // requirements any more.
+  const published = () =>
+    withFiles([{ path: "specs/requirements/prd.md", sha: "abc", group: "requirements" }]);
+
+  it("says what is happening instead of offering an empty picker", () => {
+    mockSpecAgent = "working";
+    mockSpecFlow = "start";
+    empty();
+    render(<SpecView projectName="proj1" />);
+
+    expect(
+      screen.getByText("Agent is working on the requirements document"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Select a file to view its content."),
+    ).not.toBeInTheDocument();
+  });
+
+  // The body says an agent is working ONLY when the rail pulses for the same
+  // reason. It used to claim it whenever the workspace was empty, so between
+  // turns the rail showed Requirements as not started while the body beside it
+  // insisted an agent was writing — the two surfaces contradicting each other.
+  it("does not claim work the rail is not showing", () => {
+    mockSpecAgent = "";
+    mockSpecFlow = "";
+    empty();
+    render(<SpecView projectName="proj1" />);
+
+    expect(
+      screen.queryByText("Agent is working on the requirements document"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Nothing written yet")).toBeInTheDocument();
+  });
+
+  // A failure has its own banner with its own way out; spinning underneath it
+  // would promise work that already stopped.
+  it("stops spinning once the turn has failed", () => {
+    mockSpecAgent = "failed";
+    empty();
+    render(<SpecView projectName="proj1" />);
+
+    expect(
+      screen.queryByText("Agent is working on the requirements document"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText("The agent couldn't write your requirements"),
+    ).toBeInTheDocument();
+  });
+
+
+  // `spec.agent` is PROJECT-wide — the newest turn of any flow. A design pass
+  // on a project whose PRD shipped months ago is an agent working, but not on
+  // the requirements, and not on anything this workspace should re-explain.
+  it("does not claim requirements work while a later flow runs", () => {
+    mockSpecAgent = "working";
+    published();
+    render(<SpecView projectName="proj1" />);
+
+    expect(
+      screen.queryByText("Agent is working on the requirements document"),
+    ).not.toBeInTheDocument();
+  });
+
+  // The failure banner was unreachable before #562 wired a real signal into it.
+  // Unscoped it would pin a red alert across a healthy published spec after any
+  // The alert owns the failed case, so the body must add nothing to it. It used
+  // to fall through to "Select a file to view its content." — `nothingToShow`
+  // excludes `failed`, and an empty workspace has no file to select.
+  it("leaves the body empty under the failure banner", () => {
+    mockSpecAgent = "failed";
+    empty();
+    render(<SpecView projectName="proj1" />);
+
+    expect(screen.getByText("The agent couldn't write your requirements")).toBeInTheDocument();
+    expect(screen.queryByText("Select a file to view its content.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Nothing written yet")).not.toBeInTheDocument();
+  });
+
+  // turn failed; a kickoff that died is the one failure leaving nothing behind.
+  // The one state that can be KNOWN rather than inferred: a turn that started
+  // and then died. So it is the only one carrying a way out.
+  it("banners a failed kickoff, and offers Retry there", () => {
+    mockSpecAgent = "failed";
+    empty();
+    const { unmount } = render(<SpecView projectName="proj1" />);
+    expect(
+      screen.getByText("The agent couldn't write your requirements"),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    // GUARDED: this surface cannot see an interview that ended on a question.
+    // The panel re-decides after it has rehydrated, which is the first moment
+    // that is knowable.
+    expect(consumePendingSeed(chatKeyFor("acme", "proj1"))).toEqual({
+      message: START_COMMAND,
+      guarded: true,
+    });
+    unmount();
+
+    mockSpecAgent = "failed";
+    published();
+    render(<SpecView projectName="proj1" />);
+    expect(
+      screen.queryByText("The agent couldn't write your requirements"),
+    ).not.toBeInTheDocument();
+  });
+
+  // The dead end this closed (#562 review): a dispatch that never reached the
+  // turn guard — no Anthropic key, an unreachable skills repo — or an abandoned
+  // reference upload the create held the kickoff for. There is no turn row, so
+  // nothing "failed", and the spinner promised work that was never coming with
+  // nothing to click.
+  it("offers a way out when no turn has ever run", () => {
+    mockSpecAgent = "never-started";
+    mockSpecFlow = "";
+    empty();
+    render(<SpecView projectName="proj1" />);
+
+    expect(
+      screen.queryByText("Agent is working on the requirements document"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Nothing written yet")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(consumePendingSeed(chatKeyFor("acme", "proj1"))).toEqual({
+      message: START_COMMAND,
+      guarded: true,
+    });
+  });
+
+  // A design run is not requirements work, so the requirements body says
+  // nothing about it.
+  it("does not claim requirements work during a design run", () => {
+    mockSpecAgent = "working";
+    mockSpecFlow = "design";
+    empty();
+    render(<SpecView projectName="proj1" />);
+
+    expect(
+      screen.queryByText("Agent is working on the requirements document"),
+    ).not.toBeInTheDocument();
+  });
+
+  // An empty workspace offers NOTHING (#562 retest). It used to carry a Start
+  // button, which appeared during the kickoff itself — the moment the user must
+  // not be invited to restart it — because "the workspace looks empty" is true
+  // for a while before the agent's first write lands.
+  it("offers no action while an agent is actually writing", () => {
+    mockSpecAgent = "working";
+    mockSpecFlow = "start";
+    empty();
+    render(<SpecView projectName="proj1" />);
+
+    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
   });
 });
 
@@ -906,5 +1096,93 @@ describe("SpecView while the agent is waiting on answers", () => {
 
     expect(screen.getByRole("button", { name: "+ Feature" })).toBeDisabled();
     expect(screen.getByRole("button", { name: /Generate design/ })).toBeDisabled();
+  });
+});
+
+// Designing against the agent's own guesses is ordinary use, not a mistake —
+// gating it was tried and removed (#539). But it has a cost the button does not
+// show: the design is derived from those guesses, and overturning one later
+// means deriving again. So the click warns and lets the user go on.
+describe("SpecView warns before designing against unsettled requirements", () => {
+  const REQUIREMENTS_FILES = [
+    { path: "specs/requirements/prd.md", sha: "p1", group: "requirements" },
+  ];
+  const UNSETTLED = [
+    "## User Stories",
+    "",
+    "1. As a manager, I approve claims *assumed* single approver",
+    "",
+    "## Open Questions",
+    "",
+    "- Which payroll vendor?",
+  ].join("\n");
+  const SETTLED = ["## User Stories", "", "1. As a manager, I approve claims"].join("\n");
+
+  function seed(prd: string): void {
+    mockUseSpecFiles.mockReturnValue({
+      data: REQUIREMENTS_FILES,
+      isPending: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    mockUseSpecFileContent.mockReturnValue({
+      data: { sha: "p1", content: prd },
+      isPending: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+  }
+
+  const clickGenerate = () =>
+    fireEvent.click(screen.getByRole("button", { name: /Generate design/ }));
+
+  it("goes straight to the design run when nothing is unsettled", () => {
+    seed(SETTLED);
+    render(<SpecView projectName="proj1" />);
+    clickGenerate();
+
+    expect(mockNavigate).toHaveBeenCalledWith(
+      expect.objectContaining({ search: { generate: "design" } }),
+    );
+  });
+
+  // The count is what the rail already shows, said in the same words — one
+  // account of what is unsettled, not two that can drift apart.
+  it("names what is unsettled instead of designing", () => {
+    seed(UNSETTLED);
+    render(<SpecView projectName="proj1" />);
+    clickGenerate();
+
+    expect(screen.getByText("1 open question")).toBeInTheDocument();
+    expect(screen.getByText("1 assumption to challenge")).toBeInTheDocument();
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  // A warning, not a gate: the way past is the primary action.
+  it("designs anyway when the user says so", () => {
+    seed(UNSETTLED);
+    render(<SpecView projectName="proj1" />);
+    clickGenerate();
+    fireEvent.click(screen.getByRole("button", { name: "Generate anyway" }));
+
+    expect(mockNavigate).toHaveBeenCalledWith(
+      expect.objectContaining({ search: { generate: "design" } }),
+    );
+  });
+
+  // The other way out gets out of the user's way — it does not leave them on a
+  // dialog they have already answered, and it starts no design run.
+  it("stands down without designing when the user goes to resolve", async () => {
+    seed(UNSETTLED);
+    render(<SpecView projectName="proj1" />);
+    clickGenerate();
+    fireEvent.click(screen.getByRole("button", { name: "Resolve issues" }));
+
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Generate anyway" })).toBeNull(),
+    );
+    expect(mockNavigate).not.toHaveBeenCalled();
   });
 });

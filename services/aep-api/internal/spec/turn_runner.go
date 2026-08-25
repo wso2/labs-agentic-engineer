@@ -174,6 +174,24 @@ func attachmentNames(as []agentsvc.TurnAttachment) []string {
 	return names
 }
 
+// authorIDOf / authorNameOf flatten the journal author onto the turn row's two
+// columns. Nil — an M2M or minimal token, which journals no author rather than
+// a bare subject — flattens to two empty strings, the row's "unattributable"
+// state and the same one every pre-#562 row carries.
+func authorIDOf(a *agentsvc.JournalAuthor) string {
+	if a == nil {
+		return ""
+	}
+	return a.ID
+}
+
+func authorNameOf(a *agentsvc.JournalAuthor) string {
+	if a == nil {
+		return ""
+	}
+	return a.DisplayName
+}
+
 // journalAuthorFrom projects the request bearer onto the journal's author
 // shape, EMAIL-ANCHORED to match the console's live author identity
 // ({id: email, displayName}) — that equality is what lets a rehydrated row

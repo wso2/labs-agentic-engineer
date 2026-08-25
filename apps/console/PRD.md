@@ -85,6 +85,58 @@ which is also what closes its issue. Newest first; links go to the feature's
 GitHub issue plus any ADRs it produced. Features still being built aren't
 here: they're the open `console` + `feature` issues.
 
+- The journey starts itself — creating a project **fires `/start` server-side**,
+  so the user lands on the overview with the agent chat already open, the
+  transcript showing `/start` beside their own idea (cropped), and the Spec card
+  reading **Writing requirements** with **Open spec** as its CTA: generation is
+  already underway, so there is nothing left to ask for. A project created WITH
+  reference documents declares `referencesPending`, and the platform holds the
+  kickoff until the upload lands — they are the primary brief, and an interview
+  started before they arrive is conducted blind. The spec view,
+  opened before the interview has asked anything, says *"Agent is working on the
+  requirements document"*. **Nothing auto-navigates**, and the `?generate=`
+  handshake between the overview CTA and the spec view is retired: the CTA that
+  still starts an interview seeds the chat from wherever the user is. Its
+  remaining forms are resumption affordances — **Try again** over a kickoff that
+  died, **Generate spec** on a project nothing ever started —
+  [#562](https://github.com/wso2/labs-agentic-engineer/issues/562)
+  (contract: `SpecStage.agent`, `CreateProjectRequest.referencesPending`)
+- Spec view — the rail is the flow: **Requirements · Design · Validation**
+  each carrying state (ready · being worked on · needs attention · not begun),
+  documents named as documents rather than files (*Product requirements*,
+  *Design overview*, *Acceptance criteria*), and the app's existing pulse on a
+  section an agent is writing. An amber section explains itself in **rows** —
+  *N assumptions to challenge*, *N open questions*, *The requirements have
+  changed since* — each going where the work already happens. Staleness is
+  derived by comparing the requirements against the snapshot the last design run
+  read, so nothing is stored and nothing can fall out of sync; **an outdated
+  design is refused by the build gate**, joining the refusal Build already shows
+  on click. Retires *"Being derived…"*, which claimed work over sections nobody
+  had asked for —
+  [#575](https://github.com/wso2/labs-agentic-engineer/issues/575)
+  (contract: `SpecStage.designOutdated`)
+- Overview — the spec card stops rewriting itself: **one button** (*Open spec*)
+  in every state instead of three captions walked during a single kickoff with
+  no user input, and **one line that always says something** instead of blanking
+  the moment the agent asked a question. The card is a destination and never a
+  send — every way of STARTING work moved to the spec view, which offers
+  **Retry** in exactly two states: under the failure alert when a kickoff died
+  (the only state that can be *known* rather than inferred, so the button can
+  never appear mid-kickoff), and on an empty workspace with nothing running. The kickoff now fires **inline** with `POST /projects`, so
+  the create answers only once the turn exists — which is what makes
+  `spec.agent == ""` mean *never started* rather than also *starting right now* —
+  [#562](https://github.com/wso2/labs-agentic-engineer/issues/562)
+  (no contract change)
+- Agent chat — the transcript keeps up with the work: your own message paints
+  the moment you send it rather than when the dispatch answers; a turn this
+  browser did not send (the creation-time kickoff, or a teammate's) shows who
+  started it and what they said, from a display record carried on the turn
+  itself — the conversation store only records a turn once it has finished; a
+  cold panel looks for a running turn every ~2s instead of every 12s; and a
+  question arriving **no longer moves the user** — the pill says the agent is
+  waiting and the click is what opens the form —
+  [#562](https://github.com/wso2/labs-agentic-engineer/issues/562)
+  (contract: `TurnStatus.instruction` / `authorId` / `authorDisplayName`)
 - Spec view — the PRD is the interface: each PRD section carries a **code
   lens** firing the command that belongs there — `/actor` on Actors,
   `/feature` on the story list, `/expand` on each story, `/settle` over Open
@@ -242,7 +294,11 @@ here: they're the open `console` + `feature` issues.
   to generate requirements (create does not auto-derive) —
   [#150](https://github.com/wso2/labs-agentic-engineer/issues/150)
   (no contract change; duplicate-generation guard deferred to
-  [#151](https://github.com/wso2/labs-agentic-engineer/issues/151))
+  [#151](https://github.com/wso2/labs-agentic-engineer/issues/151)).
+  *Superseded twice: the localStorage prompt copy by the project descriptor, and
+  the CTA-as-the-way-in by
+  [#562](https://github.com/wso2/labs-agentic-engineer/issues/562), which fires
+  the kickoff at creation and leaves the CTA as a resumption affordance.*
 - Onboarding — first-time credentials wizard for the default org (hard gate on
   incomplete `GET /config`): GitHub PAT + Anthropic key, then auto skills-repo
   bootstrap via extended `/skills/sync` —

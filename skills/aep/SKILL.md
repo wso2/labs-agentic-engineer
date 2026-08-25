@@ -233,6 +233,19 @@ it does not add concurrency — it detaches the subagent, so its steps stop reac
 the progress feed and the person watching sees an empty section where a component
 was built.
 
+**Say on the issue when you hand its work to a subagent.** In the same turn you
+dispatch a wave, comment ONE line on each issue in it naming what was delegated:
+
+```bash
+gh issue comment <number> --body "Started: <what the subagent was asked to build>"
+```
+
+That comment is the only thing a person watching the build sees between dispatch
+and the pull request — the issue is the surface they are reading, and a wave that
+takes twenty minutes is otherwise twenty minutes of silence on it. One line per
+issue, at dispatch. Not a plan, not a status table, and never a second comment
+saying the same thing again.
+
 **A subagent starts from its prompt and nothing else.** It does not have this
 skill. Name **exactly these**, and nothing else:
 

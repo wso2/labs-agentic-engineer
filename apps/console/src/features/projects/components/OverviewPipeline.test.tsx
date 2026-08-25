@@ -18,17 +18,28 @@
 
 // @vitest-environment jsdom
 
-// The spec stage's two actions. The stage is derived from GIT, which cannot see
-// an interview: no requirements file exists until the agent writes one, so the
-// old card invited "Generate spec" for the entire duration of the interview it
-// had already started — and a second click injected a `/start` that the start
-// skill read as the user's skip valve.
+// The spec stage's actions. The stage is derived from GIT, which cannot see an
+// interview: no requirements file exists until the agent writes one, so the old
+// card invited "Generate spec" for the entire duration of the interview it had
+// already started — and a second click injected a `/start` that the start skill
+// read as the user's skip valve.
+//
+// Two signals now cover that blindness, and they know different things. The
+// local chat log (`engaged`) only exists once the panel has mounted; the
+// server's `spec.agent` (#562) is what a user who never opened the chat sees —
+// which, since the platform fires the kickoff itself, is the ordinary case.
 
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AskQuestionInput } from "@aep/agent-stream";
 import type { components } from "../../../generated/aep-api";
-import { addMessage, chatKeyFor, replaceMessages } from "../../agent-chat/chatStore";
+import {
+  addMessage,
+  chatKeyFor,
+  consumePendingSeed,
+  peekPendingSeed,
+  replaceMessages,
+} from "../../agent-chat/chatStore";
 import { OverviewPipeline } from "./OverviewPipeline";
 
 type ProjectStatus = components["schemas"]["ProjectStatus"];
@@ -60,7 +71,7 @@ function status(spec: Partial<ProjectStatus["spec"]>): ProjectStatus {
     hasTasks: false,
     specStatus: "",
     designStatus: "",
-    spec: { exists: false, version: "", dirty: false, design: false, ...spec },
+    spec: { exists: false, version: "", dirty: false, design: false, agent: "", ...spec },
     build: { version: "", status: "idle" },
     deploy: {
       version: "",
@@ -75,70 +86,77 @@ function renderPipeline(spec: Partial<ProjectStatus["spec"]> = {}) {
   return render(<OverviewPipeline projectName={PROJECT} status={status(spec)} />);
 }
 
-describe("OverviewPipeline — the spec stage's action", () => {
+describe("OverviewPipeline — the spec card", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     replaceMessages(KEY, []);
+    consumePendingSeed(KEY);
   });
 
-  it("offers Generate spec, carrying the generate signal, on an untouched project", () => {
-    renderPipeline();
+  // The caption used to be three captions, walked in order during a single
+  // kickoff with no input from the user: Generate spec → Open spec → Continue
+  // spec. Each came from a different signal that moved on its own. A control
+  // that renames itself while you read it cannot be learned, and the
+  // destination never actually varied.
+  it.each([
+    ["nothing started", {}, false],
+    ["kickoff running", { agent: "working" }, false],
+    ["question waiting", {}, true],
+    ["kickoff failed", { agent: "failed" }, false],
+    ["published spec", { exists: true, version: "v2" }, false],
+  ])("says Open spec and nothing else — %s", (_name, spec, withQuestion) => {
+    if (withQuestion) {
+      addMessage(KEY, { role: "question", turnId: "t1", toolCallId: "tc1", questions: QUESTIONS });
+    }
+    renderPipeline(spec);
 
-    fireEvent.click(screen.getByRole("button", { name: /Generate spec/ }));
-    expect(mockNavigate).toHaveBeenCalledWith({
-      to: "/projects/$projectName/spec",
-      params: { projectName: PROJECT },
-      search: { generate: "requirements" },
-    });
-  });
-
-  it("offers Continue spec, with NO generate signal, while a question waits", () => {
-    addMessage(KEY, { role: "question", turnId: "t1", toolCallId: "tc1", questions: QUESTIONS });
-    renderPipeline();
-
+    expect(screen.getByRole("button", { name: "Open spec" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Generate spec/ })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Continue spec/ }));
-    // No `search`: the param is what injects the second `/start`, and dropping
-    // it also leaves the chat panel closed so the question form owns the body.
-    expect(mockNavigate).toHaveBeenCalledWith({
-      to: "/projects/$projectName/spec",
-      params: { projectName: PROJECT },
-    });
-  });
-
-  it("offers Continue spec while a turn is in flight", () => {
-    addMessage(KEY, { role: "user", content: "/start", turnId: "t1", status: "in_flight" });
-    renderPipeline();
-
-    expect(screen.getByRole("button", { name: /Continue spec/ })).toBeInTheDocument();
-  });
-
-  // An amendment interview runs against a spec that already exists, asks
-  // questions the same way, and is skipped by a stray `/start` the same way —
-  // but the stage card that replaces the CTA offered no sign one was open.
-  it("brings the action back for an amendment on an existing spec", () => {
-    addMessage(KEY, { role: "question", turnId: "t1", toolCallId: "tc1", questions: QUESTIONS });
-    renderPipeline({ exists: true, version: "v2" });
-
-    expect(screen.getByRole("button", { name: /Continue spec/ })).toBeInTheDocument();
-    // The version and its status stay on screen, so continuing doesn't read as
-    // starting over — and the card says no less than the one it replaced.
-    expect(screen.getByText("v2")).toBeInTheDocument();
-    expect(screen.getByText("published")).toBeInTheDocument();
-  });
-
-  it("leaves the plain stage card alone when nothing is in flight", () => {
-    renderPipeline({ exists: true, version: "v2" });
-
     expect(screen.queryByRole("button", { name: /Continue spec/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Generate spec/ })).not.toBeInTheDocument();
-    expect(screen.getByText("published")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Try again/ })).not.toBeInTheDocument();
   });
 
-  it("retry still works: a failed attempt leaves Generate spec armed", () => {
-    addMessage(KEY, { role: "user", content: "/start", turnId: "t1", status: "failed" });
+  it("navigates to the spec and never sends", () => {
     renderPipeline();
 
-    expect(screen.getByRole("button", { name: /Generate spec/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open spec" }));
+    expect(mockNavigate).toHaveBeenCalledWith({
+      to: "/projects/$projectName/spec",
+      params: { projectName: PROJECT },
+    });
+    // Starting moved to the spec view's empty state — this card is a
+    // destination in every state now, never a send.
+    expect(peekPendingSeed(KEY)).toBeNull();
+  });
+
+  // The line is the part that moves, and it always says something. It used to
+  // blank itself the moment the agent asked a question, because a turn that
+  // ends ON one has written no PRD and reads server-side as "never ran".
+  it.each([
+    ["nothing started", {}, false, "Nothing written yet."],
+    ["kickoff running", { agent: "working" }, false, "The agent is writing your requirements."],
+    ["question waiting", {}, true, "The agent has questions for you."],
+    [
+      "kickoff failed",
+      { agent: "failed" },
+      false,
+      "The agent couldn't start — open the spec to try again.",
+    ],
+  ])("never blanks the line — %s", (_name, spec, withQuestion, line) => {
+    if (withQuestion) {
+      addMessage(KEY, { role: "question", turnId: "t1", toolCallId: "tc1", questions: QUESTIONS });
+    }
+    renderPipeline(spec);
+
+    expect(screen.getByText(line as string)).toBeInTheDocument();
+  });
+
+  // The version is a separate fact from what is happening right now.
+  it("keeps the version while an amendment interview is open", () => {
+    addMessage(KEY, { role: "question", turnId: "t1", toolCallId: "tc1", questions: QUESTIONS });
+    renderPipeline({ exists: true, version: "v2" });
+
+    expect(screen.getByText("v2")).toBeInTheDocument();
+    expect(screen.getByText("The agent has questions for you.")).toBeInTheDocument();
   });
 });

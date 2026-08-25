@@ -124,8 +124,21 @@ const norm = (text: string): string => text.trim().toLowerCase().replace(/\s+/g,
 /** A subject the agent reads back: the entry as written, on one line. */
 const subjectOf = (text: string): string => text.replace(/\s+/g, " ").trim();
 
-/** An emphasised run is the assumption flag when the run IS the word. */
-const isAssumedFlag = (run: EmphasisRun): boolean => /^assumed$/i.test(run.text.trim());
+/**
+ * An emphasised run is the assumption flag when the run IS the word — give or
+ * take the punctuation an agent wraps it in.
+ *
+ * `*(assumed)*` and `*[assumed]*` count, because agents write both and an exact
+ * match silently dropped them: the rail stopped counting the assumption AND the
+ * line lost its Settle control, so the user could neither see nor challenge a
+ * judgment the agent had made. The tag is prose an LLM writes free-hand, so the
+ * reader tolerates the punctuation while the contract states the plain form.
+ *
+ * Still the whole run, not a substring: `*assumed single approver*` is the
+ * agent emphasising its reasoning, not tagging it.
+ */
+const isAssumedFlag = (run: EmphasisRun): boolean =>
+  /^[([]?assumed[)\]]?$/i.test(run.text.trim());
 
 /**
  * What the document offers, in document order.

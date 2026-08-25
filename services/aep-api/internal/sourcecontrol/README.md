@@ -61,6 +61,30 @@ and installation lifecycle.*
   exception — they carry no `aep`, so they are counted on their own alias and subtracted from nothing.
   Callers read the sets through `OpenDevWork()` / `OpenTaskWork()` and never subtract fields themselves;
   the arithmetic must not be duplicated.
+- **Every platform issue comment is BRANDED as machine-written, at one point.** `issueService` stamps
+  `MachineCommentMarker` (an HTML comment, so it renders as nothing) onto every body it sends —
+  `CommentIssue` and `CloseIssue`'s closing comment alike — and the milestone comment read strips it
+  again, reporting `IssueComment.Machine`. It exists because AUTHORSHIP CANNOT ANSWER THE QUESTION: the
+  platform comments through the org's own credential and the coding runner is handed that same
+  credential as `GITHUB_TOKEN`, so a machine comment and an agent's progress note arrive under one
+  login. Stamping here rather than at the five call sites (the delivery `IssueWriter`, the provisioning
+  wiring and failure notes, the plan tap, the closing comment) is deliberate — this service is the only
+  adapter they all pass through, and there is no user-facing comment write on the API, so the brand is
+  exactly the statement "the platform wrote this" and no call site can forget it. Branding is
+  idempotent; a comment written BEFORE this shipped carries no marker and reads as human, which is an
+  accepted gap (the alternative was pattern-matching five writers' openers).
+- **`ListMilestoneIssueComments` is ONE call for a whole milestone's threads.** It is the version
+  ledger's comment read and it rides a 5s console poll, so neither REST shape works — per-issue costs a
+  call per issue and repo-wide answers the whole repository out of the budget the run loop needs; the
+  arithmetic is in `milestone_comments.go`, where the choice was made. GraphQL's points budget is
+  separate and this query costs ~1 of it. `milestone.issues` is a pure-issue connection, so PR
+  comments are excluded by construction rather than by a filter. `comments(last:)` returns the TAIL of a
+  thread already in chronological order, so the newest notes survive the cap with no reversal; a null
+  `author` (deleted account) is a fact about the comment, not a decode failure, and lands as an empty
+  login. **Coverage is ONE issue page, which is narrower than the REST sibling's** — `ListMilestoneIssues`
+  walks pages until a short one and returns every issue, so on a milestone over 100 the issues past the
+  page get no comments. Deliberate for a decorative read on a 5s poll, and logged (`hasNextPage`) because
+  a missing bucket is indistinguishable from "this issue has none".
 - **REST narrows on labels, GraphQL widens.** `ListMilestoneIssues`' REST `?labels=a,b` is AND (an
   issue must carry all of them); the GraphQL `labels:` above is OR. Two APIs over one resource, two
   rules — carrying an assumption from one to the other silently empties the working set, and the

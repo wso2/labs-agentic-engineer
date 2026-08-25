@@ -59,7 +59,9 @@ type Service struct {
 	deprovisioner  resourceDeprovisioner // dependency provisioning teardown; may be nil
 	runReader      milestoneRunRows      // build/deploy stage reads + delete purge (status_stages.go)
 	bindingsReader bindingsReader        // deploy stage: OC release bindings (status_stages.go)
+	specTurns      specTurnRows          // spec stage: newest agent turn (status_stages.go); may be nil
 	runAbandoner   runAbandoner          // run-supervisor teardown on delete; may be nil
+	kickoff        kickoffStarter        // fires `/start` on create (#562); may be nil
 }
 
 // runAbandoner is project_service's narrow consumer port for the run-supervisor
@@ -108,6 +110,21 @@ type descriptorWriter interface {
 	WriteDescriptor(ctx context.Context, orgID, projectID, name, idea string) error
 }
 
+// kickoffStarter fires the new project's opening `/start` turn (#562) — the
+// journey starts itself rather than waiting for a Generate-spec click. Narrow
+// port declared here (like the three around it) so projects keeps no genai
+// edge; *spec.Service satisfies it. Wired at the composition root; nil is a
+// documented no-op.
+//
+// Deliberately returns nothing. It runs INLINE — the create answers only once
+// the turn exists, so the console can paint the kickoff on arrival and
+// `spec.agent == ""` means one thing rather than two — but it still cannot
+// fail the creation the user already committed to, so it swallows its own
+// errors and bounds its own time.
+type kickoffStarter interface {
+	Kickoff(ctx context.Context, orgID, projectID string)
+}
+
 // skillMirror seeds the new repo's `.claude/skills/` copies from the org
 // library, so a clone carries the coding guidance before any design or task
 // exists. Narrow port declared here (like the two above) so projects keeps no
@@ -122,6 +139,11 @@ func (s *Service) SetSkillsProvisioner(p skillsProvisioner) { s.skillsProv = p }
 func (s *Service) SetDescriptorWriter(w descriptorWriter) { s.descriptors = w }
 
 func (s *Service) SetSkillMirror(m skillMirror) { s.skillMirrorSvc = m }
+
+// SetKickoffStarter wires the create-time `/start` dispatch (#562). A nil
+// starter is a documented no-op — the project is still perfectly usable, and
+// its spec card offers the kickoff as a CTA.
+func (s *Service) SetKickoffStarter(k kickoffStarter) { s.kickoff = k }
 
 func NewProjectService(
 	client openchoreo.ProjectClient,
@@ -277,6 +299,25 @@ func (s *Service) CreateProject(ctx context.Context, orgName string, req *gen.Cr
 					}
 				})
 			}
+
+			// The journey starts itself (#562): fire `/start` rather than
+			// land the user on a dashboard asking them to press a button for
+			// work the platform can already do. AFTER the descriptor commit
+			// above — that file is where the turn reads the idea from — and
+			// BEFORE this call returns, so the client arrives at a project
+			// whose turn already exists rather than one that looks unstarted
+			// for the couple of seconds the dispatch takes.
+			//
+			// HELD when the caller says reference documents are still coming:
+			// they are the primary brief, and a kickoff dispatched before the
+			// upload would interview the user about a document the agent
+			// never saw. The references call fires it instead. An abandoned
+			// upload therefore leaves the project un-started, which the spec
+			// card offers as a CTA — the honest outcome, and better than an
+			// interview conducted blind.
+			if s.kickoff != nil && !req.ReferencesPending {
+				s.kickoff.Kickoff(ctx, orgName, project.Name)
+			}
 		}
 	}
 
@@ -418,7 +459,7 @@ func (s *Service) GetProjectStatus(ctx context.Context, orgName, projectName str
 	}
 
 	// Ready repo: derive the three stage aggregates + the flat artifact
-	// fields from the three poll sources (status_stages.go).
+	// fields from the four poll sources (status_stages.go).
 	if err := s.populateStages(ctx, orgName, projectName, status); err != nil {
 		return nil, err
 	}

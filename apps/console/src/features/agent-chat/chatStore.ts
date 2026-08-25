@@ -171,10 +171,49 @@ function nextId(): string {
 
 // Omit must distribute over the message union (a plain Omit collapses it to
 // the common fields).
-type WithoutId<T> = T extends unknown ? Omit<T, "id"> : never;
+export type WithoutId<T> = T extends unknown ? Omit<T, "id"> : never;
 
-export function addMessage(key: string, msg: WithoutId<ChatMessage>): void {
-  persist(key, [...load(key), { ...msg, id: nextId() } as ChatMessage]);
+/** The shape `ensureUserMessage` takes: a user row that names its turn. */
+export type StartingUserMessage = WithoutId<Extract<ChatMessage, { role: "user" }>> & {
+  turnId: string;
+};
+
+/** Append a message; returns its generated id, for callers that must update
+ *  the row later (an optimistic send waiting on its turn id). */
+export function addMessage(key: string, msg: WithoutId<ChatMessage>): string {
+  const id = nextId();
+  persist(key, [...load(key), { ...msg, id } as ChatMessage]);
+  return id;
+}
+
+/**
+ * Settle an optimistic user row once the dispatch answers.
+ *
+ * A send paints its row BEFORE the POST — that request resolves the repo, the
+ * workspace ref, the Anthropic key, two git heads and two snapshot extracts
+ * before it returns a turn id, and the user watching their own message not
+ * appear for all of that has no way to tell a slow platform from a dropped
+ * one. So the row goes up first and is settled here: stamped with the turn it
+ * became, or marked failed if there wasn't one.
+ *
+ * Addressed by MESSAGE id rather than turn id, which is the whole point —
+ * until this runs the row has no turn id to be addressed by.
+ */
+export function settleUserMessage(
+  key: string,
+  messageId: string,
+  settled: { turnId: string } | { failed: true },
+): void {
+  persist(
+    key,
+    load(key).map((m) =>
+      m.role === "user" && m.id === messageId
+        ? "turnId" in settled
+          ? { ...m, turnId: settled.turnId }
+          : { ...m, status: "failed" as const }
+        : m,
+    ),
+  );
 }
 
 /**
@@ -269,6 +308,30 @@ export function setTurnStatus(
   );
 }
 
+/**
+ * Append the user row that STARTED a turn, unless the log already has one.
+ *
+ * For a turn this browser did not send — a teammate's, or the platform's own
+ * kickoff at project creation — there is no optimistic row and the server's
+ * transcript will not carry one until the turn ENDS, because the conversation
+ * store persists a turn's history only then. Without this the panel renders
+ * the agent narrating under a blank space for the whole turn, which on a fresh
+ * project is the user's entire first impression of the product.
+ *
+ * Idempotent on turnId, because every path that can call it runs more than
+ * once: mount, the foreign-turn poll, and a re-attach after a dropped stream.
+ * The sender's own row already carries the turnId, so their send no-ops here.
+ *
+ * The row is TRANSIENT. When the turn lands, the rehydrate replaces the log
+ * with the server's history — which by then does carry the real message — and
+ * this row goes with it. That is the intended handoff, not a leak.
+ */
+export function ensureUserMessage(key: string, msg: StartingUserMessage): void {
+  const messages = load(key);
+  if (messages.some((m) => m.role === "user" && m.turnId === msg.turnId)) return;
+  persist(key, [...messages, { ...msg, id: nextId() } as ChatMessage]);
+}
+
 /** Remove a turn's streamed output before a replay-from-0 re-attach. */
 export function dropTurnOutput(key: string, turnId: string): void {
   persist(
@@ -339,18 +402,43 @@ export function replaceMessages(key: string, messages: ChatMessage[]): void {
 // the message-log's own Map+listeners+subscribe shape above. The panel
 // consumes it exactly once (get-and-clear) so a re-render never re-sends it.
 
-const pendingSeeds = new Map<string, string>();
+/**
+ * A seed, plus whether the panel may refuse it.
+ *
+ * Most seeds are the user SPEAKING — submitted interview answers, a dependency
+ * they want discussed — and refusing one would destroy the only copy of what
+ * they said. `guarded` marks the exception: an INJECTED flow command, which
+ * nobody typed and which is destructive to send into an open exchange. Landing
+ * on an unanswered question form, a `/start` reads to the start skill as the
+ * user's skip valve, so the interview is silently replaced by the agent's own
+ * answers (see `agentEngaged`).
+ *
+ * The flag rather than a check on the text: "may this be refused" is a property
+ * of WHY the seed was written, and the caller is the only party that knows it.
+ */
+export interface PendingSeed {
+  message: string;
+  /** The panel may drop this rather than send it into an open exchange. */
+  guarded: boolean;
+}
+
+const pendingSeeds = new Map<string, PendingSeed>();
 const seedListeners = new Map<string, Set<() => void>>();
 
-/** Set the one-shot seed message the panel will auto-send next time it looks. */
-export function setPendingSeed(key: string, message: string): void {
-  pendingSeeds.set(key, message);
+/**
+ * Set the one-shot seed message the panel will auto-send next time it looks.
+ *
+ * `guarded` defaults to false — the safe default for a seed carrying the user's
+ * own words, which is every caller but the spec card's start CTA.
+ */
+export function setPendingSeed(key: string, message: string, guarded = false): void {
+  pendingSeeds.set(key, { message, guarded });
   for (const fn of seedListeners.get(key) ?? []) fn();
 }
 
 /** Non-destructive read — for callers (e.g. "should the panel open?") that
  *  only need to know a seed is waiting, without consuming it. */
-export function peekPendingSeed(key: string): string | null {
+export function peekPendingSeed(key: string): PendingSeed | null {
   return pendingSeeds.get(key) ?? null;
 }
 
@@ -359,12 +447,12 @@ export function peekPendingSeed(key: string): string | null {
  *  `useSyncExternalStore` snapshot flips from true back to false only when
  *  a listener fires; without this, it would stay stuck `true` after the
  *  panel consumes the seed. */
-export function consumePendingSeed(key: string): string | null {
-  const msg = pendingSeeds.get(key);
-  if (msg === undefined) return null;
+export function consumePendingSeed(key: string): PendingSeed | null {
+  const seed = pendingSeeds.get(key);
+  if (seed === undefined) return null;
   pendingSeeds.delete(key);
   for (const fn of seedListeners.get(key) ?? []) fn();
-  return msg;
+  return seed;
 }
 
 export function subscribeSeed(key: string, fn: () => void): () => void {

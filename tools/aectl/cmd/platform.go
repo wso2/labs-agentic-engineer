@@ -166,6 +166,10 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if err := checkOrConfigureGatewayIngress(ctx, k8sClient); err != nil {
+		return err
+	}
+
 	openBaoDirect := viper.GetBool("codingagent.openbao_direct.enabled")
 
 	if initReuseSecrets {
@@ -342,6 +346,10 @@ type addonDeps struct {
 	confirm         func(string) bool
 	installOperator func(context.Context, string, addons.OperatorSpec) error
 	newApplier      func(string) (manifestApplier, error)
+	// waitForSecrets blocks until all named Secrets exist in namespace or the
+	// context deadline is exceeded. Nil skips the wait (tests that do not
+	// exercise credential synchronization may omit this dep).
+	waitForSecrets func(ctx context.Context, namespace string, names []string) error
 }
 
 var defaultAddonDeps = addonDeps{
@@ -357,8 +365,12 @@ var defaultAddonDeps = addonDeps{
 // It installs any required operators first, prompting for confirmation, then
 // applies addon manifests. Addons whose operator failed are skipped.
 // platformVersion is used as the Helm --version for operators whose OperatorSpec.Version is empty.
-func installAddons(ctx context.Context, _ *kubernetes.Clientset, platformVersion string) error {
-	return runAddonInstall(ctx, platformVersion, defaultAddonDeps)
+func installAddons(ctx context.Context, client *kubernetes.Clientset, platformVersion string) error {
+	deps := defaultAddonDeps
+	deps.waitForSecrets = func(ctx context.Context, namespace string, names []string) error {
+		return waitForSecretsReady(ctx, client, namespace, names, 3*time.Minute)
+	}
+	return runAddonInstall(ctx, platformVersion, deps)
 }
 
 func runAddonInstall(ctx context.Context, platformVersion string, deps addonDeps) error {
@@ -416,6 +428,41 @@ func runAddonInstall(ctx context.Context, platformVersion string, deps addonDeps
 			if op.Version == "" && platformVersion != "" {
 				op.Version = platformVersion
 			}
+
+			if len(op.PreManifests) > 0 {
+				preSp := ui.NewSpinner(fmt.Sprintf("Preparing %s prerequisites", op.DisplayName))
+				preSp.Start()
+				preApplier, err := deps.newApplier(kubeconfig)
+				if err != nil {
+					preSp.Fail(fmt.Sprintf("Failed to prepare %s prerequisites", op.DisplayName))
+					operatorFailed[a.Operator.ReleaseName] = fmt.Errorf("build applier for %s pre-manifests: %w", op.ReleaseName, err)
+					continue
+				}
+				var preErr error
+				for _, m := range op.PreManifests {
+					if preErr = preApplier.ApplyYAML(ctx, "aectl", "", m); preErr != nil {
+						break
+					}
+				}
+				if preErr != nil {
+					preSp.Fail(fmt.Sprintf("Failed to prepare %s prerequisites", op.DisplayName))
+					operatorFailed[a.Operator.ReleaseName] = fmt.Errorf("apply %s pre-manifests: %w", op.ReleaseName, preErr)
+					continue
+				}
+				preSp.Success(fmt.Sprintf("%s prerequisites applied", op.DisplayName))
+			}
+
+			if len(op.WaitForSecrets) > 0 && deps.waitForSecrets != nil {
+				waitSp := ui.NewSpinner(fmt.Sprintf("Waiting for %s credentials", op.DisplayName))
+				waitSp.Start()
+				if err := deps.waitForSecrets(ctx, op.Namespace, op.WaitForSecrets); err != nil {
+					waitSp.Fail(fmt.Sprintf("%s credentials not ready", op.DisplayName))
+					operatorFailed[a.Operator.ReleaseName] = fmt.Errorf("wait for %s secrets: %w", op.ReleaseName, err)
+					continue
+				}
+				waitSp.Success(fmt.Sprintf("%s credentials ready", op.DisplayName))
+			}
+
 			sp := ui.NewSpinner(fmt.Sprintf("Installing %s...", op.DisplayName))
 			sp.Start()
 			if err := deps.installOperator(ctx, kubeconfig, op); err != nil {
@@ -706,6 +753,9 @@ func provisionOpenBao(ctx context.Context, anthropicKey, thunderAdminClientID, t
 		{"aep/opensearch-password", openSearchPassword},
 		{"aep/thunder-admin/client-id", thunderAdminClientID},
 		{"aep/thunder-admin/client-secret", thunderAdminClientSecret},
+		// system-client ID is a known constant but stored in OpenBao so the
+		// thunder-app-operator can source both credentials from the same ESO Secret.
+		{"aep/thunder-clients/system-client-id", "aep-system-client"},
 	}
 	for _, name := range thunderClientNames {
 		secrets = append(secrets, struct{ path, value string }{
@@ -918,6 +968,35 @@ func waitForAllPodsReady(ctx context.Context, client *kubernetes.Clientset, name
 		select {
 		case <-ctx.Done():
 			sp.Fail("Cancelled")
+			return ctx.Err()
+		case <-time.After(5 * time.Second):
+		}
+	}
+}
+
+// waitForSecretsReady polls until all named Secrets exist in namespace or
+// timeout is exceeded. Returns nil once every Secret is present.
+func waitForSecretsReady(ctx context.Context, client *kubernetes.Clientset, namespace string, names []string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		var missing []string
+		for _, name := range names {
+			if _, err := client.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{}); err != nil {
+				if apierrors.IsNotFound(err) {
+					missing = append(missing, name)
+				} else {
+					return fmt.Errorf("check secret %s/%s: %w", namespace, name, err)
+				}
+			}
+		}
+		if len(missing) == 0 {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out waiting for secrets in %s: %s", namespace, strings.Join(missing, ", "))
+		}
+		select {
+		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(5 * time.Second):
 		}

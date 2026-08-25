@@ -38,11 +38,31 @@ import (
 type Handler struct {
 	files    spec.FilesService
 	activity spec.SpecUpdatedRecorder
+	kickoff  kickoffStarter
+}
+
+// kickoffStarter fires a project's opening `/start` turn (#562). The
+// references upload is the SECOND of its two triggers: a create that declared
+// documents were coming holds the kickoff, because they are the primary brief
+// and an interview run before they land is conducted blind. *spec.Service
+// satisfies it; the port is declared here so the slice keeps no genai edge.
+// Nil is a documented no-op.
+type kickoffStarter interface {
+	Kickoff(ctx context.Context, orgID, projectID string)
 }
 
 // New returns the slice's handler.
 func New(files spec.FilesService, activity spec.SpecUpdatedRecorder) *Handler {
 	return &Handler{files: files, activity: activity}
+}
+
+// WithKickoffStarter wires the held kickoff the references upload releases.
+// Chained rather than added to New: every other caller of this handler is
+// unrelated to project creation, and a fourth positional dependency on the
+// constructor would say otherwise.
+func (h *Handler) WithKickoffStarter(k kickoffStarter) *Handler {
+	h.kickoff = k
+	return h
 }
 
 func (h *Handler) ListFiles(ctx context.Context, request gen.ListFilesRequestObject) (gen.ListFilesResponseObject, error) {

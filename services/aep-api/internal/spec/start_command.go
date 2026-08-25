@@ -106,6 +106,32 @@ func (s *Service) turnSpecFor(ctx context.Context, ref sourcecontrol.RepoRef, at
 	}, token
 }
 
+// startTurnSummary is what a turn's DISPLAY record says — the transcript line
+// and the activity feed's subject. It is the instruction verbatim for every
+// turn but one.
+//
+// The exception is `/start` fired without an inline idea, which is now the
+// ordinary case: the platform fires the kickoff itself at project creation
+// (#562), so nobody types the idea and the bare token is all the wire carries.
+// A transcript opening on `/start` alone would show the user a command they
+// never issued, about a project they described in their own words a moment
+// earlier — so the resolved idea is appended and the line reads as their own
+// brief going in (#528). It is a transparency device, not a store: the idea's
+// durable home is the descriptor, and this copy is never read back.
+//
+// Only the idea the SAME turn resolved is appended, so the line never claims
+// something the agent did not receive. An inline idea needs nothing — it is
+// already in the instruction the caller sent.
+func startTurnSummary(instruction string, spec agentsvc.TurnSpec) string {
+	if spec.Kind != agentsvc.TurnKindStart || spec.Idea == "" {
+		return instruction
+	}
+	if trimmed := strings.TrimSpace(instruction); trimmed == startCommand {
+		return startCommand + " " + spec.Idea
+	}
+	return instruction
+}
+
 // ReferencesDir is where a reference document sits INSIDE a turn's snapshot.
 // It is not a repo path: nothing commits there (console ADR-0017). The engine
 // stores the documents beside the mirror and overlays them into each extracted

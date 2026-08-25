@@ -44,7 +44,7 @@ describe("useResolveDependencyViaChat — the Task 9 seam (#252 Task 5)", () => 
     const { result } = renderHook(() => useResolveDependencyViaChat("acme", "proj1"));
     result.current("checkout-api", dep, "resolve");
 
-    const seeded = consumePendingSeed(chatKeyFor("acme", "proj1"));
+    const seeded = consumePendingSeed(chatKeyFor("acme", "proj1"))?.message;
     expect(seeded).toBe(
       buildDependencyResolutionMessage("checkout-api", dep, "resolve"),
     );
@@ -54,7 +54,7 @@ describe("useResolveDependencyViaChat — the Task 9 seam (#252 Task 5)", () => 
     const { result } = renderHook(() => useResolveDependencyViaChat("acme", "proj1"));
     result.current("checkout-api", dep, "reconsider");
 
-    const seeded = consumePendingSeed(chatKeyFor("acme", "proj1"));
+    const seeded = consumePendingSeed(chatKeyFor("acme", "proj1"))?.message;
     expect(seeded).toBe(
       buildDependencyResolutionMessage("checkout-api", dep, "reconsider"),
     );

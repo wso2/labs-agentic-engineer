@@ -50,6 +50,7 @@ const noSpec: SpecStage = {
   version: "",
   dirty: false,
   design: false,
+  agent: "",
 };
 const idleBuild: BuildStage = { version: "", status: "idle" };
 const noDeploy: DeployStage = {
@@ -70,7 +71,10 @@ export const projectStatuses: Record<
   Exclude<ProjectScenario, "error">,
   ProjectStatus
 > = {
-  // Just created from a prompt: spec derivation hasn't produced anything.
+  // Just created from a prompt. The kickoff fires server-side at creation
+  // (#562), so the honest fresh project has an agent already working and
+  // nothing committed yet — which is exactly the state `exists`/`version`/
+  // `dirty` cannot describe, and the reason `agent` is on the wire.
   fresh: {
     phase: "prompt",
     repoStatus: "ready",
@@ -80,7 +84,7 @@ export const projectStatuses: Record<
     hasTasks: false,
     specStatus: "pending",
     designStatus: "pending",
-    spec: noSpec,
+    spec: { ...noSpec, agent: "working" },
     build: idleBuild,
     deploy: noDeploy,
   },
@@ -94,7 +98,7 @@ export const projectStatuses: Record<
     hasTasks: false,
     specStatus: "draft",
     designStatus: "in_progress",
-    spec: { exists: true, version: "", dirty: false, design: true },
+    spec: { exists: true, version: "", dirty: false, design: true, agent: "" },
     build: idleBuild,
     deploy: noDeploy,
   },
@@ -108,7 +112,7 @@ export const projectStatuses: Record<
     hasTasks: false,
     specStatus: "failed",
     designStatus: "failed",
-    spec: { exists: true, version: "", dirty: false, design: false },
+    spec: { exists: true, version: "", dirty: false, design: false, agent: "" },
     build: idleBuild,
     deploy: noDeploy,
   },
@@ -123,7 +127,7 @@ export const projectStatuses: Record<
     hasTasks: false,
     specStatus: "approved",
     designStatus: "approved",
-    spec: { exists: true, version: "v1", dirty: false, design: true },
+    spec: { exists: true, version: "v1", dirty: false, design: true, agent: "" },
     build: {
       version: "v1",
       status: "running",
@@ -140,7 +144,7 @@ export const projectStatuses: Record<
     hasTasks: false,
     specStatus: "approved",
     designStatus: "approved",
-    spec: { exists: true, version: "v1", dirty: false, design: true },
+    spec: { exists: true, version: "v1", dirty: false, design: true, agent: "" },
     build: {
       version: "v1",
       status: "succeeded",
@@ -162,7 +166,7 @@ export const projectStatuses: Record<
     hasTasks: false,
     specStatus: "approved",
     designStatus: "approved",
-    spec: { exists: true, version: "v1", dirty: true, design: true },
+    spec: { exists: true, version: "v1", dirty: true, design: true, agent: "" },
     build: {
       version: "v1",
       status: "succeeded",
@@ -186,7 +190,7 @@ export const projectStatuses: Record<
     hasTasks: false,
     specStatus: "approved",
     designStatus: "approved",
-    spec: { exists: true, version: "v1", dirty: false, design: true },
+    spec: { exists: true, version: "v1", dirty: false, design: true, agent: "" },
     build: {
       version: "v1",
       status: "succeeded",

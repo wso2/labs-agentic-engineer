@@ -24,17 +24,21 @@ import {
   clearFailedSends,
   chatKeyFor,
   dropTurnOutput,
+  ensureUserMessage,
   getMessages,
   replaceMessages,
+  settleUserMessage,
   setTurnStatus,
   subscribe,
   type ChatMessage,
+  type StartingUserMessage,
 } from "./chatStore.js";
 import {
   ConversationRotatedError,
   getActiveTurn,
   getConversationMessages,
   startCollabTurn,
+  type TurnStatus,
 } from "./api/turns.js";
 import {
   conversationKeys,
@@ -58,6 +62,67 @@ import { useCurrentAuthor } from "./currentUser.js";
 // trigger if idle-panel lag ever matters — push the signal, never the state.
 const FOREIGN_TURN_POLL_MS = 12_000;
 
+// …except while the panel has NOTHING on screen, where the same lag is the
+// whole experience rather than a background refresh. That is the state a
+// freshly created project lands in: the platform fires `/start` server-side
+// (#562) and the panel opens before the turn exists, so the first check finds
+// nothing and there is no local row to paint in the meantime.
+const EMPTY_PANEL_POLL_MS = 2_000;
+
+// How many of those fast checks to spend before settling. The fast cadence is
+// for an ARRIVAL — the seconds between a panel opening and the turn it is
+// waiting for appearing — not for a panel that is empty because the project
+// simply has no conversation. Without a bound, a project that never used chat,
+// or one just after a rotation cleared the log, polls every 2s for as long as
+// the panel stays open.
+const EMPTY_PANEL_FAST_POLLS = 8;
+
+/**
+ * How long to wait before asking again whether a turn is running.
+ *
+ * Keyed on "is there anything to look at" rather than on a project's age or an
+ * arrival flag: an empty log is precisely the case where a poll interval is
+ * indistinguishable from a broken product, and it stops being empty the moment
+ * either the turn or its history lands. Bounded, because "empty" is also the
+ * resting state of a project nobody has talked to. Exported for its own test —
+ * the cadence is the fix, so it is the thing worth pinning.
+ */
+export function foreignTurnPollDelay(messages: ChatMessage[], pollsSoFar: number): number {
+  return messages.length === 0 && pollsSoFar < EMPTY_PANEL_FAST_POLLS
+    ? EMPTY_PANEL_POLL_MS
+    : FOREIGN_TURN_POLL_MS;
+}
+
+/**
+ * The user row that started a running turn, from the turn's own display record
+ * (#562), or null when the turn carries none — a row written before the record
+ * existed, where painting a blank bubble would be worse than painting nothing.
+ *
+ * The author rides along when the turn has an attributable one, so a teammate's
+ * turn reads as theirs; without it the feed's fallback calls every unattributed
+ * row "You", which is how a teammate's kickoff used to be mislabelled.
+ *
+ * Pure, and exported for its own test.
+ */
+export function userMessageForTurn(active: TurnStatus): StartingUserMessage | null {
+  if (!active.instruction) return null;
+  return {
+    role: "user",
+    content: active.instruction,
+    turnId: active.turnId,
+    status: "in_flight",
+    ...(active.authorId
+      ? {
+          author: {
+            id: active.authorId,
+            displayName: active.authorDisplayName || active.authorId,
+          },
+        }
+      : {}),
+    createdAt: Date.parse(active.createdAt) || Date.now(),
+  };
+}
+
 export interface AgentChat {
   messages: ChatMessage[];
   isSending: boolean;
@@ -69,6 +134,16 @@ export interface AgentChat {
   /** The resolve failed after retries — the composer is disabled and the
    *  panel should say why (a focus refetch retries automatically). */
   conversationError: boolean;
+  /**
+   * The server's history has been read at least once for this thread.
+   *
+   * `conversationReady` says only that the thread has an id. An INJECTED
+   * command must additionally wait for this: the whole point of the panel's
+   * backstop is that it can see an exchange this browser did not take part in,
+   * and until the rehydrate lands the log is empty and every such exchange is
+   * invisible. A user's own words never wait on it.
+   */
+  historyReady: boolean;
   /**
    * Send a message, optionally with chat attachments (#428). Resolves TRUE once
    * the turn has been accepted by the server, FALSE when the send was refused
@@ -93,11 +168,20 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
     () => getMessages(chatKey),
   );
   const [isSending, setIsSending] = useState(false);
+  const [historyReady, setHistoryReady] = useState(false);
   const [activeTurnId, setActiveTurnId] = useState<string | undefined>(undefined);
   const abortRef = useRef<AbortController | null>(null);
   // Mirrors the attachment state for the poll/refocus triggers: a rehydrate
   // REPLACE must never run mid-fold, or it would clobber streamed partials.
   const attachedRef = useRef(false);
+  // A local send whose dispatch has not answered yet. `attachedRef` cannot
+  // cover this window: the turn row exists server-side the moment StartTurn
+  // returns 202, but this client does not learn its id until the response
+  // lands — so the poll could find that turn, attach it, and fold it, while
+  // `send` was about to fold the very same stream. Two concurrent folds, and
+  // (since the optimistic row has no turn id yet) a second user bubble beside
+  // the one the user is already looking at.
+  const pendingStartRef = useRef(false);
   const author = useCurrentAuthor();
   const queryClient = useQueryClient();
 
@@ -151,7 +235,13 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
     // SUCCESSFUL send (clearFailedSends) or by a rotation — without that bound
     // a failure stayed pinned below newer turns forever, reading as a retry.
     const rehydrate = async () => {
-      if (attachedRef.current) return;
+      // Not while a local send is mid-dispatch either. The optimistic row has
+      // no turn id yet and the server has no record of it, so it survives
+      // neither the REPLACE nor the `localOnly` filter (which keeps error and
+      // failed rows only) — a tab switch inside the ~2s dispatch would drop
+      // the user's own message, and `settleUserMessage` would then no-op onto
+      // an id that no longer exists.
+      if (attachedRef.current || pendingStartRef.current) return;
       const history = await getConversationMessages(projectName, conversationId);
       if (ac.signal.aborted || attachedRef.current || history === null) return;
       const localOnly = getMessages(chatKey).filter(
@@ -160,13 +250,22 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
       replaceMessages(chatKey, [...projectableHistory(history), ...localOnly]);
     };
 
-    // Attach to a running turn (ours or a teammate's) and fold it live.
-    const attach = async (turnId: string) => {
+    // Attach to a running turn (ours or a teammate's, or the platform's own
+    // kickoff) and fold it live.
+    const attach = async (active: TurnStatus) => {
       if (attachedRef.current) return;
+      const turnId = active.turnId;
       attachedRef.current = true;
       setIsSending(true);
       setActiveTurnId(turnId);
       dropTurnOutput(chatKey, turnId); // replay-from-0 re-adds it all
+      // Paint who started this turn and what they said, BEFORE folding a
+      // single frame of the agent's reply. The turn row carries both (#562);
+      // nothing else can, because the conversation store does not persist a
+      // turn's transcript until it ends. No-ops for a turn this browser sent —
+      // its own row already carries the id.
+      const startedBy = userMessageForTurn(active);
+      if (startedBy) ensureUserMessage(chatKey, startedBy);
       try {
         await attachAndFoldTurn(chatKey, projectName, turnId, ac.signal, onTurnCommitted);
       } catch {
@@ -199,27 +298,59 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
     void (async () => {
       await rehydrate();
       if (ac.signal.aborted) return;
+      // Flagged even when the read FAILED. It reports "we have asked", not
+      // "we know" — and holding an injected command forever on a history the
+      // server will not serve would strand the only recovery a stalled project
+      // has. The engaged check still runs on whatever did land.
+      setHistoryReady(true);
       const active = await getActiveTurn(projectName);
       if (ac.signal.aborted || !active || active.status !== "running") return;
       if (active.useCase !== "general") return; // another flow's turn
       if (!attachableOrReResolve(active)) return;
-      await attach(active.turnId);
+      await attach(active);
     })();
 
-    // Foreign-turn trigger: a teammate's send while this panel idles. The
-    // rehydrate first pulls their user message (attribution for the feed's
-    // composer lock), then the attach folds the stream live.
-    const poll = setInterval(() => {
-      if (attachedRef.current || ac.signal.aborted) return;
+    // Foreign-turn trigger: a turn this browser did not send — a teammate's,
+    // or the platform's own kickoff at project creation. The rehydrate first
+    // pulls the user message (attribution for the feed's composer lock), then
+    // the attach folds the stream live.
+    //
+    // Self-rescheduling rather than a fixed interval so the cadence can follow
+    // how much the panel has to show. On a project that was just created the
+    // panel mounts BEFORE the kickoff has dispatched, so the one mount check
+    // finds nothing and the user watches an empty pane until the next tick —
+    // which at the idle cadence is most of a minute's worth of nothing at the
+    // one moment the product is trying to prove it is working.
+    let pollTimer: ReturnType<typeof setTimeout> | undefined;
+    let pollsSoFar = 0;
+    const scheduleNextPoll = () => {
+      if (ac.signal.aborted) return;
+      pollTimer = setTimeout(
+        runPoll,
+        foreignTurnPollDelay(getMessages(chatKey), pollsSoFar),
+      );
+      pollsSoFar += 1;
+    };
+    const runPoll = () => {
+      if (ac.signal.aborted) return;
+      if (attachedRef.current || pendingStartRef.current) {
+        scheduleNextPoll();
+        return;
+      }
       void (async () => {
-        const active = await getActiveTurn(projectName);
-        if (ac.signal.aborted || attachedRef.current) return;
-        if (!active || active.status !== "running" || active.useCase !== "general") return;
-        if (!attachableOrReResolve(active)) return;
-        await rehydrate();
-        if (!ac.signal.aborted) await attach(active.turnId);
+        try {
+          const active = await getActiveTurn(projectName);
+          if (ac.signal.aborted || attachedRef.current) return;
+          if (!active || active.status !== "running" || active.useCase !== "general") return;
+          if (!attachableOrReResolve(active)) return;
+          await rehydrate();
+          if (!ac.signal.aborted) await attach(active);
+        } finally {
+          scheduleNextPoll();
+        }
       })();
-    }, FOREIGN_TURN_POLL_MS);
+    };
+    scheduleNextPoll();
 
     // Refocus trigger: the user was away; catch the thread up — and re-check
     // WHICH thread is current first, because a teammate may have rotated
@@ -238,9 +369,11 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
 
     return () => {
       ac.abort();
-      clearInterval(poll);
+      if (pollTimer !== undefined) clearTimeout(pollTimer);
       document.removeEventListener("visibilitychange", onVisible);
       attachedRef.current = false;
+      pendingStartRef.current = false;
+      setHistoryReady(false);
       setIsSending(false);
       setActiveTurnId(undefined);
     };
@@ -251,21 +384,33 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
       const text = instruction.trim();
       if (!text || isSending || !conversationId) return false;
       setIsSending(true);
+      pendingStartRef.current = true;
       // Names only, and only when there are any: a message without attachments
       // must persist exactly the row shape it did before this feature.
       const attachments = files.length > 0 ? files.map((f) => f.name) : undefined;
+      // The row goes up NOW, not after the dispatch answers. `startCollabTurn`
+      // resolves the repo, the workspace ref, the org's Anthropic key, two git
+      // heads and two snapshot extracts before it returns a turn id — and the
+      // user watching their own message not appear for all of that cannot tell
+      // a slow platform from a dropped message. It carries no turnId yet;
+      // `buildFeed` links a turn block to the nearest preceding user message
+      // when it cannot link by id, which is exactly this window.
+      const messageId = addMessage(chatKey, {
+        role: "user",
+        content: text,
+        status: "in_flight",
+        author,
+        createdAt: Date.now(),
+        ...(attachments ? { attachments } : {}),
+      });
       let turnId: string;
       try {
         turnId = await startCollabTurn(projectName, conversationId, text, files);
       } catch (err) {
-        addMessage(chatKey, {
-          role: "user",
-          content: text,
-          status: "failed",
-          author,
-          createdAt: Date.now(),
-          ...(attachments ? { attachments } : {}),
-        });
+        // The row the user is already looking at becomes the failed one —
+        // adding a second copy beside it would read as two sends.
+        pendingStartRef.current = false;
+        settleUserMessage(chatKey, messageId, { failed: true });
         addMessage(chatKey, {
           role: "error",
           content: err instanceof Error ? err.message : "Failed to reach the agent.",
@@ -287,22 +432,26 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
       // rows are local-only and the rehydrate re-appends them AFTER the server
       // history on every refocus, so leaving them would keep a stale failure
       // pinned below newer turns — looking like a retry that never happened.
+      // The row just added is in_flight, not failed, so it survives this.
       clearFailedSends(chatKey);
-      addMessage(chatKey, {
-        role: "user",
-        content: text,
-        turnId,
-        status: "in_flight",
-        author,
-        createdAt: Date.now(),
-        ...(attachments ? { attachments } : {}),
-      });
+      settleUserMessage(chatKey, messageId, { turnId });
       // The fold runs DETACHED from here on. The caller is unblocked as soon as
       // the turn is accepted, which is the only fact it needs to decide whether
       // to clear the composer — waiting for the terminal would hold the
       // attachment cards on screen for the whole turn.
       void (async () => {
         const signal = abortRef.current?.signal ?? new AbortController().signal;
+        // Someone else got there first. `pendingStartRef` holds the POLL off,
+        // but the mount's own rehydrate → getActiveTurn runs before it is set
+        // — an auto-sent seed fires the moment `conversationReady` flips,
+        // concurrently with that sequence — so `attach` can already own this
+        // turn. Folding it a second time would replay the whole stream on top
+        // of itself after `dropTurnOutput`.
+        pendingStartRef.current = false;
+        if (attachedRef.current) {
+          setIsSending(false);
+          return;
+        }
         attachedRef.current = true;
         try {
           await attachAndFoldTurn(chatKey, projectName, turnId, signal, onTurnCommitted);
@@ -351,6 +500,7 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
     isSending,
     activeTurnId,
     conversationReady: Boolean(conversationId),
+    historyReady,
     conversationError: conversation.isError,
     send,
     newConversation,

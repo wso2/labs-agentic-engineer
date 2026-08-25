@@ -19,7 +19,17 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { ProjectOverview } from "../features/projects/components/ProjectOverview";
 
+// `?chat=open` (#562): arriving straight from project creation. The platform
+// has already fired `/start`, so the user lands with the agent chat open and
+// the transcript showing their own idea going in — the journey is visibly
+// underway rather than waiting on them. AppLayout consumes the signal and
+// strips it, so a refresh or a Back does not reopen a panel the user closed.
+//
+// It is a signal to OPEN A PANEL, never to navigate: nothing on this journey
+// moves the user's viewport for them (#522).
 export const Route = createFileRoute("/projects/$projectName/")({
+  validateSearch: (search: Record<string, unknown>): { chat?: "open" } =>
+    search.chat === "open" ? { chat: "open" as const } : {},
   component: ProjectOverviewRoute,
 });
 

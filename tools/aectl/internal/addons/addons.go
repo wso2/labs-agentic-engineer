@@ -36,6 +36,17 @@ type OperatorSpec struct {
 	DisplayName string
 	// Sets is optional key=value pairs passed as --set flags to Helm.
 	Sets []string
+	// PreManifests are YAML strings server-side-applied in order before the Helm
+	// chart is installed. The operator namespace is created first. Use this for
+	// resources the operator Pod depends on at startup (e.g. a credentials Secret
+	// managed by ESO rather than by the chart itself).
+	PreManifests []string
+	// WaitForSecrets lists Secret names (in Namespace) that must exist before
+	// the Helm chart is installed. Use this when the platform chart creates an
+	// ESO ExternalSecret for the operator — ESO sync is async, so install must
+	// wait until the Secret is actually present or the operator Pod will fail to
+	// start with a missing-secret error.
+	WaitForSecrets []string
 }
 
 // Addon describes an optional platform resource type.
@@ -75,6 +86,10 @@ var Available = []Addon{
 			Chart:       "oci://ghcr.io/wso2/thunder-app-operator",
 			Namespace:   "thunder-app-operator-system",
 			DisplayName: "thunder-app-operator",
+			// The platform chart creates an ESO ExternalSecret that syncs to
+			// this Secret. ESO sync is async; wait before Helm install so the
+			// operator Pod starts with credentials already present.
+			WaitForSecrets: []string{"thunder-app-operator-credentials"},
 		},
 		Manifests: []string{thunderAppResourceType, thunderAppRBAC},
 		VerifyResources: []VerifySpec{

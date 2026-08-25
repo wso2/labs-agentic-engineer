@@ -43,6 +43,15 @@ const (
 	turnStatusFailed    = "failed"
 )
 
+// The two statuses a CONSUMER outside this package branches on: the status
+// poll folds the newest turn row into spec.agent (#562). Exported as aliases
+// of the internal constants so the strings stay authored once — the store is
+// still the only writer.
+const (
+	TurnStatusRunning = turnStatusRunning
+	TurnStatusFailed  = turnStatusFailed
+)
+
 // Failure reasons (AgentTurn.Reason and the terminal event's `reason`).
 const (
 	turnReasonStreamDied     = "stream-died"
@@ -107,6 +116,27 @@ type TurnRepository interface {
 	// LastTerminal returns the most recent completed/failed turn of a
 	// conversation — the D20 filesChangedExternally / divergence-note input.
 	LastTerminal(ctx context.Context, orgID, projectID, conversationID string) (*AgentTurn, error)
+
+	// NewestCompletedFlow returns the project's most recent COMPLETED turn of
+	// one flow ("design", "start", …), or (nil, nil) when it has run none.
+	//
+	// The status read's staleness check (#575) asks for the newest successful
+	// design run so it can read the requirements as that run saw them. Scoped
+	// to completed because a failed or running turn never reconciled anything:
+	// treating one as the baseline would clear a staleness warning on the
+	// strength of work that did not land.
+	NewestCompletedFlow(ctx context.Context, orgID, projectID, flow string) (*AgentTurn, error)
+
+	// Newest returns the project's most recent turn row, running or terminal,
+	// across every conversation — or (nil, nil) when nothing has ever run.
+	//
+	// Two callers, both needing "has this project ever had an agent work on
+	// it, and what is it doing now" (#562): the kickoff's idempotence guard,
+	// and the status poll's spec.agent field. Project-scoped rather than
+	// conversation-scoped BECAUSE rotation exists — a rotated thread would
+	// otherwise make an interviewed project look untouched and re-fire the
+	// kickoff into it.
+	Newest(ctx context.Context, orgID, projectID string) (*AgentTurn, error)
 
 	// SweepStale fails every running row whose heartbeat predates olderThan
 	// (reason stream-died, message "replica crashed or hung") and returns the
@@ -238,6 +268,49 @@ func (r *turnRepository) LastTerminal(ctx context.Context, orgID, projectID, con
 	err := r.db.WithContext(ctx).
 		Where("org_id = ? AND project_id = ? AND conversation_id = ? AND status IN ?",
 			orgID, projectID, conversationID, []string{turnStatusCompleted, turnStatusFailed}).
+		Order("created_at DESC").
+		First(&t).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+// Newest reads one row off `ix_agent_turns_project_newest`
+// (org_id, project_id, created_at DESC — migrate/agent_turns.go), whose column
+// order IS this query's, so it is a single index read rather than a sort of
+// every turn the project has ever run. That matters: the status poll runs this
+// every 5s per viewer while an agent works.
+//
+// A RUNNING row is always the newest one the project has: TryStart's partial
+// unique admits at most one, and no later row can be inserted while it holds
+// the guard — so ordering by creation is enough to find it, with no status
+// precedence.
+func (r *turnRepository) Newest(ctx context.Context, orgID, projectID string) (*AgentTurn, error) {
+	var t AgentTurn
+	err := r.db.WithContext(ctx).
+		Where("org_id = ? AND project_id = ?", orgID, projectID).
+		Order("created_at DESC").
+		First(&t).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+// NewestCompletedFlow reads one row off the (org_id, project_id) index,
+// narrowed by the indexed `flow` column.
+func (r *turnRepository) NewestCompletedFlow(ctx context.Context, orgID, projectID, flow string) (*AgentTurn, error) {
+	var t AgentTurn
+	err := r.db.WithContext(ctx).
+		Where("org_id = ? AND project_id = ? AND flow = ? AND status = ?",
+			orgID, projectID, flow, turnStatusCompleted).
 		Order("created_at DESC").
 		First(&t).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {

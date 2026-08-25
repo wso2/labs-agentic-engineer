@@ -1,7 +1,6 @@
-{{- if .Values.localOrgProvisioning.enabled }}
-# LOCAL ORG PROVISIONING — api-configuration ClusterTrait (cluster-scoped).
+# api-configuration ClusterTrait (cluster-scoped).
 # Verbatim from deployments/manifests/api-platform/api-configuration-trait.yaml.
-# Referenced by the ComponentTypes' allowedTraits. Gated with them.
+# Not gated — this is a cluster-level platform capability, not a per-org resource.
 # WSO2 API Platform API Configuration Trait for OpenChoreo
 #
 # This trait adds WSO2 API Platform API management to components by:
@@ -294,4 +293,3 @@ spec:
           value:
             type: ReplacePrefixMatch
             replacePrefixMatch: /${metadata.environmentName}-${metadata.componentNamespace}-${metadata.componentName}-${parameters.endpointName}
-{{- end }}

@@ -18,7 +18,9 @@
 
 import { Avatar, Box, Chip, Stack, Typography, alpha } from "@wso2/oxygen-ui";
 import { Paperclip } from "@wso2/oxygen-ui-icons-react";
+import { START_COMMAND } from "@aep/contracts/commands";
 import type { FeedBlock } from "../feed";
+import { startLineOf } from "../startLine";
 import { TurnBlock } from "./TurnBlock";
 import { WorkingIndicator } from "./WorkingIndicator";
 
@@ -28,6 +30,60 @@ import { WorkingIndicator } from "./WorkingIndicator";
 
 function initialOf(name: string): string {
   return name.trim().charAt(0).toUpperCase() || "?";
+}
+
+// How many lines of the kickoff's idea the transcript shows before cropping.
+// Two: one is not enough to recognise a paragraph you wrote, and the whole
+// point is recognition — the document itself is the PRD, not this.
+const IDEA_CLAMP_LINES = 2;
+
+/**
+ * The kickoff line (#562/#528): `/start` beside the user's own words.
+ *
+ * The command is set apart so the idea reads as prose rather than as part of a
+ * string the user is being shown they "typed" — they did not; the platform
+ * fired it at project creation, and this line's whole job is to show the agent
+ * working from what they wrote.
+ *
+ * Nothing is ADDED to the line, not even a connective. The same shape also
+ * renders a `/start <idea>` a user really did type, and the console cannot tell
+ * the two apart — the server journals a typed command verbatim — so a joining
+ * word here would put a word the user never wrote inside a message attributed
+ * to them. Setting the command apart already does the work a join would.
+ *
+ * The crop is CSS. A clamped element keeps its full text for selection, copy
+ * and screen readers, and re-measures when the user drags the panel wider —
+ * none of which a truncated string does.
+ */
+function StartLine({ idea }: { idea: string }) {
+  return (
+    <Typography
+      component="span"
+      sx={{ fontSize: "0.875rem", color: "text.primary", display: "block" }}
+    >
+      <Box
+        component="span"
+        sx={{ fontFamily: "monospace", fontWeight: 600, mr: 0.75 }}
+      >
+        {START_COMMAND}
+      </Box>
+      {idea && (
+        <Box
+          component="span"
+          title={idea}
+          sx={{
+            display: "-webkit-box",
+            WebkitBoxOrient: "vertical",
+            WebkitLineClamp: IDEA_CLAMP_LINES,
+            overflow: "hidden",
+            color: "text.secondary",
+          }}
+        >
+          {idea}
+        </Box>
+      )}
+    </Typography>
+  );
 }
 
 function timeOf(createdAt: number | undefined): string | null {
@@ -43,6 +99,7 @@ function UserBlock({ block }: { block: Extract<FeedBlock, { kind: "user" }> }) {
   const isOwn = attribution.isOwn;
   const time = timeOf(message.createdAt);
   const failed = message.status === "failed";
+  const startLine = startLineOf(message.content);
   return (
     // Your own messages align to the right, teammates to the left — the
     // familiar chat convention that makes "who said this" scannable at a
@@ -95,16 +152,22 @@ function UserBlock({ block }: { block: Extract<FeedBlock, { kind: "user" }> }) {
               : theme.palette.action.hover,
         }}
       >
-        <Typography
-          sx={{
-            whiteSpace: "pre-wrap",
-            fontSize: "0.875rem",
-            color: "text.primary",
-            opacity: failed ? 0.6 : 1,
-          }}
-        >
-          {message.content}
-        </Typography>
+        {startLine ? (
+          <Box sx={{ opacity: failed ? 0.6 : 1 }}>
+            <StartLine idea={startLine.idea} />
+          </Box>
+        ) : (
+          <Typography
+            sx={{
+              whiteSpace: "pre-wrap",
+              fontSize: "0.875rem",
+              color: "text.primary",
+              opacity: failed ? 0.6 : 1,
+            }}
+          >
+            {message.content}
+          </Typography>
+        )}
         {/* What went up with this message (#428). Names only — the bytes are
             conversation-scoped model content the platform never stores
             (ADR-0019), so a chip is a record, not a download link. Wraps rather

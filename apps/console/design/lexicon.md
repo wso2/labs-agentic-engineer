@@ -51,9 +51,21 @@ migration for every existing project. This table *is* the mapping — keep it, s
 path, which requires the agent to stop quoting them
 ([#530](https://github.com/wso2/labs-agentic-engineer/issues/530)).
 
-Placeholder for an artifact class with nothing in it: **"Not created yet"**. Active wording is
+Placeholder for an artifact class with nothing in it: **"Not created yet"** — shipped in
+[#575](https://github.com/wso2/labs-agentic-engineer/issues/575). Active wording is
 reserved for when an agent is genuinely working — the old *"Being derived…"* claimed work that
 was not happening.
+
+**"Genuinely working" is `spec.agent`, not "the spec has no version".** The old signal was the flat
+`specStatus`, which the platform only ever sets to *draft* or *approved* — so every unversioned project
+on screen was described as being worked on, and the one moment work really is in flight, the kickoff,
+had no files at all and read as idle. It is now read from the turn record
+([#562](https://github.com/wso2/labs-agentic-engineer/issues/562)).
+
+A user who opens the spec **before the interview has asked anything** — reachable from the moment the
+project exists, since the kickoff fires at creation — meets *"Agent is working on the requirements
+document"*, not a file picker over an empty list. It names what is happening rather than asking the user
+to choose from nothing.
 
 ## Starting a project
 
@@ -155,6 +167,18 @@ Its words come from the state table below — no chip-specific vocabulary:
 | spec versioned, edited since | **`v1 · edited`** |
 | spec versioned, clean | **`v1`** |
 
+### What the chat shows while an agent works
+
+**Your own message appears the moment you send it**, not when the platform accepts it. Dispatch
+resolves a repository, a workspace ref, an API key, two git heads and two snapshot extracts before it
+answers, and a message that has not appeared yet is indistinguishable from one that was dropped.
+
+**A turn you did not send still shows who started it and what they said.** That covers the kickoff —
+which no browser sent — and a teammate's turn, which used to render under a blank space and be
+attributed to *you*. The turn itself carries the line
+([#562](https://github.com/wso2/labs-agentic-engineer/issues/562)); the transcript store cannot,
+because it only records a turn once the turn has finished.
+
 ### Card grammar
 
 Every stage card says the same things in the same slots, so the pattern is learned once:
@@ -172,6 +196,67 @@ Every stage card says the same things in the same slots, so the pattern is learn
 | running | *Building 3 of 7 tasks* | yes | none |
 | settled | *Built* | yes | view |
 | failed | *Build failed* | yes | fix |
+
+#### The spec card: one button, one line
+
+**The button never changes. It says *Open spec*, in every state.**
+
+It used to be three buttons — *Generate spec*, then *Open spec*, then *Continue spec* — and it walked
+all three during a single kickoff **with no input from the user at all**, because each state was
+inferred from a signal that moved on its own. A control that renames itself while you are reading it
+cannot be learned, and the destination never actually varied. So the caption stopped varying too.
+
+**The line is the only part that moves, and it always says something.** It used to blank itself
+mid-kickoff: a turn that ends *on* a question has written no requirements, so the spec still looks
+absent and the agent looks idle, and the card fell through to its cold-start wording.
+
+| the project's situation | line |
+|---|---|
+| the agent is writing the first requirements | *The agent is writing your requirements.* |
+| an agent is working on a spec that already exists | *The agent is working on your spec.* |
+| the agent asked and is waiting | *The agent has questions for you.* |
+| the kickoff died with nothing written | *The agent couldn't start — open the spec to try again.* |
+| nothing ever started | *Nothing written yet.* |
+| otherwise | the spec's own status |
+
+The **version** is a separate slot and survives underneath all of these, so an amendment interview on
+`v2` still reads as `v2`.
+
+**Nothing on this card starts anything.** It is a destination in every state.
+
+**An empty spec workspace shows one thing: a centred spinner over *"Agent is working on the
+requirements document"***, the same shape the architecture pane uses while a design turn runs. It is
+keyed on the **file list**, not on the agent's status — `spec.agent` returns to `""` in every gap
+between turns, and each time it did the user was handed *"Select a file to view its content"* over a
+workspace with no files in it to select. A failure has its own banner, so an empty workspace without
+one means the work is pending or in flight either way.
+
+**An empty spec workspace offers nothing either.** *"The workspace looks empty"* is true for a while
+before the agent's first write lands — so a button gated on it appears **during the kickoff**, which is
+precisely the moment the user must not be invited to restart. The only state carrying a way out is the
+one that can be *known* rather than inferred: a turn that started and then died.
+
+| | |
+|---|---|
+| Title | **The agent couldn't write your requirements** |
+| Body | *Nothing was lost — anything already written stays browsable.* |
+| Action | **Retry** |
+
+The previous copy ended *"Ask the agent to continue from where it stopped in the chat panel"*, which
+[#530](https://github.com/wso2/labs-agentic-engineer/issues/530) forbids: a command the UI can offer as
+a control is offered, not described.
+
+**A project that never got a turn at all** — a dispatch that never reached the turn guard (no Anthropic
+key, an unreachable skills repo), or an abandoned document upload the create held the kickoff for — is
+its own state, not an absence. It shows the same **Retry**, over *"Nothing written yet."*
+
+That distinction is load-bearing. *Nothing has run* and *between turns* look identical in git, and need
+opposite treatment: one needs a way to begin, the other is mid-interview and must not be offered a
+restart that would supersede it. Collapsed, the first showed a spinner for work that was never coming,
+with nothing to click.
+
+**Everything else is the chat's job.** The card says where the project stands in one line; the panel
+carries the conversation, the questions and the agent's work.
 
 **Ghost cards stay clickable.** Their destination teaches what the section is for
 ([#533](https://github.com/wso2/labs-agentic-engineer/issues/533)), so the click is a lesson, not
@@ -263,9 +348,77 @@ lens on every story; the list pins the PRD instead, and everything behind it kee
 | outdated | amber warning, section name amber |
 | not started | dim, no ornament |
 
-**Outdated is the load-bearing one.** Edit requirements after a design exists and Requirements
-goes *active* while Design and Validation go *outdated* — the same rail that reported progress
-reports staleness, with no second mechanism to learn.
+**Outdated is the load-bearing one.** Edit requirements after a design exists and Design and
+Validation go *outdated* — the same rail that reported progress reports staleness, with no second
+mechanism to learn.
+
+**An amber section carries a COUNTED alert chip beside its title**, and clicking it opens a dialog
+listing what there is to resolve, each with the way to resolve it. Hovering shows the most
+significant one, so a peek costs no click.
+
+Rows beneath the title were tried first and cost the rail up to three extra lines before the user
+reached the documents, in a column 280px wide; one chip costs one slot however many problems there
+are. It is a chip rather than a bare tooltip because it is discoverable at rest — the hover is a
+shortcut on top of an affordance, not a replacement for one. And it carries the **count**, because
+three assumptions and one otherwise look identical and *how much* is what a glance is for.
+
+| section | what the dialog lists | its fix |
+|---|---|---|
+| Requirements | *N open questions* | **Open the document**, where the settle controls already are |
+| Requirements | *N assumptions to challenge* | **Open the document** |
+| Design · Validation | *The requirements have changed since* | **Update the design** |
+
+**Ordered by how badly it hurts to ignore**, which is what makes the hover's pick meaningful rather
+than arbitrary: a design behind its requirements blocks the build and ships the wrong software if
+forced; an open question is a hole only the user can fill, so nothing else can resolve it; an
+assumption already *has* an answer standing, which the user may or may not disagree with.
+
+**Build refuses the same way.** Its unmet conditions are the same kind of thing — a list the user can
+act on — so they read identically rather than one being a strip under the header and the other a
+sidebar. Acting from either dialog closes it and goes, so it is never dismissed twice.
+
+Assumptions and open questions are counted **apart** — one is a judgment the agent made and you may
+overturn, the other a hole only you can fill — and neither GATES anything. Designing against
+assumptions is deliberate: the requirements arrive early, full of them, and are refined in place. The
+rail reports; Design stays clickable throughout.
+
+**But Generate design warns first when they stand.** The rail says the same thing at rest; the click
+is the moment it becomes consequential, because the design is derived from those guesses and
+overturning one afterwards means deriving again. So the dialog names what is unsettled and offers
+both ways: *Resolve issues* returns to the requirements document, where the settle controls already
+live on the flagged lines, and *Generate anyway* goes on.
+
+This is where the dialog's two moods separate, and the distinction is the point:
+
+| | says | way past |
+|---|---|---|
+| **refusal** — Build | the platform will not do this yet | none; Close |
+| **warning** — Generate design | this will cost you if you are wrong | the primary action |
+
+A warning that cannot be dismissed is a gate wearing a warning's clothes, and gating a design run on
+settled requirements was tried and removed. So the way past is the *primary* button, not a buried
+link — the user is being informed, not asked for permission.
+
+**Active follows the WORK in flight, not which sections happen to be empty.** The running turn's
+flow says what it is for — settling an assumption is requirements work, a design run is design work
+— and that maps straight onto the section that will change. Guessing from emptiness was wrong in
+both directions: settling an assumption lit Design, because Design was the first empty section; and
+the moment a design run wrote its first file the pulse jumped to Validation, while the rest of the
+design was still being written.
+
+Work the rail cannot place — a plain chat turn, an org's own skill — pulses **nothing**. An agent is
+working, but a pulse on the wrong section is worse than a still rail.
+
+**The counts read the LIVE document, not the committed one.** Deleting an `*assumed*` flag clears
+the alert as you delete it; the committed copy is a collab flush behind, and on the agent's own
+edits that lag was long enough to look broken.
+
+**How staleness is known.** Every commit is a permanent snapshot, and every agent turn records the
+commit it read the project at — so the requirements *as the last design run saw them* are still
+there to compare against. Nothing is stored, so nothing can fall out of sync, and the question is
+answerable for projects that predate the check. Coarse on purpose: it reports that the requirements
+moved, never which components are affected. Over-marking costs one re-derivation the agent mostly
+no-ops through; under-marking ships a design the user has already changed their mind about.
 
 ### Artifact state
 
@@ -290,12 +443,21 @@ Work in progress is the app's existing `agentChatWorkingPulse` — an 8px `prima
 opacity .3→1, scale .85→1, 1.2s ease-in-out, from `WorkingIndicator.tsx`. Not a spinner, and not a
 second animation: "working" looks the same everywhere it appears.
 
-### Build, at the foot of the rail
+### Build stays in the header
 
-| situation | Build says |
-|---|---|
-| design not written yet | *after the design is written* |
-| design outdated | **blocked** — *The design is behind your requirements.* + **Update the design** |
+Build was drawn at the foot of the rail as its terminal step. It stays where it is: a call to
+action at the bottom of a scrolling list is not where a user looks for it, and the header button is
+visible from every part of the workspace rather than only once you have reached the end of a list.
+
+**An outdated design still blocks it**, as one more entry in the refusal Build shows on click —
+*"the requirements have changed since this design was written — update the design before building"*.
+The refusal is a **dialog**, headed *"Not ready to build yet"*, the same one the rail's alert chip
+opens. The button stays live and the same click re-checks, exactly as it does for a missing
+dependency. No disabled control and no tooltip.
+
+The refusal is enforced by the **build gate on the server**, not by the console: a block the client
+draws is not a block. The rail's amber Design row carries the same repair for anyone who meets it
+there first.
 
 **An outdated design blocks Build.** Building it would implement something the user has already
 changed their mind about. This is the one gate that survives the map's general "progress with
@@ -413,6 +575,13 @@ user is *not* looking at any of them.
 
 **Nothing auto-navigates.** The notification is how the user finds out; clicking it is how they go
 ([#522](https://github.com/wso2/labs-agentic-engineer/issues/522)).
+
+**That holds for a question arriving, too.** The chat says one has — *"The agent has N questions ·
+Answer them →"* — and the **click** is what opens the form. It used to move the user the moment an
+unanswered question appeared, which was tolerable when reaching a question meant having asked for
+one; since the kickoff fires at project creation every project produces one in its first minute, so
+it threw every new user off the page they had just landed on, before they had read a word of what the
+agent was doing.
 
 ## Empty states
 
@@ -564,6 +733,22 @@ renaming; it needed to stop being visible.
 
 **A command names the user's intent, never the document operation.** `/feature` says what they
 came to do; `/amend Add a feature` said what the system does to a file.
+
+**The transcript line is `/start <idea>`, and the console adds nothing to it** — not even a joining
+word. The command is set apart (monospace, and the idea in secondary text), which does the work a
+connective would; the map's `/start with <idea>` is its own shorthand, not a string. The same shape also
+renders a `/start <idea>` a user really typed, and the console cannot tell the two apart, so an added
+word would appear inside a message attributed to them that they never wrote.
+
+The idea is attached **server-side**: the kickoff dispatches a bare `/start`, and the platform — the only
+party that can read the project descriptor — records the resolved idea on the turn's display record. So
+the line is true of what the agent received without a client having composed it.
+
+It is a **transparency device, not a store**
+([#528](https://github.com/wso2/labs-agentic-engineer/issues/528)): the user never typed it, and its
+whole job is to show the agent working from what they wrote. Two lines of the idea show, and the crop is
+CSS — a clamped element keeps the full text for selection, copy and screen readers, and re-measures when
+the user drags the panel wider, none of which a truncated string does.
 
 Offering them **where the thing they change lives** — a lens on the section, a lens on the flagged
 line — is what retires the `Actions ▾` menu as the way in. Their exact rendering in the transcript

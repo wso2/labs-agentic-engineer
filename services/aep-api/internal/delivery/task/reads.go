@@ -84,14 +84,32 @@ func NewReads(issues IssueClient, repos RepoResolver, execs ExecutionReader, run
 // The untagged read cannot see them: it is two label queries, and a ledger
 // issue is defined by carrying no label to query on. Milestone membership is
 // the only handle there is.
-func (r *Reads) ListByTag(ctx context.Context, orgID, projectID, state, tag string) ([]delivery.TaskView, error) {
+//
+// COMMENTS follow that same handle. withComments asks for each issue's newest
+// comments, and it is honoured only on a tag-scoped read for exactly the reason
+// ledger issues are only visible there: the comment read is anchored on one
+// milestone, and a query spanning every version has no bounded set of issues to
+// ask about. A caller that renders no comments passes false and the read costs
+// what it always did.
+func (r *Reads) ListByTag(ctx context.Context, orgID, projectID, state, tag string, withComments bool) ([]delivery.TaskView, error) {
 	_, owner, name, err := resolveProjectRepo(ctx, r.repos, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
 	repoFullName := owner + "/" + name
 
-	issues, specTag, err := r.taskIssues(ctx, orgID, projectID, tag)
+	milestoneNumber, err := r.milestoneForTag(ctx, orgID, projectID, tag)
+	if err != nil {
+		return nil, err
+	}
+
+	// The comment read goes FIRST and runs alongside the issue list. The two are
+	// independent once the milestone number is in hand, they are both host round
+	// trips, and this endpoint is POLLED — taking them in sequence measured at
+	// roughly double the latency of taking them together.
+	commentsCh := r.issueCommentsAsync(ctx, orgID, projectID, milestoneNumber, withComments)
+
+	issues, specTag, err := r.taskIssues(ctx, orgID, projectID, tag, milestoneNumber)
 	if err != nil {
 		return nil, err
 	}
@@ -104,18 +122,72 @@ func (r *Reads) ListByTag(ctx context.Context, orgID, projectID, state, tag stri
 		execsByIssue = map[int]map[string]*delivery.Execution{}
 	}
 
+	commentsByIssue := <-commentsCh
+
 	out := make([]delivery.TaskView, 0, len(issues))
 	for _, issue := range issues {
 		if !matchesState(issue.State, state) {
 			continue
 		}
-		view, ok := buildView(issue, specTag, execsByIssue[issue.Number], tag != "")
+		view, ok := buildView(issue, specTag, execsByIssue[issue.Number], commentsByIssue[issue.Number], tag != "")
 		if !ok {
 			continue
 		}
 		out = append(out, view)
 	}
 	return out, nil
+}
+
+// CommentsPerIssue is how many of an issue's newest comments the HOST IS ASKED
+// FOR on a tag-scoped read. It is not how many are returned.
+//
+// It is the window the machine filter runs INSIDE, and that ordering is forced:
+// GraphQL has no predicate for "comments without this marker", so the read takes
+// the newest N and commentViews drops the platform's own afterwards. The
+// consequence is exact and worth stating rather than discovering — an issue
+// whose newest N comments are ALL platform-written answers empty, while the
+// narrative sits just outside the window. A larger N is the only lever on that.
+//
+// So N is generous rather than minimal: the platform posts a few comments per
+// issue (a resolved-dependency block, a provisioning note, a closing line), and
+// 10 leaves room behind them without doubling what a 5s poll carries.
+const CommentsPerIssue = 10
+
+// issueCommentsAsync starts the milestone's comment read and hands back the
+// channel its result will arrive on.
+//
+// The channel is BUFFERED with room for the one value, so the goroutine always
+// completes and exits even when the caller abandons the read after an error on
+// the issue list — there is nothing to leak.
+//
+// A read that was not asked for, or that has no milestone to anchor on, answers
+// on the same channel without starting anything: the caller then has one shape
+// to handle instead of a nil-channel special case.
+func (r *Reads) issueCommentsAsync(ctx context.Context, orgID, projectID string, milestoneNumber int, withComments bool) <-chan map[int][]sourcecontrol.IssueComment {
+	ch := make(chan map[int][]sourcecontrol.IssueComment, 1)
+	if !withComments || milestoneNumber <= 0 {
+		ch <- nil
+		return ch
+	}
+	go func() { ch <- r.issueComments(ctx, orgID, projectID, milestoneNumber) }()
+	return ch
+}
+
+// issueComments reads the milestone's comment buckets, or answers nil.
+//
+// It DEGRADES rather than fails, like the executions load above and for a
+// stronger reason: this list drives the milestone panel and the run card's
+// ability to tell a gate hold from an empty working set, while comments are
+// decorative. A host that will not answer them must cost the caller its
+// comments, never its Tasks.
+func (r *Reads) issueComments(ctx context.Context, orgID, projectID string, milestoneNumber int) map[int][]sourcecontrol.IssueComment {
+	comments, err := r.issues.ListMilestoneIssueComments(ctx, orgID, projectID, milestoneNumber, CommentsPerIssue)
+	if err != nil {
+		slog.WarnContext(ctx, "reads: load issue comments failed",
+			"project", projectID, "milestone", milestoneNumber, "error", err)
+		return nil
+	}
+	return comments
 }
 
 // Get returns one Task with its full Execution history. The issue is fetched by
@@ -155,25 +227,47 @@ func (r *Reads) Get(ctx context.Context, orgID, projectID string, issueNumber in
 	return &delivery.TaskDetail{TaskView: view, ExecutionHistory: hv}, nil
 }
 
-// taskIssues resolves the requested population, and the version tag every
+// milestoneForTag resolves a `?tag=` to the milestone NUMBER it names, or 0.
+//
+// Zero is the answer to three different questions — no tag was given, no run
+// rows can resolve one, and this platform never built that version — and the
+// callers treat all three alike: no milestone means no milestone-scoped read.
+// Only a resolver ERROR propagates, because that one says nothing about whether
+// the version exists.
+//
+// It is split out from taskIssues so the milestone is known BEFORE either host
+// read starts, which is what lets the two run at the same time.
+func (r *Reads) milestoneForTag(ctx context.Context, orgID, projectID, tag string) (int, error) {
+	if tag == "" || r.runs == nil {
+		return 0, nil
+	}
+	number, found, err := r.runs.MilestoneNumberForTag(ctx, orgID, projectID, tag)
+	if err != nil {
+		return 0, err
+	}
+	if !found {
+		return 0, nil // a version this platform never built has no Tasks
+	}
+	return number, nil
+}
+
+// taskIssues resolves the requested population and the version tag every
 // returned issue belongs to (empty when the query spans versions).
-func (r *Reads) taskIssues(ctx context.Context, orgID, projectID, tag string) ([]sourcecontrol.IssueInfo, string, error) {
+//
+// milestoneNumber is the already-resolved answer from milestoneForTag rather
+// than something re-derived here: resolving it twice would be a second database
+// read and a second chance for the two answers to disagree about which version
+// this read is describing.
+func (r *Reads) taskIssues(ctx context.Context, orgID, projectID, tag string, milestoneNumber int) ([]sourcecontrol.IssueInfo, string, error) {
 	if tag == "" {
 		issues, err := r.allVersionIssues(ctx, orgID, projectID)
 		return issues, "", err
 	}
-	if r.runs == nil {
+	if milestoneNumber <= 0 {
 		return nil, tag, nil
 	}
-	number, found, err := r.runs.MilestoneNumberForTag(ctx, orgID, projectID, tag)
-	if err != nil {
-		return nil, tag, err
-	}
-	if !found {
-		return nil, tag, nil // a version this platform never built has no Tasks
-	}
 	issues, err := r.issues.ListMilestoneIssues(ctx, orgID, projectID, sourcecontrol.MilestoneIssuesFilter{
-		Number: number,
+		Number: milestoneNumber,
 		State:  "all", // state filtering is matchesState's job, so "closed" works too
 	})
 	return issues, tag, err
@@ -217,7 +311,8 @@ func (r *Reads) allVersionIssues(ctx context.Context, orgID, projectID string) (
 //
 // The validation task is hidden on its KIND, not on the absence of an arming
 // label — it carries one, like every other issue an agent is dispatched at.
-func buildView(issue sourcecontrol.IssueInfo, specTag string, execs map[string]*delivery.Execution, milestoneScoped bool) (delivery.TaskView, bool) {
+func buildView(issue sourcecontrol.IssueInfo, specTag string, execs map[string]*delivery.Execution,
+	comments []sourcecontrol.IssueComment, milestoneScoped bool) (delivery.TaskView, bool) {
 	if delivery.IsValidationWork(issue.Labels) {
 		return delivery.TaskView{}, false
 	}
@@ -230,7 +325,47 @@ func buildView(issue sourcecontrol.IssueInfo, specTag string, execs map[string]*
 	// A dispatch gate's provisioning run still keeps an execution row; agent work
 	// has none — its pull request lives on the run's cycle record instead.
 	view.Executions = latestViews(execs)
+	view.Comments = commentViews(comments)
 	return view, true
+}
+
+// commentViews projects the host's comments onto the read DTO, preserving order
+// and DROPPING the platform's own.
+//
+// A machine comment is the platform talking to the agent — a resolved dependency
+// block, a provisioning note, a closing line. It is written for a reader that is
+// not a person, it is often long, and on an issue that has one it would crowd
+// out the narrative this field exists to carry. The host brands them on write
+// and reports the brand on read (sourcecontrol.MachineCommentMarker); what to do
+// about it is this surface's policy, and this surface shows only what a person
+// wrote or an agent said.
+//
+// nil out covers four cases: comments were not asked for, the host could not
+// answer, the issue has none, and every one it has is the platform's. That is
+// deliberate — a consumer cannot act differently on any of them, and inventing
+// an empty slice for one would put a distinction on the wire nothing can rely
+// on.
+func commentViews(comments []sourcecontrol.IssueComment) []delivery.IssueComment {
+	if len(comments) == 0 {
+		return nil
+	}
+	out := make([]delivery.IssueComment, 0, len(comments))
+	for _, c := range comments {
+		if c.Machine {
+			continue
+		}
+		out = append(out, delivery.IssueComment{
+			ID:        c.ID,
+			Author:    c.Author,
+			Body:      c.Body,
+			URL:       c.URL,
+			CreatedAt: c.CreatedAt,
+		})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // bareView is the projection every Task shares: what GitHub holds about the

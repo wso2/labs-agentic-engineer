@@ -83,3 +83,11 @@ func (s *issueService) MilestoneIssueCounts(ctx context.Context, orgID, projectI
 	}
 	return s.github.MilestoneIssueCounts(ctx, owner, repoName, cred, number)
 }
+
+func (s *issueService) ListMilestoneIssueComments(ctx context.Context, orgID, projectID string, number, perIssue int) (map[int][]IssueComment, error) {
+	owner, repoName, cred, err := s.resolveRepoAndCredential(ctx, orgID, projectID)
+	if err != nil {
+		return nil, err
+	}
+	return s.github.ListMilestoneIssueComments(ctx, owner, repoName, cred, number, perIssue)
+}

@@ -135,7 +135,9 @@ func TestCloseIssue_CommentsThenCloses(t *testing.T) {
 	comment := onlyRequest(t, reqs, http.MethodPost, "/repos/acme/widgets/issues/7/comments")
 	var cb struct{ Body string }
 	decodeBody(t, comment.Body, &cb)
-	if cb.Body != "closing this out" {
+	// The prose is the caller's; the machine brand rides in front of it (see
+	// TestCloseIssue_ClosingCommentIsBrandedAsMachine).
+	if !strings.Contains(cb.Body, "closing this out") {
 		t.Fatalf("comment body = %q", cb.Body)
 	}
 
@@ -164,7 +166,12 @@ func TestCloseIssue_NoCommentWhenBlank(t *testing.T) {
 	}
 }
 
-func TestCommentIssue_PostsBody(t *testing.T) {
+// Every platform comment is BRANDED as machine-written on the way out. This
+// service is the only adapter platform comment writes pass through and there is
+// no user-facing comment write on the API, so the brand here is exactly the
+// statement "the platform wrote this" — which is the only way a reader can tell
+// it from the coding agent's own notes (both post under the org's credential).
+func TestCommentIssue_PostsBodyBrandedAsMachine(t *testing.T) {
 	t.Parallel()
 	stub := gittest.NewStub(t)
 	stub.On(http.MethodPost, "/repos/acme/widgets/issues/7/comments", http.StatusCreated, `{}`)
@@ -176,8 +183,75 @@ func TestCommentIssue_PostsBody(t *testing.T) {
 	req := onlyRequest(t, stub.Requests(), http.MethodPost, "/repos/acme/widgets/issues/7/comments")
 	var b struct{ Body string }
 	decodeBody(t, req.Body, &b)
-	if b.Body != "a comment" {
-		t.Fatalf("comment body = %q", b.Body)
+	if !strings.HasPrefix(b.Body, sourcecontrol.MachineCommentMarker) {
+		t.Fatalf("comment not branded: %q", b.Body)
+	}
+	if !strings.Contains(b.Body, "a comment") {
+		t.Fatalf("the caller's prose did not survive branding: %q", b.Body)
+	}
+}
+
+// A closing comment is a platform comment too, and takes the same brand — it was
+// the most visible machine comment on an issue before this existed.
+func TestCloseIssue_ClosingCommentIsBrandedAsMachine(t *testing.T) {
+	t.Parallel()
+	stub := gittest.NewStub(t)
+	stub.On(http.MethodPost, "/repos/acme/widgets/issues/7/comments", http.StatusCreated, `{}`)
+	stub.On(http.MethodPatch, "/repos/acme/widgets/issues/7", http.StatusOK, `{}`)
+	svc := newIssueSvcOnStub(t, stub)
+
+	if err := svc.CloseIssue(testContext(), "org1", "proj1", 7, "✅ Provisioned."); err != nil {
+		t.Fatalf("CloseIssue: %v", err)
+	}
+	req := onlyRequest(t, stub.Requests(), http.MethodPost, "/repos/acme/widgets/issues/7/comments")
+	var b struct{ Body string }
+	decodeBody(t, req.Body, &b)
+	if !strings.HasPrefix(b.Body, sourcecontrol.MachineCommentMarker) {
+		t.Fatalf("closing comment not branded: %q", b.Body)
+	}
+}
+
+// Branding is idempotent. A caller may compose a body from another platform
+// comment, and a retry may re-send one — neither may stack markers, which would
+// leave a visible artefact once the read strips only what it expects.
+func TestCommentIssue_BrandingDoesNotStack(t *testing.T) {
+	t.Parallel()
+	stub := gittest.NewStub(t)
+	stub.On(http.MethodPost, "/repos/acme/widgets/issues/7/comments", http.StatusCreated, `{}`)
+	svc := newIssueSvcOnStub(t, stub)
+
+	already := sourcecontrol.MachineCommentMarker + "\nalready branded"
+	if err := svc.CommentIssue(testContext(), "org1", "proj1", 7, already); err != nil {
+		t.Fatalf("CommentIssue: %v", err)
+	}
+	req := onlyRequest(t, stub.Requests(), http.MethodPost, "/repos/acme/widgets/issues/7/comments")
+	var b struct{ Body string }
+	decodeBody(t, req.Body, &b)
+	if n := strings.Count(b.Body, sourcecontrol.MachineCommentMarker); n != 1 {
+		t.Fatalf("marker appears %d times, want 1: %q", n, b.Body)
+	}
+}
+
+// A platform comment that QUOTES the marker further down is not already branded,
+// and must still get one. The check is a prefix test for exactly this reason: the
+// read side detects on the prefix too, so treating a mention as a brand would
+// leave the body unbranded AND unhidden — the platform's own text surfacing in a
+// feed built to exclude it.
+func TestCommentIssue_BrandsABodyThatMerelyQuotesTheMarker(t *testing.T) {
+	t.Parallel()
+	stub := gittest.NewStub(t)
+	stub.On(http.MethodPost, "/repos/acme/widgets/issues/7/comments", http.StatusCreated, `{}`)
+	svc := newIssueSvcOnStub(t, stub)
+
+	quoting := "the earlier note said:\n\n> " + sourcecontrol.MachineCommentMarker + "\n> done"
+	if err := svc.CommentIssue(testContext(), "org1", "proj1", 7, quoting); err != nil {
+		t.Fatalf("CommentIssue: %v", err)
+	}
+	req := onlyRequest(t, stub.Requests(), http.MethodPost, "/repos/acme/widgets/issues/7/comments")
+	var b struct{ Body string }
+	decodeBody(t, req.Body, &b)
+	if !strings.HasPrefix(b.Body, sourcecontrol.MachineCommentMarker) {
+		t.Fatalf("a body quoting the marker was left unbranded: %q", b.Body)
 	}
 }
 

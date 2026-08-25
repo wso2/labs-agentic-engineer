@@ -41,6 +41,15 @@ type AgentTurn struct {
 	ConversationID string `gorm:"index;not null" json:"conversationId"`
 	UseCase        string `gorm:"not null" json:"useCase"`
 
+	// Flow is the `/<skill>` token this turn ran ("design", "start", …); "" for
+	// plain chat. Recorded (#575) because the status read has to find "the
+	// newest successful DESIGN run" to answer whether the requirements have
+	// moved since — and a turn is otherwise indistinguishable from any other
+	// once it has finished. NOT a conversation-identity dimension (see
+	// useCaseGeneral): every turn of a project shares one thread whatever its
+	// flow, and this column only ever narrows a lookup.
+	Flow string `gorm:"type:text;index" json:"-"`
+
 	// BaseRef is the main-tip commit SHA the turn ran against (its snapshot
 	// ref); SkillsRef is the _skills head the skill catalog was read at.
 	BaseRef   string `gorm:"not null" json:"baseRef"`
@@ -64,6 +73,23 @@ type AgentTurn struct {
 	// SpecTag is the D19 lineage stamp for design turns: the latest approved
 	// requirements tag (vN) at gate time. BaseRef covers the baseSha half.
 	SpecTag string `gorm:"type:text" json:"specTag,omitempty"`
+
+	// The turn's DISPLAY record (#562): the transcript line for the message
+	// that started it, and who sent it. The same facts the journal carries to
+	// the agents service — held here as well because that store persists a
+	// turn's transcript only when the turn ENDS, so between dispatch and
+	// landing there is nowhere else to read them from. That window is the
+	// whole of a kickoff, and the browser that lands on a freshly created
+	// project never sent the turn, so it has no local copy either: without
+	// these it renders the agent narrating under a blank space.
+	//
+	// AuthorID is EMAIL-anchored to match the console's live author identity —
+	// that equality is what lets a rendered row read as "you" rather than a
+	// teammate. Both empty for an unattributable turn (an M2M token) and for
+	// every row written before this existed.
+	Summary           string `gorm:"type:text" json:"-"`
+	AuthorID          string `gorm:"type:text" json:"-"`
+	AuthorDisplayName string `gorm:"type:text" json:"-"`
 
 	// Token usage from the turn's terminal manifest (#249/#291). Tokens + model
 	// are the stored truth; CostUsd is the USD stamped at capture from the

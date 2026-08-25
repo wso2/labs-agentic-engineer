@@ -51,6 +51,14 @@ func (h *Handler) PutProjectReferences(ctx context.Context, request gen.PutProje
 	if err := h.files.PutReferences(ctx, org, request.ProjectName, docs); err != nil {
 		return nil, mapReferenceError(err)
 	}
+	// Release the kickoff a create with `referencesPending` held (#562): the
+	// documents are now in front of the agent, so the interview can start.
+	// Idempotent on "has this project ever run a turn", which is what makes a
+	// re-upload safe — it replaces the stored set without starting a second
+	// interview over the first.
+	if h.kickoff != nil {
+		h.kickoff.Kickoff(ctx, org, request.ProjectName)
+	}
 	return gen.PutProjectReferences204Response{}, nil
 }
 

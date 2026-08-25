@@ -278,6 +278,12 @@ func turnStatusModel(st *spec.TurnStatus) gen.TurnStatus {
 		Message:        st.Message,
 		CreatedAt:      st.CreatedAt,
 		UpdatedAt:      st.UpdatedAt,
+
+		// The turn's display record (#562) — what a client attaching to a
+		// running turn paints as the message that started it.
+		Instruction:       st.Instruction,
+		AuthorID:          st.AuthorID,
+		AuthorDisplayName: st.AuthorDisplayName,
 	}
 }
 

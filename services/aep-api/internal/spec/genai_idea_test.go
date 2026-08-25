@@ -115,6 +115,27 @@ func TestStartCommand_InlineIdeaOverridesDescriptor(t *testing.T) {
 	}
 }
 
+// A `/start` the user TYPED is journalled verbatim: they saw those bytes go
+// into the composer, and the transcript has to show what they sent. Only the
+// bare token — which nobody types any more, since the platform fires the
+// kickoff itself (#562) — gets the resolved idea appended.
+func TestStartCommand_TypedInlineIdeaJournalsVerbatim(t *testing.T) {
+	r := newGenaiRig(t, map[string]string{
+		spec.DescriptorPath: descriptorTOML(t, testIdea),
+	})
+	r.fake.parts = []string{addFilePart("specs/requirements/prd.md", "# Reqs\n")}
+	m := manifestPart(map[string]string{"specs/requirements/prd.md": "# Reqs\n"}, nil)
+	r.fake.manifest = &m
+
+	const typed = "/start a rota planner for nurses"
+	r.waitTerminal(t, r.startTurn(t, convUUID, "", typed))
+
+	journal := r.fake.sentTurn(t, 0).req.Journal
+	if journal == nil || journal.Text != typed {
+		t.Fatalf("journal = %+v, want the typed command verbatim", journal)
+	}
+}
+
 // The idea is trimmed on the way onto the turn: the agents service renders it
 // into a prompt paragraph, and stray whitespace there is the platform's to fix,
 // not the model's to cope with.

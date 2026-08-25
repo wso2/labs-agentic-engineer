@@ -921,6 +921,9 @@ type CreateProjectRequest struct {
 	// Prompt The user's initial requirement — what they want built. Persisted as the project's requirement and kicks off spec derivation for the new project (issue #72). Projects created without a prompt keep today's behavior.
 	Prompt string `json:"prompt,omitempty"`
 
+	// ReferencesPending The caller will POST reference documents for this project next (`put-project-references`), so the platform must hold the `/start` kickoff (#562) until they land — they are the primary brief, and a kickoff dispatched before the upload interviews the user about a document the agent never saw. The kickoff then fires from the references call instead. Omitted/false fires it from this call. Nothing else waits on it: an abandoned upload simply leaves the project un-started, which the overview's spec card offers as a CTA.
+	ReferencesPending bool `json:"referencesPending,omitempty"`
+
 	// RepoName Repository name for the project's GitHub repo; defaults to the project name, the organization is fixed server-side (issue #71).
 	RepoName string `json:"repoName,omitempty"`
 }
@@ -1144,6 +1147,18 @@ type InputFailure struct {
 	Dependency string `json:"dependency"`
 	Kind       string `json:"kind,omitempty"`
 	Reason     string `json:"reason"`
+}
+
+// IssueComment One comment on an issue, exactly as GitHub holds it. The platform stores none of this — it is read live on every request, so GitHub stays the only copy. The platform's OWN machine comments are excluded (a resolved-dependency block, a provisioning note, a closing line — written for the agent, not for a person); what remains is the coding agent's progress notes and whatever a human wrote, which appear alike. They cannot be told apart by author, and are not meant to be — the platform comments through the org's own credential and the coding runner is handed that same credential, so both arrive under one login.
+type IssueComment struct {
+	// Author The commenter's GitHub login. Empty when the account is gone — GitHub answers a null author for a deleted user, which is a fact about the comment, not a read failure.
+	Author    string    `json:"author"`
+	Body      string    `json:"body"`
+	CreatedAt time.Time `json:"createdAt"`
+
+	// ID GitHub's own node id — stable across reads, and the list key a consumer should render on.
+	ID  string `json:"id"`
+	URL string `json:"url"`
 }
 
 // IssueInfo One issue from list/search. Field names are CAPITALIZED on the wire (historical shape the deployed aep-mcp-server parses — do not "fix" without a coordinated MCP-server release).
@@ -1729,8 +1744,21 @@ type SkillUpdateList struct {
 
 // SpecStage Spec-stage aggregate on ProjectStatus (#184). Approved/draft is derived, not stored — version set and not dirty = approved (vN); dirty = draft changes (vN+); no version = unpublished draft; exists false = no spec yet.
 type SpecStage struct {
+	// Agent Whether an agent is working on this project's spec right now, and how the last attempt ended (#562). `never-started` — no turn has EVER run for this project; `""` — a turn has run and the newest one completed; `working` — a turn is in flight; `failed` — the newest turn ended in failure and none has run since. `never-started` is distinct from `""` because the two need opposite treatment: one means the journey has not begun and the user needs a way to begin it, the other means it is under way between turns and offering to restart it would supersede a live interview. Derived from the newest `agent_turns` row for the project, which is what `exists`/`version`/`dirty` cannot say: all three read committed git, and a kickoff writes nothing until it lands. The overview's spec card needs it to say *Writing requirements* while the platform-fired `/start` runs, and the spec view needs it to explain an empty workspace instead of offering a file picker.
+	Agent string `json:"agent"`
+
+	// AgentFlow WHICH work the running turn is doing — the `/<skill>` token it runs under (`start`, `design`, `settle`, `amend`, …); `""` for plain chat or when nothing is running (#575). `agent` says an agent is working; this says on what, which the spec rail needs to pulse the right section.
+	// Without it the rail could only guess from which sections were still empty, and guessed wrongly in both directions: settling an assumption lit Design (the first empty section, though the work was requirements), and the moment a design run wrote its first file the pulse jumped to Validation while the rest of the design was still being written.
+	// Reported for the RUNNING turn only. A finished turn's flow says nothing about what is happening now, and the section states are derived from committed files from then on.
+	AgentFlow string `json:"agentFlow,omitempty"`
+
 	// Design Design files exist for the spec (gates the Spec view's design button).
 	Design bool `json:"design"`
+
+	// DesignOutdated The requirements have changed since the design was last derived from them (#575), so the design may no longer describe what the user asked for. Derived by comparing the requirements as they stand now against the requirements as they stood in the snapshot the newest successful `/design` turn read — no stored fingerprint, so there is nothing to fall out of sync and it answers for projects that predate the field.
+	// Coarse ON PURPOSE: it reports that the requirements moved, never which components are affected. The two failures are not symmetric — over-marking costs one re-derivation the agent mostly no-ops through, while under-marking ships a design the user has already changed their mind about to the coding agents.
+	// False while a project has no design or no successful design turn: there is nothing to be behind.
+	DesignOutdated bool `json:"designOutdated,omitempty"`
 
 	// Dirty specs/ moved on GitHub past the latest tag.
 	Dirty bool `json:"dirty"`
@@ -1821,8 +1849,11 @@ type TaskView struct {
 	Attention []string `json:"attention"`
 
 	// BlockedBy Names of the dependencies this task is waiting on; present when derivedStatus is on_hold.
-	BlockedBy     []string                 `json:"blockedBy,omitempty"`
-	Body          string                   `json:"body,omitempty"`
+	BlockedBy []string `json:"blockedBy,omitempty"`
+	Body      string   `json:"body,omitempty"`
+
+	// Comments The issue's newest comments, OLDEST FIRST, capped per issue, with the platform's own machine comments excluded. Present only on a `tag`-scoped read taken with `comments=true` (the default); a read spanning versions omits it, for the same reason ledger issues are invisible there — the fetch is anchored on one milestone and a cross-version read has no bounded set to ask for. Absence covers every empty case (not asked for, nothing there, nothing left after the machine comments were dropped); the field is never an empty array.
+	Comments      []IssueComment           `json:"comments,omitempty"`
 	Component     string                   `json:"component,omitempty"`
 	DependsOn     []string                 `json:"dependsOn"`
 	DerivedStatus string                   `json:"derivedStatus"`
@@ -1960,13 +1991,21 @@ type TurnOutputBody struct {
 
 // TurnStatus One turn's lifecycle view (create-turn 202 → poll/attach).
 type TurnStatus struct {
+	// AuthorDisplayName The acting user's display name, paired with authorId.
+	AuthorDisplayName string `json:"authorDisplayName,omitempty"`
+
+	// AuthorID Who started this turn — EMAIL-anchored, matching the console's live author identity, which is what lets a client tell its own turn from a teammate's. Empty when no attributable human sent it (an M2M token, a minimal user token, or a turn dispatched before the display record was stored). Flat rather than a nested object so "absent" is one convention across this schema: the empty string, exactly as `instruction` uses it.
+	AuthorID       string    `json:"authorId,omitempty"`
 	CommitSha      string    `json:"commitSha,omitempty"`
 	ConversationID string    `json:"conversationId"`
 	CreatedAt      time.Time `json:"createdAt"`
-	Message        string    `json:"message,omitempty"`
-	NoChanges      bool      `json:"noChanges,omitempty"`
-	Paths          []string  `json:"paths,omitempty"`
-	Reason         string    `json:"reason,omitempty"`
+
+	// Instruction What this turn's DISPLAY record says — the transcript line for the message that started it. Present so a client attaching to a turn it did not send can render the sender's message immediately, instead of narration under a blank space: the conversation store persists a turn's transcript only when the turn ENDS, so a history read mid-turn cannot supply it. Empty on turns dispatched before this field existed. Not the model's prompt — the agents service composes that from the turn spec and it never crosses this boundary.
+	Instruction string   `json:"instruction,omitempty"`
+	Message     string   `json:"message,omitempty"`
+	NoChanges   bool     `json:"noChanges,omitempty"`
+	Paths       []string `json:"paths,omitempty"`
+	Reason      string   `json:"reason,omitempty"`
 
 	// Status running, completed, failed
 	Status    string    `json:"status"`
@@ -2162,6 +2201,9 @@ type ListTasksParams struct {
 
 	// Tag Filter to the Tasks of one spec/build version tag (e.g. v3). The tag is resolved to a milestone number through the platform's run rows and the filter is milestone MEMBERSHIP — never a title match against GitHub. Empty returns every version.
 	Tag string `form:"tag,omitempty" json:"tag,omitempty"`
+
+	// Comments Include each issue's newest comments (defaults true). Honoured only on a `tag`-scoped read — the comment fetch is anchored on the milestone, so a read spanning versions has no bounded set to ask for. Pass false to skip the GitHub round trip when the caller does not render them.
+	Comments *bool `form:"comments,omitempty" json:"comments,omitempty"`
 }
 
 // ListTasksParamsState defines parameters for ListTasks.

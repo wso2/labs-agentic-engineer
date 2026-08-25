@@ -156,6 +156,14 @@ type TurnStatus struct {
 	Message        string    `json:"message,omitempty"`
 	CreatedAt      time.Time `json:"createdAt"`
 	UpdatedAt      time.Time `json:"updatedAt"`
+	// The turn's DISPLAY record (#562) — the transcript line for the message
+	// that started it, and who sent it. A client attaching to a turn it did not
+	// send has no other source for these until the turn lands: the conversation
+	// store persists a turn's transcript only at the end. Empty on rows written
+	// before this existed, and on turns with no attributable human behind them.
+	Instruction       string `json:"instruction,omitempty"`
+	AuthorID          string `json:"authorId,omitempty"`
+	AuthorDisplayName string `json:"authorDisplayName,omitempty"`
 }
 
 func turnStatusOf(t *AgentTurn) *TurnStatus {
@@ -171,6 +179,10 @@ func turnStatusOf(t *AgentTurn) *TurnStatus {
 		Message:        t.Message,
 		CreatedAt:      t.CreatedAt,
 		UpdatedAt:      t.UpdatedAt,
+
+		Instruction:       t.Summary,
+		AuthorID:          t.AuthorID,
+		AuthorDisplayName: t.AuthorDisplayName,
 	}
 }
 
@@ -338,6 +350,13 @@ func (s *Service) StartTurn(ctx context.Context, orgID, projectID string, in Tur
 	// every turn snapshot; an idea typed inline wins). Best-effort — no
 	// descriptor, no idea, and the start skill asks the user instead.
 	turnSpec, flow := s.turnSpecFor(ctx, ref, baseRef, in.Instruction)
+	// What the transcript will SHOW for this turn. Ordinarily the instruction
+	// verbatim — but a bare `/start` says nothing about what it is starting,
+	// and the idea it carries is exactly the reassurance the user needs on the
+	// journey's first screen: the agent is working from THEIR words (#528).
+	// Only `/start` is rewritten, and only to append an idea the server just
+	// resolved for the same turn, so the line still describes what was sent.
+	summary := startTurnSummary(in.Instruction, turnSpec)
 
 	// Skills resolve failures are typed: both arms mean the org's _skills repo
 	// is unusable right now (row missing/unprovisionable, or the backing repo
@@ -360,14 +379,22 @@ func (s *Service) StartTurn(ctx context.Context, orgID, projectID string, in Tur
 	}
 
 	// D18 guard: one active turn per project, any use case.
+	// The display record rides the row itself: a client attaching to this turn
+	// reads it off the active-turn response and paints the sender's message,
+	// which no other source can give it until the turn lands (see AgentTurn).
+	author := journalAuthorFrom(ctx)
 	row, err := s.turns.TryStart(ctx, &AgentTurn{
-		OrgID:          orgID,
-		ProjectID:      projectID,
-		ConversationID: in.ConversationID,
-		UseCase:        useCaseGeneral,
-		BaseRef:        baseRef,
-		SkillsRef:      skillsRef,
-		Status:         turnStatusRunning,
+		OrgID:             orgID,
+		ProjectID:         projectID,
+		ConversationID:    in.ConversationID,
+		UseCase:           useCaseGeneral,
+		Flow:              flow,
+		BaseRef:           baseRef,
+		SkillsRef:         skillsRef,
+		Status:            turnStatusRunning,
+		Summary:           summary,
+		AuthorID:          authorIDOf(author),
+		AuthorDisplayName: authorNameOf(author),
 	})
 	if errors.Is(err, ErrTurnActive) {
 		return "", &TurnInProgressError{ActiveTurnID: row.ID}
@@ -386,11 +413,11 @@ func (s *Service) StartTurn(ctx context.Context, orgID, projectID string, in Tur
 		nsConversationID: namespacedID(repo, useCaseGeneral, in.ConversationID),
 		turn:             turnSpec,
 		target:           in.Target,
-		summary:          in.Instruction,
+		summary:          summary,
 		attachments:      in.Attachments,
 		// Captured before the detached goroutine: the identity reads the
 		// request's bearer, and the journal (#463) attributes the turn.
-		author:       journalAuthorFrom(ctx),
+		author:       author,
 		repoRef:      ref,
 		baseRef:      baseRef,
 		skillsRef:    skillsRef,

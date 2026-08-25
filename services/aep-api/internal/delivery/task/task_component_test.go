@@ -32,6 +32,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -63,6 +64,13 @@ const (
 type fakeIssues struct {
 	mu    sync.Mutex
 	byNum map[int]*sourcecontrol.IssueInfo
+	// milestone is the one milestone every seeded issue belongs to — enough for
+	// the tag-scoped reads here, which never need two versions at once.
+	milestone int
+	// hostComments is what the host holds per issue; commentReads counts the
+	// round trips the surface actually made.
+	hostComments map[int][]sourcecontrol.IssueComment
+	commentReads int
 }
 
 func newIssues(seed ...sourcecontrol.IssueInfo) *fakeIssues {
@@ -96,8 +104,48 @@ func (f *fakeIssues) GetIssue(_ context.Context, _, _ string, n int) (*sourcecon
 	}
 	return nil, sourcecontrol.ErrIssueNotFound
 }
-func (f *fakeIssues) ListMilestoneIssues(context.Context, string, string, sourcecontrol.MilestoneIssuesFilter) ([]sourcecontrol.IssueInfo, error) {
-	return nil, nil
+func (f *fakeIssues) ListMilestoneIssues(_ context.Context, _, _ string, filter sourcecontrol.MilestoneIssuesFilter) ([]sourcecontrol.IssueInfo, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.milestone == 0 || f.milestone != filter.Number {
+		return nil, nil
+	}
+	out := make([]sourcecontrol.IssueInfo, 0, len(f.byNum))
+	for _, i := range f.byNum {
+		out = append(out, *i)
+	}
+	sort.Slice(out, func(a, b int) bool { return out[a].Number < out[b].Number })
+	return out, nil
+}
+func (f *fakeIssues) ListMilestoneIssueComments(_ context.Context, _, _ string, number, _ int) (map[int][]sourcecontrol.IssueComment, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.commentReads++
+	if f.milestone == 0 || f.milestone != number {
+		return nil, nil
+	}
+	out := map[int][]sourcecontrol.IssueComment{}
+	for n, cs := range f.hostComments {
+		out[n] = append([]sourcecontrol.IssueComment(nil), cs...)
+	}
+	return out, nil
+}
+
+// inMilestone marks the seeded issues as members of one milestone and attaches
+// a comment thread, so a `?tag=` read has something to answer with.
+func (f *fakeIssues) inMilestone(number int, comments map[int][]sourcecontrol.IssueComment) *fakeIssues {
+	f.milestone = number
+	f.hostComments = comments
+	return f
+}
+
+// fakeMilestoneRuns resolves a `?tag=` to a milestone number, standing in for
+// the run rows.
+type fakeMilestoneRuns map[string]int
+
+func (f fakeMilestoneRuns) MilestoneNumberForTag(_ context.Context, _, _, tag string) (int, bool, error) {
+	n, ok := f[tag]
+	return n, ok, nil
 }
 func (f *fakeIssues) CommentIssue(context.Context, string, string, int, string) error { return nil }
 func (f *fakeIssues) EditIssueBody(context.Context, string, string, int, string) error {
@@ -207,7 +255,14 @@ func taskIssue(number int, component, state string, extra ...string) sourcecontr
 
 func newRig(t *testing.T, iss *fakeIssues, execs fakeExecs) *componenttest.Harness {
 	t.Helper()
-	reads := task.NewReads(iss, fakeRepos{}, execs, nil)
+	return newRigWithRuns(t, iss, execs, nil)
+}
+
+// newRigWithRuns is newRig plus a tag→milestone resolver, for the reads that are
+// version-scoped.
+func newRigWithRuns(t *testing.T, iss *fakeIssues, execs fakeExecs, runs task.MilestoneResolver) *componenttest.Harness {
+	t.Helper()
+	reads := task.NewReads(iss, fakeRepos{}, execs, runs)
 	return componenttest.New(t, componenttest.Options{Deps: edge.Deps{
 		Delivery: mustDelivery(deliveryhttpapi.New(deliveryhttpapi.Deps{TaskReads: reads})),
 	}})

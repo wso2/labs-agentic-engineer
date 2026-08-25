@@ -47,6 +47,8 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
 | repo/workspace bootstrap · repo-name conflict | needs | `sourcecontrol` — on project create/delete |
 | design read · spec-stage snapshot | needs | `spec` — the Stage aggregate's spec column + component OpenAPI source |
 | `descriptorWriter` | needs | `spec` — stamps `specs/.agentic-engineer.toml` on create (best-effort; nil is a no-op) |
+| `kickoffStarter` (`SetKickoffStarter`) | needs | `spec` — fires the new project's opening `/start` turn (#562), after the descriptor commit the turn reads the idea from and before the create returns. Bounded + error-swallowing on its own side; nil is a no-op |
+| `specTurnRows` (`SetSpecTurnSource`) | needs | `spec` — the newest `agent_turns` row (off `ix_agent_turns_project_newest`), folded into the Stage aggregate's `spec.agent`. Nil serves `""`, degrading to the pre-#562 reading rather than failing the poll |
 | build/exec status (`SetStageSources` port) | needs | `delivery` — the build/deploy columns of the Stage aggregate, wired at the root |
 | `runAbandoner` (`SetRunAbandoner`) | needs | `delivery` — ends the supervisors of a deleted project's live runs, wired at the root (nil is a no-op) |
 | per-project agent usage (`UsageService`) | needs | `delivery` — the agent-usage ledger, keyed by lifetime (`contracts.UsageScope`) |
@@ -105,11 +107,18 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
   JSON `null` 200 when no row exists (not `{}`); get-component-openapi returns 409 *with* the componentType
   body for a non-service component; build-logs 503s when the observability client is unwired.
 - **The Stage aggregate is one cheap poll (5s active / 30s idle), strict-join.** get-project-status runs
-  three sources concurrently — spec from a fetch-free local-mirror snapshot, build from the newest
+  four sources concurrently — spec from a fetch-free local-mirror snapshot, build from the newest
   `milestone_runs` row (a version's delivery IS its run), deploy from the project's `development` release
-  bindings — with no GitHub API, Temporal query, or origin fetch. Any source failure fails the whole read
-  (the console keeps last-good); the one carve-out: a deploy tag missing from the local mirror degrades to
-  a 0 denominator, not a 500.
+  bindings, and the newest `agent_turns` row — with no GitHub API, Temporal query, or origin fetch. Any
+  source failure fails the whole read (the console keeps last-good); the one carve-out: a deploy tag
+  missing from the local mirror degrades to a 0 denominator, not a 500.
+- **`spec.agent` is the one spec field git cannot answer.** exists/version/dirty all read committed truth,
+  and a turn writes nothing until it lands — so through the whole kickoff (#562), the busiest moment in a
+  project's life, git says the project is untouched. The newest turn row says otherwise, and folds to three
+  values: `never-started`, `""`, `working`, `failed`. A COMPLETED turn folds to `""` rather than to a
+  value of its own, because whatever it produced is already in git and a second vocabulary for the same
+  fact could only disagree with the first. `never-started` is NOT that gap: it says no turn has ever
+  run, which is the one case an empty workspace should offer to start rather than wait on.
 - **The build stage carries NO task counts** — not zeroed ones, none at all. Their only honest source is
   the version's milestone on GitHub, and a 5s poll may not spend GitHub rate, so the field is absent from
   the contract rather than present and always zero; the console renders counts from the list-tasks

@@ -53,9 +53,12 @@ type Handlers struct {
 func New(d spec.Deps) (*Handlers, error) {
 	return &Handlers{
 		genaiturnsHandler: genaiturns.New(d.GenAI),
-		filesHandler:      files.New(d.Files, d.FilesActivity),
-		tagsHandler:       tags.New(d.Artifacts),
-		skillsHandler:     skills.New(d.Skills, d.SkillMut, d.SkillImport),
-		collabHandler:     collab.New(d.CollabRepo),
+		// The references upload releases a kickoff that project creation held
+		// (#562) — the turn engine is what fires it, so the slice gets it as
+		// a narrow port rather than growing a genai import.
+		filesHandler:  files.New(d.Files, d.FilesActivity).WithKickoffStarter(d.GenAI),
+		tagsHandler:   tags.New(d.Artifacts),
+		skillsHandler: skills.New(d.Skills, d.SkillMut, d.SkillImport),
+		collabHandler: collab.New(d.CollabRepo),
 	}, nil
 }

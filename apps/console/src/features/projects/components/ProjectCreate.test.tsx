@@ -49,13 +49,26 @@ const uploadReferences = {
   isError: false,
   error: null as Error | null,
 };
+// The create page reads the org handle to address the chat's seed slot when
+// the user abandons their documents; useSession throws outside an AuthGuard.
+vi.mock("../../../auth/SessionContext", () => ({
+  useSession: () => ({
+    user: { name: "Test User", email: "test@example.com" },
+    orgHandle: "acme",
+    signOut: vi.fn(),
+  }),
+}));
+
 vi.mock("../api/queries", () => ({
   useCreateProject: () => createProject,
   useGithubOrg: () => ({ data: "acme" }),
   useUploadReferences: () => uploadReferences,
 }));
 
+import { START_COMMAND } from "@aep/contracts/commands";
 import { ApiRequestError } from "../../../api/errors";
+import { chatKeyFor, consumePendingSeed } from "../../agent-chat/chatStore";
+import { suggestProjectName } from "../lib/projectName";
 import { ProjectCreate } from "./ProjectCreate";
 
 function attachAll(names: string[], content = "content"): void {
@@ -167,6 +180,81 @@ describe("ProjectCreate reference documents (#383)", () => {
       screen.getByRole("button", { name: "Continue without documents" }),
     );
     expect(navigate).toHaveBeenCalled();
+  });
+
+  // The create declared `referencesPending`, so the platform HELD the kickoff
+  // for an upload that is now never coming. Nothing else releases it: the
+  // project has no turn, so it reads as "never started" rather than "failed",
+  // and the spec view's Retry hangs off failure. Without this it is the one
+  // path to a permanently un-started project through ordinary UI.
+  it("releases the held kickoff when the documents are abandoned", () => {
+    uploadReferences.isError = true;
+    uploadReferences.error = new Error("boom");
+    render(<ProjectCreate />);
+    attach("prd.md");
+    typePrompt();
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Continue without documents" }),
+    );
+
+    // GUARDED like every other injected `/start`; the bare token is enough
+    // because the server attaches the idea from the project descriptor.
+    // Addressed by the created project's name, which the page derives from the
+    // prompt — the same value the navigation carries.
+    expect(
+      consumePendingSeed(chatKeyFor("acme", suggestProjectName("A todo app"))),
+    ).toEqual({ message: START_COMMAND, guarded: true });
+  });
+});
+
+// The journey starts itself (#562): the platform fires `/start` server-side,
+// and this page's job is only to say whether to wait for the documents, then
+// land the user where they can watch it happen.
+describe("ProjectCreate — handing the journey over (#562)", () => {
+  it("lands on the overview with the agent chat open", () => {
+    render(<ProjectCreate />);
+    typePrompt();
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+
+    expect(navigate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "/projects/$projectName",
+        search: { chat: "open" },
+      }),
+    );
+  });
+
+  // Documents are the primary brief, so the create call has to say they are
+  // coming — otherwise the kickoff interviews before they land.
+  it("declares pending references so the platform holds the kickoff", () => {
+    render(<ProjectCreate />);
+    attach("prd.md");
+    typePrompt();
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+
+    expect(createProject.mutate).toHaveBeenCalledWith(
+      expect.objectContaining({ referencesPending: true }),
+      expect.anything(),
+    );
+  });
+
+  // Nothing to wait for: the kickoff fires from the create call itself, and a
+  // field claiming otherwise would hold it forever.
+  it("declares nothing when no documents are attached", () => {
+    render(<ProjectCreate />);
+    typePrompt();
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+
+    expect(createProject.mutate).toHaveBeenCalledWith(
+      expect.not.objectContaining({ referencesPending: expect.anything() }),
+      expect.anything(),
+    );
   });
 });
 

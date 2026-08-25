@@ -26,7 +26,7 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { addMessage, chatKeyFor, getMessages, replaceMessages } from "./chatStore";
 import { useAgentChat } from "./useAgentChat";
 
@@ -282,5 +282,106 @@ describe("useAgentChat — the shared thread (#430)", () => {
       expect(contents).toContain("do not lose me");
       expect(contents).toContain("502 upstream");
     });
+  });
+});
+
+// #562 review: the window between "the server has the turn" and "this client
+// knows its id". The turn row exists the moment StartTurn returns 202, but
+// `startCollabTurn` has not resolved yet — so `attachedRef` is still false and
+// the foreign-turn poll would happily find that turn, attach it, and fold it,
+// while `send` was about to fold the very same stream. Two concurrent folds,
+// and a second user bubble beside the one the user is already looking at,
+// because the optimistic row has no turn id to be recognised by yet.
+describe("useAgentChat — a local send in flight", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    replaceMessages(KEY, []);
+    mockFetchCurrent.mockResolvedValue("conv-1");
+    mockGetHistory.mockResolvedValue([]);
+    mockGetActive.mockResolvedValue(null);
+    mockAttach.mockResolvedValue(undefined);
+    // The poll is a timeout; `shouldAdvanceTime` keeps waitFor working while
+    // letting the test fire that timeout on demand.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // The optimistic row has no turn id and the server has no record of it, so it
+  // survives neither the rehydrate's REPLACE nor its `localOnly` filter (error
+  // and failed rows only). A tab switch inside the ~2s dispatch would drop the
+  // user's own message, and `settleUserMessage` would then no-op onto an id
+  // that no longer exists — the message simply gone until the turn ended.
+  it("keeps the user's message through a refocus mid-dispatch", async () => {
+    let resolveDispatch: (id: string) => void = () => {};
+    mockStartTurn.mockImplementation(
+      () => new Promise<string>((res) => { resolveDispatch = res; }),
+    );
+
+    const { result } = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.conversationReady).toBe(true));
+
+    act(() => {
+      void result.current.send("tidy the requirements");
+    });
+    await waitFor(() => expect(getMessages(KEY)).toHaveLength(1));
+
+    // The server still has no record of this turn.
+    mockGetHistory.mockResolvedValue([]);
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(
+      getMessages(KEY).filter((m) => m.role === "user" && m.content === "tidy the requirements"),
+    ).toHaveLength(1);
+
+    act(() => resolveDispatch("t1"));
+    await waitFor(() => expect(mockAttach).toHaveBeenCalled());
+  });
+
+  it("holds the poll off, and never doubles the user's message", async () => {
+    // The dispatch hangs; the turn nonetheless exists server-side.
+    let resolveDispatch: (id: string) => void = () => {};
+    mockStartTurn.mockImplementation(
+      () => new Promise<string>((res) => { resolveDispatch = res; }),
+    );
+
+    const { result } = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.conversationReady).toBe(true));
+
+    act(() => {
+      void result.current.send("tidy the requirements");
+    });
+
+    // The user's row is up immediately, with no turn id yet.
+    await waitFor(() => expect(getMessages(KEY)).toHaveLength(1));
+
+    // The poll now reports the very turn this client is still dispatching.
+    mockGetActive.mockResolvedValue({
+      turnId: "t1",
+      conversationId: "conv-1",
+      useCase: "general",
+      status: "running",
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+      instruction: "tidy the requirements",
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(13_000);
+      await Promise.resolve();
+    });
+
+    act(() => resolveDispatch("t1"));
+    await waitFor(() => expect(mockAttach).toHaveBeenCalled());
+
+    // One user row, one fold.
+    const users = getMessages(KEY).filter((m) => m.role === "user");
+    expect(users).toHaveLength(1);
+    expect(mockAttach).toHaveBeenCalledTimes(1);
   });
 });
