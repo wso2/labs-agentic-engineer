@@ -6,8 +6,8 @@ dependency's *contract* is, and how code reads its injected values, is in
 
 Everything here derives from what `specs/` already fixed, so it reads the same
 for a component's first line and for a change to one that shipped weeks ago. The
-one half that is **not** derivable — a provider's live coordinates — stays in the
-skill body under **Dependencies and `workload.yaml`**.
+one kind that is **not** derivable — an `org-service`, which belongs to another
+project — stays in the skill body under **Dependencies and `workload.yaml`**.
 
 Most of what goes wrong here is silent: an env var you renamed arrives empty, a
 `visibility` you omitted leaves a dependent's config unwritten, and nothing fails
@@ -22,21 +22,38 @@ consumes. Its `kind` decides where the wiring comes from and what you write:
 |---|---|---|
 | `platform-resource` | its `wiring` object | one `resources:` entry |
 | `external` | its `wiring` object — **only when it declares `config` keys** | one `resources:` entry (none when it declares no keys) |
-| `component` | not derivable from `specs/` — the skill body | one `endpoints:` entry, `visibility: project` |
+| `component` | its `wiring` object | one `endpoints:` entry |
 | `org-service` | not derivable from `specs/` — the skill body | one `endpoints:` entry, plus `project:` and `visibility: namespace` |
 
-`component` and `org-service` need no `wiring` object: their env var is always
-`<DEP_NAME>_URL`. What does need resolving is the provider's *coordinates* — its
-`project`, the platform's name for it, and an endpoint name that comes from a
-`workload.yaml` nobody may have written yet.
+Three of the four kinds carry a `wiring` object the platform derived and
+committed into `design.json`. Its **shape** tells you which half of
+`dependencies:` the entry belongs in:
+
+| `wiring` holds | The entry goes in |
+|---|---|
+| an `endpoint` object | `dependencies.endpoints[]` |
+| `ref` + `envBindings` | `dependencies.resources[]` |
+
+`org-service` is the one kind with no `wiring` object, because its provider
+belongs to another project: its `project`, the platform's name for it and its
+endpoint name are resolved live and reach you by the channel the skill body
+names.
 
 **A `platform-resource` with no `wiring` is broken input, not a licence to
 substitute your own store** — say so in one line and stop the run.
 
-**Copy a `wiring` object verbatim** — `ref` and every `envBindings` pair,
-unchanged. **Those env-var names are the keys the platform populates at
-runtime**: an output arrives under that name and no other. Never rename one,
-never invent one.
+**Copy a `wiring` object verbatim** — every field and every `envBindings` pair,
+unchanged. It is already byte-identical to the entry that belongs there.
+
+**Those env-var names are the keys the platform populates at runtime**: an output
+arrives under that name and no other. Never rename one, never invent one.
+
+**A `wiring.endpoint`'s `component` carries the project as a prefix** —
+`<project>-<component>`. It deliberately does not match the name the rest of the
+tree calls that component: this prefixed one is what OpenChoreo resolves a
+connection by. Write the `wiring` value. Any other spelling parses, builds,
+deploys and serves with the address env var silently absent, and the only symptom
+is a project that reports "deploying" for ever.
 
 **Every component writes its `resources:` entries, a `web-application`
 included** — a web app reads the values from `window._env_` rather than pod env
@@ -73,9 +90,11 @@ endpoints:
       - external
 
 dependencies:                    # what you resolved above — omit a half you have none of
-  endpoints:                     # component / org-service
-    - project: <provider-project> # cross-project only; absent = same project
-      component: <provider-component> # the platform's name — never "correct" it
+  endpoints:                     # component: `wiring.endpoint`, verbatim
+                                 # org-service: resolved live (skill body)
+    - project: <provider-project> # org-service only; absent = same project
+      component: <provider-component> # `<project>-<component>` — the platform's
+                                  # own name for it, project-prefixed
       name: <provider-endpoint>   # e.g. http
       visibility: namespace       # or project (same-project)
       envBindings:

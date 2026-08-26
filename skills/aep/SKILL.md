@@ -185,7 +185,8 @@ For **each** issue in the ordered set:
    plus the `openapi.yaml` of every component it consumes. The issue says what to
    build; the contract fixes the shape.
    Read its comments too (`gh issue view <number> --comments`): a
-   "Platform-resolved dependencies" comment carries dependency wiring you need.
+   "Platform-resolved dependencies" comment carries an `org-service`'s
+   coordinates.
 2. **Make the change it asks for**, holding to
    `references/component-contract.md` and the stack skills of every component it
    touches.
@@ -354,18 +355,22 @@ is guessable. Both failure modes are silent: an env var you renamed arrives empt
 a `visibility` you omitted leaves a dependent's config unwritten, and nothing
 errors until deploy.
 
-One thing that file cannot give you is a provider's live coordinates. That is
-below.
+One thing that file cannot give you is an `org-service`'s live coordinates. That
+is below.
 
 ### The `endpoints:` half
 
-The platform resolves live addresses and posts them as a **"Platform-resolved
-dependencies"** comment on the open issues of your working set, so it may land
-on a **sibling** issue rather than the one for the component it describes. Read
-the comments on the issues you are working and copy every `## Component <name>`
-block into **that named component's** `workload.yaml` — invent, rename and omit
-nothing. Two blocks for the same component: the **latest** is the complete
-answer.
+A **sibling** (`kind: component`) is already resolved in your own tree: its entry
+is the `wiring.endpoint` object on that dependency in `design.json`, copied
+verbatim. That holds whether or not the comment below exists.
+
+An **`org-service`** belongs to another project, so only the platform can resolve
+it. It posts what it resolved as a **"Platform-resolved dependencies"** comment
+on the open issues of your working set, so it may land on a **sibling** issue
+rather than the one for the component it describes. Read the comments on the
+issues you are working and copy every `## Component <name>` block into **that
+named component's** `workload.yaml` — invent, rename and omit nothing. Two blocks
+for the same component: the **latest** is the complete answer.
 
 ### Finding an `org-service` contract
 

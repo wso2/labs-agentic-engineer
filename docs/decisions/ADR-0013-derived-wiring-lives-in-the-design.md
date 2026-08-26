@@ -24,17 +24,21 @@ for information it already had at design time.
 Split the block by what is DERIVED from what is RESOLVED, and give each the
 channel its nature allows.
 
-**Derived — stamped into `design.json`.** Every `platform-resource` and `external`
-dependency carries a platform-stamped `wiring: {ref, envBindings}` object,
-shape-identical to one `dependencies.resources[]` entry so the agent copies rather
-than transforms it. It is derived in the design-save pass (the pre-tag step on
-`POST /build`), committed to the design the agent reads as its spec, and captured
-in the version tag. There is no ordering, no audience, and no idempotency marker
-left to get wrong.
+**Derived — stamped into `design.json`.** Every `platform-resource`, `external`
+and `component` dependency carries a platform-stamped `wiring` object,
+shape-identical to the entry it belongs in so the agent copies rather than
+transforms it: `{ref, envBindings}` for one `dependencies.resources[]` entry, and
+`{endpoint}` for one `dependencies.endpoints[]` entry. A **sibling**'s endpoint
+qualifies for the same reason a resource's ref does — scoped provider name, the
+sibling's own endpoint name, `project` visibility and one `address` binding are
+all pure functions of the design. It is derived in the design-save pass (the
+pre-tag step on `POST /build`), committed to the design the agent reads as its
+spec, and captured in the version tag. There is no ordering, no audience, and no
+idempotency marker left to get wrong.
 
-**Resolved — pushed at cycle dispatch.** The `endpoints:` half genuinely needs
-live resolution (a cross-project provider may not have published; a sibling's
-endpoint name comes from a `workload.yaml` nobody has written yet), so it stays a
+**Resolved — pushed at cycle dispatch.** What is left on the `endpoints:` half is
+an `org-service`, which genuinely needs live resolution because its provider
+belongs to another project and may not have published yet, so it stays a
 comment — but triggered at dispatch, not at gate resolution. Dispatch is provably
 correct rather than lucky: the dispatch predicate already requires that no gate is
 open in the milestone, so everything resolvable has resolved, and the working set
@@ -57,10 +61,11 @@ Three properties make this hold:
 - **Absence is loud.** A declared dependency with no `wiring` is a platform fault
   the agent reports and stops on — never a licence to substitute its own database,
   cache or IDP. Independently, the merged-PR fan-out compares each component's
-  declared refs against the `workload.yaml` it shipped and mints a fix issue on a
-  mismatch, because the silence was a separate defect from the delivery bug: a
-  component that quietly substituted its own persistence BUILDS, so nothing else
-  would ever notice.
+  declared refs AND endpoint targets against the `workload.yaml` it shipped and
+  mints a fix issue on a mismatch, because the silence was a separate defect from
+  the delivery bug: a component that quietly substituted its own persistence
+  BUILDS, and one that named a sibling by its unscoped name builds, deploys and
+  serves, so nothing else would ever notice.
 
 ## Consequences
 
