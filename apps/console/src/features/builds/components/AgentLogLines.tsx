@@ -72,7 +72,7 @@ export function EmitterChip({ emitter, label }: { emitter: string; label?: strin
   );
 }
 
-// The log surface moved to components/LogSection (ADR-0020): three surfaces now
+// The log surface moved to components/LogSection (ADR-0021): three surfaces now
 // render logs and one definition keeps them identical. Re-exported here so the
 // feature's existing importers are untouched.
 // Imported as well as re-exported: a bare `export … from` does not bind the

@@ -222,3 +222,117 @@ func TestDesignJSONStories(t *testing.T) {
 		}
 	}
 }
+
+// ---- the roles document ----------------------------------------------------
+//
+// The structured half of the security design is the ONE spec file the platform
+// acts on deterministically at build time: it creates the roles and test users
+// the file declares. These pin the three things the gate owns about it —
+// presence when the design signs users in, parseability, and that the stories
+// its roles cite are real.
+
+// authService is a service the design-save auth derivation has already stamped
+// as sitting behind end-user sign-in. That stamp, not a live catalog call, is
+// what tells the gate this design has sign-in.
+func authService(id, stories string) string {
+	return `{"name":"` + id + `","type":"service","version":"0.1.0","language":"Ballerina",` +
+		`"buildpack":"docker","appPath":"` + id + `","entrypoint":"deployment/service",` +
+		`"exposure":"intranet","stories":[` + stories + `],"dependencies":[],` +
+		`"description":"real responsibility text","exposesAPI":{"auth":"end-user-required"}}`
+}
+
+func rolesDoc(stories string) string {
+	return `{"version":1,"coldStartRole":"Member","publicComponents":[],` +
+		`"roles":[{"name":"Member","description":"Joins today's order.","stories":[` + stories + `],` +
+		`"grantedBy":"first sign-in","permissions":[{"component":"lunch-api","actions":["join round"]}]}],` +
+		`"testUsers":[{"username":"test-member","role":"Member"}]}`
+}
+
+// A design with no sign-in needs no roles document — most designs are this.
+func TestBuildGate_NoSignInNeedsNoRolesDocument(t *testing.T) {
+	if errs := gateErrors(t, completeDesignFiles()); len(errs) != 0 {
+		t.Fatalf("a design with no sign-in should not be asked for roles.json, got %+v", errs)
+	}
+}
+
+// The one that matters: sign-in without a roles document ships an app whose
+// role-gated behaviour nothing can exercise, because the platform has no roles
+// or test users to create and validation has no login to sign in as.
+func TestBuildGate_SignInWithoutRolesDocument(t *testing.T) {
+	files := completeDesignFiles()
+	files["components/lunch-api/design.json"] = authService("lunch-api", "1, 2, 4")
+
+	errs := gateErrors(t, files)
+	if !slices.Contains(codesOf(errs), codeMissingRolesDocument) {
+		t.Fatalf("want %s, got %+v", codeMissingRolesDocument, errs)
+	}
+}
+
+func TestBuildGate_SignInWithARolesDocumentPasses(t *testing.T) {
+	files := completeDesignFiles()
+	files["components/lunch-api/design.json"] = authService("lunch-api", "1, 2, 4")
+	files["roles.json"] = rolesDoc("1, 2")
+
+	if errs := gateErrors(t, files); len(errs) != 0 {
+		t.Fatalf("want a clean gate, got %+v", errs)
+	}
+}
+
+// A roles document that acquired a tag but does not parse is a hard failure, not
+// a warning: the platform provisions credentials from it.
+func TestBuildGate_UnparseableRolesDocument(t *testing.T) {
+	files := completeDesignFiles()
+	files["components/lunch-api/design.json"] = authService("lunch-api", "1, 2, 4")
+	files["roles.json"] = `{"version":1,`
+
+	errs := gateErrors(t, files)
+	if !slices.Contains(codesOf(errs), codeInvalidRolesDocument) {
+		t.Fatalf("want %s, got %+v", codeInvalidRolesDocument, errs)
+	}
+}
+
+// A referential rule rolesspec owns surfaces through the same gate code, so the
+// two halves of the validation cannot drift apart.
+func TestBuildGate_RolesDocumentBreakingAReferentialRule(t *testing.T) {
+	files := completeDesignFiles()
+	files["components/lunch-api/design.json"] = authService("lunch-api", "1, 2, 4")
+	// coldStartRole names a role the document does not declare.
+	files["roles.json"] = strings.Replace(rolesDoc("1"), `"coldStartRole":"Member"`, `"coldStartRole":"Nobody"`, 1)
+
+	errs := gateErrors(t, files)
+	if !slices.Contains(codesOf(errs), codeInvalidRolesDocument) {
+		t.Fatalf("want %s, got %+v", codeInvalidRolesDocument, errs)
+	}
+}
+
+// A role citing a story the PRD does not define means the design and the
+// requirements have drifted, and the permissions it grants trace to nothing.
+// The gate is the only place this is checkable: rolesspec validates one file,
+// and only the gate also sees the PRD.
+func TestBuildGate_RoleCitingAStoryThePRDDoesNotDefine(t *testing.T) {
+	files := completeDesignFiles()
+	files["components/lunch-api/design.json"] = authService("lunch-api", "1, 2, 4")
+	files["roles.json"] = rolesDoc("1, 99")
+
+	errs := gateErrors(t, files)
+	if !slices.Contains(codesOf(errs), codeUnknownRoleStory) {
+		t.Fatalf("want %s, got %+v", codeUnknownRoleStory, errs)
+	}
+	for _, e := range errs {
+		if e.Code == codeUnknownRoleStory && !strings.Contains(e.Message, "99") {
+			t.Fatalf("message should name the offending story: %q", e.Message)
+		}
+	}
+}
+
+// A roles document present on a design with NO sign-in is still validated —
+// it is the same file the platform will provision from either way.
+func TestBuildGate_RolesDocumentValidatedEvenWithoutSignIn(t *testing.T) {
+	files := completeDesignFiles()
+	files["roles.json"] = rolesDoc("1, 99")
+
+	errs := gateErrors(t, files)
+	if !slices.Contains(codesOf(errs), codeUnknownRoleStory) {
+		t.Fatalf("want %s, got %+v", codeUnknownRoleStory, errs)
+	}
+}

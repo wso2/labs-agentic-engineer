@@ -63,14 +63,19 @@ moved on GitHub after that tag.
 Approved at section level; per-section detail is defined feature-by-feature.
 
 - **Home — projects list.** Empty state prompts the user to start an app
-  development (give a requirement → project is born).
+  development (give a requirement → project is born). Org-level sidebar (no
+  project in the route): **Projects · Resources · Endpoints · Alerts**;
+  Settings stays in the footer.
+- **Resources** — org catalog of External resources (`/resources`). Register
+  via chat + form; environment values stay on the form. A later project that
+  needs a registered name reuses it — Build does not re-collect those secrets.
 - **Project view** — inside a project the sidebar nav swaps to its sections
   (ADR-0010; no back-item, home is the header brand / project switcher):
   - **Overview** — component map + status, deployment state, recent activity.
   - **Spec** — the requirement, derived design + acceptance criteria.
   - **Builds** — the version ledger: one row per version, with its milestone,
     status, duration and start. A row opens that version's
-    build — summary card, task list, coding-agent log, build logs (ADR-0020).
+    build — summary card, task list, coding-agent log, build logs (ADR-0021).
   - **Deployments** — dev environment state and URLs.
   - **Validations** — the runs checking a build against the spec's acceptance
     criteria.
@@ -99,8 +104,16 @@ here: they're the open `console` + `feature` issues.
   deploy aggregate the layout already polls. It carries no task counts, because
   an untagged list-tasks response cannot be attributed to versions and a
   tag-scoped one would be a GitHub-backed request per row —
-  [#609](https://github.com/wso2/labs-agentic-engineer/issues/609) (ADR-0020,
+  [#609](https://github.com/wso2/labs-agentic-engineer/issues/609) (ADR-0021,
   superseding ADR-0015)
+- Resources catalog lives at `/resources` (not Settings). Register an External
+  resource through chat that can question then draft the form (secrets stay on
+  the form). A new project that needs an already-registered API reuses that
+  name; after aep-api restart the catalog still treats it as configured, so
+  Build does not ask for the token again —
+  [#636](https://github.com/wso2/labs-agentic-engineer/pull/636)
+  (ADR-0021; catalog move on
+  [#626](https://github.com/wso2/labs-agentic-engineer/pull/626))
 - The journey starts itself — creating a project **fires `/start` server-side**,
   so the user lands on the overview with the agent chat already open, the
   transcript showing `/start` beside their own idea (cropped), and the Spec card

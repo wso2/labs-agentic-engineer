@@ -71,8 +71,9 @@ is `undefined` at module load. Use these exact spellings:
 
 There is **no** `API_BASE_URL` and **no** `<UPSTREAM>_URL` in `window._env_` for
 a sibling service. The sibling lives at **same-origin** `/api` (extra siblings:
-`/api/<component-name>/`). OpenChoreo still injects `<DEP>_URL` as a **pod**
-env var; only the nginx drop-in reads it.
+`/api/<component-name>/`). Its addresses — `<DEP>_GATEWAY_URL` and `<DEP>_URL` —
+are **pod** env vars, never browser keys; only the nginx drop-in reads them (see
+**Same-origin API proxy** below).
 
 **Throw on a missing key, never default it.** No `?? ""`, no `|| ''`, for keys
 this table says are set. A silent fallback hides a missing OIDC issuer. Do not
@@ -84,12 +85,30 @@ stock Vite default is correct: **do NOT set `base`**. Asset URLs, any react-rout
 `/callback`). Services ARE path-routed, under `/<project>-<component>-http` on a
 shared gateway — copying that prefix into `base` 404s every asset.
 
-**Same-origin API proxy.** Nginx reverse-proxies `location /api/` to the primary
-sibling's project Service URL. Copy the assets in Layout; do not hand-write a
-different `proxy_pass`, do not add `/oidc/` (token endpoint stays cross-origin;
-`thunder-authentication`), do not copy `apps/console/docker-entrypoint.sh`.
-Keep the official `nginx:alpine` `ENTRYPOINT`. The only extra file is
-`/docker-entrypoint.d/15-aep-api-proxy.sh`.
+**Same-origin API proxy, through the gateway.** Nginx reverse-proxies
+`location /api/` to the primary sibling. Two pod env vars address that sibling and
+they are NOT interchangeable:
+
+| Pod env var | Reaches | Auth |
+|---|---|---|
+| `<DEP>_GATEWAY_URL` | the API gateway. Set by the platform for a sibling whose design declares `exposesAPI.auth`. Carries a **context path prefix**. | validates the bearer token, injects `X-User-*` from its claims |
+| `<DEP>_URL` | the project Service, directly | none — nothing validates a token, nothing injects identity |
+
+The asset **prefers `<DEP>_GATEWAY_URL`** and falls back to `<DEP>_URL`. That
+order is the whole point: browser traffic is untrusted, and this proxy is the one
+hop that would otherwise carry it into the project's trusted lane with no
+authentication in between. Two rules follow, and the asset already obeys both —
+which is why you copy it rather than write it:
+
+- **Preserve the context prefix.** The gateway routes on it; a rewrite that
+  strips it 404s every call.
+- **Clear inbound `X-User-*`.** Identity is the gateway's to assert. A browser
+  that sets those headers itself must not be believed.
+
+Copy the assets in Layout; do not hand-write a different `proxy_pass`, do not add
+`/oidc/` (token endpoint stays cross-origin; `thunder-authentication`), do not
+copy `apps/console/docker-entrypoint.sh`. Keep the official `nginx:alpine`
+`ENTRYPOINT`. The only extra file is `/docker-entrypoint.d/15-aep-api-proxy.sh`.
 
 **Auth.** If the component declares an auth `platform-resource` dependency, add
 `src/auth.ts` and attach `Authorization: Bearer <token>` to every API call —
@@ -149,12 +168,17 @@ cp "$AEP_SKILLS_DIR/react-webapp/assets/15-aep-api-proxy.sh" nginx/15-aep-api-pr
 If `$AEP_SKILLS_DIR` is unset, copy from `assets/` next to this skill's `SKILL.md`
 (the BFF mirrors that directory to `.claude/skills/react-webapp/`).
 
-Then in `nginx/15-aep-api-proxy.sh` only: change `API_URL="${TODO_API_URL:-}"` so
-`TODO_API_URL` is the UPPER_SNAKE `_URL` of the **primary** component-kind
-dependency (`todo-api` → `TODO_API_URL`). Do not invent a second name.
+Then in `nginx/15-aep-api-proxy.sh` only: rename **both** variables so they name
+the **primary** component-kind dependency in UPPER_SNAKE —
+`API_URL="${TODO_API_GATEWAY_URL:-}"` and the fallback `"${TODO_API_URL:-}"`
+(`todo-api` → `TODO_API_GATEWAY_URL` / `TODO_API_URL`). Rename both or the
+fallback silently wins and the app runs unauthenticated. Do not invent a second
+name, and do not delete the fallback — an unprotected sibling has no gateway
+address.
 
-**Done when:** `nginx/default.conf` contains `location /api/` and
-`proxy_pass http://$api_backend`; the drop-in script's `API_URL=` line uses that
+**Done when:** `nginx/default.conf` contains `location /api/`,
+`proxy_pass http://$api_backend` and the `__API_CONTEXT__` rewrite; the drop-in
+script's two `API_URL=` lines use that
 primary `<DEP>_URL`; there is no `/oidc/` location.
 
 Extra component-kind siblings: add one `location /api/<component-name>/` block
@@ -256,9 +280,12 @@ component contract. Consumer connection to the sibling: `visibility: project`,
 `configurations.env` arrives as a `window._env_` entry.
 
 **Done when:** this app's dependency on the sibling is `visibility: project`
-(never `external`). The sibling *service's* own endpoint lists both
-`project` and `external` — that file is the Go (or other backend) skill's
-to write; do not strip `external` from it because this SPA uses `/api`.
+(never `external`). The sibling *service's* own endpoint lists all three of
+`project`, `internal` and `external` — `internal` is what admits the gateway to
+the service's NetworkPolicy, and without it every `/api` call answers `503`.
+That file is the Go (or other backend) skill's to write: leave all three in
+place rather than stripping `external` because this SPA uses `/api`
+(`workload-and-wiring` covers what each item earns).
 
 ## Pitfalls
 
@@ -267,6 +294,9 @@ to write; do not strip `external` from it because this SPA uses `/api`.
 | SPA throws on load: `window._env_ not set` | `/env-config.js` failed to load — path wrong, 404, or the `<script>` was `defer`/`async` | Make the tag synchronous in `<head>`, BEFORE the bundle's `<script type="module">`. |
 | `nginx: [emerg] host not found in upstream "…"` at pod start | Literal `proxy_pass http://hostname` (startup DNS) or leftover `/oidc/` block | Use the asset conf (`proxy_pass http://$api_backend`) and the drop-in; delete `/oidc/`. |
 | Browser CORS error calling the sibling API | `baseUrl` is the public gateway URL or `window._env_.API_BASE_URL` | `baseUrl: "/api"`. |
-| `/api` 502, SPA otherwise fine | API pod down, or drop-in left `TODO_API_URL` when the dep is named something else | Align `API_URL="${…}"` with `envBindings.address`; 502 while the API is down is expected. |
+| `/api` 502, SPA otherwise fine | API pod down, or drop-in left `TODO_API_URL` when the dep is named something else | Align both `API_URL="${…}"` lines with the dependency name; 502 while the API is down is expected. |
+| `/api` 400 `no header value found for 'x-user-id'` | The proxy took the direct-Service lane, so nothing injected identity | Check the pod log line `aep-api-proxy: /api -> … [lane]`. `direct Service` means `<DEP>_GATEWAY_URL` was unset: the provider's design has no `exposesAPI.auth`, or the drop-in names the wrong variable. |
+| `/api` 404 from the gateway | The rewrite dropped the context prefix | `nginx/default.conf` must rewrite to `__API_CONTEXT__/$1`, not `/$1`. |
+| `/api` 503 through the gateway | The gateway authenticated but cannot reach the service | The provider endpoint needs `internal` in its `workload.yaml` visibility (`workload-and-wiring`). |
 | Types in `src/generated/*` don't match the live service | Upstream `openapi.yaml` changed since last generation | Re-run the `openapi-typescript` command and commit the diff. |
 | Docker build succeeds but ships stale/hand-written shapes, or fails `ENOENT ../specs/...` | `src/generated/` wasn't committed — the per-component build context is this app's folder alone | Generate and commit `src/generated/` before PR. |

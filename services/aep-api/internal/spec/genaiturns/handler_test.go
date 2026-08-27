@@ -29,6 +29,7 @@ import (
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/platform/apierr"
+	"github.com/wso2/aep/aep-api/internal/platform/gitfs"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
@@ -54,6 +55,8 @@ func TestMapGenAITurnError_Table(t *testing.T) {
 		{"buffer truncated", spec.ErrTurnBufferTruncated, 409},
 		{"skills repo unavailable", fmt.Errorf("%w: resolve head: boom", spec.ErrSkillsRepoUnavailable), 503},
 		{"wrapped skills unavailable", fmt.Errorf("start turn: %w", spec.ErrSkillsRepoUnavailable), 503},
+		{"disk admission", fmt.Errorf("ensure repo snapshot: %w", gitfs.ErrDiskAdmission), 503},
+		{"wrapped disk admission", fmt.Errorf("start turn: %w", gitfs.ErrDiskAdmission), 503},
 		{"unmapped default", errors.New("some unexpected failure"), 500},
 	}
 	for _, tc := range cases {
@@ -143,6 +146,25 @@ func TestGenAISkillsUnavailable_LogsCause(t *testing.T) {
 		t.Fatalf("skills-unavailable status = %d, want 503", got)
 	}
 	if !strings.Contains(buf.String(), "git ref not found") {
+		t.Errorf("503 log did not carry the cause; log = %q", buf.String())
+	}
+}
+
+func TestGenAIDiskAdmission_Is503NotInternalError(t *testing.T) {
+	buf := captureGenAILogs(t)
+	err := fmt.Errorf("ensure repo snapshot: %w (usage=92%%)", gitfs.ErrDiskAdmission)
+	mapped := mapGenAITurnError(context.Background(), err)
+	var ae *apierr.Error
+	if !errors.As(mapped, &ae) {
+		t.Fatalf("expected an *apierr.Error, got %T (%v)", mapped, mapped)
+	}
+	if ae.Status != 503 {
+		t.Fatalf("disk-admission status = %d, want 503", ae.Status)
+	}
+	if ae.Message == "internal error" {
+		t.Fatalf("message = %q, want a sentence the console can show", ae.Message)
+	}
+	if !strings.Contains(buf.String(), "disk admission") && !strings.Contains(buf.String(), "usage=92") {
 		t.Errorf("503 log did not carry the cause; log = %q", buf.String())
 	}
 }

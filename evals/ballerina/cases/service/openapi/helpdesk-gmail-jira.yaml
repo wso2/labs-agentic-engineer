@@ -1,0 +1,247 @@
+openapi: 3.0.3
+info:
+  title: Support Triage API
+  version: 1.0.0
+paths:
+  /inbox:
+    get:
+      operationId: listInbox
+      summary: Support mail waiting to be triaged
+      parameters:
+        - name: label
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: max
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: The waiting mail
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/InboundMail"
+  /tickets:
+    get:
+      operationId: listTickets
+      summary: List tickets by state
+      parameters:
+        - name: state
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/TicketState"
+        - name: project
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Matching tickets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Ticket"
+    post:
+      operationId: openTicket
+      summary: Turn a mail into an issue and acknowledge the sender
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewTicket"
+      responses:
+        "201":
+          description: The opened ticket
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ticket"
+        "404":
+          description: No such mail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /tickets/{ticketId}:
+    get:
+      operationId: getTicket
+      summary: Fetch one ticket
+      parameters:
+        - name: ticketId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The ticket
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ticket"
+        "404":
+          description: No such ticket
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /tickets/{ticketId}/reply:
+    post:
+      operationId: replyToTicket
+      summary: Reply on the ticket's mail thread and comment on its issue
+      parameters:
+        - name: ticketId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReplyRequest"
+      responses:
+        "200":
+          description: What was sent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Reply"
+        "404":
+          description: No such ticket
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /tickets/{ticketId}/close:
+    post:
+      operationId: closeTicket
+      summary: Resolve the issue and send a closing reply
+      parameters:
+        - name: ticketId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CloseRequest"
+      responses:
+        "200":
+          description: The closed ticket
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ticket"
+        "404":
+          description: No such ticket
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+components:
+  schemas:
+    TicketState:
+      type: string
+      enum: [open, waiting, closed]
+    InboundMail:
+      type: object
+      required: [messageId, threadId, from, subject, receivedAt]
+      properties:
+        messageId:
+          type: string
+        threadId:
+          type: string
+        from:
+          type: string
+        subject:
+          type: string
+        receivedAt:
+          type: string
+        snippet:
+          type: string
+    NewTicket:
+      type: object
+      required: [messageId, project, issueType]
+      properties:
+        messageId:
+          type: string
+        project:
+          type: string
+        issueType:
+          type: string
+        priority:
+          type: string
+        assignee:
+          type: string
+    Ticket:
+      type: object
+      required: [ticketId, issueKey, messageId, threadId, requester, subject, state, openedAt]
+      properties:
+        ticketId:
+          type: string
+        issueKey:
+          type: string
+        messageId:
+          type: string
+        threadId:
+          type: string
+        requester:
+          type: string
+        subject:
+          type: string
+        state:
+          $ref: "#/components/schemas/TicketState"
+        openedAt:
+          type: string
+        closedAt:
+          type: string
+    ReplyRequest:
+      type: object
+      required: [body]
+      properties:
+        body:
+          type: string
+          minLength: 1
+    Reply:
+      type: object
+      required: [messageId, threadId, sentAt]
+      properties:
+        messageId:
+          type: string
+        threadId:
+          type: string
+        sentAt:
+          type: string
+    CloseRequest:
+      type: object
+      required: [resolution, body]
+      properties:
+        resolution:
+          type: string
+        body:
+          type: string
+    ErrorMessage:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string

@@ -78,8 +78,8 @@ func TestValidationContext_ResolvesEndpoints(t *testing.T) {
 	if len(resp.Endpoints) != 2 || resp.Endpoints[0].Component != "hello-web" {
 		t.Errorf("endpoints = %+v", resp.Endpoints)
 	}
-	// Credentials are no longer bundled in the context — the runner requests
-	// them on demand from the sibling test-credentials endpoint.
+	// Credentials are not bundled in the context, and no callback serves them:
+	// the agent reads a test user's login from the roles gate ticket (ADR-0022).
 	if resp.CriteriaPath != criteriaFilePath {
 		t.Errorf("criteriaPath = %q; want %q", resp.CriteriaPath, criteriaFilePath)
 	}

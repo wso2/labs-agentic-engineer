@@ -1,0 +1,103 @@
+openapi: 3.0.3
+info:
+  title: Catalog Facade API
+  version: 1.0.0
+paths:
+  /products/{sku}:
+    get:
+      operationId: getProduct
+      summary: Fetch one product, cached
+      parameters:
+        - name: sku
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The product
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+        "404":
+          description: No such product upstream
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /products/{sku}/cache:
+    delete:
+      operationId: evictProduct
+      summary: Drop a product from the cache
+      parameters:
+        - name: sku
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Whether an entry was dropped
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Eviction"
+  /search:
+    get:
+      operationId: searchProducts
+      summary: Search products upstream
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Matching products
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Product"
+components:
+  schemas:
+    Product:
+      type: object
+      required: [sku, name, price, currency, inStock]
+      properties:
+        sku:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        price:
+          type: number
+          format: double
+        currency:
+          type: string
+        inStock:
+          type: boolean
+    Eviction:
+      type: object
+      required: [sku, evicted]
+      properties:
+        sku:
+          type: string
+        evicted:
+          type: boolean
+    ErrorMessage:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string

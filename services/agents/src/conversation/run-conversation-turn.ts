@@ -43,7 +43,7 @@ import { DocFileBundle } from "../collab/doc-bundle.js";
 import { StreamingDocWriter } from "../collab/streaming-add.js";
 import type { RoomPeer } from "../collab/room-peer.js";
 import { runTurn } from "../agents/main/run-turn.js";
-import { buildFileTools } from "../agents/main/tools/files.js";
+import { buildFileTools, buildRegisterDraftTools } from "../agents/main/tools/files.js";
 import { buildTaskPlanTools } from "../agents/main/tools/task-plan.js";
 import { TaskPlan } from "../agents/main/task-plan-accumulator.js";
 import { buildInstructions, buildTaskPlanInstructions, buildPrompt, buildEagerSkillsBlock } from "../agents/main/prompt.js";
@@ -181,6 +181,11 @@ export interface RunConversationTurnInput {
    */
   collabPeer?: RoomPeer;
   /**
+   * Marketplace register flow: merge draftExternalResource onto the files set.
+   * Omitted → byte-identical files tools (spec/project turns).
+   */
+  registerDraft?: boolean;
+  /**
    * Attach Anthropic's provider-executed `web_search` tool for this turn
    * (external-dependency-discovery #252). The caller (BFF) sets this true
    * under the same condition as `mcp`. Registered ONLY when true AND the
@@ -253,6 +258,9 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
         ? new DocFileBundle(input.collabPeer, input.files)
         : new FileBundle(input.files);
       tools = buildFileTools(bundle, skills);
+      if (input.registerDraft) {
+        tools = { ...tools, ...buildRegisterDraftTools() };
+      }
       instructions = buildInstructions(skills, input.surface);
     }
 

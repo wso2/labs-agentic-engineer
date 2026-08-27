@@ -1,6 +1,6 @@
 ---
 name: architecture
-description: Use when deriving or enriching a component's design — deciding the component decomposition, filling a scaffolded design.json (language, dependencies, description, pinned skills), or resolving/reconsidering any dependency.
+description: Reuse org catalog resources when deriving or enriching a component's design — deciding the component decomposition, filling a scaffolded design.json (language, dependencies, description, pinned skills), or resolving/reconsidering any dependency.
 metadata:
   aep:
     kind: platform
@@ -181,29 +181,33 @@ schema violation that both the zod write-gate and the Go fold gate reject.
 | `component` | a SIBLING in this design that this component CALLS | the sibling's own name | — | this design |
 | `org-service` | a service ANOTHER project publishes for cross-project use | the provider's exact name, **copied verbatim** | — | `list_org_endpoints`, then `list_org_component_endpoints` |
 | `platform-resource` | a backing resource the platform provisions (database, cache, IDP) | **your choice** — it becomes the env-var prefix | `resourceType` (a registered type), `parameters` | `list_platform_resource_types` |
-| `external` | a system OUTSIDE the platform (a SaaS API, a legacy service) | a registered resource's exact name, else your choice | `style` (`rest-api`\|`sdk`), then `specPath` or `package`; `config`; `candidates` | `list_external_resources` + `get_external_resource_schema`, else `web_search` |
+| `external` | a system OUTSIDE the platform (a SaaS API, a legacy service) | a **Registered External resource**'s exact name, else a **new** name for a **Project External resource** | `style` (`rest-api`\|`sdk`), then `specPath` or `package`; `config`; `candidates` | `list_external_resources` + `get_external_resource_schema`, else `web_search` |
 
-**Discover before you invent.** Call that last column's tool before authoring the
-entry, and take the name and schema from what it returns rather than from the
-requirement's wording — a registered resource described as "transactional email
+**Reuse.** Call that last column's tool before authoring the entry, and take
+the name and schema from the matching row rather than from the requirement's
+wording — a **Registered External resource** described as "transactional email
 delivery" is the right reuse for an "email" need even when its name (`sendgrid`)
-doesn't echo the requirement. When nothing the catalog returns fills the role,
-leave the dependency unresolved rather than forcing a fit: a name that resolves
-to nothing is worse than an absent one.
+doesn't echo the requirement. When several rows could fill the role, the
+org-level one wins (a Registered External over a new Project External name; an
+org-service over a sibling you would otherwise add; a listed cluster resource
+type for `resourceType`). This step is done when every `external`,
+`org-service`, and `platform-resource` emitted this turn is taken from this
+turn's matching `list_*` result (exact `name` or `resourceType`), unless this
+turn is a user-asked reconsider. When nothing the catalog returns fills the
+role, leave the dependency unresolved rather than forcing a fit: a name that
+resolves to nothing is worse than an absent one.
 
 ```json
 "dependencies": [
   { "kind": "component", "name": "expense-api" },
   { "kind": "platform-resource", "name": "orders-db", "resourceType": "postgres-cnpg" },
-  { "kind": "external", "name": "stripe", "style": "sdk", "package": "npm:stripe@^14",
-    "config": [ { "key": "STRIPE_API_KEY", "secret": true, "description": "Your Stripe secret API key" } ] },
-  { "kind": "external", "name": "github", "style": "rest-api",
-    "description": "GitHub REST API for issues + PRs." }
+  { "kind": "external", "name": "github",
+    "config": [ { "key": "GITHUB_TOKEN", "secret": true, "description": "GitHub personal access token" } ],
+    "description": "Call GitHub issues + PRs — consumption instructions from the Registered row." }
 ]
 ```
 
-The `github` entry is unresolved on purpose: `style: "rest-api"` with no
-`specPath` computes `unresolved`/`needs-spec` — expected, not an error to fix.
+The `github` entry is authored from the catalog row.
 
 #### Reading a provider's real contract
 
@@ -251,16 +255,21 @@ operations its contract actually exposes:
   unable to sign in. For `thunder-app` only, proposing the `scopes` parameter is
   allowed (default `openid profile email`); every other resource type keeps the
   no-invented-parameters rule, and `redirectUris` are platform-managed — never
-  propose them. `thunder-authentication` owns the full rule.
+  propose them. `thunder-authentication` owns the full rule, and
+  `security-design` owns which roles sign in through it.
 
 ### Resolving an `external` dependency
 
-`external` is the one kind with real-world discovery to do — the SaaS or legacy
-system lives in no catalog you can look up directly. Work it in order:
+`external` is the one kind with real-world discovery to do. Work it in order:
 
-1. **Reuse first**, via the table's tool column. A registered resource whose
-   description fits resolves from the registry regardless of
-   `style`/`specPath`/`package`. Don't re-discover what the org already has.
+1. **Reuse first.** Call `list_external_resources`. Prefer a fitting
+   **Registered External resource** — take its exact name, config-key schema,
+   consumption instructions, and org resource docs pointers.
+   Write consumption instructions into the dependency `description`.
+   That name resolves from the registry regardless of
+   `style`/`specPath`/`package`. A user-asked reconsider may switch to a
+   different Registered name, or create a **Project External resource** under
+   a **new** name — a separate catalog record; org values stay on the Registered name.
 2. **`web_search` for candidates** when nothing registered fits. Stop at the
    options actually worth presenting — often 2–3 genuine contenders, sometimes
    one when a real signal already points to it.
@@ -268,19 +277,21 @@ system lives in no catalog you can look up directly. Work it in order:
    specific HTTP endpoints; `sdk` when it codes against a vendor SDK/library —
    the candidate's own docs make it obvious ("REST API reference" vs "install our
    SDK").
-4. **Resolve the contract.** A `rest-api` needs a `specPath`: prefer a URL you
-   discovered — confirm it is a real OpenAPI document with `fetch_openapi_spec`
+4. **Resolve the contract.** A `rest-api` needs a `specPath`: prefer an OpenAPI
+   URL from org resource docs on the Registered row, else a URL you discovered —
+   confirm it is a real OpenAPI document with `fetch_openapi_spec`
    (it fetches and validates, stores nothing), then set `specPath` to that URL. If
    the user hands you a spec file, or the API is private/undocumented, `addFile`
    it to
    `specs/design/components/<component>/dependencies/<dep-name>.openapi.yaml` and
-   point `specPath` at that repo-relative path. With NO `specPath` the dep stays
-   `needs-spec` and the build gate asks the user for one. Don't hand-author a
+   point `specPath` at that repo-relative path. With NO `specPath` and no catalog
+   hit the dep stays `needs-spec` and the build gate asks the user for one. Don't hand-author a
    whole spec — the coding agent researches the API. An `sdk` needs `package`
    instead: one ecosystem-prefixed identifier (`npm:`, `go:`, `pypi:`), version
    inline but optional.
 5. **Derive `config` keys** from the contract — a `rest-api`'s
-   `components.securitySchemes`, an `sdk`'s auth documentation.
+   `components.securitySchemes`, an `sdk`'s auth documentation. A reused
+   Registered row already named the keys — keep them.
 6. **Emit the outcome**, never a `status`/`reason`:
    - **A real SIGNAL points to one option → emit it resolved**, with `style` +
      (`package` or `specPath`) and `config`. A signal is one of: the requirement
@@ -369,8 +380,10 @@ snapshot) and act on its current state.
   may name another. Pin the one they name — the same signal rule as discovery, so
   with no signal the choice stays theirs — then remove `candidates` per step 7.
 - **Unresolved.** Apply that kind's row in the table above.
-- **Already resolved — reconsider.** Present fresh alternatives as `candidates`,
-  or repin to the one the user names.
+- **Already resolved — reconsider.** This is the only branch that may leave a
+  catalog row that still fills the role. Present fresh alternatives as
+  `candidates`, or repin to the Registered name the user picks, or emit a
+  **Project External resource** under a **new** name.
 
 Edit ONLY that one dependency's entry: re-emit the component's whole
 `design.json` (never a patch) with every other field and dependency carried over
@@ -379,8 +392,9 @@ exactly as they were.
 ### Descriptions, and the per-component artifacts
 
 Every dependency carries a one-line `description`: what the target is and how
-this component uses it. Source it per kind — an `external`'s says which
-endpoints/SDK and which auth scheme; an `org-service`'s says the specific
+this component uses it. Source it per kind — an `external`'s is the consumption
+instructions when the name is a Registered External resource; an `org-service`'s
+says the specific
 operations it calls from the discovered contract, or plainly that no contract was
 resolvable, never a guess; a `platform-resource`'s says what it stores. The
 console shows it in the dependency drawer and the coding agent relies on it to

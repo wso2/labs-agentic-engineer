@@ -59,9 +59,3 @@ type CriteriaReader interface {
 type ContextProvider interface {
 	ValidationContext(ctx context.Context, cycleID, orgHandle string) (*ValidationContextResponse, error)
 }
-
-// CredentialRequester is the internal test-credentials endpoint's view of the
-// credential service (*CredentialService satisfies it).
-type CredentialRequester interface {
-	RequestCredentials(ctx context.Context, cycleID, orgHandle string, req CredentialRequest) (*TestCredential, error)
-}

@@ -22,6 +22,7 @@ import (
 	"log/slog"
 
 	"github.com/wso2/aep/aep-api/internal/dependencies"
+	"github.com/wso2/aep/aep-api/internal/platform/apierr"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
@@ -55,6 +56,11 @@ func (s *Service) SaveValues(ctx context.Context, orgID, ocOrgID, projectID, dep
 	dep, err := matchDependency(comps, depName, spec.DependencyKindExternal)
 	if err != nil {
 		return err
+	}
+	// Registered External resources hold values on the org catalog plane;
+	// project POST .../values is Project External only.
+	if s.catalogValuePlane != nil && len(s.catalogValuePlane.EnvCells(orgID, depName)) > 0 {
+		return apierr.Conflict("values live on the org record")
 	}
 	unionConfig, _ := spec.UnionExternalConfigFor(comps, depName)
 

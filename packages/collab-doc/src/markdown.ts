@@ -50,12 +50,41 @@ export function isMarkdownPath(path: string): boolean {
   return path.endsWith(".md");
 }
 
+/**
+ * An EMPTY document is one empty paragraph, not zero blocks.
+ *
+ * That is what the editor itself holds for a document with nothing in it, and
+ * `fragmentToMarkdown` serializes it back to "" — so the two agree and no
+ * spurious write is produced. Parsing "" gives zero blocks instead, and the
+ * difference is not cosmetic: a fragment with no children generates NO Yjs
+ * update, so its share key never replicates to a joining client. `doc.share`
+ * then answers "no such document" for a file the room was seeded with and git
+ * really holds, which left an emptied markdown file permanently uneditable —
+ * and emptying one is a supported action (the committer writes an emptied
+ * fragment back as an empty file, since a top-level fragment cannot be deleted
+ * from a Y.Doc).
+ *
+ * Normalizing here rather than at the call sites keeps every producer of a
+ * fragment — the seed, and an agent writing a file — on the same shape.
+ */
+function withEmptyDocAsParagraph(json: Record<string, unknown>): Record<string, unknown> {
+  const content = json.content;
+  if (Array.isArray(content) && content.length > 0) return json;
+  return { ...json, content: [{ type: "paragraph" }] };
+}
+
 /** Parse markdown into an (empty) Y.XmlFragment. */
 export function markdownToFragment(
   markdown: string,
   fragment: Y.XmlFragment,
 ): void {
-  prosemirrorJSONToYXmlFragment(schema, manager.parse(markdown), fragment);
+  prosemirrorJSONToYXmlFragment(
+    schema,
+    withEmptyDocAsParagraph(
+      manager.parse(markdown) as unknown as Record<string, unknown>,
+    ),
+    fragment,
+  );
 }
 
 /** Serialize a fragment back to markdown (committer + agent-read seam). */

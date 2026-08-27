@@ -48,8 +48,9 @@
  */
 
 import { spawn } from "node:child_process";
-import { createWriteStream, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, join } from "node:path";
 import { stdout as output } from "node:process";
 import {
   formatLine,
@@ -70,6 +71,138 @@ const BUILD_RUNNER_SCRIPT = join(REPO_ROOT, "deployments", "scripts", "build-run
 // it into the project dir's .claude/skills/, standing in for the BFF's write.
 const IMAGE_LIBRARY_DIR = "/app/skills";
 const RUNNER_IMAGE = process.env.AGENT_RUNNER_IMAGE || "aep-runner:dev";
+// The `bal library` tool, which the `ballerina` skill drives by name. The image
+// INSTALLS it (see the Dockerfile) rather than putting a command on PATH: it is a
+// Ballerina CLI tool, so it lives in the `aep` user's local bala repository and
+// `bal` dispatches `library` to it. What a run reads is therefore ONE jar, at a
+// path the bala layout fixes.
+//
+// Docker mode mounts the tool's working-tree jar over that one, so the tuning
+// loop is `./gradlew :native:jar` in the tool's repository and never an image
+// rebuild — the same trade the skill library makes a few lines above, for the
+// same reason: what is being iterated on is what the agent reads, and a rebuild
+// between edit and run is what stops people iterating.
+//
+// Host mode gets no such overlay, because there is nothing to overlay: `bal`
+// resolves the tool out of the developer's OWN home, and the loop there is the
+// tool's `install-local.sh`. Rather than write into someone's `~/.ballerina`
+// behind their back, host mode reports what it found (see `hostToolAdvice`).
+const BAL_TOOL_REPO = join(REPO_ROOT, "packages", "bal-library-tool");
+
+// The tool's coordinates, which its bala path is built out of. Pinned here rather
+// than parsed out of the tool's `Ballerina.toml`: that file is the source of
+// truth and a test holds these two to it, so a rename fails a test instead of
+// silently mounting over a path no image has.
+const TOOL_ORG = "ballerinax";
+const TOOL_NAME = "tool_library";
+/** Where the image's install puts the jar, and the working-tree jar to put there. */
+export interface ToolJarOverlay {
+  hostJar: string;
+  imageJar: string;
+}
+
+/**
+ * The tool's own build output, when its repository is checked out and built.
+ *
+ * Found by looking rather than by composing a version into a filename: the jar's
+ * name carries the tool's version, and the mount does not care what it is —
+ * what lands in the container is named by the IMAGE's side of the mount. One jar
+ * or nothing, because two would mean guessing which build to send.
+ */
+export function workingTreeToolJar(): string | undefined {
+  const libs = join(BAL_TOOL_REPO, "native", "build", "libs");
+  if (!existsSync(libs)) return undefined;
+  const [jar, ...extra] = readdirSync(libs).filter((entry) => entry.endsWith(".jar"));
+  return jar !== undefined && extra.length === 0 ? join(libs, jar) : undefined;
+}
+
+/**
+ * The jar mount for a docker run, or undefined to leave the image's own install
+ * alone — which is the honest outcome when the tool's repository is not checked
+ * out beside this one, since the image's copy is then the only one there is.
+ *
+ * The container-side path is composed from the tool's declared version, because
+ * that is what the image's install used. Bumping that version without rebuilding
+ * the image therefore aims this mount at a path that image does not have;
+ * `make build-runner FORCE=1` is what keeps the two together, and the line this
+ * prints on every run names the version it is mounting as.
+ */
+export function toolJarOverlay(): ToolJarOverlay | undefined {
+  const hostJar = workingTreeToolJar();
+  const version = installedToolVersion();
+  if (!hostJar || !version) return undefined;
+  const libs = `/home/aep/.ballerina/repositories/local/bala/${TOOL_ORG}/${TOOL_NAME}/${version}/any/tool/libs`;
+  return { hostJar, imageJar: `${libs}/native-${version}.jar` };
+}
+
+/**
+ * The version the image installed.
+ *
+ * Read from the tool's `gradle.properties`, which is where `make-dist.sh`
+ * derives it — and `make-dist.sh` is what the image's first stage runs, so this
+ * is the same value by construction rather than by agreement. It used to be read
+ * from a checked-in `vendor/.../VERSION`; ADR-0008 deleted that file, and a
+ * missing file here returns undefined, which silently disables the overlay.
+ */
+function installedToolVersion(): string | undefined {
+  try {
+    const properties = readFileSync(join(BAL_TOOL_REPO, "gradle.properties"), "utf8");
+    return /^version=(.+)$/m.exec(properties)?.[1]?.trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Every tool jar installed in this developer's own bala repository. */
+function installedToolJars(): string[] {
+  const root = join(homedir(), ".ballerina", "repositories", "local", "bala", TOOL_ORG, TOOL_NAME);
+  if (!existsSync(root)) return [];
+  return readdirSync(root).flatMap((version) => {
+    const libs = join(root, version, "any", "tool", "libs");
+    if (!existsSync(libs)) return [];
+    return readdirSync(libs)
+      .filter((entry) => entry.endsWith(".jar"))
+      .map((entry) => join(libs, entry));
+  });
+}
+
+/**
+ * What host mode will actually resolve `bal library` to, when that is worth
+ * saying — nothing when the installed tool already IS the working-tree build.
+ *
+ * Reported rather than repaired. Installing is a write into the developer's own
+ * `~/.ballerina`, and a dev harness silently replacing a tool they may have
+ * installed from a release is not a trade worth making for two saved seconds.
+ *
+ * "Built after it was installed", by mtime, is the question — NOT "are the bytes
+ * the same". A gradle jar is not byte-reproducible (the zip carries entry
+ * timestamps), so comparing content calls an unchanged rebuild stale and the
+ * advice becomes noise nobody reads. `install-local.sh` copies without `-p`, so
+ * the installed copy is stamped when it landed, which is exactly the ordering
+ * this needs.
+ *
+ * A missing tool is advice, never a precondition — the `ballerina` skill treats a
+ * failed lookup the way it treats any other: write from `code-rules.md` and let
+ * `bal build` name what is wrong. Blocking the run would cost more than the
+ * accuracy it buys.
+ */
+export function hostToolAdvice(): string | undefined {
+  const installed = installedToolJars();
+  if (installed.length === 0) {
+    return (
+      "`bal library` is not installed, so the ballerina skill's lookups will fail and it will " +
+      "write from code-rules.md instead — install it with packages/bal-library-tool/install-local.sh"
+    );
+  }
+  const hostJar = workingTreeToolJar();
+  if (!hostJar) return undefined;
+  const built = statSync(hostJar).mtimeMs;
+  if (installed.some((jar) => statSync(jar).mtimeMs >= built)) return undefined;
+  return (
+    "`bal library` resolves to an installed jar older than your working-tree build — " +
+    "re-run packages/bal-library-tool/install-local.sh to put this run on your changes"
+  );
+}
 // The Agent SDK's project state inside the image, which is where a fanned-out
 // subagent's own transcript lives (`<slug>/<session>/subagents/agent-<taskId>.jsonl`).
 // That transcript is the ONLY record of what a subagent was doing beyond the
@@ -287,6 +420,11 @@ interface Invocation {
  * See ADR-0016 for the platform half.
  */
 export function hostInvocation(opts: CodingRunOptions, runDir: string): Invocation {
+  // Host mode has no image, so every tool a skill names comes off the developer's
+  // own machine — which is exactly what --host already means for `bal`, `go` and
+  // `playwright-cli`, and now for `bal library` too: it is a `bal` tool, resolved
+  // out of `~/.ballerina`, so there is no PATH entry to point anywhere. What that
+  // resolves to is reported by `hostToolAdvice`, not patched here.
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     AEP_LOCAL_PROJECT_DIR: opts.projectDir,
@@ -373,6 +511,7 @@ export function dockerInvocation(opts: CodingRunOptions, runDir: string, contain
   // putting a secret somewhere it is never read.
   const coding = codingCredential();
   const credentialVar = coding?.envVar ?? "ANTHROPIC_API_KEY";
+  const toolJar = toolJarOverlay();
   const args = [
     "run",
     "--rm",
@@ -387,6 +526,7 @@ export function dockerInvocation(opts: CodingRunOptions, runDir: string, contain
     `${LOCAL_ENTRY}:/app/src/local.ts:ro`,
     "-v",
     `${opts.skillsDir}:${IMAGE_LIBRARY_DIR}:ro`,
+    ...(toolJar ? ["-v", `${toolJar.hostJar}:${toolJar.imageJar}:ro`] : []),
     "-v",
     `${opts.projectDir}:/workspace/project`,
     "-v",
@@ -513,6 +653,20 @@ export async function runCodingAgent(opts: CodingRunOptions): Promise<CodingRunR
       if (!opts.silent) output.write(`  ✗ ${err instanceof Error ? err.message : String(err)}\n`);
       return { exitCode: 2, runDir };
     }
+  }
+
+  // Which `bal library` this run reads, when that is not simply "the one the
+  // image installed". It is the ballerina skill's source for every signature, and
+  // a run reading a stale jar looks exactly like a run reading a fresh one — so
+  // the one case worth a line is the one where they differ.
+  if (!opts.silent) {
+    const overlay = mode === "docker" ? toolJarOverlay() : undefined;
+    const note = overlay
+      ? `bal library: mounting ${basename(overlay.hostJar)} over the image's install`
+      : mode === "host"
+        ? hostToolAdvice()
+        : undefined;
+    if (note) output.write(`  ℹ ${note}\n`);
   }
 
   // Names this run's container so its scratch can be copied out after it exits.

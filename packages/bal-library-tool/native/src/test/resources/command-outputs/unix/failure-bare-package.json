@@ -1,0 +1,1 @@
+{"kind":"validation","message":"'ballerinax/github' is not a verb.","suggestion":"A verb comes first: try `bal library overview ballerinax/github`. The verbs are find, overview, client, class, funcs, type, guide, api."}

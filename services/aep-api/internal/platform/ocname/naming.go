@@ -143,6 +143,25 @@ func ServiceURLEnvName(depName string) string {
 	return EnvVarName(depName, "URL")
 }
 
+// ServiceGatewayURLEnvName is the env var a consumer reads a PROTECTED provider
+// component's gateway address from: "todo-api" → "TODO_API_GATEWAY_URL". It sits
+// beside ServiceURLEnvName because the two name the same provider reached two
+// different ways, and the difference is authentication:
+//
+//   - ServiceURLEnvName is the project Service, reached directly. Nothing
+//     validates a token and nothing injects identity headers.
+//   - This one is the API gateway, which validates the caller's bearer token and
+//     injects X-User-* from its claims. The platform emits it only for a provider
+//     whose design declares `exposesAPI.auth` (spec.ResolveAPISecurityEnabled).
+//
+// A consumer that carries untrusted traffic — a SPA's nginx proxying the
+// browser's /api — must prefer this one. Keyed on the LOGICAL dependency name for
+// the same reason as ServiceURLEnvName: the var the coding agent codes against
+// does not move when OC's scoping rule does.
+func ServiceGatewayURLEnvName(depName string) string {
+	return EnvVarName(depName, "GATEWAY_URL")
+}
+
 // ExternalResourceName is the per-project OC Resource name (== the Workload
 // dependency `ref`) for a project's external OR platform resource. metadata.name
 // is namespace-unique — owner.projectName does NOT scope it — so the project

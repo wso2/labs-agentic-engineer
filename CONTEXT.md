@@ -157,18 +157,35 @@ opposite side of the wire).
 external` entry in its `design.json` `dependencies[]` (`style: rest-api | sdk`),
 naming the config keys it reads and, for a REST API, an optional `specPath` (a
 URL or a committed spec file) the coding agent starts from (ADR-0010). Resolved
-at read time (ADR-0003), never a stored flag. It **resolves to** an external
-resource (below).
+at read time (ADR-0003), never a stored flag. It **resolves to** an External
+resource: a **Registered External resource**'s exact name when the catalog
+already has a fit, otherwise a new **Project External resource** name.
 _Avoid_: `needsSpec`, `specUrl`, `sources` — retired fields, rejected on parse.
 
 **External resource**:
-**The org-level, shared** record of one such integration once provisioned — its
-name, description, and config-key schema — so many components' external
-dependencies reuse it by name instead of each redefining it (one resource, many
-dependencies). It is what the Settings → Resources view lists and what a card's
-"Used by" counts. Stored as an org-namespaced OpenChoreo `ResourceType`, not a
-database table (ADR-0009).
+The org-level shared record of one third-party integration — name, description,
+config-key schema — so many components reuse it by name instead of each
+redefining it. Listed on **Resources**. Two kinds below. The OpenChoreo
+`ResourceType` *is* the record (ADR-0009).
 _Avoid_: "external_resources table" (removed); connection.
+
+**Registered External resource**:
+An External resource the org registered once, with org-held environment values
+and **consumption instructions**, so a later project that needs the same API
+reuses that name instead of collecting the values again.
+_Avoid_: org API, shared secret (the resource is the integration, not the secret).
+
+**Project External resource**:
+An External resource invented for one project's design when nothing in the
+catalog fits, or the user asks to reconsider. Its environment values are that
+project's.
+_Avoid_: unregistered external, local external.
+
+**Consumption instructions**:
+How a consuming project should use a Registered External resource — distinct
+from what the resource *is* (description), never a restatement of it. Their
+presence on the catalog record is what makes the resource Registered (ADR-0021).
+_Avoid_: usage notes, description (a different field).
 
 **Resource-type marker**:
 A declaration a platform engineer attaches to a resource type in the catalog,
@@ -202,6 +219,76 @@ Formerly an implicit per-component flag describing who calls a service's API.
 Superseded by the explicit Thunder application dependency: a design.json still
 carrying the field is rejected on parse, not silently migrated.
 _Avoid_: reviving `callerIdentity` as a design.json key — it no longer parses.
+
+## Security & access (`services/aep-api`)
+
+**Security architecture**:
+The prose half of a project's security design (`specs/design/security.md`) — how
+a caller's role is resolved from a token, and the policy narrative behind the
+access rules. It names no Role and declares no Test user: the Roles document
+owns both, so the two documents cannot contradict each other.
+_Avoid_: security spec, auth doc; and never restate a fact `design.json` already
+holds (the Thunder application's dependency name, its scopes, and which
+components sit on each side of sign-in are all read from there).
+
+**Roles document**:
+The structured half of a project's security design (`specs/design/roles.json`) —
+which Roles this project uses, what each may do **within this project**, and its
+Test users. A design artifact like any other: authored during design, versioned
+into the project's `v<N>` tag, read at build time by the platform alone. It
+DECLARES Roles rather than owning them; only the permissions it grants them are
+this project's.
+_Avoid_: security.json, access model, permissions file, RBAC config (it is not
+enforcement — it is the declaration the platform provisions from and the coding
+agent wires to).
+
+**Role**:
+A named group of people on the Platform IdP, reaching an app as a `groups` claim.
+A Role is **shared, not project-scoped**: its scope is whatever the IdP's scope
+is — cluster-wide while one IdP serves the cluster, narrower once the IdP is.
+Two projects naming the same Role mean the same Role, and a person who holds it
+holds it everywhere. What a Role may DO is per-project (the Roles document); the
+Role itself is not — so a Role OUTLIVES the projects that declare it: dropping it
+from a design, or deleting the project, leaves the Role standing.
+_Avoid_: group (the IdP's word for what a Role is; use Role in the domain),
+permission (a Role is granted permissions, it is not one), scope (an OAuth
+concept, unrelated), project role (there is no such thing).
+
+**Role catalog**:
+The Roles that already exist on the Platform IdP, read at design time so a design
+REUSES an existing Role instead of minting a near-duplicate. Read-only to the
+design agent, exactly like the external-resource and platform-resource-type
+catalogs it already consults before inventing a name.
+_Avoid_: role registry, directory (the directory is the whole user store; the
+catalog is the readable list of Roles in it).
+
+**Test user**:
+An account on the Platform IdP, holding a Role, that exists so that Role's
+behaviour can be exercised — the validation agent signs in as one to judge
+role-gated acceptance criteria. Shared on the same terms as a Role, and outliving
+a project the same way. Every Role has at least one: the user may name their own,
+and the platform supplies any the design does not. Its password is
+platform-generated and PUBLISHED in the Roles gate ticket, which is where the
+validation agent reads it; a Test user is therefore a disposable account for
+agents, readable by anyone who can read the repository, and never a real person's.
+_Avoid_: demo user, seed user, service account (a Test user is a person-type
+account standing in for a real end user, never a machine identity).
+
+**Roles gate**:
+The `provision` gate titled "Provision roles and test users", minted once per
+version beside the per-dependency gates and resolved by the platform itself in
+the same pass. It is driven by the DESIGN at the tag, not by the Build drawer's
+inputs, which is what makes a Role added in v2 actually get created; and it
+carries `aep:gate/roles`, not an `aep:dep/` label, so it can never be mistaken
+for a dependency's gate. Like every gate it holds the next dispatch while open —
+which earns its keep only on failure, when validation would otherwise run
+unable to sign in. Before closing, it PUBLISHES every Test user's login as a
+comment, under an `<!-- aep:test-users -->` marker: that comment is the
+validation agent's source for the credentials it signs in with, and a failure to
+publish fails the build rather than sending validation into a run it cannot sign
+in for.
+_Avoid_: roles issue, provisioning task (it is never agent work — it carries no
+`aep` arming label, and nothing may work it).
 
 ## Tasks
 

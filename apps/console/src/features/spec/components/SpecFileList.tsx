@@ -39,10 +39,12 @@ import {
   RefreshCw,
   Network,
   LayoutDashboard,
+  ShieldCheck,
   TriangleAlert,
 } from "@wso2/oxygen-ui-icons-react";
 import { WorkingPulse } from "../../agent-chat/components/WorkingIndicator";
 import { PRD_PATH, type SpecFileEntry } from "../api/mapping";
+import { fileLabel } from "../api/labels";
 import {
   mostSignificant,
   reasonCount,
@@ -55,47 +57,6 @@ import {
   selectionKey,
   type SpecSelection,
 } from "../api/designTree";
-
-function basename(path: string): string {
-  return path.split("/").at(-1) ?? path;
-}
-
-const OPENAPI_RE = /\/openapi\.ya?ml$/;
-const COMPONENT_DESIGN_RE = /^specs\/design\/components\/[^/]+\/design\.json$/;
-const VALIDATION_CRITERIA_RE = /^specs\/validation\/validation-criteria\.json$/;
-const DESIGN_ROOT = "specs/design/design.md";
-const SECURITY = "specs/design/security.md";
-
-/**
- * A document's NAME, never its filename (#575).
- *
- * The user is reading a document tree, not a repository — `prd.md` and
- * `security.md` are storage details that leaked into the one surface they read
- * throughout the journey. The repo paths deliberately do not change; this is
- * the mapping, and the lexicon holds the same table in words.
- *
- * A file with no entry here falls back to its filename, which keeps an
- * agent-invented document readable rather than blank. Feature files land there
- * on purpose: their filename IS the feature's name, so the fallback is already
- * the right answer.
- */
-const TITLES: Record<string, string> = {
-  [PRD_PATH]: "Product requirements",
-  [DESIGN_ROOT]: "Design overview",
-  [SECURITY]: "Security",
-};
-
-function fileLabel(path: string): string {
-  if (Object.hasOwn(TITLES, path)) return TITLES[path] as string;
-  if (OPENAPI_RE.test(path)) return "API";
-  if (COMPONENT_DESIGN_RE.test(path)) return "Design overview";
-  if (VALIDATION_CRITERIA_RE.test(path)) return "Acceptance criteria";
-  // A document nothing above names — a feature file most of the time, where
-  // the filename IS the feature's name once the extension is off it. Keeping
-  // `.md` would leave the one surface the user reads throughout still showing
-  // them a file.
-  return basename(path).replace(/\.md$/, "");
-}
 
 function fileSel(path: string): SpecSelection {
   return { kind: "file", path };
@@ -328,6 +289,11 @@ export function SpecFileList({
             {design.overview.map((f) =>
               row(fileSel(f.path), fileLabel(f.path), <LayoutDashboard size={16} />),
             )}
+            {/* ONE entry for both halves of the security design — the roles and
+                their test users, and the prose saying how a caller's role is
+                resolved. Two files, one subject; the panel tabs between them. */}
+            {design.hasSecurity &&
+              row({ kind: "security" }, "Security", <ShieldCheck size={16} />)}
             {design.components.map((c) => {
               const collapsed = collapsedComponents.has(c.name);
               return (

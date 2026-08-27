@@ -48,6 +48,66 @@ func errProvisioningUnavailable() error {
 	return apierr.ServiceUnavailable("provisioning is not configured")
 }
 
+func (h *Handler) ListWorkloadDependencies(ctx context.Context, request gen.ListWorkloadDependenciesRequestObject) (gen.ListWorkloadDependenciesResponseObject, error) {
+	if h.svc == nil {
+		return nil, errProvisioningUnavailable()
+	}
+	org := tenant.BoundOrgFromContext(ctx)
+	views, err := h.svc.ListWorkloadDependencies(ctx, org, request.ProjectName)
+	if err != nil {
+		return nil, mapProvisionError(err)
+	}
+	return gen.ListWorkloadDependencies200JSONResponse(toWorkloadDependencyDTOs(views)), nil
+}
+
+func (h *Handler) ListOrgEnvironments(ctx context.Context, _ gen.ListOrgEnvironmentsRequestObject) (gen.ListOrgEnvironmentsResponseObject, error) {
+	org := tenant.BoundOrgFromContext(ctx)
+	if h.svc == nil {
+		return nil, errProvisioningUnavailable()
+	}
+	names, err := h.svc.ListOrgEnvironments(ctx, org)
+	if err != nil {
+		return nil, mapProvisionError(err)
+	}
+	out := make([]gen.EnvironmentDTO, 0, len(names))
+	for _, n := range names {
+		out = append(out, gen.EnvironmentDTO{Name: n})
+	}
+	return gen.ListOrgEnvironments200JSONResponse(out), nil
+}
+
+func (h *Handler) RegisterExternalResource(ctx context.Context, request gen.RegisterExternalResourceRequestObject) (gen.RegisterExternalResourceResponseObject, error) {
+	org := tenant.BoundOrgFromContext(ctx)
+	if h.svc == nil {
+		return nil, errProvisioningUnavailable()
+	}
+	if request.Body == nil {
+		return nil, apierr.BadRequest("request body is required")
+	}
+	view, err := h.svc.RegisterExternalResource(ctx, org, *request.Body)
+	if err != nil {
+		return nil, mapProvisionError(err)
+	}
+	dtos := toExternalResourceDTOs([]ExternalResourceView{view})
+	return gen.RegisterExternalResource201JSONResponse(dtos[0]), nil
+}
+
+func (h *Handler) UpdateExternalResource(ctx context.Context, request gen.UpdateExternalResourceRequestObject) (gen.UpdateExternalResourceResponseObject, error) {
+	org := tenant.BoundOrgFromContext(ctx)
+	if h.svc == nil {
+		return nil, errProvisioningUnavailable()
+	}
+	if request.Body == nil {
+		return nil, apierr.BadRequest("request body is required")
+	}
+	view, err := h.svc.UpdateExternalResource(ctx, org, request.Name, *request.Body)
+	if err != nil {
+		return nil, mapProvisionError(err)
+	}
+	dtos := toExternalResourceDTOs([]ExternalResourceView{view})
+	return gen.UpdateExternalResource200JSONResponse(dtos[0]), nil
+}
+
 func (h *Handler) ListExternalResources(ctx context.Context, _ gen.ListExternalResourcesRequestObject) (gen.ListExternalResourcesResponseObject, error) {
 	org := tenant.BoundOrgFromContext(ctx)
 	if h.svc == nil {
@@ -213,6 +273,10 @@ func accessRequestsToWire(reqs []dependencies.AccessRequest) []gen.AccessRequest
 // sentinels (dependencies.Err*) and this slice's own (ErrOrgServiceNotFound /
 // ErrExternalResourceInUse).
 func mapProvisionError(err error) error {
+	var ae *apierr.Error
+	if errors.As(err, &ae) {
+		return ae
+	}
 	switch {
 	case errors.Is(err, dependencies.ErrDepWrongKind):
 		return apierr.BadRequest(err.Error())
@@ -232,18 +296,67 @@ func toExternalResourceDTOs(views []ExternalResourceView) []gen.ExternalResource
 	out := make([]gen.ExternalResourceDTO, 0, len(views))
 	for _, v := range views {
 		keys := make([]gen.ConfigKeyDTO, 0, len(v.Config))
+		secretByKey := make(map[string]bool, len(v.Config))
 		for _, k := range v.Config {
 			keys = append(keys, gen.ConfigKeyDTO{Key: k.Key, Secret: k.Secret, Description: k.Description, DefaultValue: k.DefaultValue})
+			secretByKey[k.Key] = k.Secret
 		}
 		consumers := make([]gen.ConsumerDTO, 0, len(v.Consumers))
 		for _, c := range v.Consumers {
 			consumers = append(consumers, gen.ConsumerDTO{ProjectID: c.ProjectID, ComponentName: c.ComponentName})
 		}
+		envCells := make([]gen.EnvValueCellDTO, 0, len(v.EnvCells))
+		for _, c := range v.EnvCells {
+			cell := gen.EnvValueCellDTO{
+				Environment: c.Environment,
+				Key:         c.Key,
+				Status:      gen.EnvValueCellDTOStatus(c.Status),
+			}
+			if !secretByKey[c.Key] {
+				cell.Value = c.Value
+			}
+			envCells = append(envCells, cell)
+		}
+		docs := make([]gen.ResourceDocPointerDTO, 0, len(v.ResourceDocs))
+		for _, d := range v.ResourceDocs {
+			docs = append(docs, gen.ResourceDocPointerDTO{
+				Type: gen.ResourceDocPointerDTOType(d.Type),
+				URL:  d.URL,
+				Path: d.Path,
+			})
+		}
+		instances := make([]gen.ResourceInstanceDTO, 0, len(v.Instances))
+		for _, inst := range v.Instances {
+			instances = append(instances, gen.ResourceInstanceDTO{
+				Project:     inst.Project,
+				Environment: inst.Environment,
+				Status:      inst.Status,
+			})
+		}
 		out = append(out, gen.ExternalResourceDTO{
-			Name:        v.Name,
-			Description: v.Description,
-			Config:      keys,
-			Consumers:   consumers,
+			Name:                    v.Name,
+			Description:             v.Description,
+			Config:                  keys,
+			Consumers:               consumers,
+			ConsumptionInstructions: v.ConsumptionInstructions,
+			EnvCells:                envCells,
+			ResourceDocs:            docs,
+			Instances:               instances,
+		})
+	}
+	return out
+}
+
+func toWorkloadDependencyDTOs(views []WorkloadDependencyView) []gen.WorkloadDependencyDTO {
+	out := make([]gen.WorkloadDependencyDTO, 0, len(views))
+	for _, v := range views {
+		out = append(out, gen.WorkloadDependencyDTO{
+			Kind:      gen.WorkloadDependencyDTOKind(v.Kind),
+			Ref:       v.Ref,
+			Tag:       gen.WorkloadDependencyDTOTag(v.Tag),
+			Name:      v.Name,
+			Project:   v.Project,
+			Component: v.Component,
 		})
 	}
 	return out

@@ -95,7 +95,7 @@ export function IssueChips({
                 params={{
                   projectName,
                   // A number now: `/tasks/$issueNumber` parses its param
-                  // (ADR-0020 §7); it used to be a bare string redirect.
+                  // (ADR-0021 §7); it used to be a bare string redirect.
                   issueNumber: issue.issueNumber,
                 }}
                 variant="body2"

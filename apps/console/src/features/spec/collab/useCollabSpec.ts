@@ -38,6 +38,14 @@ import {
 // pushes `{type:"token"}` over the stateless channel (D6) so long sessions
 // keep flushing after the initial handshake token expires.
 
+/**
+ * The reason the collab server tags an auth failure with when its own upstream
+ * was unreachable, rather than when the bearer was refused. Duplicated from
+ * `services/collab/src/server.ts` rather than shared, matching how the
+ * stateless message types are already spelled on both sides of this socket.
+ */
+const UPSTREAM_UNAVAILABLE = "upstream-unavailable";
+
 export interface CollabPeer {
   clientId: number;
   name: string;
@@ -52,7 +60,8 @@ export interface CollabSpec {
   peers: CollabPeer[];
   /** Y.Text for a non-md path, once synced; null → REST-content fallback. */
   getFileText: (path: string) => Y.Text | null;
-  /** Y.XmlFragment for an md path, once synced (#86 phase 6 doc model). */
+  /** Y.XmlFragment for an md path, once synced (#86 phase 6 doc model).
+   *  Never creates the fragment — a read is not authorship (ADR-0020). */
   getFileFragment: (path: string) => Y.XmlFragment | null;
   /** Live file paths in the doc (Y.Map entries + md fragments) — the source
    *  for the reactive spec list; empty until connected. */
@@ -175,8 +184,15 @@ export function useCollabSpec(
     // present the same token and be rejected again, so `authFailed` latches for
     // the life of this provider.
     let authFailed = false;
-    const scheduleRebuild = () => {
-      if (authFailed || !syncedRef.current || rebuildTimerRef.current) return;
+    // `requireSynced: false` is for the one drop that never synced and never
+    // will on its own: a room the server REFUSED (#586, an unseedable room or
+    // an unreachable oracle). That arrives as a permission-denied frame, which
+    // leaves the socket open — so the websocket's own reconnect never fires and
+    // nothing retries unless this does. The doc is empty in that case, so the
+    // doubling this ladder normally guards against cannot happen.
+    const scheduleRebuild = ({ requireSynced = true } = {}) => {
+      if (authFailed || rebuildTimerRef.current) return;
+      if (requireSynced && !syncedRef.current) return;
       syncedRef.current = false;
       // Silence the OLD provider's own retry first. Its websocket re-arms a
       // reconnect from `onClose` on the same 1s delay as ours, so a socket that
@@ -187,10 +203,31 @@ export function useCollabSpec(
       provider.disconnect();
       // Back off while drops keep coming, and start over once a session has
       // held long enough to count as healthy.
-      const attempt =
-        Date.now() - syncedAtRef.current >= REBUILD_RESET_MS
-          ? 0
-          : rebuildAttemptsRef.current;
+      // `syncedAtRef` is 0 until a session actually syncs, so "has it held long
+      // enough to count as healthy?" must ask whether it EVER synced first —
+      // otherwise a room that never synced (a server that refuses it, #586)
+      // reads as infinitely healthy, resets the ladder on every attempt, and
+      // retries once a second forever against the service that is already
+      // struggling.
+      const held =
+        syncedAtRef.current > 0 &&
+        Date.now() - syncedAtRef.current >= REBUILD_RESET_MS;
+      // Spend that credit ONCE. The healthy session earns the next attempt a
+      // fast retry, not every attempt: `syncedAtRef` belongs to a provider that
+      // is being thrown away, and leaving it set means each replacement room —
+      // none of which ever syncs, because the server is refusing them — still
+      // reads as "just came off a healthy session" and restarts the ladder. The
+      // result is the same once-a-second hammer the ladder exists to prevent,
+      // reached from the other side. The next successful sync sets it again.
+      // Spend that credit ONCE. The healthy session earns the next attempt a
+      // fast retry, not every attempt: `syncedAtRef` belongs to a provider that
+      // is being thrown away, and leaving it set means each replacement room —
+      // none of which ever syncs, because the server is refusing them — still
+      // reads as "just came off a healthy session" and restarts the ladder. The
+      // result is the same once-a-second hammer the ladder exists to prevent,
+      // reached from the other side. The next successful sync sets it again.
+      syncedAtRef.current = 0;
+      const attempt = held ? 0 : rebuildAttemptsRef.current;
       rebuildAttemptsRef.current = attempt + 1;
       rebuildTimerRef.current = setTimeout(
         () => {
@@ -222,7 +259,19 @@ export function useCollabSpec(
       // the rejection and the close in either order, so this both latches the
       // flag and cancels a bump the close already queued. The room stays
       // offline until something else remounts the hook.
-      onAuthenticationFailed: () => {
+      //
+      // Terminal for a VERDICT only (#586). The collab server reaches its
+      // oracle over the same `aep-api` that goes down on every deploy, and it
+      // used to report an unreachable oracle through this same channel — so a
+      // 503 during a redeploy latched the room offline for the life of the
+      // page, when retrying was the whole answer. Those now arrive tagged, and
+      // the provider's own reconnect is left to do its job.
+      onAuthenticationFailed: ({ reason }) => {
+        if (reason === UPSTREAM_UNAVAILABLE) {
+          setStatus("offline");
+          scheduleRebuild({ requireSynced: false });
+          return;
+        }
         authFailed = true;
         if (rebuildTimerRef.current) {
           clearTimeout(rebuildTimerRef.current);
@@ -368,10 +417,23 @@ export function useCollabSpec(
         status === "connected"
           ? (docRef.current?.getMap<Y.Text>("files").get(path) ?? null)
           : null,
-      getFileFragment: (path: string) =>
-        status === "connected"
-          ? (docRef.current?.getXmlFragment(path) ?? null)
-          : null,
+      // A READ MUST NOT CREATE (ADR-0020). `Y.Doc.getXmlFragment` registers a
+      // fragment for any path it is asked for, which made "does the room hold
+      // this file?" unanswerable — asking made the answer yes. That is what
+      // let an unseeded room paint a blank document over a PRD that exists in
+      // git (#586), because `usesCollab` saw a fragment and stood the
+      // committed-git fallback down; and it is what conjured phantom entries
+      // into `docPaths`, which the file list unions into the rail.
+      //
+      // `share.has` can be trusted as "the room holds this file" because an
+      // empty markdown document seeds as one empty paragraph rather than zero
+      // blocks (`markdownToFragment`) — without that, an emptied file would
+      // generate no update, never replicate its key, and read as absent here.
+      getFileFragment: (path: string) => {
+        const doc = docRef.current;
+        if (status !== "connected" || !doc?.share.has(path)) return null;
+        return doc.getXmlFragment(path);
+      },
       docPaths:
         status === "connected" && docRef.current
           ? listDocPaths(docRef.current)

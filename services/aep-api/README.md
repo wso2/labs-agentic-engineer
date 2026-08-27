@@ -2,7 +2,7 @@
 
 aep-api is the platform's Go **backend-for-frontend**: a contract-first HTTP service
 organized as **domain-oriented modules with vertical slices**. A request enters through
-`edge` (which authenticates it and binds its tenant), fans out to one of **seven
+`edge` (which authenticates it and binds its tenant), fans out to one of **eight
 domains**, and each domain does its work over **ports** — to its peers and to a shared
 **platform kernel**. The boundaries below aren't a style guide; they're compiled and
 CI-enforced by `internal/arch`.
@@ -19,7 +19,7 @@ flowchart TB
   subgraph AEPAPI["aep-api"]
     direction TB
     EDGE["edge — surface composer · tenant gate · composition root"]
-    subgraph DOMAINS["the seven domains — each self-contained, wired only through ports"]
+    subgraph DOMAINS["the eight domains — each self-contained, wired only through ports"]
       direction LR
       ORG["organization"]
       SPEC["spec"]
@@ -28,6 +28,7 @@ flowchart TB
       PROJ["projects"]
       SC["sourcecontrol"]
       OPS["ops"]
+      IDN["identity"]
     end
     PLAT["platform/ — the kernel: auth · secrets · gitfs · tenant · database · agentfold …  (imports no domain)"]
     EDGE --> DOMAINS
@@ -39,6 +40,7 @@ flowchart TB
   DEP --> OC[[OpenChoreo]]
   SC --> GH[[GitHub]]
   ORG --> TH[[Thunder]]
+  IDN --> TH
   DEL --> TMP[[Temporal]]
 ```
 
@@ -47,7 +49,7 @@ inside · `["box"]` = a package within it · `[[Name]]` = something *outside* th
 unit — another domain or an external system, always reached over a port · `[(store)]` = a
 datastore · `(["/surface"])` = an inbound HTTP surface.
 
-## The seven domains
+## The eight domains
 
 | Domain | Owns | Shape | README |
 |---|---|---|---|
@@ -58,6 +60,7 @@ datastore · `(["/surface"])` = an inbound HTTP surface.
 | **projects** | OpenChoreo `Project`/`Component` write-authority + the whole-pipeline Stage aggregate read | flat-root | [→](internal/projects/README.md) |
 | **sourcecontrol** | repos / issues / webhooks over a provider-neutral `Host`, + the bare-mirror workspace | flat-root | [→](internal/sourcecontrol/README.md) |
 | **ops** | incident RCA reports, correlated live against Task executions | flat-root | [→](internal/ops/README.md) |
+| **identity** | the SHARED identity-provider Roles and Test users a build provisions from `roles.json` | flat-root | [→](internal/identity/README.md) |
 
 ## The kernel, the edge, and the rest
 
@@ -124,7 +127,7 @@ coverage never exercised it either. Detail →
 
 | Term | Meaning |
 |---|---|
-| **domain** | one of the seven top-level capabilities; owns its data and its slices |
+| **domain** | one of the eight top-level capabilities; owns its data and its slices |
 | **vertical slice** | one use-case as one folder: handler + service + wire mapping |
 | **port** | a typed seam between domains — *needs* (an interface a domain requires) / *offers* (one it exposes). Domains meet only at ports |
 | **flat-root** | domain shape: services in the root package; slices import the root |
@@ -158,7 +161,7 @@ point at enforcement, they don't restate it.
 - delivery's `task ⊥ run` split — dispatch has exactly one door →
   `TestTaskRunSplit`
 - the machine-block encoding stays a pure domain leaf → `TestTaskmetaIsPure`
-- The legacy flat layout is gone; all seven domains landed → `TestFlatPackagesDeleted` ·
+- The legacy flat layout is gone; every domain landed → `TestFlatPackagesDeleted` ·
   `TestAllDomainsLanded`
 - Secret-backend SDKs are fenced to `platform/secrets` → `TestImportFences`
   (in `platform/secrets`)

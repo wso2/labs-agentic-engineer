@@ -44,6 +44,23 @@ concept for *the agreed description of what we're building*.
 | `DESIGN` (not `DESIGNS` — one design, several files) | **Architecture** · **Design overview** · **Security** · then per-component | `specs/design/` |
 | `VALIDATION` | **Acceptance criteria** | `specs/validation/validation-criteria.json` |
 
+**Security is one rail entry with two tabs**, because it is one subject held in two
+files and a user does not think of it as two documents:
+
+| tab | what it holds | repo path |
+|---|---|---|
+| **Security architecture** | how a caller's role is resolved, and which surfaces are public | `specs/design/security.md` |
+| **Roles & users** | which roles the project uses, what each may do, and its test users | `specs/design/roles.json` |
+
+**Security architecture opens first.** The mechanism is the decision; the roster
+is what follows from it, so a reader arriving at Security meets the reasoning
+before a table of accounts. It also matches every other section, where the prose
+artifact leads.
+
+The prose tab keeps a pane to itself rather than sharing a scroll container with
+the roles table: it is a live collaborative editor with its own toolbar, bubble
+menu and streaming autoscroll, and form controls beside it fight all three.
+
 The repo paths **do not change**. They are the internal language, consumed by the agents, the
 runner's validation cycle and aep-api; renaming them buys nothing a user can see and costs a
 migration for every existing project. This table *is* the mapping — keep it, so nobody later
@@ -143,7 +160,7 @@ scope** ("in scope" is the jargon; the list is right).
 ## Builds
 
 Decided in [#609](https://github.com/wso2/labs-agentic-engineer/issues/609)
-(ADR-0020). The Builds page is a list now, so its status cells are read side by
+(ADR-0021). The Builds page is a list now, so its status cells are read side by
 side — which is exactly why each **names the situation, not the state machine**
 (naming rule 6). The qualifier after the middot is the fact the bare state does
 not carry: who is acting, why it failed.
@@ -461,7 +478,24 @@ the moment a design run wrote its first file the pulse jumped to Validation, whi
 design was still being written.
 
 Work the rail cannot place — a plain chat turn, an org's own skill — pulses **nothing**. An agent is
-working, but a pulse on the wrong section is worse than a still rail.
+working, but a pulse on the wrong section is worse than a still rail. One exception, by elimination
+rather than by guess: while the project holds nothing at all, an unplaceable turn pulses
+Requirements — nothing downstream can be written before that document exists, and the turn carrying
+a member's interview answers (plain prose, no flow) is the very one that writes it (#629). The
+moment anything exists, the silence above resumes.
+
+**"In flight" starts at the submit, not at the server.** `spec.agent` cannot see a turn before its
+row exists, and submitted interview answers take the dispatch round-trip — seconds — to become one;
+in that gap every signal above read idle and the empty workspace offered Retry against the very
+interview it could not see ([#635](https://github.com/wso2/labs-agentic-engineer/issues/635)). The
+browser that submitted holds the missing evidence — a seeded message waiting, a dispatch awaiting
+its turn id, a stream being folded — and that chain counts as agent work until the status catches
+up. It is claim-scoped, not timed — a refused send releases its claim and Retry surfaces at once —
+with one backstop: a seeded message whose consumer never opens (the one stage with no failure path
+of its own) lapses from the signal after a generous TTL, so an outage cannot pin a working state
+that hides Retry. A
+teammate's browser holds no claim for a send made elsewhere and waits on the status, as it always
+did.
 
 **The counts read the LIVE document, not the committed one.** Deleting an `*assumed*` flag clears
 the alert as you delete it; the committed copy is a collab flush behind, and on the agent's own
@@ -836,6 +870,10 @@ Issues**. All six stay visible and enabled from project creation
 ([#522](https://github.com/wso2/labs-agentic-engineer/issues/522)). `Validation` →
 **`Validations`** is the only rename, per the plural rule.
 
+The org sidebar (no project in the route) is, in order: **Projects · Resources ·
+Endpoints · Alerts**. **Settings** stays in the footer in both contexts
+(ADR-0010).
+
 > Two older documents disagree with that list and with each other, both predating this file.
 > **ADR-0010** enumerates five and calls Builds *Tasks*; **`PRD.md`** enumerates five and calls
 > Spec *Specs & Design*. Neither mentions Validation, which ships. `PRD.md` is corrected alongside
@@ -846,3 +884,17 @@ Issues**. All six stay visible and enabled from project creation
 `Validations` (the runs) and `Acceptance criteria` (what they check) no longer share a word, so
 the link between them is made explicit in the section's empty state
 ([#533](https://github.com/wso2/labs-agentic-engineer/issues/533)).
+
+## Resources
+
+The org's catalog of **External resources** — integrations registered once so
+projects reuse them. Not a Settings page.
+
+| | |
+|---|---|
+| Nav / heading | **Resources** |
+| Primary action | **Register External resource** |
+| Register chat | the agent asks, then drafts the form; environment values stay on the form, never in chat |
+
+A later project's Build does not ask again for secrets the org already holds on
+that name.

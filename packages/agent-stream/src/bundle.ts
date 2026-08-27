@@ -40,6 +40,7 @@
 
 import { parse as parseYaml } from "yaml";
 import { checkComponentDesign } from "./component-design-schema.js";
+import { checkRolesDesign } from "./roles-design-schema.js";
 import { checkOpenapiSpec } from "./openapi-spec.js";
 import { checkWireframeLayout } from "./wireframe-layout.js";
 import type {
@@ -200,7 +201,8 @@ export class FileBundle {
   /**
    * Apply `content` to `path` through the write-gate ladder: YAML reparse, then
    * each artifact-specific gate that claims the path (component `design.json`
-   * schema, `wireframes.dsl` syntax, `openapi.yaml` structure). The first
+   * schema, `roles.json` schema, `wireframes.dsl` syntax, `openapi.yaml`
+   * structure). The first
    * problem aborts with its own code and NO write, leaving the bundle
    * byte-for-byte unchanged — the safe in-memory contract. Every gate is a pure
    * (path, content) => problem | null function, so a new artifact kind is one
@@ -217,6 +219,14 @@ export class FileBundle {
     const jsonProblem = checkComponentDesign(path, content);
     if (jsonProblem) {
       return err(path, op, jsonProblem.code, jsonProblem.message);
+    }
+    // The roles document is gated on the same terms: it is the ONE spec file the
+    // platform acts on deterministically at build time (creating directory
+    // roles and test users), so a malformed one must be caught while the model
+    // can still fix it, not when the build gate refuses the tag.
+    const rolesProblem = checkRolesDesign(path, content);
+    if (rolesProblem) {
+      return err(path, op, rolesProblem.code, rolesProblem.message);
     }
     // Wireframes .dsl is layout-gated the same way: out-of-frame or
     // partially-overlapping elements abort the write with the coordinates the

@@ -113,6 +113,89 @@ describe("railSections — the rail is the flow", () => {
     for (const s of sections) expect(s.state).not.toBe("active");
   });
 
+  // The turn that carries a member's interview answers is plain prose, not a
+  // `/<skill>` command, so it has no flow — and it is the turn that writes the
+  // first requirements document. Before that document exists a turn cannot be
+  // writing anything else, so the rail claims Requirements by elimination
+  // (#629). Unattributed, this turn left the workspace offering Retry against
+  // work in flight.
+  it("claims requirements for flowless work before requirements exist", () => {
+    const sections = railSections(
+      input({
+        hasRequirements: false,
+        hasDesign: false,
+        hasValidation: false,
+        agentWorking: true,
+        agentFlow: "",
+      }),
+    );
+    expect(of(sections, "requirements").state).toBe("active");
+    expect(of(sections, "design").state).toBe("not-started");
+    expect(of(sections, "validation").state).toBe("not-started");
+  });
+
+  // Same elimination for a flow this rail does not know — an org's own skill
+  // kicking a project off is still requirements work while nothing exists.
+  it("claims requirements for an unknown flow before requirements exist", () => {
+    const sections = railSections(
+      input({
+        hasRequirements: false,
+        hasDesign: false,
+        hasValidation: false,
+        agentWorking: true,
+        agentFlow: "org-kickoff",
+      }),
+    );
+    expect(of(sections, "requirements").state).toBe("active");
+  });
+
+  // The elimination argument needs the project to hold NOTHING. Design files
+  // without a requirements-group file (a PRD renamed by an amend, an org skill
+  // that wrote design first) mean a flowless turn could be touching either —
+  // and a pulse on the wrong section is worse than a still rail.
+  it("stays silent for flowless work when only the requirements are missing", () => {
+    const sections = railSections(
+      input({
+        hasRequirements: false,
+        hasDesign: true,
+        hasValidation: false,
+        agentWorking: true,
+        agentFlow: "",
+      }),
+    );
+    for (const s of sections) expect(s.state).not.toBe("active");
+  });
+
+  // The elimination argument dies with the first requirements file: a flowless
+  // turn could then be touching requirements OR design, and guessing is what
+  // this rail deliberately refuses to do.
+  it("returns to silence for flowless work once requirements exist", () => {
+    const sections = railSections(
+      input({
+        hasRequirements: true,
+        hasDesign: false,
+        hasValidation: false,
+        agentWorking: true,
+        agentFlow: "",
+      }),
+    );
+    for (const s of sections) expect(s.state).not.toBe("active");
+  });
+
+  // No agent, no pulse — an empty project between turns is not-started, never
+  // active, whatever the last turn's flow was.
+  it("claims nothing by elimination while no agent is working", () => {
+    const sections = railSections(
+      input({
+        hasRequirements: false,
+        hasDesign: false,
+        hasValidation: false,
+        agentWorking: false,
+      }),
+    );
+    expect(of(sections, "requirements").state).toBe("not-started");
+  });
+
   // A turn is known project-wide, never per document. While every section
   // holds something there is no honest way to say which is being worked on,
   // and a pulse on the wrong section is worse than a still rail.

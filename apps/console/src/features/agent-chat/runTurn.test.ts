@@ -72,6 +72,7 @@ vi.mock("./chatStore.js", () => ({
 import { attachAndFoldTurn } from "./runTurn";
 import { TurnStreamAttachError } from "./api/turns.js";
 import { addMessage, upsertToolMessage } from "./chatStore.js";
+import { clearRegisterDraft, peekRegisterDraft } from "./registerDraftStore.js";
 
 const KEY = "aep.chat.v1.acme.proj1";
 
@@ -250,6 +251,36 @@ describe("attachAndFoldTurn — a file card settles on its OWN input-end, not th
       { type: "tool-input-end", id: "c1" } as StreamPart,
     ];
     await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
+    expect(upsertToolMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe("attachAndFoldTurn — draftExternalResource publishes a register draft", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    queuedParts = [];
+    notified.length = 0;
+    mockOpenTurnStream.mockResolvedValue(new ReadableStream());
+    clearRegisterDraft(KEY);
+  });
+
+  it("publishes a parsed draft from a complete draftExternalResource tool-call", async () => {
+    const draft = {
+      name: "stripe",
+      description: "Payments API",
+      consumptionInstructions: "Use the secret key as Bearer.",
+      config: [{ key: "API_KEY", description: "Secret", secret: true }],
+    };
+    queuedParts = [
+      {
+        type: "tool-call",
+        toolCallId: "d1",
+        toolName: "draftExternalResource",
+        input: draft,
+      } as StreamPart,
+    ];
+    await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
+    expect(peekRegisterDraft(KEY)).toEqual(draft);
     expect(upsertToolMessage).not.toHaveBeenCalled();
   });
 });

@@ -19,14 +19,20 @@
 import fs from "node:fs";
 import path from "node:path";
 import { query, type McpServerConfig, type Query } from "@anthropic-ai/claude-agent-sdk";
-import { openDebugSinks, type DebugSinks, type TaskLog } from "./logger.js";
+import { debugQueryOptions, openDebugSinks, type DebugSinks, type TaskLog } from "./logger.js";
+// Re-exported from where they now live: `debugQueryOptions` is entirely about
+// the sinks, so it sits beside them in `logger.ts`. Still exported here because
+// this is the module every existing caller and test imports it from, and
+// because a consumer that only wants the options should not have to pull in
+// this module's whole dependency graph to get them.
+export { debugQueryOptions, type DebugQueryOptions } from "./logger.js";
 import type { DispatchRequest } from "./types.js";
 import type { WorkspaceLayout } from "./workspace.js";
 import { writeBearerFile } from "./workspace.js";
 import { emit, primeScrubber } from "./progress/emitter.js";
 import { createSdkTranslator } from "./progress/from-sdk.js";
 import { createRunWatchdog } from "./progress/watchdog.js";
-import { apiRetryLine, isStreamFrame, readApiRetry } from "./progress/diagnostics.js";
+import { apiRetryLine, isStreamFrame, readApiRetry, readStallSignal } from "./progress/diagnostics.js";
 import { scrubber } from "./progress/scrubber.js";
 import { createWebSearchDlpHook, stagedSecretValues } from "./websearch_dlp.js";
 import { createForegroundFanOutHook } from "./fanout_foreground.js";
@@ -331,34 +337,6 @@ export function onDemandSkills(taskKind: DispatchRequest["taskKind"]): string[] 
 }
 
 /**
- * The SDK options that exist only to be read by a developer afterwards.
- *
- * Split out as a pure function so the boundary is testable: the expensive,
- * prompt-bearing options must be provably absent from a run that did not ask
- * for them, and "absent" is not something an integration test of a live session
- * can assert.
- *
- * `includePartialMessages` is in here for volume, not secrecy — it multiplies
- * the message count by roughly the token count, and the run loop drops every
- * frame it produces on the floor after the watchdog has seen it. The other two
- * are in here for both reasons.
- */
-export interface DebugQueryOptions {
-  includePartialMessages?: true;
-  debugFile?: string;
-  stderr?: (data: string) => void;
-}
-
-export function debugQueryOptions(sinks: DebugSinks | undefined): DebugQueryOptions {
-  if (!sinks) return {};
-  return {
-    includePartialMessages: true,
-    debugFile: sinks.debugFilePath,
-    stderr: (data: string) => sinks.onStderr(data),
-  };
-}
-
-/**
  * `PLAYWRIGHT_MCP_CONFIG`, but only when there is a config to point at.
  *
  * Spread into the child env so the variable is absent rather than empty when the
@@ -635,6 +613,18 @@ export async function runClaudeQuery(
         if (retry) {
           watchdog.observeRetry(retry);
           emit({ kind: "log", level: "warn", summary: apiRetryLine(retry) });
+          continue;
+        }
+        // The other system messages that explain a silence or an ending — a
+        // compaction, a refusal, a denied tool, a worker going away. Dropped
+        // with every other unrecognised subtype until now, which is how a run
+        // that was compacting and a run that was wedged looked identical.
+        // Deliberately NOT fed to the watchdog: none of them is the agent making
+        // progress, and firing the idle report slightly early is the safe
+        // direction for a diagnostic.
+        const signal = readStallSignal(message);
+        if (signal) {
+          emit({ kind: "log", level: signal.level, summary: signal.summary });
           continue;
         }
         const events = translate(message);

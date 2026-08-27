@@ -91,6 +91,49 @@ type Client interface {
 	// rotate it into OpenBao + redeploy any consumer pods that mounted
 	// the old value.
 	RegenerateClientSecret(ctx context.Context, orgHandle string) (string, error)
+
+	// -- directory (groups + users) --------------------------------------
+	//
+	// The build-time roles ensure makes a project's declared Roles and Test
+	// users real through these. Everything lands in the DEFAULT OU, the same
+	// one the thunder-app operator registers each generated app's OAuth
+	// client under — a user in another OU is not a user of the app.
+	// directory.go carries the Thunder constraints each method works around.
+
+	// ListGroups returns every group in the default OU — the Role catalog the
+	// design agent reads before inventing a name.
+	ListGroups(ctx context.Context) ([]Group, error)
+
+	// FindGroupByName returns the group with this name (case-insensitive),
+	// and whether one exists.
+	FindGroupByName(ctx context.Context, name string) (*Group, bool, error)
+
+	// GroupMembers returns the user ids in a group.
+	GroupMembers(ctx context.Context, groupID string) ([]string, error)
+
+	// CreateGroup creates a group with exactly these members. It is the only
+	// call that can set membership — Thunder ignores `members` on update.
+	CreateGroup(ctx context.Context, name, description string, memberIDs []string) (Group, error)
+
+	// AddGroupMembers adds members while preserving the ones already there,
+	// reading and writing under one lock. Destructive by construction — the
+	// write is a delete-and-recreate — so pass only a group the platform
+	// created. Returns the group's NEW id when members were added.
+	AddGroupMembers(ctx context.Context, group Group, memberIDs []string) (Group, error)
+
+	// FindUserByUsername returns the account with this exact username, and
+	// whether one exists.
+	FindUserByUsername(ctx context.Context, username string) (*DirectoryUser, bool, error)
+
+	// CreateUser creates a person-type account. The password is write-only
+	// afterwards, so the caller must seal its own copy.
+	CreateUser(ctx context.Context, username, email, password string) (DirectoryUser, error)
+
+	// SetUserPassword rotates an account's password.
+	SetUserPassword(ctx context.Context, userID, password string) error
+
+	// DeleteUser removes an account. Idempotent.
+	DeleteUser(ctx context.Context, userID string) error
 }
 
 // Config bundles the construction params — a struct rather than
@@ -120,6 +163,14 @@ type client struct {
 	// ("default") so for v1 we always use that.
 	muOU      sync.Mutex
 	defaultOU string
+
+	// Per-group-name write serialisation for the directory surface —
+	// group membership has no atomic add, so a fan-out must not have two
+	// goroutines read-then-write the same group. See lockGroup.
+	groupLocks struct {
+		mu     sync.Mutex
+		byName map[string]*sync.Mutex
+	}
 }
 
 // New builds a Thunder admin client.

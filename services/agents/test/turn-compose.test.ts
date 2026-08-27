@@ -29,7 +29,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { SURFACES } from "@aep/agent-stream";
-import { composeInstruction, eagerSkillsFor, toolsetFor } from "../src/prompts/turn.js";
+import { composeInstruction, eagerSkillsFor, toolsetFor, wantsRegisterDraftTool } from "../src/prompts/turn.js";
 
 /** The platform skill library this monorepo publishes to every org. */
 const SKILLS_DIR = path.resolve(fileURLToPath(import.meta.url), "../../../../skills");
@@ -334,6 +334,21 @@ test("the tool set is derived from the kind", () => {
   assert.equal(toolsetFor({ kind: "chat", text: "x" }), "files");
   assert.equal(toolsetFor({ kind: "start" }), "files");
   assert.equal(toolsetFor({ kind: "flow", skill: "design" }), "files");
+});
+
+test("only the register-external-resource flow gets the draft tool", () => {
+  assert.equal(wantsRegisterDraftTool({ kind: "flow", skill: "register-external-resource" }), true);
+  assert.equal(wantsRegisterDraftTool({ kind: "flow", skill: "design" }), false);
+  assert.equal(wantsRegisterDraftTool({ kind: "chat", text: "x" }), false);
+  assert.equal(wantsRegisterDraftTool({ kind: "start" }), false);
+});
+
+test("every turn on the synthetic register project gets the draft tool", () => {
+  assert.equal(
+    wantsRegisterDraftTool({ kind: "chat", text: "Answer to \"auth?\": PAT" }, "__marketplace_register__"),
+    true,
+  );
+  assert.equal(wantsRegisterDraftTool({ kind: "chat", text: "x" }, "weather-api"), false);
 });
 
 /**

@@ -69,6 +69,18 @@ describe("startCollabTurn transport", () => {
     expect(sent().init.body).toEqual({ instruction: "hello", collab: true });
   });
 
+  it("omits collab on the JSON body when collab is false", async () => {
+    await startCollabTurn("shop", "conv-1", "/register-external-resource github", [], false);
+    expect(sent().init.body).toEqual({ instruction: "/register-external-resource github" });
+  });
+
+  it("omits collab on multipart when collab is false", async () => {
+    await startCollabTurn("shop", "conv-1", "hello", [fileOf("a.md")], false);
+    const form = sent().init.body as FormData;
+    expect(form.get("collab")).toBeNull();
+    expect(form.get("instruction")).toBe("hello");
+  });
+
   it("switches to multipart when files are attached", async () => {
     await startCollabTurn("shop", "conv-1", "what is wrong here?", [
       fileOf("error.png"),

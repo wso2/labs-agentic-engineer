@@ -58,6 +58,10 @@ type DeploymentService struct {
 	// files computes the literal files a component needs mounted
 	// (env-config.js). Optional, same unmanaged-vs-empty rule.
 	files RuntimeFileProvider
+	// gatewayHost is host:port of the API gateway runtime, published to a
+	// consumer of a protected sibling as `<DEP>_GATEWAY_URL`. Empty leaves every
+	// consumer on the direct-Service lane (see gateway_address.go).
+	gatewayHost string
 }
 
 // ComponentEnvVarReader is the user's component config, consumer-side.
@@ -93,6 +97,17 @@ func (s *DeploymentService) SetIDPService(idp OrgPublisher) {
 func (s *DeploymentService) SetConfigSources(envVars ComponentEnvVarReader, files RuntimeFileProvider) {
 	if s != nil {
 		s.envVars, s.files = envVars, files
+	}
+}
+
+// SetAPIGatewayHost wires the address a consumer reaches a protected sibling's
+// managed API on. Empty (the zero value) publishes no gateway address at all,
+// which leaves consumers on the unauthenticated direct-Service lane — so the
+// composition root passes projects.DefaultAPIGatewayHost unless the deployment
+// overrides it.
+func (s *DeploymentService) SetAPIGatewayHost(host string) {
+	if s != nil {
+		s.gatewayHost = host
 	}
 }
 
@@ -238,6 +253,11 @@ func (s *DeploymentService) deployOne(ctx context.Context, orgID, projectID, com
 		Issuers:       issuers,
 		EnvVars:       s.envVarsFor(ctx, orgID, projectID, componentName),
 		Files:         s.filesFor(ctx, orgID, projectID, componentName),
+		// The org IS the OC namespace components are created in, and that
+		// namespace is a segment of every managed API's gateway context path.
+		ComponentNamespace: orgID,
+		GatewayHost:        s.gatewayHost,
+		ProtectedSiblings:  ProtectedSiblingsOf(design, *comp),
 	})
 	if err := s.components.ApplyReleaseBinding(ctx, orgID, projectID, desired.Binding); err != nil {
 		return outcome, fmt.Errorf("apply release binding: %w", permanentIfMissing(err))

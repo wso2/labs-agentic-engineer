@@ -1,0 +1,14 @@
+Usage: bal library find <keywords>...
+
+Packages matching free-text keywords, one line each, in Central's relevance order
+with pull counts. The only verb that needs no package name.
+
+Central's relevance order is kept, with one change: packages under 1,000 pulls are
+moved to the end. The pull count is printed beside every hit, because a low count is
+not a verdict on quality — only on adoption.
+
+It matches names, summaries and keywords — not documentation, and not questions. One
+broad noun works better than a sentence. Takes no --refresh: a registry query
+resolves no version and is never cached.
+
+  bal library find kafka messaging

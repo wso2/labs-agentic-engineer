@@ -1,0 +1,28 @@
+Usage: bal library guide <org/name> [<n|title>] [--module <name>] [-s <q>]
+                         [--refresh]
+
+The package's own readme, verbatim: setup steps, account prerequisites and worked
+recipes. Addressable one chunk at a time.
+
+Central's prose, on the package author's release clock, so it can be out of date
+where a signature cannot. Names in it that this version does not declare are listed
+before the quotation rather than left to fail at build time.
+
+A CHUNK is a readme section that carries code, prose and all — the account setup and
+the 'you must also enable the Drive API' notes are the part no signature can tell
+you. 'overview' prints the chunk index; pass a number or a title fragment to read
+one.
+
+  --module <name>    One module's readme. A package publishes one per module, and
+                     this verb's own 'Modules' row names them.
+  -s, --search <q>   Filter this verb's scope by name, path, parameter or type.
+                     Every word and every path segment of the query has to appear,
+                     in any order — to anchor a path, pass it as the selector
+                     instead. A match found only in documentation is named rather
+                     than printed.
+  --refresh          Ignore any cached copy and rewrite it. Worth passing only when
+                     a name should exist and does not.
+
+  bal library guide ballerinax/twilio
+  bal library guide ballerinax/googleapis.sheets 2
+  bal library guide ballerina/http --module http

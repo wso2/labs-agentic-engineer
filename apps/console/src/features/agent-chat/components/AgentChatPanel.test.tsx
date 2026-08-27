@@ -536,6 +536,15 @@ describe("AgentChatPanel — a question does not move the user", () => {
       expect.objectContaining({ to: "/projects/$projectName/spec" }),
     );
   });
+
+  it("does not navigate when specWorkspace is off — register chat has no spec", () => {
+    addMessage(KEY, { role: "question", turnId: "t1", toolCallId: "tc1", questions: QUESTION });
+    renderPanel({ specWorkspace: false });
+
+    expect(screen.queryByTestId("questions-pointer")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open spec workspace" })).not.toBeInTheDocument();
+    expect(mockPanelNavigate).not.toHaveBeenCalled();
+  });
 });
 
 // The one remaining generation CTA (#159 design). The requirements half is

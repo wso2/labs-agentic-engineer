@@ -75,43 +75,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: Error
-  /validation/{cycleId}/test-credentials:
-    post:
-      operationId: runner-validation-credentials
-      summary: Request test credentials for a validation run (runner callback)
-      tags:
-      - Internal
-      security:
-      - taskJWT: []
-      - publisherCC: []
-      parameters:
-      - description: Validation cycle id the runner callback is scoped to — the
-          run cycle the platform dispatched this runner for, carried to the pod as
-          AEP_TASK_ID and bound into its bearer token
-        in: path
-        name: cycleId
-        required: true
-        schema:
-          type: string
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/TestCredentialRequest'
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/TestCredential'
-          description: OK
-        default:
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Error
 components:
   schemas:
     RefreshResponse:
@@ -186,36 +149,6 @@ components:
       required:
       - component
       - url
-    TestCredential:
-      description: Test login credentials for a validation run. Generated as
-        igen.TestCredential (no x-go-type); the edge's internal handler projects
-        the delivery domain's own struct onto this wire shape.
-      type: object
-      additionalProperties: false
-      properties:
-        username:
-          type: string
-        password:
-          type: string
-        mock:
-          type: boolean
-        note:
-          type: string
-      required:
-      - username
-      - password
-      - mock
-    TestCredentialRequest:
-      description: Optional hints for a runner test-credential request.
-      type: object
-      additionalProperties: false
-      properties:
-        role:
-          type: string
-        purpose:
-          type: string
-        username:
-          type: string
     Error:
       description: Flat error envelope returned by every non-2xx response.
       type: object

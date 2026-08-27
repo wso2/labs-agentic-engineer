@@ -55,6 +55,8 @@ import (
 	"github.com/wso2/aep/aep-api/internal/dependencies/provisioning"
 	"github.com/wso2/aep/aep-api/internal/dependencies/runtimeconfig"
 	"github.com/wso2/aep/aep-api/internal/edge"
+	"github.com/wso2/aep/aep-api/internal/identity"
+	identityhttpapi "github.com/wso2/aep/aep-api/internal/identity/httpapi"
 	"github.com/wso2/aep/aep-api/internal/ops"
 	opshttpapi "github.com/wso2/aep/aep-api/internal/ops/httpapi"
 	"github.com/wso2/aep/aep-api/internal/organization"
@@ -189,6 +191,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	}
 	projectClient := openchoreo.NewProjectClient(ocConfig)
 	namespaceClient := openchoreo.NewNamespaceClient(ocConfig)
+	environmentClient := openchoreo.NewEnvironmentClient(ocConfig)
 	componentClient := openchoreo.NewComponentClient(ocConfig)
 	// GitSecret client lands the per-org build git credential on the workflow
 	// plane (via OC → OpenBao → SecretReference). Used by BuildCredentialsService
@@ -370,16 +373,9 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		}
 		return res.Key, nil
 	}
-	// skillsRepoForTurns ensures the org's _skills repo exists (seeding the
-	// embedded builtin/flow skills on first touch) and hands back its row —
-	// the SkillsRef source for genai + task-plan turns. A closure at the
-	// composition root so neither feature grows a skills edge.
-	skillsRepoForTurns := func(ctx context.Context, orgID string) (*sourcecontrol.GitRepository, error) {
-		if err := skillSvc.EnsureProvisioned(ctx, orgID); err != nil {
-			return nil, err
-		}
-		return repoService.GetRepo(ctx, orgID, spec.SkillsRepoSentinelProjectID)
-	}
+	// SkillsRef source for genai + task-plan turns. Reconcile so platform
+	// skills shipped after first provision land before Head/Ensure.
+	skillsRepoForTurns := spec.SkillsRepoForTurns(skillSvc, repoService)
 	turnRepo := spec.NewTurnRepository(db, in.RateStamper)
 	turnBroker := spec.NewTurnBroker()
 	genaiDeps := spec.ServiceDeps{
@@ -538,6 +534,33 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	} else {
 		slog.Warn("Thunder admin client disabled — set THUNDER_ADMIN_URL + THUNDER_SYSTEM_CLIENT_ID + THUNDER_SYSTEM_CLIENT_SECRET")
 	}
+
+	// The identity domain: the platform's record of the SHARED roles and test
+	// users it creates on Thunder at build time, and the ensure that creates
+	// them. Both are optional — with no Thunder admin client there is no
+	// directory to write to, so `rolesEnsure` reports Enabled()==false and the
+	// build skips the roles gate entirely rather than failing every build.
+	// The store is wired regardless: it is what the validation credential
+	// provider reads, and reading an empty table is a correct "no test user".
+	identityStore := identity.NewStore(db, in.ColumnCipher)
+	var rolesEnsure *identity.EnsureService
+	var roleCatalogSvc *identity.CatalogService
+	// The console's Security panel. It takes the directory OPTIONALLY: with no
+	// Thunder admin client it still serves this project's references and their
+	// ownership from the store, and reports directoryAvailable=false so the
+	// console says "unknown" rather than "does not exist". The mutations refuse
+	// in that state — there is nothing to write to.
+	var identityDirectory identity.Directory
+	if thunderAdminClient != nil {
+		directory := thunderDirectory{c: thunderAdminClient}
+		identityDirectory = directory
+		rolesEnsure = identity.NewEnsureService(directory, identityStore, identityDesignReader{art: artifactSvcGit})
+		roleCatalogSvc = identity.NewCatalogService(directory, identityStore)
+		slog.Info("roles ensure wired — a build provisions the roles and test users specs/design/roles.json declares")
+	} else {
+		slog.Warn("roles ensure disabled — no Thunder admin client; builds will not provision roles or test users")
+	}
+	identityPanel := identity.NewPanelService(identityDirectory, identityStore)
 
 	// Wire the Thunder OU validator into the org service so a stale/phantom JWT
 	// `ouId` can't poison the org→OU mapping (the root cause behind the runner
@@ -754,14 +777,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		validationCycleLocator{repo: runCycleRepo},
 		validationEndpointResolver{store: artifactStore, comp: componentService},
 	)
-	// Test-credentials runner callback: the runner requests a login on demand
-	// (only when a criterion needs one). v1 returns a shared mock account; the
-	// cycle→project fence + request contract are what real per-project user
-	// provisioning slots into later.
-	validationCredentialsSvc := validation.NewCredentialService(
-		validationCycleLocator{repo: runCycleRepo},
-		mockValidationCredentials{},
-	)
 
 	// Controllers
 	params := edge.AppParams{
@@ -770,10 +785,9 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		// only the connect-callback + webhook controllers remain raw handlers.
 		// Every other feature is served by the strict handlers via params.Deps.
 		InternalDeps: edge.InternalDeps{
-			CredsRefresh:          credRefreshService,
-			RunnerAuth:            runnerAuth,
-			ValidationContext:     validationContextSvc,
-			ValidationCredentials: validationCredentialsSvc,
+			CredsRefresh:      credRefreshService,
+			RunnerAuth:        runnerAuth,
+			ValidationContext: validationContextSvc,
 		},
 		WebhookController:   webhookCtrl,
 		OrgGitHubController: orgGitHubCtrl,
@@ -864,6 +878,15 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	}
 	params.Deps.SourceControl = scHandlers
 
+	// identity — the platform's record of the SHARED directory objects (roles and
+	// test users) it creates at build time. Its one slice serves the console's
+	// Security panel; the slice is nil-tolerant, so the edge 503s when unwired.
+	identityHandlers, err := identityhttpapi.New(identity.Deps{Panel: identityPanel})
+	if err != nil {
+		return nil, fmt.Errorf("assemble identity domain: %w", err)
+	}
+	params.Deps.Identity = identityHandlers
+
 	// organization — org config + the organizations list (P3). Its handlers are
 	// embedded straight into the edge's composite; the edge holds no org service.
 	orgHandlers, err := orghttpapi.New(organization.Deps{OrgSvc: organizationService, Config: orgConfigSvc})
@@ -949,6 +972,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	params.MCPOrgEndpoints = orgEndpointCatalog
 	resourceTypeCatalog := dependencies.NewResourceTypeCatalog(resourceClient, cfg.PlatformResourcesEnabled)
 	params.MCPResourceTypes = resourceTypeCatalog
+	params.MCPRoleCatalog = roleCatalogOrNil(roleCatalogSvc)
 	// params.Deps.Dependencies (the strict ListPlatformResourceTypes + provisioning
 	// ops) is assembled below, after provisioningSvc exists.
 	// Endpoint spec discovery: the read-only remote-git reader an agent uses to
@@ -979,6 +1003,13 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// imports the dependencies feature (the *Catalog satisfies
 	// spec.OrgServiceResolver structurally).
 	artifactStore.SetOrgServiceResolver(orgEndpointCatalog)
+	// Read-time external-resource registry reuse (rule 2): the same
+	// ResourceType-backed catalog that backs MCP list_external_resources marks
+	// each design's `external` dependencies resolved when the name is already
+	// registered. Consumer-side wiring — spec never imports the dependencies
+	// feature (*ExternalResourceCatalog satisfies spec.ExternalResourceResolver
+	// structurally).
+	artifactStore.SetExternalResourceResolver(externalResourceRTCatalog)
 
 	// Dependency provisioning (dependency-management Phase 6): the value/param
 	// collection surface + the `provision` gate funnel. The provisioner cores
@@ -1010,18 +1041,25 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		Design: designComponents{store: artifactStore},
 	})
 	platformProvisioner := dependencies.NewOCNativeProvisioner(resourceClient)
+	catalogValuePlane := provisioning.NewMemoryValuePlane()
 	provisioningSvc := provisioning.NewService(provisioning.Deps{
-		Issues:    issueService,
-		Execs:     executionRepo,
-		Design:    designComponents{store: artifactStore},
-		Repos:     repoNamer{repos: repoRepo, db: db},
-		RTCatalog: externalResourceRTCatalog,
-		ExtProv:   externalProvisioner,
-		PlatProv:  platformProvisioner,
-		Bindings:  resourceClient,
-		Projects:  provisionProjects{repos: repoRepo},
-		Access:    dependencies.NewAccessRequestRepository(db),
-		Providers: orgEndpointCatalog,
+		Issues:            issueService,
+		Execs:             executionRepo,
+		Design:            designComponents{store: artifactStore},
+		Repos:             repoNamer{repos: repoRepo, db: db},
+		RTCatalog:         externalResourceRTCatalog,
+		ExtProv:           externalProvisioner,
+		PlatProv:          platformProvisioner,
+		Bindings:          resourceClient,
+		Workloads:         resourceClient,
+		Projects:          provisionProjects{repos: repoRepo},
+		Access:            dependencies.NewAccessRequestRepository(db),
+		Providers:         orgEndpointCatalog,
+		Environments:      environmentClient,
+		CatalogValuePlane: catalogValuePlane,
+		OrgSecrets:        secretRefWriter,
+		OrgResourceDocs:   provisioning.NewGitOrgResourceDocs(repoService, gitOpsService),
+		Roles:             rolesEnsurerOrNil(rolesEnsure),
 	})
 	// Assemble the dependencies domain (P8): the provisioning slice (7 ops over
 	// provisioningSvc) + the resource-type-discovery slice (ListPlatformResourceTypes
@@ -1029,6 +1067,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	dependenciesHandlers, err := dephttpapi.New(dephttpapi.Deps{
 		ProvisioningSvc: provisioningSvc,
 		ResourceTypes:   resourceTypeCatalog,
+		OrgEndpoints:    orgEndpointCatalog,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("assemble dependencies domain: %w", err)
@@ -1039,8 +1078,9 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// anything already provisioned OR in-flight (buildProvisionStatus collapses the
 	// provisioning tri-state onto the "already handled" bool).
 	preflightSvc := build.NewPreflightService(build.PreflightDeps{
-		Design: designComponents{store: artifactStore},
-		Status: buildProvisionStatus{svc: provisioningSvc},
+		Design:  designComponents{store: artifactStore},
+		Status:  buildProvisionStatus{svc: provisioningSvc},
+		Catalog: buildOrgCatalog{svc: provisioningSvc},
 	})
 	// delivery — the Delivery Pipeline domain (P6): the public single-tag build
 	// surface, the task read + promote-dispatch surface, and the task-log SSE
@@ -1172,6 +1212,14 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// The deployment service's two config inputs, wired here because both are
 	// built after it.
 	deploymentService.SetConfigSources(configService, runtimeConfigSvc)
+	// The address a consumer reaches a protected sibling's managed API on. Config
+	// carries only an override; the default lives beside the context-path builder
+	// it has to agree with.
+	if host := cfg.APIGatewayHost; host != "" {
+		deploymentService.SetAPIGatewayHost(host)
+	} else {
+		deploymentService.SetAPIGatewayHost(projects.DefaultAPIGatewayHost)
+	}
 	configService.SetConverger(deploymentService)
 	// The cross-project access grant is the only deploy observer left. The two
 	// that rode beside it — the env-config.js re-emit and the api-configuration

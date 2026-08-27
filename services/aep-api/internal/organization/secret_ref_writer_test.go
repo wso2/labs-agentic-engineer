@@ -296,6 +296,36 @@ func TestSecretRefWriter_WriteExternalResourceSecret(t *testing.T) {
 	})
 }
 
+func TestSecretRefWriter_WriteOrgCatalogSecret(t *testing.T) {
+	t.Parallel()
+	fake := &fakeSMClient{}
+	w := organization.NewSecretRefWriter(fake, nil, nil, nil)
+	if _, err := w.WriteOrgCatalogSecret(claimsCtx("ou-acme-uuid"), "acme", "stripe-development",
+		map[string]string{"api_key": "sk_live"}); err != nil {
+		t.Fatalf("WriteOrgCatalogSecret: %v", err)
+	}
+	if len(fake.createCalls) != 1 {
+		t.Fatalf("want exactly 1 CreateSecret call, got %d", len(fake.createCalls))
+	}
+	call := fake.createCalls[0]
+	wantLoc := secretmanagersvc.SecretLocation{OrgName: "ou-acme-uuid", ControlPlaneNamespace: "acme", ProjectName: "org-catalog", EntityName: "stripe-development"}
+	if call.loc != wantLoc {
+		t.Fatalf("SecretLocation = %+v; want %+v", call.loc, wantLoc)
+	}
+}
+
+func TestSecretRefWriter_OrgCatalogVaultKey(t *testing.T) {
+	t.Parallel()
+	w := organization.NewSecretRefWriter(&fakeSMClient{}, nil, nil, nil)
+	got, err := w.OrgCatalogVaultKey(claimsCtx("ou-acme-uuid"), "acme", "github-development")
+	if err != nil {
+		t.Fatalf("OrgCatalogVaultKey: %v", err)
+	}
+	if !strings.HasPrefix(got, "user-app-secrets/") || !strings.HasSuffix(got, "/github-development-secrets") {
+		t.Fatalf("OrgCatalogVaultKey = %q, want user-app-secrets/<ns>/github-development-secrets", got)
+	}
+}
+
 // --- WriteGitHubPAT --------------------------------------------------------------
 
 func TestSecretRefWriter_WriteGitHubPAT(t *testing.T) {

@@ -24,6 +24,7 @@ import (
 
 	"github.com/wso2/aep/aep-api/internal/gen"
 	"github.com/wso2/aep/aep-api/internal/platform/apierr"
+	"github.com/wso2/aep/aep-api/internal/platform/gitfs"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
@@ -40,6 +41,20 @@ func TestMapFilesError_CASExhaustionMapsTo409(t *testing.T) {
 	if ae.Status != http.StatusConflict || ae.Code != apierr.CodeConflict {
 		t.Fatalf("status/code = %d/%s, want 409/%s (CAS exhaustion is a retryable conflict)",
 			ae.Status, ae.Code, apierr.CodeConflict)
+	}
+}
+
+func TestMapFilesError_DiskAdmissionMapsTo503(t *testing.T) {
+	err := mapFilesError(fmt.Errorf("ensure: %w (usage=92%%)", gitfs.ErrDiskAdmission))
+	var ae *apierr.Error
+	if !errors.As(err, &ae) {
+		t.Fatalf("mapped error %T is not an *apierr.Error", err)
+	}
+	if ae.Status != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 (disk admission is not a 500)", ae.Status)
+	}
+	if ae.Message == "internal error" {
+		t.Fatalf("message = %q, want a disk-admission sentence the console can show", ae.Message)
 	}
 }
 

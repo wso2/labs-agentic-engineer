@@ -43,6 +43,14 @@ import {
 /** Transaction origin for every doc write this peer makes. */
 export const AGENT_ORIGIN = "aep-agent";
 
+/**
+ * The reason the collab server tags a refusal with when ITS upstream was
+ * unreachable, rather than when the bearer was refused. Duplicated from
+ * `services/collab/src/server.ts` — the console spells it out on its side of
+ * this socket too, the same way the stateless message types are.
+ */
+const UPSTREAM_UNAVAILABLE = "upstream-unavailable";
+
 const SYNC_TIMEOUT_MS = 10_000;
 
 export interface RoomPeer {
@@ -101,15 +109,38 @@ export async function joinRoom(input: JoinRoomInput): Promise<RoomPeer> {
   try {
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
-        reject(new Error(`collab: room ${input.roomId} did not sync within ${SYNC_TIMEOUT_MS}ms`));
+        // A room the server REFUSES does not land here — that arrives
+        // immediately as `authenticationFailed` below, because a rejected load
+        // is answered with a permission-denied frame rather than a closed
+        // socket. This branch is the genuinely slow or silent room: a seed
+        // still running, or a socket that never came up at all.
+        reject(
+          new Error(
+            `collab: room ${input.roomId} could not be loaded — no sync within ${SYNC_TIMEOUT_MS}ms`,
+          ),
+        );
       }, SYNC_TIMEOUT_MS);
       provider.on("synced", () => {
         clearTimeout(timer);
         resolve();
       });
-      provider.on("authenticationFailed", () => {
+      // A refused room and a refused bearer arrive through the SAME event
+      // (#586): the collab server answers an unseedable room with a
+      // permission-denied frame too, tagging it so the two can be told apart.
+      // Both are terminal for this turn — an agent has no committed copy to
+      // fall back on the way the console does, and writing into a room that
+      // was never seeded is what corrupted the spec in the first place — but
+      // they must not be REPORTED alike, or an `aep-api` restart shows up in
+      // the turn log as a credentials problem.
+      provider.on("authenticationFailed", ({ reason }: { reason?: string }) => {
         clearTimeout(timer);
-        reject(new Error(`collab: room ${input.roomId} rejected the forwarded bearer`));
+        reject(
+          new Error(
+            reason === UPSTREAM_UNAVAILABLE
+              ? `collab: room ${input.roomId} is unavailable — the collab server could not reach its upstream (${reason})`
+              : `collab: room ${input.roomId} rejected the forwarded bearer`,
+          ),
+        );
       });
       provider.attach();
     });

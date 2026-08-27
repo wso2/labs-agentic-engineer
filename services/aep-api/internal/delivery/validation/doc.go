@@ -31,15 +31,17 @@
 // carrying one label, and it deliberately does NOT carry the `aep` working-set
 // label for the same reason — the cycle is dispatched at it by number.
 //
-// This feature does the ISSUE side only. Its runtime inputs — deployed endpoint
-// URLs and test credentials — are never written into the (public) issue: the
-// runner PREFLIGHTS the endpoints from the secure validation-context endpoint
-// before its agent starts, and the agent requests test credentials on demand
-// (only when a criterion needs a login) from the sibling test-credentials
-// endpoint (credentials.go). Test credentials are a v1 mock (admin/admin) until
-// real user provisioning exists.
+// This feature does the ISSUE side only. Deployed endpoint URLs are never written
+// into this (public) issue: the runner PREFLIGHTS them from the secure
+// validation-context endpoint before its agent starts.
 //
-// Both callbacks identify their caller by the run CYCLE the platform dispatched
+// TEST CREDENTIALS do not come from this domain at all. The build provisions the
+// project's test users (the identity domain, from `specs/design/roles.json`) and
+// publishes each account's login as a comment on the ROLES GATE ticket, which is
+// where the agent reads it (ADR-0022). That leaves exactly one published copy of
+// each password, so no two places can disagree about it.
+//
+// The callback identifies its caller by the run CYCLE the platform dispatched
 // (context.go's CycleLocator) — the id the pod carries as AEP_TASK_ID and the
 // subject its bearer is bound to. Resolving it anywhere else is not a detail: it
 // was resolved against the executions table, which the milestone supervisor does

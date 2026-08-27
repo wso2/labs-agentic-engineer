@@ -152,19 +152,51 @@ Four further gaps, all verified rather than assumed:
    "Compiling source". A line ending in a colon takes the line it was
    introducing, because on its own it is a heading.
 
+   **A failed FAN-OUT is the exception, and it prints everything it has.** The
+   one-line rule holds because the command is on the row above and the whole
+   output is in `claude.log`. A subagent has neither: its transcript is not on
+   this feed, and `claude.log` dies with the pod. Measured live, that left a
+   22-minute subagent arriving as a bare `ok:false` with the reason recorded
+   nowhere. So a failed fan-out emits a SECOND event — an `error` log line
+   attributed to the subagent, carrying the tool result's text bounded to 10
+   lines / 2,000 characters. Second event rather than a richer row, because
+   `summary` on that row is contractually the subagent's LABEL, which the console
+   renders as the section heading. It is emitted even when the result carried no
+   text: "the SDK gave no reason" is itself the finding, and is otherwise a whole
+   run spent re-establishing it.
+
 6. **Reasoning capture was rejected, on evidence.** The obvious fix — translate
    `thinking` blocks — cannot reach the subagents, which is where the incident
    happened and where 65% of the work happens. Instead the `aep` skill requires
    a one-line `echo` naming the reason before discarding existing work. Tool
    calls are the only channel that survives the forwarding boundary, so the
-   reason has to *be* a tool call to be recorded at all.
+   reason has to *be* a tool call to be recorded at all. **Superseded in part by
+   decision 16** — the forwarding boundary was the SDK's default, not a fixed
+   property of it. The `echo` rule stays: it is what puts a reason on the *feed*,
+   which is a different audience from the transcript.
 
-7. **Silence reports what it is waiting on.** The watchdog distinguishes the two
+7. **Silence reports what it is waiting on.** The watchdog distinguishes the
    faults a silent feed can mean — a tool in flight (that call is slow or stuck,
-   and the line names it) versus nothing in flight (the model turn is). It warns
+   and the line names it), a subagent running (its model turn is the slow half,
+   and the line names which subagent), or neither (the lead's own turn). It warns
    and repeats; it never fails a run on its own clock, because a long dependency
    pull is legitimate. A SIGTERM handler dumps the same snapshot, so a killed
    run still explains itself.
+
+   **The subagent case is read off `emitterId`, not off the fan-out call.**
+   Decision 11's sibling: the translator gives an `Agent` call no `tool_use`
+   event of its own, so the watchdog — which sees only emitted events — never had
+   the call in flight and could not name it. It claimed otherwise for as long as
+   the claim existed, in this ADR, in the module header, and in a test that
+   asserted against a hand-made `{tool: "Agent"}` event production never emits.
+   Measured live: a fan-out went silent for ten minutes and every report said
+   "no tool in flight — waiting on the model", pointing at the lead while a
+   22-minute `Agent` call was the thing being waited on. The only trace of a
+   running subagent on this stream is the attribution stamped on the lines it
+   produces, so that is what the watchdog registers. Its clock therefore starts
+   at the subagent's FIRST line rather than at the call — a few seconds late, and
+   the only start this stream carries. Several at once are counted, not guessed
+   between: the lines interleave and any of them could be the silent one.
 
 14. **A stalled model turn names its cause, and API retries are reported on
     every run.** "Nothing in flight" was where decision 7 stopped, and it is a
@@ -175,8 +207,12 @@ Four further gaps, all verified rather than assumed:
     unrecognised system subtype. Measured against a dead endpoint: 8 retries in
     69s and not one line about any of them. So retries now become a `warn` log
     event and the watchdog's line names them — `(API retry 7/10, overloaded,
-    last 10s ago)` — in the tool-in-flight branch too, because a fan-out lead's
-    `Agent` call stays open for its subagent's whole run.
+    last 10s ago)` — in every branch, because a stall inside a subagent surfaces
+    under that subagent's line and that is where the cause is hardest to guess
+    from outside. Whether an `api_retry` raised INSIDE a subagent reaches the
+    lead's stream at all is **not established**: none arrived during the live
+    stall above, which is equally consistent with "no retries" and "not
+    forwarded". An empty cause therefore claims nothing.
 
     This is **not** gated behind a debug flag, and that is deliberate on three
     counts: a healthy run emits nothing (no retries, no messages, no lines);
@@ -211,6 +247,49 @@ Four further gaps, all verified rather than assumed:
     none: probed against the same dead endpoint it produced one unrelated
     startup warning while all 8 retries went past on the message channel. It is
     kept as a sink for what else the CLI says, not as the diagnosis.
+
+16. **The reasoning IS capturable now, and it joins the developer options.**
+    Decision 6 rejected reasoning capture because the forwarding boundary put
+    the subagents out of reach. That boundary is the SDK's *default*, not a
+    property of it: `forwardSubagentText` forwards a subagent's text and
+    thinking as messages carrying `parent_tool_use_id`, and it was never set.
+
+    It takes two options, because either alone leaves the transcript unable to
+    answer the question. Measured on the 2026-08-14 playground run, with
+    neither set: 7 thinking blocks in the lead session, **every one of them
+    `thinking: ""`** — signed, empty, and accompanied by 62
+    `system`/`thinking_tokens` events counting reasoning whose text nothing
+    kept; and 120 subagent tool calls with zero blocks of any other kind. So
+    `thinking: {type: "adaptive", display: "summarized"}` is what makes a block
+    carry words, and `forwardSubagentText` is what makes the blocks exist for
+    the streams that do the work.
+
+    They sit in `debugQueryOptions` with the other three, for the reason
+    decision 15 gives: volume, and a sink nothing collects. A pod's transcript
+    would grow by every subagent's prose to no reader.
+
+    The progress feed is unaffected, and that is checked rather than hoped:
+    `assistantToolUseBlocks` selects `type === "tool_use"` and ignores every
+    other block kind, so the new content reaches `claude.log` and stops there.
+    Decision 12 still holds — this is developer detail that is READ, not fed.
+
+17. **The system messages that explain a silence are read, not dropped.**
+    Decision 14 took `api_retry` off the discard pile; four more subtypes were
+    still on it, and each is a stall or a death the feed reported as silence.
+    `compact_boundary` is the one that matters most and the only benign entry:
+    an auto-compaction is minutes of total quiet with no tool in flight and no
+    retry — indistinguishable from a wedge, and now a line
+    (`[compact] auto compaction 152k → 38k tokens in 47s`).
+    `model_refusal_no_fallback` / `model_refusal_fallback` say a turn ended
+    because the model refused, `permission_denied` says a call was denied rather
+    than answered (on the stream only since SDK 0.3.223 — before it a
+    `DISALLOWED_TOOLS` denial reached the feed as a puzzling tool result), and
+    `worker_shutting_down` says the worker left. Ungated for the same three
+    reasons as decision 14: a healthy run emits none of them, every field
+    printed is a closed enum, a number, an id or ONE prose field bounded to 200
+    characters, and none of these faults is one a flag would be on for.
+    Deliberately not fed to `watchdog.observe` — none is the agent making
+    progress, and an idle report that fires slightly early is the safe direction.
 
 8. **`console.*` is converted, not merely scrubbed.** It shares the fd with the
    feed, so a bare line makes the stream unparseable — and a watchdog cannot

@@ -223,3 +223,51 @@ export function buildFileTools(bundle: FileBundle, skills?: SkillSource): Record
 
   return { ...tools, ...buildSkillTools(skills) };
 }
+
+export const DRAFT_EXTERNAL_RESOURCE_TOOL = "draftExternalResource" as const;
+
+const draftExternalResourceInputSchema = z.object({
+  name: z.string().optional().describe("Resource identity (logical name)."),
+  description: z.string().optional().describe("What the resource is."),
+  consumptionInstructions: z
+    .string()
+    .optional()
+    .describe("How a consuming project should use it — not a restatement of description."),
+  config: z
+    .array(
+      z.object({
+        key: z.string().describe("Config key identity."),
+        description: z.string().describe("What this key is for."),
+        secret: z.boolean().describe("True when the value must never appear in chat."),
+      }),
+    )
+    .optional()
+    .describe("Config keys. Never include env values or secret bytes."),
+  resourceDocs: z
+    .array(
+      z.object({
+        type: z.enum(["documentation", "openapi", "graphql", "asyncapi", "protobuf"]),
+        url: z.string().describe("Remote docs URL. Never a file body."),
+      }),
+    )
+    .optional()
+    .describe("Optional URL-only resource-docs. Never env values."),
+});
+
+/**
+ * Console-folded draft for Marketplace register. Execute is a no-op: the
+ * tool-call input IS the draft. Only registered on `/register-external-resource`
+ * turns — never on spec/project files turns.
+ */
+export function buildRegisterDraftTools(): Record<string, Tool> {
+  return {
+    [DRAFT_EXTERNAL_RESOURCE_TOOL]: tool({
+      description:
+        "Draft the Registered External resource form (name, description, consumption instructions, " +
+        "config keys, optional URL resource-docs). Never include environment values or secret bytes. " +
+        "Call this when you know enough to fill the form; ask_question first when you do not.",
+      inputSchema: draftExternalResourceInputSchema,
+      execute: async (input) => ({ status: "ok" as const, ...input }),
+    }),
+  };
+}

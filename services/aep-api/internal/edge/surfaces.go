@@ -162,7 +162,8 @@ func mountSurfaces(params AppParams) *http.ServeMux {
 	if params.Deps.TaskTokens != nil {
 		mcpVerifier := auth.NewAgentsScopedVerifier(params.Deps.TaskTokens, params.Deps.PublisherTokens)
 		mcpHandler := mcpdiscovery.NewMCPHandler(
-			params.MCPExternalResources, params.MCPOrgEndpoints, params.MCPResourceTypes, params.MCPRemoteGit,
+			params.MCPExternalResources, params.MCPOrgEndpoints, params.MCPResourceTypes,
+			params.MCPRoleCatalog, params.MCPRemoteGit,
 			params.MCPSpecValidator, params.MCPSpecNormalizer, params.MCPSpecFetcher)
 		mux.Handle("POST "+internalV1+"/mcp", mcpVerifier.Middleware(mcpHandler))
 

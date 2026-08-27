@@ -33,6 +33,11 @@ import (
 // consumer-side port.
 var _ spec.OrgServiceResolver = (*Catalog)(nil)
 
+// Structural compile-time check: *ExternalResourceCatalog is the concrete
+// provider the composition root wires as the read-time external-resource
+// resolver (spec.SetExternalResourceResolver).
+var _ spec.ExternalResourceResolver = (*ExternalResourceCatalog)(nil)
+
 func sampleEndpoints() []openchoreo.WorkloadEndpointInfo {
 	return []openchoreo.WorkloadEndpointInfo{
 		// org-published: external + namespace → an org-service target.

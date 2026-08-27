@@ -25,7 +25,7 @@ type TaskView = components["schemas"]["TaskView"];
 type DeployStage = components["schemas"]["DeployStage"];
 
 /**
- * Pure derivations for the version ledger (ADR-0020).
+ * Pure derivations for the version ledger (ADR-0021).
  *
  * EVERYTHING here comes from reads the console already makes — the ledger adds
  * no contract surface of its own. Two sources, and which one answers which cell

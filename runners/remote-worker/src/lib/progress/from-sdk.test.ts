@@ -689,6 +689,66 @@ test("from-sdk: a subagent that dies is reported as a failure, not merely as sil
   assert.equal((done as { status?: string }).status, "error_during_execution");
 });
 
+/** A fan-out call that came back as an error block rather than a report. */
+function agentFailure(spawnId: string, text: string): unknown {
+  return {
+    type: "user",
+    parent_tool_use_id: null,
+    message: { content: [{ type: "tool_result", tool_use_id: spawnId, is_error: true, content: text }] },
+  };
+}
+
+test("from-sdk: a failed subagent's error text is printed, because nothing else carries it", () => {
+  // The live regression: a 22-minute subagent failed and the feed said `ok:false`
+  // and nothing else. Its transcript is not on this feed and claude.log dies with
+  // the pod, so the tool result's own text is the last copy of the reason.
+  const translate = createSdkTranslator();
+  translate(fanOut("toolu_spawn", "Continue expense-webapp React SPA implementation"));
+  const events = translate(
+    agentFailure("toolu_spawn", "Error: API request failed after 600s\nrequest timed out\n"),
+  );
+
+  assert.equal(events.length, 2, "the row that settles the section, then the reason");
+  assert.equal((events[0] as { ok: boolean }).ok, false);
+  // The row keeps the LABEL — the console renders it as the section heading.
+  assert.equal((events[0] as { summary?: string }).summary, "Continue expense-webapp React SPA implementation");
+
+  const why = events[1];
+  assert.equal(why.kind, "log");
+  assert.equal((why as { level?: string }).level, "error");
+  const line = (why as { summary: string }).summary;
+  assert.match(line, /^\[fan-out\] Continue expense-webapp React SPA implementation failed: /);
+  assert.match(line, /Error: API request failed after 600s \| request timed out/, "every line, not one sentence");
+  // Attributed to the subagent, so the reason lands in its own section.
+  assert.equal(why.emitterId, "toolu_spawn");
+});
+
+test("from-sdk: a failed subagent with no error text says so, rather than saying nothing", () => {
+  // "The SDK gave no reason" is itself the finding — it is what a reader would
+  // otherwise spend the next run establishing.
+  const translate = createSdkTranslator();
+  translate(fanOut("toolu_spawn", "Implement todo-webapp"));
+  const events = translate({
+    type: "user",
+    parent_tool_use_id: null,
+    message: { content: [{ type: "tool_result", tool_use_id: "toolu_spawn", content: "" }] },
+    tool_use_result: { status: "error_during_execution" },
+  });
+
+  assert.equal(events.length, 2);
+  assert.match(
+    (events[1] as { summary: string }).summary,
+    /failed: no error text on the tool result \(status error_during_execution\)/,
+  );
+});
+
+test("from-sdk: a successful subagent adds no failure line", () => {
+  const translate = createSdkTranslator();
+  translate(fanOut("toolu_spawn", "Implement todo-api"));
+  const events = translate(agentResult("toolu_spawn", "completed"));
+  assert.equal(events.length, 1);
+});
+
 test("from-sdk: a subagent's totals fall back to a measured duration when the SDK reports none", () => {
   let clock = 0;
   const translate = createSdkTranslator({ now: () => clock });

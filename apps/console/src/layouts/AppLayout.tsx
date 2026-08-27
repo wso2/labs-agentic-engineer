@@ -32,6 +32,7 @@ import {
   useAppShell,
 } from "@wso2/oxygen-ui";
 import {
+  Boxes,
   CircleAlert,
   CircleCheck,
   FileText,
@@ -39,6 +40,7 @@ import {
   LayoutDashboard,
   ListChecks,
   LogOut,
+  Radio,
   Rocket,
   Settings,
   Siren,
@@ -68,6 +70,8 @@ const REPO_URL = "https://github.com/wso2/labs-agentic-engineer";
 // (global nav) or per project section (project nav, ADR-0010).
 function activeItemFor(pathname: string, inProject: boolean): string {
   if (pathname.startsWith("/settings")) return "settings";
+  if (pathname.startsWith("/resources")) return "resources";
+  if (pathname.startsWith("/endpoints")) return "endpoints";
   if (pathname.startsWith("/alerts")) return "alerts";
   if (!inProject) return "projects";
   const section = pathname.split("/")[3];
@@ -328,6 +332,18 @@ export function AppLayout() {
                     <FolderOpen />
                   </Sidebar.ItemIcon>
                   <Sidebar.ItemLabel>Projects</Sidebar.ItemLabel>
+                </Sidebar.Item>
+                <Sidebar.Item id="resources" link={<Link to="/resources" />}>
+                  <Sidebar.ItemIcon>
+                    <Boxes />
+                  </Sidebar.ItemIcon>
+                  <Sidebar.ItemLabel>Resources</Sidebar.ItemLabel>
+                </Sidebar.Item>
+                <Sidebar.Item id="endpoints" link={<Link to="/endpoints" />}>
+                  <Sidebar.ItemIcon>
+                    <Radio />
+                  </Sidebar.ItemIcon>
+                  <Sidebar.ItemLabel>Endpoints</Sidebar.ItemLabel>
                 </Sidebar.Item>
                 {/* Global Alerts section (#155) — RCA-agent reports across every project. */}
                 <Sidebar.Item id="alerts" link={<Link to="/alerts" />}>

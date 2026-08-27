@@ -350,11 +350,11 @@ func (s *Service) executeTurn(ctx context.Context, job turnJob) TurnTerminal {
 		}
 	}()
 
-	// Room-scoped turn (#86 phase 4): the doc is the write surface — the fold
-	// would run against the SNAPSHOT while the agents-side bundle started from
-	// the DOC, so parity is undefined by construction. Relay frames only;
-	// nothing folds, nothing commits, no manifest gate.
-	roomMode := job.collabRoomID != ""
+	// Relay-only turns: collab roomMode (#86 phase 4) — doc is the write
+	// surface — and Marketplace register chat, whose project snapshot is a
+	// dual materialization of org-skills (folding would commit into skills).
+	// Relay frames only; nothing folds, nothing commits, no manifest gate.
+	roomMode := job.collabRoomID != "" || isMarketplaceRegisterProject(job.projectID)
 
 	fold := agentfold.New(s.turnBaseReader(job.repoRef, job.baseRef))
 	var manifest *agentfold.Manifest

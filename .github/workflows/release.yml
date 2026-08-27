@@ -53,7 +53,13 @@ jobs:
           - name: remote-worker
             dockerfile: runners/remote-worker/Dockerfile
             context: runners/remote-worker
-            buildContexts: skills=skills
+            # Two named contexts, both outside this image's context: the authored
+            # skill library, and the `bal library` tool's SOURCE — the image's
+            # first stage compiles it, so nothing has to be built before this job
+            # and no artifact can be stale (ADR-0008).
+            buildContexts: |
+              skills=skills
+              bal-library-tool=packages/bal-library-tool
           - name: console
             dockerfile: apps/console/Dockerfile
             context: .
@@ -83,6 +89,18 @@ jobs:
           # skills repos, and the runner's local (playground) mode mirrors it into
           # a project dir. See the COPY --from=skills line in each Dockerfile.
           build-contexts: ${{ matrix.buildContexts }}
+          # remote-worker's tool stage needs to read ballerina-platform's GitHub
+          # Packages; a repo-scoped GITHUB_TOKEN suffices (ADR-0008).
+          #
+          # A SECRET and never a build-arg, and that is this file's constraint
+          # rather than a preference: `cache-to mode=max` below publishes the
+          # builder stages to a public buildcache, so anything in a layer or in
+          # image history is published with them.
+          #
+          # Reaches every image because this key is not matrix-conditional.
+          # Harmless: a build declaring no matching mount never reads it.
+          secrets: |
+            packagePAT=${{ secrets.GITHUB_TOKEN }}
           push: true
           platforms: linux/amd64,linux/arm64
           tags: |

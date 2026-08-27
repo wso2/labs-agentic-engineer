@@ -28,6 +28,7 @@ import (
 type Deps struct {
 	ProvisioningSvc *provisioning.Service
 	ResourceTypes   mcpdiscovery.ResourceTypeLister
+	OrgEndpoints    mcpdiscovery.OrgEndpointLister
 }
 
 // Both slices name their handler type Handler, so embedding them directly would
@@ -60,6 +61,6 @@ func New(d Deps) (*Handlers, error) {
 	}
 	return &Handlers{
 		provisioningHandler: provisioning.NewHandler(d.ProvisioningSvc),
-		mcpdiscoveryHandler: mcpdiscovery.NewHandler(d.ResourceTypes, consumers),
+		mcpdiscoveryHandler: mcpdiscovery.NewHandler(d.ResourceTypes, consumers, d.OrgEndpoints),
 	}, nil
 }

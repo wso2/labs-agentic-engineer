@@ -1,0 +1,63 @@
+# The ATTACHABILITY case: a service on a listener, where Central publishes no
+# method contract for the service type.
+#
+# `service/telemetry-kafka` is the same package from the other end — a producer,
+# reached through a client, which every other case also does. Nothing else in the
+# suite writes a `service on <listener>`, and that shape's answer lives in one
+# place: `bal library api` renders a `service kafka:Service on new
+# kafka:Listener(...)` template and says outright that Central publishes no method
+# contract for it, pointing at the guide. `onConsumerRecord` and its `kafka:Caller`
+# and `kafka:BytesConsumerRecord[]` parameters appear in no signature at all.
+#
+# WHAT IT ACTUALLY MEASURED, first run: `overview` once, `type` three times,
+# `client` once — and NOT `api`, NOT `guide`. It produced a correct attached
+# service anyway, so `onConsumerRecord` came from recall rather than from the tool.
+# So this case does NOT force the `api` path, and the claim that it would was wrong:
+# the method name is evidently well enough known to be remembered. What it does
+# still measure is whether the service ends up ATTACHED and whether the manual
+# commit contract survives — the `mustContain` patterns below — and it remains the
+# only case in the suite where a plausible invention (`onMessage`, `onRecord`)
+# compiles green while consuming nothing.
+#
+# `api` has now gone unreached across every attempt of every case. That is the
+# intended outcome for a last-resort verb, not a coverage hole to engineer around.
+#
+# The reference solution was compiled before this case was written: a `listener
+# kafka:Listener` with an explicit ConsumerConfiguration, one `remote function
+# onConsumerRecord(kafka:Caller, kafka:BytesConsumerRecord[])`, and a manual
+# `caller->commit()`, builds clean on Ballerina 2201.13.2.
+prompt: |
+  In this Ballerina package, write `audit_consumer.bal` — a Kafka consumer that
+  runs as a service rather than polling in a loop.
+
+  - `bootstrapServers` and `topic` are configurable,
+  - it belongs to the consumer group `order-audit`,
+  - it must NOT auto-commit: commit the offsets yourself, only after the batch
+    has been handled,
+  - for each record, log the partition and the offset it was read from.
+
+  Then run `bal build` until it is clean. Do not write tests.
+
+expect:
+  builds: true
+  imports:
+    - ballerinax/kafka
+  mustContain:
+    # The service must be ATTACHED to the listener, not merely declared beside it.
+    - "service\\s+(kafka:Service\\s+)?on\\s+"
+    # The method contract Central does not publish. A run that invents a plausible
+    # name — onMessage, onRecord, onConsume — compiles happily as an unattached
+    # service and never consumes anything, which `builds: true` cannot see.
+    - "remote function onConsumerRecord"
+    # autoCommit: false plus an explicit commit is the prompt's actual requirement,
+    # and the reason `kafka:Caller` has to be in the signature at all.
+    - "autoCommit\\s*:\\s*false"
+    # `'commit` — quoted, because `commit` is a reserved word — is the spelling the
+    # tool prints and the one a run wrote. Both forms compile, so both match here:
+    # this case is about the commit HAPPENING, not about how the identifier is spelled.
+    - "->'?commit\\(\\)"
+  mustNotContain:
+    # The loop this case exists to rule out: a client-side `poll` is the shape the
+    # other kafka case already measures, and it satisfies the prompt's words while
+    # missing its point.
+    - "->poll\\("

@@ -37,6 +37,7 @@ import { useNavigate } from "@tanstack/react-router";
 import type { components } from "../../../generated/aep-api";
 import { useSession } from "../../../auth/SessionContext";
 import { useAgentEngaged } from "../../agent-chat/useAgentEngaged";
+import { useConversationLog } from "../../agent-chat/useConversationLog";
 import {
   buildStageView,
   CHIP_COLOR,
@@ -197,6 +198,12 @@ export function OverviewPipeline({
   // a completed turn to "", and a turn that ends ON a question is exactly that.
   // The local chat log is the only thing that knows.
   const org = useSession().orgHandle ?? "default";
+  // ...so this card must make sure the log EXISTS (#606). It used to be filled
+  // only while the chat panel was mounted, which is why a teammate opening the
+  // overview in a fresh browser read "nothing has started" over a thread holding
+  // someone else's unanswered question. One shared cache entry with the panel
+  // and the spec workspace, so mounting it here costs no extra request.
+  useConversationLog(org, projectName);
   const engaged = useAgentEngaged(org, projectName);
   const spec = specStageView(status, engaged);
   const build = buildStageView(status);

@@ -45,7 +45,7 @@ type Infra struct {
 	CredentialStore secrets.CredentialStore
 	ColumnCipher    *secrets.ColumnCipher // same key as CredentialStore; seals column values
 	Minter          *secrets.AppTokenMinter
-	AppClientSecret string        // GitHub App OAuth client_secret ("" ⇒ bind path disabled)
+	AppClientSecret string // GitHub App OAuth client_secret ("" ⇒ bind path disabled)
 	Workspace       *gitfs.Engine
 	// RateStamper prices captured agent usage at write time (#291), loaded once
 	// from model_rates after migration. Assemble threads it into the turn +

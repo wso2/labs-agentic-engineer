@@ -20,6 +20,24 @@ ingress:
 # SQLite requires a single writer pod
 deployment:
   replicaCount: 1
+  # The chart defaults to cpu 200m / memory 100Mi, which flaps this pod. Measured
+  # from its own cgroup on a k3d dev node: 33% of active scheduling periods were
+  # throttled and 22.1s were spent frozen against 9.3s of CPU actually used, so
+  # the HTTP liveness probe — which the chart templates with no timeoutSeconds,
+  # inheriting Kubernetes' 1s default and failureThreshold 3 — misses its
+  # deadline and the container is SIGTERMed. It had restarted 6 times in 8 hours.
+  #
+  # Memory was never the problem: peak was 28MB of the 100MB limit with zero
+  # oom_kill events. The raise here is CPU, and the memory bump is only headroom.
+  # Requests stay small so this cannot schedule-starve the dataplane on a 6-vCPU
+  # dev node; the limit is a burst ceiling, not a reservation.
+  resources:
+    requests:
+      cpu: 250m
+      memory: 128Mi
+    limits:
+      cpu: 1500m
+      memory: 512Mi
 
 hpa:
   enabled: false

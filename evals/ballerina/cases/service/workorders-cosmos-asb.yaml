@@ -1,0 +1,23 @@
+prompt: |
+  An HTTP work order service for a facilities operator. Work orders live in an
+  Azure Cosmos DB container partitioned by site, which is why every read carries
+  the site alongside the id. Listing queries the container by site and narrows on
+  status and priority.
+
+  Dispatching a work order puts a message carrying the crew, the schedule and the
+  priority onto an Azure Service Bus queue, records the message id against the
+  work order and moves it to dispatched; dispatching one twice is a 409.
+
+  Generate the service from `openapi.yaml`. The Cosmos endpoint, key, database
+  and container, and the Service Bus connection string and queue, stay
+  configurable. No tests.
+
+fixtures:
+  openapi.yaml: openapi/workorders-cosmos-asb.yaml
+
+expect:
+  builds: true
+  imports:
+    - ballerina/http
+    - ballerinax/azure_cosmosdb
+    - ballerinax/asb

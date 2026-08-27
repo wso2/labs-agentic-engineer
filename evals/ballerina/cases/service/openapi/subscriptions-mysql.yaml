@@ -1,0 +1,274 @@
+openapi: 3.0.3
+info:
+  title: Subscription Billing API
+  version: 1.0.0
+paths:
+  /plans:
+    get:
+      operationId: listPlans
+      summary: Every plan on offer
+      responses:
+        "200":
+          description: The plans
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Plan"
+  /subscribers:
+    post:
+      operationId: createSubscriber
+      summary: Register a subscriber
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewSubscriber"
+      responses:
+        "201":
+          description: The registered subscriber
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Subscriber"
+        "409":
+          description: That email is already registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /subscribers/{subscriberId}:
+    get:
+      operationId: getSubscriber
+      summary: Fetch one subscriber
+      parameters:
+        - name: subscriberId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The subscriber
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Subscriber"
+        "404":
+          description: No such subscriber
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /subscriptions:
+    get:
+      operationId: listSubscriptions
+      summary: List subscriptions, newest first
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/SubscriptionStatus"
+        - name: planCode
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Matching subscriptions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Subscription"
+    post:
+      operationId: subscribe
+      summary: Put a subscriber on a plan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewSubscription"
+      responses:
+        "201":
+          description: The started subscription
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Subscription"
+        "404":
+          description: No such subscriber or plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /subscriptions/{subscriptionId}:
+    get:
+      operationId: getSubscription
+      summary: Fetch one subscription
+      parameters:
+        - name: subscriptionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The subscription
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Subscription"
+        "404":
+          description: No such subscription
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /subscriptions/{subscriptionId}/cancel:
+    post:
+      operationId: cancelSubscription
+      summary: Cancel a subscription at the end of its term
+      parameters:
+        - name: subscriptionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The cancelled subscription
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Subscription"
+        "404":
+          description: No such subscription
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /subscriptions/{subscriptionId}/invoices:
+    get:
+      operationId: listInvoices
+      summary: Invoices raised against a subscription
+      parameters:
+        - name: subscriptionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The invoices
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Invoice"
+        "404":
+          description: No such subscription
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+components:
+  schemas:
+    SubscriptionStatus:
+      type: string
+      enum: [trialing, active, past_due, cancelled]
+    Plan:
+      type: object
+      required: [planCode, name, priceCents, intervalDays]
+      properties:
+        planCode:
+          type: string
+        name:
+          type: string
+        priceCents:
+          type: integer
+          format: int64
+          minimum: 0
+        intervalDays:
+          type: integer
+          format: int32
+          minimum: 1
+    NewSubscriber:
+      type: object
+      required: [name, email]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        email:
+          type: string
+    Subscriber:
+      type: object
+      required: [subscriberId, name, email, registeredAt]
+      properties:
+        subscriberId:
+          type: string
+        name:
+          type: string
+        email:
+          type: string
+        registeredAt:
+          type: string
+    NewSubscription:
+      type: object
+      required: [subscriberId, planCode]
+      properties:
+        subscriberId:
+          type: string
+        planCode:
+          type: string
+        trialDays:
+          type: integer
+          format: int32
+          minimum: 0
+    Subscription:
+      type: object
+      required: [subscriptionId, subscriberId, planCode, status, startedAt, renewsAt]
+      properties:
+        subscriptionId:
+          type: string
+        subscriberId:
+          type: string
+        planCode:
+          type: string
+        status:
+          $ref: "#/components/schemas/SubscriptionStatus"
+        startedAt:
+          type: string
+        renewsAt:
+          type: string
+        cancelledAt:
+          type: string
+    Invoice:
+      type: object
+      required: [invoiceId, subscriptionId, amountCents, issuedAt, paid]
+      properties:
+        invoiceId:
+          type: string
+        subscriptionId:
+          type: string
+        amountCents:
+          type: integer
+          format: int64
+        issuedAt:
+          type: string
+        paid:
+          type: boolean
+    ErrorMessage:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string

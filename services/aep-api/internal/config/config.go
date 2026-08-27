@@ -115,6 +115,15 @@ type Config struct {
 	// still deploy, just without per-org publishers).
 	ThunderAdmin ThunderAdminConfig
 
+	// APIGatewayHost is host:port of the API Platform gateway runtime — the hop
+	// that terminates authentication for a managed API. Published to a consumer
+	// of a protected sibling as `<DEP>_GATEWAY_URL` so a SPA's nginx can proxy
+	// the browser's /api through it instead of straight at the project Service.
+	// Loaded from API_GATEWAY_HOST. Empty means "use the platform default" —
+	// the constant lives in the projects domain beside the context-path builder
+	// it must agree with, so config carries only the override.
+	APIGatewayHost string
+
 	// Platform IDP defaults seeded into organization_idp_profiles rows
 	// on first access. Loaded from PLATFORM_IDP_ISSUER /
 	// PLATFORM_IDP_JWKS_URL — should match the cluster's Thunder

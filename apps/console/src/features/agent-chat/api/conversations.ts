@@ -22,6 +22,7 @@
 // (The pre-#430 id was a per-browser localStorage mint, so a teammate's
 // interview was structurally invisible.)
 
+import type { QueryClient } from "@tanstack/react-query";
 import type { components } from "../../../generated/aep-api";
 import { client } from "../../../api/client";
 import { apiErrorMessage } from "../../../api/errors";
@@ -60,7 +61,27 @@ export async function rotateConversation(projectName: string): Promise<string> {
   return data.conversationId;
 }
 
-/** Query key for the resolved current-thread id (react-query). */
+/** Rotate the project's current thread and stamp the new id into the query cache. */
+export async function rotateCurrentConversation(
+  queryClient: QueryClient,
+  projectName: string,
+): Promise<string> {
+  const fresh = await rotateConversation(projectName);
+  queryClient.setQueryData(conversationKeys.current(projectName), fresh);
+  return fresh;
+}
+
+/** Query keys for the thread (react-query). */
 export const conversationKeys = {
   current: (projectName: string) => ["agent-conversation", projectName] as const,
+  /**
+   * The thread's server-side history. ONE cache entry shared by every surface
+   * that rehydrates the log (#606) — the chat panel, the spec workspace and the
+   * overview's spec card — so three mounted readers cost one request, not three.
+   *
+   * Keyed on the conversation id as well as the project: a rotation must not
+   * serve the demoted thread's messages under the new thread's key.
+   */
+  messages: (projectName: string, conversationId: string) =>
+    ["agent-conversation", projectName, "messages", conversationId] as const,
 };

@@ -27,6 +27,8 @@ import {
   ensureUserMessage,
   getMessages,
   replaceMessages,
+  claimSendInFlight,
+  claimStreamFold,
   settleUserMessage,
   setTurnStatus,
   subscribe,
@@ -36,17 +38,19 @@ import {
 import {
   ConversationRotatedError,
   getActiveTurn,
-  getConversationMessages,
   startCollabTurn,
   type TurnStatus,
 } from "./api/turns.js";
 import {
   conversationKeys,
   fetchCurrentConversationId,
-  rotateConversation,
+  rotateCurrentConversation,
 } from "./api/conversations.js";
 import { attachAndFoldTurn } from "./runTurn.js";
-import { projectableHistory } from "./history.js";
+import {
+  applyConversationHistory,
+  fetchConversationHistory,
+} from "./useConversationLog.js";
 import { useCurrentAuthor } from "./currentUser.js";
 
 // The panel's behavior hook (#130), on the SHARED project thread (#430): the
@@ -161,7 +165,12 @@ export interface AgentChat {
   newConversation: () => void;
 }
 
-export function useAgentChat(org: string, projectName: string): AgentChat {
+export function useAgentChat(
+  org: string,
+  projectName: string,
+  options: { collab?: boolean } = {},
+): AgentChat {
+  const collab = options.collab ?? true;
   const chatKey = chatKeyFor(org, projectName);
   const messages = useSyncExternalStore(
     useCallback((fn: () => void) => subscribe(chatKey, fn), [chatKey]),
@@ -173,6 +182,12 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
   const abortRef = useRef<AbortController | null>(null);
   // Mirrors the attachment state for the poll/refocus triggers: a rehydrate
   // REPLACE must never run mid-fold, or it would clobber streamed partials.
+  //
+  // Since #606 the log has other writers (the spec workspace, the overview's
+  // spec card), so both guards are ALSO published to the store — see
+  // `markAttached` / `markSending` below. The refs stay because this hook reads
+  // them synchronously for its own concurrency control ("am I already
+  // attached"), which is a different question from "may anyone replace the log".
   const attachedRef = useRef(false);
   // A local send whose dispatch has not answered yet. `attachedRef` cannot
   // cover this window: the turn row exists server-side the moment StartTurn
@@ -184,6 +199,45 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
   const pendingStartRef = useRef(false);
   const author = useCurrentAuthor();
   const queryClient = useQueryClient();
+
+  // The ONLY writers of the two guards above, so the local ref and the store
+  // claim it publishes cannot drift apart. Both are idempotent: setting a guard
+  // that is already set keeps the single outstanding claim.
+  const foldClaimRef = useRef<(() => void) | null>(null);
+  const sendClaimRef = useRef<(() => void) | null>(null);
+  const markAttached = useCallback(
+    (on: boolean) => {
+      attachedRef.current = on;
+      if (on) foldClaimRef.current ??= claimStreamFold(chatKey);
+      else {
+        foldClaimRef.current?.();
+        foldClaimRef.current = null;
+      }
+    },
+    [chatKey],
+  );
+  const markSending = useCallback(
+    (on: boolean) => {
+      pendingStartRef.current = on;
+      if (on) sendClaimRef.current ??= claimSendInFlight(chatKey);
+      else {
+        sendClaimRef.current?.();
+        sendClaimRef.current = null;
+      }
+    },
+    [chatKey],
+  );
+  // A chatKey change (rotation, project switch) strands any claim held under
+  // the old key — release it rather than leaving that log permanently unreplaceable.
+  useEffect(
+    () => () => {
+      foldClaimRef.current?.();
+      foldClaimRef.current = null;
+      sendClaimRef.current?.();
+      sendClaimRef.current = null;
+    },
+    [chatKey],
+  );
 
   // The project's current thread id (#430) — server-resolved, shared by every
   // member. staleTime Infinity: the id only moves on rotation, and rotation
@@ -205,9 +259,37 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
   // (spec file list included) so views keyed off committed truth — e.g. the
   // Architecture tab's "Designing…" state — settle instead of serving the
   // staleTime-Infinity snapshot until a reload.
+  //
+  // The THREAD is the same kind of stale, and the commit is the same signal.
+  // The fold appends turn rows into `chatStore` live, but the authority that
+  // replaces them is the `staleTime: Infinity` history query — refreshed
+  // only on a cold mount, a refocus, or a poll that finds a RUNNING turn. None
+  // of those is "the turn just finished", so a turn ending while the user sits
+  // still left the cache one turn behind, and the next surface to mount
+  // `useConversationLog` replayed that snapshot over the live rows. On a new
+  // project the snapshot is the EMPTY thread the panel read before the
+  // platform's kickoff dispatched, so the replay emptied the log outright and
+  // the spec workspace fell back to "Nothing written yet" plus a Retry while
+  // the agent stood waiting on the questions it had just asked.
+  //
+  // READ the thread here rather than merely invalidating it. An invalidation
+  // leaves the stale entry in place, and react-query serves that entry to the
+  // next observer synchronously while it refetches behind it — so the spec
+  // workspace would still paint one frame of the pre-turn snapshot, wiping the
+  // question and flashing "Nothing written yet" before the fresh read restored
+  // it. Reading AT the commit means the cache already holds post-turn truth by
+  // the time any surface mounts, and there is no window to paint.
+  //
+  // Through the shared cache entry (#606), so this is the same request every
+  // other surface would have made rather than a second one racing it. Failure
+  // is a no-op: `fetchConversationHistory` answers null and the existing
+  // triggers (refocus, cold mount) remain the recovery path.
   const onTurnCommitted = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: projectKeys.detail(projectName) });
-  }, [queryClient, projectName]);
+    if (conversationId) {
+      void fetchConversationHistory(queryClient, projectName, conversationId);
+    }
+  }, [queryClient, projectName, conversationId]);
 
   useEffect(() => {
     if (!conversationId) return;
@@ -242,12 +324,16 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
       // the user's own message, and `settleUserMessage` would then no-op onto
       // an id that no longer exists.
       if (attachedRef.current || pendingStartRef.current) return;
-      const history = await getConversationMessages(projectName, conversationId);
-      if (ac.signal.aborted || attachedRef.current || history === null) return;
-      const localOnly = getMessages(chatKey).filter(
-        (m) => m.role === "error" || (m.role === "user" && m.status === "failed"),
+      // Through the SHARED cache entry (#606), not a bare fetch: the spec
+      // workspace and the overview's spec card observe the same key, so this
+      // read serves them too instead of racing a second identical request.
+      const history = await fetchConversationHistory(
+        queryClient,
+        projectName,
+        conversationId,
       );
-      replaceMessages(chatKey, [...projectableHistory(history), ...localOnly]);
+      if (ac.signal.aborted) return;
+      applyConversationHistory(chatKey, history);
     };
 
     // Attach to a running turn (ours or a teammate's, or the platform's own
@@ -255,7 +341,7 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
     const attach = async (active: TurnStatus) => {
       if (attachedRef.current) return;
       const turnId = active.turnId;
-      attachedRef.current = true;
+      markAttached(true);
       setIsSending(true);
       setActiveTurnId(turnId);
       dropTurnOutput(chatKey, turnId); // replay-from-0 re-adds it all
@@ -271,7 +357,7 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
       } catch {
         // surfaced by the fold's error handling; the view just settles
       } finally {
-        attachedRef.current = false;
+        markAttached(false);
         if (!ac.signal.aborted) {
           setIsSending(false);
           setActiveTurnId(undefined);
@@ -371,20 +457,20 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
       ac.abort();
       if (pollTimer !== undefined) clearTimeout(pollTimer);
       document.removeEventListener("visibilitychange", onVisible);
-      attachedRef.current = false;
-      pendingStartRef.current = false;
+      markAttached(false);
+      markSending(false);
       setHistoryReady(false);
       setIsSending(false);
       setActiveTurnId(undefined);
     };
-  }, [chatKey, org, projectName, conversationId, onTurnCommitted, queryClient]);
+  }, [chatKey, org, projectName, conversationId, onTurnCommitted, queryClient, markAttached, markSending]);
 
   const send = useCallback(
     async (instruction: string, files: File[] = []): Promise<boolean> => {
       const text = instruction.trim();
       if (!text || isSending || !conversationId) return false;
       setIsSending(true);
-      pendingStartRef.current = true;
+      markSending(true);
       // Names only, and only when there are any: a message without attachments
       // must persist exactly the row shape it did before this feature.
       const attachments = files.length > 0 ? files.map((f) => f.name) : undefined;
@@ -405,11 +491,11 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
       });
       let turnId: string;
       try {
-        turnId = await startCollabTurn(projectName, conversationId, text, files);
+        turnId = await startCollabTurn(projectName, conversationId, text, files, collab);
       } catch (err) {
         // The row the user is already looking at becomes the failed one —
         // adding a second copy beside it would read as two sends.
-        pendingStartRef.current = false;
+        markSending(false);
         settleUserMessage(chatKey, messageId, { failed: true });
         addMessage(chatKey, {
           role: "error",
@@ -447,12 +533,12 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
         // concurrently with that sequence — so `attach` can already own this
         // turn. Folding it a second time would replay the whole stream on top
         // of itself after `dropTurnOutput`.
-        pendingStartRef.current = false;
+        markSending(false);
         if (attachedRef.current) {
           setIsSending(false);
           return;
         }
-        attachedRef.current = true;
+        markAttached(true);
         try {
           await attachAndFoldTurn(chatKey, projectName, turnId, signal, onTurnCommitted);
         } catch {
@@ -464,7 +550,7 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
             });
           }
         } finally {
-          attachedRef.current = false;
+          markAttached(false);
           if (!signal.aborted) {
             setIsSending(false);
             setActiveTurnId(undefined);
@@ -473,7 +559,7 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
       })();
       return true;
     },
-    [chatKey, projectName, conversationId, isSending, author, onTurnCommitted, queryClient],
+    [chatKey, projectName, conversationId, isSending, author, onTurnCommitted, queryClient, collab, markAttached, markSending],
   );
 
   // Rotation (D4): a PROJECT-WIDE act — the demoted thread stops being current
@@ -483,9 +569,8 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
   const newConversation = useCallback(() => {
     void (async () => {
       try {
-        const fresh = await rotateConversation(projectName);
+        await rotateCurrentConversation(queryClient, projectName);
         replaceMessages(chatKey, []);
-        queryClient.setQueryData(conversationKeys.current(projectName), fresh);
       } catch (err) {
         addMessage(chatKey, {
           role: "error",

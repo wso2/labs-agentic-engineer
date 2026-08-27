@@ -24,11 +24,11 @@ type ExecutionView = components["schemas"]["ExecutionView"];
 type IssueComment = components["schemas"]["IssueComment"];
 
 /**
- * The state a task row renders in (design arrangement 2b, ADR-0020 §3).
+ * The state a task row renders in (design arrangement 2b, ADR-0021 §3).
  *
  * DERIVED, not read off a field. `derivedStatus` is deliberately a two-value
  * vocabulary — the issue is open, or it is closed (tasks/api/status.ts) — and
- * ADR-0015 §4, which ADR-0020 keeps in force, is explicit that anything richer
+ * ADR-0015 §4, which ADR-0021 keeps in force, is explicit that anything richer
  * is a derivation the console makes and must be able to defend.
  *
  * The order below is the precedence, and it matters: a task can be both held

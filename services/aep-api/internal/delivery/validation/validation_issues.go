@@ -257,8 +257,8 @@ func rationale(s criteriaSummary) string {
 // consumer contract the aep-validation skill reads (acceptance oracle + test
 // layout + report). Deployed endpoints and test credentials are deliberately
 // absent: the runner fetches endpoints from the secure validation-context
-// endpoint and requests credentials on demand from the test-credentials
-// endpoint, never from this public issue. Mirrors scripts/create-validation-issue.mjs
+// endpoint, and the agent reads a test user's login from the roles gate ticket
+// in this same milestone. Mirrors scripts/create-validation-issue.mjs
 // renderBody minus the Deployed-endpoints section.
 func renderScope(doc *criteriaDoc) string {
 	sum := doc.summarize()
@@ -273,7 +273,7 @@ func renderScope(doc *criteriaDoc) string {
 	w(
 		"Validate the deployed system against its acceptance criteria: author end-to-end tests, run them against the deployed system, and open a PR containing the tests and a validation report.",
 		"",
-		"The deployed endpoint URLs and any test credentials are provided to the validation runner by the platform at dispatch time — they are not in this issue.",
+		"The deployed endpoint URLs are provided to the validation runner by the platform at dispatch time, and a test user's login is published on this milestone's roles gate ticket — neither is in this issue.",
 		"",
 		"## Acceptance oracle",
 		fmt.Sprintf("The source of truth is `%s` in this repo. It is read-only input for this task — do not modify it or anything else under `specs/`.", criteriaFilePath),

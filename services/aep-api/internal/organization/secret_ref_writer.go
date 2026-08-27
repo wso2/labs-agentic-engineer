@@ -221,6 +221,43 @@ func (w *SecretRefWriter) WriteExternalResourceSecret(ctx context.Context, ocOrg
 	return vaultKey, secretRefName, nil
 }
 
+// orgCatalogProjectName is the SM-API project sentinel for Registered External
+// org-catalog secrets. It is not a real project; the vault layout is the same
+// WriteExternalResourceSecret path.
+const orgCatalogProjectName = "org-catalog"
+
+// WriteOrgCatalogSecret uploads Registered External secret fields using the
+// existing vault layout with projectName "org-catalog" and returns the vault
+// key the ResourceType CEL reads from the binding (secretStorePath).
+func (w *SecretRefWriter) WriteOrgCatalogSecret(ctx context.Context, ocOrgID, entityName string, data map[string]string) (string, error) {
+	vaultKey, _, err := w.WriteExternalResourceSecret(ctx, ocOrgID, orgCatalogProjectName, entityName, data)
+	return vaultKey, err
+}
+
+// OrgCatalogVaultKey reconstructs the org-catalog vault path for an already-
+// written Registered External secret (entityName is `<name>-<env>`) without
+// writing. Used after aep-api restart when the process-local value plane is
+// empty but OpenBao still holds the org-catalog record.
+func (w *SecretRefWriter) OrgCatalogVaultKey(ctx context.Context, ocOrgID, entityName string) (string, error) {
+	if w == nil || !w.Enabled() {
+		return "", nil
+	}
+	if strings.TrimSpace(ocOrgID) == "" || strings.TrimSpace(entityName) == "" {
+		return "", errors.New("secret-ref writer: ocOrgID and entityName required")
+	}
+	orgUUID, err := orgUUIDForSecretLocation(ctx)
+	if err != nil {
+		return "", fmt.Errorf("secret-ref writer: org-catalog vault key (%s): %w", entityName, err)
+	}
+	loc := secretmanagersvc.SecretLocation{
+		OrgName:               orgUUID,
+		ControlPlaneNamespace: ocOrgID,
+		ProjectName:           orgCatalogProjectName,
+		EntityName:            entityName,
+	}
+	return w.resolveVaultKey(ctx, loc.SecretRefName())
+}
+
 // orgUUIDForSecretLocation returns the Thunder ouId that must populate
 // SecretLocation.OrgName. The vault KV path hashes OrgName via
 // tenant.OrgBaseNamespace; SecretReference CRs are authored into

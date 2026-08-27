@@ -20,12 +20,12 @@ import { createFileRoute, redirect } from "@tanstack/react-router";
 import { BuildDetailPage } from "../features/builds/components/BuildDetailPage";
 
 /**
- * One version's build (ADR-0020 §2, §7).
+ * One version's build (ADR-0021 §2, §7).
  *
  * `/builds/:tag` and `/builds/:issueNumber` cannot both exist — the router
  * carries one dynamic child per segment — and this segment is now the VERSION.
  * A numeric segment is therefore an old task link (#185 pointed `/tasks/:n`
- * here; ADR-0020 §7 points it back), and is redirected rather than 404'd, so
+ * here; ADR-0021 §7 points it back), and is redirected rather than 404'd, so
  * every `/builds/118` in a comment, a bookmark or a GitHub thread still lands
  * on the task it named.
  */

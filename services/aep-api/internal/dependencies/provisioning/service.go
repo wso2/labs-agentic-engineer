@@ -39,17 +39,22 @@ const defaultEnv = openchoreo.DevEnvironmentName
 // tracks cross-project access requests, and drives each provision Execution
 // through the store while closing the gate issue with a no-secrets reference.
 type Service struct {
-	issues    IssueClient
-	execs     ExecutionStore
-	design    DesignReader
-	repos     RepoLocator
-	rtCatalog ExternalRTCatalog
-	extProv   ExternalProvisioner
-	platProv  PlatformProvisioner
-	bindings  BindingReader
-	projects  ProjectLister
-	access    AccessStore
-	providers ProviderResolver
+	issues            IssueClient
+	execs             ExecutionStore
+	design            DesignReader
+	repos             RepoLocator
+	rtCatalog         ExternalRTCatalog
+	extProv           ExternalProvisioner
+	platProv          PlatformProvisioner
+	bindings          BindingReader
+	workloads         WorkloadDepSource
+	projects          ProjectLister
+	access            AccessStore
+	providers         ProviderResolver
+	catalogValuePlane CatalogValuePlane
+	environments      EnvironmentLister
+	orgSecrets        OrgSecretWriter
+	orgResourceDocs   OrgResourceDocs
 	// orgPublish commits the exposesAPI.orgPublished durability marker on a
 	// provider component when its access request is granted. Wired via a setter
 	// (SetOrgPublishMarker) at the composition root — it points BACK at the
@@ -62,6 +67,12 @@ type Service struct {
 	// composition root (Task 5) so provisioning never imports build/devflow. Nil
 	// is a documented best-effort no-op (logged).
 	providerBuild ProviderBuildTrigger
+
+	// roles is the build-time roles ensure. Optional: nil (or a disabled one)
+	// skips the roles gate, which is what a stack with no identity provider
+	// wants — the alternative is failing every build for a feature it cannot
+	// use.
+	roles RolesEnsurer
 }
 
 // OrgPublishMarker persists a provider component's deliberate publish decision.
@@ -82,33 +93,46 @@ func (s *Service) SetProviderBuildTrigger(t ProviderBuildTrigger) { s.providerBu
 // providers may be nil (a nil projects skips the cross-project consumer scan;
 // nil access / providers disable the access-request surface).
 type Deps struct {
-	Issues    IssueClient
-	Execs     ExecutionStore
-	Design    DesignReader
-	Repos     RepoLocator
-	RTCatalog ExternalRTCatalog
-	ExtProv   ExternalProvisioner
-	PlatProv  PlatformProvisioner
-	Bindings  BindingReader
-	Projects  ProjectLister
-	Access    AccessStore
-	Providers ProviderResolver
+	Issues            IssueClient
+	Execs             ExecutionStore
+	Design            DesignReader
+	Repos             RepoLocator
+	RTCatalog         ExternalRTCatalog
+	ExtProv           ExternalProvisioner
+	PlatProv          PlatformProvisioner
+	Bindings          BindingReader
+	Workloads         WorkloadDepSource
+	Projects          ProjectLister
+	Access            AccessStore
+	Providers         ProviderResolver
+	CatalogValuePlane CatalogValuePlane
+	Environments      EnvironmentLister
+	OrgSecrets        OrgSecretWriter
+	OrgResourceDocs   OrgResourceDocs
+	// Roles is the build-time roles ensure. Nil skips the roles gate.
+	Roles RolesEnsurer
 }
 
 // NewService wires the provisioning service from its collaborator set.
 func NewService(d Deps) *Service {
 	return &Service{
-		issues:    d.Issues,
-		execs:     d.Execs,
-		design:    d.Design,
-		repos:     d.Repos,
-		rtCatalog: d.RTCatalog,
-		extProv:   d.ExtProv,
-		platProv:  d.PlatProv,
-		bindings:  d.Bindings,
-		projects:  d.Projects,
-		access:    d.Access,
-		providers: d.Providers,
+		issues:            d.Issues,
+		execs:             d.Execs,
+		design:            d.Design,
+		repos:             d.Repos,
+		rtCatalog:         d.RTCatalog,
+		extProv:           d.ExtProv,
+		platProv:          d.PlatProv,
+		bindings:          d.Bindings,
+		workloads:         d.Workloads,
+		projects:          d.Projects,
+		access:            d.Access,
+		providers:         d.Providers,
+		catalogValuePlane: d.CatalogValuePlane,
+		environments:      d.Environments,
+		roles:             d.Roles,
+		orgSecrets:        d.OrgSecrets,
+		orgResourceDocs:   d.OrgResourceDocs,
 	}
 }
 
@@ -250,6 +274,23 @@ func (s *Service) failProvisionRow(ctx context.Context, orgID, projectID string,
 			slog.WarnContext(ctx, "provisioning: comment gate issue failed", "issue", issueNumber, "error", err)
 		}
 	}
+}
+
+// ListOrgEnvironments returns OpenChoreo Environment names for the org
+// namespace. A nil lister or empty result is an empty slice (never nil),
+// never a 404.
+func (s *Service) ListOrgEnvironments(ctx context.Context, orgID string) ([]string, error) {
+	if s.environments == nil {
+		return []string{}, nil
+	}
+	names, err := s.environments.ListNames(ctx, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("provisioning: list environments: %w", err)
+	}
+	if names == nil {
+		return []string{}, nil
+	}
+	return names, nil
 }
 
 // envList returns the environments to provision, defaulting to [development].

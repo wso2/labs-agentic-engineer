@@ -1,0 +1,41 @@
+Usage: bal library find     <keywords>...
+       bal library overview <org/name> [-s <q>]
+       bal library client   <org/name> [<Name|selector>...] [-s <q>] [-r]
+       bal library class    <org/name> [<Name|member>...] [-s <q>] [-r]
+       bal library funcs    <org/name> [<name|prefix*>...] [-s <q>] [-r]
+       bal library type     <org/name> <Name>... [-s <q>] [-r]
+       bal library guide    <org/name> [<n|title>] [--module <name>] [-s <q>]
+       bal library api      <org/name>
+
+Read a Ballerina package off Central. A signature from here is the source for what
+compiles; a readme, a web search and a remembered API are not.
+
+Typical session:
+
+  0. Don't know which package?   bal library find "mysql database"
+  1. Map + quickstart code:      bal library overview ballerinax/mysql
+  2. Search anywhere with -s (the scope is the verb you attach it to):
+       bal library client ballerinax/github -s "cache"      # within the client
+       bal library overview ballerina/http -s "cookie"      # every kind at once
+  3. A call and every type it needs:
+       bal library client ballerinax/github Client delete repos/{owner}/{repo}/actions/caches -r
+  4. Setup, auth and worked recipes:  bal library guide ballerinax/github
+
+  find       Packages matching free-text keywords, one line each, in Central's
+             relevance order with pull counts. The only verb that needs no package
+             name.
+  overview   A map of the package: what it declares, the readme's worked code, and
+             the command that opens each part. Start here.
+  client     One client's whole callable surface, or a roster of them. Resource
+             functions by path, remote and normal ones by name, the constructor
+             included.
+  class      A class, service type or listener, and its members. Same shape as
+             'client'; these are the objects called with '.' rather than '->'.
+  funcs      Functions at module scope — the callable surface of a package that has
+             no client, and the utilities of one that does.
+  type       One or more declarations, as Ballerina. All-or-nothing: a name that
+             does not resolve fails the run with candidates.
+  guide      The package's own readme, verbatim: setup steps, account prerequisites
+             and worked recipes. Addressable one chunk at a time.
+  api        Last resort. Every declaration in one document, unaddressed and large —
+             reach for it only when the other verbs did not answer.

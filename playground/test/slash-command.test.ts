@@ -110,3 +110,10 @@ test("prose that merely mentions /start is not the command", () => {
   assert.equal(parseStartCommand("where do I /start with the design?"), null);
   assert.equal(parseStartCommand("/started"), null);
 });
+
+test("/register-external-resource is a flow command", () => {
+  assert.deepEqual(parseFlowCommand("/register-external-resource Register Stripe"), {
+    skill: "register-external-resource",
+    text: "Register Stripe",
+  });
+});

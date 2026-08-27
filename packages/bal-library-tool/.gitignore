@@ -1,0 +1,9 @@
+.gradle/
+build/
+dist/
+.DS_Store
+.idea/
+*.iml
+.vscode/
+internal-docs/CONTEXT.md
+target/

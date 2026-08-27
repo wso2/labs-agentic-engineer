@@ -63,7 +63,7 @@ const turn = (over: Partial<Turn> = {}): Turn => ({
   ...over,
 });
 
-function renderTurn(t: Turn, onOpenSpec = vi.fn()) {
+function renderTurn(t: Turn, onOpenSpec = vi.fn(), showSpecLink?: boolean) {
   render(
     <OxygenUIThemeProvider theme={OxygenTheme}>
       <TurnBlock
@@ -71,6 +71,7 @@ function renderTurn(t: Turn, onOpenSpec = vi.fn()) {
         expandedGroups={new Set()}
         onToggleGroup={vi.fn()}
         onOpenSpec={onOpenSpec}
+        {...(showSpecLink === undefined ? {} : { showSpecLink })}
       />
     </OxygenUIThemeProvider>,
   );
@@ -113,6 +114,22 @@ describe("TurnBlock", () => {
     expect(screen.getByTestId("turn-committed")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Open spec" }));
     expect(onOpenSpec).toHaveBeenCalledOnce();
+  });
+
+  it("hides Open spec and the questions pointer when showSpecLink is off", () => {
+    const question: ChatItem = {
+      kind: "message",
+      message: {
+        id: "q1",
+        role: "question",
+        turnId: "t1",
+        toolCallId: "tc1",
+        questions: [{ question: "Auth?", options: [{ label: "PAT" }] }],
+      },
+    };
+    renderTurn(turn({ items: [question] }), vi.fn(), false);
+    expect(screen.queryByRole("button", { name: "Open spec" })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("questions-pointer")).not.toBeInTheDocument();
   });
 
   it("shows distinct failed styling on a failed turn (not a committed footer)", () => {

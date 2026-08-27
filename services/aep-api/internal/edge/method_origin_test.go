@@ -62,6 +62,7 @@ const (
 	embedDelivery      = "deliveryHandlers"      // P6
 	embedProjects      = "projectsHandlers"      // P7
 	embedDependencies  = "dependenciesHandlers"  // P8
+	embedIdentity      = "identityHandlers"      // identity — the Security panel
 )
 
 // opOwner maps every operation of the committed contract to the apiServer
@@ -79,6 +80,7 @@ var opOwner = map[string]string{
 	"CreateTurn":                    embedSpec,
 	"DeleteExternalResource":        embedDependencies,
 	"DeleteProject":                 embedProjects,
+	"DeleteTestUser":                embedIdentity,
 	"DeleteSkill":                   embedSpec,
 	"DisconnectGitProvider":         embedOrganization,
 	"DiscoverIdp":                   embedOrganization,
@@ -93,6 +95,7 @@ var opOwner = map[string]string{
 	"GetDependencyStatus":           embedDependencies,
 	"GetProjectDependencyReadiness": embedDependencies,
 	"GetProject":                    embedProjects,
+	"GetProjectRoles":               embedIdentity,
 	"GetProjectStatus":              embedProjects,
 	"GetRcaAgentReport":             embedOps,
 	"GetSkill":                      embedSpec,
@@ -107,8 +110,10 @@ var opOwner = map[string]string{
 	"ListConversations":             embedSpec,
 	"ListDeployments":               embedProjects,
 	"ListExternalResources":         embedDependencies,
+	"ListOrgEndpoints":              embedDependencies,
 	"ListFiles":                     embedSpec,
 	"ListIssues":                    embedSourceControl,
+	"ListOrgEnvironments":           embedDependencies,
 	"ListOrganizations":             embedOrganization,
 	"ListPlatformResourceTypes":     embedDependencies,
 	"ListBuildRuns":                 embedDelivery,
@@ -121,13 +126,17 @@ var opOwner = map[string]string{
 	"ListSkillUpdates":              embedSpec,
 	"ListSkills":                    embedSpec,
 	"ListTasks":                     embedDelivery,
+	"ListWorkloadDependencies":      embedDependencies,
 	"PromoteTaskFromIssue":          embedDelivery,
 	"ProvisionPlatformResource":     embedDependencies,
 	"PutProjectReferences":          embedSpec,
 	"ReadFile":                      embedSpec,
 	"ReadFileBundle":                embedSpec,
+	"RegisterExternalResource":      embedDependencies,
 	"RequestOrgServiceAccess":       embedDependencies,
+	"RevealTestUserPassword":        embedIdentity,
 	"RotateConversation":            embedSpec,
+	"RotateTestUserPassword":        embedIdentity,
 	"RotateIdpClientSecret":         embedOrganization,
 	"SetSkillEnabled":               embedSpec,
 	"StartGitProviderConnect":       embedOrganization,
@@ -139,6 +148,7 @@ var opOwner = map[string]string{
 	"SyncSkills":                    embedSpec,
 	"TriggerBuild":                  embedProjects,
 	"UpdateComponentConfig":         embedProjects,
+	"UpdateExternalResource":        embedDependencies,
 	"UpdateConfig":                  embedOrganization,
 	"UpdateSkill":                   embedSpec,
 	"ValidateCollabAccess":          embedSpec,

@@ -17,7 +17,19 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { mapConversationMessage } from "./turns";
+import { mapConversationMessage, startTurnBody } from "./turns";
+
+describe("startTurnBody", () => {
+  it("includes collab: true for a spec-room turn", () => {
+    expect(startTurnBody("hello", true)).toEqual({ instruction: "hello", collab: true });
+  });
+
+  it("omits collab for Marketplace register chat", () => {
+    expect(startTurnBody("/register-external-resource github", false)).toEqual({
+      instruction: "/register-external-resource github",
+    });
+  });
+});
 
 describe("mapConversationMessage", () => {
   it("keeps an author present on the payload", () => {

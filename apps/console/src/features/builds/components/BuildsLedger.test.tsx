@@ -91,7 +91,7 @@ describe("BuildsLedger", () => {
     expect(
       screen.getAllByText(/^v[1-9]\d*$/).map((el) => el.textContent),
     ).toEqual(["v3", "v2", "v1"]);
-    // The whole point of the page ADR-0020 introduced: three versions readable
+    // The whole point of the page ADR-0021 introduced: three versions readable
     // at once, which the now-first page could never show.
     expect(screen.getByText("Running · Coding agent")).toBeTruthy();
     expect(screen.getByText("Failed · Merge conflict")).toBeTruthy();

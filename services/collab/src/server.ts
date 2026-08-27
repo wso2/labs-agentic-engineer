@@ -27,7 +27,12 @@ import type {
   onStoreDocumentPayload,
 } from "@hocuspocus/server";
 import type { CollabConfig } from "./env.js";
-import type { BffClient } from "./bff.js";
+import {
+  BffAccessDeniedError,
+  BffReadError,
+  type BffClient,
+  type CollabIdentity,
+} from "./bff.js";
 import { isSpecRoom } from "./room.js";
 import { isReferenceDocPath, seedDocument } from "./seed.js";
 import { devSeedFiles } from "./fixtures.js";
@@ -137,6 +142,67 @@ function surfaceFlushError(
   }
 }
 
+// A rejected bearer and an unreachable oracle both surface here as a thrown
+// error, and Hocuspocus answers either one with the same permission-denied
+// frame — which the console latches on, correctly, because a bearer that was
+// rejected will be rejected again. An `aep-api` that is merely restarting is
+// NOT that (#586): every non-ok status became BffAccessDeniedError, so a 503
+// during a deploy left the spec view offline until the page was reloaded.
+//
+// So the reason is classified before it leaves. Hocuspocus forwards
+// `error.reason` verbatim into the frame and the provider re-emits it as
+// `onAuthenticationFailed({ reason })`, which is where the console decides
+// whether to latch. The string is duplicated there rather than shared, the
+// same way the stateless message types already are.
+export const UPSTREAM_UNAVAILABLE = "upstream-unavailable";
+
+/**
+ * An error tagged as "not now" rather than "not you".
+ *
+ * The load hook needs this as much as the auth hook does, which is not
+ * obvious: Hocuspocus runs `onLoadDocument` inside the SAME try/catch as
+ * `onAuthenticate` (it is reached through `setUpNewConnection`), so a refused
+ * room reaches the client as a permission-denied frame — not as a dropped
+ * socket. Untagged, refusing an unseedable room would read to the console as a
+ * rejected bearer and latch the view offline for the life of the page, which is
+ * worse than the wedge it replaces.
+ */
+function unavailable(message: string): Error {
+  return Object.assign(new Error(message), { reason: UPSTREAM_UNAVAILABLE });
+}
+
+/**
+ * True for a status that says "not you" rather than "not now".
+ *
+ * The three retryable 4xx are excluded deliberately. A rate-limited or
+ * timing-out oracle is the SAME outage this fix exists for, reached through a
+ * different status code — latching the console offline on a 429 would
+ * reintroduce #586 the moment the BFF starts shedding load.
+ */
+const RETRYABLE_4XX = new Set([408, 425, 429]);
+
+function isDenial(status: number): boolean {
+  return status < 500 && !RETRYABLE_4XX.has(status);
+}
+
+async function validated(
+  bff: BffClient,
+  token: string,
+  documentName: string,
+): Promise<CollabIdentity> {
+  try {
+    return await bff.validateAccess(token, documentName);
+  } catch (err) {
+    // Anything that is not a decision the oracle actually made — a 5xx, a
+    // refused connection, a DNS failure mid-redeploy — is transient, and the
+    // client should keep retrying rather than treat it as a verdict.
+    if (err instanceof BffAccessDeniedError && isDenial(err.status)) throw err;
+    throw unavailable(
+      `collab oracle unavailable for ${documentName}: ${String(err)}`,
+    );
+  }
+}
+
 export function buildAuthenticateHook(config: CollabConfig, deps: CollabDeps) {
   return async (
     data: Pick<onAuthenticatePayload, "token" | "documentName">,
@@ -160,7 +226,7 @@ export function buildAuthenticateHook(config: CollabConfig, deps: CollabDeps) {
     // room's project-ownership/tenancy check. This service verifies nothing
     // itself (#86: identity stays the BFF's problem). It also resolves the
     // room into a project name for the seed read.
-    const identity = await deps.bff.validateAccess(token, documentName);
+    const identity = await validated(deps.bff, token, documentName);
     // Committer bookkeeping (#133): the session's participants become the
     // commit's Co-authored-by trailers; the latest token backs the forced
     // unload flush (no connection context exists by then).
@@ -199,15 +265,31 @@ export function buildLoadDocumentHook(config: CollabConfig, deps: CollabDeps) {
 
     // Real path: read the spec files as the first joiner (the oracle
     // resolved the room into context.projectName).
+    //
+    // A ROOM EXISTS ONLY IF IT WAS SEEDED (#586). Both failure branches below
+    // therefore reject the load rather than returning an unseeded document.
+    //
+    // This one is NOT tagged transient. `deps.bff` and `context.token` cannot
+    // be missing here at all (the auth hook throws first), and a room the
+    // oracle resolved without a project is a room it will keep resolving
+    // without one — so it is a verdict, and the client should stop asking
+    // rather than reconnect every 30s for the life of the page.
     if (!deps.bff || !context.token || !context.projectName) {
-      deps.log?.(
-        `cannot seed ${documentName}: missing bff/token/project — opening empty`,
-      );
-      return document;
+      throw new Error(`cannot seed ${documentName}: missing bff/token/project`);
     }
-    // A failed seed must not kill the room: access was already authorized
-    // by the oracle, and an unseeded-but-live doc beats a dead connection
-    // (transient BFF errors would otherwise hard-fail every join).
+    // Returning an empty document here is what wedged a project's spec view
+    // (#586): the baseline stays empty, so every path writes with baseSha ""
+    // — which the Files API reads as "must not exist" — and every flush 409s
+    // against the real file for as long as the room lives. Meanwhile the
+    // console could not tell the empty room from an empty project, and an
+    // agent turn joined a room that synced perfectly and reported no files.
+    //
+    // Failing the load costs nothing that a retry does not recover: the
+    // provider reconnects on its own (1s doubling to 30s, unbounded), so the
+    // next attempt reseeds from git once the read works. That IS the retry —
+    // marking the room unseeded would buy a flag with no trigger, because
+    // `onLoadDocument` fires per LOAD and a room stays loaded while any client
+    // is connected.
     try {
       const fetched = await deps.bff.fetchSpecFiles(
         context.token,
@@ -225,9 +307,23 @@ export function buildLoadDocumentHook(config: CollabConfig, deps: CollabDeps) {
       }
       deps.log?.(`seeded ${documentName} (${files.length} files) from BFF`);
     } catch (err) {
+      // Clear the BASELINE, not the room state. A seed that threw partway
+      // leaves entries the next successful seed would not overwrite, so they
+      // have to go — but the state itself belongs to every connection that
+      // authenticated into this room, not to this load. Dropping it wholesale
+      // loses another tab's `lastToken`, and a room with no token skips its
+      // flush (committer.ts) — that tab's edits would be discarded in silence
+      // at exactly the moment several tabs are reconnecting together.
+      roomState(documentName)?.baseline.clear();
       deps.log?.(
-        `seed failed for ${documentName} (${String(err)}) — opening empty`,
+        `seed failed for ${documentName} (${String(err)}) — refusing the room`,
       );
+      // A read the BFF answered permanently — a 404 for a project whose repo
+      // row is missing — is a verdict, not an outage. Tagging it transient
+      // would have every open tab reconnect forever against a room that can
+      // never be seeded.
+      if (err instanceof BffReadError && isDenial(err.status)) throw err;
+      throw unavailable(`could not load ${documentName}: ${String(err)}`);
     }
     return document;
   };

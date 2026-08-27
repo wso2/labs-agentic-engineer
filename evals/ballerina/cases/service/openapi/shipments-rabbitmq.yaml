@@ -1,0 +1,231 @@
+openapi: 3.0.3
+info:
+  title: Shipment Tracking API
+  version: 1.0.0
+paths:
+  /shipments:
+    get:
+      operationId: listShipments
+      summary: List shipments, newest first
+      parameters:
+        - name: carrier
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/Carrier"
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/ShipmentStatus"
+      responses:
+        "200":
+          description: Matching shipments
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Shipment"
+    post:
+      operationId: createShipment
+      summary: Book a shipment with a carrier
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewShipment"
+      responses:
+        "201":
+          description: The booked shipment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Shipment"
+        "502":
+          description: The carrier could not be reached
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /shipments/{shipmentId}:
+    get:
+      operationId: getShipment
+      summary: Fetch one shipment
+      parameters:
+        - name: shipmentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The shipment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Shipment"
+        "404":
+          description: No such shipment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /shipments/{shipmentId}/tracking:
+    get:
+      operationId: trackShipment
+      summary: Fetch the carrier's tracking history
+      parameters:
+        - name: shipmentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The tracking history, oldest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TrackingEvent"
+        "404":
+          description: No such shipment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+        "502":
+          description: The carrier could not be reached
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /shipments/{shipmentId}/events:
+    post:
+      operationId: recordShipmentEvent
+      summary: Publish a status event for downstream consumers
+      parameters:
+        - name: shipmentId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewEvent"
+      responses:
+        "202":
+          description: What was published
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventReceipt"
+        "404":
+          description: No such shipment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+components:
+  schemas:
+    Carrier:
+      type: string
+      enum: [dhl, fedex, ups, royalmail]
+    ShipmentStatus:
+      type: string
+      enum: [booked, collected, in_transit, delivered, exception]
+    Address:
+      type: object
+      required: [line1, city, postcode, country]
+      properties:
+        line1:
+          type: string
+        line2:
+          type: string
+        city:
+          type: string
+        postcode:
+          type: string
+        country:
+          type: string
+          minLength: 2
+          maxLength: 2
+    NewShipment:
+      type: object
+      required: [orderId, carrier, destination, weightKg]
+      properties:
+        orderId:
+          type: string
+        carrier:
+          $ref: "#/components/schemas/Carrier"
+        destination:
+          $ref: "#/components/schemas/Address"
+        weightKg:
+          type: number
+          format: double
+          minimum: 0
+    Shipment:
+      type: object
+      required: [shipmentId, orderId, carrier, trackingNumber, status, destination, createdAt]
+      properties:
+        shipmentId:
+          type: string
+        orderId:
+          type: string
+        carrier:
+          $ref: "#/components/schemas/Carrier"
+        trackingNumber:
+          type: string
+        status:
+          $ref: "#/components/schemas/ShipmentStatus"
+        destination:
+          $ref: "#/components/schemas/Address"
+        weightKg:
+          type: number
+          format: double
+        createdAt:
+          type: string
+    TrackingEvent:
+      type: object
+      required: [occurredAt, status, description]
+      properties:
+        occurredAt:
+          type: string
+        status:
+          $ref: "#/components/schemas/ShipmentStatus"
+        location:
+          type: string
+        description:
+          type: string
+    NewEvent:
+      type: object
+      required: [status]
+      properties:
+        status:
+          $ref: "#/components/schemas/ShipmentStatus"
+        note:
+          type: string
+    EventReceipt:
+      type: object
+      required: [shipmentId, exchange, routingKey, publishedAt]
+      properties:
+        shipmentId:
+          type: string
+        exchange:
+          type: string
+        routingKey:
+          type: string
+        publishedAt:
+          type: string
+    ErrorMessage:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string

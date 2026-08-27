@@ -128,6 +128,13 @@ type ResourceClient interface {
 	// aep.wso2.com/external-name annotation (see ExternalResourceRTName).
 	DeleteResourceType(ctx context.Context, namespace, name string) error
 
+	// UpdateResourceType PUTs an existing namespaced ResourceType (same path
+	// shape as GetResourceType / DeleteResourceType). Used to replace catalog
+	// fields (description, consumption instructions, key descriptions,
+	// resource-docs) when key identity — and therefore the hashed RT name —
+	// is unchanged. EnsureResourceType stays get-or-create and never PUTs.
+	UpdateResourceType(ctx context.Context, namespace string, rt *ResourceType) (*ResourceType, error)
+
 	// ListWorkloadEndpoints enumerates every provider-side endpoint declared by
 	// the Workloads in an org's namespace (one row per endpoint, carrying owner +
 	// visibility). This is the dynamic source for the org endpoint catalog: the
@@ -135,6 +142,14 @@ type ResourceClient interface {
 	// each row's namespace visibility. orgHandle is the org's namespace name
 	// (OC namespaces are 1:1 with orgs).
 	ListWorkloadEndpoints(ctx context.Context, orgHandle string) ([]WorkloadEndpointInfo, error)
+
+	// ListWorkloadConsumerDeps enumerates consumer-side dependency refs declared
+	// by Workloads owned by projectName in the org's namespace. It GETs the same
+	// /workloads collection as ListWorkloadEndpoints but parses
+	// spec.dependencies.resources[].ref and spec.dependencies.endpoints[] —
+	// generated WorkloadSpec.Dependencies currently has endpoints only.
+	// Workloads whose spec.owner.projectName does not match are omitted.
+	ListWorkloadConsumerDeps(ctx context.Context, orgHandle, projectName string) ([]WorkloadConsumerDep, error)
 }
 
 // WorkloadEndpointInfo is one provider-side endpoint discovered by enumerating
@@ -157,6 +172,24 @@ type WorkloadEndpointInfo struct {
 	// or a directly-authored Workload CR). Empty for app-factory BYO-image workloads.
 	SchemaType    string // e.g. "openapi", "proto", "graphql" (endpoint.Schema.Type)
 	SchemaContent string // the inlined spec document (endpoint.Schema.Content)
+}
+
+// WorkloadConsumerDep is one Workload's consumer-side dependency refs —
+// resources[].ref (OC Resource instance names) and endpoints[] (provider
+// project/component + visibility). OwnerProject is spec.owner.projectName.
+type WorkloadConsumerDep struct {
+	OwnerProject   string
+	OwnerComponent string
+	ResourceRefs   []string
+	Endpoints      []WorkloadConsumerEndpoint
+}
+
+// WorkloadConsumerEndpoint is one spec.dependencies.endpoints[] entry.
+type WorkloadConsumerEndpoint struct {
+	Project    string // provider project; empty means same project as the consumer
+	Component  string
+	Name       string
+	Visibility string // project | namespace
 }
 
 // NamespaceVisible reports whether this endpoint is consumable cross-project
@@ -691,6 +724,16 @@ func (c *resourceClient) DeleteResourceType(ctx context.Context, namespace, name
 	return nil
 }
 
+func (c *resourceClient) UpdateResourceType(ctx context.Context, namespace string, rt *ResourceType) (*ResourceType, error) {
+	rt.APIVersion, rt.Kind = ocResourceAPIVersion, kindResourceType
+	rt.Metadata.Namespace = namespace
+	out := &ResourceType{}
+	if _, err := c.do(ctx, http.MethodPut, nsBase(namespace)+"/resourcetypes/"+rt.Metadata.Name, rt, out); err != nil {
+		return nil, fmt.Errorf("update resourcetype %q: %w", rt.Metadata.Name, err)
+	}
+	return out, nil
+}
+
 // workloadList / workloadItem mirror just the slice of the Workload CR the
 // catalog needs: the owner (project/component) and the endpoints map.
 type workloadList struct {
@@ -742,6 +785,73 @@ func (c *resourceClient) ListWorkloadEndpoints(ctx context.Context, orgHandle st
 		}
 	}
 	return infos, nil
+}
+
+// workloadConsumerList is a separate decode shape from workloadList so
+// ListWorkloadEndpoints keeps parsing only provider-side spec.endpoints.
+type workloadConsumerList struct {
+	Items []workloadConsumerItem `json:"items"`
+}
+
+type workloadConsumerItem struct {
+	Metadata struct {
+		Name string `json:"name"`
+	} `json:"metadata"`
+	Spec struct {
+		Owner struct {
+			ProjectName   string `json:"projectName"`
+			ComponentName string `json:"componentName"`
+		} `json:"owner"`
+		Dependencies struct {
+			Resources []struct {
+				Ref string `json:"ref"`
+			} `json:"resources"`
+			Endpoints []struct {
+				Project    string `json:"project"`
+				Component  string `json:"component"`
+				Name       string `json:"name"`
+				Visibility string `json:"visibility"`
+			} `json:"endpoints"`
+		} `json:"dependencies"`
+	} `json:"spec"`
+}
+
+func (c *resourceClient) ListWorkloadConsumerDeps(ctx context.Context, orgHandle, projectName string) ([]WorkloadConsumerDep, error) {
+	out := &workloadConsumerList{}
+	if _, err := c.do(ctx, http.MethodGet, nsBase(orgHandle)+"/workloads", nil, out); err != nil {
+		return nil, fmt.Errorf("list workloads in %q: %w", orgHandle, err)
+	}
+	deps := make([]WorkloadConsumerDep, 0)
+	for _, w := range out.Items {
+		if w.Spec.Owner.ProjectName != projectName {
+			continue
+		}
+		refs := make([]string, 0, len(w.Spec.Dependencies.Resources))
+		for _, r := range w.Spec.Dependencies.Resources {
+			if r.Ref != "" {
+				refs = append(refs, r.Ref)
+			}
+		}
+		eps := make([]WorkloadConsumerEndpoint, 0, len(w.Spec.Dependencies.Endpoints))
+		for _, ep := range w.Spec.Dependencies.Endpoints {
+			if ep.Component == "" {
+				continue
+			}
+			eps = append(eps, WorkloadConsumerEndpoint{
+				Project:    ep.Project,
+				Component:  ep.Component,
+				Name:       ep.Name,
+				Visibility: ep.Visibility,
+			})
+		}
+		deps = append(deps, WorkloadConsumerDep{
+			OwnerProject:   w.Spec.Owner.ProjectName,
+			OwnerComponent: w.Spec.Owner.ComponentName,
+			ResourceRefs:   refs,
+			Endpoints:      eps,
+		})
+	}
+	return deps, nil
 }
 
 // WaitForReleaseChange polls GetResource until status.latestRelease.Name is

@@ -107,10 +107,9 @@ type GitReader interface {
 	Resolver() secrets.Resolver
 }
 
-// SkillsRepoResolver ensures the org's _skills repo is provisioned (the
-// task-planning flow skill is seeded there) and returns its row — the source
-// of the plan turn's SkillsRef snapshot. Wired at the composition root from
-// the skills feature so task holds no skills edge.
+// SkillsRepoResolver returns the org _skills git row used as the plan
+// turn's SkillsRef snapshot source. Production wires the same reconcile
+// resolver as genai turns so the library is not first-touch-only.
 type SkillsRepoResolver func(ctx context.Context, orgID string) (*sourcecontrol.GitRepository, error)
 
 // ExecutionReader is the read side of the executions rows (the platform-owned

@@ -52,9 +52,10 @@ path + per-criterion tables), a **Test layout** section, and **Report**
 requirements. If a required section is missing, post an issue comment
 naming what's missing and exit with failure.
 
-Deployed endpoint URLs and any test credentials are NOT in the issue —
-they are runtime inputs kept out of the public issue. The endpoints are
-already on disk for you (step 4); credentials you request on demand.
+Deployed endpoint URLs are NOT in this issue — they are runtime inputs the
+platform resolved for you and left on disk (step 4). Test-user logins are
+not here either: they are published in this milestone's roles gate ticket,
+which is a different issue (step 4).
 
 Post a brief opening comment (`Starting validation: <one-line plan>`).
 
@@ -119,27 +120,75 @@ yourself; the URL is not something you can work out from inside the cluster.
   Never start, build, or deploy the app; you validate what is already
   running. If a request fails once you are authoring, that is a finding
   about the app, not a target to go re-derive.
-- **Test credentials (on demand):** request them only when a criterion
-  needs a login — POST the test-credentials endpoint with an optional
-  `role` hint (the role the flow requires). `AEP_TASK_ID` is this run's
-  validation cycle id; the bearer rides a file:
+- **Test users and their passwords** come from the **roles gate ticket**,
+  not from the context file and not from a spec file. A project whose design
+  declares roles gets one issue per version titled *Provision roles and test
+  users*, and the platform posts a comment on it carrying every test account's
+  login. Find that ticket in your own milestone:
 
   ```bash
-  curl -sf -X POST "$AEP_PLATFORM_URL/internal/v1/validation/$AEP_TASK_ID/test-credentials" \
-    -H "Authorization: Bearer $(cat "$AEP_BEARER_FILE")" \
-    -H "Content-Type: application/json" \
-    --data '{"role":"admin"}' > /tmp/creds.json
+  # newest gate in THIS milestone — only its table is current, and a rebuild can
+  # leave an older ticket beside it
+  GATE=$(gh issue list --repo <owner/repo> --label "aep:gate/roles" \
+    --milestone "$MILESTONE" --state all --json number,createdAt \
+    --jq 'sort_by(.createdAt) | .[-1].number // empty')
+  [ -n "$GATE" ] && gh issue view "$GATE" --repo <owner/repo> --comments
   ```
 
-  The response is `{ "username", "password", "mock": true|false, "note":
-  "..." }`. Export it in-session and never commit it:
-  `export AEP_E2E_USERNAME=… AEP_E2E_PASSWORD=…`. When `mock` is true the
-  account is a shared stand-in (real user provisioning isn't implemented
-  yet) — use it, and state in your PR description and closing comment that
-  auth-gated criteria ran against mock credentials, since such a login may
-  legitimately fail against a generated app that doesn't recognise it.
-  Only if the request itself errors do you let the affected criterion land
-  `not_run`, blocker noted.
+  It is normally CLOSED — the platform resolves this gate itself — so
+  `--state all` is required, and the logins are a comment, so `--comments` is
+  too. `$MILESTONE` is the one you read in step 2; if it is empty here, read it
+  again rather than running the query without it — unfiltered, it returns
+  another version's ticket.
+
+  The logins are the markdown table under the `<!-- aep:test-users -->`
+  marker — the LAST such comment if the ticket carries more than one, since an
+  earlier one is a superseded build's. One row per account:
+
+  | Username | Password | Role | Cold start |
+  |---|---|---|---|
+  | `test-trainer` | `tdyjkfmq5t` | Trainer | no |
+  | `test-team-member` | `n3pe5cw8s4` | Team Member | yes |
+
+  Read the table, never the prose around it — a human may rewrite that at any
+  time, and the marker is what the platform guarantees.
+
+  **Which row.** Match the criterion's role to the `Role` column and use that
+  row. For a criterion that needs *a* signed-in user but names no role, use
+  the row with **Cold start: yes** — that is the role a person holds before
+  anyone grants them one. Do not reuse one role's login to exercise another
+  role's screens; that is the difference between judging a permission and
+  judging a page.
+
+  Export the pair in-session, per role, as you need it:
+
+  ```bash
+  export AEP_E2E_USERNAME='test-trainer' AEP_E2E_PASSWORD='…'
+  ```
+
+  **Never write a password into anything you commit or post** — not the
+  specs, not `targets.json`, not the report, not the PR body, not an issue
+  comment. Read it from the ticket into the environment and leave it there.
+  Playwright specs take it from `process.env`, never as a literal.
+
+  These accounts are the platform's own, created for this purpose. They hold
+  only the project's application roles, so a criterion judged with one is
+  judged against a real sign-in.
+
+  **When a login is missing.** Never improvise one, and never fall back to a
+  guess like `admin`/`admin` — a verdict from a login the app does not
+  recognise is worth less than no verdict. Land the affected criteria
+  `not_run` and say WHICH of these you hit, in the report and in your closing
+  comment; they mean different things and only some are a problem:
+
+  | What you see | What it means | Report it as |
+  |---|---|---|
+  | No gate ticket in the milestone | The design declares no roles — this system has no sign-in | Expected; no finding |
+  | A ticket, but no login table | Every role the design declares is one the platform does not own, so it could provision no usable account | A provisioning problem — say so |
+  | The ticket is OPEN and carries a failure comment | Provisioning failed; quote the cause | A provisioning problem — say so |
+  | A table, but no row for the role you need | That account was refused or could not be enrolled — the ticket's other comment says which | A provisioning problem — name the role |
+  | A row whose password says *unavailable* | The platform holds the account but could not publish its password | A platform problem — name the account |
+  | No row has **Cold start: yes** | The design says a caller with no role reaches nothing. Use the least-privileged role the criterion implies; if it implies none, the criterion is unreachable by design | Expected; explain the reasoning |
 - **Local dev servers (experimental runs only):** if the fetched
   endpoints are `localhost` dev servers you must start (the local
   harness), this overrides the base "never start servers" rule: start
@@ -356,10 +405,11 @@ and the PR link; the platform closes the issue itself.
 - Leave `.only` / `.skip` / `.fixme` in committed specs.
 - Hand-edit `report.md` / `report.json` — regenerate via the script.
 - Commit playwright-cli session state, server logs, `test-results/`,
-  or credentials. Credentials come only from the step-4 test-credentials
-  request (exported in-session as `AEP_E2E_USERNAME` / `AEP_E2E_PASSWORD`,
-  never written to a file); if the request errors and a criterion needs
-  login, mark it blocked in an issue comment and let it land `not_run`.
+  or credentials. A login comes only from the step-4 roles gate ticket,
+  exported in-session as `AEP_E2E_USERNAME` / `AEP_E2E_PASSWORD` and never
+  written to a file, a spec, a report or a comment; if there is no login to
+  read and a criterion needs one, mark it blocked in an issue comment and let
+  it land `not_run`.
 - Everything in the `aep` skill's deny-list (no default-branch pushes, one
   PR, no merging, no repo-settings changes). Its force-push exception is
   yours: `--force-with-lease` on your own branch, per step 10.

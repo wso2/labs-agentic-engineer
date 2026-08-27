@@ -62,6 +62,9 @@ export const START_COMMAND = "/start";
 /** The design CTA's command. */
 export const DESIGN_COMMAND = "/design";
 
+/** Marketplace register flow. Same family as `/start` / `/design`. */
+export const REGISTER_EXTERNAL_RESOURCE_COMMAND = "/register-external-resource";
+
 /**
  * Parse `/start [idea]`. Returns the inline idea (`""` when the command was
  * bare), or null when the line is not the command at all.

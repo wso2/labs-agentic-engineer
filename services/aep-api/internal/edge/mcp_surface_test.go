@@ -85,7 +85,7 @@ func newMCPTestServer(t *testing.T) (*httptest.Server, *auth.TaskTokenManager, *
 		t.Fatalf("NewTaskTokenManager: %v", err)
 	}
 	salesforceRT, err := openchoreo.BuildExternalResourceType("salesforce", "CRM",
-		[]openchoreo.ExternalResourceConfigKey{{Key: "SALESFORCE_TOKEN", Secret: true}})
+		[]openchoreo.ExternalResourceConfigKey{{Key: "SALESFORCE_TOKEN", Secret: true}}, "", nil)
 	if err != nil {
 		t.Fatalf("build salesforce RT fixture: %v", err)
 	}
@@ -322,7 +322,7 @@ func TestMCPSurface_PublisherCCFullRoundTrip(t *testing.T) {
 		t.Fatalf("NewTaskTokenManager: %v", err)
 	}
 	salesforceRT, err := openchoreo.BuildExternalResourceType("salesforce", "CRM",
-		[]openchoreo.ExternalResourceConfigKey{{Key: "SALESFORCE_TOKEN", Secret: true}})
+		[]openchoreo.ExternalResourceConfigKey{{Key: "SALESFORCE_TOKEN", Secret: true}}, "", nil)
 	if err != nil {
 		t.Fatalf("build salesforce RT fixture: %v", err)
 	}

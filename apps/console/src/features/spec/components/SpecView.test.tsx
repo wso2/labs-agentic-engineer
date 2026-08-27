@@ -18,16 +18,26 @@
 
 // @vitest-environment jsdom
 
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
 import type { components } from "../../../generated/aep-api";
 import { START_COMMAND } from "@aep/contracts/commands";
 import {
   chatKeyFor,
+  claimSendInFlight,
+  claimStreamFold,
   consumePendingSeed,
   notifyTurnEnd,
   replaceMessages,
+  setPendingSeed,
 } from "../../agent-chat/chatStore";
 import { SpecView } from "./SpecView";
 
@@ -66,7 +76,12 @@ const soloCollab = () => ({
   // No room doc offline — tests that need one (the question-form block below)
   // assign a real Y.Doc over this.
   doc: null as Y.Doc | null,
-  peers: [] as { clientId: number; name: string; color: string; kind: string }[],
+  peers: [] as {
+    clientId: number;
+    name: string;
+    color: string;
+    kind: string;
+  }[],
   getFileText: (() => null) as (path: string) => Y.Text | null,
   getFileFragment: () => null,
   docPaths: [] as string[],
@@ -115,6 +130,22 @@ vi.mock("../collab/useTurnEndFlush", () => ({
   useTurnEndFlush: (...args: unknown[]) => mockUseTurnEndFlush(...args),
 }));
 
+// --- Conversation log (#606): filling this browser's chat log from server
+// truth without the chat panel. Its own behavior is covered by
+// useConversationLog.test.tsx — here it's a stub for the same reason
+// useTurnEndFlush is (no QueryClientProvider in this file), and so SpecView's
+// own wiring can be asserted: the (org, projectName) it mounts the hook with,
+// and that it calls `resync` when the agent peer leaves the room.
+const mockResyncConversation = vi.fn();
+const mockUseConversationLog = vi.fn();
+mockUseConversationLog.mockReturnValue({
+  historyReady: true,
+  resync: mockResyncConversation,
+});
+vi.mock("../../agent-chat/useConversationLog", () => ({
+  useConversationLog: (...args: unknown[]) => mockUseConversationLog(...args),
+}));
+
 // --- "Resolve in chat" (#252 Task 9 seam, Task 5's plumbing): its own
 // behavior is covered by useResolveDependencyViaChat.test.ts — here it's a
 // stub so SpecView's own wiring (which componentName/dep it's called with)
@@ -144,7 +175,10 @@ vi.mock("@aep/ui-design-view", () => ({
     design: string;
     dependencyStatus?: Record<string, { status?: string; reason?: string }>;
     dependencyUsedBy?: Record<string, string[]>;
-    onResolveDependency?: (name: string, intent: "resolve" | "reconsider") => void;
+    onResolveDependency?: (
+      name: string,
+      intent: "resolve" | "reconsider",
+    ) => void;
   }) => (
     <div data-testid="design-view">
       <div data-testid="design-view-content">{design}</div>
@@ -178,7 +212,11 @@ vi.mock("../../projects/api/queries", () => ({
   useProjectStatus: () => ({
     data: {
       specStatus: "approved",
-      spec: { agent: mockSpecAgent, agentFlow: mockSpecFlow, designOutdated: false },
+      spec: {
+        agent: mockSpecAgent,
+        agentFlow: mockSpecFlow,
+        designOutdated: false,
+      },
     },
   }),
   useProjectTags: () => ({ data: { latest: "v1", specDirty: false } }),
@@ -202,12 +240,30 @@ vi.mock("../api/queries", () => ({
     mockUseDesignDependencies(...args),
 }));
 
+// The Security entry's own wiring. Stubbed like every other query here: these
+// tests render SpecView without a QueryClientProvider, and the hook's and the
+// panel's behavior are covered by their own tests.
+vi.mock("../hooks/useSecurityEntry", () => ({
+  useSecurityEntry: () => ({
+    rolesJson: null,
+    live: undefined,
+    onRolesChange: undefined,
+    proseFragment: null,
+    actions: { reveal: vi.fn(), rotate: vi.fn(), remove: vi.fn() },
+  }),
+}));
+
 // --- BuildDependencyDrawer: its own behavior is covered by
 // BuildDependencyDrawer.test.tsx, so here it's a thin stub that exposes
 // Continue/Cancel so tests can drive SpecView's routing without re-deriving
 // real dependency-form state. ------------------------------------------
 const STUB_INPUTS: BuildInputItem[] = [
-  { component: "checkout-api", dependency: "postgres", kind: "platform-resource", approved: true },
+  {
+    component: "checkout-api",
+    dependency: "postgres",
+    kind: "platform-resource",
+    approved: true,
+  },
 ];
 vi.mock("./BuildDependencyDrawer", () => ({
   BuildDependencyDrawer: ({
@@ -236,7 +292,9 @@ vi.mock("./BuildDependencyDrawer", () => ({
           </button>
         ) : null}
         {items[0] ? (
-          <button onClick={() => onResolveDependency?.(items[0]!, "reconsider")}>
+          <button
+            onClick={() => onResolveDependency?.(items[0]!, "reconsider")}
+          >
             Reconsider drawer item
           </button>
         ) : null}
@@ -315,7 +373,9 @@ describe("SpecView while the kickoff is still writing", () => {
   // A project past its kickoff: the PRD exists, so nothing here is about
   // requirements any more.
   const published = () =>
-    withFiles([{ path: "specs/requirements/prd.md", sha: "abc", group: "requirements" }]);
+    withFiles([
+      { path: "specs/requirements/prd.md", sha: "abc", group: "requirements" },
+    ]);
 
   it("says what is happening instead of offering an empty picker", () => {
     mockSpecAgent = "working";
@@ -362,7 +422,6 @@ describe("SpecView while the kickoff is still writing", () => {
     ).toBeInTheDocument();
   });
 
-
   // `spec.agent` is PROJECT-wide — the newest turn of any flow. A design pass
   // on a project whose PRD shipped months ago is an agent working, but not on
   // the requirements, and not on anything this workspace should re-explain.
@@ -386,8 +445,12 @@ describe("SpecView while the kickoff is still writing", () => {
     empty();
     render(<SpecView projectName="proj1" />);
 
-    expect(screen.getByText("The agent couldn't write your requirements")).toBeInTheDocument();
-    expect(screen.queryByText("Select a file to view its content.")).not.toBeInTheDocument();
+    expect(
+      screen.getByText("The agent couldn't write your requirements"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Select a file to view its content."),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText("Nothing written yet")).not.toBeInTheDocument();
   });
 
@@ -418,6 +481,42 @@ describe("SpecView while the kickoff is still writing", () => {
     expect(
       screen.queryByText("The agent couldn't write your requirements"),
     ).not.toBeInTheDocument();
+  });
+
+  // #635 (review): `spec.agent` keeps reading "failed" until the retry's own
+  // turn has a row, so unguarded the banner sat through the retry's dispatch
+  // offering a SECOND Retry against the send it already fired — while the rail
+  // beside it pulsed working. The click's own seed is the evidence that flips
+  // the pane; if the send dies, the claim releases and the banner returns.
+  it("drops the failure banner the moment Retry is clicked", () => {
+    mockSpecAgent = "failed";
+    empty();
+    render(<SpecView projectName="proj1" />);
+    expect(
+      screen.getByText("The agent couldn't write your requirements"),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    expect(
+      screen.queryByText("The agent couldn't write your requirements"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Retry" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Agent is working on the requirements document"),
+    ).toBeInTheDocument();
+
+    // The send died before a turn existed: the seed's consumption with no
+    // claim taken collapses the evidence, and the banner returns.
+    act(() => {
+      consumePendingSeed(chatKeyFor("acme", "proj1"));
+    });
+    expect(
+      screen.getByText("The agent couldn't write your requirements"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
   });
 
   // The dead end this closed (#562 review): a dispatch that never reached the
@@ -456,6 +555,116 @@ describe("SpecView while the kickoff is still writing", () => {
     ).not.toBeInTheDocument();
   });
 
+  // #629: the turn that carries a member's interview answers is plain prose —
+  // no flow token — and it is the very turn that writes the first requirements
+  // document. The empty state, and the Retry it carries, must be unreachable
+  // while that turn runs.
+  it("keeps the working spinner through a flowless answer turn", () => {
+    mockSpecAgent = "working";
+    mockSpecFlow = "";
+    empty();
+    render(<SpecView projectName="proj1" />);
+
+    expect(
+      screen.getByText("Agent is working on the requirements document"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Nothing written yet")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Retry" }),
+    ).not.toBeInTheDocument();
+  });
+
+  // A design run on an empty project is attributed to Design, not Requirements
+  // — but it is still a running turn, so the empty state may not offer a way
+  // out of it (#629). The pane says an agent works without naming a document
+  // it may not be writing.
+  it("offers no Retry during a design run on an empty project", () => {
+    mockSpecAgent = "working";
+    mockSpecFlow = "design";
+    empty();
+    render(<SpecView projectName="proj1" />);
+
+    expect(screen.getByText("Agent is working")).toBeInTheDocument();
+    expect(screen.queryByText("Nothing written yet")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Retry" }),
+    ).not.toBeInTheDocument();
+  });
+
+  // #635: the status field cannot see a turn before its row exists. Submitted
+  // interview answers leave through the seed slot the instant the form goes,
+  // but for the dispatch round-trip `spec.agent` still reads idle — and every
+  // other running-work signal is gone too, so the pane fell through to
+  // "Nothing written yet" plus a Retry whose /start would supersede the very
+  // interview it cannot see. The browser that submitted holds the evidence:
+  // seed waiting, dispatch in flight, stream being folded — each stage counts
+  // as agent work until the status catches up.
+  it("keeps the working state while this browser's send is still dispatching", () => {
+    mockSpecAgent = "";
+    mockSpecFlow = "";
+    empty();
+    act(() =>
+      setPendingSeed(chatKeyFor("acme", "proj1"), "my interview answers"),
+    );
+    render(<SpecView projectName="proj1" />);
+
+    expect(
+      screen.getByText("Agent is working on the requirements document"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Nothing written yet")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Retry" }),
+    ).not.toBeInTheDocument();
+
+    // The seed's consumption hands over to the send claim with no gap — the
+    // pane must not flash Retry between the stages.
+    let releaseSend: () => void;
+    act(() => {
+      releaseSend = claimSendInFlight(chatKeyFor("acme", "proj1"));
+      consumePendingSeed(chatKeyFor("acme", "proj1"));
+    });
+    expect(
+      screen.getByText("Agent is working on the requirements document"),
+    ).toBeInTheDocument();
+
+    // Dispatch answered: the fold claim takes over in the same continuation.
+    let releaseFold: () => void;
+    act(() => {
+      releaseFold = claimStreamFold(chatKeyFor("acme", "proj1"));
+      releaseSend();
+    });
+    expect(
+      screen.getByText("Agent is working on the requirements document"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Retry" }),
+    ).not.toBeInTheDocument();
+
+    act(() => releaseFold());
+  });
+
+  // The signal collapses with the claims: a refused dispatch releases its
+  // claim (and the seed is already consumed), so the pane returns to the
+  // truthful empty state rather than spinning on evidence that died.
+  it("surfaces Retry again once a send dies without a turn", () => {
+    mockSpecAgent = "";
+    mockSpecFlow = "";
+    empty();
+    let release: () => void;
+    act(() => {
+      release = claimSendInFlight(chatKeyFor("acme", "proj1"));
+    });
+    render(<SpecView projectName="proj1" />);
+    expect(
+      screen.getByText("Agent is working on the requirements document"),
+    ).toBeInTheDocument();
+
+    act(() => release());
+
+    expect(screen.getByText("Nothing written yet")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+  });
+
   // An empty workspace offers NOTHING (#562 retest). It used to carry a Start
   // button, which appeared during the kickoff itself — the moment the user must
   // not be invited to restart it — because "the workspace looks empty" is true
@@ -466,7 +675,9 @@ describe("SpecView while the kickoff is still writing", () => {
     empty();
     render(<SpecView projectName="proj1" />);
 
-    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Retry" }),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -492,9 +703,7 @@ describe("SpecView never opens a reference document (#383)", () => {
     });
     render(<SpecView projectName="proj1" />);
 
-    expect(
-      screen.queryByText("claim-form.pdf"),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText("claim-form.pdf")).not.toBeInTheDocument();
     // The content hook is disabled (empty path) rather than pointed at it.
     const requestedPaths = mockUseSpecFileContent.mock.calls.map(
       (c) => (c[1] as { path: string } | null)?.path ?? null,
@@ -547,7 +756,9 @@ describe("SpecView onBuild routing (#164)", () => {
   });
 
   it("needsInput:false — shows the Cut-version ceremony; confirming builds and navigates (#370/#372)", async () => {
-    mockPreflightRefetch.mockResolvedValue({ data: { needsInput: false, items: [] } });
+    mockPreflightRefetch.mockResolvedValue({
+      data: { needsInput: false, items: [] },
+    });
     mockMutateAsync.mockResolvedValue({ tag: "v1" } satisfies BuildResponse);
 
     render(<SpecView projectName="proj1" />);
@@ -556,7 +767,10 @@ describe("SpecView onBuild routing (#164)", () => {
     // The ceremony intervenes: nothing POSTs until the user confirms — the
     // BACKEND cuts the real tag on confirm.
     const dialog = await screen.findByTestId("cut-version-dialog");
-    const confirm = within(dialog).getByRole("button", { name: /cut v\d+ & build/i, hidden: true });
+    const confirm = within(dialog).getByRole("button", {
+      name: /cut v\d+ & build/i,
+      hidden: true,
+    });
     expect(mockMutateAsync).not.toHaveBeenCalled();
     fireEvent.click(confirm);
 
@@ -662,7 +876,12 @@ const CHECKOUT_DEPS: ComponentDependencies[] = [
   {
     componentName: "checkout-api",
     dependencies: [
-      { kind: "external", name: "stripe", status: "unresolved", reason: "needs-input" },
+      {
+        kind: "external",
+        name: "stripe",
+        status: "unresolved",
+        reason: "needs-input",
+      },
     ],
   },
 ];
@@ -707,7 +926,10 @@ describe("SpecView dependency wiring (#252 Task 9)", () => {
     // useSession's mock above sets orgHandle: "acme" explicitly, so the
     // "default" fallback never actually kicks in here — but the call proves
     // SpecView passes orgHandle through rather than hardcoding a value.
-    expect(mockUseResolveDependencyViaChat).toHaveBeenCalledWith("acme", "proj1");
+    expect(mockUseResolveDependencyViaChat).toHaveBeenCalledWith(
+      "acme",
+      "proj1",
+    );
   });
 
   it("passes the selected component's dependency status map to DesignView, keyed by dependency name", () => {
@@ -750,14 +972,27 @@ describe("SpecView dependency wiring (#252 Task 9)", () => {
       {
         componentName: "checkout-api",
         dependencies: [
-          { kind: "external", name: "stripe", status: "unresolved", reason: "needs-input" },
-          { kind: "platform-resource", name: "thunder-app", resourceType: "auth" },
+          {
+            kind: "external",
+            name: "stripe",
+            status: "unresolved",
+            reason: "needs-input",
+          },
+          {
+            kind: "platform-resource",
+            name: "thunder-app",
+            resourceType: "auth",
+          },
         ],
       },
       {
         componentName: "checkout-web",
         dependencies: [
-          { kind: "platform-resource", name: "thunder-app", resourceType: "auth" },
+          {
+            kind: "platform-resource",
+            name: "thunder-app",
+            resourceType: "auth",
+          },
         ],
       },
     ];
@@ -1005,14 +1240,77 @@ describe("SpecView header metadata (soft version chips)", () => {
     mockFlush.mockResolvedValue(undefined);
   });
 
+  // #586. Whenever the room is not the source for a document, git is — and it
+  // is READ-ONLY there, because nothing in that state can commit. The pane used
+  // to offer an editable box whose keystrokes went nowhere, or (when the room
+  // had failed to seed) a blank editor over a document that exists in git.
+  it("shows the committed document read-only, and says live editing is unavailable", () => {
+    mockUseSpecFileContent.mockReturnValue({
+      data: {
+        sha: "abc",
+        content: "# Product requirements\n\nThe committed text.",
+      },
+      isPending: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    render(<SpecView projectName="proj1" />);
+
+    expect(screen.getByText("The committed text.")).toBeInTheDocument();
+    expect(screen.getByText(/Live editing is unavailable/)).toBeInTheDocument();
+    // Nothing offers to take an edit: the committed markdown is rendered, not
+    // dropped into a textbox.
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+  });
+
+  it("names the document and offers one Retry when there is nothing to show", () => {
+    const refetch = vi.fn();
+    mockUseSpecFiles.mockReturnValue({
+      data: [
+        {
+          path: "specs/requirements/prd.md",
+          sha: "abc",
+          group: "requirements",
+        },
+      ],
+      isPending: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    mockUseSpecFileContent.mockReturnValue({
+      data: undefined,
+      isPending: false,
+      isError: true,
+      error: new Error("Failed to read spec files (500)"),
+      refetch,
+    });
+    render(<SpecView projectName="proj1" />);
+
+    // The document's NAME, never its path (the lexicon's mapping holds only
+    // while the user never sees one).
+    expect(
+      screen.getByText("Product requirements couldn't be loaded"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Failed to read spec files (500)"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/specs\/requirements/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(refetch).toHaveBeenCalled();
+  });
+
   it("renders session/version info as soft status chips (not buttons) and drops 'Approved'", () => {
     render(<SpecView projectName="proj1" />);
 
     // Version + session state render as soft status chips beside the title
     // (consistent with the builds/deployments headers): "v1 · published"
-    // (tags.latest) and "solo session" (offline collab).
+    // (tags.latest) and "offline" (no room). The chip says `offline`, not
+    // `solo session` — the lexicon retired the latter for reading like a focus
+    // feature rather than a degraded state.
     expect(screen.getByText("v1 · published")).toBeInTheDocument();
-    expect(screen.getByText("solo session")).toBeInTheDocument();
+    expect(screen.getByText("offline")).toBeInTheDocument();
 
     // The old "Approved" status chip is gone entirely (specStatus is
     // "approved" in this test's project-status mock).
@@ -1050,7 +1348,9 @@ describe("SpecView while the agent is waiting on answers", () => {
         role: "question",
         turnId: "t1",
         toolCallId: "call-1",
-        questions: [{ question: "Which of these did I get wrong?", options: [] }],
+        questions: [
+          { question: "Which of these did I get wrong?", options: [] },
+        ],
       },
     ]);
   }
@@ -1069,8 +1369,12 @@ describe("SpecView while the agent is waiting on answers", () => {
   it("offers the launchers and Generate design once the questions are answered", () => {
     render(<SpecView projectName="proj1" />);
 
-    expect(screen.getByRole("button", { name: "+ Feature" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Generate design/ })).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "+ Feature" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Generate design/ }),
+    ).toBeEnabled();
   });
 
   it("stands them down while a question form is open", () => {
@@ -1079,7 +1383,9 @@ describe("SpecView while the agent is waiting on answers", () => {
 
     expect(screen.getByTestId("spec-question-form")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "+ Feature" })).toBeNull();
-    expect(screen.getByRole("button", { name: /Generate design/ })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: /Generate design/ }),
+    ).toBeDisabled();
   });
 
   // A seeded command does NOT go through the composer: `AgentChatPanel` sends
@@ -1095,7 +1401,9 @@ describe("SpecView while the agent is waiting on answers", () => {
     render(<SpecView projectName="proj1" />);
 
     expect(screen.getByRole("button", { name: "+ Feature" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /Generate design/ })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: /Generate design/ }),
+    ).toBeDisabled();
   });
 });
 
@@ -1116,7 +1424,11 @@ describe("SpecView warns before designing against unsettled requirements", () =>
     "",
     "- Which payroll vendor?",
   ].join("\n");
-  const SETTLED = ["## User Stories", "", "1. As a manager, I approve claims"].join("\n");
+  const SETTLED = [
+    "## User Stories",
+    "",
+    "1. As a manager, I approve claims",
+  ].join("\n");
 
   function seed(prd: string): void {
     mockUseSpecFiles.mockReturnValue({
@@ -1181,8 +1493,60 @@ describe("SpecView warns before designing against unsettled requirements", () =>
     fireEvent.click(screen.getByRole("button", { name: "Resolve issues" }));
 
     await waitFor(() =>
-      expect(screen.queryByRole("button", { name: "Generate anyway" })).toBeNull(),
+      expect(
+        screen.queryByRole("button", { name: "Generate anyway" }),
+      ).toBeNull(),
     );
     expect(mockNavigate).not.toHaveBeenCalled();
+  });
+});
+
+// A project whose agent is WAITING on answers must not look dead here (#606).
+// The question form is the room's, but the fact that a question is pending
+// reaches the room through this browser's chat log — which used to be filled
+// only while AgentChatPanel was mounted. These pin the two halves of removing
+// the panel from that path: the workspace mounts the log itself, and it
+// re-reads the thread when the agent peer leaves the room (turn-end observed,
+// not polled).
+describe("SpecView keeps the chat log fed without the chat panel (#606)", () => {
+  it("mounts the conversation log for this org and project", () => {
+    render(<SpecView projectName="proj1" />);
+    // The SAME org expression the chatKey above uses (`orgHandle ?? "default"`,
+    // matching AppLayout/AgentChatPanel) — this harness signs in under "acme",
+    // so the log it fills is `aep.chat.v1.acme.proj1`, the very key
+    // useTurnEndFlush is wired with. Mounting it under a different org fills a
+    // log nothing reads.
+    expect(mockUseConversationLog).toHaveBeenCalledWith("acme", "proj1");
+  });
+
+  it("re-reads the thread when the agent peer leaves the room", () => {
+    // The agent joins the room while it works and leaves when the turn ends, so
+    // its departure is the moment the thread gained a question — or the answer
+    // to one. Nothing else can tell us with the panel closed.
+    mockCollab = {
+      ...soloCollab(),
+      status: "connected",
+      peers: [{ clientId: 1, name: "Agent", color: "#000000", kind: "agent" }],
+    };
+    const { rerender } = render(<SpecView projectName="proj1" />);
+    expect(mockResyncConversation).not.toHaveBeenCalled();
+
+    mockCollab = {
+      ...soloCollab(),
+      status: "connected",
+      peers: [],
+      version: 1,
+    };
+    rerender(<SpecView projectName="proj1" />);
+
+    expect(mockResyncConversation).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not re-read on mount into an already-idle project", () => {
+    // Falling edge only. The query's own mount read covers arrival; firing here
+    // as well would spend a second request on every visit to a quiet project.
+    mockCollab = { ...soloCollab(), status: "connected", peers: [] };
+    render(<SpecView projectName="proj1" />);
+    expect(mockResyncConversation).not.toHaveBeenCalled();
   });
 });

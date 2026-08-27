@@ -25,6 +25,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/contracts/taskmeta"
 	"github.com/wso2/aep/aep-api/internal/delivery"
+	"github.com/wso2/aep/aep-api/internal/gen"
 	"github.com/wso2/aep/aep-api/internal/platform/ocname"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
@@ -388,4 +389,196 @@ func gateNumber(issues *fakeIssues, depName string) int {
 		}
 	}
 	return 0
+}
+
+// TestProvisionForBuild_RegisteredExternal_AuthorsFromOrgCells: a Registered
+// External resource (non-empty EnvCells) authors the project's Resource
+// instance from org non-secret cells — not design defaults — and records the
+// instance on the value plane. No project OpenBao Provision.
+func TestProvisionForBuild_RegisteredExternal_AuthorsFromOrgCells(t *testing.T) {
+	plane := NewMemoryValuePlane()
+	plane.PutEnvCells("acme", "stripe", []EnvCell{
+		{Environment: "development", Key: "api_key", Status: "configured"},
+		{Environment: "development", Key: "region", Status: "configured", Value: "us"},
+	})
+	ext := &fakeExtProv{}
+	svc := NewService(Deps{
+		Issues:            newFakeIssues(nil),
+		Execs:             &fakeExecStore{},
+		Design:            fakeDesign{comps: designWithDeps()},
+		Repos:             fakeRepos{},
+		ExtProv:           ext,
+		PlatProv:          &fakePlatProv{},
+		Bindings:          &fakeBindings{},
+		CatalogValuePlane: plane,
+	})
+
+	fails, err := svc.ProvisionForBuild(context.Background(), "acme", "acme", "proj", "v1", 0, []BuildProvisionInput{
+		{Component: "orders", Dependency: "stripe", Kind: "external-config"},
+	})
+	if err != nil {
+		t.Fatalf("ProvisionForBuild: %v", err)
+	}
+	if len(fails) != 0 {
+		t.Fatalf("want no failures, got %+v", fails)
+	}
+	if ext.authorPreparedCalls != 1 {
+		t.Fatalf("Registered build must AuthorPreparedValues once, got %d", ext.authorPreparedCalls)
+	}
+	if ext.calls != 0 {
+		t.Fatalf("Registered build must not Provision (project OpenBao), got %d", ext.calls)
+	}
+	got := ext.authorByEnv["development"]
+	if got.Plain["region"] != "us" {
+		t.Fatalf("Registered author Plain = %+v, want region=us from org cells", got.Plain)
+	}
+	if _, hasSecret := got.Plain["api_key"]; hasSecret {
+		t.Fatalf("secret cell must not appear in Plain: %+v", got.Plain)
+	}
+	inst := plane.Instances("acme", "stripe")
+	if len(inst) != 1 || inst[0].Project != "proj" || inst[0].Environment != "development" {
+		t.Fatalf("instances after Registered author = %+v, want {proj, development}", inst)
+	}
+}
+
+// fakeOrgSecrets is an OrgSecretWriter that returns a caller-chosen vault key
+// without talking to SM-API. Tests assert the key is forwarded, not its format.
+type fakeOrgSecrets struct {
+	key string
+}
+
+func (f *fakeOrgSecrets) WriteOrgCatalogSecret(context.Context, string, string, map[string]string) (string, error) {
+	return f.key, nil
+}
+
+func (f *fakeOrgSecrets) OrgCatalogVaultKey(context.Context, string, string) (string, error) {
+	return f.key, nil
+}
+
+type fakeEnvs struct {
+	names []string
+}
+
+func (f fakeEnvs) ListNames(context.Context, string) ([]string, error) {
+	return f.names, nil
+}
+
+// TestProvisionForBuild_RegisteredExternal_AuthorsOrgSecretStorePath: register
+// with a wired OrgSecretWriter persists the returned vault key on the value
+// plane; build authoring passes it as SecretStorePath. No project OpenBao
+// Provision. Secret cells stay out of Plain.
+func TestProvisionForBuild_RegisteredExternal_AuthorsOrgSecretStorePath(t *testing.T) {
+	plane := NewMemoryValuePlane()
+	ext := &fakeExtProv{}
+	writer := &fakeOrgSecrets{key: "from-org-secret-writer"}
+	svc := NewService(Deps{
+		Issues:            newFakeIssues(nil),
+		Execs:             &fakeExecStore{},
+		Design:            fakeDesign{comps: designWithDeps()},
+		Repos:             fakeRepos{},
+		RTCatalog:         &fakeRTCatalog{},
+		ExtProv:           ext,
+		PlatProv:          &fakePlatProv{},
+		Bindings:          &fakeBindings{},
+		CatalogValuePlane: plane,
+		Environments:      fakeEnvs{names: []string{"development"}},
+		OrgSecrets:        writer,
+	})
+
+	_, err := svc.RegisterExternalResource(context.Background(), "acme", gen.RegisterExternalResourceRequest{
+		Name:                    "stripe",
+		Description:             "Stripe payments",
+		ConsumptionInstructions: "Use the secret as Bearer.",
+		Config: []gen.ConfigKeyDTO{
+			{Key: "api_key", Description: "Secret API key", Secret: true},
+			{Key: "region", Description: "Account region"},
+		},
+		EnvValues: []struct {
+			Environment string `json:"environment"`
+			Key         string `json:"key"`
+			Value       string `json:"value"`
+		}{
+			{Environment: "development", Key: "api_key", Value: "sk_live"},
+			{Environment: "development", Key: "region", Value: "us"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("RegisterExternalResource: %v", err)
+	}
+
+	fails, err := svc.ProvisionForBuild(context.Background(), "acme", "acme", "proj", "v1", 0, []BuildProvisionInput{
+		{Component: "orders", Dependency: "stripe", Kind: "external-config"},
+	})
+	if err != nil {
+		t.Fatalf("ProvisionForBuild: %v", err)
+	}
+	if len(fails) != 0 {
+		t.Fatalf("want no failures, got %+v", fails)
+	}
+	if ext.authorPreparedCalls != 1 {
+		t.Fatalf("Registered build must AuthorPreparedValues once, got %d", ext.authorPreparedCalls)
+	}
+	if ext.calls != 0 {
+		t.Fatalf("Registered build must not Provision (project OpenBao), got %d", ext.calls)
+	}
+	got := ext.authorByEnv["development"]
+	if got.SecretStorePath == "" {
+		t.Fatal("AuthorPreparedValues must receive a non-empty SecretStorePath from the org-catalog writer")
+	}
+	if got.SecretStorePath != writer.key {
+		t.Fatalf("SecretStorePath = %q, want the vault key OrgSecretWriter returned", got.SecretStorePath)
+	}
+	if got.Plain["region"] != "us" {
+		t.Fatalf("Registered author Plain = %+v, want region=us from org cells", got.Plain)
+	}
+	if _, hasSecret := got.Plain["api_key"]; hasSecret {
+		t.Fatalf("secret cell must not appear in Plain: %+v", got.Plain)
+	}
+}
+
+// TestProvisionForBuild_RegisteredAfterRestart_AuthorsOrgSecretStorePath:
+// after aep-api restart the value plane is empty. Consumption instructions
+// on the RT still mark the name Registered; synthesize + OrgCatalogVaultKey
+// must pin the org-catalog path so build does not mint a project secret.
+func TestProvisionForBuild_RegisteredAfterRestart_AuthorsOrgSecretStorePath(t *testing.T) {
+	plane := NewMemoryValuePlane()
+	ext := &fakeExtProv{}
+	writer := &fakeOrgSecrets{key: "org-catalog-github-development"}
+	svc := NewService(Deps{
+		Issues: newFakeIssues(nil),
+		Execs:  &fakeExecStore{},
+		Design: fakeDesign{comps: designWithDeps()},
+		Repos:  fakeRepos{},
+		RTCatalog: &fakeRTCatalog{defs: []openchoreo.ExternalResourceDefinition{{
+			Name: "stripe",
+			Config: []openchoreo.ExternalResourceConfigKey{
+				{Key: "api_key", Secret: true},
+				{Key: "region"},
+			},
+			ConsumptionInstructions: "Use the secret as Bearer.",
+		}}},
+		ExtProv:           ext,
+		PlatProv:          &fakePlatProv{},
+		Bindings:          &fakeBindings{},
+		CatalogValuePlane: plane,
+		Environments:      fakeEnvs{names: []string{"development"}},
+		OrgSecrets:        writer,
+	})
+
+	fails, err := svc.ProvisionForBuild(context.Background(), "acme", "acme", "proj", "v1", 0, []BuildProvisionInput{
+		{Component: "orders", Dependency: "stripe", Kind: "external-config"},
+	})
+	if err != nil {
+		t.Fatalf("ProvisionForBuild: %v", err)
+	}
+	if len(fails) != 0 {
+		t.Fatalf("want no failures, got %+v", fails)
+	}
+	got := ext.authorByEnv["development"]
+	if got.SecretStorePath != writer.key {
+		t.Fatalf("SecretStorePath = %q, want reconstructed org-catalog key %q", got.SecretStorePath, writer.key)
+	}
+	if ext.calls != 0 {
+		t.Fatalf("Registered restart build must not Provision (project OpenBao), got %d", ext.calls)
+	}
 }

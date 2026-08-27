@@ -22,13 +22,14 @@ import { createServer } from "node:net";
 import * as Y from "yjs";
 import type { CollabConfig } from "./env.js";
 import type { BffClient } from "./bff.js";
-import { BffAccessDeniedError } from "./bff.js";
+import { BffAccessDeniedError, BffReadError } from "./bff.js";
 import {
   buildAuthenticateHook,
   buildLoadDocumentHook,
   buildStatelessHook,
   createCollabServer,
   requestFreshToken,
+  UPSTREAM_UNAVAILABLE,
   type CollabContext,
 } from "./server.js";
 import { filesMap } from "./seed.js";
@@ -146,6 +147,112 @@ test("auth propagates oracle denial", async () => {
   );
 });
 
+// A 403 is a verdict about this bearer, and the console is right to stop
+// retrying it. A 503 is not (#586): `aep-api` restarts on every deploy, and
+// every non-ok status used to arrive as the same BffAccessDeniedError — so a
+// redeploy left the spec view offline until the page was reloaded. The reason
+// is what the console reads to tell the two apart.
+test("an unreachable oracle is tagged transient, not a denial", async () => {
+  for (const failure of [
+    new BffAccessDeniedError(503),
+    new TypeError("fetch failed"),
+  ]) {
+    const auth = buildAuthenticateHook(prodConfig, {
+      bff: fakeBff({
+        validateAccess: async () => {
+          throw failure;
+        },
+      }),
+    });
+    const err = await auth({ token: "t", documentName: ROOM }).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    assert.equal(
+      (err as { reason?: string }).reason,
+      UPSTREAM_UNAVAILABLE,
+      `${String(failure)} should not read as a verdict`,
+    );
+  }
+});
+
+// The retryable 4xx are the same outage wearing a different status. A BFF
+// shedding load answers 429, and latching the console offline on that would
+// reintroduce #586 through the one door the 5xx test does not cover.
+test("a rate-limited or timing-out oracle is transient, not a verdict", async () => {
+  for (const status of [408, 425, 429]) {
+    const auth = buildAuthenticateHook(prodConfig, {
+      bff: fakeBff({
+        validateAccess: async () => {
+          throw new BffAccessDeniedError(status);
+        },
+      }),
+    });
+    const err = await auth({ token: "t", documentName: ROOM }).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    assert.equal(
+      (err as { reason?: string }).reason,
+      UPSTREAM_UNAVAILABLE,
+      `${status} should keep the client retrying`,
+    );
+  }
+});
+
+// The seed read needs the same split the oracle got. A 404 for a project whose
+// repo row is missing is permanent: tagging it transient would have every open
+// tab reconnect forever against a room that can never be seeded.
+test("a permanently-unreadable spec is a verdict, a failing one is not", async () => {
+  for (const [failure, expected] of [
+    [new BffReadError("shop", 404), undefined],
+    [new BffReadError("shop", 502), UPSTREAM_UNAVAILABLE],
+    [new BffReadError("shop", 429), UPSTREAM_UNAVAILABLE],
+    [new TypeError("fetch failed"), UPSTREAM_UNAVAILABLE],
+  ] as const) {
+    const load = buildLoadDocumentHook(prodConfig, {
+      bff: fakeBff({
+        fetchSpecFiles: async () => {
+          throw failure;
+        },
+      }),
+    });
+    ensureRoomState(ROOM, "shop");
+    const err = await load({
+      document: new Y.Doc() as Document,
+      documentName: ROOM,
+      context: {
+        user: { name: "Jo", email: "j", kind: "user" },
+        token: "t",
+        projectName: "shop",
+      },
+    }).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    assert.equal(
+      (err as { reason?: string }).reason,
+      expected,
+      `${String(failure)} was classified wrongly`,
+    );
+  }
+});
+
+test("a denial carries no transient reason", async () => {
+  const auth = buildAuthenticateHook(prodConfig, {
+    bff: fakeBff({
+      validateAccess: async () => {
+        throw new BffAccessDeniedError(403);
+      },
+    }),
+  });
+  const err = await auth({ token: "t", documentName: ROOM }).then(
+    () => null,
+    (e: unknown) => e,
+  );
+  assert.equal((err as { reason?: string }).reason, undefined);
+});
+
 test("auth rejects a missing token outside dev mode", async () => {
   const auth = buildAuthenticateHook(prodConfig, { bff: fakeBff() });
   await assert.rejects(
@@ -259,25 +366,56 @@ test("load never seeds reference documents into the room", async () => {
   );
 });
 
-test("load opens an unseeded doc when the files fetch fails (room must survive)", async () => {
+// A ROOM EXISTS ONLY IF IT WAS SEEDED (#586). This used to assert the
+// opposite — that a failed read still opened a live room, on the reasoning that
+// an unseeded doc beat a dead connection. It did not: the baseline stayed
+// empty, so every write preconditioned on baseSha "" ("must not exist") and
+// 409ed against the real file for as long as the room lived, while the console
+// painted the empty room over a document that exists in git.
+test("a failed files fetch rejects the load rather than opening an empty room", async () => {
   const load = buildLoadDocumentHook(prodConfig, {
     bff: fakeBff({
       fetchSpecFiles: async () => {
-        throw new Error("files fetch exploded (404)");
+        throw new Error("files fetch exploded (500)");
       },
     }),
   });
+  // Stand in for a second tab that authenticated into this room while this
+  // load was in flight: its token and its stale baseline entry are both
+  // already on the shared state.
+  const state = ensureRoomState(ROOM, "shop");
+  state.lastToken = "held-by-another-tab";
+  state.baseline.set("specs/requirements/prd.md", { content: "stale", sha: "s0" });
   const doc = new Y.Doc() as Document;
-  await load({
-    document: doc,
-    documentName: "spec-acme-shop",
-    context: {
-      user: { name: "Jo", email: "j", kind: "user" },
-      token: "t",
-      projectName: "shop",
-    },
-  });
-  assert.equal(filesMap(doc).size, 0);
+  await assert.rejects(
+    load({
+      document: doc,
+      documentName: ROOM,
+      context: {
+        user: { name: "Jo", email: "j", kind: "user" },
+        token: "t",
+        projectName: "shop",
+      },
+    }),
+    /files fetch exploded \(500\)/,
+  );
+  // The BASELINE is what must not survive: a seed that threw partway leaves
+  // entries the next successful seed would not overwrite, and a stale baseline
+  // is what makes a flush commit against the wrong sha.
+  assert.equal(
+    roomState(ROOM)!.baseline.size,
+    0,
+    "a failed seed left a baseline behind for the next load to commit against",
+  );
+  // The state itself belongs to every connection that authenticated into the
+  // room, not to this load. Evicting it would take another tab's token with
+  // it, and a room with no token skips its flush entirely — that tab's edits
+  // would be dropped in silence, which is worse than the wedge being fixed.
+  assert.equal(
+    roomState(ROOM)!.lastToken,
+    "held-by-another-tab",
+    "a failed load evicted state another connection owns",
+  );
 });
 
 test("GET /healthz returns 200 ok", async () => {
@@ -290,15 +428,46 @@ test("GET /healthz returns 200 ok", async () => {
   await server.destroy();
 });
 
-test("load opens an empty doc when the oracle gave no project (pre-phase-2 BFF)", async () => {
+// The same wedge through a different door: a room with no project can never
+// commit either, because the committer needs the project the oracle failed to
+// resolve. It opened empty as a pre-phase-2 BFF allowance; nothing in the field
+// is that old, and one branch left returning an unseeded room would keep the
+// class alive while the fix claims it closed.
+test("no project from the oracle rejects the load too", async () => {
   const load = buildLoadDocumentHook(prodConfig, { bff: fakeBff() });
+  ensureRoomState(ROOM, "shop");
   const doc = new Y.Doc() as Document;
-  await load({
+  await assert.rejects(
+    load({
+      document: doc,
+      documentName: ROOM,
+      context: { user: { name: "Jo", email: "j", kind: "user" }, token: "t", projectName: null },
+    }),
+    /missing bff\/token\/project/,
+  );
+});
+
+// ...and it is a VERDICT, not an outage. A room the oracle resolved without a
+// project will keep resolving without one, so tagging it transient would have
+// every open tab reconnect every 30s for the life of the page against a room
+// that can never open.
+test("a room with no project is refused permanently, not tagged transient", async () => {
+  const load = buildLoadDocumentHook(prodConfig, { bff: fakeBff() });
+  ensureRoomState(ROOM, "shop");
+  const doc = new Y.Doc() as Document;
+  const err = await load({
     document: doc,
-    documentName: "spec-acme-shop",
+    documentName: ROOM,
     context: { user: { name: "Jo", email: "j", kind: "user" }, token: "t", projectName: null },
-  });
-  assert.equal(filesMap(doc).size, 0);
+  }).then(
+    () => null,
+    (e: unknown) => e,
+  );
+  assert.equal(
+    (err as { reason?: string }).reason,
+    undefined,
+    "a permanent condition must not invite an endless retry",
+  );
 });
 
 test("stateless token updates connection context and lastToken", async () => {

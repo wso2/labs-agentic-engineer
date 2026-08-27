@@ -296,7 +296,7 @@ test("debugQueryOptions: a normal run carries NONE of the developer options", ()
   assert.deepEqual(debugQueryOptions(undefined), {});
 });
 
-test("debugQueryOptions: a debug run wires all three at the sinks it was given", () => {
+test("debugQueryOptions: a debug run wires every developer option at the sinks it was given", () => {
   const written: string[] = [];
   const opts = debugQueryOptions({
     debugFilePath: "/run/.logs/claude-debug.log",
@@ -309,4 +309,22 @@ test("debugQueryOptions: a debug run wires all three at the sinks it was given",
   // gets it scrubbed on the way to disk.
   opts.stderr?.("boom");
   assert.deepEqual(written, ["boom"]);
+});
+
+test("debugQueryOptions: the reasoning pair is on together, or not at all", () => {
+  // They answer one question between them — what did this run think, including
+  // the subagents that did the work — and either alone leaves the transcript
+  // unable to answer it: no display gives signed-but-empty blocks, and no
+  // forwarding gives them for the lead session only. ADR-0002 decision 16.
+  const opts = debugQueryOptions({
+    debugFilePath: "/run/.logs/claude-debug.log",
+    onStderr: () => {},
+    close: () => {},
+  });
+  assert.deepEqual(opts.thinking, { type: "adaptive", display: "summarized" });
+  assert.equal(opts.forwardSubagentText, true);
+
+  const normal = debugQueryOptions(undefined);
+  assert.equal(normal.thinking, undefined);
+  assert.equal(normal.forwardSubagentText, undefined);
 });

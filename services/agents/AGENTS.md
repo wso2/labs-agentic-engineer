@@ -52,7 +52,9 @@ an absent value) is the file-mutation set (`src/agents/main/tools/files.ts`) ove
 (`tools/task-plan.ts`) registers `planTask`/`updateTask` over a per-turn `TaskPlan`
 accumulator (`task-plan-accumulator.ts`) and NO file tools; `files` then carries
 READ-ONLY context (the spec/design bundle + one `tasks/<issueNumber>.md` rendering
-per existing open Task) and nothing mutates it. `kind: "plan"` selects `task-plan`; every other kind selects `files`. Callers do
+per existing open Task) and nothing mutates it. `kind: "plan"` selects `task-plan`; every other kind selects `files`. Register
+chat merges `draftExternalResource` onto that files set for the synthetic
+register project; spec and project turns keep the files set byte-identical. Callers do
 not send a tool set — two ways to say what a turn is for is two ways to
 disagree. Selection lives in `run-conversation-turn.ts` (the loop stays generic); the shared skill loaders
 (`tools/skill-tools.ts`) attach to either set. `execute()` validates + accumulates

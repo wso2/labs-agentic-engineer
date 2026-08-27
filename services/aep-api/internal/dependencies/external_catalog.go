@@ -18,6 +18,7 @@ package dependencies
 
 import (
 	"context"
+	"fmt"
 	"sort"
 
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
@@ -34,11 +35,12 @@ import (
 // surface (provisioning.Service.DeleteExternalResource, guarded upstream by
 // its own design-sweep in-use check).
 //
-// Only a PROVISIONED `external` dependency has an authored RT (the
-// provisioner authors it — see NewExternalResourceProvisioner), so
-// this catalog reflects provisioned externals only: a design-only `external`
-// dependency that has not yet been provisioned is not discoverable here (D2 —
-// deliberate; no design-sweep is added).
+// An authored RT is present for both Project Externals (provisioner — see
+// NewExternalResourceProvisioner) and Registered resources (Ensure authors
+// the RT at register). MCP List is therefore RT-backed: a
+// zero-consumer Registered row is already listable. A design-only `external`
+// dependency that never went through register/Ensure still has no RT and is
+// not discoverable here (deliberate; no design-sweep is added).
 type ExternalResourceCatalog struct{ rc openchoreo.ResourceClient }
 
 // NewExternalResourceCatalog wires the catalog over the OC client.
@@ -46,8 +48,9 @@ func NewExternalResourceCatalog(rc openchoreo.ResourceClient) *ExternalResourceC
 	return &ExternalResourceCatalog{rc: rc}
 }
 
-// List returns every provisioned external resource registered in orgID's
-// namespace, reconstructed from its authored ResourceType and sorted by name.
+// List returns every external resource with an authored RT in orgID's
+// namespace (Registered or Project External), reconstructed from its
+// ResourceType and sorted by name.
 // A namespaced ResourceType that is not self-describing as an external
 // (openchoreo.ExternalDefinitionFromRT's ok=false — e.g. it lacks the
 // aep.wso2.com/external-name annotation) is silently skipped: it is not
@@ -86,7 +89,7 @@ func (c *ExternalResourceCatalog) List(ctx context.Context, orgID string) ([]ope
 }
 
 // Get returns the named external resource's definition, or (nil, nil) when no
-// provisioned RT in orgID's namespace carries that logical name. The RT's own
+// authored RT in orgID's namespace carries that logical name. The RT's own
 // metadata.name is a hash of (name, schema) — see
 // openchoreo.ExternalResourceRTName — so it can never be derived from name
 // alone; listing every namespaced RT and matching on the recovered logical
@@ -148,6 +151,42 @@ func (c *ExternalResourceCatalog) Delete(ctx context.Context, orgID, name string
 		}
 	}
 	return nil
+}
+
+// Ensure get-or-creates the named ResourceType in orgID's namespace via
+// ResourceClient.EnsureResourceType. Register uses this to author the org
+// catalog RT without ApplyResource / EnsureBinding (no project instance).
+func (c *ExternalResourceCatalog) Ensure(ctx context.Context, orgID string, rt *openchoreo.ResourceType) error {
+	if rt == nil {
+		return fmt.Errorf("external resource catalog: nil ResourceType")
+	}
+	_, err := c.rc.EnsureResourceType(ctx, orgID, rt)
+	return err
+}
+
+// Update replaces an existing namespaced ResourceType via
+// ResourceClient.UpdateResourceType (PUT). Edit uses this so catalog fields
+// persist when key identity — and therefore the hashed RT name — is unchanged.
+// Do not route Update through Ensure (Ensure is get-or-create and will not PUT).
+func (c *ExternalResourceCatalog) Update(ctx context.Context, orgID string, rt *openchoreo.ResourceType) error {
+	if rt == nil {
+		return fmt.Errorf("external resource catalog: nil ResourceType")
+	}
+	_, err := c.rc.UpdateResourceType(ctx, orgID, rt)
+	return err
+}
+
+// IsRegistered reports whether `name` is in the org's ResourceType-backed
+// catalog — the design-read registry-reuse hit (spec.ExternalResourceResolver).
+func (c *ExternalResourceCatalog) IsRegistered(ctx context.Context, orgID, name string) (bool, error) {
+	if c == nil {
+		return false, nil
+	}
+	def, err := c.Get(ctx, orgID, name)
+	if err != nil {
+		return false, err
+	}
+	return def != nil, nil
 }
 
 // newerExternalRT reports whether rt should be preferred over cur as the

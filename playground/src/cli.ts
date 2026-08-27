@@ -91,7 +91,7 @@ function printUsage(): void {
       "  --host            (code) run the coding agent as a bare host process, not the runner image",
       "  --api-key         (code --host) authenticate with ANTHROPIC_API_KEY instead of your Claude login",
       "  --slow            (log) only the calls that took 3s or more, slowest first",
-      "  --thinking        (log) the model's reasoning blocks (main agent only — subagents emit none)",
+      "  --thinking        (log) the model's reasoning, the subagents' included, each block owner-labelled",
       "  --run <name>      (log) an older archived run instead of the newest",
       "  -h, --help        show this help",
       "",

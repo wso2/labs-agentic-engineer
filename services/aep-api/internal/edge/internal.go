@@ -48,11 +48,11 @@ type InternalDeps struct {
 	// RunnerAuth verifies runner publisher-cc bearers against the
 	// path execution id. nil fails closed: every internal op answers 503.
 	RunnerAuth *auth.RunnerAuthorizer
-	// ValidationContext + ValidationCredentials back the two validation runner
-	// callbacks (validation-context GET, test-credentials POST); a nil provider
-	// answers 503 for its op.
-	ValidationContext     validation.ContextProvider
-	ValidationCredentials validation.CredentialRequester
+	// ValidationContext backs the validation-context runner callback; a nil
+	// provider answers 503 for that op. A test user's login is NOT served here —
+	// it is published on the roles gate ticket, which is where the validation
+	// agent reads it (ADR-0022).
+	ValidationContext validation.ContextProvider
 }
 
 // internalServer implements igen.StrictServerInterface.
@@ -102,8 +102,6 @@ func runnerAuthGate(authorizer *auth.RunnerAuthorizer) igen.StrictMiddlewareFunc
 			case igen.RunnerRefreshCredentialsRequestObject:
 				cycleID = req.ExecutionID
 			case igen.RunnerValidationContextRequestObject:
-				cycleID = req.CycleID
-			case igen.RunnerValidationCredentialsRequestObject:
 				cycleID = req.CycleID
 			default:
 				return nil, errUnauthorized("unauthenticated internal operation: " + operationID)
@@ -179,12 +177,11 @@ func (s *internalServer) RunnerValidationContext(ctx context.Context, request ig
 	return igen.RunnerValidationContext200JSONResponse(toIgenValidationContext(*resp)), nil
 }
 
-// toIgenValidationContext + toIgenTestCredential project the validation
-// service's own structs onto the S2S wire shapes. igen must stay a leaf, so it
-// cannot import the feature/domain that owns these value types (§7) — hence a
-// mapping here rather than the former x-go-type aliases. The wire keys are
-// byte-identical; a nil endpoints slice stays nil (marshals `null`) exactly as
-// the alias did, never silently becoming `[]`.
+// toIgenValidationContext projects the validation service's own struct onto the
+// S2S wire shape. igen must stay a leaf, so it cannot import the feature/domain
+// that owns the value type (§7) — hence a mapping here rather than the former
+// x-go-type alias. The wire keys are byte-identical; a nil endpoints slice stays
+// nil (marshals `null`) exactly as the alias did, never silently becoming `[]`.
 func toIgenValidationContext(r validation.ValidationContextResponse) igen.ValidationContextResponse {
 	var eps []igen.ComponentEndpoint
 	if r.Endpoints != nil {
@@ -194,36 +191,4 @@ func toIgenValidationContext(r validation.ValidationContextResponse) igen.Valida
 		}
 	}
 	return igen.ValidationContextResponse{Endpoints: eps, CriteriaPath: r.CriteriaPath}
-}
-
-func toIgenTestCredential(c validation.TestCredential) igen.TestCredential {
-	return igen.TestCredential{
-		Username: c.Username,
-		Password: c.Password,
-		Mock:     c.Mock,
-		Note:     c.Note,
-	}
-}
-
-func (s *internalServer) RunnerValidationCredentials(ctx context.Context, request igen.RunnerValidationCredentialsRequestObject) (igen.RunnerValidationCredentialsResponseObject, error) {
-	if s.deps.ValidationCredentials == nil {
-		return nil, errServiceUnavailable("validation credentials not configured")
-	}
-	org := tenant.BoundOrgFromContext(ctx)
-	var req validation.CredentialRequest
-	if request.Body != nil {
-		req = validation.CredentialRequest{
-			Role:     request.Body.Role,
-			Purpose:  request.Body.Purpose,
-			Username: request.Body.Username,
-		}
-	}
-	resp, err := s.deps.ValidationCredentials.RequestCredentials(ctx, request.CycleID, org, req)
-	if err != nil {
-		if errors.Is(err, validation.ErrCycleNotFound) {
-			return nil, errNotFound("no validation cycle with this id")
-		}
-		return nil, errInternal("failed to request test credentials")
-	}
-	return igen.RunnerValidationCredentials200JSONResponse(toIgenTestCredential(*resp)), nil
 }

@@ -119,7 +119,7 @@ function OptionCard({
 }
 
 /** One question block: heading, context detail, option cards, and an "Other…" free-text row. */
-function QuestionBlock({
+export function QuestionBlock({
   q,
   answer,
   disabled,

@@ -1,0 +1,28 @@
+Usage: bal library overview <org/name> [-s <q>] [--refresh]
+
+A map of the package: what it declares, the readme's worked code, and the command
+that opens each part. Start here.
+
+A MAP, not a dump: counts, the guide's chunk index, a roster whose every row ends in
+the command that opens it, and last, every Ballerina block the readme published. No
+generated signatures — the container verbs print those, in full, within their own
+budget.
+
+With -s it is the CROSS-KIND search, over clients, classes, module functions,
+declarations and guide chunk titles at once. That is the question no kind-specific
+verb can answer, because you do not yet know the kind.
+
+Ordered so that a window keeps the useful half: facts, '## Next' and the rosters
+first, and the quoted code last because it is as long as the readme made it. If you
+cut it off, line one says so.
+
+  -s, --search <q>   Filter this verb's scope by name, path, parameter or type.
+                     Every word and every path segment of the query has to appear,
+                     in any order — to anchor a path, pass it as the selector
+                     instead. A match found only in documentation is named rather
+                     than printed.
+  --refresh          Ignore any cached copy and rewrite it. Worth passing only when
+                     a name should exist and does not.
+
+  bal library overview ballerinax/github
+  bal library overview ballerina/http -s "cookie"

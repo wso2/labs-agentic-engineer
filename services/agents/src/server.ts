@@ -61,7 +61,7 @@ import {
   type TurnJournal,
   type TurnSpec,
 } from "@aep/agent-stream";
-import { composeInstruction, eagerSkillsFor, toolsetFor } from "./prompts/turn.js";
+import { composeInstruction, eagerSkillsFor, toolsetFor, wantsRegisterDraftTool } from "./prompts/turn.js";
 import type { ConversationStore } from "./store/conversation-store.js";
 import { runConversationTurn, TurnGuard, ConcurrentTurnError } from "./conversation/run-conversation-turn.js";
 import { projectDisplayHistory } from "./conversation/display-history.js";
@@ -270,6 +270,7 @@ export function createApp(deps: CreateAppDeps): Express {
     // a start turn with no PDF references, leaves this empty.
     let referenceAttachments: FilePart[] = [];
     let turnId: string;
+    let projectId: string | undefined;
     try {
       const ws = resolveWorkspace({
         conversationIdParam: id,
@@ -277,6 +278,7 @@ export function createApp(deps: CreateAppDeps): Express {
         orgIdClaim: orgId,
         ...(deps.workspaceMountRoot ? { mountRoot: deps.workspaceMountRoot } : {}),
       });
+      projectId = ws.projectId;
       files = readSnapshot(ws.snapshotDir);
       skillSource = loadSkillsFromSnapshot(ws.skillsSnapshotDir);
       if (turn.kind === "start" || turn.kind === "flow") {
@@ -468,6 +470,7 @@ export function createApp(deps: CreateAppDeps): Express {
         ...(referenceAttachments.length ? { referenceAttachments } : {}),
         ...(chatAttachments.length ? { chatAttachments } : {}),
         ...(toolset ? { toolset } : {}),
+        ...(wantsRegisterDraftTool(turn, projectId) ? { registerDraft: true } : {}),
         ...(mcp ? { mcp } : {}),
         ...(journal ? { journal: { ...journal, turnId } } : {}),
         ...(eagerSkills ? { eagerSkills } : {}),

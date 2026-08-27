@@ -242,8 +242,9 @@ func TestEnsureValidationIssue_CreatesFormattedIssue(t *testing.T) {
 	}
 
 	// The body is PROSE: the consumer contract the aep-validation skill reads,
-	// with no machine block, and NO deployed endpoints or credentials (the
-	// runner fetches those from the secure validation-context endpoint).
+	// with no machine block, and NO deployed endpoints or credentials — the
+	// runner fetches endpoints from the secure validation-context endpoint, and
+	// a login is published on the roles gate ticket.
 	if strings.Contains(got.Body, "aep:task/v1") {
 		t.Errorf("a validation issue body must carry no machine block:\n%s", got.Body)
 	}

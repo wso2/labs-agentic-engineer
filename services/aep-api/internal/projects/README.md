@@ -66,8 +66,8 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
 - **The DEPLOY** (`DeploymentService`): cut a component's release from the Workload its build posted, compose
   the whole desired binding, write it once, and report what the cluster says back. Plus `ConvergeWatcher`,
   the sweep that re-asserts deployed bindings for drift no event causes.
-- **The desired-state projection** (`DesiredDeploymentFor`, `api_traits.go`, `alert_rule_trait.go`): design
-  facts → the two objects the platform owns, as pure functions.
+- **The desired-state projection** (`DesiredDeploymentFor`, `api_traits.go`, `alert_rule_trait.go`,
+  `gateway_address.go`): design facts → the two objects the platform owns, as pure functions.
 - **Persistence**: the `component_config` gorm and its entities live in this domain (`repository_config.go`
   over `component_config.go`), single write-authority.
 
@@ -82,6 +82,17 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
   without its config does not degrade — it fails the whole binding render. The two halves land at different
   times (the shape pre-build, since a ComponentRelease freezes it; the config at deploy, since it needs a
   release to bind) and that split is forced by OpenChoreo, not chosen.
+- **A protected sibling is addressed through the gateway** (`gateway_address.go`). OpenChoreo resolves a
+  `component`-kind dependency to the provider's project Service — right for a trusted service-to-service
+  caller, wrong for a consumer that forwards UNTRUSTED traffic, because a SPA's nginx proxying the browser's
+  `/api` then carries it into the project's trusted lane with nothing authenticating it. So for every
+  dependency whose provider passes `ResolveAPISecurityEnabled`, the projection also publishes
+  `<DEP>_GATEWAY_URL`, and the `react-webapp` proxy prefers it. Two couplings this file must keep:
+  `APIGatewayContextPath` mirrors the `api-configuration` trait's `RestApi.spec.context` template (a
+  mismatched prefix 404s at the gateway, it does not degrade), and the provider's endpoint must list
+  `internal` or the gateway is not admitted by the component's NetworkPolicy (it authenticates, then 503s).
+  The address rides the binding's env field and is overlaid ONLY when that field is already managed —
+  merging into an unmanaged (nil) one would replace the user's whole config with the platform's variable.
 - **Deploy is DRIVEN, never inferred.** Components carry `autoDeploy: false`, so nothing promotes a release
   except a call to `Deploy`. That is what lets the run supervisor place validation after a version is
   genuinely serving — see [ADR-0017](../../../../docs/decisions/ADR-0017-the-platform-owns-deploy.md).

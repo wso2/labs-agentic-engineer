@@ -1,0 +1,243 @@
+openapi: 3.0.3
+info:
+  title: Work Order Dispatch API
+  version: 1.0.0
+paths:
+  /workorders:
+    get:
+      operationId: listWorkOrders
+      summary: List work orders for a site
+      parameters:
+        - name: site
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/WorkOrderStatus"
+        - name: priority
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/Priority"
+      responses:
+        "200":
+          description: Matching work orders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WorkOrder"
+    post:
+      operationId: raiseWorkOrder
+      summary: Raise a work order against an asset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewWorkOrder"
+      responses:
+        "202":
+          description: The stored work order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkOrder"
+        "400":
+          description: The work order was rejected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /workorders/{workOrderId}:
+    get:
+      operationId: getWorkOrder
+      summary: Fetch one work order
+      parameters:
+        - name: workOrderId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: site
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The work order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkOrder"
+        "404":
+          description: No such work order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /workorders/{workOrderId}/dispatch:
+    post:
+      operationId: dispatchWorkOrder
+      summary: Hand a work order to the dispatch queue
+      parameters:
+        - name: workOrderId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: site
+          in: query
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DispatchRequest"
+      responses:
+        "200":
+          description: What was enqueued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchReceipt"
+        "404":
+          description: No such work order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+        "409":
+          description: The work order was already dispatched
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /workorders/{workOrderId}/status:
+    put:
+      operationId: updateWorkOrderStatus
+      summary: Move a work order along
+      parameters:
+        - name: workOrderId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: site
+          in: query
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StatusUpdate"
+      responses:
+        "200":
+          description: The updated work order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkOrder"
+        "404":
+          description: No such work order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+components:
+  schemas:
+    Priority:
+      type: string
+      enum: [routine, urgent, emergency]
+    WorkOrderStatus:
+      type: string
+      enum: [received, dispatched, in_progress, closed]
+    NewWorkOrder:
+      type: object
+      required: [site, asset, summary, priority, raisedBy]
+      properties:
+        site:
+          type: string
+          minLength: 1
+        asset:
+          type: string
+          minLength: 1
+        summary:
+          type: string
+          maxLength: 280
+        priority:
+          $ref: "#/components/schemas/Priority"
+        raisedBy:
+          type: string
+    WorkOrder:
+      type: object
+      required: [workOrderId, site, asset, summary, priority, status, raisedBy, raisedAt]
+      properties:
+        workOrderId:
+          type: string
+        site:
+          type: string
+        asset:
+          type: string
+        summary:
+          type: string
+        priority:
+          $ref: "#/components/schemas/Priority"
+        status:
+          $ref: "#/components/schemas/WorkOrderStatus"
+        raisedBy:
+          type: string
+        raisedAt:
+          type: string
+        dispatchedAt:
+          type: string
+        crew:
+          type: string
+    DispatchRequest:
+      type: object
+      required: [crew, scheduledFor]
+      properties:
+        crew:
+          type: string
+        scheduledFor:
+          type: string
+        notes:
+          type: string
+    DispatchReceipt:
+      type: object
+      required: [workOrderId, messageId, queue, enqueuedAt]
+      properties:
+        workOrderId:
+          type: string
+        messageId:
+          type: string
+        queue:
+          type: string
+        enqueuedAt:
+          type: string
+    StatusUpdate:
+      type: object
+      required: [status]
+      properties:
+        status:
+          $ref: "#/components/schemas/WorkOrderStatus"
+        note:
+          type: string
+    ErrorMessage:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string

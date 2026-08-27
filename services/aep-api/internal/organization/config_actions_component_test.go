@@ -38,6 +38,11 @@ import (
 // fakeThunder is the component tier's Thunder admin stub — only Regenerate is
 // exercised by the client-secret rotation route; the rest panic if reached.
 type fakeThunder struct {
+	// The directory half of thundersvc.Client (groups + users) is the identity
+	// domain's, not this surface's. Embedding satisfies the interface without a
+	// wall of stubs; an accidental call panics on the nil rather than passing.
+	thundersvc.Client
+
 	regenSecret string
 	regenCalls  []string
 }

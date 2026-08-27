@@ -47,6 +47,12 @@ type ArtifactStore struct {
 	// already carry (always empty: Status/Reason are read-time computed and
 	// never persisted to design.json).
 	orgServices OrgServiceResolver
+	// externals resolves `external` dependencies against the live org
+	// ResourceType catalog at design-read time (see resolveExternalDependencies).
+	// Nil until the composition root wires a concrete provider via
+	// SetExternalResourceResolver — until then, registryHit is false and status
+	// derives from stored intent alone.
+	externals ExternalResourceResolver
 }
 
 func NewArtifactStore(artifactSvc ArtifactService) *ArtifactStore {
@@ -76,6 +82,26 @@ func (s *ArtifactStore) SetOrgServiceResolver(r OrgServiceResolver) {
 		return
 	}
 	s.orgServices = r
+}
+
+// ExternalResourceResolver answers whether an `external` dependency name is
+// in the org's ResourceType-backed catalog (a Registered External, or a
+// Project External that already has an authored RT). Declared here (consumer
+// side) so spec stays free of an OC-client / dependencies-feature dependency;
+// the concrete provider (*dependencies.ExternalResourceCatalog) is wired in
+// by the composition root via SetExternalResourceResolver.
+type ExternalResourceResolver interface {
+	IsRegistered(ctx context.Context, orgID, name string) (bool, error)
+}
+
+// SetExternalResourceResolver wires the org external-resource catalog used to
+// mark `external` dependencies resolved at design-read time (rule 2,
+// registry reuse). A nil store is a documented no-op.
+func (s *ArtifactStore) SetExternalResourceResolver(r ExternalResourceResolver) {
+	if s == nil {
+		return
+	}
+	s.externals = r
 }
 
 // ---- Design (multi-file directory) --------------------------------------
@@ -146,11 +172,10 @@ func (s *ArtifactStore) ReadDesignAt(ctx context.Context, orgID, projectID, comm
 // the single resolution authority models.ComputeDependencyStatus: each
 // `org-service` dependency is resolved against the live org endpoint catalog
 // (resolveOrgServices), and every other dependency — `external` against the
-// precedence table (its own stored intent fields),
+// precedence table (catalog hit, then stored intent fields),
 // `component`/`platform-resource` trivially — is resolved by
 // resolveExternalDependencies. orgID is the OC namespace the org's Workloads
-// live in. Fail-open: a resolver error leaves the affected dependency
-// untouched (empty Status/Reason, or whatever it already carried).
+// live in. Fail-open: a resolver error never fails the design read.
 func (s *ArtifactStore) AssembleDesignFrom(ctx context.Context, orgID string, files map[string]string) (*DesignFile, error) {
 	if len(files) == 0 || strings.TrimSpace(files[DesignRootFile]) == "" {
 		return nil, nil
@@ -220,25 +245,42 @@ func (s *ArtifactStore) resolveOrgServices(ctx context.Context, orgID string, d 
 }
 
 // resolveExternalDependencies computes every NON-org-service dependency's
-// read-time Status/Reason via ComputeDependencyStatus: `external`
-// against the precedence table (derived purely from the dependency's own
-// stored intent fields — style/specPath/package — with no registry lookup:
-// the rule-2 registry-reuse hit was retired with the external_resources table,
-// D6, so registryHit is always false); `component`/`platform-resource`
-// trivially (no lookup at all). `org-service` dependencies are left
-// untouched — resolveOrgServices owns them (its per-call fail-open error
-// handling doesn't fit this simpler loop).
-func (s *ArtifactStore) resolveExternalDependencies(_ context.Context, _ string, d *DesignFile) {
+// read-time Status/Reason via ComputeDependencyStatus: `external` against
+// the precedence table (rule 2 is a live catalog lookup via
+// ExternalResourceResolver; a miss or unwired resolver falls through to
+// stored intent); `component`/`platform-resource` trivially (no lookup).
+// `org-service` dependencies are left untouched — resolveOrgServices owns
+// them (its per-call fail-open error handling doesn't fit this simpler loop).
+//
+// Fail-open: a resolver error never fails the design read — that dependency
+// is resolved from stored intent (registryHit=false), matching org-service.
+func (s *ArtifactStore) resolveExternalDependencies(ctx context.Context, orgID string, d *DesignFile) {
 	if s == nil || d == nil {
 		return
 	}
+	hits := map[string]bool{}
 	for i := range d.Components {
 		for j := range d.Components[i].Dependencies {
 			dep := &d.Components[i].Dependencies[j]
 			if dep.Kind == DependencyKindOrgService {
 				continue
 			}
-			dep.Status, dep.Reason = ComputeDependencyStatus(*dep, false, OrgServiceHit{})
+			registryHit := false
+			if dep.Kind == DependencyKindExternal && s.externals != nil {
+				if cached, ok := hits[dep.Name]; ok {
+					registryHit = cached
+				} else {
+					hit, err := s.externals.IsRegistered(ctx, orgID, dep.Name)
+					if err != nil {
+						slog.WarnContext(ctx, "external-resource resolver: catalog check failed",
+							"org", orgID, "dependency", dep.Name, "error", err)
+					} else {
+						registryHit = hit
+					}
+					hits[dep.Name] = registryHit
+				}
+			}
+			dep.Status, dep.Reason = ComputeDependencyStatus(*dep, registryHit, OrgServiceHit{})
 		}
 	}
 }

@@ -33,7 +33,6 @@ import {
   IconButton,
   PageContent,
   Stack,
-  TextField,
   Tooltip,
   Typography,
   useAppShell,
@@ -48,11 +47,17 @@ import {
   useProjectStatus,
   useProjectTags,
 } from "../../projects/api/queries";
-import { useDesignDependencies, useSpecFileContent, useSpecFiles } from "../api/queries";
+import {
+  useDesignDependencies,
+  useSpecFileContent,
+  useSpecFiles,
+} from "../api/queries";
 import { PRD_PATH, toSpecEntry } from "../api/mapping";
 import { computeDependencyUsedBy } from "../lib/dependencyUsedBy";
 import { useCollabSpec } from "../collab/useCollabSpec";
 import { SpecQuestionForm } from "./SpecQuestionForm";
+import { SecurityPanel } from "./SecurityPanel";
+import { useSecurityEntry } from "../hooks/useSecurityEntry";
 import { nextVersionLabel, parsePrdStories } from "../lib/buildScope";
 import { useRoomQuestion } from "../../agent-chat/useRoomQuestion";
 import { CollabTextArea } from "../collab/CollabTextArea";
@@ -67,9 +72,16 @@ import {
   railSections as buildRailSections,
   type SectionReason,
 } from "../lib/railSections";
-import { chatKeyFor, setPendingSeed, subscribeTurnEnd } from "../../agent-chat/chatStore";
+import {
+  chatKeyFor,
+  setPendingSeed,
+  subscribeTurnEnd,
+} from "../../agent-chat/chatStore";
+import { useConversationLog } from "../../agent-chat/useConversationLog";
+import { useLocalTurnActivity } from "../../agent-chat/useLocalTurnActivity";
 import { EmptyState } from "../../../components/EmptyState";
 import { ProblemsDialog } from "./ProblemsDialog";
+import { CommittedFileView } from "./CommittedFileView";
 import { useResolveDependencyViaChat } from "../../agent-chat/useResolveDependencyViaChat";
 import type { DependencyResolutionIntent } from "../../projects/lib/dependencyResolutionMessage.js";
 import { useDesignCellChangeCount } from "../collab/useDesignCellChange";
@@ -81,7 +93,7 @@ import { OpenApiView } from "@aep/ui-openapi-view";
 import { DesignView } from "@aep/ui-design-view";
 import type { DependencyStatusInfo } from "@aep/ui-design-view";
 import { ValidationView } from "@aep/ui-validation-view";
-import type { SpecSelection } from "../api/designTree";
+import { SECURITY_MD_PATH, type SpecSelection } from "../api/designTree";
 import { DESIGN_CELL_PATH, componentOf } from "../api/designTree";
 import { useSession } from "../../../auth/SessionContext";
 
@@ -111,13 +123,20 @@ export function SpecView({ projectName }: { projectName: string }) {
   // observes the shared map. chatKey uses the "default" org fallback matching
   // the chat panel, not the collab room's "acme".
   const roomDoc = collab.doc;
-  const roomQuestion = useRoomQuestion(roomDoc, chatKeyFor(orgHandle ?? "default", projectName));
+  const roomQuestion = useRoomQuestion(
+    roomDoc,
+    chatKeyFor(orgHandle ?? "default", projectName),
+  );
   // Chat-path turn-end flush (#252 Task 5): the chat panel's chatKey uses a
   // DIFFERENT fallback ("default", matching AppLayout/AgentChatPanel) than
   // the collab room's org scoping above ("acme") — these are unrelated
   // conventions and must not be conflated, or this subscribes to a chat key
   // nothing is listening on.
-  useTurnEndFlush(chatKeyFor(orgHandle ?? "default", projectName), projectName, collab);
+  useTurnEndFlush(
+    chatKeyFor(orgHandle ?? "default", projectName),
+    projectName,
+    collab,
+  );
   // "Resolve in chat" (#252 Task 9 seam, Task 5's plumbing): SAME "default"
   // org fallback as the chatKey above — not the collab room's "acme" one.
   const resolveDependencyViaChat = useResolveDependencyViaChat(
@@ -138,7 +157,10 @@ export function SpecView({ projectName }: { projectName: string }) {
   const [buildError, setBuildError] = useState<string | null>(null);
   // The build gate's 422 refusal, rendered as an actionable checklist (#372)
   // rather than one flattened alert string.
-  const [gateRefusal, setGateRefusal] = useState<Array<{ field?: string; message: string }> | null>(null);
+  const [gateRefusal, setGateRefusal] = useState<Array<{
+    field?: string;
+    message: string;
+  }> | null>(null);
   /** The warning standing between a design run and unsettled requirements. */
   const [confirmDesign, setConfirmDesign] = useState(false);
   // The "Cut version" ceremony (#369/#372): Build first shows what the click
@@ -331,7 +353,10 @@ export function SpecView({ projectName }: { projectName: string }) {
   const dependencyUsedBy = useMemo<Record<string, string[]>>(
     () =>
       selectedComponentName
-        ? computeDependencyUsedBy(dependencies.data ?? [], selectedComponentName)
+        ? computeDependencyUsedBy(
+            dependencies.data ?? [],
+            selectedComponentName,
+          )
         : {},
     [dependencies.data, selectedComponentName],
   );
@@ -441,9 +466,21 @@ export function SpecView({ projectName }: { projectName: string }) {
       : null,
   );
   const structuredLive =
-    typeof structuredLiveText === "string" && structuredLiveText.trim().length > 0
+    typeof structuredLiveText === "string" &&
+    structuredLiveText.trim().length > 0
       ? structuredLiveText
       : null;
+  // The Security entry's own wiring lives in its hook — see useSecurityEntry
+  // for why this page does not carry it.
+  const isSecurityView = effectiveSelection.kind === "security";
+  const security = useSecurityEntry({
+    projectName,
+    active: isSecurityView,
+    files,
+    collab,
+    agentInRoom,
+  });
+
   const content = useSpecFileContent(
     projectName,
     selectedFile &&
@@ -480,13 +517,38 @@ export function SpecView({ projectName }: { projectName: string }) {
   // healthy published spec after any turn failed — a design pass, a chat reply
   // — until some later turn happened to succeed. A kickoff that died is the one
   // failure that leaves the user with nothing and no explanation.
-  const noRequirementsYet = !files.some((f) => f.group === "requirements");
-  const failed = specAgent === "failed" && noRequirementsYet;
+  // The ONE reading of "this project has requirements" — the failure banner,
+  // the rail input, and the design CTA (#159: design is derived FROM
+  // requirements, so its CTA needs them first) all share it, so they cannot
+  // drift into contradicting each other about the same files.
+  const hasRequirementsFiles = files.some((f) => f.group === "requirements");
+  // The status field cannot see a turn before its row exists (#635): submitted
+  // interview answers travel through the chat's seed slot and take the dispatch
+  // round-trip — seconds — to become a turn `spec.agent` reports. This browser
+  // holds that evidence locally (seed waiting, dispatch in flight, stream being
+  // folded), so a send counts as agent work from the moment it leaves the form;
+  // otherwise the pane meets the gap with "Nothing written yet" plus a Retry
+  // whose `/start` would supersede the interview it cannot see.
+  const localTurnActivity = useLocalTurnActivity(
+    orgHandle ?? "default",
+    projectName,
+  );
+  // `failed` yields to that same evidence: `spec.agent` keeps reading "failed"
+  // until the retry's own turn has a row, so unguarded the banner would sit
+  // through the retry's dispatch offering a SECOND Retry against the send it
+  // already fired — while the rail beside it pulses working. If the send dies,
+  // its claim releases (or the seed's TTL lapses) and the banner returns.
+  const failed =
+    specAgent === "failed" && !hasRequirementsFiles && !localTurnActivity;
   // Retrying is a SEND, so it goes where every other send goes: the chat's
   // one-shot seed slot, GUARDED — the panel re-decides after it has rehydrated,
   // which is the first moment "is the agent mid-exchange" is knowable here.
   const retryStart = () =>
-    setPendingSeed(chatKeyFor(orgHandle ?? "default", projectName), START_COMMAND, true);
+    setPendingSeed(
+      chatKeyFor(orgHandle ?? "default", projectName),
+      START_COMMAND,
+      true,
+    );
   // The design gate: Build arms once design files are generated (#80).
   const hasDesignFiles = files.some((f) => f.group === "designs");
   // The committed PRD, read for the Build drawer's story preview. It used to
@@ -499,7 +561,9 @@ export function SpecView({ projectName }: { projectName: string }) {
     prdEntry ? { path: prdEntry.path, sha: prdEntry.sha } : null,
   );
   const cutPreview = useMemo(() => {
-    const stories = prdContent.data ? parsePrdStories(prdContent.data.content) : [];
+    const stories = prdContent.data
+      ? parsePrdStories(prdContent.data.content)
+      : [];
     return { stories, nextVersion: nextVersionLabel(tags.data?.latest) };
   }, [prdContent.data, tags.data?.latest]);
 
@@ -529,25 +593,41 @@ export function SpecView({ projectName }: { projectName: string }) {
   const railSections = useMemo(
     () =>
       buildRailSections({
-        hasRequirements: files.some((f) => f.group === "requirements"),
+        hasRequirements: hasRequirementsFiles,
         hasDesign: files.some((f) => f.group === "designs"),
         hasValidation: files.some((f) => f.group === "validation"),
-        agentWorking: deriving,
+        agentWorking: deriving || localTurnActivity,
         agentFlow: status.data?.spec.agentFlow ?? "",
         designOutdated: status.data?.spec.designOutdated ?? false,
         assumptions: unsettled.assumptions,
         openQuestions: unsettled.openQuestions,
       }),
-    [files, deriving, status.data?.spec.agentFlow, status.data?.spec.designOutdated, unsettled],
+    [
+      files,
+      hasRequirementsFiles,
+      deriving,
+      localTurnActivity,
+      status.data?.spec.agentFlow,
+      status.data?.spec.designOutdated,
+      unsettled,
+    ],
   );
   // The rail's own answer to "is an agent writing the requirements", reused so
   // the workspace body cannot contradict the rail beside it — and its reasons,
   // reused so the warning before a design run cannot drift from the rail's own
   // account of what is unsettled.
-  const requirementsSection = railSections.find((sec) => sec.id === "requirements");
+  const requirementsSection = railSections.find(
+    (sec) => sec.id === "requirements",
+  );
   const requirementsActive = requirementsSection?.state === "active";
-  // Written nothing, and nothing on the way.
-  const nothingToShow = files.length === 0 && !requirementsActive && !failed;
+  // Written nothing, and nothing on the way. `!deriving` is not redundant with
+  // `!requirementsActive`: a KNOWN non-requirements flow on an empty project —
+  // `/design` typed into chat before any kickoff landed — marks Design active,
+  // not Requirements, and without this guard the empty state would offer Retry
+  // against that running turn (#629's failure, through the one flow the rail
+  // attributes elsewhere).
+  const nothingToShow =
+    files.length === 0 && !requirementsActive && !deriving && !failed;
 
   // A reason row is a pointer to where the work already happens: the settle
   // controls live on the requirements document's own flagged lines, and a stale
@@ -562,8 +642,6 @@ export function SpecView({ projectName }: { projectName: string }) {
 
   const seedChat = (message: string) =>
     setPendingSeed(chatKeyFor(orgHandle ?? "default", projectName), message);
-  // #159: design is derived FROM requirements, so its CTA needs them first.
-  const hasRequirementsFiles = files.some((f) => f.group === "requirements");
 
   // Generate/Re-generate design (#159): open the agent panel and auto-send the
   // design turn via the shared ?generate=design signal (AppLayout + the panel).
@@ -594,6 +672,38 @@ export function SpecView({ projectName }: { projectName: string }) {
   // renders them with kind:"agent"). Building a half-written design is wrong,
   // so Build is disabled — with a tooltip — while one is working (#162).
   const agentBusy = collab.peers.some((p) => p.kind === "agent");
+
+  // Keep this browser's chat log fed WITHOUT the chat panel (#606).
+  //
+  // The question form is the room's, but the fact that a question is pending
+  // reaches the room via `useRoomQuestion`, which reads the chat log — and the
+  // log used to be filled only while `AgentChatPanel` was mounted. So a member
+  // opening a spec link cold had no log, nothing mirrored, and this workspace
+  // showed "Nothing written yet" plus a Retry while the agent stood waiting on
+  // their answers. Mounting the log here removes the panel from that path.
+  //
+  // Same "default" org fallback as the chatKey above, not the room's "acme".
+  const { resync: resyncConversation } = useConversationLog(
+    orgHandle ?? "default",
+    projectName,
+  );
+  // Turn-end, observed rather than polled. The agent joins the room as a peer
+  // while it works and leaves when the turn ends, so its DEPARTURE is the exact
+  // moment the thread gained something — a question, or the answer to one.
+  // `subscribeTurnEnd` cannot serve this: it fires from the panel's fold, which
+  // is precisely what is absent here. Edge-triggered off a ref rather than a
+  // state flag: this must fire on the falling edge only, never on mount into an
+  // already-idle project, where the query's own mount read has it covered.
+  const agentWasInRoom = useRef(false);
+  useEffect(() => {
+    if (agentBusy) {
+      agentWasInRoom.current = true;
+      return;
+    }
+    if (!agentWasInRoom.current) return;
+    agentWasInRoom.current = false;
+    resyncConversation();
+  }, [agentBusy, resyncConversation]);
   // A standing question form owns the turn: the agent's turn ended ON the
   // question, so `agentBusy` is false while the work is very much unfinished.
   // Since the interview is uncapped (#578) the PRD now exists from the first
@@ -672,11 +782,15 @@ export function SpecView({ projectName }: { projectName: string }) {
           params: { projectName },
         });
       } catch (e) {
-        const details = (e as Error & { details?: Array<{ field?: string; message: string }> }).details;
+        const details = (
+          e as Error & { details?: Array<{ field?: string; message: string }> }
+        ).details;
         if (Array.isArray(details) && details.length > 0) {
           setGateRefusal(details);
         } else {
-          setBuildError(e instanceof Error ? e.message : "Failed to start the build.");
+          setBuildError(
+            e instanceof Error ? e.message : "Failed to start the build.",
+          );
         }
       } finally {
         setBuildPhase(null);
@@ -734,7 +848,11 @@ export function SpecView({ projectName }: { projectName: string }) {
     // missing link — this is the supported override, not a guessed
     // viewport value like 100vh (which ignores the footer entirely and
     // overshoots the actual available space).
-    <PageContent fullWidth noPadding sx={{ height: "100%", display: "flex", flexDirection: "column" }}>
+    <PageContent
+      fullWidth
+      noPadding
+      sx={{ height: "100%", display: "flex", flexDirection: "column" }}
+    >
       <Box
         sx={{
           height: "100%",
@@ -787,10 +905,17 @@ export function SpecView({ projectName }: { projectName: string }) {
                   dot
                 />
               )}
+              {/* `offline`, not `solo session` — the lexicon retired the latter
+                  (it reads like a focus feature), and the tooltip names the
+                  user's situation rather than which service is down. */}
               {isOffline && (
-                <Tooltip title="Collaboration server unreachable — editing solo; edits aren't shared or saved.">
+                <Tooltip title="Live editing is unavailable — showing the last committed version. Reconnecting…">
                   <Box sx={{ display: "inline-flex" }}>
-                    <StatusChip label="solo session" tone="neutral" appearance="soft" />
+                    <StatusChip
+                      label="offline"
+                      tone="neutral"
+                      appearance="soft"
+                    />
                   </Box>
                 </Tooltip>
               )}
@@ -828,36 +953,36 @@ export function SpecView({ projectName }: { projectName: string }) {
               Build. A dead disabled Build hid what to do next. */}
           {hasDesignFiles ? (
             <>
-            <Tooltip
-              title={
-                agentBusy
-                  ? "An agent is still working — Build is available once it finishes"
-                  : "Commit your latest changes and start building"
-              }
-            >
-              {/* span so the tooltip works while the button is disabled */}
-              <span>
-                <Button
-                  variant="contained"
-                  startIcon={<Hammer size={18} />}
-                  disabled={agentBusy || buildPhase !== null}
-                  loading={buildPhase !== null}
-                  onClick={onBuild}
-                >
-                  {buildPhase === "committing"
-                    ? "Committing…"
-                    : buildPhase === "checking"
-                      ? "Checking…"
-                      : buildPhase === "building"
-                        ? "Building…"
-                        : "Build"}
-                </Button>
-              </span>
-            </Tooltip>
+              <Tooltip
+                title={
+                  agentBusy
+                    ? "An agent is still working — Build is available once it finishes"
+                    : "Commit your latest changes and start building"
+                }
+              >
+                {/* span so the tooltip works while the button is disabled */}
+                <span>
+                  <Button
+                    variant="contained"
+                    startIcon={<Hammer size={18} />}
+                    disabled={agentBusy || buildPhase !== null}
+                    loading={buildPhase !== null}
+                    onClick={onBuild}
+                  >
+                    {buildPhase === "committing"
+                      ? "Committing…"
+                      : buildPhase === "checking"
+                        ? "Checking…"
+                        : buildPhase === "building"
+                          ? "Building…"
+                          : "Build"}
+                  </Button>
+                </span>
+              </Tooltip>
             </>
           ) : (
             <>
-            {/* The one launcher that is not on the document (#579): every
+              {/* The one launcher that is not on the document (#579): every
                 other command is offered by the PRD section it changes, but
                 "add a feature" has to be reachable while another artifact is
                 open, so it keeps its place beside the primary CTA.
@@ -867,50 +992,52 @@ export function SpecView({ projectName }: { projectName: string }) {
                 moment the conversation is ready WITHOUT the composer's
                 `inputDisabled` guard — so an ungated click delivers `/feature`
                 mid-turn, which the composer itself would have refused. */}
-            {hasRequirementsFiles && !awaitingAnswers && (
+              {hasRequirementsFiles && !awaitingAnswers && (
+                <Tooltip
+                  title={
+                    agentBusy
+                      ? "An agent is still working — add a feature once it finishes"
+                      : "Describe a feature to add to the requirements"
+                  }
+                >
+                  {/* span so the tooltip works while the button is disabled */}
+                  <span>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      disabled={agentBusy}
+                      onClick={() => seedChat("/feature")}
+                    >
+                      + Feature
+                    </Button>
+                  </span>
+                </Tooltip>
+              )}
               <Tooltip
                 title={
                   agentBusy
-                    ? "An agent is still working — add a feature once it finishes"
-                    : "Describe a feature to add to the requirements"
+                    ? "An agent is still working — Generate design is available once it finishes"
+                    : awaitingAnswers
+                      ? "The agent is waiting on your answers — finish the questions below first"
+                      : hasRequirementsFiles
+                        ? "Derive the component design from your requirements"
+                        : "Generate requirements first"
                 }
               >
                 {/* span so the tooltip works while the button is disabled */}
                 <span>
                   <Button
-                    size="small"
-                    variant="outlined"
-                    disabled={agentBusy}
-                    onClick={() => seedChat("/feature")}
+                    variant="contained"
+                    startIcon={<Sparkles size={18} />}
+                    disabled={
+                      !hasRequirementsFiles || agentBusy || awaitingAnswers
+                    }
+                    onClick={generateDesign}
                   >
-                    + Feature
+                    Generate design
                   </Button>
                 </span>
               </Tooltip>
-            )}
-            <Tooltip
-              title={
-                agentBusy
-                  ? "An agent is still working — Generate design is available once it finishes"
-                  : awaitingAnswers
-                    ? "The agent is waiting on your answers — finish the questions below first"
-                    : hasRequirementsFiles
-                      ? "Derive the component design from your requirements"
-                      : "Generate requirements first"
-              }
-            >
-              {/* span so the tooltip works while the button is disabled */}
-              <span>
-                <Button
-                  variant="contained"
-                  startIcon={<Sparkles size={18} />}
-                  disabled={!hasRequirementsFiles || agentBusy || awaitingAnswers}
-                  onClick={generateDesign}
-                >
-                  Generate design
-                </Button>
-              </span>
-            </Tooltip>
             </>
           )}
         </Box>
@@ -959,7 +1086,10 @@ export function SpecView({ projectName }: { projectName: string }) {
             key: reason.key,
             label: reason.label,
           }))}
-          resolve={{ label: "Resolve issues", run: () => onRailReason("document") }}
+          resolve={{
+            label: "Resolve issues",
+            run: () => onRailReason("document"),
+          }}
           proceed={{ label: "Generate anyway", run: runDesign }}
           onClose={() => setConfirmDesign(false)}
         />
@@ -987,7 +1117,10 @@ export function SpecView({ projectName }: { projectName: string }) {
                       seedChat(
                         "/design Fix these build-gate refusals:\n" +
                           (gateRefusal ?? [])
-                            .map((r) => `- ${r.field ? `${r.field}: ` : ""}${r.message}`)
+                            .map(
+                              (r) =>
+                                `- ${r.field ? `${r.field}: ` : ""}${r.message}`,
+                            )
                             .join("\n"),
                       ),
                   }
@@ -999,7 +1132,13 @@ export function SpecView({ projectName }: { projectName: string }) {
         {/* The "Cut version" ceremony (#369/#372): what the Build click does,
             before it does it. The version shown is predictive — the BACKEND
             assigns the real tag at cut time. */}
-        <Dialog data-testid="cut-version-dialog" open={cutDialogOpen} onClose={() => setCutDialogOpen(false)} maxWidth="xs" fullWidth>
+        <Dialog
+          data-testid="cut-version-dialog"
+          open={cutDialogOpen}
+          onClose={() => setCutDialogOpen(false)}
+          maxWidth="xs"
+          fullWidth
+        >
           <DialogTitle>Cut version {cutPreview.nextVersion}</DialogTitle>
           <DialogContent>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
@@ -1009,7 +1148,9 @@ export function SpecView({ projectName }: { projectName: string }) {
             <Stack spacing={0.5}>
               <Typography variant="body2">
                 <b>Stories in scope:</b>{" "}
-                {cutPreview.stories.length > 0 ? cutPreview.stories.join(", ") : "—"}
+                {cutPreview.stories.length > 0
+                  ? cutPreview.stories.join(", ")
+                  : "—"}
               </Typography>
               <Typography variant="body2">
                 <b>Milestone:</b>{" "}
@@ -1063,7 +1204,9 @@ export function SpecView({ projectName }: { projectName: string }) {
           <Box sx={{ p: 3 }}>
             <Alert
               severity="error"
-              action={<Button onClick={() => void spec.refetch()}>Retry</Button>}
+              action={
+                <Button onClick={() => void spec.refetch()}>Retry</Button>
+              }
             >
               Failed to load the spec
               {spec.error instanceof Error && spec.error.message
@@ -1118,7 +1261,41 @@ export function SpecView({ projectName }: { projectName: string }) {
               }
             >
               {effectiveSelection.kind === "cell-diagram" ? (
-                <CellDiagramPanel projectName={projectName} files={files} collab={collab} />
+                <CellDiagramPanel
+                  projectName={projectName}
+                  files={files}
+                  collab={collab}
+                />
+              ) : effectiveSelection.kind === "security" ? (
+                <SecurityPanel
+                  rolesJson={security.rolesJson}
+                  onRolesChange={security.onRolesChange}
+                  live={security.live}
+                  actions={security.actions}
+                  prose={
+                    security.proseFragment && collab.provider ? (
+                      <SpecMdEditor
+                        key={`${SECURITY_MD_PATH}:md`}
+                        fragment={security.proseFragment}
+                        provider={collab.provider}
+                        self={collab.self}
+                        agentStreaming={agentBusy}
+                        links={{
+                          path: SECURITY_MD_PATH,
+                          knownPaths: specPaths,
+                          open: (path) => setSelection({ kind: "file", path }),
+                        }}
+                      />
+                    ) : (
+                      <Box sx={{ p: 3 }}>
+                        <Typography variant="body2" color="text.secondary">
+                          The access rules are edited live, and the
+                          collaboration service is not reachable right now.
+                        </Typography>
+                      </Box>
+                    )
+                  }
+                />
               ) : effectiveSelection.kind === "wireframe" ? (
                 <WireframePanel
                   projectName={projectName}
@@ -1180,14 +1357,17 @@ export function SpecView({ projectName }: { projectName: string }) {
                       }}
                     >
                       <Typography variant="body2" color="text.secondary">
-                        Waiting for the agent to write {selectedFile.path.split("/").at(-1)}…
+                        Waiting for the agent to write{" "}
+                        {selectedFile.path.split("/").at(-1)}…
                       </Typography>
                     </Box>
                   ) : content.isError ? (
                     <Alert
                       severity="error"
                       action={
-                        <Button onClick={() => void content.refetch()}>Retry</Button>
+                        <Button onClick={() => void content.refetch()}>
+                          Retry
+                        </Button>
                       }
                     >
                       Failed to load {selectedFile.path}
@@ -1201,7 +1381,9 @@ export function SpecView({ projectName }: { projectName: string }) {
                         justifyContent: "center",
                       }}
                     >
-                      <CircularProgress aria-label={`Loading ${selectedFile.path}`} />
+                      <CircularProgress
+                        aria-label={`Loading ${selectedFile.path}`}
+                      />
                     </Box>
                   )
                 ) : fragment && collab.provider ? (
@@ -1231,54 +1413,30 @@ export function SpecView({ projectName }: { projectName: string }) {
                     path={selectedFile.path}
                     isLocalTransaction={collab.isLocalTransaction}
                   />
-                ) : content.data ? (
-                  <TextField
-                    key={`${selectedFile.path}:${content.data.sha}`}
-                    fullWidth
-                    multiline
-                    minRows={20}
-                    defaultValue={content.data.content}
-                    aria-label={`Content of ${selectedFile.path}`}
-                    helperText={`${selectedFile.path} — edits aren't saved yet; editing lands with the file editors.`}
-                    slotProps={{
-                      input: {
-                        sx: { fontFamily: "monospace", fontSize: "0.875rem" },
-                      },
-                    }}
-                  />
-                ) : content.isError ? (
-                  <Alert
-                    severity="error"
-                    action={
-                      <Button onClick={() => void content.refetch()}>
-                        Retry
-                      </Button>
-                    }
-                  >
-                    Failed to load {selectedFile.path}
-                    {content.error instanceof Error && content.error.message
-                      ? `: ${content.error.message}`
-                      : ""}
-                  </Alert>
                 ) : (
-                  <Box
-                    sx={{
-                      height: "100%",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                    }}
-                  >
-                    <CircularProgress
-                      aria-label={`Loading ${selectedFile.path}`}
-                    />
-                  </Box>
+                  /* The room is not the source for this file — it is
+                     unreachable, or it genuinely does not hold the path. Git
+                     is, and it is read-only there (#586). */
+                  <CommittedFileView
+                    key={`${selectedFile.path}:committed`}
+                    path={selectedFile.path}
+                    content={content.data?.content ?? null}
+                    errorMessage={
+                      content.isError
+                        ? content.error instanceof Error &&
+                          content.error.message
+                          ? content.error.message
+                          : "The workspace could not be reached."
+                        : undefined
+                    }
+                    onRetry={() => void content.refetch()}
+                    offline={isOffline}
+                  />
                 )
-              ) : failed ? null : /* The alert above owns this case: it names the
+              ) : failed ? null /* The alert above owns this case: it names the
                    failure and carries the one Retry. A body beneath it would
                    either repeat that offer or, as it did, invite the user to
-                   "select a file" in a workspace that has none. */
-              nothingToShow ? (
+                   "select a file" in a workspace that has none. */ : nothingToShow ? (
                 /* Nothing written and nothing running — a project whose
                    kickoff never landed, or one sitting between turns with no
                    document yet. Either way the workspace will not fill itself,
@@ -1294,14 +1452,21 @@ export function SpecView({ projectName }: { projectName: string }) {
                     </Button>
                   }
                 />
-              ) : requirementsActive ? (
+              ) : requirementsActive || (files.length === 0 && deriving) ? (
                 /* An agent is writing the requirements right now — the same
                    fact the rail pulses on, so the two surfaces cannot
                    disagree. They did: this said "Agent is working on the
                    requirements document" whenever the workspace was empty,
                    including between turns when the rail correctly showed the
                    section as not started. Same centred-spinner shape the
-                   architecture pane uses while a design turn runs. */
+                   architecture pane uses while a design turn runs.
+
+                   The requirements are NAMED only when the rail attributes the
+                   turn to them: a turn the rail places elsewhere (a `/design`
+                   run before any kickoff landed) or cannot place still keeps
+                   the empty pane honest with a plain "working", rather than
+                   claiming a document it may not be writing — or, worse,
+                   falling through to the Retry beneath (#629). */
                 failed ? null : (
                   <Box
                     sx={{
@@ -1313,9 +1478,18 @@ export function SpecView({ projectName }: { projectName: string }) {
                       justifyContent: "center",
                     }}
                   >
-                    <CircularProgress size={28} aria-label="Agent is writing the requirements" />
+                    <CircularProgress
+                      size={28}
+                      aria-label={
+                        requirementsActive
+                          ? "Agent is writing the requirements"
+                          : "Agent is working"
+                      }
+                    />
                     <Typography variant="body2" color="text.secondary">
-                      Agent is working on the requirements document
+                      {requirementsActive
+                        ? "Agent is working on the requirements document"
+                        : "Agent is working"}
                     </Typography>
                   </Box>
                 )
@@ -1331,7 +1505,6 @@ export function SpecView({ projectName }: { projectName: string }) {
           </Box>
         )}
       </Box>
-
 
       <BuildDependencyDrawer
         open={dependencyDrawerOpen}

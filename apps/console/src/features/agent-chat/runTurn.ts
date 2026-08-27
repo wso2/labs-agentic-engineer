@@ -37,8 +37,26 @@ import {
 } from "./chatStore.js";
 import { extractStreamingQuestions, isQuestionTool, parseQuestionsInput } from "./questionCards.js";
 import { getTurn, isTurnStreamNotFound, openTurnStream } from "./api/turns.js";
+import {
+  DRAFT_EXTERNAL_RESOURCE_TOOL,
+  parseRegisterDraft,
+  publishRegisterDraft,
+} from "./registerDraftStore.js";
 
 const FILE_TOOLS = new Set(["addFile", "editFile", "removeFile"]);
+
+function publishDraftFromInput(chatKey: string, input: unknown): void {
+  let value = input;
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value) as unknown;
+    } catch {
+      return;
+    }
+  }
+  const draft = parseRegisterDraft(value);
+  if (draft) publishRegisterDraft(chatKey, draft);
+}
 
 const ATTACH_404_MAX_ATTEMPTS = 8;
 const ATTACH_404_BASE_MS = 250; // 250, 500, 1000, ... capped
@@ -167,7 +185,13 @@ export async function attachAndFoldTurn(
         appendAssistantText(chatKey, turnId, part.delta ?? part.text ?? "");
         break;
       case "tool-input-start":
-        if (part.toolName && part.id && (FILE_TOOLS.has(part.toolName) || isQuestionTool(part.toolName))) {
+        if (
+          part.toolName &&
+          part.id &&
+          (FILE_TOOLS.has(part.toolName) ||
+            isQuestionTool(part.toolName) ||
+            part.toolName === DRAFT_EXTERNAL_RESOURCE_TOOL)
+        ) {
           inputs.set(part.id, { toolName: part.toolName, buf: "", carded: false, shownQuestions: 0 });
         }
         break;
@@ -189,6 +213,7 @@ export async function attachAndFoldTurn(
           }
           break;
         }
+        if (st.toolName === DRAFT_EXTERNAL_RESOURCE_TOOL) break;
         if (st.carded) break;
         const path = readToolInputPath(st.buf);
         if (path) {
@@ -208,6 +233,10 @@ export async function attachAndFoldTurn(
         // off the result made all five cards spin for the whole batch and then
         // settle together, long after the earlier files were done.
         const st = part.id ? inputs.get(part.id) : undefined;
+        if (st?.toolName === DRAFT_EXTERNAL_RESOURCE_TOOL) {
+          publishDraftFromInput(chatKey, st.buf);
+          break;
+        }
         if (!st || !st.carded) break; // no card was ever shown (path never resolved)
         const path = readToolInputPath(st.buf);
         if (!path) break;
@@ -215,6 +244,10 @@ export async function attachAndFoldTurn(
         break;
       }
       case "tool-call": {
+        if (part.toolName === DRAFT_EXTERNAL_RESOURCE_TOOL) {
+          publishDraftFromInput(chatKey, part.input);
+          break;
+        }
         // ask_question / ask_questions (ADR-0012): the COMPLETE call is the
         // authoritative card — it replaces whatever prefix streamed above and
         // clears the `streaming` gate. Malformed input → the streamed prefix

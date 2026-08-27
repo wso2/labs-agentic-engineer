@@ -25,7 +25,8 @@ that names a directory, a next step that names a command — these rules win.
 | `specs/requirements/prd.md` | the **Product requirements** |
 | `specs/design/design.cell` | the **Architecture** |
 | `specs/design/design.md` | the **Design overview** |
-| `specs/design/security.md` | **Security** |
+| `specs/design/security.md` | **Security** → the **Security architecture** tab (the first one) |
+| `specs/design/roles.json` | **Security** → the **Roles & users** tab |
 | `specs/design/components/<name>/…` | the component, by its own name |
 | `specs/validation/validation-criteria.json` | the **Acceptance criteria** |
 

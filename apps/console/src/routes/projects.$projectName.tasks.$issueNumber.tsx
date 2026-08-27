@@ -20,7 +20,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { TaskPage } from "../features/tasks/components/TaskPage";
 
 /**
- * One task (ADR-0020 §7).
+ * One task (ADR-0021 §7).
  *
  * This route used to redirect INTO `/builds/:issueNumber` (#185, when the Tasks
  * section became the Builds page). `/builds/:tag` is now the version's page, so

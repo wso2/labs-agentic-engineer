@@ -1,7 +1,7 @@
 # ADR-0014: A run is ONE numbered flow — provisioning, then every build session's stages
 
 - **Status:** Historical as of
-  [ADR-0020](./ADR-0020-builds-is-a-version-ledger.md) — nothing renders
+  [ADR-0021](./ADR-0021-builds-is-a-version-ledger.md) — nothing renders
   the numbered rail this ADR designed. §9's fetch-on-demand policy survives as
   the build page's log-section behaviour. Previously: Accepted
 - **Date:** 2026-07-28

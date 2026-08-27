@@ -1,0 +1,21 @@
+prompt: |
+  An HTTP ledger service that hands its books to an SFTP drop. Entries are kept
+  in memory, posted with a timestamp. An export selects the entries falling in a
+  period — skipping voided ones unless asked for — writes them as a CSV with a
+  header row, and uploads it to a dated path under a remote directory.
+
+  Listing reads that directory back rather than a local record, so an export
+  removed on the server stops being listed. Downloading streams the remote file
+  back as `text/csv`, and deleting removes it.
+
+  Generate the service from `openapi.yaml`. The SFTP host, port, credentials and
+  remote directory stay configurable. No tests.
+
+fixtures:
+  openapi.yaml: openapi/exports-sftp.yaml
+
+expect:
+  builds: true
+  imports:
+    - ballerina/http
+    - ballerina/ftp

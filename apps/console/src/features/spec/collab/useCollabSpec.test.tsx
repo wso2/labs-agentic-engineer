@@ -27,8 +27,11 @@
 
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type * as Y from "yjs";
+import * as Y from "yjs";
+import { markdownToFragment } from "@aep/collab-doc";
 import { useCollabSpec } from "./useCollabSpec";
+
+const PRD_PATH = "specs/requirements/prd.md";
 
 interface FakeConfig {
   document: Y.Doc;
@@ -167,7 +170,7 @@ describe("useCollabSpec — rejoin from scratch after a post-sync drop", () => {
 // provider would present the same token and be rejected again. The server
 // closes the socket right after rejecting, so the rejection and the close
 // arrive in either order — both must end offline and stay there.
-describe("useCollabSpec — an authentication failure is terminal", () => {
+describe("useCollabSpec — a REJECTION is terminal, an outage is not", () => {
   beforeEach(() => {
     instances.length = 0;
     vi.useFakeTimers();
@@ -198,6 +201,156 @@ describe("useCollabSpec — an authentication failure is terminal", () => {
       await vi.advanceTimersByTimeAsync(10_000);
     });
 
+    expect(instances).toHaveLength(1);
+    expect(result.current.status).toBe("offline");
+  });
+});
+
+// ADR-0020: the console reads the room, agents author it. `getXmlFragment`
+// creates a fragment for any path it is asked for, so a read used to make its
+// own answer true — which is what let an unseeded room paint a blank document
+// over a PRD that exists in git, and what conjured phantom files into the rail.
+describe("useCollabSpec — reading a document never creates one", () => {
+  beforeEach(() => {
+    instances.length = 0;
+  });
+
+  it("returns null for a path the room does not hold, and leaves the doc alone", () => {
+    const { result } = renderCollab();
+    act(() => instances[0]!.onSynced());
+    const doc = instances[0]!.document;
+
+    expect(result.current.getFileFragment(PRD_PATH)).toBeNull();
+    expect(doc.share.has(PRD_PATH)).toBe(false);
+    // The file list unions this with git; a path invented by a read would show
+    // up in the rail as a real document that opens onto nothing.
+    expect(result.current.docPaths).not.toContain(PRD_PATH);
+  });
+
+  it("returns the fragment once the room really holds the path", () => {
+    const { result } = renderCollab();
+    act(() => instances[0]!.onSynced());
+    const doc = instances[0]!.document;
+    // How an agent's file arrives: over sync, with its share entry present.
+    act(() => {
+      doc.getXmlFragment(PRD_PATH).insert(0, [new Y.XmlText("hello")]);
+    });
+
+    expect(result.current.getFileFragment(PRD_PATH)).not.toBeNull();
+    expect(result.current.docPaths).toContain(PRD_PATH);
+  });
+
+  // An EMPTY document still opens for editing. `share.has` can only be trusted
+  // as "the room holds this file" because an empty markdown document seeds as
+  // one empty paragraph (`markdownToFragment`) rather than zero blocks — a
+  // fragment with no children generates no update, so its key would never
+  // replicate and the file would read as absent, leaving it permanently
+  // read-only. Emptying a document is a supported action, so this is reachable
+  // by clearing one and reopening it.
+  it("opens an empty document the room holds", () => {
+    const { result } = renderCollab();
+    act(() => instances[0]!.onSynced());
+    const doc = instances[0]!.document;
+    // How an emptied file arrives over sync: present, with no text in it.
+    act(() => {
+      markdownToFragment("", doc.getXmlFragment(PRD_PATH));
+    });
+    expect(doc.getXmlFragment(PRD_PATH).length).toBe(1);
+
+    expect(result.current.getFileFragment(PRD_PATH)).not.toBeNull();
+    expect(result.current.docPaths).toContain(PRD_PATH);
+  });
+});
+
+// #586. The collab server reaches its oracle, and reads the spec bundle, over
+// the same `aep-api` that restarts on every deploy — and BOTH of those failures
+// arrive here, because Hocuspocus runs the load hook inside the same try/catch
+// as authentication and answers either with a permission-denied frame. Latching
+// on those left the spec view offline until the page was reloaded, and the
+// frame leaves the socket OPEN, so nothing below this retries on its own.
+describe("useCollabSpec — an unreachable upstream retries instead of latching", () => {
+  beforeEach(() => {
+    instances.length = 0;
+    vi.useFakeTimers();
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("rebuilds after a refusal that never synced", async () => {
+    const { result } = renderCollab();
+    act(() =>
+      instances[0]!.onAuthenticationFailed({ reason: "upstream-unavailable" }),
+    );
+    expect(result.current.status).toBe("offline");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+    expect(instances).toHaveLength(2);
+  });
+
+  it("backs off rather than retrying once a second while it keeps failing", async () => {
+    // The room never syncs here, so the "has this session held long enough to
+    // be healthy?" reset has no sync to measure from — it must not read a
+    // never-synced room as healthy and flatten the ladder.
+    renderCollab();
+    const refuse = async (waitMs: number) => {
+      const room = instances[instances.length - 1]!;
+      act(() => room.onAuthenticationFailed({ reason: "upstream-unavailable" }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(waitMs);
+      });
+    };
+    await refuse(1_000);
+    expect(instances).toHaveLength(2);
+    // Second failure is due at 2s, not 1s.
+    await refuse(1_000);
+    expect(instances).toHaveLength(2);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+    expect(instances).toHaveLength(3);
+  });
+
+  // The same flattening, reached from the other side: a session that DID hold
+  // long enough to count as healthy earns the next attempt a fast retry — but
+  // only that one. The timestamp belongs to a provider being thrown away, so
+  // leaving it set makes every refused replacement look like it just came off a
+  // healthy session, and the ladder never climbs.
+  it("spends a healthy session's fast-retry credit only once", async () => {
+    renderCollab();
+    act(() => instances[0]!.onSynced());
+    // Hold the room well past the reset window, then lose the upstream.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+
+    const refuse = async (waitMs: number) => {
+      const room = instances[instances.length - 1]!;
+      act(() => room.onAuthenticationFailed({ reason: "upstream-unavailable" }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(waitMs);
+      });
+    };
+
+    // The credit: this one retries fast.
+    await refuse(1_000);
+    expect(instances).toHaveLength(2);
+    // The next refusal must climb the ladder, not reset it. Nothing has synced
+    // since, so 1s is not enough.
+    await refuse(1_000);
+    expect(instances).toHaveLength(2);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+    expect(instances).toHaveLength(3);
+  });
+
+  it("still latches when the bearer itself was refused", async () => {
+    const { result } = renderCollab();
+    act(() => instances[0]!.onAuthenticationFailed({ reason: "Forbidden" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
     expect(instances).toHaveLength(1);
     expect(result.current.status).toBe("offline");
   });

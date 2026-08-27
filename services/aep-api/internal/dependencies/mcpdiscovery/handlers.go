@@ -29,21 +29,24 @@ import (
 // Handler is the resource-type-discovery slice of the strict interface: the
 // platform-resource-type catalog read (the HTTP transport of the same data the
 // list_platform_resource_types MCP tool serves, over the same ResourceTypeLister
-// this package owns). The catalog is cluster-global — there is nothing org-scoped
-// to filter by — but the operation still sits behind the deny-by-default tenant
-// gate like every other one. A nil lister answers 503, mirroring the pre-migration
-// RegisterResourceTypes nil guard.
+// this package owns) and the org-endpoint catalog read (GET /dependencies/org-endpoints,
+// the BFF of list_org_endpoints). The resource-type catalog is cluster-global —
+// there is nothing org-scoped to filter by — but both operations still sit
+// behind the deny-by-default tenant gate like every other one. A nil lister
+// answers 503, mirroring the pre-migration RegisterResourceTypes nil guard.
 type Handler struct {
-	catalog   ResourceTypeLister
-	consumers PlatformResourceConsumerLister
+	catalog      ResourceTypeLister
+	consumers    PlatformResourceConsumerLister
+	orgEndpoints OrgEndpointLister
 }
 
-// NewHandler wires the slice over the resource-type catalog. A nil catalog is a
-// supported configuration: the op degrades to 503. The consumers lister is
-// likewise nil-safe: it feeds the additive "used by" overlay and, when nil,
-// every type simply reports no consumers.
-func NewHandler(catalog ResourceTypeLister, consumers PlatformResourceConsumerLister) *Handler {
-	return &Handler{catalog: catalog, consumers: consumers}
+// NewHandler wires the slice over the resource-type catalog and the org-endpoint
+// catalog. A nil catalog is a supported configuration: the op degrades to 503.
+// The consumers lister is likewise nil-safe: it feeds the additive "used by"
+// overlay and, when nil, every type simply reports no consumers. A nil
+// org-endpoint lister 503s ListOrgEndpoints the same way.
+func NewHandler(catalog ResourceTypeLister, consumers PlatformResourceConsumerLister, orgEndpoints OrgEndpointLister) *Handler {
+	return &Handler{catalog: catalog, consumers: consumers, orgEndpoints: orgEndpoints}
 }
 
 func (h *Handler) ListPlatformResourceTypes(ctx context.Context, _ gen.ListPlatformResourceTypesRequestObject) (gen.ListPlatformResourceTypesResponseObject, error) {
@@ -64,6 +67,30 @@ func (h *Handler) ListPlatformResourceTypes(ctx context.Context, _ gen.ListPlatf
 		consumersByType, _ = h.consumers.PlatformResourceConsumersByType(ctx, tenant.BoundOrgFromContext(ctx))
 	}
 	return gen.ListPlatformResourceTypes200JSONResponse(toPlatformResourceTypeDTOs(types, consumersByType)), nil
+}
+
+func (h *Handler) ListOrgEndpoints(ctx context.Context, _ gen.ListOrgEndpointsRequestObject) (gen.ListOrgEndpointsResponseObject, error) {
+	if h.orgEndpoints == nil {
+		return nil, apierr.ServiceUnavailable("org-endpoint catalog is not configured")
+	}
+	infos, err := h.orgEndpoints.List(ctx, tenant.BoundOrgFromContext(ctx))
+	if err != nil {
+		return nil, apierr.BadGateway("failed to list org endpoints")
+	}
+	out := make([]gen.OrgEndpointDTO, 0)
+	for _, e := range infos {
+		if !e.NamespaceVisible() {
+			continue
+		}
+		out = append(out, gen.OrgEndpointDTO{
+			Name:             e.Component,
+			Project:          e.Project,
+			Endpoint:         e.Name,
+			Type:             gen.OrgEndpointDTOType(e.Type),
+			NamespaceVisible: true,
+		})
+	}
+	return gen.ListOrgEndpoints200JSONResponse(out), nil
 }
 
 // toPlatformResourceTypeDTOs projects the domain resource types onto the wire

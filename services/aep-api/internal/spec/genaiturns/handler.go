@@ -31,6 +31,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/clients/agentsvc"
 	"github.com/wso2/aep/aep-api/internal/gen"
 	"github.com/wso2/aep/aep-api/internal/platform/apierr"
+	"github.com/wso2/aep/aep-api/internal/platform/gitfs"
 	"github.com/wso2/aep/aep-api/internal/platform/tenant"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
@@ -406,6 +407,12 @@ func mapGenAITurnError(ctx context.Context, err error) error {
 		// skills-repo arm above.
 		slog.ErrorContext(ctx, "genai turn: conversation store not configured", "error", err)
 		return apierr.ServiceUnavailable(spec.ErrConversationsUnavailable.Error())
+	case errors.Is(err, gitfs.ErrDiskAdmission):
+		// New snapshot dests are refused at ≥90% workspace usage. Operator
+		// recovery (reap / prune), not a client bug — 503 with a sentence
+		// the console can show, cause in the logs. Same posture as skills.
+		slog.ErrorContext(ctx, "genai turn: workspace disk admission refused", "error", err)
+		return apierr.ServiceUnavailable("workspace disk is full — try again in a few minutes, or contact your platform admin")
 	default:
 		return genaiInternalError(ctx, "genai turn", err)
 	}

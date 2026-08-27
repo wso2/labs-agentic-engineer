@@ -35,11 +35,13 @@ import (
 
 // ExternalResourceReader is the read slice of the org external-resource catalog
 // the MCP surface exposes (list every registered external resource, get one by
-// name). Sourced from the org's provisioned OpenChoreo ResourceTypes
-// (openchoreo.ExternalDefinitionFromRT) — ONLY a provisioned `external`
-// dependency has an authored RT, so this reflects provisioned externals only
-// (D2: an unprovisioned/design-only external is not discoverable here). Get
-// returns (nil, nil) when the name is not registered.
+// name). Sourced from the org's OpenChoreo ResourceTypes via
+// openchoreo.ExternalDefinitionFromRT. Ensure authors the RT at
+// register, so a zero-consumer Registered row is already listable here (MCP
+// List is RT-backed; the agent JSON view carries consumptionInstructions and
+// resourceDocs pointers). A design-only `external` dependency that never went
+// through register/Ensure still has no RT and is not discoverable. Get returns
+// (nil, nil) when the name is not registered.
 type ExternalResourceReader interface {
 	List(ctx context.Context, orgID string) ([]openchoreo.ExternalResourceDefinition, error)
 	Get(ctx context.Context, orgID, name string) (*openchoreo.ExternalResourceDefinition, error)
@@ -59,6 +61,33 @@ type OrgEndpointLister interface {
 // the installed cluster ResourceTypes a platform-resource dependency references.
 type ResourceTypeLister interface {
 	List(ctx context.Context) ([]dependencies.PlatformResourceType, error)
+}
+
+// RoleCatalogLister reads the roles that already exist on the platform identity
+// provider — the Role catalog the design agent consults before inventing a
+// name. Roles are SHARED across projects, so the catalog is cluster-wide, not
+// org-scoped: that is precisely what makes reuse meaningful, and it is why the
+// rows carry a name and a description and nothing about who uses them.
+//
+// Satisfied by *identity.CatalogService. Read-only with no write counterpart
+// anywhere on this surface — roles are created at BUILD time, deterministically,
+// never by a model.
+type RoleCatalogLister interface {
+	ListRoleCatalog(ctx context.Context) ([]RoleCatalogEntry, error)
+}
+
+// RoleCatalogEntry is one row of the role catalog as the tool renders it. It is
+// mcpdiscovery's own view type — the projection every other tool here goes
+// through — so a field added to the identity domain cannot leak into an LLM
+// prompt by accident.
+type RoleCatalogEntry struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	// PlatformCreated is true when the platform created this role and may
+	// therefore give it test users. False means somebody else made the group;
+	// the platform will leave it alone.
+	PlatformCreated bool `json:"platformCreated"`
+	MemberCount     int  `json:"memberCount"`
 }
 
 // PlatformResourceConsumerLister derives, per installed platform ResourceType,

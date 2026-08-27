@@ -128,6 +128,15 @@ func (f *fakeArtifactSvc) GetDesignAtTag(ctx context.Context, orgID, projectID, 
 	return f.GetDesignAtTagFunc(ctx, orgID, projectID, tag)
 }
 
+// GetDesignAtSpecTag reads the design at a `v<N>` SPEC tag; the fake shares the
+// one hook, since nothing in these tests distinguishes the two tag shapes.
+func (f *fakeArtifactSvc) GetDesignAtSpecTag(ctx context.Context, orgID, projectID, tag string) (map[string]string, error) {
+	if f.GetDesignAtTagFunc == nil {
+		panic("spec test: GetDesignAtSpecTag called but GetDesignAtTagFunc is not set")
+	}
+	return f.GetDesignAtTagFunc(ctx, orgID, projectID, tag)
+}
+
 func (f *fakeArtifactSvc) GetDesignAtCommit(ctx context.Context, orgID, projectID, commitSHA string) (map[string]string, error) {
 	if f.GetDesignAtCommitFunc == nil {
 		panic("spec test: GetDesignAtCommit called but GetDesignAtCommitFunc is not set")

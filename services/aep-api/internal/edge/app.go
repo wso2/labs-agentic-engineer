@@ -103,6 +103,7 @@ type AppParams struct {
 	MCPExternalResources mcpdiscovery.ExternalResourceReader
 	MCPOrgEndpoints      mcpdiscovery.OrgEndpointLister
 	MCPResourceTypes     mcpdiscovery.ResourceTypeLister
+	MCPRoleCatalog       mcpdiscovery.RoleCatalogLister
 	// MCPRemoteGit backs the read-only remote-git MCP tools (endpoint spec
 	// discovery). Nil makes get_remote_git_file_contents/search_remote_git_code
 	// return a tool error; it never affects the other tools.

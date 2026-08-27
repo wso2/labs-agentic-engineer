@@ -303,3 +303,54 @@ func TestPreflight_ExternalResolved_FallsThroughToConfigItem(t *testing.T) {
 	require.Len(t, pf.Items, 1)
 	require.Equal(t, "external-config", pf.Items[0].Kind)
 }
+
+// fakeCatalog reports names that already hold org env cells (Registered
+// External). Missing / false is Project External — same fail-open as a nil
+// Catalog port.
+type fakeCatalog map[string]bool
+
+func (f fakeCatalog) HasOrgEnvCells(_ context.Context, _, name string) bool { return f[name] }
+
+// A Registered External already holds values on the org plane. Preflight must
+// not emit external-config (the Build drawer would force typing secrets that
+// POST /build ignores). Project External still collects as today.
+func TestPreflight_RegisteredExternal_DoesNotEmitConfigItem(t *testing.T) {
+	comps := []spec.DesignComponent{{Name: "board", ComponentType: spec.ComponentTypeService,
+		Dependencies: []spec.Dependency{
+			{Kind: spec.DependencyKindExternal, Name: "openweathermap",
+				Config: []spec.ConfigKey{{Key: "api_key", Secret: true}}},
+			{Kind: spec.DependencyKindExternal, Name: "travel-board-fx",
+				Config: []spec.ConfigKey{{Key: "api_key", Secret: true}}},
+		}}}
+	svc := NewPreflightService(PreflightDeps{
+		Design:  fakeDesign{comps: comps},
+		Status:  fakeStatus{},
+		Catalog: fakeCatalog{"openweathermap": true},
+	})
+	pf, err := svc.Preflight(context.Background(), "acme", "travel-board")
+	require.NoError(t, err)
+	kinds := kindsByDep(pf.Items)
+	_, weather := kinds["openweathermap"]
+	require.False(t, weather, "Registered name must not raise external-config, got %v", kinds["openweathermap"])
+	require.Equal(t, []string{"external-config"}, kinds["travel-board-fx"])
+	require.True(t, pf.NeedsInput)
+}
+
+// An unresolved Registered name still raises the blocker — catalog cells do
+// not skip dependency resolution.
+func TestPreflight_RegisteredExternal_UnresolvedStillEmitsBlocker(t *testing.T) {
+	comps := []spec.DesignComponent{{Name: "board", ComponentType: spec.ComponentTypeService,
+		Dependencies: []spec.Dependency{
+			{Kind: spec.DependencyKindExternal, Name: "openweathermap",
+				Status: spec.DependencyStatusUnresolved, Reason: spec.DependencyReasonNeedsInput},
+		}}}
+	svc := NewPreflightService(PreflightDeps{
+		Design:  fakeDesign{comps: comps},
+		Status:  fakeStatus{},
+		Catalog: fakeCatalog{"openweathermap": true},
+	})
+	pf, err := svc.Preflight(context.Background(), "acme", "travel-board")
+	require.NoError(t, err)
+	require.Len(t, pf.Items, 1)
+	require.Equal(t, "external-unresolved", pf.Items[0].Kind)
+}

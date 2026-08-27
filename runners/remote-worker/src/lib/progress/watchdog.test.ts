@@ -177,19 +177,99 @@ test("watchdog: real activity clears the retry, so a later stall is not blamed o
   assert.doesNotMatch(h.summaries()[0] ?? "", /API retry/);
 });
 
-test("watchdog: a subagent's retry surfaces under the Agent call that is still in flight", () => {
-  // A fan-out lead's Agent call stays open for its subagent's whole run, so this
-  // branch is where a retry inside that subagent shows up — and where the cause
-  // is hardest to guess from outside.
+// One line as the translator really emits it for work done inside a subagent:
+// the fan-out call gets NO tool_use event of its own, so `emitterId` is the only
+// evidence on this stream that it exists. Every fan-out test below builds its
+// events through here, because a hand-made `{tool: "Agent"}` tool_use — which is
+// what this suite used to assert against — is a shape production never produces.
+function subagentLine(e: ProgressEventInput): ProgressEventInput {
+  return { ...e, emitter: "subagent", emitterId: "a1", emitterLabel: "implement checkout" };
+}
+
+test("watchdog: a silent subagent is named, not reported as an idle model", () => {
+  // The live regression. A fan-out went quiet for ten minutes and every report
+  // said "no tool in flight — waiting on the model", pointing at the lead while
+  // a 22-minute Agent call was the thing being waited on.
   const h = harness();
-  h.watchdog.observe([{ kind: "tool_use", tool: "Agent", summary: "implement checkout", toolUseId: "a1" }]);
+  h.watchdog.observe([subagentLine({ kind: "tool_use", tool: "Edit", summary: "src/api.ts", toolUseId: "t9" })]);
+  h.watchdog.observe([subagentLine({ kind: "tool_result", ok: true, toolUseId: "t9" })]);
+
+  h.advance(IDLE + 1);
+  h.watchdog.check();
+  const line = h.summaries()[0] ?? "";
+  assert.match(line, /no tool in flight inside Agent \(implement checkout\), running 2m0s/);
+  assert.match(line, /waiting on its model for 2m0s/);
+});
+
+test("watchdog: a tool in flight inside a subagent names both the call and the subagent", () => {
+  // The inner call is the diagnosis; the subagent is where to look for it. The
+  // fan-out must not outrank its own tool — it is always the older of the two.
+  const h = harness();
+  h.watchdog.observe([subagentLine({ kind: "tool_use", tool: "Bash", summary: "npm ci", toolUseId: "t9" })]);
+
+  h.advance(IDLE + 1);
+  h.watchdog.check();
+  assert.match(h.summaries()[0] ?? "", /waiting on Bash \(npm ci\) in subagent \(implement checkout\) for 2m0s/);
+});
+
+test("watchdog: a subagent's retry surfaces under the fan-out it belongs to", () => {
+  // Where a retry inside a subagent shows up, and where the cause is hardest to
+  // guess from outside.
+  const h = harness();
+  h.watchdog.observe([subagentLine({ kind: "tool_result", ok: true, toolUseId: "t9" })]);
   h.watchdog.observeRetry({ ...OVERLOADED, error: "rate_limit", errorStatus: 429 });
 
   h.advance(IDLE + 1);
   h.watchdog.check();
   const line = h.summaries()[0] ?? "";
-  assert.match(line, /waiting on Agent \(implement checkout\)/);
+  assert.match(line, /inside Agent \(implement checkout\)/);
   assert.match(line, /API retry 3\/10, rate_limit/);
+});
+
+test("watchdog: the fan-out's own result settles it — the lead is idle again, not a subagent", () => {
+  // That result carries the subagent id in BOTH toolUseId and emitterId, so the
+  // registration and the deletion race inside one event. The deletion has to win
+  // or a finished subagent is reported as running for the rest of the run.
+  const h = harness();
+  h.watchdog.observe([subagentLine({ kind: "tool_use", tool: "Edit", summary: "src/api.ts", toolUseId: "t9" })]);
+  h.watchdog.observe([subagentLine({ kind: "tool_result", ok: true, toolUseId: "t9" })]);
+  h.watchdog.observe([
+    { kind: "tool_result", ok: false, tool: "Agent", toolUseId: "a1", emitter: "subagent", emitterId: "a1" },
+  ]);
+
+  h.advance(IDLE + 1);
+  h.watchdog.check();
+  assert.match(h.summaries()[0] ?? "", /^\[watchdog\] no tool in flight — waiting on the model for 2m0s$/);
+});
+
+test("watchdog: a settled subagent is not resurrected by a late line about it", () => {
+  // Its id is registered from the lines it produces, so a stray line after the
+  // settle would otherwise register a phantom that nothing ever closes.
+  const h = harness();
+  h.watchdog.observe([subagentLine({ kind: "tool_result", ok: true, toolUseId: "t9" })]);
+  h.watchdog.observe([
+    { kind: "tool_result", ok: false, tool: "Agent", toolUseId: "a1", emitter: "subagent", emitterId: "a1" },
+  ]);
+  h.watchdog.observe([subagentLine({ kind: "activity", summary: "a late narration" })]);
+
+  h.advance(IDLE + 1);
+  h.watchdog.check();
+  assert.match(h.summaries()[0] ?? "", /^\[watchdog\] no tool in flight — waiting on the model for 2m0s$/);
+});
+
+test("watchdog: several subagents at once are counted, not guessed between", () => {
+  // A milestone cycle runs two or three concurrently and their lines interleave,
+  // so naming one of them would be a coin flip.
+  const h = harness();
+  for (const id of ["a1", "a2"]) {
+    h.watchdog.observe([
+      { kind: "tool_result", ok: true, toolUseId: `t-${id}`, emitter: "subagent", emitterId: id, emitterLabel: id },
+    ]);
+  }
+
+  h.advance(IDLE + 1);
+  h.watchdog.check();
+  assert.match(h.summaries()[0] ?? "", /no tool in flight in any of 2 running subagents/);
 });
 
 test("watchdog: streaming frames do not reset the clock — the report fires on the same schedule either way", () => {

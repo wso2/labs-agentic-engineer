@@ -75,6 +75,21 @@ func gateDepLabel(depName string) string {
 	return gateDepLabelPrefix + slug
 }
 
+// PlatformGateLabelPrefix marks a gate the PLATFORM resolves itself, as opposed
+// to one keyed to a design dependency. It is a DIFFERENT prefix from
+// gateDepLabelPrefix on purpose: a platform gate must be unreachable from
+// gateDepFromLabels, so no dependency name — however unlikely — can ever slug
+// into the same label and make a dependency's gate and a platform gate
+// indistinguishable.
+const PlatformGateLabelPrefix = "aep:gate/"
+
+// platformGateLabels is the label set a platform-resolved gate is minted with:
+// the `provision` kind, so it holds the next dispatch exactly like a dependency
+// gate, plus its own identity. No `aep` arming label — nothing may work it.
+func platformGateLabels(gate string) []string {
+	return []string{delivery.KindProvision, PlatformGateLabelPrefix + depSlug(gate)}
+}
+
 // gateLabels is the full label set a gate issue is minted with. A gate
 // deliberately does NOT carry the `aep` ARMING label: it is never agent work,
 // only a hold on the next dispatch. That absence is also what keeps the gate

@@ -1,0 +1,191 @@
+openapi: 3.0.3
+info:
+  title: Knowledge Base API
+  version: 1.0.0
+paths:
+  /documents:
+    post:
+      operationId: indexDocument
+      summary: Chunk, embed and index a document
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewDocument"
+      responses:
+        "202":
+          description: What was indexed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IndexReceipt"
+        "400":
+          description: The document was rejected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /documents/{documentId}:
+    get:
+      operationId: getDocument
+      summary: Fetch what is known about an indexed document
+      parameters:
+        - name: documentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Document"
+        "404":
+          description: No such document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+    delete:
+      operationId: removeDocument
+      summary: Drop a document and every vector it produced
+      parameters:
+        - name: documentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: The document was removed
+        "404":
+          description: No such document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /questions:
+    post:
+      operationId: askQuestion
+      summary: Answer a question from the indexed corpus
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Question"
+      responses:
+        "200":
+          description: The answer and what it was drawn from
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Answer"
+        "422":
+          description: Nothing in the corpus was close enough to answer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+components:
+  schemas:
+    NewDocument:
+      type: object
+      required: [title, source, text]
+      properties:
+        title:
+          type: string
+          minLength: 1
+        source:
+          type: string
+        text:
+          type: string
+          minLength: 1
+        tags:
+          type: array
+          items:
+            type: string
+    Document:
+      type: object
+      required: [documentId, title, source, chunkCount, indexedAt]
+      properties:
+        documentId:
+          type: string
+        title:
+          type: string
+        source:
+          type: string
+        chunkCount:
+          type: integer
+          format: int32
+        indexedAt:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+    IndexReceipt:
+      type: object
+      required: [documentId, chunkCount, vectorIds]
+      properties:
+        documentId:
+          type: string
+        chunkCount:
+          type: integer
+          format: int32
+        vectorIds:
+          type: array
+          items:
+            type: string
+    Question:
+      type: object
+      required: [question]
+      properties:
+        question:
+          type: string
+          minLength: 1
+        topK:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 20
+        tags:
+          type: array
+          items:
+            type: string
+    Citation:
+      type: object
+      required: [documentId, chunkId, score]
+      properties:
+        documentId:
+          type: string
+        chunkId:
+          type: string
+        score:
+          type: number
+          format: double
+        excerpt:
+          type: string
+    Answer:
+      type: object
+      required: [question, answer, model, citations]
+      properties:
+        question:
+          type: string
+        answer:
+          type: string
+        model:
+          type: string
+        citations:
+          type: array
+          items:
+            $ref: "#/components/schemas/Citation"
+    ErrorMessage:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string

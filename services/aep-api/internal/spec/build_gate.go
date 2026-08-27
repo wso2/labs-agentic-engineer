@@ -28,7 +28,12 @@ package spec
 //     design);
 //   - every deployable component is ENRICHED (its design.json moved off the
 //     scaffold placeholder, a language decided) and carries its type-mandated
-//     artifact (service → openapi.yaml, web-application → wireframes.dsl).
+//     artifact (service → openapi.yaml, web-application → wireframes.dsl);
+//   - a design with END-USER SIGN-IN carries specs/design/roles.json, it parses,
+//     and every story its roles cite is a real PRD story. The platform creates
+//     the roles and test users that file declares when the tag is built, so a
+//     design that signs users in but declares no roles ships an app whose
+//     role-gated behaviour nothing can exercise.
 //
 // Story-less infrastructure nodes (database, cache, …) are not deployable and
 // never gate. Failures surface as FileValidationError rows through the
@@ -36,12 +41,15 @@ package spec
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/wso2/aep/aep-api/internal/platform/rolesspec"
 )
 
 // Build-gate error codes (join the designspec/save vocabulary the console
@@ -53,6 +61,13 @@ const (
 	codeUncoveredStory           = "UNCOVERED_STORY"
 	codeUnenrichedComponent      = "UNENRICHED_COMPONENT"
 	codeMissingComponentArtifact = "MISSING_COMPONENT_ARTIFACT"
+	// codeMissingRolesDocument — the design has sign-in but declares no roles.
+	codeMissingRolesDocument = "MISSING_ROLES_DOCUMENT"
+	// codeInvalidRolesDocument — roles.json does not parse, or breaks a
+	// referential rule the platform depends on at build time.
+	codeInvalidRolesDocument = "INVALID_ROLES_DOCUMENT"
+	// codeUnknownRoleStory — a role cites a PRD story that does not exist.
+	codeUnknownRoleStory = "UNKNOWN_ROLE_STORY"
 )
 
 const designCellFile = "design.cell"
@@ -104,6 +119,8 @@ func validateBuildGate(reqFiles, designFiles map[string]string) []FileValidation
 			})
 		}
 	}
+
+	errs = append(errs, validateRolesDocument(designFiles, prdStories)...)
 
 	// Per-component completeness for deployable components.
 	for _, c := range facts.Components {
@@ -158,6 +175,88 @@ func validateBuildGate(reqFiles, designFiles map[string]string) []FileValidation
 		}
 	}
 	return errs
+}
+
+// validateRolesDocument checks the structured half of the security design.
+//
+// Presence is keyed on END-USER SIGN-IN, read off committed truth rather than a
+// live catalog call: design-save already derives `exposesAPI.auth =
+// end-user-required` onto every service that declares a platform-resource
+// dependency whose resourceType carries the `aep.wso2.com/role: end-user-auth`
+// marker (derive_auth.go). So the marker's consequence is already in the bundle,
+// and the gate needs no cluster round-trip and no hardcoded resourceType name.
+//
+// The story cross-check lives here rather than in rolesspec because only the
+// gate sees the PRD: rolesspec validates one file, this validates the bundle.
+func validateRolesDocument(designFiles map[string]string, prdStories map[int]string) []FileValidationError {
+	raw, present := designFiles[rolesspec.BundleKey]
+	hasRoles := present && strings.TrimSpace(raw) != ""
+
+	if !hasRoles {
+		if !hasEndUserSignIn(designFiles) {
+			return nil
+		}
+		return []FileValidationError{{
+			Path: rolesspec.BundleKey, Code: codeMissingRolesDocument,
+			Message: "this design signs users in but declares no roles — write " +
+				"specs/design/roles.json with the roles the PRD's actors need and a test user " +
+				"for each, or the platform has nothing to provision and validation cannot " +
+				"exercise role-gated behaviour",
+		}}
+	}
+
+	doc, err := rolesspec.Parse([]byte(raw))
+	if err != nil {
+		var ve *rolesspec.ValidationError
+		msg := err.Error()
+		if errors.As(err, &ve) {
+			msg = ve.Message
+		}
+		return []FileValidationError{{
+			Path: rolesspec.BundleKey, Code: codeInvalidRolesDocument, Message: msg,
+		}}
+	}
+
+	// Every cited story is a real one. A role pointing at a story the PRD does
+	// not have means the design and the requirements have drifted, and the
+	// permissions it grants trace to nothing.
+	var errs []FileValidationError
+	for _, role := range doc.Roles {
+		for _, n := range role.Stories {
+			if _, ok := prdStories[n]; !ok {
+				errs = append(errs, FileValidationError{
+					Path: rolesspec.BundleKey, Code: codeUnknownRoleStory,
+					Message: fmt.Sprintf("role %q cites story %d, which the PRD does not define — "+
+						"cite a real story or drop it", role.Name, n),
+				})
+			}
+		}
+	}
+	return errs
+}
+
+// hasEndUserSignIn reports whether any component's design.json carries
+// exposesAPI.auth = end-user-required — design-save's stamp for "this API sits
+// behind the end-user login the SPA performs". It is the committed-truth
+// signal that the design has sign-in at all.
+func hasEndUserSignIn(designFiles map[string]string) bool {
+	for rel, content := range designFiles {
+		if !strings.HasSuffix(rel, "/design.json") {
+			continue
+		}
+		var doc struct {
+			ExposesAPI struct {
+				Auth string `json:"auth"`
+			} `json:"exposesAPI"`
+		}
+		if json.Unmarshal([]byte(content), &doc) != nil {
+			continue
+		}
+		if doc.ExposesAPI.Auth == authEndUserRequired {
+			return true
+		}
+	}
+	return false
 }
 
 // componentStoryClaims maps each cell component to the stories its design.json

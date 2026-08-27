@@ -51,7 +51,7 @@ type BuildSummary = components["schemas"]["BuildSummary"];
 type DeployStage = components["schemas"]["DeployStage"];
 
 /**
- * The Builds page: ONE ROW PER VERSION (ADR-0020 §1).
+ * The Builds page: ONE ROW PER VERSION (ADR-0021 §1).
  *
  * This replaced the now-first landing page, which opened on the newest
  * version's live run and offered no way to see two versions at once. The live

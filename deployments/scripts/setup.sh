@@ -85,6 +85,15 @@ if [ -n "$RUNNER_BUILD_PID" ]; then
     echo "⏳ Waiting for the background runner-image build..."
     if wait "$RUNNER_BUILD_PID"; then
         echo "✅ runner image pre-built (setup-aep.sh imports it into the node next)"
+        # The prebuild just produced a fresh image, so setup-aep.sh's own
+        # build-runner.sh call must not build it a SECOND time. It normally
+        # doesn't — the build is skipped when the tag exists — but FORCE=1 is
+        # exactly what you pass after changing the Dockerfile, and it is
+        # inherited, so `FORCE=1 bash setup.sh` otherwise pays for the
+        # multi-minute build twice and imports the second one. Cleared only on
+        # success: a failed prebuild must leave FORCE alone so the serial build
+        # still gets its chance.
+        export FORCE=0
     else
         echo "⚠️  background runner-image build failed — see $RUNNER_BUILD_LOG"
         tail -5 "$RUNNER_BUILD_LOG" 2>/dev/null || true

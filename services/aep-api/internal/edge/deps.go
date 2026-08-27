@@ -19,6 +19,7 @@ package edge
 import (
 	deliveryhttpapi "github.com/wso2/aep/aep-api/internal/delivery/httpapi"
 	dephttpapi "github.com/wso2/aep/aep-api/internal/dependencies/httpapi"
+	identityhttpapi "github.com/wso2/aep/aep-api/internal/identity/httpapi"
 	opshttpapi "github.com/wso2/aep/aep-api/internal/ops/httpapi"
 	orghttpapi "github.com/wso2/aep/aep-api/internal/organization/httpapi"
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
@@ -57,4 +58,5 @@ type Deps struct {
 	Projects      *projectshttpapi.Handlers
 	Delivery      *deliveryhttpapi.Handlers
 	Dependencies  *dephttpapi.Handlers
+	Identity      *identityhttpapi.Handlers
 }

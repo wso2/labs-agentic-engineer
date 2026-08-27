@@ -71,13 +71,28 @@ func CodingAgentComponentType() map[string]any {
 						// Requests are enum-bounded too: an unbounded request can
 						// schedule-starve the dataplane the same way an unbounded
 						// limit can.
+						//
+						// The REQUEST stays small and the LIMIT is what moved: a
+						// request is a reservation held for the pod's whole life,
+						// while a limit is only a ceiling it may burst to. A runner
+						// spends most of its wall clock waiting on the model — its
+						// own cgroup shows ~34% of one core averaged over a run —
+						// and then wants several cores for a few bursts of `npm
+						// install` and `bal build`. Reserving 500m and allowing 3
+						// buys those bursts without holding cores idle in between.
+						//
+						// Under contention the split is also what protects the rest
+						// of the dataplane: cgroup CPU weight is proportional to
+						// REQUESTS, so a bursting runner is squeezed back toward its
+						// 500m share as soon as anything else becomes runnable,
+						// rather than holding 3 cores against it.
 						"cpuRequest": map[string]any{
 							"type": "string", "default": "500m",
 							"enum": []any{"500m", "1"},
 						},
 						"cpuLimit": map[string]any{
-							"type": "string", "default": "1",
-							"enum": []any{"500m", "1"},
+							"type": "string", "default": "3",
+							"enum": []any{"500m", "1", "2", "3"},
 						},
 						"memoryRequest": map[string]any{
 							"type": "string", "default": "1Gi",

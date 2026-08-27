@@ -37,9 +37,12 @@ type ComponentEndpoint struct {
 
 // ValidationContextResponse is the secure runtime-inputs payload the runner
 // fetches at dispatch time (never carried in the public issue): the deployed
-// endpoint URLs and the criteria file path. Test credentials are NOT bundled
-// here — the runner requests them on demand (only when a criterion needs a
-// login) from the sibling test-credentials endpoint (credentials.go).
+// endpoint URLs and the criteria file path.
+//
+// No test account rides here, not even a username. The build publishes the whole
+// roster — logins included — on the roles gate ticket, and the agent reads it
+// there (ADR-0022). A copy in this payload would land on disk for the run's
+// lifetime and could disagree with the ticket.
 type ValidationContextResponse struct {
 	Endpoints    []ComponentEndpoint `json:"endpoints"`
 	CriteriaPath string              `json:"criteriaPath"`

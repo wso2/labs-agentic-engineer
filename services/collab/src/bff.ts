@@ -104,9 +104,32 @@ export interface BffClient {
 }
 
 export class BffAccessDeniedError extends Error {
+  /** Retained so the caller can tell a verdict (4xx) from an outage (5xx). */
+  readonly status: number;
+
   constructor(status: number) {
     super(`BFF denied collab access (${status})`);
     this.name = "BffAccessDeniedError";
+    this.status = status;
+  }
+}
+
+/**
+ * A spec read that the BFF refused or could not serve.
+ *
+ * Carries the status for the same reason `BffAccessDeniedError` does: the seed
+ * path has to tell a permanent answer (a 404 for a project whose repo row is
+ * missing) from a transient one (a 502 mid-redeploy). Tagging the permanent
+ * case as transient would have the console retry a room forever that the
+ * server will never be able to seed.
+ */
+export class BffReadError extends Error {
+  readonly status: number;
+
+  constructor(projectName: string, status: number) {
+    super(`Failed to read spec files for ${projectName} (${status})`);
+    this.name = "BffReadError";
+    this.status = status;
   }
 }
 
@@ -147,11 +170,7 @@ export function createBffClient(
         `${base}/projects/${project}/files/bundle?prefix=${encodeURIComponent(SPECS_PREFIX)}`,
         { headers: { Authorization: `Bearer ${token}` } },
       );
-      if (!res.ok) {
-        throw new Error(
-          `Failed to read spec files for ${projectName} (${res.status})`,
-        );
-      }
+      if (!res.ok) throw new BffReadError(projectName, res.status);
       const body = (await res.json()) as {
         files?: SpecFile[] | null;
       };

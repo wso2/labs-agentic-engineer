@@ -96,7 +96,7 @@ func (p *ExternalResourceProvisioner) Provision(
 	// SAME name (a stable get-or-create target), while a schema OR template
 	// change authors a fresh RT instead of silently reusing a stale same-named
 	// one on 409-conflict.
-	rt, err := openchoreo.BuildExternalResourceType(er.Name, er.Description, toRTConfigKeys(er.ConfigKeys))
+	rt, err := openchoreo.BuildExternalResourceType(er.Name, er.Description, toRTConfigKeys(er.ConfigKeys), "", nil)
 	if err != nil {
 		return nil, fmt.Errorf("external resources: build resourcetype: %w", err)
 	}
@@ -177,7 +177,7 @@ func (p *ExternalResourceProvisioner) AuthorPreparedValues(
 	}
 
 	// 1. ResourceType (get-or-create; immutable once created).
-	rt, err := openchoreo.BuildExternalResourceType(er.Name, er.Description, toRTConfigKeys(er.ConfigKeys))
+	rt, err := openchoreo.BuildExternalResourceType(er.Name, er.Description, toRTConfigKeys(er.ConfigKeys), "", nil)
 	if err != nil {
 		return nil, fmt.Errorf("external resources: build resourcetype: %w", err)
 	}

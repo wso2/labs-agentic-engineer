@@ -36,6 +36,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
+	"github.com/wso2/aep/aep-api/internal/identity"
 	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/platform/database"
 	"github.com/wso2/aep/aep-api/internal/platform/modelcost"
@@ -68,6 +69,13 @@ func BaseModels() []any {
 		&delivery.RunCycle{},
 		&delivery.AgentUsageLedgerEntry{},
 		&spec.ProjectConversation{},
+		// The platform's record of the SHARED directory objects it created at
+		// build time: the roles a design declares, the test users that exercise
+		// them, and the per-project references that join the two. Plain tables
+		// with plain indexes, so AutoMigrate expresses the whole schema.
+		&identity.IdPRole{},
+		&identity.TestUser{},
+		&identity.TestUserRef{},
 	}
 }
 

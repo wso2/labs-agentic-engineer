@@ -45,9 +45,12 @@ func (s *Service) ListConversations(ctx context.Context, orgID, projectID string
 	if s.conversations == nil {
 		return nil, ErrConversationsUnavailable
 	}
-	// The repo must exist — same tenant fence as every other genai read.
-	if _, err := s.resolveRepo(ctx, orgID, projectID); err != nil {
-		return nil, err
+	// Real projects still require a git repo row. The Marketplace register
+	// chat project is synthetic — no git_repositories row — so skip that fence.
+	if !isMarketplaceRegisterProject(projectID) {
+		if _, err := s.resolveRepo(ctx, orgID, projectID); err != nil {
+			return nil, err
+		}
 	}
 	row, err := s.conversations.ResolveCurrent(ctx, orgID, projectID, useCaseGeneral, displayIdentityFrom(ctx))
 	if err != nil {
@@ -64,8 +67,10 @@ func (s *Service) RotateConversation(ctx context.Context, orgID, projectID strin
 	if s.conversations == nil {
 		return nil, ErrConversationsUnavailable
 	}
-	if _, err := s.resolveRepo(ctx, orgID, projectID); err != nil {
-		return nil, err
+	if !isMarketplaceRegisterProject(projectID) {
+		if _, err := s.resolveRepo(ctx, orgID, projectID); err != nil {
+			return nil, err
+		}
 	}
 	row, err := s.conversations.Rotate(ctx, orgID, projectID, useCaseGeneral, displayIdentityFrom(ctx))
 	if err != nil {

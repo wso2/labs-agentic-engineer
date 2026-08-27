@@ -61,8 +61,8 @@ func (r staticOrgResolver) ExistsAnyVisibility(_ context.Context, _, name string
 // newDesignHarness assembles the real designService (wrapping the REAL
 // ArtifactStore over the given fake artifact service, with the org-service
 // resolver port wired) behind the real handler chain. External-resource status
-// derives purely from the design's own style/config (the registry-reuse rule
-// was retired with the external_resources table — D6).
+// derives from stored intent here — no ExternalResourceResolver is wired, so
+// rule 2 (registry reuse) does not fire.
 func newDesignHarness(t *testing.T, files map[string]string, orgVisible map[string]bool) *componenttest.Harness {
 	t.Helper()
 	fake := &artifactstest.FakeArtifactService{

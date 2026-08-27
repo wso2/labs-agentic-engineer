@@ -76,7 +76,7 @@ const LinkMenuItem = createLink(MenuItem);
 const RouterLink = createLink(MuiLink);
 
 /**
- * One version's build (ADR-0020 §2, §3).
+ * One version's build (ADR-0021 §2, §3).
  *
  * A summary card, then three collapsible sections — Tasks, the coding agent's
  * log, and the build logs. This carries what the Builds page used to lead with;

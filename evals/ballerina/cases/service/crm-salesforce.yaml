@@ -1,0 +1,17 @@
+prompt: |
+  An HTTP lead pipeline over Salesforce. Captured leads become Lead records;
+  listing runs a query filtered by status and owner; converting one creates an
+  account, a contact and an opportunity and reports the three ids back. Notes
+  attach to the lead. Listing opportunities filters by stage and amount.
+
+  Generate the service from `openapi.yaml`. The Salesforce base url and
+  credentials stay configurable. No tests.
+
+fixtures:
+  openapi.yaml: openapi/crm-salesforce.yaml
+
+expect:
+  builds: true
+  imports:
+    - ballerina/http
+    - ballerinax/salesforce

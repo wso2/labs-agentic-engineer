@@ -9,7 +9,7 @@
     "test": "tsx --test 'src/**/*.test.ts'"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.3.220",
+    "@anthropic-ai/claude-agent-sdk": "0.3.247",
     "tsx": "^4.21.0",
     "typescript": "^6.0.2",
     "yaml": "^2.9.0"

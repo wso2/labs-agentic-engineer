@@ -78,19 +78,60 @@ type RepoLocator interface {
 }
 
 // ExternalRTCatalog is the org-namespaced OpenChoreo ResourceType-backed
-// external-resource registry the org-settings list+delete surface
-// (ListExternalResources / DeleteExternalResource) reads: List reconstructs
-// each provisioned external's definition off its authored RT (deduped to the
-// newest schema-version RT per name); Delete removes every RT registered under
-// a logical name (more than one schema-version RT can carry the same name —
-// see openchoreo.ExternalResourceRTName). *dependencies.ExternalResourceCatalog
-// satisfies it. The provision/value-collection paths build their RT-authoring
-// definition straight off the project's committed design (build_provision.go /
-// value_service.go), never a DB catalog — the external_resources table is
-// gone.
+// external-resource registry the org-settings list+delete+register+update
+// surface (ListExternalResources / DeleteExternalResource /
+// RegisterExternalResource / UpdateExternalResource) reads and writes: List
+// reconstructs each provisioned external's definition off its authored RT
+// (deduped to the newest schema-version RT per name); Ensure get-or-creates
+// the RT (no project Resource instance); Update PUTs an existing RT in place
+// so catalog-field edits persist when the hashed name is unchanged; Delete
+// removes every RT registered under a logical name (more than one
+// schema-version RT can carry the same name — see openchoreo.ExternalResourceRTName).
+// *dependencies.ExternalResourceCatalog satisfies it. The provision/value-
+// collection paths build their RT-authoring definition straight off the
+// project's committed design (build_provision.go / value_service.go), never
+// a DB catalog — the external_resources table is gone.
 type ExternalRTCatalog interface {
 	List(ctx context.Context, orgID string) ([]openchoreo.ExternalResourceDefinition, error)
+	Ensure(ctx context.Context, orgID string, rt *openchoreo.ResourceType) error
+	Update(ctx context.Context, orgID string, rt *openchoreo.ResourceType) error
 	Delete(ctx context.Context, orgID, name string) error
+}
+
+// CatalogValuePlane is the org value plane for Registered External resources.
+// Production wires a process-local MemoryValuePlane so list-after-register
+// shows envCells for the process lifetime. Tests inject Registered cells and
+// instances through this seam. ListExternalResources copies cells/instances
+// from the plane when non-nil; otherwise they stay empty and every live row
+// remains Project External.
+type CatalogValuePlane interface {
+	EnvCells(orgID, name string) []EnvCell
+	Instances(orgID, name string) []ResourceInstance
+	PutEnvCells(orgID, name string, cells []EnvCell)
+	PutInstances(orgID, name string, instances []ResourceInstance)
+}
+
+// OrgSecretWriter optionally persists Registered External secret bytes through
+// the existing SM-API vault layout with projectName "org-catalog" (sentinel,
+// not a real project) and returns the vault key the ResourceType CEL reads
+// as secretStorePath. Nil is a documented no-op — HTTP tests leave it unwired
+// and SecretStorePath then stays empty on the value plane.
+type OrgSecretWriter interface {
+	WriteOrgCatalogSecret(ctx context.Context, orgID, entityName string, data map[string]string) (vaultKey string, err error)
+}
+
+// OrgResourceDocs commits UTF-8 resource-docs files into the per-org
+// org-resource-docs repo. Nil is a documented no-op for URL/path rows —
+// HTTP tests leave it unwired except file-row tests. A file row with a
+// nil store returns a 500-class wrap.
+type OrgResourceDocs interface {
+	CommitUTF8(ctx context.Context, orgID, logicalName, fileName, content string) (path string, err error)
+}
+
+// EnvironmentLister lists OpenChoreo Environment names for the org namespace.
+// Empty org → empty slice, never nil error-for-empty.
+type EnvironmentLister interface {
+	ListNames(ctx context.Context, orgID string) ([]string, error)
 }
 
 // ProjectRef identifies one project (org + project id) for the cross-project
@@ -136,6 +177,17 @@ type BindingReader interface {
 	GetBinding(ctx context.Context, namespace, name string) (*openchoreo.ResourceReleaseBinding, error)
 }
 
+// WorkloadDepSource is the deployed-Workload consumer-dependency reader the
+// Overview list uses. openchoreo.ResourceClient satisfies it (the same client
+// Bindings and the external-resource catalog already share — not a second
+// HTTP stack). List is org-scoped then filtered to projectName; GetResource
+// 404s are dangling refs the service omits.
+type WorkloadDepSource interface {
+	ListWorkloadConsumerDeps(ctx context.Context, orgHandle, projectName string) ([]openchoreo.WorkloadConsumerDep, error)
+	GetResource(ctx context.Context, namespace, name string) (*openchoreo.Resource, error)
+	GetResourceType(ctx context.Context, namespace, name string) (*openchoreo.ResourceType, error)
+}
+
 // ProviderResolver resolves a dependency's provider endpoint in OpenChoreo. It
 // has two readers with different visibility rules, so all three resolves live on
 // one port (*dependencies.Catalog satisfies all of them):
@@ -172,4 +224,55 @@ type AccessStore interface {
 	FindOpenForTarget(ctx context.Context, orgID, providerProjectID, providerComponentName string) (*dependencies.AccessRequest, error)
 	UpdateStatus(ctx context.Context, id, status string) error
 	ListByProviderTask(ctx context.Context, providerTaskID string) ([]dependencies.AccessRequest, error)
+}
+
+// RolesEnsureOutcome is what one build-time roles ensure did.
+//
+// It carries no "did this project declare roles" flag: the gate asks
+// DeclaresRoles FIRST and does not reach the ensure otherwise, so a second
+// answer here would only be free to disagree with the one the gate acted on.
+type RolesEnsureOutcome struct {
+	// Summary is the human-readable account of what was created, reused, left
+	// alone or refused — the gate's closing comment.
+	Summary string
+	// Refusals is true when something was left untouched because the platform
+	// does not own it. Not a failure; a thing a human has to look at.
+	Refusals bool
+	// Credentials are the logins for the test accounts this project can sign in
+	// as at this version. They are published in the gate's closing comment,
+	// because that ticket is where the validation agent reads them from.
+	//
+	// This is the one field carrying a secret. It goes into the issue body and
+	// NOWHERE else: never into a log line, never into Summary, never into a
+	// ProvisionFailure reason.
+	Credentials []RolesCredential
+}
+
+// RolesCredential is one published test-account login.
+//
+// An empty Password means the platform holds the account but could not open its
+// seal. The comment says so per row rather than printing a blank, so a reader —
+// human or agent — is never handed an empty string that looks like a password.
+type RolesCredential struct {
+	Username  string
+	Password  string
+	Role      string
+	ColdStart bool
+}
+
+// RolesEnsurer makes the roles and test users a project's design declares real
+// on the platform identity provider, at build time and with NO MODEL IN THE
+// LOOP. Wired to the identity domain at the composition root.
+//
+// Enabled is false when the identity provider is not configured (a local stack
+// without one); the roles gate is then skipped entirely rather than failing
+// every build.
+type RolesEnsurer interface {
+	Enabled() bool
+	// DeclaresRoles reports whether the design at the tag carries a roles
+	// document. It is asked FIRST, so the gate can be minted open before the
+	// work starts — the shape every other provisioning gate has. An error here
+	// is a real failure, never "no roles".
+	DeclaresRoles(ctx context.Context, orgID, projectID, tag string) (bool, error)
+	EnsureRolesForBuild(ctx context.Context, orgID, projectID, tag string) (RolesEnsureOutcome, error)
 }

@@ -18,7 +18,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { apiRetryLine, isStreamFrame, readApiRetry } from "./diagnostics.js";
+import { apiRetryLine, isStreamFrame, readApiRetry, readStallSignal } from "./diagnostics.js";
 
 // The literal wire shape, copied from a live SDK message rather than from the
 // type declaration — the reader's job is to survive what actually arrives.
@@ -97,4 +97,81 @@ test("isStreamFrame: only the streaming frames", () => {
   assert.ok(!isStreamFrame({ type: "assistant", message: { content: [] } }));
   assert.ok(!isStreamFrame(RETRY));
   assert.ok(!isStreamFrame(null));
+});
+
+// --- The system messages that explain a silence, or an ending ---------------
+
+test("readStallSignal: an auto-compaction is minutes of silence with a name", () => {
+  // The stall shape api_retry cannot explain: no retries, no tool, no tokens —
+  // the run is compacting, and until now that reached the feed as nothing.
+  const line = readStallSignal({
+    type: "system",
+    subtype: "compact_boundary",
+    compact_metadata: { trigger: "auto", pre_tokens: 152_331, post_tokens: 38_120, duration_ms: 47_000 },
+    uuid: "u1",
+    session_id: "s1",
+  });
+  assert.equal(line?.level, "info", "compaction is healthy — it is reported, not warned about");
+  assert.equal(line?.summary, "[compact] auto compaction 152k → 38k tokens in 47s");
+});
+
+test("readStallSignal: a refusal with no fallback is the end of the turn, and says so", () => {
+  const line = readStallSignal({
+    type: "system",
+    subtype: "model_refusal_no_fallback",
+    original_model: "claude-sonnet-5",
+    request_id: "req_1",
+    api_refusal_category: "cyber",
+    api_refusal_explanation: "The request was declined.",
+    content: "",
+    uuid: "u1",
+    session_id: "s1",
+  });
+  assert.equal(line?.level, "error");
+  assert.equal(
+    line?.summary,
+    "[model] claude-sonnet-5 refused (cyber) and no fallback ran: The request was declined.",
+  );
+});
+
+test("readStallSignal: a denied tool call is named — the agent is working around a wall", () => {
+  // On the stream only since SDK 0.3.223. A DISALLOWED_TOOLS denial used to
+  // reach the feed as a tool call with a puzzling result and no reason.
+  const line = readStallSignal({
+    type: "system",
+    subtype: "permission_denied",
+    tool_name: "ScheduleWakeup",
+    tool_use_id: "toolu_1",
+    decision_reason_type: "rule",
+    message: "This tool is not available in this session",
+    uuid: "u1",
+    session_id: "s1",
+  });
+  assert.equal(line?.level, "warn");
+  assert.match(line?.summary ?? "", /^\[permission\] ScheduleWakeup denied by rule: /);
+});
+
+test("readStallSignal: prose from elsewhere is bounded", () => {
+  const line = readStallSignal({
+    type: "system",
+    subtype: "model_refusal_no_fallback",
+    original_model: "claude-sonnet-5",
+    api_refusal_explanation: "x".repeat(5_000),
+  });
+  assert.ok((line?.summary.length ?? 0) < 300, "an unbounded field cannot flood the feed");
+  assert.match(line?.summary ?? "", /…$/);
+});
+
+test("readStallSignal: a missing field degrades to a usable line, never to undefined text", () => {
+  // Same rule as readApiRetry: the image ships whatever SDK it ships.
+  const line = readStallSignal({ type: "system", subtype: "worker_shutting_down" });
+  assert.equal(line?.summary, "[worker] shutting down: unknown");
+  assert.equal(readStallSignal({ type: "system", subtype: "compact_boundary" })?.summary, "[compact] auto compaction");
+});
+
+test("readStallSignal: every other message is not a signal", () => {
+  assert.equal(readStallSignal(RETRY), undefined, "retries have their own line");
+  assert.equal(readStallSignal({ type: "system", subtype: "task_started" }), undefined);
+  assert.equal(readStallSignal({ type: "assistant", message: { content: [] } }), undefined);
+  assert.equal(readStallSignal(null), undefined);
 });

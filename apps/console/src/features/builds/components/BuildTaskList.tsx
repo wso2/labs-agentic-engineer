@@ -58,7 +58,7 @@ const RouterLink = createLink(MuiLink);
 const LinkButton = createLink(Button);
 
 /**
- * The build page's task list — the design's arrangement 2b (ADR-0020 §3).
+ * The build page's task list — the design's arrangement 2b (ADR-0021 §3).
  *
  * One row per task, gates included: a connection to configure and a feature to
  * write are peers here, each with its own way out (§4). That is what replaced
@@ -236,9 +236,9 @@ export function BuildTaskRow({
           sx={{ alignItems: "center", flexShrink: 0, pt: 0.625 }}
         >
           {state === "blocked" ? (
-            // The way out, on the row that needs it (ADR-0020 §4).
+            // The way out, on the row that needs it (ADR-0021 §4).
             <LinkButton
-              to="/settings/resources"
+              to="/resources"
               size="small"
               variant="outlined"
               endIcon={<ArrowUpRight size={13} />}

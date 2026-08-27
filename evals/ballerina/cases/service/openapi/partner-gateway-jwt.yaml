@@ -1,0 +1,216 @@
+openapi: 3.0.3
+info:
+  title: Partner Gateway API
+  version: 1.0.0
+paths:
+  /whoami:
+    get:
+      operationId: whoami
+      summary: What this token resolves to
+      responses:
+        "200":
+          description: The caller
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Caller"
+        "401":
+          description: The token was missing, expired or did not verify
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /catalogue:
+    get:
+      operationId: searchCatalogue
+      summary: Search the catalogue a partner is entitled to
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 200
+      responses:
+        "200":
+          description: Matching entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CatalogueEntry"
+        "401":
+          description: The token was missing, expired or did not verify
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+        "403":
+          description: The partner is not entitled to the catalogue
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /quotes:
+    post:
+      operationId: requestQuote
+      summary: Price a basket for the calling partner
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuoteRequest"
+      responses:
+        "201":
+          description: The quote
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Quote"
+        "401":
+          description: The token was missing, expired or did not verify
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+        "403":
+          description: The partner is not entitled to quote
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+        "422":
+          description: A line referenced an unknown sku
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /quotes/{quoteId}:
+    get:
+      operationId: getQuote
+      summary: Fetch a quote the calling partner owns
+      parameters:
+        - name: quoteId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The quote
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Quote"
+        "401":
+          description: The token was missing, expired or did not verify
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+        "404":
+          description: No such quote for this partner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+components:
+  schemas:
+    Caller:
+      type: object
+      required: [partnerId, subject, scopes, expiresAt]
+      properties:
+        partnerId:
+          type: string
+        subject:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        expiresAt:
+          type: string
+    CatalogueEntry:
+      type: object
+      required: [sku, name, unitPriceCents]
+      properties:
+        sku:
+          type: string
+        name:
+          type: string
+        unitPriceCents:
+          type: integer
+          format: int64
+        availableFrom:
+          type: string
+    QuoteLineRequest:
+      type: object
+      required: [sku, quantity]
+      properties:
+        sku:
+          type: string
+        quantity:
+          type: integer
+          format: int32
+          minimum: 1
+    QuoteRequest:
+      type: object
+      required: [lines]
+      properties:
+        reference:
+          type: string
+        lines:
+          type: array
+          items:
+            $ref: "#/components/schemas/QuoteLineRequest"
+    QuoteLine:
+      type: object
+      required: [sku, name, quantity, unitPriceCents, lineTotalCents]
+      properties:
+        sku:
+          type: string
+        name:
+          type: string
+        quantity:
+          type: integer
+          format: int32
+        unitPriceCents:
+          type: integer
+          format: int64
+        lineTotalCents:
+          type: integer
+          format: int64
+    Quote:
+      type: object
+      required: [quoteId, partnerId, lines, totalCents, expiresAt]
+      properties:
+        quoteId:
+          type: string
+        partnerId:
+          type: string
+        reference:
+          type: string
+        lines:
+          type: array
+          items:
+            $ref: "#/components/schemas/QuoteLine"
+        totalCents:
+          type: integer
+          format: int64
+        expiresAt:
+          type: string
+    ErrorMessage:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string

@@ -133,6 +133,32 @@ covers the coding run's own workflow skill and its local-mode overlay too: the
 library is mounted over the image's `/app/skills`, so `aep/SKILL.md` and
 `aep/overlays/local.md` are live-editable exactly like a stack skill.
 
+**`bal library` is live-editable on the same terms — in docker mode.** The
+`ballerina` skill drives that one tool by name, and a skill is only as good as
+what the tool it names returns, so tuning the two has to be one loop:
+
+```bash
+make bal-library-tool   # ~3s; builds the jar the next run mounts
+pnpm play <dir> code --yes --restore
+```
+
+Docker mode mounts that jar over the one the image INSTALLED, so it needs no
+rebuild; the baked copy — compiled by the runner image's own first stage from
+`packages/bal-library-tool` (ADR-0008) — is what a cluster run gets. Every run
+that overlays it says so, naming the jar. The version the mount targets is read
+from the tool's `gradle.properties`, which is what the image's build derives it
+from; bumping it without `make build-runner FORCE=1` aims the mount at a path
+that image does not have.
+
+Host mode cannot overlay anything: `bal library` is a `bal` tool, resolved out of
+**your own** `~/.ballerina`, so the loop there is the tool's `install-local.sh`.
+Rather than write into your home behind your back, a host run tells you when your
+working-tree jar was built after the installed one landed — by mtime, because a
+gradle jar is not byte-reproducible and a content comparison would call every
+unchanged rebuild stale — or when the tool is absent, in which case the skill
+falls through to `code-rules.md`, the same branch a stale image produces and the
+reason the skill documents it.
+
 **AI SDK DevTools is always on** (`src/devtools-default.ts`): every
 engineering-agent LLM call — the composed prompt, tool calls, usage, timing —
 is captured to `playground/.devtools/generations.json` (gitignored). Inspect

@@ -144,22 +144,3 @@ func firstDeploymentURL(list *gen.DeploymentList) string {
 	}
 	return ""
 }
-
-// mockValidationCredentials is the v1 test-credential provider: it returns a
-// shared mock account (admin/admin) for any request, because programmatic user
-// provisioning is not implemented yet. The account is marked Mock so the runner
-// can note in its report that auth-gated criteria ran against a stand-in login,
-// and the request hints (role/purpose/username) are ignored for now — they are
-// the contract a real per-project provider will honor later. admin/admin is the
-// OpenChoreo/Backstage portal admin used as a stand-in; it is not guaranteed to
-// be a valid end-user of a generated app.
-type mockValidationCredentials struct{}
-
-func (mockValidationCredentials) RequestCredentials(_ context.Context, _, _ string, _ validation.CredentialRequest) (validation.TestCredential, error) {
-	return validation.TestCredential{
-		Username: "admin",
-		Password: "admin",
-		Mock:     true,
-		Note:     "user provisioning not implemented; shared mock credentials — any role currently returns the same account",
-	}, nil
-}

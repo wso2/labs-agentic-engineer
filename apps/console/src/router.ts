@@ -33,4 +33,8 @@ declare module "@tanstack/react-router" {
   interface Register {
     router: typeof router;
   }
+  /** Composer → register form. History state, never a search param (reload must not re-seed chat). */
+  interface HistoryState {
+    registerPrompt?: string;
+  }
 }

@@ -97,6 +97,15 @@ func (s *Service) ProvisionForBuild(ctx context.Context, orgID, ocOrgID, project
 	}
 
 	var failures []ProvisionFailure
+
+	// The roles gate is driven by the DESIGN at the tag, not by the drawer
+	// inputs, so it runs on EVERY build that declares roles — including a
+	// rebuild whose dependencies are all already Ready and therefore carry no
+	// input at all. roles_gate.go carries why that matters.
+	if f := s.ensureRolesGate(ctx, orgID, projectID, tag, milestoneNumber); f != nil {
+		failures = append(failures, *f)
+	}
+
 	provisioned := make(map[string]bool, len(inputs))
 	for _, in := range inputs {
 		provisioned[strings.ToLower(in.Dependency)] = true
@@ -246,6 +255,11 @@ func (s *Service) authorExternalPrepared(ctx context.Context, orgID, ocOrgID, pr
 		ConfigKeys:  keys,
 	}
 	byEnv := designPreparedValues(keys)
+	registered := false
+	if cells := s.registeredEnvCells(ctx, orgID, in.Dependency); len(cells) > 0 {
+		byEnv = preparedValuesFromOrgCells(keys, cells)
+		registered = true
+	}
 
 	// External dependencies do not mint config-collection gates. When the caller
 	// supplies an existing gate, reconcile it; never discover or create one here.
@@ -273,6 +287,10 @@ func (s *Service) authorExternalPrepared(ctx context.Context, orgID, ocOrgID, pr
 		return fmt.Errorf("%w: %v", dependencies.ErrProvisionFailed, perr)
 	}
 
+	if registered {
+		recordResourceInstances(s.catalogValuePlane, orgID, projectID, in.Dependency, byEnv)
+	}
+
 	if execID != "" {
 		ref := result.BindingByEnv[defaultEnv]
 		if ref == "" {
@@ -285,6 +303,53 @@ func (s *Service) authorExternalPrepared(ctx context.Context, orgID, ocOrgID, pr
 			fmt.Sprintf("External resource `%s` configured (OC binding `%s`).", in.Dependency, ref))
 	}
 	return nil
+}
+
+// preparedValuesFromOrgCells builds AuthorPreparedValues inputs from Registered
+// org EnvCells: one entry per environment that appears on the plane, Plain
+// filled from non-secret configured cells. SecretStorePath is the org-catalog
+// vault key persisted on those cells (empty when no OrgSecretWriter was wired).
+func preparedValuesFromOrgCells(keys []spec.ConfigKey, cells []EnvCell) map[string]dependencies.PreparedEnvValues {
+	secret := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		if k.Secret {
+			secret[k.Key] = true
+		}
+	}
+	byEnv := map[string]dependencies.PreparedEnvValues{}
+	for _, c := range cells {
+		ev := byEnv[c.Environment]
+		if ev.Plain == nil {
+			ev.Plain = map[string]string{}
+		}
+		if c.Status == "configured" && !secret[c.Key] {
+			ev.Plain[c.Key] = c.Value
+		}
+		if c.SecretStorePath != "" {
+			ev.SecretStorePath = c.SecretStorePath
+		}
+		byEnv[c.Environment] = ev
+	}
+	return byEnv
+}
+
+// recordResourceInstances merges this project's authored environments into the
+// org value plane's instance list for a Registered External resource.
+func recordResourceInstances(plane CatalogValuePlane, orgID, projectID, name string, byEnv map[string]dependencies.PreparedEnvValues) {
+	existing := plane.Instances(orgID, name)
+	keep := make([]ResourceInstance, 0, len(existing))
+	for _, inst := range existing {
+		if inst.Project == projectID {
+			if _, authored := byEnv[inst.Environment]; authored {
+				continue
+			}
+		}
+		keep = append(keep, inst)
+	}
+	for env := range byEnv {
+		keep = append(keep, ResourceInstance{Project: projectID, Environment: env})
+	}
+	plane.PutInstances(orgID, name, keep)
 }
 
 // designPreparedValues derives the only build-time authoring values the server

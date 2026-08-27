@@ -25,10 +25,22 @@
 // run is WAITING ON, which is the diagnosis rather than the symptom:
 //
 //   - a tool is in flight  → the tool is slow or stuck, and the line names it
-//   - nothing is in flight → the model turn is slow or stuck
+//   - a subagent is running → its model turn is the slow half, and the line
+//                             names WHICH subagent
+//   - neither               → the lead's own model turn is slow or stuck
 //
 // Those are different faults with different fixes, and the feed could not
 // previously distinguish them at all.
+//
+// The subagent case is read off `emitterId`, not off the fan-out call: the
+// translator gives an `Agent` call no tool_use event of its own (from-sdk.ts
+// drops it so the feed does not print the section heading twice), so the only
+// trace of a running subagent on this stream is the attribution stamped on the
+// lines it produces. Deriving it from the fan-out call is what the code used to
+// claim and never did — measured on a live run, a subagent that went silent for
+// ten minutes and then failed produced four reports, every one of them saying
+// "no tool in flight" while a 22-minute `Agent` call was the thing being waited
+// on.
 //
 // "The model turn is stuck" was the end of the diagnosis and is now the middle
 // of it: `observeRetry` and `observeStream` carry the two things that tell those
@@ -51,10 +63,19 @@ import type { ApiRetryInfo } from "./diagnostics.js";
 // instead of one silent terminal.
 export const DEFAULT_IDLE_MS = 120_000;
 
+// What the SDK calls its fan-out tool, and what the feed labels a subagent's
+// section with. `Task` in SDK 0.2, `Agent` since 0.3 — this is display text
+// here, never a match, so it does not need the two-name set from-sdk.ts keeps.
+const FANOUT_TOOL = "Agent";
+
 interface InFlight {
   tool: string;
   summary: string;
   startedAt: number;
+  /** The fan-out call itself, as opposed to a tool call made inside one. */
+  fanOut?: boolean;
+  /** For a call made inside a subagent: which subagent. */
+  ownerLabel?: string;
 }
 
 export interface RunWatchdogOptions {
@@ -97,6 +118,12 @@ export function createRunWatchdog(opts?: RunWatchdogOptions): RunWatchdog {
   const emit = opts?.emit ?? defaultEmit;
 
   const inFlight = new Map<string, InFlight>();
+  // Fan-outs that have already settled. A subagent's id is registered from the
+  // lines it produces, so without this a stray late line about a FINISHED
+  // subagent would register a phantom that nothing ever closes, and the
+  // watchdog would report it as running for the rest of the run. One entry per
+  // subagent the run ever had, so it needs no cap.
+  const settledFanOuts = new Set<string>();
   let lastActivityAt = now();
   // Tracked separately from lastActivityAt so a repeat fires every idleMs of
   // continued silence rather than only once.
@@ -107,21 +134,33 @@ export function createRunWatchdog(opts?: RunWatchdogOptions): RunWatchdog {
   let lastRetry: { info: ApiRetryInfo; at: number } | undefined;
   let lastStreamAt = 0;
 
-  function oldestInFlight(): InFlight | undefined {
+  function oldestInFlight(pick: (call: InFlight) => boolean): InFlight | undefined {
     let oldest: InFlight | undefined;
     for (const call of inFlight.values()) {
+      if (!pick(call)) continue;
       if (!oldest || call.startedAt < oldest.startedAt) oldest = call;
     }
     return oldest;
   }
 
+  function runningFanOuts(): InFlight[] {
+    return [...inFlight.values()].filter((c) => c.fanOut);
+  }
+
+  function named(call: InFlight): string {
+    return call.summary ? `${call.tool} (${call.summary})` : call.tool;
+  }
+
   /**
    * Why the model turn is silent, when we know.
    *
-   * Appended to BOTH branches, not just the nothing-in-flight one: a fan-out
-   * lead's `Agent` call stays in flight for its subagent's whole run, so a
-   * retry storm inside that subagent surfaces under "waiting on Agent" — and
-   * that is the case where the cause is hardest to guess from outside.
+   * Appended to EVERY branch, not just the nothing-in-flight one: a stall
+   * inside a subagent surfaces under that subagent's line, and that is the case
+   * where the cause is hardest to guess from outside. Whether an api_retry
+   * raised INSIDE a subagent reaches the lead's message stream at all is not
+   * established — no retry frame arrived during the live stall this was
+   * measured on, which is consistent with both "no retries" and "not
+   * forwarded", so an empty cause here claims nothing.
    */
   function cause(t: number): string {
     if (lastRetry) {
@@ -136,10 +175,29 @@ export function createRunWatchdog(opts?: RunWatchdogOptions): RunWatchdog {
 
   function describe(): string {
     const t = now();
-    const oldest = oldestInFlight();
+    // A real tool beats the fan-out that owns it: "waiting on Bash (npm ci)" is
+    // the diagnosis, and "waiting on Agent" while a Bash of its own is open
+    // would be the symptom one level up.
+    const oldest = oldestInFlight((c) => !c.fanOut);
     if (oldest) {
-      const what = oldest.summary ? `${oldest.tool} (${oldest.summary})` : oldest.tool;
-      return `waiting on ${what} for ${seconds(t - oldest.startedAt)}${cause(t)}`;
+      const where = oldest.ownerLabel ? ` in subagent (${oldest.ownerLabel})` : "";
+      return `waiting on ${named(oldest)}${where} for ${seconds(t - oldest.startedAt)}${cause(t)}`;
+    }
+    const agents = runningFanOuts();
+    if (agents.length === 1) {
+      const a = agents[0];
+      return (
+        `no tool in flight inside ${named(a)}, running ${seconds(t - a.startedAt)}` +
+        ` — waiting on its model for ${seconds(t - lastActivityAt)}${cause(t)}`
+      );
+    }
+    if (agents.length > 1) {
+      // Naming one of several would be a coin flip: the lines interleave and
+      // any of them could be the silent one.
+      return (
+        `no tool in flight in any of ${agents.length} running subagents` +
+        ` — waiting on the model for ${seconds(t - lastActivityAt)}${cause(t)}`
+      );
     }
     return `no tool in flight — waiting on the model for ${seconds(t - lastActivityAt)}${cause(t)}`;
   }
@@ -151,8 +209,28 @@ export function createRunWatchdog(opts?: RunWatchdogOptions): RunWatchdog {
       lastRetry = undefined;
       lastStreamAt = 0;
       for (const e of events) {
+        // A subagent line is the fan-out call announcing itself — see the
+        // header. Its clock therefore starts at the subagent's FIRST line
+        // rather than at the call, a few seconds later than the truth and the
+        // only start this stream carries. Registered before the tool_result
+        // branch below so the fan-out's own closing result still settles it:
+        // that event carries the same id in both fields.
+        if (
+          e.emitter === "subagent" &&
+          e.emitterId &&
+          !inFlight.has(e.emitterId) &&
+          !settledFanOuts.has(e.emitterId)
+        ) {
+          inFlight.set(e.emitterId, {
+            tool: FANOUT_TOOL,
+            summary: e.emitterLabel ?? "",
+            startedAt: now(),
+            fanOut: true,
+          });
+        }
         if (!e.toolUseId) continue;
         if (e.kind === "tool_result") {
+          if (inFlight.get(e.toolUseId)?.fanOut) settledFanOuts.add(e.toolUseId);
           inFlight.delete(e.toolUseId);
           continue;
         }
@@ -160,7 +238,16 @@ export function createRunWatchdog(opts?: RunWatchdogOptions): RunWatchdog {
         // the git_commit/git_push/gh_action rewrites of a Bash command.
         const tool = "tool" in e && typeof e.tool === "string" ? e.tool : e.kind;
         const summary = "summary" in e && typeof e.summary === "string" ? e.summary : "";
-        inFlight.set(e.toolUseId, { tool, summary, startedAt: now() });
+        inFlight.set(e.toolUseId, {
+          tool,
+          summary,
+          startedAt: now(),
+          // Which subagent's work this is, so a stuck tool names its own
+          // section rather than leaving the reader to scroll for it.
+          ...(e.emitter === "subagent" && e.emitterId !== e.toolUseId && e.emitterLabel
+            ? { ownerLabel: e.emitterLabel }
+            : {}),
+        });
       }
     },
 

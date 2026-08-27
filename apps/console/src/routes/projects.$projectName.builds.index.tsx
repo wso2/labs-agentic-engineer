@@ -19,7 +19,7 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { BuildsLedger } from "../features/builds/components/BuildsLedger";
 
-// The version ledger (ADR-0020 §1). One version's story is its own page now.
+// The version ledger (ADR-0021 §1). One version's story is its own page now.
 //
 // `?tag=vN` used to select which version this page told the story of. That
 // surface moved, so an old link carrying the search param is redirected to the

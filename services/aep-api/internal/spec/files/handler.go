@@ -22,6 +22,7 @@ import (
 
 	"github.com/wso2/aep/aep-api/internal/gen"
 	"github.com/wso2/aep/aep-api/internal/platform/apierr"
+	"github.com/wso2/aep/aep-api/internal/platform/gitfs"
 	"github.com/wso2/aep/aep-api/internal/platform/tenant"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 	"github.com/wso2/aep/aep-api/internal/spec"
@@ -216,6 +217,8 @@ func mapFilesError(err error) error {
 		// us on every attempt. That is a concurrent-write conflict, not a
 		// server fault — surface it as a retryable 409, never a 500.
 		return apierr.Conflict("the repository changed during the write; retry")
+	case errors.Is(err, gitfs.ErrDiskAdmission):
+		return apierr.ServiceUnavailable("workspace disk is full — try again in a few minutes, or contact your platform admin")
 	default:
 		return apierr.Internal("internal error")
 	}

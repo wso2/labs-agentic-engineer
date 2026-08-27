@@ -38,6 +38,7 @@ import { projectChip } from "../lib/projectChip";
 import { RecentActivity } from "./RecentActivity";
 import { ComponentsList } from "./ComponentsList";
 import { OverviewPipeline } from "./OverviewPipeline";
+import { OverviewDependencies } from "./OverviewDependencies";
 
 function SectionError({
   what,
@@ -173,6 +174,7 @@ export function ProjectOverview({ projectName }: { projectName: string }) {
                 items={componentsQuery.data.items ?? []}
               />
             )}
+            <OverviewDependencies projectName={projectName} />
           </Grid>
         </Grid>
       </Stack>

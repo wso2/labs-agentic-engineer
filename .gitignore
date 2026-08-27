@@ -102,3 +102,6 @@ deployments/scripts/setup-local
 /.idea/inspectionProfiles/Project_Default.xml
 /.idea/vcs.xml
 /.idea/wso2-agentic-engineer-2.iml
+
+# Ballerina eval sweeps: scratch packages, transcripts and reports (on-demand, never CI)
+evals/ballerina/.runs/

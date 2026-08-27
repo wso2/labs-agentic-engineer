@@ -25,7 +25,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { FileBundle } from "@aep/agent-stream";
-import { buildFileTools } from "../src/agents/main/tools/files.js";
+import { buildFileTools, buildRegisterDraftTools } from "../src/agents/main/tools/files.js";
 import { buildTaskPlanTools } from "../src/agents/main/tools/task-plan.js";
 import { TaskPlan } from "../src/agents/main/task-plan-accumulator.js";
 import { instructions, buildInstructions, taskPlanInstructions, buildTaskPlanInstructions } from "../src/agents/main/prompt.js";
@@ -43,6 +43,11 @@ test("files tool set (no skills) is the file tools + the HITL question tools", (
     "ask_question",
     "ask_questions",
   ]);
+});
+
+test("draftExternalResource is not on the files set — only the register flow adds it", () => {
+  assert.equal("draftExternalResource" in buildFileTools(bundle()), false);
+  assert.deepEqual(Object.keys(buildRegisterDraftTools()), ["draftExternalResource"]);
 });
 
 test("files tool set with skills adds only the skill loader", () => {

@@ -22,6 +22,7 @@ import type { SpecFileEntry } from "./mapping";
 export type SpecSelection =
   | { kind: "file"; path: string }
   | { kind: "cell-diagram" }
+  | { kind: "security" }
   | { kind: "wireframe"; component: string; dslPath: string };
 
 export interface DesignComponentNode {
@@ -38,11 +39,24 @@ export interface DesignSection {
   hasComponents: boolean;
   /** Whether a project-level design.cell exists (drives the Architecture tab). */
   hasCellDsl: boolean;
+  /** Whether either half of the security design exists (drives the Security entry). */
+  hasSecurity: boolean;
   components: DesignComponentNode[];
 }
 
 /** The project-level cell-diagram DSL path (rendered via the Architecture tab, never as a file). */
 export const DESIGN_CELL_PATH = "specs/design/design.cell";
+
+/**
+ * The two halves of the security design. They are ONE rail entry with two tabs,
+ * not two documents: a user thinks about security as one subject, and the split
+ * exists because the platform has to parse half of it, which is not their
+ * problem. `lexicon.md` holds the same mapping in words.
+ */
+export const SECURITY_MD_PATH = "specs/design/security.md";
+export const ROLES_JSON_PATH = "specs/design/roles.json";
+
+const SECURITY_PATHS: readonly string[] = [SECURITY_MD_PATH, ROLES_JSON_PATH];
 
 // SpecFileEntry.path is the full repo-relative path (mapping.ts's current
 // scheme — the unprefixed room-key scheme it retired), so this must match
@@ -67,10 +81,16 @@ function isDsl(path: string): boolean {
 export function buildDesignSection(files: SpecFileEntry[]): DesignSection {
   const design = files.filter((f) => f.group === "designs");
   const hasCellDsl = design.some((f) => f.path === DESIGN_CELL_PATH);
+  const hasSecurity = design.some((f) => SECURITY_PATHS.includes(f.path));
   // design.cell is surfaced through the Architecture tab (streaming cell
   // diagram), never as a raw text file — keep it out of the overview list.
   const overview = design
-    .filter((f) => componentOf(f.path) === null && f.path !== DESIGN_CELL_PATH)
+    .filter(
+      (f) =>
+        componentOf(f.path) === null &&
+        f.path !== DESIGN_CELL_PATH &&
+        !SECURITY_PATHS.includes(f.path),
+    )
     .sort((a, b) => a.path.localeCompare(b.path));
 
   const byComponent = new Map<string, DesignComponentNode>();
@@ -91,7 +111,13 @@ export function buildDesignSection(files: SpecFileEntry[]): DesignSection {
   );
   for (const c of components) c.files.sort((a, b) => a.path.localeCompare(b.path));
 
-  return { overview, hasComponents: components.length > 0, hasCellDsl, components };
+  return {
+    overview,
+    hasComponents: components.length > 0,
+    hasCellDsl,
+    hasSecurity,
+    components,
+  };
 }
 
 /** Stable string identity for a selection (React keys + selected-state compare). */
@@ -101,6 +127,8 @@ export function selectionKey(sel: SpecSelection): string {
       return `file:${sel.path}`;
     case "cell-diagram":
       return "cell-diagram";
+    case "security":
+      return "security";
     case "wireframe":
       return `wireframe:${sel.component}`;
   }

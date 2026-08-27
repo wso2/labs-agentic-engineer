@@ -209,12 +209,14 @@ export function MessageList({
   expandedGroups,
   onToggleGroup,
   onOpenSpec,
+  showSpecLink = true,
   showWorkingTail,
 }: {
   feed: FeedBlock[];
   expandedGroups: Set<string>;
   onToggleGroup: (id: string) => void;
   onOpenSpec: () => void;
+  showSpecLink?: boolean;
   /** Show a tail "Working…" indicator when a turn is in flight but hasn't
    *  produced any content (and so has no running turn block of its own yet). */
   showWorkingTail: boolean;
@@ -234,6 +236,7 @@ export function MessageList({
             expandedGroups={expandedGroups}
             onToggleGroup={onToggleGroup}
             onOpenSpec={onOpenSpec}
+            showSpecLink={showSpecLink}
           />
         ),
       )}

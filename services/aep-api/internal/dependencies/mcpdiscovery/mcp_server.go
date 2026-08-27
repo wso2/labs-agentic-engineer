@@ -75,6 +75,7 @@ type mcpHandler struct {
 	resources     ExternalResourceReader
 	orgEndpoints  OrgEndpointLister
 	resourceTypes ResourceTypeLister
+	roles         RoleCatalogLister
 	remoteGit     RemoteGitReader
 	validateSpec  SpecValidator
 	normalizeSpec SpecNormalizer
@@ -88,16 +89,16 @@ type mcpHandler struct {
 // The acting org is resolved from the request context (bound by the auth
 // middleware), never from the request itself. A nil external-resource reader
 // makes the surface unavailable (503 — it is the surface's core catalog). A
-// nil orgEndpoints/resourceTypes degrades that one tool to an empty result; a
+// nil orgEndpoints/resourceTypes/roles degrades that one tool to an empty result; a
 // nil remoteGit makes the two remote-git tools return a tool error; a nil
 // validateSpec/normalizeSpec/fetchSpec makes the two spec tools return a tool
 // error.
 func NewMCPHandler(
-	er ExternalResourceReader, ep OrgEndpointLister, rt ResourceTypeLister, rg RemoteGitReader,
-	vs SpecValidator, ns SpecNormalizer, fs SpecFetcher,
+	er ExternalResourceReader, ep OrgEndpointLister, rt ResourceTypeLister, rc RoleCatalogLister,
+	rg RemoteGitReader, vs SpecValidator, ns SpecNormalizer, fs SpecFetcher,
 ) http.Handler {
 	h := &mcpHandler{
-		resources: er, orgEndpoints: ep, resourceTypes: rt, remoteGit: rg,
+		resources: er, orgEndpoints: ep, resourceTypes: rt, roles: rc, remoteGit: rg,
 		validateSpec: vs, normalizeSpec: ns, fetchSpec: fs,
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

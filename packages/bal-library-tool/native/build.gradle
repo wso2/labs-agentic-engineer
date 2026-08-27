@@ -1,0 +1,99 @@
+/*
+ *  Copyright (c) 2026, WSO2 LLC. (http://www.wso2.com)
+ *
+ *  WSO2 LLC. licenses this file to you under the Apache License,
+ *  Version 2.0 (the "License"); you may not use this file except
+ *  in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing,
+ *  software distributed under the License is distributed on an
+ *  "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *  KIND, either express or implied.  See the License for the
+ *  specific language governing permissions and limitations
+ *  under the License.
+ */
+
+plugins {
+    id 'java'
+    id 'jacoco'
+}
+
+description = 'Ballerina library tool native code'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}
+
+// Everything this tool needs at RUN time is already on the Ballerina distribution's classpath
+// (`bre/lib` ships gson, picocli and the CLI launcher), so the dependencies are compile-only and the
+// jar carries nothing but our own classes — roughly 370KB, no third-party code redistributed.
+//
+// BUILD time is a different question, and conflating the two is why the credential requirement below
+// went unnoticed: `org.ballerinalang:ballerina-cli` is published only to ballerina-platform's GitHub
+// Packages, so resolving it needs `packageUser`/`packagePAT` with `read:packages`. The whole of that
+// dependency is one interface, `io.ballerina.cli.BLauncherCmd`.
+dependencies {
+    compileOnly "org.ballerinalang:ballerina-cli:${ballerinaLangVersion}"
+    compileOnly "info.picocli:picocli:${picocliVersion}"
+    compileOnly "com.google.code.gson:gson:${gsonVersion}"
+
+    testImplementation "org.ballerinalang:ballerina-cli:${ballerinaLangVersion}"
+    testImplementation "info.picocli:picocli:${picocliVersion}"
+    testImplementation "com.google.code.gson:gson:${gsonVersion}"
+    testImplementation "org.testng:testng:${testngVersion}"
+}
+
+test {
+    useTestNG()
+    // The corpus is 12.4MB of JSON for one fixture and the suite holds several parsed at once. `bal`
+    // itself launches with -Xmx2048m, so this is the same ceiling the tool has in production.
+    maxHeapSize = '2048m'
+    systemProperty "project.version", "${project.version}"
+    testLogging {
+        events "failed"
+        exceptionFormat "full"
+    }
+    finalizedBy jacocoTestReport
+}
+
+// Coverage is a map of what the suite does not reach, not a score to chase. The reason it is wired at
+// all: the fidelity register lists defects whose fix sites are read once, deep in a payload walk, and a
+// line nothing executes is a line whose fix nothing will verify.
+jacoco {
+    toolVersion = '0.8.12'
+}
+
+jacocoTestReport {
+    dependsOn test
+    reports {
+        xml.required = true
+        html.required = true
+        csv.required = true
+    }
+}
+
+// A floor, set at what the suite reaches today rather than at an aspiration, so it fails on a
+// REGRESSION and never on an untouched gap. Raise it when a stage of the fidelity fix plan lands.
+jacocoTestCoverageVerification {
+    dependsOn jacocoTestReport
+    violationRules {
+        rule {
+            limit {
+                counter = 'INSTRUCTION'
+                minimum = 0.80
+            }
+        }
+        rule {
+            limit {
+                counter = 'BRANCH'
+                minimum = 0.70
+            }
+        }
+    }
+}
+
+check.dependsOn jacocoTestCoverageVerification

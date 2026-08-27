@@ -1,0 +1,22 @@
+prompt: |
+  An HTTP checkout service over Stripe. Customers and payments are created
+  through Stripe and the ids it hands back are what this service returns;
+  refunds go through it too, and refunding twice is a 409. What was taken from a
+  customer is listed back, filtered by status.
+
+  Stripe calls back on `/webhooks/stripe`. The `Stripe-Signature` header is an
+  HMAC-SHA256 of the timestamp and the raw body under a shared signing secret,
+  and an event whose signature does not verify is a 401 that changes nothing.
+
+  Generate the service from `openapi.yaml`. The secret key and the webhook
+  signing secret stay configurable. No tests.
+
+fixtures:
+  openapi.yaml: openapi/payments-stripe.yaml
+
+expect:
+  builds: true
+  imports:
+    - ballerina/http
+    - ballerinax/stripe
+    - ballerina/crypto

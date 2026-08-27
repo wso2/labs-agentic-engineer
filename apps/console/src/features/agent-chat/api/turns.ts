@@ -39,12 +39,20 @@ export class ConversationRotatedError extends Error {
  * wire as the string "true" because a form field has no other representation —
  * the server parses it, and the JSON path is unaffected.
  */
-function turnFormData(instruction: string, files: File[]): FormData {
+function turnFormData(instruction: string, files: File[], collab: boolean): FormData {
   const form = new FormData();
   form.append("instruction", instruction);
-  form.append("collab", "true");
+  if (collab) form.append("collab", "true");
   for (const file of files) form.append("files", file);
   return form;
+}
+
+/** JSON body for StartTurn. Register chat omits collab — there is no spec room. */
+export function startTurnBody(
+  instruction: string,
+  collab: boolean,
+): components["schemas"]["TurnInputBody"] {
+  return collab ? { instruction, collab: true } : { instruction };
 }
 
 /**
@@ -63,6 +71,7 @@ export async function startCollabTurn(
   conversationId: string,
   instruction: string,
   files: File[] = [],
+  collab = true,
 ): Promise<string> {
   const { data, error, response } = await client.POST(
     "/projects/{projectName}/agents/{conversationId}/messages",
@@ -78,15 +87,12 @@ export async function startCollabTurn(
             // through its default bodySerializer untouched (the browser sets the
             // multipart boundary), but the generated request type describes the
             // JSON Schema shape, not the wire.
-            body: turnFormData(instruction, files) as unknown as {
+            body: turnFormData(instruction, files, collab) as unknown as {
               instruction: string;
             },
           }
         : {
-            body: {
-              instruction,
-              collab: true,
-            },
+            body: startTurnBody(instruction, collab),
           }),
     },
   );

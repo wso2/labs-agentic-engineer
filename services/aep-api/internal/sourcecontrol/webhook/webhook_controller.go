@@ -141,7 +141,8 @@ func (c *webhookController) Receive(w http.ResponseWriter, r *http.Request) {
 	}
 
 	action := actionFromPayload(body)
-	res, err := c.deliveries.Persist(ctx, deliveryID, ocOrgID, event, action, body)
+	res, err := c.deliveries.Persist(ctx, deliveryID, ocOrgID, event, action,
+		redactPublishedCredentials(body))
 	if err != nil {
 		slog.ErrorContext(ctx, "webhook: persist failed",
 			"deliveryId", deliveryID, "event", event, "error", err, "result", "persist_failed")

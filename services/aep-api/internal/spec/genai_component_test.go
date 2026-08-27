@@ -430,8 +430,10 @@ func (m *memTurnRepo) row(t *testing.T, id string) spec.AgentTurn {
 
 type stubRepoResolver struct{ rec *sourcecontrol.GitRepository }
 
-func (s stubRepoResolver) GetRepo(_ context.Context, _, _ string) (*sourcecontrol.GitRepository, error) {
-	if s.rec == nil {
+func (s stubRepoResolver) GetRepo(_ context.Context, _, projectID string) (*sourcecontrol.GitRepository, error) {
+	// Match on project id so a synthetic Marketplace id does not silently
+	// receive the fixture repo (that harness lie hid the live 404).
+	if s.rec == nil || projectID != s.rec.ProjectID {
 		return nil, sourcecontrol.ErrRepoNotFound
 	}
 	return s.rec, nil
@@ -478,6 +480,8 @@ type rigConfig struct {
 	mcpBaseURL    string
 	recorder      spec.TurnActivityRecorder
 	conversations spec.ConversationRepository
+	repos         spec.RepoResolver
+	snapshots     sourcecontrol.SnapshotProvider
 }
 
 // withConversations wires the #430 thread store so the resolve/rotate endpoints
@@ -485,6 +489,18 @@ type rigConfig struct {
 // fence, keeping the pre-#430 tests' arbitrary conversation uuids valid).
 func withConversations(repo spec.ConversationRepository) rigOption {
 	return func(c *rigConfig) { c.conversations = repo }
+}
+
+// withRepos swaps the project-repo resolver (e.g. a counting stub that 404s
+// the synthetic Marketplace id while still serving testProj).
+func withRepos(r spec.RepoResolver) rigOption {
+	return func(c *rigConfig) { c.repos = r }
+}
+
+// withSnapshots swaps the snapshot engine (e.g. Ensure returns disk admission
+// so StartTurn can be asserted as 503, not opaque 500).
+func withSnapshots(p sourcecontrol.SnapshotProvider) rigOption {
+	return func(c *rigConfig) { c.snapshots = p }
 }
 
 // withRecorder wires an activity recorder so a committed turn's spec_updated
@@ -573,14 +589,22 @@ func newGenaiRig(t *testing.T, seed map[string]string, opts ...rigOption) *genai
 	if cfg.skillsRepo != nil {
 		skillsRepo = cfg.skillsRepo
 	}
+	repos := spec.RepoResolver(stubRepoResolver{rec: rec})
+	if cfg.repos != nil {
+		repos = cfg.repos
+	}
+	snapshots := sourcecontrol.SnapshotProvider(fx.Engine)
+	if cfg.snapshots != nil {
+		snapshots = cfg.snapshots
+	}
 	svc := spec.NewService(spec.ServiceDeps{
-		Repos:         stubRepoResolver{rec: rec},
+		Repos:         repos,
 		Git:           sourcecontrol.NewGitOpsService(stubResolver{}, fx.Engine),
 		Keys:          func(context.Context, string) (string, error) { return rig.key, nil },
 		Client:        client,
 		Turns:         turns,
 		Broker:        broker,
-		Snapshots:     fx.Engine,
+		Snapshots:     snapshots,
 		SkillsRepo:    skillsRepo,
 		Conversations: cfg.conversations,
 		MCPTokens:     cfg.mcpTokens,

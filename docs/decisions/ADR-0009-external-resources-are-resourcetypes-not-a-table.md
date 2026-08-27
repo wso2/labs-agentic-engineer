@@ -5,7 +5,7 @@ or SDK such as Stripe or OpenWeatherMap) together with its config-key schema —
 which env-var keys it reads and which are secret. The org needs a **registry**
 of these so the designing agent can reuse an already-registered external
 (name + schema) across designs and projects instead of re-proposing it, and so
-the org-settings Resources view can list them.
+the Resources catalog (`/resources`) can list them.
 
 The original design backed that registry with a Postgres `external_resources`
 table (one row per `(org_id, name)`, upserted at design save). But OpenChoreo
@@ -29,9 +29,9 @@ ResourceType is **self-describing**:
 | `spec.parameters` | the config-key schema (per-key description/default) |
 | `spec.outputs` | secret classification — `secretKeyRef` = secret, `configMapKeyRef` = plain |
 
-The RT is authored at **provision time** (`EnsureResourceType`, get-or-create).
+The RT is authored at **provision time** for a Project External (`EnsureResourceType`, get-or-create), and at **register** for a Registered External (ADR-0021).
 Reads — the MCP `list_external_resources` / `get_external_resource_schema`
-discovery tools and the org-settings Resources tab — reconstruct the definition
+discovery tools and Resources (`/resources`) — reconstruct the definition
 straight from the RTs via `openchoreo.ExternalDefinitionFromRT`. Secret
 classification for provisioning + build reads the component's committed
 `design.json` `config[]`, unioned across consumers with secret-wins — never the
@@ -40,14 +40,16 @@ registry. This keeps the external RT symmetric with the platform-resource
 
 ## Consequence — provision-gated reuse
 
-Because the RT is authored at provision, an external that has been *designed*
-but *never provisioned* anywhere is not yet in the registry, so it is not
-reusable or listed until its first provision. This is accepted: resolution
-correctness is identical (a design carries its own full `config[]` regardless),
-only the *timing* of cross-design reuse differs, and it buys a single source of
-truth with no table to keep in sync. Editing only an external's description does
+Because a Project External's RT is authored at provision, one that has been
+*designed* but *never provisioned* is not yet in the registry. A Registered
+External is listed from register, before any project consumes it (ADR-0021).
+Resolution correctness is identical (a design carries its own full `config[]`
+regardless); only the *timing* of cross-design reuse differs, and it buys a
+single source of truth with no table to keep in sync. Editing only an external's description does
 not re-author its RT (the name hashes over keys, not description); the
 description lives on the existing RT's annotation.
 
 Related: ADR-0003 (resolution is read-time), ADR-0007 (resource-type behavior
-keys on `aep.wso2.com/*` markers, not names).
+keys on `aep.wso2.com/*` markers, not names), ADR-0021 (a **Registered External
+resource** is authored at register, marked by consumption instructions on this
+RT — not only at first provision).

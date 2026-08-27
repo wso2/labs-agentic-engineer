@@ -371,3 +371,16 @@ export function eagerSkillsFor(turn: TurnSpec): string[] {
 export function toolsetFor(turn: TurnSpec): Toolset {
   return turn.kind === "plan" ? "task-plan" : "files";
 }
+
+/**
+ * Synthetic Marketplace register project (console `MARKETPLACE_CHAT_PROJECT`).
+ * Follow-up answers on this thread are classified as `chat`, not the
+ * `/register-external-resource` flow — they still need the draft tool.
+ */
+export const MARKETPLACE_REGISTER_PROJECT = "__marketplace_register__";
+
+/** Marketplace register chat needs a draft tool the files set does not carry. */
+export function wantsRegisterDraftTool(turn: TurnSpec, projectId?: string): boolean {
+  if (projectId === MARKETPLACE_REGISTER_PROJECT) return true;
+  return turn.kind === "flow" && turn.skill === "register-external-resource";
+}

@@ -87,3 +87,36 @@ func assertResourceCeilingsPresent(t *testing.T, props map[string]any) {
 		}
 	}
 }
+
+// The runner may BURST but must not RESERVE what it burst to: a request is held
+// for the pod's whole life and a limit is only a ceiling, so a request equal to
+// the limit would hold cores idle through the model waits that are most of a
+// run — and would out-weight every other pod on the node under contention,
+// because cgroup CPU weight is proportional to requests.
+func TestCodingAgentReservesFarLessCPUThanItMayBurstTo(t *testing.T) {
+	ct := CodingAgentComponentType()
+	spec, _ := ct["spec"].(map[string]any)
+	props := mustFindSchemaProps(t, spec)
+
+	req := props["cpuRequest"].(map[string]any)
+	lim := props["cpuLimit"].(map[string]any)
+
+	if req["default"] != "500m" {
+		t.Errorf("cpuRequest default = %v, want 500m — the reservation must stay small", req["default"])
+	}
+	if lim["default"] != "3" {
+		t.Errorf("cpuLimit default = %v, want 3", lim["default"])
+	}
+	// The ceiling is the schema's job, not the caller's: nothing passes these
+	// parameters, so the enum is the only thing standing between a runner and
+	// the whole node.
+	enum, _ := lim["enum"].([]any)
+	if len(enum) == 0 || enum[len(enum)-1] != "3" {
+		t.Errorf("cpuLimit enum = %v, want a ceiling of 3", enum)
+	}
+	for _, v := range enum {
+		if v == "4" || v == "6" || v == "8" {
+			t.Errorf("cpuLimit enum offers %v — the k3d node has 6 vCPU shared with the whole stack", v)
+		}
+	}
+}

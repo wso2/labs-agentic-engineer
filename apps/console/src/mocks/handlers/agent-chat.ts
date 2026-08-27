@@ -34,6 +34,7 @@
 
 import { http, HttpResponse } from "msw";
 import { ANSWER_PREFIX, ANSWERS_PREFIX } from "@aep/agent-stream";
+import { registerChatFrames } from "./registerChatFrames";
 import {
   MAX_ATTACHMENT_FILES,
   MAX_ATTACHMENT_FILE_BYTES,
@@ -289,6 +290,14 @@ export const agentChatHandlers = [
         { type: "text-delta", delta: "Let me try that…" },
         { type: "turn-failed", message: "Mock turn failure (instruction contained 'fail')." },
       ]);
+    }
+    const registerFrames = registerChatFrames(
+      instruction,
+      String(params.projectName),
+      turnId,
+    );
+    if (registerFrames) {
+      return sse(registerFrames);
     }
     // Grilling scenarios (ADR-0012 / #270) — keyed on the /start flow command
     // or a typed trigger, never on a mere mention of "grill" in an edit

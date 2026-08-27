@@ -95,6 +95,21 @@ func (b buildProvisionStatus) Ready(ctx context.Context, orgID, projectID, depNa
 	return st.Status != "unknown", nil
 }
 
+// buildOrgCatalog adapts provisioning.Service onto preflight's OrgCatalogReader:
+// a Registered External (org env cells, or a catalog RT that still carries
+// consumption instructions after the value plane was wiped) must not collect
+// values. Nil service is fail-open (HasOrgEnvCells false).
+type buildOrgCatalog struct {
+	svc *provisioning.Service
+}
+
+func (b buildOrgCatalog) HasOrgEnvCells(ctx context.Context, orgID, name string) bool {
+	if b.svc == nil {
+		return false
+	}
+	return b.svc.HasOrgEnvCells(ctx, orgID, name)
+}
+
 // buildGateResolver adapts the provisioning feature onto the build plan path's
 // GateResolver port: author the version's dependencies and mint its
 // `provision` gates INTO the version's milestone, so the run's dispatch

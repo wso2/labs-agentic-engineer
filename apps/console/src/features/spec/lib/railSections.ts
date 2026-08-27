@@ -177,12 +177,14 @@ export function reasonCount(reasons: SectionReason[]): number {
 /**
  * The three sections, in journey order, each carrying its state and reasons.
  *
- * ACTIVE is claimed for at most ONE section — the earliest that has nothing in
- * it — and only while an agent is working. Once every section holds something
- * nothing pulses: a turn is known project-wide, never per document, so there is
- * no honest way to say which one is being worked on, and a pulse on the wrong
- * section is worse than a still rail. The per-document work that makes this
- * precise waits on agents declaring their plan before they write.
+ * ACTIVE is claimed for at most ONE section, only while an agent is working,
+ * and WHICH one comes from the running turn's flow token — with one fallback:
+ * a flowless turn on a project that holds nothing yet is Requirements work,
+ * because nothing downstream can be written yet (#629). Beyond that a turn is known
+ * project-wide, never per document, so an unplaceable turn pulses nothing —
+ * a pulse on the wrong section is worse than a still rail. The per-document
+ * work that makes this precise waits on agents declaring their plan before
+ * they write.
  *
  * ATTENTION never outranks ACTIVE: an agent working on a stale design is
  * already resolving it, and a warning about the thing being fixed while it is
@@ -213,10 +215,23 @@ export function railSections(input: RailInput): RailSection[] {
   // that will change. An unrecognised flow (a plain chat turn, an org's own
   // skill) pulses nothing: an agent IS working, but nothing here can say where,
   // and a pulse on the wrong section is worse than a still rail.
+  //
+  // One exception, by elimination rather than by guess (#629): while the
+  // project holds NOTHING — no requirements, no design, no validation — a turn
+  // cannot be writing anything but the first requirements document; everything
+  // downstream derives from it. And the turn this catches is the COMMON one,
+  // not an edge: a member's interview answers are plain prose, not a `/<skill>`
+  // command, so the very turn that writes that first document carries no flow.
+  // Unattributed, it left the workspace showing "Nothing written yet" plus a
+  // Retry against work in flight. The moment anything exists the honest
+  // silence above resumes — a flowless turn could then be touching anything.
+  const projectEmpty = !input.hasRequirements && !input.hasDesign && !input.hasValidation;
   const activeID =
     input.agentWorking && Object.hasOwn(SECTION_FOR_FLOW, input.agentFlow)
       ? SECTION_FOR_FLOW[input.agentFlow]
-      : undefined;
+      : input.agentWorking && projectEmpty
+        ? "requirements"
+        : undefined;
 
   const section = (
     id: RailSection["id"],

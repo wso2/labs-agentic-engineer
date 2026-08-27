@@ -32,6 +32,7 @@ import {
   isQuestionTool,
   normalizeAnswers,
   parseQuestionsInput,
+  pendingAnswerableQuestion,
 } from "./questionCards";
 import type { QuestionAnswer } from "@aep/agent-stream";
 import type { ChatMessage } from "./chatStore";
@@ -302,5 +303,16 @@ describe("answerableQuestionIds", () => {
 
   it("supersedes earlier questions but not later ones, in one pass", () => {
     expect(answerableQuestionIds([question("q1"), user("u1"), question("q2")])).toEqual(new Set(["q2"]));
+  });
+});
+
+describe("pendingAnswerableQuestion", () => {
+  it("returns the newest answerable question", () => {
+    const q2 = question("q2");
+    expect(pendingAnswerableQuestion([question("q1"), user("u1"), q2])).toBe(q2);
+  });
+
+  it("returns undefined when a later user message superseded the question", () => {
+    expect(pendingAnswerableQuestion([question("q1"), user("u2")])).toBeUndefined();
   });
 });

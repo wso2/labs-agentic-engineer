@@ -19,6 +19,7 @@ package openchoreo
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -31,7 +32,7 @@ func TestBuildExternalResourceType_PlainAndSecret(t *testing.T) {
 		{Key: "OPENWEATHER_API_KEY", Secret: true, Description: "API key"},
 	}
 	// OpenWeather shape: a plain base URL + a secret API key.
-	rt, err := BuildExternalResourceType("openweather", "Weather data provider", keys)
+	rt, err := BuildExternalResourceType("openweather", "Weather data provider", keys, "", nil)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -133,7 +134,7 @@ func TestBuildExternalResourceType_AllPlain_NoExternalSecret(t *testing.T) {
 
 	rt, err := BuildExternalResourceType("plainsvc", "", []ExternalResourceConfigKey{
 		{Key: "BASE_URL", Secret: false},
-	})
+	}, "", nil)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -150,13 +151,13 @@ func TestBuildExternalResourceType_AllPlain_NoExternalSecret(t *testing.T) {
 func TestBuildExternalResourceType_Errors(t *testing.T) {
 	t.Parallel()
 
-	if _, err := BuildExternalResourceType("", "", []ExternalResourceConfigKey{{Key: "X"}}); err == nil {
+	if _, err := BuildExternalResourceType("", "", []ExternalResourceConfigKey{{Key: "X"}}, "", nil); err == nil {
 		t.Error("want error on empty name")
 	}
-	if _, err := BuildExternalResourceType("r", "", nil); err == nil {
+	if _, err := BuildExternalResourceType("r", "", nil, "", nil); err == nil {
 		t.Error("want error on no keys")
 	}
-	if _, err := BuildExternalResourceType("r", "", []ExternalResourceConfigKey{{Key: ""}}); err == nil {
+	if _, err := BuildExternalResourceType("r", "", []ExternalResourceConfigKey{{Key: ""}}, "", nil); err == nil {
 		t.Error("want error on empty config key")
 	}
 }
@@ -223,7 +224,7 @@ func TestExternalDefinitionFromRT_RoundTrips(t *testing.T) {
 		{Key: "SF_REGION", Secret: false, Description: "deployment region", DefaultValue: "us-east-1"},
 		{Key: "SF_TOKEN", Secret: true, Description: "API token"},
 	}
-	rt, err := BuildExternalResourceType("salesforce", "Salesforce CRM", keys)
+	rt, err := BuildExternalResourceType("salesforce", "Salesforce CRM", keys, "", nil)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -247,6 +248,107 @@ func TestExternalDefinitionFromRT_RoundTrips(t *testing.T) {
 		if got.Key != want.Key || got.Secret != want.Secret || got.Description != want.Description || got.DefaultValue != want.DefaultValue {
 			t.Errorf("Config[%d] = %+v, want %+v", i, got, want)
 		}
+	}
+}
+
+func TestExternalDefinitionFromRT_ReadsConsumptionAnnotations(t *testing.T) {
+	t.Parallel()
+
+	keys := []ExternalResourceConfigKey{
+		{Key: "SF_REGION", Secret: false},
+		{Key: "SF_TOKEN", Secret: true},
+	}
+	docs := []ResourceDoc{
+		{Type: "openapi", URL: "https://example.com/openapi.yaml"},
+		{Type: "documentation", Path: "docs/README.md"},
+	}
+	rt, err := BuildExternalResourceType("salesforce", "Salesforce CRM", keys, "Call REST with the token.", docs)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if rt.Metadata.Annotations[consumptionInstructionsAnnotation] != "Call REST with the token." {
+		t.Fatalf("consumption-instructions annotation = %q", rt.Metadata.Annotations[consumptionInstructionsAnnotation])
+	}
+	var gotDocs []ResourceDoc
+	if err := json.Unmarshal([]byte(rt.Metadata.Annotations[resourceDocsAnnotation]), &gotDocs); err != nil {
+		t.Fatalf("resource-docs annotation: %v", err)
+	}
+	if !reflect.DeepEqual(gotDocs, docs) {
+		t.Fatalf("resource-docs pointers = %+v, want %+v (type+url/path only, no spec bodies)", gotDocs, docs)
+	}
+
+	empty, err := BuildExternalResourceType("salesforce", "Salesforce CRM", keys, "", nil)
+	if err != nil {
+		t.Fatalf("build empty: %v", err)
+	}
+	if _, ok := empty.Metadata.Annotations[consumptionInstructionsAnnotation]; ok {
+		t.Fatal("empty consumptionInstructions must omit the annotation")
+	}
+	if _, ok := empty.Metadata.Annotations[resourceDocsAnnotation]; ok {
+		t.Fatal("empty resourceDocs must omit the annotation")
+	}
+
+	def, ok := ExternalDefinitionFromRT(rt)
+	if !ok {
+		t.Fatal("want reconstructable RT")
+	}
+	if def.ConsumptionInstructions != "Call REST with the token." {
+		t.Errorf("ConsumptionInstructions = %q", def.ConsumptionInstructions)
+	}
+	if len(def.ResourceDocs) != 2 {
+		t.Fatalf("ResourceDocs = %+v", def.ResourceDocs)
+	}
+	if def.ResourceDocs[0].Type != "openapi" || def.ResourceDocs[0].URL != "https://example.com/openapi.yaml" {
+		t.Errorf("ResourceDocs[0] = %+v", def.ResourceDocs[0])
+	}
+	if def.ResourceDocs[1].Type != "documentation" || def.ResourceDocs[1].Path != "docs/README.md" {
+		t.Errorf("ResourceDocs[1] = %+v", def.ResourceDocs[1])
+	}
+	want := ExternalResourceDefinition{
+		Name:                    def.Name,
+		Description:             def.Description,
+		Config:                  def.Config,
+		ConsumptionInstructions: def.ConsumptionInstructions,
+		ResourceDocs:            def.ResourceDocs,
+	}
+	if !reflect.DeepEqual(def, want) {
+		t.Errorf("ExternalDefinitionFromRT must not invent envCells, got %+v", def)
+	}
+}
+
+func TestExternalDefinitionFromRT_IgnoresMalformedResourceDocs(t *testing.T) {
+	t.Parallel()
+
+	rt, err := BuildExternalResourceType("salesforce", "", []ExternalResourceConfigKey{{Key: "TOKEN", Secret: true}}, "", nil)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	rt.Metadata.Annotations[resourceDocsAnnotation] = `{not-json`
+
+	def, ok := ExternalDefinitionFromRT(rt)
+	if !ok {
+		t.Fatal("malformed resource-docs must not fail reconstruction")
+	}
+	if len(def.ResourceDocs) != 0 {
+		t.Errorf("malformed resource-docs must leave ResourceDocs empty, got %+v", def.ResourceDocs)
+	}
+}
+
+func TestExternalDefinitionFromRT_DropsUnsupportedResourceDocTypes(t *testing.T) {
+	t.Parallel()
+
+	rt, err := BuildExternalResourceType("salesforce", "", []ExternalResourceConfigKey{{Key: "TOKEN", Secret: true}}, "", nil)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	rt.Metadata.Annotations[resourceDocsAnnotation] = `[{"type":"openapi","url":"https://example.com/openapi.yaml"},{"type":"swagger"},{"type":""}]`
+
+	def, ok := ExternalDefinitionFromRT(rt)
+	if !ok {
+		t.Fatal("want reconstructable RT")
+	}
+	if len(def.ResourceDocs) != 1 || def.ResourceDocs[0].Type != "openapi" || def.ResourceDocs[0].URL != "https://example.com/openapi.yaml" {
+		t.Fatalf("unsupported types must be dropped, got %+v", def.ResourceDocs)
 	}
 }
 

@@ -36,16 +36,26 @@ type mcpTool struct {
 }
 
 // externalResourceView is the JSON shape returned to the agent for one
-// registered external resource.
+// registered external resource (including zero-consumer Registered rows).
 type externalResourceView struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description,omitempty"`
-	ConfigKeys  []configKeyDTO `json:"configKeys"`
+	Name                    string           `json:"name"`
+	Description             string           `json:"description,omitempty"`
+	ConfigKeys              []configKeyDTO   `json:"configKeys"`
+	ConsumptionInstructions string           `json:"consumptionInstructions,omitempty"`
+	ResourceDocs            []resourceDocDTO `json:"resourceDocs,omitempty"`
 }
 
 type configKeyDTO struct {
 	Key    string `json:"key"`
 	Secret bool   `json:"secret,omitempty"`
+}
+
+// resourceDocDTO is an org resource-docs pointer (type + URL or path) — never
+// file bodies or secret values.
+type resourceDocDTO struct {
+	Type string `json:"type"`
+	URL  string `json:"url,omitempty"`
+	Path string `json:"path,omitempty"`
 }
 
 // orgEndpointView is the JSON shape returned to the agent for one published org
@@ -140,9 +150,11 @@ func mcpTools() []mcpTool {
 		{
 			Name: "list_external_resources",
 			Description: "List the external resources (third-party APIs/services) already registered in " +
-				"this organization. Use this BEFORE proposing an `external` dependency so you reuse an " +
-				"existing external resource name + its config-key schema instead of inventing a new one. " +
-				"Returns each external resource's name, description, and config keys (with which are secret).",
+				"this organization — including Registered records that no project has consumed yet. Use this " +
+				"BEFORE proposing an `external` dependency so you reuse an existing external resource name + " +
+				"its config-key schema instead of inventing a new one. Returns each external resource's name, " +
+				"description, config keys (with which are secret), consumptionInstructions, and resourceDocs " +
+				"pointers ({type, url} or {type, path} — never file bodies).",
 			InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
 		},
 		{
@@ -185,6 +197,18 @@ func mcpTools() []mcpTool {
 				"dependency, with a `description` of what the type provides and when to depend on it, its " +
 				"provisioning parameters, and the outputs it exposes. Pick the type whose description " +
 				"matches the need. Read-only — you never author these.",
+			InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+		},
+		{
+			Name: "list_roles",
+			Description: "List the roles that already exist on the platform identity provider. " +
+				"Roles are SHARED across projects, so reuse a matching row's name verbatim instead " +
+				"of inventing a near-duplicate — take the row whose `description` matches the need, " +
+				"not the one whose name echoes the requirement's wording. Each row gives the role " +
+				"`name`, its `description`, `platformCreated` (true when this platform created it — " +
+				"only those can be given test users) and `memberCount`. Read-only: you never author " +
+				"these, and nothing you do creates one. The platform creates the roles your " +
+				"`specs/design/roles.json` declares when the user clicks Build.",
 			InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
 		},
 		{
@@ -349,6 +373,17 @@ func handleToolCall(w http.ResponseWriter, r *http.Request, h *mcpHandler, orgHa
 			return
 		}
 		writeToolText(w, req.ID, mustJSON(map[string]any{"resourceTypes": types}))
+	case "list_roles":
+		if h.roles == nil {
+			writeToolText(w, req.ID, mustJSON(map[string]any{"roles": []any{}}))
+			return
+		}
+		roles, err := h.roles.ListRoleCatalog(r.Context())
+		if err != nil {
+			writeToolError(w, req.ID, fmt.Sprintf("list roles: %v", err))
+			return
+		}
+		writeToolText(w, req.ID, mustJSON(map[string]any{"roles": roles}))
 	case "get_remote_git_file_contents":
 		if h.remoteGit == nil {
 			writeToolError(w, req.ID, "remote git reader not configured")
@@ -459,15 +494,25 @@ func (h *mcpHandler) validateAndNormalize(raw []byte) validateSpecView {
 // toExternalResourceView projects an external resource's definition —
 // reconstructed from its authored OpenChoreo ResourceType via
 // openchoreo.ExternalDefinitionFromRT — to the agent-facing shape (name,
-// description, and its config keys with the secret flag). The JSON shape is
-// unchanged from the pre-Task-3 DB-backed projection: only the source of `er`
-// moved (org RT registry, not the external_resources table).
+// description, config keys with the secret flag, consumptionInstructions, and
+// resourceDocs pointers). Ensure authors the RT at register, so a
+// zero-consumer Registered row is listable here once these fields are carried.
 func toExternalResourceView(er *openchoreo.ExternalResourceDefinition) externalResourceView {
 	keys := make([]configKeyDTO, 0, len(er.Config))
 	for _, k := range er.Config {
 		keys = append(keys, configKeyDTO{Key: k.Key, Secret: k.Secret})
 	}
-	return externalResourceView{Name: er.Name, Description: er.Description, ConfigKeys: keys}
+	docs := make([]resourceDocDTO, 0, len(er.ResourceDocs))
+	for _, d := range er.ResourceDocs {
+		docs = append(docs, resourceDocDTO{Type: d.Type, URL: d.URL, Path: d.Path})
+	}
+	return externalResourceView{
+		Name:                    er.Name,
+		Description:             er.Description,
+		ConfigKeys:              keys,
+		ConsumptionInstructions: er.ConsumptionInstructions,
+		ResourceDocs:            docs,
+	}
 }
 
 // maxToolFileBytes caps the file content one tool result may carry. A tool

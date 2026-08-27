@@ -1,0 +1,100 @@
+openapi: 3.0.3
+info:
+  title: Alert Dispatch API
+  version: 1.0.0
+paths:
+  /alerts:
+    post:
+      operationId: raiseAlert
+      summary: Raise an alert and text everyone on call
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewAlert"
+      responses:
+        "202":
+          description: The alert as recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Alert"
+        "400":
+          description: The alert was rejected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+  /alerts/{alertId}:
+    get:
+      operationId: getAlert
+      summary: Fetch a raised alert and its delivery outcome
+      parameters:
+        - name: alertId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The alert
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Alert"
+        "404":
+          description: No such alert
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+components:
+  schemas:
+    NewAlert:
+      type: object
+      required: [severity, summary, recipients]
+      properties:
+        severity:
+          type: string
+          enum: [info, warning, critical]
+        summary:
+          type: string
+        recipients:
+          type: array
+          items:
+            type: string
+    Delivery:
+      type: object
+      required: [recipient, delivered]
+      properties:
+        recipient:
+          type: string
+        delivered:
+          type: boolean
+        reference:
+          type: string
+        failure:
+          type: string
+    Alert:
+      type: object
+      required: [alertId, severity, summary, raisedAt, deliveries]
+      properties:
+        alertId:
+          type: string
+        severity:
+          type: string
+        summary:
+          type: string
+        raisedAt:
+          type: string
+        deliveries:
+          type: array
+          items:
+            $ref: "#/components/schemas/Delivery"
+    ErrorMessage:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string

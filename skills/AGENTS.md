@@ -21,6 +21,16 @@ and writes the mirror itself (`local_skill_mirror.ts`), applying the same rule.
 The library is bind-mounted from the working tree in dev (`setup-k3d.sh` for the
 cluster, `pnpm play` for the playground), so **a skill edit needs no rebuild**.
 
+A **tool** a skill names by command is the exception — it is installed, not
+mounted, so a change to one is NOT live until it is. `evals/ballerina/AGENTS.md`
+has the per-mode table and the loop for measuring whether a change to the
+`ballerina` skill did anything.
+
+One result from that loop worth knowing before writing any skill: an instruction
+about *how a command is invoked in a shell* does not land — 19/19 lookups stayed
+piped across a skill edit saying otherwise, and no thinking block ever mentioned
+piping. An instruction about *which command to run* does.
+
 ## Kinds — `metadata.aep.kind` in frontmatter
 
 An absent kind means `org`, which is a real decision, not a default to lean on:
@@ -139,6 +149,14 @@ its design system without a platform change.
   outright while `go` required it for an unmanaged service). A cross-stack
   *practice* ("read config in one place at startup") is the contract's; **which
   file it lands in** is the stack skill's.
+- **A tool documents itself; a skill points at it.** Where a stack skill drives a
+  tool the platform ships, the verbs, flags and output rules belong in that tool's
+  `--help`, and the skill says to run it. Same argument as above and a sharper
+  version of it: the two ship on different clocks — a tool rides a runner
+  image, a skill rides the org's library — so a copy here goes stale with nothing
+  to catch it. `ballerina` is the worked example: `bal library --help` carries the
+  chain and how to read a document, the skill carries only what surrounds the tool
+  (`packages/bal-library-tool/design/decisions/ADR-0011-…`).
 - Inside `aep`, the tie-break: a rule naming `git`/`gh`/an issue/a PR belongs to
   `SKILL.md`; one naming a path, a file or an env var belongs to the component
   contract. The contract is stated as information rather than a build procedure,

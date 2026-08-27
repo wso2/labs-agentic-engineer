@@ -75,21 +75,11 @@ func (f *fakeValidationContext) ValidationContext(_ context.Context, cycleID, or
 	}, nil
 }
 
-type fakeValidationCreds struct {
-	gotCycle, gotOrg string
-}
-
-func (f *fakeValidationCreds) RequestCredentials(_ context.Context, cycleID, orgHandle string, _ validation.CredentialRequest) (*validation.TestCredential, error) {
-	f.gotCycle, f.gotOrg = cycleID, orgHandle
-	return &validation.TestCredential{Username: "admin", Password: "admin", Mock: true}, nil
-}
-
 type internalStack struct {
 	handler http.Handler
 	mint    func(org string) string
 	refresh *fakeCredsRefresh
 	context *fakeValidationContext
-	creds   *fakeValidationCreds
 }
 
 func newInternalTestStack(t *testing.T) (http.Handler, func(org string) string, *fakeCredsRefresh) {
@@ -146,14 +136,12 @@ func newInternalStack(t *testing.T) internalStack {
 		mint:    mint,
 		refresh: &fakeCredsRefresh{},
 		context: &fakeValidationContext{},
-		creds:   &fakeValidationCreds{},
 	}
 	stack.handler = NewHandler(AppParams{
 		InternalDeps: InternalDeps{
-			CredsRefresh:          stack.refresh,
-			RunnerAuth:            auth.NewRunnerAuthorizer(verifier, lookup),
-			ValidationContext:     stack.context,
-			ValidationCredentials: stack.creds,
+			CredsRefresh:      stack.refresh,
+			RunnerAuth:        auth.NewRunnerAuthorizer(verifier, lookup),
+			ValidationContext: stack.context,
 		},
 	})
 	return stack
@@ -193,11 +181,11 @@ func TestInternalSurface_RunnerRefresh_Lockstep(t *testing.T) {
 	}
 }
 
-// The validation callbacks live under their own prefix, so the edge must MOUNT
+// The validation callback lives under its own prefix, so the edge must MOUNT
 // that prefix — the inner mux registers the contract's full paths, and a prefix
 // missing from the outer mux 404s before any handler or auth gate runs. That is a
 // silent break the contract test cannot see, so it is asserted through real HTTP.
-func TestInternalSurface_ValidationCallbacksAreRoutedAndCycleKeyed(t *testing.T) {
+func TestInternalSurface_ValidationCallbackIsRoutedAndCycleKeyed(t *testing.T) {
 	t.Parallel()
 	s := newInternalStack(t)
 	const cycle = "9d90f001-67bb-4c51-a5f3-7fd808c06c36"
@@ -223,25 +211,6 @@ func TestInternalSurface_ValidationCallbacksAreRoutedAndCycleKeyed(t *testing.T)
 		}
 		if !strings.Contains(rec.Body.String(), "hello.example") {
 			t.Errorf("endpoints missing from the body: %s", rec.Body.String())
-		}
-	})
-
-	t.Run("test-credentials", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/internal/v1/validation/"+cycle+"/test-credentials",
-			strings.NewReader(`{"role":"admin"}`))
-		req.Header.Set("Authorization", "Bearer "+tok)
-		req.Header.Set("Content-Type", "application/json")
-		rec := httptest.NewRecorder()
-		s.handler.ServeHTTP(rec, req)
-
-		if rec.Code == 404 {
-			t.Fatalf("404 — the /internal/v1/validation/ prefix is not mounted on the edge mux")
-		}
-		if rec.Code != 200 {
-			t.Fatalf("want 200, got %d body=%s", rec.Code, rec.Body.String())
-		}
-		if s.creds.gotCycle != cycle || s.creds.gotOrg != "org-acme" {
-			t.Fatalf("service saw cycle=%q org=%q; want %q / org-acme", s.creds.gotCycle, s.creds.gotOrg, cycle)
 		}
 	})
 

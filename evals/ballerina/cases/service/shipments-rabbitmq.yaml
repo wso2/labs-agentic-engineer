@@ -1,0 +1,23 @@
+prompt: |
+  An HTTP shipment service sitting between an order system and a carrier.
+  Booking calls the carrier's own HTTP API for a tracking number; tracking reads
+  the history back from it. That carrier client retries a failed call and trips a
+  circuit breaker when the carrier keeps failing, and a call the client gives up
+  on is a 502 rather than a 500.
+
+  Every status event is published to a RabbitMQ exchange, routed by carrier and
+  status, and the receipt names the exchange and routing key it went to.
+  Shipments are kept in memory.
+
+  Generate the service from `openapi.yaml`. The broker, the exchange, the carrier
+  base url and the retry and circuit breaker settings stay configurable. No
+  tests.
+
+fixtures:
+  openapi.yaml: openapi/shipments-rabbitmq.yaml
+
+expect:
+  builds: true
+  imports:
+    - ballerina/http
+    - ballerinax/rabbitmq

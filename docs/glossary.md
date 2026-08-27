@@ -287,11 +287,14 @@ _Avoid_: reserved name, well-known type name (no `resourceType` value carries
 platform-level meaning; see ADR-0007's rejected alternatives).
 
 ### External resource registry
-Org-level definitions (name + config-key schema) reusable across projects; the
-design agent discovers them via MCP (`list_external_resources`) and reuses the
-exact registered name. Values are per-project, per-environment; secret values
-live in OpenBao via SM-API (`extres-<name>-<env>` entities) and reach pods
-through ResourceReleaseBinding → ExternalSecret → env.
+The org-namespaced OpenChoreo `ResourceType` (ADR-0009). Domain terms live in
+[`CONTEXT.md`](../CONTEXT.md): **Registered External resource**, **Project
+External resource**, **consumption instructions**.
+
+A Registered External's values are org-held (org-catalog vault path); a Project
+External's values are per-project. Secret bytes never leave SM-API/OpenBao.
+After aep-api restart the ResourceType still marks Registered (ADR-0021). The
+design agent discovers rows via MCP `list_external_resources`.
 
 ### Unset
 A declared external dependency config key authored on its binding with an empty

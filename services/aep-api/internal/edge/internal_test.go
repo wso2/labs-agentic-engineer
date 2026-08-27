@@ -40,15 +40,13 @@ func TestInternalContract(t *testing.T) {
 		// same wire-compat debt AEP_TASK_ID carries. The version root lives in
 		// `servers`, so the path is server-relative.
 		"/executions/{executionId}/credentials/refresh",
-		// Validation runner callbacks, grouped under the feature that owns them and
-		// keyed by the cycle id the runner actually carries. They used to sit under
-		// /executions/{executionId}, resolved against a table the milestone
+		// The validation runner callback, grouped under the feature that owns it
+		// and keyed by the cycle id the runner actually carries. It used to sit
+		// under /executions/{executionId}, resolved against a table the milestone
 		// supervisor never writes — so every validation runner was told its own
 		// dispatch did not exist.
 		"runner-validation-context",
 		"/validation/{cycleId}/context",
-		"runner-validation-credentials",
-		"/validation/{cycleId}/test-credentials",
 		"taskJWT",
 		"publisherCC",
 	} {

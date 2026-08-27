@@ -160,21 +160,39 @@ func (e DeployStageValidation) Valid() bool {
 	}
 }
 
+// Defines values for EnvValueCellDTOStatus.
+const (
+	EnvValueCellDTOStatusConfigured EnvValueCellDTOStatus = "configured"
+	EnvValueCellDTOStatusUnset      EnvValueCellDTOStatus = "unset"
+)
+
+// Valid indicates whether the value is a known member of the EnvValueCellDTOStatus enum.
+func (e EnvValueCellDTOStatus) Valid() bool {
+	switch e {
+	case EnvValueCellDTOStatusConfigured:
+		return true
+	case EnvValueCellDTOStatusUnset:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ExternalDependencyValueState.
 const (
-	Configured     ExternalDependencyValueState = "configured"
-	NotProvisioned ExternalDependencyValueState = "not-provisioned"
-	Unset          ExternalDependencyValueState = "unset"
+	ExternalDependencyValueStateConfigured     ExternalDependencyValueState = "configured"
+	ExternalDependencyValueStateNotProvisioned ExternalDependencyValueState = "not-provisioned"
+	ExternalDependencyValueStateUnset          ExternalDependencyValueState = "unset"
 )
 
 // Valid indicates whether the value is a known member of the ExternalDependencyValueState enum.
 func (e ExternalDependencyValueState) Valid() bool {
 	switch e {
-	case Configured:
+	case ExternalDependencyValueStateConfigured:
 		return true
-	case NotProvisioned:
+	case ExternalDependencyValueStateNotProvisioned:
 		return true
-	case Unset:
+	case ExternalDependencyValueStateUnset:
 		return true
 	default:
 		return false
@@ -256,6 +274,36 @@ func (e MilestoneRunViewState) Valid() bool {
 	}
 }
 
+// Defines values for OrgEndpointDTOType.
+const (
+	GRPC      OrgEndpointDTOType = "gRPC"
+	GraphQL   OrgEndpointDTOType = "GraphQL"
+	HTTP      OrgEndpointDTOType = "HTTP"
+	TCP       OrgEndpointDTOType = "TCP"
+	UDP       OrgEndpointDTOType = "UDP"
+	Websocket OrgEndpointDTOType = "Websocket"
+)
+
+// Valid indicates whether the value is a known member of the OrgEndpointDTOType enum.
+func (e OrgEndpointDTOType) Valid() bool {
+	switch e {
+	case GRPC:
+		return true
+	case GraphQL:
+		return true
+	case HTTP:
+		return true
+	case TCP:
+		return true
+	case UDP:
+		return true
+	case Websocket:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for PreflightItemKind.
 const (
 	PreflightItemKindExternalAmbiguous  PreflightItemKind = "external-ambiguous"
@@ -298,6 +346,60 @@ func (e ProgressEventEmitter) Valid() bool {
 	case ProgressEventEmitterMain:
 		return true
 	case ProgressEventEmitterSubagent:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ResourceDocPointerDTOType.
+const (
+	ResourceDocPointerDTOTypeAsyncapi      ResourceDocPointerDTOType = "asyncapi"
+	ResourceDocPointerDTOTypeDocumentation ResourceDocPointerDTOType = "documentation"
+	ResourceDocPointerDTOTypeGraphql       ResourceDocPointerDTOType = "graphql"
+	ResourceDocPointerDTOTypeOpenapi       ResourceDocPointerDTOType = "openapi"
+	ResourceDocPointerDTOTypeProtobuf      ResourceDocPointerDTOType = "protobuf"
+)
+
+// Valid indicates whether the value is a known member of the ResourceDocPointerDTOType enum.
+func (e ResourceDocPointerDTOType) Valid() bool {
+	switch e {
+	case ResourceDocPointerDTOTypeAsyncapi:
+		return true
+	case ResourceDocPointerDTOTypeDocumentation:
+		return true
+	case ResourceDocPointerDTOTypeGraphql:
+		return true
+	case ResourceDocPointerDTOTypeOpenapi:
+		return true
+	case ResourceDocPointerDTOTypeProtobuf:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ResourceDocWriteDTOType.
+const (
+	ResourceDocWriteDTOTypeAsyncapi      ResourceDocWriteDTOType = "asyncapi"
+	ResourceDocWriteDTOTypeDocumentation ResourceDocWriteDTOType = "documentation"
+	ResourceDocWriteDTOTypeGraphql       ResourceDocWriteDTOType = "graphql"
+	ResourceDocWriteDTOTypeOpenapi       ResourceDocWriteDTOType = "openapi"
+	ResourceDocWriteDTOTypeProtobuf      ResourceDocWriteDTOType = "protobuf"
+)
+
+// Valid indicates whether the value is a known member of the ResourceDocWriteDTOType enum.
+func (e ResourceDocWriteDTOType) Valid() bool {
+	switch e {
+	case ResourceDocWriteDTOTypeAsyncapi:
+		return true
+	case ResourceDocWriteDTOTypeDocumentation:
+		return true
+	case ResourceDocWriteDTOTypeGraphql:
+		return true
+	case ResourceDocWriteDTOTypeOpenapi:
+		return true
+	case ResourceDocWriteDTOTypeProtobuf:
 		return true
 	default:
 		return false
@@ -571,6 +673,42 @@ func (e TurnConflictCode) Valid() bool {
 	case RequirementsMissing:
 		return true
 	case TurnInProgress:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WorkloadDependencyDTOKind.
+const (
+	OrgService WorkloadDependencyDTOKind = "org-service"
+	Resource   WorkloadDependencyDTOKind = "resource"
+)
+
+// Valid indicates whether the value is a known member of the WorkloadDependencyDTOKind enum.
+func (e WorkloadDependencyDTOKind) Valid() bool {
+	switch e {
+	case OrgService:
+		return true
+	case Resource:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WorkloadDependencyDTOTag.
+const (
+	External WorkloadDependencyDTOTag = "external"
+	Platform WorkloadDependencyDTOTag = "platform"
+)
+
+// Valid indicates whether the value is a known member of the WorkloadDependencyDTOTag enum.
+func (e WorkloadDependencyDTOTag) Valid() bool {
+	switch e {
+	case External:
+		return true
+	case Platform:
 		return true
 	default:
 		return false
@@ -1049,10 +1187,26 @@ type DiscoverOutputBody struct {
 	JwksURL string `json:"jwksUrl"`
 }
 
+// EnvValueCellDTO One org-held env cell. Secrets never include value.
+type EnvValueCellDTO struct {
+	Environment string                `json:"environment"`
+	Key         string                `json:"key"`
+	Status      EnvValueCellDTOStatus `json:"status"`
+	Value       string                `json:"value,omitempty"`
+}
+
+// EnvValueCellDTOStatus defines model for EnvValueCellDTO.Status.
+type EnvValueCellDTOStatus string
+
 // EnvVar defines model for EnvVar.
 type EnvVar struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
+}
+
+// EnvironmentDTO defines model for EnvironmentDTO.
+type EnvironmentDTO struct {
+	Name string `json:"name"`
 }
 
 // Error Flat error envelope returned by every non-2xx response.
@@ -1100,10 +1254,16 @@ type ExternalDependencyValueState string
 
 // ExternalResourceDTO defines model for ExternalResourceDTO.
 type ExternalResourceDTO struct {
-	Config      []ConfigKeyDTO `json:"config"`
-	Consumers   []ConsumerDTO  `json:"consumers"`
-	Description string         `json:"description,omitempty"`
-	Name        string         `json:"name"`
+	Config                  []ConfigKeyDTO `json:"config"`
+	Consumers               []ConsumerDTO  `json:"consumers"`
+	ConsumptionInstructions string         `json:"consumptionInstructions,omitempty"`
+	Description             string         `json:"description,omitempty"`
+
+	// EnvCells Org value plane. Present with one cell per config key × OpenChoreo Environment on a Registered External resource. Omitted or empty on a Project External resource. Secrets never include value.
+	EnvCells     []EnvValueCellDTO       `json:"envCells,omitempty"`
+	Instances    []ResourceInstanceDTO   `json:"instances,omitempty"`
+	Name         string                  `json:"name"`
+	ResourceDocs []ResourceDocPointerDTO `json:"resourceDocs,omitempty"`
 }
 
 // FileBundle A set of files read at ONE commit. commitSha names that commit; every entry's sha is a blob of that same tree.
@@ -1228,6 +1388,22 @@ type MilestoneRunViewOrigin string
 
 // MilestoneRunViewState planning is the fill window — the version's milestone is still being written (gates minted, then issues planned in). waiting is the unbounded wait between cycles, where something outside the platform is needed. blocked is terminal and is NOT a failure — the org has no agent concurrency slot left, so the cycle was never launched (see terminalReason agent-quota-blocked).
 type MilestoneRunViewState string
+
+// OrgEndpointDTO One Marketplace Endpoint — thin list_org_endpoints item, not the MCP {endpoints:[…]} wrapper.
+type OrgEndpointDTO struct {
+	Endpoint string `json:"endpoint"`
+
+	// Name org-service dependency name = provider component name
+	Name string `json:"name"`
+
+	// NamespaceVisible always true on this operation
+	NamespaceVisible bool               `json:"namespaceVisible"`
+	Project          string             `json:"project"`
+	Type             OrgEndpointDTOType `json:"type"`
+}
+
+// OrgEndpointDTOType defines model for OrgEndpointDTO.Type.
+type OrgEndpointDTOType string
 
 // OrganizationList defines model for OrganizationList.
 type OrganizationList struct {
@@ -1379,6 +1555,33 @@ type ProjectList struct {
 	NextCursor string `json:"nextCursor,omitempty"`
 }
 
+// ProjectRoleState One role as it exists on the identity provider right now, joined against the platform's own record. Roles are shared at the provider's scope, so a row here is not owned by the project reading it.
+type ProjectRoleState struct {
+	// Description The group description on the directory. Seeded at create and never rewritten (a shared role may have been described by whoever declared it first).
+	Description string `json:"description,omitempty"`
+
+	// MemberCount How many accounts currently hold the role. Best-effort — a per-role read failure leaves it 0 rather than failing the whole panel.
+	MemberCount int `json:"memberCount,omitempty"`
+
+	// Name The role name verbatim; it is the identity, and it is what reaches an app as a groups claim.
+	Name string `json:"name"`
+
+	// PlatformCreated True when the platform created this role and may therefore enrol test users into it. A hand-made group reads false and the platform leaves it alone.
+	PlatformCreated bool `json:"platformCreated"`
+}
+
+// ProjectRolesView The Security panel's read model.
+type ProjectRolesView struct {
+	// DirectoryAvailable False when the identity provider could not be reached. The store-derived fields are still populated; the console must say "unknown" for the live ones instead of rendering absence as "does not exist".
+	DirectoryAvailable bool `json:"directoryAvailable"`
+
+	// Roles The WHOLE directory catalog, name-ordered — not just this project's roles. Roles are shared, so the panel shows which existing role a design reuses. Empty when directoryAvailable is false.
+	Roles []ProjectRoleState `json:"roles,omitempty"`
+
+	// TestUsers The test accounts THIS project's design references, role-ordered.
+	TestUsers []ProjectTestUserState `json:"testUsers,omitempty"`
+}
+
 // ProjectStatus Computed SDLC phase and artifact states.
 type ProjectStatus struct {
 	// Build Build-stage aggregate on ProjectStatus (#184) — the version the newest milestone run is working, and how that run is doing. Deliberately count-free - the only honest source of a per-version task tally is the version's milestone on GitHub, and this endpoint is polled at 5s. The console renders counts from the list-tasks response it already holds, on the surface that already pays for it.
@@ -1408,6 +1611,34 @@ type ProjectStatus struct {
 
 	// SpecStatus "", draft, approved
 	SpecStatus string `json:"specStatus"`
+}
+
+// ProjectTestUserState One test account this project references. The account itself is shared at the identity provider's scope; only the reference is the project's.
+type ProjectTestUserState struct {
+	// ColdStart True for the account holding this project's cold-start role — the one served when a caller asks for credentials without naming a role.
+	ColdStart bool `json:"coldStart"`
+
+	// Exists True when the account is present on the identity provider. Meaningless when directoryAvailable is false.
+	Exists bool `json:"exists"`
+
+	// Owned True when the platform holds a sealed password for this account and may therefore reveal, rotate or delete it. False means the username belongs to somebody else and every mutation is refused.
+	Owned bool `json:"owned"`
+
+	// ReferencingCount How many projects reference this account IN TOTAL, across every org. A bare count with no names — the minimum disclosure that makes "others may still be using this" a true statement before a delete.
+	ReferencingCount int `json:"referencingCount,omitempty"`
+
+	// ReferencingProjects THIS ORG's projects that reference the account. Never another org's — a project name is one org's data, and the shared directory does not license disclosing it.
+	ReferencingProjects []string `json:"referencingProjects,omitempty"`
+
+	// RoleName The role this account holds.
+	RoleName string `json:"roleName"`
+
+	// RotatedAt When the password was last replaced; null when never.
+	RotatedAt *time.Time `json:"rotatedAt,omitempty"`
+
+	// Supplied True when the design named no test user for the role and the platform generated the username.
+	Supplied bool   `json:"supplied"`
+	Username string `json:"username"`
 }
 
 // ProjectUsageCard One project's lifetime agent usage (#291). Identity comes from the usage rows' stored project slug, so a card survives its project's deletion.
@@ -1486,6 +1717,50 @@ type RcaAgentReportList struct {
 
 	// NextCursor Cursor for the next page; absent on the last page.
 	NextCursor string `json:"nextCursor,omitempty"`
+}
+
+// RegisterExternalResourceRequest defines model for RegisterExternalResourceRequest.
+type RegisterExternalResourceRequest struct {
+	Config                  []ConfigKeyDTO `json:"config"`
+	ConsumptionInstructions string         `json:"consumptionInstructions"`
+	Description             string         `json:"description"`
+	EnvValues               []struct {
+		Environment string `json:"environment"`
+		Key         string `json:"key"`
+		Value       string `json:"value"`
+	} `json:"envValues"`
+	Name         string                `json:"name"`
+	ResourceDocs []ResourceDocWriteDTO `json:"resourceDocs,omitempty"`
+}
+
+// ResourceDocPointerDTO Org resource docs pointer (type + URL or repo path), not file bodies.
+type ResourceDocPointerDTO struct {
+	Path string                    `json:"path,omitempty"`
+	Type ResourceDocPointerDTOType `json:"type"`
+	URL  string                    `json:"url,omitempty"`
+}
+
+// ResourceDocPointerDTOType defines model for ResourceDocPointerDTO.Type.
+type ResourceDocPointerDTOType string
+
+// ResourceDocWriteDTO One resource-docs write row on register/update. Exactly one of {type,url} | {type,path} | {type,fileName,content}. List/GET never use this schema.
+type ResourceDocWriteDTO struct {
+	// Content UTF-8 text of a new or replacement file; never returned on GET.
+	Content  string                  `json:"content,omitempty"`
+	FileName string                  `json:"fileName,omitempty"`
+	Path     string                  `json:"path,omitempty"`
+	Type     ResourceDocWriteDTOType `json:"type"`
+	URL      string                  `json:"url,omitempty"`
+}
+
+// ResourceDocWriteDTOType defines model for ResourceDocWriteDTO.Type.
+type ResourceDocWriteDTOType string
+
+// ResourceInstanceDTO defines model for ResourceInstanceDTO.
+type ResourceInstanceDTO struct {
+	Environment string `json:"environment"`
+	Project     string `json:"project"`
+	Status      string `json:"status"`
 }
 
 // RevalidateAccepted The run that will answer the question. Its cycles stream on the ordinary run progress endpoint, and its verdict becomes the version's once it settles.
@@ -1880,6 +2155,15 @@ type TaskView struct {
 // TaskViewExecutorClass WHO works this issue, derived from its labels: `coding` for anything a coding agent is dispatched at (planned work, a bug, a merge conflict — all armed with the `aep` label), `provision` for a dispatch gate the platform resolves, `validation` for the version's validation task, `ledger` for a bare human issue that joined the milestone unarmed. Deliberately coarser than `kind`: the three coding kinds are dispatched identically, so they are one class here and are told apart by `kind`. Nothing here is parsed out of the body — issue bodies are prose the platform writes for the agent and never reads back.
 type TaskViewExecutorClass string
 
+// TestUserPassword A test account's password, disclosed deliberately by reveal or rotate. It is never returned by any read.
+type TestUserPassword struct {
+	Password string `json:"password"`
+
+	// RotatedAt When the password was last replaced; null when it is the one minted at create.
+	RotatedAt *time.Time `json:"rotatedAt,omitempty"`
+	Username  string     `json:"username"`
+}
+
 // TimelineEvent A unified-timeline entry: today's ProgressEvent (phase | tool_use | git_commit | git_push | gh_action | build_step | log | result) plus its attribution — which execution attempt it came from. This is the per-row shape the console renders; the FE groups rows by executionId/kind.
 type TimelineEvent struct {
 	Branch      string `json:"branch,omitempty"`
@@ -2071,6 +2355,27 @@ type WorkflowRunTask struct {
 	StartedAt   string `json:"startedAt,omitempty"`
 }
 
+// WorkloadDependencyDTO defines model for WorkloadDependencyDTO.
+type WorkloadDependencyDTO struct {
+	// Component Provider component (org-service rows)
+	Component string                    `json:"component,omitempty"`
+	Kind      WorkloadDependencyDTOKind `json:"kind"`
+	Name      string                    `json:"name,omitempty"`
+
+	// Project Provider project (org-service rows)
+	Project string `json:"project,omitempty"`
+
+	// Ref Resource type (resource rows)
+	Ref string                   `json:"ref,omitempty"`
+	Tag WorkloadDependencyDTOTag `json:"tag,omitempty"`
+}
+
+// WorkloadDependencyDTOKind defines model for WorkloadDependencyDTO.Kind.
+type WorkloadDependencyDTOKind string
+
+// WorkloadDependencyDTOTag defines model for WorkloadDependencyDTO.Tag.
+type WorkloadDependencyDTOTag string
+
 // WriteOp defines model for WriteOp.
 type WriteOp struct {
 	BaseSha string `json:"baseSha,omitempty"`
@@ -2243,6 +2548,12 @@ type UpdateConfigJSONRequestBody = ConfigPatch
 
 // StartGitProviderConnectJSONRequestBody defines body for StartGitProviderConnect for application/json ContentType.
 type StartGitProviderConnectJSONRequestBody = StartConnectInputBody
+
+// RegisterExternalResourceJSONRequestBody defines body for RegisterExternalResource for application/json ContentType.
+type RegisterExternalResourceJSONRequestBody = RegisterExternalResourceRequest
+
+// UpdateExternalResourceJSONRequestBody defines body for UpdateExternalResource for application/json ContentType.
+type UpdateExternalResourceJSONRequestBody = RegisterExternalResourceRequest
 
 // CreateProjectJSONRequestBody defines body for CreateProject for application/json ContentType.
 type CreateProjectJSONRequestBody = CreateProjectRequest

@@ -134,7 +134,7 @@ function CodingHandoverContent({ report }: { report: RcaAgentReport }) {
       params: {
         projectName: report.project!,
         // A number now: `/tasks/$issueNumber` renders the task itself and parses
-        // its param (ADR-0020 §7). It used to be a bare redirect into
+        // its param (ADR-0021 §7). It used to be a bare redirect into
         // `/builds/$issueNumber`, which typed the param as a string.
         issueNumber: report.issueNumber!,
       },

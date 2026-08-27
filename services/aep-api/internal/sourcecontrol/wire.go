@@ -144,6 +144,22 @@ type MilestoneIssuesFilter struct {
 // reworded.
 const MachineCommentMarker = "<!-- aep:machine -->"
 
+// PublishedCredentialsMarker marks an issue comment whose body deliberately
+// carries CREDENTIALS in plaintext — the test-user logins the build publishes on
+// the roles gate ticket, which is where the validation agent reads them
+// (ADR-0022).
+//
+// It lives here, beside MachineCommentMarker, because the writer is not the only
+// party that has to know about it: GitHub delivers every comment we post back to
+// us as an `issue_comment` webhook, and this receiver stores each verified
+// delivery's raw body for audit. Persisting that body unchanged would copy every
+// published password into the platform's own database in cleartext — the one
+// place in this service where every other credential is sealed — and nothing
+// ever reads those rows back. redactPublishedCredentials keys on this constant
+// to keep the blast radius where the ADR bounds it: the repository, and not the
+// database.
+const PublishedCredentialsMarker = "<!-- aep:test-users -->"
+
 // IssueComment is one comment on an issue, exactly as the host holds it.
 //
 // It carries no issue number: the read that produces these buckets them by

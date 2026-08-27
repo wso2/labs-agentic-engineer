@@ -125,7 +125,7 @@ used as given.
 - A `.curlrc` write failure is fatal. Proceeding would start an agent holding a
   URL it cannot dial and no explanation of why — the state this ADR removes.
 - `resolve` entries are scoped per `host:port`, so pinning endpoint hosts does not
-  affect the run's other HTTP traffic (the test-credentials callback, `gh`, git).
+  affect the run's other HTTP traffic (`gh`, git).
 - The `.curlrc` lives in the runner's home directory, outside the git work tree,
   so unlike `.aep/` there is no path by which it could be committed.
 

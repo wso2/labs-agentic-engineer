@@ -32,7 +32,7 @@ import { ChevronDown, ChevronRight } from "@wso2/oxygen-ui-icons-react";
  *
  * Lives here rather than beside one feature because three surfaces now render
  * logs — the coding agent's stream, a component's build log, and a running
- * workload's runtime log (ADR-0020) — and three dark boxes that drifted apart
+ * workload's runtime log (ADR-0021) — and three dark boxes that drifted apart
  * would read as three different systems. `grey.900` is a theme token, so this
  * stays dark in BOTH schemes deliberately: a terminal that inverts in light mode
  * stops looking like a terminal.

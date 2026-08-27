@@ -29,7 +29,10 @@ import {
   hostInvocation,
   isFailedSubagent,
   renderMergedTimeline,
+  toolJarOverlay,
+  workingTreeToolJar,
 } from "../src/engine/coding-run.js";
+import { REPO_ROOT } from "../src/paths.js";
 import { formatLine } from "@aep/progress-view";
 
 // The playground renders through the SAME formatter the console does, so these
@@ -442,4 +445,61 @@ test("failed-subagent trigger: fires on a real stalled Agent result, and nothing
   assert.equal(isFailedSubagent({ ...stalled, ok: true, status: "completed" }), false);
   assert.equal(isFailedSubagent({ ...stalled, tool: "Bash", summary: "bal build" }), false);
   assert.equal(isFailedSubagent({ ...stalled, kind: "tool_use" }), false);
+});
+
+// `bal library` is the one tool the `ballerina` skill calls by name, and the
+// point of wiring it here is that an edit to it reaches the next docker run
+// without an image rebuild. Asserted against the same resolver the invocation
+// uses, so it holds whether or not the tool's repository happens to be checked
+// out and built in the environment running the tests — with no jar to send, the
+// image's own install must be left alone rather than shadowed.
+test("docker mode mounts the working-tree bal library jar, or leaves the install alone", () => {
+  const overlay = toolJarOverlay();
+  const { args } = dockerInvocation(invocationOpts, "/r", "c1");
+  const mount = args.find((a) => a.includes("/tool/libs/") && a.endsWith(":ro"));
+
+  if (overlay === undefined) {
+    assert.equal(mount, undefined, "nothing may be mounted over the image's installed tool");
+    return;
+  }
+  assert.equal(mount, `${overlay.hostJar}:${overlay.imageJar}:ro`);
+  assert.equal(overlay.hostJar, workingTreeToolJar());
+});
+
+// Host mode has no image and no PATH entry to point anywhere: `bal library` is a
+// `bal` tool resolved out of the developer's own ~/.ballerina. So the environment
+// must come through untouched — the failure this guards is a well-meant PATH or
+// HOME edit that makes a host run read a different tool than a bare `bal library`
+// in the same shell would.
+test("host mode leaves the developer's own environment alone", () => {
+  const { env } = hostInvocation(invocationOpts, "/r");
+  assert.equal(env.PATH, process.env.PATH);
+  assert.equal(env.HOME, process.env.HOME);
+});
+
+// The image installs what its first stage BUILDS from these files (ADR-0008), and
+// the coordinates the container path is composed from are held to the tool's own
+// metadata — a rename lands here rather than 300 layers into a docker build.
+test("the bal library tool's source carries what the image install needs", () => {
+  // Asserted against the SOURCE and not a built artifact: there is no checked-in
+  // distribution any more, so the image's first stage runs `make-dist.sh` over
+  // exactly these files. Getting this wrong silently disables the jar overlay.
+  const tool = join(REPO_ROOT, "packages", "bal-library-tool");
+  const version = /^version=(.+)$/m.exec(readFileSync(join(tool, "gradle.properties"), "utf8"))?.[1]?.trim();
+  assert.ok(version && version.length > 0, "gradle.properties names the version install.sh registers");
+  assert.ok(existsSync(join(tool, "release", "install.sh")), "the tool's own offline installer");
+  assert.ok(existsSync(join(tool, "make-dist.sh")), "the one place that decides what a distribution holds");
+
+  // install.sh derives the bala path from these, and coding-run.ts composes the
+  // mount target from the same three values.
+  const toml = readFileSync(join(tool, "Ballerina.toml"), "utf8");
+  assert.match(toml, /^org = "ballerinax"$/m);
+  assert.match(toml, /^name = "tool_library"$/m);
+  const overlay = toolJarOverlay();
+  if (overlay) {
+    assert.ok(
+      overlay.imageJar.endsWith(`/ballerinax/tool_library/${version}/any/tool/libs/native-${version}.jar`),
+      `the mount target must be the path install.sh wrote: ${overlay.imageJar}`,
+    );
+  }
 });

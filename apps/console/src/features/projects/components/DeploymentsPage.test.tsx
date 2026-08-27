@@ -50,6 +50,7 @@ import { DeploymentsPage } from "./DeploymentsPage";
 type ProjectStatus = components["schemas"]["ProjectStatus"];
 type DeployStage = components["schemas"]["DeployStage"];
 type ComponentDependencies = components["schemas"]["ComponentDependencies"];
+type ExternalResourceDTO = components["schemas"]["ExternalResourceDTO"];
 
 // Query hooks replaced wholesale — no QueryClientProvider / MSW needed, only the
 // rendering under test is real (mirrors TasksList.test.tsx).
@@ -79,6 +80,12 @@ const DEFAULT_DEPENDENCIES: ComponentDependencies[] = [
   },
 ];
 let mockDependencies: ComponentDependencies[] = DEFAULT_DEPENDENCIES;
+
+// Org catalog for Registered vs Project External. Default empty / no envCells
+// so the fixture `stripe` stays a Project External (re-collect test).
+let mockExternalCatalog: ExternalResourceDTO[] = [];
+let mockExternalCatalogPending = false;
+let mockExternalCatalogError = false;
 
 function status(): ProjectStatus {
   return {
@@ -134,6 +141,16 @@ vi.mock("../../spec/api/queries", () => ({
   useDesignDependencies: () => ({ data: mockDependencies, isPending: false }),
 }));
 
+vi.mock("../../settings/api/queries", () => ({
+  useExternalResources: () => ({
+    data: mockExternalCatalog,
+    isPending: mockExternalCatalogPending,
+    isError: mockExternalCatalogError,
+    error: mockExternalCatalogError ? new Error("catalog down") : null,
+    refetch: vi.fn(),
+  }),
+}));
+
 // The criteria/report join (#395 decision 3) — counts undefined by default (the
 // fallback path); individual tests set them to assert the "n/m passed" upgrade. The
 // VERDICT rides with them because `deploy.validation` folds `failed` and `unreported`
@@ -160,6 +177,9 @@ beforeEach(() => {
   mockRepairing = false;
   mockMutate.mockClear();
   mockDependencies = DEFAULT_DEPENDENCIES;
+  mockExternalCatalog = [];
+  mockExternalCatalogPending = false;
+  mockExternalCatalogError = false;
 });
 
 describe("DeploymentsPage — validation", () => {
@@ -439,6 +459,128 @@ describe("DeploymentsPage — connections", () => {
     expect(
       screen.queryByRole("button", { name: /Configure/ }),
     ).not.toBeInTheDocument();
+  });
+
+  // Registered External: org catalog row with non-empty envCells — values live
+  // on the org plane, so Deployments must not offer Connection values dialog.
+  it("hides Configure for a Registered external connection", () => {
+    mockDeploy = {
+      version: "v1",
+      status: "deployed",
+      components: { total: 1, ready: 1 },
+      validation: "passed",
+    };
+    mockExternalCatalog = [
+      {
+        name: "stripe",
+        config: [{ key: "STRIPE_SECRET_KEY", secret: true }],
+        consumers: [],
+        envCells: [
+          {
+            environment: "development",
+            key: "STRIPE_SECRET_KEY",
+            status: "configured",
+          },
+        ],
+      },
+    ];
+
+    render(<DeploymentsPage projectName="acme" />);
+
+    expect(
+      screen.queryByRole("button", { name: "Configure stripe" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  // While the org catalog is still loading, registeredNames is empty — a
+  // Registered row must not flash Configure (which would open the project
+  // values dialog for a name that might already live on the org plane).
+  it("does not show Configure for an external while the org catalog is loading", () => {
+    mockDeploy = {
+      version: "v1",
+      status: "deployed",
+      components: { total: 1, ready: 1 },
+      validation: "passed",
+    };
+    mockExternalCatalogPending = true;
+    mockExternalCatalog = [];
+
+    render(<DeploymentsPage projectName="acme" />);
+
+    expect(
+      screen.queryByRole("button", { name: "Configure stripe" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  // Catalog error leaves registeredNames empty the same way pending does —
+  // fail closed so a Registered name cannot open the project values dialog.
+  it("does not show Configure for an external when the org catalog fails", () => {
+    mockDeploy = {
+      version: "v1",
+      status: "deployed",
+      components: { total: 1, ready: 1 },
+      validation: "passed",
+    };
+    mockExternalCatalogError = true;
+    mockExternalCatalog = [];
+
+    render(<DeploymentsPage projectName="acme" />);
+
+    expect(
+      screen.queryByRole("button", { name: "Configure stripe" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByText(/Failed to load org catalog/i)).toBeInTheDocument();
+  });
+
+  // Project External under a new name: empty/omitted catalog envCells — still
+  // opens the values dialog (and POSTs values; never register).
+  it("opens Configure for a Project External connection", () => {
+    mockDeploy = {
+      version: "v1",
+      status: "deployed",
+      components: { total: 1, ready: 1 },
+      validation: "passed",
+    };
+    mockDependencies = [
+      {
+        componentName: "storefront",
+        dependencies: [
+          {
+            kind: "external",
+            name: "acme-stripe",
+            config: [
+              {
+                key: "STRIPE_SECRET_KEY",
+                description: "Secret key",
+                secret: true,
+              },
+            ],
+          },
+        ],
+      },
+    ];
+    mockExternalCatalog = [
+      {
+        name: "acme-stripe",
+        config: [{ key: "STRIPE_SECRET_KEY", secret: true }],
+        consumers: [],
+        // Empty envCells = Project External (same as omitted).
+        envCells: [],
+      },
+    ];
+
+    render(<DeploymentsPage projectName="acme" />);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Configure acme-stripe" }),
+    );
+    const dialog = screen.getByRole("dialog");
+    expect(
+      within(dialog).getByText("Configure — acme-stripe"),
+    ).toBeInTheDocument();
   });
 });
 

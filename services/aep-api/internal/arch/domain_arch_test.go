@@ -38,7 +38,7 @@ import (
 // fires-proof test that plants the violation in a temp tree and asserts the rule
 // reports it. Without that, a scanner with a typo'd path would "pass" forever.
 
-// targetDomains are the seven business domains of §3. This is a DESIGN decision,
+// targetDomains are the business domains of §3. This is a DESIGN decision,
 // not a disk discovery: a new top-level package under internal/ must be
 // classified — as a domain here, or as infrastructure in nonDomainPkgs — so that
 // growing an eighth domain is a deliberate act with a review, not a side effect.
@@ -50,6 +50,11 @@ var targetDomains = map[string]bool{
 	"projects":      true,
 	"sourcecontrol": true,
 	"ops":           true,
+	// The SHARED identity-provider Roles and Test users a build provisions from
+	// specs/design/roles.json. A domain rather than kernel infrastructure: it
+	// owns entities, a repository and a lifecycle of its own, and three other
+	// domains reach it only through ports.
+	"identity": true,
 }
 
 // nonDomainPkgs are the internal/ packages that are NOT business domains: the

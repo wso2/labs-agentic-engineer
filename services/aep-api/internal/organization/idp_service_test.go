@@ -45,6 +45,12 @@ import (
 // (moq-style). Each fake is built per-test and driven by a single synchronous
 // httptest request, so no mutex is needed for the capture slices.
 type fakeThunder struct {
+	// The directory half of thundersvc.Client (groups + users) belongs to the
+	// identity domain, not the IDP service under test here. Embedding the
+	// interface satisfies it without a wall of stubs, and any accidental call
+	// panics on the nil rather than passing silently.
+	thundersvc.Client
+
 	ensureFn func(ctx context.Context, orgHandle, orgOUID string) (string, string, bool, error)
 	deleteFn func(ctx context.Context, orgHandle string) (bool, error)
 	regenFn  func(ctx context.Context, orgHandle string) (string, error)

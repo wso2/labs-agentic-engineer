@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/platform/designspec"
+	"github.com/wso2/aep/aep-api/internal/platform/rolesspec"
 )
 
 // The hard save gate (docs/design/agents-generation-migration.md §8). Save is
@@ -75,6 +76,9 @@ const (
 //   - component design.json: every present design.json validates against the
 //     single published schema + the name==dir rule (designspec — the same
 //     definition the agent's write gate uses);
+//   - roles.json, when present: the structured half of the security design
+//     validates against the same published schema and referential rules the
+//     agent's write gate applies;
 //   - OpenAPI: every present component openapi.yaml/yml must parse.
 //
 // A missing root is ErrArtifactPathInvalid (400). Any other failure aggregates
@@ -109,6 +113,22 @@ func validateDesignBundle(files map[string]string) error {
 			} else {
 				verrs = append(verrs, FileValidationError{Path: key, Code: designspec.CodeSchemaViolation, Message: err.Error()})
 			}
+		}
+	}
+
+	// The roles document, when present: schema + the referential rules
+	// (every test user's role declared, coldStartRole declared or null). Same
+	// single definition the agent's write gate uses, so a document that passes
+	// one gate passes the other.
+	if raw, ok := files[rolesspec.BundleKey]; ok && strings.TrimSpace(raw) != "" {
+		if _, err := rolesspec.Parse([]byte(raw)); err != nil {
+			var ve *rolesspec.ValidationError
+			code := rolesspec.CodeSchemaViolation
+			msg := err.Error()
+			if errors.As(err, &ve) {
+				code, msg = ve.Code, ve.Message
+			}
+			verrs = append(verrs, FileValidationError{Path: rolesspec.BundleKey, Code: code, Message: msg})
 		}
 	}
 

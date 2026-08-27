@@ -172,6 +172,11 @@ type ArtifactService interface {
 	ListSpecVersionTags(ctx context.Context, orgID, projectID string) (*TagList, error)
 	GetRequirementsAtTag(ctx context.Context, orgID, projectID, tag string) (map[string]string, error)
 	GetDesignAtTag(ctx context.Context, orgID, projectID, tag string) (map[string]string, error)
+	// GetDesignAtSpecTag reads the design bundle at a `v<N>` SPEC tag — the tag
+	// a build actually has. GetDesignAtTag above takes the legacy `v<N>-<M>`
+	// design-revision tag and REFUSES a spec tag outright, so a build-time
+	// consumer must use this one.
+	GetDesignAtSpecTag(ctx context.Context, orgID, projectID, tag string) (map[string]string, error)
 	// GetDesignAtCommit reads the design bundle at an exact commit — the publish
 	// flow's pinned-commit read (no ref resolution involved).
 	GetDesignAtCommit(ctx context.Context, orgID, projectID, commitSHA string) (map[string]string, error)
@@ -299,6 +304,24 @@ func (s *artifactService) GetDesignAtCommit(ctx context.Context, orgID, projectI
 func (s *artifactService) GetDesignAtTag(ctx context.Context, orgID, projectID, tag string) (map[string]string, error) {
 	if _, _, ok := parseDesignTag(tag); !ok {
 		return nil, fmt.Errorf("%w: %q is not a v<N>-<M> tag", ErrInvalidVersionTag, tag)
+	}
+	_, ref, err := s.readyRef(ctx, orgID, projectID)
+	if err != nil {
+		return nil, err
+	}
+	return s.readBundleAtTag(ctx, ref, tag, designPrefix, designBundleFilter)
+}
+
+// GetDesignAtSpecTag reads the design bundle at a `v<N>` spec tag.
+//
+// It exists because GetDesignAtTag next door parses its argument as a
+// design-REVISION tag (`v<N>-<M>`, the legacy per-design sequence) and rejects
+// anything else. A build only ever knows the spec tag, so wiring a build-time
+// consumer to the other method fails on every real build with "not a v<N>-<M>
+// tag" — which is exactly what happened to the roles ensure.
+func (s *artifactService) GetDesignAtSpecTag(ctx context.Context, orgID, projectID, tag string) (map[string]string, error) {
+	if _, ok := parseRequirementsTag(tag); !ok {
+		return nil, fmt.Errorf("%w: %q is not a v<N> spec tag", ErrInvalidVersionTag, tag)
 	}
 	_, ref, err := s.readyRef(ctx, orgID, projectID)
 	if err != nil {

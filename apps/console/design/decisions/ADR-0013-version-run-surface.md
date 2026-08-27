@@ -1,7 +1,7 @@
 # ADR-0013: The Builds page is one version's run story, and the run state is the only liveness
 
 - **Status:** Historical as of
-  [ADR-0020](./ADR-0020-builds-is-a-version-ledger.md) — the version-run
+  [ADR-0021](./ADR-0021-builds-is-a-version-ledger.md) — the version-run
   card this ADR designed is no longer mounted, and §5 (rows are not clickable) is
   overturned for the LEDGER, whose rows now have somewhere of their own to go. A
   task row keeps §5's spirit: its issue chip still links to GitHub.

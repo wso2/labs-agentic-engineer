@@ -87,6 +87,11 @@ func wantSecretRefPath(orgID string) string {
 // RegenerateClientSecret); OUExists is irrelevant to this feature, so a call
 // to it is a test bug — it panics.
 type idpDBFakeThunder struct {
+	// The directory half of thundersvc.Client (groups + users) belongs to the
+	// identity domain, not this test. Embedding satisfies the interface without
+	// a wall of stubs; an accidental call panics on the nil rather than passing.
+	thundersvc.Client
+
 	ensureFn func(ctx context.Context, orgHandle, orgOUID string) (string, string, bool, error)
 	deleteFn func(ctx context.Context, orgHandle string) (bool, error)
 	regenFn  func(ctx context.Context, orgHandle string) (string, error)

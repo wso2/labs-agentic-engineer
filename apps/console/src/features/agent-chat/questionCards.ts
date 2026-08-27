@@ -282,3 +282,15 @@ export function answerableQuestionIds(messages: ChatMessage[]): Set<string> {
   }
   return ids;
 }
+
+/** Newest chat-log question that still accepts an answer, if any. */
+export function pendingAnswerableQuestion(
+  messages: ChatMessage[],
+): Extract<ChatMessage, { role: "question" }> | undefined {
+  const ids = answerableQuestionIds(messages);
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]!;
+    if (m.role === "question" && m.questions.length && ids.has(m.id)) return m;
+  }
+  return undefined;
+}

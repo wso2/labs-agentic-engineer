@@ -11,6 +11,7 @@ import {
   uploadReferencesError,
   componentDeployments,
   componentOpenApi,
+  buildRunsForTag,
   projectBuildRuns,
   projectCycleBuilds,
   projectBuilds,
@@ -170,8 +171,12 @@ export const projectHandlers = [
       // The verdict lives on the RUN, and its cycles are what the page reads the
       // report at — so an override has to replace the whole story, not patch a
       // field onto the project scenario's.
-      const runs = v ? validationRuns(v, validationAttempt()) : projectBuildRuns[s];
-      return { ...runs, tag: String(params.tag) };
+      const tag = String(params.tag);
+      // Keyed BY TAG: a run story stamped with another version's identity is a
+      // fixture that contradicts its own envelope.
+      return v
+        ? { ...validationRuns(v, validationAttempt()), tag }
+        : buildRunsForTag(s, tag);
     }),
   ),
   // A build session's fan-out. Derived from the cluster on the real server, so

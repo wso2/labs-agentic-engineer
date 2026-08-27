@@ -62,7 +62,8 @@ runtime relationship, not a build order — it never holds an issue back.
 
 <!-- replace-text -->
    Read its comments too (`gh issue view <number> --comments`): a
-   "Platform-resolved dependencies" comment carries dependency wiring you need.
+   "Platform-resolved dependencies" comment carries an `org-service`'s
+   coordinates.
 <!-- with -->
 <!-- /replace-text -->
 

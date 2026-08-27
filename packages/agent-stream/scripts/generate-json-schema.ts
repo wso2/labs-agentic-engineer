@@ -29,17 +29,20 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import {
   componentDesignJsonSchema,
+  rolesDesignJsonSchema,
   planTaskJsonSchema,
   updateTaskJsonSchema,
 } from "../src/json-schema.js";
 import {
   COMPONENT_DESIGN_SCHEMA_ARTIFACT,
+  ROLES_DESIGN_SCHEMA_ARTIFACT,
   PLAN_TASK_SCHEMA_ARTIFACT,
   UPDATE_TASK_SCHEMA_ARTIFACT,
 } from "./artifact-path.js";
 
 const artifacts: [string, Record<string, unknown>][] = [
   [COMPONENT_DESIGN_SCHEMA_ARTIFACT, componentDesignJsonSchema()],
+  [ROLES_DESIGN_SCHEMA_ARTIFACT, rolesDesignJsonSchema()],
   [PLAN_TASK_SCHEMA_ARTIFACT, planTaskJsonSchema()],
   [UPDATE_TASK_SCHEMA_ARTIFACT, updateTaskJsonSchema()],
 ];

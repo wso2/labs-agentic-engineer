@@ -29,13 +29,41 @@ if [ -z "$DNS_RESOLVERS" ]; then
 fi
 sed -i "s|__DNS_RESOLVERS__|${DNS_RESOLVERS}|g" "$CONF"
 
-# Primary sibling address. After copy, the coding agent sets this to the
-# UPPER_SNAKE `_URL` of the primary component-kind dependency
-# (todo-api → TODO_API_URL). OpenChoreo injects it on the pod.
-API_URL="${TODO_API_URL:-}"
-API_BACKEND="$(echo "${API_URL}" | sed 's|^https\{0,1\}://||' | sed 's|/.*||')"
-if [ -z "$API_BACKEND" ]; then
-    echo "aep-api-proxy: primary *_URL unset; /api will 502 until OpenChoreo injects it"
-    API_BACKEND="127.0.0.1:9"
+# Primary sibling address. After copy, the coding agent renames BOTH variables
+# below to the UPPER_SNAKE of the primary component-kind dependency
+# (todo-api → TODO_API_GATEWAY_URL / TODO_API_URL). OpenChoreo and the platform
+# inject them on the pod.
+#
+# Two lanes exist and they are NOT interchangeable:
+#
+#   <DEP>_GATEWAY_URL  the API gateway. It validates the caller's bearer token
+#                      and injects the X-User-* identity headers the backend
+#                      authorizes on. Set by the platform for any sibling whose
+#                      design declares `exposesAPI.auth`. Carries a context
+#                      path prefix.
+#   <DEP>_URL          the project Service, reached directly. Nothing validates
+#                      a token and nothing injects identity.
+#
+# Always prefer the gateway when the platform offers it. Browser traffic is
+# untrusted, and this proxy is the one hop that would otherwise carry it into
+# the project's trusted lane with no authentication in between.
+API_URL="${TODO_API_GATEWAY_URL:-}"
+API_LANE="gateway (token validated, identity injected)"
+if [ -z "$API_URL" ]; then
+    API_URL="${TODO_API_URL:-}"
+    API_LANE="direct Service (NO token validation)"
 fi
+
+# Split the injected address into host:port and the context path prefix.
+API_BACKEND="$(echo "${API_URL}" | sed -e 's|^https\{0,1\}://||' -e 's|/.*$||')"
+API_CONTEXT="$(echo "${API_URL}" | sed -e 's|^https\{0,1\}://[^/]*||' -e 's|/$||')"
+
+if [ -z "$API_BACKEND" ]; then
+    echo "aep-api-proxy: no sibling API address injected; /api will 502 until one is"
+    API_BACKEND="127.0.0.1:9"
+    API_CONTEXT=""
+fi
+
+echo "aep-api-proxy: /api -> ${API_BACKEND}${API_CONTEXT}  [${API_LANE}]"
 sed -i "s|__API_BACKEND__|${API_BACKEND}|g" "$CONF"
+sed -i "s|__API_CONTEXT__|${API_CONTEXT}|g" "$CONF"

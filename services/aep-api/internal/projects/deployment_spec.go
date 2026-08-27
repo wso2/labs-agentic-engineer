@@ -77,6 +77,16 @@ type DeploymentInputs struct {
 	// Files are the literal files the runtime-config projection wants mounted
 	// (env-config.js for a web app). Nil means "not managed by this write".
 	Files []openchoreo.WorkflowFileVar
+	// ComponentNamespace is the OC namespace the component's CR lives in — a
+	// segment of every managed API's gateway context path.
+	ComponentNamespace string
+	// GatewayHost is host:port of the API gateway runtime. Empty emits no
+	// gateway address, which leaves a consumer on the direct-Service lane.
+	GatewayHost string
+	// ProtectedSiblings are the component-kind dependencies whose provider sits
+	// behind the gateway. Each becomes a `<DEP>_GATEWAY_URL` env var so the
+	// consumer can choose the authenticated lane (see gateway_address.go).
+	ProtectedSiblings []ProtectedSibling
 }
 
 // DesiredDeploymentFor projects one component's design facts onto the two
@@ -111,6 +121,20 @@ func DesiredDeploymentFor(in DeploymentInputs) DesiredDeployment {
 		}
 	}
 
+	// The gateway address for each protected sibling rides the same env field as
+	// the user's own config, so it is overlaid rather than written separately.
+	//
+	// Only when that field is already MANAGED (non-nil). Nil means the user's env
+	// could not be read on this pass, and replacing it with the platform's two
+	// variables would drop configuration the platform does not own — a
+	// component that loses its env is worse off than one still on the direct
+	// lane, and the next converge re-attempts the overlay anyway.
+	envVars := in.EnvVars
+	if envVars != nil {
+		envVars = mergeEnvVars(envVars,
+			GatewayEnvVars(in.GatewayHost, in.Environment, in.ComponentNamespace, in.ProtectedSiblings))
+	}
+
 	return DesiredDeployment{
 		Traits: traits,
 		Binding: openchoreo.ReleaseBindingDesired{
@@ -122,7 +146,7 @@ func DesiredDeploymentFor(in DeploymentInputs) DesiredDeployment {
 			// traits wants an EMPTY config map, not an untouched one, or a trait
 			// turned off in the design would keep its config forever.
 			TraitEnvironmentConfigs: liveTraitConfigs(configs),
-			Env:                     in.EnvVars,
+			Env:                     envVars,
 			Files:                   in.Files,
 		},
 	}

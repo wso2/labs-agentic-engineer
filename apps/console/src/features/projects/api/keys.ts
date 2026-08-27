@@ -34,4 +34,6 @@ export const projectKeys = {
   tags: (name: string) => [...projectKeys.detail(name), "tags"] as const,
   buildPreflight: (name: string) =>
     [...projectKeys.detail(name), "build-preflight"] as const,
+  workloadDependencies: (name: string) =>
+    [...projectKeys.detail(name), "workload-dependencies"] as const,
 };

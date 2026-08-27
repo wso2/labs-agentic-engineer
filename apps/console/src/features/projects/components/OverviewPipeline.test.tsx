@@ -53,6 +53,15 @@ vi.mock("../../../auth/SessionContext", () => ({
 }));
 
 const mockNavigate = vi.fn();
+// --- Conversation log (#606): this card reads the local chat log, so it now
+// makes sure one exists. Stubbed here (this file mounts no QueryClientProvider);
+// the hook's own behavior is covered by useConversationLog.test.tsx, and the
+// wiring assertion lives below.
+const mockUseConversationLog = vi.fn();
+vi.mock("../../agent-chat/useConversationLog", () => ({
+  useConversationLog: (...args: unknown[]) => mockUseConversationLog(...args),
+}));
+
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => mockNavigate,
 }));
@@ -158,5 +167,17 @@ describe("OverviewPipeline — the spec card", () => {
 
     expect(screen.getByText("v2")).toBeInTheDocument();
     expect(screen.getByText("The agent has questions for you.")).toBeInTheDocument();
+  });
+});
+
+// The card reads the local chat log to say "the agent is waiting on you", so it
+// must make sure a log EXISTS (#606). Without this a teammate opening the
+// overview in a fresh browser read "nothing has started" over a thread holding
+// someone else's unanswered question — and the Generate-spec CTA it offers
+// would have answered that question with the agent's own defaults.
+describe("OverviewPipeline keeps the chat log fed (#606)", () => {
+  it("mounts the conversation log for this org and project", () => {
+    renderPipeline();
+    expect(mockUseConversationLog).toHaveBeenCalledWith(ORG, PROJECT);
   });
 });

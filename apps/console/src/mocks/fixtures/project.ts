@@ -532,7 +532,7 @@ function task(
   };
 }
 
-// v3's tasks — one per row state the build page can render (ADR-0020 §3, §4),
+// v3's tasks — one per row state the build page can render (ADR-0021 §3, §4),
 // so the design's 2b arrangement is actually demonstrable in mock mode. Scoped
 // to `v3` by lineage, which is what `list-tasks?tag=` filters on.
 function v3Task(
@@ -665,7 +665,7 @@ const v3Tasks: TaskView[] = [
   v3Task(125, "Returns dashboard for support staff", "pending", {
     component: "storefront",
   }),
-  // A gate, rendered as a peer of the work it blocks (ADR-0020 §4).
+  // A gate, rendered as a peer of the work it blocks (ADR-0021 §4).
   {
     ...task(126, "Connect returns shipping provider", "pending", "provision"),
     lineage: { specTag: "v3" },
@@ -770,7 +770,7 @@ export const projectTasks: Record<
 // the state of the newest milestone run that has worked it.
 const noBuilds: BuildList = { builds: [] };
 
-// The version ledger (ADR-0020). THREE versions on purpose — one per row state
+// The version ledger (ADR-0021). THREE versions on purpose — one per row state
 // the page can render (running / failed / built-and-deployed) — because the
 // Builds page renders them side by side and a one-row fixture demos none of the
 // comparison the page exists for. Newest first, as the contract promises.
@@ -977,6 +977,37 @@ const settledRun: BuildRunList = {
     }),
   ],
 };
+
+/**
+ * Re-stamp a scenario's run story onto the version actually being asked for.
+ *
+ * The run fixtures are authored once and shared across scenarios, so every one
+ * of them says `run-v1-1` / milestone 1. Served unchanged, `/builds/v3/runs`
+ * answered an envelope tagged `v3` carrying a run that belongs to v1 — a fixture
+ * that contradicts itself, and exactly the kind of thing that makes a mock stop
+ * being evidence.
+ *
+ * A tag the scenario never built gets an EMPTY run list, which is what the real
+ * server answers for a version it has no runs for.
+ */
+export function buildRunsForTag(
+  s: Exclude<ProjectScenario, "error">,
+  tag: string,
+): BuildRunList {
+  const known = (projectBuilds[s].builds ?? []).find((b) => b.tag === tag);
+  if (!known) return { runs: [], tag, milestoneNumber: 0 };
+  const base = projectBuildRuns[s];
+  return {
+    ...base,
+    tag,
+    runs: (base.runs ?? []).map((run) => ({
+      ...run,
+      id: `run-${tag}-1`,
+      milestoneNumber: known.milestoneNumber,
+      milestoneTitle: tag,
+    })),
+  };
+}
 
 export const projectBuildRuns: Record<
   Exclude<ProjectScenario, "error">,

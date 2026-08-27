@@ -73,6 +73,15 @@ and installation lifecycle.*
   exactly the statement "the platform wrote this" and no call site can forget it. Branding is
   idempotent; a comment written BEFORE this shipped carries no marker and reads as human, which is an
   accepted gap (the alternative was pattern-matching five writers' openers).
+- **A stored delivery never carries a published credential.** Every verified webhook delivery's RAW
+  body is persisted to `webhook_payloads` for audit and nothing reads it back — so a comment the
+  platform posts *on purpose* carrying credentials would land in the database in cleartext, the one
+  place here where every other credential is sealed. The roles gate publishes each test user's login as
+  an issue comment (ADR-0022), GitHub delivers that comment straight back, and `webhook/redact.go`
+  rewrites the body before `Persist`. It keys on `PublishedCredentialsMarker` — declared beside
+  `MachineCommentMarker` precisely because the writer is not the only party that has to know it — and
+  matches on the part of it that survives JSON escaping, since Go's encoder turns `<` into `\u003c` and
+  a scan for the literal marker finds nothing. A body it cannot rewrite is dropped, not stored.
 - **`ListMilestoneIssueComments` is ONE call for a whole milestone's threads.** It is the version
   ledger's comment read and it rides a 5s console poll, so neither REST shape works — per-issue costs a
   call per issue and repo-wide answers the whole repository out of the budget the run loop needs; the
