@@ -120,6 +120,57 @@ describe("BuildsLedger", () => {
     expect(screen.queryByText(/of \d+ done/)).toBeNull();
   });
 
+  it("filters a rolling-out version under Running, not just tints it", () => {
+    // The filter read `build.status`, which is `completed` during a rollout, so
+    // a row showing "Deploying to development" was hidden from Running.
+    mockBuilds = [build({ tag: "v2" }), build({ tag: "v1" })];
+    mockDeploy = {
+      version: "v1",
+      status: "deploying",
+      components: { total: 3, ready: 1 },
+      validation: "none",
+    };
+    renderLedger();
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: /status/i }));
+    fireEvent.click(screen.getByRole("option", { name: "Running" }));
+
+    expect(screen.getByText("Deploying to development")).toBeTruthy();
+    expect(screen.queryByText("Built")).toBeNull();
+  });
+
+  it("filters a failed rollout under Failed", () => {
+    mockBuilds = [build({ tag: "v2" }), build({ tag: "v1" })];
+    mockDeploy = {
+      version: "v1",
+      status: "failed",
+      components: { total: 3, ready: 1 },
+      validation: "none",
+    };
+    renderLedger();
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: /status/i }));
+    fireEvent.click(screen.getByRole("option", { name: "Failed" }));
+
+    expect(screen.getByText("Deploy failed")).toBeTruthy();
+    expect(screen.queryByText("Built")).toBeNull();
+  });
+
+  it("does not list a still-moving version under Completed as well", () => {
+    mockBuilds = [build({ tag: "v1" })];
+    mockDeploy = {
+      version: "v1",
+      status: "deploying",
+      components: { total: 3, ready: 1 },
+      validation: "none",
+    };
+    renderLedger();
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: /status/i }));
+    fireEvent.click(screen.getByRole("option", { name: "Completed" }));
+    expect(screen.getByText(/No completed builds/)).toBeTruthy();
+  });
+
   it("keeps a rolling-out version live, even though its BUILD is completed", () => {
     // The row tinted on build.status, which is `completed` during a rollout —
     // so it went quiet at exactly the moment it had something to say.

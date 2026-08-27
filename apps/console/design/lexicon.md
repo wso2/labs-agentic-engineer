@@ -180,6 +180,14 @@ not carry: who is acting, why it failed.
 **`Built`, never *Completed*.** "Completed" describes the run; the row is about
 the version.
 
+**There is no queued status, and that is a gap rather than a choice.** The
+design drew `Queued · next` for a version waiting its turn, and the platform
+genuinely does run one build at a time — but `BuildSummary.status` has no member
+for it (`started` · `in_progress` · `completed` · `failed`), and a version that
+has not started has no row in the ledger read at all. So a waiting version is
+simply absent until its run begins. Giving it words needs a `queued` member on
+that enum; until then the page says nothing rather than inventing a state.
+
 **Only the deployed version may be described by where it reached.** The platform
 records one deployed version per project, so every other completed version says
 `Built` — saying more would be a guess.
@@ -202,9 +210,14 @@ Counts read **`11 in this build · 5 done · 2 need your attention`**. *Need you
 attention* folds blocked and in-review together deliberately: both are waiting
 on the reader, which is what makes them one number.
 
-The row's second line is the issue's **newest comment**, flattened to its first
-non-empty line. A task the agent has said nothing about shows no second line at
-all — eleven rows each reading "No updates yet" is noise, not information.
+The row's second line is the issue's **newest comment by any author**, flattened
+to its first non-empty line. Not "the agent's latest note": the platform's own
+machine comments are already excluded server-side, and what remains — the coding
+agent's progress notes and whatever a human wrote — cannot be told apart by
+author, because the platform comments through the org's own credential and the
+runner is handed that same credential. A task with no comment shows no second
+line at all: eleven rows each reading "No updates yet" is noise, not
+information.
 
 **The ledger has no Tasks column.** A version's task counts cannot be attributed
 from a read that spans versions, and asking per row would be one GitHub-backed

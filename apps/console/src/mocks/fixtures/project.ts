@@ -885,6 +885,20 @@ const waitingRun: BuildRunList = {
 // full coverage, so claiming it here would have the tile say "all criteria passed"
 // over a report showing two nobody checked. Every other verdict is one devtools
 // key away: see fixtures/validation.ts.
+// A version whose run ended badly — the ledger's failed row needs a story that
+// agrees with it.
+const failedRun: BuildRunList = {
+  tag: "v1",
+  milestoneNumber: 1,
+  runs: [
+    milestoneRun({
+      state: "failed",
+      terminalReason: "merge-conflict",
+      endedAt: "2026-07-11T10:12:12Z",
+    }),
+  ],
+};
+
 const settledRun: BuildRunList = {
   tag: "v1",
   milestoneNumber: 1,
@@ -979,13 +993,19 @@ const settledRun: BuildRunList = {
 };
 
 /**
- * Re-stamp a scenario's run story onto the version actually being asked for.
+ * The run story for the version actually being asked for.
  *
  * The run fixtures are authored once and shared across scenarios, so every one
  * of them says `run-v1-1` / milestone 1. Served unchanged, `/builds/v3/runs`
  * answered an envelope tagged `v3` carrying a run that belongs to v1 — a fixture
- * that contradicts itself, and exactly the kind of thing that makes a mock stop
- * being evidence.
+ * that contradicts its own envelope, and exactly the kind of thing that makes a
+ * mock stop being evidence.
+ *
+ * Restamping identity alone was not enough either: the `building` scenario has
+ * v3 running, v2 failed and v1 completed, and handing all three the same
+ * `waitingRun` showed a run still waiting for versions that had finished. The
+ * story is therefore chosen by the BUILD'S OWN STATUS, so the run page and the
+ * ledger row can never disagree about what happened to a version.
  *
  * A tag the scenario never built gets an EMPTY run list, which is what the real
  * server answers for a version it has no runs for.
@@ -996,13 +1016,23 @@ export function buildRunsForTag(
 ): BuildRunList {
   const known = (projectBuilds[s].builds ?? []).find((b) => b.tag === tag);
   if (!known) return { runs: [], tag, milestoneNumber: 0 };
-  const base = projectBuildRuns[s];
+
+  const story =
+    known.status === "in_progress" || known.status === "started"
+      ? projectBuildRuns[s]
+      : known.status === "failed"
+        ? failedRun
+        : settledRun;
+
   return {
-    ...base,
+    ...story,
     tag,
-    runs: (base.runs ?? []).map((run) => ({
+    milestoneNumber: known.milestoneNumber,
+    // `${tag}-${i}`, not `${tag}-1`: a settled story carries SEVERAL runs, and
+    // giving them one id collapses distinct history rows onto each other.
+    runs: (story.runs ?? []).map((run, i) => ({
       ...run,
-      id: `run-${tag}-1`,
+      id: `run-${tag}-${i + 1}`,
       milestoneNumber: known.milestoneNumber,
       milestoneTitle: tag,
     })),

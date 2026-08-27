@@ -41,7 +41,6 @@ import { useProjectStatus } from "../../projects/api/queries";
 import { useBuilds } from "../api/queries";
 import { runStamp } from "../lib/format";
 import {
-  isLedgerLive,
   ledgerDuration,
   ledgerStatus,
   milestoneLabel,
@@ -69,16 +68,30 @@ const STATUS_FILTERS = [
 
 type StatusFilter = (typeof STATUS_FILTERS)[number]["value"];
 
-function matchesFilter(build: BuildSummary, filter: StatusFilter): boolean {
+/**
+ * Filter on the status the ROW RENDERS, not on `build.status`.
+ *
+ * They are not the same thing: a completed version whose rollout is under way
+ * shows "Deploying to development" and IS live, and one whose rollout failed
+ * shows "Deploy failed". Filtering on the raw build status hid both from the
+ * filters that name exactly what they are.
+ */
+function matchesFilter(
+  build: BuildSummary,
+  filter: StatusFilter,
+  deploy: DeployStage | undefined,
+): boolean {
+  if (filter === "all") return true;
+  const status = ledgerStatus(build, deploy);
   switch (filter) {
-    case "all":
-      return true;
     case "running":
-      return isLedgerLive(build);
-    case "completed":
-      return build.status === "completed";
+      return status.live;
     case "failed":
-      return build.status === "failed";
+      return status.tone === "error";
+    case "completed":
+      // A version that is completed AND still moving belongs under Running; it
+      // would otherwise appear under both.
+      return build.status === "completed" && !status.live;
     default:
       return true;
   }
@@ -110,8 +123,8 @@ export function BuildsLedger({ projectName }: { projectName: string }) {
   const deploy: DeployStage | undefined = status.data?.deploy;
 
   const rows = useMemo(
-    () => (builds.data ?? []).filter((b) => matchesFilter(b, filter)),
-    [builds.data, filter],
+    () => (builds.data ?? []).filter((b) => matchesFilter(b, filter, deploy)),
+    [builds.data, filter, deploy],
   );
 
   // The header renders through every state below so the back link stays

@@ -134,7 +134,7 @@ behaviour.
   rows, decision 4) and the two log sections, and the rail's cost was making the
   reader scan six expanded stages to find the one that moved. `RunSpine`,
   `StageRow`, `RunGlanceStrip`, `RunNowPanel`, `RunHoldNotice` and
-  `ProvisioningGates` should now be pruned rather than left as reference.
+  `ProvisioningGates` remain in the tree, mounted by nothing.
 - **The Milestone column shows a number, not a title.** `milestoneNumber` is what
   the ledger read carries; the title is on `MilestoneRunView`, which is
   tag-scoped and would cost a request per row. The lexicon's promise that the
