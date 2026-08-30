@@ -17,6 +17,17 @@ replicaCount: 1
 thunder:
   # In-cluster admin API base URL for the platform Thunder.
   adminURL: "http://amp-thunder-extension-service.amp-thunder.svc.cluster.local:8090"
+  # OAuth resource indicator for ThunderID's own "System" resource server —
+  # the one that owns the `system` scope. Conventionally
+  # "<thunder PUBLIC url>/mcp"; the identifier is a name, not an address, so it
+  # is the public URL even though adminURL above is the in-cluster one.
+  #
+  # Needed wherever Thunder has a server-wide DEFAULT resource server set — as
+  # it does here, to Agent Manager's. Without the indicator the `system` scope
+  # resolves against that default, which does not define it, and is dropped
+  # SILENTLY: the token endpoint returns 200 with a scope-less token and every
+  # admin call then 403s. Empty disables the parameter (pre-1.0.0 behaviour).
+  systemResourceIdentifier: "http://thunder.openchoreo.localhost:8080/mcp"
   # Credentials (THUNDER_SYSTEM_CLIENT_ID, THUNDER_SYSTEM_CLIENT_SECRET) are
   # sourced exclusively from the `thunder-app-operator-credentials` Secret,
   # which is provisioned by ESO before this chart is installed. The chart does

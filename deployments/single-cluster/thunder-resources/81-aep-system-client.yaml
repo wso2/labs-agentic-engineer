@@ -14,6 +14,16 @@ inboundAuthConfig:
       tokenEndpointAuthMethod: "client_secret_post"
       pkceRequired: false
       publicClient: false
+      # `system` is what actually unlocks ThunderID's own admin API, and it is an
+      # OAuth SCOPE read straight off the token — a different mechanism from the
+      # resource-server role model. Being assigned into the Administrator role
+      # (84-aep-system-role.yaml) is NOT sufficient on its own: without this
+      # scope the client authenticates fine and then 403s on every admin call,
+      # which is exactly how thunder-app-operator fails.
+      #
+      # openid/profile/email ride along so the same client can be used for
+      # ordinary introspection; they grant nothing by themselves.
+      scopes: ["openid", "profile", "email", "system"]
       token:
         accessToken:
           clientConfig:
