@@ -151,10 +151,13 @@ deployment. An 8 GB Colima keeps working.
 Measured on this base, 33 pods, observability off and the compose stack down:
 **3.7 GB** resident inside the VM.
 
-**Profile B — flag on.** Roughly +22 pods: OpenSearch, Prometheus and its
-operator, `amp-api`/`amp-console`/PostgreSQL, the per-environment gateway
-runtime, the observability plane, the tracing adapter and OTel collector, one
-environment Thunder, Fluent Bit, `amp-observer` and the sandbox controller.
+**Profile B — flag on.** Measured, not estimated: **64 pods** and **7.3 GB**
+resident in the VM with everything up — both platforms, the observability plane
+with OpenSearch and Prometheus, the per-environment Thunder and gateway, and
+AEP's compose stack. That is +31 pods and +3.6 GB over Profile A, comfortably
+inside a 12 GB VM (the estimate in the plan was 4.3–5.2 GB added, so this came
+in slightly under).
+
 Budget **12 GB of VM memory and +15–25 GB of disk**:
 
 ```bash

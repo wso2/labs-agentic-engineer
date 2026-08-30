@@ -69,6 +69,23 @@ OBSERVABILITY_LOGS_VERSION="0.5.3"
 OBSERVABILITY_TRACING_VERSION="0.6.0"
 OBSERVABILITY_METRICS_VERSION="0.6.1"
 
+# Per-environment API Platform gateway encryption key. gateway-controller 1.2.x
+# mounts an AES-256 at-rest key from a Secret in its OWN namespace, and Agent
+# Manager's per-environment gateways each live in their own `<org>-<env>`
+# namespace — so each needs its own copy.
+#
+# The NAME is AEP's, not Agent Manager's `gateway-encryption-keys`, and that is
+# deliberate: `encryptionKeys.secretName` is set once on the gateway-OPERATOR
+# (manifests/api-platform/operator-values.yaml), and the operator applies it to
+# every gateway it deploys — including Agent Manager's. One operator means one
+# secret name; only the namespace varies. Creating it under Agent Manager's name
+# instead leaves the controller stuck on
+#   MountVolume.SetUp failed for volume "encryption-keys":
+#   secret "api-platform-controller-aesgcm-key" not found
+# with the APIGateway reporting Programmed=False and retrying forever.
+GATEWAY_ENCRYPTION_SECRET_NAME="${GATEWAY_ENCRYPTION_SECRET_NAME:-api-platform-controller-aesgcm-key}"
+GATEWAY_ENCRYPTION_SECRET_KEY="${GATEWAY_ENCRYPTION_SECRET_KEY:-default-aesgcm256-v1.bin}"
+
 # Agent Sandbox community module (openchoreo registry, versioned independently
 # of AMP). Only installed when ENABLE_AGENT_MANAGER=1.
 AGENT_SANDBOX_MODULE_VERSION="${AGENT_SANDBOX_MODULE_VERSION:-0.1.1}"
