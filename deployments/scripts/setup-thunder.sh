@@ -226,19 +226,18 @@ echo "   ✅ ConfigMap ${BOOTSTRAP_CM} applied in ${THUNDER_NS} (changed: ${BOOT
 echo ""
 echo "2️⃣  Installing ${THUNDER_RELEASE}"
 
-# CORS is configured natively on ThunderID rather than as a kgateway filter on
-# the HTTPRoute. Thunder 0.34's chart route had no filters and Thunder itself
-# sent no CORS headers, so the console's cross-origin preflight to
-# POST /oauth2/token returned 405 and setup patched a filter in. ThunderID
-# 1.0.0 has configuration.cors, which is where this belongs.
+# CORS is NOT set here. ThunderID 1.0.0's static deployment.yaml has no CORS
+# section, so `--set thunder.configuration.cors.*` writes a key nothing reads
+# and reports success — the one failure mode worth calling out, because the
+# resulting cluster looks correctly configured and still refuses every
+# cross-origin call. The only thing that sets allowedOrigins is the `cors`
+# server_config bootstrap document; both products' origins are unioned in
+# thunder-resources/89-aep-cors-config.yaml.
 #
-# Both console origins are listed unconditionally. Agent Manager's console is
-# only reachable when ENABLE_AGENT_MANAGER=1, but an allowed origin that
-# nothing calls from costs nothing, and making the list conditional would mean
-# a Thunder restart every time the flag flips.
 # THUNDER_FORCE_UPGRADE=1 re-drives an already-deployed release. Callers use it
 # to mean "the values changed, converge it" — apply_public_urls_to_cluster in
 # utils.sh is the one that does.
+#
 # One list, used by BOTH the install and the bootstrap re-import below. They
 # have to render the same chart the same way, or the Job the re-import runs is
 # not the Job this release installed.
@@ -249,10 +248,6 @@ THUNDER_SET_ARGS=(
     --set "thunder.configuration.gateClient.hostname=${THUNDER_HOSTNAME}"
     --set "thunder.configuration.gateClient.port=${PUBLIC_THUNDER_PORT}"
     --set "thunder.configuration.gateClient.scheme=${PUBLIC_THUNDER_SCHEME}"
-    --set "thunder.configuration.cors.allowedOrigins[0]=${PUBLIC_CONSOLE_URL}"
-    --set "thunder.configuration.cors.allowedOrigins[1]=${PUBLIC_THUNDER_URL}"
-    --set "thunder.configuration.cors.allowedOrigins[2]=http://localhost:19080"
-    --set "thunder.configuration.cors.allowedOrigins[3]=http://console.amp.localhost:8080"
     --set "thunder.setup.admin.password=admin"
     --set "thunder.bootstrap.configMap.name=${BOOTSTRAP_CM}"
     --set-json "thunder.bootstrap.configMap.files=$(cat "$BOOTSTRAP_FILES_JSON")"
@@ -293,6 +288,8 @@ kubectl wait -n "${THUNDER_NS}" --context "${CLUSTER_CONTEXT}" \
 # property that lets the hook itself be re-entrant.
 reimport_bootstrap() {
     local job="${THUNDER_RELEASE}-bootstrap-reimport"
+    # The ThunderID chart names its Deployment "<release>-deployment".
+    local deploy="${THUNDER_RELEASE}-deployment"
     echo "   re-running the bootstrap importer..."
     kubectl --context "${CLUSTER_CONTEXT}" -n "${THUNDER_NS}" \
         delete job "$job" --ignore-not-found --wait=true >/dev/null 2>&1
@@ -326,6 +323,18 @@ yaml.safe_dump(job, sys.stdout)
             1/*) echo "   ✅ bootstrap re-imported"
                  kubectl --context "${CLUSTER_CONTEXT}" -n "${THUNDER_NS}" \
                      delete job "$job" --ignore-not-found --wait=false >/dev/null 2>&1
+                 # Thunder reads `server_config` documents into its runtime
+                 # configuration once, at startup. Re-importing them updates the
+                 # database and changes nothing that is serving traffic, so
+                 # without this restart a corrected `cors` or
+                 # `defaultResourceServer` imports "successfully" and the
+                 # running Thunder keeps the old value — the failure looks like
+                 # the document was wrong rather than never loaded.
+                 echo "   restarting Thunder to load the re-imported server config..."
+                 kubectl --context "${CLUSTER_CONTEXT}" -n "${THUNDER_NS}" \
+                     rollout restart deploy "$deploy" >/dev/null
+                 kubectl --context "${CLUSTER_CONTEXT}" -n "${THUNDER_NS}" \
+                     rollout status deploy "$deploy" --timeout=300s >/dev/null
                  return 0 ;;
             */1) echo "❌ bootstrap import failed:" >&2
                  kubectl --context "${CLUSTER_CONTEXT}" -n "${THUNDER_NS}" \

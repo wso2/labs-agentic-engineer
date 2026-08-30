@@ -90,12 +90,22 @@ echo "   ✅ tracing module"
 
 # The Prometheus chart's own CRDs race its first reconcile on a cold cluster.
 # One retry after waiting for establishment is the documented recovery.
+#
+# The chart caps the Prometheus operator at 40m CPU, which is sized for a
+# cluster running one platform. Here it runs two, and the operator sits pinned
+# at its ceiling: its /healthz then cannot answer inside the 1s probe timeout,
+# so the kubelet SIGTERMs it and it restarts forever (exit 0, "Completed" — the
+# giveaway that this is a probe kill and not a crash). The metrics adapter dies
+# with it, because no operator means no Prometheus StatefulSet to connect to.
+# Memory is untouched; measured use is 16Mi of the 60Mi it is already given.
 install_metrics_module() {
     helm upgrade --install observability-metrics-prometheus \
         oci://ghcr.io/openchoreo/helm-charts/observability-metrics-prometheus \
         --namespace "$OBS_NS" --create-namespace --kube-context "$CLUSTER_CONTEXT" \
         --version "${OBSERVABILITY_METRICS_VERSION}" \
         --set adapter.image.tag="" \
+        --set kube-prometheus-stack.prometheusOperator.resources.requests.cpu=50m \
+        --set kube-prometheus-stack.prometheusOperator.resources.limits.cpu=300m \
         --timeout 10m
 }
 if ! metrics_out="$(install_metrics_module 2>&1)"; then

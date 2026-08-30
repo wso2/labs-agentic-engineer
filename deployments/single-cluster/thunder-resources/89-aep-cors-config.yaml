@@ -1,0 +1,34 @@
+# CORS allowed origins — the UNION of both products' browser origins.
+#
+# Agent Manager's own 71-amp-cors-config.yaml declares this same `cors`
+# server_config with only its own two origins. On a converged cluster that
+# document is not wrong, it is just incomplete: it predates AEP sharing the
+# IdP. Because server_config documents are applied in filename order and a
+# re-declaration of the same name updates it, this 89- document lands after
+# AM's 71- and carries both products' origins.
+#
+# Why this must be a bootstrap document and not a Helm value: ThunderID's
+# static deployment.yaml has no CORS section at all, so a
+# `--set thunder.configuration.cors.*` writes a key nothing reads and fails
+# silently. The only thing that sets allowedOrigins is this resource.
+#
+# Without AEP's origin here the AEP console cannot even reach a login form: its
+# very first call is a browser fetch of /.well-known/openid-configuration, and
+# with no Access-Control-Allow-Origin on the response the browser refuses to
+# hand it to the page. The console renders "Sign-in failed / Failed to fetch"
+# while curl against the identical URL returns a healthy 200 — the request is
+# fine, only the browser's cross-origin check fails.
+#
+# Both the fixed http://localhost:8090 form and ${PUBLIC_CONSOLE_URL} are
+# listed so that overriding the public URL ADDS an origin rather than replacing
+# the local one; setup-thunder.sh de-duplicates the array when they collapse
+# onto each other, which is the common case since the default IS
+# http://localhost:8090.
+#
+# The data plane's app gateway (:19080) is deliberately absent: deployed
+# workloads are not browser clients of Thunder, and this list stays an explicit
+# least-privilege allow-list rather than a catch-all.
+resource_type: server_config
+name: cors
+value:
+  allowedOrigins: ["http://localhost:3000","http://console.amp.localhost:8080","http://localhost:8090","${PUBLIC_CONSOLE_URL}","${PUBLIC_THUNDER_URL}"]

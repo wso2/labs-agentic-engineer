@@ -178,6 +178,39 @@ else
     done
 fi
 
+# ── 8. The shared IdP admits BOTH consoles' origins ─────────────────────────
+#
+# The consoles' very first call is a browser fetch of the OIDC discovery
+# document. If Thunder answers it without an Access-Control-Allow-Origin the
+# browser discards a perfectly good 200 and the console dies before it can even
+# render a login form — while curl against the same URL looks completely
+# healthy, which is what makes this worth asserting rather than eyeballing.
+#
+# Both origins are checked because the allow-list lives in a single `cors`
+# server_config document that either product's bootstrap can redeclare; the
+# regression to catch is one product's document silently replacing the other's
+# origin. The unlisted origin is checked too, so a wildcard that "fixes" this by
+# admitting everything fails here instead of passing.
+echo ""
+echo "8️⃣  CORS: the shared IdP admits both consoles"
+cors_origin() {
+    curl -s -D- -o /dev/null --max-time 10 \
+        "${PUBLIC_THUNDER_URL}/.well-known/openid-configuration" \
+        -H "Origin: $1" 2>/dev/null \
+        | tr -d '\r' | awk 'tolower($1)=="access-control-allow-origin:"{print $2}'
+}
+cors_expect=("${PUBLIC_CONSOLE_URL}")
+amp_installed && cors_expect+=("http://console.amp.localhost:8080")
+for o in "${cors_expect[@]}"; do
+    check "origin ${o} allowed" "$(cors_origin "$o")" "$o"
+done
+denied="$(cors_origin "http://not-allowed.invalid")"
+if [ -z "$denied" ]; then
+    pass "unlisted origin refused (allow-list, not wildcard)"
+else
+    fail "unlisted origin was allowed — got '${denied}'"
+fi
+
 echo ""
 if [ "$FAILURES" -eq 0 ]; then
     echo "✅ All convergence invariants hold."
