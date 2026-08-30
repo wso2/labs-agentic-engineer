@@ -499,6 +499,45 @@ else
     echo "   AE handoff: disabled (AE_HANDOFF=false)"
 fi
 kubectl --context "$CLUSTER_CONTEXT" -n "$NS" rollout status deploy/observer --timeout=300s
+
+# ── 3c. observer-auth-config: service-account claim → client_id ───────────
+# The observer resolves service accounts through its OWN copy of the
+# entitlement mapping, separate from openchoreo-api-config, and it also ships
+# keyed on `sub`. ThunderID puts a client_credentials subject in `client_id`
+# (see setup-openchoreo.sh), so without this every build-log and observability
+# query from a service account gets a 403.
+#
+# The configmap is populated ASYNCHRONOUSLY — it can exist before its
+# service-account claim is written. Patching too early would see no `sub` and
+# silently do nothing, so wait for the claim to surface first (either `sub` to
+# patch, or `client_id` if a prior run already did it).
+echo ""
+echo "3️⃣c observer-auth-config service-account claim"
+_obs_claim=""
+for _ in $(seq 1 30); do
+    _obs_claim="$(kubectl --context "$CLUSTER_CONTEXT" -n "$NS" get configmap observer-auth-config -o yaml 2>/dev/null \
+        | grep -oE "claim:[[:space:]]*['\"]?(sub|client_id)['\"]?" | head -1)"
+    [ -n "$_obs_claim" ] && break
+    sleep 4
+done
+if [ -z "$_obs_claim" ]; then
+    # Distinguish a genuinely-absent configmap from one that is present but
+    # whose claim never surfaced, so the outcome is not misleading.
+    if kubectl --context "$CLUSTER_CONTEXT" -n "$NS" get configmap observer-auth-config &>/dev/null; then
+        echo "❌ observer-auth-config is present but its service-account claim never surfaced" >&2
+        exit 1
+    fi
+    echo "   ⚠️  observer-auth-config not found — skipping"
+elif echo "$_obs_claim" | grep -q client_id; then
+    echo "   ✓ already client_id"
+else
+    kubectl --context "$CLUSTER_CONTEXT" -n "$NS" get configmap observer-auth-config -o yaml \
+        | sed -E "s/claim:[[:space:]]*['\"]?sub['\"]?/claim: client_id/g" \
+        | kubectl --context "$CLUSTER_CONTEXT" apply --server-side --field-manager=helm --force-conflicts -f - >/dev/null
+    kubectl --context "$CLUSTER_CONTEXT" -n "$NS" rollout restart deployment/observer >/dev/null
+    kubectl --context "$CLUSTER_CONTEXT" -n "$NS" rollout status deployment/observer --timeout=120s >/dev/null
+    echo "   ✓ patched to client_id"
+fi
 if [ "$AE_HANDOFF" = "true" ]; then
     # With AE_HANDOFF=true the agent's boot-time MCP test is FATAL: it must
     # reach aep-mcp-server (docker-compose, started later by start.sh). Only
