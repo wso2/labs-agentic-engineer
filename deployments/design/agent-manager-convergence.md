@@ -53,6 +53,31 @@ the RAM.
 | `ClusterProjectType/default` | AEP's own `CreateProject` needs it whether or not Agent Manager is installed. |
 | `aep-`prefixed build templates | Harmless when Agent Manager is absent, required when present. |
 
+### Two things the 1.2.0 charts started requiring
+
+Neither is a collision — they are just gates the older charts did not have, and
+both fail at `helm template` time with a clear message.
+
+* **`Project.spec.type`.** Required on the CRD. The OpenChoreo *API* defaults it
+  to `ClusterProjectType/default`, so AEP only has to make that object exist —
+  which `setup-aep.sh` now does. A direct `kubectl apply` of a Project (the
+  API Platform POC manifests) has to state it.
+
+* **`observer.extraEnvs`.** The observability-plane chart now fails its own
+  render if any of `controlPlaneApiUrl`, `observer.extraEnvs` or
+  `rca.openchoreoApiUrl` still carries its placeholder `.invalid` domain — and
+  the chart's own DEFAULT `extraEnvs` does. So the block must be supplied even
+  where nothing about it is deployment-specific. It REPLACES rather than merges,
+  so the chart's `AUTHZ_TIMEOUT` default has to be restated alongside it.
+
+And one that is a genuine behaviour change rather than a gate: creating a
+Project no longer materializes its cell namespace. A `ProjectReleaseBinding`
+pins a release to an environment and owns that namespace, and nothing creates
+one for you. The failure is silent — the project reports `Created=True` and
+`Ready=True`, then every component deploy fails with "namespace ... not found".
+`aep-api` authors the binding per environment the project's pipeline promotes
+through (`internal/clients/openchoreo/project_cell_client.go`).
+
 ## The collisions, and how each is resolved
 
 Both products are OpenChoreo platforms, so they reach for the same names.
@@ -119,8 +144,12 @@ and starting the cluster through k3d re-wires the node.
 
 That restart then costs you the node's `/etc/resolv.conf` override, which k3d
 resets to Docker's default resolver. Every pod that has to pull an image goes
-`ImagePullBackOff` — the cluster looks alive and pulls nothing. `fix_node_dns`
-in `utils.sh` puts it back:
+`ImagePullBackOff` — the cluster looks alive and pulls nothing. Worse, Docker's
+embedded resolver (127.0.0.11) does not reliably survive the node container
+restarting: it answers CONNECTION REFUSED, and listing a dead resolver first
+makes containerd fail pulls with "lookup registry-1.docker.io: Try again"
+rather than falling through cleanly. `fix_node_dns` in `utils.sh` now probes it
+and only puts it first when it actually answers:
 
 ```bash
 cd deployments/scripts && source env.sh && source utils.sh && fix_node_dns

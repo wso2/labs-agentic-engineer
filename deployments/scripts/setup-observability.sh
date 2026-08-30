@@ -326,6 +326,24 @@ observer:
   # to it via in-cluster DNS instead of the chart default
   # (api.openchoreo.localhost, which only resolves on the host).
   controlPlaneApiUrl: "http://openchoreo-api.openchoreo-control-plane.svc.cluster.local:8080"
+  # REQUIRED from chart 1.2.0. The chart now fails its own render if any of
+  # controlPlaneApiUrl / observer.extraEnvs / rca.openchoreoApiUrl still carries
+  # its placeholder ".invalid" domain, and its DEFAULT extraEnvs does:
+  # OBSERVER_BASE_URL=http://observer.openchoreo.invalid:11080. So the block has
+  # to be supplied here even though only one of its two entries is really ours.
+  #
+  # extraEnvs REPLACES the chart's list rather than merging, so AUTHZ_TIMEOUT is
+  # restated at the chart's own default — dropping it would silently shorten the
+  # authorization timeout.
+  #
+  # Port 8080, not the chart's 11080: step 4 below disables the bundled
+  # port-11080 Gateway (k3d's serverlb does not publish it) and routes the
+  # observer through the main kgateway on :8080 by Host header instead.
+  extraEnvs:
+    - name: OBSERVER_BASE_URL
+      value: "http://observer.openchoreo.localhost:8080"
+    - name: AUTHZ_TIMEOUT
+      value: "30s"
 security:
   enabled: true
   oidc:

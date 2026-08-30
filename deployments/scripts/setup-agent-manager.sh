@@ -230,10 +230,32 @@ echo "   ✅ amp-api + amp-console ready"
 
 echo ""
 echo "8️⃣  Observability extension (amp-observer)"
+# amp-observer's HTTPRoute names `gateway-default` with NO namespace, so it
+# attaches to the Gateway in its own namespace — the observability plane's
+# bundled one, on the port k3d publishes as 11080. AEP disables that Gateway
+# (setup-observability.sh: "dead weight") because AEP reaches the observer
+# through the main kgateway on :8080 by Host header instead. With Agent Manager
+# installed it is no longer dead weight, so turn it back on.
+#
+# --reuse-values so this does not silently reset every value
+# setup-observability.sh set.
+echo "   re-enabling the observability plane's own gateway (amp-observer rides it)"
+helm upgrade observability-plane \
+    oci://ghcr.io/openchoreo/helm-charts/openchoreo-observability-plane \
+    --namespace "$OBS_NS" --kube-context "$CLUSTER_CONTEXT" \
+    --version "${OPENCHOREO_VERSION}" \
+    --reuse-values --set gateway.enabled=true \
+    --force-conflicts --timeout 10m
+
+# auth.issuer defaults to the chart's own thunder.amp.localhost. It is what
+# amp-observer validates `iss` against, so it has to name the IdP this
+# deployment actually publishes — same move as the three values on the
+# agent-manager chart above.
 helm upgrade --install amp-observability-traces \
     "${AMP_REGISTRY}/wso2-amp-observability-extension" \
     --version "${AMP_VERSION}" \
     --namespace "$OBS_NS" --create-namespace --kube-context "$CLUSTER_CONTEXT" \
+    --set "amObserver.auth.issuer=${PUBLIC_THUNDER_URL}" \
     --timeout 15m
 if kubectl get deployment amp-observer -n "$OBS_NS" &>/dev/null; then
     kubectl wait -n "$OBS_NS" --context "$CLUSTER_CONTEXT" \

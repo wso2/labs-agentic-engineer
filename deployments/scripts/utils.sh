@@ -375,8 +375,31 @@ json.dump(cm, sys.stdout)
 # 8.8.8.8 as a fallback for external image pulls.
 fix_node_dns() {
     echo "🔧 Fixing k3d node DNS resolution..."
+    local node
     for node in $(docker ps --filter "name=k3d-${CLUSTER_NAME}" --format '{{.Names}}'); do
-        docker exec "$node" sh -c 'echo "nameserver 127.0.0.11" > /etc/resolv.conf; echo "nameserver 8.8.8.8" >> /etc/resolv.conf' 2>/dev/null || true
+        # Docker's embedded resolver (127.0.0.11) is preferred when it works:
+        # it is what resolves other CONTAINER names on the k3d network. But it
+        # does not always survive the node container being restarted — after a
+        # `k3d cluster stop/start`, or a Colima resize, it answers CONNECTION
+        # REFUSED. Listing a dead resolver first is not harmless: containerd's
+        # image pulls intermittently fail with "lookup registry-1.docker.io:
+        # Try again" rather than falling through cleanly, and the cluster then
+        # sits in ImagePullBackOff looking like a registry problem.
+        #
+        # So probe it, and only put it first if it actually answers. The public
+        # resolvers are the fallback either way; two of them, because a single
+        # unreachable one strands the node with no external DNS at all.
+        if docker exec "$node" sh -c \
+            'nslookup -timeout=2 localhost 127.0.0.11 >/dev/null 2>&1' 2>/dev/null; then
+            docker exec "$node" sh -c \
+                'printf "nameserver 127.0.0.11\nnameserver 8.8.8.8\nnameserver 1.1.1.1\n" > /etc/resolv.conf' \
+                2>/dev/null || true
+        else
+            echo "   ${node}: Docker's embedded resolver is not answering — using public resolvers only"
+            docker exec "$node" sh -c \
+                'printf "nameserver 8.8.8.8\nnameserver 1.1.1.1\n" > /etc/resolv.conf' \
+                2>/dev/null || true
+        fi
     done
     echo "✅ Node DNS configured"
 }
