@@ -252,6 +252,13 @@ spec:
         metadata:
           name: ${metadata.name}-${parameters.endpointName}
           namespace: ${metadata.namespace}
+          labels:
+            # Selects AEP's APIGateway (manifests/api-platform/api-gateway.yaml),
+            # which matches on exactly this label. Required, not decorative: the
+            # gateway moved off Cluster scope so it would stop adopting Agent
+            # Manager's RestApis, and an unlabelled RestApi is now served by no
+            # gateway at all.
+            gateway.api-platform.wso2.com/restapi-target: api-platform-default
         spec:
           displayName: ${metadata.environmentName}-${metadata.componentNamespace}-${metadata.componentName}-${parameters.endpointName}
           version: v1.0

@@ -185,9 +185,22 @@ for binding in $(kubectl get clusterauthzrolebindings.openchoreo.dev \
     claim="$(kubectl get clusterauthzrolebinding.openchoreo.dev "$binding" \
         -o jsonpath='{.spec.entitlement.claim}' 2>/dev/null)"
     [ "$claim" = "sub" ] || continue
+    # 2>/dev/null: the FIRST server-side apply on an object Helm created with
+    # client-side apply performs a field-manager migration, and the redundant
+    # re-apply that follows it races the controller's own write. kubectl reports
+    # that as a non-fatal warning and the migration itself still lands — but the
+    # warning is indistinguishable from a real failure, so the claim is verified
+    # below rather than trusted.
     kubectl get clusterauthzrolebinding.openchoreo.dev "$binding" -o yaml \
         | sed -E "s/claim:[[:space:]]*['\"]?sub['\"]?/claim: client_id/g" \
-        | kubectl apply --server-side --field-manager=helm --force-conflicts -f - >/dev/null
+        | kubectl apply --server-side --field-manager=helm --force-conflicts -f - >/dev/null 2>&1 || true
+    now="$(kubectl get clusterauthzrolebinding.openchoreo.dev "$binding" \
+        -o jsonpath='{.spec.entitlement.claim}' 2>/dev/null)"
+    if [ "$now" != "client_id" ]; then
+        echo "❌ ClusterAuthzRoleBinding ${binding} is still on claim '${now}'." >&2
+        echo "   Every service account bound through it would 403 against ThunderID." >&2
+        exit 1
+    fi
     echo "   ✓ ${binding}"
 done
 echo "✅ Entitlement claim is client_id"

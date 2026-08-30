@@ -5,8 +5,23 @@ metadata:
   name: api-platform-default
   namespace: openchoreo-data-plane
 spec:
+  # LabelSelector, not Cluster.
+  #
+  # A Cluster-scoped APIGateway adopts EVERY RestApi in the cluster. That was
+  # fine while AEP was the only thing creating them, but Agent Manager creates
+  # its own and points them at its own gateway with exactly this label. Left on
+  # Cluster scope, AEP's gateway would silently adopt those too and both
+  # gateways would serve the same APIs.
+  #
+  # The label is stamped on every RestApi the api-configuration ClusterTrait
+  # renders (manifests/api-platform/api-configuration-trait.yaml and the
+  # platform chart's copy). The two must move together — a RestApi without the
+  # label is served by nothing at all, which presents as a 404 from the gateway
+  # with a perfectly healthy-looking RestApi CR.
   apiSelector:
-    scope: Cluster
+    scope: LabelSelector
+    matchLabels:
+      gateway.api-platform.wso2.com/restapi-target: api-platform-default
   infrastructure:
     replicas: 1
     resources:
