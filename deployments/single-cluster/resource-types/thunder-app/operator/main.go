@@ -51,7 +51,7 @@ const (
 	envThunderClientID     = "THUNDER_SYSTEM_CLIENT_ID"
 	envThunderClientSecret = "THUNDER_SYSTEM_CLIENT_SECRET"
 
-	defaultThunderAdminURL = "http://thunder-service.thunder.svc.cluster.local:8090"
+	defaultThunderAdminURL = "http://amp-thunder-extension-service.amp-thunder.svc.cluster.local:8090"
 )
 
 // scheme carries every type the manager's client reads or writes: the

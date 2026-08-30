@@ -1,0 +1,21 @@
+# resource_type: application
+resource_type: application
+id: aep-api-client
+type: m2m # client_credentials only, no interactive login
+name: "AEP API Service"
+description: "AEP API service principal. The BFF presents this on its outbound client_credentials calls to OpenChoreo. Bound to the OpenChoreo admin role by the aep-api-client-binding ClusterAuthzRoleBinding in setup-aep.sh."
+ouId: "01900000-0000-7000-8000-000000000001"
+inboundAuthConfig:
+  - type: oauth2
+    config:
+      clientId: "aep-api-client"
+      clientSecret: "aep-api-client-secret"
+      grantTypes: ["client_credentials"]
+      tokenEndpointAuthMethod: "client_secret_post"
+      pkceRequired: false
+      publicClient: false
+      token:
+        accessToken:
+          clientConfig:
+            validityPeriod: 3600
+            attributes: ["ouId", "ouHandle"]

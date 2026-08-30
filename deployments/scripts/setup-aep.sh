@@ -24,13 +24,14 @@ source "$SCRIPT_DIR/utils.sh"
 echo "=== Setting up AEP Platform ==="
 
 # Verify Thunder is running and AEP client exists
-kubectl get deployment thunder-deployment -n thunder &>/dev/null || {
+kubectl get deployment "${THUNDER_RELEASE}-deployment" -n "${THUNDER_NS}" &>/dev/null || {
     echo "❌ Thunder not found. Run setup-openchoreo.sh first."
     exit 1
 }
-echo "✅ Thunder is running"
-echo "   AEP OAuth2 clients are bootstrapped via Thunder helm values"
-echo "   (59-aep-oauth-apps.sh — registers console / api / workload-publisher / 3x bff→service clients)"
+echo "✅ Platform IdP is running"
+echo "   AEP's OAuth2 clients are bootstrapped declaratively from"
+echo "   single-cluster/thunder-resources/ (merged with Agent Manager's own set"
+echo "   by scripts/setup-thunder.sh)"
 
 # ============================================================================
 # Registry mirror for Docker builds
@@ -741,6 +742,10 @@ echo "✅ DeploymentPipeline 'default' created"
 # client_credentials calls; the second binds Thunder's default
 # `Administrators` group (which `admin/admin` is a member of) so an
 # operator logging into the console immediately has admin rights.
+#
+# Service-account bindings key on `client_id`, not `sub`: ThunderID 1.0.0 puts
+# a client_credentials token's subject in `client_id`. The group binding below
+# still keys on `groups` — that is a user claim and did not move.
 kubectl apply -f - <<'OCEOF'
 apiVersion: openchoreo.dev/v1alpha1
 kind: ClusterAuthzRoleBinding
@@ -749,7 +754,7 @@ metadata:
 spec:
   effect: allow
   entitlement:
-    claim: sub
+    claim: client_id
     value: aep-api-client
   roleMappings:
   - roleRef:
@@ -787,7 +792,7 @@ metadata:
 spec:
   effect: allow
   entitlement:
-    claim: sub
+    claim: client_id
     value: openchoreo-workload-publisher-client
   roleMappings:
   - roleRef:
@@ -827,7 +832,7 @@ metadata:
 spec:
   effect: allow
   entitlement:
-    claim: sub
+    claim: client_id
     value: openchoreo-rca-agent
   roleMappings:
   - roleRef:

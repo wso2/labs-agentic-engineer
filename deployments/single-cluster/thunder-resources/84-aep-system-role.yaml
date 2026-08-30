@@ -1,0 +1,28 @@
+# Assigns aep-system-client into ThunderID's OWN built-in "Administrator" role,
+# so the BFF can mint scope=system tokens and drive Thunder's admin
+# /applications endpoints (per-org publisher apps), and so thunder-app-operator
+# can reconcile ThunderApplication CRs into real Thunder applications.
+#
+# Registration alone is not enough — without this the operator authenticates
+# fine and then 403s on every write.
+#
+# The id, name, description and permissions below are ThunderID's own values for
+# this role, restated verbatim (see its internal
+# bootstrap/01-default-resources.yaml). The importer REPLACES those three fields
+# wholesale on update, so restating them keeps this a no-op re-assertion rather
+# than an accidental rename. Assignments are additive, so this only adds
+# aep-system-client alongside whatever else is already assigned — notably the
+# Administrators group and Agent Manager's own amp-system-client, which reaches
+# the same role through its own bootstrap document.
+resource_type: role
+id: "01900000-0000-7000-8000-000000000050"
+name: Administrator
+description: System administrator role with full permissions
+ouHandle: default
+permissions:
+  - resourceServerId: "01900000-0000-7000-8000-000000000020"
+    permissions:
+      - system
+assignments:
+  - id: aep-system-client
+    type: app

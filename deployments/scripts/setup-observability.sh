@@ -329,8 +329,8 @@ observer:
 security:
   enabled: true
   oidc:
-    jwksUrl: "http://thunder-service.thunder.svc.cluster.local:8090/oauth2/jwks"
-    tokenUrl: "http://thunder-service.thunder.svc.cluster.local:8090/oauth2/token"
+    jwksUrl: "http://amp-thunder-extension-service.amp-thunder.svc.cluster.local:8090/oauth2/jwks"
+    tokenUrl: "http://amp-thunder-extension-service.amp-thunder.svc.cluster.local:8090/oauth2/token"
     authServerBaseUrl: "http://thunder.openchoreo.localhost:8080"
 rca:
   # SRE / RCA agent. Uses a locally-built image that carries the Anthropic

@@ -1,0 +1,21 @@
+# resource_type: application
+resource_type: application
+id: aep-bff-to-remote-worker
+type: m2m # client_credentials only, no interactive login
+name: "AEP BFF to remote-worker"
+description: "BFF outbound Service JWT, audience: remote-worker."
+ouId: "01900000-0000-7000-8000-000000000001"
+inboundAuthConfig:
+  - type: oauth2
+    config:
+      clientId: "aep-bff-to-remote-worker"
+      clientSecret: "aep-bff-to-remote-worker-secret"
+      grantTypes: ["client_credentials"]
+      tokenEndpointAuthMethod: "client_secret_post"
+      pkceRequired: false
+      publicClient: false
+      token:
+        accessToken:
+          clientConfig:
+            validityPeriod: 3600
+            attributes: ["ouId", "ouHandle"]

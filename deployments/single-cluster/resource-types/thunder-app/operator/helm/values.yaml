@@ -16,7 +16,7 @@ replicaCount: 1
 
 thunder:
   # In-cluster admin API base URL for the platform Thunder.
-  adminURL: "http://thunder-service.thunder.svc.cluster.local:8090"
+  adminURL: "http://amp-thunder-extension-service.amp-thunder.svc.cluster.local:8090"
   # Credentials (THUNDER_SYSTEM_CLIENT_ID, THUNDER_SYSTEM_CLIENT_SECRET) are
   # sourced exclusively from the `thunder-app-operator-credentials` Secret,
   # which is provisioned by ESO before this chart is installed. The chart does

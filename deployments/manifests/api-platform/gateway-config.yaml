@@ -39,7 +39,7 @@ data:
               issuer: http://thunder.openchoreo.localhost:8080
               jwks:
                 remote:
-                  uri: http://thunder-service.thunder.svc.cluster.local:8090/oauth2/jwks
+                  uri: http://amp-thunder-extension-service.amp-thunder.svc.cluster.local:8090/oauth2/jwks
                   skipTlsVerify: true
             jwkscachettl: "5m"
             jwksfetchtimeout: "5s"
@@ -61,7 +61,7 @@ data:
               issuer: http://thunder.openchoreo.localhost:8080
               jwks:
                 remote:
-                  uri: http://thunder-service.thunder.svc.cluster.local:8090/oauth2/jwks
+                  uri: http://amp-thunder-extension-service.amp-thunder.svc.cluster.local:8090/oauth2/jwks
                   skipTlsVerify: true
             jwkscachettl: "5m"
             jwksfetchtimeout: "5s"

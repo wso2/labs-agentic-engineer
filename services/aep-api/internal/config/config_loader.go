@@ -75,7 +75,7 @@ func Load() (Config, error) {
 		APIGatewayHost: r.readOptionalString("API_GATEWAY_HOST", ""),
 		PlatformIDP: PlatformIDPDefaults{
 			Issuer:  r.readOptionalString("PLATFORM_IDP_ISSUER", "http://thunder.openchoreo.localhost:8080"),
-			JWKSURL: r.readOptionalString("PLATFORM_IDP_JWKS_URL", "http://thunder-service.thunder.svc.cluster.local:8090/oauth2/jwks"),
+			JWKSURL: r.readOptionalString("PLATFORM_IDP_JWKS_URL", "http://amp-thunder-extension-service.amp-thunder.svc.cluster.local:8090/oauth2/jwks"),
 		},
 		TaskTokenSigningKey:    r.taskSigningKey(),
 		TaskTokenIssuer:        r.readOptionalString("BFF_TASK_TOKEN_ISSUER", "aep-bff"),

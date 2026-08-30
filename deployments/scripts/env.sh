@@ -26,12 +26,6 @@
 #     backwards — so AEP moves forward. Pinned to 1.2.0 (not the newer 1.2.2)
 #     to match the version Agent Manager's own charts are validated against.
 OPENCHOREO_VERSION="1.2.0"
-# Thunder pin for the CURRENT (pre-convergence) IdP. Phase 2 of the Agent
-# Manager convergence replaces this release with wso2-amp-thunder-extension
-# (ThunderID 1.0.0) and deletes this variable — the token-subject claim moves
-# from `sub` to `client_id` in the SAME step, because that is a Thunder
-# behaviour change, not an OpenChoreo one.
-THUNDER_VERSION="0.34.0"
 CNPG_VERSION="0.29.0"
 CLUSTER_NAME="openchoreo"
 CLUSTER_CONTEXT="k3d-${CLUSTER_NAME}"

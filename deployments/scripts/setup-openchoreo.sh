@@ -29,12 +29,11 @@ kubectl cluster-info --context $CLUSTER_CONTEXT &>/dev/null || {
 }
 kubectl config use-context $CLUSTER_CONTEXT
 
-# Load PUBLIC_THUNDER_URL / PUBLIC_CONSOLE_URL so values-thunder.yaml and
-# values-cp.yaml can be rendered with the user's chosen public URLs.
+# Load PUBLIC_THUNDER_URL / PUBLIC_CONSOLE_URL so values-cp.yaml can be
+# rendered with the user's chosen public URLs.
 load_public_urls "$SCRIPT_DIR/../.env"
-RENDERED_THUNDER_VALUES="$(render_values_file "$SCRIPT_DIR/../single-cluster/values-thunder.yaml")"
 RENDERED_CP_VALUES="$(render_values_file "$SCRIPT_DIR/../single-cluster/values-cp.yaml")"
-trap 'rm -f "$RENDERED_THUNDER_VALUES" "$RENDERED_CP_VALUES"' EXIT
+trap 'rm -f "$RENDERED_CP_VALUES"' EXIT
 
 # ============================================================================
 # Control Plane
@@ -145,98 +144,62 @@ fi
 echo ""
 
 # ============================================================================
-# Thunder (Auth IDP)
+# Platform IdP (ThunderID) + the entitlement claim that follows it
 # ============================================================================
-echo "3️⃣  Thunder (Auth IDP)"
-# Only a `deployed` release counts as installed (self-heals a failed release).
-if helm_release_deployed thunder thunder; then
-    echo "⏭️  Already installed"
-else
-    echo "📦 Installing Thunder (Asgardeo IDP)..."
-    helm upgrade --install thunder \
-        oci://ghcr.io/asgardeo/helm-charts/thunder \
-        --version ${THUNDER_VERSION} \
-        --namespace thunder --create-namespace \
-        --values "$RENDERED_THUNDER_VALUES" \
-        --timeout 10m || {
-        echo "❌ Thunder installation failed."
-        exit 1
-    }
-fi
-echo "⏳ Waiting for Thunder..."
-kubectl wait -n thunder --for=condition=available --timeout=300s deployment --all
-echo "✅ Thunder ready"
+echo "3️⃣  Platform IdP"
+bash "$SCRIPT_DIR/setup-thunder.sh"
 
-# The Thunder helm chart's HTTPRoute is created with no filters, but the
-# console (at PUBLIC_CONSOLE_URL — typically http://localhost:8090) needs
-# to preflight POST /oauth2/token cross-origin to get an access_token.
-# Without an explicit kgateway CORS filter on the HTTPRoute, the preflight
-# returns 405 Method Not Allowed and the Asgardeo SDK fails with
-# "Requesting access token failed". Patch the filter in idempotently.
-# User-app SPAs (auth.kind=oidc-spa) sidestep this via a same-origin nginx
-# /oidc/ proxy — but the console login itself needs the CORS filter.
-echo "🔧 Patching Thunder HTTPRoute with CORS filter for cross-origin /oauth2/* preflights..."
-# kgateway exposes HTTPRoute conditions under .status.parents[].conditions
-# (Gateway API spec), NOT the top-level .status.conditions that
-# `kubectl wait --for=condition=Accepted` reads. So that wait always times
-# out, even on a healthy route. Poll the parents path instead.
-for _hr_attempt in $(seq 1 60); do
-    if [ "$(kubectl get httproute -n thunder thunder-httproute \
-            --context "${CLUSTER_CONTEXT}" \
-            -o jsonpath='{.status.parents[0].conditions[?(@.type=="Accepted")].status}' \
-            2>/dev/null)" = "True" ]; then
-        break
+# ThunderID 1.0.0 puts a client_credentials token's subject in the `client_id`
+# claim, not the `sub` that OpenChoreo's service-account entitlement mapping
+# defaults to. Every service account 403s until this is switched, so it moves
+# in the SAME step as the IdP itself — a cluster with the new Thunder and the
+# old claim is not a state anyone should be able to reach.
+#
+# Server-side apply under Helm's own field manager, not `kubectl patch`: patch
+# claims the field under a `kubectl-patch` manager, and the NEXT
+# `helm upgrade --install` of the control plane then fails outright with
+# "conflict with kubectl-patch".
+echo "🔧 Switching the service-account entitlement claim to client_id..."
+if kubectl get configmap openchoreo-api-config -n openchoreo-control-plane &>/dev/null; then
+    patched_api_config="$(kubectl get configmap openchoreo-api-config \
+        -n openchoreo-control-plane -o yaml \
+        | sed -E "s/claim:[[:space:]]*['\"]?sub['\"]?/claim: client_id/g")"
+    if ! echo "$patched_api_config" | grep -q "claim: client_id"; then
+        echo "❌ openchoreo-api-config carries no entitlement claim to switch" >&2
+        exit 1
     fi
-    sleep 2
-done
-# Note: kgateway rejects the patch if allowOrigins contains duplicates. The
-# hardcoded http://localhost:8090 used to overlap with ${PUBLIC_CONSOLE_URL}
-# (default = http://localhost:8090) and every retry failed silently because
-# the patch call below masks stderr. Rely on the env-var here and let the
-# user override via PUBLIC_CONSOLE_URL in .env.
-CORS_PATCH=$(cat <<EOF
-[{"op":"replace","path":"/spec/rules/0/filters","value":[{"type":"CORS","cors":{"allowOrigins":["http://localhost:19080","http://*.openchoreoapis.localhost:19080","${PUBLIC_CONSOLE_URL}","${PUBLIC_THUNDER_URL}"],"allowMethods":["GET","POST","PUT","PATCH","DELETE","OPTIONS"],"allowHeaders":["Content-Type","Authorization","Accept","Origin"],"allowCredentials":true,"maxAge":3600}}]}]
-EOF
-)
-# Retry the patch + verify. On a fresh cluster the kgateway controller's
-# CORS-filter handling can lag behind the HTTPRoute Accepted condition, so
-# the first attempt sometimes returns a transient validation error and the
-# old code silently swallowed it while still printing "✅ applied". We now
-# verify .spec.rules[0].filters[0].type == "CORS" after each patch and
-# only declare success on a verified write. Hard-fail (set -e is on) if
-# all retries are exhausted — silently shipping a CORS-broken cluster
-# bricks the console login.
-_cors_applied=0
-_cors_last_err=""
-for attempt in 1 2 3 4 5; do
-    _cors_last_err=$(kubectl patch httproute -n thunder thunder-httproute \
-        --type=json -p="$CORS_PATCH" --context "${CLUSTER_CONTEXT}" 2>&1 >/dev/null || true)
-    if [ "$(kubectl get httproute -n thunder thunder-httproute \
-            --context "${CLUSTER_CONTEXT}" \
-            -o jsonpath='{.spec.rules[0].filters[0].type}' 2>/dev/null)" = "CORS" ]; then
-        echo "✅ Thunder HTTPRoute CORS filter applied (attempt ${attempt})"
-        _cors_applied=1
-        break
-    fi
-    echo "   attempt ${attempt} did not land the CORS filter — retrying in 5s..."
-    [ -n "$_cors_last_err" ] && echo "     ↳ ${_cors_last_err}"
-    sleep 5
-done
-if [ "${_cors_applied}" -ne 1 ]; then
-    echo "❌ Thunder HTTPRoute CORS patch failed after 5 attempts." >&2
-    echo "   Console login will hit CORS errors on /api/server/v1/* and /oauth2/*." >&2
-    echo "   Inspect with: kubectl get httproute -n thunder thunder-httproute -o yaml" >&2
+    echo "$patched_api_config" | kubectl apply --server-side --field-manager=helm --force-conflicts -f - >/dev/null
+    kubectl rollout restart deployment/openchoreo-api -n openchoreo-control-plane
+    kubectl rollout status deployment/openchoreo-api -n openchoreo-control-plane --timeout=120s
+    echo "   ✓ openchoreo-api-config"
+else
+    echo "❌ openchoreo-api-config not found — the control plane is not installed" >&2
     exit 1
 fi
 
-# The Helm chart uses security.oidc.tokenUrl for both the OpenChoreo API metadata
-# (browser-facing) and the Backstage token exchange (server-side). The browser URL
-# (thunder.openchoreo.localhost:8080) is not resolvable from inside the cluster, so
-# we override Backstage's env var to use the cluster-internal Thunder service URL.
+# The bindings shipped by the control-plane chart are keyed on `sub` for the
+# same reason and need the same move. AEP's own bindings are authored directly
+# with `client_id` (setup-aep.sh), so this loop is a no-op for them.
+for binding in $(kubectl get clusterauthzrolebindings.openchoreo.dev \
+    -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+    claim="$(kubectl get clusterauthzrolebinding.openchoreo.dev "$binding" \
+        -o jsonpath='{.spec.entitlement.claim}' 2>/dev/null)"
+    [ "$claim" = "sub" ] || continue
+    kubectl get clusterauthzrolebinding.openchoreo.dev "$binding" -o yaml \
+        | sed -E "s/claim:[[:space:]]*['\"]?sub['\"]?/claim: client_id/g" \
+        | kubectl apply --server-side --field-manager=helm --force-conflicts -f - >/dev/null
+    echo "   ✓ ${binding}"
+done
+echo "✅ Entitlement claim is client_id"
+
+# The control-plane chart uses security.oidc.tokenUrl for BOTH the OpenChoreo
+# API metadata (browser-facing) and Backstage's token exchange (server-side).
+# The browser URL is not resolvable from inside the cluster, so Backstage gets
+# the in-cluster service address instead.
 echo "🔧 Patching Backstage token URL for in-cluster resolution..."
 kubectl set env deployment/backstage \
     -n openchoreo-control-plane --context "${CLUSTER_CONTEXT}" \
-    OPENCHOREO_AUTH_TOKEN_URL="http://thunder-service.thunder.svc.cluster.local:8090/oauth2/token"
+    OPENCHOREO_AUTH_TOKEN_URL="${THUNDER_INTERNAL_URL}/oauth2/token"
 kubectl rollout status deployment/backstage -n openchoreo-control-plane \
     --context "${CLUSTER_CONTEXT}" --timeout=120s
 echo "✅ Backstage token URL patched"
@@ -288,7 +251,7 @@ echo ""
 echo "✅ OpenChoreo installation complete!"
 echo ""
 echo "📊 Pod Status:"
-for ns in openchoreo-control-plane openchoreo-data-plane openchoreo-workflow-plane thunder; do
+for ns in openchoreo-control-plane openchoreo-data-plane openchoreo-workflow-plane "${THUNDER_NS}"; do
     echo "--- $ns ---"
     kubectl get pods -n $ns --no-headers 2>/dev/null || echo "  (no pods)"
     echo ""

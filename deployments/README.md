@@ -91,7 +91,7 @@ Key wiring:
 - The coding-agent pod reaches `git-service` and `aep-api` (running on the host) via `host.k3d.internal`, which we pin to the **docker bridge gateway** in CoreDNS NodeHosts. Pods → host.
 - **Two separate resolvers.** `fix_node_dns` sets the *node's* `/etc/resolv.conf` (image pulls); `k3s-resolv.conf`, mounted via `files:` in `k3d-local-config.yaml` and passed as `--resolv-conf`, is what every `dnsPolicy: Default` pod gets — CoreDNS included. CoreDNS reads its upstream once at startup and never refreshes, so without the static pin a Colima restart can leave it forwarding to a dead address: the node resolves fine, pods resolve nothing external, and coding-agent runs die at `git clone` with `Could not resolve host: github.com`. `ensure_cluster_dns_healthy` (run by `setup-k3d.sh` and every `start.sh`) probes real resolution and restarts CoreDNS if it has gone stale.
 - `OPENBAO_ADDR=host.docker.internal:8200` — OpenBao's `NodePort` 30820 is exposed on host port 8200 by `k3d-local-config.yaml`.
-- Thunder OAuth apps (`aep-console-client`, `aep-api-client`, BFF→service triplets, **`openchoreo-workload-publisher-client`**) are bootstrapped via Thunder helm pre-install scripts (`single-cluster/values-thunder.yaml`), same pattern as agent-manager's `wso2-amp-thunder-extension`.
+- The platform IdP is **ThunderID 1.0.0**, installed from Agent Manager's `wso2-amp-thunder-extension` chart (`scripts/setup-thunder.sh`) so both products share one issuer — OpenChoreo's control plane has only one. AEP's OAuth apps (`aep-console-client`, `aep-api-client`, `aep-system-client`, BFF→service clients, **`openchoreo-workload-publisher-client`**) are declared in `single-cluster/thunder-resources/` and merged with Agent Manager's own bootstrap set at install time — see that directory's README for why a merge rather than a second source.
 
 ## What was removed from the previous v1
 
@@ -106,7 +106,8 @@ Key wiring:
 | `scripts/setup.sh` | One-shot chain: k3d → prereqs → OpenChoreo → AEP infra |
 | `scripts/setup-k3d.sh` | k3d cluster + CoreDNS |
 | `scripts/setup-prerequisites.sh` | cert-manager + ESO + kgateway + OpenBao |
-| `scripts/setup-openchoreo.sh` | Control Plane + Data Plane + Workflow Plane + Thunder |
+| `scripts/setup-openchoreo.sh` | Control Plane + Data Plane + Workflow Plane, then the platform IdP + the `client_id` entitlement claim |
+| `scripts/setup-thunder.sh` | The one platform IdP (ThunderID via `wso2-amp-thunder-extension`), with AEP's and Agent Manager's bootstrap documents merged |
 | `scripts/setup-aep.sh` | Build ClusterWorkflow + ComponentTypes + Environment + AuthzRoleBindings + `.env` + runner image |
 | `scripts/setup-local.sh` | **(Skaffold)** K8s Secrets + Thunder clients + resource-type catalog + thunder-app operator (`make setup-local`) |
 | `../skaffold.yaml` | **(Skaffold)** in-cluster build/deploy for `make dev-cluster` |
@@ -115,7 +116,7 @@ Key wiring:
 | `scripts/stop.sh` | **(Compose, legacy)** `docker compose down` (cluster stays) |
 | `docker-compose.yml` | **(Compose, legacy)** long-lived host services |
 | `manifests/docker-build-workflow.yaml` | `dockerfile-builder` ClusterWorkflow (Argo CWTs) |
-| `single-cluster/values-thunder.yaml` | Thunder helm values + bootstrap scripts (users, OAuth apps) |
+| `single-cluster/thunder-resources/` | AEP's declarative ThunderID bootstrap documents (OAuth apps, role assignment) |
 | `single-cluster/values-cp.yaml` | OC Control Plane helm values |
 | `single-cluster/values-dp.yaml` | OC Data Plane helm values |
 
@@ -137,7 +138,7 @@ What it adds:
 - `setup-prerequisites.sh` — step 6 installs the AP gateway-operator (`gateway-operator` v0.4.0, runtime image v0.9.0) into `openchoreo-data-plane`, applies `manifests/api-platform/{gateway-config.yaml,rbac.yaml,api-gateway.yaml}`.
 - `setup-aep.sh` — adds `api-configuration` to the `service` ClusterComponentType's `allowedTraits` and installs the ClusterTrait CR from `manifests/api-platform/api-configuration-trait.yaml`.
 - `manifests/poc-api-platform/` — two hello-world Components (`poc-public`, `poc-protected`) using `mendhak/http-https-echo:35`. Both have the trait attached; only the protected one's ReleaseBinding sets `jwtAuth.enabled: true`.
-- `scripts/setup-thunder-client.sh` — bootstraps the `poc-api-platform-client` confidential OAuth client via `kubectl exec` into the Thunder pod (idempotent).
+- No dedicated POC client: `scripts/verify-api-platform.sh` mints its token from the already-bootstrapped `aep-api-client`.
 - `scripts/verify-api-platform.sh` — applies the manifests, mints a token, runs the 4-cell truth table.
 
 Run the POC:

@@ -113,7 +113,7 @@ type AdminClient interface {
 // Config bundles the client's construction parameters.
 type Config struct {
 	// BaseURL is Thunder's admin API base, e.g.
-	// http://thunder-service.thunder.svc.cluster.local:8090 (trailing
+	// http://amp-thunder-extension-service.amp-thunder.svc.cluster.local:8090 (trailing
 	// slash tolerated).
 	BaseURL string
 	// ClientID/ClientSecret are the operator's own system OAuth2 client
