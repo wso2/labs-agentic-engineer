@@ -51,7 +51,14 @@ import (
 // getaddrinfo does. The short name resolves for `wget` inside the very same pod
 // and is NXDOMAIN for nginx, which surfaces as a 502 on every /api call with
 // `could not be resolved (3: Host not found)` in the error log.
-const DefaultAPIGatewayHost = "api-platform-default-gateway-gateway-runtime.openchoreo-data-plane.svc.cluster.local:8080"
+//
+// The `-gw-` infix is the API Platform gateway-operator's own naming: from
+// operator 0.11.0 the child Helm release it creates for an APIGateway is named
+// "<apigateway-name>-gw", so every resource under it gains that segment. Under
+// operator 0.6.0 the same service was
+// "api-platform-default-gateway-gateway-runtime". Renaming the APIGateway CR
+// changes this name too — see deployments/manifests/api-platform/api-gateway.yaml.
+const DefaultAPIGatewayHost = "api-platform-default-gw-gateway-gateway-runtime.openchoreo-data-plane.svc.cluster.local:8080"
 
 // ProtectedSibling is one component-kind dependency whose provider sits behind
 // the API gateway, resolved to everything needed to address it there.

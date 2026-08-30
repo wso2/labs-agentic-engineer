@@ -804,3 +804,43 @@ generate_machine_ids() {
     done
     echo "✅ Machine IDs generated"
 }
+
+# ── Chart CRD synchronisation ────────────────────────────────────────────────
+# `helm upgrade` NEVER touches a chart's crds/ directory — it applies them only
+# on the very first install. So bumping a chart's version on a cluster that
+# already has the old release leaves the OLD CRDs in place, and every new kind
+# or field the new version introduces is silently unavailable. That is not a
+# theoretical concern here: the OpenChoreo 1.1.1 -> 1.2.0 bump adds the
+# ProjectType / ClusterProjectType CRDs that Project.spec.type now requires, so
+# without this an upgraded cluster fails every project creation while a fresh
+# one works.
+#
+# Applying the new CRDs is safe: CRDs are additive and keep serving the
+# existing stored versions alongside the new ones. --force-conflicts is needed
+# because the first install stamped them with Helm's field manager.
+#
+# Usage: sync_chart_crds <chart-name> <version> [oci-registry]
+sync_chart_crds() {
+    local chart="$1"
+    local version="$2"
+    local registry="${3:-oci://ghcr.io/openchoreo/helm-charts}"
+    local tmp rc=0
+
+    tmp="$(mktemp -d)" || {
+        echo "❌ Failed to create temp dir for ${chart} CRD sync" >&2
+        return 1
+    }
+    if helm pull "${registry}/${chart}" --version "$version" \
+        --untar --untardir "$tmp" >/dev/null 2>&1; then
+        if compgen -G "$tmp/${chart}/crds/*.yaml" >/dev/null; then
+            echo "   Syncing ${chart} CRDs to ${version} (helm upgrade does not update crds/)..."
+            kubectl --context "${CLUSTER_CONTEXT}" apply --server-side --force-conflicts \
+                -f "$tmp/${chart}/crds/" >/dev/null || rc=1
+        fi
+    else
+        echo "❌ Failed to pull ${chart} ${version} for CRD sync" >&2
+        rc=1
+    fi
+    rm -rf "$tmp"
+    return "$rc"
+}

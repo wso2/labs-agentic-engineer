@@ -26,12 +26,10 @@ CERT_MANAGER_VERSION="v1.19.4"
 EXTERNAL_SECRETS_VERSION="2.0.1"
 KGATEWAY_VERSION="v2.2.1"
 OPENBAO_VERSION="0.25.6"
-API_PLATFORM_OPERATOR_VERSION="0.6.0"
-# AP gateway-runtime chart version. 1.0.1 ships runtime + controller +
-# policy-engine images at tag 1.0.0, which adds `jwt-auth v1` support
-# (per-RestApi issuers + audience filtering — see Phase 6 of
-# docs/design/api-platform-integration.md).
-API_PLATFORM_CHART_VERSION="1.0.1"
+# gateway-operator / gateway-runtime pins live in env.sh
+# (GATEWAY_OPERATOR_VERSION / GATEWAY_CHART_VERSION / GATEWAY_IMAGE_VERSION) —
+# they are shared with the Agent Manager install, which renders APIGateway CRs
+# the pre-0.11.0 CRDs do not serve.
 
 echo "=== Installing Prerequisites for OpenChoreo ==="
 
@@ -155,18 +153,40 @@ echo "6️⃣  WSO2 API Platform operator"
 # manifests below short-circuit on the same namespace, so order is safe.
 #
 # The operator manages the gateway-runtime chart out-of-band — see
-# manifests/api-platform/operator-values.yaml for the chart pin (gateway v1.0.0).
+# manifests/api-platform/operator-values.yaml for its value overlay.
 # CRDs (APIGateway, RestApi) ship with the operator chart.
-helm_install_if_not_exists "api-platform-operator" "openchoreo-data-plane" \
-    "oci://ghcr.io/wso2/api-platform/helm-charts/gateway-operator" \
-    --version ${API_PLATFORM_OPERATOR_VERSION} \
+#
+# Uses `helm upgrade --install` rather than helm_install_if_not_exists: a
+# version-pin bump in env.sh must land on long-lived clusters too, and the
+# helper skips anything already installed. helm upgrade never touches a
+# chart's crds/ directory, so the CRDs are applied explicitly first when the
+# installed chart version differs from the target — otherwise the new CR
+# apiVersions (which the Agent Manager gateway extension renders) are never
+# served. Applying them is safe: the chart's CRDs keep serving the old
+# versions alongside the new ones.
+OPERATOR_CHART="oci://ghcr.io/wso2/api-platform/helm-charts/gateway-operator"
+TARGET_OPERATOR_CHART="gateway-operator-${GATEWAY_OPERATOR_VERSION}"
+current_operator_chart="$(helm list -n openchoreo-data-plane -f '^api-platform-operator$' -o json \
+    --kube-context "${CLUSTER_CONTEXT}" 2>/dev/null \
+    | grep -o '"chart":"[^"]*"' | cut -d'"' -f4 || true)"
+if [ -n "$current_operator_chart" ] && [ "$current_operator_chart" != "$TARGET_OPERATOR_CHART" ]; then
+    echo "⚠️  gateway-operator is ${current_operator_chart}, target is ${TARGET_OPERATOR_CHART} — syncing CRDs before upgrade..."
+    helm show crds "$OPERATOR_CHART" --version "${GATEWAY_OPERATOR_VERSION}" \
+        | kubectl --context "${CLUSTER_CONTEXT}" apply --server-side --force-conflicts -f -
+fi
+helm upgrade --install api-platform-operator "$OPERATOR_CHART" \
+    --version "${GATEWAY_OPERATOR_VERSION}" \
+    --namespace openchoreo-data-plane --create-namespace \
+    --kube-context "${CLUSTER_CONTEXT}" \
     --set gatewayApi.installStandardCRDs=false \
-    --set "gateway.helm.chartVersion=${API_PLATFORM_CHART_VERSION}" \
+    --set "gateway.helm.chartVersion=${GATEWAY_CHART_VERSION}" \
+    --set "gateway.values.gateway.controller.image.tag=${GATEWAY_IMAGE_VERSION}" \
+    --set "gateway.values.gateway.gatewayRuntime.image.tag=${GATEWAY_IMAGE_VERSION}" \
     --values "${SCRIPT_DIR}/../manifests/api-platform/operator-values.yaml"
 kubectl wait --for=condition=available deployment \
     -l app.kubernetes.io/instance=api-platform-operator \
     -n openchoreo-data-plane --context ${CLUSTER_CONTEXT} --timeout=180s || true
-echo "✅ API Platform operator installed"
+echo "✅ API Platform operator at ${TARGET_OPERATOR_CHART}"
 
 # AES-GCM encryption key required by gateway-controller v1.0.0+ for
 # at-rest secret encryption. Generated once and kept in a Secret —

@@ -653,6 +653,60 @@ print(json.dumps({
 done
 echo "✅ Namespaced ComponentTypes 'service' + 'web-application' created in ns 'default'"
 
+# ClusterProjectType: default — required from OpenChoreo 1.2.0 onward.
+#
+# Project.spec.type became a REQUIRED field on the Project CRD in OC 1.2.0.
+# AEP never sets it: aep-api creates projects through the OpenChoreo REST API,
+# and that API fills the field in for us — but it fills it with a hardcoded
+# reference to `ClusterProjectType/default` (openchoreo-api project service,
+# `defaultProjectType`). So the object has to exist or every CreateProject
+# fails at admission.
+#
+# This is AEP's own copy of the upstream getting-started sample rather than a
+# dependency on Agent Manager's platform-resources chart, which also ships a
+# default project type: that chart is behind ENABLE_AGENT_MANAGER, so relying
+# on it would break the default profile. No collision either way — Agent
+# Manager ships a NAMESPACED `ProjectType/default`, this is the CLUSTER-scoped
+# kind, and they are separate objects.
+kubectl apply -f - <<'OCEOF'
+apiVersion: openchoreo.dev/v1alpha1
+kind: ClusterProjectType
+metadata:
+  name: default
+  annotations:
+    openchoreo.dev/display-name: Default Project Type
+    openchoreo.dev/description: >-
+      Minimal project type that provisions only the cell namespace per
+      environment.
+  labels:
+    openchoreo.dev/name: default
+spec:
+  environmentConfigs:
+    openAPIV3Schema:
+      type: object
+      properties:
+        namespaceLabels:
+          type: object
+          additionalProperties:
+            type: string
+          default: {}
+        namespaceAnnotations:
+          type: object
+          additionalProperties:
+            type: string
+          default: {}
+  resources:
+    - id: cell-namespace
+      template:
+        apiVersion: v1
+        kind: Namespace
+        metadata:
+          name: ${metadata.namespace}
+          labels: ${oc_merge(metadata.labels, environmentConfigs.namespaceLabels)}
+          annotations: ${environmentConfigs.namespaceAnnotations}
+OCEOF
+echo "✅ ClusterProjectType 'default' created"
+
 # Environment: development — backed by the default ClusterDataPlane
 kubectl apply -f - <<'OCEOF'
 apiVersion: openchoreo.dev/v1alpha1

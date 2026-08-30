@@ -409,6 +409,12 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// configService can call back into it to mirror env-var edits onto
 	// the OC Component's workflow params.
 	projectService := projects.NewProjectService(projectClient, repoService, webhookRegService, artifactSvcGit, executionRepo)
+	// Cell-namespace provisioning. OpenChoreo 1.2.0 stopped materializing a
+	// project's namespace as a side effect of creating the Project — a
+	// ProjectReleaseBinding per environment does it now, and nothing creates
+	// those for us. Without this the project is created, reports Ready, and
+	// then fails every deploy with "namespace ... not found".
+	projectService.SetProjectCellProvisioner(openchoreo.NewProjectCellClient(ocConfig))
 	// Build/deploy stage sources for the status poll (#184): the milestone-run
 	// index (one row read) + the org-scoped release-binding list —
 	// consumer-side ports wired here so projects imports neither.

@@ -2,15 +2,17 @@ apiVersion: v1
 data:
   values.yaml: |
     # Per-APIGateway value overlay merged on top of the operator's chart
-    # defaults (see operator-values.yaml). Phase 6 — rewritten against
-    # chart v1.0.1 key paths (`gateway.config.controller.*`, NOT the old
-    # `gateway.config.gateway_controller.*` from v0.9.0).
+    # defaults (see operator-values.yaml). Key paths verified against gateway
+    # chart 1.2.2: `gateway.config.controller.*` and
+    # `gateway.config.policy_configurations.*` are both still current — the
+    # Agent Manager gateway extension renders the identical shape.
     gateway:
-      # Auto-generate the AES-GCM encryption key the controller needs at
-      # boot. Combined with the api-platform-controller-aesgcm-key Secret
-      # mounted via operator-values.yaml, this lets a clean cluster boot
-      # without out-of-band key provisioning.
-      developmentMode: true
+      # NOTE: `developmentMode` used to live here to auto-generate the
+      # controller's AES-GCM key on first boot. It was removed from the gateway
+      # chart in 1.2.x and is now an inert key, so it is gone from this overlay
+      # too. The key is pre-provisioned instead — setup-prerequisites.sh
+      # creates Secret api-platform-controller-aesgcm-key and
+      # operator-values.yaml mounts it via `controller.encryptionKeys`.
       config:
         controller:
           # The 1.0.0 controller's `/health` endpoint goes through the

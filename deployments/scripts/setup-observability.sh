@@ -115,11 +115,18 @@ cd "$SCRIPT_DIR"
 source "$SCRIPT_DIR/env.sh"
 source "$SCRIPT_DIR/utils.sh"
 
-OBS_PLANE_VERSION="1.0.1-hotfix.1"
+# The observability plane tracks the OpenChoreo version (env.sh) — the two are
+# released together and the observer speaks the control plane's API.
+OBS_PLANE_VERSION="${OPENCHOREO_VERSION}"
 # >= 0.5.1 REQUIRED for the logs-adapter (alert-rule evaluation engine).
 # 0.3.x ships no adapter: ObservabilityAlertRules sync as Ready but are
 # never evaluated — no alert ever fires, silently.
-OBS_LOGS_VERSION="0.5.1"
+# Bumped 0.5.1 -> 0.5.3 (OBSERVABILITY_LOGS_VERSION in env.sh) for OC 1.2.0.
+OBS_LOGS_VERSION="${OBSERVABILITY_LOGS_VERSION}"
+# Adapter image override. Set to "" to run the chart's stock adapter image.
+# See the adapter block in step 3 for why AEP carries a fork.
+OBS_LOGS_ADAPTER_IMAGE_REPO="${OBS_LOGS_ADAPTER_IMAGE_REPO:-docker.io/tharindulak/observability-logs-opensearch-adapter}"
+OBS_LOGS_ADAPTER_IMAGE_TAG="${OBS_LOGS_ADAPTER_IMAGE_TAG:-0.5.1-case-insensitive}"
 NS="openchoreo-observability-plane"
 
 # SRE-agent handoff knobs (see header). AE_API_URL is how the in-cluster RCA
@@ -394,6 +401,29 @@ echo "✅ observability-plane ready"
 # ── 3. Logs + OpenSearch + Fluent Bit chart ──────────────────────────────
 echo ""
 echo "3️⃣  observability-logs-opensearch chart (v${OBS_LOGS_VERSION})"
+# Adapter image: AEP runs a patched build of the upstream 0.5.1 adapter whose
+# alert-rule log matching is case-insensitive. The stock adapter compiles a
+# rule into a case-SENSITIVE wildcard, so a rule watching "ERROR" silently
+# stops firing the moment a code change rewords the log line to "error" — which
+# is exactly what happened when a coding-agent PR detached an alert from the
+# failure it was watching.
+#
+# Still not fixed upstream as of community-modules 0.5.4: BuildAlertQuery in
+# internal/opensearch/queries.go emits a `wildcard` on `log` with no
+# `case_insensitive: true`, unlike the log-LEVEL filter a few lines above it
+# which does set the flag. So the fork stays.
+#
+# The fork is built from 0.5.1 while the CHART is now 0.5.3. That combination
+# is verified only as far as the gate below goes; if the adapter misbehaves
+# against a newer chart, clear OBS_LOGS_ADAPTER_IMAGE_REPO to fall back to the
+# stock image and accept case-sensitive alert matching.
+if [ -n "$OBS_LOGS_ADAPTER_IMAGE_REPO" ]; then
+    OBS_ADAPTER_IMAGE_BLOCK="  image:
+    repository: ${OBS_LOGS_ADAPTER_IMAGE_REPO}
+    tag: ${OBS_LOGS_ADAPTER_IMAGE_TAG}"
+else
+    OBS_ADAPTER_IMAGE_BLOCK="  # stock chart adapter image (case-SENSITIVE alert matching)"
+fi
 cat > /tmp/obs-logs-values.yaml <<EOF
 openSearchSetup:
   openSearchSecretName: opensearch-admin-credentials
@@ -422,17 +452,7 @@ fluent-bit:
 # adapter.enabled defaults true in >=0.5.1; it only needs the credentials ref.
 adapter:
   openSearchSecretName: opensearch-admin-credentials
-  # Patched build of upstream 0.5.1: alert-rule log matching is
-  # case-insensitive (stock 0.5.1 compiles rules into a case-sensitive
-  # wildcard, so a rule watching "ERROR" silently stops firing when a code
-  # change rewords the log line to "error" — when a
-  # coding-agent PR detached the alert from the failure it watched).
-  # Stopgap pending the upstream PR to openchoreo/community-modules
-  # (fix/alert-rule-case-insensitive-match) — drop this pin when the fix
-  # ships in a released adapter (>0.5.1).
-  image:
-    repository: docker.io/tharindulak/observability-logs-opensearch-adapter
-    tag: 0.5.1-case-insensitive
+${OBS_ADAPTER_IMAGE_BLOCK}
 EOF
 helm upgrade --install observability-logs-opensearch \
     "oci://ghcr.io/openchoreo/helm-charts/observability-logs-opensearch" \

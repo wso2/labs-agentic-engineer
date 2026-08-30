@@ -55,7 +55,7 @@ if ! kubectl get secret backstage-secrets -n openchoreo-control-plane &>/dev/nul
 fi
 
 # A fresh control-plane install races the controller-manager's validating
-# webhook: the OC 1.1.1 chart applies webhook-gated CRs (ClusterAuthzRoleBinding)
+# webhook: the OC chart applies webhook-gated CRs (ClusterAuthzRoleBinding)
 # in the SAME helm pass that first creates the controller-manager pod, so on a
 # cold image pull the webhook service has no endpoints yet and the install errors
 # ("no endpoints available for service controller-manager-webhook-service").
@@ -64,6 +64,13 @@ fi
 # half-configured. So: treat ONLY a `deployed` release as installed, and retry
 # the install once the webhook is ready (helm reconciles the partial release on
 # the second pass — the documented recovery path).
+
+# Bumping OPENCHOREO_VERSION on a cluster that already carries an older release
+# needs the chart's CRDs re-applied by hand (helm upgrade skips crds/) — see
+# sync_chart_crds in utils.sh. No-op on a first install, so it runs
+# unconditionally rather than trying to detect the upgrade case.
+sync_chart_crds openchoreo-control-plane "${OPENCHOREO_VERSION}"
+
 cp_status="$(helm status openchoreo-control-plane -n openchoreo-control-plane \
     --kube-context ${CLUSTER_CONTEXT} -o json 2>/dev/null \
     | grep -o '"status":"[a-z-]*"' | head -1)" || true
@@ -117,6 +124,7 @@ if helm_release_deployed openchoreo-data-plane openchoreo-data-plane; then
     echo "⏭️  Already installed"
 else
     echo "📦 Installing OpenChoreo Data Plane..."
+    sync_chart_crds openchoreo-data-plane "${OPENCHOREO_VERSION}"
     create_plane_cert_resources openchoreo-data-plane
     helm upgrade --install openchoreo-data-plane \
         oci://ghcr.io/openchoreo/helm-charts/openchoreo-data-plane \
@@ -247,6 +255,7 @@ if helm_release_deployed openchoreo-workflow-plane openchoreo-workflow-plane; th
     echo "⏭️  Already installed"
 else
     echo "📦 Installing Workflow Plane..."
+    sync_chart_crds openchoreo-workflow-plane "${OPENCHOREO_VERSION}"
     create_plane_cert_resources openchoreo-workflow-plane
 
     # Pre-fetched via fetch_gh_raw (PAT-aware, retried) — a direct helm
