@@ -139,7 +139,43 @@ kinds, different objects.
 | `setup-thunder.sh` | always | Merges Agent Manager's bootstrap documents with `single-cluster/thunder-resources/`, installs the one platform IdP on AEP's hostname. |
 | `setup-agent-manager.sh` | flag on | CoreDNS rewrites, tracing + metrics modules, pipeline hand-over, then the platform-resources / sandbox / agent-manager / observability / evaluation charts. |
 | `setup-agent-manager-env.sh` | flag on | The `default` environment's own Thunder and its API Platform gateway. Split out because both drive Agent Manager's admin API over its public URL and fail for reasons unrelated to the chart installs. |
-| `teardown-agent-manager.sh` | manual | Makes the flag genuinely reversible. Leaves the platform IdP, OpenChoreo, the gateway operator and the observability plane alone, and restores AEP's own `DeploymentPipeline/default`. |
+| `teardown-agent-manager.sh` | manual | Makes the flag genuinely reversible. Leaves the platform IdP, OpenChoreo, the gateway operator and the observability plane alone, and restores AEP's own `DeploymentPipeline/default`. **Read its `PROTECTED_NAMESPACES` before changing how it selects releases** — see below. |
+
+### Why the teardown has a protected-namespace list
+
+Agent Manager's per-environment gateway releases are named
+`api-platform-<org>-<env>`. So is something else: the API Platform **operator**
+creates a child Helm release for AEP's OWN gateway, named
+`api-platform-default-gw`, in `openchoreo-data-plane`.
+
+Selecting releases by that name prefix matches both. The first version of the
+teardown did exactly that, and then deleted each matched release's namespace —
+so tearing down Agent Manager uninstalled AEP's gateway and destroyed
+`openchoreo-data-plane` with it. The cluster afterwards looks fine: every
+remaining pod is Running, no error is printed, and the only symptom is that
+every AEP deploy fails with
+
+```
+no agents found for plane dataplane/default
+```
+
+because the data-plane cluster-agent no longer exists.
+
+Recovering is not just a re-run, either: AEP's `APIGateway` CR carries a
+finalizer that only the gateway-operator clears, and the operator was in the
+namespace being deleted. The namespace hangs in `Terminating` indefinitely —
+
+```
+NamespaceFinalizersRemaining: gateway.api-platform.wso2.com/apigateway-finalizer
+```
+
+— and every reinstall fails with "unable to create new content in namespace
+... because it is being terminated". The finalizer has to be cleared by hand
+before `setup-prerequisites.sh` and `setup-openchoreo.sh` can rebuild it.
+
+The teardown now refuses to touch a release in any namespace AEP or the shared
+base owns, and never deletes one. Anything that selects resources by name
+pattern in a cluster two products share needs the same treatment.
 
 ## Resource cost
 

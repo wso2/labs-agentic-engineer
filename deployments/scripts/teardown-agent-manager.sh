@@ -53,22 +53,51 @@ uninstall() {
     fi
 }
 
+# Namespaces this script must NEVER remove, and never uninstall a release from
+# by name-pattern alone. Every one belongs to AEP or to the shared base.
+#
+# This list is load-bearing. Agent Manager's per-environment gateway releases
+# are named `api-platform-<org>-<env>` — but the API Platform OPERATOR also
+# creates a child release for AEP's OWN gateway, named `api-platform-default-gw`,
+# in openchoreo-data-plane. A name pattern alone matches both, and an earlier
+# version of this script uninstalled AEP's gateway and then deleted the entire
+# openchoreo-data-plane namespace with it: no cluster-agent, no data plane, and
+# every AEP deploy failing with "no agents found for plane dataplane/default".
+PROTECTED_NAMESPACES="
+default kube-system kube-public kube-node-lease
+openchoreo-control-plane openchoreo-data-plane openchoreo-workflow-plane
+openchoreo-observability-plane
+cert-manager external-secrets openbao cnpg-system temporal
+thunder-app-operator-system ${THUNDER_NS}
+"
+
+is_protected() {
+    local candidate="$1" ns
+    for ns in $PROTECTED_NAMESPACES; do
+        [ "$candidate" = "$ns" ] && return 0
+    done
+    return 1
+}
+
 echo ""
 echo "1️⃣  Per-environment gateways and Thunders"
 # Both are named per (org, environment); discover rather than assume `default`,
-# so an installation that added environments is fully cleaned up.
+# so an installation that added environments is fully cleaned up. Anything
+# living in a protected namespace is skipped — see PROTECTED_NAMESPACES.
 for rel in $(helm list -A -o json --kube-context "$CLUSTER_CONTEXT" 2>/dev/null \
         | python3 -c "
 import json,sys
 for r in json.load(sys.stdin):
     n = r['name']
-    if n.startswith('api-platform-') and n != 'api-platform-operator':
-        print(f\"{n}:{r['namespace']}\")
-    elif n.startswith('amp-thunder-'):   # per-env; the platform one is amp-thunder-extension
+    if n.startswith('api-platform-') or n.startswith('amp-thunder-'):
         print(f\"{n}:{r['namespace']}\")
 " 2>/dev/null); do
     name="${rel%%:*}"; ns="${rel#*:}"
     [ "$name" = "${THUNDER_RELEASE}" ] && continue   # never the shared platform IdP
+    if is_protected "$ns"; then
+        echo "   skipping ${name} — lives in ${ns}, which AEP owns"
+        continue
+    fi
     uninstall "$name" "$ns"
     kubectl delete ns "$ns" --context "$CLUSTER_CONTEXT" --ignore-not-found --wait=false >/dev/null 2>&1
 done
@@ -106,6 +135,7 @@ echo "   ✅ DeploymentPipeline/default restored (development only)"
 
 echo ""
 echo "5️⃣  Namespaces"
+# Only Agent Manager's own. The shared ones are in PROTECTED_NAMESPACES.
 kubectl delete ns wso2-amp --context "$CLUSTER_CONTEXT" --ignore-not-found --wait=false >/dev/null 2>&1
 kubectl delete ns agent-sandbox-system --context "$CLUSTER_CONTEXT" --ignore-not-found --wait=false >/dev/null 2>&1
 
