@@ -211,6 +211,42 @@ The teardown now refuses to touch a release in any namespace AEP or the shared
 base owns, and never deletes one. Anything that selects resources by name
 pattern in a cluster two products share needs the same treatment.
 
+### Two things a data-plane reinstall silently takes with it
+
+Rebuilding `openchoreo-data-plane` is not a clean re-run, because two pieces of
+state live in that namespace while the things that depend on them live
+elsewhere. Both were found by the POC truth table failing after the recovery
+above, and both look like something other than what they are.
+
+**The cluster-agent's CA.** `ClusterDataPlane/default` lives in `default` but
+pins a CA copied out of a Secret in `openchoreo-data-plane`. Reinstall the data
+plane and cert-manager mints a fresh CA while the CR keeps the old one, so the
+agent presents a certificate the gateway will not verify. Every deploy then
+fails with `no agents found for plane dataplane/default` — which reads as a
+missing agent, though the agent is `Running`; it is looping on `websocket: bad
+handshake` while the gateway logs `certificate not valid for any CR`. It never
+self-heals, because `setup-openchoreo.sh` used to register a plane only when
+the CR did not already exist. It now re-registers on every run — `kubectl
+apply`, so a no-op when the CA has not moved — and the same guard covers the
+workflow plane. To confirm this specific failure, compare fingerprints:
+
+```bash
+kubectl get clusterdataplane default -n default \
+  -o jsonpath='{.spec.clusterAgent.clientCA.value}' | openssl x509 -noout -fingerprint -sha256
+kubectl get secret cluster-agent-tls -n openchoreo-data-plane \
+  -o jsonpath='{.data.ca\.crt}' | base64 -d | openssl x509 -noout -fingerprint -sha256
+```
+
+**The gateway's AES key.** The API Platform controller encrypts its persisted
+API state with a key held in that same namespace. Delete the namespace and the
+key is regenerated, so every API registered under the old one becomes
+undecryptable and vanishes from the gateway's runtime config. The `RestApi` CRs
+still report `Accepted=True, Programmed=True` — nothing told them otherwise —
+while the gateway answers `direct_response` 404 for a route it clearly matched.
+Restarting the controller does not help; the state is gone, not stale. The
+APIs have to be redeployed, which for the POC means deleting and re-applying
+its two ReleaseBindings.
+
 ## Resource cost
 
 **Profile A — flag off.** Unchanged from before convergence. The unconditional

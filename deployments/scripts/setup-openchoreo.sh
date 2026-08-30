@@ -135,12 +135,35 @@ echo "⏳ Waiting for Data Plane..."
 kubectl wait -n openchoreo-data-plane --for=condition=available --timeout=300s deployment --all
 echo "✅ Data Plane ready"
 
-# Register Data Plane
-if ! kubectl get clusterdataplane default -n default &>/dev/null; then
-    echo "🔗 Registering Data Plane..."
-    local_ca=$(kubectl get secret cluster-agent-tls -n openchoreo-data-plane -o jsonpath='{.data.ca\.crt}' | base64 -d)
-    register_data_plane "$local_ca" "default" "default"
+# Register Data Plane.
+#
+# Re-registered on EVERY run, never guarded on the CR already existing. The CR
+# lives in `default` but pins a CA that comes from a Secret in
+# openchoreo-data-plane, so the two have independent lifetimes: reinstall the
+# data plane and cert-manager mints a fresh CA while the CR keeps the old one.
+# The cluster-agent then presents a cert the gateway cannot verify and the
+# tunnel never comes up — `no agents found for plane dataplane/default` on
+# every deploy, with the agent looping on `websocket: bad handshake` and the
+# gateway logging "certificate not valid for any CR". Nothing self-heals,
+# because the guard sees the CR and skips.
+#
+# register_data_plane is a plain `kubectl apply`, so re-running it is cheap and
+# idempotent when the CA has not moved. The CA is checked for emptiness first,
+# in two steps: `set -e` does not catch a failing left side of a pipe, and an
+# empty value would apply a blank clientCA that breaks the tunnel with no error
+# — the same guard setup-observability.sh uses for its own plane.
+echo "🔗 Registering Data Plane..."
+local_ca_b64=$(kubectl get secret cluster-agent-tls -n openchoreo-data-plane -o jsonpath='{.data.ca\.crt}')
+if [ -z "$local_ca_b64" ]; then
+    echo "❌ cluster-agent-tls has no ca.crt in openchoreo-data-plane" >&2
+    exit 1
 fi
+local_ca=$(printf '%s' "$local_ca_b64" | base64 -d)
+if [ -z "$local_ca" ]; then
+    echo "❌ decoded data-plane CA is empty" >&2
+    exit 1
+fi
+register_data_plane "$local_ca" "default" "default"
 echo ""
 
 # ============================================================================
@@ -254,11 +277,20 @@ echo "⏳ Waiting for Workflow Plane..."
 kubectl wait -n openchoreo-workflow-plane --for=condition=available --timeout=300s deployment --all
 echo "✅ Workflow Plane ready"
 
-if ! kubectl get clusterworkflowplane default -n default &>/dev/null; then
-    echo "🔗 Registering Workflow Plane..."
-    wp_ca=$(kubectl get secret cluster-agent-tls -n openchoreo-workflow-plane -o jsonpath='{.data.ca\.crt}' | base64 -d)
-    register_workflow_plane "$wp_ca" "default" "default"
+# Re-registered every run for the same reason as the data plane above: the CR
+# and the CA it pins have independent lifetimes.
+echo "🔗 Registering Workflow Plane..."
+wp_ca_b64=$(kubectl get secret cluster-agent-tls -n openchoreo-workflow-plane -o jsonpath='{.data.ca\.crt}')
+if [ -z "$wp_ca_b64" ]; then
+    echo "❌ cluster-agent-tls has no ca.crt in openchoreo-workflow-plane" >&2
+    exit 1
 fi
+wp_ca=$(printf '%s' "$wp_ca_b64" | base64 -d)
+if [ -z "$wp_ca" ]; then
+    echo "❌ decoded workflow-plane CA is empty" >&2
+    exit 1
+fi
+register_workflow_plane "$wp_ca" "default" "default"
 echo ""
 
 echo "✅ OpenChoreo installation complete!"
