@@ -66,11 +66,20 @@ fi
 # ── 2. The issuer Thunder stamps matches what OpenChoreo expects ────────────
 echo ""
 echo "2️⃣  Token issuer agrees with OpenChoreo's configured issuer"
-tok="$(kubectl run "idp-probe-$RANDOM" -n "$THUNDER_NS" --rm -i --restart=Never \
-    --image=curlimages/curl:8.11.1 --quiet --context "$CLUSTER_CONTEXT" -- \
-    -s -X POST "${THUNDER_INTERNAL_URL}/oauth2/token" \
-    -d "grant_type=client_credentials&client_id=aep-api-client&client_secret=aep-api-client-secret" \
-    2>/dev/null | python3 -c "import sys,json;print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null)"
+# Retried: `kubectl run --rm -i` occasionally returns nothing at all on a busy
+# cluster — the pod runs and its output is lost. Reporting that as "could not
+# mint a token" would be a false negative on the single most load-bearing check
+# in this script, so a silent empty result is retried rather than believed.
+tok=""
+for _ in 1 2 3; do
+    tok="$(kubectl run "idp-probe-$RANDOM" -n "$THUNDER_NS" --rm -i --restart=Never \
+        --image=curlimages/curl:8.11.1 --quiet --context "$CLUSTER_CONTEXT" -- \
+        -s -X POST "${THUNDER_INTERNAL_URL}/oauth2/token" \
+        -d "grant_type=client_credentials&client_id=aep-api-client&client_secret=aep-api-client-secret" \
+        2>/dev/null | python3 -c "import sys,json;print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null)"
+    [ -n "$tok" ] && break
+    sleep 3
+done
 if [ -z "$tok" ]; then
     fail "aep-api-client could not mint a token"
 else

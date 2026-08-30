@@ -81,7 +81,7 @@ echo ""
 echo "1️⃣  Provisioning the environment's Thunder"
 ENV_THUNDER_SCRIPT="$(mktemp)"
 trap 'rm -f "$ENV_THUNDER_SCRIPT"' EXIT
-fetch_gh_raw "${AM_SCRIPT_BASE}/add-environment-thunder.sh" "$ENV_THUNDER_SCRIPT"
+fetch_gh_raw "${AM_SCRIPT_BASE}/add-environment-thunder.sh" "$ENV_THUNDER_SCRIPT" "$AM_REF"
 
 ENV_NAME="$ENV_NAME" \
 DISPLAY_NAME="${DISPLAY_NAME:-Default}" \
@@ -129,7 +129,7 @@ fi
 # gateway at a Thunder that is not there.
 THUNDER_NAMING_LIB="$(mktemp)"
 trap 'rm -f "$ENV_THUNDER_SCRIPT" "$THUNDER_NAMING_LIB"' EXIT
-fetch_gh_raw "${AM_SCRIPT_BASE}/thunder-naming.sh" "$THUNDER_NAMING_LIB"
+fetch_gh_raw "${AM_SCRIPT_BASE}/thunder-naming.sh" "$THUNDER_NAMING_LIB" "$AM_REF"
 # shellcheck source=/dev/null
 source "$THUNDER_NAMING_LIB"
 ENV_THUNDER_RELEASE="$(thunder_release_name "$ORG_NAME" "$ENV_NAME")"

@@ -22,8 +22,16 @@
 # LOCAL_DEV_ADMIN_GITHUB_PAT is available (env or deployments/.env) the fetch
 # goes through the authenticated contents API instead — a far higher limit.
 # Falls back to the plain unauthenticated raw URL when no PAT is configured.
+#
+#   fetch_gh_raw <raw-url> <dest> [ref]
+#
+# Pass `ref` whenever the ref contains a SLASH — release tags like
+# `amp/v1.0.0-rc2` do. The URL is otherwise split on the assumption that the ref
+# is one path segment, which silently mis-parses such a URL into ref=`amp` and
+# path=`v1.0.0-rc2/deployments/...`, and the authenticated fetch then 404s while
+# the plain URL it was derived from works fine.
 fetch_gh_raw() {
-    local url="$1" dest="$2"
+    local url="$1" dest="$2" explicit_ref="${3:-}"
     local pat="${LOCAL_DEV_ADMIN_GITHUB_PAT:-}"
     if [ -z "$pat" ]; then
         local envfile
@@ -36,7 +44,13 @@ fetch_gh_raw() {
     local rest="${url#https://raw.githubusercontent.com/}"
     local owner="${rest%%/*}"; rest="${rest#*/}"
     local repo="${rest%%/*}"; rest="${rest#*/}"
-    local ref="${rest%%/*}"; local path="${rest#*/}"
+    local ref path
+    if [ -n "$explicit_ref" ]; then
+        ref="$explicit_ref"
+        path="${rest#"${explicit_ref}"/}"
+    else
+        ref="${rest%%/*}"; path="${rest#*/}"
+    fi
     local attempt
     for attempt in 1 2 3 4 5; do
         if [ -n "$pat" ]; then

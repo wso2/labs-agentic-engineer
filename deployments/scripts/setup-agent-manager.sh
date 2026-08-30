@@ -265,11 +265,24 @@ echo "8️⃣  Observability extension (amp-observer)"
 # --reuse-values so this does not silently reset every value
 # setup-observability.sh set.
 echo "   re-enabling the observability plane's own gateway (amp-observer rides it)"
+# Ports and TLS are Agent Manager's own values for this gateway
+# (single-cluster/values-op.yaml there): 11080/11085 are what k3d publishes for
+# it, and TLS is off, matching every other gateway in this local setup.
+#
+# `enabled=true` alone is not enough. The chart defaults tls.enabled to true
+# with an EMPTY certificateRefs, and enabling the gateway without disabling TLS
+# renders an HTTPS listener whose certificateRefs serialises as null — which the
+# Gateway API CRD then rejects outright:
+#   spec.listeners[1].tls.certificateRefs in body must be of type array: "null"
 helm upgrade observability-plane \
     oci://ghcr.io/openchoreo/helm-charts/openchoreo-observability-plane \
     --namespace "$OBS_NS" --kube-context "$CLUSTER_CONTEXT" \
     --version "${OPENCHOREO_VERSION}" \
-    --reuse-values --set gateway.enabled=true \
+    --reuse-values \
+    --set gateway.enabled=true \
+    --set gateway.httpPort=11080 \
+    --set gateway.httpsPort=11085 \
+    --set gateway.tls.enabled=false \
     --force-conflicts --timeout 10m
 
 # auth.issuer defaults to the chart's own thunder.amp.localhost. It is what

@@ -753,7 +753,11 @@ metadata:
 spec:
   effect: allow
   entitlement:
-    claim: sub
+    # client_id, not sub: ThunderID puts a client_credentials token's subject in
+    # the client_id claim. Same move as every other service-account binding
+    # (setup-openchoreo.sh, setup-aep.sh) — this one lives here because the
+    # observer role is only meaningful once the observability plane exists.
+    claim: client_id
     value: openchoreo-observer-resource-reader-client
   roleMappings:
     - roleRef:
