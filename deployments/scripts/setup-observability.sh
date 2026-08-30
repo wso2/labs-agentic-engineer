@@ -128,6 +128,11 @@ OBS_LOGS_VERSION="${OBSERVABILITY_LOGS_VERSION}"
 OBS_LOGS_ADAPTER_IMAGE_REPO="${OBS_LOGS_ADAPTER_IMAGE_REPO:-docker.io/tharindulak/observability-logs-opensearch-adapter}"
 OBS_LOGS_ADAPTER_IMAGE_TAG="${OBS_LOGS_ADAPTER_IMAGE_TAG:-0.5.1-case-insensitive}"
 NS="openchoreo-observability-plane"
+# The SRE/RCA agent's Deployment, Service and container were all renamed
+# ai-rca-agent -> sre-agent in observability-plane 1.2.0. Named once here so the
+# next rename is a one-line change rather than a scavenger hunt through the
+# eight places that address it.
+RCA_DEPLOYMENT="sre-agent"
 
 # SRE-agent handoff knobs (see header). AE_API_URL is how the in-cluster RCA
 # agent reaches the docker-compose-hosted aep-mcp-server on the host.
@@ -396,7 +401,7 @@ EOF
 #
 # --force-conflicts: this Helm (v4+) defaults --server-side to "auto", which
 # uses SSA once a release's prior revision did. Step 3b below kubectl-patches
-# observer-config/rca-agent-config/the ai-rca-agent deployment AFTER every
+# observer-config/rca-agent-config/the RCA agent deployment AFTER every
 # helm run (deliberately — see that step's comment), which stamps those
 # fields with fieldManager "kubectl-patch". Without --force-conflicts, the
 # NEXT re-run of this same `helm upgrade` fails outright ("Apply failed with
@@ -431,10 +436,15 @@ echo "3️⃣  observability-logs-opensearch chart (v${OBS_LOGS_VERSION})"
 # `case_insensitive: true`, unlike the log-LEVEL filter a few lines above it
 # which does set the flag. So the fork stays.
 #
-# The fork is built from 0.5.1 while the CHART is now 0.5.3. That combination
-# is verified only as far as the gate below goes; if the adapter misbehaves
-# against a newer chart, clear OBS_LOGS_ADAPTER_IMAGE_REPO to fall back to the
-# stock image and accept case-sensitive alert matching.
+# The fork is built from 0.5.1 while the CHART is now 0.5.3. That combination is
+# verified: the 0.5.1 adapter reads 0.5.3's configuration correctly (OpenSearch
+# address, index prefixes, observer URL) and reaches Ready. If a future chart
+# does break it, clear OBS_LOGS_ADAPTER_IMAGE_REPO to fall back to the stock
+# image and accept case-sensitive alert matching.
+#
+# Expect it to CrashLoopBackOff for the first minute or two of a fresh install:
+# it refuses to start without OpenSearch, and OpenSearch is a large image and a
+# slow boot. It recovers on its own once the StatefulSet is Ready.
 if [ -n "$OBS_LOGS_ADAPTER_IMAGE_REPO" ]; then
     OBS_ADAPTER_IMAGE_BLOCK="  image:
     repository: ${OBS_LOGS_ADAPTER_IMAGE_REPO}
@@ -505,12 +515,12 @@ echo "✅ logs-opensearch ready (incl. logs-adapter)"
 echo ""
 echo "3️⃣b Alert→RCA auto-trigger + AEP handoff wiring"
 kubectl --context "$CLUSTER_CONTEXT" -n "$NS" patch cm observer-config --type=merge -p \
-    '{"data":{"LOGS_ADAPTER_ENABLED":"true","RCA_SERVICE_URL":"http://ai-rca-agent:8080","ALERT_SUPPRESSION_WINDOW":"1h"}}'
+    '{"data":{"LOGS_ADAPTER_ENABLED":"true","RCA_SERVICE_URL":"http://'"${RCA_DEPLOYMENT}"':8080","ALERT_SUPPRESSION_WINDOW":"1h"}}'
 kubectl --context "$CLUSTER_CONTEXT" -n "$NS" rollout restart deploy/observer
 if [ "$AE_HANDOFF" = "true" ]; then
     kubectl --context "$CLUSTER_CONTEXT" -n "$NS" patch cm rca-agent-config --type=merge -p \
         "{\"data\":{\"AE_HANDOFF\":\"true\",\"AE_AUTO_DISPATCH\":\"${AE_AUTO_DISPATCH}\",\"AE_API_URL\":\"${AE_API_URL}\",\"AE_PUBLISH_REPORTS\":\"${AE_PUBLISH_REPORTS}\",\"AEP_API_URL\":\"${AEP_API_URL}\"}}"
-    kubectl --context "$CLUSTER_CONTEXT" -n "$NS" rollout restart deploy/ai-rca-agent
+    kubectl --context "$CLUSTER_CONTEXT" -n "$NS" rollout restart deploy/${RCA_DEPLOYMENT}
     echo "   AE handoff: enabled (auto-dispatch=${AE_AUTO_DISPATCH}, mcp=${AE_API_URL})"
     echo "   Report publishing: ${AE_PUBLISH_REPORTS} (aep-api=${AEP_API_URL})"
 else
@@ -563,10 +573,10 @@ if [ "$AE_HANDOFF" = "true" ]; then
     # re-run on a live stack); on a fresh setup the crash-loop is expected
     # and start.sh auto-recovers the agent once compose is up.
     if curl -s --max-time 2 http://localhost:3401/healthz 2>/dev/null | grep -q '"ok"'; then
-        kubectl --context "$CLUSTER_CONTEXT" -n "$NS" rollout status deploy/ai-rca-agent --timeout=300s || \
-            echo "⚠️  ai-rca-agent not ready — check the RCA image import in step 1b"
+        kubectl --context "$CLUSTER_CONTEXT" -n "$NS" rollout status deploy/${RCA_DEPLOYMENT} --timeout=300s || \
+            echo "⚠️  ${RCA_DEPLOYMENT} not ready — check the RCA image import in step 1b"
     else
-        echo "ℹ️  aep-mcp-server not running yet — ai-rca-agent will crash-loop until"
+        echo "ℹ️  aep-mcp-server not running yet — ${RCA_DEPLOYMENT} will crash-loop until"
         echo "    'bash scripts/start.sh' brings the compose stack up (start.sh then"
         echo "    auto-restarts the agent). This is expected on a fresh setup."
     fi
@@ -594,7 +604,7 @@ echo "3️⃣c Dynamic Anthropic key (volume wiring; the ExternalSecret is owned
 # Patched onto the Deployment (not chart values) for the same "survives a
 # helm re-run" reason as step 3b's ConfigMap patches. A podSpec change here
 # triggers K8s's normal rolling update on its own — no explicit restart needed.
-kubectl --context "$CLUSTER_CONTEXT" -n "$NS" patch deployment ai-rca-agent --type=strategic -p '
+kubectl --context "$CLUSTER_CONTEXT" -n "$NS" patch deployment ${RCA_DEPLOYMENT} --type=strategic -p '
 spec:
   template:
     spec:
@@ -605,7 +615,7 @@ spec:
             optional: true
             defaultMode: 0400
       containers:
-        - name: ai-rca-agent
+        - name: '"${RCA_DEPLOYMENT}"'
           volumeMounts:
             - name: anthropic-key
               mountPath: /etc/rca-agent/anthropic
@@ -614,7 +624,7 @@ spec:
             - name: RCA_LLM_API_KEY_FILE
               value: /etc/rca-agent/anthropic/RCA_LLM_API_KEY
 '
-echo "✅ ai-rca-agent volume/env wired for the dynamic Anthropic key"
+echo "✅ ${RCA_DEPLOYMENT} volume/env wired for the dynamic Anthropic key"
 echo "   The RCA agent's own ExternalSecret (against the org's Anthropic KV path) fills this mount."
 echo "   Until one exists it falls back to the static RCA_LLM_API_KEY from step 1b."
 
@@ -638,7 +648,7 @@ if [ "$AE_HANDOFF" = "true" ]; then
     ISSUE_FIX_SKILL="$SCRIPT_DIR/../../services/aep-mcp-server/skills/issue-fix/SKILL.md"
     if [ ! -f "$ISSUE_FIX_SKILL" ]; then
         echo "⚠️  issue-fix skill not found at $ISSUE_FIX_SKILL — skipping mount."
-        echo "    AE_HANDOFF is on, so ai-rca-agent will error 'Skill issue-fix not found'"
+        echo "    AE_HANDOFF is on, so ${RCA_DEPLOYMENT} will error 'Skill issue-fix not found'"
         echo "    on the handoff stage (best-effort — RCA analysis still completes)."
     else
         # Render deterministically (create --dry-run) then apply, so re-runs are
@@ -653,7 +663,7 @@ if [ "$AE_HANDOFF" = "true" ]; then
         # Patch the Deployment: mount the skill at /etc/rca-agent/skills/issue-fix
         # and point the loader at /etc/rca-agent/skills. A podSpec change here
         # triggers a rolling update on its own.
-        kubectl --context "$CLUSTER_CONTEXT" -n "$NS" patch deployment ai-rca-agent --type=strategic -p '
+        kubectl --context "$CLUSTER_CONTEXT" -n "$NS" patch deployment ${RCA_DEPLOYMENT} --type=strategic -p '
 spec:
   template:
     spec:
@@ -665,7 +675,7 @@ spec:
               - key: SKILL.md
                 path: SKILL.md
       containers:
-        - name: ai-rca-agent
+        - name: '"${RCA_DEPLOYMENT}"'
           volumeMounts:
             - name: issue-fix-skill
               mountPath: /etc/rca-agent/skills/issue-fix
@@ -674,7 +684,7 @@ spec:
             - name: EXTERNAL_SKILLS_DIR
               value: /etc/rca-agent/skills
 '
-        echo "✅ ai-rca-agent volume/env wired for the handoff skill (EXTERNAL_SKILLS_DIR=/etc/rca-agent/skills)"
+        echo "✅ ${RCA_DEPLOYMENT} volume/env wired for the handoff skill (EXTERNAL_SKILLS_DIR=/etc/rca-agent/skills)"
         echo "   Edit the skill in services/aep-mcp-server/skills/issue-fix/, re-run this script"
         echo "   (or re-apply the ConfigMap) and restart the agent — no SRE image rebuild."
     fi

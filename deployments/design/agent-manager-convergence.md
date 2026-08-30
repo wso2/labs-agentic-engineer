@@ -70,6 +70,11 @@ both fail at `helm template` time with a clear message.
   where nothing about it is deployment-specific. It REPLACES rather than merges,
   so the chart's `AUTHZ_TIMEOUT` default has to be restated alongside it.
 
+* **The SRE/RCA agent was renamed.** Its Deployment, Service and container all
+  went `ai-rca-agent` → `sre-agent` in observability-plane 1.2.0. This one does
+  NOT fail at render time — it fails eight steps later, at the first
+  `kubectl ... deploy/ai-rca-agent`, with a bare `NotFound`.
+
 And one that is a genuine behaviour change rather than a gate: creating a
 Project no longer materializes its cell namespace. A `ProjectReleaseBinding`
 pins a release to an environment and owns that namespace, and nothing creates
@@ -85,11 +90,40 @@ Both products are OpenChoreo platforms, so they reach for the same names.
 | Object | AEP | Agent Manager | Resolution |
 |---|---|---|---|
 | `ClusterWorkflowTemplate` `checkout-source`, `containerfile-build`, `publish-image` | own fork of each | own fork of each | AEP renamed to `aep-*`. **The dangerous one**: nothing errors, the last apply wins, and the other product's builds silently change behaviour. `setup-agent-manager.sh` also deletes pre-rename copies left by an older cluster. |
-| `DeploymentPipeline/default` (ns `default`) | promotes from `development` | promotes from `default` | ONE object carrying both paths. Neither side can rename: the OpenChoreo API hardcodes `DeploymentPipeline/default` when a client creates a project without naming one, and both products do. Agent Manager's chart owns it; `setup-agent-manager.sh` stamps Helm ownership onto AEP's copy first so the chart adopts rather than errors, and passes the union as values. |
+| `DeploymentPipeline/default` (ns `default`) | promotes from `development` | promotes from `default` | ONE object carrying both paths — see below. |
 | `APIGateway` API selection | was `scope: Cluster` | `scope: LabelSelector` | AEP moved to `LabelSelector` and its `api-configuration` trait now stamps the matching label on every RestApi. Cluster scope would have adopted Agent Manager's RestApis too, and both gateways would serve the same APIs. |
 | `observability-logs-opensearch` | 0.5.1 | 0.5.3 | One release. AEP moved to 0.5.3; only AEP installs it. |
 | API Platform gateway-operator | `api-platform-operator` 0.6.0 | `gateway-operator` 0.11.0 | One operator, at 0.11.0, keeping AEP's release name. |
 | External Secrets | 2.0.1 | 1.3.2 | 2.0.1. Both use only `external-secrets.io/v1`. |
+
+### The DeploymentPipeline hand-over
+
+Worth its own note, because it took three failed attempts to get right and the
+error message names a different culprit each time.
+
+Neither product can rename its pipeline: the OpenChoreo API hardcodes
+`DeploymentPipeline/default` when a client creates a project without naming
+one, and both products create projects that way. So there is one object,
+carrying the union of both promotion paths, and Agent Manager's chart owns it.
+
+Handing it over takes three things, and the first two alone are not enough:
+
+1. **Helm ownership metadata** — the `meta.helm.sh/release-*` annotations and
+   the `managed-by: Helm` label. Without these the install fails outright with
+   "invalid ownership metadata".
+2. **Dropping `kubectl.kubernetes.io/last-applied-configuration`.** AEP creates
+   the object with a CLIENT-side `kubectl apply`; Helm's server-side apply
+   migrates that annotation into a `kubectl-client-side-apply` field manager
+   that owns `.spec.promotionPaths`, and the install dies on the conflict.
+3. **`--force-conflicts` on the install.** This is the one that actually
+   matters. Removing the annotation does not remove the field manager it
+   created — and resetting `metadata.managedFields` to `[{}]`, Kubernetes'
+   documented escape hatch, only renames the owner to `before-first-apply` and
+   the conflict returns under a new name.
+
+Forcing is not a workaround here: taking that field over is the entire point of
+the hand-over, and the union passed as chart values is exactly what should end
+up there.
 
 Verified as safe to coexist: `Environment` (`development` vs `default`),
 ComponentTypes (`service`/`web-application` vs `agent-api`/`external-agent-api`),

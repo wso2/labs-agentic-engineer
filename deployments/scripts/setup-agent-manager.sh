@@ -135,6 +135,23 @@ if kubectl get deploymentpipeline default -n default &>/dev/null; then
         meta.helm.sh/release-namespace=default >/dev/null
     kubectl label deploymentpipeline default -n default --overwrite \
         app.kubernetes.io/managed-by=Helm >/dev/null
+    # Ownership metadata alone is not enough. setup-aep.sh creates this object
+    # with a CLIENT-side `kubectl apply`, which leaves a
+    # last-applied-configuration annotation; Helm's server-side apply migrates
+    # that into a "kubectl-client-side-apply" field manager owning
+    # .spec.promotionPaths, and the install then dies with
+    #
+    #   conflict with "kubectl-client-side-apply": .spec.promotionPaths
+    #
+    # Removing the annotation alone does NOT fix it: once that field manager
+    # exists in metadata.managedFields it outlives the annotation it came from.
+    # `managedFields: [{}]` is Kubernetes' documented reset for exactly this —
+    # it drops every recorded owner so the next apply establishes ownership
+    # cleanly. The object's spec is untouched; only the bookkeeping is cleared.
+    kubectl annotate deploymentpipeline default -n default \
+        kubectl.kubernetes.io/last-applied-configuration- >/dev/null 2>&1 || true
+    kubectl patch deploymentpipeline default -n default --type=merge \
+        -p '{"metadata":{"managedFields":[{}]}}' >/dev/null 2>&1 || true
     echo "   ✅ ownership stamped for adoption"
 fi
 
@@ -161,10 +178,18 @@ done
 
 echo ""
 echo "5️⃣  Platform resources extension"
+# --force-conflicts: this release is DELIBERATELY taking over
+# DeploymentPipeline/default from whoever wrote it last (see step 3). Helm's
+# server-side apply refuses that by default, and the owner it names shifts
+# depending on how the object got there — "kubectl-client-side-apply" for one
+# AEP created, "before-first-apply" for one whose field management was reset.
+# Forcing is the point of the hand-over, not a workaround for a surprise: the
+# union of promotion paths passed below is exactly what should end up there.
 helm upgrade --install amp-platform-resources \
     "${AMP_REGISTRY}/wso2-amp-platform-resources-extension" \
     --version "${AMP_VERSION}" \
     --namespace default --kube-context "$CLUSTER_CONTEXT" \
+    --force-conflicts \
     --set "deploymentPipeline.promotionOrder[0].sourceEnvironmentRef.name=development" \
     --set-json "deploymentPipeline.promotionOrder[0].targetEnvironmentRefs=[]" \
     --set "deploymentPipeline.promotionOrder[1].sourceEnvironmentRef.name=default" \
