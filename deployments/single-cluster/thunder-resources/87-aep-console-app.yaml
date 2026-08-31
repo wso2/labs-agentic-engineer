@@ -1,0 +1,42 @@
+# AEP Console — public PKCE redirect client for the React app.
+#
+# authFlowHandle is `default-flow`: ThunderID 1.0.0 renamed the built-in
+# authentication flow that Thunder 0.34 called `default-basic-flow`. Agent
+# Manager's own console document uses the same handle.
+#
+# The user attributes are what the console reads off the ID token. `groups` in
+# particular is load-bearing: the aep-admins-binding ClusterAuthzRoleBinding
+# (setup-aep.sh) keys on the `groups` claim to give a member of Thunder's
+# `Administrators` group the OpenChoreo admin role. `ouId`/`ouHandle`/`ouName`
+# carry the org identity every AEP request is scoped by.
+#
+# No allowedUserTypes: Agent Manager restricts its console to its own
+# `engineer` user type, but AEP has no user-type model — restricting here would
+# lock out the default admin.
+resource_type: application
+id: aep-console-client
+type: browser # public redirect client (authorization_code + PKCE console login)
+name: "AEP Console"
+description: "AEP Platform Console"
+ouId: "01900000-0000-7000-8000-000000000001"
+authFlowHandle: default-flow
+inboundAuthConfig:
+  - type: oauth2
+    config:
+      clientId: "aep-console-client"
+      # /callback is the console's dedicated OAuth route; the bare origins
+      # handle post-logout redirects.
+      redirectUris: ["http://localhost:8090","http://localhost:8090/callback","${PUBLIC_CONSOLE_URL}","${PUBLIC_CONSOLE_URL}/callback"]
+      grantTypes: ["authorization_code","refresh_token"]
+      responseTypes: ["code"]
+      tokenEndpointAuthMethod: "none"
+      pkceRequired: true
+      publicClient: true
+      token:
+        accessToken:
+          userConfig:
+            validityPeriod: 86400
+            attributes: ["given_name","family_name","username","groups","ouId","ouName","ouHandle"]
+        idToken:
+          validityPeriod: 86400
+          userAttributes: ["given_name","family_name","username","groups","ouId","ouName","ouHandle"]

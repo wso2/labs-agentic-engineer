@@ -61,23 +61,27 @@ type DesiredApp struct {
 	// DisplayName is the human-readable label from the CR. Carried on the
 	// CR but NOT sent on the wire in v1: neither of thundersvc's create
 	// functions (createApp/createSPAApp) sends a display-name/description
-	// field, and Thunder 0.34.0's schema tolerance for extra keys is
+	// field, and the IdP's schema tolerance for extra keys is
 	// unverified — the app's Thunder `name` is set to Name (the
 	// deterministic per-CR identity). Task 4's live verification may wire
 	// this in if Thunder accepts a separate label field.
 	DisplayName string
-	// Scopes is accepted for interface completeness but is currently a
-	// no-op on the wire: Thunder 0.34.0's application inboundAuthConfig
-	// has no per-app OAuth scope allowlist field. Checked against both of
-	// this repo's Thunder bootstrap scripts —
-	// deployments/helm-charts/wso2-agentic-engineer-bundle/files/thunder-bootstrap.sh
-	// and deployments/single-cluster/values-thunder.yaml's embedded
-	// 59-aep-oauth-apps.sh — neither sets a scope field for any
-	// application (confidential or public/PKCE). The advertised scope set
-	// is carried independently by the thunder-app ClusterResourceType's
-	// `outputs.scopes` value, so leaving this field a no-op here does not
-	// break that path. If a future Thunder version adds such a field,
-	// wire it in here — do not invent one now.
+	// Scopes is accepted for interface completeness but is still a no-op on
+	// the wire. The advertised scope set is carried independently by the
+	// thunder-app ClusterResourceType's `outputs.scopes` value, so leaving
+	// this a no-op does not break that path.
+	//
+	// NOTE: the reason this is a no-op has changed. It used to be that
+	// Thunder 0.34.0's application inboundAuthConfig had no per-app scope
+	// allowlist at all. ThunderID 1.0.0 DOES have one
+	// (inboundAuthConfig[].config.scopes), and it is load-bearing: `system`
+	// is granted through it, not through a role, and an application that
+	// omits it authenticates fine and then 403s on every admin call. That is
+	// why single-cluster/thunder-resources/81-aep-system-client.yaml declares
+	// scopes explicitly. Wiring this field through to the create/update calls
+	// would let a ThunderApplication CR request scopes for the apps it
+	// provisions — worth doing, but it is a behaviour change with an
+	// authorization blast radius, not a comment fix.
 	Scopes []string
 	// RedirectURIs is the exact set of allowed OAuth redirect URIs.
 	// EnsureApplication REPLACES the app's stored redirect URIs with this
@@ -113,13 +117,30 @@ type AdminClient interface {
 // Config bundles the client's construction parameters.
 type Config struct {
 	// BaseURL is Thunder's admin API base, e.g.
-	// http://thunder-service.thunder.svc.cluster.local:8090 (trailing
+	// http://amp-thunder-extension-service.amp-thunder.svc.cluster.local:8090 (trailing
 	// slash tolerated).
 	BaseURL string
 	// ClientID/ClientSecret are the operator's own system OAuth2 client
 	// credentials (client_credentials grant, scope=system).
 	ClientID     string
 	ClientSecret string
+	// SystemResourceIdentifier is the OAuth resource indicator naming
+	// ThunderID's own "System" resource server — the one that owns the
+	// `system` scope. Conventionally "<thunder public url>/mcp".
+	//
+	// Required from ThunderID 1.0.0. A client_credentials request carrying an
+	// explicit scope now resolves that scope against a resource server, and
+	// without a `resource` parameter it falls back to the server-wide default
+	// — which this deployment sets to Agent Manager's resource server, since
+	// that is what most callers want. amp-resource-server does not define
+	// `system`, so the scope is dropped SILENTLY: the token endpoint returns
+	// 200 with a perfectly valid token that simply has no scope claim, and
+	// every admin call then 403s. Nothing in the token response says why.
+	//
+	// Empty means "send no resource indicator", which is the pre-1.0.0
+	// behaviour and is still correct against a Thunder with no default
+	// resource server configured.
+	SystemResourceIdentifier string
 	// HTTPClient — optional override (tests inject one pointed at an
 	// httptest.Server). Defaults to a 30s-timeout net/http client.
 	HTTPClient *http.Client
@@ -162,6 +183,7 @@ func New(cfg Config) AdminClient {
 		baseURL:      strings.TrimRight(cfg.BaseURL, "/"),
 		systemID:     cfg.ClientID,
 		systemSecret: cfg.ClientSecret,
+		systemAud:    cfg.SystemResourceIdentifier,
 		httpClient:   hc,
 	}
 }
@@ -170,6 +192,7 @@ type client struct {
 	baseURL      string
 	systemID     string
 	systemSecret string
+	systemAud    string
 	httpClient   *http.Client
 
 	mu          sync.Mutex
@@ -215,6 +238,11 @@ func (c *client) fetchSystemToken(ctx context.Context) (string, int, error) {
 		"scope":         {"system"},
 		"client_id":     {c.systemID},
 		"client_secret": {c.systemSecret},
+	}
+	if c.systemAud != "" {
+		// See Config.SystemResourceIdentifier: without this the `system`
+		// scope is dropped silently and every admin call 403s.
+		data.Set("resource", c.systemAud)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/oauth2/token", strings.NewReader(data.Encode()))
 	if err != nil {
@@ -426,6 +454,16 @@ func (c *client) EnsureApplication(ctx context.Context, app DesiredApp) (string,
 //     it, groups appears only in the access token and the SPA (reading the
 //     id_token) sees no role.
 //   - allowedUserTypes lets org (Person) users authenticate.
+
+// Application types accepted by ThunderID's /applications API. The full enum
+// is browser / fullstack / mobile / m2m / mcp / custom; these are the two
+// shapes this operator creates. The field is REQUIRED from 1.0.0 — omitting it
+// fails the create with APP-1042 — and did not exist in Thunder 0.34.
+const (
+	appTypeBrowser = "browser"
+	appTypeM2M     = "m2m"
+)
+
 var (
 	identityUserAttributes = []string{
 		"given_name", "family_name", "username", "groups",
@@ -470,7 +508,12 @@ func scopeClaimConfig() map[string]any {
 func (c *client) createApp(ctx context.Context, token string, app DesiredApp, ouID string) (string, error) {
 	uris := wireRedirectURIs(app.RedirectURIs)
 	payload := map[string]any{
-		"name":             app.Name,
+		"name": app.Name,
+		// REQUIRED from ThunderID 1.0.0 (APP-1042 without it); Thunder 0.34's
+		// application API had no such field. The enum is browser / fullstack /
+		// mobile / m2m / mcp / custom — "browser" is the public-PKCE
+		// redirect client this function creates.
+		"type":             appTypeBrowser,
 		"ouId":             ouID,
 		"allowedUserTypes": allowedUserTypes,
 		"inboundAuthConfig": []map[string]any{
@@ -529,7 +572,11 @@ func (c *client) createApp(ctx context.Context, token string, app DesiredApp, ou
 // the pre-generated secret via app.ClientSecret.
 func (c *client) createConfidentialApp(ctx context.Context, token string, app DesiredApp, ouID string) (string, error) {
 	payload := map[string]any{
-		"name":             app.Name,
+		"name": app.Name,
+		// See createApp: required from ThunderID 1.0.0. "m2m" is the
+		// client_credentials-only shape this function creates — no interactive
+		// login, no redirect URIs.
+		"type":             appTypeM2M,
 		"ouId":             ouID,
 		"allowedUserTypes": allowedUserTypes,
 		"inboundAuthConfig": []map[string]any{

@@ -19,7 +19,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: ClusterWorkflowTemplate
 metadata:
-  name: checkout-source
+  name: aep-checkout-source
 spec:
   templates:
     - name: checkout
@@ -183,7 +183,7 @@ spec:
 apiVersion: argoproj.io/v1alpha1
 kind: ClusterWorkflowTemplate
 metadata:
-  name: containerfile-build
+  name: aep-containerfile-build
 spec:
   templates:
     - name: build-image
@@ -271,7 +271,7 @@ spec:
 apiVersion: argoproj.io/v1alpha1
 kind: ClusterWorkflowTemplate
 metadata:
-  name: publish-image
+  name: aep-publish-image
 spec:
   templates:
     - name: publish-image
@@ -356,7 +356,7 @@ spec:
 apiVersion: argoproj.io/v1alpha1
 kind: ClusterWorkflowTemplate
 metadata:
-  name: generate-workload
+  name: aep-generate-workload
 spec:
   templates:
     - name: generate-workload-cr
@@ -781,12 +781,12 @@ spec:
           steps:
             - - name: checkout-source
                 templateRef:
-                  name: checkout-source
+                  name: aep-checkout-source
                   clusterScope: true
                   template: checkout
             - - name: build-image
                 templateRef:
-                  name: containerfile-build
+                  name: aep-containerfile-build
                   clusterScope: true
                   template: build-image
                 arguments:
@@ -799,7 +799,7 @@ spec:
                       value: '{{workflow.parameters.build-args}}'
             - - name: publish-image
                 templateRef:
-                  name: publish-image
+                  name: aep-publish-image
                   clusterScope: true
                   template: publish-image
                 arguments:
@@ -808,7 +808,7 @@ spec:
                       value: '{{steps.checkout-source.outputs.parameters.git-revision}}'
             - - name: generate-workload-cr
                 templateRef:
-                  name: generate-workload
+                  name: aep-generate-workload
                   clusterScope: true
                   template: generate-workload-cr
                 arguments:

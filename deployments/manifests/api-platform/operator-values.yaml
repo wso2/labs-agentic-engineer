@@ -1,40 +1,51 @@
 # Helm values for the WSO2 API Platform gateway-operator chart.
-# Used by setup-prerequisites.sh: helm install api-platform-operator <chart> --values <this>.
+# Used by setup-prerequisites.sh: helm upgrade --install api-platform-operator <chart> --values <this>.
 #
-# Phase 6 — bumped to gateway chart 1.0.1 + image tags 1.0.0 so the
-# trait's `jwt-auth v1` emission lands on a runtime that recognises
-# v1. The controller 1.0.0 expects an AES-GCM encryption key at boot
-# — we provide it via the chart's native `encryptionKeys` block, which
-# mounts a Secret at `/app/data/aesgcm-keys/`. The Secret itself
-# (api-platform-controller-aesgcm-key) is provisioned by
-# setup-prerequisites.sh.
+# Version pins live in deployments/scripts/env.sh
+# (GATEWAY_OPERATOR_VERSION / GATEWAY_CHART_VERSION / GATEWAY_IMAGE_VERSION);
+# the image tags below are re-asserted from there with --set, so this file
+# carries only the shape, not the versions.
+#
+# Bumped for the Agent Manager convergence (operator 0.6.0 -> 0.11.0, gateway
+# chart 1.0.1 -> 1.2.2). What changed in the gateway chart's value schema:
+#   * `gateway.router` and `gateway.policyEngine` are GONE — 1.2.x ships only
+#     `controller` and `gatewayRuntime`. Their old image-tag overrides were
+#     silently dead keys and have been removed.
+#   * `gateway.developmentMode` is GONE. It used to auto-generate the AES-GCM
+#     at-rest encryption key on first boot; the key must now be pre-provisioned,
+#     which setup-prerequisites.sh already does (Secret
+#     api-platform-controller-aesgcm-key, key default-aesgcm256-v1.bin — the
+#     exact filename the chart's encryption provider reads).
+#   * The controller's liveness/readiness probes already default to
+#     /api/admin/v1/health on the `admin` port, so no probe overrides are needed.
 gateway:
   helm:
     chartName: "oci://ghcr.io/wso2/api-platform/helm-charts/gateway"
-    chartVersion: "1.0.1"
+    # chartVersion comes from GATEWAY_CHART_VERSION via --set.
   values:
     gateway:
-      # Auto-generate the AES-GCM encryption key on first boot. Combined
-      # with the encryptionKeys block below this means a clean cluster
-      # comes up without out-of-band key provisioning; production should
-      # set this to false and pre-provision the Secret via ExternalSecret.
-      developmentMode: true
       controller:
         image:
-          tag: "1.0.0"
+          repository: ghcr.io/wso2/api-platform/gateway-controller
+          # tag comes from GATEWAY_IMAGE_VERSION via --set.
         encryptionKeys:
           enabled: true
           secretName: api-platform-controller-aesgcm-key
           mountPath: /app/data/aesgcm-keys
-      router:
-        image:
-          tag: "1.0.0"
-      policyEngine:
-        image:
-          tag: "1.0.0"
       gatewayRuntime:
         image:
-          tag: "1.0.0"
+          repository: ghcr.io/wso2/api-platform/gateway-runtime
+          # tag comes from GATEWAY_IMAGE_VERSION via --set.
+        service:
+          # Pinned explicitly because the chart's DEFAULT flipped from
+          # ClusterIP (1.0.1) to LoadBalancer (1.2.2). On k3d a LoadBalancer
+          # Service makes klipper bind its ports as hostPorts on the node, and
+          # these are 8080/8443 — the ports k3d already publishes for the
+          # OpenChoreo control-plane gateway. Nothing in this environment
+          # reaches the gateway runtime from outside the cluster anyway: the
+          # api-configuration trait routes to it through a kgateway Backend by
+          # in-cluster DNS.
+          type: ClusterIP
         deployment:
           # OC's component NetworkPolicies (auto-generated per Component)
           # allow ingress only from pods labeled

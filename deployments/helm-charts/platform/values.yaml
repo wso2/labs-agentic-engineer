@@ -176,8 +176,8 @@ platformAPI:
 
 thunder:
   # In-cluster URL for the Thunder service. Override if Thunder is deployed in a different namespace or port.
-  adminURL: "http://thunder-service.thunder.svc.cluster.local:8090"
-  jwksURL: "http://thunder-service.thunder.svc.cluster.local:8090/oauth2/jwks"
+  adminURL: "http://amp-thunder-extension-service.amp-thunder.svc.cluster.local:8090"
+  jwksURL: "http://amp-thunder-extension-service.amp-thunder.svc.cluster.local:8090/oauth2/jwks"
 
 openbao:
   # Address of OpenChoreo's built-in OpenBao service.

@@ -1,11 +1,43 @@
 # POC project for API Platform + Thunder JWT validation.
 # Both hello-world Components (poc-public, poc-protected) live under it.
+#
+# OpenChoreo 1.2.0 changed what it takes to get a usable project:
+#   * `spec.type` is a REQUIRED field on the Project CRD. Only the OpenChoreo
+#     REST API defaults it (to ClusterProjectType/default); a direct kubectl
+#     apply like this one must state it. The ClusterProjectType itself is
+#     created by scripts/setup-aep.sh.
+#   * Creating the Project no longer materializes its cell namespace. It cuts a
+#     ProjectRelease, and a ProjectReleaseBinding is what pins that release to
+#     an environment and owns the namespace. Without the binding below, the
+#     Project reports Created=True and Ready=True and every ReleaseBinding in
+#     this POC then fails with "namespace ... not found".
+#     (aep-api does the same thing for real projects — see
+#     internal/clients/openchoreo/project_cell_client.go.)
 apiVersion: openchoreo.dev/v1alpha1
 kind: Project
 metadata:
   name: poc-api-platform
   namespace: default
 spec:
+  type:
+    kind: ClusterProjectType
+    name: default
   deploymentPipelineRef:
     kind: DeploymentPipeline
     name: default
+---
+apiVersion: openchoreo.dev/v1alpha1
+kind: ProjectReleaseBinding
+metadata:
+  name: poc-api-platform-development
+  namespace: default
+  labels:
+    openchoreo.dev/project: poc-api-platform
+    openchoreo.dev/environment: development
+spec:
+  owner:
+    projectName: poc-api-platform
+  environment: development
+  # projectRelease is deliberately unset: the Project controller seeds the pin
+  # once with the project's latest release, and advancing it afterwards is a
+  # deliberate promotion.

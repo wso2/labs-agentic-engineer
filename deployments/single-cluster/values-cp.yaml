@@ -24,6 +24,6 @@ backstage:
 security:
   oidc:
     issuer: "${PUBLIC_THUNDER_URL}"
-    jwksUrl: "http://thunder-service.thunder.svc.cluster.local:8090/oauth2/jwks"
+    jwksUrl: "http://amp-thunder-extension-service.amp-thunder.svc.cluster.local:8090/oauth2/jwks"
     authorizationUrl: "http://thunder.openchoreo.localhost:8080/oauth2/authorize"
     tokenUrl: "http://thunder.openchoreo.localhost:8080/oauth2/token"

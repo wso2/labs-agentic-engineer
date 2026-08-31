@@ -29,6 +29,10 @@ spec:
                   fieldPath: metadata.namespace
             - name: THUNDER_ADMIN_URL
               value: {{ .Values.thunder.adminURL | quote }}
+            {{- if .Values.thunder.systemResourceIdentifier }}
+            - name: THUNDER_SYSTEM_RESOURCE_IDENTIFIER
+              value: {{ .Values.thunder.systemResourceIdentifier | quote }}
+            {{- end }}
             - name: THUNDER_SYSTEM_CLIENT_ID
               valueFrom:
                 secretKeyRef:

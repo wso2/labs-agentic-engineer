@@ -237,7 +237,11 @@ spec:
           type: Static
           static:
             hosts:
-              - host: api-platform-default-gateway-gateway-runtime.openchoreo-data-plane
+              # The `-gw-` infix comes from the API Platform gateway-operator:
+              # from 0.11.0 it names the child Helm release for an APIGateway
+              # "<apigateway-name>-gw". Keep in lockstep with
+              # DefaultAPIGatewayHost in aep-api (projects/gateway_address.go).
+              - host: api-platform-default-gw-gateway-gateway-runtime.openchoreo-data-plane
                 port: 8080
 
     # --- RestApi: WSO2 API Platform API definition ---
@@ -251,6 +255,13 @@ spec:
         metadata:
           name: ${metadata.name}-${parameters.endpointName}
           namespace: ${metadata.namespace}
+          labels:
+            # Selects AEP's APIGateway (manifests/api-platform/api-gateway.yaml),
+            # which matches on exactly this label. Required, not decorative: the
+            # gateway moved off Cluster scope so it would stop adopting Agent
+            # Manager's RestApis, and an unlabelled RestApi is now served by no
+            # gateway at all.
+            gateway.api-platform.wso2.com/restapi-target: api-platform-default
         spec:
           displayName: ${metadata.environmentName}-${metadata.componentNamespace}-${metadata.componentName}-${parameters.endpointName}
           version: v1.0

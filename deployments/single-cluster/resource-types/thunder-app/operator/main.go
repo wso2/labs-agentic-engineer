@@ -48,10 +48,11 @@ import (
 // port-forwarded Thunder.
 const (
 	envThunderAdminURL     = "THUNDER_ADMIN_URL"
+	envThunderSystemAud    = "THUNDER_SYSTEM_RESOURCE_IDENTIFIER"
 	envThunderClientID     = "THUNDER_SYSTEM_CLIENT_ID"
 	envThunderClientSecret = "THUNDER_SYSTEM_CLIENT_SECRET"
 
-	defaultThunderAdminURL = "http://thunder-service.thunder.svc.cluster.local:8090"
+	defaultThunderAdminURL = "http://amp-thunder-extension-service.amp-thunder.svc.cluster.local:8090"
 )
 
 // scheme carries every type the manager's client reads or writes: the
@@ -125,10 +126,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	// The resource indicator for ThunderID's own System resource server. Empty
+	// by default so a Thunder without a server-wide default resource server
+	// keeps working unchanged; set it wherever one IS configured, or the
+	// `system` scope is silently dropped (see thunder.Config).
 	thunderClient := thunder.New(thunder.Config{
-		BaseURL:      adminURL,
-		ClientID:     clientID,
-		ClientSecret: clientSecret,
+		BaseURL:                  adminURL,
+		ClientID:                 clientID,
+		ClientSecret:             clientSecret,
+		SystemResourceIdentifier: os.Getenv(envThunderSystemAud),
 	})
 
 	if err := (&controller.Reconciler{

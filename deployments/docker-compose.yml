@@ -177,17 +177,18 @@ services:
 
       # ── Phase 3 of api-platform-integration — Thunder admin client
       # for per-org publisher OAuth app lifecycle. The aep-system-client
-      # OAuth app + Administrator role binding are provisioned by
-      # values-thunder.yaml's 60-aep-system-role.sh bootstrap script.
+      # OAuth app and its Administrator role assignment are provisioned by
+      # single-cluster/thunder-resources/81-aep-system-client.yaml and
+      # 84-aep-system-role.yaml.
       THUNDER_ADMIN_URL: "http://thunder.openchoreo.localhost:8080"
       THUNDER_SYSTEM_CLIENT_ID: "aep-system-client"
       # After setup-local.sh, Thunder holds the random secret in
       # aep-thunder-secrets/THUNDER_SYSTEM_CLIENT_SECRET — not the
-      # values-thunder.yaml bootstrap literal. Export from that K8s
-      # secret (or .env) before `compose up`, same as helm's secretKeyRef.
+      # bootstrap document's literal. Export from that K8s secret (or .env)
+      # before `compose up`, same as helm's secretKeyRef.
       THUNDER_SYSTEM_CLIENT_SECRET: "${THUNDER_SYSTEM_CLIENT_SECRET:-aep-system-client-secret}"
       PLATFORM_IDP_ISSUER: "http://thunder.openchoreo.localhost:8080"
-      PLATFORM_IDP_JWKS_URL: "http://thunder-service.thunder.svc.cluster.local:8090/oauth2/jwks"
+      PLATFORM_IDP_JWKS_URL: "http://amp-thunder-extension-service.amp-thunder.svc.cluster.local:8090/oauth2/jwks"
 
       # ── OIDC config handed to user web-apps whose design has
       # auth.kind=oidc-spa. v1 reuses the aep-console-client Thunder

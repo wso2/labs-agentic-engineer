@@ -24,7 +24,7 @@ source "$SCRIPT_DIR/utils.sh"
 echo "=== Setting up AEP Platform ==="
 
 # Verify Thunder is running and AEP client exists
-kubectl get deployment thunder-deployment -n thunder &>/dev/null || {
+kubectl get deployment "${THUNDER_RELEASE}-deployment" -n "${THUNDER_NS}" &>/dev/null || {
     echo "❌ Thunder not found. Run setup-openchoreo.sh first."
     exit 1
 }

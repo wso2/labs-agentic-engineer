@@ -1,0 +1,46 @@
+# OpenChoreo's Backstage developer portal.
+#
+# OpenChoreo's control-plane chart ships Backstage enabled with an HTTPRoute on
+# openchoreo.localhost:8080, and a backstage-catalog-reader
+# ClusterAuthzRoleBinding — but stock OpenChoreo registers this IDP client
+# through its own Thunder bootstrap, which this deployment replaces. Without
+# this document the portal's Sign In is broken on a fresh cluster.
+#
+# Confidential AND authorization_code: Backstage both logs users in (server-side
+# code exchange, so a secret rather than PKCE) and mints its own service token
+# for catalog sync. clientSecret matches the backstage-secrets Secret created by
+# setup-openchoreo.sh; the redirect uses provider id `openchoreo-auth` and must
+# match backstage.baseUrl in single-cluster/values-cp.yaml.
+resource_type: application
+# `fullstack`, not `web`: ThunderID accepts only browser / fullstack / mobile /
+# m2m / mcp / custom, and rejects anything else with APP-1040. `fullstack` is
+# the confidential-client-with-a-redirect shape — a backend that both completes
+# the code exchange server-side and holds a secret.
+id: openchoreo-backstage-client
+type: fullstack
+name: "OpenChoreo Backstage Portal"
+description: "OIDC client for the OpenChoreo Backstage developer portal — sign-in (authorization_code) plus catalog-sync service token (client_credentials)."
+ouId: "01900000-0000-7000-8000-000000000001"
+authFlowHandle: default-flow
+inboundAuthConfig:
+  - type: oauth2
+    config:
+      clientId: "openchoreo-backstage-client"
+      clientSecret: "backstage-portal-secret"
+      redirectUris: ["http://openchoreo.localhost:8080/api/auth/openchoreo-auth/handler/frame"]
+      grantTypes: ["authorization_code","refresh_token","client_credentials"]
+      responseTypes: ["code"]
+      tokenEndpointAuthMethod: "client_secret_post"
+      pkceRequired: false
+      publicClient: false
+      token:
+        accessToken:
+          userConfig:
+            validityPeriod: 3600
+            attributes: ["sub","email","email_verified","given_name","family_name","username","groups"]
+          clientConfig:
+            validityPeriod: 3600
+            attributes: ["ouId", "ouHandle"]
+        idToken:
+          validityPeriod: 3600
+          userAttributes: ["sub","email","email_verified","given_name","family_name","username","groups"]
