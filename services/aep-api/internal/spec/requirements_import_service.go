@@ -41,6 +41,15 @@ const (
 // specs/requirements/prd.md is already at HEAD. Maps to 409.
 var ErrRequirementsExist = errors.New("requirements already exist")
 
+// ErrRequirementsTurnActive — import refused while a spec agent turn is still
+// running (typically a create-time /start that raced the upload). Maps to 409.
+var ErrRequirementsTurnActive = errors.New("a spec agent turn is in progress")
+
+// requirementsImportTurns is the narrow turn-store port for import gating.
+type requirementsImportTurns interface {
+	Newest(ctx context.Context, orgID, projectID string) (*AgentTurn, error)
+}
+
 // RequirementsImportIssue is one gate failure in a refused import.
 type RequirementsImportIssue struct {
 	Code    string `json:"code"`
@@ -80,12 +89,14 @@ type RequirementsImportResult struct {
 type RequirementsImportService struct {
 	files     FilesService
 	artifacts ArtifactService
+	turns     requirementsImportTurns
 }
 
 // NewRequirementsImportService wires the import path. Either dep may be nil
-// in degraded boot; Import then fails closed.
-func NewRequirementsImportService(files FilesService, artifacts ArtifactService) *RequirementsImportService {
-	return &RequirementsImportService{files: files, artifacts: artifacts}
+// in degraded boot; Import then fails closed. turns may be nil — import skips
+// the active-turn gate (degraded).
+func NewRequirementsImportService(files FilesService, artifacts ArtifactService, turns requirementsImportTurns) *RequirementsImportService {
+	return &RequirementsImportService{files: files, artifacts: artifacts, turns: turns}
 }
 
 // Import reads a gzip+tar requirements bundle, validates it, commits the
@@ -100,6 +111,9 @@ func (s *RequirementsImportService) Import(ctx context.Context, orgID, projectID
 	// Create-only: refuse before unpacking so an existing project never sees
 	// a partial apply from a race with a second upload.
 	if err := s.requireAbsentPRD(ctx, orgID, projectID); err != nil {
+		return nil, err
+	}
+	if err := s.requireNoActiveTurn(ctx, orgID, projectID); err != nil {
 		return nil, err
 	}
 
@@ -168,6 +182,20 @@ func (s *RequirementsImportService) requireAbsentPRD(ctx context.Context, orgID,
 		return nil
 	}
 	return fmt.Errorf("check existing requirements: %w", err)
+}
+
+func (s *RequirementsImportService) requireNoActiveTurn(ctx context.Context, orgID, projectID string) error {
+	if s.turns == nil {
+		return nil
+	}
+	newest, err := s.turns.Newest(ctx, orgID, projectID)
+	if err != nil {
+		return fmt.Errorf("check active spec turn: %w", err)
+	}
+	if newest != nil && newest.Status == turnStatusRunning {
+		return ErrRequirementsTurnActive
+	}
+	return nil
 }
 
 // extractRequirementsTarball decodes a gzip+tar into a flat name→content map

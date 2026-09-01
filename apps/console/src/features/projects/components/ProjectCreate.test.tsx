@@ -256,6 +256,27 @@ describe("ProjectCreate — handing the journey over (#562)", () => {
       expect.anything(),
     );
   });
+
+  // Onboarding (ADR-0020): requirements bundle is the brief — suppress kickoff.
+  it("lands on spec import for the onboard path", () => {
+    render(<ProjectCreate />);
+    fireEvent.click(screen.getByRole("button", { name: /Import an existing app/i }));
+    fireEvent.change(screen.getByLabelText("Project name"), {
+      target: { value: "legacy-expense" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Create and import requirements/i }));
+
+    expect(createProject.mutate).toHaveBeenCalledWith(
+      expect.objectContaining({ requirementsImportPending: true, name: "legacy-expense" }),
+      expect.anything(),
+    );
+    expect(navigate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "/projects/$projectName/spec",
+        search: { import: "requirements" },
+      }),
+    );
+  });
 });
 
 

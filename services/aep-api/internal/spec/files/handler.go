@@ -308,6 +308,8 @@ func mapRequirementsImportError(err error) error {
 		return apierr.New(http.StatusBadRequest, apierr.CodeValidationFailed, verr.Error(), details)
 	case errors.Is(err, spec.ErrRequirementsExist):
 		return apierr.Conflict("specs/requirements/prd.md already exists — import is create-only")
+	case errors.Is(err, spec.ErrRequirementsTurnActive):
+		return apierr.Conflict("a spec agent turn is still running — wait for it to finish or create a project via Import existing app")
 	case errors.Is(err, spec.ErrProjectRepoNotFound):
 		return apierr.NotFound("project repository not found")
 	default:

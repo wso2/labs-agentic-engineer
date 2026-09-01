@@ -101,6 +101,7 @@ const soloCollab = () => ({
   flush: mockFlush,
   flushError: null as string | null,
   clearFlushError: vi.fn(),
+  resyncRoom: vi.fn(),
 });
 let mockCollab = soloCollab();
 vi.mock("../collab/useCollabSpec", () => ({

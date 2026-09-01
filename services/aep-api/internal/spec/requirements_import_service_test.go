@@ -197,7 +197,7 @@ func TestRequirementsImport_Happy(t *testing.T) {
 			return &RequirementsSaveResult{Status: "approved", Tag: "v1", Version: 1, CommitHash: req.CommitSHA}, nil
 		},
 	}
-	svc := NewRequirementsImportService(files, arts)
+	svc := NewRequirementsImportService(files, arts, nil)
 	tgz := makeTarGz(t, map[string]string{
 		"bundle/":                "",
 		"bundle/prd.md":          validImportPRD,
@@ -236,7 +236,7 @@ func TestRequirementsImport_Exists(t *testing.T) {
 	t.Parallel()
 	files := &fakeReqFiles{existingPRD: true}
 	arts := &fakeArtifactSvc{}
-	svc := NewRequirementsImportService(files, arts)
+	svc := NewRequirementsImportService(files, arts, nil)
 	tgz := makeTarGz(t, map[string]string{
 		"bundle/":       "",
 		"bundle/prd.md": validImportPRD,
@@ -254,7 +254,7 @@ func TestRequirementsImport_MissingStories(t *testing.T) {
 	t.Parallel()
 	files := &fakeReqFiles{}
 	arts := &fakeArtifactSvc{}
-	svc := NewRequirementsImportService(files, arts)
+	svc := NewRequirementsImportService(files, arts, nil)
 	tgz := makeTarGz(t, map[string]string{
 		"bundle/":       "",
 		"bundle/prd.md": "# X — PRD\n\n## User Stories\n\nnothing numbered\n",
@@ -262,5 +262,33 @@ func TestRequirementsImport_MissingStories(t *testing.T) {
 	_, err := svc.Import(context.Background(), "org", "proj", "alice", bytes.NewReader(tgz))
 	if reqImportCode(err) != "MISSING_USER_STORIES" {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+type fakeImportTurns struct {
+	newest *AgentTurn
+	err    error
+}
+
+func (f *fakeImportTurns) Newest(context.Context, string, string) (*AgentTurn, error) {
+	return f.newest, f.err
+}
+
+func TestRequirementsImport_RefusesWhileTurnRunning(t *testing.T) {
+	t.Parallel()
+	files := &fakeReqFiles{}
+	arts := &fakeArtifactSvc{}
+	turns := &fakeImportTurns{newest: &AgentTurn{Status: turnStatusRunning}}
+	svc := NewRequirementsImportService(files, arts, turns)
+	tgz := makeTarGz(t, map[string]string{
+		"bundle/":       "",
+		"bundle/prd.md": validImportPRD,
+	})
+	_, err := svc.Import(context.Background(), "org", "proj", "alice", bytes.NewReader(tgz))
+	if !errors.Is(err, ErrRequirementsTurnActive) {
+		t.Fatalf("err = %v, want ErrRequirementsTurnActive", err)
+	}
+	if files.applied != nil {
+		t.Fatal("Apply must not run while a turn is active")
 	}
 }

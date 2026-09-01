@@ -38,11 +38,12 @@ cd .aep && tar czf requirements-bundle.tar.gz -C requirements .
 
 ## 3. Import into a new AEP project
 
-1. Create an empty project in the console.
-2. Open **Spec**.
-3. In the Requirements group header, click **Import requirements** (only shown
-   when the project has no requirements yet).
-4. Upload `requirements-bundle.tar.gz`.
+1. In the console, choose **Import an existing app** on the create page (or
+   create with `requirementsImportPending: true` on the API). This skips the
+   `/start` interview — the bundle is the brief.
+2. Name the project and continue — you land on **Spec** with the import dialog open.
+3. Upload `requirements-bundle.tar.gz` (upload icon also lives in the
+   Requirements rail header when the project has no requirements yet).
 
 The API gates the PRD shape (numbered user stories), flat paths, and size, then
 commits and cuts `v1`.

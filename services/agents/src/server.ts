@@ -74,6 +74,7 @@ import {
   loadSkillsFromSnapshot,
   readReferenceAttachments,
   overlayReferenceTexts,
+  overlayRequirementsTexts,
   toAttachmentParts,
 } from "./conversation/load-workspace.js";
 import { conversationOrgId, resolveWorkspace, WorkspaceRefError } from "./shared/snapshot-path.js";
@@ -475,7 +476,10 @@ export function createApp(deps: CreateAppDeps): Express {
         // The room excludes reference documents by design — text references
         // ride in from the turn's snapshot instead, which is their authority
         // (aep-api overlays the off-git store into it).
-        files = overlayReferenceTexts(roomPeer.files(), files);
+        const snapshotFiles = files;
+        const roomFiles = roomPeer.files();
+        files = overlayRequirementsTexts(roomFiles, snapshotFiles);
+        files = overlayReferenceTexts(files, snapshotFiles);
       } catch (err) {
         res.status(502).json({
           error: err instanceof Error ? err.message : "collab room join failed",

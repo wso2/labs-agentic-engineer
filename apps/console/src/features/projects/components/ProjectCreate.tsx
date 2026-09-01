@@ -37,6 +37,7 @@ import {
   ClipboardCheck,
   GitHub,
   ReceiptText,
+  Upload,
 } from "@wso2/oxygen-ui-icons-react";
 import { useNavigate } from "@tanstack/react-router";
 import { START_COMMAND } from "@aep/contracts/commands";
@@ -125,6 +126,7 @@ function ExampleCard({
 export function ProjectCreate() {
   const navigate = useNavigate();
   const [step, setStep] = useState<"prompt" | "confirm">("prompt");
+  const [mode, setMode] = useState<"greenfield" | "onboard">("greenfield");
   const [prompt, setPrompt] = useState("");
   const [name, setName] = useState("");
   // The repo name follows the project name until the user edits it (#71
@@ -143,9 +145,20 @@ export function ProjectCreate() {
 
   const start = (chosenPrompt: string) => {
     const suggested = suggestProjectName(chosenPrompt);
+    setMode("greenfield");
     setPrompt(chosenPrompt);
     setName(suggested);
     setRepoName(suggested);
+    setRepoTouched(false);
+    createProject.reset();
+    setStep("confirm");
+  };
+
+  const startOnboard = () => {
+    setMode("onboard");
+    setPrompt("");
+    setName("");
+    setRepoName("");
     setRepoTouched(false);
     createProject.reset();
     setStep("confirm");
@@ -188,6 +201,14 @@ export function ProjectCreate() {
     });
   };
 
+  const goToRequirementsImport = (projectName: string) => {
+    void navigate({
+      to: "/projects/$projectName/spec",
+      params: { projectName },
+      search: { import: "requirements" as const },
+    });
+  };
+
   const uploadFor = (projectName: string) => {
     uploadReferences.mutate(
       { projectName, files },
@@ -227,16 +248,23 @@ export function ProjectCreate() {
     createProject.mutate(
       {
         name,
-        prompt,
+        ...(mode === "greenfield" && prompt ? { prompt } : {}),
         ...(repoName !== name && { repoName }),
         // Tell the platform documents are coming so it HOLDS the kickoff until
         // the upload lands (#562). They are the primary brief, and an interview
         // started before they arrive is conducted blind — so the second call
         // fires it instead.
         ...(files.length > 0 && { referencesPending: true }),
+        // Onboarding (ADR-0020): the requirements bundle IS the brief — never
+        // fire `/start`; land on Spec with the import dialog instead.
+        ...(mode === "onboard" && { requirementsImportPending: true }),
       },
       {
         onSuccess: (project) => {
+          if (mode === "onboard") {
+            goToRequirementsImport(project.name);
+            return;
+          }
           // No client-side copy of the prompt: the BE persists it into the
           // project's own descriptor (specs/.agentic-engineer.toml) on create,
           // and `/start` reads it back from there — so the idea survives a
@@ -284,28 +312,39 @@ export function ProjectCreate() {
                 </Grid>
               ))}
             </Grid>
+            <Card variant="outlined">
+              <CardActionArea onClick={startOnboard} sx={{ p: 2 }}>
+                <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
+                  <Upload size={24} />
+                  <Box>
+                    <Typography variant="subtitle2" gutterBottom>
+                      Import an existing app
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Upload a requirements bundle from a legacy codebase — skip
+                      the interview and go straight to design.
+                    </Typography>
+                  </Box>
+                </Stack>
+              </CardActionArea>
+            </Card>
           </Stack>
         ) : (
           <Stack spacing={3}>
             <Box>
               <Typography variant="h4" gutterBottom>
-                Name your project
+                {mode === "onboard" ? "Name your onboarded project" : "Name your project"}
               </Typography>
-              {/* Labelled "Prompt:" so the user can see what we do with what
-                  they wrote — it is the agent's brief, not just a description
-                  we filed. Bare quotes never said that.
-
-                  One line, always: this echo confirms "this is what you asked
-                  for" (the same transparency-device role the cropped idea has
-                  beside /start, #528) rather than displaying the document. The
-                  textarea is multiline with no maxLength, so unclamped it is
-                  the one element on this page that can grow without bound and
-                  push Create project off the fold. Nothing is lost — the full
-                  text is on the title attribute, and Back returns to the
-                  textarea still holding it. */}
-              <Typography variant="body2" color="text.secondary" noWrap title={prompt}>
-                Prompt: {prompt}
-              </Typography>
+              {mode === "greenfield" ? (
+                <Typography variant="body2" color="text.secondary" noWrap title={prompt}>
+                  Prompt: {prompt}
+                </Typography>
+              ) : (
+                <Typography variant="body2" color="text.secondary">
+                  You will upload a requirements bundle on the next screen. No
+                  agent interview runs until you choose to amend later.
+                </Typography>
+              )}
             </Box>
             <TextField
               label="Project name"
@@ -387,7 +426,10 @@ export function ProjectCreate() {
             <Stack direction="row" spacing={2} sx={{ justifyContent: "flex-end" }}>
               <Button
                 startIcon={<ArrowLeft size={18} />}
-                onClick={() => setStep("prompt")}
+                onClick={() => {
+                  setStep("prompt");
+                  setMode("greenfield");
+                }}
                 disabled={pending || Boolean(createdName)}
               >
                 Back
@@ -413,7 +455,9 @@ export function ProjectCreate() {
                   ? "Retry upload"
                   : pending
                     ? "Creating your project…"
-                    : "Create project"}
+                    : mode === "onboard"
+                      ? "Create and import requirements"
+                      : "Create project"}
               </Button>
             </Stack>
           </Stack>

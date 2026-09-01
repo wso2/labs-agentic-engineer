@@ -45,10 +45,13 @@ export function ImportRequirementsDialog({
   open,
   onClose,
   projectName,
+  onImported,
 }: {
   open: boolean;
   onClose: () => void;
   projectName: string;
+  /** Called after a successful import so the collab room can reseed from git. */
+  onImported?: () => void;
 }) {
   const [file, setFile] = useState<File | null>(null);
   const [result, setResult] = useState<RequirementsImportResult | null>(null);
@@ -79,7 +82,12 @@ export function ImportRequirementsDialog({
       setFileError("Upload a .tar.gz / .tgz requirements bundle");
       return;
     }
-    importBundle.mutate(file, { onSuccess: setResult });
+    importBundle.mutate(file, {
+      onSuccess: (data) => {
+        setResult(data);
+        onImported?.();
+      },
+    });
   };
 
   const warnings = result?.warnings ?? [];

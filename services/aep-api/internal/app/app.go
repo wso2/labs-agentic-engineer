@@ -355,8 +355,9 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 
 	// Files API — generic specs/-scoped, GitHub-at-HEAD reads + atomic apply
 	// (commits straight to main under CAS retry). No local working tree.
+	turnRepo := spec.NewTurnRepository(db, in.RateStamper)
 	filesSvc := spec.NewFilesService(repoService, gitOpsService)
-	requirementsImportSvc := spec.NewRequirementsImportService(filesSvc, artifactSvcGit)
+	requirementsImportSvc := spec.NewRequirementsImportService(filesSvc, artifactSvcGit, turnRepo)
 
 	// Unified genai committed-truth turn surface (shared-workspace-volume). It
 	// resolves the org Anthropic key (no platform fallback), snapshots the
@@ -378,7 +379,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// SkillsRef source for genai + task-plan turns. Reconcile so platform
 	// skills shipped after first provision land before Head/Ensure.
 	skillsRepoForTurns := spec.SkillsRepoForTurns(skillSvc, repoService)
-	turnRepo := spec.NewTurnRepository(db, in.RateStamper)
 	turnBroker := spec.NewTurnBroker()
 	genaiDeps := spec.ServiceDeps{
 		Repos:      repoService,
