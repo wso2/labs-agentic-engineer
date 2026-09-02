@@ -23,32 +23,28 @@ import { SpecView } from "../features/spec/components/SpecView";
 // /projects/$projectName layout: the spec view is a full-screen workspace
 // without the shared project header (#80).
 //
+// `?import=requirements` (ADR-0020): arriving from the onboard create path —
+// open the import dialog immediately; no `/start` kickoff ran for this project.
+//
 // `?generate=design` (#159): arriving from a "Generate/Re-generate design" CTA
-// — AppLayout opens the agent panel and auto-sends the design turn.
-//
-// The requirements half of that signal is GONE (#562). The platform fires
-// `/start` itself at project creation, so the console no longer has a
-// generate-requirements moment to hand across a navigation; the one CTA that
-// still starts an interview seeds the chat directly, from wherever the user is.
-//
-// `?view=architecture`: land on the Architecture tab instead of the workspace's
-// default file. The overview's architecture panel links here — it offers the
-// link BECAUSE it is showing a diagram, so dropping the reader on the PRD would
-// make them hunt the rail for the thing they just clicked.
-//
-// Unlike `generate`, this is not stripped after use: it names WHICH view, so it
-// stays a shareable deep link. A manual rail click still wins for the session.
 export const Route = createFileRoute("/projects/$projectName_/spec")({
   validateSearch: (
     search: Record<string, unknown>,
-  ): { generate?: "design"; view?: "architecture" } => ({
+  ): { generate?: "design"; view?: "architecture"; import?: "requirements" } => ({
     ...(search.generate === "design" ? { generate: "design" as const } : {}),
     ...(search.view === "architecture" ? { view: "architecture" as const } : {}),
+    ...(search.import === "requirements" ? { import: "requirements" as const } : {}),
   }),
   component: SpecRoute,
 });
 
 function SpecRoute() {
   const { projectName } = Route.useParams();
-  return <SpecView projectName={projectName} />;
+  const { import: importMode } = Route.useSearch();
+  return (
+    <SpecView
+      projectName={projectName}
+      openImportOnMount={importMode === "requirements"}
+    />
+  );
 }

@@ -315,7 +315,7 @@ func (s *Service) CreateProject(ctx context.Context, orgName string, req *gen.Cr
 			// upload therefore leaves the project un-started, which the spec
 			// card offers as a CTA — the honest outcome, and better than an
 			// interview conducted blind.
-			if s.kickoff != nil && !req.ReferencesPending {
+			if s.kickoff != nil && !req.ReferencesPending && !req.RequirementsImportPending {
 				s.kickoff.Kickoff(ctx, orgName, project.Name)
 			}
 		}

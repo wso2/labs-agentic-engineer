@@ -167,6 +167,16 @@ export function keepInTurnSnapshot(path: string): boolean {
  * ADR-0017), which is exactly why nothing in this file had to change.
  */
 export const REFERENCES_PREFIX = "specs/requirements/references/";
+export const REQUIREMENTS_PREFIX = "specs/requirements/";
+
+function isRequirementsSpecPath(path: string): boolean {
+  return path.startsWith(REQUIREMENTS_PREFIX) && !path.startsWith(REFERENCES_PREFIX);
+}
+
+/** True when markdown carries no authored body (empty file or whitespace only). */
+function isEmptyMarkdown(content: string): boolean {
+  return content.trim().length === 0;
+}
 
 function isTextReferencePath(path: string): boolean {
   return path.startsWith(REFERENCES_PREFIX) && nativeMediaTypeFor(path) === undefined;
@@ -412,6 +422,38 @@ export function overlayReferenceTexts(
   if (refs.length === 0) return roomFiles;
   const out = { ...roomFiles };
   for (const [path, content] of refs) out[path] = content;
+  return out;
+}
+
+/**
+ * Overlay the SNAPSHOT's requirements texts onto a room-scoped turn when the
+ * room is missing them or still holds a create-time stub. Requirements import
+ * (#onboard) commits straight to git; the collab room may have connected and
+ * seeded (or been stubbed by /start) before the upload landed, so a design turn
+ * that reads only the room would report no PRD while the file rail shows the
+ * import. The room stays the authority for live edits; git fills gaps and
+ * replaces empty or story-less stubs the import superseded.
+ */
+export function overlayRequirementsTexts(
+  roomFiles: Record<string, string>,
+  snapshotFiles: Record<string, string>,
+): Record<string, string> {
+  const reqs = Object.entries(snapshotFiles).filter(([path]) => isRequirementsSpecPath(path));
+  if (reqs.length === 0) return roomFiles;
+  const out = { ...roomFiles };
+  for (const [path, snapshotContent] of reqs) {
+    const roomContent = out[path];
+    if (roomContent === undefined || isEmptyMarkdown(roomContent)) {
+      out[path] = snapshotContent;
+      continue;
+    }
+    // Kickoff can leave a titled stub in the room while git holds the import.
+    const snapshotHasStories = /\bUS-\d+\b|^\s*\d+\.\s/m.test(snapshotContent);
+    const roomHasStories = /\bUS-\d+\b|^\s*\d+\.\s/m.test(roomContent);
+    if (snapshotHasStories && !roomHasStories) {
+      out[path] = snapshotContent;
+    }
+  }
   return out;
 }
 

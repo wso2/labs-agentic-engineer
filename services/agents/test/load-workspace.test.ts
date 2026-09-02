@@ -28,6 +28,7 @@ import {
   loadSkillsFromSnapshot,
   readReferenceAttachments,
   overlayReferenceTexts,
+  overlayRequirementsTexts,
   MAX_REFERENCE_ATTACHMENT_ENCODED_BYTES,
   SkillReadError,
 } from "../src/conversation/load-workspace.js";
@@ -596,6 +597,38 @@ test("overlayReferenceTexts: no references → the room files return unchanged",
   const room = { "specs/requirements/prd.md": "# PRD" };
   const merged = overlayReferenceTexts(room, { "README.md": "hi" });
   assert.deepEqual(merged, room);
+});
+
+test("overlayRequirementsTexts: git requirements fill a room that has no PRD", () => {
+  const room = { "specs/design/design.md": "# Design" };
+  const git = {
+    "specs/requirements/prd.md": "# PRD\n\n1. As a user I want checkout",
+    "specs/requirements/domain-model.md": "# Domain",
+  };
+  const merged = overlayRequirementsTexts(room, git);
+  assert.equal(merged["specs/requirements/prd.md"], git["specs/requirements/prd.md"]);
+  assert.equal(merged["specs/requirements/domain-model.md"], git["specs/requirements/domain-model.md"]);
+  assert.equal(merged["specs/design/design.md"], "# Design");
+});
+
+test("overlayRequirementsTexts: git replaces a kickoff stub that has no stories", () => {
+  const room = { "specs/requirements/prd.md": "# Product requirements\n\n" };
+  const git = {
+    "specs/requirements/prd.md": "# Product requirements\n\n1. As a shopper I want a cart",
+  };
+  const merged = overlayRequirementsTexts(room, git);
+  assert.equal(merged["specs/requirements/prd.md"], git["specs/requirements/prd.md"]);
+});
+
+test("overlayRequirementsTexts: live room edits with stories win over git", () => {
+  const room = {
+    "specs/requirements/prd.md": "# PRD\n\n1. As a user I want the room version",
+  };
+  const git = {
+    "specs/requirements/prd.md": "# PRD\n\n1. As a user I want the git version",
+  };
+  const merged = overlayRequirementsTexts(room, git);
+  assert.equal(merged["specs/requirements/prd.md"], room["specs/requirements/prd.md"]);
 });
 
 test("readReferenceAttachments: image references become native image-typed file parts (#383 follow-up)", () => {

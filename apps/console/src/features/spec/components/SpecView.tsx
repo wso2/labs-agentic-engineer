@@ -91,6 +91,7 @@ import type { DependencyResolutionIntent } from "../../projects/lib/dependencyRe
 import { usePlan } from "../../agent-chat/usePlan";
 import { approvalInputsFor } from "../lib/buildInputs";
 import { BuildDependencyDrawer } from "./BuildDependencyDrawer";
+import { ImportRequirementsDialog } from "./ImportRequirementsDialog";
 import { SpecFileList } from "./SpecFileList";
 import { CellDiagramPanel } from "./CellDiagramPanel";
 import { WireframePanel } from "./WireframePanel";
@@ -152,7 +153,13 @@ export function designWarningIntro(reasons: ReadonlyArray<{ key: string }>): str
   );
 }
 
-export function SpecView({ projectName }: { projectName: string }) {
+export function SpecView({
+  projectName,
+  openImportOnMount = false,
+}: {
+  projectName: string;
+  openImportOnMount?: boolean;
+}) {
   const navigate = useNavigate();
   const { actions } = useAppShell();
   const status = useProjectStatus(projectName);
@@ -193,6 +200,10 @@ export function SpecView({ projectName }: { projectName: string }) {
     projectName,
   );
   const [selection, setSelection] = useState<SpecSelection | null>(null);
+  const [importRequirementsOpen, setImportRequirementsOpen] = useState(false);
+  useEffect(() => {
+    if (openImportOnMount) setImportRequirementsOpen(true);
+  }, [openImportOnMount]);
   // Build (#162): commit-then-build. buildPhase drives the button label /
   // loading; an agent peer in the room means a turn is writing → block Build.
   const build = useBuildProject(projectName);
@@ -814,6 +825,8 @@ export function SpecView({ projectName }: { projectName: string }) {
   // reachable mid-interview — and firing one supersedes the live questions,
   // handing the agent's own assumptions back as the user's answers.
   const awaitingAnswers = Boolean(roomQuestion && roomDoc);
+  const canImportRequirements =
+    !hasRequirementsFiles && !deriving && !localTurnActivity && !awaitingAnswers;
   // A lens fired while the agent already holds the turn would be refused by the
   // composer anyway, and firing one mid-interview supersedes the live question
   // form for the whole room — so the lenses go inert for the same two reasons
@@ -1357,6 +1370,11 @@ export function SpecView({ projectName }: { projectName: string }) {
                 files={files}
                 selection={effectiveSelection}
                 onSelect={selectManually}
+                {...(canImportRequirements
+                  ? {
+                      onImportRequirements: () => setImportRequirementsOpen(true),
+                    }
+                  : {})}
                 onRegenerateDesign={generateDesign}
                 regenerateDisabled={agentBusy}
                 sections={railSections}
@@ -1633,6 +1651,13 @@ export function SpecView({ projectName }: { projectName: string }) {
           </Box>
         )}
       </Box>
+
+      <ImportRequirementsDialog
+        open={importRequirementsOpen}
+        onClose={() => setImportRequirementsOpen(false)}
+        projectName={projectName}
+        onImported={() => collab.resyncRoom()}
+      />
 
       <BuildDependencyDrawer
         open={dependencyDrawerOpen}

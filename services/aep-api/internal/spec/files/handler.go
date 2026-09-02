@@ -17,29 +17,37 @@
 package files
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"io"
+	"mime/multipart"
+	"net/http"
 
 	"github.com/wso2/aep/aep-api/internal/gen"
 	"github.com/wso2/aep/aep-api/internal/platform/apierr"
+	"github.com/wso2/aep/aep-api/internal/platform/auth"
 	"github.com/wso2/aep/aep-api/internal/platform/gitfs"
 	"github.com/wso2/aep/aep-api/internal/platform/tenant"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
-// Handler serves the files feature: list-files / read-file / apply-spec. Reads
-// are served at the branch tip through the workspace mirror; the single write
-// is the atomic apply. Every operation is org-scoped — the tenant gate bound
-// the token org before these run. read-file's {path} spans multiple segments:
-// the generated single-segment pattern serves plain paths and the ServeMux
-// catch-all registered in server.go routes nested ones — both land here with
-// PathValue-decoded (unescaped) bytes, so unicode/escaped paths survive the
-// chain byte-identically.
+// Handler serves the files feature: list-files / read-file / apply-spec /
+// import-requirements. Reads are served at the branch tip through the
+// workspace mirror; the single write is the atomic apply. Every operation is
+// org-scoped — the tenant gate bound the token org before these run.
+// read-file's {path} spans multiple segments: the generated single-segment
+// pattern serves plain paths and the ServeMux catch-all registered in
+// server.go routes nested ones — both land here with PathValue-decoded
+// (unescaped) bytes, so unicode/escaped paths survive the chain
+// byte-identically.
 type Handler struct {
 	files    spec.FilesService
 	activity spec.SpecUpdatedRecorder
 	kickoff  kickoffStarter
+	reqImp   *spec.RequirementsImportService
 }
 
 // kickoffStarter fires a project's opening `/start` turn (#562). The
@@ -52,9 +60,14 @@ type kickoffStarter interface {
 	Kickoff(ctx context.Context, orgID, projectID string)
 }
 
-// New returns the slice's handler.
-func New(files spec.FilesService, activity spec.SpecUpdatedRecorder) *Handler {
-	return &Handler{files: files, activity: activity}
+// requirementsImportMaxUploadBytes caps the compressed upload. The service
+// separately bounds the decompressed payload.
+const requirementsImportMaxUploadBytes = 4 << 20 // 4 MiB
+
+// New returns the slice's handler. reqImp may be nil in degraded boot — the
+// import endpoint then returns 503.
+func New(files spec.FilesService, activity spec.SpecUpdatedRecorder, reqImp *spec.RequirementsImportService) *Handler {
+	return &Handler{files: files, activity: activity, reqImp: reqImp}
 }
 
 // WithKickoffStarter wires the held kickoff the references upload releases.
@@ -148,6 +161,40 @@ func (h *Handler) ApplyFiles(ctx context.Context, request gen.ApplyFilesRequestO
 	return gen.ApplyFiles200JSONResponse(applyResultToWire(res)), nil
 }
 
+func (h *Handler) ImportRequirements(ctx context.Context, request gen.ImportRequirementsRequestObject) (gen.ImportRequirementsResponseObject, error) {
+	org := tenant.BoundOrgFromContext(ctx)
+	if h.reqImp == nil {
+		return nil, apierr.ServiceUnavailable("requirements import not configured")
+	}
+	file, err := multipartFormFilePart(request.Body, "file")
+	if err != nil {
+		return nil, err
+	}
+	body, err := io.ReadAll(io.LimitReader(file, requirementsImportMaxUploadBytes+1))
+	if err != nil {
+		return nil, apierr.BadRequest("read upload: " + err.Error())
+	}
+	if len(body) > requirementsImportMaxUploadBytes {
+		return nil, apierr.BadRequest(fmt.Sprintf(
+			"requirements archive exceeds the %d MiB upload limit", requirementsImportMaxUploadBytes>>20))
+	}
+	actor := auth.ActorFromContext(ctx)
+	result, err := h.reqImp.Import(ctx, org, request.ProjectName, actor, bytes.NewReader(body))
+	if err != nil {
+		return nil, mapRequirementsImportError(err)
+	}
+	warnings := result.Warnings
+	if warnings == nil {
+		warnings = []string{}
+	}
+	return gen.ImportRequirements201JSONResponse(gen.RequirementsImportResult{
+		Files:    result.Files,
+		Tag:      result.Tag,
+		Version:  result.Version,
+		Warnings: warnings,
+	}), nil
+}
+
 // applyConflictsToWire projects the service conflicts onto the contract's
 // declared 409 body (ApplyConflicts — the FE's baseSha CAS flow consumes it;
 // nothing was applied when this is returned). files_component_test.go pins the
@@ -219,6 +266,52 @@ func mapFilesError(err error) error {
 		return apierr.Conflict("the repository changed during the write; retry")
 	case errors.Is(err, gitfs.ErrDiskAdmission):
 		return apierr.ServiceUnavailable("workspace disk is full — try again in a few minutes, or contact your platform admin")
+	default:
+		return apierr.Internal("internal error")
+	}
+}
+
+// multipartFormFilePart advances the strict server's multipart.Reader to the
+// named file field and returns that part as a stream.
+func multipartFormFilePart(body *multipart.Reader, field string) (io.Reader, error) {
+	if body == nil {
+		return nil, apierr.BadRequest("missing '" + field + "' field (tarball)")
+	}
+	for {
+		part, err := body.NextPart()
+		if errors.Is(err, io.EOF) {
+			return nil, apierr.BadRequest("missing '" + field + "' field (tarball)")
+		}
+		if err != nil {
+			return nil, apierr.BadRequest("can't decode multipart body: " + err.Error())
+		}
+		if part.FormName() == field {
+			return part, nil
+		}
+	}
+}
+
+// mapRequirementsImportError translates import gate failures onto the flat
+// envelope. Validation issues populate Details so the console can list them.
+func mapRequirementsImportError(err error) error {
+	var verr *spec.RequirementsImportError
+	switch {
+	case errors.As(err, &verr):
+		details := make([]gen.ErrorDetail, 0, len(verr.Issues))
+		for _, i := range verr.Issues {
+			field := i.Path
+			if field == "" {
+				field = "file"
+			}
+			details = append(details, gen.ErrorDetail{Field: field, Message: i.Code + ": " + i.Message})
+		}
+		return apierr.New(http.StatusBadRequest, apierr.CodeValidationFailed, verr.Error(), details)
+	case errors.Is(err, spec.ErrRequirementsExist):
+		return apierr.Conflict("specs/requirements/prd.md already exists — import is create-only")
+	case errors.Is(err, spec.ErrRequirementsTurnActive):
+		return apierr.Conflict("a spec agent turn is still running — wait for it to finish or create a project via Import existing app")
+	case errors.Is(err, spec.ErrProjectRepoNotFound):
+		return apierr.NotFound("project repository not found")
 	default:
 		return apierr.Internal("internal error")
 	}

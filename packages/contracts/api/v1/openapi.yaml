@@ -2102,6 +2102,56 @@ paths:
       summary: Store a project's reference documents
       tags:
       - Projects
+  /projects/{projectName}/requirements/import:
+    post:
+      operationId: import-requirements
+      description: |-
+        Import a requirements bundle tarball into an empty project's
+        specs/requirements/. Create-only: refuses when specs/requirements/prd.md
+        already exists. On success commits the flat files and cuts a requirements
+        vN tag via the same save gate as a manual requirements save.
+      parameters:
+      - description: Project name (DNS-label slug)
+        in: path
+        name: projectName
+        required: true
+        schema:
+          description: Project name (DNS-label slug)
+          type: string
+      requestBody:
+        content:
+          multipart/form-data:
+            encoding:
+              file:
+                contentType: application/octet-stream
+            schema:
+              properties:
+                file:
+                  description: Gzip-compressed tarball of a single top-level directory of flat requirements files (prd.md required)
+                  format: binary
+                  type: string
+              required:
+              - file
+              type: object
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequirementsImportResult'
+          description: Created
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+      security:
+      - userJWT: []
+      summary: Import a requirements bundle tarball
+      tags:
+      - Files
   /projects/{projectName}/roles:
     get:
       description: The project's Security panel read. `roles` is the WHOLE directory catalog,
@@ -4014,6 +4064,14 @@ components:
             Nothing else waits on it: an abandoned upload simply leaves the project un-started,
             which the overview's spec card offers as a CTA.
           type: boolean
+        requirementsImportPending:
+          description: >-
+            The caller will POST a requirements bundle next
+            (`import-requirements`, ADR-0020). Suppress the create-time `/start` kickoff
+            permanently — the imported corpus is the brief, and an interview started before
+            import lands would be overwritten when the turn finishes. After import the project
+            proceeds from `/design` like any other. Omitted/false keeps today's greenfield create.
+          type: boolean
         repoName:
           description: 'Repository name for the project''s GitHub repo; defaults to the project name,
             the organization is fixed server-side (issue #71).'
@@ -5653,6 +5711,33 @@ components:
           type: string
       required:
       - items
+      type: object
+    RequirementsImportResult:
+      additionalProperties: false
+      description: Result of importing a requirements bundle into a project.
+      properties:
+        files:
+          description: Repo-relative paths written under specs/requirements/
+          items:
+            type: string
+          type: array
+          nullable: true
+        tag:
+          description: Requirements version tag cut by the save gate (e.g. v1)
+          type: string
+        version:
+          description: Numeric requirements version
+          type: integer
+        warnings:
+          items:
+            type: string
+          type: array
+          nullable: true
+      required:
+      - files
+      - tag
+      - version
+      - warnings
       type: object
     RevalidateAccepted:
       additionalProperties: false
