@@ -547,6 +547,15 @@ func (c *componentClient) CreateComponent(ctx context.Context, orgName, projectN
 		}
 	}
 
+	// Org web-application types from PAS still emit a hostname-less catch-all
+	// HTTPRoute. Replace it before the Component exists so the first release
+	// renders a dedicated hostname.
+	if req != nil && req.Type == webApplicationComponentTypeRef {
+		if err := c.ensureWebApplicationHTTPRouteHostnames(ctx, orgName); err != nil {
+			return nil, fmt.Errorf("create component: ensure web-application HTTPRoute hostnames: %w", err)
+		}
+	}
+
 	resp, err := c.oc.CreateComponentWithResponse(ctx, orgName, buildCreateComponentBody(projectName, req))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create component: %w", err)
