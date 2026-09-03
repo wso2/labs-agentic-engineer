@@ -18,6 +18,8 @@ under the License.
 
 # I01: User signs in and calls the Agentic Engineer API
 
+**Trust Boundary:** Untrust → Trust
+
 **Description**
 
 A person in an organization signs in with Thunder (the WSO2 Cloud platform IdP on `cloud-cp`). Thunder issues a login token (JWT). The browser uses the Agentic Engineer console over public HTTPS. The console forwards API calls inside the cluster. That hop does not go through the public API gateway.
@@ -43,6 +45,11 @@ Stolen Agentic Engineer access tokens are in scope here. Stolen Thunder/IdP sess
 **D-I01 — User → console → API (JWT, tenant, planned RBAC)**
 
 ![D-I01 User signs in and calls the Agentic Engineer API](../diagrams/d-i01-user-api.png)
+
+**Payload**
+
+- Login token (JWT)
+- The API request (path, query, and body). Organization is not taken from the URL or the body. It comes from the token.
 
 **Security Considerations**
 
