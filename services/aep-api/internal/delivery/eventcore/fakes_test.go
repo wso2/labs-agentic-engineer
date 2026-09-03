@@ -541,7 +541,7 @@ func (f *fakeIssues) withClosedIssue(milestone, number int, labels ...string) *f
 	return f
 }
 
-// fakeOracle answers whether the project authored acceptance criteria.
+// fakeOracle answers whether the project authored validation criteria.
 type fakeOracle struct {
 	has bool
 	err error

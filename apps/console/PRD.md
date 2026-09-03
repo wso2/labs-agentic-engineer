@@ -73,13 +73,13 @@ Approved at section level; per-section detail is defined feature-by-feature.
   (ADR-0010; no back-item, home is the header brand / project switcher):
   - **Overview** — the Spec → Build → Deploy track, the components and
     dependencies index, and the architecture diagram.
-  - **Spec** — the requirement, derived design + acceptance criteria.
+  - **Spec** — the requirement, derived design + validation criteria.
   - **Builds** — the version ledger: one row per version, with its milestone,
     status, duration and start. A row opens that version's
     build — summary card, task list, External resources, coding-agent log,
     build logs (ADR-0021, ADR-0023).
   - **Deployments** — dev environment state and URLs.
-  - **Validations** — the runs checking a build against the spec's acceptance
+  - **Validations** — the runs checking a build against the spec's validation
     criteria.
   - **Issues** — issues the SRE agent raises against the running project
     (placeholder until its feature lands).
@@ -92,6 +92,31 @@ which is also what closes its issue. Newest first; links go to the feature's
 GitHub issue plus any ADRs it produced. Features still being built aren't
 here: they're the open `console` + `feature` issues.
 
+- Point at a passage, say what should change — **any** markdown spec document,
+  not just the PRD's lensed lines. A drag snaps to whole blocks on release
+  (a partial paragraph becomes the paragraph, a heading takes its section) and
+  offers a single chip: **nothing opens, nothing takes the keyboard**, so
+  select-and-retype, copy and delete still mean what they always did. The chip
+  (or ⌘K, or a lens) opens one box with two sends — **Change** rewrites the
+  selection in place and leaves the chat panel shut, because the document is the
+  feedback and a panel would cover the very thing being changed; **Discuss**
+  sends the same selection as a grilling and opens the panel to it. What travels
+  is an **anchor that locates rather than carries** — the file, and a name per
+  selected node (markdown names a block by a bounded excerpt of its rendered
+  text) — so the agent resolves it against the CURRENT document rather than a
+  photograph of one. It rides as metadata beside the user's words, never folded
+  into them, and the transcript shows it as a frozen tag above the message that
+  is never re-checked: when the agent cannot find what was named, the agent says
+  so in its reply. **The PRD's lens catalogue is re-cut in the same change**
+  (#652): an `*assumed*` run offers **Agree · Discuss** — Agree is a direct
+  edit that strips the flag, no agent turn, live while an agent holds one —
+  and every bullet offers **Discuss**, which opens the same aim box with Enter
+  sending Discuss.
+  `/settle` on a flagged line is retired; it stays over the Open Questions
+  section and on each question —
+  [#666](https://github.com/wso2/labs-agentic-engineer/issues/666)
+  (ADR-0023, ADR-0024; contract: `TurnInputBody.anchor` / `.intent`, and
+  `get-conversation`'s response schema typed at last)
 - The project overview is a track of links, not a page of cards — Spec → Build
   → Deploy is one bar with a step numeral per leg and a chevron in each seam,
   and every leg links to the section that runs it. Lit means unsettled and more
@@ -172,7 +197,7 @@ here: they're the open `console` + `feature` issues.
 - Spec view — the rail is the flow: **Requirements · Design · Validation**
   each carrying state (ready · being worked on · needs attention · not begun),
   documents named as documents rather than files (*Product requirements*,
-  *Design overview*, *Acceptance criteria*), and the app's existing pulse on a
+  *Design overview*, *Validation criteria*), and the app's existing pulse on a
   section an agent is writing. An amber section explains itself in **rows** —
   *N assumptions to challenge*, *N open questions*, *The requirements have
   changed since* — each going where the work already happens. Staleness is
@@ -183,6 +208,20 @@ here: they're the open `console` + `feature` issues.
   had asked for —
   [#575](https://github.com/wso2/labs-agentic-engineer/issues/575)
   (contract: `SpecStage.designOutdated`)
+- Spec view — the turn declares its plan: a skill says what it is **about to
+  write** (`declare_plan`, fire-and-forget tool-call-as-UI — ADR-0025), and the
+  rail renders the checklist — **ghost rows** holding the coming documents'
+  places, a pulse on the one being written, and an honest **count** (*2 of 6*)
+  that grows in waves because the cell fixes the component set mid-run. Every
+  status is derived from the mutation stream, never self-reported. A clean
+  turn's plan dissolves; a dead turn leaves its **wreckage** — done ticks, one
+  error, the remaining ghosts — surfaced through the attention chip until the
+  next declaring turn replaces it. The **editor follows the write** and yields
+  to the reader's first manual click (ADR-0026), superseding the cell's
+  yank-back. The chat records each declaration as an activity step (*Planned 3
+  documents*) —
+  [#576](https://github.com/wso2/labs-agentic-engineer/issues/576)
+  (contract: `declare_plan` in `@aep/agent-stream`; no aep-api change)
 - Overview — the spec card stops rewriting itself: **one button** (*Open spec*)
   in every state instead of three captions walked during a single kickoff with
   no user input, and **one line that always says something** instead of blanking
@@ -211,7 +250,10 @@ here: they're the open `console` + `feature` issues.
   Questions — and every flagged line (an `*assumed*` decision, an open
   question) carries its own `/settle`, so the subject comes from what the user
   clicked instead of their memory. Section lenses show at rest, line lenses on
-  hover, and all of them go inert while an agent holds the turn. Retires the
+  hover, and all of them go inert while an agent holds the turn. The lenses stay
+  the PRD's own, but the affordance no longer is: every markdown document now
+  carries selection-anchored aiming beside them, and the flagged line's
+  `/settle` became Agree and Discuss (#666). Retires the
   composer's `Actions ▾` menu of raw slash commands. **Open questions no longer
   block Generate design** on either side — the console disable and the two
   skill clauses both go — since a recorded gap is information, not corruption

@@ -36,6 +36,56 @@ const (
 	// covers the one that is not.
 	activityTimeout = 2 * time.Minute
 
+	// gateActivityTimeout bounds ProvisionGates. Wider than activityTimeout
+	// because that activity is not one round trip: it authors every one of the
+	// version's platform resources in sequence, and each one WAITS up to a minute
+	// for OpenChoreo to cut its ResourceRelease
+	// (openchoreo.WaitForReleaseChange). Four dependencies, one of them
+	// unsatisfiable, already exceeds two minutes — and a StartToClose expiry
+	// there reports "timeout" as the run's terminal reason instead of the
+	// provisioning failure that actually happened, which is the one thing a
+	// reader of a failed version needs.
+	gateActivityTimeout = 5 * time.Minute
+
+	// gateActivityAttempts is how many times ProvisionGates is tried before the
+	// run gives up on the version.
+	//
+	// BOUNDED, unlike almost everything else here, and the bound is the point.
+	// Provisioning has answers that repeating cannot change — a dependency naming
+	// a ClusterResourceType nobody installed is the case that taught us — and
+	// under Temporal's default unbounded policy such an answer becomes a
+	// permanent, invisible loop: the activity re-mints the version's gate issues
+	// on every attempt (they are deduped against OPEN gates, and it closes the
+	// ready ones itself), so the symptom is a milestone filling with duplicate
+	// gates forever rather than a failed build.
+	//
+	// It is the BACKSTOP, not the front line, and that split is deliberate. The
+	// case above is now caught twice before it reaches here: the build click
+	// refuses a design naming a type the cluster does not have, and a permanent
+	// provision fault that does reach the activity comes back non-retryable and
+	// fails on attempt one with the provisioner's own message (provisionErr). Both
+	// only cover the modes we can NAME. This bound covers the rest — including the
+	// next one nobody has met — which is why it stays even though the incident
+	// that motivated it now fails earlier and reads better.
+	//
+	// Three rather than one, because the same call is also how a genuine GitHub or
+	// OpenChoreo blip shows up, and failing a version on the first hiccup would
+	// trade a rare runaway for a common false failure.
+	gateActivityAttempts = 3
+
+	// gateActivityRetryInterval is the FIRST gap between those attempts, and it is
+	// set explicitly because Temporal's default (1s, doubling) makes the bound
+	// above far tighter than it looks. A fault that fails FAST — connection
+	// refused, DNS, a 4xx — burns all three attempts in about three seconds, so a
+	// blip lasting longer than a blink would fail the version. That is the false
+	// failure the bound was supposed to avoid, arrived at by a different road.
+	//
+	// At 10s doubling, the three attempts span ~30 seconds: long enough to sit out
+	// an ordinary hiccup, short enough that a version nobody can provision still
+	// gives up while its author is watching. The named permanent faults do not
+	// wait for any of this — provisionErr fails them on attempt one.
+	gateActivityRetryInterval = 10 * time.Second
+
 	// planActivityTimeout bounds PlanMilestone, the only activity that waits on
 	// an agent turn rather than a round trip. A healthy plan turn has no upper
 	// bound on its total length — only on its SILENCE, and the plan tap's own
@@ -200,7 +250,11 @@ type loop struct {
 	// has its issue minted for it by the EVENT PLANE, which sees the failure
 	// first-hand; a deployment has no webhook, so the supervisor is the only
 	// thing that ever knows which component did not come up.
-	deployFailed   []string
+	//
+	// Each failure carries the COMMIT its release was being cut from, because the
+	// issue's dedupe key is (component, commit) and one reconcile pass can promote
+	// two components at two different commits.
+	deployFailed   []delivery.DeployTarget
 	deployFailures map[string]string
 	// cycleID is the current cycle's record id. Surfaced on the loop because the
 	// verdict write lands after the agent stage has returned.
@@ -389,12 +443,18 @@ func (l *loop) work(ctx workflow.Context, ends bookends) (RunResult, error) {
 			return l.settle(ctx, delivery.RunStateBlocked, delivery.RunReasonAgentQuotaBlocked)
 		case cyclePublisherCredentials:
 			return l.settle(ctx, delivery.RunStateBlocked, delivery.RunReasonPublisherCredentials)
-		case cycleDeployFailed:
-			// File the work before looping. Unlike a red build or a conflict —
-			// where the event plane has already minted the issue by the time the
-			// supervisor hears about it — nothing else observes a deployment, so
-			// if this does not mint, the next boundary finds an empty working set
-			// and settles a run whose version is not running.
+		default:
+			// File the deploy's work before looping, on whatever the cycle's
+			// RESULT was: a red cycle can also have a failed deployment now that
+			// the reconcile runs on both verdicts, and the result carries the
+			// build's verdict. Keying on the failures themselves is what keeps
+			// the two independent.
+			//
+			// Unlike a red build or a conflict — where the event plane has already
+			// minted the issue by the time the supervisor hears about it — nothing
+			// else observes a deployment, so if this does not mint, the next
+			// boundary finds an empty working set and settles a run whose version
+			// is not running.
 			if err := l.mintDeployFixIssues(ctx); err != nil {
 				return l.result(), err
 			}
@@ -486,16 +546,33 @@ func (l *loop) onEmptyWorkingSet(ctx workflow.Context, ends bookends) (settled b
 //	                                    ├─ conflict  ─► cycleConflict
 //	                                    ├─ no landing within the deadline ─► re-dispatch
 //	                                    └─ merged ─► wait for the fan-out's builds
-//	                                                 ├─ a component red ─► cycleRed
-//	                                                 └─ all green ─► DEPLOY, then wait for Ready
-//	                                                                ├─ all ready ─► cycleGreen
-//	                                                                └─ a component failed ─► cycleDeployFailed
+//	                                                 ├─ a component red ─► build verdict red
+//	                                                 └─ all green ─► build verdict green
+//	                                                 then, on EITHER verdict:
+//	                                                 RECONCILE the version, wait for Ready
+//	                                                 ├─ all ready ─► deploy verdict green
+//	                                                 └─ a component failed ─► cycleDeployFailed
 //
 // It composes the three stages, which is why it lives with the boundary that
 // drives it rather than in any one of them: what a cycle IS — code that merges,
 // builds and then serves — is the boundary's definition of a delivered
 // increment. A validation run has no such cycle: its pull request touches only
 // `tests/`, so it runs the agent stage alone (workflow_validation.go).
+//
+// The deploy runs on a RED build too (ADR-0026). A red build has already minted
+// its fix issue and cannot be helped by holding its siblings back; the version's
+// other components are built, and promoting them is what keeps "what is serving"
+// a function of what has been built rather than of which files a fix touched.
+// What makes that safe is the promotable rule, not this call site: the reconcile
+// writes only components whose hard providers are serving or promoted ahead of
+// them.
+//
+// A cycle can therefore be red AND have a deploy failure. Both mint their work —
+// the build's issue by the event plane, the deploy's by the boundary — and the
+// cycle's RESULT is the earlier stage's verdict, because the deploy verdict is
+// downstream of it and the result only decides the next cycle's kind and the
+// terminal reason at an empty boundary, where both would name a budget that has
+// already produced its issue.
 func (l *loop) runCycle(ctx workflow.Context, kind string, anchorIssue int) (cycleResult, error) {
 	landed, res, err := l.agentStage(ctx, kind, anchorIssue)
 	if err != nil || !landed {
@@ -503,21 +580,38 @@ func (l *loop) runCycle(ctx workflow.Context, kind string, anchorIssue int) (cyc
 	}
 
 	l.st.Phase = delivery.RunPhaseBuilding
-	res, components, err := l.awaitBuilds(ctx)
+	buildRes, err := l.awaitBuilds(ctx)
 	if err != nil {
 		return cycleNone, err
 	}
-	if res != cycleGreen {
-		return res, nil
+	if buildRes != cycleGreen && buildRes != cycleRed {
+		// Cancelled mid-build. Nothing to reconcile — the run is over.
+		return buildRes, nil
 	}
+
 	// Built, not yet running. The deploy is the platform's own act — nothing
-	// promotes a release on its own — so the cycle is not over until the
-	// components this merge touched are serving. Everything downstream of a
-	// green cycle depends on that being true rather than merely requested:
-	// validation asserts against the deployment, and the version is called
-	// delivered on the strength of it.
+	// promotes a release on its own — so the cycle is not over until the version
+	// is serving what has been built. Everything downstream of a green cycle
+	// depends on that being true rather than merely requested: validation asserts
+	// against the deployment, and the version is called delivered on the strength
+	// of it.
 	l.st.Phase = delivery.RunPhaseDeploying
-	return l.deployCycle(ctx, components)
+	version, err := l.readVersionState(ctx)
+	if err != nil {
+		return cycleNone, err
+	}
+	deployRes, err := l.reconcileVersion(ctx, version)
+	if err != nil {
+		return cycleNone, err
+	}
+	switch {
+	case deployRes == cycleCancelled:
+		return cycleCancelled, nil
+	case buildRes == cycleRed:
+		return cycleRed, nil
+	default:
+		return deployRes, nil
+	}
 }
 
 // settle ends the run, and each terminal state carries its own consequence for
@@ -681,6 +775,65 @@ func (l *loop) cancelled(ctx workflow.Context) (bool, error) {
 	return facts.CancelRequested, nil
 }
 
+// awaitInterruptibly executes one activity and STOPS WAITING the moment a cancel
+// arrives, answering which of the two happened.
+//
+// It exists for the planning bookend, and the bug it closes is worth naming: the
+// cycle loop asks l.cancelled at every boundary, but the bookend runs BEFORE the
+// first boundary, so for as long as it lasted a run was blind to cancel. Two
+// activities is not much of a window until one of them retries — a version whose
+// gates could not be authored sat there re-minting them, with six delivered
+// cancel signals unread in the channel and nothing but a Temporal terminate to
+// end it.
+//
+// The activity's context is a CHILD of the caller's, so cancelling it leaves the
+// workflow's own context live and the run settles on the ordinary path —
+// closing its issues, closing the milestone, writing its row. That is the whole
+// reason cancel is a signal here and not a Temporal workflow cancellation
+// (delivery.SigRunCancel), and this helper is how the planning phase joins that
+// design rather than working around it.
+//
+// The future resolves at once because WaitForCancellation is left off: the
+// workflow does not wait for the worker to acknowledge. What makes the ATTEMPT
+// stop rather than merely be abandoned is the heartbeat on its activity options
+// — see heartbeating — and the two are a pair. Without the heartbeat this still
+// returns instantly and the run still settles; the orphaned attempt just runs out
+// its remaining wait, unaware, before finding the workflow gone.
+//
+// The cancel channel is DRAINED on the way out, exactly as cancelRequested
+// drains it, so the signal is consumed by whoever acts on it and never acted on
+// twice.
+func (l *loop) awaitInterruptibly(ctx, actCtx workflow.Context, act, arg any) (cancelled bool, err error) {
+	actCtx, stopActivity := workflow.WithCancel(actCtx)
+	// Deferred rather than called on the cancel branch alone: on the ordinary
+	// branch the activity has already finished and this is a no-op, and one exit
+	// path is easier to keep correct than two.
+	defer stopActivity()
+
+	future := workflow.ExecuteActivity(actCtx, act, arg)
+	sel := workflow.NewSelector(ctx)
+	// CANCEL IS ADDED FIRST, and the order is load-bearing rather than tidy.
+	// Selector.Select walks its cases in registration order and takes the first
+	// that is ready, so when the activity finished in the same workflow task the
+	// cancel landed in, this is what decides which of the two the run acts on.
+	//
+	// The cancel has to win. The alternative reports the activity's own outcome
+	// for a run a person had already stopped — and when that outcome is a failure,
+	// the version settles `plan-failed` with a cancel sitting unread, which is
+	// both the wrong terminal reason and the wrong story on the issues. Discarding
+	// a successful attempt costs nothing either way: gates dedupe, and a plan the
+	// cancel is about to close was work nobody wanted.
+	sel.AddReceive(l.cancel, func(c workflow.ReceiveChannel, _ bool) {
+		c.Receive(ctx, nil)
+		cancelled = true
+	})
+	sel.AddFuture(future, func(f workflow.Future) {
+		err = f.Get(ctx, nil)
+	})
+	sel.Select(ctx)
+	return cancelled, err
+}
+
 // ---- activity calls --------------------------------------------------------
 
 // activityCtx is the options every activity but the dispatch runs under.
@@ -705,6 +858,31 @@ func activityCtx(ctx workflow.Context) workflow.Context {
 func planActivityCtx(ctx workflow.Context) workflow.Context {
 	return workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
 		StartToCloseTimeout: planActivityTimeout,
+		// Heartbeat so a cancel can reach the turn — a 30-minute agent turn is the
+		// longest a run is ever blind, and the one a person is most likely to change
+		// their mind during. The timeout is deliberately generous rather than tight;
+		// activityHeartbeatTimeout says why, and it matters most here.
+		HeartbeatTimeout: activityHeartbeatTimeout,
+	})
+}
+
+// gateActivityCtx runs ProvisionGates with a BOUNDED retry policy — see
+// gateActivityAttempts for why this one activity does not get the unbounded
+// default, and gateActivityTimeout for why it gets longer than a round trip.
+//
+// The heartbeat timeout is what makes a cancel reach the work rather than only
+// the waiting: without one, cancelling the activity's context frees the WORKFLOW
+// immediately but the attempt in the worker runs to completion unaware, so the
+// resources it was mid-way through authoring keep being authored. See
+// heartbeating, which supplies the beats these options expect.
+func gateActivityCtx(ctx workflow.Context) workflow.Context {
+	return workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+		StartToCloseTimeout: gateActivityTimeout,
+		HeartbeatTimeout:    activityHeartbeatTimeout,
+		RetryPolicy: &temporal.RetryPolicy{
+			MaximumAttempts: gateActivityAttempts,
+			InitialInterval: gateActivityRetryInterval,
+		},
 	})
 }
 
@@ -722,6 +900,25 @@ func (l *loop) pollMilestone(ctx workflow.Context) (MilestoneSnapshot, error) {
 	var out MilestoneSnapshot
 	err := workflow.ExecuteActivity(activityCtx(ctx), (*Activities).PollMilestone, l.milestoneRef()).Get(ctx, &out)
 	return out, err
+}
+
+// readVersionState re-derives what the version is serving, and mirrors it onto
+// the live status so a console reading a run mid-deploy sees the same five
+// states the loop decided on.
+//
+// It is READ, never carried. The reconcile's own classification is a moment old
+// by the time the boundary asks — a converge may have landed, a binding may
+// have been hand-edited — and the whole value of the delivery gate is that it
+// asserts what is true NOW rather than what the stage believed when it wrote.
+// Same rule the working-set poll follows.
+func (l *loop) readVersionState(ctx workflow.Context) (delivery.VersionState, error) {
+	var out delivery.VersionState
+	if err := workflow.ExecuteActivity(activityCtx(ctx), (*Activities).ReadVersionState,
+		ProjectRef{OrgID: l.in.OrgID, ProjectID: l.in.ProjectID}).Get(ctx, &out); err != nil {
+		return delivery.VersionState{}, err
+	}
+	l.st.Version = out
+	return out, nil
 }
 
 func (l *loop) milestoneRef() MilestoneRef {
@@ -881,6 +1078,11 @@ func (l *loop) closeCancelledWork(ctx workflow.Context) error {
 // mintDeployFixIssues files one issue per component that did not come up, so the
 // next cycle can work it like any other fix.
 //
+// Only components this pass WROTE, or was already waiting on, can appear here —
+// that is a property of the wait set, not a filter applied at this call. Held and
+// unbuilt components are never waited on, so a healthy web app whose api is red
+// cannot be handed a deployment bug it does not have.
+//
 // This is the supervisor minting an issue, which it does nowhere else — every
 // other recovery issue belongs to the event plane, which observes the failure
 // through a webhook. A deployment produces no webhook, so there is no event
@@ -895,15 +1097,14 @@ func (l *loop) mintDeployFixIssues(ctx workflow.Context) error {
 			OrgID:           l.in.OrgID,
 			ProjectID:       l.in.ProjectID,
 			MilestoneNumber: l.in.MilestoneNumber,
-			Components:      l.deployFailed,
+			Failed:          l.deployFailed,
 			Reasons:         l.deployFailures,
-			CommitSHA:       l.mergeSHA,
 		}).Get(ctx, nil)
 	if err != nil {
 		return err
 	}
 	workflow.GetLogger(ctx).Info("deployment failed; filed fix work",
-		"components", l.deployFailed, "commit", l.mergeSHA)
+		"components", delivery.TargetNames(l.deployFailed))
 	l.deployFailed, l.deployFailures = nil, nil
 	return nil
 }

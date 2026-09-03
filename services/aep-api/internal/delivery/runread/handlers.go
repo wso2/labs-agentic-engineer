@@ -175,12 +175,12 @@ func mapRunError(err error) error {
 		// their own — the live run settles, the open work gets worked. The message is
 		// the sentinel's own, which is written for the human who clicked.
 		return apierr.Conflict(err.Error())
-	case errors.Is(err, delivery.ErrNoAcceptanceCriteria):
+	case errors.Is(err, delivery.ErrNoValidationCriteria):
 		// The request is well-formed and the version exists; there is simply nothing
 		// to validate it against, which is the caller's to fix by authoring criteria.
 		// A slice-owned code rather than the shared `validation_failed`, which here
 		// would read as "the validation phase failed" — the opposite of what happened.
-		return apierr.New(http.StatusUnprocessableEntity, "no_acceptance_criteria", err.Error(), nil)
+		return apierr.New(http.StatusUnprocessableEntity, "no_validation_criteria", err.Error(), nil)
 	case errors.Is(err, delivery.ErrRunNotStarted):
 		// The platform is not ready to work this version — a degraded boot, most
 		// likely. Retryable, so 503 rather than a 500 the caller can do nothing with.

@@ -141,7 +141,7 @@ describe("externalResourceRows", () => {
 
   // Two components declaring the same dependency with DISJOINT keys. Readiness
   // is computed against the union, so a dialog offering only the first
-  // component's keys could never satisfy it — the row would stay "Needs values"
+  // component's keys could never satisfy it — the row would stay "Needs configuration"
   // however many times it was saved, and the deploy gate would never open.
   it("unions the config keys of a dependency two components declare differently", () => {
     const rows = externalResourceRows(
@@ -217,7 +217,7 @@ describe("externalResourceRows", () => {
   // record` for one, and the deploy gate deliberately excludes it (naming it
   // would park a run forever on something no project surface can clear), so
   // readiness omits it. Defaulting an unmentioned dependency to
-  // `not-provisioned` would resurrect exactly that row: a "Needs values" chip
+  // `not-provisioned` would resurrect exactly that row: a "Needs configuration" chip
   // and a Configure button that 409s, under a headline contradicting a gate
   // that is not blocked.
   it("does not render an external the readiness read omits", () => {
@@ -294,7 +294,7 @@ describe("externalResourceHeadline", () => {
       ),
     );
     // twilio is unset and segment has no binding yet — both outstanding.
-    expect(externalResourceHeadline(rows)).toBe("2 of 4 need values");
+    expect(externalResourceHeadline(rows)).toBe("2 of 4 need configuration");
   });
 
   // The headline counts the SUPPLIABLE set, so an external readiness omits is
@@ -308,7 +308,7 @@ describe("externalResourceHeadline", () => {
       ]),
       readiness({ name: "stripe", state: "unset", missingKeys: ["api_key"] }),
     );
-    expect(externalResourceHeadline(rows)).toBe("1 of 1 need values");
+    expect(externalResourceHeadline(rows)).toBe("1 of 1 need configuration");
   });
 
   it("says so once every one is configured", () => {
@@ -322,7 +322,7 @@ describe("externalResourceHeadline", () => {
 
 // The one thing the DESIGN read alone supports, and what the section falls
 // back to when readiness is unknown (findings 7 and 8): how many externals
-// somebody could be asked to supply — never how many still need values.
+// somebody could be asked to supply — never how many still need configuration.
 describe("declaredExternalCount", () => {
   it("counts collectable externals once each, whatever readiness says", () => {
     expect(

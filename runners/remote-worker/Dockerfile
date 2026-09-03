@@ -30,6 +30,9 @@
 #   - Playwright + a baked chromium — validation runs author and execute
 #     e2e specs against the deployed system and must never download a
 #     browser at task time.
+#   - agent-browser — the browser CLI a CODING run drives a page with. It
+#     adds a binary, not a browser: it is pointed at the chromium the line
+#     above already baked.
 
 # ─── Stage 1: the `bal library` tool jar ────────────────────────────────────
 # BUILT here rather than committed. The tool's source is in this monorepo
@@ -173,6 +176,81 @@ RUN groupadd -r aep \
     && useradd -r -g aep -m -d /home/aep aep \
     && mkdir -p /home/aep/aep-workspace \
     && chown -R aep:aep /home/aep
+
+# The agent-browser CLI — what a CODING run opens a page with and reads the
+# accessibility tree of, driven by the `agent-browser` platform skill. Pinned
+# exactly, like the Playwright pair above: the skill tells the agent to take its
+# verbs and output formats from `agent-browser skills get core`, so an unpinned
+# CLI would move that contract under it between rebuilds. The npm tarball ships
+# every platform's prebuilt binary, so this install fetches nothing further.
+#
+# npm warns EBADENGINE here (the package declares node >=24, this image is node
+# 22) and that is left alone rather than worked around: the published bin is a
+# static Rust binary and postinstall repoints npm's symlink straight at it, so
+# no node ever runs the CLI. The engines field describes the project's own
+# toolchain, not its runtime — verified: `agent-browser --version` answers.
+#
+# NO THIRD BROWSER IS DOWNLOADED. The CLI's own `agent-browser install` would
+# fetch one; instead AGENT_BROWSER_EXECUTABLE_PATH names a chromium that is
+# already in this image — the image deciding which binary launches, for the same
+# reason ADR-0007 has the image and not the skill name playwright-cli's browser.
+#
+# WHICH of the two baked revisions: @playwright/test's, not playwright-cli's.
+# Three reasons that agree — it is the only chromium this build REQUIRES (the
+# `playwright-cli install-browser` above is `|| true`, so naming its revision
+# would make this variable a promise the build does not keep); it is the one
+# whose system libraries `--with-deps` installed; and it is the build the e2e
+# specs are later asserted in, so a locator the agent reads while coding is read
+# in the chromium that will assert it. Left unset the CLI's own discovery picks
+# the OTHER one — it takes the highest version it finds under /ms-playwright —
+# which is the drift this line closes.
+#
+# Resolved FROM playwright through a fixed symlink rather than spelled out: the
+# revision is decided by PLAYWRIGHT_VERSION above, and a literal `chromium-1228`
+# here would be a second copy of that number to keep in step by hand.
+ARG AGENT_BROWSER_VERSION=0.35.2
+ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/local/share/aep-chromium/chrome
+RUN npm install -g "agent-browser@${AGENT_BROWSER_VERSION}" \
+    && ln -sfn \
+        "$(playwright install --dry-run chromium | awk '/Install location:/ {print $3; exit}')/chrome-linux" \
+        /usr/local/share/aep-chromium \
+    # A smoke test, earning its line the way `bal library --help` does at the
+    # bottom of this file: it drives a real page through the variable set
+    # above, so a missing CLI, a symlink resolving to nothing, and a chromium
+    # that cannot start all fail THIS BUILD rather than a customer's run.
+    # `--version` would not — it answers from a binary that never launches a
+    # browser. Opening and then READING the page is the round trip: the
+    # launch, the CDP connection and the render all have to work for `ok` to
+    # come back.
+    #
+    # NOT `agent-browser doctor`, which is the obvious-looking choice: its
+    # launch test is the only check that touches the browser, and it ignores
+    # both AGENT_BROWSER_ARGS (so it cannot be made to pass here, see below)
+    # and — measured — AGENT_BROWSER_EXECUTABLE_PATH in its "Chrome" line,
+    # which reports whatever the CLI's own discovery finds. `doctor --quick`
+    # passes with this variable pointing at nothing at all.
+    #
+    # `--no-sandbox` is a BUILD-TIME concession and deliberately NOT an ENV:
+    # BuildKit's RUN container denies the unprivileged user namespace
+    # chromium's zygote needs ("No usable sandbox!"), while a `docker run` of
+    # this image launches the same chromium sandboxed, as `aep`, unchanged —
+    # measured both ways. Exporting the flag would silently drop the sandbox
+    # for every run in order to make a build step pass.
+    #
+    # Run as `aep` because that is who runs a task: a chromium that starts for
+    # root and not for an unprivileged user is the class of bug ADR-0007
+    # records. `su` without `-` keeps the environment, so the variable set
+    # above is the one under test.
+    && printf '<h1>agent-browser-ok</h1>' > /tmp/ab-smoke.html \
+    && chmod a+r /tmp/ab-smoke.html \
+    && su aep -s /bin/bash -c 'set -e; \
+        export AGENT_BROWSER_ARGS=--no-sandbox; \
+        agent-browser open file:///tmp/ab-smoke.html; \
+        agent-browser get text h1 | grep agent-browser-ok; \
+        agent-browser close --all' \
+    # The smoke test leaves a state directory behind; a socket and pid file
+    # baked into the image would be stale in every pod started from it.
+    && rm -rf /tmp/ab-smoke.html /home/aep/.agent-browser
 
 WORKDIR /app
 

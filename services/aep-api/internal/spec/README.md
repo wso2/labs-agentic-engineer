@@ -171,6 +171,14 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
     resource that does not exist; a bounded-name test pins it.
   - Fail-closed: a design declaring a platform-resource whose catalog is unreachable returns
     `ErrResourceCatalogUnavailable` (503) rather than silently skipping either derivation.
+  - **Unknown `resourceType` is refused at build claim, not at design save.** After the catalog
+    fetch, a membership pass (`rejectUnknownResourceTypes`) returns `ErrUnknownResourceType`
+    when a `platform-resource` names a CRT that is not installed. Delivery maps that to HTTP 409
+    and cuts no tag — a design/task-breakdown agent inventing a type must not start a Temporal
+    run. An empty or nil catalog (`PLATFORM_RESOURCES_ENABLED=false`) skips membership so the
+    disabled path does not reject every build. Membership is against the live catalog map, never
+    a hardcoded type name (ADR-0007). Wiring derivation still treats an unknown type as "not
+    derivable yet"; the membership pass is a separate gate before persist.
 - The `/collab/validate` oracle recovers the acting org from VERIFIED claims and refuses any room whose
   `spec-<org>-` prefix mismatches — never a hint of whether the room exists. Platform-wide rules (tenant
   gate, secrets fence) → [../../README.md](../../README.md).

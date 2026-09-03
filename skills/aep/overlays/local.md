@@ -29,9 +29,8 @@ A section runs from its heading to the next heading of the same or higher level;
 headings inside fenced code blocks are not headings. **Prefer a section
 directive.** A `replace-text` anchor is prose, so it rots the moment someone
 rewords the paragraph it points at — a loud failure, but still one somebody has
-to come and fix. The four below are all text that no heading can reach: two
-clauses inside a numbered list item, one line inside a fenced block, and one
-bullet list mid-section.
+to come and fix. Every one below reaches text no heading can: clauses inside a
+numbered list item, a line inside a fenced block, and a bullet list mid-section.
 
 <!-- replace-section: ## Where you are -->
 
@@ -68,7 +67,21 @@ runtime relationship, not a build order — it never holds an issue back.
 <!-- /replace-text -->
 
 <!-- replace-text -->
+   git diff --cached --name-only    # what is ACTUALLY staged — read it
+<!-- with -->
+<!-- /replace-text -->
+
+<!-- replace-text -->
    git push -u origin HEAD          # -u only on the first push
+<!-- with -->
+<!-- /replace-text -->
+
+<!-- replace-text -->
+   **Read that `--name-only` list against what you changed.** `git add` on a
+   directory drops every ignored path inside it **silently, at exit 0**, leaving
+   `git status` clean; the staged list is the only place the omission shows. What
+   is missing there is missing from the build context, and the first sign is a red
+   build minutes later in a component that compiled perfectly on your disk.
 <!-- with -->
 <!-- /replace-text -->
 
@@ -85,19 +98,22 @@ runtime relationship, not a build order — it never holds an issue back.
    edit files.
 <!-- /replace-text -->
 
+<!-- drop-section: ### The status line -->
+
 <!-- replace-text -->
-**Say on the issue when you hand its work to a subagent.** In the same turn you
-dispatch a wave, comment ONE line on each issue in it naming what was delegated:
+For **each** issue in the ordered set — and whoever works it, you inline or a
+subagent you handed it to, keeps its status line current from start to done
+(**The status line**):
+<!-- with -->
+For **each** issue in the ordered set:
+<!-- /replace-text -->
 
-```bash
-gh issue comment <number> --body "Started: <what the subagent was asked to build>"
-```
-
-That comment is the only thing a person watching the build sees between dispatch
-and the pull request — the issue is the surface they are reading, and a wave that
-takes twenty minutes is otherwise twenty minutes of silence on it. One line per
-issue, at dispatch. Not a plan, not a status table, and never a second comment
-saying the same thing again.
+<!-- replace-text -->
+9. **its issue's status line** — the `gh issue comment` command above with **its**
+   issue number filled in, and the rule that goes with it (**The status line**):
+   one line, at both ends of its work and whenever the answer changes between
+   them. That command is the only `gh` it may run, and its own issue is the only
+   issue it may touch.
 <!-- with -->
 <!-- /replace-text -->
 

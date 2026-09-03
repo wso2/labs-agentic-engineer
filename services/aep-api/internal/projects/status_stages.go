@@ -42,6 +42,7 @@ const (
 	buildIdle      = "idle"
 	buildRunning   = "running"
 	buildFailed    = "failed"
+	buildCancelled = "cancelled"
 	buildSucceeded = "succeeded"
 
 	deployNone      = "none"
@@ -566,17 +567,28 @@ func applyFlatArtifactFields(status *gen.ProjectStatus, snap *spec.StatusSnapsho
 
 // buildStageStatus maps a milestone run's state onto the BuildStage enum. A
 // version's delivery IS its run: it is running while the run is (waiting between
-// cycles included — the version is still being delivered), and it succeeds or
-// fails exactly when the run settles. A cancelled or BLOCKED run reads as not
-// delivered: the version did not ship, and the run row's terminal reason is
-// where the difference (abandoned versus out of agent slots) is explained.
+// cycles included — the version is still being delivered), and it settles when
+// the run does.
+//
+// CANCELLED IS ITS OWN VALUE, matching build.statusFromRunState. The two
+// aggregates are read by different surfaces off the same run row — this one
+// drives the project badge in the toolbar, that one the version ledger — so a
+// difference between them is a self-contradiction a reader sees in one glance.
+// It was one: the build page header said Cancelled while the toolbar two
+// centimetres away said "Build failed".
+//
+// A BLOCKED run still reads as failed. The version did not ship and a human has
+// to supply something before it can, which is what "failed, see the reason" says;
+// nobody chose it, and that is the whole difference from a cancel.
 func buildStageStatus(state string) string {
 	switch state {
 	case delivery.RunStateSucceeded:
 		return buildSucceeded
-	case delivery.RunStateFailed, delivery.RunStateCancelled, delivery.RunStateBlocked:
+	case delivery.RunStateCancelled:
+		return buildCancelled
+	case delivery.RunStateFailed, delivery.RunStateBlocked:
 		return buildFailed
-	default: // waiting | running
+	default: // waiting | running | planning
 		return buildRunning
 	}
 }

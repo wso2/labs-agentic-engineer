@@ -18,5 +18,5 @@
     "outDir": "dist",
     "noEmit": false
   },
-  "include": ["src"]
+  "include": ["src", "dev"]
 }

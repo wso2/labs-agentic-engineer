@@ -47,6 +47,8 @@ const (
 	instructionField = "instruction"
 	collabField      = "collab"
 	targetField      = "target"
+	anchorField      = "anchor"
+	intentField      = "intent"
 )
 
 // The caps, and every one of them restates ONE number.
@@ -97,6 +99,11 @@ type multipartTurn struct {
 	Instruction string
 	Target      string
 	Collab      bool
+	// Anchor/Intent are the aim (#666), recovered as raw strings and validated
+	// with the JSON path's rules in aim.go — one place decides what a valid aim
+	// is, so the two request forms cannot drift into accepting different things.
+	Anchor      string
+	Intent      string
 	Attachments []agentsvc.TurnAttachment
 }
 
@@ -137,6 +144,20 @@ func readMultipartTurn(body *multipart.Reader) (multipartTurn, error) {
 				return out, err
 			}
 			out.Target = v
+			continue
+		case anchorField:
+			v, err := readFormValue(part)
+			if err != nil {
+				return out, err
+			}
+			out.Anchor = v
+			continue
+		case intentField:
+			v, err := readFormValue(part)
+			if err != nil {
+				return out, err
+			}
+			out.Intent = v
 			continue
 		case collabField:
 			v, err := readFormValue(part)

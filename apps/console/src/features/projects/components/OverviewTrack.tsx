@@ -24,6 +24,7 @@ import type { components } from "../../../generated/aep-api";
 import { useSession } from "../../../auth/SessionContext";
 import { useAgentEngaged } from "../../agent-chat/useAgentEngaged";
 import { useConversationLog } from "../../agent-chat/useConversationLog";
+import { WorkingPulse } from "../../agent-chat/components/WorkingIndicator";
 import { trackView, type LegState, type TrackLeg } from "../lib/track";
 
 type ProjectStatus = components["schemas"]["ProjectStatus"];
@@ -46,6 +47,20 @@ const LegLink = createLink(ButtonBase);
  * `theme.spacing(1.5)` is 12px. Same literal, two different corners.
  */
 const TRACK_RADIUS_PX = 12;
+
+/**
+ * The breakpoint at and above which the three legs sit in a ROW; below it they
+ * stack into a column.
+ *
+ * A leg carries a stage name, a version, a sentence and sometimes a call to
+ * action. Three of those across a phone — or across the half-window the
+ * overview gets whenever the agent chat panel is open — leaves each one about
+ * 110px, at which the sentence wraps to four lines and the card becomes a wall
+ * of broken text. Stacked, every leg gets the full width and the flow simply
+ * runs downward instead of across; the seam and the corner radii follow it (see
+ * `SeamBreak` and `Leg`).
+ */
+const TRACK_ROW_UP = "md";
 
 /**
  * The palette family a leg reads from. `waiting` has none — it is the theme's
@@ -103,35 +118,6 @@ function litStyles(theme: Theme, state: LegState) {
 }
 
 /**
- * The pulse: shown for `live` only.
- *
- * It is the page's only animation, and it means "the platform is working".
- * A leg waiting on the USER (`hold`) deliberately does not pulse — a page that
- * animates while it waits for you to type is lying about who is busy.
- */
-function LivePulse() {
-  return (
-    <Box
-      aria-hidden
-      sx={(theme) => ({
-        width: theme.spacing(0.875),
-        height: theme.spacing(0.875),
-        borderRadius: "50%",
-        flexShrink: 0,
-        boxSizing: "border-box",
-        border: 2,
-        borderColor: "primary.main",
-        "@keyframes legPulse": {
-          "50%": { boxShadow: `0 0 0 ${theme.spacing(0.625)} ${alpha(theme.palette.primary.main, 0.14)}` },
-        },
-        animation: "legPulse 2.2s ease-in-out infinite",
-        "@media (prefers-reduced-motion: reduce)": { animation: "none" },
-      })}
-    />
-  );
-}
-
-/**
  * The seam: the rule breaks, and a chevron stands in the break.
  *
  * The line runs down, stops, the chevron carries it across, the line resumes.
@@ -141,9 +127,9 @@ function LivePulse() {
  * mid-way along a full-height divider: the divider read as the dominant thing
  * and the triangle as decoration on it, so nothing looked connected.
  *
- * Order still comes from the step numeral and direction from here; no thread is
- * run through the whole bar, which an earlier pass tried and which read as a
- * progress meter the legs were already carrying.
+ * Order and direction both come from here, now that the step numeral is gone;
+ * no thread is run through the whole bar, which an earlier pass tried and which
+ * read as a progress meter the legs were already carrying.
  */
 function SeamBreak() {
   return (
@@ -151,8 +137,20 @@ function SeamBreak() {
       aria-hidden
       sx={(theme) => ({
         position: "absolute",
-        insetInlineEnd: theme.spacing(-1.125),
-        insetBlockStart: "50%",
+        // Straddles whichever edge the next leg is on: the end edge while the
+        // legs sit in a row, the bottom edge once they stack.
+        //
+        // Stacked, it is centred by AUTO MARGINS rather than by an inset plus a
+        // half-width translate. The translate would have been the shorter
+        // spelling and it is wrong in RTL: `insetInlineEnd` flips with the
+        // writing mode and `translateX` does not, so the two disagree and the
+        // chevron lands a full width off the seam. Auto margins have no
+        // direction to disagree about — and they leave ONE transform for both
+        // layouts instead of two.
+        insetInlineStart: { xs: 0, [TRACK_ROW_UP]: "auto" },
+        insetInlineEnd: { xs: 0, [TRACK_ROW_UP]: theme.spacing(-1.125) },
+        marginInline: { xs: "auto", [TRACK_ROW_UP]: 0 },
+        insetBlockStart: { xs: "100%", [TRACK_ROW_UP]: "50%" },
         transform: "translateY(-50%)",
         zIndex: 2,
         width: theme.spacing(2.25),
@@ -165,7 +163,16 @@ function SeamBreak() {
         color: seamInk(0.55),
       })}
     >
-      <ChevronRight size={14} strokeWidth={2.25} />
+      {/* The glyph turns with the flow. A chevron still pointing right under a
+          leg that continues DOWNWARD points at the page margin. */}
+      <Box
+        sx={{
+          display: "flex",
+          transform: { xs: "rotate(90deg)", [TRACK_ROW_UP]: "none" },
+        }}
+      >
+        <ChevronRight size={14} strokeWidth={2.25} />
+      </Box>
     </Box>
   );
 }
@@ -210,19 +217,29 @@ function Leg({
           gap: 0.75,
           px: 2.25,
           py: 1.75,
-          // The card's corners on the outer edges, square where legs meet.
+          // The card's corners on the outer edges, square where legs meet —
+          // and "outer" moves when the legs stack. The two corners on the
+          // flow's own axis (top-start, bottom-end) belong to the first and
+          // last leg either way; the other two swap owners.
           borderStartStartRadius: first ? TRACK_RADIUS_PX : 0,
-          borderEndStartRadius: first ? TRACK_RADIUS_PX : 0,
-          borderStartEndRadius: last ? TRACK_RADIUS_PX : 0,
           borderEndEndRadius: last ? TRACK_RADIUS_PX : 0,
+          borderStartEndRadius: {
+            xs: first ? TRACK_RADIUS_PX : 0,
+            [TRACK_ROW_UP]: last ? TRACK_RADIUS_PX : 0,
+          },
+          borderEndStartRadius: {
+            xs: last ? TRACK_RADIUS_PX : 0,
+            [TRACK_ROW_UP]: first ? TRACK_RADIUS_PX : 0,
+          },
           // Same reason as the seam: a separator at `divider` weight does not
           // survive the dark theme, and the legs read as one undivided block.
+          // It runs along whichever edge the next leg is on.
           ...(!last && {
-            borderInlineEnd: 1,
             borderStyle: "solid",
             borderColor: seamInk(0.12),
-            borderBlockWidth: 0,
-            borderInlineStartWidth: 0,
+            borderWidth: 0,
+            borderInlineEndWidth: { xs: 0, [TRACK_ROW_UP]: 1 },
+            borderBlockEndWidth: { xs: 1, [TRACK_ROW_UP]: 0 },
           }),
           transition: theme.transitions.create("background-color", {
             duration: theme.transitions.duration.shortest,
@@ -232,17 +249,6 @@ function Leg({
         })}
       >
         <Stack direction="row" spacing={1} sx={{ alignItems: "center", width: "100%" }}>
-          <Typography
-            variant="caption"
-            sx={{
-              fontFamily: "monospace",
-              fontVariantNumeric: "tabular-nums",
-              color: family && !muted ? `${family}.main` : "text.disabled",
-              flexShrink: 0,
-            }}
-          >
-            {leg.step}
-          </Typography>
           {/* The heaviest title on the page, deliberately.
               `subtitle2` renders at weight 400 in this theme, which put the
               stage name BELOW both a component row's name (14.5px/500) and the
@@ -258,17 +264,44 @@ function Leg({
           >
             {leg.name}
           </Typography>
-          {leg.state === "live" && <LivePulse />}
+          {/* Shown for `live` only, and it is `WorkingPulse` — the same dot the
+              chat footer and the spec rail use, NOT a ring of this file's own.
+              That component was extracted (#575) so "an agent is working" looks
+              identical everywhere it appears, and this leg had grown exactly the
+              second animation it exists to prevent: a hollow ring breathing an
+              expanding shadow at 2.2s next to a solid dot pulsing at 1.2s two
+              panels away. One fact, one animation.
+
+              A leg waiting on the USER (`hold`) still does not pulse — a page
+              that animates while it waits for you to type is lying about who is
+              busy. */}
+          {leg.state === "live" && <WorkingPulse />}
           <Box sx={{ flexGrow: 1 }} />
           {/* Version only when one exists — no em-dash placeholder. Blank says
-              "not yet" better than a dash pretending to be a value. */}
+              "not yet" better than a dash pretending to be a value.
+
+              A LABEL, NOT A BADGE. This was a filled chip in the leg's own
+              state colour, and with three legs carrying one it put three solid
+              lozenges across the widest band on the page — the version, which
+              is the same "v1" three times over in the common case, ended up
+              shouting louder than the stage names it sits beside. The state is
+              already told by the lit ring, the pulse and the line; the version
+              only has to be READABLE. So: still a Chip — the console's tag
+              everywhere, and what the component rows beside it use — but
+              outlined, unstyled by state, monospace and in secondary ink. */}
           {leg.version && (
             <Chip
               size="small"
+              variant="outlined"
               label={leg.version}
-              color={family ?? "default"}
-              variant={leg.state === "waiting" ? "outlined" : "filled"}
-              sx={{ fontFamily: "monospace", flexShrink: 0 }}
+              sx={{
+                height: 20,
+                flexShrink: 0,
+                fontFamily: "monospace",
+                fontSize: "0.6875rem",
+                color: "text.secondary",
+                borderColor: seamInk(0.18),
+              }}
             />
           )}
         </Stack>
@@ -336,6 +369,7 @@ export function OverviewTrack({
         variant="outlined"
         sx={{
           display: "flex",
+          flexDirection: { xs: "column", [TRACK_ROW_UP]: "row" },
           overflow: "hidden",
           borderRadius: `${TRACK_RADIUS_PX}px`,
         }}

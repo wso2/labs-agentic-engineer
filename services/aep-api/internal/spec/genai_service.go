@@ -153,6 +153,10 @@ type TurnInput struct {
 	// stored: they ride the turn request and are durable only as parts of the
 	// conversation's history (ADR-0019).
 	Attachments []agentsvc.TurnAttachment
+	// Aim is what the user pointed at in a spec document, and what for (#666).
+	// Nil for an ordinary chat turn, which then reaches the agents service
+	// byte-identical to one sent before this channel existed.
+	Aim *agentsvc.AimBlock
 }
 
 // TurnStatus is the read view of one turn (the status GET body).
@@ -453,6 +457,7 @@ func (s *Service) StartTurn(ctx context.Context, orgID, projectID string, in Tur
 		target:           in.Target,
 		summary:          summary,
 		attachments:      in.Attachments,
+		aim:              in.Aim,
 		// Captured before the detached goroutine: the identity reads the
 		// request's bearer, and the journal (#463) attributes the turn.
 		author:       author,

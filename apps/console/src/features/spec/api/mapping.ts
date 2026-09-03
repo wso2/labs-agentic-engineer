@@ -61,17 +61,29 @@ const GROUP_BY_FOLDER: Record<string, SpecGroup> = {
 // #427 was opened to fix.
 const REFERENCES_PREFIX = "specs/requirements/references/";
 
-export function toSpecEntry(meta: FileMeta): SpecFileEntry | null {
-  // specs/<folder>/<…file>: needs the prefix, a known folder, and a file name
-  // beyond it (segments.length >= 3). A trailing slash means the path names a
-  // DIRECTORY, not a file: it clears the length check (the empty last segment
-  // counts) and would otherwise become a selectable entry with no file name.
-  // Checked before the references branch below, so it holds for every group.
-  const segments = meta.path.split("/");
+/**
+ * The spec-view group a path would belong to, or null for a path the view
+ * hides. The declared plan (#576) sorts its entries into rail sections with
+ * this — ONE definition of the folder rule, shared with `toSpecEntry` below,
+ * so a planned path and the file it becomes can never land in different
+ * sections.
+ *
+ * specs/<folder>/<…file>: needs the prefix, a known folder, and a file name
+ * beyond it (segments.length >= 3). A trailing slash means the path names a
+ * DIRECTORY, not a file: it clears the length check (the empty last segment
+ * counts) and would otherwise become a selectable entry with no file name.
+ * Checked before the references branch below, so it holds for every group.
+ */
+export function specGroupOf(path: string): SpecGroup | null {
+  const segments = path.split("/");
   if (segments[0] !== "specs" || segments.length < 3) return null;
   if (segments[segments.length - 1] === "") return null;
-  if (meta.path.startsWith(REFERENCES_PREFIX)) return null;
-  const group = GROUP_BY_FOLDER[segments[1] ?? ""];
+  if (path.startsWith(REFERENCES_PREFIX)) return null;
+  return GROUP_BY_FOLDER[segments[1] ?? ""] ?? null;
+}
+
+export function toSpecEntry(meta: FileMeta): SpecFileEntry | null {
+  const group = specGroupOf(meta.path);
   if (!group) return null;
   return { path: meta.path, sha: meta.sha, group };
 }

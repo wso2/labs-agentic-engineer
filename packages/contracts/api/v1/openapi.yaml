@@ -720,7 +720,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/GetConversationOutputBody'
           description: OK
         default:
           content:
@@ -757,6 +757,8 @@ paths:
               $ref: '#/components/schemas/TurnInputBody'
           multipart/form-data:
             encoding:
+              anchor:
+                contentType: application/json
               files:
                 contentType: application/octet-stream
             schema:
@@ -989,7 +991,7 @@ paths:
   /projects/{projectName}/builds/{tag}/revalidate:
     post:
       description: >-
-        Ask a version's acceptance criteria again, against the system already deployed. It starts a
+        Ask a version's validation criteria again, against the system already deployed. It starts a
         fresh run over that version's milestone which ENTERS THE LOOP AT VALIDATION rather than at
         the working set — nothing is rebuilt to answer the question.
 
@@ -1005,7 +1007,7 @@ paths:
         the version's answer. 409 when a run is already live on the milestone (nothing to hand off
         to — its verdict may be hours away or may never come) or when the milestone still has open
         work (the loop would work that first, which is a build resume, not a revalidation). 422 when
-        the version has no acceptance criteria, refused rather than run so a `skipped` verdict
+        the version has no validation criteria, refused rather than run so a `skipped` verdict
         cannot overwrite a real one.
       operationId: revalidate-build
       parameters:
@@ -3145,6 +3147,47 @@ paths:
       - Skills
 components:
   schemas:
+    ConversationMessage:
+      additionalProperties: false
+      description: >
+        One rehydrated message from a conversation's server-side history, sourced from the
+        turn journal. The console's local chat log is display state; this is the durable
+        record, and it is what makes a chip survive a reload.
+      properties:
+        anchor:
+          $ref: '#/components/schemas/TurnAnchor'
+        attachments:
+          description: File NAMES that went up with this message (#428) — never bytes, which
+            are conversation-scoped model content the platform does not store (console
+            ADR-0019). Absent for every message without attachments.
+          items:
+            type: string
+          type: array
+        author:
+          $ref: '#/components/schemas/ConversationMessageAuthor'
+        content:
+          description: The message body as the journal recorded it. Deliberately untyped — a
+            turn's content is model-shaped and varies by role, and this endpoint's job is to
+            replay it, not to interpret it.
+        role:
+          description: Who the message is from, as the journal recorded it.
+          type: string
+      required:
+      - role
+      type: object
+    ConversationMessageAuthor:
+      additionalProperties: false
+      description: Who sent this message (#130 multi-user threads). Absent for the agent, and
+        for history written before attribution existed.
+      properties:
+        displayName:
+          type: string
+        id:
+          type: string
+      required:
+      - id
+      - displayName
+      type: object
     AccessRequest:
       additionalProperties: false
       properties:
@@ -3443,11 +3486,15 @@ components:
         already pays for it.
       properties:
         status:
-          description: idle (never built), running, failed, succeeded
+          description: idle (never built), running, failed, cancelled, succeeded. `cancelled` is its
+            own value for the same reason it is on BuildSummary — a person abandoning an increment is
+            a different fact from the platform failing to deliver one, and the project badge read
+            "Build failed" over a build somebody had deliberately stopped.
           enum:
           - idle
           - running
           - failed
+          - cancelled
           - succeeded
           type: string
           x-go-type: string
@@ -3565,17 +3612,25 @@ components:
           type: integer
         reason:
           description: The run's terminal reason for a failed version (empty otherwise), surfaced
-            beside the Failed badge in the console.
+            beside the Failed badge in the console. A cancelled version carries none — a person
+            abandoning an increment is not a fault with a cause to report.
           type: string
         startedAt:
           format: date-time
           type: string
         status:
+          description: What became of this version. `cancelled` is its own value rather than a
+            flavour of `failed`, because the two are different facts and a reader acts on them
+            differently — a failure is the platform reporting it could not deliver the increment,
+            while a cancel is a person deciding not to. Folding them lost that; a build somebody
+            deliberately stopped rendered as Failed, with no reason beside it to say why, while the
+            same page's run row said Cancelled two lines below.
           enum:
           - started
           - in_progress
           - completed
           - failed
+          - cancelled
           type: string
         tag:
           type: string
@@ -4248,7 +4303,7 @@ components:
             passed, none failed, some were never covered), failed (a criterion
             asserted and lost), inconclusive (no test results at all), unreported
             (no usable report at the validation cycle's merge commit), skipped (no
-            acceptance criteria, and incident runs, which get no validation cycle).
+            validation criteria, and incident runs, which get no validation cycle).
 
             failed and unreported fail the run only once its validation attempts
             are spent: while attempts remain the run repairs and re-validates, and
@@ -4938,7 +4993,7 @@ components:
             `dev` delivers a version — it plans its own milestone, and is the only kind that takes
             the one-active-build-per-project mutex. `task` works a defect inside a version already
             delivered; task runs execute concurrently on their own milestones. `validation` asks a
-            shipped version's acceptance criteria again — it has no working set, builds nothing, and
+            shipped version's validation criteria again — it has no working set, builds nothing, and
             is outside the mutex so it never holds up the next build.
           enum:
           - dev
@@ -5149,6 +5204,14 @@ components:
         files:
           format: int64
           type: integer
+        itemId:
+          description: '`progress_item` only: WHICH named unit of work the line is about — the key a
+            consumer folds on, since many lines describe the same item and a reader wants one row
+            repainted rather than many rows printed. Validation binds items to acceptance criteria
+            ("AC-003-a"), which `cycleKind` already implies, so this never repeats it. The status
+            itself rides on `status`, scoped by `kind`: planned | exploring | authoring | running |
+            healing | pass | fail.'
+          type: string
         kind:
           type: string
         level:
@@ -5813,8 +5876,9 @@ components:
     RunProgressLine:
       additionalProperties: false
       description: 'One line of a cycle''s agent log: the runner''s progress envelope (phase | tool_use
-        | git_commit | git_push | gh_action | log | result) plus the attribution the console groups on —
-        which cycle produced it, and whether the main agent or one of its Task subagents did.'
+        | activity | tool_result | git_commit | git_push | gh_action | log | progress_item | result)
+        plus the attribution the console groups on — which cycle produced it, and whether the main
+        agent or one of its Task subagents did.'
       properties:
         branch:
           type: string
@@ -5866,6 +5930,14 @@ components:
         files:
           format: int64
           type: integer
+        itemId:
+          description: '`progress_item` only: WHICH named unit of work the line is about — the key a
+            consumer folds on, since many lines describe the same item and a reader wants one row
+            repainted rather than many rows printed. Validation binds items to acceptance criteria
+            ("AC-003-a"), which `cycleKind` already implies, so this never repeats it. The status
+            itself rides on `status`, scoped by `kind`: planned | exploring | authoring | running |
+            healing | pass | fail.'
+          type: string
         kind:
           type: string
         level:
@@ -5945,7 +6017,7 @@ components:
             passed (every criterion was automated and passed), partial (some passed, none failed, and
             some were never covered — so `passed` would claim a result for criteria nobody checked),
             failed (a criterion asserted and lost), inconclusive (no test results at all), unreported
-            (no usable report at the cycle's merge commit), skipped (no acceptance criteria, and
+            (no usable report at the cycle's merge commit), skipped (no validation criteria, and
             incident runs, which get no validation cycle at all).
 
             `failed` and `unreported` fail the run ONCE ITS VALIDATION ATTEMPTS ARE SPENT, under
@@ -6500,8 +6572,8 @@ components:
       type: object
     TimelineEvent:
       additionalProperties: false
-      description: 'A unified-timeline entry: today''s ProgressEvent (phase | tool_use | git_commit |
-        git_push | gh_action | build_step | log | result) plus its attribution — which execution attempt
+      description: 'A unified-timeline entry: today''s ProgressEvent (phase | tool_use | activity |
+        tool_result | git_commit | git_push | gh_action | build_step | log | progress_item | result) plus its attribution — which execution attempt
         it came from. This is the per-row shape the console renders; the FE groups rows by executionId/kind.'
       properties:
         branch:
@@ -6548,6 +6620,14 @@ components:
         files:
           format: int64
           type: integer
+        itemId:
+          description: '`progress_item` only: WHICH named unit of work the line is about — the key a
+            consumer folds on, since many lines describe the same item and a reader wants one row
+            repainted rather than many rows printed. Validation binds items to acceptance criteria
+            ("AC-003-a"), which `cycleKind` already implies, so this never repeats it. The status
+            itself rides on `status`, scoped by `kind`: planned | exploring | authoring | running |
+            healing | pass | fail.'
+          type: string
         kind:
           type: string
         level:
@@ -6607,9 +6687,105 @@ components:
       - executionId
       - executionKind
       type: object
+    GetConversationOutputBody:
+      additionalProperties: false
+      description: A conversation's history, oldest first. An empty list is a real answer — a
+        known thread with no turns yet — never an error.
+      properties:
+        messages:
+          items:
+            $ref: '#/components/schemas/ConversationMessage'
+          type: array
+      required:
+      - messages
+      type: object
+    TurnAnchor:
+      additionalProperties: false
+      description: >
+        What the user pointed at when they aimed this turn at part of a spec document
+        (#666; console ADR-0024). It LOCATES — it never carries the selected content.
+
+
+        The agent joins the spec collab room as a live peer, so between the selection and
+        the turn starting the user may keep typing and a teammate may edit too: content
+        captured at selection time is a photograph of a document that has since moved. The
+        agent resolves these names against the CURRENT document instead. The same reasoning
+        already reversed an embedded copy once — #252 Task 17 stripped a dependency's full
+        JSON entry back to its name, because the agent reads the live entry in its own turn
+        snapshot.
+
+
+        Absent for an ordinary chat turn.
+      properties:
+        file:
+          description: The authored spec file the selection resolves to. Always present — one
+            view renders exactly one file, so a selection never spans two.
+          type: string
+        nodes:
+          description: The selected nodes, in document order. A list because both surfaces
+            multi-select — a drag across three paragraphs, a shift-click across three
+            operations.
+          items:
+            $ref: '#/components/schemas/TurnAnchorNode'
+          minItems: 1
+          type: array
+      required:
+      - file
+      - nodes
+      type: object
+    TurnAnchorNode:
+      additionalProperties: false
+      description: One selected node — the name the agent resolves, and the name the transcript
+        shows back to a user who can no longer see what they clicked.
+      properties:
+        context:
+          description: Where the node sits, for a name that cannot stand alone. Markdown — the
+            heading path, root-first (`Solution > Slack integration`). A structured view — the
+            parent (`lunch-api`). Optional; a name that stands alone needs none.
+          type: string
+        kind:
+          description: >
+            The node's vocabulary word. It carries the whole difference between a name authored
+            AS a name and a sentence pressed into service as one, which is what lets prose and
+            structured views share this schema.
+
+
+            Markdown uses structural terms — `paragraph`, `heading`, `list item` — deliberately
+            NOT document-specific readings like `open question`, so an arbitrary `.md` produces
+            the same shape as the PRD. A structured view uses its own terms (`operation`,
+            `external dependency`). Kept as a raw string rather than a closed enum so a view can
+            name its nodes without a contract change.
+          type: string
+        name:
+          description: >
+            What the agent resolves and the transcript shows. A structured view supplies the
+            node's own name (`POST /rounds`, `slack`). Markdown has none, so it supplies a
+            BOUNDED excerpt of the block's RENDERED text — at most 80 characters, cut at a word
+            boundary.
+
+
+            The bound is the load-bearing part, not the number: an excerpt that grows with the
+            selection is the carried content this schema exists to avoid. It only has to be
+            unique enough to locate — the model receives the full block regardless, because the
+            agent read it from the file.
+
+
+            RENDERED, not source: the source carries `**bold**`, `*assumed*`, links and hard
+            wraps the reader never saw, so a source-exact excerpt fails to match for most
+            blocks. The agent matches on prose, tolerantly, and asks when a name is genuinely
+            ambiguous rather than guessing. `maxLength` is the contract's ceiling against
+            carry; the 80-character rule is the markdown client's.
+          maxLength: 200
+          type: string
+      required:
+      - name
+      - kind
+      type: object
     TurnInputBody:
       additionalProperties: false
       properties:
+        anchor:
+          $ref: '#/components/schemas/TurnAnchor'
         collab:
           description: 'Room-scoped turn (#86 phase 4): the agent joins the project''s spec collab room
             as a live peer, reads and edits the shared doc, and commits nothing to git.'
@@ -6618,6 +6794,23 @@ components:
           description: User message / generation directive. `/<skill>` flow commands (`/start`, `/design`,
             …) are sent VERBATIM — the server expands them, attaches the flow's eager skills, and enriches
             `/start` with the captured project idea.
+          type: string
+        intent:
+          description: >
+            What the user wants done with `anchor` — `change` rewrites the selected nodes in
+            place, `discuss` opens the same selection as a grilling. Read by the agents service
+            when it renders the anchor into the prompt; the two differ only in how that
+            preamble is phrased.
+
+
+            Deliberately a field and NOT a `/command` prefix on `instruction`: a command IS the
+            user's message (the console adds nothing to a line they typed), and an anchored turn
+            carries prose they wrote in their own words, so a prefix would put machinery in their
+            voice. Mirrors the console's own resolve/reconsider intent, whose only job is the
+            same. Absent for a turn with no anchor.
+          enum:
+          - change
+          - discuss
           type: string
         target:
           description: Optional target (e.g. a doc type)
@@ -6644,6 +6837,8 @@ components:
         A file attached here never becomes a project reference, even when the instruction
         is `/start`.
       properties:
+        anchor:
+          $ref: '#/components/schemas/TurnAnchor'
         collab:
           description: As `TurnInputBody.collab`.
           type: boolean
@@ -6671,6 +6866,23 @@ components:
         instruction:
           description: As `TurnInputBody.instruction`. Required — an attachment alone cannot
             start a turn, and the shared TurnSpec validator rejects an empty chat text.
+          type: string
+        intent:
+          description: >
+            As `TurnInputBody.intent`. What the user wants done with `anchor` — `change` rewrites the selected nodes in
+            place, `discuss` opens the same selection as a grilling. Read by the agents service
+            when it renders the anchor into the prompt; the two differ only in how that
+            preamble is phrased.
+
+
+            Deliberately a field and NOT a `/command` prefix on `instruction`: a command IS the
+            user's message (the console adds nothing to a line they typed), and an anchored turn
+            carries prose they wrote in their own words, so a prefix would put machinery in their
+            voice. Mirrors the console's own resolve/reconsider intent, whose only job is the
+            same. Absent for a turn with no anchor.
+          enum:
+          - change
+          - discuss
           type: string
         target:
           description: As `TurnInputBody.target`.

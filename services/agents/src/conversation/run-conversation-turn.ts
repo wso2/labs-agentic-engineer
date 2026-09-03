@@ -43,7 +43,8 @@ import { DocFileBundle } from "../collab/doc-bundle.js";
 import { StreamingDocWriter } from "../collab/streaming-add.js";
 import type { RoomPeer } from "../collab/room-peer.js";
 import { runTurn } from "../agents/main/run-turn.js";
-import { buildFileTools, buildRegisterDraftTools } from "../agents/main/tools/files.js";
+import { buildFileToolSet, buildRegisterDraftTools } from "../agents/main/tools/files.js";
+import { tapWrites, type WriteLedger } from "../agents/main/tools/write-ledger.js";
 import { buildTaskPlanTools } from "../agents/main/tools/task-plan.js";
 import { TaskPlan } from "../agents/main/task-plan-accumulator.js";
 import { buildInstructions, buildTaskPlanInstructions, buildPrompt, buildEagerSkillsBlock } from "../agents/main/prompt.js";
@@ -248,6 +249,10 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
     let bundle: FileBundle | undefined;
     let tools: ToolSet;
     let instructions: string;
+    // The turn's write ledger (files turns only) — see write-ledger.ts: it is
+    // what lets each file write settle at its OWN tool-input-end instead of at
+    // the step's tail, which for a batched step is minutes later.
+    let writes: WriteLedger | undefined;
     if (toolset === "task-plan") {
       // Read-only context: `files` mutates nothing; the accumulator validates
       // planTask/updateTask against it (known components + existing Tasks).
@@ -257,7 +262,9 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
       bundle = input.collabPeer
         ? new DocFileBundle(input.collabPeer, input.files)
         : new FileBundle(input.files);
-      tools = buildFileTools(bundle, skills);
+      const fileToolSet = buildFileToolSet(bundle, skills);
+      tools = fileToolSet.tools;
+      writes = fileToolSet.writes;
       if (input.registerDraft) {
         tools = { ...tools, ...buildRegisterDraftTools() };
       }
@@ -304,12 +311,19 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
     if (input.collabPeer && bundle) {
       docWriter = new StreamingDocWriter(input.collabPeer, bundle);
     }
+    // 3d. Per-call verdicts (write-ledger.ts): a file write is applied and
+    //     reported at its own tool-input-end, so a step that batches five
+    //     addFiles settles each one as it lands instead of flushing all five
+    //     verdicts after the last body. Only the WIRE is re-projected — the doc
+    //     writer keeps observing the SDK's own frames, so its optimistic preview
+    //     is still finalized (or rolled back) by the authoritative execute().
+    const forward = writes ? tapWrites(writes, input.onEvent) : input.onEvent;
     const onEvent = docWriter
       ? (p: StreamPart) => {
           docWriter!.observe(p);
-          input.onEvent(p);
+          forward(p);
         }
-      : input.onEvent;
+      : forward;
 
     // 4. one generic turn. The instructions append the skill catalog at the END
     //    of the system prompt; buildPrompt inlines CURRENT STATE; prepend a one-line

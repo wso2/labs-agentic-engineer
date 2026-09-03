@@ -28,9 +28,9 @@ a user**, as `design-system.md` is for how it looks.
 - **Two vocabularies, deliberately allowed to differ.** `CONTEXT.md` and
   `docs/glossary.md` say what terms *mean* to engineers; the lexicon says what
   the product *says*. The lexicon carries the mapping between them (e.g.
-  *Acceptance criteria* ↔ `specs/validation/validation-criteria.json`), so the
-  divergence is recorded rather than rediscovered — and so nobody later "fixes"
-  it in the wrong direction.
+  *Architecture* ↔ `specs/design/design.cell`), so the divergence is recorded
+  rather than rediscovered — and so nobody later "fixes" it in the wrong
+  direction.
 - **It governs agent prose too, not just component strings.** The user reads the
   agent's narration in the console, so it is product surface. Because a running
   agent cannot read a repo file, the rules reach it through a console-specific

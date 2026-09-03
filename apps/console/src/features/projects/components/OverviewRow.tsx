@@ -18,7 +18,7 @@
 
 import type { ReactNode } from "react";
 import { Box, ButtonBase, Stack, Typography } from "@wso2/oxygen-ui";
-import { ChevronRight } from "@wso2/oxygen-ui-icons-react";
+import { ArrowUpRight, ChevronRight } from "@wso2/oxygen-ui-icons-react";
 
 /**
  * One row of a project's inventory, built to the build page's task-row
@@ -57,6 +57,7 @@ export function OverviewRow({
   meta,
   caption,
   onClick,
+  href,
   last = false,
 }: {
   /** Goes in the leading tile. Sized 18px by the caller, as on the build page. */
@@ -73,6 +74,16 @@ export function OverviewRow({
   caption?: string | undefined;
   /** Omit for a row that does not go anywhere — it then renders no chevron. */
   onClick?: (() => void) | undefined;
+  /**
+   * An EXTERNAL destination, opened in a new tab. Pass this instead of
+   * `onClick` — the row then renders as a real anchor, so the browser's own
+   * ways of following a link (middle click, ⌘-click, "copy link address") all
+   * work, which they never do on a button that calls `window.open`.
+   *
+   * Its affordance is the outward arrow rather than the chevron: a chevron
+   * promises the next panel of this console, and this one leaves it.
+   */
+  href?: string | undefined;
   last?: boolean;
 }) {
   const body = (
@@ -154,7 +165,7 @@ export function OverviewRow({
           display: "flex",
           flexShrink: 0,
           color: "text.disabled",
-          visibility: onClick ? "visible" : "hidden",
+          visibility: onClick || href ? "visible" : "hidden",
           opacity: 0.5,
           transition: (theme) =>
             theme.transitions.create("opacity", {
@@ -162,10 +173,23 @@ export function OverviewRow({
             }),
         }}
       >
-        <ChevronRight size={18} />
+        {href ? <ArrowUpRight size={18} /> : <ChevronRight size={18} />}
       </Box>
     </Stack>
   );
+
+  const interactiveSx = {
+    display: "block",
+    width: "100%",
+    textAlign: "left",
+    "&:hover": { bgcolor: "action.hover" },
+    "&:focus-visible": {
+      outline: 2,
+      outlineColor: "primary.main",
+      outlineOffset: -2,
+    },
+    "&:hover .row-chevron, &:focus-visible .row-chevron": { opacity: 1 },
+  } as const;
 
   return (
     <Box
@@ -174,22 +198,18 @@ export function OverviewRow({
         borderColor: "divider",
       }}
     >
-      {onClick ? (
+      {href ? (
         <ButtonBase
-          onClick={onClick}
-          sx={{
-            display: "block",
-            width: "100%",
-            textAlign: "left",
-            "&:hover": { bgcolor: "action.hover" },
-            "&:focus-visible": {
-              outline: 2,
-              outlineColor: "primary.main",
-              outlineOffset: -2,
-            },
-            "&:hover .row-chevron, &:focus-visible .row-chevron": { opacity: 1 },
-          }}
+          component="a"
+          href={href}
+          target="_blank"
+          rel="noreferrer"
+          sx={interactiveSx}
         >
+          {body}
+        </ButtonBase>
+      ) : onClick ? (
+        <ButtonBase onClick={onClick} sx={interactiveSx}>
           {body}
         </ButtonBase>
       ) : (

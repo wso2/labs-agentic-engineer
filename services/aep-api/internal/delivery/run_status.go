@@ -137,6 +137,16 @@ type RunStatus struct {
 	// "delivered, not yet judged".
 	ValidationIssue   int    `json:"validationIssue,omitempty"`
 	ValidationVerdict string `json:"validationVerdict,omitempty"`
+
+	// Version is the last VersionState the run read: every component in the
+	// design, with what it should be serving and what it is (ADR-0026).
+	//
+	// Live status rather than a column, because it is a fact about the WORLD and
+	// not about the run — the next read may differ, and the run row must not
+	// carry a stale copy of something a reader can ask the cluster for. What
+	// outlives the run is the terminal reason `version-incomplete`, plus the
+	// settle log naming the components that were not serving.
+	Version VersionState `json:"version,omitzero"`
 }
 
 // Run phases — where a cycle is. They are a read-model label only: no platform

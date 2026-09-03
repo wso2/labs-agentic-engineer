@@ -23,6 +23,9 @@
 // conversation store is the durable history; this log is display state.
 
 import type { AskQuestionInput, QuestionAnswer } from "@aep/agent-stream";
+import type { components } from "../../generated/aep-api";
+
+type TurnAnchor = components["schemas"]["TurnAnchor"];
 
 export type ChatMessage =
   | {
@@ -54,6 +57,18 @@ export type ChatMessage =
        * turn journal, which is why chips survive a reload.
        */
       attachments?: string[];
+      /**
+       * What this message was aimed at (#666) — the passage of a spec document
+       * the user selected before typing it. Rendered as a frozen tag above the
+       * text: it records what was pointed at WHEN THE MESSAGE WAS SENT and is
+       * never re-checked against the current document (console ADR-0024), so a
+       * thread read months later still says what was meant.
+       *
+       * Optional and absent for every ordinary chat message. On rehydrate it
+       * comes from the turn journal, which is what makes the tag survive a
+       * reload.
+       */
+      anchor?: TurnAnchor;
     }
   | { id: string; role: "assistant"; turnId: string; content: string }
   | {
@@ -66,10 +81,10 @@ export type ChatMessage =
        * The tool's STREAM lifecycle: `streaming` while its input is still
        * arriving, `done` once the input stream closed (`tool-input-end`) — for a
        * file tool the input IS the body, so that is the moment the file is fully
-       * written. Deliberately independent of `ok`: one step can carry several
-       * file writes, and the SDK flushes every result only after the LAST call
-       * in that step, so "this file is finished" and "the bundle accepted it"
-       * happen at different times and cannot share a field.
+       * written. Deliberately independent of `ok`: "this file is finished" and
+       * "the bundle accepted it" are two facts arriving on two frames, and a
+       * card that conflated them would tick a write the write-gates can still
+       * reject.
        */
       status: "streaming" | "done";
       op: string;
@@ -100,6 +115,20 @@ export type ChatMessage =
        * explicit `streaming: false` — omitting the field keeps the old value.
        */
       streaming?: boolean;
+    }
+  | {
+      id: string;
+      role: "plan";
+      turnId: string;
+      /** Correlates the row with its declare_plan tool-call (replay-stable). */
+      toolCallId: string;
+      /** How many paths this call genuinely ADDED to the turn's plan — the
+       *  union in planStore ignores restated entries, and a call that adds
+       *  nothing never makes a row. */
+      added: number;
+      /** True when the plan already held entries, so the row reads as growth
+       *  ("Planned N more") rather than as the plan ("Planned N documents"). */
+      grew: boolean;
     }
   | { id: string; role: "error"; content: string };
 
@@ -223,7 +252,7 @@ export function settleUserMessage(
  * toolCallId always appends (never a false in-place hit). `merge` lets a caller
  * keep fields the fresh fold doesn't know (e.g. a recorded answer).
  */
-function upsertByToolCallId<R extends "tool" | "question">(
+function upsertByToolCallId<R extends "tool" | "question" | "plan">(
   key: string,
   role: R,
   msg: WithoutId<Extract<ChatMessage, { role: R }>>,
@@ -276,6 +305,18 @@ export function upsertQuestionMessage(
   upsertByToolCallId(key, "question", msg, (existing) =>
     existing.answers ? { answers: existing.answers } : {},
   );
+}
+
+/**
+ * Add a plan activity row (#576, ADR-0025) — the declare_plan call surfacing
+ * in the chat like any other tool step. Keyed by toolCallId so the belt-and-
+ * braces double publish (tool-input-end, then tool-call) lands on one row.
+ */
+export function upsertPlanMessage(
+  key: string,
+  msg: WithoutId<Extract<ChatMessage, { role: "plan" }>>,
+): void {
+  upsertByToolCallId(key, "plan", msg);
 }
 
 /** Streamed text accumulates into the turn's last assistant message. */
@@ -391,6 +432,39 @@ export function replaceMessages(key: string, messages: ChatMessage[]): void {
 // (api/conversations.ts + useAgentChat) — which is what makes the thread
 // shared across every member's browser. This store keeps only the local
 // display log, demoted to a paint-fast cache of the server thread.
+
+
+// --- chat open requests (#666: Discuss opens the panel without seeding) ----
+//
+// `pendingSeed` above also opens the panel, but it opens it AROUND A MESSAGE it
+// then auto-sends. An anchored Discuss has already sent its own turn — with the
+// anchor attached, which a seed cannot carry — so it needs the open on its own.
+// Reusing the seed slot would send the text twice.
+//
+// A COUNT rather than a flag: two Discusses in a row must both open the panel,
+// and a flag that was already true is indistinguishable from one nobody set.
+
+const chatOpenRequests = new Map<string, number>();
+const chatOpenListeners = new Map<string, Set<() => void>>();
+
+/** Ask for the project's chat panel to be shown. */
+export function requestChatOpen(key: string): void {
+  chatOpenRequests.set(key, (chatOpenRequests.get(key) ?? 0) + 1);
+  for (const fn of chatOpenListeners.get(key) ?? []) fn();
+}
+
+/** How many times the panel has been asked for. Monotonic; a changed value is
+ *  the signal, never the number itself. */
+export function peekChatOpenRequest(key: string): number {
+  return chatOpenRequests.get(key) ?? 0;
+}
+
+export function subscribeChatOpen(key: string, fn: () => void): () => void {
+  const set = chatOpenListeners.get(key) ?? new Set();
+  set.add(fn);
+  chatOpenListeners.set(key, set);
+  return () => set.delete(fn);
+}
 
 // --- pendingSeed (#252 Task 5: "Resolve via chat") ------------------------
 //
@@ -577,6 +651,16 @@ function claim(counts: Map<string, number>, key: string): () => void {
  *  function when the fold ends, however it ends. */
 export function claimStreamFold(key: string): () => void {
   return claim(attachedFolds, key);
+}
+
+/**
+ * Is a fold already live for `key`? The log has more than one folder now — the
+ * panel, and the quiet anchored send (#666) — and two concurrent folds of the
+ * same turn would interleave one stream on top of itself. Whoever would start
+ * a fold asks this first; component-local refs cannot answer it.
+ */
+export function hasStreamFold(key: string): boolean {
+  return (attachedFolds.get(key) ?? 0) > 0;
 }
 
 /** Mark a local send as mid-dispatch for `key`. Call the returned function

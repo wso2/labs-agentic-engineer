@@ -32,7 +32,7 @@
 
 import { markdownToNode } from "@aep/collab-doc";
 import { prdAffordances } from "./prdLenses";
-import { prdBlocks } from "../collab/prdLensPlugin";
+import { docBlocks } from "../collab/docBlocks";
 
 export interface PrdUnsettled {
   /** Judgments the agent made, which the user may want to overturn. */
@@ -54,7 +54,7 @@ const NONE: PrdUnsettled = { assumptions: 0, openQuestions: 0 };
 export function prdUnsettled(markdown: string | undefined): PrdUnsettled {
   if (!markdown?.trim()) return NONE;
   try {
-    const flags = prdAffordances(prdBlocks(markdownToNode(markdown))).flags;
+    const flags = prdAffordances(docBlocks(markdownToNode(markdown))).flags;
     return {
       assumptions: flags.filter((f) => f.kind === "assumed").length,
       openQuestions: flags.filter((f) => f.kind === "question").length,

@@ -18,10 +18,10 @@
 
 import dagre from "@dagrejs/dagre";
 import { MarkerType, type Edge, type Node } from "@xyflow/react";
-import { CellModel, ProjectModel } from "../domain/cellModel";
+import { CellModel, ProjectModel, type BoundaryDirection } from "../domain/cellModel";
+import { clearBoundaryCorridors } from "./boundaryCorridor";
 
 type FlowNodeData = Record<string, unknown>;
-type BoundaryDirection = "north" | "east" | "south" | "west";
 
 const componentSize = 112;
 const externalSize = 106;
@@ -29,6 +29,10 @@ const gatewaySize = 34;
 const componentWidth = componentSize;
 const componentHeight = componentSize;
 const cellPadding = 142;
+// Free space a boundary edge keeps on either side of its line — see
+// `clearBoundaryCorridors`. Half a component plus a little, so a nudged
+// neighbour clears the line rather than grazing it.
+const corridorClearance = 28;
 const defaultCellSize = 640;
 const externalGapByDirection: Record<BoundaryDirection, number> = {
   north: 220,
@@ -42,6 +46,34 @@ const externalStepByDirection: Record<BoundaryDirection, number> = {
   south: 240,
   west: 172
 };
+
+/**
+ * The boundary directions each component's own edges leave or enter by. An
+ * inbound edge occludes exactly like an outbound one — both run between the
+ * component and the gateway — so both count.
+ */
+function boundaryDirectionsByComponent(cell: CellModel) {
+  const componentIds = new Set(cell.components.map((component) => component.id));
+  const directions = new Map<string, Set<BoundaryDirection>>();
+
+  cell.edges.forEach((edge) => {
+    const direction = edge.direction;
+    if (edge.kind === "internal" || direction === "internal") {
+      return;
+    }
+
+    const componentId = componentIds.has(edge.source) ? edge.source : edge.target;
+    if (!componentIds.has(componentId)) {
+      return;
+    }
+
+    const existing = directions.get(componentId) ?? new Set<BoundaryDirection>();
+    existing.add(direction);
+    directions.set(componentId, existing);
+  });
+
+  return directions;
+}
 
 export function layoutCell(cell: CellModel) {
   const graph = new dagre.graphlib.Graph();
@@ -66,13 +98,23 @@ export function layoutCell(cell: CellModel) {
 
   dagre.layout(graph);
 
+  const placed = clearBoundaryCorridors(
+    cell.components.map((component) => {
+      const position = graph.node(component.id) ?? { x: 0, y: 0 };
+      return {
+        id: component.id,
+        x: position.x - componentWidth / 2,
+        y: position.y - componentHeight / 2
+      };
+    }),
+    boundaryDirectionsByComponent(cell),
+    { width: componentWidth, height: componentHeight, clearance: corridorClearance }
+  );
+
+  const positions = new Map(placed.map((node) => [node.id, node]));
   const nodes = cell.components.map((component) => {
-    const position = graph.node(component.id) ?? { x: 0, y: 0 };
-    return {
-      component,
-      x: position.x - componentWidth / 2,
-      y: position.y - componentHeight / 2
-    };
+    const position = positions.get(component.id)!;
+    return { component, x: position.x, y: position.y };
   });
 
   const bounds = nodes.reduce(

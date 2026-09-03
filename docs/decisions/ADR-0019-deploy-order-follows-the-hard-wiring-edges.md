@@ -77,6 +77,16 @@ Three properties follow:
   exists in the design but has never deployed at all would still be published unconfigured. That is
   not reachable from the run loop (the deploy set comes from a build fan-out that is red if any
   component failed, and a first build builds everything), but it is an assumption, not a proof.
+
+  > **Superseded by [ADR-0026](ADR-0026-deploy-reconciles-the-version.md).** The assumption was
+  > false, and the counterexample shipped: a red build stops the fan-out being green, but the cycle
+  > that follows it rebuilds only what its own fix touched — so a component green at the earlier
+  > commit is in no later deploy set, and a consumer's provider can exist in the design having never
+  > deployed. Project `track-each-hire7321` delivered v1 that way, with its API unbound. The planner
+  > now reads the whole design's edges over the version's own state, so a provider with no serving
+  > release is an unsatisfied edge rather than an assumed-satisfied one. Everything else in this ADR
+  > stands: the grading of edges, the waves, the commitless converge, the one deadline, the permanent
+  > cycle refusal.
 - **The converge carries no commit.** `Deploy` with an empty commit SHA re-asserts wiring at whatever
   release is already serving (the verb a config edit has always used). Nothing is re-cut, so the
   pass cannot fail on a release that already exists — the wedge in (1) is removed by the shape rather

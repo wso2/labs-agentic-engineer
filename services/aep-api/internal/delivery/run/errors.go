@@ -109,3 +109,19 @@ func deployErr(err error) error {
 	}
 	return temporal.NewNonRetryableApplicationError(err.Error(), errTypePermanentDeploy, err)
 }
+
+// errTypePermanentProvision is the ApplicationError type a permanent provision
+// failure carries: the ClusterResourceType is missing, or the Resource never
+// cuts a release.
+const errTypePermanentProvision = "PermanentProvisionFailure"
+
+// provisionErr is deployErr's twin for ProvisionGates: an answer must not be
+// retried like a blip. WHICH provision failures are permanent is the
+// dependencies domain's to say (delivery.ErrProvisionPermanent) — this package
+// only knows how to say it to Temporal.
+func provisionErr(err error) error {
+	if err == nil || !errors.Is(err, delivery.ErrProvisionPermanent) {
+		return err
+	}
+	return temporal.NewNonRetryableApplicationError(err.Error(), errTypePermanentProvision, err)
+}

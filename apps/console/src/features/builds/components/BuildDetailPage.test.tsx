@@ -241,7 +241,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-// ADR-0023 moved the collection of external values off the Build button and
+// ADR-0023 moved the collection of external configuration off the Build button and
 // onto the run. ADR-0021 then made a VERSION's page the place that says why
 // that version is or is not moving, so this is where the section lives.
 describe("BuildDetailPage — external resources", () => {
@@ -252,9 +252,9 @@ describe("BuildDetailPage — external resources", () => {
     renderPage();
 
     expect(screen.getByText("External resources")).toBeInTheDocument();
-    expect(screen.getByText("1 of 1 need values")).toBeInTheDocument();
+    expect(screen.getByText("1 of 1 need configuration")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Configure stripe" }),
+      screen.getByRole("button", { name: "Configure now: stripe" }),
     ).toBeInTheDocument();
 
     // ORDER, not membership. It is outstanding work a person must do, so it is
@@ -307,7 +307,7 @@ describe("BuildDetailPage — the deploy gate's park", () => {
     renderPage();
 
     expect(
-      screen.getByText("Waiting for values: stripe, sendgrid"),
+      screen.getByText("Waiting for configuration: stripe, sendgrid"),
     ).toBeInTheDocument();
     // The promise the reader needs most: there is no restart button to hunt for.
     expect(
@@ -315,7 +315,7 @@ describe("BuildDetailPage — the deploy gate's park", () => {
     ).toBeInTheDocument();
     // On THIS page, deliberately — a route would be a second way into one
     // configuration surface.
-    expect(screen.getByRole("link", { name: "Supply values" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Add configuration" })).toHaveAttribute(
       "href",
       "#external-resources",
     );
@@ -328,7 +328,7 @@ describe("BuildDetailPage — the deploy gate's park", () => {
     mockRuns = [parked()];
     renderPage();
 
-    expect(screen.getByText("Waiting for external values")).toBeInTheDocument();
+    expect(screen.getByText("Waiting for external configuration")).toBeInTheDocument();
   });
 
   // The regression this exists to stop. `BuildSummary` has no waiting reason,
@@ -340,11 +340,11 @@ describe("BuildDetailPage — the deploy gate's park", () => {
     mockRuns = [parked(["stripe"])];
     renderPage();
 
-    expect(screen.getByText("Waiting for values")).toBeInTheDocument();
+    expect(screen.getByText("Waiting for configuration")).toBeInTheDocument();
     expect(screen.queryByText("Running · Coding agent")).not.toBeInTheDocument();
     // And the rollout line must not contradict the notice above it.
     expect(
-      screen.getByText("v2 is built and waiting for its external values."),
+      screen.getByText("v2 is built and waiting for its external configuration."),
     ).toBeInTheDocument();
   });
 
@@ -483,12 +483,12 @@ describe("BuildDetailPage — the Duration cell", () => {
   });
 });
 
-describe("BuildDetailPage — the coding agent log's 'streaming' chip", () => {
+describe("BuildDetailPage — the coding agent log's header note", () => {
   it("says streaming while a build session is open", () => {
     mockBuilds = [build()];
     mockRuns = [run({ cycles: [cycle({ endedAt: null })] })];
     renderPage();
-    expect(screen.getByText("streaming")).toBeInTheDocument();
+    expect(screen.getByText("Streaming")).toBeInTheDocument();
   });
 
   it("stops the moment the agent finishes, though the run is still in progress", () => {
@@ -499,7 +499,7 @@ describe("BuildDetailPage — the coding agent log's 'streaming' chip", () => {
       run({ cycles: [cycle({ endedAt: "2026-08-14T16:38:00Z", mergeSha: "abc1234" })] }),
     ];
     renderPage();
-    expect(screen.queryByText("streaming")).not.toBeInTheDocument();
+    expect(screen.queryByText("Streaming")).not.toBeInTheDocument();
   });
 
   it("stays quiet while the run is PARKED, even with a cycle still open", () => {
@@ -515,7 +515,53 @@ describe("BuildDetailPage — the coding agent log's 'streaming' chip", () => {
       }),
     ];
     renderPage();
-    expect(screen.queryByText("streaming")).not.toBeInTheDocument();
+    expect(screen.queryByText("Streaming")).not.toBeInTheDocument();
+  });
+});
+
+// The run's ending labels the SECTION HEADER, beside "Coding agent log", the way
+// every other section on this page carries its status. It used to sit under the
+// log as `run settled — succeeded`: the stream contract's own word for the
+// transition, with the raw state pasted on in its wire spelling.
+describe("BuildDetailPage — the coding agent log's settled label", () => {
+  it("names how the run ended, beside the section title", () => {
+    mockBuilds = [build()];
+    mockRuns = [
+      run({
+        state: "succeeded",
+        cycles: [cycle({ endedAt: "2026-08-14T16:38:00Z" })],
+      }),
+    ];
+    renderPage();
+    expect(screen.getByText("Run finished successfully")).toBeInTheDocument();
+    // The old body line, in either spelling, is gone.
+    expect(screen.queryByText(/settled/)).not.toBeInTheDocument();
+  });
+
+  it("names a cancelled run as cancelled, not as finished", () => {
+    mockBuilds = [build()];
+    mockRuns = [
+      run({ state: "cancelled", cycles: [cycle({ endedAt: "2026-08-14T16:38:00Z" })] }),
+    ];
+    renderPage();
+    expect(screen.getByText("Run cancelled")).toBeInTheDocument();
+  });
+
+  // Live beats settled, and a non-terminal run is labelled by NEITHER: a run
+  // parked at the deploy gate has not ended, and "Run finished" over its log
+  // would contradict the summary card telling the reader it is waiting on them.
+  it("says nothing about a run that has not ended", () => {
+    mockBuilds = [build()];
+    mockRuns = [
+      run({
+        state: "waiting",
+        waitingReason: "external-values",
+        blockingDependencies: ["stripe"],
+        cycles: [cycle({ endedAt: "2026-08-14T16:38:00Z" })],
+      }),
+    ];
+    renderPage();
+    expect(screen.queryByText(/^Run /)).not.toBeInTheDocument();
   });
 });
 

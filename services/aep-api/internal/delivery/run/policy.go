@@ -17,6 +17,7 @@
 package run
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
@@ -234,15 +235,230 @@ type CycleBuildState struct {
 	Expected int      `json:"expected"`
 	Settled  int      `json:"settled"`
 	Red      []string `json:"red,omitempty"`
-	// Components is the set the merge touched, in the fan-out's own order. The
-	// DEPLOY stage promotes exactly this list rather than re-deriving it from
-	// GitHub: the two stages must agree on which components a cycle owns, and a
-	// second path to that answer is a second chance to disagree.
+	// Components is the set the merge touched, in the fan-out's own order.
+	//
+	// It is the poll's own bookkeeping — what Expected was counted over — and
+	// NOTHING downstream reads it. It used to be the deploy stage's input, which
+	// is what made the deploy set the cycle's path diff: a component green at an
+	// earlier commit was in no later cycle's list, so nothing ever promoted it.
+	// The deploy reads the version's own state instead (ADR-0026). Kept on the
+	// wire because an activity result lives in Temporal history and a run in
+	// flight across an upgrade decodes what its old worker recorded.
 	Components []string `json:"components,omitempty"`
 }
 
 // Green reports whether every component the merge touched has built.
 func (s CycleBuildState) Green() bool { return len(s.Red) == 0 && s.Settled >= s.Expected }
+
+// ---- the version's deploy state (ADR-0026) ---------------------------------
+
+// versionState classifies every component in the design against what has been
+// built and what is deployed.
+//
+// DESIRED is the release the component's newest succeeded build would cut;
+// ACTUAL is the release its binding pins, plus whether that is Ready. The
+// difference between those two is the whole model: the deploy set used to be
+// the cycle's path diff, so a component whose build went green in a cycle a
+// sibling failed was promoted by nothing, ever — its files had stopped
+// changing. Classifying the DESIGN instead makes "what is serving" a function
+// of what has been built rather than of which files a fix happened to touch.
+//
+// A component the deployment read did not answer for reads as having no binding
+// — which is `behind`, and correct: it has a green build and nothing pinning
+// it.
+func versionState(projectID string, components []string, builds map[string][]BuildRunInfo,
+	deploys map[string]delivery.ComponentDeploy) delivery.VersionState {
+	out := delivery.VersionState{Components: make([]delivery.ComponentState, 0, len(components))}
+	for _, name := range components {
+		out.Components = append(out.Components,
+			classifyComponentState(projectID, name, builds[name], deploys[name]))
+	}
+	return out
+}
+
+// classifyComponentState is one component's state, as a pure function of its
+// builds and its binding.
+//
+// It does NOT branch on the binding's Failed verdict, and that is deliberate. A
+// binding pinned at the right release that will never be Ready is `converging`
+// here, because a pin cannot tell a doomed rollout from a slow one — and it does
+// not have to: converging components are waited on, and the readiness poll turns
+// a terminal Ready reason into a deploy failure within one tick. Folding failure
+// into a sixth state would put the same verdict in two places, which is how the
+// two come to disagree.
+func classifyComponentState(projectID, component string, runs []BuildRunInfo,
+	deploy delivery.ComponentDeploy) delivery.ComponentState {
+	st := delivery.ComponentState{
+		Component: component,
+		Pinned:    deploy.Release,
+		Ready:     deploy.Ready,
+		Reason:    deploy.Reason,
+	}
+	if deploy.Undeploy {
+		// Withdrawn on purpose. Nothing is owed: promoting a release over a
+		// deliberate undeploy would be the platform overruling the person who
+		// asked for it, and refusing to deliver the version would fail a run
+		// over the same decision.
+		//
+		// The marker rides along because it does NOT make this component a
+		// satisfied hard provider — it has no active release, so it has no
+		// address (ComponentState.ServesConsumers).
+		st.State, st.Undeploy = delivery.ComponentStateServing, true
+		return st
+	}
+	st.DesiredSHA = newestGreenCommit(runs)
+	if st.DesiredSHA == "" {
+		// Never built. Not a failure: a red build already minted its fix issue,
+		// and a component nobody has written yet has its development issue open.
+		st.State = delivery.ComponentStateUnbuilt
+		return st
+	}
+	st.DesiredRelease = delivery.ReleaseNameFor(projectID, component, st.DesiredSHA)
+	switch {
+	case st.Pinned != st.DesiredRelease:
+		st.State = delivery.ComponentStateBehind
+	case st.Ready:
+		st.State = delivery.ComponentStateServing
+	default:
+		st.State = delivery.ComponentStateConverging
+	}
+	return st
+}
+
+// newestGreenCommit is the commit of a component's newest SUCCEEDED build.
+//
+// Succeeded rather than newest: a component whose latest attempt failed is
+// still built, at the commit that worked, and a version does not un-deploy
+// because somebody pushed a broken commit afterwards — the red build's own fix
+// issue is what moves it forward.
+//
+// Ordered by the run's creation time because the host returns the list
+// unordered, with the NAME as the tie-break so two runs admitted in the same
+// instant classify the same way on every poll. A green run with no commit
+// (a build of whatever the branch tip was, triggered outside a cycle) is
+// skipped: it names no release the platform could pin.
+func newestGreenCommit(runs []BuildRunInfo) string {
+	best := BuildRunInfo{}
+	for _, r := range runs {
+		if !r.Terminal || !r.Succeeded || r.CommitSHA == "" {
+			continue
+		}
+		if best.CommitSHA == "" || r.StartedAt.After(best.StartedAt) ||
+			(r.StartedAt.Equal(best.StartedAt) && r.Name > best.Name) {
+			best = r
+		}
+	}
+	return best.CommitSHA
+}
+
+// unorderedPlan is the plan a run with no deployer wired gets: everything
+// behind in one wave, nothing held. It mirrors PromoteWave's own no-deployer
+// behaviour — the stage is walked, there is simply nothing to write.
+func unorderedPlan(v delivery.VersionState) delivery.DeployPlan {
+	plan := delivery.DeployPlan{}
+	var wave []delivery.DeployTarget
+	for _, c := range v.Components {
+		switch c.State {
+		case delivery.ComponentStateBehind:
+			wave = append(wave, delivery.DeployTarget{Component: c.Component, CommitSHA: c.DesiredSHA})
+			plan.Waited = append(plan.Waited, c.Component)
+		case delivery.ComponentStateConverging:
+			plan.Waited = append(plan.Waited, c.Component)
+		}
+	}
+	if len(wave) > 0 {
+		plan.Waves = [][]delivery.DeployTarget{wave}
+	}
+	return plan
+}
+
+// planWaveNames / heldNames render a plan for the log — the names, wave by
+// wave, and what each held component is waiting on.
+func planWaveNames(plan delivery.DeployPlan) [][]string {
+	out := make([][]string, 0, len(plan.Waves))
+	for _, wave := range plan.Waves {
+		out = append(out, delivery.TargetNames(wave))
+	}
+	return out
+}
+
+func heldNames(plan delivery.DeployPlan) []string {
+	out := make([]string, 0, len(plan.Held))
+	for _, c := range plan.Held {
+		entry := c.Component
+		if len(c.WaitingOn) > 0 {
+			entry += " waiting on " + strings.Join(c.WaitingOn, ", ")
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+// reconcileWork reports whether a version state gives the deploy stage anything
+// to do at all: something to promote, or something to wait for.
+//
+// Asked in the WORKFLOW, off the state it already has, because it decides
+// whether the stage runs — and a fully serving version must reconcile in one
+// read and zero writes, never park on a deploy gate it will not use.
+func reconcileWork(v delivery.VersionState) bool {
+	for _, c := range v.Components {
+		if c.State == delivery.ComponentStateBehind || c.State == delivery.ComponentStateConverging {
+			return true
+		}
+	}
+	return false
+}
+
+// convergeSet is what the stage's closing pass re-asserts the wiring of: every
+// component this pass waited on, plus every component that was ALREADY serving.
+//
+// The already-serving half is load-bearing and was the narrow reading's bug. A
+// soft edge runs from consumer to provider — a protected API's CORS allowlist is
+// the project's SPA origins — so promoting a web app in a later pass has to
+// finish the wiring of an api that was promoted in an earlier one. A converge
+// scoped to what this pass promoted would leave that api permanently unaware of
+// the SPA it serves.
+//
+// Held and unbuilt components are excluded: a converge writes a binding with no
+// release pinned, which OpenChoreo cannot render, so a component that has never
+// been promoted must not be in it.
+func convergeSet(v delivery.VersionState, waited []string) []string {
+	seen := make(map[string]struct{}, len(waited)+len(v.Components))
+	out := make([]string, 0, len(waited)+len(v.Components))
+	add := func(name string) {
+		if _, dup := seen[name]; dup {
+			return
+		}
+		seen[name] = struct{}{}
+		out = append(out, name)
+	}
+	for _, name := range waited {
+		add(name)
+	}
+	for _, c := range v.Components {
+		if c.State == delivery.ComponentStateServing && c.Pinned != "" {
+			add(c.Component)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// targetsFor pairs component names with the commit each one's release was being
+// cut from, for the fix issues a failed pass files. A name the state does not
+// know answers an empty commit rather than being dropped: a failure the platform
+// cannot attribute to a commit is still a failure that needs an issue.
+func targetsFor(names []string, v delivery.VersionState) []delivery.DeployTarget {
+	commits := make(map[string]string, len(v.Components))
+	for _, c := range v.Components {
+		commits[c.Component] = c.DesiredSHA
+	}
+	out := make([]delivery.DeployTarget, 0, len(names))
+	for _, name := range names {
+		out = append(out, delivery.DeployTarget{Component: name, CommitSHA: commits[name]})
+	}
+	return out
+}
 
 // CycleDeployState is how far a cycle's DEPLOY has got: how many components were
 // promoted, how many are serving, and which ones the cluster has given up on.

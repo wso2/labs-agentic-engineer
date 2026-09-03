@@ -21,8 +21,8 @@ yet a product word.
 ## Naming rules
 
 1. **A section names the class; an artifact names the document.** An artifact label adds
-   information, never echoes its header — `ACCEPTANCE CRITERIA › Acceptance criteria` fails
-   this.
+   information, never repeats its header outright — `VALIDATION › Validation` fails this;
+   `REQUIREMENTS › Product requirements` and `VALIDATION › Validation criteria` do not.
 2. **Filenames are never labels.** The user reads a document tree, not a repo.
 3. **Plural for things that accumulate over time, singular for the one a project has.**
    Builds, Deployments, Issues, Validations — Overview, Spec.
@@ -42,7 +42,7 @@ concept for *the agreed description of what we're building*.
 |---|---|---|
 | `REQUIREMENTS` | **Product requirements** | `specs/requirements/prd.md` |
 | `DESIGN` (not `DESIGNS` — one design, several files) | **Architecture** · **Design overview** · **Security** · then per-component | `specs/design/` |
-| `VALIDATION` | **Acceptance criteria** | `specs/validation/validation-criteria.json` |
+| `VALIDATION` | **Validation criteria** | `specs/validation/validation-criteria.json` |
 
 **Security** is one rail entry, one page:
 
@@ -240,27 +240,40 @@ The values an external dependency needs are no longer asked for in front of the
 Build button; they are supplied on a version's build page, as a section sitting
 directly under Tasks.
 
-The PAGE is version-scoped; the VALUES are not. They belong to the project and
-the environment, so every version's page shows the same answer, and a value
-supplied on one releases whichever run is parked on it. Copy here must not imply
-otherwise — "this version's credentials" would promise a per-version answer the
-platform does not have.
+The PAGE is version-scoped; the CONFIGURATION is not. It belongs to the project
+and the environment, so every version's page shows the same answer, and a
+dependency configured on one releases whichever run is parked on it. Copy here
+must not imply otherwise — "this version's credentials" would promise a
+per-version answer the platform does not have.
 
 | | |
 |---|---|
 | Section title | **External resources** |
 | Its chip, all supplied | **`3 of 3 configured`** |
-| Its chip, some outstanding | **`2 of 3 need values`** |
-| Body, all supplied | *Every external dependency has its development values.* |
-| Body, some outstanding | *The agent builds while you supply these. The version is not deployed until every one of them has its development values.* |
-| A row that has its values | **`Configured`** + **Update values** |
-| A row that does not | **`Needs values`** + **Configure** |
-| After a save | *Values saved — the deployment no longer waits on this one.* |
+| Its chip, some outstanding | **`2 of 3 need configuration`** |
+| Body, all supplied | *Every external dependency has its development configuration.* |
+| Body, some outstanding | *The agent builds while you supply these. The version is not deployed until every one of them has its development configuration.* |
+| A row that is configured | **`Configured`** + **Edit configuration** |
+| A row that is not | **`Needs configuration`** + **Configure now** |
+| A row's second line, no description | *2 settings outstanding* / *2 settings stored* |
+| After a save | *Configuration saved — the deployment no longer waits on this one.* |
 
-**`Needs values`, never *Unconfigured* or *Not ready*.** It names what the reader
-must do, not the state machine's word for the row. And *configured* is
+**`Needs configuration`, never *Unconfigured* or *Not ready*.** It names what the
+reader must do, not the state machine's word for the row. And *configured* is
 deliberately not *ready*: OpenChoreo reports these bindings `Ready` while every
 key is still empty, so the two words name different facts and must not merge.
+
+**One noun: *configuration*, never *values* or *credentials*.** The section used
+to say "values", which is the wire's word for what a binding holds, and the
+drawer before it said "credentials", which is only true of the subset that are
+secrets — a webhook URL is neither. *Configuration* covers every key the dialog
+collects and is the word the buttons already used. The individual keys are
+**settings** when they have to be counted.
+
+**The row's status is plain toned text, not a second pill.** The section header
+already carries a chip; a chip on every row competes with the button it is meant
+to lead the eye to. The outstanding row takes the section's one filled button
+(**Configure now**), a configured row the quiet outlined one.
 
 ### A version parked at the deploy gate
 
@@ -270,23 +283,61 @@ and they must agree.
 
 | | |
 |---|---|
-| The page's status pill | **`Waiting for values`** |
-| The summary card's notice, naming what it waits on | **`Waiting for values: stripe, sendgrid`** |
-| The same notice when the run named nothing | **`Waiting for external values`** |
-| Its body | *Everything built. This version is not deployed until every external resource holds its development values — add them under External resources below and the run resumes and deploys on its own, with nothing to restart.* |
-| Its button | **Supply values** |
-| The card's rollout line | ***v2** is built and waiting for its external values.* |
+| The page's status pill | **`Waiting for configuration`** |
+| The summary card's notice, naming what it waits on | **`Waiting for configuration: stripe, sendgrid`** |
+| The same notice when the run named nothing | **`Waiting for external configuration`** |
+| Its body | *Everything built. This version is not deployed until every external resource holds its development configuration — add it under External resources below and the run resumes and deploys on its own, with nothing to restart.* |
+| Its button | **Add configuration** |
+| The card's rollout line | ***v2** is built and waiting for its external configuration.* |
 
 **"with nothing to restart" is the load-bearing half.** Without it the reader
 goes looking for a Build or Retry button that would start a second run.
 
-**The ledger row says `Waiting for values` too, and it is the same words as the
-pill.** `BuildSummary` carries the waiting reason, which is what separates a
+**The ledger row says `Waiting for configuration` too, and it is the same words
+as the pill.** `BuildSummary` carries the waiting reason, which is what separates a
 parked version from a running one — both are `in_progress` — and it costs the
 ledger nothing: the run row it is built from already holds it. The row also goes
 QUIET, no tint and no pulse: those mean "the moving thing", and a park is the
 opposite. The dependency NAMES stay on the build page, where the run read that
 carries them is already being made and there is room to list them.
+
+### The build page's log sections
+
+Tasks, External resources, Coding agent log and Build logs are peers on one
+page, so they label and empty themselves the same way. Two things had drifted:
+one section's placeholder was a bare left-aligned paragraph beside another's
+centred `EmptyState`, and the agent log carried a status pill where Tasks
+carried plain text.
+
+| | |
+|---|---|
+| Header note, Tasks | *7 in this build · 7 done* |
+| Header note, agent log, streaming | *Streaming* + `AgentPulse` |
+| Header note, agent log, run over | *Run finished successfully* / *Run failed* / *Run cancelled* / *Run blocked* |
+| The same, state unknown or absent | *Run ended — `<state>`* / *Run finished* |
+| Any section with nothing to show | a centred `EmptyState compact` |
+| The agent log's stream health | *Attaching to the run feed…* / *Connection lost — reconnecting…* |
+
+**A header note is secondary caption text, never a pill.** The page header
+already carries the version's toned status chip; a second toned pill a few
+inches below competes with it for the same glance.
+
+**`Run finished successfully`, never `run settled — succeeded`.** *Settled* is
+the stream contract's word for the transition, not something a person watching a
+build says, and the state used to be pasted on raw in its lower-case wire
+spelling. It draws on the same vocabulary as the run status chip — *succeeded*
+becomes *finished successfully*, never *settled* — so a reader meets one word
+for one outcome, phrased for the slot it sits in.
+
+**How the run ENDED belongs in the header; how the STREAM is doing belongs in
+the body.** They answer different questions and come from different reads — the
+ending from the run list, which the streaming note beside it already reads, so
+the two halves of one label cannot contradict each other. Stream health is
+right-aligned under the log, away from where its content starts.
+
+**A run that is neither streaming nor terminal is labelled by neither.** A run
+parked at the deploy gate has not ended, and *Run finished* over its log would
+contradict the summary card telling the reader it is waiting on them.
 
 ## The project overview
 
@@ -550,8 +601,8 @@ three assumptions and one otherwise look identical and *how much* is what a glan
 
 | section | what the dialog lists | its fix |
 |---|---|---|
-| Requirements | *N open questions* | **Open the document**, where the settle controls already are |
-| Requirements | *N assumptions to challenge* | **Open the document** |
+| Requirements | *N questions only you can answer* | **Open the document**, where the settle controls already are |
+| Requirements | *N decisions marked assumed* | **Open the document** |
 | Design · Validation | *The requirements have changed since* | **Update the design** |
 
 **Ordered by how badly it hurts to ignore**, which is what makes the hover's pick meaningful rather
@@ -571,8 +622,17 @@ rail reports; Design stays clickable throughout.
 **But Generate design warns first when they stand.** The rail says the same thing at rest; the click
 is the moment it becomes consequential, because the design is derived from those guesses and
 overturning one afterwards means deriving again. So the dialog names what is unsettled and offers
-both ways: *Resolve issues* returns to the requirements document, where the settle controls already
-live on the flagged lines, and *Generate anyway* goes on.
+both ways: *Review them first* returns to the requirements document, where the controls already live
+on the flagged lines, and *Generate anyway* goes on.
+
+**In the user's words** ([#666](https://github.com/wso2/labs-agentic-engineer/issues/666)): the
+dialog is titled *Some decisions are still yours*, and its one paragraph says what the agent did
+(*made some decisions on your behalf — marked assumed in the document*), what happens next (*the
+design will be built on the requirements as they stand*) and what being wrong costs (*the design has
+to be generated again*). *Settled*, *derived*, *judgment* and *to challenge* were retired from it:
+they are how this file talks about the document, not how a user reads it. The rows say *N decisions
+marked assumed* — pointing at the pill they will find on the line — and *N questions only you can
+answer*, which is the fact that makes an open question different.
 
 This is where the dialog's two moods separate, and the distinction is the point:
 
@@ -625,20 +685,44 @@ no-ops through; under-marking ships a design the user has already changed their 
 
 ### Artifact state
 
+Built as [#576](https://github.com/wso2/labs-agentic-engineer/issues/576): the skill declares what
+it is about to write (`declare_plan`, ADR-0025 — fire-and-forget tool-call-as-UI), and the rail
+renders the declaration.
+
 | state | shown as |
 |---|---|
-| planned | ghosted placeholder, declared **this turn** |
-| writing / modifying | active; the stream already distinguishes `add` from `edit` |
-| done | normal, clickable |
-| error | flagged, clickable to recover |
+| planned | **ghost row** — dim, and disabled: a control that selects nothing is worse than prose |
+| writing / modifying | pulse, name in primary |
+| done | a plain row — the file is simply there |
+| error | warning mark, name in error |
 
 **Planned means about to be written now.** The plan is turn-scoped, never project-scoped —
 pre-creating design placeholders during a requirements turn would recreate the `Being derived…`
 defect this file already removed.
 
-**The plan arrives in stages.** The design agent writes the cell first; only then does the
-component set exist, and the per-component files join the list. A count (*2 of 6*) is what answers
-"how long do I wait", and it is honest precisely because it grows.
+**The plan arrives in stages, and the console takes the union.** The design agent writes the cell
+first; only then does the component set exist, and the per-component files join the list. Repeated
+declarations accumulate — first-seen order kept, restated paths ignored, no removal — the one rule
+robust to an agent restating its whole plan. A count (*2 of 6*) beside the section title is what
+answers "how long do I wait", and it is honest precisely because it grows.
+
+**Every status is derived from the stream, never self-reported**: writing when the file's mutation
+starts, done when it completes, error only for the entry being written when the turn died. A clean
+turn's plan **dissolves** — the files are the record. A dead turn's **wreckage persists** — the
+done ticks, the one error, the remaining ghosts — surfaced through the section's attention chip
+(*The design run didn't finish* → **Update the design**) until the next declaring turn replaces it.
+Recovery is the `/design` delta pass, never a per-file retry.
+
+**The chat records each declaration as an activity step** — *Planned 3 documents*, then *Planned 4
+more documents* as the plan grows. The rail is the plan's real rendering; the chat row keeps the
+activity record complete. `start` declares nothing: a single-file turn's count answers nothing,
+and a skill that declares nothing leaves the rail exactly as it was.
+
+**The editor follows the write** (ADR-0026): each artifact is selected as its write starts, in
+whatever renderer it already has. The first manual selection is a declaration of reading intent
+and ends the following for the rest of the turn — the rail's pulse on the writing entry stays the
+one-click way back in. This supersedes the cell's burst navigation, which yanked back even over a
+manual selection.
 
 ### The pulse
 
@@ -692,6 +776,14 @@ the component set everything else hangs off.
 | artifact rail | **structure** — what, and how far |
 | editor | **the artifact** — content, streaming |
 
+**The chat does not echo the rail.** Progress prose — *"drawing the
+architecture"*, *"now the component designs"* — was tried during #576 and
+removed: watching the artifacts appear as they are written already tells the
+user what is happening, so a line announcing each step restates the rail in
+words and reads as filler. The chat speaks when it has something the other two
+surfaces cannot carry — a decision, a question, a failure — and is otherwise
+free to stay quiet while it works.
+
 The chat panel is the spine and **never collapses itself**; only the user closes it. But it stops
 pointing at a form that already owns the screen, and its composer stays live during a form — the
 agent is waiting on the user, not working, and the user may want to talk instead of fill.
@@ -735,11 +827,66 @@ redundant on the page holding them.
 
 **Unsettled: `deployment` or `build`.** This description says criteria are checked
 *after every deployment*; the **Validations** empty state says *"After a build,
-your software is checked against the acceptance criteria in your spec"*. Both name
+your software is checked against the validation criteria in your spec"*. Both name
 the same event. *Deployment* is the more accurate word, since validation runs
 against the deployed system and needs its resolved endpoints, but that empty state
 was out of scope when this pane was written. Whoever settles it changes both and
 deletes this note.
+
+### What a criterion is doing, while a run is under way
+
+A validation cycle holds an agent for up to two hours. Before this, every row in
+the pane read **`Pending`** for all of it, and a repeat attempt was worse — it
+showed the *previous* attempt's verdict, so the criteria a repair was actively
+re-working sat on **`Failed`** while it fixed them.
+
+The row now says what is happening to it. In the order a reader meets them:
+
+| | |
+|---|---|
+| Nothing has happened to it yet | **`Pending`** |
+| The run has decided how it will check this one | **`Planned`** |
+| Driving the running software to learn how to check it | **`Exploring…`** |
+| Writing its check | **`Authoring…`** |
+| Its check is running | **`Running…`** |
+| It worked, then broke — being repaired | **`Healing…`** |
+| Settled | **`Passed`** / **`Failed`**, unchanged |
+
+Above the rows, one line, and only while they have nothing to say:
+
+| | |
+|---|---|
+| Nothing picked up yet | *Setting up the test harness…* |
+| All settled, no results published | *Writing the validation report…* |
+
+**The trailing `…` means in flight.** Every word that can still change carries
+one; the two settled words do not. It is the only signal separating "this is
+happening now" from "this is the answer", and both sets sit in the same column.
+
+**Only `Healing…` is coloured.** It is the one live word that changes what a
+reader thinks is happening — something that worked has stopped working. Colouring
+ordinary progress would spend attention on the common case and leave none for
+this one.
+
+**Live words are local; settled words are the report's.** `Passed` and `Failed`
+come from the report file the run commits, and the live words never enter that
+vocabulary — a report can only describe work in the past tense, so there is no
+report word for *Authoring…*. The reverse holds too: when the feed says a
+criterion passed, it renders as **`Passed`**, because that is the same fact
+whichever surface delivered it.
+
+**Rule 6, deliberately bent.** *Exploring*, *Authoring*, *Healing* name the
+system's behaviour, which rule 6 forbids. They stay because here the system's
+behaviour **is** the user's situation: the reader has handed work to an agent and
+is watching it, and "what is it doing right now" is the whole question. The rule
+protects against a reader being told about machinery they did not ask about —
+not against answering the one thing they came to find out.
+
+**Unsettled: *test harness* and *validation report*.** Both run-wide lines name
+internal artifacts, which rule 6 has a better claim over — a reader does not have
+a harness, they have criteria waiting to be checked. They are the two windows
+where nothing else moves, so something had to be said; whoever finds better words
+changes them here first.
 
 ## What a change invalidates
 
@@ -852,7 +999,7 @@ five surfaces fill themselves.
 |---|---|---|
 | Builds | **No builds yet.** A build hands your design to coding agents, which write your components and open pull requests. | **Go to the spec** |
 | Deployments | **Nothing deployed yet.** Your components run here once they are built — each environment shows what is live and where to reach it. | — |
-| Validations *(never validated)* | **Nothing validated yet.** After a build, your software is checked against the **acceptance criteria** in your spec; results appear here. | — |
+| Validations *(never validated)* | **Nothing validated yet.** After a build, your software is checked against the **validation criteria** in your spec; results appear here. | — |
 | Validations *(version skipped)* | **This version was not validated** — it has no validation criteria, or it was an incident run, which gets no validation cycle. | — |
 | Components *(overview)* | **No components yet.** Components are the services and apps your design is made of — they appear as agents build them. | — |
 | Architecture *(overview)* | **No architecture yet.** Once the agent designs your app, its components and the connections between them are drawn here. | — |
@@ -867,9 +1014,11 @@ that had already started, and narrated the *how* (a shared workspace, files chan
 on screen calls by those names. Its suggestions offered to draft requirements that exist. Both now
 open a conversation **about** the spec.
 
-The **Validations** wording is load-bearing: renaming the artifact to *Acceptance criteria* while
-the section stayed *Validations* broke the link between the criteria and the runs against them, and
-this sentence is where it is restored.
+**The document and its rows carry different names, on purpose.** The **Validation criteria** are
+the document; one row inside it is an **acceptance criterion**, which is what its `AC-` id says and
+what the term means everywhere else. Naming the document after one of its rows — the earlier
+*Acceptance criteria* label — cost the link between the criteria and the runs against them, and
+took a sentence of empty-state copy to restore. They share a root again, so nothing has to.
 
 **Validations has two empty states, and only one narrates.** The page is version-scoped, so a
 version that was skipped — no criteria, or an incident run — is a different fact from a project
@@ -947,7 +1096,7 @@ too, in the same message as the text it overrides.
 
 ### The rules it carries
 
-1. **Name things the way the UI names them.** *Architecture*, not `design.cell`. *Acceptance
+1. **Name things the way the UI names them.** *Architecture*, not `design.cell`. *Validation
    criteria*, not `specs/validation/validation-criteria.json`. The mapping is the table under
    [The spec workspace](#the-spec-workspace) — this file is its source, and the console skill is
    how it reaches the agent.
@@ -980,11 +1129,32 @@ renaming; it needed to stop being visible.
 | the user's intent | command | where it is offered |
 |---|---|---|
 | start from an idea | `/start with <idea>` | fired at project creation ([#522](https://github.com/wso2/labs-agentic-engineer/issues/522)); the idea rides along, cropped, so the user can see the agent is working from **their** words rather than a bare command ([#528](https://github.com/wso2/labs-agentic-engineer/issues/528)) |
-| add a feature | `/feature <idea>` | code lens on the story list |
-| add an actor | `/actor <who>` | code lens on Actors |
+| add a feature | `/feature <idea>` | code lens on the story list — opens the aim box to collect the idea, and sends the command plus their words |
+| add an actor | `/actor <who>` | code lens on Actors — same collecting box |
 | go deeper on a feature | `/expand <story>` | code lens on the story, which carries itself as the subject |
-| settle an assumption or an open question | `/settle <the point>` | code lens on the flagged line |
+| answer an open question | `/settle <the point>` | code lens on the question |
 | take up the open questions | `/settle` over the section | code lens on **Open Questions** |
+| talk a line through | *Discuss* — no command; opens the aim box on the line, Enter sends Discuss | code lens on any bullet |
+
+**An `*assumed*` run offers verdicts, not a command**
+([#652](https://github.com/wso2/labs-agentic-engineer/issues/652)). An assumption is a decision
+the agent already made, and the user's response to it is a judgement, not a request — so the line
+carries **Agree · Discuss**. *Agree* is a **direct edit**: it strips the flag and keeps the decision —
+no agent turn, no model, one undo — and it stays live while an agent holds the turn, which is exactly
+when a reviewer is reading flagged lines. *Discuss* opens the aim box on the line. Two, deliberately:
+a line with four controls on it stops reading as a line. *Remove* and *Reopen* were built and cut for
+that reason — dropping or reopening a decision is a sentence away in Discuss, and the editor deletes a
+bullet as well as any control could. The word is **Agree**, not *Accept* — *Accept* is what the
+agent-suggestion review bar says, and this is a different act. `/settle` on a flagged line is retired;
+the marker leaving the document is itself the signal the agent reads.
+
+**An add-lens asks before it fires** ([#666](https://github.com/wso2/labs-agentic-engineer/issues/666)):
+`+ Actor` and `+ Feature` have a subject the document cannot supply, so the click opens the aim box
+with one question (*Who are they, and what do they do?* / *Describe the feature in your own words…*)
+and one button (*Add actor* / *Add feature*). The send is the command plus the user's words —
+`/feature manager should approve` — which is the same shape the per-line lenses compose from the
+entry they sit on. An empty send is the bare command, exactly what the lens did before it learned to
+ask; the agent then asks in chat instead.
 
 **A command names the user's intent, never the document operation.** `/feature` says what they
 came to do; `/amend Add a feature` said what the system does to a file.
@@ -1024,11 +1194,13 @@ of per-line is a control that is only there while the pointer is.
 **The lens is a control beside the line, not the line made clickable.** The PRD is a collaborative
 editor: a line that fires a command on click is a line the user can no longer put a caret in.
 
-**A lens goes inert, saying which, while an agent holds the turn** — the same two conditions that
-gate the header's launchers, since firing a command mid-interview supersedes the live question form
-for the whole room.
+**A lens that starts a turn goes inert, saying which, while an agent holds the turn** — the same
+two conditions that gate the header's launcher, since firing a command mid-interview supersedes
+the live question form for the whole room. Agree starts no turn and never
+goes inert: it is the document being edited, and the document is always the user's to edit.
 
-Shipped in [#579](https://github.com/wso2/labs-agentic-engineer/issues/579).
+Shipped in [#579](https://github.com/wso2/labs-agentic-engineer/issues/579); the verdicts in
+[#666](https://github.com/wso2/labs-agentic-engineer/issues/666).
 
 ## Navigation
 
@@ -1047,10 +1219,6 @@ Endpoints · Alerts**. **Settings** stays in the footer in both contexts
 > this file; ADR-0010's decision (the sidebar swaps wholesale to project sections) still holds and
 > only its illustrative list is stale, so it is left for an explicit supersede rather than edited
 > in place.
-
-`Validations` (the runs) and `Acceptance criteria` (what they check) no longer share a word, so
-the link between them is made explicit in the section's empty state
-([#533](https://github.com/wso2/labs-agentic-engineer/issues/533)).
 
 ## Resources
 

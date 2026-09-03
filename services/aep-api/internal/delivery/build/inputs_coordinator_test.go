@@ -147,6 +147,15 @@ func TestApplyPreTag_AuthConflictReturnsError(t *testing.T) {
 	require.ErrorIs(t, err, ErrEndUserAuthConflict)
 }
 
+// An unknown resourceType is the same shape: a pre-tag error, not a drawer
+// failure, so the handler can map it to 409 and cut no tag.
+func TestApplyPreTag_UnknownResourceTypeReturnsError(t *testing.T) {
+	auth := &recordingAuth{err: ErrUnknownResourceType}
+	c := &InputsCoordinator{spec: &recordingSpec{}, auth: auth}
+	_, err := c.ApplyPreTag(ctx, "acme", "shop", nil)
+	require.ErrorIs(t, err, ErrUnknownResourceType)
+}
+
 // When a spec collection fails the build is aborting, so auth derivation must
 // NOT run (it would commit to HEAD for a build that cuts no tag) and the spec
 // failures must be returned intact rather than masked by an auth error.

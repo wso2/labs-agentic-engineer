@@ -71,16 +71,6 @@ Three components behind the project cell:
 The storefront talks to both services; services share nothing.
 `,
   },
-  {
-    path: "specs/validation/validation-plan.md",
-    content: `# Demo Shop — Validation plan
-
-- Catalog search returns seeded products by name and category.
-- Cart contents survive a browser restart.
-- Checkout produces an order visible in order history.
-- Each service exposes /healthz returning 200.
-`,
-  },
 ];
 
 /** The same files as SpecFile records — full specs/ paths (verbatim doc keys). */

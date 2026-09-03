@@ -73,6 +73,32 @@ afterEach(() => {
 });
 
 describe("RunFeed", () => {
+  // The placeholder is drawn by the SHARED `EmptyState`, the same one the Build
+  // logs section one card below uses. It used to be a bare left-aligned
+  // paragraph, which put two differently-drawn placeholders side by side on one
+  // page. `textAlign: center` is the tell that this is the shared component and
+  // not a paragraph that happens to say the same words.
+  it("draws its empty state the way every other section on the page does", () => {
+    mockCycles = [];
+    render(<RunFeed projectName="acme" runId="run-1" />);
+    const note = screen.getByText(
+      "No cycle output yet — the run's first agent has not written a line.",
+    );
+    expect(note.parentElement).toHaveStyle({ textAlign: "center" });
+  });
+
+  // The tail is the feed's connection status, not a log line, so it sits on the
+  // opposite edge from the content. Asserted because nothing else would catch it
+  // drifting back to the left when this block is next edited.
+  it("right-aligns the stream status line", () => {
+    mockCycles = [section("c1", "coding", ["main"])];
+    mockPhase = "reconnecting";
+    render(<RunFeed projectName="acme" runId="run-1" />);
+    expect(screen.getByText(/Connection lost/)).toHaveStyle({
+      textAlign: "right",
+    });
+  });
+
   it("renders one section per cycle, labelled by kind", () => {
     mockCycles = [section("c1", "coding", ["main"]), section("c2", "fix", ["main"])];
     render(<RunFeed projectName="acme" runId="run-1" />);
@@ -286,12 +312,16 @@ describe("RunFeed", () => {
     expect(screen.queryByText("coding")).not.toBeInTheDocument();
   });
 
-  it("says the run settled once the stream ends — only a terminal run does", () => {
+  // How the run ENDED moved to the section header (see BuildDetailPage), so the
+  // feed body must stay quiet about it — a settled stream repeating the header
+  // beneath the log is the duplication that move was meant to remove.
+  it("leaves the run's ending to the section header", () => {
     mockCycles = [section("c1", "coding", ["main"])];
     mockPhase = "ended";
     mockSettled = "succeeded";
     render(<RunFeed projectName="acme" runId="run-1" />);
-    expect(screen.getByText(/run settled — succeeded/)).toBeInTheDocument();
+    expect(screen.queryByText(/Run finished/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/settled/)).not.toBeInTheDocument();
   });
 
   it("says it is reattaching after a dropped connection", () => {

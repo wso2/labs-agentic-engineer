@@ -481,3 +481,46 @@ func TestDispatch_HTTPPlatformURL_MountsPublisher(t *testing.T) {
 		}
 	}
 }
+
+// TestDispatch_CodingCycleCarriesTheThreeHourDeadline: a coding cycle names its
+// own activeDeadlineSeconds rather than falling through to the ComponentType's
+// 1h default — the cycle's browser verification wave does not fit in an hour,
+// and the pod was being reaped mid-run.
+func TestDispatch_CodingCycleCarriesTheThreeHourDeadline(t *testing.T) {
+	rec := &chainRecorder{}
+	e := newOCDispatchExecutor(rec)
+
+	if _, err := e.Dispatch(context.Background(), codingMilestoneDispatch()); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if got := rec.create.Parameters["activeDeadlineSeconds"]; got != int(codingDeadlineSeconds) {
+		t.Errorf("coding deadline = %v, want %d", got, codingDeadlineSeconds)
+	}
+	if codingDeadlineSeconds != 10800 {
+		t.Errorf("codingDeadlineSeconds = %d, want 10800 (3h)", codingDeadlineSeconds)
+	}
+}
+
+// TestDeadlinesFitTheComponentTypeSchema: the dispatched deadline and the schema
+// that validates it are two halves of one change. The ComponentType's maximum is
+// what OpenChoreo rejects against, so a deadline raised on this side alone would
+// not time a run out — it would fail the dispatch outright.
+func TestDeadlinesFitTheComponentTypeSchema(t *testing.T) {
+	spec, _ := openchoreo.CodingAgentComponentType()["spec"].(map[string]any)
+	params, _ := spec["parameters"].(map[string]any)
+	schema, _ := params["openAPIV3Schema"].(map[string]any)
+	props, _ := schema["properties"].(map[string]any)
+	deadline, _ := props["activeDeadlineSeconds"].(map[string]any)
+	ceiling, ok := deadline["maximum"].(int)
+	if !ok {
+		t.Fatalf("activeDeadlineSeconds.maximum missing or not an int: %#v", deadline["maximum"])
+	}
+	for name, want := range map[string]int64{
+		"coding":     codingDeadlineSeconds,
+		"validation": validationDeadlineSeconds,
+	} {
+		if want > int64(ceiling) {
+			t.Errorf("%s deadline %d exceeds the ComponentType schema maximum %d — the dispatch would be rejected", name, want, ceiling)
+		}
+	}
+}

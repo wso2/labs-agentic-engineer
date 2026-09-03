@@ -29,6 +29,7 @@ import {
   replaceMessages,
   claimSendInFlight,
   claimStreamFold,
+  hasStreamFold,
   settleUserMessage,
   setTurnStatus,
   subscribe,
@@ -393,6 +394,9 @@ export function useAgentChat(
       if (ac.signal.aborted || !active || active.status !== "running") return;
       if (active.useCase !== "general") return; // another flow's turn
       if (!attachableOrReResolve(active)) return;
+      // A quiet anchored send (#666) may already be folding this turn; a
+      // second fold would interleave the same stream on top of itself.
+      if (hasStreamFold(chatKey)) return;
       await attach(active);
     })();
 
@@ -419,14 +423,14 @@ export function useAgentChat(
     };
     const runPoll = () => {
       if (ac.signal.aborted) return;
-      if (attachedRef.current || pendingStartRef.current) {
+      if (attachedRef.current || pendingStartRef.current || hasStreamFold(chatKey)) {
         scheduleNextPoll();
         return;
       }
       void (async () => {
         try {
           const active = await getActiveTurn(projectName);
-          if (ac.signal.aborted || attachedRef.current) return;
+          if (ac.signal.aborted || attachedRef.current || hasStreamFold(chatKey)) return;
           if (!active || active.status !== "running" || active.useCase !== "general") return;
           if (!attachableOrReResolve(active)) return;
           await rehydrate();

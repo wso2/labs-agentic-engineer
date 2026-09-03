@@ -53,7 +53,7 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
 | `runAbandoner` (`SetRunAbandoner`) | needs | `delivery` — ends the supervisors of a deleted project's live runs, wired at the root (nil is a no-op) |
 | per-project agent usage (`UsageService`) | needs | `delivery` — the agent-usage ledger, keyed by lifetime (`contracts.UsageScope`) |
 | OC `Project`/`Component`/`ReleaseBinding` CRUD | needs | `openchoreo` client — OC is the store |
-| `Deployer` · `DeploymentReader` | offers | `delivery/run` — promote a cycle's built components and read back whether they are serving. The supervisor owns the ORDER and the verdict; this domain owns the OpenChoreo writes, which is what keeps a cluster client out of the run loop |
+| `Deployer` · `DeploymentReader` | offers | `delivery/run` — plan a reconcile pass over the version's state, promote each target at its OWN commit, and read back whether components are serving. The supervisor owns the verdict and what to do with a held component; this domain owns the plan and the OpenChoreo writes, which is what keeps a cluster client out of the run loop |
 | `BindingConverger` (`Converge`) | offers | the config slice — an env-var edit pushes onto the live binding through the deploy path rather than patching a field of it, so the two can never write different desired states onto one object |
 | `ComponentEnvVarReader` · `RuntimeFileProvider` | needs | the config slice and `dependencies/runtimeconfig` — the two projections whose values ride the binding's workload overrides. Both are declared consumer-side and both distinguish "no values" from "cannot compute yet": an unready projection leaves its field UNMANAGED rather than writing an empty one over the user's values |
 | CRT catalog · binding patcher · `ThunderApplicationReader` | needs | after OC Ready, a web-app whose platform-resource CRT carries `ConsumerURLEnvConfig` stays pending until the ThunderApplication CR has the SPA callback. Wired via `SetResourceCatalog` / `SetResourceClient` / `SetThunderApplicationReader`. Any nil (or a nil store) skips the wait, so OC-only `DeploymentState` tests stay green. Service components never enter it. This domain consumes `ThunderApplicationView`; it does not GET Kubernetes |
@@ -110,7 +110,14 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
   yet — writing one with no release pinned produces an object OpenChoreo cannot render. The deploy stage's
   own last pass is a converge for the same reason: it finishes wiring that only became knowable once
   everything was up, and re-promoting to do it would re-cut a release OpenChoreo then refuses.
-- **The deploy ORDER is the design's hard wiring edges** (`wiring_graph.go` over `spec.HardConfigEdges`).
+- **The deploy PLAN is over the version's state, ordered by the design's hard wiring edges**
+  (`wiring_graph.go` over `spec.HardConfigEdges`, ADR-0026). `deploymentWaves` takes what each
+  component should be serving against what it is, promotes only the behind ones whose hard providers
+  are serving or promoted ahead of them, and returns the rest as HELD with the providers each waits
+  on. The edges are read over the whole design: a provider with no serving release is a real
+  unsatisfied edge, not an assumed-satisfied one. The fixpoint is not one pass — a consumer waiting on
+  a provider that is itself held has to fall out too, or it ships against a config its provider could
+  not fill.
   A provider whose address the platform stamps into a consumer's start-up config deploys first, so the
   consumer is never published with a config nothing could fill. What flows back from consumer to provider
   (CORS origins, an OIDC callback) orders nothing and is written by the converge. A cycle among hard edges

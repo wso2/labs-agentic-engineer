@@ -454,6 +454,17 @@ const validationTaskKind = "validation"
 // exploration + authoring/healing e2e specs is longer than a coding run.
 const validationDeadlineSeconds int64 = 7200
 
+// codingDeadlineSeconds bounds an ordinary coding run (3h). A coding cycle no
+// longer ends at "the code compiles": on top of working the milestone's whole
+// issue set it boots what it built and drives it through a browser
+// verification wave, then heals whatever that wave finds. That does not fit in
+// an hour, and the old 1h bound did not fail the run honestly — it reaped the
+// pod mid-verification, so a cycle that was still making progress died with no
+// verdict of its own. 3h is also the ComponentType schema's maximum
+// (openchoreo.CodingAgentComponentType): a longer value here would be rejected
+// at dispatch, not silently clamped.
+const codingDeadlineSeconds int64 = 10800
+
 // taskKindOrDefault normalizes the runner's AEP_TASK_KIND: empty → the coding
 // default so existing (implementation) dispatch is unchanged.
 func taskKindOrDefault(kind string) string {
@@ -470,7 +481,10 @@ type dispatchShape struct {
 	prompt        string
 	componentName string
 	taskKind      string // "" (coding) | "validation"
-	deadline      int64  // 0 → the ComponentType's 1h default
+	// deadline is the cycle's activeDeadlineSeconds. Every dispatch names one
+	// (0 would fall back to the ComponentType schema's 1h default, which is too
+	// short for either kind); it must stay within the schema's maximum.
+	deadline int64
 	// The milestone the cycle works, carried for the human-facing display name
 	// on the created Component. A cycle spans a milestone's whole working set,
 	// so the milestone (and the cycle kind) is what names it — not an issue.

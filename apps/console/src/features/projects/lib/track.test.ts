@@ -55,10 +55,9 @@ const states = (s: ProjectStatus, engaged = false): LegState[] =>
 const leg = (s: ProjectStatus, i: number, engaged = false) =>
   trackView(s, engaged).legs[i]!;
 
-describe("the track is always three numbered legs", () => {
-  it("numbers them in flow order whatever the state", () => {
+describe("the track is always three legs", () => {
+  it("names them in flow order whatever the state", () => {
     const view = trackView(status({}), false);
-    expect(view.legs.map((l) => l.step)).toEqual(["01", "02", "03"]);
     expect(view.legs.map((l) => l.name)).toEqual(["Spec", "Build", "Deploy"]);
   });
 

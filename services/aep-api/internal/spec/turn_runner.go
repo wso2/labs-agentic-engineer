@@ -72,6 +72,12 @@ type turnJob struct {
 	// between the POST and the dispatch — nothing writes them to disk (ADR-0019)
 	// — which is why the turn is the only thing that can carry them.
 	attachments []agentsvc.TurnAttachment
+	// aim is what the user pointed at in a spec document, and what for (#666).
+	// The agents service leads the instruction with it AND journals its anchor
+	// from the same value, which is why nothing here writes a second copy onto
+	// the journal block: two sources for one fact is how a transcript ends up
+	// tagging a selection the model was never told about.
+	aim *agentsvc.AimBlock
 	// author is the acting user for the journal (#463), nil when the bearer
 	// carries no human identity — an M2M token journals no author rather than
 	// a bare subject claim.
@@ -314,6 +320,7 @@ func (s *Service) executeTurn(ctx context.Context, job turnJob) TurnTerminal {
 		// turn look entirely successful — 202, chips rendered, journal correct —
 		// while the agent truthfully reported seeing no file.
 		Attachments: job.attachments,
+		Aim:         job.aim,
 	})
 	if err != nil {
 		slog.WarnContext(ctx, "genai: turn dispatch failed", "turn", job.turnID, "error", err)

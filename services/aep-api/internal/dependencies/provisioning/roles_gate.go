@@ -60,6 +60,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
@@ -163,6 +164,35 @@ func (s *Service) ensureRolesGate(ctx context.Context, orgID, projectID, tag str
 	return nil
 }
 
+// existingRolesGate finds this version's roles gate in ANY state, or 0.
+//
+// ANY state is the whole point: an OPEN one would have been caught by the
+// DedupeKey already, and the case that needs catching is the one an earlier
+// attempt of the same activity filed and then closed.
+//
+// A read failure answers 0 and the caller mints. That direction is deliberate:
+// a duplicate ticket is noise a human can see and close, while wrongly believing
+// a ticket exists would leave the accounts provisioned and their logins published
+// nowhere — the silent degradation this gate exists to prevent.
+func (s *Service) existingRolesGate(ctx context.Context, orgID, projectID, tag string) int {
+	want := PlatformGateLabelPrefix + depSlug(rolesGate)
+	issues, err := s.issues.ListIssues(ctx, orgID, projectID, []string{delivery.KindProvision})
+	if err != nil {
+		slog.WarnContext(ctx, "provisioning: list issues for the roles gate failed — minting",
+			"project", projectID, "tag", tag, "error", err)
+		return 0
+	}
+	for _, issue := range issues {
+		if !gateIsForVersion(issue.Labels, tag) {
+			continue
+		}
+		if delivery.HasLabel(issue.Labels, want) {
+			return issue.Number
+		}
+	}
+	return 0
+}
+
 // commentGateFailure records why the ensure could not finish, on the gate that
 // is now holding the run.
 func (s *Service) commentGateFailure(ctx context.Context, orgID, projectID string, number int, cause error) {
@@ -181,11 +211,29 @@ func (s *Service) commentGateFailure(ctx context.Context, orgID, projectID strin
 // the issue number and whether this call minted it; a create failure is logged
 // and reported as not-minted, because the ensure itself has already run and a
 // missing audit issue must not fail a build.
+//
+// "Deduped per (project, tag)" used to rest on the DedupeKey alone, and that was
+// not enough. The key is resolved host-side against OPEN issues, and this gate is
+// CLOSED by the same call that files it as soon as the accounts are provisioned
+// — so a retried ProvisionGates filed a fresh one every attempt. That is worse
+// here than for a dependency gate: this ticket is the channel the test users'
+// logins are published on, so each duplicate republished a set of passwords into
+// a new issue.
+//
+// The lookup below is the fix, and it looks for a gate in ANY state carrying this
+// version's label. Finding one it REUSES the number rather than filing again.
 func (s *Service) mintRolesGate(ctx context.Context, orgID, projectID, tag string, milestoneNumber int) (int, bool) {
+	if n := s.existingRolesGate(ctx, orgID, projectID, tag); n > 0 {
+		// Not minted BY THIS CALL, but the caller's question is "is there a ticket
+		// to publish onto", so this answers yes with the one that exists.
+		return n, true
+	}
 	req := sourcecontrol.CreateIssueRequest{
-		Title:  rolesGateTitle,
-		Body:   rolesGatePendingBody(),
-		Labels: platformGateLabels(rolesGate),
+		Title: rolesGateTitle,
+		Body:  rolesGatePendingBody(),
+		// The version rides a label as well as the dedupe key, so the lookup above
+		// can see a gate an earlier attempt filed and closed.
+		Labels: withGateVersion(platformGateLabels(rolesGate), tag),
 		// Same shape as a dependency gate's key, keyed on the gate's name rather
 		// than a dependency's: one roles gate per version, idempotent across a
 		// crashed re-run.
@@ -214,7 +262,8 @@ func (s *Service) mintRolesGate(ctx context.Context, orgID, projectID, tag strin
 	// idempotent, so paying for it on every mint is cheaper than a class of
 	// silent failure. A failure here is logged and tolerated: the labels the
 	// create already carried are the common case, and re-asserting is the belt.
-	if lerr := s.issues.AddLabels(ctx, orgID, projectID, res.Number, platformGateLabels(rolesGate)); lerr != nil {
+	if lerr := s.issues.AddLabels(ctx, orgID, projectID, res.Number,
+		withGateVersion(platformGateLabels(rolesGate), tag)); lerr != nil {
 		slog.WarnContext(ctx, "provisioning: could not re-assert the roles gate labels — the validation agent finds this ticket BY LABEL",
 			"project", projectID, "gate", res.Number, "error", lerr)
 	}

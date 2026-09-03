@@ -74,6 +74,15 @@ means, at work altitude — the validation oracle owns product acceptance), and
 `## References` (the spec paths the coding agent reads). A Task without a body
 is unfinished planning.
 
+For a `web-application` component the wireframe is the screen contract, so
+its Task always carries two more things: the path
+`specs/design/components/<name>/wireframes.dsl` under `## References`, and a
+`Screens:` line under `## Scope` naming every `screen` in that file the Task
+covers (`Screens: RiskQueue, MyRisks, NewRisk, …`). Names only — the elements
+live in the DSL, and listing them in the issue would go stale the moment the
+wireframe is edited. The coding agent's `wireframes` skill turns the names
+into pages.
+
 ## When a tool rejects you
 
 The result names the fix: UNKNOWN_COMPONENT lists the known components;

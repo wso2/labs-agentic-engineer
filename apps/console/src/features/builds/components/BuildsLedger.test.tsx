@@ -258,7 +258,7 @@ describe("BuildsLedger", () => {
     mockBuilds = [build({ tag: "v2", status: "in_progress", waitingReason: "external-values" })];
     renderLedger();
 
-    expect(screen.getByText("Waiting for values")).toBeTruthy();
+    expect(screen.getByText("Waiting for configuration")).toBeTruthy();
     expect(screen.queryByText("Running · Coding agent")).toBeNull();
   });
 
@@ -275,7 +275,7 @@ describe("BuildsLedger", () => {
     fireEvent.mouseDown(screen.getByRole("combobox", { name: /status/i }));
     fireEvent.click(screen.getByRole("option", { name: "In progress" }));
 
-    expect(screen.getByText("Waiting for values")).toBeTruthy();
+    expect(screen.getByText("Waiting for configuration")).toBeTruthy();
     expect(screen.queryByText("Built")).toBeNull();
   });
 

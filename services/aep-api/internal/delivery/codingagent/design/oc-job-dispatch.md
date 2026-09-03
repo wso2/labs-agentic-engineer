@@ -110,13 +110,17 @@ a failed mirror is an error.
 The Component's type is a **namespaced `coding-agent` ComponentType**
 (`workloadType: job`), seeded into the org's namespace at provisioning and
 lazily re-seeded on the dispatch path, so an org that predates the rollout works
-on first use. Deliberately not a `ClusterComponentType` and not seeded through
+on first use. The re-seed CONVERGES: a stored type whose spec has drifted from
+the shipped one is updated in place, because the stored copy is what validates
+every dispatch — otherwise widening a parameter's bounds would reach new orgs
+only and break the next dispatch of every existing one. Deliberately not a `ClusterComponentType` and not seeded through
 wso2cloud's org-default-resources bootstrap: the BFF owns the template, so it
 owns its upgrades.
 
 The type pins the cost envelope rather than trusting callers: `backoffLimit: 0`
 (the runner pushes commits and opens pull requests — a silent retry would repeat
-side effects), `activeDeadlineSeconds` (1h; a validation cycle passes 2h),
+side effects), `activeDeadlineSeconds` (a coding cycle passes 3h — it ends with a browser
+verification wave — and a validation cycle 2h),
 `ttlSecondsAfterFinished` as a backstop, and schema-bounded CPU/memory requests
 and limits, where the schema enforces the ceiling so an out-of-bounds
 per-dispatch override is rejected instead of silently clamped.

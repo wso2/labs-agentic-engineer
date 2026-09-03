@@ -685,4 +685,55 @@ cell products {
     expect(cell).toMatchObject({ draggable: false, data: { layoutKind: "cell", cellId: "orders" } });
     expect(gateway).toMatchObject({ draggable: false, data: { layoutKind: "gateway", cellId: "orders" } });
   });
+
+  it("keeps a boundary edge's run to the gateway clear of the components dagre parked on it", () => {
+    // The everyday shape: one straight chain, one of them also talking east.
+    // Dagre ranks a, b and c on the same line, which buries the east edge under
+    // b and c — the corridor pass lifts them off it.
+    const project = compileProject(`
+a -> b
+b -> c
+a -> east d
+`).model;
+    expect(project).not.toBeNull();
+
+    const flow = toReactFlow(project!);
+    const at = (id: string) => flow.nodes.find((node) => node.id === id)!.position;
+    const componentSize = 112;
+    const [a, b, c] = [at("a"), at("b"), at("c")];
+
+    // b and c sit east of a, so neither may share a's horizontal band.
+    [b, c].forEach((blocker) => {
+      expect(blocker.x).toBeGreaterThan(a.x);
+      const overlapsBand = blocker.y < a.y + componentSize && a.y < blocker.y + componentSize;
+      expect(overlapsBand).toBe(false);
+    });
+    // One above, one below — the cell stays balanced around the edge.
+    expect(b.y).toBeLessThan(a.y);
+    expect(c.y).toBeGreaterThan(a.y);
+  });
+
+  it("gives an inbound boundary edge the same corridor as an outbound one", () => {
+    // `west w -> z` arrives at `z`, so the component is the edge's target, not
+    // its source. The run back to the west gateway crosses `x` and `y`, which
+    // dagre ranked on `z`'s line.
+    const project = compileProject(`
+x -> y
+y -> z
+west w -> z
+`).model;
+    expect(project).not.toBeNull();
+
+    const flow = toReactFlow(project!);
+    const at = (id: string) => flow.nodes.find((node) => node.id === id)!.position;
+    const componentSize = 112;
+    const z = at("z");
+
+    ["x", "y"].forEach((id) => {
+      const blocker = at(id);
+      expect(blocker.x).toBeLessThan(z.x);
+      const overlapsBand = blocker.y < z.y + componentSize && z.y < blocker.y + componentSize;
+      expect(overlapsBand).toBe(false);
+    });
+  });
 });

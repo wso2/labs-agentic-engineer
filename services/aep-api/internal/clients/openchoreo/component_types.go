@@ -232,8 +232,37 @@ type ReleaseBindingSummary struct {
 	// ReadyReason is the Ready-typed condition's reason (OC copies the
 	// failing sub-condition's reason into the aggregate).
 	ReadyReason string
+	// ReleaseName is the ComponentRelease the binding PINS (spec.releaseName),
+	// "" when it pins none.
+	//
+	// It is what separates "this component is serving the release it should be"
+	// from "this component is serving an older one": Ready alone says only that
+	// whatever is pinned came up, and a version behind by one release is Ready
+	// and wrong. The run supervisor compares it against the release the
+	// component's newest succeeded build would cut (delivery.ReleaseNameFor).
+	ReleaseName string
 }
 
 // -- ComponentOpenAPI (Test tab) ----------------------------------------------
+
+// BuildRunSummary is one build WorkflowRun reduced to the facts the milestone
+// loop decides on, with OpenChoreo's condition vocabulary already mapped.
+//
+// Status is carried verbatim beside the two booleans because OC's status is a
+// condition REASON — an open string, not a closed set — so it is display and
+// logging material, while Completed and Succeeded are what anything branches on.
+type BuildRunSummary struct {
+	Name      string
+	Status    string
+	Completed bool
+	Succeeded bool
+	// CommitSHA is the commit the run was pinned to, "" for a build of whatever
+	// the branch tip was.
+	CommitSHA string
+	// StartedAt is the run's creation timestamp — what orders two succeeded
+	// builds of the same component. The list is not ordered by the host, so
+	// "the newest green build" has to be decided on a fact the run carries.
+	StartedAt time.Time
+}
 
 // -- Build Logs ---------------------------------------------------------------

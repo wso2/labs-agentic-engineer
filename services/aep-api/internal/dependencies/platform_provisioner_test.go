@@ -225,6 +225,149 @@ func TestPlatformProvision_ReconcileWaitsForNewRelease(t *testing.T) {
 	}
 }
 
+// A GetResource transport/5xx blip on a freshly created Resource (empty prior)
+// is not a wait answer. Classifying every empty-prior wait error as permanent
+// would stamp OC blips as Temporal NonRetryableApplicationError.
+func TestPlatformProvision_GetResourceBlipIsNotPermanent(t *testing.T) {
+	t.Parallel()
+
+	rc := &ocmocks.ResourceClientMock{
+		ApplyResourceFunc: func(_ context.Context, _ string, r *openchoreo.Resource) (*openchoreo.Resource, error) {
+			return r, nil
+		},
+		GetResourceFunc: func(_ context.Context, _, _ string) (*openchoreo.Resource, error) {
+			return nil, errors.New("connection reset")
+		},
+	}
+	p := NewOCNativeProvisioner(rc)
+
+	_, err := p.Provision(context.Background(), "default", "shop", "maindb", "postgres-cnpg", nil, []string{"development"})
+	if err == nil {
+		t.Fatal("want poll error when GetResource fails")
+	}
+	if errors.Is(err, ErrProvisionPermanent) {
+		t.Fatalf("GetResource transport error must stay retryable, got %v", err)
+	}
+}
+
+// ResourceTypeNotFound is terminal even when Apply returns an existing
+// release: the type is gone, so waiting for a NEW release cannot succeed.
+// Distinct from StaleReleaseWaitIsNotPermanent, which is ordinary deadline
+// expiry on a still-valid type.
+func TestPlatformProvision_ResourceTypeNotFoundWithPriorReleaseIsPermanent(t *testing.T) {
+	t.Parallel()
+
+	rc := &ocmocks.ResourceClientMock{
+		ApplyResourceFunc: func(_ context.Context, _ string, r *openchoreo.Resource) (*openchoreo.Resource, error) {
+			r.Status = &openchoreo.ResourceStatus{LatestRelease: &openchoreo.ResourceLatestRelease{Name: "shop-maindb-r1"}}
+			return r, nil
+		},
+		GetResourceFunc: func(_ context.Context, _, name string) (*openchoreo.Resource, error) {
+			return &openchoreo.Resource{
+				Metadata: openchoreo.OCObjectMeta{Name: name},
+				Status: &openchoreo.ResourceStatus{
+					LatestRelease: &openchoreo.ResourceLatestRelease{Name: "shop-maindb-r1"},
+					Conditions: []openchoreo.OCCondition{{
+						Type:    "Ready",
+						Status:  "False",
+						Reason:  "ResourceTypeNotFound",
+						Message: `ClusterResourceType "object-storage" not found`,
+					}},
+				},
+			}, nil
+		},
+	}
+	p := NewOCNativeProvisioner(rc)
+
+	_, err := p.Provision(context.Background(), "default", "shop", "maindb", "object-storage", nil, []string{"development"})
+	if !errors.Is(err, ErrProvisionPermanent) {
+		t.Fatalf("want ErrProvisionPermanent on ResourceTypeNotFound even with a prior release, got %v", err)
+	}
+}
+
+// ResourceTypeNotFound is a wait-boundary answer on a new Resource (empty
+// prior): the controller will never cut a release.
+func TestPlatformProvision_ResourceTypeNotFoundIsPermanent(t *testing.T) {
+	t.Parallel()
+
+	rc := &ocmocks.ResourceClientMock{
+		ApplyResourceFunc: func(_ context.Context, _ string, r *openchoreo.Resource) (*openchoreo.Resource, error) {
+			return r, nil
+		},
+		GetResourceFunc: func(_ context.Context, _, name string) (*openchoreo.Resource, error) {
+			return &openchoreo.Resource{
+				Metadata: openchoreo.OCObjectMeta{Name: name},
+				Status: &openchoreo.ResourceStatus{
+					Conditions: []openchoreo.OCCondition{{
+						Type:    "Ready",
+						Status:  "False",
+						Reason:  "ResourceTypeNotFound",
+						Message: `ClusterResourceType "object-storage" not found`,
+					}},
+				},
+			}, nil
+		},
+	}
+	p := NewOCNativeProvisioner(rc)
+
+	_, err := p.Provision(context.Background(), "default", "shop", "maindb", "object-storage", nil, []string{"development"})
+	if !errors.Is(err, ErrProvisionPermanent) {
+		t.Fatalf("want ErrProvisionPermanent on ResourceTypeNotFound, got %v", err)
+	}
+}
+
+func TestPlatformProvision_NeverCutReleaseIsPermanent(t *testing.T) {
+	t.Parallel()
+
+	rc := &ocmocks.ResourceClientMock{
+		ApplyResourceFunc: func(_ context.Context, _ string, r *openchoreo.Resource) (*openchoreo.Resource, error) {
+			return r, nil
+		},
+		GetResourceFunc: func(_ context.Context, _, name string) (*openchoreo.Resource, error) {
+			return &openchoreo.Resource{Metadata: openchoreo.OCObjectMeta{Name: name}}, nil
+		},
+	}
+	p := NewOCNativeProvisioner(rc)
+	p.pollInterval = time.Millisecond
+	p.pollTimeout = 20 * time.Millisecond
+
+	_, err := p.Provision(context.Background(), "default", "shop", "maindb", "postgres-cnpg", nil, []string{"development"})
+	if !errors.Is(err, ErrProvisionPermanent) {
+		t.Fatalf("want ErrProvisionPermanent when latestRelease never appears, got %v", err)
+	}
+}
+
+// A wait that expired while a stale release still sat on the Resource is not
+// classified permanent: reconcile can be slow. Twin of NeverCutReleaseIsPermanent
+// — Apply reports a prior release, Get keeps returning it.
+func TestPlatformProvision_StaleReleaseWaitIsNotPermanent(t *testing.T) {
+	t.Parallel()
+
+	rc := &ocmocks.ResourceClientMock{
+		ApplyResourceFunc: func(_ context.Context, _ string, r *openchoreo.Resource) (*openchoreo.Resource, error) {
+			r.Status = &openchoreo.ResourceStatus{LatestRelease: &openchoreo.ResourceLatestRelease{Name: "shop-maindb-r1"}}
+			return r, nil
+		},
+		GetResourceFunc: func(_ context.Context, _, name string) (*openchoreo.Resource, error) {
+			return &openchoreo.Resource{
+				Metadata: openchoreo.OCObjectMeta{Name: name},
+				Status:   &openchoreo.ResourceStatus{LatestRelease: &openchoreo.ResourceLatestRelease{Name: "shop-maindb-r1"}},
+			}, nil
+		},
+	}
+	p := NewOCNativeProvisioner(rc)
+	p.pollInterval = time.Millisecond
+	p.pollTimeout = 20 * time.Millisecond
+
+	_, err := p.Provision(context.Background(), "default", "shop", "maindb", "postgres-cnpg", nil, []string{"development"})
+	if err == nil {
+		t.Fatal("want timeout error when the stale release never changes")
+	}
+	if errors.Is(err, ErrProvisionPermanent) {
+		t.Fatalf("a wait that expired on a stale release is not permanent (reconcile can be slow), got %v", err)
+	}
+}
+
 func TestPlatformProvision_RequiresArgs(t *testing.T) {
 	t.Parallel()
 

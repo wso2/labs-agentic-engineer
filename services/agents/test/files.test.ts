@@ -19,7 +19,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { FileBundle, type LoadSkillResult, type LoadSkillReferenceResult } from "@aep/agent-stream";
-import { buildFileTools, LOAD_SKILL, LOAD_SKILL_REFERENCE } from "../src/agents/main/tools/files.js";
+import { buildFileToolSet, LOAD_SKILL, LOAD_SKILL_REFERENCE } from "../src/agents/main/tools/files.js";
 import { SkillReadError, type SkillSource } from "../src/agents/main/skill-source.js";
 import { testSkillSource, type TestSkill } from "./skill-source.js";
 
@@ -47,18 +47,26 @@ const SKILLS_WITH_REFS = testSkillSource([
 type SkillSourceArg = ReturnType<typeof testSkillSource>;
 type LoadSkillExec = (i: { names: string[] }, o: unknown) => Promise<LoadSkillResult>;
 const loadSkillExec = (skills: SkillSourceArg): LoadSkillExec =>
-  buildFileTools(new FileBundle({}), skills)[LOAD_SKILL]!.execute as unknown as LoadSkillExec;
+  buildFileToolSet(new FileBundle({}), skills).tools[LOAD_SKILL]!.execute as unknown as LoadSkillExec;
 
-test("buildFileTools omits loadSkill when no skills are supplied (skill-free = today)", () => {
-  const tools = buildFileTools(new FileBundle({}));
+test("buildFileToolSet omits loadSkill when no skills are supplied (skill-free = today)", () => {
+  const tools = buildFileToolSet(new FileBundle({})).tools;
   assert.equal(LOAD_SKILL in tools, false);
-  // The file-mutation tools plus the always-registered HITL question tools
-  // (console ADR-0012 / #270), in declaration order.
-  assert.deepEqual(Object.keys(tools), ["addFile", "editFile", "removeFile", "ask_question", "ask_questions"]);
+  // The file-mutation tools plus the always-registered UI tools, in
+  // declaration order: the HITL questions (console ADR-0012 / #270) and the
+  // fire-and-forget plan declaration (ADR-0022 / #576).
+  assert.deepEqual(Object.keys(tools), [
+    "addFile",
+    "editFile",
+    "removeFile",
+    "ask_question",
+    "ask_questions",
+    "declare_plan",
+  ]);
 });
 
-test("buildFileTools registers loadSkill when skills are supplied", () => {
-  assert.ok(buildFileTools(new FileBundle({}), SKILLS)[LOAD_SKILL]);
+test("buildFileToolSet registers loadSkill when skills are supplied", () => {
+  assert.ok(buildFileToolSet(new FileBundle({}), SKILLS).tools[LOAD_SKILL]);
 });
 
 test("loadSkill returns every requested body in one call, in request order", async () => {
@@ -89,7 +97,7 @@ test("loadSkill miss is self-correctable AND partial: resolved bodies + missing 
 
 type LoadSkillRefExec = (i: { name: string; path: string }, o: unknown) => Promise<LoadSkillReferenceResult>;
 const loadSkillRefExec = (skills: SkillSourceArg): LoadSkillRefExec =>
-  buildFileTools(new FileBundle({}), skills)[LOAD_SKILL_REFERENCE]!.execute as unknown as LoadSkillRefExec;
+  buildFileToolSet(new FileBundle({}), skills).tools[LOAD_SKILL_REFERENCE]!.execute as unknown as LoadSkillRefExec;
 
 test("loadSkill lists a skill's reference paths in a success result", async () => {
   const res = await loadSkillExec(SKILLS_WITH_REFS)({ names: ["excalidraw-diagrams"] }, {});
@@ -103,10 +111,10 @@ test("loadSkill omits the references listing for a skill without references", as
   if (res.ok) assert.equal(res.skills[0]!.references, undefined);
 });
 
-test("buildFileTools registers loadSkillReference only when a skill carries references", () => {
-  assert.ok(buildFileTools(new FileBundle({}), SKILLS_WITH_REFS)[LOAD_SKILL_REFERENCE]);
-  assert.equal(LOAD_SKILL_REFERENCE in buildFileTools(new FileBundle({}), SKILLS), false);
-  assert.equal(LOAD_SKILL_REFERENCE in buildFileTools(new FileBundle({})), false);
+test("buildFileToolSet registers loadSkillReference only when a skill carries references", () => {
+  assert.ok(buildFileToolSet(new FileBundle({}), SKILLS_WITH_REFS).tools[LOAD_SKILL_REFERENCE]);
+  assert.equal(LOAD_SKILL_REFERENCE in buildFileToolSet(new FileBundle({}), SKILLS).tools, false);
+  assert.equal(LOAD_SKILL_REFERENCE in buildFileToolSet(new FileBundle({})).tools, false);
 });
 
 test("loadSkillReference returns a reference body", async () => {
@@ -172,4 +180,19 @@ test("loadSkill I/O fault returns could-not-read — never unknown skills", asyn
       ["component-architecture"],
     );
   }
+});
+
+// #576: declaring a plan must NOT end the turn — the agent says what it is
+// about to write and then writes it. The call site pairs `hasToolCall` stop
+// conditions with the question tools only; here we hold the other half of that
+// contract: the tool resolves immediately rather than parking on the user.
+test("declare_plan acknowledges and resolves — it never awaits a human", async () => {
+  const tools = buildFileToolSet(new FileBundle({})).tools;
+  const declare = tools["declare_plan"]!;
+  const exec = declare.execute as unknown as (
+    input: { paths: string[] },
+  ) => Promise<{ status: string; paths: string[] }>;
+  const out = await exec({ paths: ["specs/design/design.cell"] });
+  assert.equal(out.status, "ok");
+  assert.deepEqual(out.paths, ["specs/design/design.cell"]);
 });

@@ -176,6 +176,16 @@ export async function listTodos() {
 }
 ```
 
+## Keep `userManager` inside `src/auth.ts`
+
+Every other module reaches auth through the **functions** — `currentUser`,
+`getAccessToken`, `getRoles`, `signIn`, `handleCallback`, `signOut`. That list
+is the module's whole surface, and it is what lets the app also run with no IDP
+behind it: mock mode substitutes the module wholesale (`react-webapp`'s
+`references/mock-mode.md` owns that). `userManager` is `oidc-client-ts`'s own
+object and has no substitute, so a page that reaches for it directly compiles in
+production and breaks the moment anybody tries to open the app without a cluster.
+
 ---
 
 # Backend authorization

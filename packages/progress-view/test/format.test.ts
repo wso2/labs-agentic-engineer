@@ -47,6 +47,21 @@ test("activity is header material, never a row", () => {
   assert.equal(formatLine({ kind: "activity", summary: "Writing todo-api/service.bal" }).text, "");
 });
 
+test("a progress_item is row state, never a row", () => {
+  // It says an ITEM's status changed — the Validation page repaints that
+  // criterion's existing row from it. Printed here as well, one criterion moving
+  // through five statuses would be five lines interleaved with the tool calls
+  // that caused them, all of it narrating what the row above already shows.
+  assert.equal(formatLine({ kind: "progress_item", itemId: "AC-003-a", status: "authoring" }).text, "");
+  // Explicit, not a fall-through: the default arm returns "" for this payload
+  // only because it happens to carry neither `message` nor `summary`, which is
+  // an accident of the shape rather than a decision.
+  assert.equal(
+    formatLine({ kind: "progress_item", itemId: "AC-003-a", status: "fail", summary: "boom" }).text,
+    "",
+  );
+});
+
 test("an outcome speaks only when it carries something the action didn't", () => {
   // A fast success: nothing to add. The next action appearing is the evidence.
   assert.deepEqual(formatOutcome({ kind: "tool_result", ok: true, durationMs: 40 }), {

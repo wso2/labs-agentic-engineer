@@ -18,6 +18,7 @@ package provisioning
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -25,6 +26,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/contracts/taskmeta"
 	"github.com/wso2/aep/aep-api/internal/delivery"
+	"github.com/wso2/aep/aep-api/internal/dependencies"
 	"github.com/wso2/aep/aep-api/internal/gen"
 	"github.com/wso2/aep/aep-api/internal/platform/ocname"
 	"github.com/wso2/aep/aep-api/internal/spec"
@@ -121,6 +123,45 @@ func TestProvisionForBuild_UsesMintedPlatformGateDespiteListRace(t *testing.T) {
 	}
 	if row := provisionRowFor(execs, "orders-db"); row == nil || row.IssueNumber != platformGate {
 		t.Fatalf("platform provision row = %+v, want captured gate #%d", row, platformGate)
+	}
+}
+
+// designWithPlatformDeps is a local fixture for the fail-fast test: three
+// platform-resource names that designWithDeps() does not carry, so the
+// provisioner is reached instead of a 404 from findDepInProject.
+func designWithPlatformDeps(names ...string) []spec.DesignComponent {
+	deps := make([]spec.Dependency, 0, len(names))
+	for _, n := range names {
+		deps = append(deps, spec.Dependency{
+			Kind:         spec.DependencyKindPlatformResource,
+			Name:         n,
+			ResourceType: "postgres-cnpg",
+		})
+	}
+	return []spec.DesignComponent{{Name: "orders", Dependencies: deps}}
+}
+
+func TestProvisionForBuild_PermanentPlatformFailureSkipsRemainingPlatformWaits(t *testing.T) {
+	issues := newFakeIssues(nil)
+	plat := &fakePlatProv{err: fmt.Errorf("%w: no release", dependencies.ErrProvisionPermanent)}
+	svc := newTestService(issues, &fakeExecStore{}, fakeDesign{comps: designWithPlatformDeps("bad-a", "bad-b", "bad-c")}, &fakeExtProv{}, plat, &fakeBindings{})
+
+	fails, err := svc.ProvisionForBuild(context.Background(), "acme", "acme", "proj", "v3", 0, []BuildProvisionInput{
+		{Component: "orders", Dependency: "bad-a", Kind: "platform-resource", Approved: true},
+		{Component: "orders", Dependency: "bad-b", Kind: "platform-resource", Approved: true},
+		{Component: "orders", Dependency: "bad-c", Kind: "platform-resource", Approved: true},
+	})
+	if err != nil {
+		t.Fatalf("batch error: %v", err)
+	}
+	if plat.calls != 1 {
+		t.Fatalf("permanent platform failure must skip remaining platform waits, got %d calls", plat.calls)
+	}
+	if len(fails) != 1 {
+		t.Fatalf("want 1 failure, got %+v", fails)
+	}
+	if !errors.Is(fails[0].Err, dependencies.ErrProvisionPermanent) {
+		t.Fatalf("failure must carry ErrProvisionPermanent, got %v", fails[0].Err)
 	}
 }
 

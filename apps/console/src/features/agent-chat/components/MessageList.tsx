@@ -21,6 +21,7 @@ import { Paperclip } from "@wso2/oxygen-ui-icons-react";
 import { START_COMMAND } from "@aep/contracts/commands";
 import type { FeedBlock } from "../feed";
 import { startLineOf } from "../startLine";
+import { AnchorTag } from "./AnchorTag";
 import { TurnBlock } from "./TurnBlock";
 import { WorkingIndicator } from "./WorkingIndicator";
 
@@ -152,6 +153,10 @@ function UserBlock({ block }: { block: Extract<FeedBlock, { kind: "user" }> }) {
               : theme.palette.action.hover,
         }}
       >
+        {/* What this message was aimed at (#666) — ABOVE the words, because the
+            anchor is the subject of the sentence rather than an addendum to it.
+            Frozen: never re-checked against the current document (ADR-0024). */}
+        {message.anchor && <AnchorTag anchor={message.anchor} />}
         {startLine ? (
           <Box sx={{ opacity: failed ? 0.6 : 1 }}>
             <StartLine idea={startLine.idea} />

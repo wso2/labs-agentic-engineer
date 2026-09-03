@@ -388,6 +388,18 @@ export type SdkTranslator = (message: unknown) => ProgressEventInput[];
 export interface SdkTranslatorOptions {
   /** Injected clock, so duration measurement is testable without sleeping. */
   now?: () => number;
+  /**
+   * Called when a plain tool call settles, with the same `ok` this translator
+   * puts on the feed. A seam, not a second feature: whether a call succeeded is
+   * already decided here from the SDK's own `is_error`, and re-deriving it
+   * anywhere else would give two answers to one question.
+   *
+   * Fan-out results are deliberately excluded — an `Agent`/`Task` call settles a
+   * whole subagent, which is a different kind of fact from one command's exit,
+   * and nothing consumes it. Today's only consumer is the validation progress
+   * tracker, which settles per-spec `npm test` calls.
+   */
+  onToolOutcome?: (toolUseId: string, ok: boolean) => void;
 }
 
 /**
@@ -397,6 +409,7 @@ export interface SdkTranslatorOptions {
  */
 export function createSdkTranslator(opts?: SdkTranslatorOptions): SdkTranslator {
   const now = opts?.now ?? Date.now;
+  const onToolOutcome = opts?.onToolOutcome;
   // Spawning tool-call id → that subagent / backgrounded command.
   const subagents = new Map<string, TaskInfo>();
   // SDK task id → the spawning tool-call id above, so a task_* message and a
@@ -680,6 +693,7 @@ export function createSdkTranslator(opts?: SdkTranslatorOptions): SdkTranslator 
           }
           continue;
         }
+        onToolOutcome?.(tr.toolUseId, !tr.isError);
         events.push({
           kind: "tool_result",
           ok: !tr.isError,

@@ -167,6 +167,16 @@ func BuildRunName(projectID, component, sha string, attempt int) string {
 // between them, so neither has to import the other's world.
 var ErrDeployPermanent = errors.New("permanent deploy failure")
 
+// ErrProvisionPermanent marks a provisioning failure that repeating cannot
+// change: the ClusterResourceType is missing, or the Resource never cuts a
+// release.
+//
+// It is the same seam as ErrDeployPermanent: WHICH provision failures are
+// permanent belongs to the dependencies domain; turning that into Temporal's
+// vocabulary belongs to run/errors.go. This sentinel is the seam so run does
+// not import dependencies.
+var ErrProvisionPermanent = errors.New("permanent provision failure")
+
 // ComponentDeploy is one component's deployment in one environment, as the run
 // loop reasons about it: which release was pinned, and what the cluster says
 // about the binding that pins it.
@@ -183,12 +193,20 @@ var ErrDeployPermanent = errors.New("permanent deploy failure")
 type ComponentDeploy struct {
 	Component   string `json:"component"`
 	Environment string `json:"environment"`
-	// Release is the ComponentRelease this deployment pinned. Empty on a read
-	// that only observed the binding.
+	// Release is the ComponentRelease this deployment pins — the release a
+	// promote just wrote, or the one a READ found on the binding. Empty when the
+	// binding does not exist yet, and on a converge, which deliberately moves no
+	// pin.
 	Release string `json:"release,omitempty"`
 	// Ready is the binding's aggregate Ready condition being True (or the
 	// component being deliberately undeployed).
 	Ready bool `json:"ready"`
+	// Undeploy is spec.state == Undeploy: somebody took this component out of
+	// the environment on purpose. It rides beside Ready, which it also sets,
+	// because the two mean opposite things to a RECONCILE — "it is up" versus
+	// "nothing is owed here" — and a pass that could not tell them apart would
+	// promote a release over a deliberate withdrawal.
+	Undeploy bool `json:"undeploy,omitempty"`
 	// Failed is Ready=False — a verdict, not a wait.
 	Failed bool `json:"failed,omitempty"`
 	// Reason is OpenChoreo's own condition reason, carried verbatim for the

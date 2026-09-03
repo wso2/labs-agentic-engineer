@@ -24,6 +24,7 @@ import (
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/delivery/build"
+	"github.com/wso2/aep/aep-api/internal/dependencies"
 	"github.com/wso2/aep/aep-api/internal/dependencies/provisioning"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
@@ -67,6 +68,8 @@ func (d buildDesignDeriver) DerivePlatformResourceFactsAtHead(ctx context.Contex
 		return nil
 	case errors.Is(err, spec.ErrEndUserAuthConflict):
 		return fmt.Errorf("%w: %v", build.ErrEndUserAuthConflict, err)
+	case errors.Is(err, spec.ErrUnknownResourceType):
+		return fmt.Errorf("%w: %v", build.ErrUnknownResourceType, err)
 	case errors.Is(err, spec.ErrResourceCatalogUnavailable):
 		return fmt.Errorf("%w: %v", build.ErrResourceCatalogUnavailable, err)
 	default:
@@ -127,14 +130,28 @@ func (b buildGateResolver) ProvisionForBuild(ctx context.Context, orgID, project
 	if err != nil {
 		return err
 	}
+	return aggregateProvisionFailures(fails)
+}
+
+func aggregateProvisionFailures(fails []provisioning.ProvisionFailure) error {
 	if len(fails) == 0 {
 		return nil
 	}
 	reasons := make([]string, 0, len(fails))
+	permanent := false
+	var cause error
 	for _, f := range fails {
 		reasons = append(reasons, f.Dependency+": "+f.Reason)
+		if errors.Is(f.Err, dependencies.ErrProvisionPermanent) {
+			permanent = true
+			cause = f.Err
+		}
 	}
-	return fmt.Errorf("provision %d dependenc(ies) failed: %s", len(fails), strings.Join(reasons, "; "))
+	joined := fmt.Errorf("provision %d dependenc(ies) failed: %s", len(fails), strings.Join(reasons, "; "))
+	if !permanent {
+		return joined
+	}
+	return fmt.Errorf("%w: %w: %w", delivery.ErrProvisionPermanent, cause, joined)
 }
 
 // mapProvisionInputs maps the delivery-root payload onto the provisioning

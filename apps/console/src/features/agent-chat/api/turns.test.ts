@@ -29,6 +29,68 @@ describe("startTurnBody", () => {
       instruction: "/register-external-resource github",
     });
   });
+
+  // The anchor is metadata BESIDE the user's words, never folded into them
+  // (console ADR-0024): the transcript renders a tag from the field, and it
+  // cannot render one for something it would have to regex back out of prose.
+  it("carries the anchor and intent as fields, leaving the instruction untouched", () => {
+    const anchor = {
+      file: "specs/requirements/PRD.md",
+      nodes: [{ name: "Rounds close automatically.", kind: "paragraph", context: "Solution" }],
+    };
+    expect(startTurnBody("make this shorter", true, { anchor, intent: "change" })).toEqual({
+      instruction: "make this shorter",
+      collab: true,
+      anchor,
+      intent: "change",
+    });
+  });
+
+  it("sends neither field for an ordinary chat turn", () => {
+    const body = startTurnBody("hello", true);
+    expect(body).not.toHaveProperty("anchor");
+    expect(body).not.toHaveProperty("intent");
+  });
+});
+
+describe("mapConversationMessage anchors", () => {
+  const anchor = {
+    file: "specs/requirements/PRD.md",
+    nodes: [{ name: "Which Slack workspace", kind: "list item", context: "Open Questions" }],
+  };
+
+  it("keeps a well-formed anchor, so the tag survives a reload", () => {
+    expect(mapConversationMessage({ role: "user", content: "hi", anchor })).toEqual({
+      role: "user",
+      content: "hi",
+      anchor,
+    });
+  });
+
+  it("omits anchor for an ordinary message", () => {
+    expect(mapConversationMessage({ role: "user", content: "hi" })).not.toHaveProperty("anchor");
+  });
+
+  // Dropped WHOLE rather than partially: a tag naming fewer nodes than the user
+  // selected is a quieter and worse failure than no tag at all.
+  it("drops the whole anchor when one node is malformed", () => {
+    const half = { file: "a.md", nodes: [{ name: "ok", kind: "paragraph" }, { kind: "paragraph" }] };
+    expect(mapConversationMessage({ role: "user", content: "hi", anchor: half })).not.toHaveProperty(
+      "anchor",
+    );
+  });
+
+  it("drops an anchor with no file to resolve against", () => {
+    expect(
+      mapConversationMessage({ role: "user", content: "hi", anchor: { nodes: anchor.nodes } }),
+    ).not.toHaveProperty("anchor");
+  });
+
+  it("omits an empty context rather than sending a blank one", () => {
+    const bare = { file: "a.md", nodes: [{ name: "n", kind: "paragraph", context: "" }] };
+    const mapped = mapConversationMessage({ role: "user", content: "hi", anchor: bare });
+    expect(mapped?.anchor?.nodes[0]).not.toHaveProperty("context");
+  });
 });
 
 describe("mapConversationMessage", () => {

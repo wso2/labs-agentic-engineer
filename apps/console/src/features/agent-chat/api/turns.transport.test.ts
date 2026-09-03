@@ -122,3 +122,59 @@ describe("startCollabTurn transport", () => {
     expect(await startCollabTurn("shop", "conv-1", "hi")).toBe("t-1");
   });
 });
+
+/** jsdom's Blob here has no `.text()`, so read the part the long way. */
+function readBlob(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsText(blob);
+  });
+}
+
+describe("startCollabTurn transport with an anchor (#666)", () => {
+  beforeEach(() => post.mockClear());
+
+  const anchor = {
+    file: "specs/requirements/PRD.md",
+    nodes: [{ name: "Rounds close automatically.", kind: "paragraph" }],
+  };
+
+  it("puts the anchor in the JSON body when nothing is attached", async () => {
+    await startCollabTurn("shop", "conv-1", "shorter please", [], true, {
+      anchor,
+      intent: "change",
+    });
+    expect(sent().init.body).toEqual({
+      instruction: "shorter please",
+      collab: true,
+      anchor,
+      intent: "change",
+    });
+  });
+
+  // A nested object has no scalar form, which is why the contract declares this
+  // part `application/json`. Sending it as `[object Object]` is exactly the
+  // "carried correctly up to a boundary and never across it" defect this file
+  // exists for.
+  it("sends the anchor as a JSON part when files ride along", async () => {
+    await startCollabTurn("shop", "conv-1", "shorter please", [fileOf("notes.md")], true, {
+      anchor,
+      intent: "discuss",
+    });
+    const body = sent().init.body as FormData;
+    expect(body).toBeInstanceOf(FormData);
+    const part = body.get("anchor");
+    expect(part).toBeInstanceOf(Blob);
+    expect(JSON.parse(await readBlob(part as Blob))).toEqual(anchor);
+    expect(body.get("intent")).toBe("discuss");
+  });
+
+  it("adds neither part when the send is not aimed", async () => {
+    await startCollabTurn("shop", "conv-1", "hello", [fileOf("notes.md")]);
+    const body = sent().init.body as FormData;
+    expect(body.get("anchor")).toBeNull();
+    expect(body.get("intent")).toBeNull();
+  });
+});

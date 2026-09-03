@@ -37,4 +37,10 @@ var (
 
 	// ErrProvisionFailed is returned when the ResourceProvisioner call fails.
 	ErrProvisionFailed = errors.New("platform provisioner failed")
+
+	// ErrProvisionPermanent marks a provisioning answer that retrying cannot
+	// change: the ClusterResourceType does not exist, or the Resource never
+	// cuts a release. Distinct from ErrProvisionFailed, which is also used
+	// for blips (OC down) that must stay retryable.
+	ErrProvisionPermanent = errors.New("platform provisioner failed permanently")
 )

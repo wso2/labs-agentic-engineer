@@ -161,19 +161,18 @@ func (a runCycles) Latest(ctx context.Context, orgID, runID string) (*delivery.R
 type runBuilds struct{ oc openchoreo.ComponentClient }
 
 func (a runBuilds) ListBuildRuns(ctx context.Context, orgID, projectID, component string) ([]run.BuildRunInfo, error) {
-	list, err := a.oc.ListWorkflowRuns(ctx, orgID, projectID, component, 0, "")
+	runs, err := a.oc.ListBuildRuns(ctx, orgID, projectID, component)
 	if err != nil {
 		return nil, err
 	}
-	if list == nil {
-		return nil, nil
-	}
-	out := make([]run.BuildRunInfo, 0, len(list.Items))
-	for _, item := range list.Items {
+	out := make([]run.BuildRunInfo, 0, len(runs))
+	for _, r := range runs {
 		out = append(out, run.BuildRunInfo{
-			Name:      item.Name,
-			Terminal:  item.Completed,
-			Succeeded: item.Status == openchoreo.ReasonWorkflowSucceeded,
+			Name:      r.Name,
+			Terminal:  r.Completed,
+			Succeeded: r.Succeeded,
+			CommitSHA: r.CommitSHA,
+			StartedAt: r.StartedAt,
 		})
 	}
 	return out, nil

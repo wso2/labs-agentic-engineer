@@ -59,7 +59,7 @@ func (s *Service) EnsureProvisionIssues(ctx context.Context, orgID, projectID, d
 		return nil, nil
 	}
 
-	existing, err := s.openProvisionDeps(ctx, orgID, projectID)
+	existing, filed, err := s.provisionGatesForVersion(ctx, orgID, projectID, designTag)
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +77,14 @@ func (s *Service) EnsureProvisionIssues(ctx context.Context, orgID, projectID, d
 
 	var created int
 	for key, dep := range distinct {
-		if existing[key] > 0 {
+		// TWO reasons to skip, and the second is the one that stops a retried
+		// activity filling the milestone with duplicates. `existing` is an OPEN
+		// gate — a live hold, whatever version filed it. `filed` is a gate for
+		// THIS version in any state, including one this same activity minted and
+		// then closed on an earlier attempt (settleReadyGates closes the gate of
+		// every dependency that is already Ready). Only the pair makes the mint
+		// idempotent, which is what its callers have always assumed it was.
+		if existing[key] > 0 || filed[key] {
 			continue
 		}
 		title := provisionIssueTitle(dep)
@@ -89,6 +96,10 @@ func (s *Service) EnsureProvisionIssues(ctx context.Context, orgID, projectID, d
 			// version mints the same key, and the host dedupes on it.
 			DedupeKey: "gate:" + projectID + ":" + designTag + ":" + strings.ToLower(dep.name),
 		}
+		// The version rides a LABEL as well as the dedupe key, because the key is
+		// resolved host-side against OPEN issues only and the label is what lets
+		// the lookup above see a gate this version already closed.
+		req.Labels = withGateVersion(req.Labels, designTag)
 		if milestoneNumber > 0 {
 			n := milestoneNumber
 			req.Milestone = &n
@@ -140,20 +151,48 @@ func distinctProvisionDeps(comps []spec.DesignComponent) map[string]provisionDep
 // races GitHub's eventually-consistent list, so the build path captures those
 // numbers from the CreateIssue result instead (issue #164).
 func (s *Service) openProvisionDeps(ctx context.Context, orgID, projectID string) (map[string]int, error) {
+	open, _, err := s.provisionGatesForVersion(ctx, orgID, projectID, "")
+	return open, err
+}
+
+// provisionGatesForVersion reads the project's dependency gates once and answers
+// the mint's two different questions about them.
+//
+//	open   dep slug → the number of an OPEN gate for it, ANY version. A live
+//	       hold, and the number the build path threads into provisioning so a
+//	       provision run is admitted against the gate it will close.
+//	filed  dep slugs that already have a gate for THIS version, in any state.
+//	       Suppresses the mint and nothing else — a closed gate is not a hold, so
+//	       it must never be threaded anywhere as one.
+//
+// The two are separate because a closed gate has to suppress a re-mint while
+// remaining invisible as a hold, and collapsing them would either resurrect
+// duplicate gates or admit a provision run against an issue nothing derives
+// from. An empty tag asks only the first question, which is what
+// openProvisionDeps wants.
+//
+// State is read off the issue rather than filtered server-side: this is one
+// label-filtered list and both answers come out of the same pass.
+func (s *Service) provisionGatesForVersion(ctx context.Context, orgID, projectID, tag string) (
+	open map[string]int, filed map[string]bool, err error) {
 	issues, err := s.issues.ListIssues(ctx, orgID, projectID, []string{delivery.KindProvision})
 	if err != nil {
-		return nil, fmt.Errorf("provisioning: list issues: %w", err)
+		return nil, nil, fmt.Errorf("provisioning: list issues: %w", err)
 	}
-	out := map[string]int{}
+	open, filed = map[string]int{}, map[string]bool{}
 	for _, issue := range issues {
-		if !strings.EqualFold(issue.State, "open") {
+		dep := gateDepFromLabels(issue.Labels)
+		if dep == "" {
 			continue
 		}
-		if dep := gateDepFromLabels(issue.Labels); dep != "" {
-			out[dep] = issue.Number
+		if gateIsForVersion(issue.Labels, tag) {
+			filed[dep] = true
+		}
+		if strings.EqualFold(issue.State, "open") {
+			open[dep] = issue.Number
 		}
 	}
-	return out, nil
+	return open, filed, nil
 }
 
 func provisionIssueTitle(dep provisionDep) string {

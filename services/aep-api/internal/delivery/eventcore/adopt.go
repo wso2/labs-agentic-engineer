@@ -181,7 +181,7 @@ func (e *Events) start(ctx context.Context, projectID string, req delivery.Start
 	return err
 }
 
-// Revalidate asks a version's acceptance criteria again, against the system
+// Revalidate asks a version's validation criteria again, against the system
 // already deployed.
 //
 // It is AdoptIssue's sibling and deliberately so: both hand a milestone to the
@@ -237,7 +237,7 @@ func (e *Events) Revalidate(ctx context.Context, orgID, projectID string, milest
 		return "", cerr
 	}
 	if !hasCriteria {
-		return "", delivery.ErrNoAcceptanceCriteria
+		return "", delivery.ErrNoValidationCriteria
 	}
 
 	slog.InfoContext(ctx, "eventcore: revalidating a deployed version",

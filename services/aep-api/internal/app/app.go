@@ -1428,7 +1428,7 @@ func computeDegradations(cfg config.Config, secretsDelivery bool) []Degradation 
 		off("secrets-delivery", "SecretsProvider not injected — secret writes + external-secret cleanup disabled")
 	}
 	if cfg.AEPInternalBaseURL == "" {
-		off("mcp-discovery", "AEP_INTERNAL_BASE_URL not set — design-turn MCP discovery omitted")
+		off("mcp-discovery", "AEP_API_INTERNAL_BASE_URL not set — design-turn MCP discovery omitted")
 	}
 	thunderBase := cfg.ThunderAdmin.BaseURL
 	if thunderBase == "" {

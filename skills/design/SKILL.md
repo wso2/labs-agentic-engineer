@@ -53,16 +53,32 @@ screenshot, a mockup image. They are attached to this conversation natively
 
 No documents attached is the ordinary case: design from the PRD alone.
 
+## Say what you are about to write
+
+Design runs long, and a reader who can only see finished files cannot tell how
+much is left. **Call `declare_plan` before you start writing**, naming the
+files that step is about to produce, and call it again each time the plan grows
+— you cannot know the per-component files until the cell fixes the component
+set, so the list arriving in waves is the real shape of the work, not a failure
+to plan. Restating a path you already declared is harmless.
+
+It does not end your turn: declare, then write. The declaration and the
+artifacts appearing as you write them are what keep the user informed — you do
+not need to narrate your progress alongside them.
+
 ## The lineup
 
 Each step names the skill that governs it. Those bodies are inlined for this
 turn — apply them directly, and load one only if you find you do not have it.
 
+0. **Declare the first wave** — `declare_plan` with what you can already name:
+   `specs/design/design.cell` and `specs/design/design.md` at minimum.
 1. **design.cell** (`cell-design`) — emit the cell FIRST: every component,
    boundaries and edges. The console streams it into the live diagram, and
    the platform scaffolds a design.json skeleton per deployable component
    when it lands.
-2. **Component enrichment** (`architecture`) — fill each
+2. **Component enrichment** (`architecture`) — the component set now exists, so
+   `declare_plan` the per-component files before writing them. Fill each
    component's design.json: language (org Tech stack default first), the PRD
    `stories` it serves (every story the PRD defines must be claimed by some
    component — the build gate checks coverage), dependencies (discover before

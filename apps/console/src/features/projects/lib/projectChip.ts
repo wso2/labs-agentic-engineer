@@ -67,6 +67,18 @@ export function projectChip(status: ProjectStatus): ProjectChip {
 function deliveryChip(status: ProjectStatus): ProjectChip | null {
   const { build, deploy } = status;
   if (build.status === "failed") return { label: "Build failed", tone: "error", busy: false };
+  // A cancel is not a failure, and it must not read as one HERE either: the build
+  // page header already says Cancelled, and a toolbar saying "Build failed" beside
+  // it is the same contradiction that fix removed, one level up. NEUTRAL tone —
+  // nothing went wrong.
+  //
+  // It keeps `failed`'s PRECEDENCE, above the deploy and validation states below,
+  // and that is deliberate rather than inherited. What a reader needs from this
+  // chip is the newest thing that happened to the project, and a cancel they just
+  // performed is exactly that; the previous version carrying on serving is the
+  // background, not the news. It is the same reading that puts Building above
+  // Active.
+  if (build.status === "cancelled") return { label: "Build cancelled", tone: "neutral", busy: false };
   if (build.status === "running") return { label: "Building", tone: "info", busy: true };
   if (deploy.status === "failed") return { label: "Deploy failed", tone: "error", busy: false };
   if (deploy.status === "deploying") return { label: "Deploying", tone: "info", busy: true };

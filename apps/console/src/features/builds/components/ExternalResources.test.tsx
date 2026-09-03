@@ -129,11 +129,11 @@ describe("ExternalResources", () => {
     renderSection();
 
     expect(screen.getByText("External resources")).toBeInTheDocument();
-    expect(screen.getByText("1 of 2 need values")).toBeInTheDocument();
+    expect(screen.getByText("1 of 2 need configuration")).toBeInTheDocument();
     expect(screen.getByText("stripe")).toBeInTheDocument();
     expect(screen.getByText("Payments")).toBeInTheDocument();
     expect(screen.getByText("sendgrid")).toBeInTheDocument();
-    expect(screen.getByText("1 value outstanding")).toBeInTheDocument();
+    expect(screen.getByText("1 setting outstanding")).toBeInTheDocument();
   });
 
   // THE regression this section exists to avoid: a dependency no build has
@@ -149,22 +149,42 @@ describe("ExternalResources", () => {
     });
     renderSection();
 
-    expect(screen.getByText("1 of 1 need values")).toBeInTheDocument();
-    expect(screen.getByText("Needs values")).toBeInTheDocument();
+    expect(screen.getByText("1 of 1 need configuration")).toBeInTheDocument();
+    expect(screen.getByText("Needs configuration")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Configure stripe" }),
+      screen.getByRole("button", { name: "Configure now: stripe" }),
     ).toBeInTheDocument();
     expect(screen.queryByText(/Provisioning/)).not.toBeInTheDocument();
   });
 
-  it("offers Update values once a dependency is configured", () => {
+  // WCAG 2.5.3 Label in Name: the accessible name must CONTAIN the visible text,
+  // or a voice-control user reading "Configure now" off the screen says a name
+  // the button does not answer to. The row name is appended, never substituted.
+  it("keeps each button's accessible name a superset of what it reads", () => {
+    mockDesign = design(external("stripe", ["api_key"]), external("dhl", ["key"]));
+    mockReadiness = readiness(
+      { name: "stripe", state: "unset", missingKeys: ["api_key"] },
+      { name: "dhl", state: "configured" },
+    );
+    renderSection();
+
+    const outstanding = screen.getByRole("button", { name: /stripe/ });
+    expect(outstanding).toHaveTextContent("Configure now");
+    expect(outstanding.getAttribute("aria-label")).toContain("Configure now");
+
+    const configured = screen.getByRole("button", { name: /dhl/ });
+    expect(configured).toHaveTextContent("Edit configuration");
+    expect(configured.getAttribute("aria-label")).toContain("Edit configuration");
+  });
+
+  it("offers Edit configuration once a dependency is configured", () => {
     mockDesign = design(external("stripe", ["api_key"]));
     mockReadiness = readiness({ name: "stripe", state: "configured" });
     renderSection();
 
     expect(screen.getByText("1 of 1 configured")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Update values for stripe" }),
+      screen.getByRole("button", { name: "Edit configuration for stripe" }),
     ).toBeInTheDocument();
   });
 
@@ -177,7 +197,7 @@ describe("ExternalResources", () => {
     });
     renderSection();
 
-    fireEvent.click(screen.getByRole("button", { name: "Configure stripe" }));
+    fireEvent.click(screen.getByRole("button", { name: "Configure now: stripe" }));
     // The dialog opens on the dependency's own schema.
     expect(screen.getByText("Configure — stripe")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("api_key"), {
@@ -201,7 +221,7 @@ describe("ExternalResources", () => {
     };
     act(() => onSuccess());
     expect(
-      screen.getByText(/Values saved — the deployment no longer waits/),
+      screen.getByText(/Configuration saved — the deployment no longer waits/),
     ).toBeInTheDocument();
     expect(invalidateQueries).toHaveBeenCalledWith({
       queryKey: [
@@ -255,7 +275,7 @@ describe("ExternalResources", () => {
     renderSection();
 
     expect(
-      screen.getByText(/Failed to load which external resources still need values/),
+      screen.getByText(/Failed to load which external resources still need configuration/),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(refetchReadiness).toHaveBeenCalled();
@@ -263,9 +283,9 @@ describe("ExternalResources", () => {
 
   // FINDING 7 — the header chip and the summary used to render ABOVE the error
   // branch off rows defaulted from the design alone, so a failed read printed
-  // "3 of 3 need values" and "the version is not deployed until every one of
+  // "3 of 3 need configuration" and "the version is not deployed until every one of
   // them has its development values" directly on top of "Failed to load which
-  // external resources still need values". A fabricated certainty, stated more
+  // external resources still need configuration". A fabricated certainty, stated more
   // confidently than the truth it sat on.
   it("claims to know nothing about what is outstanding when readiness fails", () => {
     mockDesign = design(
@@ -276,12 +296,12 @@ describe("ExternalResources", () => {
     mockReadinessError = true;
     renderSection();
 
-    expect(screen.queryByText(/need values$/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/need configuration$/)).not.toBeInTheDocument();
     expect(screen.queryByText(/of 3/)).not.toBeInTheDocument();
     expect(
       screen.queryByText(/The version is not deployed until every one of them/),
     ).not.toBeInTheDocument();
-    expect(screen.queryByText("Needs values")).not.toBeInTheDocument();
+    expect(screen.queryByText("Needs configuration")).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /Configure/ }),
     ).not.toBeInTheDocument();
@@ -304,9 +324,9 @@ describe("ExternalResources", () => {
     mockReadinessError = true;
     renderSection();
 
-    expect(screen.queryByText("1 of 1 need values")).not.toBeInTheDocument();
+    expect(screen.queryByText("1 of 1 need configuration")).not.toBeInTheDocument();
     expect(
-      screen.getByText(/Failed to load which external resources still need values/),
+      screen.getByText(/Failed to load which external resources still need configuration/),
     ).toBeInTheDocument();
   });
 
@@ -326,7 +346,7 @@ describe("ExternalResources", () => {
     });
     renderSection();
 
-    expect(screen.getByText("1 of 1 need values")).toBeInTheDocument();
+    expect(screen.getByText("1 of 1 need configuration")).toBeInTheDocument();
     expect(screen.getByText("stripe")).toBeInTheDocument();
     expect(screen.queryByText("acme-registered")).not.toBeInTheDocument();
     expect(

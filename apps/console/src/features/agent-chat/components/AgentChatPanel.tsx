@@ -184,8 +184,17 @@ export function AgentChatPanel({
         : null;
   // Before a turn has emitted anything it has no block yet — show a tail
   // "Working…" so a send never looks dropped.
+  //
+  // Derived from the LOG as well as this panel's own composer state: an aimed
+  // send (#666) dispatches through its own hook, so `isSending` here never
+  // flips for it — and its message sat in the feed for the whole dispatch-plus-
+  // first-token window with nothing pulsing, reading as dropped. The log
+  // already carries the signal: an optimistic user row is `in_flight` until
+  // the turn's history replaces it, which is the same fact `isSending` proxies.
+  const sendInFlight =
+    isSending || messages.some((m) => m.role === "user" && m.status === "in_flight");
   const showWorkingTail =
-    isSending && !feed.some((b) => b.kind === "turn" && b.status === "running");
+    sendInFlight && !feed.some((b) => b.kind === "turn" && b.status === "running");
 
   // Same-file tool runs render collapsed by default; a click flips membership.
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set());

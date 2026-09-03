@@ -257,7 +257,7 @@ func TestPlanIntoMilestone_ContextIsTheMilestonesOwnWork(t *testing.T) {
 		State: "open", Labels: nil,
 	}, 7)
 	r.issues.seedInMilestone(sourcecontrol.IssueInfo{
-		Number: 204, Title: "Validate hello-world against its acceptance criteria",
+		Number: 204, Title: "Validate hello-world against its validation criteria",
 		Body:  "Author e2e tests.",
 		State: "open", Labels: []string{delivery.LabelAgentWork, delivery.KindValidation},
 	}, 7)

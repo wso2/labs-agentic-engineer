@@ -50,13 +50,12 @@ section every time instead of remembering one, because it differs per
 organization. If that section is absent or empty, pin only the two stack skills.
 Never substitute a design system the organization defaults do not name.
 
-**Pinning the design system is not the same as consulting it.** A web-application
-in this design also means LOADING that design-system skill yourself, now: it owns
-theming, and a theme is settled at design time because the built app is themed at
-its first build. Load it by name the moment the design gains a web-application,
-and do what its design-time section says before you call the design done. Add
-`"api-management"` to any service that sits behind the gateway, and
-`"thunder-authentication"` to **both** sides of sign-in — the SPA *and* every
+**Pin the design system; do not consult it.** A design system is built against,
+not designed with — it is the coding run's to load, and its theming is a settled
+organization decision that no design-time question reopens. Never ask the user
+about colors, themes, or look and feel. Add `"api-management"` to any service
+that sits behind the gateway, and `"thunder-authentication"` to **both** sides
+of sign-in — the SPA *and* every
 protected backend it calls, since that skill owns how each resolves the caller's
 role. It is a JSON key on the component's design object, so include it when you
 write that `design.json` (addFile/editFile) — do NOT put `skillsPinned` in
@@ -194,8 +193,9 @@ type for `resourceType`). This step is done when every `external`,
 `org-service`, and `platform-resource` emitted this turn is taken from this
 turn's matching `list_*` result (exact `name` or `resourceType`), unless this
 turn is a user-asked reconsider. When nothing the catalog returns fills the
-role, leave the dependency unresolved rather than forcing a fit: a name that
-resolves to nothing is worse than an absent one.
+role, omit the entry and list the gap under **Needs your input** rather than
+coining a name: a `resourceType` that was not in this turn's
+`list_platform_resource_types` result fails Build.
 
 ```json
 "dependencies": [
@@ -229,8 +229,10 @@ operations its contract actually exposes:
   list one "for reference".
 - **A role is not a name.** The requirement says "the organization's directory
   service"; the provider is usually called something else (`employee-service`).
-  Look it up — a name coined from the role words matches no provider and
-  hard-fails the build.
+  The same for a `platform-resource`: the PRD names a capability, `resourceType`
+  is the catalog row's `name` from this turn's `list_platform_resource_types`.
+  Copy that `name`. Look it up — a name coined from the role or capability words
+  matches no provider or type and hard-fails the build.
 - **A `platform-resource`'s `name` becomes the env-var prefix** for every one of
   its outputs (`orders-db` → `ORDERS_DB_HOST`, and for a SPA
   `window._env_.ORDERS_DB_*`), so pick a clear one: renaming it later renames the
@@ -341,11 +343,12 @@ which fields are present, first match wins:
 5. `style: "sdk"` with no `package` → `unresolved`/`needs-input`
 6. otherwise → `resolved`
 
-`component` and `platform-resource` are always `resolved` here. An `org-service`
-resolves on catalog visibility, and is `blocked`/`access-required` when the
-provider exists but this project cannot see it. The old `needsSpec` boolean is
-REMOVED from the schema — a draft carrying it fails the write-gate; migrate
-`needsSpec: true` to `style: "rest-api"`.
+`component` is always `resolved` here. A `platform-resource` is too — once
+emitted — so only emit one whose `resourceType` is a `name` from this turn's
+`list_platform_resource_types`. An `org-service` resolves on catalog visibility,
+and is `blocked`/`access-required` when the provider exists but this project
+cannot see it. The old `needsSpec` boolean is REMOVED from the schema — a draft
+carrying it fails the write-gate; migrate `needsSpec: true` to `style: "rest-api"`.
 
 ### Narrating the design turn
 

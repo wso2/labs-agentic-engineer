@@ -79,6 +79,17 @@ function trackScenario(): TrackScenario | null {
 // scenario's own fixtures should stand. Unknown values are ignored rather than
 // passed through — a typo would otherwise render as the `none` empty state and
 // look like the switch is broken.
+// How fast a mock progress stream plays a line. Paced for a HUMAN watching the
+// feed animate, not for tests — nothing asserts on it, and the three streams
+// below share the constant so one of them cannot quietly drift to a different
+// speed from the others.
+//
+// A second rather than a fraction of one: the per-criterion rows on the
+// Validation page step through five statuses each, and at 120ms a whole
+// validation cycle replayed faster than a reader could follow which row had
+// changed.
+const MOCK_LINE_MS = 1_000;
+
 function validationScenario(): ValidationScenario | null {
   const raw = localStorage.getItem("aep:mock:validation");
   return raw && VALIDATION_SCENARIOS.includes(raw as ValidationScenario)
@@ -243,7 +254,14 @@ export const projectHandlers = [
       if (s === "error") {
         return HttpResponse.json(projectSectionError, { status: 500 });
       }
-      const runs = projectBuildRuns[s].runs;
+      // The same runs list-build-runs answers with. Without this the feed
+      // streamed the PROJECT scenario's runs while the page's rows came from the
+      // validation override — two answers about one run, and the validation
+      // cycle a reader had selected was not the one narrating itself.
+      const v = validationScenario();
+      const runs = v
+        ? validationRuns(v, validationAttempt()).runs
+        : projectBuildRuns[s].runs;
       const run = runs[0];
       const encoder = new TextEncoder();
       let timer: ReturnType<typeof setInterval> | undefined;
@@ -263,7 +281,7 @@ export const projectHandlers = [
               if (request.signal.aborted) return controller.close();
               send(JSON.stringify({ type: "line", line }));
               seq = (line.seq ?? seq) + 1;
-              await delay(120);
+              await delay(MOCK_LINE_MS);
             }
           }
           if (!run || isTerminalRunState(run.state)) {
@@ -335,7 +353,7 @@ export const projectHandlers = [
                 if (request.signal.aborted) return controller.close();
                 send(JSON.stringify({ type: "line", run: attribution, line }));
                 seq = (line.seq ?? seq) + 1;
-                await delay(120);
+                await delay(MOCK_LINE_MS);
               }
             }
           }
@@ -409,7 +427,7 @@ export const projectHandlers = [
             if (request.signal.aborted) return controller.close();
             send(JSON.stringify(frame));
             if (frame.type === "line") seq = (frame.line?.seq ?? seq) + 1;
-            await delay(120);
+            await delay(MOCK_LINE_MS);
           }
           if (settled) {
             send("[DONE]");

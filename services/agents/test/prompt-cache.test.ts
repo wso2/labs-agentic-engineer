@@ -29,7 +29,7 @@ import assert from "node:assert/strict";
 import { FileBundle } from "@aep/agent-stream";
 import type { ModelMessage } from "ai";
 import { runTurn } from "../src/agents/main/run-turn.js";
-import { buildFileTools } from "../src/agents/main/tools/files.js";
+import { buildFileToolSet } from "../src/agents/main/tools/files.js";
 import { mockModel } from "../src/shared/mock-model.js";
 import { SEED_FILES } from "./seed-files.js";
 
@@ -129,7 +129,7 @@ test("the breakpoint rolls onto the newest message on every step of the loop", a
   await runTurn({
     model,
     instructions: "You are a spec agent.",
-    tools: buildFileTools(bundle),
+    tools: buildFileToolSet(bundle).tools,
     messages,
     prompt: "edit it twice",
     cacheBreakpoint: BREAKPOINT,

@@ -20,7 +20,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { FilePart, ModelMessage } from "ai";
 import { runTurn } from "../src/agents/main/run-turn.js";
-import { buildFileTools } from "../src/agents/main/tools/files.js";
+import { buildFileToolSet } from "../src/agents/main/tools/files.js";
 import { FileBundle, type StreamPart } from "@aep/agent-stream";
 import { SEED_FILES } from "./seed-files.js";
 import { mockModel } from "../src/shared/mock-model.js";
@@ -29,7 +29,7 @@ const OPENAPI = "specs/design/components/hello-api/openapi.yaml";
 
 test("runTurn streams events, runs server-side execute, appends messages, returns usage", async () => {
   const bundle = new FileBundle(SEED_FILES);
-  const tools = buildFileTools(bundle);
+  const tools = buildFileToolSet(bundle).tools;
   const model = mockModel([
     {
       kind: "toolCall",
@@ -77,7 +77,7 @@ test("runTurn appends only (history grows across turns)", async () => {
   await runTurn({
     model: mockModel([{ kind: "text", text: "first" }]),
     instructions: "t",
-    tools: buildFileTools(bundle),
+    tools: buildFileToolSet(bundle).tools,
     messages,
     prompt: "turn one",
   });
@@ -87,7 +87,7 @@ test("runTurn appends only (history grows across turns)", async () => {
   await runTurn({
     model: mockModel([{ kind: "text", text: "second" }]),
     instructions: "t",
-    tools: buildFileTools(bundle),
+    tools: buildFileToolSet(bundle).tools,
     messages,
     prompt: "turn two",
   });
@@ -108,7 +108,7 @@ test("runTurn attaches file parts alongside the text prompt when fileParts is gi
   await runTurn({
     model: mockModel([{ kind: "text", text: "ok" }]),
     instructions: "t",
-    tools: buildFileTools(bundle),
+    tools: buildFileToolSet(bundle).tools,
     messages,
     prompt: "read the brief",
     fileParts: [filePart],
@@ -129,7 +129,7 @@ test("runTurn with no fileParts keeps the plain string content (byte-identical t
   await runTurn({
     model: mockModel([{ kind: "text", text: "ok" }]),
     instructions: "t",
-    tools: buildFileTools(bundle),
+    tools: buildFileToolSet(bundle).tools,
     messages,
     prompt: "change it",
   });
@@ -144,7 +144,7 @@ test("runTurn with an EMPTY fileParts array also keeps the plain string content"
   await runTurn({
     model: mockModel([{ kind: "text", text: "ok" }]),
     instructions: "t",
-    tools: buildFileTools(bundle),
+    tools: buildFileToolSet(bundle).tools,
     messages,
     prompt: "change it",
     fileParts: [],

@@ -87,7 +87,19 @@ type ProgressEvent struct {
 	// gh_action.
 	Command string `json:"command,omitempty"`
 
-	// log + result.
+	// progress_item: WHICH named unit of work the line is about — the key a
+	// consumer folds on, since many lines describe the same item and a reader
+	// wants one row repainted rather than many rows printed. Validation binds
+	// items to acceptance criteria ("AC-003-a"); CycleKind on the run line
+	// already says that, so this field never repeats it.
+	//
+	// The status itself rides on Status below rather than a field of its own:
+	// Kind scopes what it means, and progress_item's vocabulary (planned |
+	// exploring | authoring | running | healing | pass | fail) shares nothing
+	// with tool_result's SDK verdict word.
+	ItemID string `json:"itemId,omitempty"`
+
+	// log + result + progress_item.
 	Level   string `json:"level,omitempty"`
 	Status  string `json:"status,omitempty"`
 	Summary string `json:"summary,omitempty"`

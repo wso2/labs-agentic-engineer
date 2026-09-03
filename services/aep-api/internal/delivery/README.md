@@ -4,7 +4,7 @@
 
 Take a versioned Spec end-to-end: cut the version, plan its Tasks into a GitHub MILESTONE, and run a
 supervised loop that dispatches the coding agent at that milestone until it settles — merging, building
-and deploying along the way — then judge what was deployed against the version's acceptance criteria.
+and deploying along the way — then judge what was deployed against the version's validation criteria.
 **Single write-authority over the milestone-run store and the three Temporal workflows that drive it.**
 
 ```mermaid
@@ -126,7 +126,10 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   gate → whole-spec gate + `v<N>` tag cut → milestone → supersede → run row → plan. The ORDER is the
   domain fact `build` owns; the two halves it does not own (the planning turn, the gate resolvers) are
   root ports. Preflight emits no `external-config` collect for a **Registered External
-  resource** the org catalog already holds (ADR-0021).
+  resource** the org catalog already holds (ADR-0021). Pre-tag also refuses an unknown
+  `resourceType` (`ErrUnknownResourceType` → 409) the same way it refuses an end-user-auth
+  conflict: the design is unsatisfiable on this cluster, so the click claims no version and
+  starts no workflow.
 - **What preflight gates**: it reports what a version's dependencies still need, and only
   `needsResolution` — a dependency the design itself cannot name (ambiguous, unresolved, missing spec,
   or an org service awaiting access) — blocks the version cut. `needsInput` stays the broad "there is
@@ -156,13 +159,15 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   `ended_at IS NULL`: usage arrives from the terminal-log capture, and a cycle closes on the merge webhook
   seconds after its Job exits — fencing it would discard nearly every capture. Entries are keyed
   `(source, source_id)`, so a re-read of the same log updates one entry rather than adding a second.
-- The **deploy stage** (`run`): once a cycle's builds are green, the supervisor cuts each touched
-  component's release from the Workload its build posted, writes the binding that pins it — release
-  pin, trait env configs and workload overrides in ONE object write — and waits for every binding to
-  report Ready before the cycle is green. Components carry `autoDeploy: false`, so nothing else
-  promotes a release. It promotes WAVE BY WAVE (providers before the consumers whose start-up config
-  carries their address) and finishes with one converge for the facts that flow the other way — see
-  the invariant below and ADR-0019.
+- The **deploy stage** (`run`): every cycle, red or green, the supervisor RECONCILES THE VERSION. It
+  reads every component the design declares, compares the release its newest succeeded build would
+  cut against the release its binding pins, and promotes the difference — cutting each release from
+  the Workload that build posted and writing the binding that pins it, release pin plus trait env
+  configs plus workload overrides in ONE object write — then waits for Ready. Components carry
+  `autoDeploy: false`, so nothing else promotes a release. It promotes WAVE BY WAVE (providers before
+  the consumers whose start-up config carries their address), holds a component whose provider is not
+  serving, and finishes with one converge for the facts that flow the other way — see the invariants
+  below, ADR-0019 and ADR-0026.
 - The **run loop** (`run`): one Temporal workflow per SPECIES per milestone —
   `<kind>-<org>-<project>-<milestoneNumber>`, whose id is REUSED after a terminal run because a
   milestone sees sequential runs of one kind across its life. `dev` and `task` are the same cycle loop
@@ -209,6 +214,32 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   whole version because nothing told a blip from an answer, and it left no history to diagnose. As
   activities it is durable, retried, and classified by `planErr` exactly as every other I/O the loop does.
   A planning failure still settles `plan-failed` — same terminal reason, now written by the supervisor.
+  **The phase is cancellable and its gate activity gives up** ([ADR-0024][adr24]). Its two activities are
+  raced against the cancel channel (`loop.awaitInterruptibly`) and heartbeat, so a cancel both settles the
+  run and stops the work in flight — without it the phase was blind to cancel for its whole duration, which
+  is what let a version with an unsatisfiable dependency loop for 22 minutes over six unread cancels.
+  `ProvisionGates` is the one activity here with a BOUNDED retry policy (`gateActivityAttempts`), because
+  provisioning has answers repeating cannot change and the unbounded default made one of them a permanent
+  loop. It is the LAST of three guards, not the only one: the named faults are refused at the click or
+  fail on attempt one (see the retry-classification bullet below), and the cap catches the permanent modes
+  nobody has named yet. What it looped ON was the gate mint, whose dedupe considered only OPEN gates while
+  the same activity closes the ready ones — so the mint now keys on (version, dependency) in EVERY state,
+  which a version label on the gate is what makes safe (`provisioning.gateVersionLabelPrefix`).
+- **A CANCELLED version says so, in both aggregates that report one** ([ADR-0024][adr24]).
+  `build.statusFromRunState` (the version ledger and the build page header) and
+  `projects.buildStageStatus` (the toolbar's project badge) both folded `cancelled` into `failed`;
+  both now carry their own value, and they move together because a reader sees both at once. `blocked`
+  still reads as failed in both — nobody CHOSE blocked, which is the whole difference. Note the cost:
+  two contract enums gained a value, so the console and the BFF are no longer independently
+  deployable for this change (an old bundle rendered the new value as "Unknown"). Ship the console
+  with, or before, the BFF.
+- **Whether a rebuild skips the planning turn is answered by the MILESTONE, not by the spec status**
+  ([ADR-0024][adr24]). `Rebuild` means "already filled", and an unchanged spec is not evidence of that: a
+  run that died in its planning phase leaves the milestone holding its gates and no work, and a run that
+  skips planning over it reads the empty working set as "planning produced nothing" and settles the version
+  succeeded having built none of it. `build.reopenIncrement` lists the milestone's issues in every state
+  and reports whether any `development` issue is among them; an unreadable milestone answers "not filled",
+  because the wrong "filled" is silent and the wrong "not filled" costs one turn that mints nothing.
 - **The supervisor is the ONLY writer that settles a run row.** The one exception is a start that never
   happened: `StartRun` reports `ErrRunNotStarted` from a degraded boot, and the click settles the row it
   armed rather than leaving a non-terminal row with no workflow behind it. That state is unhealable by
@@ -239,6 +270,15 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   routable fact, and ordering is the "Depends on #N" lines the AGENT honours. Dedupe on re-plan is the
   title slug against the milestone's own issues, which makes reconcile additive-only and a crash re-run a
   no-op.
+- **A cycle's own verification happens INSIDE the session, and this domain orchestrates none of it.** A
+  coding cycle no longer ends at "it compiles": before committing a `web-application` the agent stands it
+  up in mock mode, drives it through a browser against the component's stories and heals what that finds,
+  which the skill library owns end to end and the platform not at all. There is no activity, no store, no
+  callback and no status for those passes — the only trace they leave here is the SHAPE of what arrives (one pull
+  request carrying the build AND its fixes, so no extra branch, pull request or issue reaches the event
+  plane) and the cycle's `activeDeadlineSeconds`, which the dispatch now NAMES rather than inheriting the
+  ComponentType's default because the work runs longer (`codingagent/design/oc-job-dispatch.md`). Judging
+  a DEPLOYED version is a different job and the validation run owns it.
 - **Two label axes: an issue is ARMED or not, and has exactly one KIND** (`labels.go`). `aep` arms it —
   something may work it — and is also the human's adoption trigger; the kind (`development`, `bug`,
   `conflict`, `validation`, `provision`) says which loop, and a `bug` carries a `src/*` source saying who
@@ -377,7 +417,21 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   secondary rate limit wears a 403 and is deliberately NOT one — and `run/errors.go` owns turning them
   into Temporal's vocabulary. The guard is per call site, so an activity added later that returns a
   source-control error raw is back on unbounded retry; `CloseMilestone` is the one deliberate exception,
-  swallowing its error by contract and so never retrying.
+  swallowing its error by contract and so never retrying. The same split applies to provision and
+  deploy: `provisionErr` / `deployErr` mark `ErrProvisionPermanent` / `ErrDeployPermanent` non-retryable.
+  A provision wait-answer (Resource `Ready=False` / `ResourceTypeNotFound` — even when a
+  prior release exists — or a create that never
+  cuts a release) is permanent; a GetResource blip or cancelled wait is not. Do not bound
+  `activityCtx` with `MaximumAttempts` — permanence is the activity's to declare, and bounding the
+  SHARED options would put every activity on a cap sized for one of them.
+  **`ProvisionGates` is the one activity with a cap of its own, and the two guards are layered rather
+  than alternative** (ADR-0024). Classification is the front line: a fault we can NAME is refused before
+  the run starts (an unknown `resourceType` is a 409 on the click) or fails on attempt one with the
+  provisioner's own message. The cap in `gateActivityCtx` catches only what is left — a permanent fault
+  nobody has named yet, which under the unbounded default is an invisible forever-loop rather than a
+  failed build. Three attempts, spaced by `gateActivityRetryInterval` so they span a blip rather than
+  three seconds of it. Do not add a cap anywhere else without an answer to "which permanent mode does
+  this catch that a classifier could not name?"
 - **Every terminal reason names exactly one failure class.** `redispatch-budget` is agent death (including
   a Job that exited without a pull request); `build-retrigger-budget` is a build that stayed red through
   its one automatic re-trigger with no fix issue to recover it; `deploy-budget` is a component that
@@ -390,9 +444,27 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   without committing a report at all, which proves nothing about the software and is a breach of the
   runner contract. `ValidationVerdictFailsRun` / `IsValidationTerminalReason` are the executable copy of
   that pair. A run that settles for a reason outside this list is a bug in the loop, not a new state.
+- **The deploy set is the VERSION's, not the cycle's** (ADR-0026). `desired(c)` is the release
+  `c`'s newest SUCCEEDED build would cut; `actual(c)` is what its binding pins and whether that is
+  Ready; the difference classifies every design component as `serving`, `behind`, `converging`,
+  `held` or `unbuilt`, and only `behind` is ever written to. A component is promoted when it is
+  behind AND every hard provider is serving or promoted ahead of it in the same pass — otherwise it
+  is `held`, which is neither waited on nor filed against. This runs on a RED cycle too: a red build
+  has already minted its fix issue, and its green siblings are still built. What it replaced promoted
+  the cycle's path diff, which made "what is serving" a function of which files a fix touched — one
+  version shipped with its API never promoted at all, because the cycle that built it was red and no
+  later cycle's diff mentioned it again. A fully serving version reconciles in one read and zero
+  writes, which is what lets the pass run every cycle.
+- **A version is delivered when it is SERVING, asserted rather than inferred.** The boundary re-reads
+  the version state and requires every design component `serving` before it mints the validation task;
+  anything else settles `version-incomplete` naming what was not. "Deployed-green" used to be inferred
+  from an empty working set plus a green last cycle — neither of which is a statement about a component
+  the cycles never touched. By the loop's own invariants the failure should be unreachable, which is
+  exactly why it must be loud rather than silent.
 - **A cycle is green when its components are DEPLOYED, not built.** The supervisor performs the
-  promote itself — `EnsureRelease` at the merge commit, then one `ApplyReleaseBinding` carrying the
-  pin and the wiring together — and then waits on each binding's Ready condition. While OpenChoreo's
+  promote itself — `EnsureRelease` at each component's own commit, then one `ApplyReleaseBinding`
+  carrying the pin and the wiring together — and then waits on each binding's Ready condition. While
+  OpenChoreo's
   AutoDeploy promoted releases on its own, a green WorkflowRun meant a deployment had been ASKED for:
   the chain was kicked off from inside the build and reconciled afterwards with no link back to the
   cycle that caused it. Everything downstream depended on the weaker fact — validation asserted
@@ -401,7 +473,9 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   component's own start-up config — a web app reads its backend's out of `window._env_` and throws at
   module load without it, so publishing the SPA alongside its backend serves a blank page. Those edges
   (`spec.HardConfigEdges`) put the provider in an earlier wave, and each wave must be Ready before the
-  next is promoted. What flows the other way is SOFT — a protected API's CORS allowlist is the
+  next is promoted. The edges are read over the WHOLE design rather than over the set being deployed,
+  so a provider with no serving release is an unsatisfied edge rather than an assumed-satisfied one
+  (ADR-0026 — the reading that published a SPA against an API that had never deployed). What flows the other way is SOFT — a protected API's CORS allowlist is the
   project's SPA origins, an OIDC resource wants the SPA's callback registered — and is written by ONE
   converge at the end, which passes an EMPTY commit so it re-asserts wiring without re-cutting a
   release. Grading them together is what made the graph look circular: the SPA needs the API's
@@ -722,3 +796,5 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   A comment read that fails costs the caller its comments, never its Tasks — this list also drives the
   run card's gate-hold vs. empty-working-set distinction.
 - Platform-wide rules (tenant gate, secrets fence, persistence-in-domain) → [../../README.md](../../README.md).
+
+[adr24]: ../../../../docs/decisions/ADR-0024-cancel-reaches-the-planning-phase.md

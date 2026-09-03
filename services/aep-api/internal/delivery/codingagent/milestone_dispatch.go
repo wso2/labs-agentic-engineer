@@ -137,6 +137,7 @@ func milestoneDispatchShape(req delivery.MilestoneDispatch, repoURL string) (dis
 	return dispatchShape{
 		prompt:          buildPrompt(req.MilestoneNumber, req.MilestoneTitle),
 		componentName:   milestoneComponentSentinel,
+		deadline:        codingDeadlineSeconds,
 		milestoneNumber: req.MilestoneNumber,
 		milestoneTitle:  req.MilestoneTitle,
 	}, nil

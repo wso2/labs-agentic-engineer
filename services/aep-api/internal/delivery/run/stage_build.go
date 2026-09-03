@@ -44,21 +44,28 @@ import (
 // fix belongs there too — at the point of creation, where the cause is still
 // known — and not in a timeout here, which could only report "something took too
 // long" about a run that was never going to start.
-func (l *loop) awaitBuilds(ctx workflow.Context) (cycleResult, []string, error) {
+//
+// It answers the CYCLE's verdict and nothing else. It used to hand the deploy
+// stage the components its poll had seen, which is what made the deploy set the
+// cycle's path diff — and a component whose build went green in a cycle a
+// sibling failed was then promoted by nothing, ever. The deploy reads the
+// version's own state instead (ADR-0026); this stage's answer is only "did the
+// code this merge built compile".
+func (l *loop) awaitBuilds(ctx workflow.Context) (cycleResult, error) {
 	for {
 		state, err := l.pollBuilds(ctx)
 		if err != nil {
-			return cycleNone, nil, err
+			return cycleNone, err
 		}
 		if len(state.Red) > 0 {
-			return cycleRed, state.Components, nil
+			return cycleRed, nil
 		}
 		if state.Green() {
-			return cycleGreen, state.Components, nil
+			return cycleGreen, nil
 		}
 
 		if cancelled, _ := l.awaitWake(ctx, buildPollInterval, nil); cancelled {
-			return cycleCancelled, nil, nil
+			return cycleCancelled, nil
 		}
 	}
 }

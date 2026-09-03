@@ -18,6 +18,7 @@ package run
 
 import (
 	"testing"
+	"time"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
 )
@@ -237,5 +238,176 @@ func TestClassifyCycleDeploys_SeparatesFailedFromPending(t *testing.T) {
 	}
 	if len(got.Pending) != 1 || got.Pending[0] != "rolling" {
 		t.Errorf("Pending = %v", got.Pending)
+	}
+}
+
+// TestClassifyComponentState pins the five states, which are the model's whole
+// premise: what a component SHOULD be serving against what it IS.
+//
+// The desired release is composed, never parsed — delivery.ReleaseNameFor is
+// what both the writer and this reader spell it with — so the cases pin the
+// classification against a name built the same way the deployer builds it.
+func TestClassifyComponentState(t *testing.T) {
+	const project, component = "shop7321", "onboarding-api"
+	at := func(sha string) string { return delivery.ReleaseNameFor(project, component, sha) }
+	green := func(sha string, minutes int) BuildRunInfo {
+		return BuildRunInfo{
+			Name: "run-" + sha, Terminal: true, Succeeded: true, CommitSHA: sha,
+			StartedAt: time.Date(2026, 9, 1, 10, minutes, 0, 0, time.UTC),
+		}
+	}
+	red := func(sha string, minutes int) BuildRunInfo {
+		r := green(sha, minutes)
+		r.Succeeded = false
+		return r
+	}
+
+	cases := []struct {
+		name       string
+		runs       []BuildRunInfo
+		deploy     delivery.ComponentDeploy
+		want       string
+		wantDesire string
+		// wantWithdrawn is the undeploy marker, which rides beside `serving` so
+		// the planner can tell "owes nothing" from "offers an address".
+		wantWithdrawn bool
+	}{
+		{
+			name: "no build at all — nothing to promote",
+			want: delivery.ComponentStateUnbuilt,
+		},
+		{
+			name: "a build that only failed is not a release",
+			runs: []BuildRunInfo{red("aaa1", 0), red("aaa1", 5)},
+			want: delivery.ComponentStateUnbuilt,
+		},
+		{
+			name:       "green, and nothing pins it — the incident",
+			runs:       []BuildRunInfo{green("aaa1", 0)},
+			want:       delivery.ComponentStateBehind,
+			wantDesire: "aaa1",
+		},
+		{
+			name:       "pinned at an older release",
+			runs:       []BuildRunInfo{green("aaa1", 0), green("bbb2", 5)},
+			deploy:     delivery.ComponentDeploy{Release: at("aaa1"), Ready: true},
+			want:       delivery.ComponentStateBehind,
+			wantDesire: "bbb2",
+		},
+		{
+			name:       "pinned at the right release, not up yet",
+			runs:       []BuildRunInfo{green("aaa1", 0)},
+			deploy:     delivery.ComponentDeploy{Release: at("aaa1")},
+			want:       delivery.ComponentStateConverging,
+			wantDesire: "aaa1",
+		},
+		{
+			name:       "pinned at the right release and Ready",
+			runs:       []BuildRunInfo{green("aaa1", 0)},
+			deploy:     delivery.ComponentDeploy{Release: at("aaa1"), Ready: true},
+			want:       delivery.ComponentStateServing,
+			wantDesire: "aaa1",
+		},
+		{
+			// The case that decides whether a version un-deploys because somebody
+			// pushed a broken commit afterwards. It must not: the older green
+			// release is still what the component should be serving, and the red
+			// build's own fix issue is what moves it forward.
+			name:       "newest build red, older one green — serving the older release",
+			runs:       []BuildRunInfo{green("aaa1", 0), red("bbb2", 5), red("bbb2", 9)},
+			deploy:     delivery.ComponentDeploy{Release: at("aaa1"), Ready: true},
+			want:       delivery.ComponentStateServing,
+			wantDesire: "aaa1",
+		},
+		{
+			// A binding pinned at the right release that will never render is
+			// CONVERGING here on purpose: the pin cannot tell a doomed rollout from
+			// a slow one, and the readiness poll turns the terminal reason into a
+			// deploy failure within one tick.
+			name:       "a failed binding at the right release is still converging",
+			runs:       []BuildRunInfo{green("aaa1", 0)},
+			deploy:     delivery.ComponentDeploy{Release: at("aaa1"), Failed: true, Reason: "RenderingFailed"},
+			want:       delivery.ComponentStateConverging,
+			wantDesire: "aaa1",
+		},
+		{
+			// Withdrawn on purpose. Promoting over it would be the platform
+			// overruling the person who asked for it — but it offers no address
+			// either, which is what the marker below is carried for.
+			name:          "undeployed on purpose — nothing is owed",
+			runs:          []BuildRunInfo{green("aaa1", 0)},
+			deploy:        delivery.ComponentDeploy{Undeploy: true, Ready: true},
+			want:          delivery.ComponentStateServing,
+			wantWithdrawn: true,
+		},
+		{
+			// A build of whatever the branch tip was names no commit, so it names
+			// no release the platform could pin.
+			name: "a green build with no pinned commit is not a release",
+			runs: []BuildRunInfo{{Name: "manual-1", Terminal: true, Succeeded: true}},
+			want: delivery.ComponentStateUnbuilt,
+		},
+		{
+			name: "a green run still in flight is not terminal",
+			runs: []BuildRunInfo{{Name: "run-1", Succeeded: true, CommitSHA: "aaa1"}},
+			want: delivery.ComponentStateUnbuilt,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := classifyComponentState(project, component, c.runs, c.deploy)
+			if got.State != c.want {
+				t.Errorf("state = %q, want %q", got.State, c.want)
+			}
+			if got.DesiredSHA != c.wantDesire {
+				t.Errorf("desired = %q, want %q", got.DesiredSHA, c.wantDesire)
+			}
+			if c.wantDesire != "" && got.DesiredRelease != at(c.wantDesire) {
+				t.Errorf("desired release = %q, want %q", got.DesiredRelease, at(c.wantDesire))
+			}
+			if got.Undeploy != c.wantWithdrawn {
+				t.Errorf("undeploy = %v, want %v", got.Undeploy, c.wantWithdrawn)
+			}
+			// The two questions a serving component is asked, and they differ for
+			// exactly one state: a withdrawn component owes the version nothing
+			// and offers a consumer nothing.
+			if want := c.want == delivery.ComponentStateServing && !c.wantWithdrawn; got.ServesConsumers() != want {
+				t.Errorf("ServesConsumers() = %v, want %v", got.ServesConsumers(), want)
+			}
+		})
+	}
+}
+
+// TestVersionStateServing pins the delivery predicate. Serving is ALL of the
+// design's components, and every other state — including the two that are
+// nobody's failure — refuses it.
+func TestVersionStateServing(t *testing.T) {
+	serving := delivery.ComponentState{Component: "api", State: delivery.ComponentStateServing}
+	for _, state := range []string{
+		delivery.ComponentStateBehind,
+		delivery.ComponentStateConverging,
+		delivery.ComponentStateHeld,
+		delivery.ComponentStateUnbuilt,
+	} {
+		v := delivery.VersionState{Components: []delivery.ComponentState{
+			serving, {Component: "web", State: state},
+		}}
+		if v.Serving() {
+			t.Errorf("a version with a %s component reads as serving", state)
+		}
+		if got := v.Describe(); got != "web="+state {
+			t.Errorf("Describe() = %q, want %q", got, "web="+state)
+		}
+	}
+	all := delivery.VersionState{Components: []delivery.ComponentState{
+		serving, {Component: "web", State: delivery.ComponentStateServing},
+	}}
+	if !all.Serving() {
+		t.Error("a version whose every component is serving does not read as serving")
+	}
+	// An empty state is serving: a project with no design has no component that
+	// could fail to serve, and a plane with no OpenChoreo answers the same way.
+	if !(delivery.VersionState{}).Serving() {
+		t.Error("an empty version state must read as serving")
 	}
 }

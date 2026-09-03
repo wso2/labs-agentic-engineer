@@ -26,6 +26,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // newTestResourceClient builds a resourceClient pointed at srv with no auth
@@ -334,6 +335,90 @@ func TestGetResource_NotFound(t *testing.T) {
 	_, err := c.GetResource(context.Background(), "wc-abc", "missing")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestGetResource_DecodesConditions(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, http.StatusOK, map[string]any{
+			"metadata": map[string]any{"name": "r1"},
+			"status": map[string]any{
+				"conditions": []map[string]any{{
+					"type": "Ready", "status": "False",
+					"reason":  "ResourceTypeNotFound",
+					"message": `ClusterResourceType "object-storage" not found`,
+				}},
+			},
+		})
+	}))
+	defer srv.Close()
+	c := newTestResourceClient(t, srv)
+	got, err := c.GetResource(context.Background(), "ns", "r1")
+	if err != nil {
+		t.Fatalf("GetResource: %v", err)
+	}
+	if got.Status == nil || len(got.Status.Conditions) != 1 || got.Status.Conditions[0].Reason != "ResourceTypeNotFound" {
+		t.Fatalf("conditions not decoded: %+v", got.Status)
+	}
+}
+
+// ---- WaitForReleaseChange -----------------------------------------------------
+
+func TestWaitForReleaseChange_ReadyFalseResourceTypeNotFoundIsPermanent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, http.StatusOK, Resource{
+			Metadata: OCObjectMeta{Name: "order-processing-dca538e7"},
+			Status: &ResourceStatus{
+				Conditions: []OCCondition{{
+					Type:    "Ready",
+					Status:  "False",
+					Reason:  "ResourceTypeNotFound",
+					Message: `ClusterResourceType "object-storage" not found`,
+				}},
+			},
+		})
+	}))
+	defer srv.Close()
+	c := newTestResourceClient(t, srv)
+
+	_, err := WaitForReleaseChange(context.Background(), c, "default", "order-processing-dca538e7", "", time.Hour, time.Hour)
+	if err == nil {
+		t.Fatal("want permanent error, got nil")
+	}
+	if !errors.Is(err, ErrResourceTypeNotFound) {
+		t.Fatalf("want ErrResourceTypeNotFound wait-answer sentinel, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "object-storage") && !strings.Contains(err.Error(), "ResourceTypeNotFound") {
+		t.Fatalf("error must quote the terminal condition, got %v", err)
+	}
+}
+
+func TestWaitForReleaseChange_ReadyFalseOtherReasonStillWaitsUntilTimeout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, http.StatusOK, Resource{
+			Metadata: OCObjectMeta{Name: "r1"},
+			Status: &ResourceStatus{
+				Conditions: []OCCondition{{
+					Type:   "Ready",
+					Status: "False",
+					Reason: "Reconciling",
+				}},
+			},
+		})
+	}))
+	defer srv.Close()
+	c := newTestResourceClient(t, srv)
+
+	start := time.Now()
+	_, err := WaitForReleaseChange(context.Background(), c, "ns", "r1", "", 5*time.Millisecond, 20*time.Millisecond)
+	if err == nil {
+		t.Fatal("want timeout, got nil")
+	}
+	if !errors.Is(err, ErrReleaseWaitTimeout) {
+		t.Fatalf("deadline expiry must wrap ErrReleaseWaitTimeout, got %v", err)
+	}
+	if time.Since(start) < 15*time.Millisecond {
+		t.Fatalf("non-terminal Ready=False must not return immediately: %v after %s", err, time.Since(start))
 	}
 }
 

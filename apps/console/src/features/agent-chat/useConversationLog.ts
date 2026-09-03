@@ -43,6 +43,7 @@ import {
   replaceMessages,
 } from "./chatStore.js";
 import { projectableHistory } from "./history.js";
+import { rehydratePlanFromHistory } from "./planStore.js";
 import { conversationKeys, fetchCurrentConversationId } from "./api/conversations.js";
 import { getConversationMessages, type ConversationMessage } from "./api/turns.js";
 
@@ -92,6 +93,9 @@ export function applyConversationHistory(
     (m) => m.role === "error" || (m.role === "user" && m.status === "failed"),
   );
   replaceMessages(chatKey, [...projectableHistory(history), ...localOnly]);
+  // The declared plan's residue rehydrates from the same replayed history the
+  // question cards do (#576 decision 6) — a no-op while a live fold owns it.
+  rehydratePlanFromHistory(chatKey, history);
 }
 
 export interface ConversationLog {

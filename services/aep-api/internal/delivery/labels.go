@@ -74,7 +74,7 @@ const (
 	// than opening a rival one.
 	KindConflict = "conflict"
 	// KindValidation ("validation") is the version's validation task: judge the
-	// deployed system against its acceptance criteria. It is worked by the
+	// deployed system against its validation criteria. It is worked by the
 	// validation loop, so it is excluded from both working sets — which is why
 	// it may carry `aep` without ever holding a dev run's settle open.
 	KindValidation = "validation"

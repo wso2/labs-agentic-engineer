@@ -379,3 +379,74 @@ test("a malformed attachments value reads back as absent, not as blank chips", a
   assert.ok(got);
   assert.deepEqual(got.turns[0]?.attachments, ["ok.pdf"]);
 });
+
+// The SAME bug, one field later (#666). The comment on rowToConversation warns
+// that a new journal field has to be added there too — and the anchor was
+// written to the turns jsonb correctly and dropped on the way back out anyway,
+// caught only by walking the real stack. A tag showed while the turn was live
+// and vanished on rehydrate, which is precisely the failure the journal exists
+// to prevent.
+const ANCHOR = {
+  file: "specs/requirements/prd.md",
+  nodes: [
+    {
+      name: "Manager — reviews expense claims submitted by their direct reports",
+      kind: "list item",
+      context: "Employees Submit Expense — PRD › Actors",
+    },
+  ],
+};
+
+test("the journal's anchor survives the jsonb round-trip", async () => {
+  const store = new PostgresConversationStore(new FakePg());
+  await store.save({
+    ...fresh("c-anchor"),
+    turns: [
+      {
+        turnId: "t1",
+        text: "say explicitly that a manager cannot approve their own claim",
+        messageIndex: 0,
+        createdAt: new Date("2026-08-30T00:00:00Z"),
+        anchor: ANCHOR,
+      },
+    ],
+  });
+  const got = await store.get("c-anchor");
+  assert.ok(got);
+  assert.deepEqual(got.turns[0]?.anchor, ANCHOR);
+});
+
+test("a turn with no anchor round-trips without the field", async () => {
+  const store = new PostgresConversationStore(new FakePg());
+  await store.save({
+    ...fresh("c-unaimed"),
+    turns: [{ turnId: "t1", text: "hello", messageIndex: 0, createdAt: new Date(0) }],
+  });
+  const got = await store.get("c-unaimed");
+  assert.ok(got);
+  assert.equal("anchor" in (got.turns[0] ?? {}), false);
+});
+
+// Whole, not partial: a tag naming fewer nodes than the user selected points at
+// a selection they never made.
+test("a malformed anchor reads back as absent, not as a half-tag", async () => {
+  const store = new PostgresConversationStore(new FakePg());
+  await store.save({
+    ...fresh("c-bad-anchor"),
+    turns: [
+      {
+        turnId: "t1",
+        text: "shorter",
+        messageIndex: 0,
+        createdAt: new Date(0),
+        anchor: {
+          file: "a.md",
+          nodes: [{ name: "ok", kind: "paragraph" }, { name: "no kind" }],
+        } as unknown as typeof ANCHOR,
+      },
+    ],
+  });
+  const got = await store.get("c-bad-anchor");
+  assert.ok(got);
+  assert.equal("anchor" in (got.turns[0] ?? {}), false);
+});

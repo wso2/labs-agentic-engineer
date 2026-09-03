@@ -43,6 +43,15 @@ func derefTimeRFC3339(t *time.Time) string {
 	return t.UTC().Format(time.RFC3339)
 }
 
+// derefTime returns *t, or the zero Time if t is nil — for the callers that
+// order objects by when the cluster admitted them rather than render a date.
+func derefTime(t *time.Time) time.Time {
+	if t == nil {
+		return time.Time{}
+	}
+	return *t
+}
+
 // annotation reads key from a pointer-to-map without panicking on nil.
 // Annotations are `*map[string]string` on every gen ObjectMeta.
 func annotation(ann *map[string]string, key string) string {

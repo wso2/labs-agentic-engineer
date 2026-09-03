@@ -18,6 +18,7 @@ package provisioning
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -57,6 +58,10 @@ type ProvisionFailure struct {
 	Component  string
 	Dependency string
 	Reason     string
+	// Err is the underlying cause, carried so aggregation can preserve
+	// ErrProvisionPermanent through errors.Is. Reason is still the string
+	// form: Temporal cannot round-trip an error value on this struct.
+	Err error
 }
 
 // ProvisionForBuild authors the project's dependencies from the inputs the dev
@@ -110,6 +115,7 @@ func (s *Service) ProvisionForBuild(ctx context.Context, orgID, ocOrgID, project
 	for _, in := range inputs {
 		provisioned[strings.ToLower(in.Dependency)] = true
 	}
+	skipPlatform := false
 	for _, in := range inputs {
 		gate := gateByDep[strings.ToLower(in.Dependency)]
 		switch in.Kind {
@@ -118,8 +124,14 @@ func (s *Service) ProvisionForBuild(ctx context.Context, orgID, ocOrgID, project
 				failures = append(failures, ProvisionFailure{Component: in.Component, Dependency: in.Dependency, Reason: err.Error()})
 			}
 		case buildKindPlatformResrc:
+			if skipPlatform {
+				continue
+			}
 			if err := s.provisionResource(ctx, orgID, projectID, in.Dependency, gate, in.Parameters, nil, tag); err != nil {
-				failures = append(failures, ProvisionFailure{Component: in.Component, Dependency: in.Dependency, Reason: err.Error()})
+				failures = append(failures, ProvisionFailure{Component: in.Component, Dependency: in.Dependency, Reason: err.Error(), Err: err})
+				if errors.Is(err, dependencies.ErrProvisionPermanent) {
+					skipPlatform = true
+				}
 			}
 		case buildKindOrgService:
 			// Cross-project org-service visibility (issue #164, Task 4): for an

@@ -20,6 +20,12 @@ package openchoreo
 // per org. Billing aliases key on this exact string (and job/coding-agent).
 const CodingAgentComponentTypeName = "coding-agent"
 
+// codingAgentDeadlineCeilingSeconds is the schema's activeDeadlineSeconds
+// maximum (3h). It bounds BOTH cycle kinds: a validation cycle passes 2h and a
+// coding cycle 3h, and the schema — never the caller — is what rejects anything
+// past it.
+const codingAgentDeadlineCeilingSeconds = 10800
+
 // CodingAgentComponentTypeRef is what a Component's spec.componentType.name
 // carries — {workloadType}/{typeName}. Matches OC's API name format.
 const CodingAgentComponentTypeRef = "job/coding-agent"
@@ -56,9 +62,13 @@ func CodingAgentComponentType() map[string]any {
 						"backoffLimit": map[string]any{
 							"type": "integer", "default": 0, "maximum": 0,
 						},
-						// Default 1h; validation dispatches override to 7200 (schema max).
+						// Default 1h for a dispatch that names no deadline; every
+						// dispatch does name one — a coding cycle 10800 (3h: it now
+						// ends with a browser verification wave, which an hour reaps
+						// mid-run) and a validation cycle 7200. The maximum is the
+						// larger of the two, so it is what actually bounds the Job.
 						"activeDeadlineSeconds": map[string]any{
-							"type": "integer", "default": 3600, "maximum": 7200,
+							"type": "integer", "default": 3600, "maximum": codingAgentDeadlineCeilingSeconds,
 						},
 						"ttlSecondsAfterFinished": map[string]any{
 							"type": "integer", "default": 86400,
@@ -94,13 +104,29 @@ func CodingAgentComponentType() map[string]any {
 							"type": "string", "default": "3",
 							"enum": []any{"500m", "1", "2", "3"},
 						},
+						// Memory does NOT follow the CPU split above, because
+						// memory is not compressible: overrunning a CPU limit costs
+						// throttling, overrunning a memory limit costs an OOM kill,
+						// and sitting above the REQUEST makes a Burstable pod the
+						// first thing evicted when the node comes under pressure. A
+						// runner loses its whole cycle either way.
+						//
+						// Mock verification put a Chromium and a Vite dev server
+						// inside this pod. Measured in the runner image against a
+						// real web-application fixture, that phase alone peaks at
+						// 1.22 GiB (cgroup `memory.peak`, npm install + build +
+						// live browser concurrently) — above the 1Gi that used to
+						// be reserved here. So the request now covers the floor the
+						// work actually stands on, and the limit leaves room above
+						// it for the agent process and for a heavier page than the
+						// fixture's four-row table.
 						"memoryRequest": map[string]any{
-							"type": "string", "default": "1Gi",
-							"enum": []any{"1Gi", "2Gi"},
+							"type": "string", "default": "2Gi",
+							"enum": []any{"1Gi", "2Gi", "3Gi"},
 						},
 						"memoryLimit": map[string]any{
-							"type": "string", "default": "2Gi",
-							"enum": []any{"1Gi", "2Gi"},
+							"type": "string", "default": "3Gi",
+							"enum": []any{"1Gi", "2Gi", "3Gi", "4Gi"},
 						},
 						"imagePullPolicy": map[string]any{
 							"type": "string", "default": "IfNotPresent",

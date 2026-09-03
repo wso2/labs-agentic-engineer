@@ -141,6 +141,14 @@ spec:
               value: "http://aep-agents.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.aepAgents.port }}"
             - name: AGENT_PLATFORM_URL
               value: "http://aep-api.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.aepApi.port }}"
+            # Design-turn MCP discovery: the agents service calls back into the
+            # BFF's own /internal/v1/mcp to list the org catalog
+            # (list_external_resources / list_platform_resource_types). Without
+            # it mcpForTurn attaches no `mcp` block, the design agent sees no
+            # catalog at all, and it invents resourceTypes that fail at build.
+            # Same in-cluster address as AGENT_PLATFORM_URL above.
+            - name: AEP_API_INTERNAL_BASE_URL
+              value: "http://aep-api.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.aepApi.port }}"
             # The one runner image, used by both task kinds.
             - name: AGENT_RUNNER_IMAGE
               value: {{ .Values.codingAgentRunner.image | quote }}

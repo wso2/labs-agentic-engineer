@@ -38,6 +38,8 @@ const RAIL_INPUT: RailInput = {
   designOutdated: false,
   assumptions: 0,
   openQuestions: 0,
+  planEntries: [],
+  planWreckage: false,
 };
 
 /** The list as `SpecView` hands it over: deduped and sorted by path. */
@@ -177,14 +179,14 @@ describe("SpecFileList — the rail carries state", () => {
     const onReason = renderWith({ assumptions: 2, openQuestions: 1 });
 
     fireEvent.click(screen.getByRole("button", { name: "Requirements: 3 to resolve" }));
-    expect(screen.getByText("1 open question")).toBeInTheDocument();
-    expect(screen.getByText("2 assumptions to challenge")).toBeInTheDocument();
+    expect(screen.getByText("1 question only you can answer")).toBeInTheDocument();
+    expect(screen.getByText("2 decisions marked assumed")).toBeInTheDocument();
 
     fireEvent.click(screen.getAllByRole("button", { name: "Open the document" })[0]!);
     expect(onReason).toHaveBeenCalledWith("document");
   });
 
-  // The acceptance criteria are written against the same stories, so they go
+  // The validation criteria are written against the same stories, so they go
   // stale with the design and clear with it — two amber sections, one reason
   // each, one repair.
   it("marks design and validation together", () => {
@@ -199,6 +201,88 @@ describe("SpecFileList — the rail carries state", () => {
     fireEvent.click(screen.getByRole("button", { name: "Design: 1 to resolve" }));
     fireEvent.click(screen.getByRole("button", { name: "Update the design" }));
     expect(onReason).toHaveBeenCalledWith("update-design");
+  });
+});
+
+// The declared plan (#576): ghosts hold the coming files' places, the header
+// carries the count, and a ghost is disabled — a control that selects nothing
+// is worse than prose.
+describe("SpecFileList — the declared plan", () => {
+  const plan = [
+    { path: "specs/design/design.md", status: "writing" as const, section: "design" as const },
+    {
+      path: "specs/design/components/portal/design.json",
+      status: "planned" as const,
+      section: "design" as const,
+    },
+  ];
+
+  function renderWithPlan() {
+    render(
+      <OxygenUIThemeProvider theme={OxygenTheme}>
+        <SpecFileList
+          files={entries("specs/requirements/prd.md")}
+          selection={null}
+          onSelect={() => {}}
+          onRegenerateDesign={() => {}}
+          sections={railSections({ ...RAIL_INPUT, agentWorking: true, planEntries: plan })}
+          plan={plan}
+          onReason={() => {}}
+        />
+      </OxygenUIThemeProvider>,
+    );
+    return screen.getByRole("navigation", { name: "Spec files" });
+  }
+
+  it("renders a planned-but-unwritten path as a disabled ghost row in its group", () => {
+    const nav = renderWithPlan();
+    // The ghost is the row under the COMPONENT (portal), which the plan lists
+    // but nothing has written; the design-overview row beside it is being
+    // written and must stay live. Asserting "some row is disabled" passed for
+    // the wrong reasons, so each row is now identified and checked on its own.
+    const rows = within(nav).getAllByRole("button", { hidden: true });
+    const disabled = (b: HTMLElement) =>
+      b.hasAttribute("disabled") || b.getAttribute("aria-disabled") === "true";
+    const ghostRows = rows.filter((b) => disabled(b));
+    expect(ghostRows).toHaveLength(1);
+    expect(ghostRows[0]!.textContent).toContain("Design overview");
+  });
+
+  it("shows the section count from the plan", () => {
+    const nav = renderWithPlan();
+    expect(within(nav).getByText("0 of 2")).toBeTruthy();
+  });
+
+  // The entry a dead turn stopped on has no file behind it any more than one it
+  // never reached, so it must not offer a click that selects nothing.
+  it("disables an errored row that never became a file", () => {
+    const wreck = [
+      {
+        path: "specs/design/components/portal/design.json",
+        status: "error" as const,
+        section: "design" as const,
+      },
+    ];
+    render(
+      <OxygenUIThemeProvider theme={OxygenTheme}>
+        <SpecFileList
+          files={entries("specs/requirements/prd.md")}
+          selection={null}
+          onSelect={() => {}}
+          onRegenerateDesign={() => {}}
+          sections={railSections({ ...RAIL_INPUT, planWreckage: true, planEntries: wreck })}
+          plan={wreck}
+          onReason={() => {}}
+        />
+      </OxygenUIThemeProvider>,
+    );
+    const nav = screen.getByRole("navigation", { name: "Spec files" });
+    const rows = within(nav).getAllByRole("button", { hidden: true });
+    const errored = rows.find((b) => b.textContent?.includes("Design overview"));
+    expect(errored).toBeTruthy();
+    expect(
+      errored!.hasAttribute("disabled") || errored!.getAttribute("aria-disabled") === "true",
+    ).toBe(true);
   });
 });
 

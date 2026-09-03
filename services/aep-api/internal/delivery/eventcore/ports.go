@@ -287,7 +287,7 @@ type RunSignaler interface {
 	SignalRun(ctx context.Context, run *delivery.MilestoneRun, name string, payload delivery.RunSignal) error
 }
 
-// ValidationOracle answers whether a project has authored acceptance criteria.
+// ValidationOracle answers whether a project has authored validation criteria.
 // Satisfied by the same criteria reader the validation feature holds, reached as
 // a port because that is a sibling slice.
 //

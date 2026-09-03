@@ -17,9 +17,9 @@
  */
 
 // Real-browser test (Chromium via Playwright) for the streaming auto-scroll in
-// SpecMdEditor. This can NOT run in jsdom: the follow-the-tail behavior is
-// driven by use-stick-to-bottom's ResizeObserver over real layout
-// (scrollHeight/clientHeight/scrollTop), none of which jsdom provides.
+// SpecMdEditor. This can NOT run in jsdom: following the agent's edit is a
+// claim about real layout (coordsAtPos, scrollHeight/clientHeight/scrollTop),
+// none of which jsdom provides.
 //
 // The agent's collab writes are emulated faithfully: the real generation path
 // is `services/agents` joining the room and calling `setDocFileAsAgent(doc,
@@ -28,6 +28,7 @@
 // editor grows exactly as it does in production — no server, no cluster.
 
 import { afterEach, describe, expect, it } from "vitest";
+import { userEvent } from "@vitest/browser/context";
 import { cleanup, render, waitFor } from "@testing-library/react";
 import * as Y from "yjs";
 import { Awareness } from "y-protocols/awareness";
@@ -179,6 +180,117 @@ describe("SpecMdEditor streaming auto-scroll", () => {
     await new Promise((r) => setTimeout(r, 400));
     expect(bottomGap(scrollEl)).toBeGreaterThan(50);
 
+    doc.destroy();
+  });
+});
+
+// The follow is on the EDIT, not the tail (#666). Reported from use: the PRD
+// jumped to the bottom whenever the agent said anything, taking the reader
+// away from the passage they had just aimed the agent at.
+describe("SpecMdEditor follows the agent's edit, not the tail", () => {
+  /** A tall document with a named paragraph a third of the way down. */
+  function tallWithTarget(targetText: string): string {
+    let s = "# Product Requirements\n\n";
+    for (let i = 1; i <= 40; i++) {
+      if (i === 14) s += `## Target\n\n${targetText}\n\n`;
+      s +=
+        `## Section ${i}\n\n` +
+        `Requirement ${i}: the system shall do the thing described in this ` +
+        `paragraph, which is long enough to take vertical space.\n\n`;
+    }
+    return s;
+  }
+
+  it("scrolls to a paragraph the agent rewrote in the middle, and not to the bottom", async () => {
+    const doc = new Y.Doc();
+    setDocFileAsAgent(doc, PATH, tallWithTarget("The old sentence."), "test-agent", AGENT_META);
+    const { view, scrollEl } = await mountEditor(doc, true);
+    await waitFor(() =>
+      expect(scrollEl.scrollHeight - scrollEl.clientHeight).toBeGreaterThan(400),
+    );
+    expect(scrollEl.scrollTop).toBe(0);
+
+    setDocFileAsAgent(
+      doc,
+      PATH,
+      tallWithTarget("The agent rewrote this sentence in place."),
+      "test-agent",
+      AGENT_META,
+    );
+
+    await waitFor(() => {
+      const target = Array.from(view.container.querySelectorAll("p")).find((p) =>
+        p.textContent?.includes("rewrote this sentence"),
+      )!;
+      const t = target.getBoundingClientRect();
+      const s = scrollEl.getBoundingClientRect();
+      expect(t.top >= s.top && t.bottom <= s.bottom).toBe(true);
+    });
+    // In view — and nowhere near the bottom.
+    expect(bottomGap(scrollEl)).toBeGreaterThan(200);
+
+    doc.destroy();
+  });
+
+  it("does not move at all when the turn writes nothing — a Discuss", async () => {
+    const doc = new Y.Doc();
+    setDocFileAsAgent(doc, PATH, tallWithTarget("Unchanged."), "test-agent", AGENT_META);
+    const { scrollEl } = await mountEditor(doc, true);
+    await waitFor(() =>
+      expect(scrollEl.scrollHeight - scrollEl.clientHeight).toBeGreaterThan(400),
+    );
+
+    // The agent holds the turn and talks; the document is untouched.
+    await new Promise((r) => setTimeout(r, 400));
+    expect(scrollEl.scrollTop).toBe(0);
+
+    doc.destroy();
+  });
+});
+
+// Reported from use: pressing Undo threw the reader to the bottom. Two causes,
+// both pinned here: the toolbar's focus chased a caret that a whole-document
+// undo replace had clamped to the end, and the follow-the-edit treated the
+// undo as the agent writing.
+describe("undo keeps the reader's place", () => {
+  it("does not scroll when the toolbar's Undo undoes an edit at the top", async () => {
+    const doc = new Y.Doc();
+    setDocFileAsAgent(doc, PATH, prd(40), "test-agent", AGENT_META);
+    const { view, scrollEl } = await mountEditor(doc, true);
+    await waitFor(() =>
+      expect(scrollEl.scrollHeight - scrollEl.clientHeight).toBeGreaterThan(400),
+    );
+
+    // A local edit near the top — the kind Agree makes.
+    const editor = (view.container.querySelector(".ProseMirror") as HTMLElement & {
+      editor?: unknown;
+    });
+    const paragraph = Array.from(view.container.querySelectorAll("p")).find((p) =>
+      p.textContent?.includes("Requirement 1:"),
+    )!;
+    paragraph.scrollIntoView({ block: "center" });
+    const before = scrollEl.scrollTop;
+
+    // Type into that paragraph through the real editor surface.
+    const range = document.createRange();
+    range.setStart(paragraph.firstChild!, 0);
+    range.collapse(true);
+    (view.container.querySelector(".ProseMirror") as HTMLElement).focus();
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    await userEvent.keyboard("XX");
+    expect(paragraph.textContent).toContain("XX");
+
+    const undo = Array.from(view.container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => b.getAttribute("aria-label")?.startsWith("Undo") || /undo/i.test(b.title ?? ""),
+    )!;
+    undo.click();
+
+    await waitFor(() => expect(paragraph.textContent).not.toContain("XX"));
+    // The reader stays where they were — nowhere near the bottom.
+    expect(Math.abs(scrollEl.scrollTop - before)).toBeLessThan(120);
+    void editor;
     doc.destroy();
   });
 });

@@ -51,7 +51,7 @@ export function fileLabel(path: string): string {
   if (Object.hasOwn(TITLES, path)) return TITLES[path] as string;
   if (OPENAPI_RE.test(path)) return "API";
   if (COMPONENT_DESIGN_RE.test(path)) return "Design overview";
-  if (VALIDATION_CRITERIA_RE.test(path)) return "Acceptance criteria";
+  if (VALIDATION_CRITERIA_RE.test(path)) return "Validation criteria";
   // A document nothing above names — a feature file most of the time, where
   // the filename IS the feature's name once the extension is off it. Keeping
   // `.md` would leave the one surface the user reads throughout still showing

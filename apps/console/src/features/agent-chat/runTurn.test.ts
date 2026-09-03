@@ -44,9 +44,11 @@ vi.mock("@aep/agent-stream", () => ({
   parseSseStream: async function* () {
     for (const part of queuedParts) yield part;
   },
-  toChange: (part: { toolCallId?: string; result?: unknown }) => ({
+  // `path` is read off the frame when a test supplies one, so a test can settle
+  // a SPECIFIC file; the fixed default keeps the older card tests unchanged.
+  toChange: (part: { toolCallId?: string; result?: unknown; path?: string }) => ({
     op: "add",
-    path: "specs/design/components/checkout-api/design.json",
+    path: part.path ?? "specs/design/components/checkout-api/design.json",
     result: part.result,
   }),
   opForTool: () => "add",
@@ -55,6 +57,7 @@ vi.mock("@aep/agent-stream", () => ({
   // tool name reaches isQuestionTool, so the mock has to carry them.
   ASK_QUESTION_TOOL: "ask_question",
   ASK_QUESTIONS_TOOL: "ask_questions",
+  DECLARE_PLAN_TOOL: "declare_plan",
   buildAnswerInstruction: () => "",
   buildAnswersInstruction: () => "",
 }));
@@ -65,6 +68,7 @@ vi.mock("./chatStore.js", () => ({
   addMessage: vi.fn(),
   upsertToolMessage: vi.fn(),
   upsertQuestionMessage: vi.fn(),
+  upsertPlanMessage: vi.fn(),
   setTurnStatus: vi.fn(),
   notifyTurnEnd: (key: string, status: string) => notified.push({ key, status }),
 }));
@@ -73,6 +77,8 @@ import { attachAndFoldTurn } from "./runTurn";
 import { TurnStreamAttachError } from "./api/turns.js";
 import { addMessage, upsertToolMessage } from "./chatStore.js";
 import { clearRegisterDraft, peekRegisterDraft } from "./registerDraftStore.js";
+import { upsertPlanMessage } from "./chatStore.js";
+import { clearPlan, peekPlan } from "./planStore.js";
 
 const KEY = "aep.chat.v1.acme.proj1";
 
@@ -179,12 +185,15 @@ describe("attachAndFoldTurn — pre-stream 404 re-attach (#3)", () => {
 });
 
 /**
- * The per-file spinner. One step can carry several file writes, and the SDK
- * flushes every `tool-result` for that step only after its LAST call — so
- * `tool-result` marks the end of the STEP, not of one file. Keying the spinner
- * off it made a batched design turn show five files "loading" for the whole
- * batch and settle them together, long after the first ones had landed.
- * `tool-input-end` is the per-file signal (for a file tool the input IS the body).
+ * The per-file spinner and tick. Two facts, two frames: `tool-input-end` says
+ * the BODY is written (for a file tool the input IS the body), the verdict says
+ * the bundle accepted it — and the card must never conflate them, or a rejected
+ * write would show a success tick.
+ *
+ * Both wire orders are exercised here, because the console has to fold either:
+ *  - verdict per call (what the agents service emits today — write-ledger.ts);
+ *  - every verdict trailing the last call (the raw SDK order, which recorded
+ *    streams and older producers still carry).
  */
 describe("attachAndFoldTurn — a file card settles on its OWN input-end, not the step's results", () => {
   beforeEach(() => {
@@ -195,20 +204,26 @@ describe("attachAndFoldTurn — a file card settles on its OWN input-end, not th
     mockOpenTurnStream.mockResolvedValue(new ReadableStream());
   });
 
-  /** The frames one batched step produces for N files (see services/agents/test/frame-order.test.ts). */
+  const callFrames = (id: string): StreamPart[] =>
+    [
+      { type: "tool-input-start", id, toolName: "addFile" },
+      { type: "tool-input-delta", id, delta: `{"path":"specs/${id}.md","content":"x"}` },
+      { type: "tool-input-end", id },
+      { type: "tool-call", toolCallId: id, toolName: "addFile", input: {} },
+    ] as StreamPart[];
+
+  const resultFrame = (id: string, ok = true): StreamPart =>
+    ({ type: "tool-result", toolCallId: id, toolName: "addFile", result: { ok } }) as StreamPart;
+
+  /** The raw SDK order: every verdict trails the LAST call of the step. */
   const batch = (ids: string[]): StreamPart[] => [
-    ...ids.flatMap(
-      (id) =>
-        [
-          { type: "tool-input-start", id, toolName: "addFile" },
-          { type: "tool-input-delta", id, delta: `{"path":"specs/${id}.md","content":"x"}` },
-          { type: "tool-input-end", id },
-          { type: "tool-call", toolCallId: id, toolName: "addFile", input: {} },
-        ] as StreamPart[],
-    ),
-    // Every result arrives only here, after the last call.
-    ...ids.map((id) => ({ type: "tool-result", toolCallId: id, toolName: "addFile", result: { ok: true } }) as StreamPart),
+    ...ids.flatMap(callFrames),
+    ...ids.map((id) => resultFrame(id)),
   ];
+
+  /** What the agents service emits: each verdict rides its own call. */
+  const batchSettledPerCall = (ids: string[]): StreamPart[] =>
+    ids.flatMap((id) => [...callFrames(id), resultFrame(id)]);
 
   const cardsFor = (id: string) =>
     vi.mocked(upsertToolMessage).mock.calls.map(([, m]) => m).filter((m) => m.toolCallId === id);
@@ -241,6 +256,21 @@ describe("attachAndFoldTurn — a file card settles on its OWN input-end, not th
     expect(c1Done).toBeGreaterThanOrEqual(0);
     expect(c3Streaming).toBeGreaterThanOrEqual(0);
     expect(c1Done).toBeLessThan(c3Streaming);
+  });
+
+  it("ticks the FIRST file mid-batch when its verdict rides its own call", async () => {
+    mockReadToolInputPath.mockReturnValue("specs/design/design.md");
+    queuedParts = batchSettledPerCall(["c1", "c2", "c3"]);
+    await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
+
+    const calls = vi.mocked(upsertToolMessage).mock.calls.map(([, m]) => m);
+    const c1Ticked = calls.findIndex((m) => m.toolCallId === "c1" && m.ok === true);
+    const c3Streaming = calls.findIndex((m) => m.toolCallId === "c3" && m.status === "streaming");
+    expect(c1Ticked).toBeGreaterThanOrEqual(0);
+    // The whole point of the per-call verdict: file 1 carries a tick while file 3
+    // is still being written, instead of a verdict-less ring for the whole batch.
+    expect(c1Ticked).toBeLessThan(c3Streaming);
+    expect(cardsFor("c1").map((c) => c.ok)).toEqual([undefined, undefined, true]);
   });
 
   it("writes no card when the path never resolved (nothing to settle)", async () => {
@@ -282,5 +312,102 @@ describe("attachAndFoldTurn — draftExternalResource publishes a register draft
     await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
     expect(peekRegisterDraft(KEY)).toEqual(draft);
     expect(upsertToolMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe("attachAndFoldTurn — declare_plan folds into the plan store (#576)", () => {
+  const CELL = "specs/design/design.cell";
+  const OVERVIEW = "specs/design/design.md";
+  const PORTAL = "specs/design/components/portal/design.json";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    queuedParts = [];
+    notified.length = 0;
+    clearPlan(KEY);
+    mockOpenTurnStream.mockResolvedValue(new ReadableStream());
+  });
+
+  afterEach(() => clearPlan(KEY));
+
+  it("unions the waves, dedupes the double publish, and rows the chat once per call", async () => {
+    const wave1 = { paths: [CELL, OVERVIEW] };
+    const wave2 = { paths: [OVERVIEW, PORTAL] }; // OVERVIEW restated on purpose
+    queuedParts = [
+      // Wave one arrives twice — streamed input, then the complete call — the
+      // belt-and-braces pair the union must collapse to one publication.
+      { type: "tool-input-start", id: "p1", toolName: "declare_plan" },
+      { type: "tool-input-delta", id: "p1", delta: JSON.stringify(wave1) },
+      { type: "tool-input-end", id: "p1" },
+      { type: "tool-call", toolCallId: "p1", toolName: "declare_plan", input: wave1 },
+      { type: "tool-call", toolCallId: "p2", toolName: "declare_plan", input: wave2 },
+      { type: "turn-failed", message: "died" },
+    ] as StreamPart[];
+    await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
+    expect(peekPlan(KEY)?.entries.map((e) => e.path)).toEqual([CELL, OVERVIEW, PORTAL]);
+    expect(vi.mocked(upsertPlanMessage).mock.calls.map(([, m]) => [m.toolCallId, m.added, m.grew]))
+      .toEqual([
+        ["p1", 2, false],
+        ["p2", 1, true],
+      ]);
+  });
+
+  it("derives writing/done/error from the file frames and keeps the wreckage", async () => {
+    mockReadToolInputPath.mockImplementation((buf: string) =>
+      buf.includes("design.cell") ? CELL : buf.includes("design.md") ? OVERVIEW : null,
+    );
+    queuedParts = [
+      {
+        type: "tool-call",
+        toolCallId: "p1",
+        toolName: "declare_plan",
+        input: { paths: [CELL, OVERVIEW, PORTAL] },
+      },
+      { type: "tool-input-start", id: "f1", toolName: "addFile" },
+      { type: "tool-input-delta", id: "f1", delta: '{"path":"specs/design/design.cell"' },
+      { type: "tool-input-end", id: "f1" },
+      // The VERDICT is what ticks it — the body being complete is not enough.
+      {
+        type: "tool-result",
+        toolName: "addFile",
+        toolCallId: "f1",
+        path: "specs/design/design.cell",
+        result: { ok: true },
+      },
+      { type: "tool-input-start", id: "f2", toolName: "addFile" },
+      { type: "tool-input-delta", id: "f2", delta: '{"path":"specs/design/design.md"' },
+      { type: "turn-failed", message: "died mid-write" },
+    ] as StreamPart[];
+    await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
+    const plan = peekPlan(KEY);
+    expect(plan?.wreckage).toBe(true);
+    expect(plan?.entries.map((e) => e.status)).toEqual(["done", "error", "planned"]);
+  });
+
+  // A restructure is removeFile + addFile. Following the removal would send the
+  // editor to a document about to vanish, and settling it would tick a deleted
+  // file green — so a removal moves nothing.
+  it("a removeFile neither follows nor settles", async () => {
+    mockReadToolInputPath.mockImplementation(() => CELL);
+    queuedParts = [
+      { type: "tool-call", toolCallId: "p1", toolName: "declare_plan", input: { paths: [CELL] } },
+      { type: "tool-input-start", id: "r1", toolName: "removeFile" },
+      { type: "tool-input-delta", id: "r1", delta: '{"path":"specs/design/design.cell"}' },
+      { type: "tool-input-end", id: "r1" },
+      { type: "turn-failed", message: "died" },
+    ] as StreamPart[];
+    await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
+    const plan = peekPlan(KEY);
+    expect(plan?.entries[0]?.status).toBe("planned");
+    expect(plan?.writingPath).toBe(null);
+  });
+
+  it("a committed turn dissolves the plan entirely", async () => {
+    queuedParts = [
+      { type: "tool-call", toolCallId: "p1", toolName: "declare_plan", input: { paths: [CELL] } },
+      { type: "turn-committed" },
+    ] as StreamPart[];
+    await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
+    expect(peekPlan(KEY)).toBe(null);
   });
 });

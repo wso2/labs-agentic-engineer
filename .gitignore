@@ -85,6 +85,7 @@ tools/aepctl/aepctl
 deployments/scripts/setup-local
 
 # Local PR-evidence screenshots (attached to PRs by hand, never committed)
+/.screenshots/
 /.screenshots-*/
 # Local session artifacts — dev-tool config and working notes, not repo content
 /.agents/launch.json

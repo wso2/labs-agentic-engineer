@@ -1,10 +1,10 @@
 ---
 name: astryx-design-system
-description: Astryx (`@astryxdesign/core`) — this organization's web-app design system, covering its Theme + StyleX wiring, the brand-colour question a web app's design must settle, and the CLI you confirm every component's props against before writing JSX. Load at DESIGN time whenever a design gains a `web-application` component, to settle its theming before the design is done. Apply at CODING time to all UI work in a `web-application` that pins it — pages, layouts, forms, tables, dialogs, nav, theming — even when the task never names Astryx.
+description: Astryx (`@astryxdesign/core`) — this organization's web-app design system, covering its Theme + StyleX wiring, the organization's settled brand colors, and the CLI you confirm every component's props against before writing JSX. Apply to all UI work in a `web-application` that pins it — pages, layouts, forms, tables, dialogs, nav, theming — even when the task never names Astryx.
 metadata:
   aep:
     kind: org
-    audience: [design, coding]
+    audience: [coding]
 ---
 
 # Astryx Design System
@@ -13,9 +13,10 @@ Astryx (`@astryxdesign/core`) is **this organization's** UI toolkit —
 components, layout, and styling (via StyleX) all come from it. Never raw HTML
 styling, never another component library, never an invented component prop.
 
-Two audiences read this skill. **At design time** only one section is yours:
-Brand colors → At design time. **At coding time** — you are here because the
-component you are building pinned it — the whole skill is yours.
+You are here because the component you are building pinned this skill, so the
+whole of it is yours — theming included. The organization's colors are settled
+in Brand colors below; nobody is interviewed about them, at design time or any
+other time.
 
 `react-webapp` owns the app: layout, config, verify sequence, Dockerfile, nginx.
 This skill owns what goes **inside** `src/` — the UI. Where the two appear to
@@ -79,54 +80,51 @@ import {neutralTheme} from '@astryxdesign/theme-neutral/built';
 ```
 
 That stock package is the default and the fallback. It is what a project gets
-when nobody chose brand colors — see the next section for when somebody does.
+when this organization has not set brand colors — see the next section.
 
 ## Brand colors
 
 A web app is themed at its FIRST build, and retrofitting a theme means revisiting
-every screen. So the colors are settled at DESIGN time and compiled at BUILD
-time. Two audiences read this section; do the half that is yours.
+every screen — so the colors cannot be a per-build decision. They are an
+**organization** decision, settled once in the section below and compiled at
+build time, exactly like the language a service is written in.
 
-### At design time — ask, then record
+**Never ask anyone for them.** Not at design time, not at coding time, not once
+per project. The answer is either set below or it is the stock theme, and both
+are complete answers — a question about theming is a defect, not diligence.
 
-**When a design includes a `web-application` component, settle its theming
-before the design is done.** The organization has a stock theme, so this is not
-a blocker — but a company with brand colors will not accept a stock-grey app,
-and by the time anyone sees the deployed page the cost of changing it is every
-screen.
+### The organization's colors
 
-Ask ONE question (mechanics are `grilling`'s — this skill only says to ask):
+- Accent (buttons, links, focus): _not set — use the stock theme_
+- Neutral (backgrounds, surfaces): _not set — use the stock theme_
 
-- Frame it as a choice, not an open request for hex values: most users cannot
-  recite their palette, and "what are your brand colors?" strands them. Offer
-  the stock theme as an explicit, recommended option, and make clear they can
-  reply with hex values instead — a typed answer is always a valid one.
-- Ask ONCE PER PROJECT, not per component: a brand is project-wide, so a second
-  web app inherits the answer already recorded rather than asking again.
-- **Headless turns ask nothing** (`grilling`) — record no brand and let the
-  stock theme apply.
-
-Record the answer in `specs/design/design.md` under a `## Brand colors`
-heading, as the two hex values:
+To brand every web app this organization builds, an org edits those two lines to
+hex values (Settings → Skills), e.g.:
 
 ```markdown
-## Brand colors
-
 - Accent (buttons, links, focus): #f5c518
 - Neutral (backgrounds, surfaces): #0a0a0a
 ```
 
-Write the HEX, never the words the user used. "Black and yellow" is not a
-palette — it does not say WHICH yellow, and the agent that builds the app never
-sees this conversation, only this file. If the user names colors in prose, pick
-the precise hexes, write them down, and say which you chose. Omit the whole
-section when they chose the stock theme: its absence is the answer.
+HEX only, never color words: "black and yellow" does not say WHICH yellow, and
+this file is the whole of what a build sees. The edit reaches every subsequent
+build in the org with no conversation involved.
+
+A per-project override still wins, **per value, not per section**: a hex under
+the `## Brand colors` heading in the project's `specs/design/design.md`
+overrides the same line here, and a line that heading omits still comes from
+this section. That heading is there for a project whose colors someone stated
+outright — it is not something to solicit, and a half-filled one is not a
+reason to drop the organization's other color.
 
 ### At build time — compile the theme
 
-Read `specs/design/design.md` before you wire the theme. **No `## Brand colors`
-section → no brand was chosen**: use the stock package above and do not invent
-a palette.
+Resolve each of the two colors before you wire the theme, independently: the
+project's `## Brand colors` line in `specs/design/design.md` if it has one,
+otherwise the line in The organization's colors above. **A color neither one
+sets is not chosen** — take it from the stock theme's own token and never
+invent one, whether that leaves you with two brand colors, one, or none. One
+brand color plus one stock color is a valid outcome; a guessed hex is not.
 
 With colors, a brand theme is a **compiled theme of your own** — not hand-written
 colors sprinkled over a stock one. Editing component styles to paint them brand
@@ -281,8 +279,8 @@ This table is a quick guide, not the catalog — run
 | Page renders blank in dev, every asset 404s | `base` was set in `vite.config.ts` from an Astryx snippet | Remove it — served at host root (`react-webapp`) |
 | A prop doesn't exist, or is the old spelling | Answered from memory instead of the CLI | Run `npx --no astryx component <Name> --dense` — the CLI reflects the installed version, training data doesn't |
 | Every row in a list is wrapped in its own `Card` | Defaulted to a generic "card grid" instead of checking data density | `npx --no astryx docs principles --dense` — dense data is `Table`/`List`+`Item`; `Card` is for widgets/galleries/settings groups |
-| Design names brand colors, deployed app is stock-themed | Colors were read but never compiled into a theme, or `brandTheme.ts` was edited without re-running `theme build` | Re-run `npx --no astryx theme build src/theme/brandTheme.ts -o src/theme/brand.css` and confirm `brand.css`/`brand.js` are COMMITTED — the image build never runs the compiler |
-| The user gave brand colors in chat, the build ignored them | They were answered at design time but never written to `specs/design/design.md` — the coding agent never sees a conversation | Record the decision in the design doc as hex, per Brand colors → At design time; an answer that is not in a file did not happen |
+| Brand colors are set, deployed app is stock-themed | Colors were read but never compiled into a theme, or `brandTheme.ts` was edited without re-running `theme build` | Re-run `npx --no astryx theme build src/theme/brandTheme.ts -o src/theme/brand.css` and confirm `brand.css`/`brand.js` are COMMITTED — the image build never runs the compiler |
+| The user gave brand colors in chat, the build ignored them | A coding run never sees a conversation — colors reach it only from this skill or the project's `specs/design/design.md` | Set them in The organization's colors (Settings → Skills) for the whole org, or under `## Brand colors` in the project's `specs/design/design.md` for one project; an answer that is not in a file did not happen |
 | Brand accent is unreadable — pale text on a pale button | The brand hex was pasted into both `[light, dark]` slots of `--color-accent` | Darken the light-mode slot and set `--color-on-accent` to a color that contrasts with the accent in each mode |
 
 ## Red flags — stop and use Astryx
@@ -296,8 +294,8 @@ This table is a quick guide, not the catalog — run
   `astryx component <Name> --dense`
 - About to satisfy a brand-color requirement by styling components instead of
   compiling a theme — or about to ignore one because no stock theme matches
-- (design) About to finish a design containing a `web-application` without having
-  settled its theming
+- About to ask which theme or colors to use — that is settled in Brand colors,
+  and "not set" means the stock theme, not an open question
 
 All of these mean: stop, run `astryx search` / `astryx component <Name> --dense`,
 and use what it returns.

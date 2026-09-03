@@ -112,7 +112,7 @@ func TestDeployment_DeleteCascade_EmptyArgsRejected(t *testing.T) {
 // deployed that was never promoted.
 func TestDeploy_RejectsUnconfiguredService(t *testing.T) {
 	var svc *DeploymentService
-	if _, err := svc.Deploy(context.Background(), "o", "p", []string{"c"}, "sha"); err == nil {
+	if _, err := svc.Deploy(context.Background(), "o", "p", promoting("sha", "c")); err == nil {
 		t.Fatal("want error from an unconfigured deployment service, got nil")
 	}
 }

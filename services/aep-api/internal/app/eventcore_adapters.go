@@ -204,20 +204,17 @@ func (a eventcoreBuilds) StageBuildCredential(ctx context.Context, orgID, projec
 // long-lived component's whole history on every build terminal would cost far
 // more than the two rows the count needs.
 func (a eventcoreBuilds) ListBuildRuns(ctx context.Context, orgID, projectID, component string) ([]eventcore.BuildRun, error) {
-	list, err := a.oc.ListWorkflowRuns(ctx, orgID, projectID, component, 0, "")
+	runs, err := a.oc.ListBuildRuns(ctx, orgID, projectID, component)
 	if err != nil {
 		return nil, err
 	}
-	if list == nil {
-		return nil, nil
-	}
-	out := make([]eventcore.BuildRun, 0, len(list.Items))
-	for _, item := range list.Items {
+	out := make([]eventcore.BuildRun, 0, len(runs))
+	for _, r := range runs {
 		out = append(out, eventcore.BuildRun{
-			Name:      item.Name,
-			Status:    item.Status,
-			Completed: item.Completed,
-			Succeeded: item.Status == openchoreo.ReasonWorkflowSucceeded,
+			Name:      r.Name,
+			Status:    r.Status,
+			Completed: r.Completed,
+			Succeeded: r.Succeeded,
 		})
 	}
 	return out, nil

@@ -40,11 +40,13 @@ import (
 // the thin POST /build path runs BEFORE its own tag-cut, so the derived values
 // are captured in the version tag (issue #164) and are already what the NEXT
 // design read sees. Returns ErrEndUserAuthConflict on an explicit conflicting
-// service-required and ErrResourceCatalogUnavailable when a platform-resource
-// dependency exists but the CRT catalog is unreachable (fail-closed). A design
-// with nothing to derive (missing/empty design, no resource dependency) is a
-// no-op returning nil. The caller re-reads HEAD after (its TagSpec re-resolves
-// HEAD), so this does not return the mutated design.
+// service-required, ErrUnknownResourceType when a platform-resource dependency
+// names a resourceType absent from the installed CRT catalog, and
+// ErrResourceCatalogUnavailable when a platform-resource dependency exists but
+// the CRT catalog is unreachable (fail-closed). A design with nothing to derive
+// (missing/empty design, no resource dependency) is a no-op returning nil. The
+// caller re-reads HEAD after (its TagSpec re-resolves HEAD), so this does not
+// return the mutated design.
 func (s *designService) DerivePlatformResourceFactsAtHead(ctx context.Context, orgID, projectID string) error {
 	designFile, err := s.store.ReadDesign(ctx, orgID, projectID)
 	if err != nil {
@@ -58,6 +60,9 @@ func (s *designService) DerivePlatformResourceFactsAtHead(ctx context.Context, o
 	}
 	markers, err := s.resourceTypesForDerivation(ctx, designFile)
 	if err != nil {
+		return err
+	}
+	if err := rejectUnknownResourceTypes(designFile.Components, markers); err != nil {
 		return err
 	}
 	if _, err := s.persistPlatformResourceDerivation(ctx, orgID, projectID, designFile, markers); err != nil {

@@ -22,7 +22,7 @@ import { Check, CircleQuestionMark, Sparkles, X as XIcon } from "@wso2/oxygen-ui
 import { MarkdownView } from "../../../components/MarkdownView";
 import type { ChatItem } from "../toolGrouping";
 import type { FeedBlock } from "../feed";
-import { ActivityStep } from "./ActivityStep";
+import { ActivityStep, PlanStep } from "./ActivityStep";
 import { WorkingIndicator } from "./WorkingIndicator";
 
 // One agent turn in the activity stream (task 3): the "✦ Agent" header with
@@ -167,6 +167,15 @@ function TurnBody({
           expanded={expandedGroups.has(item.id)}
           onToggle={() => onToggleGroup(item.id)}
         />,
+      );
+      return;
+    }
+    // A plan row is an activity step (#576): it joins the rail rather than
+    // breaking it, so "Planned 4 more documents" sits between the file steps
+    // it explains instead of splitting them into two rails.
+    if (item.message.role === "plan") {
+      rail.push(
+        <PlanStep key={item.message.id} added={item.message.added} grew={item.message.grew} />,
       );
       return;
     }

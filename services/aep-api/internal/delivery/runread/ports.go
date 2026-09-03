@@ -142,7 +142,7 @@ type RevalidateTarget struct {
 	Ceiling         int
 }
 
-// Revalidator starts a fresh run that asks a version's acceptance criteria
+// Revalidator starts a fresh run that asks a version's validation criteria
 // again, against the system already deployed. Satisfied by the event plane's
 // Revalidate.
 //

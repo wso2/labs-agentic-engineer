@@ -447,7 +447,7 @@ func gateIssue(number int, depName string) sourcecontrol.IssueInfo {
 func validationIssue(number int) sourcecontrol.IssueInfo {
 	return sourcecontrol.IssueInfo{
 		Number: number,
-		Title:  "Validate the deployed system against its acceptance criteria",
+		Title:  "Validate the deployed system against its validation criteria",
 		Body:   "Author e2e tests and run them against the deployed system.",
 		State:  "open",
 		URL:    fmt.Sprintf("https://github.com/o/r/issues/%d", number),

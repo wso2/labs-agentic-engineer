@@ -84,10 +84,24 @@ func (h *Handler) CreateTurn(ctx context.Context, request gen.CreateTurnRequestO
 		in.Target = parsed.Target
 		in.Collab = parsed.Collab
 		in.Attachments = parsed.Attachments
+		anchor, err := parseAnchorField(parsed.Anchor)
+		if err != nil {
+			return nil, err
+		}
+		aim, err := aimFromJSON(anchor, parsed.Intent)
+		if err != nil {
+			return nil, err
+		}
+		in.Aim = aim
 	case request.JSONBody != nil:
 		in.Instruction = request.JSONBody.Instruction
 		in.Target = request.JSONBody.Target
 		in.Collab = request.JSONBody.Collab
+		aim, err := aimFromJSON(request.JSONBody.Anchor, string(request.JSONBody.Intent))
+		if err != nil {
+			return nil, err
+		}
+		in.Aim = aim
 	default:
 		return nil, apierr.BadRequest("request body is required")
 	}

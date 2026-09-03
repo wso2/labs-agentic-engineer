@@ -52,6 +52,15 @@ const (
 	// FIRST (MilestoneRun.CancelRequestedAt) and this makes the loop notice at
 	// its next safe point instead of at its next poll.
 	//
+	// EVERY PHASE HAS A SAFE POINT, including the planning bookend, and that is
+	// worth stating because for a while it did not. Cancel used to be read only at
+	// a cycle boundary, so a run still minting its gates or holding its planning
+	// turn open was blind to it — and a version whose gates could not be authored
+	// sat there re-minting them with six delivered cancel signals unread. The
+	// bookend now races its activities against this channel
+	// (loop.awaitInterruptibly) and those activities heartbeat, so the cancel
+	// reaches the work in flight and not merely the waiting.
+	//
 	// That ordering is what stops a cancel from buying a cycle. The surface also
 	// reaps the agent's pod, and from inside the workflow a reaped pod and an
 	// agent that died on its own are indistinguishable — so a cancel that lived

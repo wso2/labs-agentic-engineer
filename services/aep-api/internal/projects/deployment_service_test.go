@@ -26,6 +26,7 @@ import (
 
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo/mocks"
+	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/spec"
 	"github.com/wso2/aep/aep-api/internal/spec/artifactstest"
 )
@@ -102,6 +103,18 @@ func plainServiceMd(name string) string {
 	return traitServiceJSON(name, "")
 }
 
+// promoting is one promote's targets: the same commit for each named component,
+// which is what a cycle's own deploy looked like before the reconcile made the
+// commit per component. The per-component case is covered where it matters — in
+// the wave planner, which is what pairs a component with its own build.
+func promoting(commitSHA string, components ...string) []delivery.DeployTarget {
+	out := make([]delivery.DeployTarget, 0, len(components))
+	for _, name := range components {
+		out = append(out, delivery.DeployTarget{Component: name, CommitSHA: commitSHA})
+	}
+	return out
+}
+
 // webAppMd renders a web-application component design.json (canonical type:
 // spec.ComponentTypeWebApplication — OpenChoreo's own term).
 func webAppMd(name string) string {
@@ -135,7 +148,7 @@ func TestDeploy_BindingCarriesPinAndTraitConfigTogether(t *testing.T) {
 	oc := ocDeployments(map[string]string{})
 	svc := NewDeploymentService(oc, traitStoreWith(files))
 
-	out, err := svc.Deploy(context.Background(), "acme", "proj", []string{"api"}, "abc123def456")
+	out, err := svc.Deploy(context.Background(), "acme", "proj", promoting("abc123def456", "api"))
 	if err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
@@ -173,18 +186,18 @@ func TestDeploy_ReleaseNameIsDerivedFromTheCommit(t *testing.T) {
 	oc := ocDeployments(map[string]string{})
 	svc := NewDeploymentService(oc, traitStoreWith(files))
 
-	first, err := svc.Deploy(context.Background(), "acme", "proj", []string{"api"}, "abc123def456")
+	first, err := svc.Deploy(context.Background(), "acme", "proj", promoting("abc123def456", "api"))
 	if err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
-	second, err := svc.Deploy(context.Background(), "acme", "proj", []string{"api"}, "abc123def456")
+	second, err := svc.Deploy(context.Background(), "acme", "proj", promoting("abc123def456", "api"))
 	if err != nil {
 		t.Fatalf("Deploy (retry): %v", err)
 	}
 	if first[0].Release != second[0].Release {
 		t.Errorf("same commit produced two release names: %q vs %q", first[0].Release, second[0].Release)
 	}
-	if first[0].Release != ReleaseNameFor("proj", "api", "abc123def456") {
+	if first[0].Release != delivery.ReleaseNameFor("proj", "api", "abc123def456") {
 		t.Errorf("release %q is not the derived name", first[0].Release)
 	}
 }
@@ -194,15 +207,15 @@ func TestDeploy_ReleaseNameIsDerivedFromTheCommit(t *testing.T) {
 func TestDeploy_ProtectedAPIUsesTraitDefaultCORS(t *testing.T) {
 	t.Parallel()
 	files := map[string]string{
-		spec.DesignRootFile:           traitRootMd(),
-		"components/api/design.json":  endUserServiceMd("api"),
-		"components/s2s/design.json":  serviceToServiceMd("s2s"),
-		"components/web/design.json":  webAppMd("web"),
+		spec.DesignRootFile:          traitRootMd(),
+		"components/api/design.json": endUserServiceMd("api"),
+		"components/s2s/design.json": serviceToServiceMd("s2s"),
+		"components/web/design.json": webAppMd("web"),
 	}
 	oc := ocDeployments(map[string]string{"web": "http://web.local/app/"})
 	svc := NewDeploymentService(oc, traitStoreWith(files))
 
-	if _, err := svc.Deploy(context.Background(), "acme", "proj", []string{"api", "s2s"}, "abc123def456"); err != nil {
+	if _, err := svc.Deploy(context.Background(), "acme", "proj", promoting("abc123def456", "api", "s2s")); err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
 	for _, c := range oc.ListDeploymentsCalls() {
@@ -260,7 +273,7 @@ func TestDeploy_PerComponentFailureContinuesThenSurfaces(t *testing.T) {
 	}
 	svc := NewDeploymentService(oc, traitStoreWith(files))
 
-	out, err := svc.Deploy(context.Background(), "acme", "proj", []string{"api", "two"}, "abc123def456")
+	out, err := svc.Deploy(context.Background(), "acme", "proj", promoting("abc123def456", "api", "two"))
 	if err == nil {
 		t.Fatal("want the failure surfaced, got nil")
 	}
@@ -396,4 +409,3 @@ func TestDeploymentState_FreshBindingIsPendingNotFailed(t *testing.T) {
 		}
 	}
 }
-

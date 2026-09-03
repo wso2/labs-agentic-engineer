@@ -248,7 +248,7 @@ func TestEnsureValidationIssue_CreatesFormattedIssue(t *testing.T) {
 	if strings.Contains(got.Body, "aep:task/v1") {
 		t.Errorf("a validation issue body must carry no machine block:\n%s", got.Body)
 	}
-	for _, want := range []string{"## Acceptance oracle", "## Test layout", "## Report", "AC-001-a", "specs/validation/validation-criteria.json"} {
+	for _, want := range []string{"## Validation criteria", "## Test layout", "## Report", "AC-001-a", "specs/validation/validation-criteria.json"} {
 		if !strings.Contains(got.Body, want) {
 			t.Errorf("body missing %q", want)
 		}

@@ -221,7 +221,7 @@ export function externalResourceHeadline(rows: ExternalResourceRow[]): string {
   const outstanding = rows.filter((row) => row.display === "needs-values").length;
   return outstanding === 0
     ? `${rows.length} of ${rows.length} configured`
-    : `${outstanding} of ${rows.length} need values`;
+    : `${outstanding} of ${rows.length} need configuration`;
 }
 
 /**

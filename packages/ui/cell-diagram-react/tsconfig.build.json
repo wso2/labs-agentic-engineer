@@ -2,7 +2,8 @@
   // Emits only .d.ts to dist/ (consumed via package.json "types"). Runtime is
   // the raw src (package.json "main"), which the app's bundler compiles — so
   // this build never needs to emit JS or copy CSS. Tests are excluded so their
-  // vitest-inferred types don't leak into the public declarations.
+  // vitest-inferred types don't leak into the public declarations, and so is the
+  // dev/ playground, which is a harness rather than part of the library.
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "declaration": true,
@@ -10,5 +11,5 @@
     "noEmit": false,
     "outDir": "dist"
   },
-  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/test/**"]
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/test/**", "dev"]
 }

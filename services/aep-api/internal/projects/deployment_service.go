@@ -117,15 +117,22 @@ func (s *DeploymentService) SetAPIGatewayHost(host string) {
 	}
 }
 
-// Deploy promotes each named component at the given commit and reports what
-// happened per component.
+// Deploy promotes each target at ITS OWN commit and reports what happened per
+// component.
+//
+// The commit is per target rather than per call, and that is the difference the
+// reconcile needed: one commit for a whole list is only right when the list is
+// what a single merge built, and a pass that promotes each component at its own
+// newest green build has a different commit for each of them (ADR-0026). An
+// empty commit on a target is a CONVERGE — the wiring is re-asserted at
+// whatever release is already pinned.
 //
 // It never returns early on one component's failure: a project's components are
 // independent deployments, and stopping at the first would leave the rest of a
 // version undeployed for a reason that has nothing to do with them. Failures
 // ride the returned outcomes AND the joined error, so the supervisor can both
 // see which component failed and know that the pass did not fully succeed.
-func (s *DeploymentService) Deploy(ctx context.Context, orgID, projectID string, components []string, commitSHA string) ([]delivery.ComponentDeploy, error) {
+func (s *DeploymentService) Deploy(ctx context.Context, orgID, projectID string, targets []delivery.DeployTarget) ([]delivery.ComponentDeploy, error) {
 	if s == nil || s.components == nil || s.store == nil {
 		return nil, fmt.Errorf("deployment: not configured")
 	}
@@ -144,47 +151,47 @@ func (s *DeploymentService) Deploy(ctx context.Context, orgID, projectID string,
 	// component would issue the same reads N times for the same answer.
 	issuers := s.resolveIssuers(ctx, orgID, design)
 
-	out := make([]delivery.ComponentDeploy, 0, len(components))
+	out := make([]delivery.ComponentDeploy, 0, len(targets))
 	var failures []error
-	for _, name := range components {
-		outcome, derr := s.deployOne(ctx, orgID, projectID, name, commitSHA, design, issuers)
+	for _, t := range targets {
+		outcome, derr := s.deployOne(ctx, orgID, projectID, t.Component, t.CommitSHA, design, issuers)
 		out = append(out, outcome)
 		if derr != nil {
-			failures = append(failures, fmt.Errorf("component %q: %w", name, derr))
+			failures = append(failures, fmt.Errorf("component %q: %w", t.Component, derr))
 		}
 	}
 	return out, errors.Join(failures...)
 }
 
-// PlanDeploymentWaves orders a deploy set by the design's hard wiring edges —
-// the deploy stage's plan (see wiring_graph.go for what the order means).
+// PlanDeploymentWaves plans one reconcile pass over the version's state: what
+// to promote, in what order, what to wait for and what to hold
+// (see wiring_graph.go for what the plan means).
 //
-// It lives on the service because the order and the writes it orders are read
+// It lives on the service because the plan and the writes it orders are read
 // off the same artefact by the same reader — not the same READ: the plan reads
 // the design once and each Deploy reads it again, so a design edit landing
-// mid-stage is seen by the writes and not by the order. That window is
+// mid-stage is seen by the writes and not by the plan. That window is
 // deliberately left open. Closing it would mean pinning a design revision
-// through the whole stage, and the failure it would prevent (a component added
-// to the design between the plan and the promote) cannot happen from here — the
-// deploy set comes from the cycle's builds, which were cut from one commit.
+// through the whole stage, and a component added to the design between the plan
+// and the promote is behind with no build, which the next pass classifies as
+// unbuilt and leaves alone.
 //
-// A project with no design yet is one wave, which is the same answer Deploy
-// gives it — nothing to order by.
-func (s *DeploymentService) PlanDeploymentWaves(ctx context.Context, orgID, projectID string, components []string) ([][]string, error) {
-	if s == nil || len(components) == 0 {
-		return nil, nil
+// A project with no design yet gets no ordering — every behind component in one
+// wave — which is the same answer Deploy gives it: the design is the ordering
+// input, not the deploy's permission.
+func (s *DeploymentService) PlanDeploymentWaves(ctx context.Context, orgID, projectID string,
+	state delivery.VersionState) (delivery.DeployPlan, error) {
+	if s == nil || len(state.Components) == 0 {
+		return delivery.DeployPlan{}, nil
 	}
 	if s.store == nil {
-		return nil, fmt.Errorf("deployment: not configured")
+		return delivery.DeployPlan{}, fmt.Errorf("deployment: not configured")
 	}
 	design, err := s.store.ReadDesign(ctx, orgID, projectID)
-	if err != nil {
-		if spec.IsNotFound(err) {
-			return [][]string{components}, nil
-		}
-		return nil, fmt.Errorf("deployment: read design: %w", err)
+	if err != nil && !spec.IsNotFound(err) {
+		return delivery.DeployPlan{}, fmt.Errorf("deployment: read design: %w", err)
 	}
-	return deploymentWaves(design, components)
+	return deploymentWaves(design, state)
 }
 
 // Converge re-asserts the wiring of components that are already deployed,
@@ -216,7 +223,7 @@ func (s *DeploymentService) Converge(ctx context.Context, orgID, projectID strin
 	if len(live) == 0 {
 		return nil
 	}
-	_, err := s.Deploy(ctx, orgID, projectID, live, "")
+	_, err := s.Deploy(ctx, orgID, projectID, delivery.ConvergeTargets(live))
 	return err
 }
 
@@ -244,7 +251,7 @@ func (s *DeploymentService) deployOne(ctx context.Context, orgID, projectID, com
 	// must not be able to move which release is serving.
 	var releaseName string
 	if commitSHA != "" {
-		releaseName = ReleaseNameFor(projectID, componentName, commitSHA)
+		releaseName = delivery.ReleaseNameFor(projectID, componentName, commitSHA)
 		if _, err := s.components.EnsureRelease(ctx, orgID, projectID, componentName, releaseName); err != nil {
 			return outcome, fmt.Errorf("cut release: %w", permanentIfMissing(err))
 		}
@@ -314,11 +321,16 @@ func componentDeployFrom(name string, summary *openchoreo.ReleaseBindingSummary)
 		return out // no binding admitted yet — pending
 	}
 	out.Reason = summary.ReadyReason
+	// The PIN, carried on every read and not only on a write. It is what lets
+	// the supervisor tell a component serving its newest build from one serving
+	// an older release perfectly happily — Ready says only that whatever is
+	// pinned came up.
+	out.Release = summary.ReleaseName
 	switch {
 	case summary.Undeploy:
 		// Deliberately not deployed. Ready is meaningless here, and treating it
 		// as pending would hang the poll on a component nobody is deploying.
-		out.Ready = true
+		out.Ready, out.Undeploy = true, true
 	case strings.EqualFold(summary.ReadyStatus, "True"):
 		out.Ready = true
 	case strings.EqualFold(summary.ReadyStatus, "False") && terminalDeployReason(summary.ReadyReason):
@@ -351,29 +363,6 @@ func terminalDeployReason(reason string) bool {
 	}
 	return false
 }
-
-// ReleaseNameFor names the release a component's deployment pins at a commit.
-//
-// Derived from the commit rather than server-generated so the whole deploy is
-// idempotent: the same cycle re-running its deploy activity cuts the same
-// release name, which OpenChoreo answers with a 409 the client treats as
-// success. Bounded through k8sname for the same reason build run names are — a
-// name one character over the label budget is accepted and then never renders.
-func ReleaseNameFor(projectID, componentName, commitSHA string) string {
-	return k8sname.Bounded(k8sname.MaxLabelValueLen,
-		k8sname.Capped(projectID, releaseNameProjectWidth),
-		k8sname.Capped(componentName, releaseNameComponentWidth),
-		k8sname.Whole(delivery.ShortSHA(commitSHA)),
-	)
-}
-
-// Widths of the readable head of a release name. The commit is never truncated
-// — matching a release to the commit it froze is the main reason anyone reads
-// one of these names.
-const (
-	releaseNameProjectWidth   = 18
-	releaseNameComponentWidth = 18
-)
 
 // envVarsFor reads the user's component config. A read failure leaves the field
 // UNMANAGED rather than empty: writing an empty list would delete env vars the

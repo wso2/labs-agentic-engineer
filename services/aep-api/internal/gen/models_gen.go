@@ -99,6 +99,7 @@ func (e BuildProgressRunKind) Valid() bool {
 
 // Defines values for BuildSummaryStatus.
 const (
+	BuildSummaryStatusCancelled  BuildSummaryStatus = "cancelled"
 	BuildSummaryStatusCompleted  BuildSummaryStatus = "completed"
 	BuildSummaryStatusFailed     BuildSummaryStatus = "failed"
 	BuildSummaryStatusInProgress BuildSummaryStatus = "in_progress"
@@ -108,6 +109,8 @@ const (
 // Valid indicates whether the value is a known member of the BuildSummaryStatus enum.
 func (e BuildSummaryStatus) Valid() bool {
 	switch e {
+	case BuildSummaryStatusCancelled:
+		return true
 	case BuildSummaryStatusCompleted:
 		return true
 	case BuildSummaryStatusFailed:
@@ -712,6 +715,42 @@ func (e TurnConflictCode) Valid() bool {
 	}
 }
 
+// Defines values for TurnInputBodyIntent.
+const (
+	TurnInputBodyIntentChange  TurnInputBodyIntent = "change"
+	TurnInputBodyIntentDiscuss TurnInputBodyIntent = "discuss"
+)
+
+// Valid indicates whether the value is a known member of the TurnInputBodyIntent enum.
+func (e TurnInputBodyIntent) Valid() bool {
+	switch e {
+	case TurnInputBodyIntentChange:
+		return true
+	case TurnInputBodyIntentDiscuss:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for TurnInputMultipartIntent.
+const (
+	TurnInputMultipartIntentChange  TurnInputMultipartIntent = "change"
+	TurnInputMultipartIntentDiscuss TurnInputMultipartIntent = "discuss"
+)
+
+// Valid indicates whether the value is a known member of the TurnInputMultipartIntent enum.
+func (e TurnInputMultipartIntent) Valid() bool {
+	switch e {
+	case TurnInputMultipartIntentChange:
+		return true
+	case TurnInputMultipartIntentDiscuss:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for WorkloadDependencyDTOKind.
 const (
 	OrgService WorkloadDependencyDTOKind = "org-service"
@@ -895,7 +934,7 @@ type BuildProgressEvent struct {
 	// Cycle One dispatch within a run. Branch, pull request (number and URL) and merge SHA are LEARNED FROM WEBHOOKS — the agent derives its own branch identity — so they stay empty on a cycle whose agent died before opening a pull request.
 	Cycle RunCycleView `json:"cycle,omitempty"`
 
-	// Line One line of a cycle's agent log: the runner's progress envelope (phase | tool_use | git_commit | git_push | gh_action | log | result) plus the attribution the console groups on — which cycle produced it, and whether the main agent or one of its Task subagents did.
+	// Line One line of a cycle's agent log: the runner's progress envelope (phase | tool_use | activity | tool_result | git_commit | git_push | gh_action | log | progress_item | result) plus the attribution the console groups on — which cycle produced it, and whether the main agent or one of its Task subagents did.
 	Line RunProgressLine `json:"line,omitempty"`
 
 	// Reason Why the stream ended — present only on the `done` frame, and deliberately NOT a run state. `no_live_run` means no run on the version's milestone is currently live, so there is nothing further to report RIGHT NOW. It is not a verdict on the version: a later validation or task run may be admitted on the same milestone, and the console reopens the stream when its run-list poll shows one.
@@ -949,7 +988,7 @@ type BuildRunList struct {
 
 // BuildStage Build-stage aggregate on ProjectStatus (#184) — the version the newest milestone run is working, and how that run is doing. Deliberately count-free - the only honest source of a per-version task tally is the version's milestone on GitHub, and this endpoint is polled at 5s. The console renders counts from the list-tasks response it already holds, on the surface that already pays for it.
 type BuildStage struct {
-	// Status idle (never built), running, failed, succeeded
+	// Status idle (never built), running, failed, cancelled, succeeded. `cancelled` is its own value for the same reason it is on BuildSummary — a person abandoning an increment is a different fact from the platform failing to deliver one, and the project badge read "Build failed" over a build somebody had deliberately stopped.
 	Status string `json:"status"`
 
 	// Version Spec tag the current/last build built; "" if never built.
@@ -963,17 +1002,19 @@ type BuildSummary struct {
 	// MilestoneNumber The GitHub milestone this version's work lives in — the platform key the tag resolves to, and the handle list-build-runs is read by.
 	MilestoneNumber int64 `json:"milestoneNumber"`
 
-	// Reason The run's terminal reason for a failed version (empty otherwise), surfaced beside the Failed badge in the console.
-	Reason    string             `json:"reason,omitempty"`
-	StartedAt time.Time          `json:"startedAt"`
-	Status    BuildSummaryStatus `json:"status"`
-	Tag       string             `json:"tag"`
+	// Reason The run's terminal reason for a failed version (empty otherwise), surfaced beside the Failed badge in the console. A cancelled version carries none — a person abandoning an increment is not a fault with a cause to report.
+	Reason    string    `json:"reason,omitempty"`
+	StartedAt time.Time `json:"startedAt"`
+
+	// Status What became of this version. `cancelled` is its own value rather than a flavour of `failed`, because the two are different facts and a reader acts on them differently — a failure is the platform reporting it could not deliver the increment, while a cancel is a person deciding not to. Folding them lost that; a build somebody deliberately stopped rendered as Failed, with no reason beside it to say why, while the same page's run row said Cancelled two lines below.
+	Status BuildSummaryStatus `json:"status"`
+	Tag    string             `json:"tag"`
 
 	// WaitingReason Why an in-progress version is waiting rather than moving. Empty for the ordinary between-cycles park, which needs no explanation. `external-values` is the deploy gate — the run is built and ready to deploy, and every remaining blocker is a value only a human can supply. It is carried here so a ledger row can say the version is waiting on the reader instead of reading as a run an agent is still working; the dependency NAMES stay on MilestoneRunView, where the run read that has them is already being made.
 	WaitingReason BuildSummaryWaitingReason `json:"waitingReason,omitempty"`
 }
 
-// BuildSummaryStatus defines model for BuildSummary.Status.
+// BuildSummaryStatus What became of this version. `cancelled` is its own value rather than a flavour of `failed`, because the two are different facts and a reader acts on them differently — a failure is the platform reporting it could not deliver the increment, while a cancel is a person deciding not to. Folding them lost that; a build somebody deliberately stopped rendered as Failed, with no reason beside it to say why, while the same page's run row said Cancelled two lines below.
 type BuildSummaryStatus string
 
 // BuildSummaryWaitingReason Why an in-progress version is waiting rather than moving. Empty for the ordinary between-cycles park, which needs no explanation. `external-values` is the deploy gate — the run is built and ready to deploy, and every remaining blocker is a value only a human can supply. It is carried here so a ledger row can say the version is waiting on the reader instead of reading as a run an agent is still working; the dependency NAMES stay on MilestoneRunView, where the run read that has them is already being made.
@@ -1085,6 +1126,34 @@ type ConsumerDTO struct {
 	ProjectID     string `json:"projectId"`
 }
 
+// ConversationMessage One rehydrated message from a conversation's server-side history, sourced from the turn journal. The console's local chat log is display state; this is the durable record, and it is what makes a chip survive a reload.
+type ConversationMessage struct {
+	// Anchor What the user pointed at when they aimed this turn at part of a spec document (#666; console ADR-0024). It LOCATES — it never carries the selected content.
+	//
+	// The agent joins the spec collab room as a live peer, so between the selection and the turn starting the user may keep typing and a teammate may edit too: content captured at selection time is a photograph of a document that has since moved. The agent resolves these names against the CURRENT document instead. The same reasoning already reversed an embedded copy once — #252 Task 17 stripped a dependency's full JSON entry back to its name, because the agent reads the live entry in its own turn snapshot.
+	//
+	// Absent for an ordinary chat turn.
+	Anchor TurnAnchor `json:"anchor,omitempty"`
+
+	// Attachments File NAMES that went up with this message (#428) — never bytes, which are conversation-scoped model content the platform does not store (console ADR-0019). Absent for every message without attachments.
+	Attachments []string `json:"attachments,omitempty"`
+
+	// Author Who sent this message (#130 multi-user threads). Absent for the agent, and for history written before attribution existed.
+	Author ConversationMessageAuthor `json:"author,omitempty"`
+
+	// Content The message body as the journal recorded it. Deliberately untyped — a turn's content is model-shaped and varies by role, and this endpoint's job is to replay it, not to interpret it.
+	Content interface{} `json:"content,omitempty"`
+
+	// Role Who the message is from, as the journal recorded it.
+	Role string `json:"role"`
+}
+
+// ConversationMessageAuthor Who sent this message (#130 multi-user threads). Absent for the agent, and for history written before attribution existed.
+type ConversationMessageAuthor struct {
+	DisplayName string `json:"displayName"`
+	ID          string `json:"id"`
+}
+
 // CreateIssueRequest Issue to file on the project's repo. dedupeKey makes creation idempotent per open issue (label-encoded), for concurrent alert handlers.
 type CreateIssueRequest struct {
 	Body      string   `json:"body"`
@@ -1188,7 +1257,7 @@ type DeployStage struct {
 
 	// Validation Validation state of the newest milestone run. This MIRRORS the run's verdict rather than folding it, so the chip says what the run concluded: a fold would have to discard `partial`, `inconclusive` and `unreported` at exactly the surface that needs them, and `completed` never said whether anything passed.
 	// Four LIFECYCLE values. none is PENDING, never settled: a verdict is expected and has not arrived, because a run is live or a dev run filed the version's validation task and nothing has started it yet. A client must not read it as "there is no verdict to wait for" — that is what skipped and inconclusive say. running is a validation CYCLE in flight, not merely a live run with no verdict yet. awaiting-fix is validation having failed with the run repairing it — the work in flight is a CODING cycle, which is why the state names the implementation rather than validation. cancelled is a person STOPPING the judging: a validation run settled cancelled before recording a verdict, so nothing will answer for this version unless somebody re-asks. The rest are the verdict verbatim. They are mutually exclusive in time, so nothing is hidden behind another.
-	// passed (every criterion was automated and passed), partial (some passed, none failed, some were never covered), failed (a criterion asserted and lost), inconclusive (no test results at all), unreported (no usable report at the validation cycle's merge commit), skipped (no acceptance criteria, and incident runs, which get no validation cycle).
+	// passed (every criterion was automated and passed), partial (some passed, none failed, some were never covered), failed (a criterion asserted and lost), inconclusive (no test results at all), unreported (no usable report at the validation cycle's merge commit), skipped (no validation criteria, and incident runs, which get no validation cycle).
 	// failed and unreported fail the run only once its validation attempts are spent: while attempts remain the run repairs and re-validates, and reads awaiting-fix in the meantime.
 	// The report path and per-cycle detail live on the version's run story (list-build-runs).
 	Validation DeployStageValidation `json:"validation"`
@@ -1199,7 +1268,7 @@ type DeployStage struct {
 
 // DeployStageValidation Validation state of the newest milestone run. This MIRRORS the run's verdict rather than folding it, so the chip says what the run concluded: a fold would have to discard `partial`, `inconclusive` and `unreported` at exactly the surface that needs them, and `completed` never said whether anything passed.
 // Four LIFECYCLE values. none is PENDING, never settled: a verdict is expected and has not arrived, because a run is live or a dev run filed the version's validation task and nothing has started it yet. A client must not read it as "there is no verdict to wait for" — that is what skipped and inconclusive say. running is a validation CYCLE in flight, not merely a live run with no verdict yet. awaiting-fix is validation having failed with the run repairing it — the work in flight is a CODING cycle, which is why the state names the implementation rather than validation. cancelled is a person STOPPING the judging: a validation run settled cancelled before recording a verdict, so nothing will answer for this version unless somebody re-asks. The rest are the verdict verbatim. They are mutually exclusive in time, so nothing is hidden behind another.
-// passed (every criterion was automated and passed), partial (some passed, none failed, some were never covered), failed (a criterion asserted and lost), inconclusive (no test results at all), unreported (no usable report at the validation cycle's merge commit), skipped (no acceptance criteria, and incident runs, which get no validation cycle).
+// passed (every criterion was automated and passed), partial (some passed, none failed, some were never covered), failed (a criterion asserted and lost), inconclusive (no test results at all), unreported (no usable report at the validation cycle's merge commit), skipped (no validation criteria, and incident runs, which get no validation cycle).
 // failed and unreported fail the run only once its validation attempts are spent: while attempts remain the run repairs and re-validates, and reads awaiting-fix in the meantime.
 // The report path and per-cycle detail live on the version's run story (list-build-runs).
 type DeployStageValidation string
@@ -1330,6 +1399,11 @@ type FileMeta struct {
 	Size int64  `json:"size,omitempty"`
 }
 
+// GetConversationOutputBody A conversation's history, oldest first. An empty list is a real answer — a known thread with no turns yet — never an error.
+type GetConversationOutputBody struct {
+	Messages []ConversationMessage `json:"messages"`
+}
+
 // GitProviderProjection defines model for GitProviderProjection.
 type GitProviderProjection = orgconfig.GitProviderProjection
 
@@ -1406,7 +1480,7 @@ type MilestoneRunView struct {
 	EndedAt *time.Time     `json:"endedAt,omitempty"`
 	ID      string         `json:"id"`
 
-	// Kind What this run DOES, and the value every platform predicate is written on. `dev` delivers a version — it plans its own milestone, and is the only kind that takes the one-active-build-per-project mutex. `task` works a defect inside a version already delivered; task runs execute concurrently on their own milestones. `validation` asks a shipped version's acceptance criteria again — it has no working set, builds nothing, and is outside the mutex so it never holds up the next build.
+	// Kind What this run DOES, and the value every platform predicate is written on. `dev` delivers a version — it plans its own milestone, and is the only kind that takes the one-active-build-per-project mutex. `task` works a defect inside a version already delivered; task runs execute concurrently on their own milestones. `validation` asks a shipped version's validation criteria again — it has no working set, builds nothing, and is outside the mutex so it never holds up the next build.
 	Kind            MilestoneRunViewKind `json:"kind"`
 	MilestoneNumber int64                `json:"milestoneNumber"`
 
@@ -1430,7 +1504,7 @@ type MilestoneRunView struct {
 	WaitingReason MilestoneRunViewWaitingReason `json:"waitingReason,omitempty"`
 }
 
-// MilestoneRunViewKind What this run DOES, and the value every platform predicate is written on. `dev` delivers a version — it plans its own milestone, and is the only kind that takes the one-active-build-per-project mutex. `task` works a defect inside a version already delivered; task runs execute concurrently on their own milestones. `validation` asks a shipped version's acceptance criteria again — it has no working set, builds nothing, and is outside the mutex so it never holds up the next build.
+// MilestoneRunViewKind What this run DOES, and the value every platform predicate is written on. `dev` delivers a version — it plans its own milestone, and is the only kind that takes the one-active-build-per-project mutex. `task` works a defect inside a version already delivered; task runs execute concurrently on their own milestones. `validation` asks a shipped version's validation criteria again — it has no working set, builds nothing, and is outside the mutex so it never holds up the next build.
 type MilestoneRunViewKind string
 
 // MilestoneRunViewOrigin Where this run was started from. A label on the trigger — the behaviour is the run's kind.
@@ -1531,10 +1605,13 @@ type ProgressEvent struct {
 	Error        string `json:"error,omitempty"`
 
 	// ExitCode `tool_result` only: the process status of a failed shell call, parsed from the SDK's own `Exit code N` first line. Absent when the tool was not a shell — those report a `<tool_use_error>` with no code — so read absence as "no code was reported", never as "exited 0".
-	ExitCode int64  `json:"exitCode,omitempty"`
-	Files    int64  `json:"files,omitempty"`
-	Kind     string `json:"kind"`
-	Level    string `json:"level,omitempty"`
+	ExitCode int64 `json:"exitCode,omitempty"`
+	Files    int64 `json:"files,omitempty"`
+
+	// ItemID `progress_item` only: WHICH named unit of work the line is about — the key a consumer folds on, since many lines describe the same item and a reader wants one row repainted rather than many rows printed. Validation binds items to acceptance criteria ("AC-003-a"), which `cycleKind` already implies, so this never repeats it. The status itself rides on `status`, scoped by `kind`: planned | exploring | authoring | running | healing | pass | fail.
+	ItemID string `json:"itemId,omitempty"`
+	Kind   string `json:"kind"`
+	Level  string `json:"level,omitempty"`
 
 	// LinesAdded A fanned-out subagent's total lines added, off the SDK's own report on its fan-out call's result. Present only there; nothing in the feed can reconstruct it.
 	LinesAdded int64 `json:"linesAdded,omitempty"`
@@ -1902,7 +1979,7 @@ type RunProgressEvent struct {
 	// Cycle One dispatch within a run. Branch, pull request (number and URL) and merge SHA are LEARNED FROM WEBHOOKS — the agent derives its own branch identity — so they stay empty on a cycle whose agent died before opening a pull request.
 	Cycle RunCycleView `json:"cycle,omitempty"`
 
-	// Line One line of a cycle's agent log: the runner's progress envelope (phase | tool_use | git_commit | git_push | gh_action | log | result) plus the attribution the console groups on — which cycle produced it, and whether the main agent or one of its Task subagents did.
+	// Line One line of a cycle's agent log: the runner's progress envelope (phase | tool_use | activity | tool_result | git_commit | git_push | gh_action | log | progress_item | result) plus the attribution the console groups on — which cycle produced it, and whether the main agent or one of its Task subagents did.
 	Line RunProgressLine `json:"line,omitempty"`
 
 	// State Terminal run state — present only on the `done` frame.
@@ -1913,7 +1990,7 @@ type RunProgressEvent struct {
 // RunProgressEventType defines model for RunProgressEvent.Type.
 type RunProgressEventType string
 
-// RunProgressLine One line of a cycle's agent log: the runner's progress envelope (phase | tool_use | git_commit | git_push | gh_action | log | result) plus the attribution the console groups on — which cycle produced it, and whether the main agent or one of its Task subagents did.
+// RunProgressLine One line of a cycle's agent log: the runner's progress envelope (phase | tool_use | activity | tool_result | git_commit | git_push | gh_action | log | progress_item | result) plus the attribution the console groups on — which cycle produced it, and whether the main agent or one of its Task subagents did.
 type RunProgressLine struct {
 	Branch  string `json:"branch,omitempty"`
 	Command string `json:"command,omitempty"`
@@ -1941,10 +2018,13 @@ type RunProgressLine struct {
 	Error        string `json:"error,omitempty"`
 
 	// ExitCode `tool_result` only: the process status of a failed shell call, parsed from the SDK's own `Exit code N` first line. Absent when the tool was not a shell — those report a `<tool_use_error>` with no code — so read absence as "no code was reported", never as "exited 0".
-	ExitCode int64  `json:"exitCode,omitempty"`
-	Files    int64  `json:"files,omitempty"`
-	Kind     string `json:"kind"`
-	Level    string `json:"level,omitempty"`
+	ExitCode int64 `json:"exitCode,omitempty"`
+	Files    int64 `json:"files,omitempty"`
+
+	// ItemID `progress_item` only: WHICH named unit of work the line is about — the key a consumer folds on, since many lines describe the same item and a reader wants one row repainted rather than many rows printed. Validation binds items to acceptance criteria ("AC-003-a"), which `cycleKind` already implies, so this never repeats it. The status itself rides on `status`, scoped by `kind`: planned | exploring | authoring | running | healing | pass | fail.
+	ItemID string `json:"itemId,omitempty"`
+	Kind   string `json:"kind"`
+	Level  string `json:"level,omitempty"`
 
 	// LinesAdded A fanned-out subagent's total lines added, off the SDK's own report on its fan-out call's result. Present only there; nothing in the feed can reconstruct it.
 	LinesAdded int64 `json:"linesAdded,omitempty"`
@@ -1982,13 +2062,13 @@ type RunValidation struct {
 	ReportPath string `json:"reportPath,omitempty"`
 
 	// Verdict What the run learned about the deployed system. Empty until the validation cycle settles.
-	// passed (every criterion was automated and passed), partial (some passed, none failed, and some were never covered — so `passed` would claim a result for criteria nobody checked), failed (a criterion asserted and lost), inconclusive (no test results at all), unreported (no usable report at the cycle's merge commit), skipped (no acceptance criteria, and incident runs, which get no validation cycle at all).
+	// passed (every criterion was automated and passed), partial (some passed, none failed, and some were never covered — so `passed` would claim a result for criteria nobody checked), failed (a criterion asserted and lost), inconclusive (no test results at all), unreported (no usable report at the cycle's merge commit), skipped (no validation criteria, and incident runs, which get no validation cycle at all).
 	// `failed` and `unreported` fail the run ONCE ITS VALIDATION ATTEMPTS ARE SPENT, under terminal reasons validation-failed and validation-unreported respectively; while attempts remain the run repairs and validates again, so this field can hold a fatal verdict on a run that is still live and about to try once more. A client rendering it as the run's answer therefore needs the lifecycle too — that is DeployStage.validation, which reports awaiting-fix for exactly that state. The rest settle succeeded.
 	Verdict RunValidationVerdict `json:"verdict,omitempty"`
 }
 
 // RunValidationVerdict What the run learned about the deployed system. Empty until the validation cycle settles.
-// passed (every criterion was automated and passed), partial (some passed, none failed, and some were never covered — so `passed` would claim a result for criteria nobody checked), failed (a criterion asserted and lost), inconclusive (no test results at all), unreported (no usable report at the cycle's merge commit), skipped (no acceptance criteria, and incident runs, which get no validation cycle at all).
+// passed (every criterion was automated and passed), partial (some passed, none failed, and some were never covered — so `passed` would claim a result for criteria nobody checked), failed (a criterion asserted and lost), inconclusive (no test results at all), unreported (no usable report at the cycle's merge commit), skipped (no validation criteria, and incident runs, which get no validation cycle at all).
 // `failed` and `unreported` fail the run ONCE ITS VALIDATION ATTEMPTS ARE SPENT, under terminal reasons validation-failed and validation-unreported respectively; while attempts remain the run repairs and validates again, so this field can hold a fatal verdict on a run that is still live and about to try once more. A client rendering it as the run's answer therefore needs the lifecycle too — that is DeployStage.validation, which reports awaiting-fix for exactly that state. The rest settle succeeded.
 type RunValidationVerdict string
 
@@ -2163,7 +2243,7 @@ type TaskStreamEvent struct {
 	DerivedStatus string        `json:"derivedStatus,omitempty"`
 	Execution     ExecutionView `json:"execution,omitempty"`
 
-	// Line A unified-timeline entry: today's ProgressEvent (phase | tool_use | git_commit | git_push | gh_action | build_step | log | result) plus its attribution — which execution attempt it came from. This is the per-row shape the console renders; the FE groups rows by executionId/kind.
+	// Line A unified-timeline entry: today's ProgressEvent (phase | tool_use | activity | tool_result | git_commit | git_push | gh_action | build_step | log | progress_item | result) plus its attribution — which execution attempt it came from. This is the per-row shape the console renders; the FE groups rows by executionId/kind.
 	Line TimelineEvent       `json:"line,omitempty"`
 	Task TaskView            `json:"task,omitempty"`
 	Type TaskStreamEventType `json:"type"`
@@ -2217,7 +2297,7 @@ type TestUserPassword struct {
 	Username  string     `json:"username"`
 }
 
-// TimelineEvent A unified-timeline entry: today's ProgressEvent (phase | tool_use | git_commit | git_push | gh_action | build_step | log | result) plus its attribution — which execution attempt it came from. This is the per-row shape the console renders; the FE groups rows by executionId/kind.
+// TimelineEvent A unified-timeline entry: today's ProgressEvent (phase | tool_use | activity | tool_result | git_commit | git_push | gh_action | build_step | log | progress_item | result) plus its attribution — which execution attempt it came from. This is the per-row shape the console renders; the FE groups rows by executionId/kind.
 type TimelineEvent struct {
 	Branch      string `json:"branch,omitempty"`
 	Command     string `json:"command,omitempty"`
@@ -2243,10 +2323,13 @@ type TimelineEvent struct {
 	ExecutionKind string `json:"executionKind"`
 
 	// ExitCode `tool_result` only: the process status of a failed shell call, parsed from the SDK's own `Exit code N` first line. Absent when the tool was not a shell — those report a `<tool_use_error>` with no code — so read absence as "no code was reported", never as "exited 0".
-	ExitCode int64  `json:"exitCode,omitempty"`
-	Files    int64  `json:"files,omitempty"`
-	Kind     string `json:"kind"`
-	Level    string `json:"level,omitempty"`
+	ExitCode int64 `json:"exitCode,omitempty"`
+	Files    int64 `json:"files,omitempty"`
+
+	// ItemID `progress_item` only: WHICH named unit of work the line is about — the key a consumer folds on, since many lines describe the same item and a reader wants one row repainted rather than many rows printed. Validation binds items to acceptance criteria ("AC-003-a"), which `cycleKind` already implies, so this never repeats it. The status itself rides on `status`, scoped by `kind`: planned | exploring | authoring | running | healing | pass | fail.
+	ItemID string `json:"itemId,omitempty"`
+	Kind   string `json:"kind"`
+	Level  string `json:"level,omitempty"`
 
 	// LinesAdded A fanned-out subagent's total lines added, off the SDK's own report on its fan-out call's result. Present only there; nothing in the feed can reconstruct it.
 	LinesAdded int64 `json:"linesAdded,omitempty"`
@@ -2278,6 +2361,37 @@ type TimelineEvent struct {
 // TimelineEventEmitter Who produced the line — `subagent` for work the main agent fanned out with the Task tool, absent for the main agent itself. Absence is a positive fact, not an unknown.
 type TimelineEventEmitter string
 
+// TurnAnchor What the user pointed at when they aimed this turn at part of a spec document (#666; console ADR-0024). It LOCATES — it never carries the selected content.
+//
+// The agent joins the spec collab room as a live peer, so between the selection and the turn starting the user may keep typing and a teammate may edit too: content captured at selection time is a photograph of a document that has since moved. The agent resolves these names against the CURRENT document instead. The same reasoning already reversed an embedded copy once — #252 Task 17 stripped a dependency's full JSON entry back to its name, because the agent reads the live entry in its own turn snapshot.
+//
+// Absent for an ordinary chat turn.
+type TurnAnchor struct {
+	// File The authored spec file the selection resolves to. Always present — one view renders exactly one file, so a selection never spans two.
+	File string `json:"file"`
+
+	// Nodes The selected nodes, in document order. A list because both surfaces multi-select — a drag across three paragraphs, a shift-click across three operations.
+	Nodes []TurnAnchorNode `json:"nodes"`
+}
+
+// TurnAnchorNode One selected node — the name the agent resolves, and the name the transcript shows back to a user who can no longer see what they clicked.
+type TurnAnchorNode struct {
+	// Context Where the node sits, for a name that cannot stand alone. Markdown — the heading path, root-first (`Solution > Slack integration`). A structured view — the parent (`lunch-api`). Optional; a name that stands alone needs none.
+	Context string `json:"context,omitempty"`
+
+	// Kind The node's vocabulary word. It carries the whole difference between a name authored AS a name and a sentence pressed into service as one, which is what lets prose and structured views share this schema.
+	//
+	// Markdown uses structural terms — `paragraph`, `heading`, `list item` — deliberately NOT document-specific readings like `open question`, so an arbitrary `.md` produces the same shape as the PRD. A structured view uses its own terms (`operation`, `external dependency`). Kept as a raw string rather than a closed enum so a view can name its nodes without a contract change.
+	Kind string `json:"kind"`
+
+	// Name What the agent resolves and the transcript shows. A structured view supplies the node's own name (`POST /rounds`, `slack`). Markdown has none, so it supplies a BOUNDED excerpt of the block's RENDERED text — at most 80 characters, cut at a word boundary.
+	//
+	// The bound is the load-bearing part, not the number: an excerpt that grows with the selection is the carried content this schema exists to avoid. It only has to be unique enough to locate — the model receives the full block regardless, because the agent read it from the file.
+	//
+	// RENDERED, not source: the source carries `**bold**`, `*assumed*`, links and hard wraps the reader never saw, so a source-exact excerpt fails to match for most blocks. The agent matches on prose, tolerantly, and asks when a name is genuinely ambiguous rather than guessing. `maxLength` is the contract's ceiling against carry; the 80-character rule is the markdown client's.
+	Name string `json:"name"`
+}
+
 // TurnConflict create-turn 409 body. turn_in_progress carries the active turn's id; requirements_missing means the design use-case has no requirements to work from; conversation_rotated means the addressed thread is no longer the project's current one — re-resolve via list-conversations and retry.
 type TurnConflict struct {
 	ActiveTurnID string           `json:"activeTurnId,omitempty"`
@@ -2289,15 +2403,32 @@ type TurnConflictCode string
 
 // TurnInputBody defines model for TurnInputBody.
 type TurnInputBody struct {
+	// Anchor What the user pointed at when they aimed this turn at part of a spec document (#666; console ADR-0024). It LOCATES — it never carries the selected content.
+	//
+	// The agent joins the spec collab room as a live peer, so between the selection and the turn starting the user may keep typing and a teammate may edit too: content captured at selection time is a photograph of a document that has since moved. The agent resolves these names against the CURRENT document instead. The same reasoning already reversed an embedded copy once — #252 Task 17 stripped a dependency's full JSON entry back to its name, because the agent reads the live entry in its own turn snapshot.
+	//
+	// Absent for an ordinary chat turn.
+	Anchor TurnAnchor `json:"anchor,omitempty"`
+
 	// Collab Room-scoped turn (#86 phase 4): the agent joins the project's spec collab room as a live peer, reads and edits the shared doc, and commits nothing to git.
 	Collab bool `json:"collab,omitempty"`
 
 	// Instruction User message / generation directive. `/<skill>` flow commands (`/start`, `/design`, …) are sent VERBATIM — the server expands them, attaches the flow's eager skills, and enriches `/start` with the captured project idea.
 	Instruction string `json:"instruction"`
 
+	// Intent What the user wants done with `anchor` — `change` rewrites the selected nodes in place, `discuss` opens the same selection as a grilling. Read by the agents service when it renders the anchor into the prompt; the two differ only in how that preamble is phrased.
+	//
+	// Deliberately a field and NOT a `/command` prefix on `instruction`: a command IS the user's message (the console adds nothing to a line they typed), and an anchored turn carries prose they wrote in their own words, so a prefix would put machinery in their voice. Mirrors the console's own resolve/reconsider intent, whose only job is the same. Absent for a turn with no anchor.
+	Intent TurnInputBodyIntent `json:"intent,omitempty"`
+
 	// Target Optional target (e.g. a doc type)
 	Target string `json:"target,omitempty"`
 }
+
+// TurnInputBodyIntent What the user wants done with `anchor` — `change` rewrites the selected nodes in place, `discuss` opens the same selection as a grilling. Read by the agents service when it renders the anchor into the prompt; the two differ only in how that preamble is phrased.
+//
+// Deliberately a field and NOT a `/command` prefix on `instruction`: a command IS the user's message (the console adds nothing to a line they typed), and an anchored turn carries prose they wrote in their own words, so a prefix would put machinery in their voice. Mirrors the console's own resolve/reconsider intent, whose only job is the same. Absent for a turn with no anchor.
+type TurnInputBodyIntent string
 
 // TurnInputMultipart The same turn input as `TurnInputBody`, sent as multipart so it can carry chat attachments (#428). The JSON form stays the canonical one — a message with no attachments MUST use it, and every existing caller is unaffected.
 //
@@ -2305,6 +2436,13 @@ type TurnInputBody struct {
 //
 // Deliberately NOT the reference-document channel: `POST /projects/{name}/references` REPLACES a project's whole stored set, and the create view is the only door to it. A file attached here never becomes a project reference, even when the instruction is `/start`.
 type TurnInputMultipart struct {
+	// Anchor What the user pointed at when they aimed this turn at part of a spec document (#666; console ADR-0024). It LOCATES — it never carries the selected content.
+	//
+	// The agent joins the spec collab room as a live peer, so between the selection and the turn starting the user may keep typing and a teammate may edit too: content captured at selection time is a photograph of a document that has since moved. The agent resolves these names against the CURRENT document instead. The same reasoning already reversed an embedded copy once — #252 Task 17 stripped a dependency's full JSON entry back to its name, because the agent reads the live entry in its own turn snapshot.
+	//
+	// Absent for an ordinary chat turn.
+	Anchor TurnAnchor `json:"anchor,omitempty"`
+
 	// Collab As `TurnInputBody.collab`.
 	Collab bool `json:"collab,omitempty"`
 
@@ -2316,9 +2454,19 @@ type TurnInputMultipart struct {
 	// Instruction As `TurnInputBody.instruction`. Required — an attachment alone cannot start a turn, and the shared TurnSpec validator rejects an empty chat text.
 	Instruction string `json:"instruction"`
 
+	// Intent As `TurnInputBody.intent`. What the user wants done with `anchor` — `change` rewrites the selected nodes in place, `discuss` opens the same selection as a grilling. Read by the agents service when it renders the anchor into the prompt; the two differ only in how that preamble is phrased.
+	//
+	// Deliberately a field and NOT a `/command` prefix on `instruction`: a command IS the user's message (the console adds nothing to a line they typed), and an anchored turn carries prose they wrote in their own words, so a prefix would put machinery in their voice. Mirrors the console's own resolve/reconsider intent, whose only job is the same. Absent for a turn with no anchor.
+	Intent TurnInputMultipartIntent `json:"intent,omitempty"`
+
 	// Target As `TurnInputBody.target`.
 	Target string `json:"target,omitempty"`
 }
+
+// TurnInputMultipartIntent As `TurnInputBody.intent`. What the user wants done with `anchor` — `change` rewrites the selected nodes in place, `discuss` opens the same selection as a grilling. Read by the agents service when it renders the anchor into the prompt; the two differ only in how that preamble is phrased.
+//
+// Deliberately a field and NOT a `/command` prefix on `instruction`: a command IS the user's message (the console adds nothing to a line they typed), and an anchored turn carries prose they wrote in their own words, so a prefix would put machinery in their voice. Mirrors the console's own resolve/reconsider intent, whose only job is the same. Absent for a turn with no anchor.
+type TurnInputMultipartIntent string
 
 // TurnOutputBody defines model for TurnOutputBody.
 type TurnOutputBody struct {

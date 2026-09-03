@@ -146,35 +146,104 @@ function StateChip({ status }: { status: string }) {
   );
 }
 
-// What a criterion shows while an attempt is IN FLIGHT and no report exists yet.
-//
-// A `manual` criterion gets its final word rather than "Pending": the run will
-// never answer it — that is what the method means — so a chip promising a result
-// would be a claim the eventual report contradicts. Everything else is genuinely
-// waiting on the run, including the legacy `scenario` method and any method this
-// view does not recognise.
-//
-// "Pending" is local rather than a sixth CRITERION_STATE_LABEL entry: that map is
-// report.json's vocabulary, and a criterion with no report has no status to name.
-function AwaitingChip({ method }: { method: string }) {
-  return method === "manual" ? (
-    <StateChip status="manual" />
-  ) : (
-    <Chip size="small" variant="outlined" label="Pending" sx={{ flexShrink: 0 }} />
+/**
+ * What the RUN is doing to a criterion right now, keyed by criterion id.
+ *
+ * Carried as a plain map rather than folded here, because this package renders
+ * and the consumer streams: the console builds it from the run's progress feed
+ * (`progress_item` events), and the Spec view — which shows the same oracle with
+ * no run attached — simply passes nothing.
+ */
+export type LiveStatuses = Readonly<Record<string, string>>;
+
+// The in-flight vocabulary, LOCAL for the same reason "Pending" below is: these
+// words describe work happening, and report.json can only describe work in the
+// past tense, so none of them belongs in CRITERION_STATE_LABEL. Its two terminal
+// words (`pass`/`fail`) DO arrive on the live feed, and deliberately fall through
+// to StateChip — a criterion that has passed reads the same whether the news came
+// from the feed or from the report, because it is the same fact.
+const LIVE_LABEL: Record<string, string> = {
+  planned: "Planned",
+  exploring: "Exploring…",
+  authoring: "Authoring…",
+  running: "Running…",
+  healing: "Healing…",
+};
+
+// Only `healing` is coloured. It is the run saying a criterion that WORKED has
+// stopped working — the one live status that changes what a reader thinks is
+// happening. Colouring ordinary progress would spend attention on the common case
+// and leave nothing to spend on this one.
+const LIVE_COLOR: Record<string, ChipColor> = { healing: "warning" };
+
+// The per-criterion chip while the run is still working on it.
+function LiveChip({ status }: { status: string }) {
+  return (
+    <Chip
+      size="small"
+      variant="outlined"
+      color={LIVE_COLOR[status] ?? "info"}
+      label={LIVE_LABEL[status] ?? status}
+      sx={{ flexShrink: 0 }}
+    />
   );
 }
 
-// One acceptance criterion: method badge, its id, the atomic assertion, and —
-// when a run report is joined in — its run-state chip plus healed/flaky markers
-// and (for a failure) the spec path and failure message beneath. With no report
-// and `awaiting` set, the state chip says what is going to happen to it instead.
-function CriterionRow({
+/**
+ * The one chip a criterion's row carries, in precedence order.
+ *
+ * `manual` wins over everything. Such a criterion is answered by a person, so
+ * the run will never answer it — that is what the method means — and any chip
+ * promising a result is a claim the eventual report contradicts. It outranks a
+ * live status as well as a report: a run legitimately reports progress for a
+ * manual criterion (its test plan names every criterion, not only the ones an
+ * agent will work), and rendering that as a run state left the row promising a
+ * result beside a badge saying nobody would produce one.
+ *
+ * Then live over report, and the ordering there is the whole point: a repeat
+ * attempt carries the PREVIOUS attempt's report, so ranking the report higher
+ * would freeze a criterion on the last run's verdict for the entire time the
+ * current run spends re-working it. The report wins again the moment the cycle
+ * settles, because the consumer stops supplying live statuses then.
+ *
+ * `awaiting` last, and only it can yield nothing: the Spec view renders this
+ * same pane with no run attached, where a chip would name a run that does not
+ * exist.
+ */
+function CriterionChip({
   criterion,
   report,
+  live,
   awaiting,
 }: {
   criterion: Criterion;
   report: CriterionReport | undefined;
+  live: string | undefined;
+  awaiting: boolean;
+}) {
+  if (criterion.method === "manual") return <StateChip status="manual" />;
+  // pass/fail arrive on the live feed too — report.json's own words, so its chip.
+  if (live) return LIVE_LABEL[live] ? <LiveChip status={live} /> : <StateChip status={live} />;
+  if (report) return <StateChip status={report.status} />;
+  // "Pending" is local rather than a sixth CRITERION_STATE_LABEL entry: that map
+  // is report.json's vocabulary, and a criterion with no report has no status to
+  // name.
+  if (awaiting) return <Chip size="small" variant="outlined" label="Pending" sx={{ flexShrink: 0 }} />;
+  return null;
+}
+
+// One acceptance criterion: method badge, its id, the atomic assertion, its
+// status chip (CriterionChip decides which one wins), healed/flaky markers, and
+// — for a failure — the spec path and message beneath.
+function CriterionRow({
+  criterion,
+  report,
+  live,
+  awaiting,
+}: {
+  criterion: Criterion;
+  report: CriterionReport | undefined;
+  live: string | undefined;
   awaiting: boolean;
 }) {
   const failed = report?.status === "fail";
@@ -199,11 +268,12 @@ function CriterionRow({
         {report?.healed && (
           <Chip size="small" variant="outlined" label="healed" sx={{ flexShrink: 0 }} />
         )}
-        {report ? (
-          <StateChip status={report.status} />
-        ) : awaiting ? (
-          <AwaitingChip method={criterion.method} />
-        ) : null}
+        <CriterionChip
+          criterion={criterion}
+          report={report}
+          live={live}
+          awaiting={awaiting}
+        />
       </Box>
       {/* Failure detail sits full-width beneath the row (indented past the
           method badge) so a long trace never crowds the assertion. */}
@@ -257,10 +327,12 @@ function CriterionRow({
 function RequirementCard({
   requirement,
   statuses,
+  live,
   awaiting,
 }: {
   requirement: Requirement;
   statuses: ValidationReport | undefined;
+  live: LiveStatuses | undefined;
   awaiting: boolean;
 }) {
   const count = requirement.criteria.length;
@@ -310,6 +382,7 @@ function RequirementCard({
               key={c.id}
               criterion={c}
               report={statuses?.get(c.id)}
+              live={live?.[c.id]}
               awaiting={awaiting}
             />
           ))}
@@ -322,6 +395,7 @@ function RequirementCard({
 function ValidationBody({
   criteria,
   statuses,
+  live,
   noPadding,
   fullWidth,
   hideDescription,
@@ -329,6 +403,7 @@ function ValidationBody({
 }: {
   criteria: ValidationCriteria;
   statuses: ValidationReport | undefined;
+  live: LiveStatuses | undefined;
   /** Required, not optional: `exactOptionalPropertyTypes` is on, so the public
    *  props are defaulted at the boundary rather than forwarded as `undefined`. */
   noPadding: boolean;
@@ -407,6 +482,7 @@ function ValidationBody({
               key={r.id}
               requirement={r}
               statuses={statuses}
+              live={live}
               awaiting={awaitingReport}
             />
           ))
@@ -467,6 +543,16 @@ export interface ValidationViewProps {
    * means. The criteria are loaded; the RESULTS are not.
    */
   awaitingReport?: boolean;
+
+  /**
+   * What the run is doing to each criterion right now — see LiveStatuses.
+   *
+   * Ranked ABOVE `report`, so a repeat attempt shows what it is re-working
+   * instead of the last attempt's verdict. Supply it only while a cycle is
+   * actually in flight: a stale map would keep overriding a settled report with
+   * statuses nothing is still producing.
+   */
+  live?: LiveStatuses;
 }
 
 export function ValidationView({
@@ -476,6 +562,7 @@ export function ValidationView({
   fullWidth = false,
   hideDescription = false,
   awaitingReport = false,
+  live,
 }: ValidationViewProps) {
   const parsed = useMemo(() => parseValidationCriteria(criteria), [criteria]);
   // The report is optional and tolerant: a bad report never blocks the oracle —
@@ -510,6 +597,7 @@ export function ValidationView({
       <ValidationBody
         criteria={parsed}
         statuses={statuses}
+        live={live}
         noPadding={noPadding}
         fullWidth={fullWidth}
         hideDescription={hideDescription}

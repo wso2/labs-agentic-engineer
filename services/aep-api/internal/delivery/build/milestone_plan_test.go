@@ -718,7 +718,9 @@ func TestReopenIncrement_ReopensExactlyTheMarkedSetAndClearsTheMark(t *testing.T
 	}
 	h.stub.On(http.MethodPatch, "/repos/acme/widgets/milestones/9", http.StatusOK, `{"number":9,"state":"open"}`)
 
-	h.svc.reopenIncrement(context.Background(), "acme", "shop", 9)
+	if filled := h.svc.reopenIncrement(context.Background(), "acme", "shop", 9); !filled {
+		t.Error("a milestone holding a `development` issue is FILLED — the run must skip its planning turn")
+	}
 
 	// The milestone itself comes back: a version being worked whose milestone reads
 	// closed is a lie the console renders.
@@ -726,14 +728,17 @@ func TestReopenIncrement_ReopensExactlyTheMarkedSetAndClearsTheMark(t *testing.T
 	if len(reopens) != 1 || !strings.Contains(reopens[0].Body, `"state":"open"`) {
 		t.Fatalf("milestone reopens = %+v, want exactly one state:open", reopens)
 	}
-	// The read is CLOSED issues, unfiltered by label: which of them this rebuild
-	// owns is decided from the labels, exactly as supersede decides what it carries.
+	// The read is EVERY state, unfiltered by label. Unfiltered because which issues
+	// this rebuild owns is decided from the labels, exactly as supersede decides
+	// what it carries; every state because the same list answers a second question
+	// — whether the milestone holds planned work at all — and a milestone whose
+	// Tasks are still open is as filled as one whose Tasks a cancel closed.
 	var listed bool
 	for _, r := range h.stub.Requests() {
 		if r.Method == http.MethodGet && r.Path == "/repos/acme/widgets/issues" && strings.Contains(r.Query, "milestone=9") {
 			listed = true
-			if !strings.Contains(r.Query, "state=closed") {
-				t.Errorf("the rebuild listed %s, want state=closed", r.Query)
+			if !strings.Contains(r.Query, "state=all") {
+				t.Errorf("the rebuild listed %s, want state=all", r.Query)
 			}
 			if strings.Contains(r.Query, "labels=") {
 				t.Errorf("the rebuild narrowed its fetch by label (%s) — the decision belongs in Go", r.Query)
@@ -741,7 +746,7 @@ func TestReopenIncrement_ReopensExactlyTheMarkedSetAndClearsTheMark(t *testing.T
 		}
 	}
 	if !listed {
-		t.Fatal("the rebuild never listed milestone 9's closed issues")
+		t.Fatal("the rebuild never listed milestone 9's issues")
 	}
 	// The marked set — the planned Task AND the gate the cancel closed with it.
 	for _, n := range []int{31, 32} {
@@ -775,5 +780,85 @@ func TestReopenIncrement_AVersionNobodyCancelledReopensNothing(t *testing.T) {
 
 	if n := countRequests(t, h.stub, http.MethodPatch, "/repos/acme/widgets/issues/31"); n != 0 {
 		t.Errorf("an unmarked issue must stay closed (%d patches)", n)
+	}
+}
+
+// reopenIncrement also answers whether the milestone was ever PLANNED, and this
+// is the answer that keeps a rebuild honest.
+//
+// A run that died in its planning phase leaves the milestone holding its gates
+// and nothing else. `unchanged` is true for the next click all the same, so
+// without this answer it would tell the run to skip planning — and a run that
+// skips planning over a milestone with no work reads the empty working set as
+// "planning produced nothing" and settles the version SUCCEEDED having built none
+// of it.
+//
+// A GATE IS NOT WORK. That is the whole discrimination: gates are minted before
+// the planning turn, so a milestone holding only gates is one whose planning turn
+// never landed.
+func TestReopenIncrement_AMilestoneHoldingOnlyGatesIsNotFilled(t *testing.T) {
+	h := newPlanHarness(t)
+	h.stub.OnFunc(http.MethodGet, "/repos/acme/widgets/issues", jsonPage(`[
+		{"number":12,"title":"Provision orders-db","state":"open","labels":[{"name":"provision"},{"name":"aep:dep/orders-db"}]},
+		{"number":13,"title":"Provision roles and test users","state":"open","labels":[{"name":"provision"}]}
+	]`))
+	h.stub.On(http.MethodPatch, "/repos/acme/widgets/milestones/9", http.StatusOK, `{"number":9,"state":"open"}`)
+
+	if filled := h.svc.reopenIncrement(context.Background(), "acme", "shop", 9); filled {
+		t.Error("gates are minted BEFORE the planning turn, so a milestone holding only gates was never planned")
+	}
+}
+
+// An OPEN planned Task counts too. The two questions this one list answers want
+// different states, and reading only the closed ones would call a milestone whose
+// Tasks are all still open "unplanned" and plan it a second time.
+func TestReopenIncrement_OpenPlannedWorkCountsAsFilled(t *testing.T) {
+	h := newPlanHarness(t)
+	h.stub.OnFunc(http.MethodGet, "/repos/acme/widgets/issues", jsonPage(`[
+		{"number":31,"title":"Implement orders","state":"open","labels":[{"name":"aep"},{"name":"development"}]}
+	]`))
+	h.stub.On(http.MethodPatch, "/repos/acme/widgets/milestones/9", http.StatusOK, `{"number":9,"state":"open"}`)
+
+	if filled := h.svc.reopenIncrement(context.Background(), "acme", "shop", 9); !filled {
+		t.Error("planned work that is still open is planned work")
+	}
+}
+
+// A LIST FAILURE FAILS TOWARDS PLANNING, and the asymmetry is deliberate. The
+// wrong "filled" settles an unbuilt version as delivered, silently; the wrong
+// "not filled" spends one LLM turn that dedupes onto the milestone's own titles
+// and mints nothing. Only one of those is recoverable by looking at the console.
+func TestReopenIncrement_AnUnreadableMilestoneIsNotAssumedFilled(t *testing.T) {
+	h := newPlanHarness(t)
+	h.stub.On(http.MethodGet, "/repos/acme/widgets/issues", http.StatusInternalServerError, `{}`)
+	h.stub.On(http.MethodPatch, "/repos/acme/widgets/milestones/9", http.StatusOK, `{"number":9,"state":"open"}`)
+
+	if filled := h.svc.reopenIncrement(context.Background(), "acme", "shop", 9); filled {
+		t.Error("a milestone this build could not read must be re-planned, never assumed filled")
+	}
+}
+
+// The mark is cleared on an issue the cancel marked but never managed to CLOSE.
+//
+// cancel.go tolerates that state on purpose — the label goes on before the close,
+// so a failure between them leaves the issue open and marked, which costs nothing
+// at the time. It costs something later: the mark records ONE abandoned attempt,
+// and leaving it on makes the next cancel's marked set the union of two.
+func TestReopenIncrement_ClearsTheMarkOnAnIssueTheCancelLeftOpen(t *testing.T) {
+	h := newPlanHarness(t)
+	h.stub.OnFunc(http.MethodGet, "/repos/acme/widgets/issues", jsonPage(`[
+		{"number":31,"title":"Implement orders","state":"open","labels":[{"name":"aep"},{"name":"development"},{"name":"aep:cancelled"}]}
+	]`))
+	h.stub.On(http.MethodDelete, "/repos/acme/widgets/issues/31/labels/aep:cancelled", http.StatusOK, `[]`)
+	h.stub.On(http.MethodPatch, "/repos/acme/widgets/milestones/9", http.StatusOK, `{"number":9,"state":"open"}`)
+
+	h.svc.reopenIncrement(context.Background(), "acme", "shop", 9)
+
+	if n := countRequests(t, h.stub, http.MethodPatch, "/repos/acme/widgets/issues/31"); n != 0 {
+		t.Errorf("an issue that is already open needs no reopen (%d patches)", n)
+	}
+	if n := countRequests(t, h.stub, http.MethodDelete,
+		"/repos/acme/widgets/issues/31/labels/aep:cancelled"); n != 1 {
+		t.Errorf("the cancel mark was cleared %d times, want exactly 1", n)
 	}
 }

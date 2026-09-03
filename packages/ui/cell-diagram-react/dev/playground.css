@@ -1,0 +1,102 @@
+/*
+ * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+ *
+ * WSO2 LLC. licenses this file to you under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  font: 13px/1.5 ui-sans-serif, system-ui, sans-serif;
+}
+
+.playground {
+  display: grid;
+  grid-template-columns: 360px 1fr;
+  height: 100%;
+}
+
+.playground[data-theme="dark"] {
+  background: #16181d;
+  color: #e6e8ee;
+}
+
+.playground__editor {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-right: 1px solid rgb(128 128 128 / 0.35);
+}
+
+.playground__bar,
+.playground__toggles {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgb(128 128 128 / 0.35);
+}
+
+.playground__toggles {
+  border-bottom: 0;
+  border-top: 1px solid rgb(128 128 128 / 0.35);
+  flex-wrap: wrap;
+}
+
+.playground__toggles label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.playground__spacer {
+  flex: 1;
+}
+
+.playground__editor textarea {
+  flex: 1;
+  resize: none;
+  border: 0;
+  padding: 12px;
+  background: transparent;
+  color: inherit;
+  font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+  outline: none;
+}
+
+.playground__diagnostics {
+  margin: 0;
+  max-height: 30%;
+  overflow: auto;
+  padding: 0;
+  list-style: none;
+}
+
+.playground__diagnostics:not(:empty) {
+  border-top: 1px solid rgb(128 128 128 / 0.35);
+}
+
+.playground__diagnostics li {
+  padding: 6px 12px;
+  color: #c0392b;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.playground__canvas {
+  min-width: 0;
+  height: 100%;
+}

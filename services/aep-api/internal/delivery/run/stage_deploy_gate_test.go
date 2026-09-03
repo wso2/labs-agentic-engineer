@@ -241,8 +241,8 @@ func TestDeployGate_AResourceThatNeverProvisionsFailsTheCycle(t *testing.T) {
 
 	mints := h.deployMintInputs()
 	require.Len(t, mints, 1, "a wedged deploy has to become work, or the next boundary poll settles a version that is not running")
-	require.Equal(t, []string{"order-service"}, mints[0].Components,
-		"the cycle's components are what could not be delivered; the resource is nobody's individual fault")
+	require.Equal(t, []string{"order-service"}, delivery.TargetNames(mints[0].Failed),
+		"what this pass would have promoted is what could not be delivered; the resource is nobody's individual fault")
 	require.Contains(t, mints[0].Reasons["order-service"], "orders-db",
 		"the cause names the resource, which is the one fact the reader cannot derive")
 }

@@ -129,7 +129,7 @@ ephemeral Component of this type in the **milestone's own project**, so OC
 renders the cycle's `batch/v1 Job` into the project's release NS and materialises
 its ExternalSecrets from the org's secret store (refs only; the BFF writes no
 secret material). The type pins the cost envelope: `backoffLimit: 0`,
-`activeDeadlineSeconds` (1h default, 2h for a validation cycle),
+`activeDeadlineSeconds` (3h for a coding cycle, 2h for a validation cycle),
 `ttlSecondsAfterFinished`, and schema-bounded CPU/memory requests and limits.
 The type name is also the key wso2cloud's entitlement gate reads
 (`job/coding-agent`, `coding-agent`): a create over the org's cap answers `402`,
@@ -419,6 +419,19 @@ mean something: open work on a milestone with no live run is otherwise
 indistinguishable from work nobody started, so the run that gave up would be
 replaced within a tick by one with fresh budgets. Cleared by a rebuild, or by a
 person removing the label.
+
+### Acceptance oracle
+`specs/validation/validation-criteria.json` in its JUDGING role — the source of
+truth a validation run grades the deployed system against. *Oracle* names what
+the document DOES, not what it is: the console calls the document itself the
+**Validation criteria** (`apps/console/design/lexicon.md` holds that mapping),
+and one row inside it is an **acceptance criterion**, which is what its
+`AC-001-a`-style id says. Different axes, so both words are correct and neither
+is a leftover. Authored from the requirement prose alone by the
+`validation-criteria` skill, deliberately blind to the design and the code it
+will grade. A version with no acceptance oracle has nothing to validate: no
+validation task is filed, nothing will ever judge it, and the verdict settles
+`skipped` rather than staying silent.
 
 ### Green ending
 The only thing that CLOSES a milestone: zero open working-set issues **and** a

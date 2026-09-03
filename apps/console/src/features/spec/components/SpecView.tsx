@@ -52,7 +52,8 @@ import {
   useSpecFileContent,
   useSpecFiles,
 } from "../api/queries";
-import { PRD_PATH, toSpecEntry } from "../api/mapping";
+import { PRD_PATH, specGroupOf, toSpecEntry } from "../api/mapping";
+import { fileLabel } from "../api/labels";
 import { computeDependencyUsedBy } from "../lib/dependencyUsedBy";
 import { useCollabSpec } from "../collab/useCollabSpec";
 import { SpecQuestionForm } from "./SpecQuestionForm";
@@ -70,6 +71,7 @@ import { prdUnsettled } from "../lib/prdUnsettled";
 import { useYFragmentVersion } from "../collab/useYFragmentVersion";
 import {
   railSections as buildRailSections,
+  type RailPlanEntry,
   type SectionReason,
 } from "../lib/railSections";
 import {
@@ -83,8 +85,10 @@ import { EmptyState } from "../../../components/EmptyState";
 import { ProblemsDialog } from "./ProblemsDialog";
 import { CommittedFileView } from "./CommittedFileView";
 import { useResolveDependencyViaChat } from "../../agent-chat/useResolveDependencyViaChat";
+import { useAnchoredTurn } from "../../agent-chat/useAnchoredTurn";
+import type { Anchor } from "../lib/anchor";
 import type { DependencyResolutionIntent } from "../../projects/lib/dependencyResolutionMessage.js";
-import { useDesignCellChangeCount } from "../collab/useDesignCellChange";
+import { usePlan } from "../../agent-chat/usePlan";
 import { approvalInputsFor } from "../lib/buildInputs";
 import { BuildDependencyDrawer } from "./BuildDependencyDrawer";
 import { SpecFileList } from "./SpecFileList";
@@ -95,7 +99,7 @@ import { DesignView } from "@aep/ui-design-view";
 import type { DependencyStatusInfo } from "@aep/ui-design-view";
 import { ValidationView } from "@aep/ui-validation-view";
 import { type SpecSelection } from "../api/designTree";
-import { DESIGN_CELL_PATH, componentOf } from "../api/designTree";
+import { DESIGN_CELL_PATH, componentOf, followSelection } from "../api/designTree";
 import { useSession } from "../../../auth/SessionContext";
 
 type PreflightItem = components["schemas"]["PreflightItem"];
@@ -104,6 +108,50 @@ type BuildInputItem = components["schemas"]["BuildInputItem"];
 // Full-screen spec workspace (#80), per the oxygen-ui sample's
 // LoginEditorView pattern: fullWidth/noPadding page, own header bar,
 // sidebar collapsed while the view is open.
+/**
+ * The design warning's one paragraph, in the user's words, and only about what
+ * is actually there: a project with assumed decisions and no open questions
+ * must not be told the agent "left some questions for you". What the user
+ * needs at this click is what the agent did, what happens next, and what
+ * being wrong costs.
+ */
+/**
+ * Why firing a turn from the spec would be refused right now, or "" when it is
+ * live. One computation for the lenses and the aim box, in significance order.
+ *
+ * `localTurnActivity` covers the window `agentBusy` cannot see: a dispatch has
+ * resolved (or a fold is draining) but the agent peer has not joined the room
+ * yet, so a second send in those seconds would be a 409 the user meets as a
+ * mysterious refusal (CodeRabbit on #670).
+ */
+export function specTurnGate(input: {
+  agentBusy: boolean;
+  localTurnActivity: boolean;
+  awaitingAnswers: boolean;
+}): string {
+  if (input.agentBusy) return "An agent is still working — this is available once it finishes";
+  if (input.localTurnActivity) return "Your last message is on its way to the agent — one moment";
+  if (input.awaitingAnswers)
+    return "The agent is waiting on your answers — finish the questions below first";
+  return "";
+}
+
+export function designWarningIntro(reasons: ReadonlyArray<{ key: string }>): string {
+  const assumed = reasons.some((r) => r.key === "assumptions");
+  const questions = reasons.some((r) => r.key === "open-questions");
+  const what =
+    assumed && questions
+      ? "The agent has made some decisions on your behalf — they are marked assumed in the document — and left some questions only you can answer."
+      : assumed
+        ? "The agent has made some decisions on your behalf — they are marked assumed in the document."
+        : "The requirements still hold questions only you can answer.";
+  return (
+    what +
+    " The design will be built on the requirements as they stand; change any of these " +
+    "afterwards and the design has to be generated again."
+  );
+}
+
 export function SpecView({ projectName }: { projectName: string }) {
   const navigate = useNavigate();
   const { actions } = useAppShell();
@@ -256,24 +304,48 @@ export function SpecView({ projectName }: { projectName: string }) {
     if (search.view === "architecture") setSelection({ kind: "cell-diagram" });
   }, [search.view]);
 
-  // An architectural chat change updates design.cell (targeted editFile
-  // patches, or a removeFile + streamed addFile for a restructure). Navigate
-  // to the Architecture tab once per change burst — even over a manual
-  // selection — so the user watches the change land; they can still click
-  // away mid-turn without being yanked back.
-  const designCellLive = useYTextString(collab.getFileText(DESIGN_CELL_PATH));
-  const cellChangeCount = useDesignCellChangeCount(
-    designCellLive,
-    agentInRoom && collab.status === "connected",
-  );
+  // Follow the write (#576, ADR-0026): while a turn runs, the editor selects
+  // each artifact as its write starts, so the passive watcher — the default
+  // posture at turn start — sees the work land in whatever renderer that
+  // artifact already has. The FIRST manual selection is a declaration of
+  // reading intent and ends the following for the rest of the turn; the rail's
+  // pulse on the writing entry stays the one-click way back in. A new turn
+  // resets to following. Supersedes the cell's burst navigation, which yanked
+  // back even over a manual selection.
+  const plan = usePlan(orgHandle ?? "default", projectName);
+  const followingRef = useRef(true);
+  const planTurnId = plan?.turnActive ? plan.turnId : null;
   useEffect(() => {
-    if (cellChangeCount > 0) setSelection({ kind: "cell-diagram" });
-  }, [cellChangeCount]);
+    if (planTurnId) followingRef.current = true;
+  }, [planTurnId]);
+  const writingPath = plan?.turnActive ? plan.writingPath : null;
+  // Keyed on the TURN as well as the path: a delta pass re-writes the same
+  // artifact the failed turn died on, so its first write can carry the exact
+  // path the previous turn left in `writingPath` — same value, new turn, and
+  // the follow must still fire.
+  useEffect(() => {
+    if (!writingPath || !followingRef.current) return;
+    setSelection(followSelection(writingPath));
+  }, [planTurnId, writingPath]);
+  const selectManually = (sel: SpecSelection) => {
+    followingRef.current = false;
+    setSelection(sel);
+  };
 
-  // Default selection: while a design turn is actively producing design.cell,
-  // default to Architecture (covers a reload mid-turn); otherwise the first
+  // Default selection: while a DESIGN turn is producing design.cell, default
+  // to Architecture (covers a reload mid-turn); otherwise the first
   // requirements file (the seeded PRD). A manual click sets `selection` and
   // always wins over this default.
+  //
+  // Keyed on the flow, not on an agent being in the room. This default is
+  // reactive — it is recomputed on every render — so keyed on presence it
+  // swapped the pane the moment ANY agent joined: a reader on the PRD with no
+  // click recorded asked the agent a question, the pane became Architecture
+  // for the length of the reply, and came back as a fresh editor at the top.
+  // Reported as "the PRD scrolls when the agent says something" (#666). The
+  // flow token comes from the project's status, so a reload mid-design-turn
+  // still lands on Architecture; a chat, settle or aimed turn leaves the
+  // reader where they were.
   const firstRequirements = files.find((f) => f.group === "requirements");
   // A fresh project may hold no requirements file yet; fall back to whatever
   // the spec view does list. Named for what it IS — any listed entry, which may
@@ -286,9 +358,10 @@ export function SpecView({ projectName }: { projectName: string }) {
   // What must never reach it is a REFERENCE — `toSpecEntry` drops those, which
   // is what keeps a v1 project's committed PDF out of the editor pane.
   const firstListed = files[0];
+  const designTurnRunning = status.data?.spec.agentFlow === "design" && agentInRoom;
   const effectiveSelection: SpecSelection =
     selection ??
-    (agentInRoom && hasDesignCell
+    (designTurnRunning && hasDesignCell
       ? { kind: "cell-diagram" }
       : firstRequirements
         ? { kind: "file", path: firstRequirements.path }
@@ -580,6 +653,37 @@ export function SpecView({ projectName }: { projectName: string }) {
     () => prdUnsettled(livePrd ?? prdContent.data?.content),
     [livePrd, prdContent.data],
   );
+  // The plan's entries sorted into rail sections (#576). `specGroupOf` is the
+  // same folder rule the committed files go through, so a planned path and the
+  // file it becomes can never disagree about where they belong.
+  const planEntries = useMemo<RailPlanEntry[]>(
+    () =>
+      (plan?.entries ?? []).map((e) => {
+        const group = specGroupOf(e.path);
+        return {
+          path: e.path,
+          status: e.status,
+          section: group === "designs" ? "design" : group,
+        };
+      }),
+    [plan],
+  );
+  // The selected path when the plan says a document is coming but the room has
+  // not delivered it yet. Any status EXCEPT a failed one counts while the turn
+  // runs: a body only reaches the doc when its write executes (and some bodies
+  // stream in earlier than others), so `done` can lead the room by a beat. Once
+  // the turn ends, a still-missing file is a real absence and the honest
+  // "Select a file" below takes over.
+  const pendingPlanPath =
+    plan?.turnActive &&
+    effectiveSelection.kind === "file" &&
+    !files.some((f) => f.path === effectiveSelection.path) &&
+    plan.entries.some(
+      (e) => e.path === effectiveSelection.path && e.status !== "error",
+    )
+      ? effectiveSelection.path
+      : null;
+
   const railSections = useMemo(
     () =>
       buildRailSections({
@@ -591,6 +695,8 @@ export function SpecView({ projectName }: { projectName: string }) {
         designOutdated: status.data?.spec.designOutdated ?? false,
         assumptions: unsettled.assumptions,
         openQuestions: unsettled.openQuestions,
+        planEntries,
+        planWreckage: plan?.wreckage ?? false,
       }),
     [
       files,
@@ -600,6 +706,8 @@ export function SpecView({ projectName }: { projectName: string }) {
       status.data?.spec.agentFlow,
       status.data?.spec.designOutdated,
       unsettled,
+      planEntries,
+      plan?.wreckage,
     ],
   );
   // The rail's own answer to "is an agent writing the requirements", reused so
@@ -622,12 +730,17 @@ export function SpecView({ projectName }: { projectName: string }) {
   // A reason row is a pointer to where the work already happens: the settle
   // controls live on the requirements document's own flagged lines, and a stale
   // design is repaired by the same re-derivation the header offers.
+  // Going to the document means going to the LINE: the first flagged one,
+  // scrolled into view, so "Review them first" is not "here is a long
+  // document, find them yourself".
+  const [revealUnsettled, setRevealUnsettled] = useState(0);
   const onRailReason = (action: SectionReason["action"]) => {
     if (action === "update-design") {
       generateDesign();
       return;
     }
-    setSelection({ kind: "file", path: PRD_PATH });
+    selectManually({ kind: "file", path: PRD_PATH });
+    setRevealUnsettled((n) => n + 1);
   };
 
   const seedChat = (message: string) =>
@@ -705,11 +818,18 @@ export function SpecView({ projectName }: { projectName: string }) {
   // composer anyway, and firing one mid-interview supersedes the live question
   // form for the whole room — so the lenses go inert for the same two reasons
   // the header's launchers do, and say which one.
-  const lensBusyReason = agentBusy
-    ? "An agent is still working — this is available once it finishes"
-    : awaitingAnswers
-      ? "The agent is waiting on your answers — finish the questions below first"
-      : "";
+  // Aiming the agent at a selection (#666). A turn fired from the DOCUMENT,
+  // which the chat panel cannot dispatch for us: it is mounted `unmountOnExit`,
+  // so while it is closed — the whole point of a quiet Change — the hook that
+  // owns `send` does not exist.
+  const anchoredTurn = useAnchoredTurn(orgHandle ?? "default", projectName);
+  const aimSend = async (
+    instruction: string,
+    anchor: Anchor,
+    intent: "change" | "discuss",
+  ): Promise<boolean> => anchoredTurn.send(instruction, { anchor, intent });
+
+  const lensBusyReason = specTurnGate({ agentBusy, localTurnActivity, awaitingAnswers });
 
   // Build (#162, #164): commit the room's live edits FIRST (POST /build tags
   // HEAD), then check preflight. Only a RESOLUTION blocker — a dependency
@@ -881,10 +1001,14 @@ export function SpecView({ projectName }: { projectName: string }) {
           flexDirection: "column",
         }}
       >
-        {/* Header */}
+        {/* Header — the same height as the agent panel's, which sits beside
+            it: one title bar across the top of the workspace, not two. The
+            panel's header is 48px (its small controls plus the padding), so
+            this one pins the same minimum and uses the same small controls. */}
         <Box
           sx={{
-            p: 2,
+            px: 2,
+            minHeight: 48,
             borderBottom: 1,
             borderColor: "divider",
             display: "flex",
@@ -894,6 +1018,7 @@ export function SpecView({ projectName }: { projectName: string }) {
           }}
         >
           <IconButton
+            size="small"
             aria-label="Back to project overview"
             onClick={() =>
               void navigate({
@@ -902,7 +1027,7 @@ export function SpecView({ projectName }: { projectName: string }) {
               })
             }
           >
-            <ArrowLeft size={20} />
+            <ArrowLeft size={18} />
           </IconButton>
           <Box sx={{ flexGrow: 1, minWidth: 0 }}>
             <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
@@ -983,8 +1108,9 @@ export function SpecView({ projectName }: { projectName: string }) {
                 {/* span so the tooltip works while the button is disabled */}
                 <span>
                   <Button
+                    size="small"
                     variant="contained"
-                    startIcon={<Hammer size={18} />}
+                    startIcon={<Hammer size={16} />}
                     disabled={agentBusy || buildPhase !== null}
                     loading={buildPhase !== null}
                     onClick={onBuild}
@@ -1002,42 +1128,6 @@ export function SpecView({ projectName }: { projectName: string }) {
             </>
           ) : (
             <>
-              {/* The one launcher that is not on the document (#579): every
-                other command is offered by the PRD section it changes, but
-                "add a feature" has to be reachable while another artifact is
-                open, so it keeps its place beside the primary CTA.
-
-                Gated on `agentBusy` like its neighbour: `seedChat` writes into
-                the pending-seed slot, and `AgentChatPanel` sends a seed the
-                moment the conversation is ready WITHOUT the composer's
-                `inputDisabled` guard — so an ungated click delivers `/feature`
-                mid-turn, which the composer itself would have refused. */}
-              {hasRequirementsFiles && !awaitingAnswers && (
-                <Tooltip
-                  title={
-                    agentBusy
-                      ? "An agent is still working — add a feature once it finishes"
-                      : "Describe a feature to add to the requirements"
-                  }
-                >
-                  {/* span so the tooltip works while the button is disabled */}
-                  <span>
-                    {/* Default size, matching "Generate design" beside it.
-                        `size="small"` made it 30px against its neighbour's 36,
-                        so two buttons on one row sat at two different weights
-                        with nothing meaning the difference — this is a
-                        secondary action, and `variant="outlined"` is what
-                        already says so. */}
-                    <Button
-                      variant="outlined"
-                      disabled={agentBusy}
-                      onClick={() => seedChat("/feature")}
-                    >
-                      + Feature
-                    </Button>
-                  </span>
-                </Tooltip>
-              )}
               <Tooltip
                 title={
                   agentBusy
@@ -1052,8 +1142,9 @@ export function SpecView({ projectName }: { projectName: string }) {
                 {/* span so the tooltip works while the button is disabled */}
                 <span>
                   <Button
+                    size="small"
                     variant="contained"
-                    startIcon={<Sparkles size={18} />}
+                    startIcon={<Sparkles size={16} />}
                     disabled={
                       !hasRequirementsFiles || agentBusy || awaitingAnswers
                     }
@@ -1099,11 +1190,13 @@ export function SpecView({ projectName }: { projectName: string }) {
             one informs, which is the whole reason it carries a way past. */}
         <ProblemsDialog
           open={confirmDesign}
-          title="Your requirements aren't settled yet"
-          intro={
-            "The design will be derived from what the requirements say now, " +
-            "including the agent's own judgments. Overturning one later means deriving again."
-          }
+          title="Some decisions are still yours"
+          // In the user's words, not ours: "settled", "derived" and "judgment"
+          // are how we talk about the document, not how they read it. What
+          // they need at this click is what the agent did (decided things,
+          // marked them), what happens next (the design builds on them), and
+          // what it costs to be wrong (generating again).
+          intro={designWarningIntro(unsettledReasons)}
           // No per-row fix here, unlike the build refusal: every one of these is
           // settled in the same place, and `Resolve issues` already goes there.
           // A row link beside it would be a second button to the same document.
@@ -1112,7 +1205,7 @@ export function SpecView({ projectName }: { projectName: string }) {
             label: reason.label,
           }))}
           resolve={{
-            label: "Resolve issues",
+            label: "Review them first",
             run: () => onRailReason("document"),
           }}
           proceed={{ label: "Generate anyway", run: runDesign }}
@@ -1263,10 +1356,11 @@ export function SpecView({ projectName }: { projectName: string }) {
               <SpecFileList
                 files={files}
                 selection={effectiveSelection}
-                onSelect={setSelection}
+                onSelect={selectManually}
                 onRegenerateDesign={generateDesign}
                 regenerateDisabled={agentBusy}
                 sections={railSections}
+                plan={planEntries}
                 onReason={onRailReason}
               />
             </Box>
@@ -1402,10 +1496,21 @@ export function SpecView({ projectName }: { projectName: string }) {
                         ? { run: seedChat, busyReason: lensBusyReason }
                         : undefined
                     }
+                    // Every markdown file, not just the PRD: a selection is
+                    // something any document has, so aiming cannot be one
+                    // document's privilege the way its lenses are.
+                    revealUnsettled={selectedFile.path === PRD_PATH ? revealUnsettled : 0}
+                    aim={{
+                      path: selectedFile.path,
+                      send: aimSend,
+                      busyReason: anchoredTurn.ready
+                        ? lensBusyReason
+                        : "Still opening this project's conversation",
+                    }}
                     links={{
                       path: selectedFile.path,
                       knownPaths: specPaths,
-                      open: (path) => setSelection({ kind: "file", path }),
+                      open: (path) => selectManually({ kind: "file", path }),
                     }}
                   />
                 ) : ytext ? (
@@ -1495,6 +1600,27 @@ export function SpecView({ projectName }: { projectName: string }) {
                     </Typography>
                   </Box>
                 )
+              ) : pendingPlanPath ? (
+                /* Following the write reached this document before the room
+                   did (#576, ADR-0026). A write is announced when its tool
+                   input resolves a path, but only SOME bodies stream into the
+                   doc as they are typed — a component `design.json` arrives
+                   whole, when the call executes. In that window the file is not
+                   in `files` yet, so the pane fell through to "Select a file",
+                   a dead end at the exact moment this feature exists to serve:
+                   watching a new document land. */
+                <Box
+                  sx={{
+                    height: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <Typography variant="body2" color="text.secondary">
+                    Waiting for the agent to write {fileLabel(pendingPlanPath)}…
+                  </Typography>
+                </Box>
               ) : (
                 /* Files exist but the selection names none of them — a stale
                    manual pick whose file has since gone. The default selection

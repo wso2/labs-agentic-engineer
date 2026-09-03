@@ -1,7 +1,17 @@
 # ADR-0018 — Planning is a phase of the run, not of the click
 
-**Status:** Accepted · **Related:** [ADR-0011](ADR-0011-milestone-is-the-unit-of-execution.md)
+**Status:** Accepted, partly revised by
+[ADR-0024](ADR-0024-cancel-reaches-the-planning-phase.md) ·
+**Related:** [ADR-0011](ADR-0011-milestone-is-the-unit-of-execution.md)
 (the milestone is the unit of execution), [ADR-0017](ADR-0017-the-platform-owns-deploy.md)
+
+> **ADR-0024 revises two things below.** The planning phase was blind to cancel
+> for its whole duration, and `ProvisionGates` inherited an unbounded retry policy
+> that turned a permanent provisioning answer into a loop that re-minted the
+> version's gates. It also replaces this ADR's reading of the rebuild branch: an
+> unchanged spec is not evidence that the milestone was filled, so whether a run
+> skips its planning turn is now answered by the milestone rather than by the
+> spec-save status.
 
 ## Context
 

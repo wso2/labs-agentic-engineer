@@ -27,8 +27,10 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import { ChevronDown } from "@wso2/oxygen-ui-icons-react";
+import { EmptyState } from "../../../components/EmptyState";
 import { GitHubRefChip } from "../../../components/GitHubRefChip";
 import { AgentLogLines, LogSurface } from "./AgentLogLines";
+import { connectionTail } from "../lib/feedTail";
 import { useRunProgress, type RunProgressCycle } from "../hooks/useRunProgress";
 
 // The run feed: ONE SSE stream for the whole run, rendered as one accordion
@@ -193,21 +195,22 @@ export function RunFeed({
   const followed = expandNewest ? (shown[0]?.cycle.id ?? null) : null;
   const openId = chosen === undefined ? followed : chosen;
 
-  let tail: string | undefined;
-  if (feed.phase === "connecting") {
-    tail = "attaching to the run feed…";
-  } else if (feed.phase === "reconnecting") {
-    tail = "connection lost — reconnecting…";
-  } else if (feed.phase === "ended") {
-    tail = `run settled${feed.settledState ? ` — ${feed.settledState}` : ""}`;
-  }
+  // Connection health only. How the run ENDED labels the section header instead
+  // — beside the title, where every other section on this page carries its
+  // status — so repeating it under the log would be the same news twice.
+  const tail = connectionTail(feed.phase);
 
   return (
     <Box>
       {feed.cycles.length === 0 ? (
-        <Typography variant="body2" color="text.secondary" sx={{ py: 2 }}>
-          No cycle output yet — the run's first agent has not written a line.
-        </Typography>
+        // The same `EmptyState compact` the Build logs section below uses. Two
+        // placeholders that sit one card apart on this page read as one surface
+        // only if they are drawn the same way — a left-aligned sentence beside a
+        // centred one looks like a mistake, not a distinction.
+        <EmptyState
+          compact
+          description="No cycle output yet — the run's first agent has not written a line."
+        />
       ) : (
         shown.map((section, i) => (
           <CycleSection
@@ -232,7 +235,13 @@ export function RunFeed({
         ))
       )}
       {tail && (
-        <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          // Right-aligned: it is the feed's own connection status, not a line
+          // OF the feed, and the left edge is where the log's content starts.
+          sx={{ display: "block", mt: 1, textAlign: "right" }}
+        >
           {tail}
         </Typography>
       )}

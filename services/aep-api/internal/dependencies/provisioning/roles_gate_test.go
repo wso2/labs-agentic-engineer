@@ -121,6 +121,70 @@ func TestRolesGate_MintsOpenThenClosesWithTheOutcome(t *testing.T) {
 	}
 }
 
+// A RETRIED ProvisionGates MUST NOT FILE A SECOND ROLES TICKET, and this gate is
+// the one where a duplicate does real harm.
+//
+// The gate is closed by the same call that files it, as soon as the accounts are
+// provisioned — so its DedupeKey, which the host resolves against OPEN issues
+// only, could not see the one the previous attempt left behind. The live incident
+// filed eleven, and because the ticket is the channel the test users' logins are
+// published on, each one republished a set of passwords into a new issue.
+func TestRolesGate_ARetryReusesTheTicketItAlreadyClosed(t *testing.T) {
+	roles := &fakeRolesEnsurer{declared: true, outcome: RolesEnsureOutcome{Summary: "- Roles created: Trainer"}}
+	issues := newFakeIssues(nil)
+	svc := newRolesGateService(roles, issues)
+
+	if f := svc.ensureRolesGate(context.Background(), "acme", "workouts", "v1", 7); f != nil {
+		t.Fatalf("first pass: %+v", f)
+	}
+	if len(issues.created) != 1 {
+		t.Fatalf("setup: created %d gates, want 1", len(issues.created))
+	}
+	first := issues.list[0].Number
+	if !strings.EqualFold(issues.list[0].State, "closed") {
+		t.Fatalf("setup: the gate should have been closed by its own pass, state=%q", issues.list[0].State)
+	}
+
+	// The retry.
+	issues.created = nil
+	if f := svc.ensureRolesGate(context.Background(), "acme", "workouts", "v1", 7); f != nil {
+		t.Fatalf("retry: %+v", f)
+	}
+	if len(issues.created) != 0 {
+		t.Fatalf("a retry filed %d more roles tickets — each one republishes the test users' passwords",
+			len(issues.created))
+	}
+	if len(issues.list) != 1 || issues.list[0].Number != first {
+		t.Errorf("the retry must reuse the ticket it already has, issues=%+v", issues.list)
+	}
+}
+
+// The next VERSION still gets its own ticket. Its logins are its own — reusing
+// v1's would publish v2's passwords onto a closed ticket for a version nobody is
+// building, where the validation agent's milestone-scoped query cannot find them.
+func TestRolesGate_ANewVersionFilesItsOwnTicket(t *testing.T) {
+	roles := &fakeRolesEnsurer{declared: true, outcome: RolesEnsureOutcome{}}
+	issues := newFakeIssues(nil)
+	svc := newRolesGateService(roles, issues)
+
+	if f := svc.ensureRolesGate(context.Background(), "acme", "workouts", "v1", 7); f != nil {
+		t.Fatalf("v1: %+v", f)
+	}
+	issues.created = nil
+	if f := svc.ensureRolesGate(context.Background(), "acme", "workouts", "v2", 8); f != nil {
+		t.Fatalf("v2: %+v", f)
+	}
+	if len(issues.created) != 1 {
+		t.Fatalf("v2 must file its own roles ticket, filed %d", len(issues.created))
+	}
+	if got := issues.created[0].DedupeKey; got != "gate:workouts:v2:roles" {
+		t.Errorf("dedupe key = %q, want v2's", got)
+	}
+	if m := issues.created[0].Milestone; m == nil || *m != 8 {
+		t.Errorf("milestone = %v, want v2's (8) — the agent finds this ticket BY milestone", m)
+	}
+}
+
 // A refusal closing comment names the live security document so a human can
 // rename the colliding username where they authored it.
 func TestRolesGate_RefusalClosingCommentNamesSecurityJSON(t *testing.T) {

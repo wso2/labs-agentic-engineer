@@ -32,7 +32,9 @@ import { Extension } from "@tiptap/core";
 import type { Node as PmNode } from "@tiptap/pm/model";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
-import { prdAffordances, type PrdBlock, type PrdLens } from "../lib/prdLenses";
+import { prdAffordances, type CommandPrompt, type PrdLens } from "../lib/prdLenses";
+import { docBlocks } from "./docBlocks";
+import { applyPrdEdit, type PrdEditLens } from "./prdEdits";
 
 /**
  * What the console hands the editor to make the PRD's lenses live. Absent
@@ -53,80 +55,115 @@ export interface PrdLensOptions {
   run: (command: string) => void;
   isBusy: () => boolean;
   busyReason: () => string;
+  /** Open the aim box on a block (#652's Discuss) — the editor's own surface. */
+  discuss: (from: number, to: number) => void;
+  /** Open the aim box to collect a prompted command's subject (#666). */
+  compose: (command: string, prompt: CommandPrompt, at: number) => void;
+}
+
+/**
+ * The lens as it stands NOW, for the block the user clicked.
+ *
+ * A widget whose key matches is REUSED by ProseMirror, DOM and click handler
+ * both — so the lens a handler closed over may carry positions from before an
+ * agent streamed a paragraph in above it. Commands do not care (they carry a
+ * string), but an edit acts on positions, and acting on stale ones would edit
+ * the wrong line. The block's text is the identity that survives; positions
+ * are re-read from the live document at click time.
+ */
+function sameSignature(a: PrdLens, b: PrdLens): boolean {
+  return (
+    a.kind === b.kind &&
+    (a.kind !== "edit" || a.edit === (b as PrdEditLens).edit) &&
+    (a.kind === "command" ? false : a.block.text === (b as Extract<PrdLens, { kind: "edit" | "discuss" }>).block.text)
+  );
+}
+
+/** Which occurrence of its signature this lens is, in document order. Two
+ *  bullets with identical text are told apart by nothing else. */
+function ordinalOf(lenses: PrdLens[], lens: PrdLens): number {
+  let ordinal = 0;
+  for (const other of lenses) {
+    if (other === lens) return ordinal;
+    if (sameSignature(other, lens)) ordinal += 1;
+  }
+  return ordinal;
+}
+
+function liveLens<L extends Extract<PrdLens, { kind: "edit" | "discuss" }>>(
+  view: EditorView,
+  captured: L,
+  capturedOrdinal: number,
+): L | undefined {
+  const { lenses } = prdAffordances(docBlocks(view.state.doc));
+  // The Nth duplicate stays the Nth duplicate: insertions and edits elsewhere
+  // reorder nothing among blocks with identical text, so the ordinal is the
+  // identity that survives where the text alone is ambiguous.
+  const matches = lenses.filter((l): l is L => sameSignature(l, captured));
+  return matches[capturedOrdinal] ?? matches.at(-1);
 }
 
 export const prdLensKey = new PluginKey<DecorationSet>("prdLenses");
 
-/**
- * Flatten the document's textblocks. A list entry is the paragraph INSIDE its
- * `listItem` — that is the textblock the marker decorates and the widget
- * anchors to — so the item-ness comes from the parent.
- */
-export function prdBlocks(doc: PmNode): PrdBlock[] {
-  const blocks: PrdBlock[] = [];
-  doc.descendants((node, pos, parent) => {
-    if (!node.isTextblock) return true;
-    const emphasis: PrdBlock["emphasis"] = [];
-    node.forEach((child, offset) => {
-      if (!child.isText || !child.marks.some((m) => m.type.name === "italic")) return;
-      const from = pos + 1 + offset;
-      const to = from + child.nodeSize;
-      // One `*assumed*` can arrive as several text nodes — an agent's streamed
-      // write marks its insertions, and a run split across two marks stays
-      // split. Rejoin the touching ones so the flag is read as the word it is.
-      const previous = emphasis.at(-1);
-      if (previous?.to === from) {
-        previous.text += child.text ?? "";
-        previous.to = to;
-        return;
-      }
-      emphasis.push({ text: child.text ?? "", from, to });
-    });
-    blocks.push({
-      kind:
-        node.type.name === "heading"
-          ? "heading"
-          : parent?.type.name === "listItem"
-            ? "listItem"
-            : "paragraph",
-      level: node.type.name === "heading" ? Number(node.attrs.level) : undefined,
-      text: node.textContent,
-      emphasis,
-      from: pos,
-      to: pos + node.nodeSize,
-      contentEnd: pos + node.nodeSize - 1,
-    });
-    // A textblock's children are text and marks, never further blocks.
-    return false;
-  });
-  return blocks;
-}
-
 function lensButton(
+  view: EditorView,
   lens: PrdLens,
+  ordinal: number,
   busyReason: string,
   opts: PrdLensOptions,
 ): HTMLButtonElement {
   const el = document.createElement("button");
   el.type = "button";
-  el.className = `prd-lens prd-lens--${lens.placement}`;
+  el.className = `prd-lens prd-lens--${lens.placement} prd-lens--${lens.kind}`;
   el.textContent = lens.label;
   el.contentEditable = "false";
-  el.disabled = busyReason !== "";
-  el.title = busyReason || lens.title;
+  // A direct edit needs no agent, so it never goes inert: a reviewer reading
+  // flagged lines while the agent works is exactly who these are for.
+  const inert = lens.kind !== "edit" && busyReason !== "";
+  el.disabled = inert;
+  el.title = inert ? busyReason : lens.title;
   // The button lives inside a contenteditable, so the browser would otherwise
   // move the caret into it before the click ever lands.
   el.addEventListener("mousedown", (e) => e.preventDefault());
   el.addEventListener("click", (e) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!opts.isBusy()) opts.run(lens.command);
+    switch (lens.kind) {
+      case "command":
+        if (opts.isBusy()) return;
+        // A lens with a subject to collect opens the box; the rest fire as
+        // they are — their subject is the line they sit on, or nothing.
+        if (lens.prompt) opts.compose(lens.command, lens.prompt, lens.at);
+        else opts.run(lens.command);
+        return;
+      case "edit": {
+        const live = liveLens(view, lens, ordinal);
+        if (live) applyPrdEdit(view, live);
+        return;
+      }
+      case "discuss": {
+        if (opts.isBusy()) return;
+        const live = liveLens(view, lens, ordinal);
+        if (live) opts.discuss(live.block.from, live.block.to);
+        return;
+      }
+    }
   });
   return el;
 }
 
+/** The identity a lens's DOM survives a rebuild under — never a position. The
+ *  ordinal keeps two identical bullets from sharing one key (and one DOM). */
+function lensKey(lens: PrdLens, ordinal: number, busyReason: string): string {
+  const what =
+    lens.kind === "command"
+      ? lens.command
+      : `${lens.label}:${lens.block.text.replace(/\s+/g, " ").trim()}`;
+  return `${lens.kind}:${what}#${ordinal}@${lens.placement}@${busyReason}`;
+}
+
 function build(doc: PmNode, opts: PrdLensOptions): DecorationSet {
-  const { lenses, flags } = prdAffordances(prdBlocks(doc));
+  const { lenses, flags } = prdAffordances(docBlocks(doc));
   const busyReason = opts.isBusy() ? opts.busyReason() : "";
   const decorations: Decoration[] = [];
   for (const flag of flags) {
@@ -139,8 +176,9 @@ function build(doc: PmNode, opts: PrdLensOptions): DecorationSet {
     );
   }
   for (const lens of lenses) {
+    const ordinal = ordinalOf(lenses, lens);
     decorations.push(
-      Decoration.widget(lens.at, () => lensButton(lens, busyReason, opts), {
+      Decoration.widget(lens.at, (view) => lensButton(view, lens, ordinal, busyReason, opts), {
         side: 1,
         // `side: 1` keeps the widget after the text it follows; the key makes
         // an unchanged lens survive a rebuild without its DOM being replaced,
@@ -150,7 +188,7 @@ function build(doc: PmNode, opts: PrdLensOptions): DecorationSet {
         // DOM is REUSED, factory and all — so anything the button renders has
         // to be in the key, or it freezes at whatever the first build said.
         // That is exactly what `refreshPrdLenses` exists to change.
-        key: `${lens.command}@${lens.placement}@${busyReason}`,
+        key: lensKey(lens, ordinal, busyReason),
         ignoreSelection: true,
       }),
     );
@@ -179,6 +217,8 @@ export const PrdLenses = Extension.create<PrdLensOptions>({
       run: () => {},
       isBusy: () => false,
       busyReason: () => "",
+      discuss: () => {},
+      compose: () => {},
     };
   },
 

@@ -48,6 +48,7 @@ import { fileLabel } from "../api/labels";
 import {
   mostSignificant,
   reasonCount,
+  type RailPlanEntry,
   type RailSection,
   type SectionReason,
 } from "../lib/railSections";
@@ -55,6 +56,8 @@ import { ProblemsDialog } from "./ProblemsDialog";
 import {
   buildDesignSection,
   selectionKey,
+  DESIGN_CELL_PATH,
+  SECURITY_JSON_PATH,
   type SpecSelection,
 } from "../api/designTree";
 
@@ -69,6 +72,7 @@ export function SpecFileList({
   onRegenerateDesign,
   regenerateDisabled,
   sections,
+  plan,
   onReason,
 }: {
   files: SpecFileEntry[];
@@ -82,6 +86,10 @@ export function SpecFileList({
   /** The rail's own state per section (#575) — what is ready, being worked on,
    *  wanting attention, or not begun, plus why. */
   sections: RailSection[];
+  /** The declared plan's entries (#576): ghosts for what is coming, a pulse on
+   *  what is being written, an error mark on what died. Empty when no plan is
+   *  live and no wreckage stands. */
+  plan?: RailPlanEntry[];
   /** A reason row was clicked: open the requirements document, or re-derive. */
   onReason: (action: SectionReason["action"]) => void;
 }) {
@@ -95,16 +103,39 @@ export function SpecFileList({
   const selKey = selection ? selectionKey(selection) : null;
   const isSel = (sel: SpecSelection) => selKey === selectionKey(sel);
 
+  // The declared plan (#576). A planned path with no committed file yet is a
+  // GHOST: it takes a row where the file will live — same grouping rules, so
+  // the list never re-arranges when the write lands — but is disabled, because
+  // a control that selects nothing is worse than prose. The moment the write
+  // starts, the path exists in the live doc, the row becomes real, and the
+  // status pulses on it.
+  const planByPath = new Map((plan ?? []).map((e) => [e.path, e.status]));
+  const committed = new Set(files.map((f) => f.path));
+  const ghosts: SpecFileEntry[] = (plan ?? [])
+    .filter((e) => e.section !== null && !committed.has(e.path))
+    .map((e) => ({
+      path: e.path,
+      sha: "",
+      group: e.section === "design" ? ("designs" as const) : (e.section as "requirements" | "validation"),
+    }));
+  // Merged in PATH order, not appended: a ghost has to sit where its file will
+  // sit, or the row hops up the list the moment the write lands — the visible
+  // re-arrangement holding a place was supposed to prevent. `files` arrives
+  // path-sorted and the group sorts below are stable, so one sort here is
+  // enough for every group.
+  const allFiles = [...files, ...ghosts].sort((a, b) => a.path.localeCompare(b.path));
+
+
   // The PRD leads, whatever it sorts as. Everything else under Requirements
   // elaborates it — a feature file is depth on a story the PRD defines — and on
   // path alone `features/…` sorts ABOVE `prd.md`, burying the document the
   // whole flow is written against beneath its own footnotes. `files` arrives
   // path-sorted and sort is stable, so the rest keeps that order.
-  const requirements = files
+  const requirements = allFiles
     .filter((f) => f.group === "requirements")
     .sort((a, b) => Number(b.path === PRD_PATH) - Number(a.path === PRD_PATH));
-  const validation = files.filter((f) => f.group === "validation");
-  const design = buildDesignSection(files);
+  const validation = allFiles.filter((f) => f.group === "validation");
+  const design = buildDesignSection(allFiles);
 
   // Per-component expand/collapse — default expanded, remembered by name so
   // toggling one component survives unrelated re-derivations of the list.
@@ -187,6 +218,18 @@ export function SpecFileList({
             fault. `attention` is the only state this chip belongs to; the other
             three carry no reasons or, when active, deliberately do not show
             them. */}
+        {/* The denominator (#576): how far the declared plan has come. Answers
+            "how long do I wait" — honest BECAUSE it grows in waves; it counts
+            only what the turn actually declared. */}
+        {section.progress && (
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ flexShrink: 0, fontVariantNumeric: "tabular-nums" }}
+          >
+            {section.progress.done} of {section.progress.total}
+          </Typography>
+        )}
         {section.state === "attention" && section.reasons.length > 0 && (
           <Tooltip title={mostSignificant(section.reasons)?.label ?? ""}>
             <Chip
@@ -222,22 +265,57 @@ export function SpecFileList({
   // `indent` bumps a row one level deeper than the top-level tree (matching
   // the old console's depth-based pl: files inside an expanded component sit
   // right of both the top-level entries and the component's own header row).
+  // `statusPath` is for the synthetic rows (Architecture, Security, Wireframe)
+  // whose selection is not a file path; a plain file row derives it itself.
   const row = (
     sel: SpecSelection,
     label: string,
     icon: React.ReactNode,
     indent?: boolean,
-  ) => (
-    <ListItemButton
-      key={selectionKey(sel)}
-      selected={isSel(sel)}
-      onClick={() => onSelect(sel)}
-      sx={{ pl: indent ? 4 : 2, pr: 2 }}
-    >
-      <ListItemIcon sx={{ minWidth: 32 }}>{icon}</ListItemIcon>
-      <ListItemText primary={label} slotProps={{ primary: { noWrap: true } }} />
-    </ListItemButton>
-  );
+    statusPath?: string,
+  ) => {
+    const path = statusPath ?? (sel.kind === "file" ? sel.path : undefined);
+    const status = path !== undefined ? planByPath.get(path) : undefined;
+    // A row with no document behind it selects nothing, so it is disabled
+    // whatever the plan says about it — an entry the turn DIED on has no file
+    // any more than one it never reached. `writing` is the exception: its
+    // document is arriving, the editor is already following it, and the pane
+    // says so.
+    const ghost =
+      path !== undefined &&
+      !committed.has(path) &&
+      (status === "planned" || status === "error");
+    return (
+      <ListItemButton
+        key={selectionKey(sel)}
+        selected={isSel(sel)}
+        onClick={() => onSelect(sel)}
+        disabled={ghost}
+        sx={{ pl: indent ? 4 : 2, pr: 2, ...(ghost ? { opacity: 0.55 } : {}) }}
+      >
+        <ListItemIcon sx={{ minWidth: 32 }}>{icon}</ListItemIcon>
+        <ListItemText
+          primary={label}
+          slotProps={{
+            primary: {
+              noWrap: true,
+              ...(status === "writing"
+                ? { color: "primary" }
+                : status === "error"
+                  ? { color: "error" }
+                  : {}),
+            },
+          }}
+        />
+        {status === "writing" && <WorkingPulse />}
+        {status === "error" && (
+          <Box sx={{ display: "flex", flexShrink: 0, color: "error.main" }}>
+            <TriangleAlert size={14} />
+          </Box>
+        )}
+      </ListItemButton>
+    );
+  };
 
   const flatGroup = (section: RailSection, groupFiles: SpecFileEntry[]) => (
     <Box sx={{ mb: 1 }}>
@@ -293,14 +371,26 @@ export function SpecFileList({
         {design.hasComponents || design.hasCellDsl || design.overview.length > 0 ? (
           <List dense disablePadding>
             {design.hasCellDsl &&
-              row({ kind: "cell-diagram" }, "Architecture", <Network size={16} />)}
+              row(
+                { kind: "cell-diagram" },
+                "Architecture",
+                <Network size={16} />,
+                false,
+                DESIGN_CELL_PATH,
+              )}
             {design.overview.map((f) =>
               row(fileSel(f.path), fileLabel(f.path), <LayoutDashboard size={16} />),
             )}
             {/* ONE rail entry for security.json — present file shows the row;
                 missing file hides it. */}
             {design.hasSecurity &&
-              row({ kind: "security" }, "Security", <ShieldCheck size={16} />)}
+              row(
+                { kind: "security" },
+                "Security",
+                <ShieldCheck size={16} />,
+                false,
+                SECURITY_JSON_PATH,
+              )}
             {design.components.map((c) => {
               const collapsed = collapsedComponents.has(c.name);
               return (
@@ -343,6 +433,7 @@ export function SpecFileList({
                         "Wireframe",
                         <LayoutDashboard size={16} />,
                         true,
+                        c.wireframeDslPath,
                       )}
                   </Collapse>
                 </Box>

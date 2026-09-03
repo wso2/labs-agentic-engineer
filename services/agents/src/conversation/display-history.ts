@@ -42,6 +42,8 @@ export type DisplayMessage =
       author?: TurnJournalEntry["author"];
       /** File NAMES that rode this message (#428) — never bytes. */
       attachments?: string[];
+      /** What this message was aimed at (#666) — names, never content. */
+      anchor?: TurnJournalEntry["anchor"];
     };
 
 export function projectDisplayHistory(conv: Conversation): DisplayMessage[] {
@@ -58,6 +60,7 @@ export function projectDisplayHistory(conv: Conversation): DisplayMessage[] {
       ...(entry.attachments && entry.attachments.length > 0
         ? { attachments: entry.attachments }
         : {}),
+      ...(entry.anchor ? { anchor: entry.anchor } : {}),
     };
   });
 }

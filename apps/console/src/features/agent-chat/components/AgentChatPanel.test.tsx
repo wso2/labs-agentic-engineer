@@ -162,6 +162,37 @@ describe("AgentChatPanel — pendingSeed + turn-end wiring (#252 Task 5)", () =>
     expect(mockSend).not.toHaveBeenCalled();
   });
 
+  // The waiting pulse is derived from the LOG, not this panel's composer
+  // state (#666): an aimed send dispatches through its own hook, so
+  // `isSending` here never flips for it — and its message sat in the feed for
+  // the whole dispatch-plus-first-token window with nothing pulsing, reading
+  // as dropped. The mocked hook's `isSending` is false, which IS the aimed
+  // send's condition.
+  it("pulses for an in-flight message this panel did not send", () => {
+    mockMessages = [
+      {
+        id: "m1",
+        role: "user",
+        content: "make this shorter",
+        status: "in_flight",
+        anchor: { file: "specs/requirements/prd.md", nodes: [{ name: "n", kind: "paragraph" }] },
+      },
+    ];
+    renderPanel();
+    expect(screen.getByText("Working…")).toBeInTheDocument();
+    mockMessages = [];
+  });
+
+  it("does not pulse over settled history", () => {
+    mockMessages = [
+      { id: "m1", role: "user", content: "hello", status: "completed" },
+      { id: "m2", role: "assistant", turnId: "t1", content: "done" },
+    ];
+    renderPanel();
+    expect(screen.queryByText("Working…")).not.toBeInTheDocument();
+    mockMessages = [];
+  });
+
   it("wires the universal turn-end freshness fallback with this project's chat key", () => {
     renderPanel();
     expect(mockUseTurnEndDependencyRefresh).toHaveBeenCalledWith(KEY, PROJECT);

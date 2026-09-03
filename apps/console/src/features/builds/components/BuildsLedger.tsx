@@ -67,6 +67,12 @@ const STATUS_FILTERS = [
   { value: "running", label: "In progress" },
   { value: "completed", label: "Completed" },
   { value: "failed", label: "Failed" },
+  // Cancelled is its OWN filter and not a flavour of Failed, matching the
+  // vocabulary the API now speaks. It also has to exist: `failed` matches on an
+  // error tone and a cancelled row is neutral, so without this the row would
+  // match no filter at all and vanish from every view but "All statuses" — the
+  // same trap the deploy-gate park clause below was written for.
+  { value: "cancelled", label: "Cancelled" },
 ] as const;
 
 type StatusFilter = (typeof STATUS_FILTERS)[number]["value"];
@@ -96,6 +102,8 @@ function matchesFilter(
       return status.live || isAwaitingValues(build);
     case "failed":
       return status.tone === "error";
+    case "cancelled":
+      return build.status === "cancelled";
     case "completed":
       // A version that is completed AND still moving belongs under Running; it
       // would otherwise appear under both.

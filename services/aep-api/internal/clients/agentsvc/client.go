@@ -173,6 +173,15 @@ type TurnRequest struct {
 	// without attachments byte-identical to one from before this channel
 	// existed.
 	Attachments []TurnAttachment `json:"attachments,omitempty"`
+	// Aim, when set, is what the user pointed at and what for (console #666):
+	// a passage of a spec document they selected before typing. The agents
+	// service leads the instruction with it AND journals its anchor from the
+	// same value, so the tag the transcript renders can never disagree with the
+	// selection the model was told about. It LOCATES and never carries content
+	// (console ADR-0024) — the agent resolves these names against the document
+	// in its own turn snapshot. Wire shape pinned by @aep/agent-stream's
+	// TurnAim.
+	Aim *AimBlock `json:"aim,omitempty"`
 	// WebSearch, when true, has the agents service register Anthropic's
 	// provider-executed web_search tool for this turn (external-dependency-
 	// discovery #252) — it lets the model verify a candidate external API/SDK
@@ -230,6 +239,35 @@ type JournalBlock struct {
 	// without these a reload would show the agent discussing a document that
 	// appears nowhere in the thread.
 	Attachments []string `json:"attachments,omitempty"`
+}
+
+// AimBlock is what a turn was aimed at (console #666). JSON field names match
+// @aep/agent-stream's TurnAim exactly.
+type AimBlock struct {
+	Anchor AnchorBlock `json:"anchor"`
+	// Intent is "change" (rewrite the named nodes in place) or "discuss" (open
+	// the same selection as a grilling). The two differ only in how the agents
+	// service phrases the preamble, which is why this is a field rather than a
+	// /command prefixed onto words the user typed themselves.
+	Intent string `json:"intent"`
+}
+
+// AnchorBlock names the selection. File is always present: one view renders
+// exactly one file, so a selection never spans two.
+type AnchorBlock struct {
+	File  string            `json:"file"`
+	Nodes []AnchorNodeBlock `json:"nodes"`
+}
+
+// AnchorNodeBlock is one selected node. Name is what the agent resolves and the
+// transcript shows — a structured view's own name, or a BOUNDED excerpt of a
+// markdown block's rendered text. Bounded is the load-bearing part: an excerpt
+// that grew with the selection would be the carried content this shape exists
+// to avoid.
+type AnchorNodeBlock struct {
+	Name    string `json:"name"`
+	Kind    string `json:"kind"`
+	Context string `json:"context,omitempty"`
 }
 
 // TurnAttachment is one chat attachment (console #428), carried INLINE.

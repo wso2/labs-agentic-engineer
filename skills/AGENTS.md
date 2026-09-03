@@ -40,7 +40,8 @@ An absent kind means `org`, which is a real decision, not a default to lean on:
   `cell-design`, `architecture`, `security-design`, `openapi-conventions`,
   `wireframes`, `validation-criteria`, `task-planning`), the `console`
   narration policy, and the coding run's own workflow skills (`aep`,
-  `aep-validation`, `playwright-cli`).
+  `aep-validation`, `mock-verification`) and the browser CLIs they drive
+  (`playwright-cli`, `agent-browser`).
 - **`org`** — the org-visible stack skills (`go`, `ballerina`, `react-webapp`,
   `astryx-design-system`, `api-management`, `thunder-authentication`). Editable
   and deletable by an org.
@@ -159,7 +160,10 @@ its design system without a platform change.
   (`packages/bal-library-tool/design/decisions/ADR-0011-…`).
 - Inside `aep`, the tie-break: a rule naming `git`/`gh`/an issue/a PR belongs to
   `SKILL.md`; one naming a path, a file or an env var belongs to the component
-  contract. The contract is stated as information rather than a build procedure,
+  contract. That is why the **status line** — the one `gh` a fan-out subagent may
+  run, keeping its own issue's newest comment current — is handed down through
+  the fan-out prompt and not written into the contract the subagent reads
+  (`runners/remote-worker/design/decisions/ADR-0010-the-issue-is-the-status-line.md`). The contract is stated as information rather than a build procedure,
   so it reads the same for a component's first line and for a change to one that
   shipped weeks ago.
 - Niche material only some runs need goes to `references/`, not into a body.

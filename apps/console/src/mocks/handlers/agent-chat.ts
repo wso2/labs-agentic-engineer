@@ -34,6 +34,7 @@
 
 import { http, HttpResponse } from "msw";
 import { ANSWER_PREFIX, ANSWERS_PREFIX } from "@aep/agent-stream";
+import { designPlanFrames } from "./designPlanFrames";
 import { registerChatFrames } from "./registerChatFrames";
 import {
   MAX_ATTACHMENT_FILES,
@@ -219,9 +220,25 @@ export const agentChatHandlers = [
     const isMultipart = (request.headers.get("content-type") ?? "").includes("multipart/form-data");
     let instruction = "";
     let attachments: string[] = [];
+    // What the message was aimed at (#666), if anything. Recorded into the
+    // journal so a reload paints the tag again — which is the whole reason the
+    // anchor is journaled rather than being a live-session nicety.
+    let anchor: unknown;
     if (isMultipart) {
       const form = await request.formData();
       instruction = String(form.get("instruction") ?? "");
+      const anchorPart = form.get("anchor");
+      try {
+        if (anchorPart instanceof Blob) anchor = JSON.parse(await anchorPart.text());
+        else if (typeof anchorPart === "string" && anchorPart) anchor = JSON.parse(anchorPart);
+      } catch {
+        // The real server answers a malformed part with its structured 400; a
+        // mock that throws instead fails the request with no response at all.
+        return HttpResponse.json(
+          { code: "invalid_request", message: "anchor must be valid JSON" },
+          { status: 400 },
+        );
+      }
       const files = form.getAll("files").filter((f): f is File => f instanceof File);
       // The server's own guard, mirrored: the console screens first, so a
       // rejection reaching here means a hostile or buggy client. Modelled so the
@@ -232,8 +249,9 @@ export const agentChatHandlers = [
       }
       attachments = files.map((f) => f.name);
     } else {
-      const body = (await request.json()) as { instruction?: string };
+      const body = (await request.json()) as { instruction?: string; anchor?: unknown };
       instruction = body.instruction ?? "";
+      anchor = body.anchor;
     }
     // The real server refuses a blank instruction BEFORE the turn row exists
     // (the shared TurnSpec validator rejects an empty chat turn), so mock mode
@@ -253,6 +271,7 @@ export const agentChatHandlers = [
       role: "user",
       content: instruction,
       ...(attachments.length > 0 ? { attachments } : {}),
+      ...(anchor ? { anchor } : {}),
     });
     return HttpResponse.json({ turnId }, { status: 202 });
   }),
@@ -285,6 +304,12 @@ export const agentChatHandlers = [
     const turnId = String(params.turnId);
     const instruction = turnInstruction.get(turnId) ?? "";
     const failing = instruction.includes("fail");
+    // The /design run declares its plan (#576) — and owns its own failure
+    // variant ("/design fail" dies mid-write, leaving the wreckage), so it is
+    // checked before the generic failing stream.
+    if (instruction.trim().startsWith("/design")) {
+      return sse(designPlanFrames(turnId, failing));
+    }
     if (failing) {
       return sse([
         { type: "text-delta", delta: "Let me try that…" },

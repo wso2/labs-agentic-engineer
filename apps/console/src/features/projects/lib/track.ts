@@ -22,11 +22,17 @@ import { validationView } from "./pipeline";
 type ProjectStatus = components["schemas"]["ProjectStatus"];
 
 /**
- * THE TRACK: spec → build → deploy as one numbered flow.
+ * THE TRACK: spec → build → deploy as one flow.
  *
  * This replaced three separate stage cards. Three cards with three borders read
  * as three features; they are one version moving through three gates, so they
- * are one bar whose legs carry a step number and an arrowhead at the seam.
+ * are one bar whose legs are divided by a seam a chevron points across.
+ *
+ * The legs carried a step numeral ("01", "02", "03") until it was cut. Three
+ * stages laid left to right with a chevron between each pair are already in
+ * order; the numeral said the same thing a second time, in the loudest slot on
+ * the row, and it read as an identifier — a version, a count — rather than as
+ * a position nobody was in any doubt about.
  *
  * Two rules the card grammar could not express, both forced by states the cards
  * rendered wrong:
@@ -50,8 +56,6 @@ type ProjectStatus = components["schemas"]["ProjectStatus"];
 export type LegState = "waiting" | "live" | "hold" | "done" | "failed";
 
 export interface TrackLeg {
-  /** Position in the flow, said out loud: "01", "02", "03". */
-  step: string;
   name: string;
   /** Version chip text; "" renders nothing — there is no em-dash placeholder. */
   version: string;
@@ -95,7 +99,7 @@ export interface TrackView {
 
 function specLeg(status: ProjectStatus, engaged: boolean): TrackLeg {
   const { exists, version, dirty, agent } = status.spec;
-  const leg = { step: "01", name: "Spec", to: "/projects/$projectName/spec", version } as const;
+  const leg = { name: "Spec", to: "/projects/$projectName/spec", version } as const;
 
   // A live state overrides the LINE only — the version is a separate fact, so
   // an amendment interview on v2 still reads as v2.
@@ -151,7 +155,7 @@ function specLeg(status: ProjectStatus, engaged: boolean): TrackLeg {
 
 function buildLeg(status: ProjectStatus): TrackLeg {
   const { version, status: state } = status.build;
-  const leg = { step: "02", name: "Build", to: "/projects/$projectName/builds" } as const;
+  const leg = { name: "Build", to: "/projects/$projectName/builds" } as const;
   switch (state) {
     case "running":
       return { ...leg, version, state: "live", line: "Building" };
@@ -181,7 +185,7 @@ function validationInFlight(validation: string): boolean {
 
 function deployLeg(status: ProjectStatus): TrackLeg {
   const { version, status: state, components: comps, validation } = status.deploy;
-  const leg = { step: "03", name: "Deploy", to: "/projects/$projectName/deployments" } as const;
+  const leg = { name: "Deploy", to: "/projects/$projectName/deployments" } as const;
   // Validation is a PHASE OF DEPLOYING, not a fourth gate: it only runs once
   // the components are up, so it rides this line rather than adding a leg that
   // would be empty in most states of the flow.

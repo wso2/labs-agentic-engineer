@@ -17,7 +17,7 @@
  */
 
 export { ValidationView } from "./ValidationView.js";
-export type { ValidationViewProps } from "./ValidationView.js";
+export type { LiveStatuses, ValidationViewProps } from "./ValidationView.js";
 export { parseValidationCriteria } from "./parse.js";
 export type {
   Criterion,

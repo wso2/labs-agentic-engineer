@@ -85,11 +85,42 @@ describe("ledgerStatus", () => {
     // The wording is the build page's own pill, so the two surfaces agree.
     expect(
       ledgerStatus(build({ status: "in_progress", waitingReason: "external-values" })),
-    ).toEqual({ label: "Waiting for values", tone: "warning", live: false });
+    ).toEqual({ label: "Waiting for configuration", tone: "warning", live: false });
   });
 
   it("treats `started` as running too", () => {
     expect(ledgerStatus(build({ status: "started" })).live).toBe(true);
+  });
+
+  // A cancel is not a failure, and the row has to say so. It rendered as
+  // "Failed" until the API gained its own `cancelled` status — with no reason
+  // beside it, because a cancel writes none — while the same page's run row two
+  // lines below already read "Cancelled" off the same database row.
+  it("reads a cancelled version as cancelled, not failed", () => {
+    const status = ledgerStatus(build({ status: "cancelled" }));
+    expect(status.label).toBe("Cancelled");
+    expect(status.tone).toBe("neutral");
+    expect(status.live).toBe(false);
+  });
+
+  // The status is a contract enum value, so a missing case would have the
+  // console answer "Unknown" to a state the API had just named — which is what
+  // the `default` branch is for and exactly what it must not catch.
+  it("does not fall through to Unknown for a cancelled version", () => {
+    expect(ledgerStatus(build({ status: "cancelled" })).label).not.toBe("Unknown");
+  });
+
+  // The BFF and this bundle deploy as separate units, so a status the console
+  // has never heard of means the API is ahead. Shrugging "Unknown" at it is how
+  // `cancelled` looked before this bundle knew the word — worse than the
+  // "Failed" it replaced — so an unrecognised value shows what the API said.
+  it("labels an unknown status with what the API actually said", () => {
+    // @ts-expect-error — deliberately a value outside the contract enum, which
+    // is the whole point: this is the shape of a BFF newer than the bundle.
+    const status = ledgerStatus(build({ status: "quarantined_pending_review" }));
+    expect(status.label).toBe("Quarantined pending review");
+    expect(status.tone).toBe("neutral");
+    expect(status.live).toBe(false);
   });
 
   it("carries the terminal reason onto a failed row", () => {
@@ -154,6 +185,7 @@ describe("isLedgerLive", () => {
     expect(isLedgerLive(build({ status: "started" }))).toBe(true);
     expect(isLedgerLive(build({ status: "completed" }))).toBe(false);
     expect(isLedgerLive(build({ status: "failed" }))).toBe(false);
+    expect(isLedgerLive(build({ status: "cancelled" }))).toBe(false);
   });
 });
 

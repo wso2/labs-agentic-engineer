@@ -97,7 +97,7 @@ func (s *Service) provisionResource(ctx context.Context, orgID, projectID, depNa
 		if execID != "" {
 			s.failProvisionRow(ctx, orgID, projectID, gateNumber, execID, perr.Error())
 		}
-		return fmt.Errorf("%w: %v", dependencies.ErrProvisionFailed, perr)
+		return fmt.Errorf("%w: %w", dependencies.ErrProvisionFailed, perr)
 	}
 
 	// Async: mark the run RUNNING pinned to the development binding name; the

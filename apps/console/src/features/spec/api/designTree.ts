@@ -112,6 +112,24 @@ export function buildDesignSection(files: SpecFileEntry[]): DesignSection {
   };
 }
 
+/**
+ * The selection that WATCHES a path being written (#576, ADR-0026) — the same
+ * routing the rail's own rows use: the cell opens as the Architecture diagram,
+ * security.json opens the Security entry, a wireframe `.dsl` opens as its
+ * component's diagram, and everything else is the file itself. One definition,
+ * so follow-the-write can never land somewhere a click on the rail would not
+ * have gone.
+ */
+export function followSelection(path: string): SpecSelection {
+  if (path === DESIGN_CELL_PATH) return { kind: "cell-diagram" };
+  if (path === SECURITY_JSON_PATH) return { kind: "security" };
+  const component = componentOf(path);
+  if (component && isDsl(path)) {
+    return { kind: "wireframe", component, dslPath: path };
+  }
+  return { kind: "file", path };
+}
+
 /** Stable string identity for a selection (React keys + selected-state compare). */
 export function selectionKey(sel: SpecSelection): string {
   switch (sel.kind) {

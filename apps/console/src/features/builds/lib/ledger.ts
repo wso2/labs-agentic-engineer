@@ -71,6 +71,17 @@ export function isAwaitingValues(build: BuildSummary): boolean {
  * because the platform records ONE deployed version per project and inferring
  * anything about the others would be a guess.
  */
+/**
+ * A raw status value as a label — `in_progress` → "In progress". Only the
+ * unknown-status fallback uses it; every value this console knows has prose of
+ * its own.
+ */
+function humanise(status: string): string {
+  const words = status.replace(/[_-]+/g, " ").trim();
+  if (words === "") return "Unknown";
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 export function ledgerStatus(
   build: BuildSummary,
   deploy?: DeployStage | undefined,
@@ -87,7 +98,7 @@ export function ledgerStatus(
       // stay on that page — the row has no space for them and the ledger read
       // does not carry them.
       if (isAwaitingValues(build)) {
-        return { label: "Waiting for values", tone: "warning", live: false };
+        return { label: "Waiting for configuration", tone: "warning", live: false };
       }
       return { label: "Running · Coding agent", tone: "info", live: true };
     case "failed":
@@ -98,6 +109,17 @@ export function ledgerStatus(
         tone: "error",
         live: false,
       };
+    case "cancelled":
+      // A person stopped this increment. NEUTRAL rather than error: nothing went
+      // wrong, and an error tone would say the platform failed at something a
+      // reader then has to go and look into. No reason is appended either — a
+      // cancel writes none, having no fault to report — so unlike Failed this
+      // label stands alone by design.
+      //
+      // Its own case rather than the `default`, which answers "Unknown": the
+      // status is a contract enum value, so falling through would be the console
+      // telling a reader it does not recognise a state the API had just named.
+      return { label: "Cancelled", tone: "neutral", live: false };
     case "completed": {
       if (deploy && deploy.version === build.tag) {
         if (deploy.status === "deployed") {
@@ -113,7 +135,17 @@ export function ledgerStatus(
       return { label: "Built", tone: "success", live: false };
     }
     default:
-      return { label: "Unknown", tone: "neutral", live: false };
+      // A status this console does not know about, which in practice means ONE
+      // thing: the BFF is ahead of the bundle. The enum gained `cancelled` and
+      // this branch is how that looked in between — a cancelled build rendering
+      // as "Unknown" against an old bundle, which is worse than the "Failed" it
+      // replaced. They deploy as separate units, so the skew window is real
+      // however carefully the two are rolled.
+      //
+      // So show what the API actually said rather than shrugging. A future value
+      // degrades to a readable label a reader can act on, and it is never live —
+      // an unknown status must not tint and pulse a row as the moving thing.
+      return { label: humanise(build.status), tone: "neutral", live: false };
   }
 }
 

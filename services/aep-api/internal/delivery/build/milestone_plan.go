@@ -344,42 +344,69 @@ func (s *Service) supersedePreviousMilestone(ctx context.Context, orgID, project
 // the whole rebuild. The milestone reopen is unconditional on this branch — a
 // version being worked whose milestone reads closed is a lie the console renders,
 // whether it was a cancel or a delivered run that closed it.
-func (s *Service) reopenIncrement(ctx context.Context, orgID, projectID string, milestoneNumber int) {
+//
+// IT ALSO ANSWERS THE PLANNING QUESTION, and that second job is why it returns
+// something. `filled` reports whether the milestone holds planned work at all —
+// any `development` issue, in any state — which is the fact the run needs to know
+// whether re-planning it would be a no-op. It is answered HERE because this
+// function already holds the milestone's whole issue list, and a second caller
+// asking the host the same question is a second round trip and a second reading
+// of the same labels. See Service.Run for what the answer decides.
+func (s *Service) reopenIncrement(ctx context.Context, orgID, projectID string, milestoneNumber int) (filled bool) {
 	p := s.plan
 	if rerr := p.milestones.ReopenMilestone(ctx, orgID, projectID, milestoneNumber); rerr != nil {
 		slog.WarnContext(ctx, "build: reopening the rebuilt version's milestone failed",
 			"project", projectID, "milestone", milestoneNumber, "error", rerr)
 	}
-	// The milestone's CLOSED issues, unfiltered by label: which of them this
+	// The milestone's issues in EVERY state, unfiltered by label: which of them this
 	// rebuild owns is decided here, from the labels, exactly as supersede decides
 	// what it carries forward.
+	//
+	// `all` rather than `closed`, because the two questions this list answers want
+	// different states and the wider one is a superset. The reopen half still acts
+	// only on what is closed; the planning half has to see the milestone WHOLE — a
+	// version whose Tasks are all still open is as filled as one whose Tasks a
+	// cancel closed, and asking only for the closed ones would read it as unplanned
+	// and plan it twice.
 	issues, err := p.milestones.ListMilestoneIssues(ctx, orgID, projectID, sourcecontrol.MilestoneIssuesFilter{
 		Number: milestoneNumber,
-		State:  "closed",
+		State:  "all",
 	})
 	if err != nil {
-		slog.WarnContext(ctx, "build: list the rebuilt milestone's closed issues failed — nothing reopened",
+		// NOT filled, and the caller re-plans. A read failure must fail towards the
+		// LLM turn that mints nothing over a milestone already holding its work,
+		// never towards the skip that would settle an unbuilt version as delivered.
+		slog.WarnContext(ctx, "build: list the rebuilt milestone's issues failed — nothing reopened, re-planning",
 			"project", projectID, "milestone", milestoneNumber, "error", err)
-		return
+		return false
 	}
 	reopened := 0
 	for _, issue := range issues {
+		if delivery.HasLabel(issue.Labels, delivery.KindDevelopment) {
+			filled = true
+		}
 		if !delivery.HasLabel(issue.Labels, delivery.LabelCancelled) {
 			continue
 		}
-		if rerr := p.issues.Reopen(ctx, orgID, projectID, issue.Number); rerr != nil {
-			slog.WarnContext(ctx, "build: reopening a cancelled issue failed",
-				"project", projectID, "issue", issue.Number, "error", rerr)
-			continue
+		// An issue the cancel marked but never managed to close needs no reopen —
+		// cancel.go tolerates that state deliberately — but it does need the mark
+		// cleared, or the NEXT cancel's marked set is the union of two attempts.
+		if issue.State == "closed" {
+			if rerr := p.issues.Reopen(ctx, orgID, projectID, issue.Number); rerr != nil {
+				slog.WarnContext(ctx, "build: reopening a cancelled issue failed",
+					"project", projectID, "issue", issue.Number, "error", rerr)
+				continue
+			}
+			reopened++
 		}
 		if uerr := p.issues.Unlabel(ctx, orgID, projectID, issue.Number, delivery.LabelCancelled); uerr != nil {
 			slog.WarnContext(ctx, "build: clearing the cancel mark on a reopened issue failed",
 				"project", projectID, "issue", issue.Number, "error", uerr)
 		}
-		reopened++
 	}
 	slog.InfoContext(ctx, "build: rebuilding an unchanged version — reopened what the cancel closed",
-		"project", projectID, "milestone", milestoneNumber, "issuesReopened", reopened)
+		"project", projectID, "milestone", milestoneNumber, "issuesReopened", reopened, "milestoneFilled", filled)
+	return filled
 }
 
 // previousDevMilestone picks the newest DEV run's milestone whose title is not

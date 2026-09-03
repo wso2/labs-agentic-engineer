@@ -322,3 +322,66 @@ func TestDeriveEndUserAuthAtHead_NoPlatformResourceDepNoOp(t *testing.T) {
 		t.Fatalf("auth-free derive must not touch catalog/committer: calls=%d commits=%d", cat.calls, fc.commits)
 	}
 }
+
+func TestDeriveAtHead_UnknownResourceTypeReturnsSentinel(t *testing.T) {
+	t.Parallel()
+	deps := `[{"kind":"platform-resource","name":"parcel-receipts","resourceType":"object-storage"}]`
+	svc := newService(happySave(designFilesWithDeps(deps)))
+	fc := &fakeCommitter{}
+	svc.fileCommitter = fc
+	svc.resourceCatalog = &fakeTypeCatalog{types: map[string]CRTType{
+		"postgres-cnpg": {},
+		"thunder-app":   {},
+	}}
+
+	err := svc.DerivePlatformResourceFactsAtHead(context.Background(), "acme", "web")
+	if !errors.Is(err, ErrUnknownResourceType) {
+		t.Fatalf("want ErrUnknownResourceType, got %v", err)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "object-storage") {
+		t.Fatalf("error must name the unknown type: %v", err)
+	}
+	if !strings.Contains(msg, "postgres-cnpg") || !strings.Contains(msg, "thunder-app") {
+		t.Fatalf("error must list installed types: %v", err)
+	}
+	if fc.commits != 0 {
+		t.Fatalf("unknown type must commit nothing, got %d", fc.commits)
+	}
+}
+
+func TestDeriveAtHead_InstalledResourceTypePasses(t *testing.T) {
+	t.Parallel()
+	deps := `[{"kind":"platform-resource","name":"orders-db","resourceType":"postgres-cnpg"}]`
+	svc := newService(happySave(designFilesWithDeps(deps)))
+	svc.fileCommitter = &fakeCommitter{}
+	svc.resourceCatalog = &fakeTypeCatalog{types: map[string]CRTType{"postgres-cnpg": {}}}
+
+	if err := svc.DerivePlatformResourceFactsAtHead(context.Background(), "acme", "web"); err != nil {
+		t.Fatalf("installed type must pass: %v", err)
+	}
+}
+
+func TestDeriveAtHead_EmptyCatalogDoesNotReject(t *testing.T) {
+	t.Parallel()
+	deps := `[{"kind":"platform-resource","name":"orders-db","resourceType":"postgres-cnpg"}]`
+	svc := newService(happySave(designFilesWithDeps(deps)))
+	svc.fileCommitter = &fakeCommitter{}
+	svc.resourceCatalog = &fakeTypeCatalog{types: map[string]CRTType{}}
+
+	if err := svc.DerivePlatformResourceFactsAtHead(context.Background(), "acme", "web"); err != nil {
+		t.Fatalf("empty/disabled catalog must not reject: %v", err)
+	}
+}
+
+func TestDeriveAtHead_NilCatalogDoesNotReject(t *testing.T) {
+	t.Parallel()
+	deps := `[{"kind":"platform-resource","name":"orders-db","resourceType":"postgres-cnpg"}]`
+	svc := newService(happySave(designFilesWithDeps(deps)))
+	svc.fileCommitter = &fakeCommitter{}
+	svc.resourceCatalog = &fakeTypeCatalog{types: nil}
+
+	if err := svc.DerivePlatformResourceFactsAtHead(context.Background(), "acme", "web"); err != nil {
+		t.Fatalf("nil/disabled catalog must not reject: %v", err)
+	}
+}

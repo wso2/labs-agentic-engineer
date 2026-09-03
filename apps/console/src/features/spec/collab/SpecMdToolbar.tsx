@@ -196,7 +196,12 @@ export function SpecMdToolbar({ editor }: { editor: Editor }) {
           <IconButton
             size="small"
             disabled={!state.canUndo}
-            onClick={() => chain().undo().run()}
+            // Without `scrollIntoView: false` the focus chases the caret —
+            // and a Yjs undo lands as a whole-document replace, which clamps
+            // the mapped caret to the end, so pressing Undo threw the reader
+            // to the bottom of the document. The reader is already looking at
+            // the place they are undoing; keep them there.
+            onClick={() => editor.chain().focus(null, { scrollIntoView: false }).undo().run()}
             aria-label="Undo"
           >
             <Undo2 size={16} />
@@ -208,7 +213,7 @@ export function SpecMdToolbar({ editor }: { editor: Editor }) {
           <IconButton
             size="small"
             disabled={!state.canRedo}
-            onClick={() => chain().redo().run()}
+            onClick={() => editor.chain().focus(null, { scrollIntoView: false }).redo().run()}
             aria-label="Redo"
           >
             <Redo2 size={16} />

@@ -22,7 +22,6 @@ import {
   Avatar,
   Box,
   Button,
-  Grid,
   Link as MuiLink,
   Skeleton,
   Stack,
@@ -35,7 +34,7 @@ import { SectionTitle } from "../../../components/SectionTitle";
 import { useProject, useProjectComponents, useProjectStatus } from "../api/queries";
 import { ComponentsList } from "./ComponentsList";
 import { OverviewTrack } from "./OverviewTrack";
-import { OverviewArchitecture } from "./OverviewArchitecture";
+import { OverviewArchitecture, OVERVIEW_SPLIT_PX } from "./OverviewArchitecture";
 import { OverviewDependencies } from "./OverviewDependencies";
 
 function SectionError({
@@ -158,34 +157,61 @@ export function ProjectOverview({ projectName }: { projectName: string }) {
           already names what belongs there and when it turns up, so the
           explainer was a fourth surface teaching the same thing in worse
           words, and it hid the shape of the page from the one reader who has
-          never seen it. */}
-        <Grid container spacing={4}>
-          <Grid size={{ xs: 12, md: 5 }}>
-            <SectionTitle>Components</SectionTitle>
-            {componentsQuery.isError ? (
-              <SectionError
-                what="components"
-                message={
-                  componentsQuery.error instanceof Error
-                    ? componentsQuery.error.message
-                    : undefined
-                }
-                onRetry={() => void componentsQuery.refetch()}
-              />
-            ) : componentsQuery.isPending ? (
-              <Skeleton variant="rounded" height={120} />
-            ) : (
-              <ComponentsList
-                projectName={projectName}
-                items={componentsQuery.data.items ?? []}
-              />
-            )}
-            <OverviewDependencies projectName={projectName} />
-          </Grid>
-          <Grid size={{ xs: 12, md: 7 }}>
-            <OverviewArchitecture projectName={projectName} />
-          </Grid>
-        </Grid>
+          never seen it.
+
+          THE SPLIT IS A CONTAINER QUERY, NOT A BREAKPOINT. The two halves are
+          not equally squeezable: the lists reflow to any width, while the
+          diagram is a fixed-aspect drawing that can only scale down, and below
+          about 600px of column it stops shrinking and starts being CROPPED
+          (`DIAGRAM_MIN_HEIGHT` explains the clamp). A viewport breakpoint gets
+          this wrong every time, because the viewport is not what the page gets:
+          the nav rail takes ~280px of it, and the agent chat panel can take
+          half of what is left. At `md` the diagram was cropped on a 1440px
+          screen — a picture you cannot read sitting next to a list you can,
+          which is the worst of both halves.
+
+          Measured against the page's own width instead, the two columns appear
+          exactly when there is room for both and not a pixel sooner. Under the
+          threshold the diagram goes below the lists at FULL width, where it
+          gets more room than the split ever gave it. */}
+        <Box sx={{ containerType: "inline-size" }}>
+          <Box
+            sx={{
+              display: "grid",
+              gap: 4,
+              gridTemplateColumns: "1fr",
+              [`@container (min-width: ${OVERVIEW_SPLIT_PX}px)`]: {
+                gridTemplateColumns: "5fr 7fr",
+              },
+            }}
+          >
+            <Box sx={{ minWidth: 0 }}>
+              <SectionTitle>Components</SectionTitle>
+              {componentsQuery.isError ? (
+                <SectionError
+                  what="components"
+                  message={
+                    componentsQuery.error instanceof Error
+                      ? componentsQuery.error.message
+                      : undefined
+                  }
+                  onRetry={() => void componentsQuery.refetch()}
+                />
+              ) : componentsQuery.isPending ? (
+                <Skeleton variant="rounded" height={120} />
+              ) : (
+                <ComponentsList
+                  projectName={projectName}
+                  items={componentsQuery.data.items ?? []}
+                />
+              )}
+              <OverviewDependencies projectName={projectName} />
+            </Box>
+            <Box sx={{ minWidth: 0 }}>
+              <OverviewArchitecture projectName={projectName} />
+            </Box>
+          </Box>
+        </Box>
       </Stack>
     </>
   );

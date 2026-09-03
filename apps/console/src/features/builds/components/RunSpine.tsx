@@ -20,6 +20,7 @@ import { useState } from "react";
 import { Box, Button, Stack, Typography } from "@wso2/oxygen-ui";
 import type { components } from "../../../generated/aep-api";
 import { useCycleBuilds } from "../api/queries";
+import { connectionTail } from "../lib/feedTail";
 import { useRunProgress, type RunProgressCycle, type RunProgressPhase } from "../hooks/useRunProgress";
 import { provisioningStage } from "../lib/provisioning";
 import { BUILD_CYCLE_KINDS, buildSessionLabel, isTerminalRun } from "../lib/runView";
@@ -228,12 +229,9 @@ export function RunSpine({
     );
   }
 
-  let tail: string | undefined;
-  if (progress.phase === "connecting") {
-    tail = "attaching to the run feed…";
-  } else if (progress.phase === "reconnecting") {
-    tail = "connection lost — reconnecting…";
-  }
+  // Connection only: a settled run is already drawn by the stage rows above, so
+  // a second sentence saying it ended would be the same news twice.
+  const tail = connectionTail(progress.phase);
 
   return (
     <Box>

@@ -245,6 +245,6 @@ export function liveLine(
     kind: "log",
     executionId: `exec-${issueNumber}-coding`,
     executionKind: "coding",
-    message: `validating acceptance criteria (${tick})…`,
+    message: `checking validation criteria (${tick})…`,
   };
 }

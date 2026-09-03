@@ -34,7 +34,7 @@
  * all send a `TurnSpec` and none of them composes.
  */
 
-import type { PlanContextFile, PlanScope, Toolset, TurnSpec } from "@aep/agent-stream";
+import type { PlanContextFile, PlanScope, Toolset, TurnAim, TurnSpec } from "@aep/agent-stream";
 
 // --- Wording -----------------------------------------------------------------
 
@@ -84,6 +84,34 @@ const TARGET_CLOSE = ")";
  */
 const PREVIOUS_TURN_FAILED_NOTE =
   "Note: your previous turn's changes were NOT applied; the workspace reflects the repository state.";
+
+/**
+ * The aimed-turn preamble (#666). Leads the instruction, so the model knows
+ * WHAT it is being pointed at before it reads what to do with it.
+ *
+ * The names are LOCATORS, not content (console ADR-0024). They are how the
+ * selection read when the user made it, and the agent is a live peer in the
+ * same room — the user may have kept typing, a teammate may have edited. So the
+ * note says to resolve them against the document as it stands and to SAY SO on
+ * a miss: an agent that guesses which paragraph was meant is the one failure
+ * this whole shape exists to avoid.
+ */
+const AIM_CHANGE =
+  "The user has selected part of a document and wants it changed. Their request follows the selection.";
+const AIM_DISCUSS =
+  "The user has selected part of a document and wants to talk it through BEFORE anything changes. Take up their point about the selection; do not edit the document in this turn unless they ask you to.";
+const AIM_RESOLVE_RULE =
+  "Find these in the document as it stands now — the names above are how the selection read when they made it, and the document may have moved on since. If you cannot find one, say so and ask; never guess which part was meant.";
+/**
+ * The fence, decided on #654: the selection is the SUBJECT, not a cage. A hard
+ * fence was rejected — a spec has legitimate ripples (rename an actor and the
+ * stories mention it; settle a decision and its entry leaves Open Questions),
+ * and the product's safety net is visibility, review marks and undo, not a
+ * cage. What the rule forbids is the other failure: unrelated tidying the user
+ * never pointed at. Change turns only — a Discuss edits nothing.
+ */
+const AIM_FENCE_RULE =
+  "The selection is the subject, not a cage: make the requested change at the named place. Touch other parts only where this change makes them wrong — consistency, never improvement — and leave everything else exactly as it is. If the right fix lies somewhere other than the selection, make it there and say so plainly in your reply.";
 
 /** No interview is possible (the playground's headless phases). */
 const HEADLESS_NOTE =
@@ -194,19 +222,43 @@ export interface TurnModifiers {
   previousTurnFailed?: boolean | undefined;
   /** No interview is possible in this run. */
   headless?: boolean | undefined;
+  /**
+   * What the user pointed at, and what for (#666). A FACT the caller supplies —
+   * the console never formats these words, because a preamble written there
+   * would have to ride `instruction` and would then appear in the transcript as
+   * something the user said and did not.
+   */
+  aim?: TurnAim | undefined;
 }
 
 /**
  * A `TurnSpec` plus its modifiers, as the instruction text the agent receives.
  *
- * Shape: `[failure note] <body> [spec-paths rule] [target] [headless note]`.
+ * Shape: `[failure note] [aim note] <body> [spec-paths rule] [target] [headless note]`.
  * The spec-paths rule is a property of the KIND — plan turns write no spec
  * files, so they never carry it — which is why it is not a caller flag.
  */
 export function composeInstruction(turn: TurnSpec, mods: TurnModifiers = {}): string {
   const body = turn.kind === "plan" ? planBody(turn) : specBody(turn) + SPEC_PATHS_RULE + target(mods.target);
   const lead = mods.previousTurnFailed ? PREVIOUS_TURN_FAILED_NOTE + "\n\n" : "";
-  return lead + body + (mods.headless ? HEADLESS_NOTE : "");
+  return lead + aimNote(mods.aim) + body + (mods.headless ? HEADLESS_NOTE : "");
+}
+
+/**
+ * The selection, as the model reads it. Empty for every unaimed turn, so an
+ * ordinary chat message is byte-identical to what it was before this existed.
+ */
+export function aimNote(aim: TurnAim | undefined): string {
+  if (!aim) return "";
+  const lead = aim.intent === "discuss" ? AIM_DISCUSS : AIM_CHANGE;
+  const rows = aim.anchor.nodes
+    .map((n) => {
+      const where = n.context ? ` (under ${n.context})` : "";
+      return `- the ${n.kind} "${n.name}"${where}`;
+    })
+    .join("\n");
+  const fence = aim.intent === "change" ? `${AIM_FENCE_RULE}\n\n` : "";
+  return `${lead}\n\nIn ${aim.anchor.file}:\n${rows}\n\n${AIM_RESOLVE_RULE}\n\n${fence}`;
 }
 
 /** The instruction head for every kind that edits the spec bundle. */

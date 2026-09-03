@@ -40,7 +40,7 @@ const (
 	// other and with a live dev run, and serialising them per project would turn
 	// every incident into a queue behind the next build.
 	RunKindTask = "task"
-	// RunKindValidation is a run that asks a version's acceptance criteria again,
+	// RunKindValidation is a run that asks a version's validation criteria again,
 	// against the system already deployed. It has NO WORKING SET — an empty
 	// milestone is its expected starting state — and it builds and deploys
 	// nothing, so it enters the loop at validation rather than at the working set.
@@ -61,7 +61,7 @@ const (
 	// RunOriginIncidentAdoption is a run started by adopting an issue into an
 	// already-deployed version's milestone. Kind task.
 	RunOriginIncidentAdoption = "incident-adoption"
-	// RunOriginRevalidate is a run that asks a version's acceptance criteria again,
+	// RunOriginRevalidate is a run that asks a version's validation criteria again,
 	// against the system already deployed. Kind validation. Both triggers wear it:
 	// a human clicking revalidate, and the reconcile sweep finding the version's
 	// validation task open — an origin is a label on the trigger, and what the run
@@ -115,12 +115,25 @@ const (
 	// two send a human to different places: a red build is code that did not
 	// compile, while this is code that compiled and would not run — a bad image,
 	// an unrenderable trait, a missing dependency at runtime.
-	RunReasonDeployBudget     = "deploy-budget"
-	RunReasonFixChainBudget   = "fix-chain-budget"
-	RunReasonConflictBudget   = "conflict-budget"
-	RunReasonNoProgress       = "no-progress"
-	RunReasonCycleCeiling     = "cycle-ceiling"
-	RunReasonValidationFailed = "validation-failed"
+	RunReasonDeployBudget = "deploy-budget"
+	// RunReasonVersionIncomplete — the milestone has no work left, and the
+	// version is still not serving. Every component that is not serving is named
+	// in the settle log and on the run's live status (ADR-0026).
+	//
+	// By the loop's own invariants it should be unreachable: a component that is
+	// behind and whose providers are met is promoted by the cycle's reconcile,
+	// and one whose deployment failed mints a fix issue that keeps the working
+	// set non-empty. It exists because the alternative to being unreachable is
+	// being SILENT — the shape it replaces settled such a version `succeeded`,
+	// minted its validation task and closed the increment with an API nothing had
+	// ever bound. A gate that should never fire is worth having when the thing it
+	// catches is indistinguishable from success.
+	RunReasonVersionIncomplete = "version-incomplete"
+	RunReasonFixChainBudget    = "fix-chain-budget"
+	RunReasonConflictBudget    = "conflict-budget"
+	RunReasonNoProgress        = "no-progress"
+	RunReasonCycleCeiling      = "cycle-ceiling"
+	RunReasonValidationFailed  = "validation-failed"
 	// RunReasonValidationUnreported is its own failure class, distinct from
 	// validation-failed: the suite going red and the agent delivering no report at
 	// all are different explanations, and a terminal reason exists to explain.
@@ -159,7 +172,7 @@ const (
 	//   failed        a criterion asserted and lost (fails the run)
 	//   inconclusive  no test results at all; nothing to conclude from
 	//   unreported    no usable report at the cycle's merge commit (fails the run)
-	//   skipped       no acceptance criteria authored, and incident runs, which
+	//   skipped       no validation criteria authored, and incident runs, which
 	//                 get no validation cycle at all
 	//
 	// `passed` requiring FULL coverage is the point: it previously held whenever

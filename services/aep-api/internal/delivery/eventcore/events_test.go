@@ -810,7 +810,7 @@ func TestRevalidate_RefusesWithoutAnOracle(t *testing.T) {
 
 	_, err := h.events.Revalidate(context.Background(), testOrg, testProject,
 		MilestoneRef{Number: 5, Title: "v3"}, 1, 0)
-	if !errors.Is(err, delivery.ErrNoAcceptanceCriteria) {
+	if !errors.Is(err, delivery.ErrNoValidationCriteria) {
 		t.Fatalf("a version with no criteria must refuse, got %v", err)
 	}
 	if len(h.sup.started) != 0 {

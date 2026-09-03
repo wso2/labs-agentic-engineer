@@ -52,6 +52,7 @@ export function projectableHistory(history: ConversationMessage[]): ChatMessage[
         status: "completed",
         ...(m.author ? { author: m.author } : {}),
         ...(attachments.length > 0 ? { attachments } : {}),
+        ...(m.anchor ? { anchor: m.anchor } : {}),
       });
     } else if (m.role === "assistant") {
       if (text) out.push({ id: `h${out.length}`, role: "assistant", turnId: "history", content: text });

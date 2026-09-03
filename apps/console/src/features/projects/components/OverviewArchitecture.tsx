@@ -74,6 +74,40 @@ const READ_ONLY_SX = {
 const DIAGRAM_MIN_HEIGHT = 340;
 
 /**
+ * The page width, IN PIXELS, at which the overview splits into two columns —
+ * measured on the overview's own body, not on the viewport, and applied by
+ * `ProjectOverview` as a container query.
+ *
+ * It lives here because the DIAGRAM is what sets it. The lists reflow to any
+ * width; this panel does not, so the threshold is "wide enough that 7/12 of it
+ * still shows the cell whole". A viewport breakpoint cannot express that — the
+ * nav rail takes ~280px of the viewport before the page sees any of it, and the
+ * agent chat panel can take half of what is left, which is how a `md` split
+ * ended up cropping the diagram on a 1440px screen.
+ */
+export const OVERVIEW_SPLIT_PX = 1100;
+
+/**
+ * The height the panel takes when it is BELOW the lists rather than beside
+ * them.
+ *
+ * Stacking is what a narrow page does with the diagram, and 340px is the wrong
+ * box for it once the card runs the full width of the page: what the renderer
+ * shows is governed by the box's HEIGHT (a cell is taller than it is wide), so
+ * a short, very wide card spends its extra width on empty margins and shows
+ * strictly less of the graph. Full width only helps if the height comes with
+ * it.
+ *
+ * It still does not show all of it. On a real cell the renderer draws at close
+ * to 1:1 whatever box it is handed and crops the rest — the same clamp
+ * `DIAGRAM_MIN_HEIGHT` describes, and the reason this panel is a preview with a
+ * link rather than a diagram you read. 560px covers the cell's own ring of
+ * components; the externals hanging off its north and south gates are what
+ * "Open in spec" is for.
+ */
+const DIAGRAM_STACKED_HEIGHT = 560;
+
+/**
  * The project's shape, on the page that answers "what is this".
  *
  * Same renderer as the spec workspace's Architecture tab, same source file, and
@@ -136,7 +170,17 @@ export function OverviewArchitecture({ projectName }: { projectName: string }) {
       </SectionTitle>
       <Card
         variant="outlined"
-        sx={{ flex: 1, minHeight: DIAGRAM_MIN_HEIGHT, display: "flex" }}
+        sx={{
+          flex: 1,
+          display: "flex",
+          // Stacked is the default here, and the split is the exception: the
+          // query below fires only when the overview body is wide enough to
+          // have put this panel beside the lists.
+          minHeight: DIAGRAM_STACKED_HEIGHT,
+          [`@container (min-width: ${OVERVIEW_SPLIT_PX}px)`]: {
+            minHeight: DIAGRAM_MIN_HEIGHT,
+          },
+        }}
       >
         <Box sx={drawn ? READ_ONLY_SX : { flex: 1, minWidth: 0, display: "flex" }}>
           <Body

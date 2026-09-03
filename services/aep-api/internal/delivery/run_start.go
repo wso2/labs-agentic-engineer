@@ -34,11 +34,11 @@ var (
 	// The loop would dispatch a coding cycle for it before validating, which is a
 	// build resumed rather than a version re-judged.
 	ErrMilestoneHasOpenWork = errors.New("this version still has open work — the run would build it, not just re-check it")
-	// ErrNoAcceptanceCriteria means the version has no oracle to validate against.
+	// ErrNoValidationCriteria means the version has no oracle to validate against.
 	// Refused rather than run: a run with nothing to validate concludes `skipped`,
 	// and because the newest run owns the version's verdict that would replace a
 	// real answer with "not validated".
-	ErrNoAcceptanceCriteria = errors.New("this version has no acceptance criteria to validate against")
+	ErrNoValidationCriteria = errors.New("this version has no validation criteria to validate against")
 	// ErrRunNotStarted means the supervisor reported success but no run row exists
 	// behind it — a degraded boot (no agent dispatcher, no workflow engine) or a
 	// lost admission race. The paths that re-offer on a timer treat those as
@@ -92,15 +92,25 @@ type StartRunRequest struct {
 	Tag             string
 	ProvisionInputs []ProvisionInput
 
-	// Rebuild says the version's milestone is ALREADY FILLED: the click resolved
-	// to the SAME tag (the spec did not change), reopened the milestone, and
-	// reopened exactly the issues a cancel had closed. The run mints its gates and
-	// skips the planning TURN.
+	// Rebuild says the version's milestone is ALREADY FILLED, so the run mints its
+	// gates and skips the planning TURN.
 	//
-	// Only the build click sets it, and only on that branch. Re-planning a
-	// reopened milestone would mint NOTHING — plan dedupe is the title slug
-	// against the milestone's issues in any state — and the run would then read
-	// the empty working set as "delivered" and settle a version it never built.
+	// Only the build click sets it, and only when BOTH halves hold: the click
+	// resolved to the same tag (the spec did not change) AND the milestone
+	// actually holds planned work. The second half is not redundant, and the
+	// clicks that taught us are the ones where a run died in its planning phase —
+	// `plan-failed`, or a cancel that landed before the planning turn. The spec is
+	// unchanged there too, but the milestone holds only its gates, and a run that
+	// skips planning over it reads the empty working set as "planning produced
+	// nothing to work" and settles the version SUCCEEDED having built none of it.
+	// build.reopenIncrement answers the second half off the milestone's own
+	// issues.
+	//
+	// Re-planning a genuinely filled milestone is the opposite failure and is why
+	// the flag exists at all: plan dedupe is the title slug against the
+	// milestone's issues in any state, so the turn would mint nothing and the run
+	// would settle an unbuilt version as delivered just the same.
+	//
 	// It rides the request beside Tag for the same reason: the row cannot tell
 	// "fill me" from "resume me", let alone "I refilled it for you".
 	Rebuild bool

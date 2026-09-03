@@ -21,7 +21,7 @@
 // ONE issue per VERSION, filed into that version's milestone by the create
 // itself. The milestone is the version pin — there is no version label, and no
 // follow-up patch, so the issue is never versionless. Per version rather than per
-// project because the issue body embeds the acceptance criteria as they stood at
+// project because the issue body embeds the validation criteria as they stood at
 // mint time: reusing the previous version's issue would hand this version's agent
 // the previous version's oracle.
 //

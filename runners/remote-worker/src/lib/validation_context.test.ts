@@ -178,7 +178,7 @@ test("a context with no criteria path throws", async () => {
         file,
         fetchImpl: impl,
       }),
-      /no acceptance-criteria path/,
+      /no validation-criteria path/,
       `criteriaPath ${JSON.stringify(criteria)}`,
     );
     assert.equal(fs.existsSync(file), false);

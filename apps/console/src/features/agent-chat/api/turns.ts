@@ -22,6 +22,20 @@ import { apiErrorMessage } from "../../../api/errors";
 
 export type TurnStatus = components["schemas"]["TurnStatus"];
 
+/** What the user pointed at, and what they want done with it (#666). */
+export type TurnAnchor = components["schemas"]["TurnAnchor"];
+export type TurnIntent = NonNullable<components["schemas"]["TurnInputBody"]["intent"]>;
+
+/**
+ * The aiming half of a send. Both fields travel together or not at all: an
+ * intent with nothing to point at says nothing, and an anchor with no intent
+ * leaves the service guessing which preamble to render.
+ */
+export interface TurnAiming {
+  anchor: TurnAnchor;
+  intent: TurnIntent;
+}
+
 /**
  * The addressed thread is no longer the project's current one (#430) — a
  * teammate rotated while this client held a resolved id. Recovery is
@@ -39,10 +53,21 @@ export class ConversationRotatedError extends Error {
  * wire as the string "true" because a form field has no other representation —
  * the server parses it, and the JSON path is unaffected.
  */
-function turnFormData(instruction: string, files: File[], collab: boolean): FormData {
+function turnFormData(
+  instruction: string,
+  files: File[],
+  collab: boolean,
+  aiming?: TurnAiming | undefined,
+): FormData {
   const form = new FormData();
   form.append("instruction", instruction);
   if (collab) form.append("collab", "true");
+  // The anchor is a nested object, which a form field cannot carry as a scalar —
+  // the contract declares this part `application/json` for exactly that reason.
+  if (aiming) {
+    form.append("anchor", new Blob([JSON.stringify(aiming.anchor)], { type: "application/json" }));
+    form.append("intent", aiming.intent);
+  }
   for (const file of files) form.append("files", file);
   return form;
 }
@@ -51,8 +76,13 @@ function turnFormData(instruction: string, files: File[], collab: boolean): Form
 export function startTurnBody(
   instruction: string,
   collab: boolean,
+  aiming?: TurnAiming | undefined,
 ): components["schemas"]["TurnInputBody"] {
-  return collab ? { instruction, collab: true } : { instruction };
+  return {
+    instruction,
+    ...(collab ? { collab: true } : {}),
+    ...(aiming ? { anchor: aiming.anchor, intent: aiming.intent } : {}),
+  };
 }
 
 /**
@@ -72,6 +102,7 @@ export async function startCollabTurn(
   instruction: string,
   files: File[] = [],
   collab = true,
+  aiming?: TurnAiming | undefined,
 ): Promise<string> {
   const { data, error, response } = await client.POST(
     "/projects/{projectName}/agents/{conversationId}/messages",
@@ -87,12 +118,12 @@ export async function startCollabTurn(
             // through its default bodySerializer untouched (the browser sets the
             // multipart boundary), but the generated request type describes the
             // JSON Schema shape, not the wire.
-            body: turnFormData(instruction, files, collab) as unknown as {
+            body: turnFormData(instruction, files, collab, aiming) as unknown as {
               instruction: string;
             },
           }
         : {
-            body: startTurnBody(instruction, collab),
+            body: startTurnBody(instruction, collab, aiming),
           }),
     },
   );
@@ -125,14 +156,17 @@ export interface ConversationMessage {
    *  bytes (ADR-0019). Absent for every message without attachments, and for
    *  history from before the journal carried them. */
   attachments?: string[];
+  /** What the user aimed this message at (#666), from the turn journal. Absent
+   *  for every ordinary chat message, and for history from before the journal
+   *  carried it. */
+  anchor?: TurnAnchor;
 }
 
-// The rehydrate response's schema is currently untyped in the contract
-// (`schema: {}` for GET .../messages in openapi.yaml — no author field
-// defined yet). Read it as an optional unknown-extension field instead of
-// regenerating the client: `author` first, `user` as a fallback name, so a
-// future contract addition is likely to just work without another change
-// here. See task-2 report for the contract-gap note.
+// `author` predates the response schema being typed at all (#666 closed that
+// gap), and the field it arrives under was never pinned: read `author` first,
+// `user` as a fallback name, so history written either way still attributes.
+// A malformed author drops rather than throwing — this is the rehydrate path,
+// and one bad row must not cost the user their whole log.
 function mapAuthor(raw: unknown): ConversationMessageAuthor | undefined {
   if (typeof raw !== "object" || raw === null) return undefined;
   const source =
@@ -157,29 +191,60 @@ export function mapConversationMessage(raw: unknown): ConversationMessage | null
   if (typeof r.role !== "string") return null;
   const author = mapAuthor(raw);
   const attachments = mapAttachments(raw);
+  const anchor = mapAnchor(raw);
   return {
     role: r.role,
     content: r.content,
     ...(author ? { author } : {}),
     ...(attachments ? { attachments } : {}),
+    ...(anchor ? { anchor } : {}),
   };
 }
 
 /**
  * Attachment NAMES off a rehydrated message (#428), from the turn journal.
  *
- * Filtered rather than trusted: this is an untyped extension field in the
- * contract (`schema: {}` for get-conversation), so a malformed entry must drop
- * out instead of reaching the UI as a blank chip. Returns null — not [] — when
- * there is nothing, so the caller can omit the property entirely under
- * `exactOptionalPropertyTypes` and a message without attachments keeps the row
- * shape it had before this feature.
+ * Filtered rather than trusted. The contract now describes this field (#666),
+ * but a contract describes what the server SHOULD send — this is the rehydrate
+ * path, and a malformed entry must drop out instead of reaching the UI as a
+ * blank chip. Returns null — not [] — when there is nothing, so the caller can
+ * omit the property entirely under `exactOptionalPropertyTypes` and a message
+ * without attachments keeps the row shape it had before this feature.
  */
 function mapAttachments(raw: unknown): string[] | null {
   const value = (raw as { attachments?: unknown }).attachments;
   if (!Array.isArray(value)) return null;
   const names = value.filter((n): n is string => typeof n === "string" && n.trim() !== "");
   return names.length > 0 ? names : null;
+}
+
+/**
+ * The anchor off a rehydrated message (#666) — what the user pointed at when
+ * they aimed this turn at part of a spec document.
+ *
+ * Read defensively for the same reason as attachments, and dropped WHOLE when
+ * any part of it is malformed. A half-read anchor would render a tag naming
+ * fewer nodes than the user selected, which is a quieter and worse failure than
+ * no tag: the transcript is the record of what was aimed at, so it either says
+ * so correctly or says nothing.
+ */
+function mapAnchor(raw: unknown): TurnAnchor | null {
+  const value = (raw as { anchor?: unknown }).anchor;
+  if (typeof value !== "object" || value === null) return null;
+  const { file, nodes } = value as { file?: unknown; nodes?: unknown };
+  if (typeof file !== "string" || file === "" || !Array.isArray(nodes)) return null;
+  const mapped: TurnAnchor["nodes"] = [];
+  for (const node of nodes) {
+    if (typeof node !== "object" || node === null) return null;
+    const { name, kind, context } = node as {
+      name?: unknown;
+      kind?: unknown;
+      context?: unknown;
+    };
+    if (typeof name !== "string" || name === "" || typeof kind !== "string") return null;
+    mapped.push({ name, kind, ...(typeof context === "string" && context ? { context } : {}) });
+  }
+  return mapped.length > 0 ? { file, nodes: mapped } : null;
 }
 
 /** Text-only rehydrate of a conversation's server-side history. */

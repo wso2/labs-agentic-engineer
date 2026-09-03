@@ -51,6 +51,7 @@ import {
   isTurnSpec,
   isCollabConfig,
   isSurface,
+  isTurnAim,
   isTurnAttachmentsOrAbsent,
   SURFACES,
   type CollabConfig,
@@ -58,6 +59,7 @@ import {
   type StreamPart,
   type Surface,
   type Toolset,
+  type TurnAim,
   type TurnJournal,
   type TurnSpec,
 } from "@aep/agent-stream";
@@ -184,6 +186,7 @@ export function createApp(deps: CreateAppDeps): Express {
       toolset?: unknown;
       mcp?: unknown;
       journal?: unknown;
+      aim?: unknown;
       attachments?: unknown;
       collab?: unknown;
       webSearch?: unknown;
@@ -237,10 +240,26 @@ export function createApp(deps: CreateAppDeps): Express {
       }
       surface = body.surface;
     }
+    // aim (#666): what the user pointed at, and what for. Parsed BEFORE the
+    // instruction because it leads the wording, and reused for the journal
+    // below — one value, so the tag the transcript renders can never disagree
+    // with the selection the model was told about.
+    let aim: TurnAim | undefined;
+    if (body.aim !== undefined) {
+      if (!isTurnAim(body.aim)) {
+        res.status(400).json({
+          error:
+            "aim must be { anchor: { file, nodes: [{ name, kind, context? }] }, intent: change|discuss }",
+        });
+        return;
+      }
+      aim = body.aim;
+    }
     const instruction = composeInstruction(turn, {
       target: typeof body.target === "string" ? body.target : undefined,
       previousTurnFailed: body.previousTurnFailed === true,
       headless: body.headless === true,
+      ...(aim ? { aim } : {}),
     });
 
     // The pre-§12 inline contract is GONE — reject it loudly so a stale caller
@@ -364,6 +383,11 @@ export function createApp(deps: CreateAppDeps): Express {
         ...(chatAttachments.length > 0
           ? { attachments: chatAttachments.flatMap((p) => (p.filename ? [p.filename] : [])) }
           : {}),
+        // From the SAME value the instruction was composed from, never a
+        // second field the caller sends alongside: a journal that disagreed
+        // with the prompt would render a tag for a selection the agent was
+        // never pointed at.
+        ...(aim ? { anchor: aim.anchor } : {}),
       };
     }
 

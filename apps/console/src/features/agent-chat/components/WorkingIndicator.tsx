@@ -44,6 +44,17 @@ export function WorkingPulse() {
           "0%, 100%": { opacity: 0.3, transform: "scale(0.85)" },
           "50%": { opacity: 1, transform: "scale(1)" },
         },
+        // A reader who has asked their OS for less motion still needs to know
+        // an agent is working, so the dot stays — at the animation's bright
+        // end, rather than at whatever opacity it happened to stop on. The
+        // overview track brought this guard with it (#575 unified the three
+        // surfaces on this component; the ring it replaced honoured the
+        // preference and this did not), and it belongs here, where all three
+        // get it.
+        "@media (prefers-reduced-motion: reduce)": {
+          animation: "none",
+          opacity: 1,
+        },
       }}
     />
   );

@@ -19,6 +19,8 @@ package spec
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 )
 
 // Auth-as-platform-resource (learning/thunder-resource/PLAN-generalization.md):
@@ -126,6 +128,38 @@ func hasPlatformResourceDependency(components []DesignComponent) bool {
 		}
 	}
 	return false
+}
+
+// rejectUnknownResourceTypes fails when any platform-resource dependency names
+// a resourceType absent from the installed CRT catalog. An empty or nil catalog
+// (PLATFORM_RESOURCES_ENABLED=false) skips membership — fail-open for the
+// disabled path. Membership is against the live catalog map, never a hardcoded
+// resourceType name (ADR-0007).
+func rejectUnknownResourceTypes(components []DesignComponent, types map[string]CRTType) error {
+	if len(types) == 0 {
+		return nil
+	}
+	available := make([]string, 0, len(types))
+	for name := range types {
+		available = append(available, name)
+	}
+	sort.Strings(available)
+	var unknown []string
+	for i := range components {
+		for _, d := range components[i].Dependencies {
+			if d.Kind != DependencyKindPlatformResource {
+				continue
+			}
+			if _, ok := types[d.ResourceType]; !ok {
+				unknown = append(unknown, fmt.Sprintf("%s (%q)", d.Name, d.ResourceType))
+			}
+		}
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%w: %s; available: %s",
+		ErrUnknownResourceType, strings.Join(unknown, ", "), strings.Join(available, ", "))
 }
 
 // exposesAPIEqual reports whether two (possibly nil) ExposesAPI pointers

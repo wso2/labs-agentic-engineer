@@ -63,6 +63,12 @@ var ErrEndUserAuthConflict = errors.New("service component declares an end-user-
 // platform-resource dependency) never fetch the catalog and so never hit this.
 var ErrResourceCatalogUnavailable = errors.New("resource-type catalog unavailable — retry the save")
 
+// ErrUnknownResourceType is returned when a platform-resource dependency names
+// a resourceType that is not in the installed ClusterResourceType catalog.
+// Surfaced as 409 at build claim — the design is unsatisfiable on this cluster,
+// and no version tag or Temporal run is created.
+var ErrUnknownResourceType = errors.New("resourceType is not installed on this cluster")
+
 // Spec-collection sentinels (dependency-management — the collect-dependency-spec
 // route). The HTTP layer maps each to a status: ErrDependencyNotFound→404,
 // ErrDependencyWrongKind/ErrInvalidSpec→400, ErrSpecFetchFailed→502,

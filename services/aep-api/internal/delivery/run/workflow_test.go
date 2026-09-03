@@ -81,8 +81,8 @@ type harness struct {
 	// deploys records every promote the loop asked for, and deployMints every
 	// deploy-fix filing. wavePlans records every ordering request, so a test can
 	// assert the stage planned before it wrote.
-	deploys     []DeployCycleInput
-	wavePlans   []DeployCycleInput
+	deploys     []PromoteInput
+	wavePlans   []PlanDeployInput
 	deployMints []MintDeployFixIssuesInput
 	// traitSyncs records every managed-API trait convergence the loop asked for,
 	// so a test can assert WHEN it fires rather than merely that it was wired.
@@ -119,6 +119,23 @@ type harness struct {
 	// gateChecks counts the deploy gate's reads, so a test can assert the gate
 	// was consulted (or deliberately was not, on a cycle that promotes nothing).
 	gateChecks int
+
+	// The VERSION STATE model: what the cluster would answer ReadVersionState.
+	//
+	// Derived rather than pinned, because the loop now reads the same world
+	// twice — once to decide what to promote, once at the boundary to decide
+	// whether the version may be delivered — and a static answer could only be
+	// right for one of them. buildStates is what the test already pinned
+	// (a component green at the merge SHA is BEHIND until something promotes it,
+	// a red one is UNBUILT), and promoted is what the loop actually wrote. So a
+	// test describes builds and deployments as before, and the version state
+	// follows from them the way it follows from the cluster.
+	seenBuilds []CycleBuildState
+	promoted   map[string]string
+	// versionOverride, when set, replaces the derived model — for the tests that
+	// are ABOUT a state the loop's own actions cannot produce, such as a
+	// component nothing ever bound.
+	versionOverride *delivery.VersionState
 }
 
 // newHarness registers the activities whose behaviour never varies — the
@@ -127,7 +144,7 @@ type harness struct {
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	var ts testsuite.WorkflowTestSuite
-	h := &harness{env: ts.NewTestWorkflowEnvironment(), set: map[string]bool{}}
+	h := &harness{env: ts.NewTestWorkflowEnvironment(), set: map[string]bool{}, promoted: map[string]string{}}
 	var acts *Activities
 	h.acts = acts
 
@@ -151,12 +168,13 @@ func newHarness(t *testing.T) *harness {
 	h.env.RegisterActivity(acts.ProvisionGates)
 	h.env.RegisterActivity(acts.PlanMilestone)
 	h.env.RegisterActivity(acts.PlanDeployWaves)
-	h.env.RegisterActivity(acts.DeployCycle)
-	h.env.RegisterActivity(acts.PollCycleDeployments)
+	h.env.RegisterActivity(acts.PromoteWave)
+	h.env.RegisterActivity(acts.PollDeployments)
 	h.env.RegisterActivity(acts.MintDeployFixIssues)
 	h.env.RegisterActivity(acts.HaltUnfinishedWork)
 	h.env.RegisterActivity(acts.CloseCancelledWork)
 	h.env.RegisterActivity(acts.CheckDeployReadiness)
+	h.env.RegisterActivity(acts.ReadVersionState)
 
 	h.env.OnActivity(acts.SetRunState, mock.Anything, mock.Anything).
 		Run(func(args mock.Arguments) {
@@ -258,6 +276,64 @@ func (h *harness) planIs(gatesErr, planErr error) {
 		}).Return(planErr)
 }
 
+// planStep names one of the two activities the planning phase drives, for
+// planIsCancelledDuring.
+type planStep int
+
+const (
+	gatesActivity planStep = iota
+	planActivity
+)
+
+// planIsCancelledDuring pins the planning phase's activities and makes a cancel
+// arrive WHILE the named one is running.
+//
+// The signal is sent from inside the activity mock, and that is a necessity
+// rather than a shortcut: the environment auto-advances its clock only when
+// nothing is executing, so a RegisterDelayedCallback scheduled for the window an
+// activity is in flight would never fire. Signalling from the activity puts the
+// cancel in the workflow's channel before the workflow task that reads that
+// activity's result — which is exactly the race the phase has to resolve.
+//
+// failWith, when supplied, is what the named activity ALSO answers, so a test can
+// pin what the run reports when a cancel and a failure land together.
+func (h *harness) planIsCancelledDuring(step planStep, failWith ...error) {
+	h.set["plan"] = true
+	var stepErr error
+	if len(failWith) > 0 {
+		stepErr = failWith[0]
+	}
+	cancel := func() {
+		h.env.SignalWorkflow(delivery.SigRunCancel, delivery.RunSignal{
+			Signal: delivery.SigRunCancel, MilestoneNumber: testMilepost,
+		})
+	}
+	var gatesErr, planTurnErr error
+	if step == gatesActivity {
+		gatesErr = stepErr
+	} else {
+		planTurnErr = stepErr
+	}
+	h.env.OnActivity(h.acts.ProvisionGates, mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			h.mu.Lock()
+			h.gateMints = append(h.gateMints, args.Get(1).(PlanMilestoneInput))
+			h.mu.Unlock()
+			if step == gatesActivity {
+				cancel()
+			}
+		}).Return(gatesErr)
+	h.env.OnActivity(h.acts.PlanMilestone, mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			h.mu.Lock()
+			h.plans = append(h.plans, args.Get(1).(PlanMilestoneInput))
+			h.mu.Unlock()
+			if step == planActivity {
+				cancel()
+			}
+		}).Return(planTurnErr)
+}
+
 // planCounts reports the two tallies, read safely.
 func (h *harness) planCounts() (gates, plans int) {
 	h.mu.Lock()
@@ -270,50 +346,202 @@ func (h *harness) planCounts() (gates, plans int) {
 // the harness consumes expectations in registration order.
 func (h *harness) deployIs(err error) {
 	h.set["deploy"] = true
-	h.env.OnActivity(h.acts.DeployCycle, mock.Anything, mock.Anything).
+	h.env.OnActivity(h.acts.PromoteWave, mock.Anything, mock.Anything).
 		Run(func(args mock.Arguments) {
+			in := args.Get(1).(PromoteInput)
 			h.mu.Lock()
 			defer h.mu.Unlock()
-			h.deploys = append(h.deploys, args.Get(1).(DeployCycleInput))
+			h.deploys = append(h.deploys, in)
+			if err != nil {
+				return // a failed promote wrote nothing
+			}
+			for _, t := range in.Targets {
+				if t.CommitSHA == "" {
+					continue // a converge moves no pin
+				}
+				h.promoted[t.Component] = t.CommitSHA
+			}
 		}).Return([]delivery.ComponentDeploy(nil), err)
 }
 
-// wavesAre pins the deploy order the planner answers.
+// versionIs pins the version state outright, replacing the derived model. For
+// the cases the loop's own actions cannot produce — a component whose binding
+// nothing ever wrote, above all, which is the failure the delivery gate exists
+// to catch.
+func (h *harness) versionIs(components ...delivery.ComponentState) {
+	h.set["version"] = true
+	st := delivery.VersionState{Components: components}
+	h.mu.Lock()
+	h.versionOverride = &st
+	h.mu.Unlock()
+}
+
+// versionState is what ReadVersionState answers: the override if a test pinned
+// one, otherwise the model derived from the builds it pinned and the promotes
+// the loop made.
+//
+// A component is SERVING once the loop promoted it at the commit its newest
+// green build was cut from — which is exactly when the real read would say so,
+// because the stage does not leave the promote until the binding is Ready.
+func (h *harness) versionState() delivery.VersionState {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.versionOverride != nil {
+		return *h.versionOverride
+	}
+	desired := map[string]string{}
+	var order []string
+	for _, st := range h.seenBuilds {
+		for _, name := range st.Components {
+			if _, seen := desired[name]; !seen {
+				order = append(order, name)
+			}
+			desired[name] = testMergeSHA
+		}
+		for _, name := range st.Red {
+			if _, seen := desired[name]; !seen {
+				order = append(order, name)
+			}
+			// A red build is a component with no release to pin. The next state
+			// in the queue may report it green, which overwrites this.
+			desired[name] = ""
+		}
+	}
+	out := delivery.VersionState{}
+	for _, name := range order {
+		st := delivery.ComponentState{Component: name, DesiredSHA: desired[name]}
+		switch {
+		case desired[name] == "":
+			st.State = delivery.ComponentStateUnbuilt
+		case h.promoted[name] == desired[name]:
+			st.State, st.Ready = delivery.ComponentStateServing, true
+		default:
+			st.State = delivery.ComponentStateBehind
+		}
+		out.Components = append(out.Components, st)
+	}
+	return out
+}
+
+// wavesAre pins the levels the planner answers, by name. Each named component
+// is promoted at the commit the version state says it is behind by, so a test
+// describes the ORDER and the model supplies the commits.
 func (h *harness) wavesAre(waves [][]string, err error) {
 	h.set["waves"] = true
 	h.env.OnActivity(h.acts.PlanDeployWaves, mock.Anything, mock.Anything).
-		Run(func(args mock.Arguments) {
-			h.mu.Lock()
-			defer h.mu.Unlock()
-			h.wavePlans = append(h.wavePlans, args.Get(1).(DeployCycleInput))
-		}).Return(waves, err)
-}
-
-// wavesAreOneWave is the default: whatever the cycle built, promoted together —
-// what a project with no hard wiring edges gets.
-//
-// Derived from the REQUEST rather than hardcoded, so a test that changes which
-// components its builds report cannot end up silently planning a different set
-// than the one being deployed.
-func (h *harness) wavesAreOneWave() {
-	h.set["waves"] = true
-	h.env.OnActivity(h.acts.PlanDeployWaves, mock.Anything, mock.Anything).
-		Return(func(_ context.Context, in DeployCycleInput) ([][]string, error) {
+		Return(func(_ context.Context, in PlanDeployInput) (delivery.DeployPlan, error) {
 			h.mu.Lock()
 			defer h.mu.Unlock()
 			h.wavePlans = append(h.wavePlans, in)
-			if len(in.Components) == 0 {
-				return nil, nil
+			if err != nil {
+				return delivery.DeployPlan{}, err
 			}
-			return [][]string{in.Components}, nil
+			return planFor(in.Version, waves), nil
 		})
+}
+
+// wavesAreOneWave is the default: everything the version is behind by,
+// promoted together — what a project with no hard wiring edges gets.
+//
+// Derived from the STATE rather than hardcoded, so a test that changes which
+// components its builds report cannot end up planning a different set than the
+// one the loop would promote.
+func (h *harness) wavesAreOneWave() {
+	h.set["waves"] = true
+	h.env.OnActivity(h.acts.PlanDeployWaves, mock.Anything, mock.Anything).
+		Return(func(_ context.Context, in PlanDeployInput) (delivery.DeployPlan, error) {
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			h.wavePlans = append(h.wavePlans, in)
+			return planFor(in.Version, nil), nil
+		})
+}
+
+// planIsHolding pins a planner that refuses to promote the named components,
+// however many cycles the run takes, and promotes everything else that is
+// behind. It is the one decision the derived plan cannot make on its own,
+// because it does not read a design.
+func (h *harness) planIsHolding(held ...string) {
+	h.set["waves"] = true
+	holds := make(map[string]bool, len(held))
+	for _, name := range held {
+		holds[name] = true
+	}
+	h.env.OnActivity(h.acts.PlanDeployWaves, mock.Anything, mock.Anything).
+		Return(func(_ context.Context, in PlanDeployInput) (delivery.DeployPlan, error) {
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			h.wavePlans = append(h.wavePlans, in)
+			var promote []string
+			for _, c := range in.Version.Components {
+				if c.State == delivery.ComponentStateBehind && !holds[c.Component] {
+					promote = append(promote, c.Component)
+				}
+			}
+			plan := planFor(in.Version, [][]string{promote})
+			for i := range plan.Held {
+				plan.Held[i].WaitingOn = []string{"a provider that is not serving"}
+			}
+			return plan, nil
+		})
+}
+
+// planFor is the harness's stand-in for the real planner: it levels the behind
+// components the way the test asked (or all of them in one wave), pairs each
+// with the commit the state says it is behind by, and waits on everything it
+// promoted plus anything already converging.
+//
+// It deliberately does NOT hold anything. What a plan holds is the planner's
+// own decision, tested against real designs in projects/wiring_graph_test.go;
+// what these tests exercise is what the STAGE does with a plan.
+func planFor(version delivery.VersionState, levels [][]string) delivery.DeployPlan {
+	commits := map[string]string{}
+	var behind []string
+	plan := delivery.DeployPlan{}
+	for _, c := range version.Components {
+		switch c.State {
+		case delivery.ComponentStateBehind:
+			commits[c.Component] = c.DesiredSHA
+			behind = append(behind, c.Component)
+		case delivery.ComponentStateConverging:
+			plan.Waited = append(plan.Waited, c.Component)
+		}
+	}
+	if levels == nil && len(behind) > 0 {
+		levels = [][]string{behind}
+	}
+	placed := map[string]bool{}
+	for _, level := range levels {
+		var wave []delivery.DeployTarget
+		for _, name := range level {
+			if _, isBehind := commits[name]; !isBehind {
+				continue // already serving, or never built: not this pass's work
+			}
+			wave = append(wave, delivery.DeployTarget{Component: name, CommitSHA: commits[name]})
+			plan.Waited = append(plan.Waited, name)
+			placed[name] = true
+		}
+		if len(wave) > 0 {
+			plan.Waves = append(plan.Waves, wave)
+		}
+	}
+	// A behind component the levels did not name is HELD — which is how a test
+	// describes a plan that refuses to promote something.
+	for _, name := range behind {
+		if !placed[name] {
+			plan.Held = append(plan.Held, delivery.ComponentState{
+				Component: name, State: delivery.ComponentStateHeld, DesiredSHA: commits[name],
+			})
+		}
+	}
+	return plan
 }
 
 // deploymentsAre queues the readiness polls, in order; the last repeats.
 func (h *harness) deploymentsAre(states ...CycleDeployState) {
 	h.set["deployments"] = true
 	for i, st := range states {
-		call := h.env.OnActivity(h.acts.PollCycleDeployments, mock.Anything, mock.Anything).Return(st, nil)
+		call := h.env.OnActivity(h.acts.PollDeployments, mock.Anything, mock.Anything).Return(st, nil)
 		if i < len(states)-1 {
 			call.Once()
 		}
@@ -406,8 +634,18 @@ func (h *harness) milestoneIs(snaps ...MilestoneSnapshot) {
 // buildsAre queues the cycle-build polls, in order; the last repeats.
 func (h *harness) buildsAre(states ...CycleBuildState) {
 	h.set["builds"] = true
-	for i, s := range states {
-		call := h.env.OnActivity(h.acts.PollCycleBuilds, mock.Anything, mock.Anything).Return(s, nil)
+	for i, st := range states {
+		// Each answer is RECORDED as the loop consumes it, which is what makes the
+		// version model advance with the run: a component reported red in cycle
+		// one and green in cycle two is unbuilt while cycle one is deciding and
+		// behind once cycle two has seen its build. Deriving from the queue
+		// instead would let the first cycle see the second cycle's builds.
+		call := h.env.OnActivity(h.acts.PollCycleBuilds, mock.Anything, mock.Anything).
+			Run(func(mock.Arguments) {
+				h.mu.Lock()
+				defer h.mu.Unlock()
+				h.seenBuilds = append(h.seenBuilds, st)
+			}).Return(st, nil)
 		if i < len(states)-1 {
 			call.Once()
 		}
@@ -560,6 +798,16 @@ func (h *harness) applyDefaults() {
 	if !h.set["deployMint"] {
 		h.deployMintsAre([]int{testRepairIssue})
 	}
+	if !h.set["version"] {
+		h.set["version"] = true
+	}
+	// Always registered, override or not: the read is on the path of every dev
+	// run's delivery, and a mock the loop calls without an expectation fails the
+	// workflow rather than the assertion.
+	h.env.OnActivity(h.acts.ReadVersionState, mock.Anything, mock.Anything).
+		Return(func(context.Context, ProjectRef) (delivery.VersionState, error) {
+			return h.versionState(), nil
+		})
 	if !h.set["gate"] {
 		// An OPEN gate is the default: the project is configured, so every test
 		// that is not about the gate deploys exactly as it did before ADR-0023.
@@ -749,25 +997,98 @@ func TestBuildsGreen_DeploysBeforeSettling(t *testing.T) {
 	h.assertSettled(t, res, delivery.RunStateSucceeded, "")
 	require.Equal(t, 2, h.deployCount(),
 		"one green cycle = one wave promoted, then one converge that promotes nothing")
-	require.Equal(t, []string{"order-service"}, h.deploys[0].Components,
-		"the deploy promotes the components the BUILD poll reported, not a re-derived set")
-	require.Equal(t, testMergeSHA, h.deploys[0].CommitSHA,
-		"the promote is pinned to the cycle's own merge commit")
+	require.Equal(t, []delivery.DeployTarget{{Component: "order-service", CommitSHA: testMergeSHA}},
+		h.deploys[0].Targets,
+		"the deploy promotes what the VERSION is behind by, each at its own newest green build")
 }
 
-// TestRedBuild_DoesNotDeploy: a component that did not build has no image to
-// promote, so the red cycle must not reach the deploy stage at all. The fix
-// cycle that follows passes through the green path and promotes then.
-func TestRedBuild_DoesNotDeploy(t *testing.T) {
+// TestDeliverVersion_RefusesAVersionThatIsNotServing reconstructs the incident
+// this gate was written for.
+//
+// A build's webapp went red while its api went green. The api was never
+// promoted — the deploy set was the cycle's path diff, and the fix cycle's diff
+// touched only the webapp — so when the milestone emptied the run settled
+// SUCCEEDED, minted the version's validation task and closed the increment with
+// an api nothing had ever bound. Every cycle had been green; nothing in the
+// sequence was a lie. The predicate was.
+//
+// The version is now READ at the boundary, and a component that is not serving
+// fails the run with a reason that names the class rather than delivering
+// software that is not running.
+func TestDeliverVersion_RefusesAVersionThatIsNotServing(t *testing.T) {
+	h := newHarness(t)
+	h.milestoneIs(workable(1, 1), MilestoneSnapshot{})
+	h.merges(1)
+	// The api built and is serving; the webapp has a green build and no binding.
+	// That is exactly what the cluster answered on 2026-09-01.
+	h.versionIs(
+		delivery.ComponentState{
+			Component: "onboarding-api", State: delivery.ComponentStateServing, Ready: true,
+		},
+		delivery.ComponentState{
+			Component: "onboarding-webapp", State: delivery.ComponentStateBehind,
+			DesiredSHA: testMergeSHA,
+		},
+	)
+
+	h.run(delivery.RunKindDev, 0)
+	res := h.result(t)
+
+	h.assertSettled(t, res, delivery.RunStateFailed, delivery.RunReasonVersionIncomplete)
+	h.env.AssertNotCalled(t, "EnsureValidationIssue", mock.Anything, mock.Anything)
+	require.Equal(t, 0, h.closed,
+		"and the milestone stays open: the way forward is more work in the same version")
+	require.Len(t, h.haltedWork(), 1,
+		"the failed settle halts what it could not finish, like every other failure")
+}
+
+// TestDeliverVersion_DeliversWhenEveryComponentServes is the other half of the
+// same predicate, and it asserts the READ rather than the outcome: the boundary
+// re-derives the version state instead of trusting the cycle that just ended,
+// because between the two the world may have moved.
+func TestDeliverVersion_DeliversWhenEveryComponentServes(t *testing.T) {
+	h := newHarness(t)
+	h.milestoneIs(workable(1, 1), MilestoneSnapshot{})
+	h.merges(1)
+	h.versionIs(delivery.ComponentState{
+		Component: "order-service", State: delivery.ComponentStateServing, Ready: true,
+	})
+	h.validationIs(77, delivery.ValidationVerdictPassed)
+
+	h.run(delivery.RunKindDev, 0)
+	res := h.result(t)
+
+	h.assertSettled(t, res, delivery.RunStateSucceeded, "")
+	h.env.AssertCalled(t, "EnsureValidationIssue", mock.Anything, mock.Anything)
+	require.Empty(t, res.ValidationVerdict,
+		"a dev run delivers and never judges — the validation run owns the verdict")
+}
+
+// TestRedBuild_PromotesItsGreenSiblings is the incident, run forwards.
+//
+// Cycle one built two components: the api went green, the webapp went red. The
+// cycle is RED — the webapp's fix issue is the next cycle's work — and the api
+// is promoted anyway, in that same cycle. What this replaced returned at the red
+// verdict before the deploy stage, so the api's release was never cut; and
+// because the deploy set was the cycle's path diff, the fix cycle that followed
+// touched only the webapp and never mentioned the api again. The api was
+// stranded for the rest of the version's life.
+//
+// A red build cannot be helped by holding its siblings back, and the promotable
+// rule is what makes promoting them safe: only components whose hard providers
+// are serving or promoted ahead of them are written.
+func TestRedBuild_PromotesItsGreenSiblings(t *testing.T) {
 	h := newHarness(t)
 	h.milestoneIs(
-		workable(1, 1),
-		workable(1, 1),
-		MilestoneSnapshot{},
+		workable(1, 1),      // dispatch
+		workable(1, 1),      // the webapp's fix issue
+		MilestoneSnapshot{}, // delivered
 	)
 	h.buildsAre(
-		CycleBuildState{Expected: 1, Settled: 1, Red: []string{"order-service"}, Components: []string{"order-service"}},
-		CycleBuildState{Expected: 1, Settled: 1, Components: []string{"order-service"}},
+		CycleBuildState{Expected: 2, Settled: 2,
+			Components: []string{"onboarding-api", "onboarding-webapp"},
+			Red:        []string{"onboarding-webapp"}},
+		CycleBuildState{Expected: 1, Settled: 1, Components: []string{"onboarding-webapp"}},
 	)
 	h.merges(2)
 
@@ -775,8 +1096,94 @@ func TestRedBuild_DoesNotDeploy(t *testing.T) {
 	res := h.result(t)
 
 	h.assertSettled(t, res, delivery.RunStateSucceeded, "")
-	require.Equal(t, 2, h.deployCount(),
-		"only the GREEN cycle deploys — its one wave and its converge, and nothing from the red one")
+	require.Equal(t, []string{delivery.CycleKindCoding, delivery.CycleKindFix}, h.dispatchKinds(),
+		"the red build still makes the next cycle a FIX cycle — the deploy does not launder the verdict")
+
+	first := h.deploys[0]
+	require.Equal(t, []string{"onboarding-api"}, delivery.TargetNames(first.Targets),
+		"the RED cycle promotes its green sibling; the webapp has no release to pin")
+	require.Equal(t, 0, h.deployMintCount(),
+		"a component with no image is not a deployment failure — its red build already filed its issue")
+
+	// And the fix cycle picks the webapp up, so the version ends serving both.
+	var promoted []string
+	for _, in := range h.deploys {
+		for _, target := range in.Targets {
+			if target.CommitSHA != "" {
+				promoted = append(promoted, target.Component)
+			}
+		}
+	}
+	require.ElementsMatch(t, []string{"onboarding-api", "onboarding-webapp"}, promoted,
+		"both components are serving by the time the version is delivered")
+}
+
+// TestHeldComponent_IsNeitherPromotedNorBlamed is the objection, answered: A
+// needs B, A is green, B is red.
+//
+// A is HELD. Not promoted — a SPA published against an api with no address is a
+// blank page — and not waited on and not filed against either, which is the part
+// that is easy to get wrong: a deploy-fix issue would send an agent to debug a
+// deployment that is perfectly healthy and simply has not happened. B's red
+// build has its own issue, and the pass that finds B serving promotes A.
+//
+// Which components a plan holds is the planner's decision, tested against real
+// designs in projects. What this pins is the STAGE's treatment of one.
+func TestHeldComponent_IsNeitherPromotedNorBlamed(t *testing.T) {
+	h := newHarness(t)
+	h.milestoneIs(workable(1, 1), workable(1, 1), MilestoneSnapshot{})
+	h.buildsAre(
+		CycleBuildState{Expected: 2, Settled: 2,
+			Components: []string{"api", "web"}, Red: []string{"api"}},
+		CycleBuildState{Expected: 1, Settled: 1, Components: []string{"api"}},
+	)
+	// The planner refuses to promote the web app while its api is unbuilt.
+	h.planIsHolding("web")
+	h.merges(2)
+
+	h.run(delivery.RunKindDev, 0)
+	res := h.result(t)
+
+	// The version never serves the web app, so the run refuses to deliver it —
+	// loudly, rather than shipping a SPA with no backend.
+	h.assertSettled(t, res, delivery.RunStateFailed, delivery.RunReasonVersionIncomplete)
+	for _, in := range h.deploys {
+		require.NotContains(t, delivery.TargetNames(in.Targets), "web",
+			"a held component is never written — not in a wave, and not in the converge either")
+	}
+	require.Equal(t, 0, h.deployMintCount(),
+		"held is not a deployment failure: filing one would send an agent after nothing")
+	require.Len(t, h.deploys, 2,
+		"cycle one wrote NOTHING — not a wave and not a converge either, because a pass that "+
+			"promotes nothing never consulted the deploy gate; cycle two promoted the api and converged it")
+}
+
+// TestReconcile_AServingVersionWritesNothing is the property that lets the
+// reconcile run on every cycle, red or green: re-running it against a version
+// that already serves what has been built promotes nothing, waits on nothing,
+// and never consults the deploy gate.
+//
+// It is also what keeps a converge/validation-shaped cycle — a merge that
+// rebuilt no component — from parking on a credential it will not use.
+func TestReconcile_AServingVersionWritesNothing(t *testing.T) {
+	h := newHarness(t)
+	h.milestoneIs(workable(1, 1), MilestoneSnapshot{})
+	h.merges(1)
+	h.versionIs(delivery.ComponentState{
+		Component: "order-service", State: delivery.ComponentStateServing, Ready: true,
+		Pinned: "release-order-service",
+	})
+
+	h.run(delivery.RunKindDev, 0)
+	res := h.result(t)
+
+	h.assertSettled(t, res, delivery.RunStateSucceeded, "")
+	require.Empty(t, h.deploys, "nothing is behind, so nothing is written — not even a converge")
+	require.Empty(t, h.wavePlans, "and nothing is planned: the state alone answers it")
+	_, checks := h.parksOnValues()
+	require.Equal(t, 0, checks,
+		"a pass that writes nothing must not consult the deploy gate — a credential it will not use cannot park the run")
+	h.env.AssertNotCalled(t, "PollDeployments", mock.Anything, mock.Anything)
 }
 
 // TestDeploy_PromotesWaveByWaveThenConverges pins the whole stage's shape.
@@ -803,19 +1210,23 @@ func TestDeploy_PromotesWaveByWaveThenConverges(t *testing.T) {
 
 	h.assertSettled(t, res, delivery.RunStateSucceeded, "")
 	require.Len(t, h.deploys, 3, "two waves promote, then one converge")
-	require.Equal(t, []string{"todo-api"}, h.deploys[0].Components,
+	require.Equal(t, []delivery.DeployTarget{{Component: "todo-api", CommitSHA: testMergeSHA}},
+		h.deploys[0].Targets,
 		"the provider goes first — its address is what the consumer's config carries")
-	require.Equal(t, []string{"todo-webapp"}, h.deploys[1].Components)
-	require.Equal(t, testMergeSHA, h.deploys[0].CommitSHA)
-	require.Equal(t, testMergeSHA, h.deploys[1].CommitSHA)
+	require.Equal(t, []delivery.DeployTarget{{Component: "todo-webapp", CommitSHA: testMergeSHA}},
+		h.deploys[1].Targets)
 
-	require.Equal(t, []string{"todo-api", "todo-webapp"}, h.deploys[2].Components,
+	require.Equal(t, []string{"todo-api", "todo-webapp"}, delivery.TargetNames(h.deploys[2].Targets),
 		"the converge re-asserts the whole set, not just the last wave")
-	require.Empty(t, h.deploys[2].CommitSHA,
-		"the converge promotes nothing: an empty commit is what keeps it from re-cutting a release")
+	for _, target := range h.deploys[2].Targets {
+		require.Empty(t, target.CommitSHA,
+			"the converge promotes nothing: an empty commit is what keeps it from re-cutting a release")
+	}
 
-	require.Len(t, h.wavePlans, 1, "the order is planned once per cycle, before anything is written")
-	require.Equal(t, []string{"todo-api", "todo-webapp"}, h.wavePlans[0].Components)
+	require.Len(t, h.wavePlans, 1, "the pass is planned once per cycle, before anything is written")
+	require.Equal(t, []string{"todo-api", "todo-webapp"},
+		behindNames(h.wavePlans[0].Version),
+		"the planner is handed the version's own state, not the cycle's path diff")
 }
 
 // A wave that cannot come up ends the stage there: the waves after it depend on
@@ -835,7 +1246,7 @@ func TestDeploy_FailedWaveRunsNoFurtherWaveOrConverge(t *testing.T) {
 
 	h.assertSettled(t, res, delivery.RunStateFailed, delivery.RunReasonDeployBudget)
 	require.Len(t, h.deploys, 1, "the first wave failed; nothing downstream of it runs")
-	require.Equal(t, []string{"todo-api"}, h.deploys[0].Components)
+	require.Equal(t, []string{"todo-api"}, delivery.TargetNames(h.deploys[0].Targets))
 }
 
 // An order that cannot be satisfied has to arrive as a DEPLOY FAILURE, not as a
@@ -865,10 +1276,50 @@ func TestDeployOrderUnsatisfiable_SettlesAsADeployFailure(t *testing.T) {
 	h.assertSettled(t, res, delivery.RunStateFailed, delivery.RunReasonDeployBudget)
 	require.Empty(t, h.deploys, "an unsatisfiable order promotes nothing")
 	require.Equal(t, 1, h.deployMintCount(), "the fix work is filed, not swallowed by a failed workflow")
-	require.ElementsMatch(t, []string{"web-a", "web-b"}, h.deployMints[0].Components,
+	require.ElementsMatch(t, []string{"web-a", "web-b"}, delivery.TargetNames(h.deployMints[0].Failed),
 		"a cycle is nobody's individual fault — every component in it is named")
 	require.Contains(t, h.deployMints[0].Reasons["web-a"], "hard dependency cycle",
 		"the cause reaches the issue body rather than only the workflow history")
+}
+
+// A permanent plan failure must always NAME somebody, because the fix issue is
+// what stops the next boundary settling a version that is not running.
+//
+// The reachable hole this closes: a pass is entered when anything is behind OR
+// converging, so a version whose components are all converging can hit an
+// unsatisfiable order with an empty behind set. Attributed to the behind set
+// alone, the failure would name nobody, mint nothing, and settle the run on the
+// deploy budget with an empty milestone behind it — the exact wedge the stage
+// exists to stop producing.
+func TestDeployOrderPermanentlyUnsatisfiable_NamesEveryNonServingComponent(t *testing.T) {
+	h := newHarness(t)
+	h.milestoneIs(workable(1, 1), MilestoneSnapshot{})
+	// Nothing behind: both components are converging towards the release they
+	// already pin, which is what makes the behind set empty.
+	h.versionIs(
+		delivery.ComponentState{
+			Component: "todo-api", State: delivery.ComponentStateConverging,
+			DesiredSHA: testMergeSHA, Pinned: "release-todo-api",
+		},
+		delivery.ComponentState{
+			Component: "todo-webapp", State: delivery.ComponentStateConverging,
+			DesiredSHA: testMergeSHA, Pinned: "release-todo-webapp",
+		},
+	)
+	h.wavesAre(nil, temporal.NewNonRetryableApplicationError(
+		"deployment: hard dependency cycle among components todo-api needs [todo-webapp]; todo-webapp needs [todo-api]",
+		errTypePermanentDeploy, nil))
+	h.deployMintsAre([]int{testRepairIssue})
+	h.merges(1)
+
+	h.run(delivery.RunKindDev, 0)
+	res := h.result(t)
+
+	h.assertSettled(t, res, delivery.RunStateFailed, delivery.RunReasonDeployBudget)
+	require.Equal(t, 1, h.deployMintCount(), "a failure that names nobody files nothing and wedges the run")
+	require.ElementsMatch(t, []string{"todo-api", "todo-webapp"},
+		delivery.TargetNames(h.deployMints[0].Failed),
+		"with nothing behind, the attribution falls back to every component that is not serving")
 }
 
 // A plan that could not be READ is a blip, not an answer, and must keep the
@@ -927,7 +1378,7 @@ func TestDeployFailed_BecomesTheNextCyclesWork(t *testing.T) {
 	require.Equal(t, []string{delivery.CycleKindCoding, delivery.CycleKindFix}, h.dispatchKinds(),
 		"a failed deployment recovers through an ordinary fix cycle")
 	require.Equal(t, 1, h.deployMintCount(), "the supervisor files the deploy-fix work itself")
-	require.Equal(t, []string{"order-service"}, h.deployMints[0].Components)
+	require.Equal(t, []string{"order-service"}, delivery.TargetNames(h.deployMints[0].Failed))
 	require.Equal(t, "RenderingFailed", h.deployMints[0].Reasons["order-service"],
 		"OpenChoreo's own reason reaches the issue body")
 }
@@ -969,7 +1420,7 @@ func TestValidationRun_BuildsAndDeploysNothing(t *testing.T) {
 	require.Equal(t, 0, h.deployCount(), "a validation run promotes nothing")
 	h.env.AssertNotCalled(t, "PollCycleBuilds", mock.Anything, mock.Anything)
 	h.env.AssertNotCalled(t, "PlanDeployWaves", mock.Anything, mock.Anything)
-	h.env.AssertNotCalled(t, "PollCycleDeployments", mock.Anything, mock.Anything)
+	h.env.AssertNotCalled(t, "PollDeployments", mock.Anything, mock.Anything)
 	// And it never polls a working set: it has none, which is why it does not
 	// share the cycle-boundary loop at all.
 	h.env.AssertNotCalled(t, "PollMilestone", mock.Anything, mock.Anything)
@@ -1001,7 +1452,7 @@ func TestDeployNeverReady_ExpiresIntoADeployFailure(t *testing.T) {
 	h.assertSettled(t, res, delivery.RunStateFailed, delivery.RunReasonDeployBudget)
 	require.Positive(t, h.deployMintCount(),
 		"the expiry files fix work rather than hanging the run")
-	require.Equal(t, []string{"order-service"}, h.deployMints[0].Components,
+	require.Equal(t, []string{"order-service"}, delivery.TargetNames(h.deployMints[0].Failed),
 		"the components that never came up are the ones named")
 }
 
@@ -2271,6 +2722,123 @@ func TestPlanningPhase_ARebuildMintsGatesButDoesNotPlan(t *testing.T) {
 	require.Equal(t, 0, plans, "a re-plan over reopened work would mint nothing and settle an unbuilt version")
 	// The reopened work was still worked: skipping the plan is not skipping the run.
 	require.Equal(t, []string{delivery.CycleKindCoding}, h.dispatchKinds())
+}
+
+// ---- cancel reaches the PLANNING phase --------------------------------------
+//
+// The cycle loop asks about cancel at every boundary, but the planning bookend
+// runs BEFORE the first boundary — so for as long as it lasted, a run was blind
+// to a cancel that had already been delivered. It is the phase a person is most
+// likely to be looking at when they press the button, and the one where a stuck
+// activity can hold a run for hours: a version whose gates could not be authored
+// sat re-minting them with six delivered cancel signals unread in the channel.
+//
+// These four pin the four ways the phase can now hear it.
+
+// The row is asked FIRST, before a single gate is minted. It is the only reading
+// that survives a cancel whose SIGNAL never arrived — the cancel surface swallows
+// a failed delivery so a dead engine cannot wedge the console — and planning is
+// the longest stretch a run has to be wrong about.
+func TestPlanningPhase_CancelAlreadyOnTheRowSettlesBeforeMintingGates(t *testing.T) {
+	h := newHarness(t)
+	h.factsAre(CycleFacts{CancelRequested: true})
+	h.milestoneIs(workable(1, 1))
+
+	h.runWith(RunInput{Kind: delivery.RunKindDev, Tag: "v3"})
+	res := h.result(t)
+
+	h.assertSettled(t, res, delivery.RunStateCancelled, "")
+	gates, plans := h.planCounts()
+	require.Equal(t, 0, gates, "a run cancelled before it started mints no gates")
+	require.Equal(t, 0, plans)
+	require.Equal(t, 0, h.dispatchCount())
+}
+
+// A cancel delivered WHILE the gates are being authored settles the run at once,
+// and the planning turn never runs. This is the case the incident was: the gate
+// activity holding the phase open, cancel unread behind it.
+func TestPlanningPhase_CancelDuringTheGatesSettlesWithoutPlanning(t *testing.T) {
+	h := newHarness(t)
+	h.milestoneIs(workable(1, 1))
+	// Signalled from inside the activity, which is the only way to place a cancel
+	// in the window this test is about: the environment's clock does not advance
+	// while an activity is in flight, so a delayed callback could not fire there.
+	h.planIsCancelledDuring(gatesActivity)
+
+	h.runWith(RunInput{Kind: delivery.RunKindDev, Tag: "v3"})
+	res := h.result(t)
+
+	h.assertSettled(t, res, delivery.RunStateCancelled, "")
+	gates, plans := h.planCounts()
+	require.Equal(t, 1, gates, "the attempt that was interrupted still happened")
+	require.Equal(t, 0, plans, "the phase ended at the cancel; the planning turn never ran")
+	require.Equal(t, 0, h.dispatchCount(), "a cancelled planning phase dispatches nothing")
+	require.Equal(t, 1, h.closedCount(), "the increment is abandoned, so its milestone closes")
+}
+
+// The same, one activity later: the gates landed, and the cancel arrives during
+// the planning TURN — the 30-minute one, where a person waiting on a spec they
+// have changed their mind about is most likely to press the button.
+func TestPlanningPhase_CancelDuringThePlanningTurnSettles(t *testing.T) {
+	h := newHarness(t)
+	h.milestoneIs(workable(1, 1))
+	h.planIsCancelledDuring(planActivity)
+
+	h.runWith(RunInput{Kind: delivery.RunKindDev, Tag: "v3"})
+	res := h.result(t)
+
+	h.assertSettled(t, res, delivery.RunStateCancelled, "")
+	gates, plans := h.planCounts()
+	require.Equal(t, 1, gates)
+	require.Equal(t, 1, plans, "the turn that was interrupted still happened")
+	require.Equal(t, 0, h.dispatchCount())
+}
+
+// A cancel pending in the same workflow task as a FAILED activity is read as a
+// cancel, not as the failure.
+//
+// The selector's registration order is what decides this, and the alternative is
+// actively misleading: the version would settle `plan-failed` — a story about the
+// platform being unable to author the version — for a run a person had
+// deliberately stopped, with their cancel still sitting unread.
+func TestPlanningPhase_CancelWinsOverASimultaneousGateFailure(t *testing.T) {
+	h := newHarness(t)
+	h.milestoneIs(workable(1, 1))
+	h.planIsCancelledDuring(gatesActivity, errors.New("openchoreo unreachable"))
+
+	h.runWith(RunInput{Kind: delivery.RunKindDev, Tag: "v3"})
+	res := h.result(t)
+
+	h.assertSettled(t, res, delivery.RunStateCancelled, "")
+	require.NotEqual(t, delivery.RunReasonPlanFailed, res.TerminalReason,
+		"a cancelled run reports the cancel, never the failure it raced")
+}
+
+// ---- the gate activity's retries are BOUNDED --------------------------------
+
+// Provisioning has answers that repeating cannot change — a dependency naming a
+// ClusterResourceType nobody installed is the one that taught us — and under
+// Temporal's default unbounded policy such an answer is a permanent, invisible
+// loop rather than a failed build. Worse than invisible: the activity re-mints
+// the version's gate issues on every attempt, so the symptom is a milestone
+// filling with duplicate gates forever.
+//
+// So it gives up, and the run settles `plan-failed` — the reason the phase has
+// always written for a version it could not author.
+func TestPlanningPhase_AnUnsatisfiableGateGivesUpAfterItsAttempts(t *testing.T) {
+	h := newHarness(t)
+	h.milestoneIs(workable(1, 1))
+	h.planIs(errors.New(`resource "x" produced no new ResourceRelease within 1m0s`), nil)
+
+	h.runWith(RunInput{Kind: delivery.RunKindDev, Tag: "v3"})
+	res := h.result(t)
+
+	h.assertSettled(t, res, delivery.RunStateFailed, delivery.RunReasonPlanFailed)
+	gates, plans := h.planCounts()
+	require.Equal(t, gateActivityAttempts, gates,
+		"the gate activity is tried a bounded number of times and then the version fails")
+	require.Equal(t, 0, plans, "a version whose gates could not be authored is never planned")
+	require.Equal(t, 0, h.dispatchCount())
 }
 
 // A run that did NOT plan may not read an empty working set as "delivered".

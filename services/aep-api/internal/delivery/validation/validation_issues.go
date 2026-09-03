@@ -33,7 +33,7 @@ const criteriaFilePath = "specs/validation/validation-criteria.json"
 // validationTitle is the fixed title of a version's validation issue. It names
 // no version: the MILESTONE is the version pin, and a title is renamable display
 // text that nothing matches on.
-const validationTitle = "Validate the deployed system against its acceptance criteria"
+const validationTitle = "Validate the deployed system against its validation criteria"
 
 // Service mints the project's validation Task issue. It holds only consumer
 // ports; concrete providers are wired at the composition root.
@@ -254,7 +254,7 @@ func rationale(s criteriaSummary) string {
 }
 
 // renderScope builds the human markdown body of the validation issue — the
-// consumer contract the aep-validation skill reads (acceptance oracle + test
+// consumer contract the aep-validation skill reads (validation criteria + test
 // layout + report). Deployed endpoints and test credentials are deliberately
 // absent: the runner fetches endpoints from the secure validation-context
 // endpoint, and the agent reads a test user's login from the roles gate ticket
@@ -271,11 +271,11 @@ func renderScope(doc *criteriaDoc) string {
 	}
 
 	w(
-		"Validate the deployed system against its acceptance criteria: author end-to-end tests, run them against the deployed system, and open a PR containing the tests and a validation report.",
+		"Validate the deployed system against its validation criteria: author end-to-end tests, run them against the deployed system, and open a PR containing the tests and a validation report.",
 		"",
 		"The deployed endpoint URLs are provided to the validation runner by the platform at dispatch time, and a test user's login is published on this milestone's roles gate ticket — neither is in this issue.",
 		"",
-		"## Acceptance oracle",
+		"## Validation criteria",
 		fmt.Sprintf("The source of truth is `%s` in this repo. It is read-only input for this task — do not modify it or anything else under `specs/`.", criteriaFilePath),
 		"",
 		fmt.Sprintf("- `e2e` — %d criteria: a committed spec already at `tests/e2e/specs/<AC-ID>.spec.ts` runs as regression; author specs for the rest.", sum.E2E),

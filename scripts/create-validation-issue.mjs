@@ -127,11 +127,11 @@ function renderBody(doc, issueNumber) {
   const lines = [];
 
   lines.push(
-    "Validate the deployed system against its acceptance criteria: author end-to-end tests, run them against the deployed system, and open a PR containing the tests and a validation report.",
+    "Validate the deployed system against its validation criteria: author end-to-end tests, run them against the deployed system, and open a PR containing the tests and a validation report.",
     "",
     "The deployed endpoint URLs and any test credentials are provided to the validation runner by the platform at dispatch time — they are not in this issue.",
     "",
-    "## Acceptance oracle",
+    "## Validation criteria",
     `The source of truth is \`${CRITERIA_PATH}\` in this repo. It is read-only input for this task — do not modify it or anything else under \`specs/\`.`,
     "",
     `- \`e2e\` — ${sum.e2e} criteria: a committed spec already at \`tests/e2e/specs/<AC-ID>.spec.ts\` runs as regression; author specs for the rest.`,
@@ -177,7 +177,7 @@ function main() {
     return;
   }
 
-  const title = `Validate ${REPO.split("/")[1]} against its acceptance criteria`;
+  const title = `Validate ${REPO.split("/")[1]} against its validation criteria`;
   for (const label of LABELS) {
     // Idempotent: --force updates the label if it already exists.
     gh(["label", "create", label, "--repo", REPO, "--force"]);

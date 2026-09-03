@@ -37,6 +37,7 @@ import { scrubber } from "./progress/scrubber.js";
 import { createWebSearchDlpHook, stagedSecretValues } from "./websearch_dlp.js";
 import { createForegroundFanOutHook } from "./fanout_foreground.js";
 import { createWorkspaceWriteGuard } from "./workspace_guard.js";
+import { createValidationProgressTracker } from "./validation_progress.js";
 import { startMcpAuthProxy } from "./mcp_auth_proxy.js";
 import { staticTokenSource, type AccessTokenSource } from "./auth_retry.js";
 import { createWebFetchGuardHook } from "./webfetch_guard.js";
@@ -74,10 +75,11 @@ function mirrorDir(workspace: string): string {
 // Agent joins the set for the milestone run loop (docs/design §9.3): a cycle
 // works several issues, and the main agent fans the big, prose-independent,
 // disjoint-App-Path ones out to subagents. The main agent stays the SOLE git
-// writer — subagents Edit/Write only. That split is a SKILL rule, not a tool
-// restriction: the SDK hands a subagent the same allowedTools as its parent,
-// so `aep`'s deny-list is what keeps a subagent off git, and its fan-out
-// section is what keeps small issues inline.
+// writer — subagents Edit/Write, plus the one `gh issue comment` that keeps
+// their own issue's status line current while they work. That split is a SKILL
+// rule, not a tool restriction: the SDK hands a subagent the same allowedTools
+// as its parent, so `aep`'s deny-list is what keeps a subagent off git, and its
+// fan-out section is what keeps small issues inline.
 //
 // The fan-out tool is `Agent`. It was `Task` until the SDK 0.2 → 0.3 bump, and
 // this list still said `Task` afterwards — a name with no tool behind it in
@@ -480,6 +482,17 @@ export async function runClaudeQuery(
     emit({ kind: "log", level: "warn", summary: `[workspace] ${reason}` });
   });
 
+  // Per-criterion progress — see validation_progress.ts. Validation only: a
+  // coding run has no validation criteria to report on, and registering the
+  // matchers anyway would put a hook on every Write, Edit and Bash call of every
+  // run to derive nothing.
+  const validationProgress =
+    req.taskKind === "validation"
+      ? createValidationProgressTracker((update) => {
+          emit({ kind: "progress_item", itemId: update.itemId, status: update.status });
+        })
+      : undefined;
+
   // The SDK auto-discovers the bundled native binary — no
   // pathToClaudeCodeExecutable needed. See settingSources below for why the
   // project source — and only the project source — is admitted.
@@ -555,6 +568,18 @@ export async function runClaudeQuery(
           { matcher: "Write", hooks: [workspaceWriteGuard] },
           { matcher: "Edit", hooks: [workspaceWriteGuard] },
           { matcher: "NotebookEdit", hooks: [workspaceWriteGuard] },
+          // Neither a guard nor a rewrite: this one only watches, and returns an
+          // empty decision. One matcher per tool for the same reason as every
+          // entry above, and `Bash` as well because a validation run's per-spec
+          // `npm test` call is what says a criterion is running.
+          ...(validationProgress
+            ? [
+                { matcher: "Write", hooks: [validationProgress.hook] },
+                { matcher: "Edit", hooks: [validationProgress.hook] },
+                { matcher: "NotebookEdit", hooks: [validationProgress.hook] },
+                { matcher: "Bash", hooks: [validationProgress.hook] },
+              ]
+            : []),
         ],
       },
     },
@@ -566,7 +591,11 @@ export async function runClaudeQuery(
 
   // One translator per run — it carries this run's subagent labels and
   // in-flight tool calls (see createSdkTranslator).
-  const translate = createSdkTranslator();
+  // The tracker settles a criterion from the SAME `ok` the feed reports, rather
+  // than re-deriving success from the tool result a second time.
+  const translate = createSdkTranslator(
+    validationProgress ? { onToolOutcome: validationProgress.settle } : undefined,
+  );
   // …and one watchdog, so a silent stretch says what it is waiting on rather
   // than looking identical to a dead run.
   const watchdog = createRunWatchdog();

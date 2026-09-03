@@ -23,7 +23,7 @@ import (
 )
 
 // Commands is the run surface's two writes: cancel a run, and ask a version's
-// acceptance criteria again. Neither decides anything — both resolve the target
+// validation criteria again. Neither decides anything — both resolve the target
 // through the org-scoped read first, then hand off.
 type Commands struct {
 	runs       RunReader
@@ -106,7 +106,7 @@ func (c *Commands) Cancel(ctx context.Context, orgID, projectID, runID string) e
 	return nil
 }
 
-// Revalidate asks a version's acceptance criteria again, against the system
+// Revalidate asks a version's validation criteria again, against the system
 // already deployed, and answers with the run that will produce the verdict.
 //
 // This surface's whole job is the RESOLUTION: a `v<N>` tag becomes a milestone

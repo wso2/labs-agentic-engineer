@@ -834,7 +834,7 @@ const doneTasks: TaskView[] = buildingTasks.map((t) => ({
 // property and lives on the run rows, which is where the deployment surface
 // reads it.
 export const validationTask: TaskView = {
-  ...task(30, "Validate deployed system against acceptance criteria", "merged"),
+  ...task(30, "Validate the deployed system against its validation criteria", "merged"),
   executorClass: "validation",
 };
 
@@ -1346,6 +1346,38 @@ Three components behind the project cell:
 The storefront talks to both services; services share nothing.
 `;
 
+// The security design (#665): ONE document, and the Security rail entry reads
+// it alone. The roles it declares are the ones `fixtures/roles.ts` reconciles
+// against — `Compliance Admin` exists on the directory, `Viewer` does not yet
+// ("New at Build") — so the panel's live half has something to disagree with.
+const securityJson = `{
+  "version": 1,
+  "coldStartRole": "Compliance Admin",
+  "publicComponents": ["storefront"],
+  "roles": [
+    {
+      "name": "Compliance Admin",
+      "description": "Approves and audits submitted claims.",
+      "stories": [1, 2],
+      "grantedBy": "Platform IdP",
+      "permissions": [
+        { "component": "orders-api", "actions": ["approve", "refund"] },
+        { "component": "storefront", "screens": ["Orders", "Audit log"] }
+      ]
+    },
+    {
+      "name": "Viewer",
+      "description": "Reads the catalog and their own order history.",
+      "stories": [3],
+      "grantedBy": "Platform IdP",
+      "permissions": [{ "component": "catalog-api", "actions": ["read"] }]
+    }
+  ],
+  "testUsers": [{ "username": "test-compliance-admin", "role": "Compliance Admin" }],
+  "thunder": { "name": "demo-shop", "type": "browser" }
+}
+`;
+
 // Per-component design files (#80 rich design view): design.json for each of
 // the three components named in architectureMd, plus one wireframes.dsl for
 // the customer-facing component — enough to exercise the Designs sidebar's
@@ -1456,14 +1488,6 @@ const ordersApiDesignJson = `{
   "dependencies": []
 }`;
 
-const validationPlan = `# Demo Shop — Validation plan
-
-- Catalog search returns seeded products by name and category.
-- Cart contents survive a browser restart.
-- Checkout produces an order visible in order history.
-- Each service exposes /healthz returning 200.
-`;
-
 // The two validation artifacts come from ./validation.ts, which builds the oracle
 // and the run report from ONE outcome map so they cannot disagree — and which the
 // aep:mock:validation switch swaps wholesale to reach every verdict.
@@ -1501,6 +1525,7 @@ const collaborationFiles: MockSpecFile[] = [
 const fullFiles: MockSpecFile[] = [
   ...settledSpecFiles,
   { path: "specs/design/design.cell", content: designCell },
+  { path: "specs/design/security.json", content: securityJson },
   {
     path: "specs/design/components/storefront/design.json",
     content: storefrontDesignJson,
@@ -1517,7 +1542,6 @@ const fullFiles: MockSpecFile[] = [
     path: "specs/design/components/orders-api/design.json",
     content: ordersApiDesignJson,
   },
-  { path: "specs/validation/validation-plan.md", content: validationPlan },
   {
     path: "specs/validation/validation-criteria.json",
     content: DEFAULT_VALIDATION_CRITERIA,

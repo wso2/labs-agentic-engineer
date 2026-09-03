@@ -579,7 +579,7 @@ describe("RunSpine", () => {
 
   // A settled run opens no stream, so it must not narrate one. The hook reports
   // `idle` for a stream nobody asked for; reporting `connecting` had a
-  // connection-free page claiming it was "attaching to the run feed" forever.
+  // connection-free page claiming it was "Attaching to the run feed" forever.
   it("says nothing about the feed while no log has been asked for", () => {
     mockPhase = "idle";
     const done = cycle({
@@ -590,7 +590,7 @@ describe("RunSpine", () => {
     renderSpine(run([done], "succeeded"));
 
     expect(
-      screen.queryByText(/attaching to the run feed/),
+      screen.queryByText(/Attaching to the run feed/),
     ).not.toBeInTheDocument();
     expect(enabledCalls.every((e) => e === false)).toBe(true);
   });
@@ -599,7 +599,7 @@ describe("RunSpine", () => {
     mockPhase = "connecting";
     const live = cycle({ id: "c1" });
     renderSpine(run([live]));
-    expect(screen.getByText(/attaching to the run feed/)).toBeInTheDocument();
+    expect(screen.getByText(/Attaching to the run feed/)).toBeInTheDocument();
     expect(screen.getByText(/Loading agent output/)).toBeInTheDocument();
   });
 

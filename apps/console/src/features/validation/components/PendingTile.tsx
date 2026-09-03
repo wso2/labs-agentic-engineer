@@ -24,6 +24,7 @@ import {
   type CriterionMethodCount,
 } from "@aep/ui-validation-view";
 import { validationView } from "../../projects/lib/pipeline";
+import { LiveNote } from "./LiveNote";
 
 // A method named inside a sentence: the badge's word, set the way the badge sets it
 // — same monospace, same weight, same tracking, same uppercase — so a reader
@@ -85,10 +86,13 @@ const NO_CRITERIA =
 export function PendingTile({
   methods,
   noCriteria = false,
+  note,
 }: {
   methods?: CriterionMethodCount[];
   /** The criteria read came back `not_found`: none were ever authored. */
   noCriteria?: boolean;
+  /** What the run is doing while no criterion has anything to say — see LiveNote. */
+  note?: string;
 }) {
   const view = validationView("running");
   if (!view) return null;
@@ -134,6 +138,7 @@ export function PendingTile({
           {counts}
         </Typography>
       )}
+      {note && <LiveNote note={note} />}
     </Alert>
   );
 }

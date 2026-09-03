@@ -140,7 +140,7 @@ export async function fetchValidationContext(
   // check above, so it fails the same way.
   if (typeof ctx.criteriaPath !== "string" || ctx.criteriaPath === "") {
     throw new Error(
-      "validation context names no acceptance-criteria path — there is nothing to validate against",
+      "validation context names no validation-criteria path — there is nothing to validate against",
     );
   }
 

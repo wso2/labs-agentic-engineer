@@ -37,6 +37,7 @@
 export interface ProgressLineView {
   kind: string;
   phase?: string | undefined;
+  itemId?: string | undefined;
   tool?: string | undefined;
   summary?: string | undefined;
   command?: string | undefined;
@@ -235,6 +236,19 @@ export function formatLine(e: ProgressLineView): FormattedLine {
     }
     case "activity":
       // Header material, never a row — see the runner's ActivityEvent.
+      return { text: "", tone: "muted" };
+    case "progress_item":
+      // Row STATE, never a row. The line says an item's status changed
+      // (`AC-003-a` → `authoring`); the surface that folds it repaints that
+      // item's existing row, and printing the transition here as well would
+      // narrate the same fact twice — one criterion moving through five
+      // statuses is five lines interleaved with the tool calls that caused
+      // them. Silent for the same reason `activity` above is.
+      //
+      // Explicit rather than left to the default arm below, which would also
+      // return "" today only because the payload happens to carry neither
+      // `message` nor `summary`. That is an accident of the shape, not a
+      // decision, and it would start printing the moment either is added.
       return { text: "", tone: "muted" };
     case "tool_result": {
       // A fan-out call's result settles a WHOLE subagent, so it reads as that

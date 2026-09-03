@@ -9,7 +9,7 @@ The vocabulary a turn's prose should use belongs to the **surface** it is read
 on, not to the skill that produced it. `design.cell` is exactly the right word
 for someone standing in the repository with a terminal open; on a console screen
 it names nothing, and once the artifacts are labelled *Product requirements* and
-*Acceptance criteria* it names things that are demonstrably not there.
+*Validation criteria* it names things that are demonstrably not there.
 
 The same flow skills — `start`, `design`, `amend` — have to run on both. So
 nothing is stripped from the trunk: the difference rides one extra skill, and the

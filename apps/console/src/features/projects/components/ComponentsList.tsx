@@ -21,6 +21,7 @@ import { Card, Chip, Tooltip } from "@wso2/oxygen-ui";
 import { Box as BoxIcon, Boxes } from "@wso2/oxygen-ui-icons-react";
 import { EmptyState } from "../../../components/EmptyState";
 import type { components } from "../../../generated/aep-api";
+import { useComponentEndpointUrl } from "../api/queries";
 import { ComponentOpenApiDialog } from "./ComponentOpenApiDialog";
 import { OverviewRow } from "./OverviewRow";
 
@@ -30,6 +31,75 @@ type Component = components["schemas"]["Component"];
 const isWebApp = (c: Component) => c.type === "web-application";
 
 const typeLabel = (c: Component) => (isWebApp(c) ? "Web app" : "Service");
+
+/** The row itself, so both kinds render identically apart from where they go. */
+function ComponentRow({
+  component: c,
+  last,
+  onClick,
+  href,
+}: {
+  component: Component;
+  last: boolean;
+  onClick?: (() => void) | undefined;
+  href?: string | undefined;
+}) {
+  return (
+    <OverviewRow
+      icon={<BoxIcon size={18} />}
+      title={c.displayName ?? c.name}
+      trailing={
+        <Chip
+          size="small"
+          variant="outlined"
+          label={typeLabel(c)}
+          sx={{ height: 22, flexShrink: 0, fontSize: "0.75rem" }}
+        />
+      }
+      caption={c.description ?? undefined}
+      last={last}
+      onClick={onClick}
+      href={href}
+    />
+  );
+}
+
+/**
+ * A web app's row, which opens the RUNNING APP rather than a contract.
+ *
+ * A web app has no OpenAPI document, so this row used to go nowhere at all —
+ * the one component on the page a reader most wants to click was the one that
+ * did nothing. It has a public URL instead, and that URL is the answer to
+ * "what did the platform actually build me".
+ *
+ * The URL comes from the component's DEPLOYMENTS, not from the component:
+ * `Component.endpointUrl` is on the contract but the backend never fills it
+ * (noted drift, #196), while the dev binding's resolved URL rides on
+ * list-deployments. Its own component so the read is one hook per web app,
+ * rather than a hook called inside a map.
+ *
+ * Until it deploys there is no URL, and the row then stays inert — a link
+ * offered before the app is up is a link to a 404.
+ */
+function WebAppRow({
+  projectName,
+  component,
+  last,
+}: {
+  projectName: string;
+  component: Component;
+  last: boolean;
+}) {
+  const url = useComponentEndpointUrl(projectName, component.name).data;
+  if (!url) return <ComponentRow component={component} last={last} />;
+  return (
+    <Tooltip title="Open the app" placement="left">
+      <div>
+        <ComponentRow component={component} last={last} href={url} />
+      </div>
+    </Tooltip>
+  );
+}
 
 /**
  * The project's components.
@@ -72,35 +142,26 @@ export function ComponentsList({
   return (
     <>
       <Card variant="outlined">
-        {items.map((c, i) => {
-          // A web app has no contract to open, so its row goes nowhere and
-          // shows no chevron: only rows that do something look like they do.
-          const openable = !isWebApp(c);
-          const row = (
-            <OverviewRow
-              icon={<BoxIcon size={18} />}
-              title={c.displayName ?? c.name}
-              trailing={
-                <Chip
-                  size="small"
-                  variant="outlined"
-                  label={typeLabel(c)}
-                  sx={{ height: 22, flexShrink: 0, fontSize: "0.75rem" }}
-                />
-              }
-              caption={c.description ?? undefined}
+        {items.map((c, i) =>
+          isWebApp(c) ? (
+            <WebAppRow
+              key={c.name}
+              projectName={projectName}
+              component={c}
               last={i === items.length - 1}
-              {...(openable && { onClick: () => setContractComponent(c.name) })}
             />
-          );
-          return openable ? (
-            <Tooltip key={c.name} title="View API contract" placement="left">
-              <div>{row}</div>
-            </Tooltip>
           ) : (
-            <div key={c.name}>{row}</div>
-          );
-        })}
+            <Tooltip key={c.name} title="View API contract" placement="left">
+              <div>
+                <ComponentRow
+                  component={c}
+                  last={i === items.length - 1}
+                  onClick={() => setContractComponent(c.name)}
+                />
+              </div>
+            </Tooltip>
+          ),
+        )}
       </Card>
       <ComponentOpenApiDialog
         projectName={projectName}

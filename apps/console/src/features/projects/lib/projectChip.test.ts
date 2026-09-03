@@ -99,6 +99,29 @@ describe("projectChip — delivery state outranks the spec", () => {
       "error",
     );
   });
+  // A cancel is not a failure. The toolbar said "Build failed" over a build
+  // somebody had deliberately stopped — and once the build page header learned
+  // the word Cancelled, the two surfaces contradicted each other in one glance.
+  it("build cancelled → Build cancelled, neutral rather than error", () => {
+    expect(projectChip(status({ build: { version: "v1", status: "cancelled" } }))).toEqual({
+      label: "Build cancelled",
+      tone: "neutral",
+      busy: false,
+    });
+  });
+  // It keeps `failed`'s precedence over what settled behind it: a cancel the
+  // reader just performed is the newest thing that happened to the project, and
+  // the previous version still serving is background rather than news.
+  it("a cancelled build outranks a deployed previous version", () => {
+    expect(
+      projectChip(
+        status({
+          build: { version: "v2", status: "cancelled" },
+          deploy: { version: "v1", status: "deployed" },
+        }),
+      ).label,
+    ).toBe("Build cancelled");
+  });
   it("built, nothing deployed → Built", () => {
     expect(projectChip(status({ build: { version: "v1", status: "succeeded" } }))).toEqual({
       label: "Built",

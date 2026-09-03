@@ -36,6 +36,7 @@ export type ProgressKind =
   | "git_push"
   | "gh_action"
   | "log"
+  | "progress_item"
   | "result";
 
 // Who produced the event: the main agent, or one of the subagents it fans out
@@ -156,6 +157,49 @@ export interface LogEvent extends ProgressEnvelope {
   summary: string;
 }
 
+// What a `progress_item` may say about one item. The terminal two are
+// report.json's OWN words (`pass`/`fail`, see aep-validation's
+// generate-report.mjs), deliberately not `passed`/`failed`: the console
+// overlays these live statuses onto the same rows it later fills from that
+// report, and a second spelling for one fact would need a translation table
+// between them. `not_run` is absent because only the report can conclude it —
+// nothing observed DURING a run proves a criterion was never attempted.
+//
+// `healing` means a spec that once passed has broken, matching what
+// aep-validation's healing.md scopes a heal to. An edit before an item's first
+// pass is still `authoring`: authoring.md requires a spec to pass twice
+// consecutively, so failing on the way there is the normal path, and calling it
+// healing would make a healthy run read as a struggling one.
+export type ProgressItemStatus =
+  | "planned"
+  | "exploring"
+  | "authoring"
+  | "running"
+  | "healing"
+  | "pass"
+  | "fail";
+
+// One named unit of work whose status changes over a run — as opposed to every
+// other kind here, which reports something that happened once at a moment.
+// `itemId` is the stable key a consumer folds on: many of these lines describe
+// the SAME item, and a reader wants one row repainted rather than seven rows
+// printed.
+//
+// Validation is the first caller and binds items to acceptance criteria
+// (`AC-003-a`). Nothing here says so, and nothing needs to: `cycleKind` is
+// already stamped on every line the BFF serves, so the same kind carries a
+// coding cycle's issues or a build's steps without a second field repeating
+// what the envelope already said.
+//
+// Renderers format this to no text — the structure IS the payload, and the
+// surface that folds it (the console's Validation page) shows it as row state
+// rather than as log rows. See @aep/progress-view's formatLine.
+export interface ProgressItemEvent extends ProgressEnvelope {
+  kind: "progress_item";
+  itemId: string;
+  status: ProgressItemStatus;
+}
+
 // TurnModelUsage is one model's slice of the run's usage, read off the SDK
 // result's per-model `modelUsage` record (#291). The model id is the SDK's
 // canonicalModel where it reports one (versioned release ids collapse onto the
@@ -203,6 +247,7 @@ export type ProgressEvent =
   | GitPushEvent
   | GhActionEvent
   | LogEvent
+  | ProgressItemEvent
   | ResultEvent;
 
 // Attribution the translator knows and emit() cannot: which agent produced the
@@ -239,5 +284,6 @@ export type ProgressEventInput = (
   | { kind: "git_push"; sha?: string; branch?: string; summary?: string }
   | { kind: "gh_action"; command: string; summary?: string }
   | { kind: "log"; level?: "info" | "warn" | "error"; summary: string }
+  | { kind: "progress_item"; itemId: string; status: ProgressItemStatus }
   | { kind: "result"; status: "success" | "failure"; summary?: string; error?: string; usage?: TurnUsage }
 ) & ProgressAttribution;

@@ -50,6 +50,22 @@ confirm a change holds at size. Since `playground/.projects/` is gitignored,
 a fixture like that is yours alone — author it by copying the `specs/` +
 `issues/` shape of an existing project and stripping every dependency.
 
+**A `web-application` costs an extra round.** Its build is followed by mock
+verification: a subagent starts the app with `npm run dev:mock`, walks its
+stories with `agent-browser`, and reports a verdict per story, which the lead
+fixes and re-verifies (`skills/mock-verification`, and `react-webapp`'s
+`references/mock-mode.md` for the mock itself). In docker mode that is all
+inside the container. **In `--host` mode it is your machine**: the run binds a
+localhost port and drives a real browser under bypassPermissions. Nothing is
+installed — `agent-browser` and the browser are resolved off your `PATH`, the
+same way `playwright-cli` already is — but a run that dies badly can leave a
+`vite` process holding its port, and the next run's `--strictPort` will say so
+rather than quietly reading the old server.
+
+That is the one part of the loop with no minimal fixture: a web app small enough
+to be fast still has screens to walk. Budget for it, or tune API-only changes on
+a project with no `web-application` in it.
+
 Relative `<dir>` paths resolve against pnpm's `INIT_CWD`, so pass an absolute
 path from a script or a shell whose cwd you have not changed.
 
@@ -209,7 +225,7 @@ push it to a repo and let the platform's normal flow build/deploy it.
 | Issue `key` lineage constant `"local"`; no spec/design tags | no builds/tags locally | dedupe across replans still works |
 | Design/tasks gates are playground-side UX | production has no server gate on the console's spec paths | advisory only |
 | No status field on an issue file | prod's own `derivedStatus` is read from GitHub issue state, never cached; the playground has no such oracle, so it re-derives "is this done" from whether the App Path looks implemented, every run | none needed — deleting a component's code puts its issue back in the working set |
-| Coding agent runs in a throwaway `docker run` of the runner image, not a pod | no cluster; the image and the session options are production's | mandatory undo snapshot + first-run consent. `--host` opts out of the container entirely and runs bypassPermissions ON THE HOST against the developer's own toolchain **and the developer's own Claude credentials** — weaker parity, so point it at scratch/git-tracked projects |
+| Coding agent runs in a throwaway `docker run` of the runner image, not a pod | no cluster; the image and the session options are production's | mandatory undo snapshot + first-run consent. `--host` opts out of the container entirely and runs bypassPermissions ON THE HOST against the developer's own toolchain **and the developer's own Claude credentials** — weaker parity, so point it at scratch/git-tracked projects. A project with a `web-application` widens that further: verifying one binds a localhost port and drives a real browser on your machine (see below) |
 | No GitHub-shaped steps in the workflow skill (issue files, no branch, no PR) | there is no remote to discover issues from or open a PR against | the deliberate one: the same authored `aep` skill, assembled for `mode: "local"`; only the passages `skills/aep/overlays/local.md` anchors are swapped, everything else is production's text verbatim |
 
 ## Layout

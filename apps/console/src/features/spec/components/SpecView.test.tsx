@@ -26,7 +26,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
 import type { components } from "../../../generated/aep-api";
 import { START_COMMAND } from "@aep/contracts/commands";
@@ -39,7 +39,13 @@ import {
   replaceMessages,
   setPendingSeed,
 } from "../../agent-chat/chatStore";
-import { SpecView } from "./SpecView";
+import { SpecView, designWarningIntro, specTurnGate } from "./SpecView";
+import {
+  clearPlan,
+  planDeclared,
+  planFileWriting,
+  planTurnEnded,
+} from "../../agent-chat/planStore";
 
 type PreflightItem = components["schemas"]["PreflightItem"];
 type BuildInputItem = components["schemas"]["BuildInputItem"];
@@ -146,6 +152,20 @@ mockUseConversationLog.mockReturnValue({
   historyReady: true,
   resync: mockResyncConversation,
 });
+// --- Aiming the agent at a selection (#666): dispatching a turn from the
+// DOCUMENT rather than the chat composer. Stubbed for the same reason as the
+// hooks above — it resolves the project's thread through react-query, and this
+// file renders SpecView without a QueryClientProvider. Its own behavior is
+// covered by useAnchoredTurn.test.tsx; what belongs HERE is that SpecView
+// mounts it for the right (org, project) and hands every markdown file an aim
+// binding, which the test below asserts.
+const mockAnchoredSend = vi.fn().mockResolvedValue(true);
+const mockUseAnchoredTurn = vi.fn();
+mockUseAnchoredTurn.mockReturnValue({ send: mockAnchoredSend, ready: true });
+vi.mock("../../agent-chat/useAnchoredTurn", () => ({
+  useAnchoredTurn: (...args: unknown[]) => mockUseAnchoredTurn(...args),
+}));
+
 vi.mock("../../agent-chat/useConversationLog", () => ({
   useConversationLog: (...args: unknown[]) => mockUseConversationLog(...args),
 }));
@@ -1255,33 +1275,17 @@ describe("SpecView build dependency drawer (#252 Task 10)", () => {
   });
 });
 
-describe("SpecView architecture-tab navigation on design.cell change", () => {
+describe("SpecView follows the write (#576, ADR-0026)", () => {
+  const chatKey = chatKeyFor("acme", "proj1");
+  const CELL = "specs/design/design.cell";
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockFlush.mockResolvedValue(undefined);
+    clearPlan(chatKey);
   });
 
-  // A connected room whose doc carries design.cell. An agent editFile lands as
-  // an in-place Y.Text patch (useYTextString observes it directly); a
-  // restructure's removeFile deletes the Y.Map entry, whose re-render the real
-  // hook receives via useCollabSpec's version bump — simulated here with a
-  // reassignment + rerender.
-  function connectedRoom(withAgent: boolean) {
-    const doc = new Y.Doc();
-    const files = doc.getMap<Y.Text>("files");
-    const ytext = new Y.Text();
-    files.set("specs/design/design.cell", ytext);
-    ytext.insert(0, "title X\ncomponent api service\n");
-    const collab = {
-      ...soloCollab(),
-      status: "connected",
-      peers: withAgent
-        ? [{ clientId: 1, name: "Agent", color: "#000000", kind: "agent" }]
-        : [],
-      getFileText: (path: string) => files.get(path) ?? null,
-    };
-    return { files, ytext, collab };
-  }
+  afterEach(() => clearPlan(chatKey));
 
   // The overview's architecture panel links here with `?view=architecture`. It
   // offers that link BECAUSE it is drawing a diagram, so landing the reader on
@@ -1298,45 +1302,104 @@ describe("SpecView architecture-tab navigation on design.cell change", () => {
     expect(screen.queryByTestId("cell-diagram-panel")).not.toBeInTheDocument();
   });
 
-  it("navigates to the Architecture tab when the agent patches design.cell in place", () => {
-    const room = connectedRoom(true);
-    mockCollab = room.collab;
-
+  it("selects each artifact as its write starts — the cell opens as Architecture", () => {
     render(<SpecView projectName="proj1" />);
     expect(screen.queryByTestId("cell-diagram-panel")).not.toBeInTheDocument();
 
-    act(() => {
-      room.ytext.insert(room.ytext.length, "south email-provider service\n");
-    });
+    act(() => planFileWriting(chatKey, "t1", CELL));
 
     expect(screen.getByTestId("cell-diagram-panel")).toBeInTheDocument();
   });
 
-  it("navigates on a restructure (removeFile deletes the doc entry)", () => {
-    const room = connectedRoom(true);
-    mockCollab = room.collab;
+  it("the first manual selection ends following for the rest of the turn", () => {
+    render(<SpecView projectName="proj1" />);
+    act(() => planFileWriting(chatKey, "t1", CELL));
+    expect(screen.getByTestId("cell-diagram-panel")).toBeInTheDocument();
 
+    // The reader clicks a document — a declaration of reading intent.
+    fireEvent.click(screen.getByText("overview"));
+    expect(screen.queryByTestId("cell-diagram-panel")).not.toBeInTheDocument();
+
+    // The turn moves on to other writes and back to the cell; a still-following
+    // editor would jump to Architecture here. It must not.
+    act(() => planFileWriting(chatKey, "t1", "specs/design/design.md"));
+    act(() => planFileWriting(chatKey, "t1", CELL));
+    expect(screen.queryByTestId("cell-diagram-panel")).not.toBeInTheDocument();
+  });
+
+  // The default selection is reactive, and it used to key on an agent being in
+  // the room: a reader on the PRD with no click recorded asked a question, the
+  // pane became Architecture for the length of the reply, and came back as a
+  // fresh editor at the top. Reported as "the PRD scrolls when the agent says
+  // something" (#666). The default follows the FLOW: design, and only design.
+  it("keeps the default file when an agent joins for a turn that is not a design turn", () => {
+    mockCollab = { ...soloCollab(), status: "connected", docPaths: [CELL] };
     const { rerender } = render(<SpecView projectName="proj1" />);
     expect(screen.queryByTestId("cell-diagram-panel")).not.toBeInTheDocument();
 
-    room.files.delete("specs/design/design.cell");
-    mockCollab = { ...room.collab, version: 1 };
+    // A chat turn: the agent joins, the flow is not design.
+    mockSpecFlow = "";
+    mockCollab = {
+      ...mockCollab,
+      peers: [{ clientId: 1, name: "Agent", color: "#000", kind: "agent" }],
+    };
     rerender(<SpecView projectName="proj1" />);
+
+    expect(screen.queryByTestId("cell-diagram-panel")).not.toBeInTheDocument();
+  });
+
+  it("defaults to Architecture while a design turn is in the room — a reload mid-turn", () => {
+    // The rail has to list design.cell for Architecture to be a place to go.
+    mockCollab = {
+      ...soloCollab(),
+      status: "connected",
+      docPaths: [CELL],
+      peers: [{ clientId: 1, name: "Agent", color: "#000", kind: "agent" }],
+    };
+    mockSpecFlow = "design";
+
+    render(<SpecView projectName="proj1" />);
 
     expect(screen.getByTestId("cell-diagram-panel")).toBeInTheDocument();
   });
 
-  it("does not navigate when no agent peer is in the room", () => {
-    const room = connectedRoom(false);
-    mockCollab = room.collab;
-
+  // The window ADR-0026 exists to serve: a write is announced when its tool
+  // input resolves a path, but the body reaches the room later — some bodies
+  // stream in as they are typed, a component design.json arrives whole. Without
+  // this the pane met that moment with "Select a file to view its content."
+  it("says the document is on its way while the room has not delivered it", () => {
     render(<SpecView projectName="proj1" />);
-
     act(() => {
-      room.ytext.insert(room.ytext.length, "south email-provider service\n");
+      planDeclared(chatKey, "t1", ["specs/design/components/portal/design.json"]);
+      planFileWriting(chatKey, "t1", "specs/design/components/portal/design.json");
     });
+    expect(screen.getByText(/Waiting for the agent to write/)).toBeInTheDocument();
+    expect(
+      screen.queryByText("Select a file to view its content."),
+    ).not.toBeInTheDocument();
+  });
 
+  // Once the turn is over, a file that never arrived is a real absence — the
+  // waiting message would claim work that is not happening.
+  it("stops claiming a document is coming once the turn has ended", () => {
+    render(<SpecView projectName="proj1" />);
+    act(() => {
+      planDeclared(chatKey, "t1", ["specs/design/components/portal/design.json"]);
+      planFileWriting(chatKey, "t1", "specs/design/components/portal/design.json");
+      planTurnEnded(chatKey, "t1", "failed");
+    });
+    expect(screen.queryByText(/Waiting for the agent to write/)).not.toBeInTheDocument();
+  });
+
+  it("a new turn resets to following", () => {
+    render(<SpecView projectName="proj1" />);
+    act(() => planFileWriting(chatKey, "t1", CELL));
+    fireEvent.click(screen.getByText("overview"));
     expect(screen.queryByTestId("cell-diagram-panel")).not.toBeInTheDocument();
+
+    act(() => planFileWriting(chatKey, "t2", CELL));
+
+    expect(screen.getByTestId("cell-diagram-panel")).toBeInTheDocument();
   });
 });
 
@@ -1472,41 +1535,35 @@ describe("SpecView while the agent is waiting on answers", () => {
     });
   });
 
-  it("offers the launchers and Generate design once the questions are answered", () => {
+  // The header carries ONE launcher (#666): "add a feature" moved onto the
+  // document, beside the story list it changes, where every other command
+  // already was. A second copy in the header was two buttons for one act.
+  it("offers Generate design once the questions are answered, and no + Feature", () => {
     render(<SpecView projectName="proj1" />);
 
-    expect(
-      screen.getByRole("button", { name: "+ Feature" }),
-    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "+ Feature" })).toBeNull();
     expect(
       screen.getByRole("button", { name: /Generate design/ }),
     ).toBeEnabled();
   });
 
-  it("stands them down while a question form is open", () => {
+  it("stands Generate design down while a question form is open", () => {
     askQuestion();
     render(<SpecView projectName="proj1" />);
 
     expect(screen.getByTestId("spec-question-form")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "+ Feature" })).toBeNull();
     expect(
       screen.getByRole("button", { name: /Generate design/ }),
     ).toBeDisabled();
   });
 
-  // A seeded command does NOT go through the composer: `AgentChatPanel` sends
-  // a pending seed as soon as the conversation is ready, without the
-  // `inputDisabled` guard that stops a user typing mid-turn. So an ungated
-  // launcher delivers `/feature` into a running turn — the thing the composer
-  // beside it refuses.
-  it("stands + Feature down while an agent holds the turn", () => {
+  it("stands Generate design down while an agent holds the turn", () => {
     mockCollab = {
       ...soloCollab(),
       peers: [{ clientId: 1, name: "Agent", color: "#fff", kind: "agent" }],
     };
     render(<SpecView projectName="proj1" />);
 
-    expect(screen.getByRole("button", { name: "+ Feature" })).toBeDisabled();
     expect(
       screen.getByRole("button", { name: /Generate design/ }),
     ).toBeDisabled();
@@ -1573,8 +1630,8 @@ describe("SpecView warns before designing against unsettled requirements", () =>
     render(<SpecView projectName="proj1" />);
     clickGenerate();
 
-    expect(screen.getByText("1 open question")).toBeInTheDocument();
-    expect(screen.getByText("1 assumption to challenge")).toBeInTheDocument();
+    expect(screen.getByText("1 question only you can answer")).toBeInTheDocument();
+    expect(screen.getByText("1 decision marked assumed")).toBeInTheDocument();
     expect(mockNavigate).not.toHaveBeenCalled();
   });
 
@@ -1596,7 +1653,7 @@ describe("SpecView warns before designing against unsettled requirements", () =>
     seed(UNSETTLED);
     render(<SpecView projectName="proj1" />);
     clickGenerate();
-    fireEvent.click(screen.getByRole("button", { name: "Resolve issues" }));
+    fireEvent.click(screen.getByRole("button", { name: "Review them first" }));
 
     await waitFor(() =>
       expect(
@@ -1654,6 +1711,52 @@ describe("SpecView keeps the chat log fed without the chat panel (#606)", () => 
     mockCollab = { ...soloCollab(), status: "connected", peers: [] };
     render(<SpecView projectName="proj1" />);
     expect(mockResyncConversation).not.toHaveBeenCalled();
+  });
+});
+
+// The warning's paragraph follows what is actually unsettled. Seen on the local
+// setup: a project with two assumed decisions and no open questions was told the
+// agent had "left some questions for you".
+// One gate for the lenses and the aim box, in significance order — and it
+// covers the dispatch window `agentBusy` cannot see (CodeRabbit on #670).
+describe("specTurnGate", () => {
+  it("names the agent first, the in-flight dispatch second, the questions third", () => {
+    expect(
+      specTurnGate({ agentBusy: true, localTurnActivity: true, awaitingAnswers: true }),
+    ).toMatch(/agent is still working/);
+    expect(
+      specTurnGate({ agentBusy: false, localTurnActivity: true, awaitingAnswers: true }),
+    ).toMatch(/on its way/);
+    expect(
+      specTurnGate({ agentBusy: false, localTurnActivity: false, awaitingAnswers: true }),
+    ).toMatch(/waiting on your answers/);
+    expect(
+      specTurnGate({ agentBusy: false, localTurnActivity: false, awaitingAnswers: false }),
+    ).toBe("");
+  });
+});
+
+describe("designWarningIntro", () => {
+  it("does not mention questions when there are none", () => {
+    const intro = designWarningIntro([{ key: "assumptions" }]);
+    expect(intro).toContain("marked assumed");
+    expect(intro).not.toMatch(/question/);
+  });
+
+  it("does not mention assumed decisions when there are none", () => {
+    const intro = designWarningIntro([{ key: "open-questions" }]);
+    expect(intro).toContain("only you can answer");
+    expect(intro).not.toMatch(/assumed/);
+  });
+
+  it("names both when both stand", () => {
+    const intro = designWarningIntro([{ key: "open-questions" }, { key: "assumptions" }]);
+    expect(intro).toContain("marked assumed");
+    expect(intro).toContain("only you can answer");
+  });
+
+  it("always says what being wrong costs", () => {
+    expect(designWarningIntro([{ key: "assumptions" }])).toContain("generated again");
   });
 });
 

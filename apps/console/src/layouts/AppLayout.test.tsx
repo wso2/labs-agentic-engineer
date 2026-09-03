@@ -24,7 +24,8 @@
 // next moment on.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render as rtlRender, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render as rtlRender, screen, act } from "@testing-library/react";
+import { chatKeyFor, requestChatOpen } from "../features/agent-chat/chatStore";
 import { OxygenTheme, OxygenUIThemeProvider } from "@wso2/oxygen-ui";
 
 const PROJECT = "expense-approval";
@@ -91,6 +92,9 @@ beforeEach(() => {
   mockPathname = `/projects/${PROJECT}`;
   mockSearch = {};
   mockParams = { projectName: PROJECT };
+  // The panel's open state persists (#666); without this a test that opened
+  // it would leak an open panel into every test after it.
+  localStorage.removeItem("aep.chat.panelOpen");
 });
 afterEach(cleanup);
 
@@ -182,6 +186,60 @@ describe("AppLayout — landing from project creation", () => {
 
     expect(screen.queryByTestId("agent-chat-panel")).not.toBeInTheDocument();
     expect(mockNavigate).not.toHaveBeenCalled();
+  });
+});
+
+// The panel's open state survives a reload (#666): a reader who works with the
+// chat beside the spec should not have to reopen it every time the page comes
+// back. localStorage, per browser — a convenience, never state.
+describe("AppLayout — the panel remembers whether it was open", () => {
+  it("comes back open after a reload when it was open", () => {
+    mockSearch = { chat: "open" };
+    const first = render();
+    expect(screen.getByTestId("agent-chat-panel")).toBeInTheDocument();
+    first.unmount();
+
+    // The reload: a fresh mount with no signal.
+    mockSearch = {};
+    render();
+    expect(screen.getByTestId("agent-chat-panel")).toBeInTheDocument();
+  });
+
+  it("comes back closed after the user closed it", () => {
+    mockSearch = { chat: "open" };
+    const first = render();
+    expect(screen.getByTestId("agent-chat-panel")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Toggle agent chat" }));
+    // The Collapse unmounts the panel when its exit transition ends, which
+    // jsdom never runs — so the closed state is asserted on what persisted,
+    // and the reload below is what proves it was honoured.
+    expect(localStorage.getItem("aep.chat.panelOpen")).toBe("false");
+    first.unmount();
+
+    mockSearch = {};
+    render();
+    expect(screen.queryByTestId("agent-chat-panel")).not.toBeInTheDocument();
+  });
+});
+
+// A Discuss request count lives in the store for the life of the page, so the
+// layout reacts only to INCREMENTS: leaving a project and coming back must not
+// reopen the panel off a request from minutes ago (CodeRabbit on #670).
+describe("AppLayout — a stale chat-open request does not replay", () => {
+  // The session mock's org — the layout keys the chat by `orgHandle ?? "default"`.
+  const CHAT_KEY = chatKeyFor("acme", PROJECT);
+
+  it("ignores a count that predates the mount", () => {
+    requestChatOpen(CHAT_KEY);
+    render();
+    expect(screen.queryByTestId("agent-chat-panel")).not.toBeInTheDocument();
+  });
+
+  it("opens on a request made after mount", () => {
+    render();
+    expect(screen.queryByTestId("agent-chat-panel")).not.toBeInTheDocument();
+    act(() => requestChatOpen(CHAT_KEY));
+    expect(screen.getByTestId("agent-chat-panel")).toBeInTheDocument();
   });
 });
 

@@ -34,21 +34,28 @@
 //
 // # dev and task: the cycle loop
 //
-//	WAIT ──► dispatch the coding agent ──► PR opened ──► auto-merge ──► builds + deploy
-//	 ▲        (prompt = milestone reference only)                            │
-//	 │  all green, open issues remain ─────────────► next cycle (re-WAIT)    │
-//	 │  red after the one automatic re-trigger ─► FIX issue ─► next cycle    │
-//	 │  merge conflict ─────────────────────────► CONFLICT issue ─► next     │
+//	WAIT ──► dispatch the coding agent ──► PR opened ──► auto-merge ──► builds
+//	 ▲        (prompt = milestone reference only)                          │
+//	 │                                        RECONCILE the version ◄──────┘
+//	 │                                        (on EITHER build verdict)    │
+//	 │  all green, open issues remain ─────────────► next cycle (re-WAIT)  │
+//	 │  red after the one automatic re-trigger ─► FIX issue ─► next cycle  │
+//	 │  merge conflict ─────────────────────────► CONFLICT issue ─► next   │
 //	 └─ working set empty ──► the run's own BOOKEND ──► settle
 //	    budgets exhausted / no progress / cancel ─► failed | blocked | cancelled
+//	    working set empty but the version is not serving ─► version-incomplete
 //
 // They are the SAME loop with different bookends — one `bookends` value, never
 // two cycle loops that drift apart:
 //
 //	dev   work:    DevWork  — armed, kind ∈ development/bug/conflict
 //	      before:  provisionGates → planTasks (it owns the version it is filling)
-//	      onEmpty: mint the version's validation task → settle succeeded, and
-//	               LEAVE THE MILESTONE OPEN: the version is deployed and unjudged
+//	      onEmpty: ASSERT the version is serving, mint its validation task →
+//	               settle succeeded, and LEAVE THE MILESTONE OPEN: the version is
+//	               deployed and unjudged. A version that is not serving settles
+//	               FAILED `version-incomplete` (ADR-0026) — the read is what makes
+//	               "delivered" a claim about the cluster rather than about the
+//	               sequence of cycles that led here
 //	task  work:    TaskWork — armed, kind ∈ bug/conflict, NEVER development
 //	      before:  nothing (the milestone was filled by the build that shipped it)
 //	      onEmpty: reopen the validation task IFF it worked a `src/validation`
@@ -149,14 +156,15 @@
 //
 // Only issues OPEN at cancel time are marked, which is the whole reason the marker
 // exists: work a cycle genuinely finished stays closed and unmarked, so the way
-// back cannot resurrect it. That way back is a rebuild, decided by the SPEC-SAVE
-// STATUS alone — a changed spec cuts a new tag and plans it fresh, an unchanged one
-// reuses the same milestone, reopens exactly the marked set, clears the label and
-// starts a run with `Rebuild` set. Such a run mints its gates and SKIPS the
-// planning turn (see RunInput.Rebuild): plan dedupe is the title slug against the
-// milestone's issues in ANY state, so a re-plan over a cancel that closed
-// everything would mint nothing and the loop would settle an unbuilt version as
-// delivered.
+// back cannot resurrect it. That way back is a rebuild: a changed spec cuts a new
+// tag and plans it fresh, an unchanged one reuses the same milestone, reopens
+// exactly the marked set and clears the label. Whether that run also SKIPS the
+// planning turn is a second question, asked of the MILESTONE rather than of the
+// spec status — it skips only a milestone that holds planned work (see
+// RunInput.Rebuild). Both readings are load-bearing: a re-plan over a filled
+// milestone mints nothing, because plan dedupe is the title slug against its
+// issues in ANY state, while a skip over an EMPTY one hands the loop an empty
+// working set. Either way the loop would settle an unbuilt version as delivered.
 //
 // A dev run therefore **settles at deployed-green having minted the validation
 // task, and never validates**. Its verdict column stays EMPTY, which is the
@@ -195,7 +203,15 @@
 // The supervisor DECIDES; it detects nothing. Every fact about the world
 // arrives from `delivery/eventcore` as a run signal, and the supervisor
 // re-derives that fact from GROUND TRUTH before acting on it — a signal is a
-// wake-up, never evidence. That is what makes a lost delivery cost latency
+// wake-up, never evidence.
+//
+// The DEPLOY is where that rule earns the most. What is serving is derived from
+// the cluster and from the builds, never accumulated in workflow state: a
+// component's desired release is its newest succeeded build's, its actual
+// release is what its binding pins, and the stage writes the difference
+// (ADR-0026). State carried across cycles instead would fix nothing that
+// matters — a rebuild, a task run or a crash resume starts empty — which is why
+// the version state is READ twice per cycle rather than remembered once. That is what makes a lost delivery cost latency
 // instead of correctness, and it is why the wait state can be unbounded: the
 // cycle-boundary poll and the reconcile sweep both re-read the milestone.
 //
@@ -214,8 +230,9 @@
 //
 //	activities.go            the single Activities struct — ONE RegisterActivity
 //	stage_agent.go           append cycle · dispatch · await landing · re-dispatch
-//	stage_build.go           await the merge's fan-out
-//	stage_deploy.go          plan waves · promote · await Ready · converge
+//	stage_build.go           await the merge's fan-out — the CYCLE's verdict only
+//	stage_deploy.go          reconcile the version: classify · plan · promote each
+//	                         component at its own commit · await Ready · converge
 //	stage_boundary.go        the shared loop · poll · dispatchable? · budgets · park
 //	workflow_dev.go          gates + plan (skipped on a rebuild) + boundary loop +
 //	                         mint the validation task

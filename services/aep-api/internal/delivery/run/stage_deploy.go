@@ -27,10 +27,27 @@ import (
 	"github.com/wso2/aep/aep-api/internal/delivery"
 )
 
-// The DEPLOY STAGE: plan the waves, promote them in order, wait for each to
-// serve, and converge the wiring that only exists once everything is up.
+// The DEPLOY STAGE: reconcile the VERSION. Plan what is behind and may be
+// promoted, promote it wave by wave, wait for each wave to serve, and converge
+// the wiring that only exists once everything is up.
 
-// deployCycle promotes the cycle's components and waits for them to serve.
+// reconcileVersion moves the version towards what has been built (ADR-0026).
+//
+// It takes the version's STATE — every component in the design, classified as
+// serving, behind, converging, held or unbuilt — and writes only the behind ones
+// whose hard providers are met. What it replaced promoted the components the
+// cycle's merge happened to touch, which made "what is serving" a function of
+// which files a fix edited: a component whose build went green in a cycle a
+// sibling failed was promoted by nothing, ever, because its files had stopped
+// changing. One such component shipped as a delivered version with no
+// ReleaseBinding at all.
+//
+// It therefore runs on a RED cycle as well as a green one, which is the
+// deliberate half of the change. A red build has already minted its fix issue;
+// its green siblings are still built, and holding their release hostage to a
+// failure in another component is what created the stranding. The promotable
+// rule is what makes that safe: the only components written are ones whose
+// providers are serving or promoted ahead of them in the same pass.
 //
 // WAVE BY WAVE, then one CONVERGE — because the wiring between components splits
 // into two kinds that want opposite treatment (spec.HardConfigEdges).
@@ -52,26 +69,22 @@ import (
 // not a third promote: nothing is re-cut, so it cannot fail on a release that is
 // already there, and no component's live release can move under a pass whose job
 // is only to finish the wiring.
-func (l *loop) deployCycle(ctx workflow.Context, components []string) (cycleResult, error) {
-	if len(components) == 0 {
-		// A merge that touched no component has nothing to promote and nothing to
-		// wait for.
+//
+// Re-running it against a fully serving version writes NOTHING — every component
+// is serving, so nothing is behind — which is what lets it run every cycle. That
+// idempotence is not new: it is the property ADR-0019 already engineered into the
+// verb, where EnsureRelease is idempotent by read-back and the binding write is
+// an upsert.
+func (l *loop) reconcileVersion(ctx workflow.Context, version delivery.VersionState) (cycleResult, error) {
+	if !reconcileWork(version) {
+		// Nothing behind and nothing converging: the version already serves what
+		// has been built. One read, zero writes, no deadline started — and no
+		// deploy gate consulted, because a pass that writes nothing must not park
+		// on a credential it will not use.
 		return cycleGreen, nil
 	}
-	// THE DEPLOY GATE (ADR-0023). Before anything is ordered or promoted: every
-	// external dependency configured, every platform resource provisioned.
-	//
-	// It sits here, and not at settle, because ADR-0017 put the deploy between
-	// builds-green and validation so validation asserts against a version that is
-	// genuinely serving. A gate after validation would be gating the wrong thing.
-	// It sits after the empty-components return above, so a converge/validation
-	// cycle — which promotes nothing — is never parked on a credential it will
-	// not use.
-	if res, err := l.awaitDeployable(ctx, components); err != nil || res != cycleGreen {
-		return res, err
-	}
 
-	waves, err := l.planDeployWaves(ctx, components)
+	plan, err := l.planDeployWaves(ctx, version)
 	if err != nil {
 		// An unsatisfiable ORDER is a deployment failure like any other, and has to
 		// arrive as one. Returned raw it would fail the workflow outright: the
@@ -84,32 +97,146 @@ func (l *loop) deployCycle(ctx workflow.Context, components []string) (cycleResu
 		if !isPermanentDeploy(err) {
 			return cycleNone, err
 		}
-		l.deployFailed = components
-		l.deployFailures = reasonForAll(components, err)
+		// Attributed to what is BEHIND, and to every non-serving component when
+		// nothing is behind. The second half is not tidiness: a pass is entered
+		// when anything is behind OR converging, so a version whose components are
+		// all converging can reach a permanent plan failure with an empty behind
+		// set — and a failure attributed to nobody mints no issue, which settles
+		// the run on the deploy budget with no named component and nothing to work.
+		// That is exactly the wedge the paragraph above describes. An unsatisfiable
+		// order is nobody's individual fault either way (see reasonForAll).
+		failed := behindNames(version)
+		if len(failed) == 0 {
+			failed = notServingNames(version)
+		}
+		l.failDeploy(failed, version, err)
 		return cycleDeployFailed, nil
+	}
+	if len(plan.Held) > 0 {
+		// Reported and then left alone. A held component is not a failure and
+		// nothing is filed against it — the provider it waits on has its own work
+		// in the milestone, and the first pass that finds that provider serving
+		// promotes this one.
+		workflow.GetLogger(ctx).Info("some components are held behind a provider that is not serving",
+			"held", heldNames(plan))
+	}
+	if !plan.Writes() && len(plan.Waited) == 0 {
+		return cycleGreen, nil
+	}
+
+	// THE DEPLOY GATE (ADR-0023). Before anything is WRITTEN: every external
+	// dependency configured, every platform resource provisioned.
+	//
+	// It sits after the plan and before the promote — the plan only reads the
+	// design — so the run parks on a credential only when it is about to publish
+	// something that needs one, and the failure it can produce is attributed to
+	// the components this pass would have promoted rather than to the whole
+	// design.
+	//
+	// It sits inside the stage rather than at settle because ADR-0017 put the
+	// deploy between builds-green and validation, so validation asserts against a
+	// version that is genuinely serving. A gate after validation would be gating
+	// the wrong thing.
+	if plan.Writes() {
+		promoting := delivery.TargetNames(flattenWaves(plan.Waves))
+		if res, err := l.awaitDeployable(ctx, promoting, version); err != nil || res != cycleGreen {
+			return res, err
+		}
 	}
 
 	// ONE deadline for the whole stage rather than one per wave. What a version
 	// is owed is a time to be serving; a per-wave budget would silently multiply
 	// that allowance by however many levels the design happens to have.
+	//
+	// It starts HERE — after the plan, at the first write — so a pass that only
+	// waits on a converge somebody else started is still bounded, and a pass with
+	// nothing behind (or with everything held) starts no timer at all.
 	deadlineCtx, stopDeadline := workflow.WithCancel(ctx)
 	defer stopDeadline()
 	deadline := workflow.NewTimer(deadlineCtx, deployReadyTimeout)
 
-	for _, wave := range waves {
-		if err := l.deploy(ctx, wave, l.mergeSHA); err != nil {
+	for _, wave := range plan.Waves {
+		if err := l.promote(ctx, wave); err != nil {
 			return cycleNone, err
 		}
-		res, err := l.awaitDeployments(ctx, wave, deadline)
+		res, err := l.awaitDeployments(ctx, delivery.TargetNames(wave), version, deadline)
 		if err != nil || res != cycleGreen {
 			return res, err
 		}
 	}
+	// Everything this pass wrote, plus what was already converging: a component
+	// promoted by an EARLIER pass may still be rolling out, and the version does
+	// not serve until it does.
+	if res, err := l.awaitDeployments(ctx, plan.Waited, version, deadline); err != nil || res != cycleGreen {
+		return res, err
+	}
 
-	if err := l.deploy(ctx, components, convergeNoPromotion); err != nil {
+	if !plan.Writes() {
+		// Nothing was promoted, so there is no new address for a soft fact to
+		// carry and nothing to converge. It also matters that this returns rather
+		// than writing: the deploy gate is only consulted when the pass promotes,
+		// and a converge is a write like any other — so a pass that skipped the
+		// gate must not go on to write a binding.
+		return cycleGreen, nil
+	}
+	converge := convergeSet(version, plan.Waited)
+	if len(converge) == 0 {
+		return cycleGreen, nil
+	}
+	if err := l.promote(ctx, delivery.ConvergeTargets(converge)); err != nil {
 		return cycleNone, err
 	}
-	return l.awaitDeployments(ctx, components, deadline)
+	return l.awaitDeployments(ctx, converge, version, deadline)
+}
+
+// behindNames is every component the version state says is behind — the first
+// choice of attribution for a failure of the PLAN, which is nobody's individual
+// fault (see reasonForAll).
+func behindNames(v delivery.VersionState) []string {
+	var out []string
+	for _, c := range v.Components {
+		if c.State == delivery.ComponentStateBehind {
+			out = append(out, c.Component)
+		}
+	}
+	return out
+}
+
+// notServingNames is every component that is not serving — the attribution of
+// last resort, so a stage-wide failure always names somebody and therefore
+// always files work. A failure nobody is filed against is a run that settles on
+// the deploy budget with an empty milestone behind it.
+func notServingNames(v delivery.VersionState) []string {
+	off := v.NotServing()
+	out := make([]string, 0, len(off))
+	for _, c := range off {
+		out = append(out, c.Component)
+	}
+	return out
+}
+
+// flattenWaves is every target the plan will promote, in wave order.
+func flattenWaves(waves [][]delivery.DeployTarget) []delivery.DeployTarget {
+	var out []delivery.DeployTarget
+	for _, wave := range waves {
+		out = append(out, wave...)
+	}
+	return out
+}
+
+// failDeploy records a deploy failure for the boundary to file, pairing each
+// component with the commit its release was being cut from.
+//
+// The commit is per component because the dedupe key is (component, commit): a
+// redeploy of the same commit that fails the same way finds the open issue and
+// files nothing, while the next version's failure is genuinely new work. A pass
+// can promote two components at two different commits, so one commit for the
+// whole list would key at least one of them wrongly.
+func (l *loop) failDeploy(components []string, version delivery.VersionState, cause error) {
+	l.deployFailed = targetsFor(components, version)
+	if cause != nil {
+		l.deployFailures = reasonForAll(components, cause)
+	}
 }
 
 // awaitDeployable holds the deploy stage until the project may deploy, and is
@@ -150,10 +277,13 @@ func (l *loop) deployCycle(ctx workflow.Context, components []string) (cycleResu
 //
 // Returns cycleGreen when the gate opens, cycleCancelled if a human gave up,
 // and cycleDeployFailed when the provisioning budget runs out — in which case
-// components are the ones the failure is filed against, since a resource that
-// will not provision is a stage-wide failure of the whole cycle rather than any
-// one component's fault (see reasonForAll).
-func (l *loop) awaitDeployable(ctx workflow.Context, components []string) (cycleResult, error) {
+// promoting names the components the failure is filed against, since a resource
+// that will not provision is a stage-wide failure of the whole pass rather than
+// any one component's fault (see reasonForAll). Components this pass was NOT
+// going to write are absent from that list on purpose: a held component gets no
+// deploy-fix issue for a credential it was never waiting on.
+func (l *loop) awaitDeployable(ctx workflow.Context, promoting []string,
+	version delivery.VersionState) (cycleResult, error) {
 	parked := false
 	// leaveValuesPark undoes setWaitingOnValues, and every exit from the values
 	// park goes through it — not only the one that finds the gate open. The park
@@ -218,11 +348,11 @@ func (l *loop) awaitDeployable(ctx workflow.Context, components []string) (cycle
 			}
 			if budget.expired {
 				// Out of time. Reported the way a binding that never served is:
-				// the cycle's components could not be delivered, and each fix
-				// issue carries the same stage-wide cause, which names the
-				// resources rather than the component it is filed against.
-				l.deployFailed = components
-				l.deployFailures = reasonForAll(components, errProvisioningTimedOut(verdict.Provisioning))
+				// the components this pass would have promoted could not be
+				// delivered, and each fix issue carries the same stage-wide
+				// cause, which names the resources rather than the component it
+				// is filed against.
+				l.failDeploy(promoting, version, errProvisioningTimedOut(verdict.Provisioning))
 				return cycleDeployFailed, nil
 			}
 			workflow.GetLogger(ctx).Info("deploy gate: platform resources still provisioning",
@@ -324,13 +454,6 @@ func (l *loop) setWaitingOnValues(ctx workflow.Context, deps []string) error {
 	return nil
 }
 
-// convergeNoPromotion is the commit a converge deploys at: none. The deployer
-// reads an empty commit as "re-assert the wiring at whatever release is already
-// serving", so this is the difference between finishing a component's wiring and
-// promoting it again — named rather than spelled `""` at the call site, because
-// which of those two a pass does is the whole point of the pass.
-const convergeNoPromotion = ""
-
 // awaitDeployments waits for the promoted components to reach a verdict.
 //
 // Unlike awaitBuilds this stage HAS a deadline, and the difference is not
@@ -346,7 +469,11 @@ const convergeNoPromotion = ""
 //
 // The deadline is the STAGE's and is passed in, so a run cannot buy itself more
 // time by having more waves to wait through.
-func (l *loop) awaitDeployments(ctx workflow.Context, components []string, deadline workflow.Future) (cycleResult, error) {
+func (l *loop) awaitDeployments(ctx workflow.Context, components []string,
+	version delivery.VersionState, deadline workflow.Future) (cycleResult, error) {
+	if len(components) == 0 {
+		return cycleGreen, nil
+	}
 	expired := false
 
 	for {
@@ -355,8 +482,8 @@ func (l *loop) awaitDeployments(ctx workflow.Context, components []string, deadl
 			return cycleNone, err
 		}
 		if len(state.Failed) > 0 {
+			l.failDeploy(state.Failed, version, nil)
 			l.deployFailures = state.Reasons
-			l.deployFailed = state.Failed
 			return cycleDeployFailed, nil
 		}
 		if state.Green() {
@@ -364,10 +491,10 @@ func (l *loop) awaitDeployments(ctx workflow.Context, components []string, deadl
 		}
 		if expired {
 			// Out of time. Reported as a failure of the components that have not
-			// come up — and ONLY those: a cycle can expire with some components
+			// come up — and ONLY those: a pass can expire with some components
 			// serving and others still rolling out, and filing fix work against
 			// one that deployed fine would send an agent after nothing.
-			l.deployFailed = state.Pending
+			l.failDeploy(state.Pending, version, nil)
 			return cycleDeployFailed, nil
 		}
 
@@ -381,28 +508,28 @@ func (l *loop) awaitDeployments(ctx workflow.Context, components []string, deadl
 
 // ---- deploy activity calls -------------------------------------------------
 
-// deploy promotes at commitSHA, or converges when it is empty.
-func (l *loop) deploy(ctx workflow.Context, components []string, commitSHA string) error {
-	return workflow.ExecuteActivity(activityCtx(ctx), (*Activities).DeployCycle, DeployCycleInput{
-		OrgID: l.in.OrgID, ProjectID: l.in.ProjectID, Components: components, CommitSHA: commitSHA,
+// promote writes one wave — or the converge, whose targets carry no commit.
+func (l *loop) promote(ctx workflow.Context, targets []delivery.DeployTarget) error {
+	return workflow.ExecuteActivity(activityCtx(ctx), (*Activities).PromoteWave, PromoteInput{
+		OrgID: l.in.OrgID, ProjectID: l.in.ProjectID, Targets: targets,
 	}).Get(ctx, nil)
 }
 
-// planDeployWaves asks for the order. No commit rides the request: the order is
-// a property of the DESIGN, not of the release being promoted, and sending one
-// would imply the plan changes with the commit.
-func (l *loop) planDeployWaves(ctx workflow.Context, components []string) ([][]string, error) {
-	var waves [][]string
-	err := workflow.ExecuteActivity(activityCtx(ctx), (*Activities).PlanDeployWaves, DeployCycleInput{
-		OrgID: l.in.OrgID, ProjectID: l.in.ProjectID, Components: components,
-	}).Get(ctx, &waves)
-	return waves, err
+// planDeployWaves asks what this pass should do. The VERSION STATE rides the
+// request and no commit does: the order is a property of the design and of what
+// is already serving, not of any one release being promoted.
+func (l *loop) planDeployWaves(ctx workflow.Context, version delivery.VersionState) (delivery.DeployPlan, error) {
+	var plan delivery.DeployPlan
+	err := workflow.ExecuteActivity(activityCtx(ctx), (*Activities).PlanDeployWaves, PlanDeployInput{
+		OrgID: l.in.OrgID, ProjectID: l.in.ProjectID, Version: version,
+	}).Get(ctx, &plan)
+	return plan, err
 }
 
 func (l *loop) pollDeployments(ctx workflow.Context, components []string) (CycleDeployState, error) {
 	var state CycleDeployState
-	err := workflow.ExecuteActivity(activityCtx(ctx), (*Activities).PollCycleDeployments, DeployCycleInput{
-		OrgID: l.in.OrgID, ProjectID: l.in.ProjectID, Components: components, CommitSHA: l.mergeSHA,
+	err := workflow.ExecuteActivity(activityCtx(ctx), (*Activities).PollDeployments, WaitSetInput{
+		OrgID: l.in.OrgID, ProjectID: l.in.ProjectID, Components: components,
 	}).Get(ctx, &state)
 	return state, err
 }
@@ -423,7 +550,7 @@ func isPermanentDeploy(err error) bool {
 //
 // An unsatisfiable order is nobody's individual fault — the components are stuck
 // on each other — so each fix issue carries the same cause, which names the whole
-// cycle rather than the component it happens to be filed against.
+// pass rather than the component it happens to be filed against.
 func reasonForAll(components []string, err error) map[string]string {
 	out := make(map[string]string, len(components))
 	for _, name := range components {

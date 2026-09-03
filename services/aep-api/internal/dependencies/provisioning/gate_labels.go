@@ -75,6 +75,73 @@ func gateDepLabel(depName string) string {
 	return gateDepLabelPrefix + slug
 }
 
+// gateVersionLabelPrefix records WHICH VERSION a gate belongs to.
+//
+// It is the second structured fact a gate carries, added for the same reason as
+// the first: the platform needs it, and a body is not a place to keep something
+// the platform reads. What needs it is the mint's own dedupe.
+//
+// A gate is deduped so a re-run does not file it twice, and the identity has to
+// be (version, dependency) rather than just (dependency) — every version
+// re-derives its own gates, so `orders-db` legitimately has one gate per version
+// across a project's life. The DedupeKey has always said so
+// (`gate:<project>:<tag>:<dep>`), but the STATE narrowing did not: the Go-side
+// lookup and the host's key resolution both consider only OPEN issues. That is
+// invisible until something closes a gate and then runs the mint again — which
+// is exactly what a retried ProvisionGates does, because it settles the gates of
+// already-ready dependencies itself. The result was a milestone filling with
+// duplicate gates, three per attempt.
+//
+// Widening the lookup to every state is only safe with this label, and that is
+// why it exists. Without it, "a gate for `orders-db` in any state" matches the
+// CLOSED gate a previous version left behind, and v2's build would decline to
+// mint its own gate at all.
+//
+// It is only for the gates that ARE per-version — a dependency's provision gate
+// and the roles gate. The visibility and publish gates are keyed per project
+// (see their DedupeKeys) and carry no version label, because for them one gate
+// across every version is the correct identity.
+const gateVersionLabelPrefix = "aep:gate-version/"
+
+// gateVersionLabel is the version label for a gate, or "" when the tag
+// slugifies to nothing — so a caller can append it unconditionally, exactly as
+// gateDepLabel allows.
+func gateVersionLabel(tag string) string {
+	slug := depSlug(tag)
+	if slug == "" {
+		return ""
+	}
+	return gateVersionLabelPrefix + slug
+}
+
+// withGateVersion stamps a per-version gate's label set with the version it
+// belongs to. A tag that slugifies to nothing leaves the set untouched, which
+// degrades to the pre-label behaviour: the mint then dedupes on OPEN gates
+// alone, as it always did.
+func withGateVersion(labels []string, tag string) []string {
+	if l := gateVersionLabel(tag); l != "" {
+		return append(labels, l)
+	}
+	return labels
+}
+
+// gateIsForVersion reports whether a gate issue's labels say it belongs to this
+// version. False for a gate minted before the label existed, which is the safe
+// direction: such a gate suppresses a re-mint only while it is OPEN, exactly as
+// it did before.
+func gateIsForVersion(labels []string, tag string) bool {
+	want := gateVersionLabel(tag)
+	if want == "" {
+		return false
+	}
+	for _, l := range labels {
+		if strings.EqualFold(l, want) {
+			return true
+		}
+	}
+	return false
+}
+
 // PlatformGateLabelPrefix marks a gate the PLATFORM resolves itself, as opposed
 // to one keyed to a design dependency. It is a DIFFERENT prefix from
 // gateDepLabelPrefix on purpose: a platform gate must be unreachable from

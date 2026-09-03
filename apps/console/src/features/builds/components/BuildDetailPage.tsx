@@ -45,7 +45,6 @@ import { createLink, Link } from "@tanstack/react-router";
 import { EmptyState } from "../../../components/EmptyState";
 import { LogSection } from "../../../components/LogSection";
 import { PageHeader } from "../../../components/PageHeader";
-import { StatusChip } from "../../../components/StatusChip";
 import type { components } from "../../../generated/aep-api";
 import { useAllTasks } from "../../tasks/api/queries";
 import { useProjectStatus } from "../../projects/api/queries";
@@ -66,8 +65,10 @@ import {
   externalValuesPark,
   isAgentStreaming,
   isDeliveryRun,
+  isTerminalRun,
   mergedCycle,
 } from "../lib/runView";
+import { settledLabel } from "../lib/feedTail";
 import { AgentPulse } from "./AgentPulse";
 import { BuildTaskList } from "./BuildTaskList";
 import { CycleBuilds } from "./CycleBuilds";
@@ -190,7 +191,7 @@ export function BuildDetailPage({
         title={`Build ${build.tag}`}
         status={
           park
-            ? { label: "Waiting for values", tone: "warning", variant: "filled" }
+            ? { label: "Waiting for configuration", tone: "warning", variant: "filled" }
             : { label: status.label, tone: status.tone, variant: "filled" }
         }
         backTo={backTo}
@@ -261,6 +262,7 @@ export function BuildDetailPage({
           projectName={projectName}
           runId={current?.id}
           streaming={isAgentStreaming(runList) && park === null}
+          runState={current?.state}
         />
 
         {/* The cycle that MERGED, not the newest one: the cluster read answers
@@ -403,7 +405,7 @@ function BuildSummaryCard({
               color="inherit"
               href={`#${EXTERNAL_RESOURCES_ANCHOR}`}
             >
-              Supply values
+              Add configuration
             </Button>
           }
         >
@@ -412,7 +414,7 @@ function BuildSummaryCard({
           </Typography>
           <Typography variant="body2">
             Everything built. This version is not deployed until every external
-            resource holds its development values — add them under External
+            resource holds its development configuration — add it under External
             resources below and the run resumes and deploys on its own, with
             nothing to restart.
           </Typography>
@@ -437,7 +439,7 @@ function BuildSummaryCard({
         )}
         <Typography variant="caption" color="text.secondary">
           {park
-            ? `${build.tag} is built and waiting for its external values.`
+            ? `${build.tag} is built and waiting for its external configuration.`
             : deploymentNote(build.tag, deploy)}
         </Typography>
       </Stack>
@@ -452,8 +454,8 @@ function BuildSummaryCard({
  * list rendered as punctuation.
  */
 function parkTitle(dependencies: string[]): string {
-  if (dependencies.length === 0) return "Waiting for external values";
-  return `Waiting for values: ${dependencies.join(", ")}`;
+  if (dependencies.length === 0) return "Waiting for external configuration";
+  return `Waiting for configuration: ${dependencies.join(", ")}`;
 }
 
 /**
@@ -566,19 +568,18 @@ function AgentLogSection({
   projectName,
   runId,
   streaming,
+  runState,
 }: {
   projectName: string;
   runId: string | undefined;
   streaming: boolean;
+  /** Forwarded to `AgentLogMeta`, which is where it is explained. */
+  runState: string | undefined;
 }) {
   return (
     <LogSection
       title="Coding agent log"
-      meta={
-        streaming ? (
-          <StatusChip label="streaming" tone="info" appearance="soft" dot />
-        ) : undefined
-      }
+      meta={<AgentLogMeta streaming={streaming} runState={runState} />}
     >
       {runId ? (
         <RunFeed projectName={projectName} runId={runId} />
@@ -589,6 +590,39 @@ function AgentLogSection({
         />
       )}
     </LogSection>
+  );
+}
+
+/**
+ * The coding agent log's header note — the Tasks header's treatment, applied to
+ * a different fact.
+ *
+ * Secondary caption text beside the title, with `AgentPulse` for "working right
+ * now", exactly as `TasksMeta` renders its counts. It was a `StatusChip` before,
+ * which made two sections one card apart label themselves in two different
+ * shapes.
+ */
+function AgentLogMeta({
+  streaming,
+  runState,
+}: {
+  streaming: boolean;
+  /** The run's own state, for the settled half. Both halves read the run list so
+   *  they cannot disagree — see `settledLabel`. */
+  runState: string | undefined;
+}) {
+  // Live beats settled: `streaming` is the stronger claim and the one a reader
+  // is watching for. A run that is neither streaming nor terminal (parked at the
+  // deploy gate, or between cycles) is labelled by neither — the summary card
+  // above says what it is waiting on, and a note here would only compete.
+  if (!streaming && (!runState || !isTerminalRun(runState))) return null;
+  return (
+    <Stack direction="row" spacing={1.25} sx={{ alignItems: "center" }}>
+      <Typography variant="caption" color="text.secondary">
+        {streaming ? "Streaming" : settledLabel(runState)}
+      </Typography>
+      {streaming && <AgentPulse />}
+    </Stack>
   );
 }
 

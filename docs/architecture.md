@@ -66,12 +66,31 @@ behind `gen`, and CI runs `gen` + `git diff --exit-code` to catch staleness. See
 
 A spec version is cut as a `v<N>` tag and executed as **one supervised run over
 one GitHub milestone**: the run mints prose issues into it as its first phase, one coding agent
-works the whole milestone per cycle, its pull request auto-merges, the merge
-fans out to a build per changed component, the supervisor then promotes each
-built component and waits for it to serve, and the run settles when the working
-set is empty and validation has a verdict. The decisions and their costs are
+works the whole milestone per cycle — verifying every web application it builds
+in a browser before committing it — its pull request auto-merges, the merge
+fans out to a build per changed component, the supervisor then **reconciles the
+version**: every component the design declares whose newest green build is not
+what its binding pins is promoted, providers before consumers, and the run
+settles when the working set is empty *and* every component is serving. The
+decisions and their costs are
 [ADR-0011](decisions/ADR-0011-milestone-is-the-unit-of-execution.md),
-[ADR-0017](decisions/ADR-0017-the-platform-owns-deploy.md) and
-[ADR-0018](decisions/ADR-0018-planning-is-a-run-phase.md); the
+[ADR-0017](decisions/ADR-0017-the-platform-owns-deploy.md),
+[ADR-0018](decisions/ADR-0018-planning-is-a-run-phase.md),
+[ADR-0024](decisions/ADR-0024-cancel-reaches-the-planning-phase.md) and
+[ADR-0026](decisions/ADR-0026-deploy-reconciles-the-version.md); the
 mechanism is
 [`internal/delivery/README.md`](../services/aep-api/internal/delivery/README.md).
+
+**Mock verification** is that browser step, and it sits inside the coding cycle
+rather than after a deployment. Once a `web-application` builds clean the cycle
+dispatches one more agent for it: it stands the app up in mock mode — MSW
+answering `/api`, a substituted auth module, no cluster and no sibling service —
+walks every screen the component's wireframes name, and repairs each failure the
+moment it finds it, clearing the line by clicking it again rather than by the
+edit compiling. It reports one verdict per user story. Running the walk before
+the commit is what makes one pull request carry the build *and* its fixes. It is distinct
+from validation, which judges a **deployed** version against live infrastructure
+once the run has promoted it. The procedure lives in the skill library
+(`skills/mock-verification`, `skills/react-webapp`) and runs inside the coding
+session; the platform orchestrates none of it —
+[ADR-0025](decisions/ADR-0025-a-web-application-is-verified-before-it-is-committed.md).

@@ -52,68 +52,229 @@ func wiringDeps(names []string) []spec.Dependency {
 	return out
 }
 
+// The version states the plan is computed over. A behind component's desired
+// commit is derived from its name so a wrong pairing is visible in a failure
+// message rather than being a plausible-looking sha.
+func wiringBehind(name string) delivery.ComponentState {
+	return delivery.ComponentState{
+		Component: name, State: delivery.ComponentStateBehind, DesiredSHA: "sha-" + name,
+	}
+}
+
+func wiringServing(name string) delivery.ComponentState {
+	return delivery.ComponentState{
+		Component: name, State: delivery.ComponentStateServing,
+		DesiredSHA: "sha-" + name, Pinned: "release-" + name, Ready: true,
+	}
+}
+
+// wiringWithdrawn is a component somebody undeployed on purpose: it reads as
+// serving (the version owes it nothing) but offers no address.
+func wiringWithdrawn(name string) delivery.ComponentState {
+	st := wiringServing(name)
+	st.Undeploy = true
+	return st
+}
+
+func wiringUnbuilt(name string) delivery.ComponentState {
+	return delivery.ComponentState{Component: name, State: delivery.ComponentStateUnbuilt}
+}
+
+func wiringConverging(name string) delivery.ComponentState {
+	return delivery.ComponentState{
+		Component: name, State: delivery.ComponentStateConverging,
+		DesiredSHA: "sha-" + name, Pinned: "release-" + name,
+	}
+}
+
+func versionOf(states ...delivery.ComponentState) delivery.VersionState {
+	return delivery.VersionState{Components: states}
+}
+
+// waveNames renders a plan's waves as names, and asserts in passing that every
+// target carries its OWN commit — the whole point of the target type.
+func waveNames(t *testing.T, plan delivery.DeployPlan) [][]string {
+	t.Helper()
+	var out [][]string
+	for _, wave := range plan.Waves {
+		names := make([]string, 0, len(wave))
+		for _, target := range wave {
+			if target.CommitSHA != "sha-"+target.Component {
+				t.Errorf("target %q promotes at %q, not its own newest green build",
+					target.Component, target.CommitSHA)
+			}
+			names = append(names, target.Component)
+		}
+		out = append(out, names)
+	}
+	return out
+}
+
+// heldOn renders the held set as `component→providers` pairs.
+func heldOn(plan delivery.DeployPlan) map[string][]string {
+	if len(plan.Held) == 0 {
+		return nil
+	}
+	out := make(map[string][]string, len(plan.Held))
+	for _, c := range plan.Held {
+		out[c.Component] = c.WaitingOn
+	}
+	return out
+}
+
 func TestDeploymentWaves(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name       string
 		design     *spec.DesignFile
-		components []string
+		version    delivery.VersionState
 		want       [][]string
+		wantHeld   map[string][]string
+		wantWaited []string
 	}{{
 		// The case that blanked a page: promoted together, the SPA composes its
 		// config while its backend has no address. The provider goes first.
 		name:       "a SPA waits for the backend whose address it carries",
 		design:     designWith(wiringWebApp("todo-webapp", "todo-api"), wiringService("todo-api")),
-		components: []string{"todo-api", "todo-webapp"},
+		version:    versionOf(wiringBehind("todo-api"), wiringBehind("todo-webapp")),
 		want:       [][]string{{"todo-api"}, {"todo-webapp"}},
+		wantWaited: []string{"todo-api", "todo-webapp"},
 	}, {
-		// Order in the SET must not decide the order of the DEPLOY, or the plan
-		// would depend on however the build fan-out happened to list things.
+		// Order in the STATE must not decide the order of the DEPLOY, or the plan
+		// would depend on however the read happened to list things.
 		name:       "the consumer listed first still deploys second",
 		design:     designWith(wiringWebApp("todo-webapp", "todo-api"), wiringService("todo-api")),
-		components: []string{"todo-webapp", "todo-api"},
+		version:    versionOf(wiringBehind("todo-webapp"), wiringBehind("todo-api")),
 		want:       [][]string{{"todo-api"}, {"todo-webapp"}},
+		wantWaited: []string{"todo-api", "todo-webapp"},
 	}, {
 		name:       "no hard edges is one wave — the ordinary case pays nothing",
 		design:     designWith(wiringService("orders"), wiringService("payments")),
-		components: []string{"orders", "payments"},
+		version:    versionOf(wiringBehind("orders"), wiringBehind("payments")),
 		want:       [][]string{{"orders", "payments"}},
+		wantWaited: []string{"orders", "payments"},
 	}, {
-		// A provider outside the set is already deployed, so its address already
-		// exists. Waiting on it would be waiting for something that has happened.
-		name:       "a provider outside the deploy set does not split the wave",
+		// A provider that is already SERVING has an address, so waiting on it
+		// would be waiting for something that has happened.
+		name:       "a serving provider does not split the wave",
 		design:     designWith(wiringWebApp("todo-webapp", "todo-api"), wiringService("todo-api")),
-		components: []string{"todo-webapp"},
+		version:    versionOf(wiringServing("todo-api"), wiringBehind("todo-webapp")),
 		want:       [][]string{{"todo-webapp"}},
+		wantWaited: []string{"todo-webapp"},
 	}, {
 		name: "independent components share a wave; only the dependent one waits",
 		design: designWith(wiringWebApp("web", "api"), wiringService("api"),
 			wiringService("worker")),
-		components: []string{"api", "web", "worker"},
+		version:    versionOf(wiringBehind("api"), wiringBehind("web"), wiringBehind("worker")),
 		want:       [][]string{{"api", "worker"}, {"web"}},
+		wantWaited: []string{"api", "web", "worker"},
 	}, {
 		name:       "no design is one wave rather than a refusal",
 		design:     nil,
-		components: []string{"api", "web"},
+		version:    versionOf(wiringBehind("api"), wiringBehind("web")),
 		want:       [][]string{{"api", "web"}},
+		wantWaited: []string{"api", "web"},
 	}, {
-		name:       "an empty set plans nothing",
-		design:     designWith(wiringService("api")),
-		components: nil,
-		want:       nil,
+		name:    "an empty state plans nothing",
+		design:  designWith(wiringService("api")),
+		version: delivery.VersionState{},
+	}, {
+		// THE INCIDENT. The webapp's build went red, the api's went green: the api
+		// is promoted on its own, in the same cycle, rather than waiting for a
+		// later cycle whose diff would never mention it again.
+		name:       "a green provider is promoted while its consumer is unbuilt",
+		design:     designWith(wiringWebApp("onboarding-webapp", "onboarding-api"), wiringService("onboarding-api")),
+		version:    versionOf(wiringBehind("onboarding-api"), wiringUnbuilt("onboarding-webapp")),
+		want:       [][]string{{"onboarding-api"}},
+		wantWaited: []string{"onboarding-api"},
+	}, {
+		// THE OBJECTION, and the answer: A needs B, A is green, B is red. A is
+		// HELD — not promoted, not waited on, not a deploy failure — because a
+		// SPA published against an api with no address is a blank page.
+		name:     "a green consumer is held when its provider is unbuilt",
+		design:   designWith(wiringWebApp("web", "api"), wiringService("api")),
+		version:  versionOf(wiringBehind("web"), wiringUnbuilt("api")),
+		wantHeld: map[string][]string{"web": {"api"}},
+	}, {
+		// A provider still rolling out has a binding but has not been observed
+		// serving, and the wave rule's whole premise is that a provider serves
+		// before its consumer is composed. The consumer costs one cycle, which is
+		// the conservative direction; the provider is waited on either way.
+		name:       "a converging provider holds its consumer and is waited on",
+		design:     designWith(wiringWebApp("web", "api"), wiringService("api")),
+		version:    versionOf(wiringConverging("api"), wiringBehind("web")),
+		wantHeld:   map[string][]string{"web": {"api"}},
+		wantWaited: []string{"api"},
+	}, {
+		// A provider somebody UNDEPLOYED is not a satisfied hard edge. It reads
+		// as serving — nothing is owed and nothing may promote over the decision
+		// — but it has no active release, so it has no address for the web app's
+		// start-up config to carry. Promoting the consumer anyway is the blank
+		// page, reached through the one state that says "serving" and means
+		// "nothing is running".
+		name:     "an undeployed provider does not satisfy its consumer",
+		design:   designWith(wiringWebApp("web", "api"), wiringService("api")),
+		version:  versionOf(wiringWithdrawn("api"), wiringBehind("web")),
+		wantHeld: map[string][]string{"web": {"api"}},
+	}, {
+		// The idempotence that lets this run on every cycle: nothing behind means
+		// nothing written and nothing waited on.
+		name:    "a fully serving version plans no writes at all",
+		design:  designWith(wiringWebApp("web", "api"), wiringService("api")),
+		version: versionOf(wiringServing("api"), wiringServing("web")),
 	}}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := deploymentWaves(tc.design, tc.components)
+			plan, err := deploymentWaves(tc.design, tc.version)
 			if err != nil {
 				t.Fatalf("deploymentWaves: %v", err)
 			}
-			if !reflect.DeepEqual(got, tc.want) {
-				t.Errorf("deploymentWaves() = %v, want %v", got, tc.want)
+			if got := waveNames(t, plan); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("waves = %v, want %v", got, tc.want)
+			}
+			if got := heldOn(plan); !reflect.DeepEqual(got, tc.wantHeld) {
+				t.Errorf("held = %v, want %v", got, tc.wantHeld)
+			}
+			if !reflect.DeepEqual(plan.Waited, tc.wantWaited) {
+				t.Errorf("waited = %v, want %v", plan.Waited, tc.wantWaited)
 			}
 		})
+	}
+}
+
+// One pass of the promotable rule is not enough, and this is the case that
+// proves it: a consumer waiting on a provider that is ITSELF held has to fall
+// out too, or it ships against a config its provider could not fill.
+//
+// Asserted on the edges rather than through a design, for the same reason the
+// cycle refusal below is: today's edge rule gives hard providers only to a web
+// app, and only for its sibling SERVICES, so a three-deep chain cannot be
+// expressed as a design at all. The fixpoint is the graph's own invariant and
+// has to hold for whatever edge kind is added next.
+func TestPromotableSet_AHeldProviderHoldsItsOwnConsumer(t *testing.T) {
+	t.Parallel()
+	behind := []string{"web", "api"}
+	providers := map[string][]string{"web": {"api"}, "api": {"worker"}}
+	byName := map[string]delivery.ComponentState{
+		"web": wiringBehind("web"), "api": wiringBehind("api"), "worker": wiringUnbuilt("worker"),
+	}
+
+	promotable, held := promotableSet(behind, providers, byName)
+	if len(promotable) != 0 {
+		t.Errorf("promoted %v; a consumer whose provider is held must not be written", promotable)
+	}
+	got := map[string][]string{}
+	for _, c := range held {
+		if c.State != delivery.ComponentStateHeld {
+			t.Errorf("%s is in the held set with state %q", c.Component, c.State)
+		}
+		got[c.Component] = c.WaitingOn
+	}
+	want := map[string][]string{"web": {"api"}, "api": {"worker"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("held = %v, want %v", got, want)
 	}
 }
 
@@ -128,13 +289,13 @@ func TestDeploymentWaves_MatchesComponentsByK8sName(t *testing.T) {
 			Dependencies: wiringDeps([]string{"Todo API"})},
 		spec.DesignComponent{Name: "Todo API", ComponentType: spec.ComponentTypeService},
 	)
-	got, err := deploymentWaves(design, []string{"todo-web-app", "todo-api"})
+	plan, err := deploymentWaves(design, versionOf(wiringBehind("todo-web-app"), wiringBehind("todo-api")))
 	if err != nil {
 		t.Fatalf("deploymentWaves: %v", err)
 	}
 	want := [][]string{{"todo-api"}, {"todo-web-app"}}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("deploymentWaves() = %v, want %v", got, want)
+	if got := waveNames(t, plan); !reflect.DeepEqual(got, want) {
+		t.Errorf("waves = %v, want %v", got, want)
 	}
 }
 
@@ -149,13 +310,14 @@ func TestPlanDeploymentWaves_OrdersFromTheStoredDesign(t *testing.T) {
 	}
 	svc := NewDeploymentService(&mocks.ComponentClientMock{}, traitStoreWith(files))
 
-	got, err := svc.PlanDeploymentWaves(context.Background(), "acme", "proj", []string{"web", "api"})
+	plan, err := svc.PlanDeploymentWaves(context.Background(), "acme", "proj",
+		versionOf(wiringBehind("web"), wiringBehind("api")))
 	if err != nil {
 		t.Fatalf("PlanDeploymentWaves: %v", err)
 	}
 	want := [][]string{{"api"}, {"web"}}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("PlanDeploymentWaves() = %v, want %v — the SPA must wait for the backend it carries", got, want)
+	if got := waveNames(t, plan); !reflect.DeepEqual(got, want) {
+		t.Errorf("waves = %v, want %v — the SPA must wait for the backend it carries", got, want)
 	}
 }
 
@@ -171,13 +333,14 @@ func TestPlanDeploymentWaves_NoDesignIsOneWave(t *testing.T) {
 			},
 		}))
 
-	got, err := svc.PlanDeploymentWaves(context.Background(), "acme", "proj", []string{"api", "web"})
+	plan, err := svc.PlanDeploymentWaves(context.Background(), "acme", "proj",
+		versionOf(wiringBehind("api"), wiringBehind("web")))
 	if err != nil {
 		t.Fatalf("PlanDeploymentWaves with no design: %v", err)
 	}
 	want := [][]string{{"api", "web"}}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("PlanDeploymentWaves() = %v, want %v", got, want)
+	if got := waveNames(t, plan); !reflect.DeepEqual(got, want) {
+		t.Errorf("waves = %v, want %v", got, want)
 	}
 }
 

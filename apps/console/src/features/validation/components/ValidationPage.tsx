@@ -44,6 +44,8 @@ import { EmptyState } from "../../../components/EmptyState";
 import { GitHubRefChip } from "../../../components/GitHubRefChip";
 import { useProjectStatus } from "../../projects/api/queries";
 import { useBuildRuns, useCancelRun } from "../../builds/api/queries";
+import { useValidationLive } from "../hooks/useValidationLive";
+import { validationLiveLine } from "../lib/liveLine";
 import { RunFeed } from "../../builds/components/RunFeed";
 import { isTerminalRun } from "../../builds/lib/runView";
 import {
@@ -185,7 +187,7 @@ function useMethods(
 
 /**
  * The Validation page: a read-only report of the deployed system against its
- * acceptance criteria, plus the validation cycle's live log. No writes.
+ * validation criteria, plus the validation cycle's live log. No writes.
  */
 export function ValidationPage({
   projectName,
@@ -320,6 +322,11 @@ export function ValidationPage({
   // attempt's verdict and report, which the page renders with its numbers marked as
   // the last attempt's; replacing that with a page of Pending chips would throw away
   // the only results anyone has.
+  //
+  // This gates the PENDING fallback only. A criterion the current attempt is
+  // actually working on gets a live status regardless (see `live` below), which is
+  // what un-freezes a repeat attempt without inventing a row that says nothing:
+  // "Pending" is a guess about every criterion, `Authoring…` is a fact about one.
   const awaitingFirstVerdict = state === "running" && rawVerdict === "";
   // `unreported` MEANS no report was committed at that commit, and the server
   // omits reportPath for it. Requesting the file anyway would 404 to rediscover
@@ -413,6 +420,28 @@ export function ValidationPage({
   // sentence and again in the tally.
   const showLogs = !canShowReport || view === "logs";
 
+  // What the validating run is doing to each criterion right now. Opened only for
+  // the report body: the log body already streams this same run through RunFeed,
+  // and these statuses are rendered on the rows, which that body does not show.
+  //
+  // `liveRun` rather than the run answering for the version — only one run on a
+  // milestone can be live, and a revalidation in flight is a different row from
+  // the one holding the current verdict. The fold itself returns nothing unless
+  // that run's newest validation cycle is still OPEN, so a repair cycle busy
+  // writing code contributes no statuses and the previous report stands.
+  const live = useValidationLive(projectName, liveRun?.id, !showLogs);
+  // Said above the rows, and only in the two windows where the rows say nothing:
+  // before any criterion has been picked up, and after they have all settled but
+  // the report has not landed. Derived from the rows so it cannot contradict them.
+  // Gated on a validation cycle actually being OPEN, not merely on there being no
+  // statuses. Without that, a settled `unreported` verdict (whose report is never
+  // fetched) and a repair cycle busy writing code both look identical to a run
+  // that has not started, and the tile announced "Setting up the test harness…"
+  // over a run that had finished or was doing something else entirely.
+  const liveNote = live.active
+    ? validationLiveLine(oracle, live.statuses, report.data !== undefined)
+    : "";
+
   // The tile stays visible in BOTH bodies — a verdict does not stop being true
   // because the reader switched to the log, and neither does an attempt still being
   // under way. `state` is what the verdict tile leads with, so a repair in flight
@@ -423,9 +452,14 @@ export function ValidationPage({
       state={state}
       repairing={repairing}
       {...(tally ? { tally } : {})}
+      {...(liveNote ? { note: liveNote } : {})}
     />
   ) : awaitingFirstVerdict ? (
-    <PendingTile noCriteria={criteriaAbsent} {...(methods ? { methods } : {})} />
+    <PendingTile
+      noCriteria={criteriaAbsent}
+      {...(methods ? { methods } : {})}
+      {...(liveNote ? { note: liveNote } : {})}
+    />
   ) : null;
 
   const chip = headerChip(verdict);
@@ -577,7 +611,7 @@ export function ValidationPage({
         {headerWithCancelError}
         <EmptyState
           compact
-          description="Nothing validated yet. After a build, your software is checked against the acceptance criteria in your spec; results appear here."
+          description="Nothing validated yet. After a build, your software is checked against the validation criteria in your spec; results appear here."
         />
       </>
     );
@@ -684,6 +718,7 @@ export function ValidationPage({
         awaitingReport={awaitingFirstVerdict}
         criteria={criteria.data.content}
         {...(report.data ? { report: report.data.content } : {})}
+        live={live.statuses}
       />
     </>
   );
