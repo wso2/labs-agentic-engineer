@@ -40,4 +40,14 @@ I01 is sign-in and the user API. Namespace placement of OpenChoreo Projects is n
 - On `cloud-dp-oc-dp`, the matching customer release namespace had no live Job or pod (TTL). An ExternalSecret for that cycle was still Ready and syncing those four secret **keys**. Do not dump secret values.
 - Do not use `cloud-dp-oc-ci` for this chapter (builds are I07).
 
+## Verified on Cloud dev (2026-09-03) — I06 / I07 GitHub
+
+- Webhook HTTPRoute in `dp-wso2cloud-app-factory-development-*`: host `development-wso2cloud.gateway.dev.cloud.wso2.com`, path `/app-factory-api-app-factory-webhook-api-endpoint/api/v1/webhooks`, visibility external.
+- ReleaseBinding `app-factory-api-development`: `app-factory-api` jwtAuth.enabled **true**; `app-factory-webhook-api` jwtAuth.enabled **false**.
+- API ConfigMap: `GITHUB_REPO_VISIBILITY=public`. `GITHUB_WEBHOOK_DELIVERY_URL` = `https://development-wso2cloud.gateway.dev.cloud.wso2.com/app-factory-api-app-factory-webhook-api-endpoint/api/v1/webhooks/github`.
+- API Secret **key names** (no values): includes `GITHUB_WEBHOOK_SECRET`, `OAUTH_STATE_SIGNING_KEY`. Does **not** include `GITHUB_APP_ID`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_APP_PRIVATE_KEY_PATH`, or `BFF_PUBLIC_URL`. No GitHub App private-key volume on the API pod.
+- `cloud-dp-oc-cp`: ClusterWorkflow `dockerfile-builder` exists. App-factory org ns has a namespaced `dockerfile-builder` Workflow (`workflowPlaneRef: default`, TTL 1d). That org had **0** WorkflowRuns. Other products have WorkflowRuns (not dockerfile-builder).
+- `cloud-dp-oc-ci`: `workflows-wc-*` namespaces exist, including the app-factory org. No live Argo workflow in that org ns. No OpenChoreo `WorkflowRun` CR on this cluster.
+- `cloud-dp-oc-dp`: ReleaseBinding is not a dataplane CR. App-factory org release namespaces had no HTTPRoute jwt filter. One org-env HTTPRoute (`apigateway-development-wc-…gateway.dp…`) had no jwtAuth annotation. Customer-app jwtAuth was **not** visible.
+
 Longer kubectl checklist (gitignored learning notes): `learning/threat-modeling/threat-model-agentic-engineer/kubectl-verify.md`.
