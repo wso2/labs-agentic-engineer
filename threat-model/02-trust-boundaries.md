@@ -18,12 +18,12 @@ under the License.
 
 # Trust Boundaries
 
-This section lists the crossings this model cares about. Seven of them get a full STRIDE chapter later (I01–I07). The others are named here only, so a reviewer can skip them or find them folded into another chapter.
+This section lists the crossings this model cares about. Seven of them get a full STRIDE chapter later (I01–I07). A few others are named only: they are not this WSO2 Cloud deployment, or they are Cloud internals we do not review here.
 
 Trust types in simple words:
 
 - **Untrust → Trust:** someone or something outside starts a call into Agentic Engineer (browser, GitHub, a dataplane Job hitting the public API).
-- **Trust → Trust:** two things we run talk to each other (API to agents, API to OpenChoreo).
+- **Trust → Trust:** two things we run talk to each other (API to the agent service, API to OpenChoreo).
 - **Trust → Untrust:** we call out (Anthropic, GitHub.com).
 
 **D2 — Trust boundaries**
@@ -34,14 +34,14 @@ Trust types in simple words:
 
 | ID | Interaction | Trust boundary |
 | :---- | :---- | :---- |
-| I01 | User signs in (Thunder) and calls the Agentic Engineer API with a login token (JWT). Tenant gate binds the organization from the token. | Untrust → Trust |
+| I01 | User signs in with Thunder (platform IdP) and calls the Agentic Engineer API with a login token (JWT). Tenant gate binds the organization from the token. Intended control is **Admin** and **AgenticDeveloper**. Today any valid organization login token can call organization APIs. | Untrust → Trust |
 | I02 | Organization saves the Anthropic API key through the API. | Untrust → Trust |
-| I03 | Design agent sends the spec (and the key) to the AI provider. | Trust → Untrust |
-| I04 | Browser joins a collab document over a websocket. Collab does not check the token itself; the API does. | Untrust → Trust |
+| I03 | Agent service sends the spec (and the key) to the AI provider. | Trust → Untrust |
+| I04 | Browser joins a collab document over a websocket. The console forwards that connection to collab. Collab asks the Agentic Engineer API to check the login token before the live spec opens. | Untrust → Trust |
 | I05a | Platform starts a coding-agent Job on the customer dataplane (secrets land in that Job). | Trust → Trust |
-| I05b | The Job calls back to the public Agentic Engineer API (MCP / callbacks). | Untrust → Trust |
-| I06 | Organization connects GitHub with a GitHub App. Public repos only. | Untrust → Trust |
-| I07 | GitHub webhook: merge, build, and deploy. HMAC at the API. Gateway login-token check is off on this path. A customer app may go live without a login check (jwtAuth). That row lives here, not in its own chapter. | Untrust → Trust |
+| I05b | The Job calls back to the public Agentic Engineer API. | Untrust → Trust |
+| I06 | Organization connects GitHub. Agentic Engineer has not taken the GitHub App path that WSO2 Cloud provides, so new repos stay public. | Untrust → Trust |
+| I07 | GitHub tells Agentic Engineer that code was merged. Agentic Engineer builds the image and deploys the customer app. | Untrust → Trust |
 
 I05 is one later chapter with two hops. I05a is dispatch. I05b is the public callback.
 
@@ -49,10 +49,6 @@ I05 is one later chapter with two hops. I05a is dispatch. I05b is the public cal
 
 | ID | Interaction | Trust boundary | Why named only |
 | :---- | :---- | :---- | :---- |
-| N1 | Playground token and `/_dev` endpoints | Untrust → Trust | Must stay off Cloud. Local/dev only. |
-| N2 | SRE / RCA agent and `aep-mcp-server` | Untrust → Trust | Not deployed in this Cloud production. |
-| N3 | Test-user password reveal / publishing test passwords to GitHub | Trust → Untrust | Being removed. Not a live Cloud control. |
-| N4 | Org-level GitHub PAT as the primary connect path | Untrust → Trust | Cloud is GitHub App and public repos (I06 / I07). |
-| N5 | Platform deploy / login check on first serve (jwtAuth) as its own chapter | Trust → Trust | Folded into I07. |
-| N6 | Thunder product internals, generic Kubernetes, OpenChoreo as the platform | Inherited | We only model Agentic Engineer’s new calls. |
-| N7 | Image build (`dockerfile-builder`) as its own story | Trust → Untrust | Folded into I07. |
+| N1 | SRE / RCA agent and `aep-mcp-server` | Untrust → Trust | Not deployed in this WSO2 Cloud deployment. |
+| N2 | Test-user password reveal / publishing test passwords to GitHub | Trust → Untrust | Being removed. Not a live control in the WSO2 Cloud deployment. |
+| N3 | WSO2 Cloud GitHub App path (how Cloud authorizes each created repo) | Inherited | Agentic Engineer has not taken this path. The live gap is public repos (I06). |
