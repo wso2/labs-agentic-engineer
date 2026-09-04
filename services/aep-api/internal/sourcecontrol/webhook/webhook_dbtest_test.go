@@ -288,6 +288,9 @@ func (f *fakeIssueSvc) MilestoneIssueCounts(context.Context, string, string, int
 func (f *fakeIssueSvc) ListMilestoneIssueComments(context.Context, string, string, int, int) (map[int][]sourcecontrol.IssueComment, error) {
 	panic("fakeIssueSvc: ListMilestoneIssueComments not expected")
 }
+func (f *fakeIssueSvc) ListIssueComments(context.Context, string, string, int, int) ([]sourcecontrol.IssueComment, error) {
+	panic("fakeIssueSvc: ListIssueComments not expected")
+}
 
 // credAESKey is a fixed 32-byte AES-256 key for the real credential store. The
 // tested handler paths never read/write it (app-installation Disconnect GCs only

@@ -196,6 +196,27 @@ func (f *fakeIssues) ListMilestoneIssueComments(_ context.Context, _, _ string, 
 	return out, nil
 }
 
+// ListIssueComments answers the same seeded thread as the milestone read, for
+// ONE issue and with no milestone test — which is what lets a test drive the
+// validation issue, the one issue the milestone-scoped list never projects.
+func (f *fakeIssues) ListIssueComments(_ context.Context, _, _ string, number, limit int) ([]sourcecontrol.IssueComment, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.commentReads++
+	f.lastCommentPerIssue = limit
+	if f.failComments {
+		return nil, fmt.Errorf("boom: comment read failed")
+	}
+	cs := f.hostComments[number]
+	if len(cs) == 0 {
+		return nil, nil
+	}
+	if limit > 0 && len(cs) > limit {
+		cs = cs[len(cs)-limit:]
+	}
+	return append([]sourcecontrol.IssueComment(nil), cs...), nil
+}
+
 func (f *fakeIssues) GetIssue(_ context.Context, _, _ string, number int) (*sourcecontrol.IssueInfo, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

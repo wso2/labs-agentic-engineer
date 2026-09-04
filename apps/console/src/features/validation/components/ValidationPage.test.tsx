@@ -81,6 +81,12 @@ let mockNewerRuns: MilestoneRunView[] = [];
 // a GitHub read that failed is not the same state as "no issue yet", and the page
 // is required to treat them alike.
 let mockIssueUrl: string | undefined = "https://github.com/acme/demo/issues/30";
+// The validation issue's comment thread — the agent's status line lives in the
+// NEWEST one. Oldest first, matching the contract.
+let mockIssueComments: { id: string; body: string }[] = [];
+// Whether the page asked get-task to poll. This read is GitHub-backed, so an
+// idle version must cost nothing and a live one must not go stale.
+let mockIssueLive: boolean | undefined;
 
 function run(over: {
   validation?: RunValidation;
@@ -202,16 +208,36 @@ vi.mock("../../builds/api/queries", () => ({
 // which is what makes "asked before an issue existed" visible rather than silently
 // answered.
 vi.mock("../../tasks/api/queries", () => ({
-  useTask: (_project: string, issueNumber: number) => ({
-    isPending: false,
-    isError: false,
-    error: null,
-    refetch: vi.fn(),
-    data:
-      issueNumber > 0 && mockIssueUrl !== undefined
-        ? { issueNumber, issueUrl: mockIssueUrl }
-        : undefined,
-  }),
+  useTask: (
+    _project: string,
+    issueNumber: number,
+    opts: { live?: boolean } = {},
+  ) => {
+    mockIssueLive = opts.live;
+    return {
+      isPending: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+      data:
+        issueNumber > 0 && mockIssueUrl !== undefined
+          ? {
+              issueNumber,
+              issueUrl: mockIssueUrl,
+              ...(mockIssueComments.length > 0
+                ? {
+                    comments: mockIssueComments.map((c) => ({
+                      ...c,
+                      author: "aep-bot",
+                      createdAt: "2026-09-04T10:00:00Z",
+                      url: `${mockIssueUrl}#issuecomment-${c.id}`,
+                    })),
+                  }
+                : {}),
+            }
+          : undefined,
+    };
+  },
 }));
 
 vi.mock("../api/queries", () => ({
@@ -302,6 +328,8 @@ afterEach(() => {
   mockLive = {};
   mockLiveActive = true;
   mockIssueUrl = "https://github.com/acme/demo/issues/30";
+  mockIssueComments = [];
+  mockIssueLive = undefined;
 });
 
 // A milestone sees SEQUENTIAL runs across its life and only some of them
@@ -1459,5 +1487,98 @@ describe("ValidationPage manual criteria ignore the live feed", () => {
     // here may appear on any row.
     expect(screen.queryByText("Pending")).not.toBeInTheDocument();
     expect(screen.queryByText("Planned")).not.toBeInTheDocument();
+  });
+});
+
+// The run-wide narration a reader arrives with. Until now the tile had exactly
+// two sentences in its whole vocabulary and said NOTHING for the entire middle of
+// a run — the longest stretch, and the one where "is this progressing or stuck?"
+// is the only question anyone has. The agent now keeps a status line on its own
+// validation issue (skills/aep/SKILL.md, "The status line") and this renders it.
+describe("ValidationPage agent status line", () => {
+  const validating = () => {
+    mockValidation = "running";
+    mockRun = { ...run({ cycles: [validationCycle] }), state: "running" };
+    mockCriteria.data = { content: CRITERIA };
+  };
+
+  it("shows the agent's own words over the derived sentence", () => {
+    validating();
+    // The derived line would say "Setting up the test harness…" here, because no
+    // criterion has been touched. The agent knows better and said so.
+    mockIssueComments = [{ id: "c1", body: "Reading the criteria; 12 to author." }];
+    renderPage(undefined);
+
+    expect(screen.getByText("Reading the criteria; 12 to author.")).toBeInTheDocument();
+    expect(screen.queryByText("Setting up the test harness…")).not.toBeInTheDocument();
+  });
+
+  it("takes the NEWEST comment, which is the point of a durable line", () => {
+    validating();
+    mockIssueComments = [
+      { id: "c1", body: "Starting validation: 12 criteria, 9 to author." },
+      { id: "c2", body: "Healing AC-004-b — the login step raced the redirect." },
+    ];
+    renderPage(undefined);
+
+    expect(
+      screen.getByText("Healing AC-004-b — the login step raced the redirect."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/^Starting validation/)).not.toBeInTheDocument();
+  });
+
+  it("renders one line of a multi-line comment", () => {
+    // A comment body is markdown over an unbounded textarea; the tile is a note.
+    validating();
+    mockIssueComments = [
+      { id: "c1", body: "Authoring the last three specs.\n\n- AC-005-a\n- AC-005-b" },
+    ];
+    renderPage(undefined);
+
+    expect(screen.getByText("Authoring the last three specs.")).toBeInTheDocument();
+    expect(screen.queryByText(/AC-005-a/)).not.toBeInTheDocument();
+  });
+
+  it("falls back to the derived sentence when the agent has posted nothing", () => {
+    // The skill ASKS for the line, and an asked-for thing can be skipped — so the
+    // page must degrade to what it showed before rather than to a blank.
+    validating();
+    mockIssueComments = [];
+    renderPage(undefined);
+
+    expect(screen.getByText("Setting up the test harness…")).toBeInTheDocument();
+  });
+
+  it("survives the switch to the log body, where the derived line cannot", () => {
+    // The live fold is opened only for the report body, so `live.active` is false
+    // here and the derived sentence is empty by construction. The status line is
+    // polled rather than streamed, so it does not care — and the log view is
+    // exactly where someone watching a long run sits.
+    validating();
+    mockIssueComments = [{ id: "c1", body: "Running the whole suite." }];
+    mockLiveActive = false;
+    renderPage("logs");
+
+    expect(screen.getByText("Running the whole suite.")).toBeInTheDocument();
+  });
+
+  it("polls the issue while the loop is live, and not once it settles", () => {
+    // This read is GitHub-backed: an idle version must cost nothing, and a live
+    // one must not freeze at whatever the line said when the page opened.
+    validating();
+    renderPage(undefined);
+    expect(mockIssueLive).toBe(true);
+
+    mockValidation = "passed";
+    mockRun = {
+      ...run({
+        validation: { verdict: "passed", reportPath: "tests/validation/report.json" },
+        cycles: [validationCycle],
+      }),
+      state: "succeeded",
+    };
+    mockReport.data = { content: REPORT };
+    renderPage(undefined);
+    expect(mockIssueLive).toBe(false);
   });
 });

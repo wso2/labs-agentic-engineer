@@ -37,6 +37,21 @@ every later call and a relative one is right only once. `Read`, `Write`
 and `Edit` never move with the shell — their relative paths always
 resolve from the repo root.
 
+## The status line
+
+Keep your validation issue's status line current, per the `aep` skill — the
+issue in your prompt, and no other.
+
+Say what the criterion rows cannot. The console already draws a row per
+criterion and repaints it as you work, with the counts beside it; a line
+repeating those tells the reader what they are already looking at. Yours
+carries what nothing else can see — where you are in this workflow, and what
+you decided.
+
+Steps 1, 2, 4 and 10 ask for comments; those are this line's ends, and step
+10's summary is the one that carries counts. A line that sends you back a step
+is the ordinary path here, not a fault to explain.
+
 ## Workflow
 
 ### 1. Read the issue

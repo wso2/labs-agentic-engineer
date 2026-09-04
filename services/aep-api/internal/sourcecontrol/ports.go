@@ -65,6 +65,12 @@ type IssueOps interface {
 	// O(1) lookup, unlike ListIssues which pages the whole repo. Returns
 	// ErrIssueNotFound when the host answers 404.
 	GetIssue(ctx context.Context, owner, repo string, cred secrets.Credential, number int) (*IssueInfo, error)
+	// ListIssueComments returns the newest `limit` comments of ONE issue, OLDEST
+	// FIRST — the detail read's narrative, where the milestone sibling on
+	// MilestoneOps serves the list. An issue with no comments answers nil, the
+	// same thing that read's absent bucket means. Returns ErrIssueNotFound when
+	// the host does not hold the issue.
+	ListIssueComments(ctx context.Context, owner, repo string, cred secrets.Credential, number, limit int) ([]IssueComment, error)
 	// EnsureLabel creates a label in the repository if it does not already exist.
 	// It is idempotent — a 422 Unprocessable Entity response (already exists) is treated as success.
 	EnsureLabel(ctx context.Context, owner, repo string, cred secrets.Credential, name, color string) error
