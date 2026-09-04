@@ -43,6 +43,15 @@ vi.mock("@tanstack/react-router", () => ({
       return <Component component="a" href={href} {...rest} />;
     },
   Link: ({ children }: { children?: React.ReactNode }) => <a>{children}</a>,
+  useNavigate: () => navigate,
+}));
+
+const navigate = vi.fn();
+
+// The version ledger, for the Milestone cell — the Builds surfaces' own read.
+let mockBuilds: components["schemas"]["BuildSummary"][] = [];
+vi.mock("../../builds/api/queries", () => ({
+  useBuilds: () => ({ data: mockBuilds, isPending: false, isError: false }),
 }));
 
 import { DeploymentsPage } from "./DeploymentsPage";
@@ -213,6 +222,8 @@ beforeEach(() => {
   mockExternalCatalogError = false;
   mockTestUsers = [];
   mockReveal.mockClear();
+  mockBuilds = [];
+  navigate.mockClear();
 });
 
 describe("DeploymentsPage — validation", () => {
@@ -239,14 +250,12 @@ describe("DeploymentsPage — validation", () => {
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/verdict: awaiting fix/)).not.toBeInTheDocument();
-    // The note answers the "when?" the sentence leaves out, and must not claim the
-    // system was already checked.
-    // The note is a WAIT and nothing more. It renders BEFORE the banner, so it names
-    // the implementation rather than saying "the fix" — which has no antecedent yet —
-    // and leaves "runs again" to the banner, whose sentence the Validation page's
-    // tile shares and must keep.
-    expect(screen.getByText("Waits for the implementation fix to deploy.")).toBeInTheDocument();
+    // "Runs again" belongs to the banner's own sentence, whose wording the
+    // Validation page's tile shares and must keep — nothing else on the card
+    // restates it.
     expect(screen.queryByText(/Runs again/)).not.toBeInTheDocument();
+    // The ledger's cell names the lifecycle, not a verdict.
+    expect(screen.getByText("awaiting fix")).toBeInTheDocument();
   });
 
   // A SETTLED failure. The banner wrote its own sentence for these and led with the
@@ -349,7 +358,7 @@ describe("DeploymentsPage — validation", () => {
     // There used to be a second — a pill in the Dev environment panel — which said
     // "Awaiting fix" with no subject in a card about deployments, and carried less
     // than the row it duplicated.
-    const link = screen.getByRole("link", { name: /View full report/ });
+    const link = screen.getByRole("link", { name: /View validations/ });
     expect(link).toHaveAttribute("href", "/projects/acme/validation");
     expect(link).not.toHaveAttribute("target");
   });
@@ -366,12 +375,53 @@ describe("DeploymentsPage — validation", () => {
 
     // The rail's Validation STAGE is still on screen (it is a stage of the
     // story), but with no verdict there is no banner and no report link.
-    expect(screen.queryByText(/View full report/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/View validations/)).not.toBeInTheDocument();
   });
 });
 
-describe("DeploymentsPage — story rail", () => {
-  it("tells the three-stage story with the dev version and rollout facts", () => {
+describe("DeploymentsPage — environment board", () => {
+  it("seats each environment on a card with what it runs", () => {
+    mockDeploy = {
+      version: "v1",
+      status: "deployed",
+      components: { total: 1, ready: 1 },
+      validation: "passed",
+    };
+    mockBuilds = [
+      { tag: "v1", milestoneNumber: 3, status: "completed", startedAt: "2026-08-14T16:20:00Z" },
+    ];
+
+    render(<DeploymentsPage projectName="acme" />);
+
+    // The two cards, named as places.
+    expect(screen.getByRole("heading", { name: "Development" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Production" })).toBeInTheDocument();
+    // The dev card's fact line and the aggregate's word on the rollout — which
+    // the ledger row repeats, so the chip appears twice.
+    expect(screen.getByText(/1 of 1 components live/)).toBeInTheDocument();
+    // Two chips — the card's and the row's — beside the ledger's column header.
+    expect(screen.getByRole("columnheader", { name: "Deployed" })).toBeInTheDocument();
+    expect(
+      screen.getAllByText("Deployed").filter((el) => el.closest("th") === null),
+    ).toHaveLength(2);
+    // Production is empty, gated, and counts the live configuration it needs.
+    expect(
+      screen.getByText("Only a version whose validation has passed can be promoted here."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("0 of 1 live configuration values set")).toBeInTheDocument();
+    // The ledger: one row, development, with the milestone read off the
+    // version ledger and a validation cell.
+    const row = screen.getByRole("row", { name: "Open Development deployment" });
+    expect(within(row).getByText("v1")).toBeInTheDocument();
+    expect(within(row).getByText("Milestone #3")).toBeInTheDocument();
+    expect(within(row).getByText("validated")).toBeInTheDocument();
+    // Nothing runs in production, so it has no ledger row.
+    expect(
+      screen.queryByRole("row", { name: "Open Production deployment" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("opens the environment's page from its ledger row", () => {
     mockDeploy = {
       version: "v1",
       status: "deployed",
@@ -381,22 +431,14 @@ describe("DeploymentsPage — story rail", () => {
 
     render(<DeploymentsPage projectName="acme" />);
 
-    // The card header is the deploy-lifecycle chip itself — no heading.
-    expect(screen.getByText("Deployed")).toBeInTheDocument();
-    // The place stages name themselves as environments (#401 feedback);
-    // Validation is the check between them, not a place.
-    expect(screen.getByText("Development environment")).toBeInTheDocument();
-    expect(screen.getByText("Validation")).toBeInTheDocument();
-    expect(screen.getByText("Production environment")).toBeInTheDocument();
-    // The side panel's scoped section label keeps the short name.
-    expect(screen.getByText("Production")).toBeInTheDocument();
-    expect(screen.getByText("1 of 1 components ready")).toBeInTheDocument();
-    // The side panel's at-a-glance facts.
-    expect(screen.getByText("1 / 1 ready")).toBeInTheDocument();
-    expect(screen.getByText("Nothing deployed yet")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("row", { name: "Open Development deployment" }));
+    expect(navigate).toHaveBeenCalledWith({
+      to: "/projects/$projectName/deployments/$environment",
+      params: { projectName: "acme", environment: "development" },
+    });
   });
 
-  it("upgrades the validation fact and banner with criteria counts", () => {
+  it("upgrades the validation cell and banner with criteria counts", () => {
     mockDeploy = {
       version: "v1",
       status: "deployed",
@@ -407,12 +449,30 @@ describe("DeploymentsPage — story rail", () => {
 
     render(<DeploymentsPage projectName="acme" />);
 
-    expect(screen.getByText("12/12 passed")).toBeInTheDocument();
+    expect(screen.getByText("12 / 12 passed")).toBeInTheDocument();
     // The tile's own sentence, word for word — the banner used to write its own,
     // which is how a settled FAILURE came to lead with the count that passed.
     expect(
       screen.getByText("All 12 criteria were covered by a test and passed."),
     ).toBeInTheDocument();
+  });
+
+  it("tints the ledger row and says Deploying while the rollout converges", () => {
+    mockDeploy = {
+      version: "v2",
+      status: "deploying",
+      components: { total: 1, ready: 0 },
+      validation: "none",
+    };
+
+    render(<DeploymentsPage projectName="acme" />);
+
+    expect(screen.getAllByText("Deploying")).toHaveLength(2);
+    const row = screen.getByRole("row", { name: "Open Development deployment" });
+    // A verdict is expected and has not arrived: the cell says so, and no
+    // promotion is offered.
+    expect(within(row).getByText("Not run")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Promote v2 to production/ })).toBeDisabled();
   });
 });
 
@@ -725,7 +785,8 @@ describe("DeploymentsPage — promotion", () => {
 
     render(<DeploymentsPage projectName="acme" />);
 
-    expect(screen.getByText("2 / 2 set")).toBeInTheDocument();
+    // The production card's readiness line counts the provisioned one as set.
+    expect(screen.getByText("2 of 2 live configuration values set")).toBeInTheDocument();
 
     fireEvent.click(
       screen.getByRole("button", { name: /Promote v1 to production/ }),
@@ -846,29 +907,37 @@ describe("DeploymentsPage — Test users", () => {
     expect(
       screen.getByText("Test users for agents on this environment"),
     ).toBeInTheDocument();
-    expect(screen.getByText("test-viewer")).toBeInTheDocument();
+    // The card carries the count; the accounts live in the dialog behind it,
+    // so a many-role app cannot grow this card past the ledger beside it.
+    expect(screen.getByText("1 account, one per role")).toBeInTheDocument();
+    expect(screen.queryByText("test-viewer")).not.toBeInTheDocument();
     const thunder = screen.getByRole("link", {
       name: "Open Thunder Console to add or remove real accounts",
     });
     expect(thunder).toHaveAttribute("href", THUNDER_CONSOLE_USERS);
     expect(thunder).toHaveAttribute("target", "_blank");
 
+    fireEvent.click(screen.getByRole("button", { name: "View test users" }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText("test-viewer")).toBeInTheDocument();
+
     fireEvent.click(
-      screen.getByRole("button", {
+      within(dialog).getByRole("button", {
         name: "Reveal the password for test-viewer",
       }),
     );
     expect(mockReveal).toHaveBeenCalledWith("test-viewer");
     await waitFor(() => {
-      expect(screen.getByText(MOCK_PASSWORD)).toBeInTheDocument();
+      expect(within(dialog).getByText(MOCK_PASSWORD)).toBeInTheDocument();
     });
-    fireEvent.click(screen.getByRole("button", { name: "Hide" }));
-    expect(screen.queryByText(MOCK_PASSWORD)).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", {
-        name: "Reveal the password for test-viewer",
+    fireEvent.click(
+      within(dialog).getByRole("button", {
+        name: "Hide the password for test-viewer",
       }),
-    ).toBeInTheDocument();
+    );
+    expect(screen.queryByText(MOCK_PASSWORD)).not.toBeInTheDocument();
+    // Masked, not gone — the row holds its place in the table.
+    expect(within(dialog).getByText("**********")).toBeInTheDocument();
   });
 
   it("keeps Thunder / Test users copy and omits Roles-gate and account actions", () => {

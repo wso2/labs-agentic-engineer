@@ -160,11 +160,11 @@ for (const rule of [
   // its OWN subagent, dispatched after the build reports clean — a builder that
   // walks the app it just wrote enters the browser carrying the whole build in
   // context. So the body owns the two halves the lead controls: the step that
-  // will not let a web app be committed unwalked, and the shape of the extra
-  // dispatch. The procedure itself is `mock-verification`, asserted below.
+  // will not let a web app be committed unwalked, and the literal dispatch
+  // prompt. The procedure itself is `mock-verification`, asserted below.
   "**A `web-application` is finished by a walk, not a build.**",
   "dispatch **one more subagent**",
-  "**A walk subagent is the same dispatch, shorter.**",
+  "Walk <component> at <App Path> (issue #<N>).",
 ]) {
   test(`shared by both modes: ${rule.split("\n")[0]}`, () => {
     assert.ok(composed.github.includes(rule), `github mode lost: ${rule}`);
@@ -242,19 +242,22 @@ for (const [file, rules] of Object.entries(REFERENCE_RULES)) {
 test("mock-verification walks and repairs a line at a time", () => {
   const skill = fs.readFileSync(path.join(LIBRARY, "mock-verification", "SKILL.md"), "utf8");
   for (const rule of [
-    "## 1 · Write the checklist",
+    // The flow is the unit and the DSL the only map: the checklist is settled
+    // from it before the browser opens, so an unreached screen is a visible gap.
+    "## What you verify",
+    "## 1 · Checklist",
     "**A line ends green.**",
     "**Three attempts on a line, then mark it `[ ]` and walk on.**",
     "**Repair the app, never the checklist.**",
     // Full page loads reset the mock's in-page state, which has twice been
     // misread as a defect in a just-created record.
-    "**Move between screens by clicking.**",
+    "**Click between screens.**",
     "Make the mock agree with the app",
     // The walk is a subagent's job, and a subagent now keeps its issue's status
     // line current. So this skill bans the RECORD (git, commits, the PR) and
     // defers where progress goes to the prompt — it ships byte-identical into a
     // playground session, which has no issue to post on.
-    "The record belongs to the agent that\n  dispatched you",
+    "The record belongs to the agent\n  that dispatched you",
   ]) {
     assert.ok(skill.includes(rule), `mock-verification lost: ${rule}`);
   }

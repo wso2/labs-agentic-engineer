@@ -208,12 +208,29 @@ RUN groupadd -r aep \
 # Resolved FROM playwright through a fixed symlink rather than spelled out: the
 # revision is decided by PLAYWRIGHT_VERSION above, and a literal `chromium-1228`
 # here would be a second copy of that number to keep in step by hand.
+#
+# ASKED OF playwright, not assembled from an install location plus a guessed
+# directory name: the layout under a chromium revision is PER-ARCH, because
+# playwright ships Google's Chrome-for-Testing build on linux-x64
+# (`chrome-linux64/chrome`) and its own build on linux-arm64
+# (`chrome-linux/chrome`). Either name hardcoded here builds green on one half
+# of the release matrix and red on the other, and `executablePath()` is the
+# same call playwright launches through. The `test -d` pins WHOSE core answers
+# — `require.resolve` walks up to the global root, so a renamed
+# @playwright/test would silently hand back another package's copy at another
+# revision — and the SYMLINK IS THE DIRECTORY, so the binary keeps the resource
+# files (icudtl.dat, the .pak set, the crashpad handler) beside it.
 ARG AGENT_BROWSER_VERSION=0.35.2
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/local/share/aep-chromium/chrome
+# BuildKit predefines both; a stage has to redeclare them to read them in a RUN.
+# Equal on a native build, different on the emulated half of the release matrix.
+ARG BUILDPLATFORM
+ARG TARGETPLATFORM
 RUN npm install -g "agent-browser@${AGENT_BROWSER_VERSION}" \
-    && ln -sfn \
-        "$(playwright install --dry-run chromium | awk '/Install location:/ {print $3; exit}')/chrome-linux" \
-        /usr/local/share/aep-chromium \
+    && test -d "$(npm root -g)/@playwright/test" \
+    && CHROME="$(node -p "require(require.resolve('playwright-core', { paths: ['$(npm root -g)/@playwright/test'] })).chromium.executablePath()")" \
+    && ln -sfn "$(dirname "$CHROME")" /usr/local/share/aep-chromium \
+    && test -x "${AGENT_BROWSER_EXECUTABLE_PATH}" \
     # A smoke test, earning its line the way `bal library --help` does at the
     # bottom of this file: it drives a real page through the variable set
     # above, so a missing CLI, a symlink resolving to nothing, and a chromium
@@ -241,16 +258,39 @@ RUN npm install -g "agent-browser@${AGENT_BROWSER_VERSION}" \
     # root and not for an unprivileged user is the class of bug ADR-0007
     # records. `su` without `-` keeps the environment, so the variable set
     # above is the one under test.
-    && printf '<h1>agent-browser-ok</h1>' > /tmp/ab-smoke.html \
-    && chmod a+r /tmp/ab-smoke.html \
-    && su aep -s /bin/bash -c 'set -e; \
-        export AGENT_BROWSER_ARGS=--no-sandbox; \
-        agent-browser open file:///tmp/ab-smoke.html; \
-        agent-browser get text h1 | grep agent-browser-ok; \
-        agent-browser close --all' \
-    # The smoke test leaves a state directory behind; a socket and pid file
-    # baked into the image would be stale in every pod started from it.
-    && rm -rf /tmp/ab-smoke.html /home/aep/.agent-browser
+    #
+    # NATIVE BUILDS ONLY. The release builds both platforms on one amd64
+    # runner, so its arm64 half runs under QEMU user-mode emulation, and
+    # chromium does not run there: the browser process dies at launch and the
+    # CLI reports "CDP response channel closed". Nothing about that half of the
+    # IMAGE is wrong — the same layer, built natively on an arm64 host, passes
+    # this test — so the launch is asserted on every native build (the
+    # release's amd64 half, every developer's host-arch `docker build`) and
+    # skipped on any cross-platform one. The gate is the platform pair, not a
+    # probe for emulation, so a foreign-arch build that COULD launch (amd64
+    # under Rosetta on a Mac) skips it too; that costs nothing the native
+    # builds do not already cover. The skipped half keeps everything above the
+    # `if`: the install, the symlink and the `test -x` need no browser process.
+    #
+    # The alternative is a release that builds its arm64 half on an arm64
+    # runner, where this test would run natively on both halves. That is a
+    # release-workflow change (per-platform jobs, a manifest merge) and is
+    # not what fixes this; the gate stays correct under it, since a native
+    # build takes the `then` branch.
+    && if [ "$TARGETPLATFORM" = "$BUILDPLATFORM" ]; then \
+        printf '<h1>agent-browser-ok</h1>' > /tmp/ab-smoke.html \
+        && chmod a+r /tmp/ab-smoke.html \
+        && su aep -s /bin/bash -c 'set -e; \
+            export AGENT_BROWSER_ARGS=--no-sandbox; \
+            agent-browser open file:///tmp/ab-smoke.html; \
+            agent-browser get text h1 | grep agent-browser-ok; \
+            agent-browser close --all' \
+        # The smoke test leaves a state directory behind; a socket and pid file
+        # baked into the image would be stale in every pod started from it.
+        && rm -rf /tmp/ab-smoke.html /home/aep/.agent-browser; \
+    else \
+        echo "agent-browser smoke test skipped: ${TARGETPLATFORM} is being built on ${BUILDPLATFORM}, and chromium does not run under emulation"; \
+    fi
 
 WORKDIR /app
 

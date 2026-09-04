@@ -285,6 +285,23 @@ here: they're the open `console` + `feature` issues.
   favour of **Agentic Engineer**. First feature to draw on the console lexicon
   (ADR-0019) —
   [#561](https://github.com/wso2/labs-agentic-engineer/issues/561)
+- Deployments, rebuilt as an environment board — a **card per environment**
+  (Development: running version, rollout count, the validation verdict and
+  the promotion; Production: the promotion gate and how much live
+  configuration is set), then a **ledger with one row per environment that
+  runs something** (Version · Milestone · Environment · Status · Validation ·
+  Deployed, the Builds ledger's own table), each row opening the
+  environment's page at `/deployments/$environment`: a summary card
+  (Deployed, Milestone, Validation, the commit that shipped it, a link to the
+  build) and the components running there with **Visit** / **Try API** and
+  their URLs. Connections keep their Configure surface on a card under the
+  ledger. A row is what the environment runs NOW — the platform keeps no
+  deployment record, so the design's past deployments, Duration, Redeploy and
+  runtime log wait on a backend read. The Development card names how many
+  **test users** the project has, one per role, and opens them in a dialog —
+  a table of username, masked password with reveal and copy, role, and the
+  cold-start account — so the card holds one height whatever the design
+  declares. **No contract change** (ADR-0027, amending ADR-0021)
 - Deployments page — one-story rail + environment panel: Development /
   Validation / Production as one numbered rail (Builds-spine vocabulary,
   ADR-0014) with a side panel (version, rollout, endpoints, production

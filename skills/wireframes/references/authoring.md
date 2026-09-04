@@ -15,22 +15,45 @@ You have up to three sources in context; read them in this order of priority:
    This is your **primary** source for screens: derive the screen list from
    the flows first. (They may not exist on every turn — if absent, promote
    the requirements to primary.)
-2. **`specs/requirements/`** (requirements / user stories) — the **detailed**
-   source. Use it to flesh out each screen and to catch tasks the design doc
-   only summarized: specific fields, states, rules, and edge cases (out-of-
-   stock, guest vs. signed-in, validation errors).
+2. **`specs/requirements/`** (requirements / user stories) — the **coverage
+   oracle**, and the detailed source. The numbered user stories are what the
+   set has to cover (see *Cover every story* below); they also flesh out each
+   screen and catch tasks the flow files only summarized: specific fields,
+   states, rules, and edge cases (out-of-stock, guest vs. signed-in,
+   validation errors).
 3. **This component's `specs/design/components/<name>/design.json`** — a thin
    per-component summary; use it mainly to **scope**, not for screen content:
    its `type` (draw wireframes only for `web-application`), its one-line
    `description`, and its `dependencies` (e.g. an auth dependency means there's
    a signed-in vs. guest distinction → likely role-specific screens).
 
-**Cover every task.** Walk the design and requirements and make sure each
-distinct user-facing task — for each role they name — has a wireframe screen
-that serves it; nothing user-facing should be left without a view. Equally,
-don't invent screens the design doesn't imply. A quick check: list the
-tasks/roles, and for each name the screen that fulfills it — a task with no
-screen is a gap, a screen with no task is noise.
+## Cover every story
+
+The user stories are **numbered**, so coverage is countable. Count it
+deliberately, before you write the file, while the requirements are in front
+of you:
+
+**Walk the numbered stories in order. For each one, name the `flow` block that
+walks it** — the wireframe's own flows, not the `specs/design/flows/` files
+you read them from. Each usually serves several stories, and a story may
+appear in more than one; what matters is that every story is accounted for —
+either walked, or knowingly set aside.
+
+**Some stories have no screen, and that is correct.** Set a story aside when
+the product genuinely gives it no view:
+
+- **Sign-in and sign-out**, on a component with an auth dependency. "As a user
+  I can sign in" is real, but the platform's SSO owns that page — there is no
+  `Login` screen to draw (see *The DSL* in `SKILL.md`). The story is served by
+  the auth dependency, not by a flow.
+- **Backend rules and jobs** — a nightly export, a retention policy, a
+  validation rule enforced in the API.
+- **Machine-facing stories** — an endpoint another service calls.
+
+Every other uncovered story is a gap: add the screens it needs and put them in
+a flow.
+
+Equally, don't invent screens the stories don't imply.
 
 ## What makes a wireframe good
 
@@ -333,6 +356,10 @@ Checklist before finishing a wireframe file:
   order across roles.
 - Each role or journey named in the design's `flows/` files has its own `flow "<name>"` block,
   entry screen first, referencing existing screens by name.
+- **Every numbered user story is accounted for**: walked by at least one flow,
+  or on the set-aside list with its reason (sign-in, a backend rule, a job, a
+  machine-facing endpoint). Go through the stories and say which for each —
+  the one thing that must not happen is a story nobody looked at.
 - **Each role flow opens on that role's own screen, and there is no `Login`
   screen when the component has an auth dependency** — the platform's SSO
   hosts sign-in and returns the user to their home screen, so the app never

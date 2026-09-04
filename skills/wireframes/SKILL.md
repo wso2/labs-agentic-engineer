@@ -18,7 +18,7 @@ DSL itself. Which reader you are decides the reference you load next:
 - **Implementing** — building a `web-application` component that has a
   `wireframes.dsl` — read `references/implementing.md`: how each screen,
   element and arrow becomes a route, a component and working navigation, and
-  the fidelity checklist your PR carries.
+  how the walk evidences it.
 
 Every `web-application` component gets its wireframes as ONE DSL source file at
 `specs/design/components/<name>/wireframes.dsl` — all screens in one file.

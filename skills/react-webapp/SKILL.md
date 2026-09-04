@@ -22,11 +22,9 @@ browser config — they are pod env for nginx.
    it), then generate `src/generated/` from each dependency's OpenAPI contract,
    then `src/api.ts` with **same-origin** `baseUrl`, then pages. Every rule under
    Constraints is a runtime failure if broken, not a style preference.
-3. **Mock mode** — read `references/mock-mode.md` and follow it. Every web-app
-   on this platform ships a `mock/` directory that stands the same app up with
-   no cluster, no sibling service and no IDP behind it; step 5 is what opens it.
-   Production is untouched: the build eliminates the whole branch as dead code
-   and ships no `msw`.
+3. **Mock mode** — author `mock/` per `references/mock-mode.md`. It stands the
+   same app up with no cluster, no sibling service and no IDP behind it, and the
+   build eliminates it as dead code.
 4. **Verify** — from the app path:
    ```bash
    npm install                   # regenerates package-lock.json
@@ -71,12 +69,10 @@ browser config — they are pod env for nginx.
    the advisories land on Vite's dev-only transitive dependencies, which never
    reach a static bundle served by nginx, and `audit fix` bumps pinned
    dependencies behind your back.
-5. **Walk** — a build exiting 0 says the code is well-formed and nothing about
-   what the screens do, so the app is not finished until somebody opens every
-   screen in a real browser and repairs what does not work. That walk is
-   `mock-verification`, and it is a **separate** agent's job: leave `mock/` and
-   the `dev:mock` script ready for it, and hand your build off clean.
-6. **PR** — only once the walk leaves no failure open.
+5. **Walk** — `mock-verification`, another agent's dispatch. Your job ends at
+   a clean Verify with `mock/` in place.
+6. **PR** — the lead's, once the walk has reported; an open `[ ]` line rides in
+   its body (the component contract's **Walks**).
 
 ## Constraints
 

@@ -143,6 +143,12 @@ its design system without a platform change.
   the fan-out section names the file and a rule that is not in it does not reach
   an implementer. The lead reads it too, for inline work and for authoring
   `workload.yaml` (whose format is `references/workload-and-wiring.md`).
+- **The walk is split the same way.** `mock-verification` owns what a walk
+  verifies, the report shape and the walker's status lines; `aep` owns the
+  dispatch (a literal prompt the lead copies) and what becomes of the report;
+  the component contract and `react-webapp` say only that the walk exists and
+  what the builder leaves for it. A second description of how to walk, in any
+  of those, is a defect.
 - **Stack skills own only their stack**: layout, `Dockerfile`, libraries, the
   verify command, their own pitfalls. Restating a platform-contract rule in a
   stack skill is a defect — it is preloaded context paid twice, and the two

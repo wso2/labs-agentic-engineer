@@ -1,9 +1,9 @@
 # Implementing wireframes (coding agent)
 
 The companion to the `wireframes` skill for the coding run: how a
-`wireframes.dsl` becomes routes, pages, elements and navigation, and the
-fidelity checklist the PR carries. The grammar you are reading is in
-`SKILL.md`; this file is about honouring it.
+`wireframes.dsl` becomes routes, pages, elements and navigation, and how that
+is evidenced. The grammar you are reading is in `SKILL.md`; this file is about
+honouring it.
 
 The wireframe is the **screen contract** for a `web-application` component.
 The reviewer who validates the deployed app compares the rendered wireframe
@@ -80,33 +80,46 @@ Every `flow` block is a journey a role must be able to walk end to end by
 clicking: entry screen first, each screen reachable from the one before. A
 screen you cannot reach from its flow is a broken page, even if it renders.
 
-## The fidelity checklist
+## The evidence
 
-The checklist is **evidence, not a claim**. A web application is opened and
-walked in a browser before its work is committed — mock mode, no cluster behind
-it, one verdict per story (`mock-verification`) — so a tick here means the screen
-was rendered and its arrows were clicked, never that the code looks as though it
-would. Write it once the walk has settled, and put it in the PR body — one
-line per screen, then one per `flow` — with any gap named beside it:
+Two lists, one pair. The **Task** carries a `Screens:` line and a `Flows:`
+checklist with every box unchecked — that is what must be built, and it is
+what you work from. The **PR body** carries the same two lists with the boxes
+earned ticked. You never tick the Task's copy; re-planning rewrites that body.
+
+The ticks are **evidence, not a claim**, and they come from the walk. Once the
+build is clean, `mock-verification` opens the app in a browser, reaches every
+screen, uses every drawn control and follows every arrow, and reports one line
+per flow and per screen; the lead ticks the PR's lists from that report when it
+opens the PR. You write no checklist of your own — a screen you could not build
+as drawn is a gap you name in your report to the lead, and the walk records it.
 
 ```text
 Wireframe fidelity (specs/design/components/<name>/wireframes.dsl)
 
 Screens
-- [x] RiskQueue → /risk-queue — all elements; "Review next" → QueueRiskDetail
-- [x] MyRisks → /my-risks — all elements; table → RiskDetail
+- [x] RiskQueue → /risk-queue
+- [x] MyRisks → /my-risks
 - [ ] NewRisk → /risks/new — "Register" select not built: no registers endpoint
 
 Flows
-- [x] "Approval queue" (Manager) — RiskQueue → QueueRiskDetail walks by clicking
-- [ ] "Log a risk" (Risk owner) — MyRisks → NewRisk walks; NewRisk → RiskDetail
-      blocked on the missing select
+- [x] F1 · Approval queue — stories 2, 5
+- [ ] F2 · Log a risk — stories 1, 3 — breaks at NewRisk → RiskDetail: the
+      "Register" select is not built
 ```
 
-A screen is ticked only when every element in its block was on the page and
-every arrow it carries navigated when clicked. A flow is ticked only when it was
-walked end to end by clicking, entry screen first — an unwalkable flow strands
-the screens behind it, so the e2e test written against the acceptance criteria
-cannot reach them either. An unticked line with its reason is fine — it tells
-the reviewer exactly where to look, and a screen whose story could not be judged
-against a mock says that in the same place.
+**Screens** come from the Task's `Screens:` line, one line each, naming the
+route built. A screen is ticked when the walk reached it, every drawn control
+acted and every arrow navigated.
+
+**Flows** carry over from the Task's `Flows:` checklist, keeping each one's
+number, name and story set — one line each here, not the Task's labelled
+block, since its persona and `Walk:` chain are recorded there. A flow is ticked
+when the walk went through its chain end to end by clicking, entry screen
+first; otherwise the line names the step it broke at. A flow the Task lists
+appears here even when it could not be built: dropping the line is how a
+missing journey goes unnoticed, and an unwalkable flow strands the stories it
+carries.
+
+Layout and copy are outside the walk. They stay the reviewer's comparison of
+the rendered wireframe against the running page.

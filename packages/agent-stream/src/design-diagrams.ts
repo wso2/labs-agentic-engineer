@@ -121,6 +121,13 @@ const MESSAGE_RE = new RegExp(`^(\\S+?)\\s*(${ARROWS})\\s*([+-])?\\s*(\\S+?)\\s*
 const DECLARE_RE = /^(?:create\s+)?(participant|actor)\s+([^\s:]+)(?:\s+as\s+(.+))?$/;
 const NOTE_RE = /^note\s+(?:left of|right of|over)\s+([^\s:,]+)(?:\s*,\s*([^\s:,]+))?\s*:/i;
 const OPENERS = /^(alt|opt|loop|par|critical|break|rect|box)(\s|$)/;
+// The two shapes the evidence says models actually write when a line fails:
+// a multi-word name in a declaration, or in a message endpoint. Mermaid
+// wants one-word ids with the label carried by `as`, so the error must
+// TEACH that — a generic "not a sequence statement" earns a byte-identical
+// retry (seen live: attempt two of a rejected flow was unchanged).
+const SPACED_DECLARE_RE = /^((?:create\s+)?(?:participant|actor))\s+\S+(?:\s+\S+)+$/;
+const SPACED_MESSAGE_RE = new RegExp(`^(.+?)\\s*(?:${ARROWS})\\s*[+-]?\\s*(.+?)\\s*:`);
 const CONTINUERS = /^(else|and|option)(\s|$)/;
 
 interface SequenceParse {
@@ -195,10 +202,28 @@ function parseSequence(block: MermaidBlock): SequenceParse {
       participants.add(msg[4] as string);
       continue;
     }
+    const spacedDecl = SPACED_DECLARE_RE.exec(text);
+    if (spacedDecl && !/\sas\s/.test(text)) {
+      const keyword = spacedDecl[1] as string;
+      const words = text.slice(keyword.length).trim();
+      const oneWord = words.replace(/[^\p{L}\p{N}]+/gu, "");
+      diagnostics.push({
+        line,
+        message: `\`${text}\` — a name is ONE word; declare \`${keyword} ${oneWord} as ${words}\` and use \`${oneWord}\` in every message`,
+      });
+      continue;
+    }
+    const spaced = SPACED_MESSAGE_RE.exec(text);
+    if (spaced && (/\s/.test(spaced[1] as string) || /\s/.test(spaced[2] as string))) {
+      diagnostics.push({
+        line,
+        message: `\`${text}\` — a message's endpoints are one-word ids (\`WarehouseStaff->>ops-console: …\`); a multi-word name gets its words from the declaration's \`as\` alias, never from the message line`,
+      });
+      continue;
+    }
     diagnostics.push({
       line,
-      message:
-        "not a sequence statement — expected a participant/actor declaration, a message (A->>B: text), a Note, or an alt/opt/loop/par block",
+      message: `\`${text}\` is not a sequence statement — expected a participant/actor declaration, a message (A->>B: text), a Note, or an alt/opt/loop/par block`,
     });
   }
   if (!sawHeader) {
@@ -257,7 +282,7 @@ function parseEr(block: MermaidBlock): Diagnostic[] {
     if (RELATION_RE.test(text) || BARE_ENTITY_RE.test(text)) continue;
     diagnostics.push({
       line,
-      message: "not an ER statement — expected an entity block (NAME { … }) or a relation (A ||--o{ B : label)",
+      message: `\`${text}\` is not an ER statement — expected an entity block (NAME { … }) or a relation (A ||--o{ B : label)`,
     });
   }
   if (!sawHeader) diagnostics.push({ line: block.fenceLine, message: "the mermaid block is empty" });

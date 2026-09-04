@@ -17,13 +17,19 @@
  */
 
 import { createFileRoute } from "@tanstack/react-router";
-import { DeploymentsPage } from "../features/projects/components/DeploymentsPage";
+import { DeploymentDetailPage } from "../features/projects/components/DeploymentDetailPage";
 
-export const Route = createFileRoute("/projects/$projectName/deployments")({
-  component: DeploymentsRoute,
+/**
+ * One environment's deployment (ADR-0027). Keyed by ENVIRONMENT rather than a
+ * deployment id because the platform keeps no deployment record — a release
+ * binding is current state, so an environment has exactly one deployment to
+ * show. The page itself rejects a segment that names no environment.
+ */
+export const Route = createFileRoute("/projects/$projectName/deployments/$environment")({
+  component: DeploymentDetailRoute,
 });
 
-function DeploymentsRoute() {
-  const { projectName } = Route.useParams();
-  return <DeploymentsPage projectName={projectName} />;
+function DeploymentDetailRoute() {
+  const { projectName, environment } = Route.useParams();
+  return <DeploymentDetailPage projectName={projectName} environment={environment} />;
 }

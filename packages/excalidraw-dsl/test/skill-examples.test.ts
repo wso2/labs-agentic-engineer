@@ -47,9 +47,9 @@ const skillDir = join(here, "..", "..", "..", "skills", "wireframes");
  * expected to hold. The count is asserted, so a fence renamed or an example
  * deleted fails here instead of silently reducing this suite to a no-op.
  *
- * `implementing.md` expects ZERO on purpose: its one fenced block is the PR
- * fidelity checklist, which is a report format, not DSL. It stays in the list
- * so that adding a DSL example to it later is caught and checked.
+ * `implementing.md` expects ZERO on purpose: it explains how a DSL becomes
+ * routes and never quotes one. It stays in the list so that adding a DSL
+ * example to it later is caught and checked.
  */
 const SKILL_FILES: ReadonlyArray<{ file: string; documents: number }> = [
   { file: "SKILL.md", documents: 1 },

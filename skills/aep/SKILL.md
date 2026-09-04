@@ -193,17 +193,20 @@ subagent you handed it to, keeps its status line current from start to done
    `references/component-contract.md` and the stack skills of every component it
    touches.
 3. **A `web-application` is finished by a walk, not a build.** Once its build is
-   clean, dispatch **one more subagent** for that component: it stands the app up
-   in mock mode, opens every screen in a real browser, and repairs each failure
-   the moment it finds it. `mock-verification` is that whole procedure. Give it
-   its own subagent rather than adding it to the builder's job — a builder that
-   walks the app it just wrote enters the browser carrying the whole build in
-   context and pays for that on every step of the walk. The walk lands before the
-   commit, so what it fixes ships with what it checked. An issue that touches no
-   web app skips this, and so does a fix whose diff moved no file the app loads.
-   An issue you are closing as **already satisfied** does not: that verdict is a
-   claim about a screen, and a claim about a screen is the one kind reading the
-   code cannot settle.
+   clean, dispatch **one more subagent** for that component with exactly this
+   prompt, and nothing about how to walk:
+
+   ```text
+   Walk <component> at <App Path> (issue #<N>). Load `mock-verification` and
+   `agent-browser`; the first is the whole procedure. Edit/Write only inside
+   <App Path>; never run `git`. Status line: <the gh issue comment command with #N filled in>.
+   Report back the skill's report block.
+   ```
+
+   The walk lands before the commit, so what it fixes ships with what it
+   checked. An issue that moved no file the app loads skips this. One you are
+   closing as **already satisfied** does not: that verdict is a claim about a
+   screen, and reading the code cannot settle one.
 4. **Commit that issue's work on its own, attributed to it:**
    ```bash
    git add <the App Paths that issue touched>
@@ -256,10 +259,10 @@ gh issue comment <number> --body "<one line: what is happening on this issue now
 ```
 
 **Post when the one-line answer changes**, and always at both ends — when the
-work starts and when it stops. In between it changes when a component goes green,
-when a web app's walk begins, and when that walk ends. A stretch with no new
-answer is silence telling the truth; a comment repeating the line already there
-is noise.
+work starts and when it stops. In between it changes when a component goes green
+and when its work is committed; a walk's own lines are the walker's
+(`mock-verification` fixes their shape). A stretch with no new answer is silence
+telling the truth; a comment repeating the line already there is noise.
 
 Every tool call already reaches the run's progress feed, so this line carries the
 **shape** of the work rather than its steps — the component, and what is
@@ -267,8 +270,8 @@ happening to it:
 
 ```text
 Implementing todo-api — 6 endpoints against its openapi.yaml.
-todo-api builds clean; standing todo-web up in mock mode to walk 7 screens.
-Walk done — 7 screens, 6 pass, 1 fixed (todo detail was plain text, now a link).
+todo-api builds clean; todo-web builds clean, walk dispatched.
+Committed todo-api and todo-web (#12).
 ```
 
 Not a plan, not a status table, not a diff, and never a comment on an issue that
@@ -294,7 +297,8 @@ the progress feed and the person watching sees an empty section where a componen
 was built.
 
 **A subagent starts from its prompt and nothing else.** It does not have this
-skill. Name **exactly these**, and nothing else:
+skill. This list is a **build** dispatch — a walk's prompt is the literal one in
+step 3, and nothing else. Name **exactly these**, and nothing else:
 
 1. its issue — the number, and to read it in full;
 2. its App Paths — the only paths it may write;
@@ -324,14 +328,6 @@ skill. Name **exactly these**, and nothing else:
    them. That command is the only `gh` it may run, and its own issue is the only
    issue it may touch.
 
-**A walk subagent is the same dispatch, shorter.** Send it after its component's
-build reports clean, naming only: the component and its App Path, its issue
-number, the two skills `mock-verification` (which carries the whole procedure)
-and `agent-browser`, and the same write boundary — `Edit`/`Write` inside the App
-Path, no `git`. It repairs what it finds as it finds it, so its report comes back
-with fixes already in the tree; hand it nothing about how to walk, which is the
-skill's job and not yours to restate.
-
 Give paths, not contents. A subagent reads the same filesystem you do, so a
 contract you paste is a long turn spent before it starts, on a file it opens
 anyway — and do not open those yourself either: every line you pull in you carry
@@ -346,10 +342,11 @@ wrote buys nothing and carries the whole set for the rest of the run.
 **You are the sole git writer.** When a subagent reports done, *you* stage those
 paths and commit them exactly as in step 4. **No worktrees** — one workspace.
 
-**A walk that leaves a failure open is not a failed wave.** Commit the component
-with the rest of that issue's work — the fixes the walk did make are already in
-it — and carry the report's `[ ]` lines into **Finish the cycle** as the
-diagnostic, naming the screen and what happens on it.
+**A walk that leaves a failure open is not a failed wave** (the component
+contract's **Walks**). Its report comes back with the fixes already in the tree
+(step 3): commit the component with the rest of that issue's work and carry the
+report's `[ ]` lines into **Finish the cycle**, where the pull request body
+carries them verbatim.
 
 ## 3 · Finish the cycle
 
@@ -373,6 +370,13 @@ That list matters twice: the **auto-merge predicate** needs at least one
 is treated as somebody else's work and left alone), and GitHub closes each
 referenced issue **when the PR merges** — one you finished but didn't list gets
 worked again next cycle. **The platform merges the PR; no human reviews it.**
+
+**A web application in the cycle** → its Task's `Screens:` and `Flows:` lists
+go in the body, ticked from the walk's report: a screen when its line is green,
+a flow when every screen in its block is. An open `[ ]` line stays unticked with
+the report's line beside it (`wireframes`' `references/implementing.md` shows
+the shape). The PR stays ready for review — a defect on a committed component
+is not a red one (the component contract's **Walks**).
 
 **A component stayed red** → the same PR, but `--draft` and a `[build-failed]`
 title prefix. A draft is the platform's signal that you are not finished and is

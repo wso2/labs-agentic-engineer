@@ -101,10 +101,32 @@ turn — apply them directly, and load one only if you find you do not have it.
    design.cell declares (a component, or a boundary external such as the
    identity server or a SaaS) or an actor from the PRD — never an invented
    name. No context/C1 diagram anywhere: the cell and the PRD carry that.
-   The platform judges both documents as you write them: a second diagram,
+   The shape is formulaic — write it like this, first try:
+
+   ```mermaid
+   sequenceDiagram
+       actor Employee
+       actor LineManager as Line Manager
+       participant expense-webapp
+       participant expense-api
+
+       Employee->>expense-webapp: submit claim (amount, receipt)
+       expense-webapp->>expense-api: create claim
+       alt no receipt
+           expense-api-->>expense-webapp: refused
+       else
+           expense-api-->>expense-webapp: created
+       end
+       LineManager->>expense-webapp: approve
+   ```
+
+   Names are ONE word. A multi-word PRD actor gets an alias — `actor
+   LineManager as Line Manager` — and every message uses the one-word id;
+   spaces in a declared name or a message endpoint are refused. The
+   platform judges both documents as you write them: a second diagram,
    a statement outside plain mermaid, or an unresolved participant is
-   refused (`INVALID_DIAGRAM`, `UNKNOWN_PARTICIPANT`) with the line and the
-   ids you may use — fix it and re-emit the whole file once.
+   refused (`INVALID_DIAGRAM`, `UNKNOWN_PARTICIPANT`) with the offending
+   line and the ids you may use — fix it and re-emit the whole file once.
 5. **Security design** (`security-design`) — `specs/design/security.json` when
    the design has sign-in or roles.
 6. **Per-component artifacts** — every `service` gets `openapi.yaml`

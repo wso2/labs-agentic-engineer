@@ -154,7 +154,7 @@ test("a sequence statement outside the subset is named by line", () => {
 `);
   const p = checkDesignDiagram(FLOW, bad, bundle());
   assert.equal(p?.code, "INVALID_DIAGRAM");
-  assert.match(p!.message, /line 8: not a sequence statement/);
+  assert.match(p!.message, /line 8: .* is not a sequence statement/);
 });
 
 test("an unclosed alt block is rejected at the line it opened", () => {
@@ -232,4 +232,37 @@ test("an unterminated mermaid fence is rejected at the line it opened", () => {
   const p = checkDesignDiagram(FLOW, bad, bundle());
   assert.equal(p?.code, "INVALID_DIAGRAM");
   assert.match(p!.message, /fence opened at line 3 is never closed/);
+});
+
+test("a multi-word declared name is taught the alias form, echoing the line", () => {
+  const bad = flow(`sequenceDiagram\n    actor Warehouse Staff\n    participant expense-api\n`);
+  const p = checkDesignDiagram(FLOW, bad, bundle());
+  assert.equal(p?.code, "INVALID_DIAGRAM");
+  assert.match(p!.message, /`actor Warehouse Staff` — a name is ONE word/);
+  assert.match(p!.message, /actor WarehouseStaff as Warehouse Staff/);
+});
+
+test("a multi-word message endpoint is taught the one-word-id rule", () => {
+  const bad = flow(`sequenceDiagram\n    actor Employee\n    Warehouse Staff->>expense-api: log parcel\n`);
+  const p = checkDesignDiagram(FLOW, bad, bundle());
+  assert.match(p!.message, /`Warehouse Staff->>expense-api: log parcel` — a message's endpoints are one-word ids/);
+});
+
+test("a generic unknown line is echoed back verbatim", () => {
+  const bad = flow(`sequenceDiagram\n    expense-api ==> expense-db: not an arrow\n`);
+  const p = checkDesignDiagram(FLOW, bad, bundle());
+  assert.match(p!.message, /`expense-api ==> expense-db: not an arrow`/);
+});
+
+test("the skill's worked example passes the gate as written", () => {
+  const example = `# Submit a claim\n\nAn Employee submits a claim; the Line Manager approves.\n\n\`\`\`mermaid\nsequenceDiagram\n    actor Employee\n    actor LineManager as Line Manager\n    participant expense-webapp\n    participant expense-api\n\n    Employee->>expense-webapp: submit claim (amount, receipt)\n    expense-webapp->>expense-api: create claim\n    alt no receipt\n        expense-api-->>expense-webapp: refused\n    else\n        expense-api-->>expense-webapp: created\n    end\n    LineManager->>expense-webapp: approve\n\`\`\`\n`;
+  assert.equal(checkDesignDiagram(FLOW, example, bundle()), null);
+});
+
+test("the repair guidance keeps the declaration's own keyword", () => {
+  const bad = flow(`sequenceDiagram\n    participant Order Service\n`);
+  const p = checkDesignDiagram(FLOW, bad, bundle());
+  assert.match(p!.message, /declare `participant OrderService as Order Service`/);
+  const badCreate = flow(`sequenceDiagram\n    create participant Order Service\n`);
+  assert.match(checkDesignDiagram(FLOW, badCreate, bundle())!.message, /declare `create participant OrderService as Order Service`/);
 });
