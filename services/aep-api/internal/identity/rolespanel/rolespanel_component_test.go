@@ -436,6 +436,104 @@ func TestPanel_DeleteRemovesTheAccountNotTheRole(t *testing.T) {
 	}
 }
 
+// A delete has to take the account OUT of its roles before removing it, and
+// this is the test the incident asked for.
+//
+// The identity provider does not un-enrol a deleted account: the group goes on
+// naming an id that no longer resolves. Membership can only be written by
+// deleting the group and recreating it, and that recreate is rejected wholesale
+// for the dead member — so the next build that enrolled anybody into the role
+// DESTROYED it, after the delete had already committed, on every retry.
+//
+// Nine role groups went that way on the demo cluster. The fix is ordering, and
+// the assertion is the invariant: no group may name an account that is gone.
+func TestPanel_DeleteUnenrolsFromItsRolesBeforeRemovingTheAccount(t *testing.T) {
+	t.Parallel()
+	store := newFakeStore().
+		withRole("Support Agent").
+		withOwnedUser("support-bot", "Support Agent", "Aep1!old").
+		withRef("acme", "helpdesk", "support-bot", "Support Agent")
+	dir := newFakeDirectory().
+		withGroup("Support Agent", "Handles tickets", "usr-support-bot", "usr-someone-else").
+		withGroup("Reporting", "Reads dashboards", "usr-support-bot").
+		withAccount("support-bot")
+	h := newPanel(t, dir, store)
+
+	resp := h.AsOrg("acme").Delete("/api/v1/projects/helpdesk/roles/test-users/support-bot")
+	if resp.Code != 200 {
+		t.Fatalf("delete: got %d body=%s", resp.Code, resp.Body.String())
+	}
+
+	// The invariant. A single dangling id here is a role group primed to be
+	// destroyed by the next build that touches it.
+	if got := dir.danglingMembers(); len(got) != 1 || got[0] != "Support Agent/usr-someone-else" {
+		t.Errorf("dangling members = %v, want only the pre-existing seed: the deleted account must be gone from every group", got)
+	}
+
+	// Un-enrol from EVERY role it held, not just the one the design named.
+	if len(dir.ops) != 3 ||
+		dir.ops[0] != "RemoveMembers:Reporting" ||
+		dir.ops[1] != "RemoveMembers:Support Agent" ||
+		dir.ops[2] != "DeleteUser:usr-support-bot" {
+		t.Fatalf("directory calls = %v, want both un-enrolments BEFORE the account delete", dir.ops)
+	}
+
+	// Everyone else in the shared role stays.
+	if got := dir.members["grp-Support Agent"]; len(got) != 1 || got[0] != "usr-someone-else" {
+		t.Errorf("Support Agent membership = %v, want the other member kept", got)
+	}
+	if _, gone := dir.groups["support agent"]; !gone {
+		t.Error("THE ROLE WAS DELETED — roles are shared and must be left standing")
+	}
+
+	// And the roles it left are named, because once the account is gone that
+	// fact is not observable from the directory any more.
+	var got gen.StatusMsg
+	if err := json.Unmarshal(resp.Body.Bytes(), &got); err != nil {
+		t.Fatalf("body: %v\n%s", err, resp.Body.String())
+	}
+	for _, want := range []string{"Reporting", "Support Agent"} {
+		if !strings.Contains(got.Status, want) {
+			t.Errorf("status must name the role the account was removed from (%s): %q", want, got.Status)
+		}
+	}
+}
+
+// An un-enrol that fails ABORTS the delete. The two orderings fail differently
+// and only one of them is recoverable: stopping here leaves a whole account
+// that can be deleted again, while pressing on would delete the account and
+// leave the group naming it — the corruption, made permanent, by the very
+// operation that was supposed to avoid it.
+func TestPanel_DeleteAbortsWhenTheAccountCannotBeUnenrolled(t *testing.T) {
+	t.Parallel()
+	store := newFakeStore().
+		withRole("Support Agent").
+		withOwnedUser("support-bot", "Support Agent", "Aep1!old").
+		withRef("acme", "helpdesk", "support-bot", "Support Agent")
+	dir := newFakeDirectory().
+		withGroup("Support Agent", "Handles tickets", "usr-support-bot").
+		withAccount("support-bot")
+	dir.failRemoveMembers = errors.New("thunder POST /groups returned 500")
+	h := newPanel(t, dir, store)
+
+	resp := h.AsOrg("acme").Delete("/api/v1/projects/helpdesk/roles/test-users/support-bot")
+	if resp.Code < 500 {
+		t.Fatalf("want a server error when the un-enrol fails, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	if len(dir.deleted) != 0 {
+		t.Errorf("the account was deleted anyway (%v) — that is what leaves the group naming a dead id", dir.deleted)
+	}
+	if _, still := dir.accounts["support-bot"]; !still {
+		t.Error("the account must survive an aborted delete")
+	}
+	if _, still := store.testUsers["support-bot"]; !still {
+		t.Error("the platform's record must survive an aborted delete, or the account can never be deleted again")
+	}
+	if got := dir.danglingMembers(); len(got) != 0 {
+		t.Errorf("dangling members = %v, want none: an aborted delete must leave nothing behind", got)
+	}
+}
+
 // The account is shared, so a delete while other projects still reference it is
 // reported rather than done silently.
 func TestPanel_DeleteWarnsWhenOtherProjectsStillReference(t *testing.T) {

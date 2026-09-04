@@ -219,13 +219,23 @@ func (s *fakeStore) CountReferencing(_ context.Context, username string) (int, e
 // fakeDirectory is the identity provider. `deleted` records the user ids the
 // panel asked it to remove, which is how a test tells "the account is gone" from
 // "only our row is gone".
+//
+// `ops` records the ORDER of the mutating calls, because the delete path's
+// correctness is an ordering property: un-enrolling an account from its roles
+// after deleting it would leave every one of those groups naming an id that no
+// longer resolves — the state that destroys a role group on the next build. A
+// set of calls cannot express that; a sequence can.
 type fakeDirectory struct {
 	groups       map[string]identity.DirectoryGroup
 	members      map[string][]string
 	accounts     map[string]identity.DirectoryAccount
 	passwordsSet map[string]string
 	deleted      []string
+	ops          []string
 	err          error
+	// failRemoveMembers fails the un-enrol without failing anything else, so a
+	// test can prove the delete ABORTS rather than pressing on.
+	failRemoveMembers error
 }
 
 func newFakeDirectory() *fakeDirectory {
@@ -286,7 +296,47 @@ func (d *fakeDirectory) CreateGroup(_ context.Context, name, description string,
 
 func (d *fakeDirectory) AddMembers(_ context.Context, group identity.DirectoryGroup, memberIDs []string) (identity.DirectoryGroup, error) {
 	d.members[group.ID] = append(d.members[group.ID], memberIDs...)
+	d.ops = append(d.ops, "AddMembers:"+group.Name)
 	return group, nil
+}
+
+func (d *fakeDirectory) RemoveMembers(_ context.Context, group identity.DirectoryGroup, memberIDs []string) (identity.DirectoryGroup, error) {
+	d.ops = append(d.ops, "RemoveMembers:"+group.Name)
+	if d.failRemoveMembers != nil {
+		return identity.DirectoryGroup{}, d.failRemoveMembers
+	}
+	if d.err != nil {
+		return identity.DirectoryGroup{}, d.err
+	}
+	drop := map[string]bool{}
+	for _, id := range memberIDs {
+		drop[id] = true
+	}
+	var remaining []string
+	for _, id := range d.members[group.ID] {
+		if !drop[id] {
+			remaining = append(remaining, id)
+		}
+	}
+	d.members[group.ID] = remaining
+	return group, nil
+}
+
+func (d *fakeDirectory) UserGroups(_ context.Context, userID string) ([]identity.DirectoryGroup, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	var out []identity.DirectoryGroup
+	for _, g := range d.groups {
+		for _, m := range d.members[g.ID] {
+			if m == userID {
+				out = append(out, g)
+				break
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
 }
 
 func (d *fakeDirectory) DeleteGroup(_ context.Context, groupID string) error {
@@ -323,7 +373,11 @@ func (d *fakeDirectory) SetUserPassword(_ context.Context, userID, password stri
 	return nil
 }
 
+// DeleteUser removes the account and, like the real identity provider, leaves
+// every group member list that names it untouched. Nothing here repairs that —
+// the panel has to have un-enrolled first.
 func (d *fakeDirectory) DeleteUser(_ context.Context, userID string) error {
+	d.ops = append(d.ops, "DeleteUser:"+userID)
 	if d.err != nil {
 		return d.err
 	}
@@ -334,6 +388,25 @@ func (d *fakeDirectory) DeleteUser(_ context.Context, userID string) error {
 	}
 	d.deleted = append(d.deleted, userID)
 	return nil
+}
+
+// danglingMembers is every member id across every group that no account has.
+// The invariant the delete path exists to preserve is that this stays empty.
+func (d *fakeDirectory) danglingMembers() []string {
+	have := map[string]bool{}
+	for _, a := range d.accounts {
+		have[a.ID] = true
+	}
+	var out []string
+	for _, g := range d.groups {
+		for _, m := range d.members[g.ID] {
+			if !have[m] {
+				out = append(out, g.Name+"/"+m)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 var _ identity.Directory = (*fakeDirectory)(nil)

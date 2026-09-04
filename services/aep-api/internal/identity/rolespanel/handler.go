@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/gen"
 	"github.com/wso2/aep/aep-api/internal/identity"
@@ -96,6 +97,13 @@ func (h *Handler) DeleteTestUser(ctx context.Context, request gen.DeleteTestUser
 	// The status carries the shared-account warning: the role is untouched, and
 	// other projects may still be pointing at the account that just went away.
 	status := fmt.Sprintf("deleted test user %s; the role was left in place", out.Username)
+	// Say which roles it was taken out of. The account is gone by now, so this
+	// is the only place that fact is observable — and "removed from Manager"
+	// is what tells a reader why a role's member count just dropped.
+	if len(out.UnenrolledFrom) > 0 {
+		status = fmt.Sprintf("%s, after removing the account from %s",
+			status, strings.Join(out.UnenrolledFrom, ", "))
+	}
 	if out.RemainingReferences > 0 {
 		status = fmt.Sprintf("%s. WARNING: %d other project(s) still reference this account and their "+
 			"validation runs will no longer be able to sign in as it",

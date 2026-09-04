@@ -38,7 +38,21 @@ type Directory interface {
 	// only membership write the IdP offers is a delete-and-recreate of the whole
 	// group. Destructive by construction: the ensure calls it ONLY for a group
 	// it owns. Returns the group's new identity.
+	//
+	// The implementation guarantees the group still exists when this returns,
+	// error or not, and never writes back a member the IdP no longer has.
 	AddMembers(ctx context.Context, group DirectoryGroup, memberIDs []string) (DirectoryGroup, error)
+
+	// RemoveMembers takes members out of a group, keeping everyone else, under
+	// the same lock and the same guarantee as AddMembers. Deleting an account
+	// without removing it from its groups first leaves the group pointing at an
+	// account that no longer exists — see PanelService.Delete.
+	RemoveMembers(ctx context.Context, group DirectoryGroup, memberIDs []string) (DirectoryGroup, error)
+
+	// UserGroups returns the groups an account belongs to, so a delete can
+	// un-enrol it from exactly those. An account that is already gone reports
+	// no groups rather than an error, which keeps a retried delete working.
+	UserGroups(ctx context.Context, userID string) ([]DirectoryGroup, error)
 
 	FindUserByUsername(ctx context.Context, username string) (*DirectoryAccount, bool, error)
 	CreateUser(ctx context.Context, username, email, password string) (DirectoryAccount, error)

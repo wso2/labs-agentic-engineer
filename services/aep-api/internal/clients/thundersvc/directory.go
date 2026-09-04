@@ -28,17 +28,44 @@ package thundersvc
 //  1. **Group membership can only be set when the group is CREATED.**
 //     `PUT /groups/{id}` accepts a `members` array, answers 200, and silently
 //     ignores it; there is no `POST/PUT/PATCH /groups/{id}/members` (404/405)
-//     and no SCIM surface. So adding a member to an existing group means
-//     delete-and-recreate with the merged list — see AddGroupMembers, and the
-//     ownership rule its doc comment names.
-//  2. **Passwords are write-only on read-back, but `PUT /users/{id}` echoes the
+//     and no SCIM surface. So changing the membership of an existing group
+//     means delete-and-recreate with the whole list — see rewriteGroupMembers,
+//     which is the only place in this file that does it.
+//
+//     Membership is READABLE from both ends, though: `/groups/{id}/members`
+//     lists a group's accounts and `/users/{id}/groups` lists an account's
+//     groups. The second one is what makes un-enrolling on delete possible at
+//     all (see UserGroups) — without it, removing an account from its roles
+//     would mean scanning every group in the directory.
+//
+//  2. **The directory has NO referential integrity between users and group
+//     membership.** `DELETE /users/{id}` leaves every group that account
+//     belonged to pointing at an id that no longer resolves, and a `POST
+//     /groups` carrying such an id is rejected WHOLESALE with
+//     `400 GRP-1007 Invalid user member ID` — which names no id, so the
+//     rejection does not say which member was the bad one.
+//
+//     Those two facts together are a data-loss machine, and it has fired: the
+//     only membership write is a delete-then-create, its payload is built from
+//     membership the directory itself corrupts, and the destructive half goes
+//     first. A group whose member list named a deleted account was DESTROYED
+//     by the next build that tried to enrol somebody into it, permanently,
+//     because the failure is deterministic and every retry repeated it.
+//     rewriteGroupMembers exists to make that outcome impossible: it proves
+//     every id resolves before it deletes anything, and it brings the group
+//     back — empty if it must — if the create fails anyway.
+//  3. **Passwords are write-only on read-back, but `PUT /users/{id}` echoes the
 //     submitted password in plaintext.** Same value the caller sent, so no new
 //     disclosure — but that response body must never reach a log or an error
 //     string. setUserAttributes is the one place that PUTs a user, and it
 //     deliberately does not read the body on success and does not interpolate
 //     it on failure.
-//  3. **There is no server-side user filter.** `GET /users?filter=…` is a 400,
-//     so finding a user by username is a bounded client-side scan.
+//  4. **There is no server-side filter, and the groups listing does not even
+//     REJECT one.** `GET /users?filter=…` is a 400, so finding a user by
+//     username is a bounded client-side scan. `GET /groups?userId=…` is worse:
+//     it answers 200 and silently returns every group, so a caller that
+//     believed it filtered would act on the whole directory. Nothing here
+//     passes a filter parameter to either.
 //
 // Requests here go through doJSON rather than the hand-rolled blocks the
 // application half of this client uses. That is deliberate scope control: the
@@ -51,6 +78,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -114,6 +142,11 @@ func (c *client) ListGroups(ctx context.Context) ([]Group, error) {
 	if err != nil {
 		return nil, fmt.Errorf("getSystemToken: %w", err)
 	}
+	return c.listGroupsWith(ctx, token)
+}
+
+// listGroupsWith is ListGroups with a token the caller already holds.
+func (c *client) listGroupsWith(ctx context.Context, token string) ([]Group, error) {
 	var out []Group
 	for page := 0; page < maxDirectoryPages; page++ {
 		var body struct {
@@ -137,7 +170,18 @@ func (c *client) ListGroups(ctx context.Context) ([]Group, error) {
 // most one can match. The comparison is case-insensitive because the platform
 // treats two role names differing only in case as one role.
 func (c *client) FindGroupByName(ctx context.Context, name string) (*Group, bool, error) {
-	groups, err := c.ListGroups(ctx)
+	token, err := c.getSystemToken(ctx)
+	if err != nil {
+		return nil, false, fmt.Errorf("getSystemToken: %w", err)
+	}
+	return c.findGroupByNameWith(ctx, token, name)
+}
+
+// findGroupByNameWith is FindGroupByName with a token the caller already holds.
+// rewriteGroupMembers needs it while holding the group lock, to ask the
+// directory what actually happened when a create reports failure.
+func (c *client) findGroupByNameWith(ctx context.Context, token, name string) (*Group, bool, error) {
+	groups, err := c.listGroupsWith(ctx, token)
 	if err != nil {
 		return nil, false, err
 	}
@@ -241,6 +285,12 @@ func (c *client) createGroupLocked(ctx context.Context, token, ou, name, descrip
 // membership write Thunder offers is a delete-and-recreate, so a no-op that
 // "wrote anyway" would change the group's id on every build for no reason.
 //
+// A member id the group ALREADY carries but that no longer resolves is dropped,
+// not replayed — see rewriteGroupMembers. A member id the CALLER asked to add
+// and that does not resolve is a different thing entirely: the caller wanted
+// somebody enrolled, so that is an error, and it is raised before anything is
+// written.
+//
 // Returns the group as it now stands — a DIFFERENT id when members were added.
 func (c *client) AddGroupMembers(ctx context.Context, group Group, memberIDs []string) (Group, error) {
 	token, err := c.getSystemToken(ctx)
@@ -265,23 +315,226 @@ func (c *client) AddGroupMembers(ctx context.Context, group Group, memberIDs []s
 		have[id] = true
 	}
 	union := append([]string(nil), existing...)
+	var added []string
 	for _, id := range memberIDs {
 		if !have[id] {
 			have[id] = true
 			union = append(union, id)
+			added = append(added, id)
 		}
 	}
-	if len(union) == len(existing) {
+	if len(added) == 0 {
 		return group, nil
 	}
-	if err := c.doJSON(ctx, token, http.MethodDelete, "/groups/"+url.PathEscape(group.ID), nil, nil); err != nil {
-		return Group{}, fmt.Errorf("add members to group %q: %w", group.Name, err)
-	}
-	recreated, err := c.createGroupLocked(ctx, token, ou, group.Name, group.Description, union)
+	return c.rewriteGroupMembers(ctx, token, ou, group, union, added)
+}
+
+// RemoveGroupMembers removes memberIDs from a group, keeping everyone else.
+//
+// This is the un-enrol half of the pair, and it exists so that deleting an
+// account can take that account out of its roles FIRST. Skipping it is what
+// leaves a group pointing at an id that no longer resolves — the state that
+// used to destroy the group on the next build (see the file header).
+//
+// Same lock, same read-modify-write, same no-op rule as AddGroupMembers: a
+// removal of somebody who is not a member writes nothing.
+func (c *client) RemoveGroupMembers(ctx context.Context, group Group, memberIDs []string) (Group, error) {
+	token, err := c.getSystemToken(ctx)
 	if err != nil {
-		return Group{}, fmt.Errorf("add members to group %q: recreate after delete: %w", group.Name, err)
+		return Group{}, fmt.Errorf("getSystemToken: %w", err)
 	}
-	return recreated, nil
+	ou := group.OUID
+	if ou == "" {
+		if ou, err = c.getDefaultOUID(ctx, token); err != nil {
+			return Group{}, err
+		}
+	}
+	c.lockGroup(group.Name)
+	defer c.unlockGroup(group.Name)
+
+	existing, err := c.groupMembersWith(ctx, token, group.ID)
+	if err != nil {
+		return Group{}, fmt.Errorf("read members of group %q: %w", group.Name, err)
+	}
+	drop := make(map[string]bool, len(memberIDs))
+	for _, id := range memberIDs {
+		drop[id] = true
+	}
+	remaining := make([]string, 0, len(existing))
+	for _, id := range existing {
+		if !drop[id] {
+			remaining = append(remaining, id)
+		}
+	}
+	if len(remaining) == len(existing) {
+		return group, nil
+	}
+	// Nothing is REQUIRED to resolve here. A removal only ever shrinks the
+	// membership, so the worst a dangling id among the survivors can do is get
+	// dropped too — which is the repair, not a loss.
+	return c.rewriteGroupMembers(ctx, token, ou, group, remaining, nil)
+}
+
+// rewriteGroupMembers replaces a group's membership with `want`, and is the ONE
+// place in this package that rewrites a group. Callers must hold the group's
+// lock.
+//
+// Thunder gives no atomic way to do this: the group is DELETED and created
+// again (file header, fact 1). That makes every membership write a potential
+// group-loss event, so the danger belongs to the operation rather than to any
+// caller — which is why the whole sequence, including what to do when it goes
+// wrong, lives here instead of being repeated at each call site.
+//
+// Two guarantees:
+//
+//   - **Nothing dead is ever written.** Every id in `want` is resolved against
+//     the directory BEFORE the delete. Ones that no longer exist are dropped
+//     and logged; ids in `require` — the ones a caller explicitly asked to add
+//     — must all resolve, and the write is abandoned with an error if any does
+//     not. This is the check whose absence destroyed nine role groups: the
+//     payload was built from membership the directory itself had corrupted.
+//
+//   - **The group always comes back.** If the create fails after the delete has
+//     committed, the same payload is tried once more (a transient failure must
+//     not cost the membership), and failing that the group is recreated EMPTY.
+//     The caller still gets an error — membership was lost, and the build
+//     should fail — but the role continues to exist, so the next build repairs
+//     it instead of finding a hole where a role used to be.
+func (c *client) rewriteGroupMembers(ctx context.Context, token, ou string, group Group, want, require []string) (Group, error) {
+	live, missing, err := c.resolveLiveUsers(ctx, token, want)
+	if err != nil {
+		// Nothing has been written. An unreadable directory is an ordinary
+		// error, and it must never become a delete.
+		return Group{}, fmt.Errorf("rewrite members of group %q: %w", group.Name, err)
+	}
+	if len(missing) > 0 {
+		gone := make(map[string]bool, len(missing))
+		for _, id := range missing {
+			gone[id] = true
+		}
+		var refused []string
+		for _, id := range require {
+			if gone[id] {
+				refused = append(refused, id)
+			}
+		}
+		if len(refused) > 0 {
+			return Group{}, fmt.Errorf(
+				"rewrite members of group %q: %d of the accounts to enrol do not exist on the directory: %s",
+				group.Name, len(refused), strings.Join(refused, ", "))
+		}
+		// Carried-over members only. Dropping them is the repair — replaying
+		// them is what the directory rejects — but say so, because a role
+		// quietly losing members is exactly the kind of thing nobody notices.
+		slog.WarnContext(ctx, "thunder: dropping group members that no longer exist on the directory",
+			"group", group.Name, "dropped", len(missing), "memberIDs", strings.Join(missing, ","),
+			"cause", "the identity provider does not remove a deleted account from its groups")
+	}
+
+	if err := c.doJSON(ctx, token, http.MethodDelete, "/groups/"+url.PathEscape(group.ID), nil, nil); err != nil {
+		return Group{}, fmt.Errorf("rewrite members of group %q: delete: %w", group.Name, err)
+	}
+
+	recreated, createErr := c.recreateGroup(ctx, token, ou, group, live)
+	if createErr == nil {
+		return recreated, nil
+	}
+	// One retry with the SAME payload. Past this point the group does not
+	// exist, so the choice is between trying again and giving up on the
+	// membership — and a blip must not cost the membership.
+	if recreated, err := c.recreateGroup(ctx, token, ou, group, live); err == nil {
+		return recreated, nil
+	}
+	// Last resort: the ROLE has to exist even if its membership does not.
+	if empty, err := c.recreateGroup(ctx, token, ou, group, nil); err == nil {
+		return Group{}, fmt.Errorf(
+			"rewrite members of group %q: recreate failed (%w); the group was restored EMPTY as %s "+
+				"and its members were lost — the next build re-enrols them",
+			group.Name, createErr, empty.ID)
+	}
+	return Group{}, fmt.Errorf(
+		"rewrite members of group %q: recreate after delete failed (%w) and so did the empty restore — "+
+			"THE GROUP NO LONGER EXISTS and must be recreated before this role can be used",
+		group.Name, createErr)
+}
+
+// recreateGroup creates the group and reconciles the one ambiguous outcome:
+// a create whose response was lost looks exactly like a create that failed, and
+// re-POSTing a name Thunder already holds is a 409 on the unique name. So a
+// failure is followed by asking the directory what is actually there. Without
+// this, a lost response would send rewriteGroupMembers down its compensation
+// path and report a group as gone while it sits there, correct and complete.
+func (c *client) recreateGroup(ctx context.Context, token, ou string, group Group, memberIDs []string) (Group, error) {
+	created, err := c.createGroupLocked(ctx, token, ou, group.Name, group.Description, memberIDs)
+	if err == nil {
+		return created, nil
+	}
+	if actual, found, ferr := c.findGroupByNameWith(ctx, token, group.Name); ferr == nil && found {
+		return *actual, nil
+	}
+	return Group{}, err
+}
+
+// resolveLiveUsers splits ids into the ones the directory still has and the
+// ones it does not, preserving the order of the input.
+//
+// It is one GET per id because there is no bulk or filtered read (file header,
+// fact 4). That is affordable here and nowhere else: this runs on the roles
+// ensure and the console's delete button, over groups holding single-digit
+// numbers of accounts — not on a request path.
+//
+// A 404 means gone. Any OTHER failure is returned as an error rather than
+// counted as gone, because treating an unreachable directory as "nobody
+// exists" would turn a network blip into a membership wipe.
+func (c *client) resolveLiveUsers(ctx context.Context, token string, ids []string) (live, missing []string, err error) {
+	for _, id := range ids {
+		lookupErr := c.doJSONNoEcho(ctx, token, http.MethodGet, "/users/"+url.PathEscape(id), nil, nil)
+		if lookupErr == nil {
+			live = append(live, id)
+			continue
+		}
+		var status *statusError
+		if errors.As(lookupErr, &status) && status.code == http.StatusNotFound {
+			missing = append(missing, id)
+			continue
+		}
+		return nil, nil, fmt.Errorf("resolve member: %w", lookupErr)
+	}
+	return live, missing, nil
+}
+
+// UserGroups returns the groups an account belongs to.
+//
+// `GET /users/{id}/groups` is the reverse of the membership read, and it is
+// what lets a delete un-enrol precisely instead of scanning the directory. An
+// account that is already gone answers 404, which is reported as "no groups"
+// so a retried delete does not fail on its own first step.
+func (c *client) UserGroups(ctx context.Context, userID string) ([]Group, error) {
+	token, err := c.getSystemToken(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("getSystemToken: %w", err)
+	}
+	var out []Group
+	for page := 0; page < maxDirectoryPages; page++ {
+		var body struct {
+			TotalResults int     `json:"totalResults"`
+			Groups       []Group `json:"groups"`
+		}
+		path := fmt.Sprintf("/users/%s/groups?limit=%d&offset=%d",
+			url.PathEscape(userID), directoryPageSize, len(out))
+		if err := c.doJSON(ctx, token, http.MethodGet, path, nil, &body); err != nil {
+			var status *statusError
+			if errors.As(err, &status) && status.code == http.StatusNotFound {
+				return nil, nil
+			}
+			return nil, err
+		}
+		out = append(out, body.Groups...)
+		if !morePages(len(out), body.TotalResults, len(body.Groups)) {
+			return out, nil
+		}
+	}
+	return nil, fmt.Errorf("thunder list groups of user: more than %d pages", maxDirectoryPages)
 }
 
 // userRecord is Thunder's wire shape for a person. `attributes` is an open map
