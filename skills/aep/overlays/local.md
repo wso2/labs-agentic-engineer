@@ -101,9 +101,10 @@ runtime relationship, not a build order — it never holds an issue back.
 <!-- drop-section: ### The status line -->
 
 <!-- replace-text -->
-   Walk <component> at <App Path> (issue #<N>). Load `mock-verification` and
+   <App Path>; never run `git`. Progress: `gh issue comment <N> --body "<line>"`.
 <!-- with -->
-   Walk <component> at <App Path>. Load `mock-verification` and
+   <App Path> and `issues/<n>.md`; never run `git`. Progress: append the line
+   to `issues/<n>.md` under `## Mock verification`.
 <!-- /replace-text -->
 
 <!-- replace-text -->

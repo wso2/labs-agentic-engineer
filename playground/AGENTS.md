@@ -52,16 +52,16 @@ a fixture like that is yours alone — author it by copying the `specs/` +
 
 **A `web-application` costs an extra round.** Its build is followed by mock
 verification: a subagent stands the app up in mock mode, walks every flow its
-wireframes draw with `agent-browser`, fixes what fails on the spot, and hands
-back one marked checklist (`skills/mock-verification`, whose `scripts/walk.sh`
-runs the server, and `react-webapp`'s `references/mock-mode.md` for the mock
-itself). In docker mode that is all
-inside the container. **In `--host` mode it is your machine**: the run binds a
-localhost port and drives a real browser under bypassPermissions. Nothing is
-installed — `agent-browser` and the browser are resolved off your `PATH`, the
-same way `playwright-cli` already is — but a run that dies badly can leave a
-`vite` process holding its port, and the next run's `--strictPort` will say so
-rather than quietly reading the old server.
+wireframes draw with `agent-browser`, fixes what fails on the spot, and posts
+its plan and one line per item into the issue file's `## Mock verification`
+section (`skills/mock-verification`, whose `scripts/walk.sh` runs the server,
+and `react-webapp`'s `references/mock-mode.md` for the mock itself). In docker
+mode that is all inside the container. **In `--host` mode it is your machine**:
+the run binds a localhost port and drives a real browser under
+bypassPermissions. Nothing is installed — `agent-browser` and the browser are
+resolved off your `PATH`, the same way `playwright-cli` already is — but a run
+that dies badly can leave a `vite` process holding its port, and the next run's
+`--strictPort` will say so rather than quietly reading the old server.
 
 That is the one part of the loop with no minimal fixture: a web app small enough
 to be fast still has screens to walk. Budget for it, or tune API-only changes on

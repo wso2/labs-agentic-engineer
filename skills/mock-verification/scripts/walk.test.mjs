@@ -17,9 +17,8 @@
  */
 
 // walk.sh owns the one thing the walker cannot see when it goes wrong — a dev
-// server it left behind — and the one line a pull request quotes. Both are
-// pinned here against a stand-in app whose `dev:mock` is a bare node listener,
-// and a stand-in `gh` that records what it was asked.
+// server it left behind. Pinned here against a stand-in app whose `dev:mock` is
+// a bare node listener.
 
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
@@ -46,23 +45,10 @@ function fixtureApp({ devMock = "node server.mjs" } = {}) {
   return dir;
 }
 
-// Stand-ins ahead of PATH for every run: a `gh` that logs its argv and answers
-// like the real one, and an `agent-browser` that does nothing — `down` closes
-// the browser, and a test must not close the one a developer is using.
+// A no-op `agent-browser` ahead of PATH: `down` closes the browser, and a test
+// must not close the one a developer is using.
 const BIN = mkdtempSync(path.join(tmpdir(), "walk-bin-"));
-const GH_LOG = path.join(BIN, "gh.log");
-writeFileSync(
-  path.join(BIN, "gh"),
-  `#!/usr/bin/env bash
-printf '%s\\n' "$*" >> "${GH_LOG}"
-case "$1" in
-  issue) echo "https://github.com/o/r/issues/$3#issuecomment-4242" ;;
-  api) echo "{}" ;;
-esac
-`,
-);
 writeFileSync(path.join(BIN, "agent-browser"), "#!/usr/bin/env bash\nexit 0\n");
-chmodSync(path.join(BIN, "gh"), 0o755);
 chmodSync(path.join(BIN, "agent-browser"), 0o755);
 
 function walk(cwd, args) {
@@ -83,7 +69,7 @@ after(() => {
 function track(dir) {
   cleanups.push(() => {
     walk(dir, ["down"]);
-    for (const ext of ["md", "log", "pgid", "port", "comment"]) rmSync(`${stateOf(dir)}.${ext}`, { force: true });
+    for (const ext of ["log", "pgid", "port"]) rmSync(`${stateOf(dir)}.${ext}`, { force: true });
     rmSync(dir, { recursive: true, force: true });
   });
   return dir;
@@ -106,9 +92,8 @@ test("up starts dev:mock on a free port and down leaves nothing listening", asyn
   const app = track(fixtureApp());
   const up = walk(app, ["up"]);
   assert.equal(up.status, 0, up.stderr);
-  const m = /^READY (http:\/\/localhost:(\d+)) · checklist (\S+)$/m.exec(up.stdout);
+  const m = /^READY (http:\/\/localhost:(\d+))$/m.exec(up.stdout);
   assert.ok(m, `unexpected READY line: ${up.stdout}`);
-  assert.equal(m[3], `${stateOf(app)}.md`, "up names the checklist path the walker writes");
   assert.ok(await isListening(Number(m[2])), "the url answers");
   assert.ok(existsSync(`${stateOf(app)}.pgid`), "the process group is recorded");
 
@@ -169,74 +154,6 @@ test("up fails fast, with the log, when dev:mock dies at once", () => {
   assert.match(up.stderr, /did not come up/);
   assert.match(up.stderr, /boom: no such mode/, "the log tail is in the output");
   assert.equal(existsSync(`${stateOf(app)}.pgid`), false, "nothing is left recorded as running");
-});
-
-const CHECKLIST = `Mock verification: todo-webapp · stale counts the walker typed
-
-flow "Approval queue" (Admin)
-- [x] AdminQueue: filtered by status; "Approve" moved the row to Done
-- [x] AuditDetail: FIXED back arrow went to /; now -> AdminQueue. Re-walked: lands on the queue.
-- [ ] AuditExport: "Export" does nothing. Tried wiring onClick, 3 attempts. Still no request.
-flow "My orders" (Customer)
-- [x] Orders: table -> OrderDetail
-- OrderDetail: "Cancel" button; -> Orders
-screens in no flow
-- [~] Settings: the 403 is the gateway's
-once per app
-- [x] Roles: Customer on /admin bounced to /orders
-- Session
-- Probes
-- [x] Console: clean
-`;
-
-test("post derives the first line from the marks and keeps the title", () => {
-  const app = track(fixtureApp());
-  writeFileSync(`${stateOf(app)}.md`, CHECKLIST);
-  const post = walk(app, ["post"]);
-  assert.equal(post.status, 0, post.stderr);
-  const lines = readFileSync(`${stateOf(app)}.md`, "utf8").split("\n");
-  assert.equal(
-    lines[0],
-    "Mock verification: todo-webapp · 6 screens, 2 flows · 4 pass, 1 fixed, 1 open, 1 outside, 3 to walk",
-  );
-  assert.equal(lines.length, CHECKLIST.split("\n").length, "only line 1 changed");
-  assert.match(post.stdout, /not published/);
-});
-
-test("post omits 'to walk' once every line is marked", () => {
-  const app = track(fixtureApp());
-  writeFileSync(`${stateOf(app)}.md`, CHECKLIST.replaceAll(/^- (?!\[)/gm, "- [x] "));
-  walk(app, ["post"]);
-  assert.equal(
-    readFileSync(`${stateOf(app)}.md`, "utf8").split("\n")[0],
-    "Mock verification: todo-webapp · 6 screens, 2 flows · 7 pass, 1 fixed, 1 open, 1 outside",
-  );
-});
-
-test("post creates one comment and edits that same comment afterwards", () => {
-  const app = track(fixtureApp());
-  writeFileSync(`${stateOf(app)}.md`, CHECKLIST);
-
-  const first = walk(app, ["post", "17"]);
-  assert.equal(first.status, 0, first.stderr);
-  assert.match(first.stdout, /^published to #17: Mock verification: todo-webapp · 6 screens/m);
-  assert.equal(readFileSync(`${stateOf(app)}.comment`, "utf8").trim(), "4242");
-
-  const second = walk(app, ["post", "17"]);
-  assert.equal(second.status, 0, second.stderr);
-
-  const calls = readFileSync(GH_LOG, "utf8").trim().split("\n");
-  assert.deepEqual(calls, [
-    `issue comment 17 --body-file ${stateOf(app)}.md`,
-    `api -X PATCH repos/{owner}/{repo}/issues/comments/4242 -F body=@${stateOf(app)}.md`,
-  ]);
-});
-
-test("post without a checklist is an error, not a silent no-op", () => {
-  const app = track(fixtureApp());
-  const post = walk(app, ["post", "17"]);
-  assert.notEqual(post.status, 0);
-  assert.match(post.stderr, /no checklist/);
 });
 
 test("an unknown verb prints the usage and exits 2", () => {

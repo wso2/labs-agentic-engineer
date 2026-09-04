@@ -87,10 +87,6 @@ const PLATFORM_ONLY = [
   // subagent are both overlaid away.
   "### The status line",
   "gh issue comment",
-  // The walk's prompt names the issue its checklist comment goes on; the
-  // playground has no issue, and `mock-verification` publishes nothing when the
-  // prompt names none.
-  "Walk <component> at <App Path> (issue #<N>).",
   // The invocation, not the words: local mode names `git push` too, in the
   // deny-list line that forbids it.
   "git push -u origin HEAD",
@@ -99,6 +95,9 @@ const PLATFORM_ONLY = [
 
 const LOCAL_ONLY = [
   "issues/<n>.md",
+  // The walk posts its progress where its prompt says: a GitHub comment on the
+  // platform, a section of the issue file here.
+  "under `## Mock verification`",
   "`## Progress`",
   ".aep-playground",
   "no git remote, no GitHub, and no PR",
@@ -240,34 +239,34 @@ for (const [file, rules] of Object.entries(REFERENCE_RULES)) {
 // failure at the line that found it, then re-walks that line before moving on.
 // A read-only verifier that only files a report is the shape this replaced, as
 // is batching every repair to the end — so the three properties that make one
-// fix-as-you-go agent safe are asserted here: the checklist is settled before
-// the browser opens, a line is not left behind until it passes, and one
-// stubborn defect cannot swallow the walk.
+// fix-as-you-go agent safe are asserted here: the plan is settled before the
+// browser opens, an item is not left behind until it passes, and one stubborn
+// defect cannot swallow the walk.
 test("mock-verification walks and repairs a line at a time", () => {
   const skill = fs.readFileSync(path.join(LIBRARY, "mock-verification", "SKILL.md"), "utf8");
   for (const rule of [
-    // The flow is the unit and the DSL the only map: the checklist is settled
-    // from it before the browser opens, so an unreached screen is a visible gap.
+    // The flow is the unit and the DSL the only map: the plan is settled from
+    // it before the browser opens, so an unreached screen is a visible gap.
     "## What you verify",
     "## 1 · Stand it up",
-    "## 2 · Checklist",
-    // The mechanics — server, port, browser, the one issue comment — are the
-    // skill's script, reached through the runner-stamped path like
-    // aep-validation's report generator. The walker never re-derives them.
+    "## 2 · Plan",
+    // The dev server — process group, free port, browser close — is the skill's
+    // script, reached through the runner-stamped path like aep-validation's
+    // report generator. The walker never re-derives it.
     'bash "$AEP_SKILLS_DIR/mock-verification/scripts/walk.sh" up',
-    'bash "$AEP_SKILLS_DIR/mock-verification/scripts/walk.sh" post <issue#>',
     'bash "$AEP_SKILLS_DIR/mock-verification/scripts/walk.sh" down',
-    "**A line ends green.**",
-    "**Three attempts on a line, then mark it `[ ]` and walk on.**",
-    "**Repair the app, never the checklist.**",
+    // Progress is three fixed shapes; WHERE they go comes from the prompt, so
+    // the skill names no `gh` and ships byte-identical into the playground.
+    "## Progress",
+    "**An item ends green, and posted.**",
+    "**Three attempts on an item, then post it open and walk on.**",
+    "**Repair the app, never the plan.**",
     // Full page loads reset the mock's in-page state, which has twice been
     // misread as a defect in a just-created record.
     "**Click between screens.**",
     "Make the mock agree with the app",
     // The walk is a subagent's job. This skill bans the RECORD (git, commits,
-    // the PR) and publishes its one checklist comment only on the issue the
-    // prompt names — it ships byte-identical into a playground session, whose
-    // overlaid prompt names none.
+    // the PR) and defers where progress goes to the prompt (ADR-0010, 7).
     "The record belongs to the agent\n  that dispatched you",
   ]) {
     assert.ok(skill.includes(rule), `mock-verification lost: ${rule}`);

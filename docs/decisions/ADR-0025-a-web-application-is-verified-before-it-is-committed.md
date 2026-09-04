@@ -171,28 +171,30 @@ That narrows decisions 3 and 4: the boundary is still the component rather than
 the issue, but the DSL alone draws it, and `specs/requirements/` is no longer a
 walk input or a checklist source. Everything else above stands.
 
-## Amendment 2026-09-04 — one checklist, and the mechanics in a script
+## Amendment 2026-09-04 — a numbered plan, a line per item, and the server in a script
 
-The walk reported through three surfaces: a checklist comment before the
-browser opened, a status-line comment per settled line, and a report comment at
-the end, each with its own shape. They collapse into **one comment, edited in
-place**: the checklist is written once from the DSL, its first line is derived
-from its marks (`<p> pass, <f> fixed, <o> open, <t> outside, <u> to walk`), and
-the same comment is re-published as lines settle. The newest comment on the
-issue stays the checklist, so the status line ADR-0010 describes is its first
-line, and the pull request quotes that same line at the end.
+The walk's progress is three comment shapes: a **plan** posted before the
+browser opens, one numbered item per screen and per once-per-app check; **one
+line per item** as it settles (`n/N Screen: done | fixed | open | outside —
+detail`); and a **closing line** with the counts. The newest comment is where
+the walk is, which is the status line ADR-0010 asks for; an item with no line
+is a screen never reached; the closing line is what the pull request quotes.
+This replaces the marked checklist block and its separate status-line shapes.
+It posts more comments per web-app issue than ADR-0010's two to four — one per
+item — and takes a legible history over a quiet thread on purpose. Where the
+lines go is the dispatch prompt's to say, per mode (a `gh issue comment` on the
+platform, a section of `issues/<n>.md` in the playground), so the skill names
+no `gh` and ships byte-identical, as ADR-0010's decision 7 requires.
 
-The mechanics moved out of the skill text into `scripts/walk.sh` beside it
-(`up`, `restart`, `post`, `down`), reached through `$AEP_SKILLS_DIR` the way
+The dev server moved out of the skill text into `scripts/walk.sh` beside it
+(`up`, `restart`, `down`), reached through `$AEP_SKILLS_DIR` the way
 `aep-validation` reaches its report generator. The text had carried a
 process-group launcher, a port-collision rule and a stop sequence that every
 walk re-typed; the one walk that improvised instead leaked four dev servers
-into its memory limit. The script reaps by process group, searches for a free
-port so two walks in one wave do not collide, closes the browser on `down`,
-and holds the create-or-edit branch of the issue comment, so the same skill
-text serves a playground session whose prompt names no issue. The runner
-image also gains `procps` as a backstop for an agent that reaches for `pkill`
-outside the procedure. This reverses the earlier call to keep the skill
+into its memory limit. The script reaps by process group, takes a free port so
+two walks in one wave cannot collide, and closes the browser on `down`. The
+runner image also gains `procps` as a backstop for an agent that reaches for
+`pkill` outside the procedure. This reverses the earlier call to keep the skill
 text-only, on the measured cost of that choice.
 
 ## Consequences

@@ -15,20 +15,15 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# walk.sh — the mechanics of a mock-verification walk, so the walker writes none
-# of them. Run from the App Path.
+# walk.sh — the dev server of a mock-verification walk, so the walker runs none
+# of its mechanics. Run from the App Path.
 #
-#   walk.sh up               start `npm run dev:mock` on a free port
-#                            → READY <url> · checklist <file>
-#   walk.sh restart          stop the server and start it again (same browser)
-#   walk.sh post [<issue#>]  rewrite the checklist's first line with the counts;
-#                            with an issue, publish the file as ONE comment on
-#                            it, edited in place on every later call
-#   walk.sh down             stop the server, close the browser, confirm the
-#                            port let go → STOPPED
+#   walk.sh up        start `npm run dev:mock` on a free port → READY <url>
+#   walk.sh restart   stop the server and start it again (same browser)
+#   walk.sh down      stop the server, close the browser, confirm the port let
+#                     go → STOPPED
 #
-# State lives at /tmp/walk-<app>.* where <app> is the App Path's basename; the
-# checklist the walker writes is /tmp/walk-<app>.md and `up` prints that path.
+# State lives at /tmp/walk-<app>.* where <app> is the App Path's basename.
 #
 # Why a script and not four lines in the skill: `npm run` is three processes and
 # the runner image has no `ps`/`pkill`, so the process GROUP is the only handle
@@ -43,11 +38,9 @@ set -euo pipefail
 
 app=$(basename "$PWD")
 state="/tmp/walk-$app"
-checklist="$state.md"
 log="$state.log"
 pgid_file="$state.pgid"
 port_file="$state.port"
-comment_file="$state.comment"
 
 listening() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
 
@@ -82,7 +75,7 @@ start_server() {
   echo "$port" > "$port_file"
   for _ in $(seq 1 60); do
     if curl -sf "http://localhost:$port/" >/dev/null 2>&1; then
-      echo "READY http://localhost:$port · checklist $checklist"
+      echo "READY http://localhost:$port"
       return 0
     fi
     # The launcher died: stop waiting on a port nothing will ever answer.
@@ -93,64 +86,6 @@ start_server() {
   tail -40 "$log" >&2
   stop_server
   exit 1
-}
-
-# Rewrite line 1 from the marks. Whatever the walker wrote before the first
-# " · " is kept as the title; everything after it is derived, so the counts can
-# never disagree with the lines. A screen listed in two flows is two lines and
-# two walks, so it counts twice; the once-per-app block is not screens.
-recount() {
-  local tmp
-  tmp=$(mktemp)
-  awk '
-    NR == 1 { head = $0; sub(/ · .*$/, "", head); next }
-    /^flow "/ { flows++ }
-    /^once per app$/ { once = 1 }
-    /^- / {
-      if (!once) screens++
-      if ($0 ~ /^- \[x\] .*FIXED/) fixed++
-      else if ($0 ~ /^- \[x\]/) pass++
-      else if ($0 ~ /^- \[ \]/) open++
-      else if ($0 ~ /^- \[~\]/) outside++
-      else towalk++
-    }
-    { body[NR] = $0 }
-    END {
-      line = head " · " screens + 0 " screens, " flows + 0 " flows · " \
-             pass + 0 " pass, " fixed + 0 " fixed, " open + 0 " open, " outside + 0 " outside"
-      if (towalk) line = line ", " towalk " to walk"
-      print line
-      for (i = 2; i <= NR; i++) print body[i]
-    }' "$checklist" > "$tmp"
-  mv "$tmp" "$checklist"
-}
-
-post() {
-  local issue=${1:-}
-  if [ ! -f "$checklist" ]; then
-    echo "no checklist at $checklist — write it first" >&2
-    exit 1
-  fi
-  recount
-  if [ -z "$issue" ]; then
-    echo "recounted $checklist (no issue given, not published)"
-    head -1 "$checklist"
-    return 0
-  fi
-  if [ -f "$comment_file" ]; then
-    gh api -X PATCH "repos/{owner}/{repo}/issues/comments/$(cat "$comment_file")" \
-      -F "body=@$checklist" > /dev/null
-  else
-    local url id
-    url=$(gh issue comment "$issue" --body-file "$checklist")
-    id=${url##*issuecomment-}
-    if [[ $id =~ ^[0-9]+$ ]]; then
-      echo "$id" > "$comment_file"
-    else
-      echo "could not read the comment id from '$url'; the next post will create a new comment" >&2
-    fi
-  fi
-  echo "published to #$issue: $(head -1 "$checklist")"
 }
 
 down() {
@@ -176,10 +111,9 @@ down() {
 
 case "${1:-}" in
   up | restart) start_server ;;
-  post) post "${2:-}" ;;
   down) down ;;
   *)
-    sed -n '18,27p' "$0" >&2
+    sed -n '18,24p' "$0" >&2
     exit 2
     ;;
 esac

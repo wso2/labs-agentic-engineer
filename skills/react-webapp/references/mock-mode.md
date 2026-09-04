@@ -269,11 +269,10 @@ guard in `src/main.tsx` was written so the bundler could not prove the branch
 dead — production would then ship the mock, which is the one failure this whole
 arrangement exists to prevent.
 
-To drive it by hand:
-
-```bash
-npm run dev:mock -- --port 5173 --strictPort
-```
+You never start it. The walk (`mock-verification`) starts and stops the dev
+server through its own script, and a server you start here has nothing to reap
+it: the runner image has no `pkill`, and a stray `vite` stays in the pod's
+memory for the rest of the run.
 
 ## Pitfalls
 
