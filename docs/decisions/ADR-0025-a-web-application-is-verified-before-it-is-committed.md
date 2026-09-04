@@ -191,8 +191,10 @@ The dev server moved out of the skill text into `scripts/walk.sh` beside it
 `aep-validation` reaches its report generator. The text had carried a
 process-group launcher, a port-collision rule and a stop sequence that every
 walk re-typed; the one walk that improvised instead leaked four dev servers
-into its memory limit. The script reaps by process group, takes a free port so
-two walks in one wave cannot collide, and closes the browser on `down`. The
+into its memory limit. The script reaps by process group, searches for a free
+port and moves on when a launch loses the bind to a sibling walk in the same
+instant, keys its state on the App Path so same-named apps stay apart, and
+closes the browser on `down`. The
 runner image also gains `procps` as a backstop for an agent that reaches for
 `pkill` outside the procedure. This reverses the earlier call to keep the skill
 text-only, on the measured cost of that choice.

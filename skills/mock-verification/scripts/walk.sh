@@ -23,7 +23,9 @@
 #   walk.sh down      stop the server, close the browser, confirm the port let
 #                     go → STOPPED
 #
-# State lives at /tmp/walk-<app>.* where <app> is the App Path's basename.
+# State lives at /tmp/walk-<app>.* where <app> is the App Path with its slashes
+# turned to underscores, so two apps with the same directory name under
+# different parents keep separate servers.
 #
 # Why a script and not four lines in the skill: `npm run` is three processes and
 # the runner image has no `ps`/`pkill`, so the process GROUP is the only handle
@@ -31,12 +33,14 @@
 # which is why `$!` below is a group id, on Linux and on a macOS laptop alike.
 # Every walk used to re-derive that, and the one that did not leaked four dev
 # servers into a 3Gi cgroup. The port is searched rather than fixed so two
-# web-application walks in one wave do not fight over 5173; a stale server from
-# this app's earlier attempt is reaped before a new one starts.
+# web-application walks in one wave do not fight over 5173 — and because two
+# `up` calls can still pick the same free port in the same instant, a launch
+# that dies on a bind collision moves to the next port by itself. A stale server
+# from this app's earlier attempt is reaped before a new one starts.
 
 set -euo pipefail
 
-app=$(basename "$PWD")
+app=$(printf '%s' "$PWD" | tr '/' '_')
 state="/tmp/walk-$app"
 log="$state.log"
 pgid_file="$state.pgid"
@@ -57,16 +61,10 @@ stop_server() {
   rm -f "$pgid_file"
 }
 
-start_server() {
-  stop_server
-  local port
-  for port in $(seq 5173 5199); do
-    listening "$port" || break
-  done
-  if listening "$port"; then
-    echo "no free port between 5173 and 5199" >&2
-    exit 1
-  fi
+# Launch on one port and wait for it. Returns 0 when the url answers, 2 when the
+# launcher died on a bind collision (the caller tries the next port), 1 otherwise.
+launch_on() {
+  local port=$1
   : > "$log"
   # `</dev/null`: under job control a server that reads the terminal would be
   # stopped with SIGTTIN; Vite reads stdin for its keyboard shortcuts.
@@ -75,16 +73,33 @@ start_server() {
   echo "$port" > "$port_file"
   for _ in $(seq 1 60); do
     if curl -sf "http://localhost:$port/" >/dev/null 2>&1; then
-      echo "READY http://localhost:$port"
       return 0
     fi
     # The launcher died: stop waiting on a port nothing will ever answer.
-    kill -0 -- "-$(cat "$pgid_file")" 2>/dev/null || break
+    if ! kill -0 -- "-$(cat "$pgid_file")" 2>/dev/null; then
+      rm -f "$pgid_file"
+      grep -qiE "EADDRINUSE|already in use" "$log" && return 2
+      return 1
+    fi
     sleep 1
   done
-  echo "dev:mock did not come up on port $port; log tail:" >&2
-  tail -40 "$log" >&2
+  return 1
+}
+
+start_server() {
   stop_server
+  local port rc
+  for port in $(seq 5173 5199); do
+    listening "$port" && continue
+    launch_on "$port" && { echo "READY http://localhost:$port"; return 0; }
+    rc=$?
+    [ "$rc" -eq 2 ] && continue
+    echo "dev:mock did not come up on port $port; log tail:" >&2
+    tail -40 "$log" >&2
+    stop_server
+    exit 1
+  done
+  echo "no free port between 5173 and 5199" >&2
   exit 1
 }
 

@@ -88,8 +88,9 @@ other: the plan once, one line per item as it settles, the close once.
 Mock verification: <component> — <N> items
 1. <Screen> (<role>): <its controls>; -> <the screens its arrows name>
 2. <Screen>: ...
-<N-1>. Session
-<N>. Probes and Console
+<N-2>. Session
+<N-1>. Probes
+<N>. Console
 ```
 
 ```text
@@ -100,7 +101,7 @@ Mock verification: <component> — <N> items
 ```
 
 ```text
-Mock verification done: <component> — <N> items · <d> done, <f> fixed, <o> open (<n> <Screen>, ...)
+Mock verification done: <component> — <N> items · <d> done, <f> fixed, <o> open (<n> <Screen>, ...), <t> outside
 ```
 
 The newest line is where the walk is, and that is what the person watching
@@ -128,7 +129,7 @@ it and run `up` again.
 Before the browser opens, post the plan from the map alone: one numbered item
 per screen in each flow, in walking order under its role, then screens in no
 flow, then Roles (with `mock/roles.ts`), Session (with an auth dependency),
-and Probes and Console. Posting it first puts your coverage in front of the
+Probes, and Console. Posting it first puts your coverage in front of the
 person watching while there is still time to say a screen is missing.
 
 **Done when:** every screen and flow in the map has a number, and the plan is

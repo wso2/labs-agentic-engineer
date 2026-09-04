@@ -22,7 +22,7 @@
 
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, realpathSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -30,16 +30,23 @@ import path from "node:path";
 
 const SCRIPT = path.join(import.meta.dirname, "walk.sh");
 
+// FAIL_PORT stands in for a bind collision: on that port the server dies the
+// way Vite does when another process won the port a moment earlier.
 const SERVER = `
 const i = process.argv.indexOf("--port");
 const port = Number(process.argv[i + 1]);
+if (String(port) === process.env.FAIL_PORT) {
+  console.error("Error: Port " + port + " is already in use");
+  process.exit(1);
+}
 import("node:http").then(({ createServer }) =>
   createServer((_, res) => res.end("ok")).listen(port));
 `;
 
-/** A stand-in App Path. Its basename is the walk's state key, so each test gets its own. */
-function fixtureApp({ devMock = "node server.mjs" } = {}) {
-  const dir = mkdtempSync(path.join(tmpdir(), "walk-app-"));
+/** A stand-in App Path. Its path is the walk's state key, so each test gets its own. */
+function fixtureApp({ devMock = "node server.mjs", parent = tmpdir(), name } = {}) {
+  const dir = name ? path.join(parent, name) : mkdtempSync(path.join(parent, "walk-app-"));
+  if (name) mkdirSync(dir, { recursive: true });
   writeFileSync(path.join(dir, "package.json"), JSON.stringify({ scripts: { "dev:mock": devMock } }));
   writeFileSync(path.join(dir, "server.mjs"), SERVER);
   return dir;
@@ -51,16 +58,18 @@ const BIN = mkdtempSync(path.join(tmpdir(), "walk-bin-"));
 writeFileSync(path.join(BIN, "agent-browser"), "#!/usr/bin/env bash\nexit 0\n");
 chmodSync(path.join(BIN, "agent-browser"), 0o755);
 
-function walk(cwd, args) {
+function walk(cwd, args, env = {}) {
   return spawnSync("bash", [SCRIPT, ...args], {
     cwd,
     encoding: "utf8",
-    env: { ...process.env, PATH: `${BIN}:${process.env.PATH}` },
+    env: { ...process.env, ...env, PATH: `${BIN}:${process.env.PATH}` },
     timeout: 90_000,
   });
 }
 
-const stateOf = (dir) => `/tmp/walk-${path.basename(dir)}`;
+// The script keys state on bash's $PWD, which is the physical path — on macOS
+// mkdtemp hands back /var/… for what bash sees as /private/var/….
+const stateOf = (dir) => `/tmp/walk-${realpathSync(dir).replaceAll("/", "_")}`;
 const cleanups = [];
 after(() => {
   for (const fn of cleanups) fn();
@@ -143,6 +152,39 @@ test("a second up reaps the first server instead of leaking it", async () => {
   assert.notEqual(secondPgid, firstPgid, "a new process group");
   assert.equal(secondPort, firstPort, "the reaped server's port is free again");
   assert.equal(spawnSync("kill", ["-0", "--", `-${firstPgid}`]).status !== 0, true, "the first group is gone");
+});
+
+test("up moves to the next port when the launch loses a bind race", async () => {
+  const app = track(fixtureApp());
+  // Find the port a bare `up` would take, and make the server refuse exactly it.
+  let first = 5173;
+  for (; first < 5199; first++) {
+    const holder = await occupy(first).catch(() => undefined);
+    if (holder) {
+      holder.close();
+      break;
+    }
+  }
+  const up = walk(app, ["up"], { FAIL_PORT: String(first) });
+  assert.equal(up.status, 0, up.stderr);
+  const port = Number(/localhost:(\d+)/.exec(up.stdout)[1]);
+  assert.ok(port > first, `moved past the contested port ${first}, got ${port}`);
+  assert.ok(await isListening(port));
+});
+
+test("two apps with the same directory name keep separate servers", async () => {
+  const a = track(fixtureApp({ parent: mkdtempSync(path.join(tmpdir(), "walk-a-")), name: "web" }));
+  const b = track(fixtureApp({ parent: mkdtempSync(path.join(tmpdir(), "walk-b-")), name: "web" }));
+  assert.notEqual(stateOf(a), stateOf(b));
+  const upA = walk(a, ["up"]);
+  const upB = walk(b, ["up"]);
+  assert.equal(upA.status, 0, upA.stderr);
+  assert.equal(upB.status, 0, upB.stderr);
+  const portA = Number(/localhost:(\d+)/.exec(upA.stdout)[1]);
+  const portB = Number(/localhost:(\d+)/.exec(upB.stdout)[1]);
+  assert.notEqual(portA, portB);
+  assert.equal(walk(a, ["down"]).status, 0, "a's down");
+  assert.ok(await isListening(portB), "b's server survived a's down");
 });
 
 test("up fails fast, with the log, when dev:mock dies at once", () => {
