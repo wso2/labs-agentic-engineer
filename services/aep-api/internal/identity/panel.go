@@ -301,10 +301,13 @@ func (s *PanelService) Rotate(ctx context.Context, orgID, projectID, username st
 
 // DeleteResult is what a delete did. RemainingReferences is how many OTHER
 // projects still referenced the account when it went — the honest warning the
-// shared directory makes necessary.
+// shared directory makes necessary. UnenrolledFrom names the roles the account
+// was taken out of on the way, which is the part of the work that is invisible
+// from the directory afterwards.
 type DeleteResult struct {
 	Username            string
 	RemainingReferences int
+	UnenrolledFrom      []string
 }
 
 // Delete removes the account from the directory and forgets the platform's
@@ -314,6 +317,27 @@ type DeleteResult struct {
 // them: dropping `Support Agent` because one test login went away would take the
 // role from every other project that names it, and from every real member of it.
 // The additive-only rule that governs the ensure governs this too.
+//
+// It DOES take the account out of its roles first, and that ordering is the
+// whole point. The identity provider has no referential integrity between
+// accounts and group membership: deleting an account leaves every group it
+// belonged to naming an id that no longer resolves, and the next build that
+// tries to enrol somebody into such a role used to DESTROY it — the write is a
+// delete-and-recreate, and the recreate is rejected wholesale for the dead
+// member. This function is where that corruption was introduced, so it is
+// where it has to stop.
+//
+// Un-enrol first, then delete. The failure modes are not symmetrical:
+//
+//   - un-enrol fails → nothing has happened, the account is still whole, and
+//     the caller can retry. So a failure here ABORTS the delete rather than
+//     pressing on: pressing on is precisely how the dangling member is made.
+//   - un-enrol succeeds, delete fails → a live account that holds no roles.
+//     Harmless and self-repairing, because the next ensure re-enrols it.
+//
+// Roles the platform does not own are un-enrolled from too. A group somebody
+// else made is not ours to curate, but an account being deleted must not be
+// left behind in it — that reference would be corruption the platform caused.
 func (s *PanelService) Delete(ctx context.Context, orgID, projectID, username string) (DeleteResult, error) {
 	owned, err := s.resolveOwned(ctx, orgID, projectID, username)
 	if err != nil {
@@ -336,6 +360,10 @@ func (s *PanelService) Delete(ctx context.Context, orgID, projectID, username st
 		slog.WarnContext(ctx, "roles panel: deleting a test account other projects still reference",
 			"org", orgID, "project", projectID, "username", owned.Username, "otherProjects", remaining)
 	}
+	unenrolled, err := s.unenrol(ctx, owned)
+	if err != nil {
+		return DeleteResult{}, err
+	}
 	if err := s.dir.DeleteUser(ctx, owned.ThunderUserID); err != nil {
 		return DeleteResult{}, fmt.Errorf("delete test user %q: %w", owned.Username, err)
 	}
@@ -345,7 +373,29 @@ func (s *PanelService) Delete(ctx context.Context, orgID, projectID, username st
 	if err := s.store.DeleteTestUser(ctx, owned.Username); err != nil {
 		return DeleteResult{}, err
 	}
-	return DeleteResult{Username: owned.Username, RemainingReferences: remaining}, nil
+	return DeleteResult{
+		Username:            owned.Username,
+		RemainingReferences: remaining,
+		UnenrolledFrom:      unenrolled,
+	}, nil
+}
+
+// unenrol takes an account out of every group it belongs to, and reports which
+// ones. See Delete for why this runs before the account is deleted and why a
+// failure here stops the delete.
+func (s *PanelService) unenrol(ctx context.Context, owned *TestUser) ([]string, error) {
+	groups, err := s.dir.UserGroups(ctx, owned.ThunderUserID)
+	if err != nil {
+		return nil, fmt.Errorf("read the roles of test user %q: %w", owned.Username, err)
+	}
+	out := make([]string, 0, len(groups))
+	for _, g := range groups {
+		if _, err := s.dir.RemoveMembers(ctx, g, []string{owned.ThunderUserID}); err != nil {
+			return nil, fmt.Errorf("remove test user %q from role %q: %w", owned.Username, g.Name, err)
+		}
+		out = append(out, g.Name)
+	}
+	return out, nil
 }
 
 // resolveOwned applies BOTH fences and returns the platform's record of the

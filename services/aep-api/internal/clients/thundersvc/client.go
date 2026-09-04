@@ -119,7 +119,22 @@ type Client interface {
 	// reading and writing under one lock. Destructive by construction — the
 	// write is a delete-and-recreate — so pass only a group the platform
 	// created. Returns the group's NEW id when members were added.
+	//
+	// Members already in the group that no longer exist on the directory are
+	// dropped rather than replayed; an account the CALLER asks to add that does
+	// not exist is an error raised before anything is written. Either way the
+	// group survives the call — see rewriteGroupMembers in directory.go.
 	AddGroupMembers(ctx context.Context, group Group, memberIDs []string) (Group, error)
+
+	// RemoveGroupMembers takes members out of a group, keeping everyone else.
+	// The un-enrol half of the pair: deleting an account without calling this
+	// first leaves the group pointing at an id that no longer resolves.
+	// Returns the group's NEW id when members were removed.
+	RemoveGroupMembers(ctx context.Context, group Group, memberIDs []string) (Group, error)
+
+	// UserGroups returns the groups an account belongs to. An account that is
+	// already gone reports no groups rather than an error.
+	UserGroups(ctx context.Context, userID string) ([]Group, error)
 
 	// FindUserByUsername returns the account with this exact username, and
 	// whether one exists.

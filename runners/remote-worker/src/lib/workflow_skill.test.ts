@@ -95,6 +95,9 @@ const PLATFORM_ONLY = [
 
 const LOCAL_ONLY = [
   "issues/<n>.md",
+  // The walk posts its progress where its prompt says: a GitHub comment on the
+  // platform, a section of the issue file here.
+  "under `## Mock verification`",
   "`## Progress`",
   ".aep-playground",
   "no git remote, no GitHub, and no PR",
@@ -164,7 +167,7 @@ for (const rule of [
   // prompt. The procedure itself is `mock-verification`, asserted below.
   "**A `web-application` is finished by a walk, not a build.**",
   "dispatch **one more subagent**",
-  "Walk <component> at <App Path> (issue #<N>).",
+  "Walk <component> at <App Path>",
 ]) {
   test(`shared by both modes: ${rule.split("\n")[0]}`, () => {
     assert.ok(composed.github.includes(rule), `github mode lost: ${rule}`);
@@ -236,27 +239,34 @@ for (const [file, rules] of Object.entries(REFERENCE_RULES)) {
 // failure at the line that found it, then re-walks that line before moving on.
 // A read-only verifier that only files a report is the shape this replaced, as
 // is batching every repair to the end — so the three properties that make one
-// fix-as-you-go agent safe are asserted here: the checklist is settled before
-// the browser opens, a line is not left behind until it passes, and one
-// stubborn defect cannot swallow the walk.
+// fix-as-you-go agent safe are asserted here: the plan is settled before the
+// browser opens, an item is not left behind until it passes, and one stubborn
+// defect cannot swallow the walk.
 test("mock-verification walks and repairs a line at a time", () => {
   const skill = fs.readFileSync(path.join(LIBRARY, "mock-verification", "SKILL.md"), "utf8");
   for (const rule of [
-    // The flow is the unit and the DSL the only map: the checklist is settled
-    // from it before the browser opens, so an unreached screen is a visible gap.
+    // The flow is the unit and the DSL the only map: the plan is settled from
+    // it before the browser opens, so an unreached screen is a visible gap.
     "## What you verify",
-    "## 1 · Checklist",
-    "**A line ends green.**",
-    "**Three attempts on a line, then mark it `[ ]` and walk on.**",
-    "**Repair the app, never the checklist.**",
+    "## 1 · Stand it up",
+    "## 2 · Plan",
+    // The dev server — process group, free port, browser close — is the skill's
+    // script, reached through the runner-stamped path like aep-validation's
+    // report generator. The walker never re-derives it.
+    'bash "$AEP_SKILLS_DIR/mock-verification/scripts/walk.sh" up',
+    'bash "$AEP_SKILLS_DIR/mock-verification/scripts/walk.sh" down',
+    // Progress is three fixed shapes; WHERE they go comes from the prompt, so
+    // the skill names no `gh` and ships byte-identical into the playground.
+    "## Progress",
+    "**An item ends green, and posted.**",
+    "**Three attempts on an item, then post it open and walk on.**",
+    "**Repair the app, never the plan.**",
     // Full page loads reset the mock's in-page state, which has twice been
     // misread as a defect in a just-created record.
     "**Click between screens.**",
     "Make the mock agree with the app",
-    // The walk is a subagent's job, and a subagent now keeps its issue's status
-    // line current. So this skill bans the RECORD (git, commits, the PR) and
-    // defers where progress goes to the prompt — it ships byte-identical into a
-    // playground session, which has no issue to post on.
+    // The walk is a subagent's job. This skill bans the RECORD (git, commits,
+    // the PR) and defers where progress goes to the prompt (ADR-0010, 7).
     "The record belongs to the agent\n  that dispatched you",
   ]) {
     assert.ok(skill.includes(rule), `mock-verification lost: ${rule}`);
@@ -572,6 +582,7 @@ test("a skill's references, assets and scripts come along", async () => {
       path.join("react-webapp", "assets", "mock-browser.ts"),
       path.join("react-webapp", "assets", "mock-auth.ts"),
       path.join("mock-verification", "SKILL.md"),
+      path.join("mock-verification", "scripts", "walk.sh"),
       path.join("agent-browser", "SKILL.md"),
     ]) {
       assert.ok(fs.existsSync(path.join(skills, rel)), `mirror is missing ${rel}`);
@@ -585,7 +596,7 @@ test("a skill's references, assets and scripts come along", async () => {
 // mirror). `/app/plugin` was such a path, and it stopped existing when the plugin
 // did; the report generator was still being invoked through it.
 test("no library skill hardcodes a runner path", () => {
-  for (const skill of ["aep", "aep-validation", "playwright-cli"]) {
+  for (const skill of ["aep", "aep-validation", "playwright-cli", "mock-verification"]) {
     const body = fs.readFileSync(path.join(LIBRARY, skill, "SKILL.md"), "utf8");
     assert.ok(!body.includes("/app/plugin"), `${skill} names the retired /app/plugin`);
     assert.ok(

@@ -171,6 +171,34 @@ That narrows decisions 3 and 4: the boundary is still the component rather than
 the issue, but the DSL alone draws it, and `specs/requirements/` is no longer a
 walk input or a checklist source. Everything else above stands.
 
+## Amendment 2026-09-04 — a numbered plan, a line per item, and the server in a script
+
+The walk's progress is three comment shapes: a **plan** posted before the
+browser opens, one numbered item per screen and per once-per-app check; **one
+line per item** as it settles (`n/N Screen: done | fixed | open | outside —
+detail`); and a **closing line** with the counts. The newest comment is where
+the walk is, which is the status line ADR-0010 asks for; an item with no line
+is a screen never reached; the closing line is what the pull request quotes.
+This replaces the marked checklist block and its separate status-line shapes.
+It posts more comments per web-app issue than ADR-0010's two to four — one per
+item — and takes a legible history over a quiet thread on purpose. Where the
+lines go is the dispatch prompt's to say, per mode (a `gh issue comment` on the
+platform, a section of `issues/<n>.md` in the playground), so the skill names
+no `gh` and ships byte-identical, as ADR-0010's decision 7 requires.
+
+The dev server moved out of the skill text into `scripts/walk.sh` beside it
+(`up`, `restart`, `down`), reached through `$AEP_SKILLS_DIR` the way
+`aep-validation` reaches its report generator. The text had carried a
+process-group launcher, a port-collision rule and a stop sequence that every
+walk re-typed; the one walk that improvised instead leaked four dev servers
+into its memory limit. The script reaps by process group, searches for a free
+port and moves on when a launch loses the bind to a sibling walk in the same
+instant, keys its state on the App Path so same-named apps stay apart, and
+closes the browser on `down`. The
+runner image also gains `procps` as a backstop for an agent that reaches for
+`pkill` outside the procedure. This reverses the earlier call to keep the skill
+text-only, on the measured cost of that choice.
+
 ## Consequences
 
 - A `web-application` costs two dispatches where a service costs one, and the

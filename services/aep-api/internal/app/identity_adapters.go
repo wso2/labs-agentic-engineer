@@ -98,6 +98,26 @@ func (d thunderDirectory) AddMembers(ctx context.Context, group identity.Directo
 	return toDirectoryGroup(g), nil
 }
 
+func (d thunderDirectory) RemoveMembers(ctx context.Context, group identity.DirectoryGroup, memberIDs []string) (identity.DirectoryGroup, error) {
+	g, err := d.c.RemoveGroupMembers(ctx, toThunderGroup(group), memberIDs)
+	if err != nil {
+		return identity.DirectoryGroup{}, err
+	}
+	return toDirectoryGroup(g), nil
+}
+
+func (d thunderDirectory) UserGroups(ctx context.Context, userID string) ([]identity.DirectoryGroup, error) {
+	groups, err := d.c.UserGroups(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]identity.DirectoryGroup, 0, len(groups))
+	for _, g := range groups {
+		out = append(out, toDirectoryGroup(g))
+	}
+	return out, nil
+}
+
 func (d thunderDirectory) FindUserByUsername(ctx context.Context, username string) (*identity.DirectoryAccount, bool, error) {
 	u, found, err := d.c.FindUserByUsername(ctx, username)
 	if err != nil || !found {
