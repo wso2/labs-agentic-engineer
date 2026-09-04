@@ -81,7 +81,7 @@ outside that lock is the duplicate-issue race the lock exists to close.
 | `build` (buildpipe) | the whole-spec gate + `v<N>` tag cut, **the milestone plan path** (mint `v<N>`'s milestone, supersede the previous version into it, admit the run row, then plan its Tasks and mint its gates), the version ledger, dependency preflight | `MilestoneRun`/`StartRunRequest`, and the planner via `SpecPlanner` |
 | `task` (taskflow) | the GitHub-native Task READ surface (list/get, scoped to a version by milestone membership) + the plan turn, which mints one **prose** issue per Task **into the version's milestone**, assigned at creation; plus the SRE/RCA handoff's adoption leg | the read DTOs, the milestone label vocabulary, and the run rows (via `MilestoneResolver`) |
 | `execution` | the executions READ surface: the per-Task progress endpoint, the task-log SSE stream, `OpsExecutionReader`. It writes nothing and dispatches nothing — the only execution rows left are the provisioning gates' | `TaskStreamHub`, the executions kernel |
-| `eventcore` | the event plane of the milestone-run loop: the auto-merge policy seam, the merged-PR path-diff build fan-out + per-`(component, SHA)` re-trigger budget, fix/conflict/red-main issue minting, the halt of a failed run's unfinished work and the close of a cancelled run's in-flight work, milestone-matched predicate re-evaluation, adoption, the reconcile sweep (trigger router; halted-aware, and blind to cancelled increments), and the build sweep that observes those builds reaching terminal | the milestone model (labels, `MilestoneRun`/`RunCycle`, run signals), `DiffComponents`/`BuildRunName` and `BuildTerminalObserver`; **no Temporal** — it reaches the supervisor only through the `RunSignaler`/`RunStarter` ports |
+| `eventcore` | the event plane of the milestone-run loop: the auto-merge policy seam, the merged-PR path-diff build fan-out + per-`(component, SHA)` re-trigger budget, fix/conflict/red-main issue minting, the halt of a failed run's unfinished work and the close of a cancelled run's in-flight work, milestone-matched predicate re-evaluation, adoption, the reconcile sweep (trigger router; halted-aware, and blind to cancelled increments) and its per-milestone door `ReconcileMilestone`, and the build sweep that observes those builds reaching terminal | the milestone model (labels, `MilestoneRun`/`RunCycle`, run signals), `DiffComponents`/`BuildRunName` and `BuildTerminalObserver`; **no Temporal** — it reaches the supervisor only through the `RunSignaler`/`RunStarter` ports, and the supervisor reaches it only through the four it declares itself (`WorkHalter`, `WorkCanceller`, `DeployIssueMinter`, `MilestoneReconciler`) |
 | `run` | the milestone run SUPERVISOR — three workflows over one shared loop: the wait state + dispatch predicate, the cycle loop, the four budgets + no-progress + ceiling, the version's judgement, settle, and cancel. Plus the `Supervisor` handle the event plane and the build click signal and start runs through | `Runtime`, the milestone model, `RunStatus`/`MilestoneRunWorkflowID`, `MilestoneDispatch`, `DiffComponents`/`BuildRunNamePrefix`; **no GitHub client, no gorm** |
 | `runread` | the run READ surface: a version's runs + their cycles, TWO SSE streams over the per-cycle agent logs (one per run, one per version), and the two writes beside them — cancel, and revalidate. Owns no state and decides nothing: both writes resolve their target through the org-scoped read, then hand off | the run/cycle entities and `IsTerminalRunState`; reaches the pod log through `CycleLogReader` (OC API while the Component lives, observer archive while retained), the supervisor through `RunCanceller` and the event plane through `Revalidator`, so it drags in neither a cluster client, a workflow engine nor GitHub |
 | `codingagent` | the CodingExecutor (ONE dispatch entry point: dispatch a run cycle as an ephemeral OpenChoreo `coding-agent` job Component), the build-auth retry, the pod-truth watcher, retention/LRU and the cancel-time delete. Design: [`codingagent/design/oc-job-dispatch.md`](codingagent/design/oc-job-dispatch.md) | `MilestoneDispatch`/`MilestoneDispatcher`, `TaskStreamHub`, `BuildTerminalObserver` |
@@ -374,6 +374,24 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   round trip. The cycle-boundary poll keeps its COUNTS, because that read runs at every boundary and is
   the loop's hottest; `aep:halted` deliberately does not reach it, since a halted issue in a LIVE run's
   milestone is a contradiction — the run that halted them is terminal by construction.
+- **A SETTLING RUN reconciles its own milestone; the sweep's timer catches only what that misses.**
+  Three hand-offs are writes the PLATFORM makes — a dev run filing the version's validation task, a
+  failed verdict filing repair issues, a task run reopening the task — and no webhook reports any of
+  them: the App bot is the sender, so the delivery is an echo, and `issues.opened` is not routed at all.
+  So `loop.settle` calls the SAME pass for its own milestone (`ReconcileMilestone`), and it must be the
+  settle rather than the write: the trigger predicate needs the milestone to have no live run, and each
+  of those writes happens inside a live one moments before it ends — a reconcile at the write finds that
+  run and starts nothing. The row going terminal is the event, and it is a fact about the platform's own
+  database that no delivery could carry. Best-effort, and bounded to three attempts: the run has already
+  settled, so a plane it cannot reach costs the hand-off latency the sweep absorbs, where an unbounded
+  retry would leave a finished run's workflow executing over work that is no longer its own. Two endings
+  hand NOTHING onward (`SettleHandsWorkOnward`). `blocked` changed nothing about the milestone — the halt
+  is failed-only, so the working set is untouched and a replacement run meets the same quota refusal, a
+  spin at workflow speed entered exactly when the org is already out of slots; the timer is the only
+  thing bounding it. `cancelled` is a courtesy rather than a guarantee: a cancelled dev run's milestone
+  is skipped anyway, and a validation run cancelled before its first read leaves the task open for the
+  next pass to restart — what the exclusion buys is that the platform does not contradict the click
+  within the same second.
 - **A FAILED run HALTS the work it could not finish, or every budget is defeated.** On every failed
   settle the run comments the terminal reason on each working-set issue it could not finish — the recovery
   bugs it filed itself included, which are the newest things in the milestone and therefore the first a

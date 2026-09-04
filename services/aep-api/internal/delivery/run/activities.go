@@ -50,6 +50,7 @@ type Activities struct {
 	deployMint DeployIssueMinter
 	halter     WorkHalter
 	canceller  WorkCanceller
+	reconciler MilestoneReconciler
 	gates      Gates
 	planner    Planner
 	deployGate DeployGate
@@ -71,6 +72,7 @@ type Deps struct {
 	DeployIssues DeployIssueMinter
 	Halter       WorkHalter
 	Canceller    WorkCanceller
+	Reconciler   MilestoneReconciler
 	Gates        Gates
 	Planner      Planner
 	DeployGate   DeployGate
@@ -92,6 +94,7 @@ func NewActivities(d Deps) *Activities {
 		deployMint: d.DeployIssues,
 		halter:     d.Halter,
 		canceller:  d.Canceller,
+		reconciler: d.Reconciler,
 		gates:      d.Gates,
 		planner:    d.Planner,
 		deployGate: d.DeployGate,
@@ -776,6 +779,42 @@ func (a *Activities) CloseCancelledWork(ctx context.Context, in CloseCancelledWo
 	}
 	closed, err := a.canceller.CloseCancelledWork(ctx, in.OrgID, in.ProjectID, in.MilestoneNumber, in.Kind)
 	return closed, sourceControlErr(err)
+}
+
+// ReconcileMilestoneInput names the milestone a settled run is handing back to
+// the event plane.
+//
+// It carries the milestone TITLE, which the halt and cancel inputs do not need:
+// those write onto issues that already exist, while this can cause a new run ROW
+// to be admitted, and a row with no title has no version to show for itself —
+// MilestoneRun.SpecTag falls back to it when the row carries no tag of its own.
+type ReconcileMilestoneInput struct {
+	OrgID           string `json:"orgId"`
+	ProjectID       string `json:"projectId"`
+	MilestoneNumber int    `json:"milestoneNumber"`
+	MilestoneTitle  string `json:"milestoneTitle"`
+}
+
+// ReconcileMilestone asks the event plane to re-examine the milestone this run
+// has just left, so a hand-off is picked up now rather than at the reconcile
+// sweep's next tick.
+//
+// The supervisor still decides nothing about what happens next: the plane runs
+// its own routing and answers with a run of the right kind, or with nothing.
+// This is a wake-up, in the same spirit as the signals that come the other way.
+//
+// An unwired reconciler is a no-op rather than an error, like every other
+// optional collaborator: a plane that is not there costs this run's hand-off
+// some latency, and the sweep is what absorbs it. A reachable one that refuses
+// permanently is classified like every other source-control round trip, so it
+// fails on attempt one instead of spending the bound the caller put on it
+// (nudgeActivityAttempts) re-asking a question already answered.
+func (a *Activities) ReconcileMilestone(ctx context.Context, in ReconcileMilestoneInput) error {
+	if a.reconciler == nil {
+		return nil
+	}
+	return sourceControlErr(a.reconciler.ReconcileMilestone(
+		ctx, in.OrgID, in.ProjectID, in.MilestoneNumber, in.MilestoneTitle))
 }
 
 // ---- validation ------------------------------------------------------------

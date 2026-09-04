@@ -215,10 +215,25 @@
 // instead of correctness, and it is why the wait state can be unbounded: the
 // cycle-boundary poll and the reconcile sweep both re-read the milestone.
 //
-// The two packages never import each other. They share the milestone
-// vocabulary (labels, run signals, the run and cycle rows, the build-fan-out
-// naming) through the delivery ROOT, and they reach each other only through
-// ports: `eventcore.RunSignaler`/`RunStarter` inbound, and nothing outbound.
+// The two packages never import each other — `internal/arch` bans it in both
+// directions. They share the milestone vocabulary (labels, run signals, the run
+// and cycle rows, the build-fan-out naming) through the delivery ROOT, and they
+// reach each other only through PORTS, in both directions.
+//
+// INBOUND, the plane's own: `eventcore.RunSignaler`/`RunStarter`, satisfied by
+// the supervisor. OUTBOUND, declared HERE and satisfied by the plane, four of
+// them — and every one is the same shape, an act the supervisor must not perform
+// itself because the plane owns the milestone:
+//
+//	WorkHalter           mark what a FAILED run could not finish
+//	WorkCanceller        close what a CANCELLED run had in flight
+//	DeployIssueMinter    file the fix work for a deployment that never came up
+//	MilestoneReconciler  re-examine this milestone now that the run has left it
+//
+// The first three write issues, which the supervisor never does: it observes and
+// asks, the plane owns the prose, the labels and the dedupe keys. The fourth
+// writes nothing at all — it says "something changed, look again", and the
+// plane's own routing decides what that starts.
 //
 // # Internal shape
 //

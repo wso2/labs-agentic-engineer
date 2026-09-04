@@ -86,6 +86,21 @@ const (
 	// wait for any of this — provisionErr fails them on attempt one.
 	gateActivityRetryInterval = 10 * time.Second
 
+	// nudgeActivityAttempts bounds the settle-time reconcile — the one activity
+	// here that must NOT retry forever.
+	//
+	// Everything else the loop does is work the run owes: retrying until it lands
+	// is the correct answer, because nobody else will do it. The nudge is the
+	// opposite. It is a hand-off the reconcile sweep also makes, on a timer, so a
+	// reconcile that cannot get through costs latency the sweep absorbs within the
+	// minute — while an unbounded retry would leave a SETTLED run's workflow
+	// executing indefinitely, long after its row went terminal, over work that is
+	// no longer its own.
+	//
+	// Three, matching gateActivityAttempts, and for the same reason: one attempt
+	// would surrender the whole point of the nudge to any passing blip.
+	nudgeActivityAttempts = 3
+
 	// planActivityTimeout bounds PlanMilestone, the only activity that waits on
 	// an agent turn rather than a round trip. A healthy plan turn has no upper
 	// bound on its total length — only on its SILENCE, and the plan tap's own
@@ -670,6 +685,15 @@ func (l *loop) settle(ctx workflow.Context, state, reason string) (RunResult, er
 	if err := l.settleRun(ctx, state, reason); err != nil {
 		return l.result(), err
 	}
+	// AFTER the row is terminal, and after the halt and the cancel-close above.
+	// Both orderings are load-bearing. Before the settle the plane still sees a
+	// live run on this milestone and would start nothing; before the halt it would
+	// restart, instantly, the very work a failed run just gave up on — which is
+	// every budget in the platform defeated at once, the failure mode
+	// HaltUnfinishedWork exists to prevent, reached a minute earlier.
+	if delivery.SettleHandsWorkOnward(state) {
+		l.nudgeReconcile(ctx)
+	}
 	l.st.State = state
 	l.st.TerminalReason = reason
 	l.st.CycleKind = ""
@@ -886,6 +910,16 @@ func gateActivityCtx(ctx workflow.Context) workflow.Context {
 	})
 }
 
+// nudgeActivityCtx runs the settle-time reconcile with a BOUNDED retry policy —
+// see nudgeActivityAttempts for why this one activity does not get the unbounded
+// default.
+func nudgeActivityCtx(ctx workflow.Context) workflow.Context {
+	return workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+		StartToCloseTimeout: activityTimeout,
+		RetryPolicy:         &temporal.RetryPolicy{MaximumAttempts: nudgeActivityAttempts},
+	})
+}
+
 // dispatchActivityCtx runs the agent launch with retries OFF. A launch that did
 // not happen is agent death, and the cycle's own re-dispatch budget is the
 // answer to that — a Temporal retry on top would spend it invisibly.
@@ -1073,6 +1107,34 @@ func (l *loop) closeCancelledWork(ctx workflow.Context) error {
 			"milestone", l.in.MilestoneNumber, "kind", l.kind(), "issues", closed)
 	}
 	return nil
+}
+
+// nudgeReconcile asks the event plane to re-examine this milestone now that the
+// run has left it. Which endings ask, and why the platform's own hand-offs need
+// asking at all, is delivery.SettleHandsWorkOnward's to explain.
+//
+// WHY HERE AND NOT AT THE WRITE. The plane's trigger requires that the milestone
+// have no live run, and each of those writes happens inside a live one, moments
+// before it settles. Asking at the write would find this very run and do
+// nothing. The row going terminal is the event, and it is a fact about the
+// platform's own database that no webhook could ever carry.
+//
+// BEST-EFFORT, and that is the contract rather than a shortcut. The run has
+// already settled; nothing about its outcome depends on this. A plane that
+// cannot be reached costs the hand-off some latency and the sweep picks it up on
+// its next pass, which is precisely the division of labour a backstop is for.
+func (l *loop) nudgeReconcile(ctx workflow.Context) {
+	err := workflow.ExecuteActivity(nudgeActivityCtx(ctx), (*Activities).ReconcileMilestone,
+		ReconcileMilestoneInput{
+			OrgID:           l.in.OrgID,
+			ProjectID:       l.in.ProjectID,
+			MilestoneNumber: l.in.MilestoneNumber,
+			MilestoneTitle:  l.in.MilestoneTitle,
+		}).Get(ctx, nil)
+	if err != nil {
+		workflow.GetLogger(ctx).Warn("could not reconcile the milestone this run left — the sweep will",
+			"milestone", l.in.MilestoneNumber, "kind", l.kind(), "error", err)
+	}
 }
 
 // mintDeployFixIssues files one issue per component that did not come up, so the

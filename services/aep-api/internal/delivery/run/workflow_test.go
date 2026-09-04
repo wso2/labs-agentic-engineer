@@ -110,7 +110,21 @@ type harness struct {
 	// so a cancelled settle that closed nothing is a cancel button that stops the
 	// run and then pays for its replacement a minute later.
 	cancels []CloseCancelledWorkInput
-	closed  int
+	// order is the ORDER the settle's writes happened in, one entry per call.
+	//
+	// The three settle-time slices below each answer "did this happen"; only a
+	// shared sequence answers "in which order", and for the nudge the order is the
+	// whole of its safety. A reconcile before the halt hands a failed run's working
+	// set to a fresh run with fresh budgets; a reconcile before the settle finds
+	// this very run still live and starts nothing at all. Both failures leave every
+	// per-activity assertion green.
+	order []string
+	// nudges records every settle-time reconcile the loop asked the event plane
+	// for. It is the SPIN's assertion surface: the plane starts a run off what it
+	// finds, so an ending that nudged when it should not have is a run started at
+	// workflow speed rather than once a minute.
+	nudges []ReconcileMilestoneInput
+	closed int
 	// stateWrites keeps the full SetRunState payloads, so a test can assert on
 	// the PARK's explanation — the reason and the dependency names — and not
 	// merely that the run went to `waiting`. A park that does not say what it is
@@ -173,6 +187,7 @@ func newHarness(t *testing.T) *harness {
 	h.env.RegisterActivity(acts.MintDeployFixIssues)
 	h.env.RegisterActivity(acts.HaltUnfinishedWork)
 	h.env.RegisterActivity(acts.CloseCancelledWork)
+	h.env.RegisterActivity(acts.ReconcileMilestone)
 	h.env.RegisterActivity(acts.CheckDeployReadiness)
 	h.env.RegisterActivity(acts.ReadVersionState)
 
@@ -189,6 +204,7 @@ func newHarness(t *testing.T) *harness {
 			h.mu.Lock()
 			defer h.mu.Unlock()
 			h.settle = args.Get(1).(SettleRunInput)
+			h.order = append(h.order, actSettle)
 		}).Return(nil)
 	h.env.OnActivity(acts.BumpRunBudget, mock.Anything, mock.Anything).Return(nil)
 	h.env.OnActivity(acts.SetValidationVerdict, mock.Anything, mock.Anything).
@@ -221,6 +237,7 @@ func newHarness(t *testing.T) *harness {
 			h.mu.Lock()
 			defer h.mu.Unlock()
 			h.halts = append(h.halts, args.Get(1).(HaltWorkInput))
+			h.order = append(h.order, actHalt)
 		}).Return([]int{}, nil)
 	// Neither does the cancel's close: every CANCELLED settle closes the work the
 	// run had in flight, so a test asserts on WHAT was closed rather than on
@@ -230,6 +247,7 @@ func newHarness(t *testing.T) *harness {
 			h.mu.Lock()
 			defer h.mu.Unlock()
 			h.cancels = append(h.cancels, args.Get(1).(CloseCancelledWorkInput))
+			h.order = append(h.order, actCancelClose)
 		}).Return([]int{}, nil)
 	// The validation task's close never varies — it is the platform's write, made
 	// on every ending — so it is a constructor default like the other writers.
@@ -255,6 +273,22 @@ func (h *harness) dispatchIs(jobRef string, err error) {
 			defer h.mu.Unlock()
 			h.dispatches = append(h.dispatches, args.Get(1).(delivery.MilestoneDispatch))
 		}).Return(jobRef, err)
+}
+
+// reconcileIs pins what the settle-time nudge answers. Registered per test for
+// the reason dispatchIs gives — the harness consumes expectations in
+// registration order — and pinned at all because the FAILING case is a real one:
+// the nudge is best-effort, so a plane that cannot be reached must cost the
+// hand-off latency and nothing else.
+func (h *harness) reconcileIs(err error) {
+	h.set["reconcile"] = true
+	h.env.OnActivity(h.acts.ReconcileMilestone, mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			h.nudges = append(h.nudges, args.Get(1).(ReconcileMilestoneInput))
+			h.order = append(h.order, actReconcile)
+		}).Return(err)
 }
 
 // planIs pins what the planning phase's two activities answer. Registered per
@@ -732,6 +766,29 @@ func (h *harness) haltedWork() []HaltWorkInput {
 	return append([]HaltWorkInput(nil), h.halts...)
 }
 
+// The names harness.order records, so an ordering assertion reads as a sentence
+// rather than as three string literals.
+const (
+	actHalt        = "halt"
+	actCancelClose = "cancel-close"
+	actSettle      = "settle"
+	actReconcile   = "reconcile"
+)
+
+// activityOrder is the sequence of settle-time writes, read safely.
+func (h *harness) activityOrder() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]string(nil), h.order...)
+}
+
+// reconciles is every settle-time nudge the run made, read safely.
+func (h *harness) reconciles() []ReconcileMilestoneInput {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]ReconcileMilestoneInput(nil), h.nudges...)
+}
+
 // cancelledWork is what the run closed as work it had in flight, read safely.
 func (h *harness) cancelledWork() []CloseCancelledWorkInput {
 	h.mu.Lock()
@@ -785,6 +842,9 @@ func (h *harness) applyDefaults() {
 	}
 	if !h.set["plan"] {
 		h.planIs(nil, nil)
+	}
+	if !h.set["reconcile"] {
+		h.reconcileIs(nil)
 	}
 	if !h.set["waves"] {
 		h.wavesAreOneWave()
@@ -3000,4 +3060,139 @@ func TestAgentDeath_WithNoCancelRecordedStillSpendsTheRedispatch(t *testing.T) {
 	h.assertSettled(t, res, delivery.RunStateFailed, delivery.RunReasonRedispatchBudget)
 	require.Equal(t, delivery.RunMaxRedispatchPerCycle, h.dispatchCount(),
 		"genuine agent death must still spend the whole re-dispatch budget")
+}
+
+// ---- the settle-time nudge -------------------------------------------------
+//
+// The three hand-offs, and which endings make one, are
+// delivery.SettleHandsWorkOnward's to explain. What these pin is that the loop
+// actually asks on the endings that hand work over, stays silent on the two that
+// do not, and never lets the ask affect the run's own outcome.
+
+// H1. A delivered version files its validation task and hands the milestone
+// straight back, instead of the version waiting out a tick to be judged.
+func TestDeliveredVersion_HandsItsMilestoneBackAtOnce(t *testing.T) {
+	h := newHarness(t)
+	h.milestoneIs(workable(1, 1), MilestoneSnapshot{})
+	h.validationIs(77, delivery.ValidationVerdictSkipped)
+	h.merges(1)
+
+	h.runWith(RunInput{Kind: delivery.RunKindDev, Tag: "v3"})
+	res := h.result(t)
+
+	h.assertSettled(t, res, delivery.RunStateSucceeded, "")
+	nudges := h.reconciles()
+	require.Len(t, nudges, 1, "a delivered version reconciles its milestone exactly once")
+	require.Equal(t, testMilepost, nudges[0].MilestoneNumber)
+	// AFTER the settle, and this is the assertion that matters: until the row is
+	// terminal the plane still sees a live run on this milestone, so a reconcile
+	// made one activity earlier would find this run and start nothing. Reversed,
+	// every other assertion here still passes and the feature does nothing.
+	require.Equal(t, []string{actSettle, actReconcile}, h.activityOrder())
+	// The title rides through: a run the plane admits off this nudge has no tag of
+	// its own, and MilestoneRun.SpecTag falls back to the title for its version.
+	require.Equal(t, "v3", nudges[0].MilestoneTitle)
+}
+
+// H2. A failing verdict files one repair issue per failed criterion and settles
+// FAILED. That work is an ordinary task run's, and this is what starts it — so
+// `failed` is in the predicate deliberately, not by omission.
+func TestFailingVerdict_HandsItsRepairWorkBackAtOnce(t *testing.T) {
+	h := newHarness(t)
+	h.validationIs(77, delivery.ValidationVerdictFailed)
+	h.validationHistoryIs(1, "")
+	h.merges(1)
+
+	h.run(delivery.RunKindValidation, 0)
+	res := h.result(t)
+
+	h.assertSettled(t, res, delivery.RunStateFailed, delivery.RunReasonValidationFailed)
+	require.Len(t, h.reconciles(), 1,
+		"the repair issues a failed verdict files are a task run's work, and nothing else starts it")
+}
+
+// A QUOTA BLOCK hands nothing over, and this is the test that matters most.
+//
+// Blocked is terminal but not a failure, so the halt does not run and the working
+// set is untouched — nothing about the milestone changed. A nudge here would have
+// the plane admit a replacement run that meets the same entitlement refusal and
+// blocks again, at workflow speed, forever, entered exactly when the org is
+// already out of slots. Only the sweep's timer has ever bounded that.
+func TestQuotaBlock_HandsNothingBackAndCannotSpin(t *testing.T) {
+	h := newHarness(t)
+	h.milestoneIs(workable(1, 1))
+	h.dispatchIs("", temporal.NewNonRetryableApplicationError(
+		delivery.AgentQuotaBlockedMessage, delivery.ErrTypeAgentQuotaBlocked, delivery.ErrAgentQuotaExceeded))
+
+	h.run(delivery.RunKindDev, 0)
+	res := h.result(t)
+
+	h.assertSettled(t, res, delivery.RunStateBlocked, delivery.RunReasonAgentQuotaBlocked)
+	require.Empty(t, h.reconciles(),
+		"a quota block must not reconcile: the replacement run meets the same refusal")
+}
+
+// A CANCEL hands nothing over either, for a different reason: a person said stop.
+// A cancelled build's increment is abandoned and the plane skips its milestone
+// anyway, but a validation run cancelled before its first read leaves the
+// version's task open on purpose — so a nudge would restart the judging a second
+// after the click. Asking again is the revalidate button's job.
+func TestCancelledRun_HandsNothingBack(t *testing.T) {
+	h := newHarness(t)
+	h.milestoneIs(workable(1, 1))
+	h.signal(delivery.SigRunCancel, time.Second)
+
+	h.run(delivery.RunKindDev, 0)
+	res := h.result(t)
+
+	h.assertSettled(t, res, delivery.RunStateCancelled, "")
+	require.Empty(t, h.reconciles(), "a cancel must not be undone a second after the click")
+}
+
+// BEST-EFFORT is the contract, not a shortcut. The run has already settled by the
+// time the nudge is made, so nothing about its outcome may depend on the plane
+// being reachable — an unreachable one costs the hand-off the latency the sweep
+// absorbs on its next pass, and that is all.
+func TestNudgeFailure_CostsLatencyAndNotTheRun(t *testing.T) {
+	h := newHarness(t)
+	h.milestoneIs(workable(1, 1), MilestoneSnapshot{})
+	h.merges(1)
+	h.reconcileIs(errors.New("the event plane is unreachable"))
+
+	h.runWith(RunInput{Kind: delivery.RunKindDev, Tag: "v3"})
+	res := h.result(t)
+
+	// The attempts are asserted FIRST, because without them this test passes on a
+	// loop that never nudged at all — the settle would be green either way. It also
+	// pins the bound: nudgeActivityAttempts is the one retry policy in this package
+	// that is deliberately not the unbounded default, since a settled run must not
+	// keep a workflow executing over work that is no longer its own.
+	require.Len(t, h.reconciles(), nudgeActivityAttempts,
+		"a reconcile that keeps failing is retried to its bound and no further")
+	h.assertSettled(t, res, delivery.RunStateSucceeded, "")
+}
+
+// The ORDER inside the settle, which is what makes the nudge safe at all.
+//
+// A failed run halts the work it could not finish BEFORE its row goes terminal,
+// so the plane sees `aep:halted` by the time it is asked to look. Reversed, this
+// call would hand a failed run's working set straight to a fresh run with fresh
+// budgets — every budget in the platform defeated at once, which is the failure
+// HaltUnfinishedWork exists to prevent, reached a minute earlier.
+func TestFailedSettle_HaltsBeforeItHandsTheMilestoneBack(t *testing.T) {
+	h := newHarness(t)
+	h.milestoneIs(workable(1, 1), MilestoneSnapshot{})
+	h.deploymentsAre(CycleDeployState{Expected: 1, Failed: []string{"order-service"}})
+	h.merges(1)
+
+	h.runWith(RunInput{Kind: delivery.RunKindDev, Tag: "v3"})
+	res := h.result(t)
+
+	h.assertSettled(t, res, delivery.RunStateFailed, delivery.RunReasonDeployBudget)
+	require.Len(t, h.haltedWork(), 1, "the halt must have happened")
+	require.Len(t, h.reconciles(), 1, "and the milestone is still handed back, over halted work")
+	// The order is the point, and asserting the two counts alone does not test it:
+	// a reconcile that ran BEFORE the halt would satisfy both `Len`s while handing
+	// the work back unmarked.
+	require.Equal(t, []string{actHalt, actSettle, actReconcile}, h.activityOrder())
 }
