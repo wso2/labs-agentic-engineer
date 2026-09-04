@@ -87,6 +87,10 @@ const PLATFORM_ONLY = [
   // subagent are both overlaid away.
   "### The status line",
   "gh issue comment",
+  // The walk's prompt names the issue its checklist comment goes on; the
+  // playground has no issue, and `mock-verification` publishes nothing when the
+  // prompt names none.
+  "Walk <component> at <App Path> (issue #<N>).",
   // The invocation, not the words: local mode names `git push` too, in the
   // deny-list line that forbids it.
   "git push -u origin HEAD",
@@ -164,7 +168,7 @@ for (const rule of [
   // prompt. The procedure itself is `mock-verification`, asserted below.
   "**A `web-application` is finished by a walk, not a build.**",
   "dispatch **one more subagent**",
-  "Walk <component> at <App Path> (issue #<N>).",
+  "Walk <component> at <App Path>",
 ]) {
   test(`shared by both modes: ${rule.split("\n")[0]}`, () => {
     assert.ok(composed.github.includes(rule), `github mode lost: ${rule}`);
@@ -245,7 +249,14 @@ test("mock-verification walks and repairs a line at a time", () => {
     // The flow is the unit and the DSL the only map: the checklist is settled
     // from it before the browser opens, so an unreached screen is a visible gap.
     "## What you verify",
-    "## 1 · Checklist",
+    "## 1 · Stand it up",
+    "## 2 · Checklist",
+    // The mechanics — server, port, browser, the one issue comment — are the
+    // skill's script, reached through the runner-stamped path like
+    // aep-validation's report generator. The walker never re-derives them.
+    'bash "$AEP_SKILLS_DIR/mock-verification/scripts/walk.sh" up',
+    'bash "$AEP_SKILLS_DIR/mock-verification/scripts/walk.sh" post <issue#>',
+    'bash "$AEP_SKILLS_DIR/mock-verification/scripts/walk.sh" down',
     "**A line ends green.**",
     "**Three attempts on a line, then mark it `[ ]` and walk on.**",
     "**Repair the app, never the checklist.**",
@@ -253,10 +264,10 @@ test("mock-verification walks and repairs a line at a time", () => {
     // misread as a defect in a just-created record.
     "**Click between screens.**",
     "Make the mock agree with the app",
-    // The walk is a subagent's job, and a subagent now keeps its issue's status
-    // line current. So this skill bans the RECORD (git, commits, the PR) and
-    // defers where progress goes to the prompt — it ships byte-identical into a
-    // playground session, which has no issue to post on.
+    // The walk is a subagent's job. This skill bans the RECORD (git, commits,
+    // the PR) and publishes its one checklist comment only on the issue the
+    // prompt names — it ships byte-identical into a playground session, whose
+    // overlaid prompt names none.
     "The record belongs to the agent\n  that dispatched you",
   ]) {
     assert.ok(skill.includes(rule), `mock-verification lost: ${rule}`);
@@ -572,6 +583,7 @@ test("a skill's references, assets and scripts come along", async () => {
       path.join("react-webapp", "assets", "mock-browser.ts"),
       path.join("react-webapp", "assets", "mock-auth.ts"),
       path.join("mock-verification", "SKILL.md"),
+      path.join("mock-verification", "scripts", "walk.sh"),
       path.join("agent-browser", "SKILL.md"),
     ]) {
       assert.ok(fs.existsSync(path.join(skills, rel)), `mirror is missing ${rel}`);
@@ -585,7 +597,7 @@ test("a skill's references, assets and scripts come along", async () => {
 // mirror). `/app/plugin` was such a path, and it stopped existing when the plugin
 // did; the report generator was still being invoked through it.
 test("no library skill hardcodes a runner path", () => {
-  for (const skill of ["aep", "aep-validation", "playwright-cli"]) {
+  for (const skill of ["aep", "aep-validation", "playwright-cli", "mock-verification"]) {
     const body = fs.readFileSync(path.join(LIBRARY, skill, "SKILL.md"), "utf8");
     assert.ok(!body.includes("/app/plugin"), `${skill} names the retired /app/plugin`);
     assert.ok(

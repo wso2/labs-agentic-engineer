@@ -199,8 +199,7 @@ subagent you handed it to, keeps its status line current from start to done
    ```text
    Walk <component> at <App Path> (issue #<N>). Load `mock-verification` and
    `agent-browser`; the first is the whole procedure. Edit/Write only inside
-   <App Path>; never run `git`. Status line: <the gh issue comment command with #N filled in>.
-   Report back the skill's report block.
+   <App Path>; never run `git`. Report back the checklist, whole.
    ```
 
    The walk lands before the commit, so what it fixes ships with what it
@@ -260,8 +259,9 @@ gh issue comment <number> --body "<one line: what is happening on this issue now
 
 **Post when the one-line answer changes**, and always at both ends — when the
 work starts and when it stops. In between it changes when a component goes green
-and when its work is committed; a walk's own lines are the walker's
-(`mock-verification` fixes their shape). A stretch with no new answer is silence
+and when its work is committed. A walk's progress is the walker's:
+`mock-verification` keeps one checklist comment on the issue current, so its
+prompt carries only the issue number. A stretch with no new answer is silence
 telling the truth; a comment repeating the line already there is noise.
 
 Every tool call already reaches the run's progress feed, so this line carries the

@@ -171,6 +171,30 @@ That narrows decisions 3 and 4: the boundary is still the component rather than
 the issue, but the DSL alone draws it, and `specs/requirements/` is no longer a
 walk input or a checklist source. Everything else above stands.
 
+## Amendment 2026-09-04 — one checklist, and the mechanics in a script
+
+The walk reported through three surfaces: a checklist comment before the
+browser opened, a status-line comment per settled line, and a report comment at
+the end, each with its own shape. They collapse into **one comment, edited in
+place**: the checklist is written once from the DSL, its first line is derived
+from its marks (`<p> pass, <f> fixed, <o> open, <t> outside, <u> to walk`), and
+the same comment is re-published as lines settle. The newest comment on the
+issue stays the checklist, so the status line ADR-0010 describes is its first
+line, and the pull request quotes that same line at the end.
+
+The mechanics moved out of the skill text into `scripts/walk.sh` beside it
+(`up`, `restart`, `post`, `down`), reached through `$AEP_SKILLS_DIR` the way
+`aep-validation` reaches its report generator. The text had carried a
+process-group launcher, a port-collision rule and a stop sequence that every
+walk re-typed; the one walk that improvised instead leaked four dev servers
+into its memory limit. The script reaps by process group, searches for a free
+port so two walks in one wave do not collide, closes the browser on `down`,
+and holds the create-or-edit branch of the issue comment, so the same skill
+text serves a playground session whose prompt names no issue. The runner
+image also gains `procps` as a backstop for an agent that reaches for `pkill`
+outside the procedure. This reverses the earlier call to keep the skill
+text-only, on the measured cost of that choice.
+
 ## Consequences
 
 - A `web-application` costs two dispatches where a service costs one, and the

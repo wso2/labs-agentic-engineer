@@ -22,6 +22,10 @@
 # What each layer is for:
 #   - git / gh / curl / bash / python3 — workspace provisioning, the git
 #     credential helper + `gh` wrapper, and the agent's Bash tool.
+#   - procps (`ps`, `pkill`) — a backstop. The walk's own script reaps its dev
+#     server by process group and needs neither, but an agent improvising a
+#     cleanup reaches for `pkill` first, and on the image without it every such
+#     call was a silenced "command not found" that left the server running.
 #   - Go and Ballerina (pinned archives, not distro packages) + node/npm
 #     from the base — the agent's compile-level build verification
 #     (`go build`, `bal build`, `tsc --noEmit`, lockfile resolution) before
@@ -95,6 +99,7 @@ RUN apt-get update \
         curl \
         bash \
         python3 \
+        procps \
         unzip \
         ca-certificates \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \

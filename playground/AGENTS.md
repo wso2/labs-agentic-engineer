@@ -51,10 +51,11 @@ a fixture like that is yours alone — author it by copying the `specs/` +
 `issues/` shape of an existing project and stripping every dependency.
 
 **A `web-application` costs an extra round.** Its build is followed by mock
-verification: a subagent starts the app with `npm run dev:mock`, walks its
-stories with `agent-browser`, and reports a verdict per story, which the lead
-fixes and re-verifies (`skills/mock-verification`, and `react-webapp`'s
-`references/mock-mode.md` for the mock itself). In docker mode that is all
+verification: a subagent stands the app up in mock mode, walks every flow its
+wireframes draw with `agent-browser`, fixes what fails on the spot, and hands
+back one marked checklist (`skills/mock-verification`, whose `scripts/walk.sh`
+runs the server, and `react-webapp`'s `references/mock-mode.md` for the mock
+itself). In docker mode that is all
 inside the container. **In `--host` mode it is your machine**: the run binds a
 localhost port and drives a real browser under bypassPermissions. Nothing is
 installed — `agent-browser` and the browser are resolved off your `PATH`, the
