@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import { Stack, Typography } from "@wso2/oxygen-ui";
+import { alpha, Stack, Typography } from "@wso2/oxygen-ui";
 import { WorkingPulse } from "../../agent-chat/components/WorkingIndicator";
 
 /**
@@ -46,8 +46,9 @@ export function LiveNote({ note }: { note: string }) {
         mt: 1,
         p: 1.25,
         borderRadius: 1.5,
-        // Neutral, not an info tint: the host Alert is already info-tinted.
-        bgcolor: "action.hover",
+        // From text.primary so it inverts with the theme: action.hover is ~4%
+        // black in light mode, which vanished on the Alert's own info tint.
+        bgcolor: (t) => alpha(t.palette.text.primary, 0.08),
       }}
     >
       <WorkingPulse />
