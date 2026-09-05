@@ -308,20 +308,19 @@ export function ValidationPage({
   // — a detail read by number deliberately skips the population filter — and answers
   // with GitHub's own url. The hook is a no-op while the number is 0.
   //
-  // Polled while the loop is live, because this issue carries more than a url: its
-  // newest comment is the agent's own status line, which is the only run-wide
-  // narration that survives a reload. Gated on the SAME predicate as the cancel
-  // button below, so the page never polls an issue at a moment its own header says
-  // nothing is running.
-  const issue = useTask(projectName, issueNumber, {
-    live: VALIDATION_LIFECYCLE_STATES.has(state),
-  });
+  // VALIDATION itself is running, not merely the loop: under `awaiting-fix` the
+  // cycle in flight is coding, so the issue's newest comment is a finished
+  // attempt's last words. Not `live.active` — that fold is off in the log body.
+  const validating = state === "running";
+  // Polled only while validating: its newest comment is the agent's status line,
+  // and a GitHub-backed read must cost nothing when there is nothing to show.
+  const issue = useTask(projectName, issueNumber, { live: validating });
   const issueUrl = issue.data?.issueUrl;
-  // What the agent says it is doing, in its own words. Durable and polled, so
-  // unlike the derived line below it is intact for a reader who opens a run an
-  // hour in — the progress stream's replay window drops the earliest events on a
-  // long run, and nothing reconstructs them.
-  const agentLine = issue.data ? statusLine(issue.data) : null;
+  // The agent's own words — durable, so intact for a reader who joins an hour in,
+  // where the progress stream's replay window has dropped the early events.
+  // Gated here because a comment outlives its run: ungated, the closing summary
+  // sat under a settled verdict forever.
+  const agentLine = validating && issue.data ? statusLine(issue.data) : null;
 
   // The run reached an ANSWER — which is not the same as "everything passed", and
   // not the same as "there is a report". Hooks stay unconditional; `enabled` gates

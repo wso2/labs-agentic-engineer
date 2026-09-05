@@ -1581,4 +1581,62 @@ describe("ValidationPage agent status line", () => {
     renderPage(undefined);
     expect(mockIssueLive).toBe(false);
   });
+
+  // A comment OUTLIVES the run that wrote it. The closing summary stays the
+  // newest comment on the issue forever, so an ungated line kept announcing a
+  // finished run as if it were still going.
+  it("says nothing over a settled verdict, however recent the comment", () => {
+    mockValidation = "passed";
+    mockRun = {
+      ...run({
+        validation: { verdict: "passed", reportPath: "tests/validation/report.json" },
+        cycles: [validationCycle],
+      }),
+      state: "succeeded",
+    };
+    mockReport.data = { content: REPORT };
+    mockIssueComments = [
+      { id: "c1", body: "Validation complete: 2/2 e2e criteria passing." },
+    ];
+    renderPage(undefined);
+
+    expect(screen.queryByText(/Validation complete/)).not.toBeInTheDocument();
+    // The verdict itself still speaks — this removes a duplicate, not the answer.
+    expect(screen.getByText(/covered by a test and passed/)).toBeInTheDocument();
+  });
+
+  // The sharper half: `awaiting-fix` is a lifecycle state, so the loop IS live —
+  // but the cycle running is CODING. The newest validation cycle closed when it
+  // reported the failure, so its last words describe a finished attempt, and
+  // showing them claims an agent is validating while none is.
+  it("says nothing while a repair cycle codes, even though the loop is live", () => {
+    mockValidation = "awaiting-fix";
+    mockRun = {
+      ...run({
+        validation: { verdict: "failed", reportPath: "tests/validation/report.json" },
+        cycles: [validationCycle, { ...validationCycle, id: "cycle-3", kind: "coding" }],
+      }),
+      state: "running",
+    };
+    mockCriteria.data = { content: CRITERIA };
+    mockReport.data = { content: REPORT };
+    mockLiveActive = false;
+    mockIssueComments = [{ id: "c1", body: "3 of 12 failed — report committed." }];
+    renderPage(undefined);
+
+    expect(screen.queryByText(/3 of 12 failed/)).not.toBeInTheDocument();
+    // And it must not poll GitHub for a line it will not render.
+    expect(mockIssueLive).toBe(false);
+  });
+
+  // The pulse is the claim that an agent is WORKING. It rides with the line, so
+  // the gate above is also what keeps it from animating over a settled run.
+  it("carries the working pulse while it speaks", () => {
+    validating();
+    mockIssueComments = [{ id: "c1", body: "Authoring the last three specs." }];
+    renderPage(undefined);
+
+    expect(screen.getByText("Authoring the last three specs.")).toBeInTheDocument();
+    expect(screen.getByTestId("working-pulse")).toBeInTheDocument();
+  });
 });

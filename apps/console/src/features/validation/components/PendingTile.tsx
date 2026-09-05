@@ -24,7 +24,7 @@ import {
   type CriterionMethodCount,
 } from "@aep/ui-validation-view";
 import { validationView } from "../../projects/lib/pipeline";
-import { LiveNote } from "./LiveNote";
+import { FULL_WIDTH_ALERT_MESSAGE, LiveNote } from "./LiveNote";
 
 // A method named inside a sentence: the badge's word, set the way the badge sets it
 // — same monospace, same weight, same tracking, same uppercase — so a reader
@@ -106,7 +106,7 @@ export function PendingTile({
 
   return (
     // No margins, same as VerdictTile: the page's body container owns the gap below.
-    <Alert severity="info">
+    <Alert severity="info" sx={FULL_WIDTH_ALERT_MESSAGE}>
       {/* The shared labels are lowercase for mid-sentence use; a headline leads. */}
       <AlertTitle>
         {view.label.charAt(0).toUpperCase() + view.label.slice(1)}

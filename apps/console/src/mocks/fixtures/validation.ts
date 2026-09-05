@@ -657,6 +657,12 @@ export function validationRuns(
 // the middle of a run, where `liveLine` is silent by construction.
 //
 // Oldest first, matching the contract — the tile reads the LAST one.
+//
+// Only `running` renders: the page shows this line while validation is running
+// and at no other time, because a comment outlives its run and the closing
+// summary would otherwise narrate a finished attempt forever. The three settled
+// and repairing threads below are therefore NOT dead fixture — they are how the
+// gate is seen to work, by switching the scenario and watching the line go away.
 const STATUS_THREAD: Partial<Record<ValidationScenario, string[]>> = {
   running: [
     "Starting validation: 12 criteria, 9 need new specs.",
