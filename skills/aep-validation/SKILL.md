@@ -254,7 +254,9 @@ tests/e2e/
   the context file — a committed `targets.json` may name URLs from an
   earlier deployment.
 - Install with `npm install --prefix tests/e2e` on first scaffold (commit
-  the lockfile), `npm ci --prefix tests/e2e` on later runs.
+  the lockfile), `npm ci --prefix tests/e2e` on later runs. That is the only
+  install this run needs: the browsers are already in the image, so
+  `playwright install` is never one of your steps.
 - `scripts/generate-report.mjs` is platform-owned: the REPORT step
   always executes the plugin's copy directly and refreshes this
   committed copy, which exists only so humans can reproduce the report

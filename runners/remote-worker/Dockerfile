@@ -175,7 +175,15 @@ RUN npm install -g "@playwright/test@${PLAYWRIGHT_VERSION}" "@playwright/cli@${P
 RUN groupadd -r aep \
     && useradd -r -g aep -m -d /home/aep aep \
     && mkdir -p /home/aep/aep-workspace \
-    && chown -R aep:aep /home/aep
+    && chown -R aep:aep /home/aep \
+    # And the browsers, which the chmod above only made readable. `playwright
+    # install` takes a LOCK in this directory before it can decide there is
+    # nothing to download, so read-only does not make it a no-op — it makes it
+    # block, silently, until the caller's timeout severs it. A validation run
+    # reached for it (the CLI and @playwright/test pin different revisions, so
+    # asking is reasonable) and lost two hours to the hang. Owned by the runtime
+    # user, the same command exits 0 immediately.
+    && chown -R aep:aep /ms-playwright
 
 # The agent-browser CLI — what a CODING run opens a page with and reads the
 # accessibility tree of, driven by the `agent-browser` platform skill. Pinned
