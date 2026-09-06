@@ -4,6 +4,7 @@ type BuildRunList = components["schemas"]["BuildRunList"];
 type MilestoneRunView = components["schemas"]["MilestoneRunView"];
 type RunCycleView = components["schemas"]["RunCycleView"];
 type DeployStage = components["schemas"]["DeployStage"];
+type IssueComment = components["schemas"]["IssueComment"];
 // The six VERDICTS, which is a strict subset of the ten states the chip can
 // show: `none`, `running`, `awaiting-fix` and `cancelled` are lifecycle, and no
 // run row or cycle record ever carries them.
@@ -644,4 +645,66 @@ export function validationRuns(
 ): BuildRunList {
   const row = isRepeat(scenario, attempt) ? RUNNING_REPEAT : RUNS[scenario];
   return { tag: "v1", milestoneNumber: 1, runs: [row] };
+}
+
+// ---------------------------------------------------------------------------
+// The agent's STATUS LINE — the validation issue's comment thread.
+//
+// The agent keeps its issue's newest comment current while it works
+// (`skills/aep/SKILL.md`, "The status line"), and the tile renders that line's
+// first row. It is the only run-wide narration that survives a reload, so the
+// fixture's job is to show a line the derived sentence could not have produced:
+// the middle of a run, where `liveLine` is silent by construction.
+//
+// Oldest first, matching the contract — the tile reads the LAST one.
+//
+// Only `running` renders: the page shows this line while validation is running
+// and at no other time, because a comment outlives its run and the closing
+// summary would otherwise narrate a finished attempt forever. The three settled
+// and repairing threads below are therefore NOT dead fixture — they are how the
+// gate is seen to work, by switching the scenario and watching the line go away.
+const STATUS_THREAD: Partial<Record<ValidationScenario, string[]>> = {
+  running: [
+    "Starting validation: 12 criteria, 9 need new specs.",
+    "Harness scaffolded; the deployed app answers.",
+    "Authoring the last three specs; the first six pass solo.",
+  ],
+  "awaiting-fix": [
+    "Starting validation: 12 criteria, 9 need new specs.",
+    "3 of 12 failed — report committed, PR #14 open for review.",
+  ],
+  passed: [
+    "Starting validation: 12 criteria, 9 need new specs.",
+    "All 12 covered and passing. Report committed, PR #14 open.",
+  ],
+  failed: [
+    "Starting validation: 12 criteria, 9 need new specs.",
+    "Healing AC-004-b: the login step raced the redirect.",
+    "3 of 12 failed — report committed, PR #14 open for review.",
+  ],
+};
+
+/**
+ * The validation issue's comments for a scenario, or undefined when the agent
+ * has posted nothing.
+ *
+ * Undefined rather than `[]` on purpose: the contract omits the field for every
+ * empty case, and a scenario with no thread is what exercises the tile's
+ * FALLBACK to the derived sentence — the path a run whose agent skipped the
+ * instruction takes.
+ */
+export function validationStatusThread(
+  scenario: ValidationScenario,
+): IssueComment[] | undefined {
+  const bodies = STATUS_THREAD[scenario];
+  if (!bodies) return undefined;
+  // Fifteen minutes apart, inside the window the run's own cycles occupy, so the
+  // thread reads as one run's narration rather than as history from another day.
+  return bodies.map((body, i) => ({
+    id: `vc-${String(i + 1)}`,
+    author: "aep-bot",
+    body,
+    createdAt: `2026-07-10T09:${String(45 + i * 5).padStart(2, "0")}:00Z`,
+    url: `${REPO_URL}/issues/30#issuecomment-${String(i + 1)}`,
+  }));
 }

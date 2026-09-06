@@ -377,6 +377,15 @@ export async function runClaudeQuery(
     AEP_PLATFORM_URL: process.env.AEP_PLATFORM_URL ?? "",
     AEP_GIT_SERVICE_URL: req.gitServiceUrl,
     AEP_CORRELATION_ID: req.correlationId ?? "",
+    // The SDK's own default is 120s, which is under what this platform's
+    // longest legitimate command takes: a Playwright spec is allowed 30s, so a
+    // suite severs on a handful of them. A severed call proves nothing — the
+    // command keeps running, its results are unread, and a validation run that
+    // authored a full suite can end with none of it recorded. 600s is the
+    // SDK's documented ceiling for a Bash call (BashInput.timeout, "max
+    // 600000"), so this raises the default to the maximum already allowed
+    // rather than picking a number.
+    BASH_DEFAULT_TIMEOUT_MS: "600000",
     // Where curl looks for `.curlrc`. Named explicitly rather than left to the
     // inherited HOME: a validation run writes `resolve` overrides there for its
     // deployed endpoints (endpoint_access.ts), and a config curl was never told

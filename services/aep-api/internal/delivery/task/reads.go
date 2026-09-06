@@ -190,6 +190,43 @@ func (r *Reads) issueComments(ctx context.Context, orgID, projectID string, mile
 	return comments
 }
 
+// oneIssueCommentsAsync starts the detail read's comment fetch, so it runs
+// alongside the issue fetch rather than after it.
+//
+// Same reasoning as its milestone sibling above, and the same measurement
+// behind it: both are host round trips, they are independent (the comment read
+// needs only the issue NUMBER, which the caller already holds), and Get is
+// POLLED at 5s while a validation run is in flight. Taken in sequence the two
+// add up; taken together the comments are free.
+//
+// A not-found issue means this fetch was wasted, which is the deliberate trade:
+// the channel is buffered so the goroutine never blocks, and a detail page
+// opened on a live issue is overwhelmingly the common case.
+func (r *Reads) oneIssueCommentsAsync(ctx context.Context, orgID, projectID string, issueNumber int) <-chan []sourcecontrol.IssueComment {
+	ch := make(chan []sourcecontrol.IssueComment, 1)
+	go func() { ch <- r.oneIssueComments(ctx, orgID, projectID, issueNumber) }()
+	return ch
+}
+
+// oneIssueComments reads ONE issue's comments, or answers nil.
+//
+// It degrades exactly like its milestone sibling above, for the same reason: a
+// detail page's narrative is decorative and its Task is not, so a host that will
+// not answer comments must cost the caller the narrative and never the Task.
+//
+// Same CommentsPerIssue window as the list, deliberately: the two surfaces show
+// the same population of the same thread, and a different depth here would mean
+// a comment visible on one page and absent on the other.
+func (r *Reads) oneIssueComments(ctx context.Context, orgID, projectID string, issueNumber int) []sourcecontrol.IssueComment {
+	comments, err := r.issues.ListIssueComments(ctx, orgID, projectID, issueNumber, CommentsPerIssue)
+	if err != nil {
+		slog.WarnContext(ctx, "reads: load task comments failed",
+			"project", projectID, "issue", issueNumber, "error", err)
+		return nil
+	}
+	return comments
+}
+
 // Get returns one Task with its full Execution history. The issue is fetched by
 // number (O(1)); a number that is not a Task of this project is
 // ErrTaskNotFound.
@@ -199,6 +236,9 @@ func (r *Reads) Get(ctx context.Context, orgID, projectID string, issueNumber in
 		return nil, err
 	}
 	repoFullName := owner + "/" + name
+
+	// Starts FIRST so it overlaps the issue fetch — see oneIssueCommentsAsync.
+	commentsCh := r.oneIssueCommentsAsync(ctx, orgID, projectID, issueNumber)
 
 	issue, err := r.issues.GetIssue(ctx, orgID, projectID, issueNumber)
 	if err != nil || issue == nil {
@@ -215,6 +255,12 @@ func (r *Reads) Get(ctx context.Context, orgID, projectID string, issueNumber in
 	// population filter is deliberately not applied here.
 	view := bareView(*issue, "")
 	view.Executions = latestViews(execs)
+	// Comments are read HERE and not in bareView, because bareView is also the
+	// list's projection base and a per-issue read there would be a call per row.
+	// This is the only path that can carry the validation issue's narrative —
+	// buildView drops that issue on its kind before comments are ever attached —
+	// and it is what the Validation page's status line reads.
+	view.Comments = commentViews(<-commentsCh)
 
 	history, err := r.execs.ListByIssueScoped(ctx, orgID, repoFullName, issueNumber)
 	if err != nil {

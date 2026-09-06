@@ -37,6 +37,22 @@ every later call and a relative one is right only once. `Read`, `Write`
 and `Edit` never move with the shell — their relative paths always
 resolve from the repo root.
 
+## The status line
+
+Keep your validation issue's status line current, per the `aep` skill — the
+issue in your prompt, and no other.
+
+Say what the criterion rows cannot. The console already draws a row per
+criterion and repaints it as you work, with the counts beside it; a line
+repeating those tells the reader what they are already looking at. Yours
+carries what nothing else can see — where you are in this workflow, and what
+you decided.
+
+Steps 1 and 10 already ask for the two ends — the opening comment and the
+closing summary, and the summary is the one that carries counts. Everything
+between them is this line. A line that sends you back a step is the ordinary
+path here, not a fault to explain.
+
 ## Workflow
 
 ### 1. Read the issue
@@ -239,7 +255,9 @@ tests/e2e/
   the context file — a committed `targets.json` may name URLs from an
   earlier deployment.
 - Install with `npm install --prefix tests/e2e` on first scaffold (commit
-  the lockfile), `npm ci --prefix tests/e2e` on later runs.
+  the lockfile), `npm ci --prefix tests/e2e` on later runs. That is the only
+  install this run needs: the browsers are already in the image, so
+  `playwright install` is never one of your steps.
 - `scripts/generate-report.mjs` is platform-owned: the REPORT step
   always executes the plugin's copy directly and refreshes this
   committed copy, which exists only so humans can reproduce the report

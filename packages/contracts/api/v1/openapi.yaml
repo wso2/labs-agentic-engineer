@@ -6344,6 +6344,17 @@ components:
           nullable: true
         body:
           type: string
+        comments:
+          description: The issue's newest comments, OLDEST FIRST, capped, with the platform's own
+            machine comments excluded — the same population the list read serves, read here for
+            ONE issue because a detail page names its issue and needs no milestone to bound the
+            fetch. Always attempted on this read; absence covers every empty case (nothing there,
+            nothing left after the machine comments were dropped), and the field is never an empty
+            array. The newest comment's first line is an agent's current status on this issue.
+          items:
+            $ref: '#/components/schemas/IssueComment'
+          minItems: 1
+          type: array
         component:
           type: string
         dependsOn:
@@ -6477,6 +6488,7 @@ components:
             the field is never an empty array.
           items:
             $ref: '#/components/schemas/IssueComment'
+          minItems: 1
           type: array
         component:
           type: string

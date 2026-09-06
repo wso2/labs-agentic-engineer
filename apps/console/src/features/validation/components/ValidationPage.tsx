@@ -54,6 +54,7 @@ import {
   type StageTone,
 } from "../../projects/lib/pipeline";
 import { useTask } from "../../tasks/api/queries";
+import { statusLine } from "../../tasks/lib/statusLine";
 import { useValidationCriteria, useValidationReport } from "../api/queries";
 import {
   answeredRun,
@@ -306,8 +307,20 @@ export function ValidationPage({
   // that is a clone url. get-task serves this issue even though list-tasks hides it
   // — a detail read by number deliberately skips the population filter — and answers
   // with GitHub's own url. The hook is a no-op while the number is 0.
-  const issue = useTask(projectName, issueNumber);
+  //
+  // VALIDATION itself is running, not merely the loop: under `awaiting-fix` the
+  // cycle in flight is coding, so the issue's newest comment is a finished
+  // attempt's last words. Not `live.active` — that fold is off in the log body.
+  const validating = state === "running";
+  // Polled only while validating: its newest comment is the agent's status line,
+  // and a GitHub-backed read must cost nothing when there is nothing to show.
+  const issue = useTask(projectName, issueNumber, { live: validating });
   const issueUrl = issue.data?.issueUrl;
+  // The agent's own words — durable, so intact for a reader who joins an hour in,
+  // where the progress stream's replay window has dropped the early events.
+  // Gated here because a comment outlives its run: ungated, the closing summary
+  // sat under a settled verdict forever.
+  const agentLine = validating && issue.data ? statusLine(issue.data) : null;
 
   // The run reached an ANSWER — which is not the same as "everything passed", and
   // not the same as "there is a report". Hooks stay unconditional; `enabled` gates
@@ -438,9 +451,18 @@ export function ValidationPage({
   // fetched) and a repair cycle busy writing code both look identical to a run
   // that has not started, and the tile announced "Setting up the test harness…"
   // over a run that had finished or was doing something else entirely.
-  const liveNote = live.active
-    ? validationLiveLine(oracle, live.statuses, report.data !== undefined)
-    : "";
+  //
+  // The agent's own line WINS when it has posted one. It is strictly better
+  // evidence: it comes from inside the run, it names what is happening rather than
+  // inferring it from which rows have moved, and it survives both a reload and the
+  // stream's replay window. The derived line stays as the fallback for the window
+  // before the first comment lands, and for a run whose agent posts nothing at all
+  // — the skill asks for the line, and an asked-for thing can be skipped.
+  const liveNote =
+    agentLine ??
+    (live.active
+      ? validationLiveLine(oracle, live.statuses, report.data !== undefined)
+      : "");
 
   // The tile stays visible in BOTH bodies — a verdict does not stop being true
   // because the reader switched to the log, and neither does an attempt still being
