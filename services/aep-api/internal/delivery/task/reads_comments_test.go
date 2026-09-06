@@ -250,6 +250,31 @@ func TestReads_Get_CarriesTheValidationIssuesComments(t *testing.T) {
 	}
 }
 
+// The detail read's two host calls OVERLAP, like the list's. Get is polled at
+// the same 5s cadence while a validation run is in flight, so a comment round
+// trip taken strictly after the issue fetch adds its whole latency to every
+// tick — for a field the caller may not even render.
+//
+// Asserted by construction rather than by a stopwatch, the same way the list's
+// is: the fake's GetIssue refuses to proceed until the comment read has
+// entered, so an implementation that reverted to sequential cannot finish this
+// test at all.
+func TestReads_Get_ReadsTheIssueAndItsCommentsConcurrently(t *testing.T) {
+	issues := newFakeIssues().overlapProbe()
+	issues.seed(validationIssue(7))
+	issues.seedComment(7, comment("c1", "aep-bot", "Authoring the last three specs.", time.Now()))
+
+	detail, err := newReads(issues, newFakeExecReader(), nil).Get(context.Background(), "org1", "proj1", 7)
+	if err != nil {
+		// Get collapses every GetIssue error into ErrTaskNotFound, so the fake's
+		// own "the two host reads are sequential" never reaches here. Say it.
+		t.Fatalf("Get: %v — a not-found here means the probe timed out: the comment read started AFTER the issue fetch", err)
+	}
+	if len(detail.Comments) != 1 {
+		t.Fatalf("want the Task with its comment, got %+v", detail)
+	}
+}
+
 // The detail read asks for the SAME depth as the list. Two surfaces showing the
 // same thread at different depths would put a comment on one page and not the
 // other, for no reader's benefit.

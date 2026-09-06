@@ -789,9 +789,12 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   `Get` carries them for the one issue the list can never reach. It is the only read that serves the
   VALIDATION issue — the list drops that issue on its kind before comments are ever attached — and the
   Validation page's status line is its newest comment. One issue is a bounded set by construction, so
-  `Get` needs no `?comments=` handle; it takes the same `CommentsPerIssue` window as the list, so a
-  comment cannot be visible on one surface and absent from the other, and it fires CONCURRENTLY with the
-  issue fetch for the same reason the list's does — this read is polled at 5s while a run is in flight.
+  `Get` needs no `?comments=` handle, and it fires CONCURRENTLY with the issue fetch for the same reason
+  the list's does — this read is polled at 5s while a run is in flight.
+  Same `CommentsPerIssue` DEPTH as the list, so the two surfaces cannot disagree about where a thread
+  is cut off. Their COVERAGE differs and cannot be made to agree: the milestone read is one 100-issue
+  page (`milestoneIssuePage`), so on a larger milestone an issue past that page carries comments here
+  and none in the list. `Get` names its issue, so it is never the one that falls off.
   Three properties are load-bearing. **Nothing is stored** — GitHub is the only copy, read live on every
   request. **The platform's OWN comments are dropped, and not by author** — authorship cannot answer that
   question here (`sourcecontrol`'s README has the why); the discriminator is the brand that domain stamps

@@ -6353,6 +6353,7 @@ components:
             array. The newest comment's first line is an agent's current status on this issue.
           items:
             $ref: '#/components/schemas/IssueComment'
+          minItems: 1
           type: array
         component:
           type: string
@@ -6487,6 +6488,7 @@ components:
             the field is never an empty array.
           items:
             $ref: '#/components/schemas/IssueComment'
+          minItems: 1
           type: array
         component:
           type: string

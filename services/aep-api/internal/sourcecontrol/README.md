@@ -100,8 +100,10 @@ and installation lifecycle.*
   sort parameter**, so the newest sits on the last page and reaching it costs a second request to learn
   where that page is. `comments(last:)` asks for the tail directly, which is the bar `graphql.go` sets
   for using the transport at all. Same projection as the milestone read (`comments.go`'s shared node
-  and mapper), so the machine-comment drop, the null-`author` rule and the ordering are one behaviour
-  across both, not two that happen to agree today.
+  and mapper), so the machine-comment FLAG, the null-`author` rule and the ordering are one behaviour
+  across both, not two that happen to agree today. Both readers flag and unbrand a machine comment and
+  return it; **dropping is `delivery`'s policy, not this layer's** (`task/reads.go` `commentViews`), so
+  a later audit or debug surface can still ask for them.
 - **REST narrows on labels, GraphQL widens.** `ListMilestoneIssues`' REST `?labels=a,b` is AND (an
   issue must carry all of them); the GraphQL `labels:` above is OR. Two APIs over one resource, two
   rules — carrying an assumption from one to the other silently empties the working set, and the

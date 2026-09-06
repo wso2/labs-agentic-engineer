@@ -200,6 +200,12 @@ func (f *fakeIssues) ListMilestoneIssueComments(_ context.Context, _, _ string, 
 // ONE issue and with no milestone test — which is what lets a test drive the
 // validation issue, the one issue the milestone-scoped list never projects.
 func (f *fakeIssues) ListIssueComments(_ context.Context, _, _ string, number, limit int) ([]sourcecontrol.IssueComment, error) {
+	// Announce the start before the lock, as the milestone sibling does, so the
+	// detail read's own overlap probe works the same way the list's does.
+	if f.commentStarted != nil {
+		close(f.commentStarted)
+		f.commentStarted = nil
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.commentReads++
@@ -218,6 +224,17 @@ func (f *fakeIssues) ListIssueComments(_ context.Context, _, _ string, number, l
 }
 
 func (f *fakeIssues) GetIssue(_ context.Context, _, _ string, number int) (*sourcecontrol.IssueInfo, error) {
+	// The detail read's half of the concurrency probe — same contract as
+	// ListMilestoneIssues above: a Get that took its comment round trip AFTER
+	// this one would leave this waiting, so the overlap test fails by timing out
+	// rather than by a stopwatch.
+	if f.awaitCommentStart != nil {
+		select {
+		case <-f.awaitCommentStart:
+		case <-time.After(2 * time.Second):
+			return nil, fmt.Errorf("comment read never started: the two host reads are sequential")
+		}
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if i := f.byNumber[number]; i != nil {
