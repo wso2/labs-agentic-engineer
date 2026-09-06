@@ -188,29 +188,14 @@ kubectl wait --for=condition=available deployment \
     -n openchoreo-data-plane --context ${CLUSTER_CONTEXT} --timeout=180s || true
 echo "✅ API Platform operator at ${TARGET_OPERATOR_CHART}"
 
-# AES-GCM encryption key required by gateway-controller v1.0.0+ for
-# at-rest secret encryption. Generated once and kept in a Secret —
-# subsequent setup runs check for the Secret and skip regeneration to
-# preserve the key (rotating the key drops all encrypted state).
-# Production should provision via ExternalSecret backed by OpenBao/KMS.
-if ! kubectl --context ${CLUSTER_CONTEXT} get secret -n openchoreo-data-plane api-platform-controller-aesgcm-key &>/dev/null; then
-    AESGCM_KEY_B64=$(openssl rand 32 | base64 | tr -d '\n')
-    kubectl --context ${CLUSTER_CONTEXT} create secret generic api-platform-controller-aesgcm-key \
-        -n openchoreo-data-plane \
-        --from-literal="default-aesgcm256-v1.bin=${AESGCM_KEY_B64}" \
-        --dry-run=client -o yaml | \
-    sed "s|default-aesgcm256-v1.bin: .*|default-aesgcm256-v1.bin: ${AESGCM_KEY_B64}|" | \
-    kubectl --context ${CLUSTER_CONTEXT} apply -f -
-    echo "✅ AES-GCM controller encryption key provisioned"
-else
-    echo "✅ AES-GCM controller encryption key already present (preserved)"
-fi
-
-# ConfigMap consumed by the APIGateway CR via spec.configRef.
-# Contains the Thunder JWKS keymanagers under jwtauth_v0 (legacy) +
-# jwtauth_v1 (Phase 6 — supports issuers/audience filtering).
-kubectl --context ${CLUSTER_CONTEXT} apply -f "${SCRIPT_DIR}/../manifests/api-platform/gateway-config.yaml"
-echo "✅ gateway-config ConfigMap applied (Thunder keymanager configured)"
+# No AES-GCM at-rest encryption key is created here. gateway-controller 1.2.x
+# mounts one from a Secret in its OWN namespace, and every gateway now lives in
+# its environment's `<org>-<env>` namespace — so the key is per gateway and
+# scripts/setup-environment-gateway.sh generates it there (name and key from
+# env.sh GATEWAY_ENCRYPTION_SECRET_NAME / _KEY, which must match the value set
+# once on the operator in manifests/api-platform/operator-values.yaml). Nothing
+# in openchoreo-data-plane mounts it: the operator's own Deployment carries only
+# its config and gateway-values ConfigMaps.
 
 # RBAC: lets OC's cluster-agent-dataplane SA reconcile RestApi CRs created
 # by the api-configuration trait. The SA is created by setup-openchoreo.sh
@@ -218,10 +203,12 @@ echo "✅ gateway-config ConfigMap applied (Thunder keymanager configured)"
 kubectl --context ${CLUSTER_CONTEXT} apply -f "${SCRIPT_DIR}/../manifests/api-platform/rbac.yaml"
 echo "✅ API Platform RBAC applied"
 
-# APIGateway CR — triggers the operator to deploy the gateway-runtime
-# (controller, router, policy-engine) reading config from the ConfigMap above.
-kubectl --context ${CLUSTER_CONTEXT} apply -f "${SCRIPT_DIR}/../manifests/api-platform/api-gateway.yaml"
-echo "✅ APIGateway CR applied — operator will deploy the gateway runtime"
+# No APIGateway CR is created here, and no keymanager ConfigMap either. There is
+# no cluster-wide gateway: the platform runs ONE gateway per (org, environment),
+# installed with its own config by scripts/setup-environment-gateway.sh once the
+# environment's Thunder exists, because a gateway terminates authentication and
+# must do so against that environment's identity tier and no other. What this
+# step installs is only the OPERATOR that watches APIGateway CRs cluster-wide.
 
 echo ""
 echo "7️⃣  CloudNativePG operator (platform-resource sample provisioner)"

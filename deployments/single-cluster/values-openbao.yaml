@@ -88,7 +88,7 @@ server:
       # ── AEP system client (Phase 3 of api-platform-integration) ────
       # The BFF's clients/thundersvc.getSystemToken reads this path to
       # mint Thunder admin tokens with scope=system. Value mirrors the
-      # aep-system-client row in values-thunder.yaml CONFIDENTIAL_APPS
+      # aep-system-client document (thunder-resources/81-aep-system-client.yaml)
       # so a single source-of-truth rotation is one line + bounce.
       bao kv put secret/aep/system/thunder-admin \
         clientId="aep-system-client" \

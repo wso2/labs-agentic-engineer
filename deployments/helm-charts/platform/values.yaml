@@ -175,9 +175,20 @@ platformAPI:
   baseURL: "http://openchoreo-api.openchoreo-control-plane.svc.cluster.local:8080"
 
 thunder:
-  # In-cluster URL for the Thunder service. Override if Thunder is deployed in a different namespace or port.
-  adminURL: "http://amp-thunder-extension-service.amp-thunder.svc.cluster.local:8090"
-  jwksURL: "http://amp-thunder-extension-service.amp-thunder.svc.cluster.local:8090/oauth2/jwks"
+  # In-cluster URLs of the platform IdP (release `platform-idp`, namespace
+  # `platform-idp`). Chart defaults are literals by nature; the source of truth
+  # for the IdP's name is deployments/scripts/env.sh (THUNDER_INTERNAL_URL) and
+  # these must agree with it. Override if the IdP moves.
+  adminURL: "http://platform-idp-service.platform-idp.svc.cluster.local:8090"
+  jwksURL: "http://platform-idp-service.platform-idp.svc.cluster.local:8090/oauth2/jwks"
+  # OAuth resource indicator for ThunderID's own "System" resource server, the
+  # one that owns the `system` scope aep-api's admin calls need. It is a name,
+  # not an address: conventionally "<public issuer>/mcp", so the default derives
+  # it from console.thunderPublicURL even though adminURL above is in-cluster.
+  # Without it, a Thunder with a default resource server (Agent Manager's, on a
+  # converged cluster) drops the scope silently and every admin call 403s.
+  # Set only when the IdP registered a non-conventional identifier.
+  systemResourceIdentifier: ""
 
 openbao:
   # Address of OpenChoreo's built-in OpenBao service.

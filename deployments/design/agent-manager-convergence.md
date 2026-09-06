@@ -7,7 +7,10 @@ the way Thunder is — a vhost on the OpenChoreo control-plane gateway at `:8080
 Off by default. The flag adds roughly 22 pods and 4–5 GB of RAM, so the default
 profile costs what it always did.
 
-Why there is one IdP rather than two, and what that cost: **ADR-0024**.
+Why there is one IdP rather than two, and what that cost: **ADR-0027**. Who owns
+it, now that both products depend on it: **ADR-0028**. The second identity tier
+— one Thunder and one API Platform gateway per environment, bound by a record —
+is [`two-tier-thunder.md`](two-tier-thunder.md) and **ADR-0029**.
 
 ---
 
@@ -18,18 +21,23 @@ Why there is one IdP rather than two, and what that cost: **ADR-0024**.
   ┌──────────────────────────────────────────────────────────────┐
   │  OpenChoreo 1.2.0    CP · DP · WP  (+ observability plane)    │
   │                                                               │
-  │  amp-thunder/  ThunderID 1.0.0 ── the ONE platform IdP        │
+  │  platform-idp/  ThunderID 1.0.0 ── the ONE platform IdP,      │
+  │                 owned by neither product                      │
   │                 published at thunder.openchoreo.localhost      │
-  │                 bootstrap = Agent Manager's docs + AEP's       │
+  │                 bootstrap = AM's bundle + AEP's,               │
+  │                             singletons composed by the         │
+  │                             installer                          │
   │                                                               │
   │  AEP                          │  Agent Manager (flag)         │
   │   aep-* OAuth clients          │   amp-* OAuth clients         │
   │   ClusterProjectType/default   │   ProjectType/default         │
-  │   Environment/development      │   Environment/default         │
+  │   Environment/default ─── ONE environment, shared by both      │
   │   aep-* build templates        │   amp-* build workflows       │
-  │   APIGateway api-platform-…    │   APIGateway per (org, env)   │
-  │                                │   + one Thunder per env       │
   └──────────────────────────────────────────────────────────────┘
+       per (org, env), platform-owned, for BOTH products:
+               APIGateway api-platform-<org>-<env>
+               + thunder-<org>-<env>, one Thunder per env,
+                 trusting platform-idp
        shared: DeploymentPipeline/default, gateway-operator,
                External Secrets, OpenBao, kgateway, cert-manager
 ```
@@ -47,7 +55,7 @@ the RAM.
 | Change | Why it cannot be a toggle |
 |---|---|
 | OpenChoreo → 1.2.0 | One cluster, one control plane. A version is not a toggle. Agent Manager's charts need `ProjectType`, which lands in 1.2.0, and cannot go backwards — so AEP moves forward. |
-| ThunderID via `wso2-amp-thunder-extension` | A different IdP release means a different PVC and issuer. Flipping the flag would invalidate every login. |
+| The platform IdP, `platform-idp` (ThunderID via `wso2-amp-thunder-extension`) | A different IdP release means a different PVC and issuer. Flipping the flag would invalidate every login. Its name is deliberately neither product's — `scripts/env.sh` holds it, every address derives from there, and the chart it comes from does not leak into it (ADR-0028). |
 | Entitlement claim → `client_id` | Follows the IdP move — it is a ThunderID behaviour change, not an OpenChoreo one. Two claim configs is exactly the dual-config trap. |
 | gateway-operator → 0.11.0 / chart 1.2.2 | Upgrade in place is supported; **downgrade is not**. Flag-flipping would be one-way. |
 | `ClusterProjectType/default` | AEP's own `CreateProject` needs it whether or not Agent Manager is installed. |
@@ -90,22 +98,26 @@ Both products are OpenChoreo platforms, so they reach for the same names.
 | Object | AEP | Agent Manager | Resolution |
 |---|---|---|---|
 | `ClusterWorkflowTemplate` `checkout-source`, `containerfile-build`, `publish-image` | own fork of each | own fork of each | AEP renamed to `aep-*`. **The dangerous one**: nothing errors, the last apply wins, and the other product's builds silently change behaviour. `setup-agent-manager.sh` also deletes pre-rename copies left by an older cluster. |
-| `DeploymentPipeline/default` (ns `default`) | promotes from `development` | promotes from `default` | ONE object carrying both paths — see below. |
-| `APIGateway` API selection | was `scope: Cluster` | `scope: LabelSelector` | AEP moved to `LabelSelector` and its `api-configuration` trait now stamps the matching label on every RestApi. Cluster scope would have adopted Agent Manager's RestApis too, and both gateways would serve the same APIs. |
-| `cors` server_config (allowed origins) | needs `http://localhost:8090` | declares only its own two origins | ONE document carrying both — see below. |
+| `Environment/default` and `DeploymentPipeline/default` (ns `default`) | creates both with kubectl (`setup-aep.sh`) | renders both from its platform-resources chart | ONE of each, shared: AEP creates them, Agent Manager's chart adopts them — see below. Both products deploy into the same environment, so there is one environment Thunder and one API Platform gateway between them. |
+| `APIGateway` | was ONE cluster-wide `api-platform-default`, `scope: Cluster` | one per (org, env), `scope: LabelSelector` | Per (org, env) for both products. Cluster scope adopted every RestApi in the cluster, including the other product's. AEP's cluster-wide gateway is gone: `setup-environment-gateway.sh` installs `api-platform-<org>-<env>` from Agent Manager's gateway-extension chart, and the `api-configuration` trait stamps `restapi-target: api-platform-<org>-<env>` on every RestApi and points its Backend at that environment's runtime (`:22893`). The gateway then terminates auth against that environment's Thunder alone — a platform-IdP token 401s there. |
+| `cors` server_config (allowed origins) | needs `http://localhost:8090` | declares only its own two origins | ONE document, composed by the installer from both declarations — see below. |
 | `observability-logs-opensearch` | 0.5.1 | 0.5.3 | One release. AEP moved to 0.5.3; only AEP installs it. |
 | API Platform gateway-operator | `api-platform-operator` 0.6.0 | `gateway-operator` 0.11.0 | One operator, at 0.11.0, keeping AEP's release name. |
 | External Secrets | 2.0.1 | 1.3.2 | 2.0.1. Both use only `external-secrets.io/v1`. |
 
-### The DeploymentPipeline hand-over
+### The Environment and DeploymentPipeline hand-over
 
 Worth its own note, because it took three failed attempts to get right and the
 error message names a different culprit each time.
 
 Neither product can rename its pipeline: the OpenChoreo API hardcodes
 `DeploymentPipeline/default` when a client creates a project without naming
-one, and both products create projects that way. So there is one object,
-carrying the union of both promotion paths, and Agent Manager's chart owns it.
+one, and both products create projects that way. And neither wants a second
+environment: one environment means one environment Thunder and one API Platform
+gateway for both. So there is one `Environment/default` and one
+`DeploymentPipeline/default` with one promotion path, both created by
+`setup-aep.sh` and both owned by Agent Manager's chart once it is installed —
+the same hand-over, applied to two objects.
 
 Handing it over takes three things, and the first two alone are not enough:
 
@@ -123,26 +135,44 @@ Handing it over takes three things, and the first two alone are not enough:
    the conflict returns under a new name.
 
 Forcing is not a workaround here: taking that field over is the entire point of
-the hand-over, and the union passed as chart values is exactly what should end
-up there.
+the hand-over, and what the chart renders by default — one environment and one
+promotion path, both `default` — is what AEP wrote. The one thing the chart adds
+is an explicit gateway ingress on the Environment, and its host is passed in as
+the ClusterDataPlane's own (`openchoreoapis.localhost` locally) rather than the
+chart's default `am-gateway.localhost`: component routes are built from that
+host, and the Agent Manager one is NXDOMAIN from inside the cluster (its CoreDNS
+rewrite targets `host.k3d.internal`), which is where the validation runner runs.
+The binding annotations `setup-environment-thunder.sh` projected onto the
+Environment are not in the chart's manifest and survive, because server-side
+apply owns fields, not objects.
 
-Verified as safe to coexist: `Environment` (`development` vs `default`),
+Verified as safe to coexist:
 ComponentTypes (`service`/`web-application` vs `agent-api`/`external-agent-api`),
 ClusterWorkflows (`dockerfile-builder` vs `amp-*`), ClusterTraits, AEP's
 `postgres-cnpg` and `thunder-app` ClusterResourceTypes, and
 `ClusterProjectType/default` vs the namespaced `ProjectType/default` — different
 kinds, different objects.
 
-### The CORS allow-list is a shared document, not a chart value
+### The CORS allow-list is composed by the installer, not owned by a product
 
-Agent Manager's bootstrap declares a `cors` server_config listing its own two
-browser origins. On a converged cluster that is not wrong, only incomplete: it
-predates AEP sharing the IdP. AEP redeclares the same document as
-`89-aep-cors-config.yaml`, carrying the union. Server-config documents apply in
-filename order and a redeclaration updates rather than duplicates, so 89 lands
-after Agent Manager's 71.
+ThunderID has exactly ONE `cors` server_config, and a redeclaration replaces it
+— so whichever bootstrap document imports last owns the whole allow-list.
+Neither product owns the union, and neither should have to maintain the other's
+origins.
 
-Two things about this are worth writing down, because both fail silently.
+So each declares only its own — Agent Manager in its chart's
+`71-amp-cors-config.yaml`, AEP in `89-platform-cors-config.yaml` — and
+`setup-thunder.sh` unions them at install time into the document that imports
+last, which is why AEP's keeps a prefix sorting after Agent Manager's. The
+composition is a superset by construction: it can add an origin, never drop one.
+The other two ThunderID singletons are composed the same way but with a
+different rule: `90-platform-default-resource-server.yaml` and
+`91-platform-csp.yaml` take Agent Manager's value unchanged, because there is
+nothing per-product to union there — what the composition buys is that no
+publisher's file is the last word. All three files are named `platform-`, not
+`aep-`, for that reason.
+
+Three things about this are worth writing down, because all three fail silently.
 
 **It cannot be a Helm value.** ThunderID 1.0.0's static `deployment.yaml` has no
 CORS section at all, so `--set thunder.configuration.cors.allowedOrigins[...]`
@@ -157,6 +187,12 @@ changes nothing that is serving traffic, so a corrected `cors` or
 the old value. `reimport_bootstrap()` restarts Thunder after a successful
 import for exactly this reason.
 
+**A hand-maintained union rots.** The first version of this was one product's
+document carrying both products' origins. Nothing enforced it: Agent Manager
+adding an origin to its chart needed a matching edit in AEP's repo, and skipping
+that edit produced the symptom below on the *other* product's console. The
+composition removes the cross-repo edit entirely.
+
 The symptom either one produces is badly misleading. A console's first call is
 a browser `fetch` of `/.well-known/openid-configuration`; with no
 `Access-Control-Allow-Origin` on the reply the browser discards a healthy 200
@@ -170,17 +206,20 @@ origins are admitted and an unlisted one is not, so a wildcard cannot pass it.
 
 | Script | Runs when | Does |
 |---|---|---|
-| `setup-thunder.sh` | always | Merges Agent Manager's bootstrap documents with `single-cluster/thunder-resources/`, installs the one platform IdP on AEP's hostname. |
-| `setup-agent-manager.sh` | flag on | CoreDNS rewrites, tracing + metrics modules, pipeline hand-over, then the platform-resources / sandbox / agent-manager / observability / evaluation charts. |
-| `setup-agent-manager-env.sh` | flag on | The `default` environment's own Thunder and its API Platform gateway. Split out because both drive Agent Manager's admin API over its public URL and fail for reasons unrelated to the chart installs. |
+| `setup-thunder.sh` | always | Merges both products' bootstrap bundles, composes the singletons, installs the one platform IdP (`platform-idp`) on AEP's hostname, and makes that hostname reach the IdP's HTTPS gateway from inside the cluster. |
+| `setup-agent-manager.sh` | flag on | CoreDNS rewrites, tracing + metrics modules, pipeline hand-over, then the platform-resources / sandbox / agent-manager / observability / evaluation charts — each with every Thunder address overridden off the chart default onto `env.sh`'s. |
+| `setup-agent-manager-env.sh` | flag on | The `default` environment: Agent Manager's own Thunder provisioning step, then the two shared steps below for the binding record and the gateway. Split out because it drives Agent Manager's admin API over its public URL and fails for reasons unrelated to the chart installs. |
+| `setup-environment-thunder.sh` | always, per env | `<org> <env>` — that environment's own Thunder (`thunder-<org>-<env>`, trusting the platform IdP as an issuer) and the binding record naming it. Binds instead of re-provisioning when Agent Manager already created the pair. |
+| `setup-environment-gateway.sh` | always, per env | `<org> <env>` — that environment's API Platform gateway, `api-platform-<org>-<env>` in namespace `<org>-<env>`, with the binding above as its only Thunder keymanager and vhost `<env>-<org>.gateway.localhost:19080`. Binds without upgrading when the release already exists. |
+| `remove-environment-thunder.sh` | manual, per env | `<org> <env>` — withdraws that environment's gateway and Thunder and every projection of its binding record, in Agent Manager's own order. Uninstalls a release only when the namespace's `aep.wso2.com/release-created-by` label says these scripts installed it. |
 | `teardown-agent-manager.sh` | manual | Makes the flag genuinely reversible. Leaves the platform IdP, OpenChoreo, the gateway operator and the observability plane alone, and restores AEP's own `DeploymentPipeline/default`. **Read its `PROTECTED_NAMESPACES` before changing how it selects releases** — see below. |
 
 ### Why the teardown has a protected-namespace list
 
-Agent Manager's per-environment gateway releases are named
-`api-platform-<org>-<env>`. So is something else: the API Platform **operator**
-creates a child Helm release for AEP's OWN gateway, named
-`api-platform-default-gw`, in `openchoreo-data-plane`.
+Per-environment gateway releases are named `api-platform-<org>-<env>`, and they
+are the PLATFORM's — AEP installs one for every environment of its own, whether
+or not Agent Manager is present. Beside each one the API Platform **operator**
+creates a child Helm release named `api-platform-<org>-<env>-gw`.
 
 Selecting releases by that name prefix matches both. The first version of the
 teardown did exactly that, and then deleted each matched release's namespace —
@@ -210,6 +249,23 @@ before `setup-prerequisites.sh` and `setup-openchoreo.sh` can rebuild it.
 The teardown now refuses to touch a release in any namespace AEP or the shared
 base owns, and never deletes one. Anything that selects resources by name
 pattern in a cluster two products share needs the same treatment.
+
+That protected list is no longer a fixed list ALONE. Its core is still the
+enumerated set of namespaces AEP owns outright, and the per-environment tiers
+are appended to it at run time: both are platform infrastructure now, so the
+namespaces holding them are DISCOVERED — one
+`<org>-<env>` for every OpenChoreo `Environment` (its gateway), plus every
+namespace holding a `thunder-binding` ConfigMap (an environment Thunder AEP has
+bound to). What is left over is an environment Agent Manager created for
+itself, which has no meaning without it.
+
+The environment Thunders have the same problem from the other direction. Their
+releases are `thunder-<org>-<env>` — a prefix the platform IdP and AEP's
+`thunder-app` operator also start with, and deleting either would be worse than
+deleting a gateway. So the prefix alone does not select: the release must also
+be a `thunderid-*` chart, which is the thing that actually distinguishes the
+tier. The legacy `amp-thunder-<org>-<env>` prefix is still matched, so a cluster
+built before Agent Manager moved the prefix still cleans up.
 
 ### Two things a data-plane reinstall silently takes with it
 

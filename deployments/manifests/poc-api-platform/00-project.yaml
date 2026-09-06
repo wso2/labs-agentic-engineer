@@ -29,15 +29,15 @@ spec:
 apiVersion: openchoreo.dev/v1alpha1
 kind: ProjectReleaseBinding
 metadata:
-  name: poc-api-platform-development
+  name: poc-api-platform-default
   namespace: default
   labels:
     openchoreo.dev/project: poc-api-platform
-    openchoreo.dev/environment: development
+    openchoreo.dev/environment: default
 spec:
   owner:
     projectName: poc-api-platform
-  environment: development
+  environment: default
   # projectRelease is deliberately unset: the Project controller seeds the pin
   # once with the project's latest release, and advancing it afterwards is a
   # deliberate promotion.

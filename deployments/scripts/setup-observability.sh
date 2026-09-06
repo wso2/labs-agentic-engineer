@@ -220,7 +220,7 @@ echo "✅ ExternalSecrets applied"
 # The agent reads its LLM key + OAuth client secret from the rca-agent-secret
 # Secret (envFrom). RCA_LLM_API_KEY comes from ANTHROPIC_API_KEY in deployments/.env;
 # OAUTH_CLIENT_SECRET must equal the openchoreo-rca-agent client secret registered
-# by the Thunder bootstrap (values-thunder.yaml CONFIDENTIAL_APPS).
+# by the IdP bootstrap (single-cluster/thunder-resources/86-openchoreo-rca-agent.yaml).
 echo ""
 echo "1️⃣b RCA agent image + secret"
 # Preferred tag `handoff-v16` (= RCA_IMAGE_TAG default below) carries the
@@ -352,8 +352,9 @@ observer:
 security:
   enabled: true
   oidc:
-    jwksUrl: "http://amp-thunder-extension-service.amp-thunder.svc.cluster.local:8090/oauth2/jwks"
-    tokenUrl: "http://amp-thunder-extension-service.amp-thunder.svc.cluster.local:8090/oauth2/token"
+    # In-cluster addresses of the platform IdP, from env.sh (this heredoc expands).
+    jwksUrl: "${THUNDER_INTERNAL_JWKS_URL}"
+    tokenUrl: "${THUNDER_INTERNAL_TOKEN_URL}"
     authServerBaseUrl: "http://thunder.openchoreo.localhost:8080"
 rca:
   # SRE / RCA agent. Uses a locally-built image that carries the Anthropic
@@ -372,7 +373,7 @@ rca:
     modelName: anthropic:claude-sonnet-4-6
   secretName: rca-agent-secret        # created in step 1b (RCA_LLM_API_KEY + OAUTH_CLIENT_SECRET)
   oauth:
-    clientId: openchoreo-rca-agent    # registered by the Thunder bootstrap (values-thunder.yaml)
+    clientId: openchoreo-rca-agent    # registered by thunder-resources/86-openchoreo-rca-agent.yaml
   openchoreoApiUrl: "http://openchoreo-api.openchoreo-control-plane.svc.cluster.local:8080"
   # Stock limit is cpu:250m — too low for trace-heavy analyses. The agent can
   # trip its liveness probe (exit 137) mid-run, which orphans the report in

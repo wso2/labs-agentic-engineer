@@ -20,20 +20,31 @@
 #
 # ── What this deliberately does NOT remove ──────────────────────────────────
 #
-#   * The platform Thunder (amp-thunder). It is AEP's IdP too — it is installed
-#     unconditionally for exactly this reason, so that flipping the flag never
-#     invalidates a login.
+#   * The platform IdP (release/namespace THUNDER_RELEASE / THUNDER_NS in
+#     env.sh, `platform-idp` by default). It is neutral infrastructure both
+#     products log in through, installed unconditionally for exactly this
+#     reason, so that flipping the flag never invalidates a login.
 #   * OpenChoreo, the gateway operator, External Secrets. Shared base.
 #   * The observability plane and the logs module. AEP uses them under
 #     ENABLE_OBSERVABILITY.
-#   * DeploymentPipeline/default. Removing it would break AEP's project
-#     creation, which relies on OpenChoreo defaulting to that exact name.
-#     `helm uninstall` of the platform-resources release deletes it, so it is
-#     re-applied afterwards with AEP's own promotion path.
+#   * Environment/default and DeploymentPipeline/default. The environment is
+#     the one AEP deploys into, and the pipeline is what OpenChoreo defaults a
+#     new project to. Both are Helm-owned by the platform-resources release once
+#     Agent Manager is installed (setup-agent-manager.sh step 3), so
+#     `helm uninstall` deletes them; both are re-applied afterwards exactly as
+#     setup-aep.sh creates them.
 #
-# It DOES remove the tracing and metrics modules, which only Agent Manager
-# needs, and every per-environment Thunder — those belong to the environments
-# Agent Manager created and have no meaning without it.
+#   * Per-environment API Platform gateways (`api-platform-<org>-<env>` in
+#     namespace `<org>-<env>`) and the environment Thunders they authenticate
+#     against. Both tiers became PLATFORM infrastructure with the two-tier
+#     design: AEP's own environments get them from setup-aep.sh whether or not
+#     Agent Manager is installed, every AEP component's managed API is served by
+#     one, and `api-configuration` points every RestApi at the one for its
+#     environment. Removing them here would leave every AEP deploy with a
+#     RestApi no gateway serves — a 404 on a healthy-looking CR — and no
+#     identity tier to validate its tokens against.
+#
+# It DOES remove the tracing and metrics modules, which only Agent Manager needs.
 
 set -uo pipefail   # deliberately NOT -e: teardown is best-effort per resource
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -56,19 +67,35 @@ uninstall() {
 # Namespaces this script must NEVER remove, and never uninstall a release from
 # by name-pattern alone. Every one belongs to AEP or to the shared base.
 #
-# This list is load-bearing. Agent Manager's per-environment gateway releases
-# are named `api-platform-<org>-<env>` — but the API Platform OPERATOR also
-# creates a child release for AEP's OWN gateway, named `api-platform-default-gw`,
-# in openchoreo-data-plane. A name pattern alone matches both, and an earlier
-# version of this script uninstalled AEP's gateway and then deleted the entire
-# openchoreo-data-plane namespace with it: no cluster-agent, no data plane, and
-# every AEP deploy failing with "no agents found for plane dataplane/default".
+# This list is load-bearing, and it now carries every `<org>-<env>` namespace as
+# well. Those hold the per-environment API Platform gateway and are the
+# platform's, not Agent Manager's: AEP installs one per environment of its own
+# (setup-aep.sh → setup-environment-gateway.sh), and the API Platform OPERATOR
+# creates a child release beside each one named `api-platform-<org>-<env>-gw`.
+# A name pattern alone matches all of them, and an earlier version of this
+# script uninstalled the gateway it matched and then deleted its namespace: no
+# cluster-agent, no data plane, and every AEP deploy failing with "no agents
+# found for plane dataplane/default".
+#
+# The last two lines are DISCOVERED, not listed, because an installation that
+# added environments has more of them than this file could name:
+#
+#   * `<org>-<env>` for every OpenChoreo Environment — that environment's
+#     API Platform gateway namespace.
+#   * every namespace holding a thunder-binding ConfigMap — an environment
+#     Thunder AEP has bound to and reads its credential from. An environment
+#     Thunder with no binding was created for an environment AEP does not have,
+#     which makes it Agent Manager's alone and fair game below.
 PROTECTED_NAMESPACES="
 default kube-system kube-public kube-node-lease
 openchoreo-control-plane openchoreo-data-plane openchoreo-workflow-plane
 openchoreo-observability-plane
 cert-manager external-secrets openbao cnpg-system temporal
 thunder-app-operator-system ${THUNDER_NS}
+$(kubectl get environment -A --context "$CLUSTER_CONTEXT" \
+    -o jsonpath='{range .items[*]}{.metadata.namespace}-{.metadata.name} {end}' 2>/dev/null)
+$(kubectl get configmap -A --context "$CLUSTER_CONTEXT" -l aep.wso2.com/kind=thunder-binding \
+    -o jsonpath='{range .items[*]}{.metadata.namespace} {end}' 2>/dev/null)
 "
 
 is_protected() {
@@ -80,16 +107,29 @@ is_protected() {
 }
 
 echo ""
-echo "1️⃣  Per-environment gateways and Thunders"
+echo "1️⃣  Per-environment gateways and Thunders Agent Manager alone created"
 # Both are named per (org, environment); discover rather than assume `default`,
 # so an installation that added environments is fully cleaned up. Anything
-# living in a protected namespace is skipped — see PROTECTED_NAMESPACES.
+# living in a protected namespace is skipped — see PROTECTED_NAMESPACES, which
+# now covers every environment AEP has, in both tiers. What is left here is an
+# environment Agent Manager created for itself, which has no meaning without it.
+#
+# The selection is deliberately narrow, for the reason PROTECTED_NAMESPACES
+# exists. Gateways are `api-platform-<org>-<env>`. Environment Thunders are
+# `thunder-<org>-<env>` (`amp-thunder-<org>-<env>` before Agent Manager moved
+# the prefix — both are matched so an older install is cleaned up too), AND are
+# releases of the upstream `thunderid` chart: the platform IdP and the
+# thunder-app operator share the `thunder-` prefix and come from other charts,
+# so the chart name is what tells an environment Thunder apart, not the prefix.
 for rel in $(helm list -A -o json --kube-context "$CLUSTER_CONTEXT" 2>/dev/null \
         | python3 -c "
 import json,sys
 for r in json.load(sys.stdin):
-    n = r['name']
-    if n.startswith('api-platform-') or n.startswith('amp-thunder-'):
+    n, chart = r['name'], r.get('chart', '')
+    is_env_gateway = n.startswith('api-platform-')
+    is_env_thunder = ((n.startswith('thunder-') or n.startswith('amp-thunder-'))
+                      and chart.startswith('thunderid-'))
+    if is_env_gateway or is_env_thunder:
         print(f\"{n}:{r['namespace']}\")
 " 2>/dev/null); do
     name="${rel%%:*}"; ns="${rel#*:}"
@@ -116,10 +156,26 @@ uninstall observability-metrics-prometheus openchoreo-observability-plane
 uninstall observability-traces-opensearch openchoreo-observability-plane
 
 echo ""
-echo "4️⃣  Restoring AEP's DeploymentPipeline"
-# The platform-resources uninstall took it with it — see the header. AEP's own
-# promotion path only, now that Agent Manager's environment is gone.
+echo "4️⃣  Restoring AEP's Environment and DeploymentPipeline"
+# The platform-resources uninstall took both with it — see the header. The
+# Environment comes back as setup-aep.sh writes it (without the gateway ingress
+# Agent Manager's chart persisted on it) and the pipeline with its one promotion
+# path. The environment's Thunder, gateway and binding record were never
+# touched: their namespaces are in PROTECTED_NAMESPACES, discovered from this
+# same Environment before anything was uninstalled — but the record's
+# projection onto the Environment CR (its aep.wso2.com/thunder-* annotations)
+# went with the object, so setup-environment-thunder.sh re-projects it.
 kubectl apply --context "$CLUSTER_CONTEXT" -f - <<'OCEOF' >/dev/null
+apiVersion: openchoreo.dev/v1alpha1
+kind: Environment
+metadata:
+  name: default
+  namespace: default
+spec:
+  dataPlaneRef:
+    kind: ClusterDataPlane
+    name: default
+---
 apiVersion: openchoreo.dev/v1alpha1
 kind: DeploymentPipeline
 metadata:
@@ -128,10 +184,13 @@ metadata:
 spec:
   promotionPaths:
     - sourceEnvironmentRef:
-        name: development
+        name: default
       targetEnvironmentRefs: []
 OCEOF
-echo "   ✅ DeploymentPipeline/default restored (development only)"
+echo "   ✅ Environment/default and DeploymentPipeline/default restored"
+bash "$SCRIPT_DIR/setup-environment-thunder.sh" default default >/dev/null \
+    && echo "   ✅ binding record re-projected onto Environment/default" \
+    || echo "   ⚠️  setup-environment-thunder.sh default default failed — re-run it to re-annotate the Environment"
 
 echo ""
 echo "5️⃣  Namespaces"

@@ -24,6 +24,14 @@ backstage:
 security:
   oidc:
     issuer: "${PUBLIC_THUNDER_URL}"
-    jwksUrl: "http://amp-thunder-extension-service.amp-thunder.svc.cluster.local:8090/oauth2/jwks"
-    authorizationUrl: "http://thunder.openchoreo.localhost:8080/oauth2/authorize"
-    tokenUrl: "http://thunder.openchoreo.localhost:8080/oauth2/token"
+    # In-cluster JWKS of the platform IdP. Rendered by utils.sh
+    # render_values_file from scripts/env.sh (THUNDER_INTERNAL_URL), so the
+    # IdP's name is spelled in one place.
+    jwksUrl: "${THUNDER_INTERNAL_URL}/oauth2/jwks"
+    # Browser-facing endpoints, so the PUBLIC URL and not the in-cluster one:
+    # OpenChoreo hands these to Backstage, which redirects a human's browser to
+    # them. Templated from the same variable as `issuer` above — a literal here
+    # would keep naming the IdP's old public host after PUBLIC_THUNDER_URL moves,
+    # and the mismatch surfaces only as a failed login.
+    authorizationUrl: "${PUBLIC_THUNDER_URL}/oauth2/authorize"
+    tokenUrl: "${PUBLIC_THUNDER_URL}/oauth2/token"

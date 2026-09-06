@@ -1,0 +1,45 @@
+# CORS allowed origins — a platform-COMPOSED singleton, not an AEP document.
+#
+# The IdP has ONE `cors` server_config: a redeclaration replaces it, so whichever
+# bootstrap document imports last owns the whole allow-list. Agent Manager's
+# 71-amp-cors-config.yaml declares its own browser origins; the list below
+# declares AEP's, and nothing else. setup-thunder.sh reads both at install time,
+# unions them (Agent Manager's first, then AEP's, de-duplicated) and writes the
+# merged list into THIS document before it goes into the bootstrap ConfigMap.
+# Keeping the file at 89 — after Agent Manager's 71 — is what makes the composed
+# document the one that lands. Neither product's file is edited when the other
+# adds an origin.
+#
+# Why this must be a bootstrap document and not a Helm value: ThunderID's
+# static deployment.yaml has no CORS section at all, so a
+# `--set thunder.configuration.cors.*` writes a key nothing reads and fails
+# silently. The only thing that sets allowedOrigins is this resource.
+#
+# Without AEP's origin here the AEP console cannot even reach a login form: its
+# very first call is a browser fetch of /.well-known/openid-configuration, and
+# with no Access-Control-Allow-Origin on the response the browser refuses to
+# hand it to the page. The console renders "Sign-in failed / Failed to fetch"
+# while curl against the identical URL returns a healthy 200 — the request is
+# fine, only the browser's cross-origin check fails.
+#
+# AEP's origins:
+#   http://localhost:8090   the console's dev server and compose default
+#   ${PUBLIC_CONSOLE_URL}   the console as published (setup-thunder.sh envsubst)
+#   ${PUBLIC_THUNDER_URL}   the IdP's own public origin (its hosted gate/console)
+# Both the fixed localhost form and the placeholder are listed so that
+# overriding the public URL ADDS an origin rather than replacing the local one;
+# the composition de-duplicates them when they collapse onto each other, which
+# is the common case since the default IS http://localhost:8090.
+#
+# The data plane's app gateway (:19080) is deliberately absent, and stays so.
+# Deployed apps ARE browser clients of an identity provider, but of their own
+# ENVIRONMENT's Thunder (T2), never of this platform IdP — and their origins are
+# per-app and born at deploy time, so they are registered there at runtime by the
+# thunder-app operator, into that instance's writable cors layer
+# (resource-types/thunder-app/operator/design/thunder-application-reconciler.md).
+# This list stays an explicit least-privilege allow-list of the PLATFORM's own
+# browser origins rather than a catch-all.
+resource_type: server_config
+name: cors
+value:
+  allowedOrigins: ["http://localhost:8090","${PUBLIC_CONSOLE_URL}","${PUBLIC_THUNDER_URL}"]

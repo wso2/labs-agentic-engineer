@@ -91,7 +91,16 @@ Key wiring:
 - The coding-agent pod reaches `git-service` and `aep-api` (running on the host) via `host.k3d.internal`, which we pin to the **docker bridge gateway** in CoreDNS NodeHosts. Pods → host.
 - **Two separate resolvers.** `fix_node_dns` sets the *node's* `/etc/resolv.conf` (image pulls); `k3s-resolv.conf`, mounted via `files:` in `k3d-local-config.yaml` and passed as `--resolv-conf`, is what every `dnsPolicy: Default` pod gets — CoreDNS included. CoreDNS reads its upstream once at startup and never refreshes, so without the static pin a Colima restart can leave it forwarding to a dead address: the node resolves fine, pods resolve nothing external, and coding-agent runs die at `git clone` with `Could not resolve host: github.com`. `ensure_cluster_dns_healthy` (run by `setup-k3d.sh` and every `start.sh`) probes real resolution and restarts CoreDNS if it has gone stale.
 - `OPENBAO_ADDR=host.docker.internal:8200` — OpenBao's `NodePort` 30820 is exposed on host port 8200 by `k3d-local-config.yaml`.
-- The platform IdP is **ThunderID 1.0.0**, installed from Agent Manager's `wso2-amp-thunder-extension` chart (`scripts/setup-thunder.sh`) so both products share one issuer — OpenChoreo's control plane has only one. AEP's OAuth apps (`aep-console-client`, `aep-api-client`, `aep-system-client`, BFF→service clients, **`openchoreo-workload-publisher-client`**) are declared in `single-cluster/thunder-resources/` and merged with Agent Manager's own bootstrap set at install time — see that directory's README for why a merge rather than a second source.
+- The platform IdP is **ThunderID 1.0.0**, one instance per cluster, shared by AEP and Agent Manager because OpenChoreo's control plane has only one `security.oidc` issuer. It is owned by neither product and named for what it is: release and namespace **`platform-idp`** (`scripts/setup-thunder.sh`; the chart it comes from is still Agent Manager's `wso2-amp-thunder-extension`, which is an implementation detail). `scripts/env.sh` is the **single source of truth for its name** — `THUNDER_NS` / `THUNDER_RELEASE`, and the `THUNDER_INTERNAL_*` addresses every script and values file derives from. Agent Manager's own per-environment Thunders are a separate tier (`thunder-<org>-<env>`), never this one. See ADR-0028.
+- **Each product publishes a bootstrap bundle; the platform composes the singletons.** AEP's OAuth apps (`aep-console-client`, `aep-api-client`, `aep-system-client`, BFF→service clients, **`openchoreo-workload-publisher-client`**) are declared in `single-cluster/thunder-resources/` and merged with Agent Manager's own set at install time. Documents ThunderID keeps exactly one of — `cors`, `defaultResourceServer`, `csp` — are composed by the installer rather than owned by a publisher: `cors` is the union of both products' origins, the other two adopt Agent Manager's value, and in all three cases the document that imports last is the platform's. See `design/two-tier-thunder.md` for the publisher contract, and that directory's README for why a merge rather than a second bootstrap source.
+- **The IdP's public hostname reaches its own HTTPS gateway from inside the cluster.** `ensure_platform_idp_in_coredns` (`utils.sh`) adds a `rewrite stop` under the `0-platform-idp.override` key — sorted first, because CoreDNS imports fragments in name order and the rule is first-match. Without it `thunder.openchoreo.localhost` resolves in-cluster to the *data*-plane gateway, which serves nothing for it on 8443, and an environment Thunder's trusted-issuer JWKS fetch (HTTPS-only, by ThunderID's rules) times out.
+- **Every `scope=system` mint names the System resource server** (`resource=<public Thunder URL>/mcp`): aep-api, the thunder-app operator, `seed-test-users.sh` and `verify-convergence.sh` (check 9) all send it. ThunderID resolves a requested scope against a resource server, and the merged bootstrap sets the server-wide default to Agent Manager's, which does not define `system` — a mint without the indicator gets a 200 and a token with no scope, and every admin call then 403s with nothing in either response saying why.
+
+- **Roles and test users live on the ENVIRONMENT's Thunder, never on the platform IdP.** A build provisions the roles and test users `specs/design/security.json` declares onto the T2 of the environment that version is validated in (`default`), resolved per `(org, env)` from the binding on the OpenChoreo Environment plus the admin credential in OpenBao. `aep-api` reaches it at whichever of the binding's two addresses its own location can resolve — `THUNDER_ENV_ADMIN_ROUTE` defaults to the PUBLIC issuer outside the cluster and to the in-cluster Service inside a pod, because neither resolves from where the other is right. In docker compose that means the public issuer, so the compose service carries an `extra_hosts` line per environment (`<env>-idp.amp.localhost:host-gateway`). `scripts/seed-test-users.sh [<org> <env>]` (default `default default`) seeds the four fixed local logins (`mark`/`john`/`chris`/`emily`, password `admin`) on that same T2, finding it through the binding ConfigMap and Secret by label — it has no platform-IdP mode, because a login minted there is valid nowhere a build deploys. See ADR-0022's 2026-09-05 amendment.
+
+- **An environment's identity and its gateway have one lifecycle.** `setup-environment-thunder.sh` then `setup-environment-gateway.sh` create the pair; `scripts/remove-environment-thunder.sh <org> <env>` withdraws it, in Agent Manager's own order — gateway, then the Thunder release, its HTTPRoute and namespace, then the binding's other projections, the `Environment` annotations and the registrations in `amp-api`. It uninstalls a release, or deletes a namespace, only when `aep.wso2.com/release-created-by` / `namespace-created-by` on the namespace say these scripts installed it; anything else is left running with only AEP's own artefacts withdrawn (its client and role deregistered from the instance over its admin API, its Secrets and ConfigMaps, the OpenBao entry). The OpenChoreo `Environment` itself is deliberately kept — delete it separately. `scripts/verify-convergence.sh` checks 11 and 12 assert the record is complete, mint with it, and compare each gateway's rendered keymanager issuer against it. The whole design is `design/two-tier-thunder.md`; the decision is ADR-0029.
+
+- **One API Platform gateway per environment, not per cluster.** `api-platform-<org>-<env>` in namespace `<org>-<env>`, installed by `scripts/setup-environment-gateway.sh` — from `setup-aep.sh` for AEP's own environments and from `setup-agent-manager-env.sh` for Agent Manager's, one script either way, binding without upgrading when the release is already there. A gateway is where a managed API's authentication is terminated, so it must terminate against exactly one identity tier: its only Thunder keymanager is the T2 named in that environment's binding record (`scripts/setup-environment-thunder.sh`). A platform-IdP token and a sibling environment's token are both 401 there, which `scripts/verify-api-platform.sh` asserts. The runtime is reached in-cluster at `api-platform-<org>-<env>-gw-gateway-gateway-runtime.<org>-<env>:22893` and publicly on the kgateway vhost `<env>-<org>.gateway.localhost:19080` (env first — the chart's derivation, and write-once in Agent Manager once registered). The `api-configuration` trait stamps `restapi-target: api-platform-<org>-<env>` on every RestApi and points its Backend at that runtime; `aep-api` derives the same host (`projects.APIGatewayHost`). All four must move together.
 
 ## What was removed from the previous v1
 
@@ -107,8 +116,12 @@ Key wiring:
 | `scripts/setup-k3d.sh` | k3d cluster + CoreDNS |
 | `scripts/setup-prerequisites.sh` | cert-manager + ESO + kgateway + OpenBao |
 | `scripts/setup-openchoreo.sh` | Control Plane + Data Plane + Workflow Plane, then the platform IdP + the `client_id` entitlement claim |
-| `scripts/setup-thunder.sh` | The one platform IdP (ThunderID via `wso2-amp-thunder-extension`), with AEP's and Agent Manager's bootstrap documents merged |
+| `scripts/setup-thunder.sh` | The one platform IdP, `platform-idp` (ThunderID via `wso2-amp-thunder-extension`): both products' bootstrap bundles merged, the CORS singleton composed, and the in-cluster CoreDNS rewrite to its HTTPS gateway |
 | `scripts/setup-aep.sh` | Build ClusterWorkflow + ComponentTypes + Environment + AuthzRoleBindings + `.env` + runner image |
+| `scripts/setup-environment-thunder.sh` | `<org> <env>` — that environment's own Thunder (T2) and the binding record AEP reaches it through; binds instead of re-provisioning when one already exists |
+| `scripts/setup-environment-gateway.sh` | `<org> <env>` — that environment's own API Platform gateway, its ThunderKeyManager read from the binding above; binds without upgrading when the release is already there |
+| `scripts/remove-environment-thunder.sh` | `<org> <env> [--yes]` — the reverse of the two above: that environment's gateway, its Thunder and every projection of its binding record. Only uninstalls a release this repo's scripts recorded installing |
+| `scripts/seed-test-users.sh` | `[<org> <env>]` (default `default default`) — the four fixed local test logins on THAT environment's Thunder, resolved from its binding record |
 | `scripts/setup-local.sh` | **(Skaffold)** K8s Secrets + Thunder clients + resource-type catalog + thunder-app operator (`make setup-local`) |
 | `../skaffold.yaml` | **(Skaffold)** in-cluster build/deploy for `make dev-cluster` |
 | `helm-charts/platform/values.local.dev.yaml.example` | **(Skaffold)** per-developer override template (webhook/smee, etc.) |
@@ -116,7 +129,9 @@ Key wiring:
 | `scripts/stop.sh` | **(Compose, legacy)** `docker compose down` (cluster stays) |
 | `docker-compose.yml` | **(Compose, legacy)** long-lived host services |
 | `manifests/docker-build-workflow.yaml` | `dockerfile-builder` ClusterWorkflow (Argo CWTs) |
-| `single-cluster/thunder-resources/` | AEP's declarative ThunderID bootstrap documents (OAuth apps, role assignment) |
+| `single-cluster/thunder-resources/` | AEP's bootstrap bundle for the platform IdP (OAuth apps, role assignment, its half of the composed CORS singleton) |
+| `single-cluster/thunder-env-resources/` | AEP's bootstrap bundle for an ENVIRONMENT Thunder — its system client and the `aep-`prefixed role granting it `system` |
+| `design/two-tier-thunder.md` | The two identity tiers, the publisher contract, the binding record and the lifecycle |
 | `single-cluster/values-cp.yaml` | OC Control Plane helm values |
 | `single-cluster/values-dp.yaml` | OC Data Plane helm values |
 
@@ -135,11 +150,11 @@ Branch-scoped experiment to prove the WSO2 API Platform gateway + the
 
 What it adds:
 
-- `setup-prerequisites.sh` — step 6 installs the AP gateway-operator (`gateway-operator` v0.4.0, runtime image v0.9.0) into `openchoreo-data-plane`, applies `manifests/api-platform/{gateway-config.yaml,rbac.yaml,api-gateway.yaml}`.
+- `setup-prerequisites.sh` — step 6 installs the AP gateway-**operator** into `openchoreo-data-plane` (versions in `scripts/env.sh`) and applies `manifests/api-platform/rbac.yaml`. It creates no gateway: those are per-environment (see above).
 - `setup-aep.sh` — adds `api-configuration` to the `service` ClusterComponentType's `allowedTraits` and installs the ClusterTrait CR from `manifests/api-platform/api-configuration-trait.yaml`.
 - `manifests/poc-api-platform/` — two hello-world Components (`poc-public`, `poc-protected`) using `mendhak/http-https-echo:35`. Both have the trait attached; only the protected one's ReleaseBinding sets `jwtAuth.enabled: true`.
-- No dedicated POC client: `scripts/verify-api-platform.sh` mints its token from the already-bootstrapped `aep-api-client`.
-- `scripts/verify-api-platform.sh` — applies the manifests, mints a token, runs the 4-cell truth table.
+- No dedicated POC client: the accepted token is minted from `aep-system-client` on the environment's Thunder (credential from the binding record), the rejected platform one from the already-bootstrapped `aep-api-client`.
+- `scripts/verify-api-platform.sh` — applies the manifests and runs the truth table against the environment's own gateway with three identities: that environment's T2 (accepted), the platform IdP (rejected), and a sibling environment's T2 (rejected).
 
 Run the POC:
 
@@ -151,10 +166,12 @@ bash scripts/verify-api-platform.sh
 Expected output (truth table):
 
 ```
-✅ protected + valid token                expected 200, got 200
-✅ protected + no token                   expected 401, got 401
-✅ public + valid token                   expected 200, got 200
 ✅ public + no token                      expected 200, got 200
+✅ public + own T2 token                  expected 200, got 200
+✅ protected + no token                   expected 401, got 401
+✅ protected + own T2 token               expected 200, got 200
+✅ protected + platform (T1)              expected 401, got 401
+✅ protected + 'default' T2 token         expected 401, got 401
 ```
 
 When something fails, `POC-API-PLATFORM.md` is the running log of every

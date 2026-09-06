@@ -559,9 +559,10 @@ echo "✅ ClusterResourceType 'postgres-cnpg' + CNPG data-plane RBAC created"
 # ── thunder-app-operator (reconciles ThunderApplication CRs → Thunder apps) ──
 # Builds the operator image from its self-contained module, imports it into the
 # k3d nodes (Never pull policy — no registry involved), and installs the chart.
-# The chart's LOCAL DEV credentials default to the aep-system-client the Thunder
-# bootstrap registers; a real cluster must override thunder.systemClient* (see
-# the chart's values.yaml). CRD ships under the chart's crds/.
+# The operator carries no Thunder configuration of its own: it resolves the
+# Thunder for each CR from that (org, environment)'s binding record, which
+# setup-environment-thunder.sh writes and mirrors into this namespace further
+# down. CRD ships under the chart's crds/.
 echo ""
 echo "🔧 Building + installing thunder-app-operator..."
 docker build -t thunder-app-operator:local "${SCRIPT_DIR}/../single-cluster/resource-types/thunder-app/operator"
@@ -579,34 +580,6 @@ if [ "$PIN_RC" = "2" ]; then
     echo "   stay ErrImageNeverPull (pullPolicy: Never, no registry). Re-run setup-aep.sh."
     exit 1
 fi
-
-# The chart sources THUNDER_SYSTEM_CLIENT_ID/_SECRET exclusively from the
-# `thunder-app-operator-credentials` Secret and manages no credential values of
-# its own. Only the PLATFORM chart creates that Secret, as an ESO ExternalSecret
-# (helm-charts/platform/templates/thunder/operator-credentials.yaml); this script
-# installs the operator chart directly and never installs the platform chart, so
-# it must create the Secret itself — otherwise the manager pod sits in
-# CreateContainerConfigError.
-#
-# The values are the system client the local Thunder bootstrap registers
-# (single-cluster/values-thunder.yaml → "AEP System Client", bound to the Thunder
-# Administrator role by its 60-aep-system-role.sh hook). LOCAL DEV ONLY: a shared
-# Thunder must override these via THUNDER_SYSTEM_CLIENT_ID/_SECRET.
-#
-# KNOWN GAP: setup-aectl.sh and setup-local.sh install the same operator chart
-# the same way and also never install the platform chart, so both still hit the
-# CreateContainerConfigError this fixes. Not fixed here — neither path was
-# exercised by this change. See the PR description.
-#
-# The namespace is created first because the Secret has to exist BEFORE the
-# operator pod starts; `helm --create-namespace` below is too late for that.
-kubectl create namespace thunder-app-operator-system --dry-run=client -o yaml | kubectl apply -f -
-kubectl create secret generic thunder-app-operator-credentials \
-    -n thunder-app-operator-system \
-    --from-literal=client-id="${THUNDER_SYSTEM_CLIENT_ID:-aep-system-client}" \
-    --from-literal=client-secret="${THUNDER_SYSTEM_CLIENT_SECRET:-aep-system-client-secret}" \
-    --dry-run=client -o yaml | kubectl apply -f -
-echo "✅ thunder-app-operator-credentials Secret created"
 
 helm upgrade --install thunder-app-operator \
     "${SCRIPT_DIR}/../single-cluster/resource-types/thunder-app/operator/helm" \
@@ -708,19 +681,43 @@ spec:
 OCEOF
 echo "✅ ClusterProjectType 'default' created"
 
-# Environment: development — backed by the default ClusterDataPlane
+# Environment: default — backed by the default ClusterDataPlane. AEP provisions
+# and validates in this ONE environment, and it is the same Environment Agent
+# Manager's platform-resources chart names: with ENABLE_AGENT_MANAGER=1 the
+# chart adopts this object (setup-agent-manager.sh hands it over the way it
+# hands over DeploymentPipeline/default) and persists its own gateway ingress on
+# the spec, so both products deploy into one environment, with one environment
+# Thunder and one API Platform gateway between them.
 kubectl apply -f - <<'OCEOF'
 apiVersion: openchoreo.dev/v1alpha1
 kind: Environment
 metadata:
-  name: development
+  name: default
   namespace: default
 spec:
   dataPlaneRef:
     kind: ClusterDataPlane
     name: default
 OCEOF
-echo "✅ Environment 'development' created"
+echo "✅ Environment 'default' created"
+
+# The environment's own Thunder (the second identity tier) and the binding record
+# AEP reaches it through. Independent of Agent Manager: if Agent Manager already
+# provisioned this environment's Thunder, this binds to that instance without
+# touching it; otherwise it provisions one, and Agent Manager's own script later
+# registers its client on that same instance (setup-agent-manager-env.sh). Either
+# way the Environment above ends up annotated with the issuer, admin URL and
+# secret path aep-api resolves, and thunder-app-operator gets the credential
+# mirrored into its own namespace.
+bash "$SCRIPT_DIR/setup-environment-thunder.sh" default default
+
+# The environment's own API Platform gateway, wired to the Thunder above through
+# the binding record it just wrote. One gateway per (org, environment) — there
+# is no cluster-wide one — because a gateway terminates a managed API's
+# authentication and must do so against that environment's identity tier alone.
+# Binds without upgrading when Agent Manager already installed this
+# environment's gateway.
+bash "$SCRIPT_DIR/setup-environment-gateway.sh" default default
 
 # DeploymentPipeline: default — single environment pipeline
 kubectl apply -f - <<'OCEOF'
@@ -732,7 +729,7 @@ metadata:
 spec:
   promotionPaths:
     - sourceEnvironmentRef:
-        name: development
+        name: default
       targetEnvironmentRefs: []
 OCEOF
 echo "✅ DeploymentPipeline 'default' created"

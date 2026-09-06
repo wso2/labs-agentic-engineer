@@ -15,8 +15,16 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# Second half of the Agent Manager install: the `default` environment's own
-# Thunder, and the API Platform gateway in front of it.
+# Second half of the Agent Manager install: Agent Manager joins the `default`
+# environment — the one AEP already provisioned (setup-aep.sh), with its own
+# Thunder and the API Platform gateway in front of it — by registering that
+# environment's Thunder as its own.
+#
+# The gateway half is NOT installed here. It is one step —
+# setup-environment-gateway.sh — shared with setup-aep.sh, because a
+# per-environment gateway is platform infrastructure that exists whether or not
+# Agent Manager does; this script only names the (org, env) and lets that script
+# install or bind. See its header for the naming and the binding contract.
 #
 # Split from setup-agent-manager.sh because both steps talk to amp-api over its
 # PUBLIC url and drive Agent Manager's own admin API — they need the platform to
@@ -35,12 +43,20 @@
 #
 # Convergence does not touch this tier. Only the platform tier is shared,
 # because OpenChoreo's control plane has exactly one OIDC issuer.
+#
+# The one edge between the tiers is trust: each environment Thunder accepts the
+# platform IdP as a trusted issuer, so a platform login can reach an
+# environment's APIs. That trust is configured here (PLATFORM_THUNDER_*) and
+# depends on the platform IdP's public hostname reaching its HTTPS gateway from
+# inside the cluster, which setup-thunder.sh arranges (utils.sh
+# ensure_platform_idp_in_coredns).
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 source "$SCRIPT_DIR/env.sh"
 source "$SCRIPT_DIR/utils.sh"
+source "$SCRIPT_DIR/am-scripts.sh"
 
 load_public_urls "$SCRIPT_DIR/../.env"
 
@@ -48,11 +64,9 @@ ENV_NAME="${ENV_NAME:-default}"
 ORG_NAME="${ORG_NAME:-default}"
 AMP_API_URL="${AMP_API_URL:-http://api.amp.localhost:8080/api/v1}"
 IDP_TOKEN_URL="${IDP_TOKEN_URL:-${PUBLIC_THUNDER_URL}/oauth2/token}"
-GATEWAY_NS="${ORG_NAME}-${ENV_NAME}"
-GATEWAY_RELEASE="api-platform-${ORG_NAME}-${ENV_NAME}"
-GATEWAY_VHOST="http://${ORG_NAME}-${ENV_NAME}.gateway.localhost:19080"
-AM_REF="amp/v${AMP_VERSION}"
-AM_SCRIPT_BASE="https://raw.githubusercontent.com/wso2/agent-manager/${AM_REF}/deployments/scripts"
+# AM_REF / AM_SCRIPT_BASE come from am-scripts.sh, which also owns the staging.
+# The gateway's names are not spelled here at all — setup-environment-gateway.sh
+# derives every one of them from (org, env) and the chart's own helpers.
 
 echo "============================================"
 echo "  Agent Manager — '${ENV_NAME}' environment"
@@ -77,106 +91,78 @@ echo "✅ amp-api reachable"
 # here would drift from the chart it provisions against. CHART_VERSION is left
 # unset on purpose so the script pins its own validated ThunderID release —
 # AMP_VERSION has no bearing on which ThunderID an env-Thunder runs.
+#
+# The release already exists when this runs: setup-aep.sh created it for the
+# shared `default` environment before amp-api was up, so the handle was never
+# registered and Agent Manager's system client never imported. Agent Manager's
+# script is an idempotent `helm upgrade --install`: this is where it registers
+# the handle with amp-api, stores its system client and imports it, through a
+# values-identical upgrade of AEP's release — setup-environment-thunder.sh
+# mirrors Agent Manager's values shape exactly so that this upgrade changes
+# nothing else. (The one Agent Manager-owned deviation is the ORDER: a fresh
+# Agent Manager-first environment would have been created by this step.)
 echo ""
 echo "1️⃣  Provisioning the environment's Thunder"
-ENV_THUNDER_SCRIPT="$(mktemp)"
-trap 'rm -f "$ENV_THUNDER_SCRIPT"' EXIT
-fetch_gh_raw "${AM_SCRIPT_BASE}/add-environment-thunder.sh" "$ENV_THUNDER_SCRIPT" "$AM_REF"
+# Staged through am-scripts.sh, which is the ONE place in this repo that knows
+# how to obtain Agent Manager's environment-Thunder scripts (local checkout via
+# AM_SCRIPTS_DIR, else fetched at AM_REF) and puts all four of them in one
+# directory as siblings, because they source each other from beside themselves.
+AM_STAGE_DIR="$(mktemp -d)"
+trap 'rm -rf "$AM_STAGE_DIR"' EXIT
+stage_agent_manager_scripts "$AM_STAGE_DIR"
+ENV_THUNDER_SCRIPT="$AM_STAGE_DIR/add-environment-thunder.sh"
 
+# The environment Thunder trusts the platform IdP as an issuer, and the script
+# takes that IdP's coordinates from PLATFORM_THUNDER_ISSUER / _JWKS_URL — with
+# defaults naming Agent Manager's own thunder.amp.localhost, which this
+# deployment does not publish. Without these two the env-Thunder is configured
+# to trust an issuer that never signs anything, and the failure is a later 401
+# on the environment's APIs with nothing pointing back here.
+#
+# The JWKS URL is HTTPS on 8443 on purpose: ThunderID rejects a plain-http JWKS
+# URL for a trusted issuer. The public hostname is what the certificate is
+# issued for, and it reaches the IdP's HTTPS gateway from inside the cluster
+# only through the CoreDNS rewrite setup-thunder.sh installs.
+#
+# The CA that signed that certificate is read by the script itself. It waits on
+# the Certificate under its chart's default name (amp-thunder-extension-local-tls)
+# only when that object exists; with the neutral release name (env.sh) it does
+# not, so the wait is skipped and the script falls through to reading the
+# chart's root CA secret directly — the same root the gateway's certificate
+# chains to, and one the chart hardcodes regardless of release name. The wait
+# itself moved to setup-thunder.sh, so the CA is issued before this runs.
 ENV_NAME="$ENV_NAME" \
 DISPLAY_NAME="${DISPLAY_NAME:-Default}" \
 ORG_NAME="$ORG_NAME" \
 THUNDER_HANDLE="${THUNDER_HANDLE:-${ENV_NAME}-idp}" \
 AMP_API_URL="$AMP_API_URL" \
 IDP_TOKEN_URL="$IDP_TOKEN_URL" \
+PLATFORM_THUNDER_ISSUER="${PUBLIC_THUNDER_URL}" \
+PLATFORM_THUNDER_JWKS_URL="https://${PUBLIC_THUNDER_HOST}:8443/oauth2/jwks" \
 SCRIPT_BASE_URL="$AM_SCRIPT_BASE" \
     bash "$ENV_THUNDER_SCRIPT"
 echo "✅ environment Thunder provisioned"
 
-# ── 2. The API Platform gateway for that environment ────────────────────────
+# ── 2. The binding record for that Thunder ──────────────────────────────────
+# Agent Manager's script does not write AEP's binding record.
+# setup-environment-thunder.sh does; finding the release already there it BINDs
+# — no helm from AEP's side — re-proves that AEP's own client still mints after
+# Agent Manager's upgrade (re-importing it if not), and re-projects the record.
+# That record is what the gateway step below and thunder-app-operator and
+# aep-api all read.
 echo ""
-echo "2️⃣  API Platform gateway"
+echo "2️⃣  Binding record"
+bash "$SCRIPT_DIR/setup-environment-thunder.sh" "$ORG_NAME" "$ENV_NAME"
 
-# Sandboxed agents may egress only to namespaces carrying this label, so it has
-# to be on the namespace before the gateway runtime starts.
-kubectl create namespace "$GATEWAY_NS" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-kubectl label namespace "$GATEWAY_NS" "amp.wso2.com/api-platform-gateway=true" --overwrite >/dev/null
-
-# gateway-controller 1.2.x mounts an AES-256 at-rest encryption key from a
-# Secret in its OWN namespace — AEP's key lives in openchoreo-data-plane and is
-# not visible here. Generated once and left alone on re-runs: rotating it drops
-# all encrypted gateway state.
-if ! kubectl get secret "${GATEWAY_ENCRYPTION_SECRET_NAME}" -n "$GATEWAY_NS" &>/dev/null; then
-    key_tmp="$(mktemp)"
-    openssl rand 32 > "$key_tmp"
-    kubectl create secret generic "${GATEWAY_ENCRYPTION_SECRET_NAME}" -n "$GATEWAY_NS" \
-        "--from-file=${GATEWAY_ENCRYPTION_SECRET_KEY}=${key_tmp}" >/dev/null
-    rm -f "$key_tmp"   # never leave the plaintext key on disk
-    echo "   ✅ gateway encryption key created"
-else
-    echo "   ✅ gateway encryption key already present (preserved)"
-fi
-
-# Wire the gateway's ThunderKeyManager to the environment's own Thunder.
-# keymanagers[0] is re-asserted alongside [1] because this install passes no
-# values file, and --set on [1] alone would drop [0].
-#
-# The release-name / issuer derivation is FETCHED from Agent Manager's own
-# thunder-naming.sh rather than reimplemented here. That file is explicit that
-# it is the single source of truth for the bash side of this algorithm (53-char
-# cap, truncate-to-46 plus a sha256-6 suffix) and that no copy should exist
-# elsewhere — a second implementation that drifted would silently point the
-# gateway at a Thunder that is not there.
-THUNDER_NAMING_LIB="$(mktemp)"
-trap 'rm -f "$ENV_THUNDER_SCRIPT" "$THUNDER_NAMING_LIB"' EXIT
-fetch_gh_raw "${AM_SCRIPT_BASE}/thunder-naming.sh" "$THUNDER_NAMING_LIB" "$AM_REF"
-# shellcheck source=/dev/null
-source "$THUNDER_NAMING_LIB"
-ENV_THUNDER_RELEASE="$(thunder_release_name "$ORG_NAME" "$ENV_NAME")"
-thunder_args=()
-if helm status "$ENV_THUNDER_RELEASE" --namespace "$ENV_THUNDER_RELEASE" &>/dev/null; then
-    ENV_THUNDER_JWKS="http://${ENV_THUNDER_RELEASE}-service.${ENV_THUNDER_RELEASE}.svc.cluster.local:8090/oauth2/jwks"
-    ENV_THUNDER_ISSUER="$(thunder_issuer "${THUNDER_HANDLE:-${ENV_NAME}-idp}")"
-    thunder_args=(
-        --set "apiGateway.config.policyConfigurations.jwtauth_v1.keymanagers[0].name=agent-manager-service"
-        --set "apiGateway.config.policyConfigurations.jwtauth_v1.keymanagers[0].issuer=agent-manager-service"
-        --set "apiGateway.config.policyConfigurations.jwtauth_v1.keymanagers[0].jwks.remote.uri=http://amp-api.wso2-amp.svc.cluster.local:9000/auth/external/jwks.json"
-        --set "apiGateway.config.policyConfigurations.jwtauth_v1.keymanagers[0].jwks.remote.skipTlsVerify=true"
-        --set "apiGateway.config.policyConfigurations.jwtauth_v1.keymanagers[1].name=ThunderKeyManager"
-        --set "apiGateway.config.policyConfigurations.jwtauth_v1.keymanagers[1].issuer=${ENV_THUNDER_ISSUER}"
-        --set "apiGateway.config.policyConfigurations.jwtauth_v1.keymanagers[1].jwks.remote.uri=${ENV_THUNDER_JWKS}"
-        --set "apiGateway.config.policyConfigurations.jwtauth_v1.keymanagers[1].jwks.remote.skipTlsVerify=true"
-        --set "bootstrap.identityProviders[0].name=ThunderKeyManager"
-        --set "bootstrap.identityProviders[0].issuer=${ENV_THUNDER_ISSUER}"
-        --set "bootstrap.identityProviders[0].jwksUri=${ENV_THUNDER_JWKS}"
-        --set "bootstrap.identityProviders[0].skipTlsVerify=true"
-    )
-else
-    echo "   ⚠️  no env-Thunder release found — the gateway keeps its default ThunderKeyManager"
-fi
-
-helm upgrade --install "$GATEWAY_RELEASE" \
-    "${AMP_REGISTRY}/wso2-amp-api-platform-gateway-extension" \
-    --version "${AMP_VERSION}" \
-    --namespace "$GATEWAY_NS" --create-namespace --kube-context "$CLUSTER_CONTEXT" \
-    --set "apiGateway.namespace=${GATEWAY_NS}" \
-    --set "agentManager.orgName=${ORG_NAME}" \
-    --set "gateway.environment=${ENV_NAME}" \
-    --set "gateway.vhost=${GATEWAY_VHOST}" \
-    "${thunder_args[@]}" \
-    --timeout 20m
-
-echo "⏳ Waiting for the gateway bootstrap Job..."
-kubectl wait --for=condition=complete "job/${GATEWAY_RELEASE}-bootstrap" \
-    -n "$GATEWAY_NS" --timeout=300s
-
-# Registration completing is not the same as the runtime serving traffic.
-echo "⏳ Waiting for the gateway to be Programmed..."
-kubectl wait --for=condition=Programmed "apigateway/${GATEWAY_RELEASE}" -n "$GATEWAY_NS" --timeout=300s
-kubectl wait --for=condition=Available \
-    "deployment/${GATEWAY_RELEASE}-gw-gateway-gateway-runtime" -n "$GATEWAY_NS" --timeout=300s
-kubectl wait --for=condition=Programmed "restapi/${GATEWAY_RELEASE}-otel-restapi" \
-    -n "$GATEWAY_NS" --timeout=300s
+# ── 3. The API Platform gateway for that environment ────────────────────────
+# One step, shared with setup-aep.sh. Everything that used to be inline here —
+# the namespace and its egress label, the per-namespace encryption key, the
+# ThunderKeyManager wiring, the waits — lives there, and the keymanager comes
+# from the binding written above rather than from a name derivation performed
+# twice.
+echo ""
+echo "3️⃣  API Platform gateway"
+bash "$SCRIPT_DIR/setup-environment-gateway.sh" "$ORG_NAME" "$ENV_NAME"
 
 echo ""
-echo "✅ '${ENV_NAME}' environment ready — Thunder + API Platform gateway at ${GATEWAY_VHOST}"
+echo "✅ '${ENV_NAME}' environment ready — Thunder, binding record and API Platform gateway"

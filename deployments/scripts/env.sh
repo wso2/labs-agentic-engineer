@@ -51,15 +51,41 @@ GATEWAY_IMAGE_VERSION="1.2.1"
 ENABLE_AGENT_MANAGER="${ENABLE_AGENT_MANAGER:-0}"
 AMP_VERSION="${AMP_VERSION:-1.0.0-rc2}"
 AMP_REGISTRY="${AMP_REGISTRY:-oci://ghcr.io/wso2}"
-# Namespace of the ONE platform Thunder both products authenticate against.
-# The release is wso2-amp-thunder-extension (a thin wrapper around ThunderID),
-# installed unconditionally — see setup-openchoreo.sh step 3.
-THUNDER_NS="${THUNDER_NS:-amp-thunder}"
-THUNDER_RELEASE="${THUNDER_RELEASE:-amp-thunder-extension}"
-# In-cluster address of that Thunder. Every jwks/token URL in this repo derives
-# from these two, so moving Thunder is a one-line change here.
+# Agent Manager's API. Spelled once here because five scripts ask whether it
+# answers (utils.sh amp_api_present) and two of them also EXPORT it for Agent
+# Manager's own sourced helpers, which read it under this name.
+AMP_API_URL="${AMP_API_URL:-http://api.amp.localhost:8080/api/v1}"
+# ── The platform IdP ─────────────────────────────────────────────────────────
+# The ONE ThunderID both products authenticate against. It is platform
+# infrastructure owned by neither product — hence the neutral release and
+# namespace name — and both AEP and Agent Manager are publishers into it (see
+# docs/decisions/ADR-0028-the-platform-idp-is-neutral-infrastructure.md).
+# Today it is installed from Agent Manager's wso2-amp-thunder-extension chart
+# (a thin wrapper around ThunderID), unconditionally, by setup-thunder.sh; the
+# chart is an implementation detail and its name does not leak into the
+# release. Agent Manager's own per-environment Thunders are a separate tier
+# (`thunder-<org>-<env>`), never this one.
+THUNDER_NS="${THUNDER_NS:-platform-idp}"
+THUNDER_RELEASE="${THUNDER_RELEASE:-platform-idp}"
+# In-cluster addresses of that Thunder. Every jwks/token URL in this repo
+# derives from these, so moving the IdP is a one-line change here — no script
+# spells a Service name of its own. Exported because values files rendered with
+# envsubst (utils.sh render_values_file) and the python merge steps read them
+# from the environment.
+#
+# THUNDER_HTTPS_GATEWAY_SVC is the chart's dedicated HTTPS Gateway Service in
+# the OpenChoreo control plane (port 8443, cert-manager TLS). It is the ONE
+# in-cluster HTTPS front for the IdP, which the environment Thunders need for
+# their trusted-issuer JWKS fetch — ThunderID refuses a plain-http JWKS URL for
+# a trusted issuer. utils.sh ensure_platform_idp_in_coredns rewrites the public
+# hostname to it inside the cluster.
 THUNDER_SVC_HOST="${THUNDER_RELEASE}-service.${THUNDER_NS}.svc.cluster.local"
 THUNDER_INTERNAL_URL="http://${THUNDER_SVC_HOST}:8090"
+THUNDER_INTERNAL_JWKS_URL="${THUNDER_INTERNAL_URL}/oauth2/jwks"
+THUNDER_INTERNAL_TOKEN_URL="${THUNDER_INTERNAL_URL}/oauth2/token"
+THUNDER_HTTPS_GATEWAY_SVC="${THUNDER_RELEASE}-https-gateway.openchoreo-control-plane.svc.cluster.local"
+export THUNDER_NS THUNDER_RELEASE THUNDER_SVC_HOST THUNDER_INTERNAL_URL \
+       THUNDER_INTERNAL_JWKS_URL THUNDER_INTERNAL_TOKEN_URL THUNDER_HTTPS_GATEWAY_SVC
 
 # Community observability modules compatible with OpenChoreo 1.2.0.
 # Tracing MUST be >= 0.6.0: the 1.2.0 observer returns span status as an object

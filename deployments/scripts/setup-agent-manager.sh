@@ -125,31 +125,38 @@ if ! metrics_out="$(install_metrics_module 2>&1)"; then
 fi
 echo "   ✅ metrics module"
 
-# ── 3. Hand DeploymentPipeline/default over to Helm ─────────────────────────
-# Both products want a DeploymentPipeline named `default` in namespace
-# `default`, and neither can rename its own: the OpenChoreo API hardcodes
-# `DeploymentPipeline/default` when a client creates a project without naming
-# one, and both AEP and Agent Manager create projects that way.
+# ── 3. Hand Environment/default and DeploymentPipeline/default over to Helm ──
+# Both products want the same two objects in namespace `default`, and neither
+# can rename its own. The OpenChoreo API hardcodes `DeploymentPipeline/default`
+# when a client creates a project without naming one, and both AEP and Agent
+# Manager create projects that way. `Environment/default` is the ONE environment
+# both products deploy into: AEP so that one environment Thunder and one API
+# Platform gateway serve both, Agent Manager because its chart names it so.
 #
-# So there is ONE object, carrying the union of both promotion paths — AEP's
-# `development` and Agent Manager's `default`. Agent Manager's chart owns it,
-# because a chart cannot adopt an object it did not create; stamping Helm's
-# ownership metadata onto AEP's copy first is the documented way to hand it
-# over. The union is passed as values so what Helm renders is what is already
-# there.
+# setup-aep.sh creates both with kubectl before this script runs. Agent
+# Manager's platform-resources chart owns them from here on, because a chart
+# cannot adopt an object it did not create; stamping Helm's ownership metadata
+# onto AEP's copies first is the documented way to hand them over. The chart's
+# defaults render what AEP wrote — one promotion path from `default` — plus the
+# gateway ingress Agent Manager persists on its Environment, so the hand-over
+# changes the owner, not the environment. The annotations
+# setup-environment-thunder.sh projected onto the Environment are not in the
+# chart's manifest and survive the apply: server-side apply owns fields, not
+# objects.
 echo ""
-echo "3️⃣  Handing DeploymentPipeline/default to Helm (union of both promotion paths)"
-if kubectl get deploymentpipeline default -n default &>/dev/null; then
-    kubectl annotate deploymentpipeline default -n default --overwrite \
+echo "3️⃣  Handing Environment/default and DeploymentPipeline/default to Helm"
+for kind in environment deploymentpipeline; do
+    kubectl get "$kind" default -n default &>/dev/null || continue
+    kubectl annotate "$kind" default -n default --overwrite \
         meta.helm.sh/release-name=amp-platform-resources \
         meta.helm.sh/release-namespace=default >/dev/null
-    kubectl label deploymentpipeline default -n default --overwrite \
+    kubectl label "$kind" default -n default --overwrite \
         app.kubernetes.io/managed-by=Helm >/dev/null
-    # Ownership metadata alone is not enough. setup-aep.sh creates this object
+    # Ownership metadata alone is not enough. setup-aep.sh creates these objects
     # with a CLIENT-side `kubectl apply`, which leaves a
     # last-applied-configuration annotation; Helm's server-side apply migrates
-    # that into a "kubectl-client-side-apply" field manager owning
-    # .spec.promotionPaths, and the install then dies with
+    # that into a "kubectl-client-side-apply" field manager owning the spec, and
+    # the install then dies with
     #
     #   conflict with "kubectl-client-side-apply": .spec.promotionPaths
     #
@@ -158,12 +165,12 @@ if kubectl get deploymentpipeline default -n default &>/dev/null; then
     # `managedFields: [{}]` is Kubernetes' documented reset for exactly this —
     # it drops every recorded owner so the next apply establishes ownership
     # cleanly. The object's spec is untouched; only the bookkeeping is cleared.
-    kubectl annotate deploymentpipeline default -n default \
+    kubectl annotate "$kind" default -n default \
         kubectl.kubernetes.io/last-applied-configuration- >/dev/null 2>&1 || true
-    kubectl patch deploymentpipeline default -n default --type=merge \
+    kubectl patch "$kind" default -n default --type=merge \
         -p '{"metadata":{"managedFields":[{}]}}' >/dev/null 2>&1 || true
-    echo "   ✅ ownership stamped for adoption"
-fi
+    echo "   ✅ ${kind}/default ownership stamped for adoption"
+done
 
 # ── 4. Agent Manager's charts ───────────────────────────────────────────────
 # AEP used to ship its build templates under the same three cluster-scoped names
@@ -189,21 +196,38 @@ done
 echo ""
 echo "5️⃣  Platform resources extension"
 # --force-conflicts: this release is DELIBERATELY taking over
-# DeploymentPipeline/default from whoever wrote it last (see step 3). Helm's
-# server-side apply refuses that by default, and the owner it names shifts
-# depending on how the object got there — "kubectl-client-side-apply" for one
-# AEP created, "before-first-apply" for one whose field management was reset.
-# Forcing is the point of the hand-over, not a workaround for a surprise: the
-# union of promotion paths passed below is exactly what should end up there.
+# Environment/default and DeploymentPipeline/default from whoever wrote them
+# last (see step 3). Helm's server-side apply refuses that by default, and the
+# owner it names shifts depending on how the object got there —
+# "kubectl-client-side-apply" for one AEP created, "before-first-apply" for one
+# whose field management was reset. Forcing is the point of the hand-over, not
+# a workaround for a surprise: the chart's defaults — one environment, one
+# promotion path, both named `default` — are exactly what should end up there.
+#
+# --reset-values: an upgrade that is given no values re-applies the LAST
+# release's values (Helm's documented behaviour, v3 and v4 alike), so a cluster
+# whose earlier install passed a promotion order would keep it forever. The
+# chart's defaults are the contract here; nothing is meant to be carried over.
+#
+# The one value passed: the ingress host the chart persists on Environment/default.
+# Its default is Agent Manager's own `am-gateway.localhost`, and every component
+# route in the shared environment — AEP's included — is then built as
+# `<...>.am-gateway.localhost`. Inside the cluster that name is NXDOMAIN (Agent
+# Manager's CoreDNS rewrite targets host.k3d.internal, which the `.:53` server
+# cannot follow — see ensure_openchoreo_localhost_in_coredns), so a runner
+# validating a deployed app cannot reach it. Mirroring the ClusterDataPlane's
+# host keeps the environment on the platform's data-plane hostname, the one
+# AEP's CoreDNS rewrite already resolves to the gateway Service, and the one the
+# environment used before the chart owned it.
+DP_INGRESS_HOST="$(kubectl get clusterdataplane default --context "$CLUSTER_CONTEXT" \
+    -o jsonpath='{.spec.gateway.ingress.external.http.host}' 2>/dev/null || true)"
+DP_INGRESS_HOST="${DP_INGRESS_HOST:-openchoreoapis.localhost}"
 helm upgrade --install amp-platform-resources \
     "${AMP_REGISTRY}/wso2-amp-platform-resources-extension" \
     --version "${AMP_VERSION}" \
     --namespace default --kube-context "$CLUSTER_CONTEXT" \
-    --force-conflicts \
-    --set "deploymentPipeline.promotionOrder[0].sourceEnvironmentRef.name=development" \
-    --set-json "deploymentPipeline.promotionOrder[0].targetEnvironmentRefs=[]" \
-    --set "deploymentPipeline.promotionOrder[1].sourceEnvironmentRef.name=default" \
-    --set-json "deploymentPipeline.promotionOrder[1].targetEnvironmentRefs=[]" \
+    --force-conflicts --reset-values \
+    --set-string "environment.gateway.http.host=${DP_INGRESS_HOST}" \
     --timeout 10m
 echo "   ✅ ProjectType, Environment, ComponentTypes, amp-* workflows, traits"
 
@@ -242,26 +266,78 @@ echo "7️⃣  Agent Manager (amp-api, amp-console, PostgreSQL)"
 #                        from this; Thunder only recognises the public URL
 #   console.auth.baseUrl where the browser is sent to log in
 #
-# Their in-cluster siblings (keyManager.jwksUrl, thunder.resolveToHost) already
-# point at amp-thunder-extension-service and need no change — the namespace and
-# service name are unchanged, only the public hostname moved.
+# Their in-cluster siblings move too. The chart defaults every in-cluster
+# address to its OWN Thunder release (amp-thunder-extension-service.amp-thunder),
+# but the platform IdP is neutral infrastructure with its own name (env.sh
+# THUNDER_RELEASE / THUNDER_NS), so each of them is set from THUNDER_INTERNAL_URL
+# — a chart left on its default here dials a Service that does not exist:
+#
+#   keyManager.jwksUrl     where amp-api fetches the IdP's signing keys
+#   oidc.tokenUrl          where amp-api mints its own client-credentials tokens
+#   thunder.resolveToHost  the host:port amp-api actually dials for admin calls
+#                          (baseURL's host is still sent as the Host header)
+#
+# Helm accepts an unknown --set path without complaint, so every one of these
+# paths was verified by rendering the chart and grepping for the old address
+# (none left) and the new one. Repeat that check when bumping AMP_VERSION.
 #
 # thunderHostBaseDomain is deliberately LEFT at amp.localhost: it builds the
 # per-environment Thunder hostnames, and that tier is not shared.
+# AMP_API_IMAGE_TAG (and optionally AMP_API_IMAGE_REPOSITORY), when set, run a
+# locally built amp-api instead of the release image — for exercising an
+# unreleased Agent Manager change against this cluster. The image has to be in
+# the k3d node already (`k3d image import <ref> -c ${CLUSTER_NAME}`); the chart
+# pulls IfNotPresent, so a tag that exists nowhere else would otherwise hang in
+# ImagePullBackOff. The migration Job runs the same binary, so it gets the same
+# image.
+amp_image_args=()
+if [ -n "${AMP_API_IMAGE_TAG:-}" ]; then
+    echo "   ℹ️  AMP_API_IMAGE_TAG set — amp-api runs ${AMP_API_IMAGE_REPOSITORY:-ghcr.io/wso2/amp-api}:${AMP_API_IMAGE_TAG}"
+    amp_image_args=(
+        --set "agentManagerService.image.tag=${AMP_API_IMAGE_TAG}"
+        --set "dbMigration.image.tag=${AMP_API_IMAGE_TAG}"
+    )
+    if [ -n "${AMP_API_IMAGE_REPOSITORY:-}" ]; then
+        amp_image_args+=(
+            --set "agentManagerService.image.repository=${AMP_API_IMAGE_REPOSITORY}"
+            --set "dbMigration.image.repository=${AMP_API_IMAGE_REPOSITORY}"
+        )
+    fi
+fi
 helm upgrade --install amp "${AMP_REGISTRY}/wso2-agent-manager" \
     --version "${AMP_VERSION}" \
     --namespace "$AMP_NS" --create-namespace --kube-context "$CLUSTER_CONTEXT" \
+    ${amp_image_args[@]+"${amp_image_args[@]}"} \
     --set console.config.instrumentationUrl="http://default-default.gateway.localhost:19080/otel" \
     --set agentManagerService.config.amObserverPublicURL="http://traces.amp.localhost:11080" \
     --set "agentManagerService.config.keyManager.issuer=${PUBLIC_THUNDER_URL}" \
     --set "agentManagerService.config.thunder.baseURL=${PUBLIC_THUNDER_URL}" \
     --set "console.config.auth.baseUrl=${PUBLIC_THUNDER_URL}" \
+    --set "agentManagerService.config.keyManager.jwksUrl=${THUNDER_INTERNAL_JWKS_URL}" \
+    --set "agentManagerService.config.oidc.tokenUrl=${THUNDER_INTERNAL_TOKEN_URL}" \
+    --set "agentManagerService.config.thunder.resolveToHost=${THUNDER_SVC_HOST}:8090" \
     --timeout 30m
 echo "⏳ Waiting for Agent Manager..."
 kubectl rollout status statefulset/amp-postgresql -n "$AMP_NS" --context "$CLUSTER_CONTEXT" --timeout=600s
 kubectl wait -n "$AMP_NS" --context "$CLUSTER_CONTEXT" \
     --for=condition=available --timeout=600s deployment/amp-api deployment/amp-console
 echo "   ✅ amp-api + amp-console ready"
+
+# THUNDER_RELEASE_PREFIX, when set, is the leading segment of every environment
+# Thunder's release name (thunder-naming.sh; the platform's target is `thunder`,
+# see design/two-tier-thunder.md). amp-api derives the same names to find those
+# instances, so it has to be told the same prefix — IDP_RELEASE_PREFIX, read by
+# the agent-manager build that carries the configurable prefix. The published
+# ${AMP_VERSION} chart schema predates that value, so it cannot go through
+# --set; it is set on the Deployment after the install. A release image that
+# does not read the variable ignores it, and its instance lookups then fail
+# against renamed releases — which is the upstream ask this knob stands in for.
+if [ -n "${THUNDER_RELEASE_PREFIX:-}" ]; then
+    echo "   ℹ️  THUNDER_RELEASE_PREFIX=${THUNDER_RELEASE_PREFIX} — telling amp-api (IDP_RELEASE_PREFIX)"
+    kubectl set env deployment/amp-api -n "$AMP_NS" --context "$CLUSTER_CONTEXT" \
+        "IDP_RELEASE_PREFIX=${THUNDER_RELEASE_PREFIX}" >/dev/null
+    kubectl rollout status deployment/amp-api -n "$AMP_NS" --context "$CLUSTER_CONTEXT" --timeout=300s
+fi
 
 echo ""
 echo "8️⃣  Observability extension (amp-observer)"
@@ -298,12 +374,17 @@ helm upgrade observability-plane \
 # auth.issuer defaults to the chart's own thunder.amp.localhost. It is what
 # amp-observer validates `iss` against, so it has to name the IdP this
 # deployment actually publishes — same move as the three values on the
-# agent-manager chart above.
+# agent-manager chart above. Its two in-cluster addresses (where the observer
+# mints its own token, and where it fetches the signing keys) default to the
+# chart's own Thunder release and move to the platform IdP for the same reason
+# as the agent-manager chart's (step 7).
 helm upgrade --install amp-observability-traces \
     "${AMP_REGISTRY}/wso2-amp-observability-extension" \
     --version "${AMP_VERSION}" \
     --namespace "$OBS_NS" --create-namespace --kube-context "$CLUSTER_CONTEXT" \
     --set "amObserver.auth.issuer=${PUBLIC_THUNDER_URL}" \
+    --set "amObserver.auth.jwksUrl=${THUNDER_INTERNAL_JWKS_URL}" \
+    --set "amObserver.observer.idpTokenUrl=${THUNDER_INTERNAL_TOKEN_URL}" \
     --timeout 15m
 if kubectl get deployment amp-observer -n "$OBS_NS" &>/dev/null; then
     kubectl wait -n "$OBS_NS" --context "$CLUSTER_CONTEXT" \
@@ -325,11 +406,18 @@ eval_args=()
 node_cidr="$(docker network inspect "k3d-${CLUSTER_NAME}" \
     --format '{{ (index .IPAM.Config 0).Subnet }}' 2>/dev/null || true)"
 [ -n "$node_cidr" ] && eval_args=(--set "networkPolicy.evaluationJob.apiServer.cidrs[0]=${node_cidr}")
+# The eval job mints its publisher token at the platform IdP, and the same
+# NetworkPolicy that scopes its egress allows the IdP by NAMESPACE. Both
+# default to the chart's own Thunder release; both follow env.sh here. Missing
+# the namespace one is the silent failure: the token request is simply denied
+# egress and the job times out with nothing naming the policy.
 helm upgrade --install amp-evaluation-extension \
     "${AMP_REGISTRY}/wso2-amp-evaluation-extension" \
     --version "${AMP_VERSION}" \
     --namespace "$WP_NS" --create-namespace --kube-context "$CLUSTER_CONTEXT" \
     ${eval_args[@]+"${eval_args[@]}"} \
+    --set "ampEvaluation.publisher.idpTokenUrl=${THUNDER_INTERNAL_TOKEN_URL}" \
+    --set "networkPolicy.evaluationJob.idp.namespace=${THUNDER_NS}" \
     --timeout 10m
 echo "   ✅ evaluation extension"
 

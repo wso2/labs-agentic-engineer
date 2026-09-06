@@ -57,7 +57,7 @@ source "$SCRIPT_DIR/utils.sh"
 AEP_RESOURCE_DIR="${SCRIPT_DIR}/../single-cluster/thunder-resources"
 BOOTSTRAP_CM="aep-thunder-bootstrap"
 
-echo "=== Platform IdP (ThunderID via wso2-amp-thunder-extension ${AMP_VERSION}) ==="
+echo "=== Platform IdP ${THUNDER_RELEASE} (ThunderID via wso2-amp-thunder-extension ${AMP_VERSION}) ==="
 
 load_public_urls "$SCRIPT_DIR/../.env"
 
@@ -79,13 +79,22 @@ THUNDER_HOSTNAME="${PUBLIC_THUNDER_HOST}"
 echo ""
 echo "1️⃣  Merging bootstrap resources (Agent Manager's + AEP's)"
 
-# Render Agent Manager's chart with the SAME overrides the install below uses,
-# so the documents in the ConfigMap agree with the release they bootstrap.
+# Render Agent Manager's chart to READ the bootstrap documents it ships.
+#
+# Only the two overrides that change those documents are passed. The install
+# below passes eleven (THUNDER_SET_ARGS), and the difference is not laziness:
+# most of them describe the RELEASE (public URL, gate client, admin password)
+# rather than the bundle, and the three that would matter here name the merged
+# ConfigMap this step is being run to produce — they cannot exist yet. The one
+# value that does leak into the documents and cannot be passed, Agent Manager's
+# hardcoded Thunder public URL, is rewritten by hand further down; see the
+# comment there for why that is the honest fix rather than a redeclaration.
 AM_RENDER="$(mktemp)"
 trap 'rm -f "$AM_RENDER"' EXIT
-helm template amp-thunder-extension "${AMP_REGISTRY}/wso2-amp-thunder-extension" \
+helm template "${THUNDER_RELEASE}" "${AMP_REGISTRY}/wso2-amp-thunder-extension" \
     --version "${AMP_VERSION}" \
     --namespace "${THUNDER_NS}" \
+    --set-string "thunder.fullnameOverride=${THUNDER_RELEASE}" \
     --set "thunder.ocIngress.hostname=${THUNDER_HOSTNAME}" \
     > "$AM_RENDER"
 
@@ -135,7 +144,7 @@ PY
 PUBLIC_CONSOLE_URL="$PUBLIC_CONSOLE_URL" PUBLIC_THUNDER_URL="$PUBLIC_THUNDER_URL" \
 BOOTSTRAP_CM="$BOOTSTRAP_CM" THUNDER_NS="$THUNDER_NS" \
 python3 - "$AM_RENDER" "$AEP_RENDERED_DIR" "$MERGED_CM" "$BOOTSTRAP_FILES_JSON" <<'PY'
-import json, os, pathlib, sys
+import json, os, pathlib, re, sys
 import yaml
 
 am_render, aep_dir, out_cm, out_files = sys.argv[1:5]
@@ -177,11 +186,93 @@ if am_public != our_public:
             rewritten += 1
     print(f"   rewrote Agent Manager's Thunder public URL in {rewritten} document(s) "
           f"-> {our_public}")
+am_names = set(data)
 for path in sorted(pathlib.Path(aep_dir).glob("*.yaml")):
     if path.name in data:
         sys.exit(f"AEP bootstrap file {path.name} collides with an Agent Manager "
                  f"document of the same name — renumber it (AEP uses 80+)")
     data[path.name] = path.read_text()
+
+# ── Compose the server_config singletons ────────────────────────────────────
+# ThunderID keeps exactly ONE server_config per name: a redeclaration replaces
+# it, so whichever product's document imports last owns the whole value. Three
+# of them are server-wide — `cors`, `defaultResourceServer`, `csp` — and none of
+# them belongs to a publisher. The platform composes each one instead: AEP's
+# bundle carries a document that sorts AFTER Agent Manager's, and the value that
+# lands in it is computed here. No publisher's file is the last word.
+#
+# What "composed" means differs per singleton, because what each product knows
+# differs. CORS is a union — each product knows its own browser origins, and the
+# result is a superset that cannot drop one. The other two are ADOPTED: the
+# value is Agent Manager's, unchanged, because changing the platform IdP's
+# default resource server or its CSP would change amp-console and amp-api
+# behaviour. The point of owning them is the ownership, not the value.
+def load_doc(body):
+    try:
+        return yaml.safe_load(body)
+    except yaml.YAMLError:
+        return None
+
+# Everything above the first non-comment line of a document: the file's own
+# explanation of what it is, which survives having its value rewritten.
+HEADER = re.compile(r'\A(?:#[^\n]*\n|[ \t]*\n)*')
+
+def singleton(config_name):
+    """The Agent Manager documents and the one AEP document for a server_config.
+
+    Guards both halves of the contract: AEP publishes exactly one document per
+    singleton, and it must sort after every Agent Manager document of the same
+    name or the composed value is the one that gets overwritten on import.
+    """
+    docs = {n: d for n, d in ((n, load_doc(b)) for n, b in data.items())
+            if isinstance(d, dict)
+            and d.get("resource_type") == "server_config"
+            and d.get("name") == config_name}
+    am = [n for n in sorted(docs) if n in am_names]
+    aep = [n for n in sorted(docs) if n not in am_names]
+    if len(aep) != 1:
+        sys.exit(f"expected exactly one AEP `{config_name}` server_config in "
+                 f"thunder-resources/, found {aep or 'none'}")
+    if am and aep[0] < max(am):
+        sys.exit(f"{aep[0]} must sort after Agent Manager's {max(am)} or the composed "
+                 f"`{config_name}` is overwritten on import")
+    return am, aep[0], docs
+
+def emit(name, doc):
+    """Rewrite an AEP document's body with the composed value, header kept."""
+    header = HEADER.match(data[name]).group(0)
+    data[name] = header + yaml.safe_dump(doc, default_flow_style=False,
+                                         sort_keys=False, width=10**6)
+
+# `cors` — the union, Agent Manager's origins first, de-duplicated.
+am_cors, cors_file, cors_docs = singleton("cors")
+composed_cors = cors_docs[cors_file]
+origins = []
+for name in am_cors + [cors_file]:
+    for origin in (cors_docs[name].get("value") or {}).get("allowedOrigins") or []:
+        if origin not in origins:
+            origins.append(origin)
+composed_cors.setdefault("value", {})["allowedOrigins"] = origins
+emit(cors_file, composed_cors)
+print(f"   composed the CORS allow-list into {cors_file}: {len(origins)} origins "
+      f"from {len(am_cors)} Agent Manager document(s) + AEP's")
+
+# `defaultResourceServer` and `csp` — adopted from Agent Manager's declaration.
+# A singleton Agent Manager does not declare is DROPPED from the bundle: the
+# platform owns the document, not a policy of its own to fall back on.
+for config_name in ("defaultResourceServer", "csp"):
+    am_docs, aep_file, docs = singleton(config_name)
+    if not am_docs:
+        del data[aep_file]
+        print(f"   no Agent Manager `{config_name}` document — {aep_file} omitted")
+        continue
+    # The last-sorting one is the one that would have won on import.
+    adopted = docs[am_docs[-1]]
+    composed = docs[aep_file]
+    composed["value"] = adopted.get("value")
+    emit(aep_file, composed)
+    print(f"   composed `{config_name}` into {aep_file} from Agent Manager's "
+          f"{am_docs[-1]}")
 
 merged = {
     "apiVersion": "v1",
@@ -231,8 +322,8 @@ echo "2️⃣  Installing ${THUNDER_RELEASE}"
 # and reports success — the one failure mode worth calling out, because the
 # resulting cluster looks correctly configured and still refuses every
 # cross-origin call. The only thing that sets allowedOrigins is the `cors`
-# server_config bootstrap document; both products' origins are unioned in
-# thunder-resources/89-aep-cors-config.yaml.
+# server_config bootstrap document, which step 1 composes from Agent Manager's
+# declaration and AEP's (thunder-resources/89-platform-cors-config.yaml).
 #
 # THUNDER_FORCE_UPGRADE=1 re-drives an already-deployed release. Callers use it
 # to mean "the values changed, converge it" — apply_public_urls_to_cluster in
@@ -241,7 +332,16 @@ echo "2️⃣  Installing ${THUNDER_RELEASE}"
 # One list, used by BOTH the install and the bootstrap re-import below. They
 # have to render the same chart the same way, or the Job the re-import runs is
 # not the Job this release installed.
+# The chart is a wrapper around the `thunderid` subchart (alias `thunder`), and
+# the subchart names its objects the usual Helm way: `<release>` when the
+# release name contains the chart name, `<release>-thunder` otherwise. Every
+# address in this repo derives from `${THUNDER_RELEASE}-service` (env.sh), and the
+# wrapper's own HTTPS route points at that name too — so a release called
+# `platform-idp` would get a Deployment and Service named `platform-idp-thunder-*`
+# that nothing reaches. Pin the subchart's fullname to the release so the names
+# the scripts derive are the names the chart creates.
 THUNDER_SET_ARGS=(
+    --set-string "thunder.fullnameOverride=${THUNDER_RELEASE}"
     --set "thunder.ocIngress.hostname=${THUNDER_HOSTNAME}"
     --set "thunder.configuration.server.publicUrl=${PUBLIC_THUNDER_URL}"
     --set "thunder.configuration.jwt.issuer=${PUBLIC_THUNDER_URL}"
@@ -274,6 +374,27 @@ fi
 echo "⏳ Waiting for the platform IdP..."
 kubectl wait -n "${THUNDER_NS}" --context "${CLUSTER_CONTEXT}" \
     --for=condition=available --timeout=300s deployment --all
+
+# ── 2b. The IdP's HTTPS front, reachable in-cluster by its public name ──────
+# The chart also serves the IdP over TLS on a dedicated Gateway in the control
+# plane (Certificate `<release>-local-tls`, chained to the chart's root CA).
+# Environment Thunders — Agent Manager's second tier — trust this IdP as an
+# issuer and fetch its JWKS over HTTPS at the PUBLIC hostname; ThunderID accepts
+# nothing less for a trusted issuer. Two things make that work from a pod:
+#
+#   * the Certificate has to be issued — waited on here, so that a
+#     setup-agent-manager-env.sh run straight after this one does not race
+#     cert-manager. Agent Manager's own script used to wait on this object under
+#     its chart's default name; with the neutral release name it no longer finds
+#     it and reads the root CA directly, so this is where the wait now lives.
+#   * the public hostname has to resolve, inside the cluster, to that Gateway's
+#     Service rather than to the data-plane gateway (which has no 8443 for it).
+#     ensure_platform_idp_in_coredns (utils.sh) installs that rewrite.
+echo "⏳ Waiting for the IdP's TLS certificate..."
+kubectl wait -n openchoreo-control-plane --context "${CLUSTER_CONTEXT}" \
+    --for=condition=Ready --timeout=300s "certificate/${THUNDER_RELEASE}-local-tls" >/dev/null \
+    || echo "⚠️  certificate/${THUNDER_RELEASE}-local-tls not Ready — environment Thunders cannot trust this IdP until it is" >&2
+ensure_platform_idp_in_coredns
 
 # ── 3. Re-import the bootstrap when it changed ──────────────────────────────
 # ThunderID's setup Job is a `helm.sh/hook: pre-install` hook — pre-install
