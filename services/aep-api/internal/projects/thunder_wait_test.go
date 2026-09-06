@@ -44,11 +44,11 @@ const (
 	thunderWaitCallback = "http://web.local/callback"
 	thunderWaitPending  = "https://pending.invalid/callback"
 	// Known-good OC names: ExternalResourceName("proj","idp") /
-	// ExternalResourceBindingName("proj","idp","development").
+	// ExternalResourceBindingName("proj","idp","default").
 	// thunderWaitCRName is the Resource name on openchoreo.dev/resource, not
-	// the rendered object name r-<resource>-development-<hash8>.
+	// the rendered object name r-<resource>-default-<hash8>.
 	thunderWaitCRName      = "proj-idp"
-	thunderWaitBindingName = "proj-idp-development"
+	thunderWaitBindingName = "proj-idp-default"
 )
 
 // fakeThunderReader is a hand double of ThunderApplicationReader.

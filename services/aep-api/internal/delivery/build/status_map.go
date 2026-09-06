@@ -40,7 +40,7 @@ const (
 // while the run row two lines below read Cancelled, off the same database row.
 //
 // It stayed hidden while a cancel was hard to reach. Cancel is now honoured in
-// the planning phase too (ADR-0024), which makes a cancelled version the
+// the planning phase too (ADR-0027), which makes a cancelled version the
 // ordinary outcome of the button rather than a rarity.
 //
 // A BLOCKED run still reads as failed, and that is deliberate rather than

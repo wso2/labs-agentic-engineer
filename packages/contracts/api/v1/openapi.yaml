@@ -1481,12 +1481,12 @@ paths:
         schema:
           description: Dependency name
           type: string
-      - description: 'Environment (default: development)'
+      - description: 'Environment (defaults to "default")'
         explode: false
         in: query
         name: environment
         schema:
-          description: 'Environment (default: development)'
+          description: 'Environment (defaults to "default")'
           type: string
       responses:
         '200':
@@ -1627,7 +1627,7 @@ paths:
         required: true
         schema:
           type: string
-      - description: 'Environment (default: development)'
+      - description: 'Environment (defaults to "default")'
         in: query
         name: environment
         schema:
@@ -5571,7 +5571,7 @@ components:
       additionalProperties: false
       properties:
         environments:
-          description: 'Environments to provision (default: [development])'
+          description: 'Environments to provision (defaults to ["default"])'
           items:
             type: string
           type: array

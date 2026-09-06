@@ -145,7 +145,7 @@ func (s *Service) ensureRolesGate(ctx context.Context, orgID, projectID, tag str
 		return &ProvisionFailure{Dependency: rolesGate, Reason: err.Error()}
 	}
 
-	if perr := s.publishTestUserLogins(ctx, orgID, projectID, number, outcome.Credentials); perr != nil {
+	if perr := s.publishTestUserLogins(ctx, orgID, projectID, number, outcome); perr != nil {
 		return perr
 	}
 
@@ -274,11 +274,12 @@ func (s *Service) mintRolesGate(ctx context.Context, orgID, projectID, tag strin
 // runs — like every other gate, it says what is about to happen.
 func rolesGatePendingBody() string {
 	return "The roles and test users this version's design declares are created on the " +
-		"platform identity provider before validation runs, so a role-gated acceptance " +
-		"criterion is judged against a real sign-in.\n\n" +
+		"identity provider of the environment this version is validated in, before validation " +
+		"runs, so a role-gated acceptance criterion is judged against a real sign-in.\n\n" +
 		"The platform resolves this gate itself — no agent works it. Roles and test users " +
-		"are SHARED across projects: a role another project already uses is reused rather " +
-		"than duplicated, and one the platform did not create is left untouched.\n\n" +
+		"are SHARED across this organisation's projects in that environment: a role another " +
+		"project already uses is reused rather than duplicated, and one the platform did not " +
+		"create is left untouched.\n\n" +
 		"When this gate closes it posts each test user's login as a comment — that comment is " +
 		"where the validation agent reads the credentials it signs in with. The same passwords " +
 		"are readable from the project's **Security → Roles & users** panel."
@@ -290,6 +291,12 @@ func rolesGatePendingBody() string {
 func rolesGateClosingComment(outcome RolesEnsureOutcome) string {
 	var b strings.Builder
 	b.WriteString("Roles and test users provisioned.\n\n")
+	// WHICH identity provider, before what was done to it. There is one per
+	// environment, so "a role called Viewer was created" is only half a fact.
+	if outcome.Issuer != "" {
+		fmt.Fprintf(&b, "On `%s`, the identity provider of the **%s** environment.\n\n",
+			outcome.Issuer, outcome.Environment)
+	}
 	b.WriteString(outcome.Summary)
 	if outcome.Refusals {
 		b.WriteString("\n\nA refusal is not a failure — the build continues — but it needs a " +
@@ -313,11 +320,12 @@ func rolesGateClosingComment(outcome RolesEnsureOutcome) string {
 //
 // A project with no accounts publishes nothing and that is not a failure — every
 // role it declares is one the platform does not own, which the summary says.
-func (s *Service) publishTestUserLogins(ctx context.Context, orgID, projectID string, number int, creds []RolesCredential) *ProvisionFailure {
+func (s *Service) publishTestUserLogins(ctx context.Context, orgID, projectID string, number int, outcome RolesEnsureOutcome) *ProvisionFailure {
+	creds := outcome.Credentials
 	if len(creds) == 0 {
 		return nil
 	}
-	if err := s.issues.CommentIssue(ctx, orgID, projectID, number, renderTestUserLogins(creds)); err != nil {
+	if err := s.issues.CommentIssue(ctx, orgID, projectID, number, renderTestUserLogins(outcome)); err != nil {
 		// Redacted on both paths: a client error may quote what it sent, and a
 		// password must not reach a log line or a run's failure reason.
 		reason := redactPasswords(err.Error(), creds)
@@ -355,11 +363,18 @@ func redactPasswords(msg string, creds []RolesCredential) string {
 // the marker, then a table whose columns and cold-start values SKILL.md
 // mirrors, then prose saying what these accounts are.
 //
+// It also names the ISSUER. There is one identity provider per environment now,
+// so a username and password on their own do not say where to sign in — and the
+// same username on another environment is a different account with a different
+// password. The agent reading this comment needs the address as much as the
+// credential.
+//
 // No escaping: a username is `[a-z0-9][a-z0-9._-]*` (securityspec) and a generated
 // password is drawn from an alphabet that excludes the backtick and the pipe, so
 // neither can break out of its cell. The identity domain's
 // TestGeneratedPasswordCarriesNoMarkdownDelimiter pins the password half.
-func renderTestUserLogins(creds []RolesCredential) string {
+func renderTestUserLogins(outcome RolesEnsureOutcome) string {
+	creds := outcome.Credentials
 	if len(creds) == 0 {
 		return ""
 	}
@@ -380,6 +395,12 @@ func renderTestUserLogins(creds []RolesCredential) string {
 			coldStart = "yes"
 		}
 		fmt.Fprintf(&b, "| `%s` | %s | %s | %s |\n", c.Username, password, c.Role, coldStart)
+	}
+	if outcome.Issuer != "" {
+		fmt.Fprintf(&b, "\nSign in at `%s` — the identity provider of the **%s** environment. "+
+			"These logins are valid there and NOWHERE else: every environment has its own "+
+			"identity provider, and the same username on another one is a different account.\n",
+			outcome.Issuer, outcome.Environment)
 	}
 	b.WriteString("\n**These are disposable test accounts for automated agents, not people.** " +
 		"The validation agent signs in as one to judge a role-gated acceptance criterion, and it " +

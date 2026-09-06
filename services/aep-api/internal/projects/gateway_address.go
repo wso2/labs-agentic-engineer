@@ -36,14 +36,31 @@ import (
 // address, and the consumer picks the lane. The direct address stays: a genuine
 // backend-to-backend caller may still want it.
 
-// DefaultAPIGatewayHost is the in-cluster host:port of the API Platform gateway
-// runtime — the hop that terminates authentication for a managed API.
+// APIGatewayPort is the API Platform gateway runtime Service's plain-HTTP port
+// (22894 is its HTTPS one). It is the gateway-extension chart's convention, not
+// a choice made here.
+const APIGatewayPort = "22893"
+
+// APIGatewayHost derives the in-cluster host:port of the gateway runtime that
+// terminates authentication for a managed API — the ONE per (org, environment).
 //
-// It MIRRORS the `api-configuration` ClusterTrait's Backend template, which
-// points its static host at the same service. The two must move together: this
-// is the address, that is the routing, and a consumer proxying here relies on
-// both agreeing. Overridable via API_GATEWAY_HOST for a data plane that names its
-// gateway differently.
+// There is no cluster-wide gateway to fall back on. A gateway is where an API's
+// authentication is terminated, and an environment's APIs are terminated against
+// that environment's identity tier and no other, so the platform runs one
+// gateway per environment:
+//
+//	APIGateway      api-platform-<ns>-<env>       in namespace <ns>-<env>
+//	runtime Service api-platform-<ns>-<env>-gw-gateway-gateway-runtime
+//
+// componentNamespace is the ORG — the OpenChoreo namespace components are
+// created in — which is also the first segment of the gateway's namespace.
+//
+// This MIRRORS the `api-configuration` ClusterTrait's Backend template, which
+// points its static host at the same service, and the names
+// deployments/scripts/setup-environment-gateway.sh installs. The three must move
+// together: this is the address, that is the routing, and a consumer proxying
+// here relies on both agreeing. Overridable via API_GATEWAY_HOST for a data
+// plane that names its gateway differently.
 //
 // FULLY QUALIFIED on purpose, unlike the trait's `<service>.<namespace>` short
 // form. The consumer here is nginx, and nginx's `resolver` queries the name
@@ -54,11 +71,19 @@ import (
 //
 // The `-gw-` infix is the API Platform gateway-operator's own naming: from
 // operator 0.11.0 the child Helm release it creates for an APIGateway is named
-// "<apigateway-name>-gw", so every resource under it gains that segment. Under
-// operator 0.6.0 the same service was
-// "api-platform-default-gateway-gateway-runtime". Renaming the APIGateway CR
-// changes this name too — see deployments/manifests/api-platform/api-gateway.yaml.
-const DefaultAPIGatewayHost = "api-platform-default-gw-gateway-gateway-runtime.openchoreo-data-plane.svc.cluster.local:8080"
+// "<apigateway-name>-gw", so every resource under it gains that segment.
+//
+// An empty componentNamespace or environment yields "" rather than a name with
+// a hole in it: no address at all leaves the consumer on the direct-Service
+// lane, where a wrong one would 502 every call.
+func APIGatewayHost(componentNamespace, environment string) string {
+	if componentNamespace == "" || environment == "" {
+		return ""
+	}
+	gateway := "api-platform-" + componentNamespace + "-" + environment
+	return gateway + "-gw-gateway-gateway-runtime." +
+		componentNamespace + "-" + environment + ".svc.cluster.local:" + APIGatewayPort
+}
 
 // ProtectedSibling is one component-kind dependency whose provider sits behind
 // the API gateway, resolved to everything needed to address it there.
@@ -130,10 +155,23 @@ func ProtectedSiblingsOf(design *spec.DesignFile, comp spec.DesignComponent) []P
 }
 
 // GatewayEnvVars projects one `<DEP>_GATEWAY_URL` pod env var per protected
-// sibling. An empty gatewayHost or no siblings yields nothing, which is the
-// correct answer for a component that consumes no protected API.
-func GatewayEnvVars(gatewayHost, environment, componentNamespace string, siblings []ProtectedSibling) []openchoreo.WorkflowEnvVarRef {
-	if gatewayHost == "" || environment == "" || componentNamespace == "" || len(siblings) == 0 {
+// sibling. No siblings yields nothing, which is the correct answer for a
+// component that consumes no protected API.
+//
+// hostOverride is the deployment's API_GATEWAY_HOST. Set, it WINS for every
+// environment — the escape hatch for a data plane that names its gateway
+// differently. Empty (the normal case) derives the address per (org,
+// environment), because the gateway is per-environment and one configured
+// literal cannot address two of them.
+func GatewayEnvVars(hostOverride, environment, componentNamespace string, siblings []ProtectedSibling) []openchoreo.WorkflowEnvVarRef {
+	if len(siblings) == 0 {
+		return nil
+	}
+	gatewayHost := hostOverride
+	if gatewayHost == "" {
+		gatewayHost = APIGatewayHost(componentNamespace, environment)
+	}
+	if gatewayHost == "" || environment == "" || componentNamespace == "" {
 		return nil
 	}
 	out := make([]openchoreo.WorkflowEnvVarRef, 0, len(siblings))

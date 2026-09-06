@@ -225,11 +225,11 @@ func goldenWorkflowRun() gen.WorkflowRun {
 
 func goldenDeployment() gen.Deployment {
 	return gen.Deployment{
-		Name:          "hello-world-api-hello-api-development",
-		Environment:   "development",
+		Name:          "hello-world-api-hello-api-default",
+		Environment:   "default",
 		ReleaseName:   "hello-world-api-hello-api-77767bbd6",
 		ComponentName: "hello-api",
-		EndpointURL:   "http://development-default.openchoreoapis.localhost:19080/hello-world-api-hello-api-http",
+		EndpointURL:   "http://default-default.openchoreoapis.localhost:19080/hello-world-api-hello-api-http",
 		CreatedAt:     "2026-07-01T06:30:57Z",
 		Status:        "Ready",
 	}

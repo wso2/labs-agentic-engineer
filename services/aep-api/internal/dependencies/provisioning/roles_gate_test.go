@@ -632,3 +632,84 @@ func TestRolesGate_LabelsAreAPlatformGateNotADependencyGate(t *testing.T) {
 		t.Errorf("gateDepFromLabels read a dependency out of %v", labels)
 	}
 }
+
+// The published logins name the ISSUER they are valid at.
+//
+// There is one identity provider per environment now, so a username and a
+// password on their own do not say where to sign in — and the same username on
+// another environment is a different account with a different password. An agent
+// handed the table without the address has to guess, and every guess but one is
+// a failed sign-in it will report as a broken application.
+func TestRolesGate_PublishedLoginsNameTheIssuer(t *testing.T) {
+	const issuer = "http://default-idp.amp.localhost:8080"
+	roles := &fakeRolesEnsurer{
+		declared: true,
+		outcome: RolesEnsureOutcome{
+			Summary:     "- Roles created: Trainer",
+			Issuer:      issuer,
+			Environment: "default",
+			Credentials: []RolesCredential{
+				{Username: "test-trainer", Password: "Aep1!gamma-delta_2", Role: "Trainer"},
+			},
+		},
+	}
+	issues := newFakeIssues(nil)
+
+	if f := newRolesGateService(roles, issues).ensureRolesGate(
+		context.Background(), "acme", "workouts", "v1", 7); f != nil {
+		t.Fatalf("unexpected failure: %+v", f)
+	}
+
+	var credentialComment string
+	for _, body := range allComments(issues) {
+		if strings.Contains(body, sourcecontrol.PublishedCredentialsMarker) {
+			credentialComment = body
+		}
+	}
+	if credentialComment == "" {
+		t.Fatal("no credentials comment was posted")
+	}
+	if !strings.Contains(credentialComment, issuer) {
+		t.Fatalf("the published logins do not name the issuer they are valid at:\n%s", credentialComment)
+	}
+	if !strings.Contains(credentialComment, "default") {
+		t.Fatalf("the published logins do not name the environment:\n%s", credentialComment)
+	}
+
+	// The closing comment names it too — that one is the durable record on the
+	// milestone of WHERE this version's roles were created.
+	namedInClose := false
+	for _, body := range issues.closed {
+		if strings.Contains(body, issuer) {
+			namedInClose = true
+		}
+	}
+	if !namedInClose {
+		t.Fatalf("no closing comment names the identity provider: %v", issues.closed)
+	}
+}
+
+// A gate whose ensure could not name an issuer still publishes the table: the
+// accounts exist and the logins work, and withholding them over a missing
+// address would fail a build whose credentials are fine.
+func TestRolesGate_PublishesLoginsEvenWithNoIssuer(t *testing.T) {
+	roles := &fakeRolesEnsurer{
+		declared: true,
+		outcome: RolesEnsureOutcome{
+			Summary:     "- Roles created: Trainer",
+			Credentials: []RolesCredential{{Username: "test-trainer", Password: "Aep1!x", Role: "Trainer"}},
+		},
+	}
+	issues := newFakeIssues(nil)
+
+	if f := newRolesGateService(roles, issues).ensureRolesGate(
+		context.Background(), "acme", "workouts", "v1", 7); f != nil {
+		t.Fatalf("unexpected failure: %+v", f)
+	}
+	for _, body := range allComments(issues) {
+		if strings.Contains(body, sourcecontrol.PublishedCredentialsMarker) {
+			return
+		}
+	}
+	t.Fatal("no credentials comment was posted")
+}

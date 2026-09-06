@@ -75,7 +75,7 @@ const ocJobNameHashLen = 8
 //
 // Coding-agent cycles always bind into DevEnvironmentName, so the decoration
 // width is fixed here rather than parameterised.
-const CodingAgentComponentNameBudget = k8sname.MaxLabelValueLen - (1 + len(DevEnvironmentName) + 1 + ocJobNameHashLen) // 42
+const CodingAgentComponentNameBudget = k8sname.MaxLabelValueLen - (1 + len(DevEnvironmentName) + 1 + ocJobNameHashLen) // 46
 
 // minCodingAgentRunNameLen is "ca-" + an 8-char digest — the shortest Bounded
 // output that still carries the ca- watcher discriminator.

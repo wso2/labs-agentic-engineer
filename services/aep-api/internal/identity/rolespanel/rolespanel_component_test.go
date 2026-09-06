@@ -42,11 +42,14 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/componenttest"
 )
 
-// newPanel assembles the real handler chain over the two fakes.
+// newPanel assembles the real handler chain over the two fakes. The directory
+// arrives through the resolver, because that is how the panel gets one: there is
+// no cluster-wide directory any more, only the one serving the caller's org and
+// the environment its version is validated in.
 func newPanel(t *testing.T, dir identity.Directory, store identity.Store) *componenttest.Harness {
 	t.Helper()
 	handlers, err := identityhttpapi.New(identity.Deps{
-		Panel: identity.NewPanelService(dir, store),
+		Panel: identity.NewPanelService(newFakeTargets(dir), store),
 	})
 	if err != nil {
 		t.Fatalf("assemble identity domain: %v", err)
@@ -204,7 +207,7 @@ func TestPanel_ProjectFenceRefusesAnotherProjectsAccount(t *testing.T) {
 			if len(dir.deleted) != 0 {
 				t.Errorf("%s across the fence still deleted a directory account", tc.name)
 			}
-			if got := store.passwords["billing-bot"]; got != "Aep1!secret" {
+			if got := store.storedPassword("billing-bot"); got != "Aep1!secret" {
 				t.Errorf("the other project's sealed password changed: %q", got)
 			}
 		})
@@ -353,9 +356,9 @@ func TestPanel_RotateWritesTheDirectoryAndReseals(t *testing.T) {
 	if got.RotatedAt == nil {
 		t.Errorf("rotate must stamp rotatedAt: %+v", got)
 	}
-	if store.passwords["support-bot"] != got.Password {
+	if store.storedPassword("support-bot") != got.Password {
 		t.Errorf("the sealed password is %q, the response says %q — they must agree",
-			store.passwords["support-bot"], got.Password)
+			store.storedPassword("support-bot"), got.Password)
 	}
 	if dir.passwordsSet["usr-support-bot"] != got.Password {
 		t.Errorf("the directory was written %q, the response says %q",
@@ -394,7 +397,7 @@ func TestPanel_RotateReportsAChangeItCouldNotRecord(t *testing.T) {
 	if dir.passwordsSet["usr-support-bot"] == "" {
 		t.Errorf("the test does not reach the hazard it claims to: the directory was never written")
 	}
-	if store.passwords["support-bot"] != "Aep1!old" {
+	if store.storedPassword("support-bot") != "Aep1!old" {
 		t.Errorf("the seal must be unchanged after a failed store write")
 	}
 }
@@ -425,13 +428,13 @@ func TestPanel_DeleteRemovesTheAccountNotTheRole(t *testing.T) {
 	if len(dir.deleted) != 1 || dir.deleted[0] != "usr-support-bot" {
 		t.Errorf("directory deletes = %v, want exactly the account", dir.deleted)
 	}
-	if _, still := store.testUsers["support-bot"]; still {
+	if store.hasUser("support-bot") {
 		t.Errorf("the platform's record of the account survived the delete")
 	}
 	if _, gone := dir.groups["support agent"]; !gone {
 		t.Fatalf("THE ROLE WAS DELETED — roles are shared and must be left standing")
 	}
-	if _, gone := store.roles["support agent"]; !gone {
+	if !store.hasRole("Support Agent") {
 		t.Errorf("the platform's record of the role was dropped; only the account goes")
 	}
 }
@@ -444,8 +447,8 @@ func TestPanel_DeleteWarnsWhenOtherProjectsStillReference(t *testing.T) {
 		withOwnedUser("shared-bot", "Support Agent", "Aep1!old").
 		withRef("acme", "helpdesk", "shared-bot", "Support Agent").
 		withRef("acme", "billing", "shared-bot", "Support Agent").
-		// Another ORG's project counts toward the bare total, and its name is
-		// never disclosed.
+		// Another org's reference is on another org's environment directory, so
+		// it names a different account entirely and does NOT count.
 		withRef("globex", "portal", "shared-bot", "Support Agent")
 	dir := newFakeDirectory().withAccount("shared-bot")
 	h := newPanel(t, dir, store)
@@ -458,11 +461,52 @@ func TestPanel_DeleteWarnsWhenOtherProjectsStillReference(t *testing.T) {
 	if err := json.Unmarshal(resp.Body.Bytes(), &got); err != nil {
 		t.Fatalf("body: %v\n%s", err, resp.Body.String())
 	}
-	if !strings.Contains(got.Status, "2 other project") {
-		t.Errorf("the status must warn about the OTHER references (2 of them): %q", got.Status)
+	if !strings.Contains(got.Status, "1 other project") {
+		t.Errorf("the status must warn about the OTHER reference in this environment (1): %q", got.Status)
 	}
 	if strings.Contains(got.Status, "portal") || strings.Contains(got.Status, "billing") {
 		t.Errorf("the warning must be a bare count, never project names: %q", got.Status)
+	}
+}
+
+// An environment with NO identity provider bound to it yet degrades exactly like
+// an unreachable one: the platform's own record is still this project's truth,
+// and the console says "unknown" rather than "these accounts do not exist". It is
+// the only reason the resolver's pure Scope is a separate call from its
+// network-touching Resolve — without that split there would be no environment to
+// read the store's rows under.
+func TestPanel_UnboundEnvironmentDegradesTheRead(t *testing.T) {
+	t.Parallel()
+	store := newFakeStore().
+		withOwnedUser("support-bot", "Support Agent", "Aep1!old").
+		withRef("acme", "helpdesk", "support-bot", "Support Agent")
+	targets := newFakeTargets(newFakeDirectory())
+	targets.err = errors.New(`environment "default" of "acme" has no Thunder binding`)
+
+	handlers, err := identityhttpapi.New(identity.Deps{
+		Panel: identity.NewPanelService(targets, store),
+	})
+	if err != nil {
+		t.Fatalf("assemble identity domain: %v", err)
+	}
+	h := componenttest.New(t, componenttest.Options{Deps: edge.Deps{Identity: handlers}})
+
+	resp := h.AsOrg("acme").Get("/api/v1/projects/helpdesk/roles")
+	if resp.Code != 200 {
+		t.Fatalf("an unbound environment must NOT fail the read: got %d body=%s", resp.Code, resp.Body.String())
+	}
+	view := decodeView(t, resp.Body.String())
+	if view.DirectoryAvailable {
+		t.Errorf("directoryAvailable must be false when no identity provider is bound")
+	}
+	if len(view.TestUsers) != 1 || !view.TestUsers[0].Owned {
+		t.Fatalf("the platform's own record must survive: %+v", view.TestUsers)
+	}
+
+	// A WRITE refuses instead of degrading: there is nothing to write to, and a
+	// rotate that reported success would leave a credential nobody can use.
+	if code := h.AsOrg("acme").Post("/api/v1/projects/helpdesk/roles/test-users/support-bot/rotate", "").Code; code == 200 {
+		t.Errorf("rotate succeeded with no identity provider bound")
 	}
 }
 

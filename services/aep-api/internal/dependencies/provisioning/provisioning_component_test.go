@@ -346,8 +346,8 @@ func TestProvisioningComponent_ListExternalResources(t *testing.T) {
 			cells: map[string]map[string][]provisioning.EnvCell{
 				"acme": {
 					"stripe": {
-						{Environment: "development", Key: "api_key", Status: "configured", Value: "sk_live"},
-						{Environment: "development", Key: "region", Status: "configured", Value: "us"},
+						{Environment: "default", Key: "api_key", Status: "configured", Value: "sk_live"},
+						{Environment: "default", Key: "region", Status: "configured", Value: "us"},
 						{Environment: "production", Key: "api_key", Status: "unset"},
 						{Environment: "production", Key: "region", Status: "unset"},
 					},
@@ -356,7 +356,7 @@ func TestProvisioningComponent_ListExternalResources(t *testing.T) {
 			instances: map[string]map[string][]provisioning.ResourceInstance{
 				"acme": {
 					"stripe": {
-						{Project: "shop", Environment: "development", Status: "Ready"},
+						{Project: "shop", Environment: "default", Status: "Ready"},
 					},
 				},
 			},
@@ -415,17 +415,17 @@ func TestProvisioningComponent_ListExternalResources(t *testing.T) {
 		if secretByKey[c.Key] && c.Value != "" {
 			t.Fatalf("secret cell must not carry value: %+v", c)
 		}
-		if c.Key == "region" && c.Environment == "development" {
+		if c.Key == "region" && c.Environment == "default" {
 			regionDev = c
 		}
 	}
 	if regionDev == nil || regionDev.Value != "us" {
-		t.Fatalf("plain region development cell = %+v, want value us", regionDev)
+		t.Fatalf("plain region default cell = %+v, want value us", regionDev)
 	}
 	if len(stripe.ResourceDocs) != 1 || stripe.ResourceDocs[0].Type != gen.ResourceDocPointerDTOTypeOpenapi || stripe.ResourceDocs[0].URL != "https://example.com/openapi.yaml" {
 		t.Errorf("resourceDocs = %+v", stripe.ResourceDocs)
 	}
-	if len(stripe.Instances) != 1 || stripe.Instances[0].Project != "shop" || stripe.Instances[0].Environment != "development" || stripe.Instances[0].Status != "Ready" {
+	if len(stripe.Instances) != 1 || stripe.Instances[0].Project != "shop" || stripe.Instances[0].Environment != "default" || stripe.Instances[0].Status != "Ready" {
 		t.Errorf("instances = %+v", stripe.Instances)
 	}
 
@@ -452,7 +452,7 @@ func TestProvisioningComponent_List_RegisteredWithoutPlane_SynthesizesEnvCells(t
 			},
 			ConsumptionInstructions: "Call api.github.com with Bearer GITHUB_TOKEN.",
 		}}},
-		Environments: &cEnvs{names: []string{"development"}},
+		Environments: &cEnvs{names: []string{"default"}},
 		Design:       cDesign{},
 		Projects:     cProjects{},
 	})
@@ -470,10 +470,10 @@ func TestProvisioningComponent_List_RegisteredWithoutPlane_SynthesizesEnvCells(t
 		t.Fatalf("resources = %+v, want github", got)
 	}
 	if len(got[0].EnvCells) != 1 {
-		t.Fatalf("envCells = %#v, want 1 synthesized cell (GITHUB_TOKEN × development)", got[0].EnvCells)
+		t.Fatalf("envCells = %#v, want 1 synthesized cell (GITHUB_TOKEN × default)", got[0].EnvCells)
 	}
 	cell := got[0].EnvCells[0]
-	if cell.Key != "GITHUB_TOKEN" || cell.Environment != "development" || cell.Status != gen.EnvValueCellDTOStatusConfigured {
+	if cell.Key != "GITHUB_TOKEN" || cell.Environment != "default" || cell.Status != gen.EnvValueCellDTOStatusConfigured {
 		t.Fatalf("synthesized cell = %+v", cell)
 	}
 	if cell.Value != "" {
@@ -526,7 +526,7 @@ func TestProvisioningComponent_DependencyStatus(t *testing.T) {
 	t.Parallel()
 	svc := provisioning.NewService(provisioning.Deps{
 		Bindings: &cBindings{byName: map[string]*openchoreo.ResourceReleaseBinding{
-			"proj-orders-db-development": readyBindingWith("host", "port"),
+			"proj-orders-db-default": readyBindingWith("host", "port"),
 		}},
 	})
 	h := newProvHarness(t, svc)
@@ -556,12 +556,12 @@ func TestProvisioningComponent_ProjectDependencyReadiness(t *testing.T) {
 	svc := provisioning.NewService(provisioning.Deps{
 		Design: cDesign{comps: stripeConsumerDesign()},
 		Bindings: &cBindings{byName: map[string]*openchoreo.ResourceReleaseBinding{
-			"proj-stripe-development": {Spec: openchoreo.ResourceReleaseBindingSpec{ResourceTypeEnvironmentConfigs: raw}},
+			"proj-stripe-default": {Spec: openchoreo.ResourceReleaseBindingSpec{ResourceTypeEnvironmentConfigs: raw}},
 		}},
 	})
 	h := newProvHarness(t, svc)
 
-	resp := h.AsOrg("acme").Get("/api/v1/projects/proj/dependencies/readiness?environment=development")
+	resp := h.AsOrg("acme").Get("/api/v1/projects/proj/dependencies/readiness?environment=default")
 	if resp.Code != 200 {
 		t.Fatalf("readiness: got %d body=%s", resp.Code, resp.Body.String())
 	}
@@ -576,7 +576,7 @@ func TestProvisioningComponent_ProjectDependencyReadiness(t *testing.T) {
 		t.Fatalf("missing keys = %v", got.Dependencies[0].MissingKeys)
 	}
 
-	status := h.AsOrg("acme").Get("/api/v1/projects/proj/components/orders/dependencies/stripe/status?environment=development")
+	status := h.AsOrg("acme").Get("/api/v1/projects/proj/components/orders/dependencies/stripe/status?environment=default")
 	if status.Code != 200 {
 		t.Fatalf("status: got %d body=%s", status.Code, status.Body.String())
 	}
@@ -928,7 +928,7 @@ func TestProvisioningComponent_ListOrgEnvironments_Empty(t *testing.T) {
 func TestProvisioningComponent_ListOrgEnvironments_NamesFromOC(t *testing.T) {
 	t.Parallel()
 	svc := provisioning.NewService(provisioning.Deps{
-		Environments: &cEnvs{names: []string{"development", "staging-local"}},
+		Environments: &cEnvs{names: []string{"default", "staging-local"}},
 	})
 	h := newProvHarness(t, svc)
 	resp := h.AsOrg("acme").Get("/api/v1/dependencies/environments")
@@ -939,7 +939,7 @@ func TestProvisioningComponent_ListOrgEnvironments_NamesFromOC(t *testing.T) {
 	if err := json.Unmarshal(resp.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(got) != 2 || got[0].Name != "development" || got[1].Name != "staging-local" {
+	if len(got) != 2 || got[0].Name != "default" || got[1].Name != "staging-local" {
 		t.Fatalf("got %#v", got)
 	}
 }
@@ -962,11 +962,11 @@ func TestProvisioningComponent_ListExternalResources_DTOGrowth(t *testing.T) {
 	    "config": [{"key": "api_key", "secret": true}],
 	    "consumers": [{"projectId": "shop", "componentName": "checkout"}],
 	    "envCells": [
-	      {"environment": "development", "key": "api_key", "status": "configured"},
+	      {"environment": "default", "key": "api_key", "status": "configured"},
 	      {"environment": "production", "key": "api_key", "status": "unset"}
 	    ],
 	    "resourceDocs": [{"type": "openapi", "url": "https://example.com/openapi.yaml"}],
-	    "instances": [{"project": "shop", "environment": "development", "status": "Ready"}]
+	    "instances": [{"project": "shop", "environment": "default", "status": "Ready"}]
 	  },
 	  {
 	    "name": "github",
@@ -1008,8 +1008,8 @@ func registerBody() gen.RegisterExternalResourceJSONRequestBody {
 			Key         string `json:"key"`
 			Value       string `json:"value"`
 		}{
-			{Environment: "development", Key: "api_key", Value: "sk_live"},
-			{Environment: "development", Key: "region", Value: "us"},
+			{Environment: "default", Key: "api_key", Value: "sk_live"},
+			{Environment: "default", Key: "region", Value: "us"},
 			{Environment: "staging-local", Key: "api_key", Value: "sk_test"},
 			{Environment: "staging-local", Key: "region", Value: "eu"},
 		},
@@ -1053,7 +1053,7 @@ func newRegisterHarnessWithDocs(t *testing.T, catalog *cRTCatalog, plane *cValue
 	return newProvHarness(t, provisioning.NewService(provisioning.Deps{
 		RTCatalog:         catalog,
 		CatalogValuePlane: plane,
-		Environments:      &cEnvs{names: []string{"development", "staging-local"}},
+		Environments:      &cEnvs{names: []string{"default", "staging-local"}},
 		OrgResourceDocs:   docs,
 	}))
 }
@@ -1089,10 +1089,10 @@ func TestProvisioningComponent_RegisterExternalResource_201(t *testing.T) {
 		if c.Key == "api_key" && c.Value != "" {
 			t.Fatalf("secret api_key cell must not carry value: %+v", c)
 		}
-		if c.Key == "region" && c.Environment == "development" {
+		if c.Key == "region" && c.Environment == "default" {
 			regionDev = c
 		}
-		if c.Key == "api_key" && c.Environment == "development" {
+		if c.Key == "api_key" && c.Environment == "default" {
 			apiKeyDev = c
 		}
 		if c.Key == "region" && c.Environment == "staging-local" && c.Value != "eu" {
@@ -1100,10 +1100,10 @@ func TestProvisioningComponent_RegisterExternalResource_201(t *testing.T) {
 		}
 	}
 	if regionDev == nil || regionDev.Value != "us" {
-		t.Fatalf("plain region development cell = %+v, want value us", regionDev)
+		t.Fatalf("plain region default cell = %+v, want value us", regionDev)
 	}
 	if apiKeyDev == nil {
-		t.Fatal("want an api_key development cell")
+		t.Fatal("want an api_key default cell")
 	}
 	if len(got.ResourceDocs) != 1 || got.ResourceDocs[0].Type != gen.ResourceDocPointerDTOTypeOpenapi || got.ResourceDocs[0].URL != "https://example.com/stripe/openapi.yaml" {
 		t.Errorf("resourceDocs = %+v", got.ResourceDocs)
@@ -1512,8 +1512,8 @@ func keepIfEmptyUpdateBody() gen.RegisterExternalResourceJSONRequestBody {
 		Key         string `json:"key"`
 		Value       string `json:"value"`
 	}{
-		envValue("development", "api_key", ""),
-		envValue("development", "region", "ap-southeast"),
+		envValue("default", "api_key", ""),
+		envValue("default", "region", "ap-southeast"),
 		envValue("staging-local", "api_key", ""),
 		envValue("staging-local", "region", "eu"),
 	}
@@ -1566,16 +1566,16 @@ func TestProvisioningComponent_UpdateExternalResource_KeepIfEmptySecret(t *testi
 		t.Fatalf("resourceDocs = %+v", got.ResourceDocs)
 	}
 
-	apiKeyDev := findEnvCell(t, got.EnvCells, "development", "api_key")
+	apiKeyDev := findEnvCell(t, got.EnvCells, "default", "api_key")
 	if apiKeyDev.Status != gen.EnvValueCellDTOStatusConfigured {
-		t.Errorf("secret api_key development status = %q, want configured", apiKeyDev.Status)
+		t.Errorf("secret api_key default status = %q, want configured", apiKeyDev.Status)
 	}
 	if apiKeyDev.Value != "" {
 		t.Fatalf("secret api_key cell must not carry value: %+v", apiKeyDev)
 	}
-	regionDev := findEnvCell(t, got.EnvCells, "development", "region")
+	regionDev := findEnvCell(t, got.EnvCells, "default", "region")
 	if regionDev.Value != "ap-southeast" {
-		t.Fatalf("plain region development cell = %+v, want value ap-southeast", regionDev)
+		t.Fatalf("plain region default cell = %+v, want value ap-southeast", regionDev)
 	}
 
 	listed := h.AsOrg("acme").Get("/api/v1/dependencies/external-resources")
@@ -1602,10 +1602,10 @@ func TestProvisioningComponent_UpdateExternalResource_KeepIfEmptySecret(t *testi
 	if len(listedStripe.ResourceDocs) != 1 || listedStripe.ResourceDocs[0].URL != "https://example.com/stripe/openapi-v2.yaml" {
 		t.Fatalf("list resourceDocs = %+v, want updated URL", listedStripe.ResourceDocs)
 	}
-	if findEnvCell(t, listedStripe.EnvCells, "development", "api_key").Value != "" {
+	if findEnvCell(t, listedStripe.EnvCells, "default", "api_key").Value != "" {
 		t.Fatalf("list secret cell leaked value: %+v", listedStripe.EnvCells)
 	}
-	if findEnvCell(t, listedStripe.EnvCells, "development", "region").Value != "ap-southeast" {
+	if findEnvCell(t, listedStripe.EnvCells, "default", "region").Value != "ap-southeast" {
 		t.Fatalf("list region cell = %+v, want ap-southeast", listedStripe.EnvCells)
 	}
 }
@@ -1622,7 +1622,7 @@ func TestProvisioningComponent_UpdateExternalResource_400KeyMutation(t *testing.
 			mut: func(body *gen.RegisterExternalResourceJSONRequestBody) {
 				body.Config = append(body.Config, gen.ConfigKeyDTO{Key: "mode", Description: "Charge mode", Secret: false})
 				body.EnvValues = append(body.EnvValues,
-					envValue("development", "mode", "live"),
+					envValue("default", "mode", "live"),
 					envValue("staging-local", "mode", "test"),
 				)
 			},
@@ -1636,7 +1636,7 @@ func TestProvisioningComponent_UpdateExternalResource_400KeyMutation(t *testing.
 					Key         string `json:"key"`
 					Value       string `json:"value"`
 				}{
-					envValue("development", "api_key", "sk_live"),
+					envValue("default", "api_key", "sk_live"),
 					envValue("staging-local", "api_key", "sk_test"),
 				}
 			},
@@ -1650,8 +1650,8 @@ func TestProvisioningComponent_UpdateExternalResource_400KeyMutation(t *testing.
 					Key         string `json:"key"`
 					Value       string `json:"value"`
 				}{
-					envValue("development", "secret_key", "sk_live"),
-					envValue("development", "region", "us"),
+					envValue("default", "secret_key", "sk_live"),
+					envValue("default", "region", "us"),
 					envValue("staging-local", "secret_key", "sk_test"),
 					envValue("staging-local", "region", "eu"),
 				}
@@ -1745,13 +1745,13 @@ func TestProvisioningComponent_UpdateExternalResource_NonSecretPrefillRoundTrip(
 	if len(before) != 1 {
 		t.Fatalf("list after register = %+v, want stripe", before)
 	}
-	if findEnvCell(t, before[0].EnvCells, "development", "region").Value != "us" {
+	if findEnvCell(t, before[0].EnvCells, "default", "region").Value != "us" {
 		t.Fatalf("prefill region = %+v, want us", before[0].EnvCells)
 	}
 
 	body := registerBody()
 	for i := range body.EnvValues {
-		if body.EnvValues[i].Key == "region" && body.EnvValues[i].Environment == "development" {
+		if body.EnvValues[i].Key == "region" && body.EnvValues[i].Environment == "default" {
 			body.EnvValues[i].Value = "ap"
 		}
 	}
@@ -1771,7 +1771,7 @@ func TestProvisioningComponent_UpdateExternalResource_NonSecretPrefillRoundTrip(
 	if len(views) != 1 {
 		t.Fatalf("list after update = %+v, want stripe", views)
 	}
-	if findEnvCell(t, views[0].EnvCells, "development", "region").Value != "ap" {
+	if findEnvCell(t, views[0].EnvCells, "default", "region").Value != "ap" {
 		t.Fatalf("round-trip region = %+v, want ap", views[0].EnvCells)
 	}
 	for _, c := range views[0].EnvCells {
@@ -1804,7 +1804,7 @@ func TestProvisioningComponent_CollectValues_DoesNotCreateOrgEnvCells(t *testing
 
 	resp := h.AsOrg("acme").Post(
 		"/api/v1/projects/proj/dependencies/external-resources/stripe/values",
-		`{"environments":{"development":{"api_key":"sk_live","region":"us"}}}`,
+		`{"environments":{"default":{"api_key":"sk_live","region":"us"}}}`,
 	)
 	if resp.Code != 200 {
 		t.Fatalf("collect values: want 200, got %d body=%s", resp.Code, resp.Body.String())
@@ -1830,8 +1830,8 @@ func TestProvisioningComponent_CollectValues_RegisteredName_409(t *testing.T) {
 	t.Parallel()
 	plane := &cValuePlane{}
 	plane.PutEnvCells("acme", "stripe", []provisioning.EnvCell{
-		{Environment: "development", Key: "api_key", Status: "configured"},
-		{Environment: "development", Key: "region", Status: "configured", Value: "us"},
+		{Environment: "default", Key: "api_key", Status: "configured"},
+		{Environment: "default", Key: "region", Status: "configured", Value: "us"},
 	})
 	prov := &cExtProv{}
 	svc := provisioning.NewService(provisioning.Deps{
@@ -1848,7 +1848,7 @@ func TestProvisioningComponent_CollectValues_RegisteredName_409(t *testing.T) {
 	h := newProvHarness(t, svc)
 	resp := h.AsOrg("acme").Post(
 		"/api/v1/projects/proj/dependencies/external-resources/stripe/values",
-		`{"environments":{"development":{"api_key":"sk_live","region":"us"}}}`,
+		`{"environments":{"default":{"api_key":"sk_live","region":"us"}}}`,
 	)
 	if resp.Code != 409 {
 		t.Fatalf("Registered values POST: want 409, got %d body=%s", resp.Code, resp.Body.String())

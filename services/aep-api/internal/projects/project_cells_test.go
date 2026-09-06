@@ -69,7 +69,7 @@ func createdProjectOC(deploymentPipeline string) *mocks.ProjectClientMock {
 func TestCreateProject_BindsEveryPipelineEnvironment(t *testing.T) {
 	t.Parallel()
 	oc := createdProjectOC("default")
-	cells := &fakeCells{envs: []string{"development", "staging"}}
+	cells := &fakeCells{envs: []string{"default", "staging"}}
 	svc := NewProjectService(oc, nil, nil, nil, nil)
 	svc.SetProjectCellProvisioner(cells)
 
@@ -78,8 +78,8 @@ func TestCreateProject_BindsEveryPipelineEnvironment(t *testing.T) {
 		t.Fatalf("CreateProject: %v", err)
 	}
 
-	if got := cells.bound["development"]; got != "shop" {
-		t.Errorf("development binding: got %q, want %q", got, "shop")
+	if got := cells.bound["default"]; got != "shop" {
+		t.Errorf("default binding: got %q, want %q", got, "shop")
 	}
 	if got := cells.bound["staging"]; got != "shop" {
 		t.Errorf("staging binding: got %q, want %q", got, "shop")
@@ -101,7 +101,7 @@ func TestCreateProject_CompensatesWhenBindingFails(t *testing.T) {
 		deleted = projectName
 		return nil
 	}
-	cells := &fakeCells{envs: []string{"development"}, bindErr: errors.New("boom")}
+	cells := &fakeCells{envs: []string{"default"}, bindErr: errors.New("boom")}
 	svc := NewProjectService(oc, nil, nil, nil, nil)
 	svc.SetProjectCellProvisioner(cells)
 
@@ -135,7 +135,7 @@ func TestCreateProject_RejectsPipelineWithNoEnvironments(t *testing.T) {
 func TestCreateProject_RejectsProjectWithNoPipeline(t *testing.T) {
 	t.Parallel()
 	oc := createdProjectOC("")
-	cells := &fakeCells{envs: []string{"development"}}
+	cells := &fakeCells{envs: []string{"default"}}
 	svc := NewProjectService(oc, nil, nil, nil, nil)
 	svc.SetProjectCellProvisioner(cells)
 

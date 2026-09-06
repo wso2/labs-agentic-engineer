@@ -71,6 +71,7 @@ var goldenStepOrder = []string{
 	"project_conversations",
 	"phase14_drop_sm_api_columns",
 	"milestone_run_kind",
+	"phase15_identity_per_environment",
 }
 
 // TestStepOrderGolden pins the ordered list. Steps is a pure builder, so this
