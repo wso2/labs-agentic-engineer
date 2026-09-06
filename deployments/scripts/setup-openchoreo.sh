@@ -182,6 +182,14 @@ bash "$SCRIPT_DIR/setup-thunder.sh"
 # claims the field under a `kubectl-patch` manager, and the NEXT
 # `helm upgrade --install` of the control plane then fails outright with
 # "conflict with kubectl-patch".
+#
+# single-cluster/values-cp.yaml sets the SAME claim under
+# openchoreoApi.config.security.subjects, so the ConfigMap is already correct
+# when this runs and the sed below is a no-op. Both are kept on purpose: the
+# values entry is what survives a bare `helm upgrade` (an upgrade re-renders
+# the ConfigMap and drops any cluster-only patch), while this block is what
+# reaches the chart-shipped ClusterAuthzRoleBindings, which have no values
+# knob. Removing either one leaves service accounts 403ing on some path.
 echo "🔧 Switching the service-account entitlement claim to client_id..."
 if kubectl get configmap openchoreo-api-config -n openchoreo-control-plane &>/dev/null; then
     patched_api_config="$(kubectl get configmap openchoreo-api-config \

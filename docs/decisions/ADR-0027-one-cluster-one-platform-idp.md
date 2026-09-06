@@ -1,8 +1,16 @@
-# ADR-0024 — One cluster, one platform IdP
+# ADR-0027 — One cluster, one platform IdP
 
-**Status:** Accepted · 2026-08-30
+**Status:** Accepted · 2026-08-30 · naming amended by
+[ADR-0028](ADR-0028-the-platform-idp-is-neutral-infrastructure.md); the second
+tier settled by [ADR-0029](ADR-0029-environment-identity-is-bound-by-a-record.md)
 **Context:** running AEP and the WSO2 Agent Management Platform on the same
 local k3d cluster.
+
+> The decision below stands: one IdP, shared, unconditional, bootstrapped by a
+> merge. What ADR-0028 changed is **who owns it** — the release and namespace
+> named `amp-thunder` here are now `platform-idp`, and the singleton bootstrap
+> documents are composed by the installer rather than carried by one product.
+> Read the two together; where they disagree on a name, ADR-0028 is current.
 
 ## Context
 
@@ -63,7 +71,10 @@ in Thunder's logs to explain it.
 **Two tiers, and only one is shared.** Agent Manager also runs one Thunder *per
 environment*, for AgentID and workload identity, pulled from the upstream
 `thunderid` chart at its own version and deliberately decoupled from
-`AMP_VERSION`. Convergence does not touch that tier.
+`AMP_VERSION`. Convergence did not touch that tier at the time of this ADR;
+[ADR-0029](ADR-0029-environment-identity-is-bound-by-a-record.md) later made it
+platform infrastructure both products provision, alongside a per-environment API
+Platform gateway.
 
 A consequence worth naming: AEP's `thunder-app` ClusterResourceType provisions
 OAuth applications for the apps AEP builds — end-user identity for generated
@@ -71,7 +82,8 @@ apps — and those now live in the same Thunder that serves platform login. That
 was already true of AEP before convergence, so nothing regressed, but it does
 contrast with Agent Manager's model of putting workload identity in the
 per-environment tier. Whether AEP's generated-app identities should eventually
-move there is a real design question, and out of scope here.
+move there is a real design question, and out of scope here. **They did move**,
+in [ADR-0029](ADR-0029-environment-identity-is-bound-by-a-record.md).
 
 ## Alternatives rejected
 

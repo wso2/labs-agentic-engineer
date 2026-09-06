@@ -6,6 +6,33 @@ openchoreoApi:
   config:
     server:
       publicUrl: "http://api.openchoreo.localhost:8080"
+    security:
+      # ThunderID 1.0.0 puts a client_credentials token's subject in the
+      # `client_id` claim, while the chart defaults the service-account
+      # entitlement to `sub` — every service account 403s on the mismatch.
+      # setup-openchoreo.sh also patches the rendered ConfigMap, because the
+      # chart-shipped ClusterAuthzRoleBindings need the same move and they are
+      # only reachable through kubectl. Setting it HERE as well is what makes
+      # the claim survive a `helm upgrade` of the control plane: an upgrade
+      # re-renders the ConfigMap from the chart and silently reverts a patch
+      # that lives only in the cluster.
+      subjects:
+        user:
+          display_name: "User"
+          priority: 1
+          mechanisms:
+            jwt:
+              entitlement:
+                claim: "groups"
+                display_name: "User Group"
+        service_account:
+          display_name: "Service Account"
+          priority: 2
+          mechanisms:
+            jwt:
+              entitlement:
+                claim: "client_id"
+                display_name: "Client ID"
 
 gateway:
   httpPort: 8080
@@ -35,3 +62,16 @@ security:
     # and the mismatch surfaces only as a failed login.
     authorizationUrl: "${PUBLIC_THUNDER_URL}/oauth2/authorize"
     tokenUrl: "${PUBLIC_THUNDER_URL}/oauth2/token"
+
+# OpenChoreo's Secret API is off by default in the chart. Agent Manager stores
+# every agent's API key through it (its secret provider is the OpenChoreo one —
+# compiled in, so the SECRET_MANAGER_* env vars cannot select anything else), so
+# with the flag off `POST /agents` fails at "failed to check secret existence:
+# unexpected error: status 501" and no agent can be created. AEP itself never
+# calls this API, which is why the gap only shows on a converged cluster.
+# Everything the API needs downstream is already provisioned by setup: the
+# external-secrets operator, the `default` ClusterSecretStore over OpenBao, and
+# `secretStoreRef` on the ClusterDataPlane.
+features:
+  secretManagement:
+    enabled: true
