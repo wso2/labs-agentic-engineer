@@ -50,12 +50,6 @@ services:
       additional_contexts:
         skills: ../skills
     container_name: aep-api
-    # aep-api is PID 1 here, and git orphans helpers (background `gc --auto`,
-    # remote helpers) that then re-parent to it. A Go binary never reaps
-    # children it did not spawn, so without an init they pile up as zombies
-    # (~6/min observed locally). tini as PID 1 reaps them; the app still gets
-    # its signals, so shutdown is unchanged.
-    init: true
     # Fast SYN-retransmit recovery for the local Colima env. Its docker-bridge
     # NAT intermittently drops a SYN under concurrent outbound bursts (the BFF's
     # parallel git fetches + GitHub API calls on a project page load); the kernel
