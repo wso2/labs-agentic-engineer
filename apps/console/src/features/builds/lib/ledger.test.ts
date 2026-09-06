@@ -133,9 +133,9 @@ describe("ledgerStatus", () => {
     expect(ledgerStatus(build({ status: "failed" })).label).toBe("Failed");
   });
 
-  it("describes the DEPLOYED version by where it reached", () => {
+  it("describes the DEPLOYED version by its deploy state", () => {
     expect(ledgerStatus(build({ tag: "v1" }), deploy()).label).toBe(
-      "Deployed to development",
+      "Deployed",
     );
     expect(ledgerStatus(build({ tag: "v1" }), deploy({ status: "deploying" })).live).toBe(
       true,

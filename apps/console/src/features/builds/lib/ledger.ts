@@ -123,10 +123,10 @@ export function ledgerStatus(
     case "completed": {
       if (deploy && deploy.version === build.tag) {
         if (deploy.status === "deployed") {
-          return { label: "Deployed to development", tone: "success", live: false };
+          return { label: "Deployed", tone: "success", live: false };
         }
         if (deploy.status === "deploying") {
-          return { label: "Deploying to development", tone: "info", live: true };
+          return { label: "Deploying", tone: "info", live: true };
         }
         if (deploy.status === "failed") {
           return { label: "Deploy failed", tone: "error", live: false };
