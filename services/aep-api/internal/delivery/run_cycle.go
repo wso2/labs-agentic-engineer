@@ -128,6 +128,14 @@ type RunCycle struct {
 	// ValidationIssue is the validation issue this cycle was dispatched at. Same
 	// reasoning: the issue is reused across attempts, but which attempt asked is a
 	// per-cycle fact, and it keeps a settled run navigable to its criteria.
+	//
+	// Written when the cycle OPENS (AppendCycle), not when it settles, because
+	// the console needs it while the run is still going — the issue link and the
+	// agent's status line both key on it. SetValidationVerdict writes it again
+	// with the same value, so a settled cycle is unaffected either way.
+	//
+	// Zero on every non-validation kind, including a repair coding cycle in a dev
+	// run whose workflow state still carries the number.
 	ValidationIssue int `gorm:"not null;default:0" json:"validationIssue,omitempty"`
 	// ValidationDigest fingerprints WHAT THIS ATTEMPT CONCLUDED — the criteria,
 	// their outcomes and their failure messages, never the file bytes

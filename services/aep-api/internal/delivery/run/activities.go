@@ -200,11 +200,19 @@ func (a *Activities) SetValidationVerdict(ctx context.Context, in SetValidationV
 // ---- cycle record ----------------------------------------------------------
 
 // AppendCycleInput opens a new cycle record under a run.
+//
+// ValidationIssue is the issue a VALIDATION cycle is being dispatched at, and is
+// zero for every other kind. It rides the open rather than waiting for the
+// verdict because the console reads it to reach the run while the run is still
+// going: the issue link and the agent's status line both key on it, and a number
+// that only lands at the verdict reaches them after the only window they render
+// in has closed.
 type AppendCycleInput struct {
-	RunID     string `json:"runId"`
-	OrgID     string `json:"orgId"`
-	ProjectID string `json:"projectId"`
-	Kind      string `json:"kind"`
+	RunID           string `json:"runId"`
+	OrgID           string `json:"orgId"`
+	ProjectID       string `json:"projectId"`
+	Kind            string `json:"kind"`
+	ValidationIssue int    `json:"validationIssue,omitempty"`
 }
 
 // AppendCycle opens the cycle record for a dispatch and returns its id.
@@ -213,10 +221,11 @@ func (a *Activities) AppendCycle(ctx context.Context, in AppendCycleInput) (stri
 		return "", errNotConfigured
 	}
 	return a.cycles.Append(ctx, &delivery.RunCycle{
-		RunID:     in.RunID,
-		OrgID:     in.OrgID,
-		ProjectID: in.ProjectID,
-		Kind:      in.Kind,
+		RunID:           in.RunID,
+		OrgID:           in.OrgID,
+		ProjectID:       in.ProjectID,
+		Kind:            in.Kind,
+		ValidationIssue: in.ValidationIssue,
 	})
 }
 

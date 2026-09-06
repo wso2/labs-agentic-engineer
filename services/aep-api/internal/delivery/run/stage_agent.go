@@ -97,7 +97,7 @@ const noAnchorIssue = 0
 //
 // anchorIssue is set only for a validation cycle (see noAnchorIssue).
 func (l *loop) agentStage(ctx workflow.Context, kind string, anchorIssue int) (landed bool, res cycleResult, err error) {
-	cycleID, err := l.appendCycle(ctx, kind)
+	cycleID, err := l.appendCycle(ctx, kind, anchorIssue)
 	if err != nil {
 		return false, cycleNone, err
 	}
@@ -276,10 +276,17 @@ func phaseFor(kind string) string {
 
 // ---- cycle activity calls --------------------------------------------------
 
-func (l *loop) appendCycle(ctx workflow.Context, kind string) (string, error) {
+// The cycle is opened carrying its ANCHOR, which is the same number the dispatch
+// is about to be anchored to. Deliberately the anchor rather than
+// l.st.ValidationIssue: only a validation cycle has one (noAnchorIssue above), so
+// the guard is the parameter rather than a kind check — where reading run state
+// would stamp a later repair CODING cycle in a dev run, whose st.ValidationIssue
+// stays set after the version is judged.
+func (l *loop) appendCycle(ctx workflow.Context, kind string, anchorIssue int) (string, error) {
 	var cycleID string
 	err := workflow.ExecuteActivity(activityCtx(ctx), (*Activities).AppendCycle, AppendCycleInput{
 		RunID: l.in.RunID, OrgID: l.in.OrgID, ProjectID: l.in.ProjectID, Kind: kind,
+		ValidationIssue: anchorIssue,
 	}).Get(ctx, &cycleID)
 	return cycleID, err
 }
