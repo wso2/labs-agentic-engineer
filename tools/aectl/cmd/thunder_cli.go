@@ -121,7 +121,10 @@ func doThunderSetup(
 	sp.Start()
 	adminClientID := viper.GetString("thunder.admin_client_id")
 	adminClientSecret := viper.GetString("thunder.admin_client_secret")
-	client, err := thunder.New(ctx, localURL, adminClientID, adminClientSecret)
+	// The System resource server is named by Thunder's PUBLIC URL, not the
+	// port-forward this client talks over.
+	systemResource := thunder.SystemResourceIdentifier(viper.GetString("thunder.public_url"))
+	client, err := thunder.New(ctx, localURL, adminClientID, adminClientSecret, systemResource)
 	if err != nil {
 		sp.Fail("Authentication failed")
 		return fmt.Errorf("authenticate with Thunder: %w", err)
@@ -220,4 +223,3 @@ func waitForThunderSecrets(ctx context.Context, k8sClient *kubernetes.Clientset,
 		}
 	}
 }
-

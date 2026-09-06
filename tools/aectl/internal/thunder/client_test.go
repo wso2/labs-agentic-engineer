@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -146,10 +147,10 @@ func TestExtractOAuthConfig(t *testing.T) {
 // key, unknown key (returns nil), and nil input.
 func TestToSlice(t *testing.T) {
 	tests := []struct {
-		name      string
-		input     any
-		wantLen   int
-		wantNil   bool
+		name    string
+		input   any
+		wantLen int
+		wantNil bool
 	}{
 		{
 			name:    "bare slice passthrough",
@@ -521,5 +522,56 @@ func TestAssignAdminRole_RoleMissing(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("POST body assignments should contain app %q, got %v", appID, postAssignments)
+	}
+}
+
+func TestSystemResourceIdentifier(t *testing.T) {
+	for in, want := range map[string]string{
+		"http://thunder.openchoreo.localhost:8080": "http://thunder.openchoreo.localhost:8080/mcp",
+		"https://idp.example.com/":                 "https://idp.example.com/mcp",
+		"":                                         "",
+	} {
+		if got := SystemResourceIdentifier(in); got != want {
+			t.Errorf("SystemResourceIdentifier(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// New names the System resource server on the token request, alongside the
+// client_secret_post credentials, and omits the parameter when given none.
+func TestNew_TokenRequestCarriesResourceIndicator(t *testing.T) {
+	var form url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/oauth2/token":
+			_ = r.ParseForm()
+			form = r.PostForm
+			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok"})
+		case "/organization-units/tree/default":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "ou-123"})
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	defer srv.Close()
+
+	if _, err := New(context.Background(), srv.URL, "sys", "sec", "http://idp.example/mcp"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for k, want := range map[string]string{
+		"grant_type": "client_credentials", "scope": "system", "client_id": "sys",
+		"client_secret": "sec", "resource": "http://idp.example/mcp",
+	} {
+		if got := form.Get(k); got != want {
+			t.Errorf("token form %s = %q, want %q", k, got, want)
+		}
+	}
+
+	if _, err := New(context.Background(), srv.URL, "sys", "sec", ""); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, present := form["resource"]; present {
+		t.Errorf("resource parameter sent without an identifier: %q", form.Get("resource"))
 	}
 }

@@ -87,9 +87,30 @@ type AdminClient struct {
 	http      *http.Client
 }
 
+// SystemResourceIdentifier derives the identifier of ThunderID's own "System"
+// resource server — the one that owns the `system` scope — from Thunder's
+// PUBLIC URL, following ThunderID's convention ("<publicUrl>/mcp"). It is a
+// name, not an address: the public URL is the right input even though this
+// client talks to Thunder over a port-forward. Empty in, empty out.
+func SystemResourceIdentifier(publicURL string) string {
+	publicURL = strings.TrimRight(strings.TrimSpace(publicURL), "/")
+	if publicURL == "" {
+		return ""
+	}
+	return publicURL + "/mcp"
+}
+
 // New authenticates with Thunder using client_credentials + scope=system and
 // returns a client ready to call admin APIs.
-func New(ctx context.Context, baseURL, adminClientID, adminClientSecret string) (*AdminClient, error) {
+//
+// systemResource is sent as the OAuth `resource` indicator (see
+// SystemResourceIdentifier). ThunderID resolves a requested scope against a
+// resource server; without the indicator it uses the server-wide default, and
+// when that default does not define `system` the scope is dropped SILENTLY —
+// the token endpoint answers 200 and every admin call then 403s. Empty sends no
+// indicator, which is only right against a Thunder with no default resource
+// server.
+func New(ctx context.Context, baseURL, adminClientID, adminClientSecret, systemResource string) (*AdminClient, error) {
 	hc := &http.Client{Timeout: 30 * time.Second}
 
 	form := url.Values{}
@@ -97,6 +118,9 @@ func New(ctx context.Context, baseURL, adminClientID, adminClientSecret string) 
 	form.Set("client_id", adminClientID)
 	form.Set("client_secret", adminClientSecret)
 	form.Set("scope", "system")
+	if systemResource != "" {
+		form.Set("resource", systemResource)
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		baseURL+"/oauth2/token",
