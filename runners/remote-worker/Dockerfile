@@ -143,6 +143,13 @@ RUN case "$(dpkg --print-architecture)" in \
     && chmod -R a+rX /usr/lib/ballerina
 ENV PATH="/usr/lib/ballerina/bin:${PATH}"
 
+# The runtime user, created BEFORE the Playwright install below so that install
+# can write its ownership directly into its own layer.
+RUN groupadd -r aep \
+    && useradd -r -g aep -m -d /home/aep aep \
+    && mkdir -p /home/aep/aep-workspace \
+    && chown -R aep:aep /home/aep
+
 # Playwright toolchain, pinned as a pair: AEP_PLAYWRIGHT_VERSION is the
 # contract the aep-validation skill pins tests/e2e/package.json to, so
 # the browsers baked here always match the version the specs run with.
@@ -170,19 +177,17 @@ RUN npm install -g "@playwright/test@${PLAYWRIGHT_VERSION}" "@playwright/cli@${P
     # installs, so they could be downloaded but never launched. Non-fatal:
     # worst case it downloads at runtime.
     && (playwright-cli install-browser chromium || true) \
-    && chmod -R a+rX /ms-playwright
-
-RUN groupadd -r aep \
-    && useradd -r -g aep -m -d /home/aep aep \
-    && mkdir -p /home/aep/aep-workspace \
-    && chown -R aep:aep /home/aep \
-    # And the browsers, which the chmod above only made readable. `playwright
-    # install` takes a LOCK in this directory before it can decide there is
-    # nothing to download, so read-only does not make it a no-op — it makes it
-    # block, silently, until the caller's timeout severs it. A validation run
-    # reached for it (the CLI and @playwright/test pin different revisions, so
-    # asking is reasonable) and lost two hours to the hang. Owned by the runtime
-    # user, the same command exits 0 immediately.
+    # OWNED by the runtime user, not merely readable by it. `playwright install`
+    # takes a LOCK in this directory before it can decide there is nothing to
+    # download, so a read-only tree does not make the command a no-op — it makes
+    # it BLOCK, silently, until the caller's timeout severs it. A validation run
+    # reached for it (the two clients pin different revisions, so asking is
+    # reasonable) and lost two hours to the hang. Owned, the same command exits 0
+    # immediately.
+    #
+    # In THIS layer, beside the download, for the reason the `--chown` on the
+    # app COPY below records: a trailing `chown -R` rewrites every file it
+    # touches into a fresh layer, and this tree is two chromium revisions.
     && chown -R aep:aep /ms-playwright
 
 # The agent-browser CLI — what a CODING run opens a page with and reads the

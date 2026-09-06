@@ -780,12 +780,18 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   A LEDGER issue is returned by the milestone-scoped read and only by it — the untagged read is two label
   queries, and a ledger issue is defined by carrying no label to query on. Milestone membership is the only
   handle there is.
-- **Issue COMMENTS ride the milestone-scoped list, and only it** (`task/reads.go` `ListByTag`,
-  `?comments=` defaulting true). Each row carries its issue's newest comments — the version's live
-  narrative between an agent's dispatch and its pull request. The field is SERVED, not yet rendered: no
-  console surface reads it today. Comments follow the same handle ledger issues do — the fetch is
-  anchored on one milestone, so a read spanning versions has no bounded set to ask for and omits the
-  field entirely.
+- **Issue COMMENTS ride two reads: the milestone-scoped LIST, and the detail GET** (`task/reads.go`
+  `ListByTag` with `?comments=` defaulting true, and `Get`). Each list row carries its issue's newest
+  comments — the version's live narrative between an agent's dispatch and its pull request — and the
+  Builds row renders that thread's newest first line as the issue's status. On the LIST, comments follow
+  the same handle ledger issues do: the fetch is anchored on one milestone, so a read spanning versions
+  has no bounded set to ask for and omits the field entirely.
+  `Get` carries them for the one issue the list can never reach. It is the only read that serves the
+  VALIDATION issue — the list drops that issue on its kind before comments are ever attached — and the
+  Validation page's status line is its newest comment. One issue is a bounded set by construction, so
+  `Get` needs no `?comments=` handle; it takes the same `CommentsPerIssue` window as the list, so a
+  comment cannot be visible on one surface and absent from the other, and it fires CONCURRENTLY with the
+  issue fetch for the same reason the list's does — this read is polled at 5s while a run is in flight.
   Three properties are load-bearing. **Nothing is stored** — GitHub is the only copy, read live on every
   request. **The platform's OWN comments are dropped, and not by author** — authorship cannot answer that
   question here (`sourcecontrol`'s README has the why); the discriminator is the brand that domain stamps

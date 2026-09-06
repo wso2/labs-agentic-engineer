@@ -30,23 +30,18 @@ package githubhost
 
 import (
 	"context"
-	"time"
 
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
-// issueCommentsQuery reads the newest `$c` comments of ONE issue.
-//
-// `last:` and the nullable `author` carry the same reasoning as the milestone
-// query — the tail is the interesting end and it still answers chronologically,
-// and a deleted account answers a null author that must not fail the decode.
+// issueCommentsQuery reads the newest `$c` comments of ONE issue. The fields and
+// the reason the tail is the end worth asking for live with commentSelection in
+// comments.go, shared with the milestone query.
 const issueCommentsQuery = `query($owner: String!, $repo: String!, $n: Int!, $c: Int!) {
   repository(owner: $owner, name: $repo) {
     issue(number: $n) {
-      comments(last: $c) {
-        nodes { id body url createdAt author { login } }
-      }
+      comments(last: $c) { ` + commentSelection + ` }
     }
   }
 }`
@@ -74,16 +69,7 @@ func (c *Client) ListIssueComments(ctx context.Context, owner, repo string, cred
 		Repository *struct {
 			Issue *struct {
 				Comments struct {
-					Nodes []struct {
-						ID        string    `json:"id"`
-						Body      string    `json:"body"`
-						URL       string    `json:"url"`
-						CreatedAt time.Time `json:"createdAt"`
-						// Author is null for a deleted account.
-						Author *struct {
-							Login string `json:"login"`
-						} `json:"author"`
-					} `json:"nodes"`
+					Nodes []commentNode `json:"nodes"`
 				} `json:"comments"`
 			} `json:"issue"`
 		} `json:"repository"`
@@ -100,21 +86,5 @@ func (c *Client) ListIssueComments(ctx context.Context, owner, repo string, cred
 	if len(nodes) == 0 {
 		return nil, nil
 	}
-	out := make([]sourcecontrol.IssueComment, 0, len(nodes))
-	for _, n := range nodes {
-		login := ""
-		if n.Author != nil {
-			login = n.Author.Login
-		}
-		body, machine := isMachineComment(n.Body)
-		out = append(out, sourcecontrol.IssueComment{
-			ID:        n.ID,
-			Author:    login,
-			Body:      body,
-			URL:       n.URL,
-			CreatedAt: n.CreatedAt,
-			Machine:   machine,
-		})
-	}
-	return out, nil
+	return toIssueComments(nodes), nil
 }

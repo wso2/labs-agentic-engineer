@@ -190,6 +190,24 @@ func (r *Reads) issueComments(ctx context.Context, orgID, projectID string, mile
 	return comments
 }
 
+// oneIssueCommentsAsync starts the detail read's comment fetch, so it runs
+// alongside the issue fetch rather than after it.
+//
+// Same reasoning as its milestone sibling above, and the same measurement
+// behind it: both are host round trips, they are independent (the comment read
+// needs only the issue NUMBER, which the caller already holds), and Get is
+// POLLED at 5s while a validation run is in flight. Taken in sequence the two
+// add up; taken together the comments are free.
+//
+// A not-found issue means this fetch was wasted, which is the deliberate trade:
+// the channel is buffered so the goroutine never blocks, and a detail page
+// opened on a live issue is overwhelmingly the common case.
+func (r *Reads) oneIssueCommentsAsync(ctx context.Context, orgID, projectID string, issueNumber int) <-chan []sourcecontrol.IssueComment {
+	ch := make(chan []sourcecontrol.IssueComment, 1)
+	go func() { ch <- r.oneIssueComments(ctx, orgID, projectID, issueNumber) }()
+	return ch
+}
+
 // oneIssueComments reads ONE issue's comments, or answers nil.
 //
 // It degrades exactly like its milestone sibling above, for the same reason: a
@@ -219,6 +237,9 @@ func (r *Reads) Get(ctx context.Context, orgID, projectID string, issueNumber in
 	}
 	repoFullName := owner + "/" + name
 
+	// Starts FIRST so it overlaps the issue fetch — see oneIssueCommentsAsync.
+	commentsCh := r.oneIssueCommentsAsync(ctx, orgID, projectID, issueNumber)
+
 	issue, err := r.issues.GetIssue(ctx, orgID, projectID, issueNumber)
 	if err != nil || issue == nil {
 		return nil, ErrTaskNotFound
@@ -239,7 +260,7 @@ func (r *Reads) Get(ctx context.Context, orgID, projectID string, issueNumber in
 	// This is the only path that can carry the validation issue's narrative —
 	// buildView drops that issue on its kind before comments are ever attached —
 	// and it is what the Validation page's status line reads.
-	view.Comments = commentViews(r.oneIssueComments(ctx, orgID, projectID, issueNumber))
+	view.Comments = commentViews(<-commentsCh)
 
 	history, err := r.execs.ListByIssueScoped(ctx, orgID, repoFullName, issueNumber)
 	if err != nil {

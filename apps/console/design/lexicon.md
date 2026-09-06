@@ -890,12 +890,36 @@ The row now says what is happening to it. In the order a reader meets them:
 | It worked, then broke — being repaired | **`Healing…`** |
 | Settled | **`Passed`** / **`Failed`**, unchanged |
 
-Above the rows, one line, and only while they have nothing to say:
+Above the rows, one line — **the agent's, in its own words**, and only while the
+run is under way. It is the newest comment on the run's validation issue, the
+same status line a dev cycle keeps on the issue it is working, and the
+`aep-validation` skill asks for it in those terms: *say what the criterion rows
+cannot*. So the two are different granularities and cannot contradict each other
+— the rows say where each criterion stands, the line says where the run is in its
+workflow and what it decided.
+
+Its vocabulary is not fixed here, because it is not ours. This file governs agent
+prose, and what it asks of this line is a shape rather than words: **one line,
+present tense, about the run and not about a criterion.** A phase enum was
+rejected for it (`liveLine.ts` carries why) — the workflow loops, so any fixed
+ladder either marches backwards on screen or is pinned forward and lies.
+
+Two derived sentences remain as the **fallback**, for the window before the first
+comment lands and for a run whose agent posts none:
 
 | | |
 |---|---|
 | Nothing picked up yet | *Setting up the test harness…* |
 | All settled, no results published | *Writing the validation report…* |
+
+**The line is led by the working pulse, and shows only while validating.** The
+pulse is the console's one *an agent is working* dot (**The pulse**, above,
+unrecoloured), because this is the same fact it always marks. The panel behind it
+is a neutral tint with no border: a rule down a leading edge means *this needs
+reading* here (`RunHoldNotice`), and progress is not that. Nothing shows once a
+verdict is in — a
+settled run's last words sitting under its verdict restate it, and under a repair
+they describe a cycle that is no longer the one running.
 
 **The trailing `…` means in flight.** Every word that can still change carries
 one; the two settled words do not. It is the only signal separating "this is
@@ -920,11 +944,12 @@ is watching it, and "what is it doing right now" is the whole question. The rule
 protects against a reader being told about machinery they did not ask about —
 not against answering the one thing they came to find out.
 
-**Unsettled: *test harness* and *validation report*.** Both run-wide lines name
+**Unsettled: *test harness* and *validation report*.** Both fallback lines name
 internal artifacts, which rule 6 has a better claim over — a reader does not have
 a harness, they have criteria waiting to be checked. They are the two windows
 where nothing else moves, so something had to be said; whoever finds better words
-changes them here first.
+changes them here first. Less load-bearing now that the agent's own line covers
+the run — but they still speak first on every run, before its opening comment.
 
 ## What a change invalidates
 

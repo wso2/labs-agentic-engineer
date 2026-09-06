@@ -48,9 +48,10 @@ repeating those tells the reader what they are already looking at. Yours
 carries what nothing else can see — where you are in this workflow, and what
 you decided.
 
-Steps 1, 2, 4 and 10 ask for comments; those are this line's ends, and step
-10's summary is the one that carries counts. A line that sends you back a step
-is the ordinary path here, not a fault to explain.
+Steps 1 and 10 already ask for the two ends — the opening comment and the
+closing summary, and the summary is the one that carries counts. Everything
+between them is this line. A line that sends you back a step is the ordinary
+path here, not a fault to explain.
 
 ## Workflow
 
