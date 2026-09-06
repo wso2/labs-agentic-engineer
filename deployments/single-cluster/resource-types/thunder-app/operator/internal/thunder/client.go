@@ -17,15 +17,17 @@
 // Package thunder is the operator-local Thunder admin client. It mints a
 // `scope=system` access token via the client_credentials grant against a
 // Thunder OAuth app that the operator authenticates as, then uses that
-// token to declare/remove per-CR OAuth applications on the platform's
-// shared Thunder instance via Thunder's /applications admin REST API.
+// token to declare/remove per-CR OAuth applications on ONE Thunder instance
+// via Thunder's /applications admin REST API. One client per instance: the
+// reconciler builds and caches one per (organization, environment) from that
+// environment's binding record.
 //
 // Wire shape: camelCase JSON keys (`ouId`, `inboundAuthConfig`, `clientId`,
 // `redirectUris`, `grantTypes`, `responseTypes`, `pkceRequired`,
 // `publicClient`, `tokenEndpointAuthMethod`), mirroring the live-E2E-validated
 // BFF client services/aep-api/internal/clients/thundersvc/client.go and the
-// local-stack bootstrap payloads in deployments/single-cluster/
-// values-thunder.yaml (59-aep-oauth-apps.sh) — the Thunder 0.34.0 instance
+// local-stack bootstrap documents in deployments/single-cluster/
+// thunder-resources/ (e.g. 87-aep-console-app.yaml) — the ThunderID instance
 // this operator actually targets speaks camelCase. (The snake_case format
 // described by the unused wso2-agentic-engineer-bundle chart's
 // thunder-bootstrap.sh is NOT what that instance accepts; do not mirror it.)
@@ -112,12 +114,16 @@ type AdminClient interface {
 	// DeleteApplication removes the app by name; absent app is success
 	// (idempotent).
 	DeleteApplication(ctx context.Context, name string) error
+	// SetBrowserOrigins makes `origins` exactly the writable layer of this
+	// instance's server-wide CORS allow-list, so the browsers running the
+	// apps registered here can call its OIDC endpoints. See cors.go.
+	SetBrowserOrigins(ctx context.Context, origins []string) error
 }
 
 // Config bundles the client's construction parameters.
 type Config struct {
 	// BaseURL is Thunder's admin API base, e.g.
-	// http://amp-thunder-extension-service.amp-thunder.svc.cluster.local:8090 (trailing
+	// http://platform-idp-service.platform-idp.svc.cluster.local:8090 (trailing
 	// slash tolerated).
 	BaseURL string
 	// ClientID/ClientSecret are the operator's own system OAuth2 client
@@ -201,6 +207,13 @@ type client struct {
 
 	muOU      sync.Mutex
 	defaultOU string
+
+	// muCORS serializes the read-modify-write of the server-wide CORS config
+	// (see cors.go). One client is shared by every reconcile targeting the
+	// same instance, and two concurrent passes computing the origin set from
+	// slightly different views of the CRs would otherwise let the loser's PUT
+	// stand.
+	muCORS sync.Mutex
 }
 
 // -- system token -----------------------------------------------------------
@@ -278,7 +291,7 @@ func (c *client) fetchSystemToken(ctx context.Context) (string, int, error) {
 
 // getDefaultOUID returns Thunder's default organisation-unit id, cached
 // after the first successful lookup. All apps this operator manages are
-// registered under it — the platform Thunder has a single default OU (v1
+// registered under it — a Thunder instance here has a single default OU (v1
 // scope; see ThunderApplicationSpec's instanceRef note).
 func (c *client) getDefaultOUID(ctx context.Context, token string) (string, error) {
 	c.muOU.Lock()
@@ -415,6 +428,9 @@ func (c *client) EnsureApplication(ctx context.Context, app DesiredApp) (string,
 		if err := c.updateApp(ctx, token, internalID, app); err != nil {
 			return "", fmt.Errorf("update app %q: %w", app.Name, err)
 		}
+		if err := c.verifyWritten(ctx, token, internalID, app); err != nil {
+			return "", err
+		}
 		return existingClientID, nil
 	}
 
@@ -433,20 +449,48 @@ func (c *client) EnsureApplication(ctx context.Context, app DesiredApp) (string,
 	if err != nil {
 		return "", fmt.Errorf("createApp %q: %w", app.Name, err)
 	}
+	// The create response does not carry the internal id in a shape this
+	// client parses, so the app is looked up again to read it back.
+	newInternalID, _, err := c.findApp(ctx, token, app.Name)
+	if err != nil {
+		return "", fmt.Errorf("findApp after create %q: %w", app.Name, err)
+	}
+	if err := c.verifyWritten(ctx, token, newInternalID, app); err != nil {
+		return "", err
+	}
 	return clientID, nil
+}
+
+// verifyWritten reads back what a create/update actually stored.
+//
+// Only browser apps carry the identity contract: a confidential client here is
+// an m2m one, whose token has no user behind it and therefore no user
+// attributes to release.
+func (c *client) verifyWritten(ctx context.Context, token, internalID string, app DesiredApp) error {
+	if app.ClientType == "confidential" {
+		return nil
+	}
+	if internalID == "" {
+		return fmt.Errorf("verify identity claims %q: the IdP returned no application id to read back", app.Name)
+	}
+	return c.verifyIdentityClaims(ctx, token, internalID, app.Name)
 }
 
 // createApp registers a new public OAuth2 client: PKCE required, no client
 // -- identity-claim contract -------------------------------------------------
 //
 // Every provisioned OAuth app carries the SAME platform identity claims so
-// end-user tokens are role-aware. This mirrors the seeded Console app
-// (deployments/dev-thunder-setup/bootstrap/60-aep-console.yaml) and is a
+// end-user tokens are role-aware. The authoritative copy of this contract is
+// the platform console's bootstrap document,
+// deployments/single-cluster/thunder-resources/87-aep-console-app.yaml, and
+// identity_contract_test.go asserts this file still agrees with it. It is a
 // platform-wide contract, not per-app config — hence a constant here rather
 // than a ThunderApplication CR field.
 //
-//   - identityUserAttributes lands in BOTH tokens' userAttributes. `groups`
-//     drives role-based UI; `ou*` identifies the org; the rest are profile.
+//   - identityUserAttributes must land in BOTH tokens, but they are declared
+//     at DIFFERENT paths (see tokenClaimConfig). `groups` drives role-based UI
+//     and, through the gateway's claim mapping, the API's authorization; `ou*`
+//     identifies the org; the rest are profile.
 //   - scopeClaimConfig gates which claims Thunder releases per requested scope.
 //     `group → [groups]` is load-bearing: verified on Thunder 0.34 that
 //     `groups` reaches the ID TOKEN only when the `group` scope is granted
@@ -480,13 +524,122 @@ var (
 // refresh/new tab without a round-trip.
 const tokenValiditySeconds = 86400
 
-// tokenClaimConfig returns the oauth2 `token` block (per-token validity +
-// userAttributes). A fresh map per call so each app payload owns its copy.
+// tokenClaimConfig returns the oauth2 `token` block. A fresh map per call so
+// each app payload owns its copy.
+//
+// The two tokens declare their attributes at DIFFERENT paths, and getting this
+// wrong costs a day:
+//
+//	idToken     validityPeriod + userAttributes          (top level)
+//	accessToken userConfig{ validityPeriod, attributes } (nested, and the key
+//	                                                      is `attributes`)
+//
+// ThunderID 1.0.0 answers 200 to either shape and silently keeps only what it
+// recognises. Sending the id-token shape for the access token — which this
+// file did until 2026-09-06 — produces an app whose ACCESS token carries no
+// `groups`, while its ID token carries all of them. The SPA signs in happily
+// and renders the user's role from the id_token; every call it then makes with
+// the access token reaches the gateway, whose `groups -> X-User-Groups` claim
+// mapping injects nothing, and the API answers 403 "caller has no recognized
+// role". Nothing anywhere reports a dropped claim.
+//
+// `userConfig` mirrors the `clientConfig` an m2m app uses for the same purpose
+// (services/aep-api/internal/clients/thundersvc/client.go): per-audience token
+// config, attributes under it. verifyIdentityClaims reads the app back after
+// every write precisely because neither shape is rejected.
 func tokenClaimConfig() map[string]any {
 	return map[string]any{
-		"accessToken": map[string]any{"validityPeriod": tokenValiditySeconds, "userAttributes": identityUserAttributes},
-		"idToken":     map[string]any{"validityPeriod": tokenValiditySeconds, "userAttributes": identityUserAttributes},
+		"accessToken": map[string]any{
+			"userConfig": map[string]any{
+				"validityPeriod": tokenValiditySeconds,
+				"attributes":     append([]string(nil), identityUserAttributes...),
+			},
+		},
+		"idToken": map[string]any{
+			"validityPeriod": tokenValiditySeconds,
+			"userAttributes": append([]string(nil), identityUserAttributes...),
+		},
 	}
+}
+
+// accessTokenAttributes / idTokenAttributes read the identity attributes back
+// out of an application body, at the two paths tokenClaimConfig writes them.
+// They return nil when the path is absent, which is exactly what a silent drop
+// looks like.
+func accessTokenAttributes(cfg map[string]any) []string {
+	token, _ := cfg["token"].(map[string]any)
+	access, _ := token["accessToken"].(map[string]any)
+	userCfg, _ := access["userConfig"].(map[string]any)
+	return stringsOf(userCfg["attributes"])
+}
+
+func idTokenAttributes(cfg map[string]any) []string {
+	token, _ := cfg["token"].(map[string]any)
+	id, _ := token["idToken"].(map[string]any)
+	return stringsOf(id["userAttributes"])
+}
+
+// stringsOf accepts what encoding/json produces for a JSON array of strings.
+func stringsOf(v any) []string {
+	raw, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, item := range raw {
+		if s, ok := item.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// missingIdentityAttributes returns the identity attributes absent from
+// `have`, preserving the contract's order so the message is stable.
+func missingIdentityAttributes(have []string) []string {
+	present := make(map[string]struct{}, len(have))
+	for _, a := range have {
+		present[a] = struct{}{}
+	}
+	var missing []string
+	for _, want := range identityUserAttributes {
+		if _, ok := present[want]; !ok {
+			missing = append(missing, want)
+		}
+	}
+	return missing
+}
+
+// verifyIdentityClaims reads the application back and fails when the identity
+// attributes did not survive the write.
+//
+// This is not defensive coding for its own sake. ThunderID accepts an
+// application payload with 200 and keeps only the fields it recognises, so a
+// contract change on its side — or a shape mistake on ours — is indistinguishable
+// from success at the point of writing. The whole cost of that silence lands on
+// a deployed app, hours later, as a 403 with no mention of a claim anywhere.
+// Reading back turns it into a ThunderApplication that refuses to go ready and
+// names the attributes that vanished.
+func (c *client) verifyIdentityClaims(ctx context.Context, token, internalID, name string) error {
+	app, err := c.getAppByID(ctx, token, internalID)
+	if err != nil {
+		return fmt.Errorf("verify identity claims %q: %w", name, err)
+	}
+	cfg, err := inboundOAuthConfig(app)
+	if err != nil {
+		return fmt.Errorf("verify identity claims %q: %w", name, err)
+	}
+	accessMissing := missingIdentityAttributes(accessTokenAttributes(cfg))
+	idMissing := missingIdentityAttributes(idTokenAttributes(cfg))
+	if len(accessMissing) == 0 && len(idMissing) == 0 {
+		return nil
+	}
+	return fmt.Errorf(
+		"application %q was written but the IdP did not store its identity claims "+
+			"(access token missing %v, id token missing %v) — ThunderID accepts an "+
+			"unrecognised token config with 200 and drops it, so this is a wire-shape "+
+			"mismatch, not an outage",
+		name, accessMissing, idMissing)
 }
 
 // scopeClaimConfig maps OIDC scopes to the claims Thunder releases when that
@@ -646,9 +799,9 @@ func (c *client) updateApp(ctx context.Context, token, internalID string, app De
 	} else if app.ClientSecret != "" {
 		// Enforce the desired secret so Thunder's stored value always matches
 		// the one provisioned in OpenBao → K8s Secret. Without this, a prior
-		// bootstrap (values-thunder.yaml 59-aep-oauth-apps.sh) may have set a
-		// different hardcoded secret, causing 401s for services reading the
-		// OpenBao-provisioned value.
+		// bootstrap (a thunder-resources/ document's literal clientSecret) may
+		// have set a different hardcoded secret, causing 401s for services
+		// reading the OpenBao-provisioned value.
 		cfg["clientSecret"] = app.ClientSecret
 	}
 	cfg["token"] = tokenClaimConfig()

@@ -14,24 +14,24 @@ image:
 # OFF (see main.go), so more than one replica would double-reconcile.
 replicaCount: 1
 
-thunder:
-  # In-cluster admin API base URL for the platform Thunder.
-  adminURL: "http://amp-thunder-extension-service.amp-thunder.svc.cluster.local:8090"
-  # OAuth resource indicator for ThunderID's own "System" resource server —
-  # the one that owns the `system` scope. Conventionally
-  # "<thunder PUBLIC url>/mcp"; the identifier is a name, not an address, so it
-  # is the public URL even though adminURL above is the in-cluster one.
-  #
-  # Needed wherever Thunder has a server-wide DEFAULT resource server set — as
-  # it does here, to Agent Manager's. Without the indicator the `system` scope
-  # resolves against that default, which does not define it, and is dropped
-  # SILENTLY: the token endpoint returns 200 with a scope-less token and every
-  # admin call then 403s. Empty disables the parameter (pre-1.0.0 behaviour).
-  systemResourceIdentifier: "http://thunder.openchoreo.localhost:8080/mcp"
-  # Credentials (THUNDER_SYSTEM_CLIENT_ID, THUNDER_SYSTEM_CLIENT_SECRET) are
-  # sourced exclusively from the `thunder-app-operator-credentials` Secret,
-  # which is provisioned by ESO before this chart is installed. The chart does
-  # not manage any credential values itself.
+# The operator has no Thunder of its own — nothing to configure here.
+#
+# Each ThunderApplication is registered on the Thunder that serves its (org,
+# environment), resolved per CR at reconcile time from the BINDING RECORD that
+# deployments/scripts/setup-environment-thunder.sh writes:
+#
+#   ConfigMap  labelled aep.wso2.com/kind=thunder-binding,
+#              aep.wso2.com/org=<org>, aep.wso2.com/env=<env>, in that
+#              environment's Thunder namespace. Selected by label, never by
+#              name. Keys read here: issuer, adminURL,
+#              systemResourceIdentifier, secretName, secretNamespace.
+#   Secret     named by the ConfigMap's `secretName`, MIRRORED into this
+#              release's namespace (the operator watches Secrets only there —
+#              see the ClusterRole/Role in templates/rbac.yaml). Keys read
+#              here: client-id, client-secret.
+#
+# A CR whose (org, environment) has no such record reports Ready=false with a
+# message naming what is missing, and reconciles as soon as the record appears.
 
 resources:
   requests:
