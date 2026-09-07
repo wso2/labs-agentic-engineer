@@ -6,6 +6,16 @@
   "description": "Cell architecture diagram renderer (React + xyflow) over the cell DSL. Vendored in-house from @kanushka/cell-diagram-react (synced at upstream tag v0.3.0).",
   "main": "src/index.ts",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./src/index.ts"
+    },
+    "./compiler": {
+      "types": "./dist/compiler/compileProject.d.ts",
+      "default": "./src/compiler/compileProject.ts"
+    }
+  },
   "sideEffects": [
     "*.css"
   ],

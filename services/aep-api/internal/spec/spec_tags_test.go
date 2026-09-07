@@ -29,9 +29,9 @@ import (
 
 func seedSpec() map[string]string {
 	return map[string]string{
-		"specs/requirements/prd.md": "# Reqs\n",
-		"specs/design/design.md":             "# Design\n",
-		"src/main.go":                        "package main\n",
+		"specs/requirements/prd.md":    "# Reqs\n",
+		"specs/design/domain-model.md": "# Design\n",
+		"src/main.go":                  "package main\n",
 	}
 }
 
@@ -105,7 +105,7 @@ func TestListSpecVersionTags_SequenceAndLegacyExclusion(t *testing.T) {
 	r.remote.Tag(t, "v1", "spec v1")
 	r.remote.Tag(t, "v1-1", "legacy design revision")
 	r.remote.Seed(t, map[string]string{
-		"specs/design/design.md": "# Design r2\n",
+		"specs/design/domain-model.md": "# Design r2\n",
 	}, "spec change")
 	r.remote.Tag(t, "v2", "spec v2")
 

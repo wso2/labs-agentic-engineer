@@ -125,9 +125,25 @@ type RunCycle struct {
 	// history and vanish with its retention, leaving a self-healed run
 	// indistinguishable from one that reported first time.
 	ValidationVerdict string `gorm:"type:text" json:"validationVerdict,omitempty"`
-	// ValidationIssue is the validation issue this cycle was dispatched at. Same
-	// reasoning: the issue is reused across attempts, but which attempt asked is a
-	// per-cycle fact, and it keeps a settled run navigable to its criteria.
+	// ValidationIssue is the validation issue this cycle was dispatched at.
+	//
+	// NOT for the reason the verdict above is kept per-cycle, despite sitting
+	// beside it: that argument is that attempts DISAGREE, and these cannot.
+	// EnsureValidationIssue is keyed by MILESTONE and reopens the existing issue
+	// for a repeat rather than minting a second one, so every cycle under a
+	// milestone holds the same number — one issue per version, however many
+	// attempts ask it. There is no per-cycle history here to lose.
+	//
+	// What it buys is TIMING. The number is knowable when the cycle OPENS and the
+	// run's own copy is not written until SetValidationVerdict, so this is the
+	// only place it exists while a validation is still going — which is exactly
+	// when the console needs it, for the issue link and for the agent's status
+	// line (that issue's newest comment). Written by AppendCycle from the
+	// dispatch's anchor; SetValidationVerdict later writes the same value again,
+	// so a settled cycle reads the same either way.
+	//
+	// Zero on every non-validation kind, including a repair coding cycle in a dev
+	// run whose workflow state still carries the number.
 	ValidationIssue int `gorm:"not null;default:0" json:"validationIssue,omitempty"`
 	// ValidationDigest fingerprints WHAT THIS ATTEMPT CONCLUDED — the criteria,
 	// their outcomes and their failure messages, never the file bytes

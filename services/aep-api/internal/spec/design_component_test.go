@@ -175,7 +175,7 @@ func TestDesignComponent_ListDependencies_ComputesStatusPerKind(t *testing.T) {
 }
 
 // TestDesignComponent_ListDependencies_NoDesignIs404 asserts an absent design
-// (no design.md at all) surfaces as 404, not an empty list or a 500.
+// (no design.cell at all) surfaces as 404, not an empty list or a 500.
 func TestDesignComponent_ListDependencies_NoDesignIs404(t *testing.T) {
 	t.Parallel()
 	h := newDesignHarness(t, map[string]string{}, nil)

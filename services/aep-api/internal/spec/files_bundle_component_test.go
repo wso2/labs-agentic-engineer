@@ -93,9 +93,9 @@ func (b wireFileBundle) byPath() map[string]wireFileContent {
 // "bundle" and fail the path gate instead.
 func TestBundle_AgreesWithThePerFileReadsItReplaces(t *testing.T) {
 	r := newFilesRig(t, map[string]string{
-		"specs/requirements/prd.md": "req body",
-		"specs/design/design.md":    "design body",
-		"specs/design/design.cell":  "cell body",
+		"specs/requirements/prd.md":    "req body",
+		"specs/design/domain-model.md": "design body",
+		"specs/design/design.cell":     "cell body",
 	})
 
 	got := r.bundle(t, "?prefix=specs/")
@@ -114,9 +114,9 @@ func TestBundle_AgreesWithThePerFileReadsItReplaces(t *testing.T) {
 		}
 	}
 	for path, want := range map[string]string{
-		"specs/requirements/prd.md": "req body",
-		"specs/design/design.md":    "design body",
-		"specs/design/design.cell":  "cell body",
+		"specs/requirements/prd.md":    "req body",
+		"specs/design/domain-model.md": "design body",
+		"specs/design/design.cell":     "cell body",
 	} {
 		f, ok := got.byPath()[path]
 		if !ok {
@@ -163,11 +163,11 @@ func TestBundle_OmitsWhatTheReadGateRefuses(t *testing.T) {
 
 func TestBundle_PrefixNarrowsWithinTheGate(t *testing.T) {
 	r := newFilesRig(t, map[string]string{
-		"specs/requirements/prd.md": "req",
-		"specs/design/design.md":    "des",
+		"specs/requirements/prd.md":    "req",
+		"specs/design/domain-model.md": "des",
 	})
 	got := r.bundle(t, "?prefix=specs/design/")
-	if len(got.Files) != 1 || got.Files[0].Path != "specs/design/design.md" {
+	if len(got.Files) != 1 || got.Files[0].Path != "specs/design/domain-model.md" {
 		t.Fatalf("prefix filter wrong: %+v", got.Files)
 	}
 }
@@ -310,10 +310,10 @@ func newRecordingRig(t *testing.T, seed map[string]string) (*componenttest.Harne
 
 func TestBundle_ResolvesTheTipOnceThenAddressesObjects(t *testing.T) {
 	h, ws := newRecordingRig(t, map[string]string{
-		"specs/requirements/prd.md": "req",
-		"specs/design/design.md":    "des",
-		"specs/design/design.cell":  "cell",
-		"README.md":                 "readme",
+		"specs/requirements/prd.md":    "req",
+		"specs/design/domain-model.md": "des",
+		"specs/design/design.cell":     "cell",
+		"README.md":                    "readme",
 	})
 	if rec := h.AsOrg(filesTestOrg).Get(bundleBase + "?prefix=specs/"); rec.Code != http.StatusOK {
 		t.Fatalf("bundle: code %d (%s)", rec.Code, rec.Body.String())
@@ -351,9 +351,9 @@ func (w *recordingWorkspace) mustResolved(t *testing.T) string {
 // a regression to per-file reads inside Bundle fails here.
 func TestBundle_CostsOneRefAddressedReadWhereTheFanOutCostsOnePerFile(t *testing.T) {
 	seed := map[string]string{
-		"specs/requirements/prd.md": "req",
-		"specs/design/design.md":    "des",
-		"specs/design/design.cell":  "cell",
+		"specs/requirements/prd.md":    "req",
+		"specs/design/domain-model.md": "des",
+		"specs/design/design.cell":     "cell",
 	}
 
 	fanOut, fanWS := newRecordingRig(t, seed)

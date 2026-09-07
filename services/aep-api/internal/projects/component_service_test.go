@@ -306,7 +306,7 @@ func TestComponentService_GetBuildLogs_SuccessAndError(t *testing.T) {
 // --- GetComponentOpenAPI (real ArtifactStore over a faked design tree) --------
 
 // designFiles builds the working-tree file map ReadDesign assembles: a root
-// design.md (required, else ReadDesign returns nil) plus one component dir with
+// design.cell (required, else ReadDesign returns nil) plus one component dir with
 // the given type + optional openapi.yaml.
 func designFiles(componentDir, componentType, openapi string) map[string]string {
 	files := map[string]string{
@@ -342,7 +342,7 @@ func TestComponentService_GetComponentOpenAPI_NoArtifactStore(t *testing.T) {
 
 func TestComponentService_GetComponentOpenAPI_NotFoundPaths(t *testing.T) {
 	t.Parallel()
-	// No design.md at all ⇒ ReadDesign returns (nil,nil) ⇒ ErrComponentNotFound.
+	// No design.cell at all ⇒ ReadDesign returns (nil,nil) ⇒ ErrComponentNotFound.
 	svc := openAPISvc(t, map[string]string{}, nil)
 	if _, err := svc.GetComponentOpenAPI(context.Background(), "acme", "web", "svc"); !errors.Is(err, ErrComponentNotFound) {
 		t.Fatalf("empty tree: want ErrComponentNotFound, got %v", err)

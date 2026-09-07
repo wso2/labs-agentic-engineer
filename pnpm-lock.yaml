@@ -224,6 +224,9 @@ importers:
       '@aep/playground':
         specifier: workspace:*
         version: link:../../playground
+      '@aep/ui-cell-diagram-react':
+        specifier: workspace:*
+        version: link:../../packages/ui/cell-diagram-react
       '@ai-sdk/anthropic':
         specifier: ^4.0.0
         version: 4.0.12(zod@4.4.3)
@@ -8328,7 +8331,7 @@ snapshots:
       '@vitest/mocker': 4.1.10(msw@2.14.6(@types/node@25.9.4)(typescript@5.9.3))(vite@7.3.6(@types/node@25.9.4)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
       playwright: 1.61.1
       tinyrainbow: 3.1.0
-      vitest: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@25.9.4)(@vitest/browser-playwright@4.1.10)(jsdom@25.0.1)(msw@2.14.6(@types/node@25.9.4)(typescript@5.9.3))(vite@7.3.6(@types/node@25.9.4)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
+      vitest: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@25.9.4)(@vitest/browser-playwright@4.1.10)(jsdom@26.1.0)(msw@2.14.6(@types/node@25.9.4)(typescript@5.9.3))(vite@7.3.6(@types/node@25.9.4)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
     transitivePeerDependencies:
       - bufferutil
       - msw

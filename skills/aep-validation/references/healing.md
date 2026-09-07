@@ -52,10 +52,12 @@ validation phase.
 
 - Max **2 heal attempts per criterion**; each followed by a focused
   re-run: `npm test --prefix tests/e2e -- specs/<AC-ID>.spec.ts`.
-- Max **2 focused re-run waves** after the initial full run.
-- Then **one final full run** (`npm test --prefix tests/e2e`) so
-  `tests/e2e/test-results/results.json` — the report's input — reflects the
-  authoritative end state.
+- Max **2 focused re-run waves**.
+- No closing full-suite run is required. Each run writes its own results
+  file under `tests/e2e/test-results/runs/` and the report takes the
+  newest per criterion, so a focused re-run supersedes the failure that
+  prompted it. Run the whole suite again if you want the sequenced pass
+  as well, not because the report needs it.
 - Still failing after the budget: leave it failing. In the plan/PR
   notes, mark it `genuine` or `unresolved (possibly brittle)`.
 

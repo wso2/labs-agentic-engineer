@@ -12,6 +12,13 @@ This is a v1 for a single, flat team of ~40 people at one startup. No
 multi-team/group structure, no restaurant menu catalog, and no in-app payment
 — people settle up with the opener offline.
 
+## Actors
+
+- **Teammate** — any signed-in member of the team; opens rounds, adds and
+  edits their own items before cutoff, views the consolidated order and past
+  rounds.
+- **Opener** — the teammate who opened the current round; may close it early.
+
 ## Users & Authentication
 
 - All users belong to a single shared team — there is no team/group hierarchy

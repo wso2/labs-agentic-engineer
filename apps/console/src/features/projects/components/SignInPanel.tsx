@@ -20,14 +20,11 @@ import { useState } from "react";
 import {
   Box,
   Button,
-  CircularProgress,
-  IconButton,
   Link as MuiLink,
   Stack,
-  Tooltip,
   Typography,
 } from "@wso2/oxygen-ui";
-import { Copy, ExternalLink, Eye } from "@wso2/oxygen-ui-icons-react";
+import { ExternalLink, Users } from "@wso2/oxygen-ui-icons-react";
 import { env } from "../../../config/env";
 import { thunderUsersConsoleHref } from "../../../config/thunderConsole";
 import {
@@ -38,112 +35,7 @@ import {
   publishedTestUsers,
   type PublishedTestUser,
 } from "../lib/publishedTestUsers";
-
-function copyText(value: string): Promise<void> {
-  if (!navigator.clipboard?.writeText) {
-    return Promise.reject(new Error("Clipboard is not available"));
-  }
-  return navigator.clipboard.writeText(value);
-}
-
-function LoginRow({
-  login,
-  revealPassword,
-}: {
-  login: PublishedTestUser;
-  revealPassword: (username: string) => Promise<string>;
-}) {
-  const [password, setPassword] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const reveal = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      setPassword(await revealPassword(login.username));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Box>
-      <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
-        <Tooltip
-          title={
-            login.coldStart ? `${login.role} · cold start` : login.role
-          }
-        >
-          <Typography
-            variant="body2"
-            sx={{ fontFamily: "monospace", flexGrow: 1, minWidth: 0 }}
-          >
-            {login.username}
-          </Typography>
-        </Tooltip>
-        {password === null ? (
-          <Tooltip title="Reveal password">
-            <span>
-              <IconButton
-                size="small"
-                disabled={busy}
-                aria-label={`Reveal the password for ${login.username}`}
-                onClick={() => void reveal()}
-              >
-                {busy ? (
-                  <CircularProgress size={12} color="inherit" />
-                ) : (
-                  <Eye size={14} />
-                )}
-              </IconButton>
-            </span>
-          </Tooltip>
-        ) : (
-          <Button size="small" color="inherit" onClick={() => setPassword(null)}>
-            Hide
-          </Button>
-        )}
-      </Stack>
-      {password !== null && (
-        <Stack
-          direction="row"
-          spacing={0.5}
-          sx={{ alignItems: "center", mt: 0.25 }}
-        >
-          <Typography
-            variant="body2"
-            aria-live="polite"
-            sx={{ fontFamily: "monospace", color: "text.secondary" }}
-          >
-            {password}
-          </Typography>
-          <Tooltip title="Copy password">
-            <IconButton
-              size="small"
-              aria-label={`Copy the password for ${login.username}`}
-              onClick={() => {
-                setError(null);
-                void copyText(password).catch((e) => {
-                  setError(e instanceof Error ? e.message : String(e));
-                });
-              }}
-            >
-              <Copy size={14} />
-            </IconButton>
-          </Tooltip>
-        </Stack>
-      )}
-      {error !== null && (
-        <Typography variant="caption" color="error">
-          {error}
-        </Typography>
-      )}
-    </Box>
-  );
-}
+import { TestUsersDialog } from "./TestUsersDialog";
 
 function ThunderSentence({ thunderUrl }: { thunderUrl: string }) {
   return (
@@ -187,6 +79,7 @@ export function SignInPanel({
   revealPassword: (username: string) => Promise<string>;
   loadState?: "ready" | "pending" | "error";
 }) {
+  const [open, setOpen] = useState(false);
   return (
     <Box>
       {loadState === "pending" && (
@@ -216,15 +109,35 @@ export function SignInPanel({
           >
             Test users for agents on this environment
           </Typography>
-          <Stack spacing={1} sx={{ mt: 1, mb: 1.5 }}>
-            {logins.map((login) => (
-              <LoginRow
-                key={login.username}
-                login={login}
-                revealPassword={revealPassword}
-              />
-            ))}
+          {/* One LINE, whatever the design declares. The accounts used to be
+              listed here, one two-line block per role, so a six-role app grew
+              this card past the ledger beside it (review on #714). The count
+              is the fact the card owes the reader; the accounts themselves are
+              a table, and a table belongs in a dialog. */}
+          <Stack
+            direction="row"
+            spacing={1.5}
+            sx={{ alignItems: "center", mt: 1, mb: 1.5 }}
+          >
+            <Typography variant="body2">
+              {logins.length} account{logins.length === 1 ? "" : "s"}, one per
+              role
+            </Typography>
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={<Users size={14} aria-hidden />}
+              onClick={() => setOpen(true)}
+            >
+              View test users
+            </Button>
           </Stack>
+          <TestUsersDialog
+            open={open}
+            onClose={() => setOpen(false)}
+            logins={logins}
+            revealPassword={revealPassword}
+          />
         </>
       )}
       <ThunderSentence thunderUrl={thunderUrl} />

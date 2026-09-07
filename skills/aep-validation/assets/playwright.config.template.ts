@@ -82,29 +82,25 @@ function hostResolverArgs(baseURL: string): string[] {
 
 const baseURL = primaryTarget();
 
-// Playwright's own ways of narrowing a run, beyond naming spec files. `--shard`
-// is the one that bites: it looks like the way to fit a big suite inside the
-// command window, and without it here a `--shard=1/3` would have been treated as
-// the authoritative pass and written a THIRD of the suite's results as if they
-// were all of it — every unrun criterion reported as never checked.
-const NARROWING_FLAGS = /^(?:--shard|--grep|--grep-invert|-g|--last-failed|--only-changed)(?:=|$)/;
-
-/**
- * Whether this run covers less than the whole suite.
- *
- * A partial run is a PROBE — one spec being checked on its own, a shard, a
- * grep — and no probe may write `test-results/results.json`, which is the
- * report generator's only input. Only a complete, unfiltered run may.
- *
- * Read off the command rather than switched by a flag or an env var: naming a
- * spec is not optional, it is how you run one spec, so there is nothing for a
- * caller to remember and nothing to forget.
- */
-function isPartialRun(): boolean {
-  return process.argv
-    .slice(2)
-    .some((a) => a.includes(".spec.") || NARROWING_FLAGS.test(a));
-}
+// Every run writes its OWN results file, and the report is the merge of them.
+//
+// One run used to have to cover the whole suite, because there was one file and
+// the last writer won. That made a run which could not finish in a single
+// command a run that could produce no report at all — 24 specs outgrew the Bash
+// timeout, the call was severed, and the criteria that had passed were lost with
+// it (issue #701). Nothing here caps how long a suite may take any more: it is
+// covered by however many calls it takes.
+//
+// The stamp is the merge order. ISO-8601 sorts lexicographically in time order,
+// so `readdir().sort()` is chronological and the newest result for a criterion
+// is simply the last one seen — which is what makes a heal's re-run supersede
+// the failure that prompted it.
+//
+// Computed once at module scope, deliberately. Playwright loads this config
+// twice — the CLI process, which constructs the reporters, and each worker,
+// which does not — so a per-evaluation stamp would differ between them
+// harmlessly, but a per-CALL one would not be stable within the run that uses it.
+const STAMP = new Date().toISOString().replace(/[:.]/g, "-");
 
 export default defineConfig({
   testDir: "./specs",
@@ -116,30 +112,11 @@ export default defineConfig({
   forbidOnly: true,
   timeout: 30_000,
   expect: { timeout: 10_000 },
-  // A PARTIAL run is a probe — one spec being checked on its own (how it is
-  // verified while authored and re-checked while healed), a shard, or a grep. A
-  // run that narrows nothing is the authoritative pass over the whole suite, and
-  // its `results.json` is the only thing the report generator reads. See
-  // isPartialRun above.
-  //
-  // Only the authoritative pass may write that file. Probes used to overwrite it
-  // with a single spec's results, which is invisible until the report claims one
-  // criterion was checked and the rest never ran.
-  //
-  // Inferred from the command rather than switched by a flag or an env var on
-  // purpose: naming a spec is not optional — it is how you run one spec — so
-  // there is nothing here for a caller to remember, and nothing to forget. The
-  // cost is that a SHARDED authoritative run reads as a probe and writes no
-  // report input at all; the generator then exits 2 naming the missing path,
-  // which is why the workflow runs the authoritative pass as one call.
-  //
-  // Playwright loads this config twice — once in the CLI process, which is where
-  // argv carries the filter and where reporters are constructed, and once per
-  // worker, where argv is empty. Only the first decides. Do not "simplify" this
-  // to a module-level constant computed somewhere the CLI process cannot see.
-  reporter: isPartialRun()
-    ? [["line"]]
-    : [["list"], ["json", { outputFile: "test-results/results.json" }]],
+  // Written per run, never shared. See STAMP above: the report generator merges
+  // this directory, so a narrowed run — one spec being verified while authored,
+  // a spec re-run while healed, a shard — contributes its results instead of
+  // overwriting everyone else's or being thrown away.
+  reporter: [["list"], ["json", { outputFile: `test-results/runs/${STAMP}.json` }]],
   outputDir: "test-results/artifacts",
   use: {
     baseURL,

@@ -86,7 +86,7 @@ func TestStartCommand_OnlyStoredReferencesRide(t *testing.T) {
 		// simply stop steering). (prd.md is left out deliberately — the shared
 		// rig writes it as the turn's own output.)
 		"specs/requirements/scope.md":                     "# Scope\n",
-		"specs/design/design.md":                          "# Design\n",
+		"specs/design/domain-model.md":                    "# Design\n",
 		"README.md":                                       "hi\n",
 		"specs/requirements/references-old/superseded.md": "# Old\n",
 		"specs/requirements/references/legacy-v1.md":      "# Committed under v1\n",

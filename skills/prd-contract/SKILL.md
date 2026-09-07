@@ -41,7 +41,9 @@ made itself, because the user has not answered it yet, ends with the literal
 tag `*assumed*` — that exact emphasised word, no parentheses or brackets around
 it. The console reads the tag to count what is unsettled and to draw the
 Settle control on the line, so a decorated variant costs the user the ability
-to challenge the judgment.>
+to challenge the judgment. The tag lives exactly as long as the user has not
+answered: the moment they do — even by confirming what was assumed — the tag
+comes off and the line stays as a settled decision.>
 
 ## Out of Scope
 <what this project deliberately does not do>

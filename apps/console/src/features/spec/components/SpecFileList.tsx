@@ -32,15 +32,18 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import {
+  Boxes,
   Check,
   ChevronDown,
   ChevronRight,
+  Database,
   FileText,
   RefreshCw,
   Network,
   LayoutDashboard,
   ShieldCheck,
   TriangleAlert,
+  Workflow,
 } from "@wso2/oxygen-ui-icons-react";
 import { WorkingPulse } from "../../agent-chat/components/WorkingIndicator";
 import { PRD_PATH, type SpecFileEntry } from "../api/mapping";
@@ -57,6 +60,7 @@ import {
   buildDesignSection,
   selectionKey,
   DESIGN_CELL_PATH,
+  DOMAIN_MODEL_PATH,
   SECURITY_JSON_PATH,
   type SpecSelection,
 } from "../api/designTree";
@@ -150,6 +154,16 @@ export function SpecFileList({
       return next;
     });
   };
+  // The Flows group collapses like a component group; both start open.
+  const [flowsCollapsed, setFlowsCollapsed] = useState(false);
+
+  // The design section has content to show (and a design to re-generate)
+  // once any of its documents, flows or components exist.
+  const hasDesign =
+    design.hasCellDsl ||
+    design.overview.length > 0 ||
+    design.flows.length > 0 ||
+    design.hasComponents;
 
   // "Not created yet" — flat, and true. The old note claimed agents were
   // "being derived…" over sections nobody had asked for yet, which stated
@@ -317,6 +331,38 @@ export function SpecFileList({
     );
   };
 
+  // A collapsible group's header — Flows and every component share it, so
+  // the two kinds of group read the same: chevron, glyph, name. The glyph is
+  // what tells a flows group from a component group at a glance (#686).
+  const groupHeader = (
+    label: string,
+    icon: React.ReactNode,
+    collapsed: boolean,
+    onToggle: () => void,
+  ) => (
+    <ListItemButton
+      onClick={onToggle}
+      sx={{ px: 2, py: 0.25, minHeight: 0 }}
+      aria-expanded={!collapsed}
+      aria-label={`${collapsed ? "Expand" : "Collapse"} ${label}`}
+    >
+      <ListItemIcon sx={{ minWidth: 20 }}>
+        {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+      </ListItemIcon>
+      <ListItemIcon sx={{ minWidth: 24, color: "text.secondary" }}>{icon}</ListItemIcon>
+      <ListItemText
+        primary={label}
+        slotProps={{
+          primary: {
+            variant: "body2",
+            fontWeight: 600,
+            color: "text.secondary",
+          },
+        }}
+      />
+    </ListItemButton>
+  );
+
   const flatGroup = (section: RailSection, groupFiles: SpecFileEntry[]) => (
     <Box sx={{ mb: 1 }}>
       {sectionHeader(section)}
@@ -342,11 +388,12 @@ export function SpecFileList({
     <Box component="nav" aria-label="Spec files" sx={{ py: 1 }}>
       {flatGroup(sectionOf("requirements"), requirements)}
 
-      {/* Design — grouped by component, with synthetic diagram entries. */}
+      {/* Design — the documents as rows (Architecture, Domain model, Security),
+          then the groups: Flows first, then one per component. */}
       <Box sx={{ mb: 1 }}>
         {sectionHeader(
           sectionOf("design"),
-          (design.hasComponents || design.overview.length > 0) && (
+          hasDesign && (
             <Tooltip
               title={
                 regenerateDisabled
@@ -368,7 +415,7 @@ export function SpecFileList({
             </Tooltip>
           ),
         )}
-        {design.hasComponents || design.hasCellDsl || design.overview.length > 0 ? (
+        {hasDesign ? (
           <List dense disablePadding>
             {design.hasCellDsl &&
               row(
@@ -379,7 +426,11 @@ export function SpecFileList({
                 DESIGN_CELL_PATH,
               )}
             {design.overview.map((f) =>
-              row(fileSel(f.path), fileLabel(f.path), <LayoutDashboard size={16} />),
+              row(
+                fileSel(f.path),
+                fileLabel(f.path),
+                f.path === DOMAIN_MODEL_PATH ? <Database size={16} /> : <FileText size={16} />,
+              ),
             )}
             {/* ONE rail entry for security.json — present file shows the row;
                 missing file hides it. */}
@@ -391,34 +442,28 @@ export function SpecFileList({
                 false,
                 SECURITY_JSON_PATH,
               )}
+            {/* The key flows — one group, one row per flow, shown only once a
+                flow exists or a turn has planned one (a planned flow rides in
+                as a ghost like any other declared path). */}
+            {design.flows.length > 0 && (
+              <Box sx={{ mt: 0.5 }}>
+                {groupHeader("Flows", <Workflow size={14} />, flowsCollapsed, () =>
+                  setFlowsCollapsed((v) => !v),
+                )}
+                <Collapse in={!flowsCollapsed} unmountOnExit>
+                  {design.flows.map((f) =>
+                    row(fileSel(f.path), fileLabel(f.path), <FileText size={16} />, true),
+                  )}
+                </Collapse>
+              </Box>
+            )}
             {design.components.map((c) => {
               const collapsed = collapsedComponents.has(c.name);
               return (
                 <Box key={c.name} sx={{ mt: 0.5 }}>
-                  <ListItemButton
-                    onClick={() => toggleComponent(c.name)}
-                    sx={{ px: 2, py: 0.25, minHeight: 0 }}
-                    aria-expanded={!collapsed}
-                    aria-label={`${collapsed ? "Expand" : "Collapse"} ${c.name}`}
-                  >
-                    <ListItemIcon sx={{ minWidth: 20 }}>
-                      {collapsed ? (
-                        <ChevronRight size={14} />
-                      ) : (
-                        <ChevronDown size={14} />
-                      )}
-                    </ListItemIcon>
-                    <ListItemText
-                      primary={c.name}
-                      slotProps={{
-                        primary: {
-                          variant: "body2",
-                          fontWeight: 600,
-                          color: "text.secondary",
-                        },
-                      }}
-                    />
-                  </ListItemButton>
+                  {groupHeader(c.name, <Boxes size={14} />, collapsed, () =>
+                    toggleComponent(c.name),
+                  )}
                   <Collapse in={!collapsed} unmountOnExit>
                     {c.files.map((f) =>
                       row(fileSel(f.path), fileLabel(f.path), <FileText size={16} />, true),

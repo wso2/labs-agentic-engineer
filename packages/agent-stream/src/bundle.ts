@@ -43,6 +43,8 @@ import { checkComponentDesign } from "./component-design-schema.js";
 import { checkSecurityDesign } from "./security-design-schema.js";
 import { checkOpenapiSpec } from "./openapi-spec.js";
 import { checkWireframeLayout } from "./wireframe-layout.js";
+import { checkDesignDiagram } from "./design-diagrams.js";
+import { checkComponentDependencies } from "./component-dependencies.js";
 import type {
   Op,
   ErrCode,
@@ -65,7 +67,7 @@ export type { Op, ErrCode, MatchCandidate, OpOk, OpErr, OpResult };
 /** Structural root files the demo refuses to delete. */
 const PROTECTED_PATHS = new Set<string>([
   "specs/requirements/prd.md",
-  "specs/design/design.md",
+  "specs/design/design.cell",
 ]);
 
 /** Leading YAML frontmatter fence: `---\n<block>\n---`. */
@@ -202,7 +204,7 @@ export class FileBundle {
    * Apply `content` to `path` through the write-gate ladder: YAML reparse, then
    * each artifact-specific gate that claims the path (component `design.json`
    * schema, `security.json` schema, `wireframes.dsl` syntax, `openapi.yaml`
-   * structure). The first
+   * structure, the design diagrams' shape and participants). The first
    * problem aborts with its own code and NO write, leaving the bundle
    * byte-for-byte unchanged — the safe in-memory contract. Every gate is a pure
    * (path, content) => problem | null function, so a new artifact kind is one
@@ -219,6 +221,14 @@ export class FileBundle {
     const jsonProblem = checkComponentDesign(path, content);
     if (jsonProblem) {
       return err(path, op, jsonProblem.code, jsonProblem.message);
+    }
+    // A component's dependencies are edges of the cell — the design's source
+    // of truth — so a dependency the cell does not declare (a database found
+    // during enrichment and never drawn) is refused while the agent can still
+    // add the node.
+    const dependencyProblem = checkComponentDependencies(path, content, this);
+    if (dependencyProblem) {
+      return err(path, op, dependencyProblem.code, dependencyProblem.message);
     }
     // The security document is gated on the same terms: it is the ONE spec file
     // the platform acts on deterministically at build time (creating directory
@@ -242,6 +252,14 @@ export class FileBundle {
     const specProblem = checkOpenapiSpec(path, content);
     if (specProblem) {
       return err(path, op, specProblem.code, specProblem.message);
+    }
+    // The design's diagram documents are shape-gated on the same terms — one
+    // diagram per file (ADR-0020) — and a flow's participants are resolved
+    // against the cell and the PRD already in this bundle, so an invented
+    // participant is caught while the model can still fix it.
+    const diagramProblem = checkDesignDiagram(path, content, this);
+    if (diagramProblem) {
+      return err(path, op, diagramProblem.code, diagramProblem.message);
     }
     this.files.set(path, content);
     this.touchedPaths.add(path);

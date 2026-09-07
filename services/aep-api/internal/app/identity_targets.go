@@ -302,6 +302,16 @@ func (d invalidatingDirectory) AddMembers(ctx context.Context, group identity.Di
 	return updated, d.check(err)
 }
 
+func (d invalidatingDirectory) RemoveMembers(ctx context.Context, group identity.DirectoryGroup, memberIDs []string) (identity.DirectoryGroup, error) {
+	updated, err := d.inner.RemoveMembers(ctx, group, memberIDs)
+	return updated, d.check(err)
+}
+
+func (d invalidatingDirectory) UserGroups(ctx context.Context, userID string) ([]identity.DirectoryGroup, error) {
+	groups, err := d.inner.UserGroups(ctx, userID)
+	return groups, d.check(err)
+}
+
 func (d invalidatingDirectory) FindUserByUsername(ctx context.Context, username string) (*identity.DirectoryAccount, bool, error) {
 	account, found, err := d.inner.FindUserByUsername(ctx, username)
 	return account, found, d.check(err)

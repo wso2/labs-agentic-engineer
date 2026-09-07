@@ -31,7 +31,9 @@
 import { DECLARE_PLAN_TOOL } from "@aep/agent-stream";
 
 const CELL = "specs/design/design.cell";
-const OVERVIEW = "specs/design/design.md";
+const DOMAIN_MODEL = "specs/design/domain-model.md";
+const FLOW_SUBMIT = "specs/design/flows/submit-an-expense.md";
+const FLOW_APPROVE = "specs/design/flows/approve-an-expense.md";
 const SECURITY = "specs/design/security.json";
 const PORTAL = "specs/design/components/expense-portal/design.json";
 const API = "specs/design/components/expense-api/design.json";
@@ -43,8 +45,12 @@ const CRITERIA = "specs/validation/validation-criteria.json";
 const CONTENT: Record<string, string> = {
   [CELL]:
     "cell expense-approval {\n  component expense-portal kind: web-app\n  component expense-api kind: service\n}",
-  [OVERVIEW]:
-    "# Design overview\n\nTwo components: the portal is the user-facing surface, the API owns the expense record.",
+  [DOMAIN_MODEL]:
+    "# Expense approval — Domain model\n\nThe records the API owns: an expense and the receipt it must carry.\n\n```mermaid\nerDiagram\n    EXPENSE ||--|| RECEIPT : carries\n    EXPENSE {\n        string id PK\n        string submittedBy\n        decimal amount\n        string status \"submitted | approved | refused\"\n    }\n    RECEIPT {\n        string id PK\n        string expenseId FK\n        string fileName\n    }\n```\n",
+  [FLOW_SUBMIT]:
+    "# Submit an expense\n\nAn employee submits an expense with its receipt; the API refuses a submission without one.\n\n```mermaid\nsequenceDiagram\n    actor Employee\n    participant expense-portal\n    participant expense-api\n\n    Employee->>expense-portal: submit expense + receipt\n    expense-portal->>expense-api: create expense\n    alt no receipt attached\n        expense-api-->>expense-portal: refused\n    else\n        expense-api-->>expense-portal: submitted\n    end\n```\n",
+  [FLOW_APPROVE]:
+    "# Approve an expense\n\nAn approver reviews a submitted expense and approves or refuses it.\n\n```mermaid\nsequenceDiagram\n    actor Approver\n    participant expense-portal\n    participant expense-api\n\n    Approver->>expense-portal: open the queue\n    expense-portal->>expense-api: list submitted expenses\n    Approver->>expense-portal: approve\n    expense-portal->>expense-api: approve expense\n    expense-api-->>expense-portal: approved\n```\n",
   [SECURITY]: JSON.stringify(
     {
       version: 1,
@@ -97,9 +103,9 @@ function addFile(id: string, path: string): MockFrame[] {
 }
 
 export function designPlanFrames(turnId: string, failing: boolean): MockFrame[] {
-  const wave1 = { paths: [CELL, OVERVIEW, SECURITY] };
-  // OVERVIEW is restated on purpose — the union must dedupe it.
-  const wave2 = { paths: [OVERVIEW, PORTAL, API, CRITERIA] };
+  const wave1 = { paths: [CELL, DOMAIN_MODEL, SECURITY] };
+  // DOMAIN_MODEL is restated on purpose — the union must dedupe it.
+  const wave2 = { paths: [DOMAIN_MODEL, FLOW_SUBMIT, FLOW_APPROVE, PORTAL, API, CRITERIA] };
   const frames: MockFrame[] = [
     { type: "text-delta", delta: "Working on the design — reading the requirements first. " },
     // Wave one via the streamed-input path plus the complete call.
@@ -132,8 +138,11 @@ export function designPlanFrames(turnId: string, failing: boolean): MockFrame[] 
       toolName: DECLARE_PLAN_TOOL,
       input: wave2,
     },
-    { type: "text-delta", delta: "Writing the design overview… " },
-    ...addFile(`f-overview-${turnId}`, OVERVIEW),
+    { type: "text-delta", delta: "Writing the domain model… " },
+    ...addFile(`f-domain-model-${turnId}`, DOMAIN_MODEL),
+    { type: "text-delta", delta: "Writing the key flows… " },
+    ...addFile(`f-flow-submit-${turnId}`, FLOW_SUBMIT),
+    ...addFile(`f-flow-approve-${turnId}`, FLOW_APPROVE),
     { type: "text-delta", delta: "Writing the security design… " },
     ...addFile(`f-security-${turnId}`, SECURITY),
     { type: "text-delta", delta: "Writing the design for the expense portal… " },

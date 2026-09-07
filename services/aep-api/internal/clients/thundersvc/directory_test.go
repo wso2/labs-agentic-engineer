@@ -633,10 +633,31 @@ func TestCreateGroup_SendsAnEmptyMemberArrayNotNull(t *testing.T) {
 // -- AddGroupMembers ----------------------------------------------------------
 
 // addMembersStub answers the read-modify-write AddGroupMembers performs against
-// one group: the members read, the delete, and the recreate.
-func addMembersStub(t *testing.T, groupID string, existing []string, recreated Group, recreateStatus int) func(http.ResponseWriter, *http.Request, []byte) {
+// one group: the liveness resolution of every id it is about to write, the
+// members read, the delete, and the recreate.
+//
+// `live` is the set of ids the directory still HAS, and it is deliberately
+// separate from `existing` — the ids the group's member list names. A directory
+// where those two always agree cannot express the state this whole mechanism
+// exists to survive: a group naming an account that has been deleted. Pass an
+// id in `existing` but not in `live` to model exactly that.
+func addMembersStub(t *testing.T, groupID string, existing, live []string, recreated Group, recreateStatus int) func(http.ResponseWriter, *http.Request, []byte) {
+	has := make(map[string]bool, len(live))
+	for _, id := range live {
+		has[id] = true
+	}
 	return func(w http.ResponseWriter, r *http.Request, _ []byte) {
 		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/users/"):
+			if !has[strings.TrimPrefix(r.URL.Path, "/users/")] {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": strings.TrimPrefix(r.URL.Path, "/users/")})
+		case r.Method == http.MethodGet && r.URL.Path == "/groups":
+			// The by-name re-read recreateGroup does after a failed create.
+			// This stub's group is gone by then, so the honest answer is empty.
+			_ = json.NewEncoder(w).Encode(map[string]any{"totalResults": 0, "groups": []Group{}})
 		case r.Method == http.MethodGet && r.URL.Path == "/groups/"+groupID+"/members":
 			members := make([]map[string]string, 0, len(existing))
 			for _, id := range existing {
@@ -665,7 +686,7 @@ func TestAddGroupMembers_ReadsThenRecreatesWithTheUnion(t *testing.T) {
 	// create before the delete is a 409 on the unique name, and a recreate that
 	// forgot to read first would silently drop everyone already in the group.
 	recreated := Group{ID: "g-new", Name: "admin", Description: "the admins", OUID: "ou-1"}
-	stub := &directoryStub{handle: addMembersStub(t, "g-old", []string{"u-1"}, recreated, 0)}
+	stub := &directoryStub{handle: addMembersStub(t, "g-old", []string{"u-1"}, []string{"u-1", "u-2"}, recreated, 0)}
 	srv := stub.server(t)
 	defer srv.Close()
 
@@ -676,7 +697,12 @@ func TestAddGroupMembers_ReadsThenRecreatesWithTheUnion(t *testing.T) {
 	}
 
 	// The group already carries its OU, so no default-OU lookup is needed.
-	wantSeq(t, stub.seq(), "GET /groups/g-old/members", "DELETE /groups/g-old", "POST /groups")
+	// Every id is resolved BEFORE the delete: that ordering is the guarantee,
+	// because the delete cannot be undone and a rejected create is fatal.
+	wantSeq(t, stub.seq(),
+		"GET /groups/g-old/members",
+		"GET /users/u-1", "GET /users/u-2",
+		"DELETE /groups/g-old", "POST /groups")
 
 	var body struct {
 		Name        string `json:"name"`
@@ -708,7 +734,7 @@ func TestAddGroupMembers_NoOpWhenEveryMemberIsAlreadyPresent(t *testing.T) {
 	// The only membership write Thunder offers is a delete-and-recreate, which
 	// changes the group id. Doing that for nothing would churn the id on every
 	// build — and briefly leave the role absent for no reason at all.
-	stub := &directoryStub{handle: addMembersStub(t, "g-old", []string{"u-1", "u-2"}, Group{ID: "g-new"}, 0)}
+	stub := &directoryStub{handle: addMembersStub(t, "g-old", []string{"u-1", "u-2"}, []string{"u-1", "u-2"}, Group{ID: "g-new"}, 0)}
 	srv := stub.server(t)
 	defer srv.Close()
 
@@ -726,7 +752,7 @@ func TestAddGroupMembers_NoOpWhenEveryMemberIsAlreadyPresent(t *testing.T) {
 func TestAddGroupMembers_ResolvesDefaultOUWhenTheGroupHasNone(t *testing.T) {
 	stub := &directoryStub{
 		ouID:   "ou-default",
-		handle: addMembersStub(t, "g-old", []string{"u-1"}, Group{ID: "g-new"}, 0),
+		handle: addMembersStub(t, "g-old", []string{"u-1"}, []string{"u-1", "u-2"}, Group{ID: "g-new"}, 0),
 	}
 	srv := stub.server(t)
 	defer srv.Close()
@@ -738,6 +764,7 @@ func TestAddGroupMembers_ResolvesDefaultOUWhenTheGroupHasNone(t *testing.T) {
 	wantSeq(t, stub.seq(),
 		"GET /organization-units/tree/default",
 		"GET /groups/g-old/members",
+		"GET /users/u-1", "GET /users/u-2",
 		"DELETE /groups/g-old",
 		"POST /groups")
 
@@ -776,32 +803,76 @@ func TestAddGroupMembers_DoesNotDeleteWhenTheMembershipReadFails(t *testing.T) {
 	wantSeq(t, stub.seq(), "GET /groups/g-old/members")
 }
 
-func TestAddGroupMembers_RecreateFailureSaysTheGroupIsGone(t *testing.T) {
-	// The operation is not atomic: a failed recreate leaves the group deleted.
-	// The error has to say which group and that the delete already happened,
-	// because that is the difference between "nothing changed" and "the role
-	// no longer exists until the next build".
-	stub := &directoryStub{handle: addMembersStub(t, "g-old", []string{"u-1"}, Group{}, http.StatusInternalServerError)}
+func TestAddGroupMembers_RecreateFailureRestoresTheGroupEmpty(t *testing.T) {
+	// The operation is not atomic: once the delete has committed, a failed
+	// recreate would leave NO GROUP AT ALL — the role would simply cease to
+	// exist, and every project that declares it would fail at planning until
+	// somebody noticed. So the failure path is a ladder: retry the same
+	// payload once for a transient blip, then recreate the group EMPTY so the
+	// role survives. The caller still gets an error, because membership WAS
+	// lost and the build must not proceed as if a test user could sign in.
+	//
+	// This stub refuses any create carrying members and accepts an empty one,
+	// which is the shape of the real failure: Thunder rejects the whole POST
+	// for one bad member id.
+	var creates []int
+	stub := &directoryStub{handle: func(w http.ResponseWriter, r *http.Request, body []byte) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/users/"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "u"})
+		case r.Method == http.MethodGet && r.URL.Path == "/groups/g-old/members":
+			_ = json.NewEncoder(w).Encode(memberPage([]map[string]string{{"id": "u-1", "type": "user"}}, 1))
+		case r.Method == http.MethodDelete && r.URL.Path == "/groups/g-old":
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodGet && r.URL.Path == "/groups":
+			_ = json.NewEncoder(w).Encode(map[string]any{"totalResults": 0, "groups": []Group{}})
+		case r.Method == http.MethodPost && r.URL.Path == "/groups":
+			var req struct {
+				Members []struct{ ID string } `json:"members"`
+			}
+			_ = json.Unmarshal(body, &req)
+			creates = append(creates, len(req.Members))
+			if len(req.Members) > 0 {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"code":"GRP-1007","message":"Invalid user member ID"}`))
+				return
+			}
+			_ = json.NewEncoder(w).Encode(Group{ID: "g-restored", Name: "project-admin", OUID: "ou-1"})
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}}
 	srv := stub.server(t)
 	defer srv.Close()
 
 	old := Group{ID: "g-old", Name: "project-admin", OUID: "ou-1"}
 	got, err := newTestClient(srv.URL).AddGroupMembers(context.Background(), old, []string{"u-2"})
 	if err == nil {
-		t.Fatalf("want an error when the recreate fails, got group %+v", got)
+		t.Fatalf("want an error when the membership could not be written, got group %+v", got)
 	}
 	msg := err.Error()
-	if !strings.Contains(msg, "project-admin") {
-		t.Errorf("error should name the group, got %q", msg)
-	}
-	if !strings.Contains(msg, "after delete") {
-		t.Errorf("error should say the delete already happened, got %q", msg)
+	for _, want := range []string{"project-admin", "restored EMPTY", "g-restored"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error should mention %q so the loss is actionable, got %q", want, msg)
+		}
 	}
 	if got != (Group{}) {
 		t.Errorf("want a zero Group alongside the error, got %+v", got)
 	}
-	// Prove the delete really did land — otherwise the message above is a lie.
-	wantSeq(t, stub.seq(), "GET /groups/g-old/members", "DELETE /groups/g-old", "POST /groups")
+	// Two attempts at the real payload, then the empty restore. The retry is
+	// what keeps a transient failure from costing the membership.
+	if len(creates) != 3 || creates[0] != 2 || creates[1] != 2 || creates[2] != 0 {
+		t.Errorf("create payload sizes = %v, want [2 2 0]: the payload twice, then empty", creates)
+	}
+	// The group EXISTS again when this returns. That is the guarantee.
+	if got := stub.snapshot(); len(got) == 0 {
+		t.Fatal("no requests recorded")
+	}
+	last := stub.snapshot()[len(stub.snapshot())-1]
+	if last.Method != http.MethodPost || last.Path != "/groups" {
+		t.Errorf("last request was %s, want the restoring POST /groups", last)
+	}
 }
 
 // -- the lost update ----------------------------------------------------------
@@ -813,26 +884,72 @@ type storedGroup struct {
 	present            bool
 }
 
-// groupStore is a stateful Thunder group store for the read-modify-write race
-// test. It is keyed by NAME, and every id the group has ever had resolves to
-// the live record, so a caller holding a pre-recreate id still reads current
-// membership — that keeps the test about the lost update rather than about id
-// staleness. Recreating a name that is still present is a 409, as Thunder does.
+// groupStore is a stateful Thunder group store. It is keyed by NAME, and every
+// id the group has ever had resolves to the live record, so a caller holding a
+// pre-recreate id still reads current membership — that keeps the race test
+// about the lost update rather than about id staleness. Recreating a name that
+// is still present is a 409, as Thunder does.
+//
+// It also holds the USERS, and this is the part that matters most. Thunder
+// rejects a group create carrying a member id it does not have — the whole
+// POST, with `400 GRP-1007` — and it does NOT remove a deleted account from the
+// groups that name it. A double where group membership and the user store
+// cannot disagree makes that rejection unreachable, which is exactly why nine
+// role groups were destroyed in production by a code path this package's tests
+// covered. So membership here is just a list of ids, deleteUser leaves those
+// ids behind on purpose, and create validates against `users`.
 type groupStore struct {
 	mu        sync.Mutex
 	byName    map[string]*storedGroup
 	byID      map[string]*storedGroup
+	users     map[string]bool
 	next      int
 	readDelay time.Duration
 }
 
 func newGroupStore(name, id string, members []string, readDelay time.Duration) *groupStore {
 	g := &storedGroup{id: id, name: name, ou: "ou-1", members: members, present: true}
-	return &groupStore{
+	s := &groupStore{
 		byName:    map[string]*storedGroup{name: g},
 		byID:      map[string]*storedGroup{id: g},
+		users:     map[string]bool{},
 		readDelay: readDelay,
 	}
+	// Every seeded member exists to begin with; a test that wants a dangling
+	// one calls deleteUser, the way the platform's own delete used to.
+	for _, m := range members {
+		s.users[m] = true
+	}
+	return s
+}
+
+// addUser makes an account exist.
+func (s *groupStore) addUser(ids ...string) *groupStore {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, id := range ids {
+		s.users[id] = true
+	}
+	return s
+}
+
+// deleteUser removes an account WITHOUT touching the groups that name it —
+// Thunder has no referential integrity here, and reproducing that is the whole
+// point of this double.
+func (s *groupStore) deleteUser(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.users, id)
+}
+
+func (s *groupStore) groupNamed(name string) (storedGroup, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	g, ok := s.byName[name]
+	if !ok || !g.present {
+		return storedGroup{}, false
+	}
+	return *g, true
 }
 
 func (s *groupStore) membersOf(name string) []string {
@@ -848,6 +965,57 @@ func (s *groupStore) membersOf(name string) []string {
 func (s *groupStore) handle(t *testing.T) func(http.ResponseWriter, *http.Request, []byte) {
 	return func(w http.ResponseWriter, r *http.Request, body []byte) {
 		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/users/") &&
+			strings.HasSuffix(r.URL.Path, "/groups"):
+			id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/users/"), "/groups")
+			s.mu.Lock()
+			if !s.users[id] {
+				s.mu.Unlock()
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			var out []Group
+			for _, g := range s.byName {
+				if !g.present {
+					continue
+				}
+				for _, m := range g.members {
+					if m == id {
+						out = append(out, Group{ID: g.id, Name: g.name, Description: g.desc, OUID: g.ou})
+						break
+					}
+				}
+			}
+			s.mu.Unlock()
+			sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+			_ = json.NewEncoder(w).Encode(map[string]any{"totalResults": len(out), "groups": out})
+
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/users/"):
+			s.mu.Lock()
+			exists := s.users[strings.TrimPrefix(r.URL.Path, "/users/")]
+			s.mu.Unlock()
+			if !exists {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": strings.TrimPrefix(r.URL.Path, "/users/")})
+
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/users/"):
+			s.deleteUser(strings.TrimPrefix(r.URL.Path, "/users/"))
+			w.WriteHeader(http.StatusNoContent)
+
+		case r.Method == http.MethodGet && r.URL.Path == "/groups":
+			s.mu.Lock()
+			var out []Group
+			for _, g := range s.byName {
+				if g.present {
+					out = append(out, Group{ID: g.id, Name: g.name, Description: g.desc, OUID: g.ou})
+				}
+			}
+			s.mu.Unlock()
+			sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+			_ = json.NewEncoder(w).Encode(map[string]any{"totalResults": len(out), "groups": out})
+
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/members"):
 			id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/groups/"), "/members")
 			s.mu.Lock()
@@ -897,6 +1065,17 @@ func (s *groupStore) handle(t *testing.T) func(http.ResponseWriter, *http.Reques
 				t.Errorf("undecodable create body %q: %v", body, err)
 			}
 			s.mu.Lock()
+			// GRP-1007: one member id the directory does not have rejects the
+			// WHOLE create. This is the rejection that turns a delete-then-
+			// create into permanent group loss.
+			for _, m := range req.Members {
+				if !s.users[m.ID] {
+					s.mu.Unlock()
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = w.Write([]byte(`{"code":"GRP-1007","message":"Invalid user member ID"}`))
+					return
+				}
+			}
 			g, ok := s.byName[req.Name]
 			if !ok {
 				g = &storedGroup{name: req.Name}
@@ -934,6 +1113,9 @@ func TestAddGroupMembers_ConcurrentAddsDoNotLoseAMember(t *testing.T) {
 	// so moving it out must turn this red.
 	const goroutines = 6
 	store := newGroupStore("admin", "g-0", []string{"u-seed"}, 2*time.Millisecond)
+	for i := 0; i < goroutines; i++ {
+		store.addUser(fmt.Sprintf("u-%d", i))
+	}
 	stub := &directoryStub{handle: store.handle(t)}
 	srv := stub.server(t)
 	defer srv.Close()
@@ -1600,4 +1782,259 @@ func TestSetUserPassword_PreservesNonStringAttributes(t *testing.T) {
 	if attrs["password"] != "Aep1!new" {
 		t.Errorf("password not set: %+v", attrs)
 	}
+}
+
+// -- the dangling member ------------------------------------------------------
+//
+// These are the tests this package was missing. Every double it had modelled
+// group membership and the user store as one consistent thing, so the state
+// that destroyed nine role groups in production — a group naming an account the
+// directory no longer has — could not be expressed, and the failure it causes
+// could not be reached.
+
+func TestAddGroupMembers_DropsAMemberTheDirectoryNoLongerHas(t *testing.T) {
+	// The production incident, start to finish. A role group holds a test
+	// account; the account is deleted (which Thunder does NOT un-enrol); the
+	// next build enrols a fresh account into the same role.
+	//
+	// Replaying the dead id is what Thunder rejects, and the rejection lands
+	// after the delete has committed — so before this fix the group ceased to
+	// exist and the build failed at planning, permanently, on every retry.
+	store := newGroupStore("Manager", "g-0", []string{"test-manager-old"}, 0).addUser("test-manager-new")
+	stub := &directoryStub{handle: store.handle(t)}
+	srv := stub.server(t)
+	defer srv.Close()
+
+	store.deleteUser("test-manager-old") // the arming step
+
+	group := Group{ID: "g-0", Name: "Manager", Description: "approvers", OUID: "ou-1"}
+	got, err := newTestClient(srv.URL).AddGroupMembers(context.Background(), group, []string{"test-manager-new"})
+	if err != nil {
+		t.Fatalf("a dangling member must not fail the enrolment: %v", err)
+	}
+	if got.ID == "g-0" || got.ID == "" {
+		t.Errorf("returned id %q, want the id of the recreated group", got.ID)
+	}
+	live, ok := store.groupNamed("Manager")
+	if !ok {
+		t.Fatal("the group no longer exists — this is the production failure")
+	}
+	if strings.Join(sortedCopy(live.members), ",") != "test-manager-new" {
+		t.Errorf("membership = %v, want only the live account: the dead id must be dropped, not replayed", live.members)
+	}
+	if live.name != "Manager" || live.desc != "approvers" {
+		t.Errorf("recreated as %+v, want the name and description preserved", live)
+	}
+}
+
+func TestAddGroupMembers_RefusesAnAccountToEnrolThatDoesNotExist_BeforeWriting(t *testing.T) {
+	// A member the group already carries and a member the caller asks to add
+	// are not the same kind of thing. Dropping the first is the repair. Dropping
+	// the second would mean reporting success for an enrolment that did not
+	// happen — and the validation agent would then fail to sign in with a
+	// credential the gate published as working.
+	//
+	// So this is an error, and it has to be raised while the group is still
+	// intact: nothing may be deleted on behalf of a write that cannot succeed.
+	store := newGroupStore("Finance", "g-0", []string{"u-live"}, 0)
+	stub := &directoryStub{handle: store.handle(t)}
+	srv := stub.server(t)
+	defer srv.Close()
+
+	group := Group{ID: "g-0", Name: "Finance", OUID: "ou-1"}
+	got, err := newTestClient(srv.URL).AddGroupMembers(context.Background(), group, []string{"u-ghost"})
+	if err == nil {
+		t.Fatalf("want an error for an account that does not exist, got %+v", got)
+	}
+	if !strings.Contains(err.Error(), "u-ghost") {
+		t.Errorf("error must name the account that does not exist, got %q", err)
+	}
+	if got != (Group{}) {
+		t.Errorf("want a zero Group alongside the error, got %+v", got)
+	}
+	live, ok := store.groupNamed("Finance")
+	if !ok {
+		t.Fatal("the group was deleted for a write that could never have succeeded")
+	}
+	if live.id != "g-0" || strings.Join(live.members, ",") != "u-live" {
+		t.Errorf("group = %+v, want it untouched at g-0 with u-live", live)
+	}
+	for _, c := range stub.snapshot() {
+		if c.Method == http.MethodDelete || c.Method == http.MethodPost {
+			t.Errorf("nothing may be written before the ids are known good, got %s", c)
+		}
+	}
+}
+
+func TestAddGroupMembers_AnUnreadableDirectoryIsNotAnAbsentMember(t *testing.T) {
+	// A 404 means the account is gone. Anything else means we do not know, and
+	// guessing "gone" would let one bad response wipe a role's membership —
+	// the resolution would drop every id it could not read and then write the
+	// remainder. So a non-404 aborts, before the delete.
+	stub := &directoryStub{handle: func(w http.ResponseWriter, r *http.Request, _ []byte) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/groups/g-0/members":
+			_ = json.NewEncoder(w).Encode(memberPage([]map[string]string{{"id": "u-1", "type": "user"}}, 1))
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/users/"):
+			w.WriteHeader(http.StatusServiceUnavailable)
+		default:
+			t.Errorf("must not write when member liveness is unknown, got %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}}
+	srv := stub.server(t)
+	defer srv.Close()
+
+	group := Group{ID: "g-0", Name: "Employee", OUID: "ou-1"}
+	if _, err := newTestClient(srv.URL).AddGroupMembers(context.Background(), group, []string{"u-2"}); err == nil {
+		t.Fatal("want an error when the directory cannot be read")
+	}
+	for _, c := range stub.snapshot() {
+		if c.Method == http.MethodDelete {
+			t.Errorf("deleted the group on an unreadable directory: %s", c)
+		}
+	}
+}
+
+// -- RemoveGroupMembers -------------------------------------------------------
+
+func TestRemoveGroupMembers_KeepsEveryoneElse(t *testing.T) {
+	store := newGroupStore("Manager", "g-0", []string{"u-1", "u-2", "u-3"}, 0)
+	stub := &directoryStub{handle: store.handle(t)}
+	srv := stub.server(t)
+	defer srv.Close()
+
+	group := Group{ID: "g-0", Name: "Manager", Description: "approvers", OUID: "ou-1"}
+	got, err := newTestClient(srv.URL).RemoveGroupMembers(context.Background(), group, []string{"u-2"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.ID == "g-0" {
+		t.Error("the id must change: the write is a delete-and-recreate")
+	}
+	live, _ := store.groupNamed("Manager")
+	if strings.Join(sortedCopy(live.members), ",") != "u-1,u-3" {
+		t.Errorf("membership = %v, want u-1 and u-3 kept", live.members)
+	}
+}
+
+func TestRemoveGroupMembers_NoOpWhenTheAccountIsNotAMember(t *testing.T) {
+	// Same reason as the add path: rewriting for nothing churns the group id,
+	// and every rewrite is a window in which the role does not exist.
+	store := newGroupStore("Manager", "g-0", []string{"u-1"}, 0)
+	stub := &directoryStub{handle: store.handle(t)}
+	srv := stub.server(t)
+	defer srv.Close()
+
+	group := Group{ID: "g-0", Name: "Manager", OUID: "ou-1"}
+	got, err := newTestClient(srv.URL).RemoveGroupMembers(context.Background(), group, []string{"u-9"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != group {
+		t.Errorf("returned %+v, want the group unchanged", got)
+	}
+	wantSeq(t, stub.seq(), "GET /groups/g-0/members")
+}
+
+func TestRemoveGroupMembers_AlsoRepairsADanglingSurvivor(t *testing.T) {
+	// Removing one account rewrites the whole group, so the ids that survive
+	// the removal go through the same liveness resolution. A dangling one among
+	// them is dropped — the repair, not a loss — which means an un-enrol can
+	// never be the thing that re-arms the group it is cleaning.
+	store := newGroupStore("Manager", "g-0", []string{"u-keep", "u-dead", "u-go"}, 0)
+	stub := &directoryStub{handle: store.handle(t)}
+	srv := stub.server(t)
+	defer srv.Close()
+	store.deleteUser("u-dead")
+
+	group := Group{ID: "g-0", Name: "Manager", OUID: "ou-1"}
+	if _, err := newTestClient(srv.URL).RemoveGroupMembers(context.Background(), group, []string{"u-go"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	live, ok := store.groupNamed("Manager")
+	if !ok {
+		t.Fatal("the group no longer exists")
+	}
+	if strings.Join(sortedCopy(live.members), ",") != "u-keep" {
+		t.Errorf("membership = %v, want only u-keep", live.members)
+	}
+}
+
+// -- UserGroups ---------------------------------------------------------------
+
+func TestUserGroups_ReturnsTheGroupsTheAccountIsIn(t *testing.T) {
+	store := newGroupStore("Manager", "g-0", []string{"u-1"}, 0)
+	stub := &directoryStub{handle: store.handle(t)}
+	srv := stub.server(t)
+	defer srv.Close()
+	c := newTestClient(srv.URL)
+
+	// A second group holding the same account, and a third that does not.
+	store.addUser("u-2")
+	if _, err := c.CreateGroup(context.Background(), "Employee", "", []string{"u-1"}); err != nil {
+		t.Fatalf("seed Employee: %v", err)
+	}
+	if _, err := c.CreateGroup(context.Background(), "Other", "", []string{"u-2"}); err != nil {
+		t.Fatalf("seed Other: %v", err)
+	}
+
+	groups, err := c.UserGroups(context.Background(), "u-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var names []string
+	for _, g := range groups {
+		names = append(names, g.Name)
+	}
+	if strings.Join(sortedCopy(names), ",") != "Employee,Manager" {
+		t.Errorf("groups = %v, want exactly the two the account is in", names)
+	}
+}
+
+func TestUserGroups_AnAccountThatIsAlreadyGoneHasNoGroups(t *testing.T) {
+	// The console can retry a delete, and the un-enrol step runs first. An
+	// account removed by an earlier attempt must not make the retry fail on its
+	// own opening move.
+	stub := &directoryStub{handle: func(w http.ResponseWriter, _ *http.Request, _ []byte) {
+		w.WriteHeader(http.StatusNotFound)
+	}}
+	srv := stub.server(t)
+	defer srv.Close()
+
+	groups, err := newTestClient(srv.URL).UserGroups(context.Background(), "u-gone")
+	if err != nil {
+		t.Fatalf("a missing account must not be an error: %v", err)
+	}
+	if len(groups) != 0 {
+		t.Errorf("groups = %v, want none", groups)
+	}
+}
+
+func TestUserGroups_PagesOnWhatItReceived(t *testing.T) {
+	// Same cursor rule as every other listing here: advance by records
+	// RECEIVED, never by page × requested-limit, or a server that caps the
+	// limit silently truncates the answer. A truncated answer here means an
+	// un-enrol that misses a role and leaves the dangling member behind.
+	all := makeGroups(7)
+	const cap = 3
+	stub := &directoryStub{handle: func(w http.ResponseWriter, r *http.Request, _ []byte) {
+		if r.Method != http.MethodGet || r.URL.Path != "/users/u-1/groups" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			return
+		}
+		start, end := pageWindow(len(all), intQuery(t, r, "offset"), cap)
+		_ = json.NewEncoder(w).Encode(map[string]any{"totalResults": len(all), "groups": all[start:end]})
+	}}
+	srv := stub.server(t)
+	defer srv.Close()
+
+	groups, err := newTestClient(srv.URL).UserGroups(context.Background(), "u-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(groups) != len(all) {
+		t.Fatalf("got %d groups, want all %d", len(groups), len(all))
+	}
+	wantPagingQueries(t, stub.snapshot(), 0, 3, 6)
 }

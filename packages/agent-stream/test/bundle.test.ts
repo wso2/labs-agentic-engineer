@@ -22,7 +22,7 @@ import { FileBundle, type OpErr, type OpOk } from "../src/bundle.js";
 import { SEED_FILES } from "./seed.js";
 
 const OPENAPI = "specs/design/components/hello-api/openapi.yaml";
-const DESIGN = "specs/design/design.md";
+const DESIGN = "specs/design/design.cell";
 const REQUIREMENTS = "specs/requirements/prd.md";
 
 function fresh(): FileBundle {

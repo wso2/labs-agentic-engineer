@@ -31,7 +31,14 @@ package identity
 //   - membership is settable only at create, so AddMembers is a
 //     delete-and-recreate that hands back a NEW group id;
 //   - that recreate is skipped when every id is already in the group, which is
-//     what keeps an unchanged re-run from churning the group's identity.
+//     what keeps an unchanged re-run from churning the group's identity;
+//   - **the IdP has no referential integrity between accounts and group
+//     membership.** DeleteUser here leaves the member lists that name the
+//     account exactly as they were, and a create carrying an id no account
+//     has is REFUSED — both as the real one behaves. A fake where those two
+//     could not disagree is why a code path with tests to spare still
+//     destroyed nine role groups in production: the state that breaks it was
+//     unrepresentable, so no test could ask for it.
 
 import (
 	"context"
@@ -61,7 +68,7 @@ type dirCall struct {
 // (a lost lookup would be a real behaviour change) but they say nothing about
 // what the ensure did, so order and count assertions filter to these.
 var writeOps = map[string]bool{
-	"CreateGroup": true, "AddMembers": true, "DeleteGroup": true,
+	"CreateGroup": true, "AddMembers": true, "RemoveMembers": true, "DeleteGroup": true,
 	"CreateUser": true, "SetUserPassword": true, "DeleteUser": true,
 }
 
@@ -95,7 +102,8 @@ func newFakeDirectory() *fakeDirectory {
 }
 
 // seedGroup puts a group on the directory that the platform did not create —
-// the `Administrators` case.
+// the `Administrators` case. The member ids are taken as given: seeding one
+// that no account has is how a test asks for the dangling-member state.
 func (d *fakeDirectory) seedGroup(name string, memberIDs ...string) DirectoryGroup {
 	d.nextID++
 	g := DirectoryGroup{ID: fmt.Sprintf("grp-%d", d.nextID), Name: name, Description: "seeded"}
@@ -198,6 +206,13 @@ func (d *fakeDirectory) CreateGroup(_ context.Context, name, description string,
 	if _, exists := d.groups[strings.ToLower(name)]; exists {
 		return DirectoryGroup{}, fmt.Errorf("fake directory: group %q already exists", name)
 	}
+	// GRP-1007: the IdP rejects the whole create for one member it does not
+	// have. The client is expected to have resolved the ids first.
+	for _, id := range memberIDs {
+		if !d.hasAccountID(id) {
+			return DirectoryGroup{}, fmt.Errorf("fake directory: group %q: invalid user member id %q", name, id)
+		}
+	}
 	d.nextID++
 	g := DirectoryGroup{ID: fmt.Sprintf("grp-%d", d.nextID), Name: name, Description: description}
 	d.groups[strings.ToLower(name)] = g
@@ -229,6 +244,14 @@ func (d *fakeDirectory) AddMembers(_ context.Context, group DirectoryGroup, memb
 	if len(added) == 0 {
 		return group, nil
 	}
+	// An account to ENROL that the directory does not have is an error; a
+	// member the group merely carries and the directory has lost is dropped.
+	// The real client draws exactly this line — see rewriteGroupMembers.
+	for _, id := range added {
+		if !d.hasAccountID(id) {
+			return DirectoryGroup{}, fmt.Errorf("fake directory: group %q: invalid user member id %q", group.Name, id)
+		}
+	}
 	delete(d.members, group.ID)
 	d.nextID++
 	recreated := DirectoryGroup{
@@ -236,8 +259,91 @@ func (d *fakeDirectory) AddMembers(_ context.Context, group DirectoryGroup, memb
 		Description: group.Description, OUID: group.OUID,
 	}
 	d.groups[strings.ToLower(group.Name)] = recreated
-	d.members[recreated.ID] = append(append([]string(nil), existing...), added...)
+	d.members[recreated.ID] = append(d.liveMembers(existing), added...)
 	return recreated, nil
+}
+
+// hasAccountID reports whether any account on the directory has this id. The
+// port speaks ids and the accounts are keyed by username, so the reverse
+// lookup is what makes the referential rule checkable.
+func (d *fakeDirectory) hasAccountID(id string) bool {
+	for _, a := range d.users {
+		if a.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// liveMembers is the real client's guarantee, modelled: a member the directory
+// no longer has is dropped from a rewrite rather than replayed into it.
+func (d *fakeDirectory) liveMembers(ids []string) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if d.hasAccountID(id) {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// RemoveMembers is the un-enrol half: the same delete-and-recreate, minus the
+// ids being removed, with a new group id when anything changed.
+func (d *fakeDirectory) RemoveMembers(_ context.Context, group DirectoryGroup, memberIDs []string) (DirectoryGroup, error) {
+	drop := map[string]bool{}
+	for _, id := range memberIDs {
+		drop[id] = true
+	}
+	existing := d.members[group.ID]
+	var remaining, removed []string
+	for _, id := range existing {
+		if drop[id] {
+			removed = append(removed, id)
+			continue
+		}
+		remaining = append(remaining, id)
+	}
+	d.record(dirCall{Op: "RemoveMembers", Target: group.Name, Members: removed, NoOp: len(removed) == 0})
+	if err := d.fail("RemoveMembers"); err != nil {
+		return DirectoryGroup{}, err
+	}
+	if len(removed) == 0 {
+		return group, nil
+	}
+	delete(d.members, group.ID)
+	d.nextID++
+	recreated := DirectoryGroup{
+		ID: fmt.Sprintf("grp-%d", d.nextID), Name: group.Name,
+		Description: group.Description, OUID: group.OUID,
+	}
+	d.groups[strings.ToLower(group.Name)] = recreated
+	// The survivors go through the same liveness filter a real rewrite applies.
+	d.members[recreated.ID] = d.liveMembers(remaining)
+	return recreated, nil
+}
+
+// UserGroups is the reverse membership read. An account the directory does not
+// have reports NO groups rather than an error — the real one 404s, and a
+// retried delete must not fail on its opening move.
+func (d *fakeDirectory) UserGroups(_ context.Context, userID string) ([]DirectoryGroup, error) {
+	d.record(dirCall{Op: "UserGroups", Target: userID})
+	if err := d.fail("UserGroups"); err != nil {
+		return nil, err
+	}
+	if !d.hasAccountID(userID) {
+		return nil, nil
+	}
+	var out []DirectoryGroup
+	for _, g := range d.groups {
+		for _, m := range d.members[g.ID] {
+			if m == userID {
+				out = append(out, g)
+				break
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
 }
 
 func (d *fakeDirectory) DeleteGroup(_ context.Context, groupID string) error {

@@ -538,7 +538,7 @@ func TestBuild_SpecValidationFails_400_NoVersionClaimed(t *testing.T) {
 	spy := newPlanSpy()
 	tagger := &fakeTagger{err: &spec.SpecValidationError{Files: []spec.FileValidationError{
 		{Path: "specs/requirements/prd.md", Code: "MISSING_REQUIREMENTS", Message: "missing"},
-		{Path: "specs/design/design.md", Code: "MISSING_DESIGN", Message: "missing"},
+		{Path: "specs/design/design.cell", Code: "MISSING_DESIGN", Message: "missing"},
 	}}}
 	svc := withPlanPath(newSvc(fakeRepos{}, tagger), spy)
 

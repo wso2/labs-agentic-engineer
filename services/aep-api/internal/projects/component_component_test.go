@@ -172,7 +172,7 @@ func nestedElementKeys(t *testing.T, raw []byte, field string) []string {
 }
 
 // designFilesFor builds the working-tree file map ReadDesign assembles: a root
-// design.md plus one component dir with the given type + optional openapi.yaml.
+// design.cell plus one component dir with the given type + optional openapi.yaml.
 func designFilesFor(componentDir, componentType, openapi string) map[string]string {
 	files := map[string]string{
 		spec.DesignRootFile: "# Overview\n",

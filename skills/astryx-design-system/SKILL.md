@@ -111,7 +111,7 @@ this file is the whole of what a build sees. The edit reaches every subsequent
 build in the org with no conversation involved.
 
 A per-project override still wins, **per value, not per section**: a hex under
-the `## Brand colors` heading in the project's `specs/design/design.md`
+the `## Brand colors` heading in the project's `specs/requirements/prd.md`
 overrides the same line here, and a line that heading omits still comes from
 this section. That heading is there for a project whose colors someone stated
 outright — it is not something to solicit, and a half-filled one is not a
@@ -120,7 +120,7 @@ reason to drop the organization's other color.
 ### At build time — compile the theme
 
 Resolve each of the two colors before you wire the theme, independently: the
-project's `## Brand colors` line in `specs/design/design.md` if it has one,
+project's `## Brand colors` line in `specs/requirements/prd.md` if it has one,
 otherwise the line in The organization's colors above. **A color neither one
 sets is not chosen** — take it from the stock theme's own token and never
 invent one, whether that leaves you with two brand colors, one, or none. One
@@ -280,7 +280,7 @@ This table is a quick guide, not the catalog — run
 | A prop doesn't exist, or is the old spelling | Answered from memory instead of the CLI | Run `npx --no astryx component <Name> --dense` — the CLI reflects the installed version, training data doesn't |
 | Every row in a list is wrapped in its own `Card` | Defaulted to a generic "card grid" instead of checking data density | `npx --no astryx docs principles --dense` — dense data is `Table`/`List`+`Item`; `Card` is for widgets/galleries/settings groups |
 | Brand colors are set, deployed app is stock-themed | Colors were read but never compiled into a theme, or `brandTheme.ts` was edited without re-running `theme build` | Re-run `npx --no astryx theme build src/theme/brandTheme.ts -o src/theme/brand.css` and confirm `brand.css`/`brand.js` are COMMITTED — the image build never runs the compiler |
-| The user gave brand colors in chat, the build ignored them | A coding run never sees a conversation — colors reach it only from this skill or the project's `specs/design/design.md` | Set them in The organization's colors (Settings → Skills) for the whole org, or under `## Brand colors` in the project's `specs/design/design.md` for one project; an answer that is not in a file did not happen |
+| The user gave brand colors in chat, the build ignored them | A coding run never sees a conversation — colors reach it only from this skill or the project's `specs/requirements/prd.md` | Set them in The organization's colors (Settings → Skills) for the whole org, or under `## Brand colors` in the project's `specs/requirements/prd.md` for one project; an answer that is not in a file did not happen |
 | Brand accent is unreadable — pale text on a pale button | The brand hex was pasted into both `[light, dark]` slots of `--color-accent` | Darken the light-mode slot and set `--color-on-accent` to a color that contrasts with the accent in each mode |
 
 ## Red flags — stop and use Astryx

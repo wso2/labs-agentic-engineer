@@ -26,6 +26,7 @@ import {
   ParsedExternal,
   ParseResult
 } from "../domain/cellModel";
+import { stripFrontmatter } from "./frontmatter";
 import { splitLabel } from "./labels";
 
 const boundaryDirections = new Set<BoundaryDirection>(["north", "east", "south", "west"]);
@@ -219,7 +220,7 @@ export function parseCellDsl(source: string): ParseResult {
   let title: string | undefined;
   let version: string | undefined;
 
-  source.split(/\r?\n/).forEach((rawLine, index) => {
+  stripFrontmatter(source).split(/\r?\n/).forEach((rawLine, index) => {
     const line = index + 1;
     const statement = rawLine.trim();
 

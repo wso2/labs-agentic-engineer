@@ -17,7 +17,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { buildDesignSection, componentOf } from "./designTree";
+import { buildDesignSection, componentOf, isFlow } from "./designTree";
 import type { SpecFileEntry } from "./mapping";
 
 // Full repo-relative paths, mirroring mapping.ts's current scheme
@@ -40,7 +40,7 @@ describe("componentOf", () => {
     expect(componentOf("specs/design/components/orders/wireframes.dsl")).toBe("orders");
   });
   it("returns null for non-component design paths", () => {
-    expect(componentOf("specs/design/design.md")).toBeNull();
+    expect(componentOf("specs/design/domain-model.md")).toBeNull();
     expect(componentOf("specs/requirements/prd.md")).toBeNull();
   });
 });
@@ -48,7 +48,7 @@ describe("componentOf", () => {
 describe("buildDesignSection", () => {
   it("splits overview files from per-component groups and finds the wireframe dsl", () => {
     const section = buildDesignSection([
-      e("specs/design/design.md"),
+      e("specs/design/domain-model.md"),
       e("specs/design/components/orders/design.json"),
       e("specs/design/components/orders/openapi.yaml"),
       e("specs/design/components/orders/wireframes.dsl"),
@@ -57,7 +57,7 @@ describe("buildDesignSection", () => {
       e("specs/requirements/prd.md"), // ignored: not a design file
     ]);
 
-    expect(section.overview.map((f) => f.path)).toEqual(["specs/design/design.md"]);
+    expect(section.overview.map((f) => f.path)).toEqual(["specs/design/domain-model.md"]);
     expect(section.hasComponents).toBe(true);
     expect(section.components.map((c) => c.name)).toEqual(["orders", "web"]);
 
@@ -86,10 +86,10 @@ describe("buildDesignSection", () => {
   it("keeps design.cell out of the overview and flags hasCellDsl", () => {
     const section = buildDesignSection([
       e("specs/design/design.cell"),
-      e("specs/design/design.md"),
+      e("specs/design/domain-model.md"),
     ]);
     // design.cell is rendered via the Architecture tab, never as a file row.
-    expect(section.overview.map((f) => f.path)).toEqual(["specs/design/design.md"]);
+    expect(section.overview.map((f) => f.path)).toEqual(["specs/design/domain-model.md"]);
     expect(section.hasCellDsl).toBe(true);
   });
 
@@ -102,7 +102,7 @@ describe("buildDesignSection", () => {
 
   it("flags hasSecurity only when security.json exists", () => {
     expect(
-      buildDesignSection([e("specs/design/design.md")]).hasSecurity,
+      buildDesignSection([e("specs/design/domain-model.md")]).hasSecurity,
     ).toBe(false);
     expect(
       buildDesignSection([e("specs/design/security.json")]).hasSecurity,
@@ -111,13 +111,13 @@ describe("buildDesignSection", () => {
 
   it("does not treat leftover security.md or roles.json as the Security entry", () => {
     const section = buildDesignSection([
-      e("specs/design/design.md"),
+      e("specs/design/domain-model.md"),
       e("specs/design/security.md"),
       e("specs/design/roles.json"),
     ]);
     expect(section.hasSecurity).toBe(false);
     expect(section.overview.map((f) => f.path)).toEqual([
-      "specs/design/design.md",
+      "specs/design/domain-model.md",
       "specs/design/roles.json",
       "specs/design/security.md",
     ]);
@@ -125,10 +125,31 @@ describe("buildDesignSection", () => {
 
   it("keeps security.json out of the overview list", () => {
     const section = buildDesignSection([
-      e("specs/design/design.md"),
+      e("specs/design/domain-model.md"),
       e("specs/design/security.json"),
     ]);
     expect(section.hasSecurity).toBe(true);
-    expect(section.overview.map((f) => f.path)).toEqual(["specs/design/design.md"]);
+    expect(section.overview.map((f) => f.path)).toEqual(["specs/design/domain-model.md"]);
+  });
+
+  it("buckets flows into their own group, out of the overview rows, sorted by path", () => {
+    const section = buildDesignSection([
+      e("specs/design/domain-model.md"),
+      e("specs/design/flows/view-order.md"),
+      e("specs/design/flows/checkout.md"),
+      e("specs/design/components/orders/design.json"),
+    ]);
+    expect(section.overview.map((f) => f.path)).toEqual(["specs/design/domain-model.md"]);
+    expect(section.flows.map((f) => f.path)).toEqual([
+      "specs/design/flows/checkout.md",
+      "specs/design/flows/view-order.md",
+    ]);
+  });
+
+  it("only a markdown file directly under flows/ is a flow", () => {
+    expect(isFlow("specs/design/flows/checkout.md")).toBe(true);
+    expect(isFlow("specs/design/flows/checkout.json")).toBe(false);
+    expect(isFlow("specs/design/flows/nested/checkout.md")).toBe(false);
+    expect(isFlow("specs/design/domain-model.md")).toBe(false);
   });
 });

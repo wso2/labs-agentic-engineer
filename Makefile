@@ -65,9 +65,16 @@ build: gen
 dev:
 	$(TURBO) run dev
 
+# `skills/` is not a pnpm workspace and deliberately isn't one — nothing in this
+# repo imports it (see knip.jsonc). Its payload still carries logic worth
+# pinning: the report generator the validation agent invokes decides a run's
+# verdict. Its tests run from here rather than nowhere, guarded on a match
+# because `node --test` with no arguments discovers the whole tree instead.
 test: gen
 	$(TURBO) run test
 	@for d in $(GO_MODULE_DIRS); do echo ">> go test $$d"; ( cd "$$d" && go test ./... ); done
+	@files=$$(find $(ROOT)/skills -name '*.test.mjs' | sort); \
+	  if [ -n "$$files" ]; then echo ">> node --test skills"; node --test $$files; fi
 
 # Local coverage summary — coverage is not gated in CI. Go: the aep-api module's fast-lane
 # cover target (-short, no Docker). TS: @aep/agents via node:test's
@@ -86,7 +93,7 @@ cover:
 #   make eval EVAL=<file>     one eval file, e.g. EVAL=evals/requirements.eval.ts
 #   make eval-ui              run once + serve the local results UI
 eval:
-	$(PNPM) --filter @aep/spec-agent-evals eval $(if $(EVAL),-- $(EVAL),)
+	$(PNPM) --filter @aep/spec-agent-evals eval $(if $(EVAL),$(EVAL),)
 
 eval-ui:
 	$(PNPM) --filter @aep/spec-agent-evals eval:ui

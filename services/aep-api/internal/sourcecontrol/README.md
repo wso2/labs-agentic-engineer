@@ -94,6 +94,16 @@ and installation lifecycle.*
   walks pages until a short one and returns every issue, so on a milestone over 100 the issues past the
   page get no comments. Deliberate for a decorative read on a 5s poll, and logged (`hasNextPage`) because
   a missing bucket is indistinguishable from "this issue has none".
+- **`ListIssueComments` is its single-issue sibling, and it is GraphQL for a DIFFERENT reason.** The
+  milestone read goes GraphQL because REST cannot answer a whole milestone in one call; for one issue
+  REST can, and still comes back from the wrong end — an issue's comments page **oldest-first with no
+  sort parameter**, so the newest sits on the last page and reaching it costs a second request to learn
+  where that page is. `comments(last:)` asks for the tail directly, which is the bar `graphql.go` sets
+  for using the transport at all. Same projection as the milestone read (`comments.go`'s shared node
+  and mapper), so the machine-comment FLAG, the null-`author` rule and the ordering are one behaviour
+  across both, not two that happen to agree today. Both readers flag and unbrand a machine comment and
+  return it; **dropping is `delivery`'s policy, not this layer's** (`task/reads.go` `commentViews`), so
+  a later audit or debug surface can still ask for them.
 - **REST narrows on labels, GraphQL widens.** `ListMilestoneIssues`' REST `?labels=a,b` is AND (an
   issue must carry all of them); the GraphQL `labels:` above is OR. Two APIs over one resource, two
   rules — carrying an assumption from one to the other silently empties the working set, and the

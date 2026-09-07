@@ -35,38 +35,10 @@ package githubhost
 import (
 	"context"
 	"log/slog"
-	"strings"
-	"time"
 
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
-
-// isMachineComment reports whether a body is one the PLATFORM wrote
-// (sourcecontrol.MachineCommentMarker) and returns the body without the brand.
-//
-// The brand is stripped rather than passed through because it is an
-// implementation detail of telling machine from human — every consumer wants the
-// prose, and a raw marker leaking into a rendered feed would be a visible
-// artefact of a mechanism that exists to be invisible.
-//
-// Detection is a PREFIX test, and only the leading brand is removed. `Contains`
-// would be more forgiving of a body edited on the host afterwards, but it
-// misclassifies the case that actually matters: an agent or a person QUOTING a
-// platform comment — which the agent is told to read (`gh issue view
-// --comments`, where the raw marker is visible) — would have their own note
-// silently dropped from the feed. The two failures are not symmetric. A machine
-// comment that slips through is visible noise somebody can report; a human note
-// classified as machine is data loss nobody can see. So the strict test wins,
-// and the writer putting the brand first is what makes it correct.
-func isMachineComment(body string) (string, bool) {
-	trimmed := strings.TrimLeft(body, " \t\r\n")
-	if !strings.HasPrefix(trimmed, sourcecontrol.MachineCommentMarker) {
-		return body, false
-	}
-	rest := strings.TrimPrefix(trimmed, sourcecontrol.MachineCommentMarker)
-	return strings.TrimLeft(rest, " \t\r\n"), true
-}
 
 // milestoneIssuePage is how many of a milestone's issues one query covers — one
 // page, and only one.
@@ -83,24 +55,9 @@ func isMachineComment(body string) (string, bool) {
 // completeness, which is what the hasNextPage warning below is for.
 const milestoneIssuePage = 100
 
-// maxCommentsPerIssue caps what a caller may ask for per issue. GraphQL's own
-// limit on a `last:` argument is 100, and asking for more is a query error
-// rather than a truncation, so the clamp belongs here — a caller's oversized N
-// must not turn a decorative read into a failed one.
-const maxCommentsPerIssue = 100
-
 // milestoneIssueCommentsQuery reads the newest `$c` comments of every issue in a
-// milestone.
-//
-// `comments(last:)` is deliberate rather than `first:`. The interesting comments
-// are the recent ones — an agent's latest progress note, the newest diagnostic —
-// and `last:` returns the tail of the thread while still answering in
-// chronological order, so the consumer needs no reversal. Ordering is not
-// requested explicitly because a comment connection has exactly one order.
-//
-// `author` is nullable and must stay nullable in the decode: GitHub answers null
-// for a comment whose account was deleted, and treating that as a decode failure
-// would drop every other comment on the issue with it.
+// milestone. What a comment's fields are, and why the tail is the end worth
+// asking for, live with commentSelection in comments.go.
 const milestoneIssueCommentsQuery = `query($owner: String!, $repo: String!, $m: Int!, $i: Int!, $c: Int!) {
   repository(owner: $owner, name: $repo) {
     milestone(number: $m) {
@@ -108,9 +65,7 @@ const milestoneIssueCommentsQuery = `query($owner: String!, $repo: String!, $m: 
         pageInfo { hasNextPage }
         nodes {
           number
-          comments(last: $c) {
-            nodes { id body url createdAt author { login } }
-          }
+          comments(last: $c) { ` + commentSelection + ` }
         }
       }
     }
@@ -147,16 +102,7 @@ func (c *Client) ListMilestoneIssueComments(ctx context.Context, owner, repo str
 					Nodes []struct {
 						Number   int `json:"number"`
 						Comments struct {
-							Nodes []struct {
-								ID        string    `json:"id"`
-								Body      string    `json:"body"`
-								URL       string    `json:"url"`
-								CreatedAt time.Time `json:"createdAt"`
-								// Author is null for a deleted account.
-								Author *struct {
-									Login string `json:"login"`
-								} `json:"author"`
-							} `json:"nodes"`
+							Nodes []commentNode `json:"nodes"`
 						} `json:"comments"`
 					} `json:"nodes"`
 				} `json:"issues"`
@@ -190,23 +136,7 @@ func (c *Client) ListMilestoneIssueComments(ctx context.Context, owner, repo str
 		if len(issue.Comments.Nodes) == 0 {
 			continue
 		}
-		bucket := make([]sourcecontrol.IssueComment, 0, len(issue.Comments.Nodes))
-		for _, n := range issue.Comments.Nodes {
-			login := ""
-			if n.Author != nil {
-				login = n.Author.Login
-			}
-			body, machine := isMachineComment(n.Body)
-			bucket = append(bucket, sourcecontrol.IssueComment{
-				ID:        n.ID,
-				Author:    login,
-				Body:      body,
-				URL:       n.URL,
-				CreatedAt: n.CreatedAt,
-				Machine:   machine,
-			})
-		}
-		out[issue.Number] = bucket
+		out[issue.Number] = toIssueComments(issue.Comments.Nodes)
 	}
 	return out, nil
 }

@@ -138,12 +138,12 @@ func renderSkillsManifest(m SkillsManifest) []byte {
 type reconcileAction int
 
 const (
-	actionSkip             reconcileAction = iota // nothing to do
-	actionSeed                                    // no repo copy: write files + stamp baseHash
-	actionRefresh                                 // org clean, platform moved: write files + advance baseHash
-	actionBackfill                                // pre-manifest copy: adopt the shipped content + stamp baseHash
-	actionOverride                                // org moved, platform not: leave alone
-	actionConflict                                // both moved: leave alone, surface for review
+	actionSkip     reconcileAction = iota // nothing to do
+	actionSeed                            // no repo copy: write files + stamp baseHash
+	actionRefresh                         // org clean, platform moved: write files + advance baseHash
+	actionBackfill                        // pre-manifest copy: adopt the shipped content + stamp baseHash
+	actionOverride                        // org moved, platform not: leave alone
+	actionConflict                        // both moved: leave alone, surface for review
 )
 
 // decideReconcile is the pure three-way decision for ONE embedded skill.

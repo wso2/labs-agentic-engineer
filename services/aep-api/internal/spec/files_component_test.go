@@ -197,9 +197,9 @@ func mustJSON(t *testing.T, v any) string {
 
 func TestListAtHead_FilteredByPrefix(t *testing.T) {
 	r := newFilesRig(t, map[string]string{
-		"specs/requirements/prd.md": "req",
-		"specs/design/design.md":    "des",
-		"README.md":                 "root",
+		"specs/requirements/prd.md":    "req",
+		"specs/design/domain-model.md": "des",
+		"README.md":                    "root",
 	})
 	rec := r.get(apiBase + "?prefix=specs/design/")
 	if rec.Code != http.StatusOK {
@@ -209,7 +209,7 @@ func TestListAtHead_FilteredByPrefix(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &metas); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(metas) != 1 || metas[0].Path != "specs/design/design.md" {
+	if len(metas) != 1 || metas[0].Path != "specs/design/domain-model.md" {
 		t.Fatalf("prefix filter wrong: %+v", metas)
 	}
 	if metas[0].SHA == "" || metas[0].Size == 0 {
@@ -282,7 +282,7 @@ func TestApply_MultiWriteAndDelete_SingleCommit(t *testing.T) {
 	body := mustJSON(t, spec.ApplyRequest{
 		Writes: []spec.WriteOp{
 			{Path: "specs/requirements/prd.md", Content: "new", BaseSHA: reqSHA},
-			{Path: "specs/design/design.md", Content: "# Design"}, // baseSha omitted ⇒ create
+			{Path: "specs/design/domain-model.md", Content: "# Design"}, // baseSha omitted ⇒ create
 		},
 		Deletes: []spec.DeleteOp{{Path: "specs/requirements/todo.md", BaseSHA: todoSHA}},
 		Message: "from test",
@@ -304,8 +304,8 @@ func TestApply_MultiWriteAndDelete_SingleCommit(t *testing.T) {
 	if got := r.remote.FileAt(t, "main", "specs/requirements/prd.md"); got != "new" {
 		t.Errorf("requirements.md = %q, want new", got)
 	}
-	if got := r.remote.FileAt(t, "main", "specs/design/design.md"); got != "# Design" {
-		t.Errorf("design.md = %q", got)
+	if got := r.remote.FileAt(t, "main", "specs/design/domain-model.md"); got != "# Design" {
+		t.Errorf("domain-model.md = %q", got)
 	}
 	tags := r.remote.Tags(t) // deletes leave no tag; just confirm no crash
 	_ = tags
@@ -407,7 +407,7 @@ func TestApply_BatchConflict_AllOrNothing_CollectsAllConflicts(t *testing.T) {
 	body := mustJSON(t, spec.ApplyRequest{
 		Writes: []spec.WriteOp{
 			{Path: "specs/requirements/prd.md", Content: "clobber", BaseSHA: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"},
-			{Path: "specs/design/design.md", Content: "new", BaseSHA: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"}, // absent + baseSha set ⇒ conflict too
+			{Path: "specs/design/domain-model.md", Content: "new", BaseSHA: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"}, // absent + baseSha set ⇒ conflict too
 		},
 		Deletes: []spec.DeleteOp{{Path: "specs/requirements/todo.md", BaseSHA: todoSHA}}, // valid — must still NOT apply
 	})
@@ -634,7 +634,7 @@ func TestApply_ShaConsistency_OriginMirrorAndReadBack(t *testing.T) {
 	body := mustJSON(t, spec.ApplyRequest{
 		Writes: []spec.WriteOp{
 			{Path: "specs/requirements/prd.md", Content: "v2", BaseSHA: reqSHA},
-			{Path: "specs/design/design.md", Content: "# Design"},
+			{Path: "specs/design/domain-model.md", Content: "# Design"},
 		},
 	})
 	rec := r.apply(body)

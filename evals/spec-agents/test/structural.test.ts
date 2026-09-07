@@ -18,7 +18,20 @@
 
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { isAcyclic } from "../src/scoring/structural.js";
+import { join } from "node:path";
+import { FIXTURES_DIR } from "../src/config.js";
+import type { SectionRunResult } from "../src/drivers/conversational.js";
+import { designChecks, isAcyclic } from "../src/scoring/structural.js";
+
+// The committed design fixture is the reference bundle shape (design.cell root,
+// domain-model.md, flows/); every deterministic design check must pass on it,
+// otherwise the scorer disagrees with the platform's own golden example.
+test("designChecks: the lunch-coordinator design fixture passes every deterministic check", () => {
+  const run: SectionRunResult = { section: "design", records: [], questionsAsked: 0, finishedInterview: true, answers: [] };
+  const report = designChecks(join(FIXTURES_DIR, "lunch-coordinator-design"), run);
+  const failed = report.checks.filter((c) => !c.ok).map((c) => `${c.name}: ${c.detail ?? ""}`);
+  assert.deepEqual(failed, []);
+});
 
 test("isAcyclic: linear provider chains pass", () => {
   assert.ok(

@@ -62,7 +62,9 @@ func TestSkillsManifest_ParseTolerant(t *testing.T) {
 
 func TestDecideReconcile(t *testing.T) {
 	t.Parallel()
-	plat := func(base string) *ManifestEntry { return &ManifestEntry{Origin: ManifestOriginPlatform, BaseHash: base} }
+	plat := func(base string) *ManifestEntry {
+		return &ManifestEntry{Origin: ManifestOriginPlatform, BaseHash: base}
+	}
 	cases := []struct {
 		name       string
 		embedded   string

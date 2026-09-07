@@ -968,3 +968,83 @@ test("from-sdk: a settled backgrounded fan-out does not poison the run's result"
 
   assert.deepEqual(translate({ type: "result", subtype: "success" }), [{ kind: "result", status: "success" }]);
 });
+
+// A command that blows its Bash timeout is auto-backgrounded and answers with
+// code 0, empty output and is_error false — indistinguishable, from here, from
+// a command that ran and succeeded. That cost a validation run its whole cycle
+// (#701): the feed called it a success and the per-criterion rows painted
+// `Passed` on criteria whose tests never finished.
+function bashCall(id: string, command: string): unknown {
+  return {
+    type: "assistant",
+    message: { content: [{ type: "tool_use", id, name: "Bash", input: { command } }] },
+  };
+}
+
+function bashResult(id: string, result: Record<string, unknown>): unknown {
+  return {
+    type: "user",
+    message: { content: [{ type: "tool_result", tool_use_id: id, content: "" }] },
+    tool_use_result: { stdout: "", stderr: "", interrupted: false, ...result },
+  };
+}
+
+test("from-sdk: a severed command is reported as severed, not as a success", () => {
+  const translate = createSdkTranslator();
+  translate(bashCall("toolu_run", "npm test --prefix tests/e2e"));
+  const out = translate(
+    bashResult("toolu_run", { timedOutAfterMs: 600_000, backgroundTaskId: "b3gnow81g" }),
+  );
+  const result = out.find((e) => e.kind === "tool_result");
+  assert.ok(result && result.kind === "tool_result");
+  assert.equal(result.ok, false);
+  assert.equal(result.status, "severed");
+  assert.match(result.summary ?? "", /hit its 600\.0s timeout and was detached/);
+  // It says the command is still going, because it is — the point is that this
+  // call proved nothing, not that anything failed. @aep/progress-view reads the
+  // `severed` status so the feed does not print the word "failed".
+  assert.match(result.summary ?? "", /kept running in the background/);
+});
+
+test("from-sdk: a severed command settles no outcome", () => {
+  // The false-green: whatever folds outcomes into state must not be told this
+  // call succeeded. Validation's per-criterion rows are the consumer that was
+  // painting `Passed` from it.
+  const settled: [string, boolean][] = [];
+  const translate = createSdkTranslator({
+    onToolOutcome: (id, ok) => settled.push([id, ok]),
+  });
+  translate(bashCall("toolu_run", "npm test --prefix tests/e2e -- specs/AC-003-a.spec.ts"));
+  translate(bashResult("toolu_run", { timedOutAfterMs: 597_462, backgroundTaskId: "b3gnow81g" }));
+  assert.deepEqual(settled, []);
+});
+
+test("from-sdk: a deliberately backgrounded command settles no outcome either", () => {
+  // run_in_background is a launch, not a completion. Nothing was misled about
+  // it, so the feed line is left alone — but it cannot settle a result.
+  const settled: [string, boolean][] = [];
+  const translate = createSdkTranslator({
+    onToolOutcome: (id, ok) => settled.push([id, ok]),
+  });
+  translate(bashCall("toolu_bg", "npm test --prefix tests/e2e"));
+  const out = translate(bashResult("toolu_bg", { backgroundTaskId: "b3gnow81g" }));
+  assert.deepEqual(settled, []);
+  const result = out.find((e) => e.kind === "tool_result");
+  assert.ok(result && result.kind === "tool_result");
+  assert.equal(result.ok, true, "a launch did not fail");
+});
+
+test("from-sdk: an ordinary command still settles its outcome both ways", () => {
+  const settled: [string, boolean][] = [];
+  const translate = createSdkTranslator({
+    onToolOutcome: (id, ok) => settled.push([id, ok]),
+  });
+  translate(bashCall("toolu_ok", "npm test --prefix tests/e2e -- specs/AC-001-a.spec.ts"));
+  translate(bashResult("toolu_ok", { code: 0 }));
+  translate(bashCall("toolu_bad", "npm test --prefix tests/e2e -- specs/AC-002-a.spec.ts"));
+  translate({
+    type: "user",
+    message: { content: [{ type: "tool_result", tool_use_id: "toolu_bad", is_error: true, content: "Exit code 1" }] },
+  });
+  assert.deepEqual(settled, [["toolu_ok", true], ["toolu_bad", false]]);
+});

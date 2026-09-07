@@ -25,7 +25,12 @@ architecture-independent are pinned to `$BUILDPLATFORM` so they run once,
 natively, instead of under QEMU — read the note in `services/aep-api/Dockerfile`
 before removing a pin. `remote-worker` is the notable exception: it installs a
 per-arch Go toolchain, Ballerina, and Playwright browsers, so its arm64 half
-genuinely is emulated and it is the slowest job in the release.
+genuinely is emulated and it is the slowest job in the release. One consequence:
+chromium cannot run under QEMU, so the runner Dockerfile's browser smoke test
+runs only on native builds. The release asserts the arm64 image's browser
+launch nowhere; native arm64 builds (every Apple-silicon bring-up) do. The
+emulated arm64 build itself is exercised before a release by the `Images`
+workflow, which builds `remote-worker` for both platforms on its PR.
 
 Layer cache lives in GHCR under `ghcr.io/wso2/aep/buildcache/<image>` rather than
 the Actions cache, which is capped at 10 GB per repository and which CI's own

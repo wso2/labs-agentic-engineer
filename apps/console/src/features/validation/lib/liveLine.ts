@@ -16,19 +16,27 @@
  * under the License.
  */
 
-// The run-wide line above the criterion rows — and the ONE rule it obeys:
-// it is derived from the rows, never reported alongside them.
+// The FALLBACK for the run-wide line above the criterion rows, derived from the
+// rows and never reported alongside them. The agent's own status line — its
+// validation issue's newest comment, `tasks/lib/statusLine.ts` — is what the
+// tile shows when there is one; this speaks before the first comment lands, and
+// for a run whose agent posts none.
 //
-// The alternative was a `phase` event the runner emits at each step boundary of
-// the aep-validation workflow. That is a second claim about the same run, and it
-// would have been wrong for most of it: authoring.md requires a spec to pass
-// twice consecutively against the live app, so the agent runs tests all through
-// the authoring step. A marker saying "Authoring tests…" while rows say
-// `Running…`, then flipping to "Running tests…" an hour after the first test
+// The alternative rejected here was a `phase` event the runner emits at each
+// step boundary of the aep-validation workflow. That is a second claim about the
+// same run, and it would have been wrong for most of it: authoring.md requires a
+// spec to pass twice consecutively against the live app, so the agent runs tests
+// all through the authoring step. A marker saying "Authoring tests…" while rows
+// say `Running…`, then flipping to "Running tests…" an hour after the first test
 // ran, is a narration that disagrees with the evidence beside it.
 //
-// Derived from the rows, it cannot disagree — it IS the rows. And it says
-// something only in the two windows where they say nothing.
+// The agent's line is NOT that marker returning. A phase enum claims the same
+// fact the rows claim, at the same granularity, from a second source. The status
+// line is prose at a different granularity — the skill asks it to say what the
+// rows cannot — so the two can be read together without either being checkable
+// against the other. Derived from the rows, this one cannot disagree with them:
+// it IS the rows, and it says something only in the two windows where they say
+// nothing.
 
 import type { LiveStatuses, ValidationCriteria } from "@aep/ui-validation-view";
 

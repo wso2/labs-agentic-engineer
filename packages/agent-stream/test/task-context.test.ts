@@ -23,7 +23,7 @@ import { parseKnownComponents, parseTaskContextFile } from "../src/task-context.
 test("parseKnownComponents collects sorted, unique component dir names", () => {
   const files = {
     "specs/requirements/prd.md": "…",
-    "specs/design/design.md": "…",
+    "specs/design/domain-model.md": "…",
     "specs/design/components/order-service/design.json": "{}",
     "specs/design/components/order-service/openapi.yaml": "…",
     "specs/design/components/user-service/design.json": "{}",
@@ -57,7 +57,7 @@ test("parseTaskContextFile tolerates missing optional fields", () => {
 });
 
 test("parseTaskContextFile returns null for a non-task path", () => {
-  assert.equal(parseTaskContextFile("specs/design/design.md", "---\na: b\n---\nx"), null);
+  assert.equal(parseTaskContextFile("specs/design/domain-model.md", "---\na: b\n---\nx"), null);
 });
 
 test("parseTaskContextFile degrades gracefully on a malformed rendering (no crash)", () => {

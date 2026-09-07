@@ -20,7 +20,6 @@ import { describe, expect, it } from "vitest";
 import type { components } from "../../../generated/aep-api";
 import {
   anyTaskRunning,
-  latestComment,
   runClaims,
   latestExecution,
   taskElapsedFrom,
@@ -352,14 +351,6 @@ describe("taskRowNote", () => {
   it("is null rather than a placeholder when there is nothing to say", () => {
     // Eleven rows each reading "No updates yet" is noise, not information.
     expect(taskRowNote(task())).toBeNull();
-  });
-});
-
-describe("latestComment", () => {
-  it("is the last element, and undefined when the field is absent", () => {
-    // The contract never sends an empty array — absence covers every empty case.
-    expect(latestComment(task({ comments: [comment("a", "c1"), comment("b", "c2")] }))?.id).toBe("c2");
-    expect(latestComment(task())).toBeUndefined();
   });
 });
 

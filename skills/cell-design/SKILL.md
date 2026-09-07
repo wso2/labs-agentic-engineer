@@ -1,6 +1,6 @@
 ---
 name: cell-design
-description: Use when generating a design OR when ANY change alters the architecture — a component added, removed, or renamed; an edge or dependency changed; exposure changed; an external/SaaS dependency added or dropped. specs/design/design.cell moves FIRST, before design.md and the component design.json files. Covers the grammar, the AEP boundary semantics (where each dependency goes), and the write protocol that drives the live architecture diagram.
+description: Use when generating a design OR when ANY change alters the architecture — a component added, removed, or renamed; an edge or dependency changed; exposure changed; an external/SaaS dependency added or dropped. specs/design/design.cell moves FIRST, before the rest of the design (domain-model.md, flows/, the component design.json files). Covers the grammar, the AEP boundary semantics (where each dependency goes), and the write protocol that drives the live architecture diagram.
 metadata:
   aep:
     kind: platform
@@ -10,8 +10,10 @@ metadata:
 
 # Cell design (design.cell)
 
-`specs/design/design.cell` is the PRIMARY design source: a small project-level
-text file describing the architecture as a **cell**. The console renders
+`specs/design/design.cell` is the design ROOT and PRIMARY design source: a
+small project-level text file describing the architecture as a **cell**. The
+platform may stamp a leading `---` YAML frontmatter block (its `sourceSpec`
+lineage) on the file — leave it in place; never author, edit, or remove it. The console renders
 it live as you write it, so it is the FIRST design artifact you emit — and the
 platform derives from it: when the cell is saved, a design.json skeleton is
 scaffolded for every deployable component that has none. The component ids
@@ -162,10 +164,16 @@ FIRST and the rest of the design follows it:
    affected lines (a component/external declaration, an edge). Each applied
    edit lands in the live diagram IN PLACE, so the user sees exactly the
    requested change without the diagram tearing down and rebuilding. Only
-   when the change replaces MOST of the diagram (a restructure) re-emit it
-   instead: `removeFile`, then ONE `addFile` with the complete new diagram
-   (the fresh add re-streams it line by line).
-2. Update `specs/design/design.md` (Components, Interactions) to match.
+   when the change replaces MOST of the diagram (a restructure) rewrite it
+   instead: ONE `editFile` whose `oldString` is the entire current file and
+   whose `newString` is the complete new diagram. When the file opens with
+   the platform's `---` frontmatter block, the `newString` starts with that
+   block unchanged, then the new diagram — the lineage is not yours to drop.
+   design.cell is the design root — a protected path — so `removeFile` on it
+   is refused.
+2. Update `specs/design/domain-model.md` and the affected
+   `specs/design/flows/` files when the change moves entities or reshapes a
+   flow — a flow's participants must stay component ids the cell declares.
 3. Re-emit every affected `components/<name>/design.json` — same component
    ids, and every design.cell edge touching a component appears in that
    component's `dependencies` (and vice versa).

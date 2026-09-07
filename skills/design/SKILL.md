@@ -72,7 +72,8 @@ Each step names the skill that governs it. Those bodies are inlined for this
 turn — apply them directly, and load one only if you find you do not have it.
 
 0. **Declare the first wave** — `declare_plan` with what you can already name:
-   `specs/design/design.cell` and `specs/design/design.md` at minimum.
+   `specs/design/design.cell` and `specs/design/domain-model.md` at minimum,
+   plus each `specs/design/flows/<slug>.md` as soon as you can name the flow.
 1. **design.cell** (`cell-design`) — emit the cell FIRST: every component,
    boundaries and edges. The console streams it into the live diagram, and
    the platform scaffolds a design.json skeleton per deployable component
@@ -82,32 +83,73 @@ turn — apply them directly, and load one only if you find you do not have it.
    component's design.json: language (org Tech stack default first), the PRD
    `stories` it serves (every story the PRD defines must be claimed by some
    component — the build gate checks coverage), dependencies (discover before
-   you invent), description, pinned skills.
-3. **design.md** — a DIAGRAM document, mermaid throughout: one Overview
-   paragraph, then `## Context (C1)` (a mermaid graph: the PRD's actors, the
-   system, external systems), `## Domain model (ER)` (a mermaid erDiagram:
-   entities, key fields, relations — these become the API schemas), and
-   `## Key flows` (one mermaid sequenceDiagram per core workflow). No
-   Components or Interactions prose — the cell owns C2.
-4. **Security design** (`security-design`) — `specs/design/security.json` when
+   you invent), description, pinned skills. A dependency is a cell node: a
+   database or cache you introduce here goes into design.cell first
+   (`component <id> as "…" database`, inside the cell) — the cell is the
+   source of truth, and a design.json naming a node it lacks is refused.
+3. **domain-model.md** — `specs/design/domain-model.md`: an H1 title, one
+   or two sentences of intro, then exactly ONE mermaid `erDiagram` (entities,
+   key fields, relations — these become the API schemas). Brief entity notes
+   after the diagram are fine; keep them to a few lines. Never a second
+   erDiagram — the API schemas derive from this one.
+4. **Key flows** — one file per flow: `specs/design/flows/<kebab-slug>.md`,
+   an H1 title, one or two sentences naming the actor and the outcome, then
+   exactly ONE mermaid `sequenceDiagram`. A key flow is a PRD actor's
+   end-to-end journey: it starts with an actor, spans cell components, and
+   involves more than one component interaction or a decision/async step —
+   plain CRUD on one entity is NOT a flow. Every participant must be a node
+   design.cell declares (a component, or a boundary external such as the
+   identity server or a SaaS) or an actor from the PRD — never an invented
+   name. No context/C1 diagram anywhere: the cell and the PRD carry that.
+   The shape is formulaic — write it like this, first try:
+
+   ```mermaid
+   sequenceDiagram
+       actor Employee
+       actor LineManager as Line Manager
+       participant expense-webapp
+       participant expense-api
+
+       Employee->>expense-webapp: submit claim (amount, receipt)
+       expense-webapp->>expense-api: create claim
+       alt no receipt
+           expense-api-->>expense-webapp: refused
+       else
+           expense-api-->>expense-webapp: created
+       end
+       LineManager->>expense-webapp: approve
+   ```
+
+   Names are ONE word. A multi-word PRD actor gets an alias — `actor
+   LineManager as Line Manager` — and every message uses the one-word id;
+   spaces in a declared name or a message endpoint are refused. The
+   platform judges both documents as you write them: a second diagram,
+   a statement outside plain mermaid, or an unresolved participant is
+   refused (`INVALID_DIAGRAM`, `UNKNOWN_PARTICIPANT`) with the offending
+   line and the ids you may use — fix it and re-emit the whole file once.
+5. **Security design** (`security-design`) — `specs/design/security.json` when
    the design has sign-in or roles.
-5. **Per-component artifacts** — every `service` gets `openapi.yaml`
+6. **Per-component artifacts** — every `service` gets `openapi.yaml`
    (`openapi-conventions`); every `web-application` gets `wireframes.dsl`
    (`wireframes`).
-6. **Validation criteria** (`validation-criteria`) — mint
+7. **Validation criteria** (`validation-criteria`) — mint
    `specs/validation/validation-criteria.json` LAST. A design without its
    acceptance oracle is unfinished — never skip this.
 
 Order binds only where a step reads an earlier one's result: the cell before
-enrichment (the platform scaffolds each design.json from it), and design.md's
-ER model before `openapi.yaml` (those entities become the API schemas).
+enrichment (the platform scaffolds each design.json from it), and
+domain-model.md's ER model before `openapi.yaml` (those entities become the
+API schemas).
 Everything else is independent — emit independent artifacts as parallel calls
 in ONE step, not a step each.
 
 ## Regeneration and the delta pass
 
 A design already exists → CONVERGE it to the current PRD: update what
-drifted, remove what the PRD no longer calls for, keep what holds.
+drifted, remove what the PRD no longer calls for, keep what holds. A legacy
+`specs/design/design.md` (the retired single-file overview) is not part of
+the design any more — `removeFile` it and put its content where it now
+belongs (domain-model.md, flows/).
 
 An amended PRD is a **delta pass with shipped parts protected**: design what
 the new stories require and touch shipped components only where those stories

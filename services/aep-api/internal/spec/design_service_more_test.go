@@ -31,11 +31,11 @@ package spec
 // --- fixtures ----------------------------------------------------------------
 
 // validDesignFiles is a well-formed working-tree map that AssembleDesign
-// accepts: a root design.md (frontmatter carrying sourceSpec) plus one service
+// accepts: a root design.cell (frontmatter carrying sourceSpec) plus one service
 // component with a design.json + openapi.yaml. Mirrors the harvested golden shape.
 func validDesignFiles() map[string]string {
 	return map[string]string{
-		DesignRootFile: "---\nsourceSpec: v1\n---\n\nOverview prose here.\n",
+		DesignRootFile: "---\nsourceSpec: v1\n---\ntitle Hello\n\ncomponent hello-api as \"Hello API\" service\n",
 		"components/hello-api/design.json": "{\n" +
 			"  \"name\": \"hello-api\",\n" +
 			"  \"type\": \"service\",\n" +

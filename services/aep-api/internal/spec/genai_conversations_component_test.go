@@ -63,8 +63,8 @@ func (m *memConversationRepo) ResolveCurrent(_ context.Context, org, project, us
 	}
 	m.n++
 	row := &spec.ProjectConversation{
-		ID:      fmt.Sprintf("00000000-0000-4000-8000-%012d", m.n),
-		OrgID:   org, ProjectID: project, UseCase: useCase,
+		ID:    fmt.Sprintf("00000000-0000-4000-8000-%012d", m.n),
+		OrgID: org, ProjectID: project, UseCase: useCase,
 		Current: true, CreatedBy: createdBy,
 	}
 	m.rows[k] = row

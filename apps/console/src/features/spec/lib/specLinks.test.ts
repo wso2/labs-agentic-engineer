@@ -21,7 +21,7 @@ import { resolveSpecHref } from "./specLinks";
 
 const PRD = "specs/requirements/prd.md";
 const RECEIPTS = "specs/requirements/features/receipts.md";
-const FILES = [PRD, RECEIPTS, "specs/design/design.md"];
+const FILES = [PRD, RECEIPTS, "specs/design/domain-model.md"];
 
 const from = (href: string, doc = PRD) => resolveSpecHref(href, doc, FILES);
 
@@ -61,6 +61,6 @@ describe("resolveSpecHref", () => {
 
   it("cannot be walked out of the repo into a path that merely looks known", () => {
     expect(from("../../../specs/requirements/features/receipts.md")).toBe(RECEIPTS);
-    expect(from("../design/design.md")).toBe("specs/design/design.md");
+    expect(from("../design/domain-model.md")).toBe("specs/design/domain-model.md");
   });
 });

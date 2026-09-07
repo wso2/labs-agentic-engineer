@@ -46,6 +46,7 @@ import { judgeArtifact, type JudgeReport } from "./scoring/judge.js";
 import { designChecks, requirementsChecks, tasksChecks, type StructuralReport } from "./scoring/structural.js";
 import { emitReviewSheet, type ReviewSection } from "./scoring/review-sheet.js";
 import { sumUsage, writeRunArtifacts, type TurnRecord, type TurnUsage } from "./tracing.js";
+import { listFlows } from "@aep/playground/src/engine/gates.js";
 
 export interface SectionOutcome {
   section: string;
@@ -68,14 +69,25 @@ export interface EvalRunOutput {
 
 /** The artifact each section's judge reads, clipped defensively. */
 const CLIP = 80_000;
-const clip = (s: string): string => (s.length > CLIP ? `${s.slice(0, CLIP)}\n…(clipped)` : s);
+const clip = (s: string): string =>
+  s.length > CLIP ? `${s.slice(0, CLIP)}\n…(clipped at ${CLIP} characters — later files were NOT judged)` : s;
 
 function requirementsArtifact(projectDir: string): string {
   return readProjectFile(projectDir, "specs/requirements/prd.md");
 }
 
 function designArtifact(projectDir: string): string {
-  const parts: string[] = [readProjectFile(projectDir, "specs/design/design.md")];
+  const labeled = (rel: string): string => {
+    const content = readProjectFile(projectDir, rel);
+    return content ? `--- ${rel} ---\n${content}` : "";
+  };
+  const parts: string[] = [
+    labeled("specs/design/design.cell"),
+    labeled("specs/design/domain-model.md"),
+  ];
+  for (const f of listFlows(projectDir)) {
+    parts.push(labeled(`specs/design/flows/${f}`));
+  }
   const componentsDir = join(projectDir, "specs/design/components");
   if (existsSync(componentsDir)) {
     for (const c of readdirSync(componentsDir).sort()) {
@@ -112,7 +124,7 @@ async function scoreConversational(
   const judge = artifact.trim()
     ? await judgeArtifact({
         rubric,
-        artifactLabel: isDesign ? "software design (design.md + per-component design.json/openapi.yaml)" : "requirements document",
+        artifactLabel: isDesign ? "software design (design.cell + domain-model.md + flows/ + per-component design.json/openapi.yaml)" : "requirements document",
         artifact: clip(artifact),
         ...(digest ? { decisionsDigest: digest } : {}),
       })
@@ -213,7 +225,7 @@ export async function runDesignScenario(sc: DesignScenario, runName: string): Pr
   }
   const outcome = await scoreConversational(projectDir, run, sc.rubric, []);
   return finishRun("design-section", sc.brief.name, runName, run.records, [outcome], {
-    "specs/design/design.md": readProjectFile(projectDir, "specs/design/design.md"),
+    "specs/design/": designArtifact(projectDir),
   });
 }
 
@@ -268,7 +280,7 @@ export async function runChainScenario(sc: ChainScenario, runName: string): Prom
 
   return finishRun("chain", sc.brief.name, runName, records, outcomes, {
     "specs/requirements/prd.md": requirementsArtifact(projectDir),
-    "specs/design/design.md": readProjectFile(projectDir, "specs/design/design.md"),
+    "specs/design/": designArtifact(projectDir),
     "issues/": tasksArtifact(projectDir),
   });
 }

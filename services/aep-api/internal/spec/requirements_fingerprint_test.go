@@ -88,7 +88,7 @@ func TestRequirementsFingerprint(t *testing.T) {
 	t.Run("changes outside requirements are ignored", func(t *testing.T) {
 		t.Parallel()
 		withDesign := append(append([]sourcecontrol.Entry{}, base...),
-			entry("specs/design/design.md", "ddd"),
+			entry("specs/design/domain-model.md", "ddd"),
 			entry("README.md", "eee"),
 		)
 		if RequirementsFingerprint(base) != RequirementsFingerprint(withDesign) {

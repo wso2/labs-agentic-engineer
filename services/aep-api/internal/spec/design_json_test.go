@@ -562,7 +562,6 @@ func TestSplitAssembleDesign_ComponentRoundTrip(t *testing.T) {
 	// End-to-end through the store split/assemble seam: a DesignFile with one
 	// component survives Split → Assemble with the design.json codec.
 	d := &DesignFile{
-		Overview: "the system",
 		Components: []DesignComponent{
 			{
 				Name:          "checkout",
@@ -587,6 +586,12 @@ func TestSplitAssembleDesign_ComponentRoundTrip(t *testing.T) {
 	if _, ok := files["components/checkout/design.md"]; ok {
 		t.Fatalf("component design.md must NOT be written any more")
 	}
+	if _, ok := files[DesignRootFile]; ok {
+		t.Fatalf("SplitDesign must not render the root design.cell — it is authored, not rendered")
+	}
+	// The cell root is authored, never rendered by SplitDesign — seed it for
+	// the assemble half of the trip.
+	files[DesignRootFile] = "component checkout service\n"
 	out, err := AssembleDesign(files)
 	if err != nil {
 		t.Fatalf("AssembleDesign: %v", err)

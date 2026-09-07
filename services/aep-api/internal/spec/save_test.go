@@ -163,7 +163,7 @@ func TestSaveDesign_AtProvidedCommit_TagsThatCommit(t *testing.T) {
 		t.Fatalf("save requirements: %v", err)
 	}
 	applied := r.seed(map[string]string{
-		"specs/design/design.md":                  "# System\n",
+		"specs/design/design.cell":                "# System\n",
 		"specs/design/components/svc/design.md":   "---\ntype: service\n---\n# svc\n",
 		"specs/design/components/svc/design.json": validComponentDesignJSON("svc"),
 	}, "apply design")
@@ -329,7 +329,7 @@ func TestSaveDesign_TagsAtHead(t *testing.T) {
 	}
 	// Add a valid design bundle to main.
 	r.seed(map[string]string{
-		"specs/design/design.md":                  "# System\n",
+		"specs/design/design.cell":                "# System\n",
 		"specs/design/components/svc/design.md":   "---\ntype: service\n---\n# svc\n",
 		"specs/design/components/svc/design.json": validComponentDesignJSON("svc"),
 	}, "add design")
@@ -349,7 +349,7 @@ func TestSaveDesign_TagsAtHead(t *testing.T) {
 
 func TestSaveDesign_NoRequirementsBaseline(t *testing.T) {
 	t.Parallel()
-	r := newRig(t, map[string]string{"specs/design/design.md": "# System\n"})
+	r := newRig(t, map[string]string{"specs/design/design.cell": "# System\n"})
 	_, err := r.svc.SaveDesign(context.Background(), r.org, r.proj, SaveRequest{})
 	if !errors.Is(err, ErrNoRequirementsBaseline) {
 		t.Fatalf("err = %v, want ErrNoRequirementsBaseline", err)
@@ -363,13 +363,13 @@ func TestSaveDesign_GateMissingLayout(t *testing.T) {
 	if _, err := r.svc.SaveRequirements(ctx, r.org, r.proj, SaveRequest{}); err != nil {
 		t.Fatalf("save requirements: %v", err)
 	}
-	// A component but no root design.md → layout gate fails.
+	// A component but no root design.cell → layout gate fails.
 	r.seed(map[string]string{
 		"specs/design/components/svc/design.json": validComponentDesignJSON("svc"),
 	}, "design without root")
 	_, err := r.svc.SaveDesign(ctx, r.org, r.proj, SaveRequest{})
 	if !errors.Is(err, ErrArtifactPathInvalid) {
-		t.Fatalf("err = %v, want ErrArtifactPathInvalid (missing design.md)", err)
+		t.Fatalf("err = %v, want ErrArtifactPathInvalid (missing design.cell)", err)
 	}
 }
 
@@ -385,7 +385,7 @@ func TestSaveDesign_GateSchemaViolation(t *testing.T) {
 	bad := `{"name":"svc","type":"service","version":"1.0.0","language":"go",` +
 		`"buildpack":"go","appPath":".","entrypoint":"main.go","exposure":"internet","dependencies":[]}`
 	r.seed(map[string]string{
-		"specs/design/design.md":                  "# System\n",
+		"specs/design/design.cell":                "# System\n",
 		"specs/design/components/svc/design.json": bad,
 	}, "bad design.json")
 
@@ -411,7 +411,7 @@ func TestSaveDesign_GateNameMismatch(t *testing.T) {
 	}
 	// design.json valid against the schema but name != component directory.
 	r.seed(map[string]string{
-		"specs/design/design.md":                  "# System\n",
+		"specs/design/design.cell":                "# System\n",
 		"specs/design/components/svc/design.json": validComponentDesignJSON("other"),
 	}, "name mismatch")
 
@@ -430,7 +430,7 @@ func TestSaveDesign_GateBrokenOpenAPI(t *testing.T) {
 		t.Fatalf("save requirements: %v", err)
 	}
 	r.seed(map[string]string{
-		"specs/design/design.md":                   "# System\n",
+		"specs/design/design.cell":                 "# System\n",
 		"specs/design/components/svc/openapi.yaml": "this: : : not valid yaml: [\n",
 	}, "broken openapi")
 

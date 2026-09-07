@@ -18,7 +18,7 @@
 
 /**
  * TEST-ONLY fixture (never a production code path): the starting spec bundle the
- * agent tests mutate. Mirrors the hello-api example in design.md — free-form
+ * agent tests mutate. Mirrors the hello-api example bundle — free-form
  * prose, markdown-with-frontmatter, and indentation-sensitive OpenAPI YAML: the
  * three shapes the file tools must handle. `@aep/agent-stream` keeps its own
  * client-side copy for the fold tests.
@@ -41,7 +41,11 @@ A simple API that responds with "Hello, World!" when called.
 - Requests work without requiring any parameters or authentication.
 `,
 
-  "specs/design/design.md": `A simple public API service that responds with "Hello, World!" in JSON format. Built as a single Go service exposing one endpoint, requiring no authentication.
+  "specs/design/design.cell": `title Hello API
+
+component hello-api as "Hello API" service
+
+north -> hello-api
 `,
 
   "specs/design/components/hello-api/design.json": `{

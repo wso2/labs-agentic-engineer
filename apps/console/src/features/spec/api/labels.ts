@@ -17,9 +17,8 @@
  */
 
 import { PRD_PATH } from "./mapping";
-import { SECURITY_JSON_PATH } from "./designTree";
+import { DOMAIN_MODEL_PATH, SECURITY_JSON_PATH } from "./designTree";
 
-const DESIGN_ROOT = "specs/design/design.md";
 const OPENAPI_RE = /\/openapi\.ya?ml$/;
 const COMPONENT_DESIGN_RE = /^specs\/design\/components\/[^/]+\/design\.json$/;
 const VALIDATION_CRITERIA_RE = /^specs\/validation\/validation-criteria\.json$/;
@@ -43,14 +42,16 @@ function basename(path: string): string {
  */
 const TITLES: Record<string, string> = {
   [PRD_PATH]: "Product requirements",
-  [DESIGN_ROOT]: "Design overview",
+  [DOMAIN_MODEL_PATH]: "Domain model",
   [SECURITY_JSON_PATH]: "Security",
 };
 
 export function fileLabel(path: string): string {
   if (Object.hasOwn(TITLES, path)) return TITLES[path] as string;
   if (OPENAPI_RE.test(path)) return "API";
-  if (COMPONENT_DESIGN_RE.test(path)) return "Design overview";
+  // Under the component's own header, so the label adds the artifact and
+  // never repeats the subject — `orders › Design · API · Wireframe`.
+  if (COMPONENT_DESIGN_RE.test(path)) return "Design";
   if (VALIDATION_CRITERIA_RE.test(path)) return "Validation criteria";
   // A document nothing above names — a feature file most of the time, where
   // the filename IS the feature's name once the extension is off it. Keeping

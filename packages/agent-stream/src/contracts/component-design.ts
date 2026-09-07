@@ -23,7 +23,7 @@
  * schema-validated by the FileBundle on every write), downstream consumers
  * (design projection, coding-agent dispatch, task generation) read it
  * directly. `skillsPinned` is a key HERE (per-component), NOT in design.md
- * frontmatter; the top-level design.md is prose + an optional `sourceSpec`
+ * frontmatter; the root design.cell carries an optional `sourceSpec`
  * frontmatter only. The Zod validator (`componentDesignSchema` in
  * `../component-design-schema.ts`) is drift-guarded against this type.
  */

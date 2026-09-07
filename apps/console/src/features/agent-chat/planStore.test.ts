@@ -37,7 +37,7 @@ function settle(key: string, turnId: string, path: string): void {
   planFileSettled(key, turnId, path, true);
 }
 const CELL = "specs/design/design.cell";
-const OVERVIEW = "specs/design/design.md";
+const OVERVIEW = "specs/design/domain-model.md";
 const PORTAL = "specs/design/components/portal/design.json";
 
 afterEach(() => clearPlan(KEY));

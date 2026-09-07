@@ -19,7 +19,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { OxygenTheme, OxygenUIThemeProvider } from "@wso2/oxygen-ui";
 import type { SpecFileEntry } from "../api/mapping";
 import { SpecFileList } from "./SpecFileList";
@@ -209,7 +209,7 @@ describe("SpecFileList — the rail carries state", () => {
 // is worse than prose.
 describe("SpecFileList — the declared plan", () => {
   const plan = [
-    { path: "specs/design/design.md", status: "writing" as const, section: "design" as const },
+    { path: "specs/design/domain-model.md", status: "writing" as const, section: "design" as const },
     {
       path: "specs/design/components/portal/design.json",
       status: "planned" as const,
@@ -237,7 +237,7 @@ describe("SpecFileList — the declared plan", () => {
   it("renders a planned-but-unwritten path as a disabled ghost row in its group", () => {
     const nav = renderWithPlan();
     // The ghost is the row under the COMPONENT (portal), which the plan lists
-    // but nothing has written; the design-overview row beside it is being
+    // but nothing has written; the domain-model row beside it is being
     // written and must stay live. Asserting "some row is disabled" passed for
     // the wrong reasons, so each row is now identified and checked on its own.
     const rows = within(nav).getAllByRole("button", { hidden: true });
@@ -245,7 +245,7 @@ describe("SpecFileList — the declared plan", () => {
       b.hasAttribute("disabled") || b.getAttribute("aria-disabled") === "true";
     const ghostRows = rows.filter((b) => disabled(b));
     expect(ghostRows).toHaveLength(1);
-    expect(ghostRows[0]!.textContent).toContain("Design overview");
+    expect(ghostRows[0]!.textContent).toBe("Design");
   });
 
   it("shows the section count from the plan", () => {
@@ -278,7 +278,7 @@ describe("SpecFileList — the declared plan", () => {
     );
     const nav = screen.getByRole("navigation", { name: "Spec files" });
     const rows = within(nav).getAllByRole("button", { hidden: true });
-    const errored = rows.find((b) => b.textContent?.includes("Design overview"));
+    const errored = rows.find((b) => b.textContent === "Design");
     expect(errored).toBeTruthy();
     expect(
       errored!.hasAttribute("disabled") || errored!.getAttribute("aria-disabled") === "true",
@@ -287,14 +287,14 @@ describe("SpecFileList — the declared plan", () => {
 });
 
 describe("SpecFileList — Security rail from security.json", () => {
-  it("hides Security when only design.md exists", () => {
-    renderList(designEntries("specs/design/design.md"));
+  it("hides Security when only the domain model exists", () => {
+    renderList(designEntries("specs/design/domain-model.md"));
     expect(screen.queryByRole("button", { name: "Security" })).not.toBeInTheDocument();
   });
 
   it("shows a Security button for security.json, not a security.json filename row", () => {
     renderList(
-      designEntries("specs/design/design.md", "specs/design/security.json"),
+      designEntries("specs/design/domain-model.md", "specs/design/security.json"),
     );
     expect(screen.getByRole("button", { name: "Security" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "security.json" })).not.toBeInTheDocument();
@@ -303,7 +303,7 @@ describe("SpecFileList — Security rail from security.json", () => {
   it("does not show Security for leftover security.md and roles.json alone", () => {
     renderList(
       designEntries(
-        "specs/design/design.md",
+        "specs/design/domain-model.md",
         "specs/design/security.md",
         "specs/design/roles.json",
       ),
@@ -311,5 +311,71 @@ describe("SpecFileList — Security rail from security.json", () => {
     expect(screen.queryByRole("button", { name: /^Security$/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^security$/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "roles.json" })).toBeInTheDocument();
+  });
+});
+
+describe("SpecFileList — the design reads as its parts (#686)", () => {
+  it("lists the documents as rows, then the Flows group, then one group per component", () => {
+    const rows = renderList(
+      designEntries(
+        "specs/design/components/api/design.json",
+        "specs/design/components/api/openapi.yaml",
+        "specs/design/flows/checkout.md",
+        "specs/design/flows/view-order.md",
+        "specs/design/domain-model.md",
+        "specs/design/security.json",
+      ),
+    );
+    expect(rows).toEqual([
+      "Domain model",
+      "Security",
+      "Flows",
+      "checkout",
+      "view-order",
+      "api",
+      "Design",
+      "API",
+    ]);
+  });
+
+  it("shows no Flows group until a flow exists", () => {
+    renderList(designEntries("specs/design/domain-model.md", "specs/design/components/api/design.json"));
+    expect(screen.queryByRole("button", { name: /Flows$/ })).not.toBeInTheDocument();
+  });
+
+  it("collapses and expands the Flows group like a component group", async () => {
+    renderList(designEntries("specs/design/flows/checkout.md"));
+    const header = screen.getByRole("button", { name: "Collapse Flows" });
+    expect(header).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "checkout" })).toBeInTheDocument();
+    fireEvent.click(header);
+    const collapsed = screen.getByRole("button", { name: "Expand Flows" });
+    expect(collapsed).toHaveAttribute("aria-expanded", "false");
+    // The group unmounts its rows once the collapse transition ends.
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "checkout" })).not.toBeInTheDocument(),
+    );
+  });
+
+  it("holds a planned flow as a ghost row inside the Flows group", () => {
+    const plan = [{ path: "specs/design/flows/checkout.md", status: "planned" as const, section: "design" as const }];
+    render(
+      <OxygenUIThemeProvider theme={OxygenTheme}>
+        <SpecFileList
+          files={designEntries("specs/design/domain-model.md")}
+          selection={null}
+          onSelect={() => {}}
+          onRegenerateDesign={() => {}}
+          sections={railSections({ ...RAIL_INPUT, agentWorking: true, planEntries: plan })}
+          plan={plan}
+          onReason={() => {}}
+        />
+      </OxygenUIThemeProvider>,
+    );
+    const nav = screen.getByRole("navigation", { name: "Spec files" });
+    expect(within(nav).getByRole("button", { name: "Collapse Flows" })).toBeInTheDocument();
+    const ghost = within(nav).getAllByRole("button", { hidden: true }).find((b) => b.textContent === "checkout");
+    expect(ghost).toBeTruthy();
+    expect(ghost!.hasAttribute("disabled") || ghost!.getAttribute("aria-disabled") === "true").toBe(true);
   });
 });

@@ -71,9 +71,12 @@ type harness struct {
 	mu         sync.Mutex
 	dispatches []delivery.MilestoneDispatch
 	finishes   []FinishCycleInput
-	states     []string
-	settle     SettleRunInput
-	verdicts   []string
+	// opens records every cycle OPEN in order, so a test can assert what a cycle
+	// carried at creation rather than only what it held once settled.
+	opens    []AppendCycleInput
+	states   []string
+	settle   SettleRunInput
+	verdicts []string
 	// gateMints / plans record the planning phase's two activities, in the order
 	// the loop drove them.
 	gateMints []PlanMilestoneInput
@@ -199,7 +202,12 @@ func newHarness(t *testing.T) *harness {
 			h.verdicts = append(h.verdicts, in.Verdict)
 			h.verdictWrites = append(h.verdictWrites, in)
 		}).Return(nil)
-	h.env.OnActivity(acts.AppendCycle, mock.Anything, mock.Anything).Return(testCycleID, nil)
+	h.env.OnActivity(acts.AppendCycle, mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			h.opens = append(h.opens, args.Get(1).(AppendCycleInput))
+		}).Return(testCycleID, nil)
 	h.env.OnActivity(acts.NoteCycleDispatch, mock.Anything, mock.Anything).Return(nil)
 	h.env.OnActivity(acts.FinishCycle, mock.Anything, mock.Anything).
 		Run(func(args mock.Arguments) {
@@ -1838,6 +1846,55 @@ func TestValidationRun_Passes(t *testing.T) {
 	// succeeded validation run is a green ending by construction: every fatal
 	// verdict settles the run `failed`.
 	require.Equal(t, 1, h.closed, "a judged version is finished, so its milestone closes")
+}
+
+// A validation cycle carries its issue FROM THE OPEN, not from the verdict.
+//
+// The console reaches a running validation through this column — the issue link
+// and the agent's own status line both key on it — and a number that arrives
+// with the verdict arrives after the only window they render in has closed. The
+// cycle is opened with the same anchor the dispatch is about to use, so the two
+// cannot disagree about which issue this attempt asked.
+func TestValidationRun_CycleCarriesItsIssueFromTheOpen(t *testing.T) {
+	h := newHarness(t)
+	h.validationIs(77, delivery.ValidationVerdictPassed)
+	h.merges(1)
+
+	h.run(delivery.RunKindValidation, 0)
+	res := h.result(t)
+	h.assertSettled(t, res, delivery.RunStateSucceeded, "")
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	require.Len(t, h.opens, 1)
+	require.Equal(t, delivery.CycleKindValidation, h.opens[0].Kind)
+	require.Equal(t, 77, h.opens[0].ValidationIssue,
+		"the cycle must know its issue while the run is still going, not only once it has settled")
+	require.Equal(t, h.dispatches[0].IssueNumber, h.opens[0].ValidationIssue,
+		"the cycle is opened at the same issue the dispatch is anchored to")
+}
+
+// ...and a cycle over a whole WORKING SET carries none. A dev run mints the
+// validation task and leaves the number in its workflow state, so a cycle that
+// read run state rather than its own anchor would stamp coding work with an
+// issue it was never dispatched at.
+func TestDevRun_CodingCycleCarriesNoValidationIssue(t *testing.T) {
+	h := newHarness(t)
+	h.milestoneIs(workable(1, 1), MilestoneSnapshot{})
+	h.validationIs(77, delivery.ValidationVerdictPassed)
+	h.merges(1)
+
+	h.run(delivery.RunKindDev, 0)
+	h.assertSettled(t, h.result(t), delivery.RunStateSucceeded, "")
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	require.NotEmpty(t, h.opens)
+	for _, o := range h.opens {
+		require.Equal(t, delivery.CycleKindCoding, o.Kind)
+		require.Zero(t, o.ValidationIssue,
+			"a coding cycle is anchored to no issue — it re-lists the milestone and picks its own")
+	}
 }
 
 // TestValidationRun_FailedFilesOneIssuePerCriterion is the repair hand-off. The

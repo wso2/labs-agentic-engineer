@@ -18,8 +18,8 @@
 
 // Mermaid rendering inside the spec markdown editor: a ```mermaid code block
 // renders as its live diagram, and shows its source when you ask to edit it.
-// The design skill emits design.md as a mermaid diagram document (C1 / ER /
-// sequence flows), so this is what makes the design read as diagrams.
+// The design skill emits domain-model.md (one erDiagram) and flows/<slug>.md
+// (one sequenceDiagram each), so this is what makes the design read as diagrams.
 //
 // The Yjs-backed source text stays the single truth — the diagram is a pure
 // view, so collaboration is untouched.

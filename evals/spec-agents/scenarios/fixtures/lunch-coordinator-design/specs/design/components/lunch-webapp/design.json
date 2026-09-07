@@ -12,5 +12,5 @@
     { "kind": "platform-resource", "name": "team-auth", "resourceType": "thunder-app", "description": "Google Workspace SSO sign-in for teammates via the platform's Thunder identity service." }
   ],
   "description": "React single-page app for the team lunch flow: sign in via Google Workspace SSO, open a daily round, browse/add/edit/remove items before cutoff, close a round manually, view the consolidated order once closed, and browse round history. Holds no secrets and does not talk to Slack or the database directly — all of that is proxied through lunch-api.",
-  "skillsApplied": ["react-webapp", "thunder-authentication", "excalidraw-wireframes"]
+  "skillsPinned": ["react-webapp", "thunder-authentication", "excalidraw-wireframes"]
 }

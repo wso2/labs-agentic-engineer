@@ -22,7 +22,8 @@ design-generation turn** — in both cases the requirement-only input rule below
 
 Read `specs/requirements/prd.md` — the numbered User Stories are the spine,
 with `specs/requirements/features/<slug>.md` for depth. **Do not read
-`design.md`, `openapi.yaml`, or any source code** to derive criteria — the
+the design bundle (design.cell, domain-model.md, flows/), `openapi.yaml`, or
+any source code** to derive criteria — the
 oracle must be independent of the work it will grade. Base every criterion
 only on what the PRD says or necessarily implies, and cite each requirement's
 story numbers so coverage is checkable: every story the PRD defines
@@ -95,7 +96,7 @@ Every criterion gets exactly one method.
 ## Do not
 
 - Do not add fields beyond the schema, comments, or any prose inside the JSON.
-- Do not read `design.md`, `openapi.yaml`, or source code to derive criteria (requirement-only input).
+- Do not read the design bundle (design.cell, domain-model.md, flows/), `openapi.yaml`, or source code to derive criteria (requirement-only input).
 - Do not generate e2e test files, a validation workflow, or anything else — this skill produces the
   single `specs/validation/validation-criteria.json` file, whether it runs standalone or as the final
   step of a design turn.

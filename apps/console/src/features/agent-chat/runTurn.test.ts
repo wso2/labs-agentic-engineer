@@ -229,7 +229,7 @@ describe("attachAndFoldTurn — a file card settles on its OWN input-end, not th
     vi.mocked(upsertToolMessage).mock.calls.map(([, m]) => m).filter((m) => m.toolCallId === id);
 
   it("stops the spinner at tool-input-end, with NO verdict yet", async () => {
-    mockReadToolInputPath.mockReturnValue("specs/design/design.md");
+    mockReadToolInputPath.mockReturnValue("specs/design/domain-model.md");
     queuedParts = batch(["c1"]);
     await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
 
@@ -246,7 +246,7 @@ describe("attachAndFoldTurn — a file card settles on its OWN input-end, not th
   });
 
   it("settles the FIRST file before the last file's call — the batch no longer blocks it", async () => {
-    mockReadToolInputPath.mockReturnValue("specs/design/design.md");
+    mockReadToolInputPath.mockReturnValue("specs/design/domain-model.md");
     queuedParts = batch(["c1", "c2", "c3"]);
     await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
 
@@ -259,7 +259,7 @@ describe("attachAndFoldTurn — a file card settles on its OWN input-end, not th
   });
 
   it("ticks the FIRST file mid-batch when its verdict rides its own call", async () => {
-    mockReadToolInputPath.mockReturnValue("specs/design/design.md");
+    mockReadToolInputPath.mockReturnValue("specs/design/domain-model.md");
     queuedParts = batchSettledPerCall(["c1", "c2", "c3"]);
     await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
 
@@ -317,7 +317,7 @@ describe("attachAndFoldTurn — draftExternalResource publishes a register draft
 
 describe("attachAndFoldTurn — declare_plan folds into the plan store (#576)", () => {
   const CELL = "specs/design/design.cell";
-  const OVERVIEW = "specs/design/design.md";
+  const OVERVIEW = "specs/design/domain-model.md";
   const PORTAL = "specs/design/components/portal/design.json";
 
   beforeEach(() => {
@@ -354,7 +354,7 @@ describe("attachAndFoldTurn — declare_plan folds into the plan store (#576)", 
 
   it("derives writing/done/error from the file frames and keeps the wreckage", async () => {
     mockReadToolInputPath.mockImplementation((buf: string) =>
-      buf.includes("design.cell") ? CELL : buf.includes("design.md") ? OVERVIEW : null,
+      buf.includes("design.cell") ? CELL : buf.includes("domain-model.md") ? OVERVIEW : null,
     );
     queuedParts = [
       {
@@ -375,7 +375,7 @@ describe("attachAndFoldTurn — declare_plan folds into the plan store (#576)", 
         result: { ok: true },
       },
       { type: "tool-input-start", id: "f2", toolName: "addFile" },
-      { type: "tool-input-delta", id: "f2", delta: '{"path":"specs/design/design.md"' },
+      { type: "tool-input-delta", id: "f2", delta: '{"path":"specs/design/domain-model.md"' },
       { type: "turn-failed", message: "died mid-write" },
     ] as StreamPart[];
     await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);

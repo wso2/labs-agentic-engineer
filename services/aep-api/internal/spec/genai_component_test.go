@@ -78,12 +78,24 @@ func sha256Hex(s string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// The agents-side write ledger emits the verdict frame right behind every
+// mutation tool-call, and the fold applies a write only on that verdict's
+// ok:true (ADR-0021) — so each helper carries the pair: two `data:` frames in
+// one script entry, exactly as the stream would.
+func withVerdict(call []byte, id, tool, op, path string) string {
+	v, _ := json.Marshal(map[string]any{
+		"type": "tool-result", "toolCallId": id, "toolName": tool,
+		"output": map[string]any{"ok": true, "path": path, "op": op, "status": "applied"},
+	})
+	return string(call) + "\n\ndata: " + string(v)
+}
+
 func addFilePart(path, content string) string {
 	b, _ := json.Marshal(map[string]any{
 		"type": "tool-call", "toolCallId": "t-" + path, "toolName": "addFile",
 		"input": map[string]string{"path": path, "content": content},
 	})
-	return string(b)
+	return withVerdict(b, "t-"+path, "addFile", "add", path)
 }
 
 func editFilePart(path, oldString, newString string) string {
@@ -91,7 +103,7 @@ func editFilePart(path, oldString, newString string) string {
 		"type": "tool-call", "toolCallId": "e-" + path, "toolName": "editFile",
 		"input": map[string]string{"path": path, "oldString": oldString, "newString": newString},
 	})
-	return string(b)
+	return withVerdict(b, "e-"+path, "editFile", "edit", path)
 }
 
 func textPart(text string) string {
@@ -805,8 +817,8 @@ func Test202Flow_PreviewOnlyAndStreamReplays(t *testing.T) {
 	if code != http.StatusOK || !done {
 		t.Fatalf("stream: code %d done %v", code, done)
 	}
-	if len(events) != 4 { // 3 parts + terminal
-		t.Fatalf("stream events = %d, want 4: %+v", len(events), events)
+	if len(events) != 6 { // 3 parts + terminal
+		t.Fatalf("stream events = %d, want 6 (each write rides with its verdict frame): %+v", len(events), events)
 	}
 	for i, ev := range events {
 		if ev.id != i {
@@ -821,25 +833,25 @@ func Test202Flow_PreviewOnlyAndStreamReplays(t *testing.T) {
 		CommitSHA string `json:"commitSha"`
 		NoChanges bool   `json:"noChanges"`
 	}
-	if err := json.Unmarshal([]byte(events[3].data), &terminal); err != nil ||
+	if err := json.Unmarshal([]byte(events[5].data), &terminal); err != nil ||
 		terminal.Type != "turn-committed" || terminal.CommitSHA != baseRef || !terminal.NoChanges {
-		t.Errorf("terminal event = %s", events[3].data)
+		t.Errorf("terminal event = %s", events[5].data)
 	}
 
 	// Replay from an index trims the head.
 	fromEvents, done2, _ := r.streamEvents(t, turnID, "?from=2", nil)
-	if !done2 || len(fromEvents) != 2 || fromEvents[0].id != 2 {
+	if !done2 || len(fromEvents) != 4 || fromEvents[0].id != 2 {
 		t.Errorf("from=2 replay = %+v done=%v", fromEvents, done2)
 	}
 	// Last-Event-ID names the last RECEIVED event — replay resumes at the
 	// next index (the SSE auto-reconnect contract, declared as a header param).
 	lastEvents, done3, _ := r.streamEvents(t, turnID, "", map[string]string{"Last-Event-ID": "1"})
-	if !done3 || len(lastEvents) != 2 || lastEvents[0].id != 2 {
+	if !done3 || len(lastEvents) != 4 || lastEvents[0].id != 2 {
 		t.Errorf("Last-Event-ID=1 replay = %+v done=%v", lastEvents, done3)
 	}
 	// from still wins over (the unread) Last-Event-ID.
 	winEvents, _, _ := r.streamEvents(t, turnID, "?from=3", map[string]string{"Last-Event-ID": "0"})
-	if len(winEvents) != 1 || winEvents[0].id != 3 {
+	if len(winEvents) != 3 || winEvents[0].id != 3 {
 		t.Errorf("from-wins replay = %+v", winEvents)
 	}
 
@@ -861,13 +873,13 @@ func TestGenericTurn_NoUseCase(t *testing.T) {
 	r := newGenaiRig(t, map[string]string{"specs/requirements/prd.md": "# Reqs\n"})
 	baseRef := r.fx.Origin.HeadSHA(t)
 
-	// The agent proposes a design.md edit; the manifest vouches for it. A
+	// The agent proposes a domain-model.md edit; the manifest vouches for it. A
 	// committing use case would land it — the general turn must not.
 	r.fake.parts = []string{
 		textPart("working"),
-		addFilePart("specs/design/design.md", "# Design\n"),
+		addFilePart("specs/design/domain-model.md", "# Design\n"),
 	}
-	m := manifestPart(map[string]string{"specs/design/design.md": "# Design\n"}, nil)
+	m := manifestPart(map[string]string{"specs/design/domain-model.md": "# Design\n"}, nil)
 	r.fake.manifest = &m
 
 	// useCase "" → the post helper omits the field entirely.

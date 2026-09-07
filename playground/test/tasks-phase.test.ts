@@ -98,7 +98,7 @@ function seedDesignedProject(): string {
   writeFileSync(join(dir, "specs/requirements/prd.md"), "# R\n");
   mkdirSync(join(dir, "specs/design/components/user-service"), { recursive: true });
   mkdirSync(join(dir, "specs/design/components/web-frontend"), { recursive: true });
-  writeFileSync(join(dir, "specs/design/design.md"), "# Design\n");
+  writeFileSync(join(dir, "specs/design/design.cell"), "title R\n\ncomponent user-service service\ncomponent web-frontend web-application\n");
   writeFileSync(join(dir, "specs/design/components/user-service/design.json"), VALID_DESIGN("user-service"));
   writeFileSync(join(dir, "specs/design/components/web-frontend/design.json"), VALID_DESIGN("web-frontend"));
   return dir;

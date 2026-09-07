@@ -1322,7 +1322,7 @@ describe("SpecView follows the write (#576, ADR-0026)", () => {
 
     // The turn moves on to other writes and back to the cell; a still-following
     // editor would jump to Architecture here. It must not.
-    act(() => planFileWriting(chatKey, "t1", "specs/design/design.md"));
+    act(() => planFileWriting(chatKey, "t1", "specs/design/domain-model.md"));
     act(() => planFileWriting(chatKey, "t1", CELL));
     expect(screen.queryByTestId("cell-diagram-panel")).not.toBeInTheDocument();
   });

@@ -34,7 +34,10 @@
 //   --issue <n>       validation issue number (required)
 //   --commit <sha>    commit under validation (default: "unknown")
 //   --criteria <p>    default specs/validation/validation-criteria.json (read-only)
-//   --results <p>     default tests/e2e/test-results/results.json
+//   --results <p>     default tests/e2e/test-results/runs (a DIRECTORY of
+//                     per-run result files, merged in filename order; a single
+//                     file is also accepted)
+//   --specs <dir>     default tests/e2e/specs
 //   --heal-log <p>    default tests/e2e/heal-log.json (optional file)
 //   --out <dir>       default tests/validation
 //
@@ -43,8 +46,18 @@
 //   <out>/report.md            human report incl. manual checklist
 //
 // Join key: every automated spec's title MUST start with "<AC-ID>: "
-// (e.g. "AC-001-a: shows a name text box"). Duplicate or unknown AC ids
-// are hard errors (exit 2) — fix the spec titles, then re-run.
+// (e.g. "AC-001-a: shows a name text box"). An unknown AC id, or two spec
+// FILES claiming one criterion inside a single run, are hard errors (exit 2)
+// — fix the spec titles, then re-run. The same criterion appearing across
+// SEVERAL runs is not an error: it is a spec that was run more than once, and
+// the newest result wins.
+//
+// Coverage is verified, not assumed. Every spec file on disk must APPEAR in
+// the merged runs — matched by path, so a stale result for the same criterion
+// under a different spec file does not count — and one that does not appear is
+// a hard error naming the specs still owed. Appearing is the check —
+// a spec whose tests all skipped appears, and reports `not_run` honestly,
+// which is also what a criterion with no spec file at all reports.
 //
 // Each mapped spec file must also carry a "// spec:" header comment
 // linking it to its test-plan section (hard error when absent — add the
@@ -53,16 +66,22 @@
 // getByLabel/...) survive UI change, raw CSS is what the healer ends
 // up fixing later.
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 
-const AC_TITLE_RE = /^(AC-\d{3}-[a-z]):/;
+// One shape, three questions asked of it: a spec TITLE's prefix (the join key),
+// a spec PATH's basename, and a spec FILENAME on its own.
+const AC_ID = String.raw`AC-\d{3}-[a-z]`;
+const AC_TITLE_RE = new RegExp(`^(${AC_ID}):`);
+const AC_SPEC_PATH_RE = new RegExp(`(${AC_ID})\\.spec\\.[cm]?[tj]sx?$`);
+const AC_SPEC_FILE_RE = new RegExp(`^(${AC_ID})\\.spec\\.[cm]?[tj]sx?$`);
 
 function parseArgs(argv) {
   const args = {
     criteria: "specs/validation/validation-criteria.json",
-    results: "tests/e2e/test-results/results.json",
+    results: "tests/e2e/test-results/runs",
+    specs: "tests/e2e/specs",
     healLog: "tests/e2e/heal-log.json",
     out: "tests/validation",
     commit: "unknown",
@@ -77,6 +96,7 @@ function parseArgs(argv) {
       case "--commit": args.commit = val; break;
       case "--criteria": args.criteria = val; break;
       case "--results": args.results = val; break;
+      case "--specs": args.specs = val; break;
       case "--heal-log": args.healLog = val; break;
       case "--out": args.out = val; break;
       default: fail(`unknown flag: ${key}`);
@@ -93,6 +113,13 @@ function fail(msg) {
   process.exit(2);
 }
 
+// Several checks accumulate before any of them speaks, so the reader gets every
+// violation at once rather than one per re-run.
+function failAll(errors) {
+  for (const e of errors) console.error(`generate-report: ${e}`);
+  process.exit(2);
+}
+
 function readJson(p, what) {
   if (!existsSync(p)) fail(`${what} not found: ${p}`);
   try {
@@ -100,6 +127,30 @@ function readJson(p, what) {
   } catch (err) {
     fail(`${what} is not valid JSON (${p}): ${err.message}`);
   }
+}
+
+/**
+ * The per-run result files, in merge order.
+ *
+ * Every test run writes its own file (see the skill's playwright.config
+ * template), so the input is normally a directory of them. Filename order is
+ * the merge order and is chronological, because the names are ISO stamps —
+ * which is what makes the newest result for a criterion simply the last one
+ * seen.
+ *
+ * A single file is still accepted. That is what one complete run looks like,
+ * and what every report generated before batching read.
+ */
+function readResultBatches(p, what) {
+  if (!existsSync(p)) fail(`${what} not found: ${p}`);
+  if (!statSync(p).isDirectory()) {
+    return [{ name: path.basename(p), doc: readJson(p, what) }];
+  }
+  const files = readdirSync(p).filter((f) => f.endsWith(".json")).sort();
+  if (files.length === 0) {
+    fail(`${what} directory holds no .json files: ${p} — no test run has written results`);
+  }
+  return files.map((f) => ({ name: f, doc: readJson(path.join(p, f), `${what} (${f})`) }));
 }
 
 function stripAnsi(s) {
@@ -157,7 +208,7 @@ function main() {
   const args = parseArgs(process.argv);
 
   const criteriaDoc = readJson(args.criteria, "criteria file");
-  const results = readJson(args.results, "Playwright results");
+  const batches = readResultBatches(args.results, "Playwright results");
   const healEntries = existsSync(args.healLog)
     ? readJson(args.healLog, "heal log")
     : [];
@@ -173,34 +224,78 @@ function main() {
   }
   if (criteriaById.size === 0) fail("criteria file has no criteria");
 
-  // ---- index test results by AC id ---------------------------------------
-  const specs = [];
-  for (const suite of results.suites ?? []) collectSpecs(suite, specs);
+  // ---- one rootDir, one Playwright version -------------------------------
+  // Batches that disagree are describing two different checkouts, and the
+  // merge would be silently meaningless. Playwright's own merge-reports
+  // refuses the same way, for the same reason.
+  const rootDirs = new Set(batches.map((b) => b.doc.config?.rootDir).filter(Boolean));
+  if (rootDirs.size > 1) {
+    fail(`results were recorded under different rootDir values: ${[...rootDirs].sort().join(", ")}`);
+  }
+  const rootDir = [...rootDirs][0];
+  const versions = new Set(batches.map((b) => b.doc.config?.version).filter(Boolean));
+  if (versions.size > 1) {
+    fail(`results were recorded by different Playwright versions: ${[...versions].sort().join(", ")}`);
+  }
 
+  // ---- index test results by AC id, merging the batches ------------------
+  //
+  // Per batch, then fold — and the two-step matters. Folding every batch's raw
+  // `spec.tests[]` into one array and calling specOutcome once would be wrong:
+  // it is fail-dominant and time-blind, so a failure that has since been
+  // healed would outvote the pass that healed it, permanently.
+  //
+  // Later batches overwrite earlier ones because the batches are in time
+  // order, which is exactly how a heal's re-run supersedes the failure that
+  // prompted it.
   const resultByAc = new Map();
+  // How many mapped specs each batch contributed, for the report's provenance.
+  // Held beside the batches rather than written onto them: readResultBatches
+  // owns those objects, and a count derived here is this loop's fact.
+  const specsPerBatch = new Map();
+  const unmappedSeen = new Set();
   const unmappedTests = [];
   const errors = [];
-  for (const spec of specs) {
-    const m = AC_TITLE_RE.exec(spec.title ?? "");
-    if (!m) {
-      unmappedTests.push({ title: spec.title ?? "", file: spec.file ?? null });
-      continue;
+  for (const batch of batches) {
+    const specs = [];
+    for (const suite of batch.doc.suites ?? []) collectSpecs(suite, specs);
+    const inBatch = new Map();
+    for (const spec of specs) {
+      const m = AC_TITLE_RE.exec(spec.title ?? "");
+      if (!m) {
+        // Deduped across batches: the same unmapped spec reappears in every run
+        // that covered it, and one authoring mistake should be reported once.
+        const key = `${spec.title ?? ""}\u0000${spec.file ?? ""}`;
+        if (!unmappedSeen.has(key)) {
+          unmappedSeen.add(key);
+          unmappedTests.push({ title: spec.title ?? "", file: spec.file ?? null });
+        }
+        continue;
+      }
+      const acId = m[1];
+      // Two spec FILES claiming one criterion is an authoring bug and stays a
+      // hard error — but only WITHIN a batch. Across batches it is the same
+      // spec run twice, which is the entire point of merging them.
+      if (inBatch.has(acId)) {
+        const first = inBatch.get(acId).file;
+        errors.push(
+          `duplicate spec title prefix ${acId} within ${batch.name} — ` +
+            (first === (spec.file ?? null)
+              ? `two tests in ${first} claim it`
+              : `claimed by both ${first} and ${spec.file}`),
+        );
+        continue;
+      }
+      if (!criteriaById.has(acId)) {
+        errors.push(`spec title references unknown criterion ${acId} (${spec.file})`);
+        continue;
+      }
+      inBatch.set(acId, { ...specOutcome(spec), file: spec.file ?? null, batch: batch.name });
     }
-    const acId = m[1];
-    if (resultByAc.has(acId)) {
-      errors.push(`duplicate spec title prefix ${acId} (files: ${resultByAc.get(acId).file}, ${spec.file})`);
-      continue;
-    }
-    if (!criteriaById.has(acId)) {
-      errors.push(`spec title references unknown criterion ${acId} (${spec.file})`);
-      continue;
-    }
-    resultByAc.set(acId, { ...specOutcome(spec), file: spec.file ?? null });
+    specsPerBatch.set(batch.name, inBatch.size);
+    for (const [acId, r] of inBatch) resultByAc.set(acId, r);
   }
-  if (errors.length > 0) {
-    for (const e of errors) console.error(`generate-report: ${e}`);
-    process.exit(2);
-  }
+  if (errors.length > 0) failAll(errors);
 
   // Heal-log entries must join to criteria AND carry full provenance — reject
   // free-form shapes (an entry the report can't attribute, or a heal without
@@ -262,7 +357,7 @@ function main() {
       healCheckSkipped = true;
     } else {
       for (const p of modified) {
-        const m = /(AC-\d{3}-[a-z])\.spec\.[cm]?[tj]sx?$/.exec(p);
+        const m = AC_SPEC_PATH_RE.exec(p);
         if (!m) continue;
         if (!healByAc.has(m[1])) {
           errors.push(
@@ -274,16 +369,40 @@ function main() {
     }
   }
 
-  // ---- spec-file conventions (header hard-check, locator lint) -----------
-  // Reporter file paths are relative to the run's rootDir (usually the
-  // testDir, e.g. tests/e2e/specs), NOT the repo root — resolve against
-  // rootDir first, then the conventional layouts.
-  const rootDir = results.config?.rootDir;
+  // ---- specs on disk: coverage, header hard-check, locator lint ----------
+  //
+  // Driven by what is on DISK, not by what turned up in the results, and that
+  // inversion is the invariant that replaces "one run must have covered
+  // everything".
+  //
+  // A spec file that exists with no result means a run was missed or severed.
+  // That used to be indistinguishable from a criterion nobody wrote a test for
+  // — both landed as `not_run` — so a partial set of results could report most
+  // of the suite as never checked and look like a finished report. Now the
+  // first is a hard error naming the specs still owed, and only the second is a
+  // legitimate `not_run`.
+  //
+  // It also fixes what the two gates below could see. Scoped to the results, a
+  // severed run's specs vanished from the tree and their missing headers went
+  // unreported, so the report could exit 0 having skipped a check on exactly
+  // the specs whose run had failed.
+  // A missing specs directory degrades VISIBLY, never silently — the same rule
+  // the heal check above follows. Without it the coverage invariant, the header
+  // gate and the locator lint would all pass over an empty list and the report
+  // would look complete having checked nothing.
+  const specsDirMissing = !existsSync(args.specs);
+  const specFiles = specsDirMissing
+    ? []
+    : readdirSync(args.specs).filter((f) => AC_SPEC_FILE_RE.test(f)).sort();
+
+  // Reporter file paths are relative to the run's rootDir (usually the testDir,
+  // e.g. tests/e2e/specs), NOT the repo root — kept as the fallback for a
+  // criterion whose result names a spec that is no longer on disk.
   function resolveSpecPath(file) {
     const candidates = [];
     if (rootDir) candidates.push(path.resolve(rootDir, file));
     candidates.push(
-      path.resolve("tests/e2e/specs", file),
+      path.resolve(args.specs, file),
       path.resolve("tests/e2e", file),
     );
     for (const c of candidates) {
@@ -295,31 +414,62 @@ function main() {
   if (healCheckSkipped) {
     warnings.push("heal-visibility check skipped (no git origin ref available)");
   }
-  for (const [acId, r] of resultByAc) {
-    if (!r.file) continue;
-    const abs = resolveSpecPath(r.file);
-    if (!abs) {
-      warnings.push(`${acId}: spec file not found on disk (${r.file}) — header/locator checks skipped`);
+  if (specsDirMissing) {
+    warnings.push(
+      `coverage, header and locator checks skipped — no spec directory at ${args.specs}`,
+    );
+  }
+  const uncovered = [];
+  for (const f of specFiles) {
+    const acId = AC_SPEC_FILE_RE.exec(f)[1];
+    const repoPath = path.join(args.specs, f).split(path.sep).join("/");
+    if (!criteriaById.has(acId)) {
+      errors.push(`${repoPath} names criterion ${acId}, which the criteria file does not carry`);
       continue;
     }
-    r.repoPath = path.relative(process.cwd(), abs).split(path.sep).join("/");
-    const src = readFileSync(abs, "utf8");
+    // Matched by PATH, not by criterion id alone. A result carrying the same
+    // `AC-001-a:` title from a DIFFERENT spec file — a stale batch from before
+    // a rename, or a spec authored in the wrong directory — would otherwise
+    // satisfy coverage for a file that was never executed, and results
+    // accumulate across the whole run so a superseded path lingers.
+    //
+    // A result with no file at all is accepted: it cannot be verified either
+    // way, and refusing would invent a failure rather than find one.
+    const r = resultByAc.get(acId);
+    const ranThisFile = r ? (r.file ? resolveSpecPath(r.file) === path.resolve(args.specs, f) : true) : false;
+    if (ranThisFile) r.repoPath = repoPath;
+    else uncovered.push(f);
+
+    const src = readFileSync(path.join(args.specs, f), "utf8");
     const head = src.split("\n").slice(0, 10);
     if (!head.some((l) => l.startsWith("// spec:"))) {
       errors.push(
-        `${r.repoPath} is missing its "// spec:" header comment (link to the test-plan section for ${acId})`,
+        `${repoPath} is missing its "// spec:" header comment (link to the test-plan section for ${acId})`,
       );
     }
     if (/\.locator\(/.test(src)) {
       warnings.push(
-        `${acId}: raw locator() usage in ${r.repoPath} — prefer getByRole/getByLabel/getByPlaceholder`,
+        `${acId}: raw locator() usage in ${repoPath} — prefer getByRole/getByLabel/getByPlaceholder`,
       );
     }
   }
-  if (errors.length > 0) {
-    for (const e of errors) console.error(`generate-report: ${e}`);
-    process.exit(2);
+  if (uncovered.length > 0) {
+    errors.push(
+      `no test result for ${uncovered.length} spec(s) that exist on disk: ${uncovered.join(", ")} — ` +
+        `run them and regenerate. A run that was severed at its timeout keeps going in the ` +
+        `background, so its results may simply not have landed yet: check the runs directory ` +
+        `again before re-running`,
+    );
   }
+  // A result whose spec is gone from disk keeps the old resolution, so the
+  // report can still name the file the run actually executed.
+  for (const [acId, r] of resultByAc) {
+    if (r.repoPath || !r.file) continue;
+    const abs = resolveSpecPath(r.file);
+    if (abs) r.repoPath = path.relative(process.cwd(), abs).split(path.sep).join("/");
+    else warnings.push(`${acId}: spec file not found on disk (${r.file})`);
+  }
+  if (errors.length > 0) failAll(errors);
 
   // ---- build per-criterion rows ------------------------------------------
   const rows = [];
@@ -339,6 +489,7 @@ function main() {
         flaky: false,
         durationMs: 0,
         failure: null,
+        batch: null,
       };
       if (c.method === "e2e") {
         totals.e2e.total += 1;
@@ -352,6 +503,10 @@ function main() {
           row.flaky = r.flaky;
           row.durationMs = r.durationMs;
           row.failure = r.failure;
+          // Which run produced this. Without it a reader cannot tell a green
+          // merged out of eleven runs from a green one run proved, and the
+          // report's central claim is that it is the authoritative record.
+          row.batch = r.batch ?? null;
           if (r.status === "pass") totals.e2e.pass += 1;
           else if (r.status === "fail") totals.e2e.fail += 1;
           else totals.e2e.notRun += 1;
@@ -373,7 +528,10 @@ function main() {
     issue: args.issue,
     commit: args.commit,
     generatedAt: new Date().toISOString(),
-    playwrightVersion: results.config?.version ?? "unknown",
+    playwrightVersion: [...versions][0] ?? "unknown",
+    // Every run that contributed, in merge order. A criterion's `batch` names
+    // which of these its result came from.
+    batches: batches.map((b) => ({ file: b.name, specs: specsPerBatch.get(b.name) ?? 0 })),
     totals,
     criteria: rows,
     ...(warnings.length > 0 ? { warnings } : {}),

@@ -32,6 +32,9 @@ self-correctable error instead, so the model fixes it in the same turn:
 | `components/*/design.json` | `checkComponentDesign` (JSON + schema + `name` = directory) | `INVALID_JSON`, `SCHEMA_VIOLATION` |
 | `wireframes.dsl` | flow-dialect syntax (invalid lines would be silently dropped) | `INVALID_DSL` |
 | `components/*/openapi.yaml` | OpenAPI 3.x, has paths, has operations | `INVALID_OPENAPI` |
+| `components/*/design.json` | every dependency names a node `design.cell` declares | `UNKNOWN_DEPENDENCY` |
+| `domain-model.md` | exactly one mermaid `erDiagram`, in the prescribed subset | `INVALID_DIAGRAM` |
+| `flows/*.md` | exactly one mermaid `sequenceDiagram`; every participant is a node `design.cell` declares or an actor the PRD names | `INVALID_DIAGRAM`, `UNKNOWN_PARTICIPANT` |
 
 The OpenAPI gate deliberately matches the coverage of the platform's
 `validate_openapi_spec` MCP tool — which is itself purely structural — so

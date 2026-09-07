@@ -276,3 +276,22 @@ test("validation-progress: a pass recorded through the tracker arms healing", ()
     );
   })();
 });
+
+test("validation-progress: a run nobody settles leaves the criterion running", () => {
+  // What a SEVERED test command now produces. The translator withholds the
+  // outcome for a call that never finished (see from-sdk's incompleteCall), so
+  // no status arrives — and `running` is the honest resting place, because the
+  // command was auto-backgrounded and may still be executing.
+  //
+  // Before this, a severed call answered `ok: true` and painted `pass` on the
+  // criterion, which on a heal re-run means a criterion that was just failing.
+  const seen: ProgressItemUpdate[] = [];
+  const tracker = createValidationProgressTracker((u) => seen.push(u));
+  return tracker
+    .hook(preToolUse("Bash", { command: "npm test --prefix tests/e2e -- specs/AC-004-a.spec.ts" }, "toolu_sev"), undefined, {
+      signal: new AbortController().signal,
+    })
+    .then(() => {
+      assert.deepEqual(seen, [{ itemId: "AC-004-a", status: "running" }]);
+    });
+});

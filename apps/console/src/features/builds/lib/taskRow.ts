@@ -18,11 +18,11 @@
 
 import type { StatusTone } from "../../../components/StatusChip";
 import type { components } from "../../../generated/aep-api";
+import { statusLine } from "../../tasks/lib/statusLine";
 import { buildCycles } from "./runView";
 
 type TaskView = components["schemas"]["TaskView"];
 type ExecutionView = components["schemas"]["ExecutionView"];
-type IssueComment = components["schemas"]["IssueComment"];
 type MilestoneRunView = components["schemas"]["MilestoneRunView"];
 
 /**
@@ -199,37 +199,18 @@ export function taskRowChip(state: TaskRowState): TaskRowChip {
 }
 
 /**
- * The issue's NEWEST comment.
- *
- * `comments` arrives OLDEST FIRST and is never an empty array — the contract
- * omits the field entirely for every empty case — so the newest is the last
- * element. The platform's own machine comments are already excluded server-side;
- * what is left is the coding agent's progress notes and whatever a human wrote.
- */
-export function latestComment(task: TaskView): IssueComment | undefined {
-  return task.comments?.at(-1);
-}
-
-/**
  * The row's second line — the agent's latest note.
  *
- * Falls back to the platform's own rationale, then to the dependency a hold is
- * waiting on. Returns null rather than a placeholder when there is nothing to
- * say: an empty second line is quieter than "No updates yet" repeated down a
- * list of eleven tasks.
- *
- * A comment body is markdown over an unbounded textarea, and this is one line of
- * a dense row — so it is flattened to its first non-empty line and the row
- * clamps what is left. The full thread is on the issue, which the row's `#N`
- * chip links to.
+ * The note ITSELF is `statusLine`, shared with the Validation page so the two
+ * surfaces cannot disagree about which comment counts or where the line ends.
+ * What is local to this row is the FALLBACK ladder: the platform's own rationale,
+ * then the dependency a hold is waiting on. Returns null rather than a
+ * placeholder when there is nothing to say — an empty second line is quieter
+ * than "No updates yet" repeated down a list of eleven tasks.
  */
 export function taskRowNote(task: TaskView): string | null {
-  const comment = latestComment(task);
-  const firstLine = comment?.body
-    .split("\n")
-    .map((l) => l.trim())
-    .find((l) => l.length > 0);
-  if (firstLine) return firstLine;
+  const line = statusLine(task);
+  if (line) return line;
   if (task.blockedBy && task.blockedBy.length > 0) {
     return `Waiting on ${task.blockedBy.join(", ")}`;
   }

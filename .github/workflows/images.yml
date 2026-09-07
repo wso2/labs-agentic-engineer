@@ -1,0 +1,158 @@
+# The images, built on the pull request that changes them.
+#
+# Until this existed, `release.yml` was the FIRST thing to build them, so a
+# Dockerfile defect surfaced 45 minutes into a cut. That is how a hardcoded
+# `chrome-linux` — playwright's arm64 chromium directory, where linux-x64 is
+# `chrome-linux64` — reached a release: it was written and built on an arm64
+# laptop, and no amd64 build of the runner image happened anywhere until the
+# release ran one.
+#
+# At least linux/amd64 for every image, because that is the half nothing else
+# covers:
+# arm64 is built by hand all day — `skaffold` and
+# `deployments/scripts/build-runner.sh` are plain host-arch `docker build`, so
+# every local bring-up on an Apple-silicon machine exercises it — while amd64 is
+# built by no developer, no script and no other job.
+#
+# remote-worker is built for BOTH platforms, which on this amd64 runner puts its
+# arm64 half under QEMU exactly as the release does. That emulated build is a
+# third mode no native build stands in for: a step that runs the target's own
+# binaries can pass natively and die under emulation — chromium does — and the
+# very next release after the `chrome-linux` fix failed that way. Only
+# remote-worker pays for it, being the one Dockerfile that launches programs
+# beyond a compiler at build time; the release has measured it at 28 min cold,
+# less against its buildcache. The other images stay amd64-only. A row's last
+# column opts an image in.
+#
+# ONE JOB, however many images a change touches: this runs on a runner pool
+# shared with the rest of the org, so the images are built in sequence inside a
+# single slot rather than fanned out across a matrix. Nothing is pushed — the
+# question a PR asks is whether the image still builds.
+name: Images
+
+on:
+  pull_request:
+    # The inputs an image is built from. A PR touching none of them cannot break
+    # one, and skips this workflow entirely.
+    paths:
+      - '**/Dockerfile'
+      - 'runners/remote-worker/**'
+      - 'services/**'
+      - 'apps/console/**'
+      - 'packages/**'
+      - 'skills/**'
+      - 'deployments/single-cluster/resource-types/thunder-app/operator/**'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/images.yml'
+
+concurrency:
+  group: images-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build changed images
+    runs-on: ubuntu-latest
+    # A budget, not just a ceiling: the images build in sequence in one slot,
+    # and a shared-input change builds all seven. remote-worker is the outlier
+    # — it compiles the `bal library` tool, installs a JDK and a chromium,
+    # smoke-tests the browser, and does half of that under emulation; the
+    # release has measured its two-platform build at 28 min cold, and the other
+    # six follow it here rather than run beside it. Raise this rather than trim
+    # an image if a cold all-images run legitimately grows past it.
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      # Full history: the selection below diffs against the PR base, which a
+      # depth-1 checkout does not have.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Read-only, for the release buildcache. The images are public, so this
+      # also succeeds with the read-only token a fork's PR is given.
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          # remote-worker's tool stage reads ballerina-platform's GitHub
+          # Packages; a repo-scoped token suffices (ADR-0008). Passed as a
+          # secret and never a build-arg: build args land in image history.
+          PACKAGE_PAT: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # name | context | dockerfile | named contexts | platforms (empty =
+          # linux/amd64). Mirrors release.yml's matrix; an image added there
+          # belongs here too. An image is selected when its own directory — the
+          # Dockerfile's — changed.
+          IMAGES=(
+            "remote-worker|runners/remote-worker|runners/remote-worker/Dockerfile|skills=skills bal-library-tool=packages/bal-library-tool|linux/amd64,linux/arm64"
+            "aep-api|services/aep-api|services/aep-api/Dockerfile|skills=skills|"
+            "agents|.|services/agents/Dockerfile||"
+            "collab|.|services/collab/Dockerfile||"
+            "aep-mcp-server|.|services/aep-mcp-server/Dockerfile||"
+            "console|.|apps/console/Dockerfile||"
+            "thunder-app-operator|deployments/single-cluster/resource-types/thunder-app/operator|deployments/single-cluster/resource-types/thunder-app/operator/Dockerfile||"
+          )
+
+          # Inputs no single image owns: the four root manifests and `packages/`
+          # are copied by every TypeScript image, `skills/` is a named context
+          # for two, and this file decides how all of them are built. A change to
+          # one of these builds everything.
+          SHARED=(package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json
+                  turbo.json packages/ skills/ .github/workflows/images.yml)
+
+          # An unreachable base (a force-push, a shallow graft) means the change
+          # set cannot be computed. Build EVERYTHING rather than nothing: this
+          # workflow's value is that it does not skip the unforeseen case.
+          if git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            CHANGED="$(git diff --name-only "$BASE" HEAD)"
+            echo "changed files:"; echo "$CHANGED" | awk '{ print "  " $0 }'
+            ALL=false
+            while IFS= read -r f; do
+              for p in "${SHARED[@]}"; do [[ $f == $p* ]] && ALL=true; done
+            done <<<"$CHANGED"
+          else
+            echo "base '$BASE' unavailable — building every image"
+            CHANGED=""; ALL=true
+          fi
+
+          built=0
+          for row in "${IMAGES[@]}"; do
+            IFS='|' read -r name context dockerfile contexts platforms <<<"$row"
+            platforms=${platforms:-linux/amd64}
+
+            selected=$ALL
+            while IFS= read -r f; do
+              [[ $f == "$(dirname "$dockerfile")"/* ]] && selected=true
+            done <<<"$CHANGED"
+            [ "$selected" = true ] || continue
+
+            echo "::group::$name ($platforms)"
+            # Seeded, never empty: expanding an empty array under `set -u` is an
+            # error on bash before 4.4, and this list is read by more shells than
+            # the runner's.
+            cmd=(docker buildx build --platform "$platforms" --file "$dockerfile")
+            for c in $contexts; do cmd+=(--build-context "$c"); done
+            # --output type=cacheonly: build it, keep nothing. No tag to name and
+            # no image to garbage-collect.
+            cmd+=(--secret "id=packagePAT,env=PACKAGE_PAT"
+                  --cache-from "type=registry,ref=ghcr.io/wso2/aep/buildcache/$name:main"
+                  --output type=cacheonly
+                  "$context")
+            "${cmd[@]}"
+            echo "::endgroup::"
+            built=$((built + 1))
+          done
+
+          echo "built $built image(s)"

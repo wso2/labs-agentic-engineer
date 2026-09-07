@@ -68,7 +68,19 @@ export function useAllTasks(
 
 // One task with its execution history — the task page's initial state; the
 // log stream (useTaskLog) takes over from there.
-export function useTask(projectName: string, issueNumber: number) {
+//
+// `live` opts into the same 5s poll the list uses, and for the same price: this
+// read is GitHub-backed, so an idle issue must cost nothing. The caller says
+// when, because only it knows whether anything is working the issue — the
+// Validation page polls while its run is in flight, so the agent's status line
+// (the newest comment, `tasks/lib/statusLine.ts`) keeps up with the run rather
+// than freezing at whatever it said when the page opened.
+export function useTask(
+  projectName: string,
+  issueNumber: number,
+  opts: { live?: boolean } = {},
+) {
+  const { live = false } = opts;
   return useQuery({
     queryKey: taskKeys.detail(projectName, issueNumber),
     queryFn: async () => {
@@ -81,7 +93,10 @@ export function useTask(projectName: string, issueNumber: number) {
       }
       return data;
     },
-    staleTime: 30_000,
+    // Stale immediately while live, so the poll actually refetches rather than
+    // being served the 30s-fresh cache it just wrote.
+    staleTime: live ? 0 : 30_000,
+    refetchInterval: live ? TASKS_POLL_MS : false,
     // A caller that holds no number yet holds 0, which is never an issue: the
     // validation surface reads the number off a run cycle that has not minted one
     // until it validates. Fetching anyway costs a live GitHub read that 404s by

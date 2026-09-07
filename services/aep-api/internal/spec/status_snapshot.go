@@ -40,9 +40,9 @@ type StatusSnapshot struct {
 	// HasSpec: any requirements file at head (the flat hasSpec predicate —
 	// top-level allowed-extension file under specs/requirements/).
 	HasSpec bool
-	// HasDesign: the root design.md exists at head with non-blank content
+	// HasDesign: the root design.cell exists at head with non-blank content
 	// (ReadDesign's presence predicate). Accepted deviation from the retired
-	// read: a design.md with malformed frontmatter counts as present here —
+	// read: a design.cell with malformed frontmatter counts as present here —
 	// the old path failed the whole status read on it, which is worse for a
 	// poll endpoint; the save gate remains the validity enforcer.
 	HasDesign bool

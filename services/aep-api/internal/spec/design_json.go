@@ -72,14 +72,14 @@ var componentDesignName = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 
 // componentDesignJSON is the on-disk shape of `components/<name>/design.json`.
 type componentDesignJSON struct {
-	Name         string           `json:"name"`
-	Type         string           `json:"type"`
-	Version      string           `json:"version,omitempty"`
-	Language     string           `json:"language,omitempty"`
-	Buildpack    string           `json:"buildpack,omitempty"`
-	AppPath      string           `json:"appPath,omitempty"`
-	Entrypoint   string           `json:"entrypoint,omitempty"`
-	Exposure     string           `json:"exposure,omitempty"`
+	Name       string `json:"name"`
+	Type       string `json:"type"`
+	Version    string `json:"version,omitempty"`
+	Language   string `json:"language,omitempty"`
+	Buildpack  string `json:"buildpack,omitempty"`
+	AppPath    string `json:"appPath,omitempty"`
+	Entrypoint string `json:"entrypoint,omitempty"`
+	Exposure   string `json:"exposure,omitempty"`
 	// Stories is the agent-authored list of PRD stories this component serves
 	// (#369) — the build gate's coverage check reads it.
 	Stories      []int            `json:"stories,omitempty"`
@@ -89,7 +89,7 @@ type componentDesignJSON struct {
 	// Platform-owned blocks (absent = zero value).
 	ExposesAPI                 *exposesAPIJSON `json:"exposesAPI,omitempty"`
 	ComponentAgentInstructions string          `json:"componentAgentInstructions,omitempty"`
-	SkillsPinned              []string        `json:"skillsPinned,omitempty"`
+	SkillsPinned               []string        `json:"skillsPinned,omitempty"`
 }
 
 // endpointJSON is the on-disk shape of the optional `endpoint` block. Only the
@@ -221,7 +221,7 @@ func parseComponentDesignJSON(dir, raw string) (DesignComponent, error) {
 		Endpoint:                   toModelEndpoint(dj.Endpoint),
 		ComponentAgentInstructions: dj.ComponentAgentInstructions,
 		ExposesAPI:                 toModelExposesAPI(dj.ExposesAPI),
-		SkillsPinned:              append([]string(nil), dj.SkillsPinned...),
+		SkillsPinned:               append([]string(nil), dj.SkillsPinned...),
 	}, nil
 }
 
@@ -326,7 +326,7 @@ func marshalComponentDesignJSON(dir string, comp DesignComponent) ([]byte, error
 		Dependencies:               toJSONDeps(comp.Dependencies),
 		ExposesAPI:                 toJSONExposesAPI(comp.ExposesAPI),
 		ComponentAgentInstructions: comp.ComponentAgentInstructions,
-		SkillsPinned:              comp.SkillsPinned,
+		SkillsPinned:               comp.SkillsPinned,
 	}
 
 	var buf bytes.Buffer

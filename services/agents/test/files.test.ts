@@ -24,7 +24,7 @@ import { SkillReadError, type SkillSource } from "../src/agents/main/skill-sourc
 import { testSkillSource, type TestSkill } from "./skill-source.js";
 
 const SKILL_LIST: TestSkill[] = [
-  { name: "component-architecture", description: "deriving components", content: "Components live at specs/design/components/<name>/design.md." },
+  { name: "component-architecture", description: "deriving components", content: "Components live at specs/design/components/<name>/design.json." },
   { name: "openapi-conventions", description: "openapi", content: "operationId is lowerCamelCase" },
 ];
 const SKILLS = testSkillSource(SKILL_LIST);

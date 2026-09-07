@@ -71,7 +71,7 @@ test("design phase: folds the bundle, gates skillsPinned shape, derives .excalid
   const skillsDir = tempSkills();
   try {
     const model = mockModel([
-      { kind: "toolCall", toolCallId: "d1", toolName: "addFile", input: { path: "specs/design/design.md", content: "# Design\n" } },
+      { kind: "toolCall", toolCallId: "d1", toolName: "addFile", input: { path: "specs/design/domain-model.md", content: "# Domain model\n" } },
       {
         kind: "toolCall",
         toolCallId: "d2",

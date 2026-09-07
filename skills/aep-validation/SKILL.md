@@ -37,6 +37,22 @@ every later call and a relative one is right only once. `Read`, `Write`
 and `Edit` never move with the shell — their relative paths always
 resolve from the repo root.
 
+## The status line
+
+Keep your validation issue's status line current, per the `aep` skill — the
+issue in your prompt, and no other.
+
+Say what the criterion rows cannot. The console already draws a row per
+criterion and repaints it as you work, with the counts beside it; a line
+repeating those tells the reader what they are already looking at. Yours
+carries what nothing else can see — where you are in this workflow, and what
+you decided.
+
+Steps 1 and 10 already ask for the two ends — the opening comment and the
+closing summary, and the summary is the one that carries counts. Everything
+between them is this line. A line that sends you back a step is the ordinary
+path here, not a fault to explain.
+
 ## Workflow
 
 ### 1. Read the issue
@@ -239,7 +255,9 @@ tests/e2e/
   the context file — a committed `targets.json` may name URLs from an
   earlier deployment.
 - Install with `npm install --prefix tests/e2e` on first scaffold (commit
-  the lockfile), `npm ci --prefix tests/e2e` on later runs.
+  the lockfile), `npm ci --prefix tests/e2e` on later runs. That is the only
+  install this run needs: the browsers are already in the image, so
+  `playwright install` is never one of your steps.
 - `scripts/generate-report.mjs` is platform-owned: the REPORT step
   always executes the plugin's copy directly and refreshes this
   committed copy, which exists only so humans can reproduce the report
@@ -247,7 +265,7 @@ tests/e2e/
 - `playwright.config.ts` is platform-owned too, and is the one scaffold
   file to re-copy from the template on EVERY run rather than skip when
   present. It carries the launch args that make deployed endpoints
-  reachable and the rule deciding which run may write `results.json`;
+  reachable and the per-run results layout the report generator merges;
   a repo scaffolded before either landed keeps the old behaviour
   silently, which is exactly the class of bug those two exist to fix.
 
@@ -274,6 +292,11 @@ counts only after passing twice consecutively against the live app.
 - Spec naming (the report's join key — get this exactly right):
   - file: `tests/e2e/specs/<AC-ID>.spec.ts` (e.g. `AC-001-a.spec.ts`)
   - title: `test('<AC-ID>: <short form of the must>', ...)`
+- **Your solo runs are the results.** The independence check below — each
+  spec passing alone, twice consecutively — writes a results file under
+  `tests/e2e/test-results/runs/` every time, and the report merges them.
+  So the work of proving a spec is also the work of recording it; step 7
+  is not repeating it.
 - **Create the file before you explore for it.** For each criterion you
   are authoring fresh, write `tests/e2e/specs/<AC-ID>.spec.ts` with its
   `// spec:` header and nothing else, THEN explore, THEN fill in the
@@ -289,49 +312,57 @@ counts only after passing twice consecutively against the live app.
 
 ### 7. RUN
 
-The suite outlives the Bash tool's DEFAULT timeout (120s), so ask for the
-time up front — `timeout` is a parameter on the Bash call, max `600000`:
+Every run writes its **own** results file under
+`tests/e2e/test-results/runs/`, and the report is the merge of them —
+newest result per criterion wins. So no single command has to cover the
+whole suite, and nothing you have already proved is thrown away by a
+later call. In particular the solo runs from step 6 already count: each
+spec you authored has a result before you get here.
+
+Run the whole suite, and treat it as **best effort**:
 
 ```bash
-rm -f tests/e2e/test-results/results.json   # never read a previous run's verdict
-npm test --prefix tests/e2e                 # Bash timeout: 600000
+npm test --prefix tests/e2e   # Bash timeout: use the max your Bash tool states
 ```
 
+If it completes, it supersedes the per-spec results with one pass over
+the deployed system in sequence — which is the only thing that catches a
+spec depending on state another spec left behind. If it severs, it costs
+you nothing: step 6's results still cover every spec you authored. A
+severed call is detached rather than killed — it keeps running, so its
+results may still land in `runs/` minutes later, which is a bonus rather
+than something to wait on.
+
+Do **not** delete anything under `test-results/runs/` first. Those are the
+accumulated results; removing them is how you lose coverage you already
+have.
+
 Never `npx playwright test` from the repo root. It finds the specs and
-passes anyway, without loading the config — so no reporter, no
-`results.json`, and none of the launch args the endpoints need. Exit 0,
-nothing written.
+passes anyway, without loading the config — so no reporter, nothing
+written, and none of the launch args the endpoints need. Exit 0, nothing
+written.
 
-Two things about this step will mislead you if you let them:
+**A timed-out command still reports success.** Past the timeout the
+harness detaches the command and hands back an OK result with no output —
+identical, from where you sit, to a suite that finished. Never infer the
+run completed from the call returning; check whether a new file appeared
+under `test-results/runs/`.
 
-- **A timed-out command still reports success.** Past the timeout the
-  harness detaches the command and hands back an OK result with no
-  output — identical, from where you sit, to a suite that finished. So
-  never infer the run completed from the call returning. Confirm
-  `tests/e2e/test-results/results.json` exists and is NEWER than the moment you
-  started the run; if it is missing or stale, the run was severed and
-  its results do not exist.
-- **You cannot wait for a detached run.** `sleep` is blocked, and
-  `Monitor`/`TaskOutput` are not available to you, so a severed run is
-  unrecoverable — there is no way to attach to it or read its output
-  later. Getting the timeout right up front is the whole game.
+If the suite will not fit one call, **cover it in pieces** — that is what
+the merge is for:
 
-**Never narrow this call** — no spec filter, and none of `--shard`,
-`--grep`, `--last-failed`, `--only-changed`. The config decides which run
-may write `results.json` by whether the command narrows the suite: a
-complete run is this one, and anything narrower is a probe — a spec being
-checked while it is authored (step 6) or healed (step 8), neither of which
-may overwrite the report's input. A narrowed run therefore writes nothing,
-and `generate-report.mjs` exits 2 naming the missing file. That is
-deliberate: a run that loudly writes nothing beats one that quietly writes
-a third of the suite as if it were all of it.
+```bash
+npm test --prefix tests/e2e -- specs/AC-001-a.spec.ts specs/AC-001-b.spec.ts
+```
 
-If the suite genuinely cannot finish inside the window, say so in the plan
-and PR notes: that is a finding about the suite, not something to work
-around by merging batches by hand.
+You do not have to guess the right size. Run what you think fits, then
+let step 9 tell you what is still missing: the report generator names
+every spec on disk that has no result and refuses to emit until they all
+do. A batch that severs is a batch you re-run smaller — its specs show up
+in that list until its results land, if they ever do.
 
-The config writes `tests/e2e/test-results/results.json`. The run includes the
-regression set — that's free regression coverage, not an accident.
+The suite includes the regression set — that's free regression coverage,
+not an accident.
 
 ### 8. HEAL (bounded)
 
@@ -339,12 +370,15 @@ For failures, **Read `references/healing.md` now and follow it as the
 binding HEAL discipline** before touching any spec. Then: triage each
 one against the live app, repair only *brittleness* (locators, waits,
 setup), never weaken what a test asserts. Log each heal in
-`tests/e2e/heal-log.json`. When the budget is exhausted, finish with
-one final full run so `results.json` reflects the authoritative state —
-under the same timeout discipline as step 7, and under its no-sharding
-rule for the same reason: a run that names specs is read as a probe and
-writes no `results.json` at all. A final run that severs leaves you with
-no authoritative state, and a sharded one leaves you with none either.
+`tests/e2e/heal-log.json`.
+
+Re-run each healed spec on its own. That result is newer than the failure
+it replaces, so it supersedes it in the report — you do not need a
+closing full-suite run to make the repair count:
+
+```bash
+npm test --prefix tests/e2e -- specs/<AC-ID>.spec.ts
+```
 
 ### 9. REPORT
 
@@ -368,11 +402,25 @@ cp "$AEP_SKILLS_DIR/aep-validation/scripts/generate-report.mjs" \
 This writes `tests/validation/report.md` + `report.json`. It reads the
 criteria but never writes them — coverage is expressed by each criterion's
 pass/fail in the report, not by a flag in the criteria file. Exit code 2
-means a contract violation: spec titles that don't map to criterion ids
-(fix titles, re-run tests from step 7), a spec file missing its
-`// spec:` header (add the header, regenerate — no test re-run needed),
-or a pre-existing spec modified without a heal-log entry (record the
-heal per `references/healing.md`).
+means a contract violation:
+
+- **a spec on disk with no result** — the generator names every one of
+  them and refuses to emit. This is the ordinary loop, not a defect: run
+  exactly those specs and regenerate. A severed batch lands here, which is
+  how you find out which of its specs you still owe — though a severed
+  call is detached, not killed, so look at `runs/` once more before
+  re-running: its results may have arrived in the meantime.
+- spec titles that don't map to criterion ids (fix titles, re-run those
+  specs), or two spec files claiming one criterion inside a single run.
+- a spec file missing its `// spec:` header (add the header, regenerate
+  — no test re-run needed).
+- a pre-existing spec modified without a heal-log entry (record the heal
+  per `references/healing.md`).
+- results recorded under different `rootDir` values or by different
+  Playwright versions — those results describe two different checkouts.
+
+The generator IS the coverage check, so there is no separate command to
+run: generate, read what it names, cover that, generate again.
 
 **`tests/validation/report.json` is REQUIRED. Commit it with the tests.**
 

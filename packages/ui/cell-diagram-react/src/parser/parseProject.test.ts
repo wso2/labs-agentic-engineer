@@ -153,4 +153,20 @@ describe("parseProject", () => {
     expect(result.diagnostics).toEqual([]);
     expect(result.project.cells[0].document.edges.map((e) => e.line)).toEqual([6]);
   });
+
+  it("skips a leading YAML frontmatter block in explicit cell mode, preserving line numbers", () => {
+    const source = [
+      "---",                  // line 1 — the platform's sourceSpec carrier
+      "sourceSpec: v1",       // line 2
+      "---",                  // line 3
+      "title Commerce",       // line 4
+      "cell orders {",        // line 5
+      "  component api",      // line 6
+      "  api -> odb",         // line 7
+      "}"                     // line 8
+    ].join("\n");
+    const result = parseProject(source);
+    expect(result.diagnostics).toEqual([]);
+    expect(result.project.cells[0].document.edges.map((e) => e.line)).toEqual([7]);
+  });
 });

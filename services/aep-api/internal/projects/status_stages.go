@@ -538,7 +538,7 @@ func validationStageFromRun(run *delivery.MilestoneRun) (state string, decided b
 // unversioned spec; designStatus approved on any legacy v<N>-<M> tag;
 // hasDesign only ever true when a spec exists (the old ladder returned at
 // "prompt" before reading the design); the phase ladder unchanged. One
-// accepted deviation: a design.md with malformed frontmatter counts as
+// accepted deviation: a design.cell with malformed frontmatter counts as
 // present here, where the old ReadDesign failed the whole status read — see
 // spec.StatusSnapshot.HasDesign. HasTasks stays false — tasks are
 // counted live from GitHub, never here.

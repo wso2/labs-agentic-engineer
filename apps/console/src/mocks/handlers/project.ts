@@ -51,6 +51,7 @@ import {
   VALIDATION_SCENARIOS,
   validationFiles,
   validationRuns,
+  validationStatusThread,
   type ValidationAttempt,
   type ValidationScenario,
 } from "../fixtures/validation";
@@ -393,6 +394,15 @@ export const projectHandlers = [
         } satisfies ApiError,
         { status: 404 },
       );
+    }
+    // The validation issue's thread is the agent's status line, and it is the
+    // one thing on this read the validation scenario owns rather than the
+    // project scenario — so it is spliced here rather than baked into the task
+    // fixture, which serves every scenario alike.
+    const v = validationScenario();
+    if (detail.executorClass === "validation" && v) {
+      const comments = validationStatusThread(v);
+      if (comments) return HttpResponse.json({ ...detail, comments });
     }
     return HttpResponse.json(detail);
   }),

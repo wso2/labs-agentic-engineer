@@ -1333,17 +1333,74 @@ const userStories = `# Demo Shop — User stories
 - As a returning customer, I can see my past orders.
 `;
 
-const architectureMd = `# Demo Shop — Component architecture
+const domainModelMd = `# Demo Shop — Domain model
 
-Three components behind the project cell:
+The records the two services own: the catalog's products and the orders a
+customer places against them.
 
-| Component | Type | Responsibility |
-|---|---|---|
-| storefront | web-application | Customer-facing UI |
-| catalog-api | service | Product catalog CRUD + search |
-| orders-api | service | Cart, checkout, order history |
+\`\`\`mermaid
+erDiagram
+    PRODUCT ||--o{ ORDER_LINE : "appears in"
+    ORDER ||--|{ ORDER_LINE : contains
+    PRODUCT {
+        string id PK
+        string name
+        decimal price
+        int stock
+    }
+    ORDER {
+        string id PK
+        string customerId
+        string status "cart | placed | shipped"
+        datetime placedAt
+    }
+    ORDER_LINE {
+        string orderId FK
+        string productId FK
+        int quantity
+    }
+\`\`\`
+`;
 
-The storefront talks to both services; services share nothing.
+const flowBrowseAndCheckout = `# Browse the catalog and check out
+
+A customer searches the catalog, fills a cart, and places the order.
+
+\`\`\`mermaid
+sequenceDiagram
+    actor Customer
+    participant storefront
+    participant catalog-api
+    participant orders-api
+
+    Customer->>storefront: search products
+    storefront->>catalog-api: search
+    Customer->>storefront: add to cart, check out
+    storefront->>orders-api: place order
+    alt a line is out of stock
+        orders-api-->>storefront: refused
+    else
+        orders-api-->>storefront: placed
+    end
+\`\`\`
+`;
+
+const flowOrderHistory = `# Review order history
+
+A signed-in customer opens past orders and follows one to its lines.
+
+\`\`\`mermaid
+sequenceDiagram
+    actor Customer
+    participant storefront
+    participant orders-api
+
+    Customer->>storefront: open order history
+    storefront->>orders-api: list orders
+    Customer->>storefront: open an order
+    storefront->>orders-api: get order + lines
+    orders-api-->>storefront: order detail
+\`\`\`
 `;
 
 // The security design (#665): ONE document, and the Security rail entry reads
@@ -1379,7 +1436,7 @@ const securityJson = `{
 `;
 
 // Per-component design files (#80 rich design view): design.json for each of
-// the three components named in architectureMd, plus one wireframes.dsl for
+// the three components the domain model and flows name, plus one wireframes.dsl for
 // the customer-facing component — enough to exercise the Designs sidebar's
 // component grouping and the derived Architecture / Wireframe views.
 const storefrontDesignJson = `{
@@ -1511,7 +1568,10 @@ const prdOnlyFiles: MockSpecFile[] = [
 const settledSpecFiles: MockSpecFile[] = [
   { path: "specs/requirements/prd.md", content: seededPrd },
   { path: "specs/requirements/user-stories.md", content: userStories },
-  { path: "specs/design/architecture.md", content: architectureMd },
+  // The design root rides with the first design artifact — a domain model
+  // without its cell would claim a design state the platform never produces.
+  { path: "specs/design/design.cell", content: designCell },
+  { path: "specs/design/domain-model.md", content: domainModelMd },
 ];
 
 // The same set mid-interview: the unsettled PRD, which is when assumptions and
@@ -1524,7 +1584,8 @@ const collaborationFiles: MockSpecFile[] = [
 
 const fullFiles: MockSpecFile[] = [
   ...settledSpecFiles,
-  { path: "specs/design/design.cell", content: designCell },
+  { path: "specs/design/flows/browse-and-check-out.md", content: flowBrowseAndCheckout },
+  { path: "specs/design/flows/review-order-history.md", content: flowOrderHistory },
   { path: "specs/design/security.json", content: securityJson },
   {
     path: "specs/design/components/storefront/design.json",

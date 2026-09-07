@@ -44,7 +44,7 @@ func ResolveDesignComponent(ctx context.Context, store *ArtifactStore, orgID, pr
 		return nil, fmt.Errorf("read design for %s/%s: %w", orgID, projectID, err)
 	}
 	if design == nil {
-		return nil, fmt.Errorf("design missing for project %s (no specs/design/design.md)", projectID)
+		return nil, fmt.Errorf("design missing for project %s (no specs/design/design.cell)", projectID)
 	}
 	for i := range design.Components {
 		if strings.EqualFold(design.Components[i].Name, componentName) {

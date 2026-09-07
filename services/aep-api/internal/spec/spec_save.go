@@ -37,7 +37,7 @@ const (
 	// codeMissingRequirements — specs/requirements/prd.md is absent.
 	codeMissingRequirements = "MISSING_REQUIREMENTS"
 	// codeMissingDesign — the design layout gate failed at its root
-	// (specs/design/design.md absent).
+	// (specs/design/design.cell absent).
 	codeMissingDesign = "MISSING_DESIGN"
 	// codeDesignOutdated — the requirements moved after this design was
 	// derived from them (#575). The only gate that refuses a design for being
@@ -253,7 +253,7 @@ func validateSpecBundles(reqFiles, designFiles map[string]string) error {
 			files = append(files, FileValidationError{
 				Path:    DesignDir + "/" + designRootFile,
 				Code:    codeMissingDesign,
-				Message: "design.md missing — generate the design before building",
+				Message: "design.cell missing — generate the design before building",
 			})
 		}
 	}

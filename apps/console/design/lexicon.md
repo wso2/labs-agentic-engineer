@@ -41,7 +41,7 @@ concept for *the agreed description of what we're building*.
 | Section | Artifacts | Repo |
 |---|---|---|
 | `REQUIREMENTS` | **Product requirements** | `specs/requirements/prd.md` |
-| `DESIGN` (not `DESIGNS` — one design, several files) | **Architecture** · **Design overview** · **Security** · then per-component | `specs/design/` |
+| `DESIGN` (not `DESIGNS` — one design, several files) | **Architecture** · **Domain model** · **Security** as rows, then the groups: **Flows**, then one per component | `specs/design/` |
 | `VALIDATION` | **Validation criteria** | `specs/validation/validation-criteria.json` |
 
 **Security** is one rail entry, one page:
@@ -50,7 +50,20 @@ concept for *the agreed description of what we're building*.
 |---|---|---|
 | **Security** | which Roles this project uses, what each may do within this project, its Test users, and the Thunder application client | `specs/design/security.json` |
 
-Agents, the runner's validation cycle and aep-api consume that repo path
+**Flows** is one collapsible group — one row per key flow, named by its
+slug — and each **component** is another, headed by the component's own name:
+
+| artifact | what it holds | repo path |
+|---|---|---|
+| a flow row | one key flow: a PRD actor's journey across the architecture, as a sequence diagram | `specs/design/flows/<slug>.md` |
+| **Design** | the component's authored design record — type, language, the stories it serves, dependencies, pinned skills | `specs/design/components/<name>/design.json` |
+| **API** | the component's OpenAPI contract | `specs/design/components/<name>/openapi.yaml` |
+| **Wireframe** | the component's screens | `specs/design/components/<name>/wireframes.dsl` |
+
+A label under a header adds the artifact, never the subject the header already
+names — *Design*, not *Design overview* (the retired root document's name).
+
+Agents, the runner's validation cycle and aep-api consume those repo paths
 internally. This table *is* the mapping — keep it, so nobody later "fixes" the
 inconsistency in the wrong direction. It holds only while the user never sees a
 path, which requires the agent to stop quoting them
@@ -183,6 +196,42 @@ records one deployed version per project, so every other completed version says
 **The Milestone cell reads `Milestone #3`.** The platform records a number, not a
 title. This is the "stays discoverable on the Builds page" the build-confirm
 dialog's copy promises.
+
+### Deployments
+
+An environment's card and its ledger row say the same word about it
+(ADR-0027). Development's is the deploy aggregate's — the same fact the Builds
+ledger reads as *Deployed to development* — so the two ledgers never disagree
+about the version running in dev; production, which the aggregate never names,
+is read off its bindings.
+
+| Situation | Says |
+|---|---|
+| Every binding settled and serving | **`Deployed`** |
+| A binding still converging | **`Deploying`** |
+| A binding failed | **`Deploy failed`** |
+| Every binding intentionally undeployed | **`Undeployed`** |
+| Nothing bound | **`Nothing deployed`** |
+
+**The Validation cell is development's alone** — the check runs against the
+dev deployment, so production reads `—`. It says the counts once the join has
+them (`24 / 24 passed`), the shared verdict word otherwise (*validating*,
+*awaiting fix*, *validated\**), and **`Not run`** before anything has been asked.
+
+**A row is what the environment runs now.** The platform keeps no deployment
+record, so there is no *Superseded* row and no Duration cell — saying either
+would be a guess. The card's age (*2h ago*) is the newest binding's stamp.
+
+**Test users are counted on the card and listed in a dialog.** The card says
+**`N accounts, one per role`** beside **View test users**, because the list
+grows with the design and the card must not. The dialog is titled **Test
+users** and says what they are — *Disposable accounts the platform created for
+this project's roles, so agents can sign in to the running app and check what
+each role can do. They are not real people.* Its columns are Username ·
+Password · Role · Cold start, and a password is **`**********`** until the eye
+beside it is pressed. The accounts are the project's own, one per role its
+security design declares; the Thunder Console link below the count is for
+**real** accounts, which is a different thing and says so.
 
 ### A task's row, on a build
 
@@ -852,12 +901,36 @@ The row now says what is happening to it. In the order a reader meets them:
 | It worked, then broke — being repaired | **`Healing…`** |
 | Settled | **`Passed`** / **`Failed`**, unchanged |
 
-Above the rows, one line, and only while they have nothing to say:
+Above the rows, one line — **the agent's, in its own words**, and only while the
+run is under way. It is the newest comment on the run's validation issue, the
+same status line a dev cycle keeps on the issue it is working, and the
+`aep-validation` skill asks for it in those terms: *say what the criterion rows
+cannot*. So the two are different granularities and cannot contradict each other
+— the rows say where each criterion stands, the line says where the run is in its
+workflow and what it decided.
+
+Its vocabulary is not fixed here, because it is not ours. This file governs agent
+prose, and what it asks of this line is a shape rather than words: **one line,
+present tense, about the run and not about a criterion.** A phase enum was
+rejected for it (`liveLine.ts` carries why) — the workflow loops, so any fixed
+ladder either marches backwards on screen or is pinned forward and lies.
+
+Two derived sentences remain as the **fallback**, for the window before the first
+comment lands and for a run whose agent posts none:
 
 | | |
 |---|---|
 | Nothing picked up yet | *Setting up the test harness…* |
 | All settled, no results published | *Writing the validation report…* |
+
+**The line is led by the working pulse, and shows only while validating.** The
+pulse is the console's one *an agent is working* dot (**The pulse**, above,
+unrecoloured), because this is the same fact it always marks. The panel behind it
+is a neutral tint with no border: a rule down a leading edge means *this needs
+reading* here (`RunHoldNotice`), and progress is not that. Nothing shows once a
+verdict is in — a
+settled run's last words sitting under its verdict restate it, and under a repair
+they describe a cycle that is no longer the one running.
 
 **The trailing `…` means in flight.** Every word that can still change carries
 one; the two settled words do not. It is the only signal separating "this is
@@ -882,11 +955,12 @@ is watching it, and "what is it doing right now" is the whole question. The rule
 protects against a reader being told about machinery they did not ask about —
 not against answering the one thing they came to find out.
 
-**Unsettled: *test harness* and *validation report*.** Both run-wide lines name
+**Unsettled: *test harness* and *validation report*.** Both fallback lines name
 internal artifacts, which rule 6 has a better claim over — a reader does not have
 a harness, they have criteria waiting to be checked. They are the two windows
 where nothing else moves, so something had to be said; whoever finds better words
-changes them here first.
+changes them here first. Less load-bearing now that the agent's own line covers
+the run — but they still speak first on every run, before its opening comment.
 
 ## What a change invalidates
 

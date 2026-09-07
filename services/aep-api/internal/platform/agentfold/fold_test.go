@@ -160,9 +160,9 @@ func TestAddFile_NoopAndAlreadyExists(t *testing.T) {
 func TestRemoveFile_ProtectedPathsRefused(t *testing.T) {
 	f := NewFromSnapshot(map[string]string{
 		"specs/requirements/prd.md": "req",
-		"specs/design/design.md":             "des",
+		"specs/design/design.cell":  "des",
 	})
-	for _, p := range []string{"specs/requirements/prd.md", "specs/design/design.md"} {
+	for _, p := range []string{"specs/requirements/prd.md", "specs/design/design.cell"} {
 		res, err := f.RemoveFile(ctx, p)
 		mustErrCode(t, res, err, ErrProtectedPath)
 	}
@@ -309,8 +309,8 @@ func TestApplyToolCall_DrivingAndIgnoring(t *testing.T) {
 	if res, _ := f.ApplyToolCall(ctx, StreamPart{Type: "tool-call", ToolName: "loadSkill", Input: json.RawMessage(`{"names":["x"]}`)}); res != nil {
 		t.Fatal("loadSkill must be ignored")
 	}
-	if res, _ := f.ApplyToolCall(ctx, StreamPart{Type: "tool-result", ToolName: "addFile", Input: json.RawMessage(`{"path":"x.md","content":"y"}`)}); res != nil {
-		t.Fatal("tool-result frames must not fold")
+	if res, _ := f.ApplyToolCall(ctx, StreamPart{Type: "tool-result", ToolCallID: "never-seen", ToolName: "addFile", Output: json.RawMessage(`{"ok":true}`)}); res != nil {
+		t.Fatal("a verdict for a call the fold never saw must not fold")
 	}
 	// Malformed inputs are ignored, exactly like the TS applyToolCall guards.
 	for _, bad := range []string{
@@ -427,4 +427,54 @@ func FilterTurnSnapshot(files map[string]string) map[string]string {
 		out[path] = content
 	}
 	return out
+}
+
+// ADR-0021: a mutation tool-call is held until its verdict arrives and
+// applied only on ok:true — so a write a TS-only gate rejected (the agent then
+// retries) never puts the fold ahead of the bundle.
+func TestApplyToolCall_VerdictGated(t *testing.T) {
+	f := NewFromSnapshot(map[string]string{})
+	call := StreamPart{Type: "tool-call", ToolCallID: "c1", ToolName: "addFile",
+		Input: json.RawMessage(`{"path":"specs/design/flows/checkout.md","content":"bad"}`)}
+	if res, err := f.ApplyToolCall(ctx, call); res != nil || err != nil {
+		t.Fatalf("a tool-call with an id must be held, got %+v %v", res, err)
+	}
+	if _, ok := f.overlay["specs/design/flows/checkout.md"]; ok {
+		t.Fatal("held call must not touch the overlay")
+	}
+	// The TS gate rejected it: dropped, unapplied.
+	verdict := StreamPart{Type: "tool-result", ToolCallID: "c1", ToolName: "addFile",
+		Output: json.RawMessage(`{"ok":false,"path":"specs/design/flows/checkout.md","op":"add","code":"UNKNOWN_PARTICIPANT","message":"…"}`)}
+	if res, _ := f.ApplyToolCall(ctx, verdict); res != nil {
+		t.Fatalf("a rejected verdict must not fold, got %+v", res)
+	}
+	if _, ok := f.overlay["specs/design/flows/checkout.md"]; ok {
+		t.Fatal("rejected write must not be applied")
+	}
+	// The retry is accepted: applied on its verdict, and the overlay carries
+	// the accepted content, not the rejected one.
+	retry := StreamPart{Type: "tool-call", ToolCallID: "c2", ToolName: "addFile",
+		Input: json.RawMessage(`{"path":"specs/design/flows/checkout.md","content":"good"}`)}
+	if res, _ := f.ApplyToolCall(ctx, retry); res != nil {
+		t.Fatal("retry must be held too")
+	}
+	okVerdict := StreamPart{Type: "tool-result", ToolCallID: "c2", ToolName: "addFile",
+		Output: json.RawMessage(`{"ok":true,"path":"specs/design/flows/checkout.md","op":"add","status":"applied"}`)}
+	res, err := f.ApplyToolCall(ctx, okVerdict)
+	if err != nil || res == nil || !res.OK {
+		t.Fatalf("accepted verdict must fold, got %+v %v", res, err)
+	}
+	if got := f.overlay["specs/design/flows/checkout.md"]; got == nil || *got != "good" {
+		t.Fatalf("overlay = %v, want the accepted content", got)
+	}
+	// A verdict without an explicit ok drops the write — the manifest gate
+	// fails the turn loudly rather than the fold guessing.
+	f.ApplyToolCall(ctx, StreamPart{Type: "tool-call", ToolCallID: "c3", ToolName: "addFile",
+		Input: json.RawMessage(`{"path":"specs/x.md","content":"y"}`)})
+	if res, _ := f.ApplyToolCall(ctx, StreamPart{Type: "tool-result", ToolCallID: "c3", ToolName: "addFile", Output: json.RawMessage(`{"path":"specs/x.md"}`)}); res != nil {
+		t.Fatalf("a verdict without ok must not fold, got %+v", res)
+	}
+	if len(f.pending) != 0 {
+		t.Fatalf("every verdict must settle its call, pending = %d", len(f.pending))
+	}
 }

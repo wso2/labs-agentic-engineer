@@ -391,7 +391,7 @@ test("skills: loadSkill is registered over the skillSource, executes server-side
     instruction: "derive a component using the skill",
     files: SEED_FILES,
     skillSource: testSkillSource([
-      { name: "component-architecture", description: "deriving components", content: "Components live at specs/design/components/<name>/design.md." },
+      { name: "component-architecture", description: "deriving components", content: "Components live at specs/design/components/<name>/design.json." },
     ]),
     model,
     store,

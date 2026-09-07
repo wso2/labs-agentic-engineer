@@ -123,6 +123,19 @@ export function formatOutcome(e: ProgressLineView | undefined): OutcomeView {
   const duration = e.durationMs && e.durationMs >= SLOW_CALL_MS ? formatDuration(e.durationMs) : "";
   if (e.ok !== false) return { detail: "", duration, tone: "muted" };
 
+  // A SEVERED call is not a failure and must not be called one. The command
+  // blew its timeout and was detached, so it neither succeeded nor failed — it
+  // has no outcome yet, and it may still be running. Saying "failed" would name
+  // a defect that did not happen, on the one line a reader consults to tell
+  // those apart. Warned rather than errored for the same reason.
+  if (e.status === "severed") {
+    return {
+      detail: e.summary ? `severed · ${e.summary}` : "severed",
+      duration,
+      tone: "warn",
+    };
+  }
+
   // A failure always speaks. `exit N` is the honest per-step signal — it names
   // THIS command as what broke. Tools that are not a shell report no code at
   // all, and inventing one would be worse than the bare word: "failed" is

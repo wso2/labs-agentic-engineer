@@ -66,7 +66,7 @@ test("reports a parse failure without writing the sibling", () => {
 test("ignores non-dsl paths and deleted dsl files", () => {
   const dir = tempThread();
   try {
-    assert.deepEqual(compileDslArtifacts(dir, ["design.md", "gone/wireframes.dsl"]), []);
+    assert.deepEqual(compileDslArtifacts(dir, ["domain-model.md", "gone/wireframes.dsl"]), []);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

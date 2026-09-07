@@ -68,7 +68,7 @@ func (s *artifactService) BuildScopeAtTag(ctx context.Context, orgID, projectID,
 	if err != nil {
 		return scope, fmt.Errorf("read design at %s: %w", tag, err)
 	}
-	facts, err := parseCellFacts(designFiles[designCellFile])
+	facts, err := parseCellFacts(designFiles[DesignRootFile])
 	if err != nil {
 		return scope, nil
 	}

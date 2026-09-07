@@ -33,8 +33,28 @@ jobs:
       packages: write
     strategy:
       fail-fast: false
+      # No max-parallel: all seven start at once. GitHub already queues a job
+      # when the org's concurrency limit is reached, so a cap prevents no
+      # failure — it only stops the release using runners that are idle.
       matrix:
         include:
+          # DECLARED FIRST so the long pole takes a slot in the first batch when
+          # the pool is short, rather than queueing behind six shorter builds.
+          # Slot order following declaration order is observed, not documented —
+          # a hint, so the worst case is a slower run, never a wrong one.
+          #
+          # One runner image serves both task kinds (implementation and
+          # validation) — see runners/remote-worker/Dockerfile.
+          - name: remote-worker
+            dockerfile: runners/remote-worker/Dockerfile
+            context: runners/remote-worker
+            # Two named contexts, both outside this image's context: the authored
+            # skill library, and the `bal library` tool's SOURCE — the image's
+            # first stage compiles it, so nothing has to be built before this job
+            # and no artifact can be stale (ADR-0008).
+            buildContexts: |
+              skills=skills
+              bal-library-tool=packages/bal-library-tool
           - name: aep-api
             dockerfile: services/aep-api/Dockerfile
             context: services/aep-api
@@ -48,18 +68,6 @@ jobs:
           - name: aep-mcp-server
             dockerfile: services/aep-mcp-server/Dockerfile
             context: .
-          # One runner image serves both task kinds (implementation and
-          # validation) — see runners/remote-worker/Dockerfile.
-          - name: remote-worker
-            dockerfile: runners/remote-worker/Dockerfile
-            context: runners/remote-worker
-            # Two named contexts, both outside this image's context: the authored
-            # skill library, and the `bal library` tool's SOURCE — the image's
-            # first stage compiles it, so nothing has to be built before this job
-            # and no artifact can be stale (ADR-0008).
-            buildContexts: |
-              skills=skills
-              bal-library-tool=packages/bal-library-tool
           - name: console
             dockerfile: apps/console/Dockerfile
             context: .
@@ -118,15 +126,20 @@ jobs:
           cache-from: type=registry,ref=${{ env.IMAGE_PREFIX }}/buildcache/${{ matrix.name }}:main
           cache-to: type=registry,ref=${{ env.IMAGE_PREFIX }}/buildcache/${{ matrix.name }}:main,mode=max
 
-  # ─── Platform: package + push Helm charts ───────────────────────────────────
-  package-push-charts:
-    name: Package + push Helm charts
+  # ─── Platform: package + push charts, then cut the release ──────────────────
+  # ONE job for both halves. They are strictly sequential, both are a couple of
+  # minutes of shell, and both open with the same checkout — as separate jobs the
+  # second paid a whole runner slot to run `gh release create`. The trade is
+  # least privilege: `contents: write` now spans the chart steps, which need only
+  # `packages: write`. Job granularity is as fine as permissions get.
+  release-platform:
+    name: Package charts + create platform release
     if: ${{ inputs.component == 'platform' || inputs.component == 'all' }}
     needs: build-push-images
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     permissions:
-      contents: read
+      contents: write
       packages: write
     steps:
       - uses: actions/checkout@v4
@@ -188,18 +201,6 @@ jobs:
           helm push /tmp/charts/aep-platform-*.tgz oci://${{ env.REGISTRY }}/wso2/aep/charts
           helm push /tmp/charts/thunder-app-operator-*.tgz oci://${{ env.REGISTRY }}/wso2
 
-  # ─── Platform: create GitHub release ────────────────────────────────────────
-  create-platform-release:
-    name: Create platform release
-    if: ${{ inputs.component == 'platform' || inputs.component == 'all' }}
-    needs: package-push-charts
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -225,28 +226,20 @@ jobs:
           - \`ghcr.io/wso2/aep/console:${{ inputs.version }}\`
           - \`ghcr.io/wso2/aep/thunder-app-operator:${{ inputs.version }}\`"
 
-  # ─── CTL: build CLI binaries ─────────────────────────────────────────────────
-  build-ctl-binaries:
-    name: Build aectl binary (${{ matrix.goos }}/${{ matrix.goarch }})
+  # ─── CTL: build every binary, then cut the release ──────────────────────────
+  # ONE job for all five targets. aectl is pure Go with CGO_ENABLED=0, so every
+  # target cross-compiles from the same toolchain on one checkout and one Go
+  # setup. The compiles are not free — each GOOS/GOARCH has its own build cache,
+  # so it is ~22s apiece, 1m51s for the set measured cold — but that is the work
+  # the matrix did anyway, minus four runners and the artifact round trip that
+  # existed only to hand the binaries to a sixth job.
+  release-ctl:
+    name: Build aectl + create CTL release
     if: ${{ inputs.component == 'ctl' || inputs.component == 'all' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - goos: linux
-            goarch: amd64
-          - goos: linux
-            goarch: arm64
-          - goos: darwin
-            goarch: amd64
-          - goos: darwin
-            goarch: arm64
-          - goos: windows
-            goarch: amd64
-            ext: .exe
-
+    timeout-minutes: 20
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -254,42 +247,30 @@ jobs:
         with:
           go-version-file: go.work
 
-      - name: Build aectl
+      - name: Build aectl for every target
         working-directory: tools/aectl
         env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
           VERSION: ${{ inputs.version }}
         run: |
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]] || { echo "invalid version: $VERSION"; exit 1; }
-          go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" \
-            -o aectl-${GOOS}-${GOARCH}${{ matrix.ext || '' }} .
 
-      - name: Upload binary artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: aectl-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: tools/aectl/aectl-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext || '' }}
+          mkdir -p "$GITHUB_WORKSPACE/dist"
 
-  # ─── CTL: create GitHub release ──────────────────────────────────────────────
-  create-ctl-release:
-    name: Create CTL release
-    if: ${{ inputs.component == 'ctl' || inputs.component == 'all' }}
-    needs: build-ctl-binaries
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
+          # The release matrix, one target per line. Windows is the only target
+          # that takes an extension, and the asset names below are the ones the
+          # install snippets in the release notes curl — do not rename them.
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+            export GOOS="${target%/*}" GOARCH="${target#*/}"
+            ext=""
+            if [[ "$GOOS" == "windows" ]]; then ext=".exe"; fi
 
-      - name: Download all binaries
-        uses: actions/download-artifact@v4
-        with:
-          pattern: aectl-*
-          path: dist
-          merge-multiple: true
+            echo ">> building aectl-${GOOS}-${GOARCH}${ext}"
+            go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" \
+              -o "$GITHUB_WORKSPACE/dist/aectl-${GOOS}-${GOARCH}${ext}" .
+          done
+
+          ls -l "$GITHUB_WORKSPACE/dist"
 
       - name: Create release
         env:
@@ -297,6 +278,9 @@ jobs:
           VERSION: ${{ inputs.version }}
           REPO: ${{ github.repository }}
         run: |
+          # Re-checked here, though the build step above already validated it:
+          # this is the step that cuts a public tag, and shellcheck cannot parse
+          # the multi-line --notes string as the script's opening command.
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]] || { echo "invalid version: $VERSION"; exit 1; }
           gh release create "ctl/v${VERSION}" \
             --title "AECTL v${VERSION}" \

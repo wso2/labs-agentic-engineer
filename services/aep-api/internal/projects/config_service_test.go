@@ -28,7 +28,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-
 )
 
 func TestConfigService_GetConfig(t *testing.T) {

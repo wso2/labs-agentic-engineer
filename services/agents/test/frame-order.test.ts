@@ -49,7 +49,7 @@ import { runConversationTurn, TurnGuard } from "../src/conversation/run-conversa
 import { InMemoryConversationStore } from "../src/store/memory-store.js";
 
 const FILES: ReadonlyArray<readonly [string, string]> = [
-  ["specs/design/design.md", "# Design\n"],
+  ["specs/design/glossary.md", "# Glossary\n"],
   ["specs/design/notes.md", "# Notes\n"],
   ["specs/design/components/web/wireframes.dsl", "screen Home\n"],
 ];

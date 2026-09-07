@@ -356,6 +356,30 @@ function subagentTotals(result: unknown): {
   };
 }
 
+/**
+ * Whether a tool call came back WITHOUT having finished, and why.
+ *
+ * A command that blows its Bash timeout is auto-backgrounded, and what comes
+ * back is `code: 0`, empty output, and `is_error` false — indistinguishable
+ * from a command that ran and succeeded. That cost a validation run its whole
+ * cycle (#701): the final suite run was severed at the ceiling, the feed
+ * recorded it as a success, and the per-criterion rows painted `Passed` on
+ * criteria whose tests never completed.
+ *
+ * `timedOutAfterMs` is the SDK's own flag for exactly that case. A
+ * `backgroundTaskId` with no timeout is a deliberate `run_in_background`
+ * launch — also not a completion, but nobody was misled about it.
+ */
+function incompleteCall(result: unknown): { severedAfterMs?: number; backgrounded: boolean } {
+  if (!result || typeof result !== "object") return { backgrounded: false };
+  const r = result as Record<string, unknown>;
+  const severed = num(r.timedOutAfterMs);
+  return {
+    ...(severed ? { severedAfterMs: severed } : {}),
+    backgrounded: str(r.backgroundTaskId) !== "",
+  };
+}
+
 // parentOf reads the SDK's subagent discriminator: `parent_tool_use_id` is the
 // id of the fan-out tool call a message was forwarded from, and null on the
 // main conversation. "" means the main agent.
@@ -693,14 +717,37 @@ export function createSdkTranslator(opts?: SdkTranslatorOptions): SdkTranslator 
           }
           continue;
         }
-        onToolOutcome?.(tr.toolUseId, !tr.isError);
+        const incomplete = incompleteCall(m.tool_use_result);
+        // A call that has not finished settles nothing. Reporting its outcome
+        // would be inventing one: the command is still running, and a consumer
+        // that folds outcomes into state would record a result no run produced.
+        if (!incomplete.severedAfterMs && !incomplete.backgrounded) {
+          onToolOutcome?.(tr.toolUseId, !tr.isError);
+        }
+        // The severed case is the one the feed actively lied about, so it is the
+        // one overridden here. A deliberate background launch is left as it was:
+        // nothing failed, and nobody has been misled about it.
+        const severed = incomplete.severedAfterMs;
         events.push({
           kind: "tool_result",
-          ok: !tr.isError,
+          ok: severed ? false : !tr.isError,
           toolUseId: tr.toolUseId,
           ...(call ? { tool: call.tool, durationMs: Math.max(0, now() - call.startedAt) } : {}),
-          // Only failures carry their text — see ToolResultEvent's doc comment.
-          ...(tr.isError ? failureDetail(tr.content) : {}),
+          ...(severed
+            ? {
+                // `status` is the SDK's verdict word and already on the wire, so
+                // naming this one costs no schema move. @aep/progress-view reads
+                // it to say "severed" where it would otherwise say "failed" —
+                // which would name a defect that did not happen.
+                status: "severed",
+                summary:
+                  `the command hit its ${(severed / 1000).toFixed(1)}s timeout and was detached — ` +
+                  `it kept running in the background, so this call proved nothing`,
+              }
+            : // Only failures carry their text — see ToolResultEvent's doc comment.
+              tr.isError
+              ? failureDetail(tr.content)
+              : {}),
           ...who,
         });
       }

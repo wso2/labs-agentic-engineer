@@ -70,16 +70,17 @@ const (
 	// a single artifact under `v<N>` tags.
 	RequirementsDir = "specs/requirements"
 	// DesignDir is the repo directory holding all design files. The
-	// architecture artifact is multi-file: a root `design.md` plus
-	// `components/<name>/design.md` (+ optional `openapi.yaml`) per component.
-	// Versioned as a single artifact under `v<N>-<M>` tags.
+	// architecture artifact is multi-file: a root `design.cell` plus
+	// `domain-model.md`, `flows/<slug>.md`, and `components/<name>/design.json`
+	// (+ optional `openapi.yaml`) per component. Versioned as a single artifact
+	// under `v<N>-<M>` tags.
 	DesignDir = "specs/design"
 	// requirementsMainFile is the canonical "main" requirements document (the
 	// PRD). Its presence is the requirements save gate.
 	requirementsMainFile = "prd.md"
-	// designRootFile is the canonical root design document (system overview).
+	// designRootFile is the canonical root design document (the cell).
 	// Its presence is part of the design save gate (layout).
-	designRootFile = "design.md"
+	designRootFile = DesignRootFile
 )
 
 // ----- Wire shapes -----

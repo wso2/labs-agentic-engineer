@@ -63,35 +63,43 @@ outlives it.
    re-runs the same shape. That deletes the socket, its listener, its lifecycle
    and its tests.
 
-   The RUN step is deliberately **not** changed to match, and making it per-spec
-   was tried and reverted. The suite runs serially against one shared deployed
-   environment (`fullyParallel: false, workers: 1`), so a spec that passes alone
-   can fail in sequence — `healing.md`'s data-collision class. Isolated probes
-   cannot find that, so replacing the integrated run with them moves the signal
-   past the heal budget, where it lands in `report.json` as a genuine failure and
-   mints a repair issue against code that is not broken. It also cost an extra
-   full pass of the suite on green runs while buying liveness only for
-   regression specs, which exist solely on re-validations.
+   The RUN step was deliberately not changed to match, on the grounds that the
+   integrated pass — the suite run serially against one shared deployed
+   environment — is the only thing that catches a spec depending on state
+   another spec left behind (`healing.md`'s data-collision class). That still
+   holds where the pass can happen. What ADR-0010 establishes is that on a suite
+   which has outgrown the command timeout it cannot happen at all, so it is now
+   attempted best-effort rather than required.
 
-5. **Only a COMPLETE run writes `results.json`.** The config chooses its own
-   reporters from whether the command narrows the suite: a narrowed run is a
-   probe and gets `line`, a complete run gets the JSON reporter the report
-   generator reads. Without this, every per-spec verification in steps 6 and 8
-   overwrites the whole suite's results with one criterion's — which today only
-   call ordering hides.
+5. **~~Only a COMPLETE run writes `results.json`.~~ Superseded by ADR-0010.**
 
-   Narrowing means a spec filter *or* one of Playwright's own flags — `--shard`,
-   `--grep`, `--last-failed`, `--only-changed`. `--shard` matters most: it looks
-   like the way to fit a big suite inside the command window, and treating it as
-   complete would write a third of the suite's results as if they were all of
-   it, reporting every unrun criterion as never checked.
+   > The config chooses its own reporters from whether the command narrows the
+   > suite: a narrowed run is a probe and gets `line`, a complete run gets the
+   > JSON reporter the report generator reads. Without this, every per-spec
+   > verification in steps 6 and 8 overwrites the whole suite's results with one
+   > criterion's.
+   >
+   > Narrowing means a spec filter *or* one of Playwright's own flags —
+   > `--shard`, `--grep`, `--last-failed`, `--only-changed`. `--shard` matters
+   > most: it looks like the way to fit a big suite inside the command window,
+   > and treating it as complete would write a third of the suite's results as
+   > if they were all of it.
+   >
+   > Inferred from the command rather than switched by a flag or an env var, for
+   > the same reason as decision 3: naming a spec is not optional, it is *how*
+   > you run one spec, so there is nothing for the agent to remember. The cost is
+   > that a narrowed authoritative run writes nothing; the generator then exits 2
+   > naming the missing file, which is why the skill forbids narrowing that one
+   > call — loudly wrong beats a partial report read as a whole one.
 
-   Inferred from the command rather than switched by a flag or an env var, for
-   the same reason as decision 3: naming a spec is not optional, it is *how* you
-   run one spec, so there is nothing for the agent to remember. The cost is that
-   a narrowed authoritative run writes nothing; the generator then exits 2 naming
-   the missing file, which is why the skill forbids narrowing that one call —
-   loudly wrong beats a partial report read as a whole one.
+   Kept verbatim above because what replaced it is only legible against it. It
+   was wrong in a way that cost a run: a suite that has outgrown the command
+   timeout **cannot** be run completely, so under this rule it had no path to a
+   report at all (issue #701). Results are now accumulated per run and merged,
+   with coverage verified against the specs on disk. The reasoning being
+   defended — a partial run silently recorded as the whole suite is worse than a
+   loud failure — still holds. The mistake was banning the partial run instead
+   of learning to detect it.
 
 6. **The live stream ends at `report.json`'s own words.** `pass` / `fail`, not
    `passed` / `failed`. The console overlays these statuses onto the same rows
@@ -108,9 +116,27 @@ outlives it.
 ## Rejected
 
 - **A durable store.** #307 added a `validation_criterion_statuses` table, an
-  ingest endpoint and a public GET. Unnecessary: the run-progress stream
-  replays the whole cycle log on reconnect, and the archive after the pod is
-  reaped, so a reload re-folds the same events.
+  ingest endpoint and a public GET, and this ADR rejected all of it on the
+  grounds that "the run-progress stream replays the whole cycle log on
+  reconnect, and the archive after the pod is reaped, so a reload re-folds the
+  same events."
+
+  **That premise is false, measured.** A poll returns at most
+  `defaultProgressLimit` = 200 events (`agent_progress.go`) drawn from the last
+  `logPageBytes` = 64 KiB of pod stdout (`cycle_log_source.go`); `sinceMillis
+  = 0` on a fresh attach means "everything in the current page", not "from the
+  start of the run". Older output is unrecoverable — it is not in the database,
+  not cached, and the archive is consulted only once live output is empty and
+  the pod terminal, itself capped at 20k lines and then cut to 199. So a page
+  opened 90 minutes into a 7200s validation cycle shows `Pending` for criteria
+  that already passed, and neither a refresh nor a reconnect recovers them.
+
+  Not building a store may still be the right call, but it is an **open gap**
+  rather than a justified rejection: the events are the only record, and they
+  are a sliding window. The durable artifact this wants already exists —
+  `tests/validation/report.json`, which is on the Files API read allow-list —
+  and what blocks reading it mid-run is that nothing records a head SHA for an
+  open cycle and the skill pushes only at step 10.
 - **Phase markers at the workflow's step boundaries.** A second claim about the
   same run, and wrong for most of it: `authoring.md` has the agent run tests all
   through the authoring step, so a marker reading "Authoring tests…" while rows

@@ -1,6 +1,6 @@
 ---
 name: mock-verification
-description: Load once a `web-application` builds clean, to finish it — stand the app up in mock mode with no cluster behind it, walk every screen in a real browser, and fix each failure the moment you find it. Judging a DEPLOYED system against live infrastructure is `aep-validation`'s job instead.
+description: Smoke-walk a `web-application` in a real browser once it builds clean — stand it up in mock mode, walk every flow its wireframes draw, fix each failure where you find it, post progress item by item. Required for every change to a webapp component. Judging a DEPLOYED system is `aep-validation`'s job instead.
 metadata:
   aep:
     kind: platform
@@ -9,200 +9,182 @@ metadata:
 
 # Mock verification
 
-This app compiles, type-checks and bundles — and none of that says what happens
-when somebody opens it. A page can render the wrong screen, drop a navigation
-arrow its wireframe draws, or leave a button wired to nothing, and every one of
-those builds perfectly clean.
+A clean build says the code is well formed and nothing about what the screens
+do: a route the wireframe draws and the router never registered, a button wired
+to nothing, a form that flips a row and sends no request. So you open the app
+and use it. Mock mode stands it up on this machine with no cluster, no sibling
+service and no IDP. You verify and repair in one pass.
 
-**So you open it.** Mock mode stands the app up on this machine with no cluster,
-no sibling service and no IDP behind it — the harness at `react-webapp`'s
-`references/mock-mode.md`. **The build starts a web application; the walk is what
-finishes it.**
+**This is a smoke walk: breadth over depth.** You are looking for a screen that
+is missing, an arrow that goes nowhere, a control that does nothing, a request
+that never leaves the page. Data, layout and wording are not your questions.
+Your scope is the whole component: a cycle's regressions land in shared chrome
+and on pages nobody meant to touch, so every flow is walked, whichever issue
+built it.
 
-**You verify and you repair, in one pass.** Walk a line, and the moment it fails
-fix it, walk that same line again, and only then start the next. You are not
-filing a report for somebody else to act on — you hold the component open, and
-the cheapest moment a defect will ever be is the one you found it in.
+## What you verify
 
-**The issue is where the change landed, never where the walk stops.** Everything
-a user can reach in this component is yours to walk, however long ago it was
-built. A cycle produces regressions — through a shared navigation bar, a layout,
-a regenerated client, a page edited for an unrelated reason — and a walk scoped
-to what just changed is the one shape that cannot see one.
+### The map
 
-## 1 · Write the checklist
+`specs/design/components/<component>/wireframes.dsl`, under the project root —
+your working directory, one level above the App Path you edit in. A `flow`
+block is the unit: one role and the screens that role walks, entry screen
+first. Walk every flow under its role (`?role=<name>`) by clicking from its
+entry screen; a screen in no flow is reached at its route. **The DSL is your
+only map**: you open a source file to repair, never to learn a route. A
+component with no `wireframes.dsl` gives you its registered routes instead, one
+flow per role.
 
-Before the browser opens. It is your walk order, and its filled-in verdicts are
-your report. One line per screen, and under it every control that screen draws.
+### Per screen
 
-1. **`specs/design/components/<component>/wireframes.dsl`** — the boundary. Every
-   `screen` is a route that must exist, every `-> Screen` arrow is navigation
-   that must work, every `flow` is a journey that must walk end to end by
-   clicking, every control drawn is a control that must do something when used.
-   A component with no `wireframes.dsl` gives you its routes instead — every one
-   the app registers.
-2. **`specs/requirements/`** — *why*. `prd.md` (or `requirements.md` on an older
-   project) says what the actor wanted, so a screen that satisfies an issue's
-   wording while defeating that is a defect. Where the requirements number their
-   stories, use those numbers.
-3. **Your issue's `## Scope` and `## Acceptance criteria`** — walked first and
-   hardest. They add emphasis to the list; they never trim it.
+Three questions, each one action and one snapshot with the first plausible
+input. A screen is answered in a handful of actions; past that you are past the
+smoke.
 
-Settling the list first is what makes coverage checkable: a screen you never
-reached shows up as a line with no verdict, where a list assembled as you go
-simply never mentions it.
+| | Question | Evidence |
+|---|---|---|
+| **Reach** | Did the arrow that names this screen bring you here, and does every `->` it draws land where it says? | the target's snapshot |
+| **Act** | Does every drawn control change something visible when used? A create is in the next list, a filter narrows, a toggle flips a row. | the snapshot after the action |
+| **Request** | Did a change leave the page as the request the contract declares, with the status it declares? A row that flips and sends nothing is the one defect a build cannot see. | `agent-browser network requests` |
 
-**Done when:** every screen the contract names has a line, and every control it
-draws sits under one.
+### Once per app
 
-## 2 · Stand it up
+- **Roles** (`mock/roles.ts` exists): each flow's entry screen under its own
+  role, and once under a role the DSL gives no flow there. Both directions are
+  defects.
+- **Session** (an auth dependency): `?auth=out` on one entry screen runs the
+  app's own guard and `signIn()` brings you back; then **Sign out** where the
+  navbar draws it leaves the screen through `signOut()`. The mock signs the
+  next load in again, so the session being gone is outside; the click leaving
+  the page is not.
+- **Probes**: submit one form empty; open one detail route with an id that does
+  not exist. The wireframe draws the happy path; these are the two states it
+  implies.
+- **Console** (`agent-browser console`, read whole, once, before you stop): a
+  page that renders and throws is broken for whoever touches it next, and the
+  error text is the finding.
+
+### Outcomes
+
+Every item ends in exactly one:
+
+- **done** — what you did and what the page did back.
+- **fixed** — what was wrong; what you changed; what it does now, re-walked.
+- **open** — what happens, after three attempts.
+- **outside** — the truth lives outside the app: a computed total, a generated
+  checklist, a 403. The mock answers to `openapi.yaml`, so it proves the request
+  went out, never that the number is right; `aep-validation` judges that against
+  the deployed system.
+
+An unreachable screen is **open**, naming the navigation that failed, never
+**done** read off the source.
+
+## Progress
+
+Your prompt says where progress goes. Post there, in these three shapes and no
+other: the plan once, one line per item as it settles, the close once.
+
+```text
+Mock verification: <component> — <N> items
+1. <Screen> (<role>): <its controls>; -> <the screens its arrows name>
+2. <Screen>: ...
+<N-2>. Session
+<N-1>. Probes
+<N>. Console
+```
+
+```text
+<n>/<N> <Screen>: done — <what you did and what the page did back>
+<n>/<N> <Screen>: fixed — <what was wrong>; <what you changed>; re-walked, <what it does now>
+<n>/<N> <Screen>: open — <what happens>, 3 attempts
+<n>/<N> <Screen>: outside — <the truth that lives outside the app>
+```
+
+```text
+Mock verification done: <component> — <N> items · <d> done, <f> fixed, <o> open (<n> <Screen>, ...), <t> outside
+```
+
+The newest line is where the walk is, and that is what the person watching
+reads. An item with no line is a screen you never reached, and it stays visible
+as one.
+
+## 1 · Stand it up
 
 From the App Path:
 
 ```bash
-setsid --fork bash -c 'echo $$ > /tmp/mock-<component>.pgid; exec npm run dev:mock -- --port 5173 --strictPort' > /tmp/mock-<component>.log 2>&1 &
-for i in $(seq 1 30); do curl -sf http://localhost:5173/ >/dev/null && break; sleep 2; done
-curl -sf http://localhost:5173/ >/dev/null || tail -40 /tmp/mock-<component>.log
+bash "$AEP_SKILLS_DIR/mock-verification/scripts/walk.sh" up
 ```
 
-That line looks fussy and every part of it is load-bearing. `npm run` is three
-processes — npm, the `sh -c` it spawns, and the server — so the **group** is the
-only handle that reaps all three; kill any single pid and the server outlives it
-holding the port. `setsid --fork` puts the group under its own session leader,
-and the leader then **writes its own id**: `$$` inside the quoted command is the
-group, and `exec` keeps that pid when npm takes over.
+It starts `npm run dev:mock` on a free port, reaps a stale server from an
+earlier attempt first, and prints `READY <url>`. The url is what you open;
+`?role=` and `?auth=out` go on it. If it prints the log instead, that is your
+first finding: the harness is `react-webapp`'s `references/mock-mode.md`; fix
+it and run `up` again.
 
-**Do not reach for `$!` here.** It names `setsid`, which forks and exits
-immediately, so the pid you record is dead and its number is not the group's —
-`kill -- -"$(cat …)"` then answers `No such process` while the server keeps
-serving. This shell has job control on, which is exactly the condition that
-makes `setsid` fork.
+**Done when:** `READY`.
 
-This machine has no `ps`, `pgrep`, `pkill` or `lsof`, so a server you cannot
-address by its group is yours for the rest of the session.
+## 2 · Plan
 
-`--strictPort` is deliberate: without it Vite moves quietly to the next free
-port, and a browser pointed at 5173 would then be reading a **previous** run's
-server while you drew conclusions about this one. A refusal to bind means an
-earlier server still holds the port — end it with its group file
-(`kill -- -"$(cat /tmp/mock-<component>.pgid)"`) and start again.
+Before the browser opens, post the plan from the map alone: one numbered item
+per screen in each flow, in walking order under its role, then screens in no
+flow, then Roles (with `mock/roles.ts`), Session (with an auth dependency),
+Probes, and Console. Posting it first puts your coverage in front of the
+person watching while there is still time to say a screen is missing.
 
-**Done when:** the URL answers and the log holds no error. If it will not start,
-that is the whole finding — fix it and start again; there is nothing to walk.
+**Done when:** every screen and flow in the map has a number, and the plan is
+posted.
 
-## 3 · Walk it, a line at a time
+## 3 · Walk
 
-Load `agent-browser` and follow it. Open the app, snapshot to see what rendered,
-act on what the snapshot shows.
+Load `agent-browser` and follow it: open, snapshot, act on what the snapshot
+shows.
 
-**A line ends green.** Walk it; if it fails, fix it now, walk that same line
-again, and see it pass before you start the next. A fix walked immediately is a
-fix proven, where a fix batched to the end is an edit that merely compiles.
-**Repair the app, never the checklist.**
+**An item ends green, and posted.** Walk it; if it fails, fix it now, walk that
+same item again, and see it pass; then post its line, and only then open the
+next. A line posted at the end for an item settled an hour ago is a history,
+not progress. Every failure is yours, whichever issue put it there.
+**Repair the app, never the plan.**
 
-**Every failure is yours, whichever issue put the defect there.** The walk
-reaches past your issue precisely so it finds these; setting one aside as
-somebody else's leaves the defect on the screen and wastes the walk that found
-it. Name what you repaired in your report.
+**Three attempts on an item, then post it open and walk on.** The screens
+behind it are still unopened. A fix is the wiring a screen is missing; a defect
+that wants a redesign is open with its cause named.
 
-**Three attempts on a line, then mark it `[ ]` and walk on.** A defect that
-resists three tries belongs in the report, and the screens behind it are still
-unopened. Restart the server after a change to `vite.config.ts`, `mock/` or a
-dependency; the dev server hot-reloads everything else.
+**Click between screens.** Mock state lives in the page, so `open`, reload and
+back restore the seed data: a record you created a moment ago is gone, and that
+is the mock telling the truth, not the app. Spend full loads at the start of a
+block, where there is no state to lose — a role switch, `?auth=out`, an unknown
+id. The once-per-app items are walked off the plan like any other.
 
-For each line of the checklist:
+`restart` after a change to `vite.config.ts`, `mock/` or a dependency;
+everything else hot-reloads.
 
-- **Reach the screen the way a user would** — from the entry screen, by
-  clicking. A route reachable only by typing its URL is a defect when a `flow`
-  says a link should have taken you there.
-- **Do what the story describes** — add the item, submit the form, filter the
-  list, follow the arrow — then snapshot and read what changed. A create really
-  does appear in the next list.
-- **Use every control the screen draws.** A control wired to nothing is precisely
-  what a clean build cannot see: it type-checks, it renders, and it does nothing.
-- **A change is not made until it leaves the page.** A screen that flips a
-  checkbox or greys a row has told you what it *intends*; the request is what
-  makes it true. Check with the CLI's network verb that the call went out and
-  what it answered.
-- **Move between screens by clicking.** Mock state lives in the page, so `open`,
-  reload and back each re-run the module and restore the seed data — a record you
-  created a moment ago is simply gone, and the screen showing that is telling the
-  truth about a mock, not about the app. Spend full loads at the START of a
-  block, where there is no state to lose: a role switch, `?auth=out`, an
-  invalid-id check.
-- **Check the states a wireframe implies but does not draw**: a table with no
-  rows, a form with an empty required field, an invalid id.
-- **Read the console** with the CLI's own verb. A page that renders and throws is
-  broken for whoever touches it next, and the error text is the finding.
-- **With roles** (`mock/roles.ts` exists): visit the screen under each role that
-  should reach it, via `?role=<name>`, and under one that should not. Both
-  directions are defects — a gated screen rendering for the wrong role, and one
-  refusing the right role.
-- **Signed out**, where a story covers it: `?auth=out` makes `currentUser()`
-  resolve null, so the app's own guard runs. `signIn()` then drops the parameter,
-  which stands in for returning from the IDP, so the whole journey walks.
+**Done when:** every number has its line, each posted before the next item was
+opened.
 
-**Done when:** every line is green, marked `[~]`, or carries what you tried and
-what still happens — and every verdict names what you did and what the page did
-back.
+## 4 · Close
 
-## 4 · Report
-
-One block, exactly this shape. It goes back to whoever dispatched you, and its
-open lines are what the pull request carries as a diagnostic — so each names a
-screen and what happens on it.
-
-```text
-Mock verification — <component>
-
-- [x] 3 · Add a todo — /todos/new: typed "Buy milk", clicked "Create todo";
-      POST /api/todos → 201, row present in the list on return.
-- [x] 7 · Mark a todo done — FIXED: the checkbox flipped and sent nothing;
-      wired onChange to PATCH /api/todos/:id. Re-walked — PATCH → 200 and the
-      row stays done across in-app navigation.
-- [ ] 9 · Open a todo — /todos: the title is plain text, not a link;
-      wireframes.dsl draws `table "Title | Due" -> TodoDetail`, and /todos/1
-      renders the 404 page. TodoDetail has no route registered; adding one needs
-      a screen the design does not specify.
-- [~] 12 · Overdue count is accurate — truth lives outside the app: the count is
-      computed by todo-api, and the mock returns seeded values.
-
-Roles: Manager saw every row; Owner saw only their own (correct).
-Console: no errors.
-```
-
-Three verdicts:
-
-- `[x]` — it does what the story says. Add `FIXED:` and what you changed when
-  you got it there.
-- `[ ]` — still broken after three attempts. Name the screen, the action, what
-  happens instead, and what you tried.
-- `[~]` — **the story's truth lives outside the app**: a total the real service
-  computes, a permission the gateway enforces, a mail that gets sent. Not a
-  failure, and nothing to fix. Say which in one line — marking these honestly is
-  what keeps the other two worth reading, and they remain `aep-validation`'s to
-  judge once the system is deployed.
-
-Then stop the server and confirm the port let go — a teardown you did not check
-is how the next round inherits a held port:
+Post the closing line, then:
 
 ```bash
-kill -- -"$(cat /tmp/mock-<component>.pgid)"
-curl -sf http://localhost:5173/ >/dev/null && echo "STILL UP" || echo "STOPPED"
+bash "$AEP_SKILLS_DIR/mock-verification/scripts/walk.sh" down
 ```
 
-**Done when:** every checklist line carries one of the three marks, and no dev
-server is left running.
+`down` stops the server, closes the browser and confirms the port let go. Hand
+back to whoever dispatched you the closing line and the numbered list with each
+item's outcome: the closing line is what the pull request quotes, and the open
+items are what it carries.
+
+**Done when:** the close is posted, `down` printed `STOPPED`, and the list is
+in your reply.
 
 ## Never
 
 - **Make the mock agree with the app.** `mock/handlers.ts` answers to
-  `openapi.yaml` — the same document `src/generated/` came from — and to nothing
-  else. A handler bent until a screen passes is a green report about nothing, and
-  it hides the defect from the deployed system too. A `501` is different: that is
-  a handler you never wrote, so write it against the contract.
-- **Judge a story you could not reach.** An unreachable screen is a `[ ]` naming
-  the navigation that failed, never an `[x]` inferred from the source.
-- Run `git`, commit, or open a pull request. The record belongs to the agent that
-  dispatched you — hand it the report block above, and post progress only where
-  your prompt says to.
+  `openapi.yaml`, the same document `src/generated/` came from, and to nothing
+  else. A handler bent until a screen passes hides the defect from the deployed
+  system too. A `501` is a handler you never wrote: write it against the
+  contract.
+- **Run `git`, commit, or open a pull request.** The record belongs to the agent
+  that dispatched you. Progress, where your prompt says it goes, is the only
+  writing you do outside the App Path.

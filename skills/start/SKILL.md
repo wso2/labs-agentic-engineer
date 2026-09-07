@@ -107,6 +107,13 @@ order this flow runs them in.
    writes the PRD also asks about it, so the user reads document and question
    together — writing is not converging, and a turn never ends on a document
    whose assumptions nobody has seen.
+
+   **Any answer settles the flag.** The tag marks a decision the user has not
+   answered; once they answer — including by picking the very answer you
+   assumed — it is their decision and `*assumed*` comes off that line, with
+   the decision kept. Offer the assumed answer as an ordinary choice, never a
+   "keep it as assumed" option: confirming is settling, and a round that ends
+   with the same tags it began with did no work.
 4. **Keep going until you converge.** Each round amends the PRD in place — it
    is the running record, never a draft you rewrite at the end, and story
    numbers are permanent from the first write on. Later rounds take up what the

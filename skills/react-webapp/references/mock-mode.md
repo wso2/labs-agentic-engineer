@@ -2,10 +2,8 @@
 
 A second way to run this same app: `npm run dev:mock` stands it up on a laptop
 or in a build sandbox with **no cluster, no sibling service and no IDP** behind
-it, so its screens can be opened and clicked before anything is deployed. The
-clicking is a separate agent's job once your build is clean — `mock-verification`
-is its procedure, and step 5 of this skill's Development flow. What you owe it is
-the harness below, working.
+it, so its screens can be opened and clicked before anything is deployed. What
+you owe the walk (`mock-verification`) is the harness below, working.
 
 **Production is the default and mock is the opt-in.** `npm run build` eliminates
 the whole mock branch as dead code, ships no `msw`, and produces an image
@@ -66,8 +64,8 @@ cp "$AEP_SKILLS_DIR/react-webapp/assets/mock-auth.ts"    mock/auth.ts
 
 **Copy again even when `mock/` already exists.** These files carry every fix the
 platform has made to the harness since this component last saw them, and a
-component that keeps its first copy quietly loses them — leaving the walk in
-step 5 reaching for a lever this app has never had. For `auth.ts` that
+component that keeps its first copy quietly loses them — leaving the walk
+reaching for a lever this app has never had. For `auth.ts` that
 means taking the current asset and re-applying your app's own exports, below.
 
 If `$AEP_SKILLS_DIR` is unset, copy from `assets/` beside this skill's
@@ -271,11 +269,10 @@ guard in `src/main.tsx` was written so the bundler could not prove the branch
 dead — production would then ship the mock, which is the one failure this whole
 arrangement exists to prevent.
 
-To drive it by hand:
-
-```bash
-npm run dev:mock -- --port 5173 --strictPort
-```
+You never start it. The walk (`mock-verification`) starts and stops the dev
+server through its own script, and a server you start here has nothing to reap
+it: the runner image has no `pkill`, and a stray `vite` stays in the pod's
+memory for the rest of the run.
 
 ## Pitfalls
 

@@ -61,18 +61,18 @@ func (e *DesignValidationError) Error() string {
 const (
 	// codeInvalidOpenAPI — a component openapi.yaml does not parse as YAML.
 	codeInvalidOpenAPI = "INVALID_OPENAPI"
-	// codeInvalidFrontmatter — the root design.md or a component design.md
-	// frontmatter block does not parse.
+	// codeInvalidFrontmatter — the root design.cell frontmatter block does
+	// not parse.
 	codeInvalidFrontmatter = "INVALID_FRONTMATTER"
 )
 
 // validateDesignBundle is the design hard gate (§8). It runs on the HEAD design
 // bundle (keys relative to specs/design/) before a tag is cut:
 //
-//   - layout: the root design.md must exist (a bundle with no root can't be
+//   - layout: the root design.cell must exist (a bundle with no root can't be
 //     assembled into a design);
-//   - frontmatter: root + per-component design.md frontmatter must parse
-//     (surfaced by AssembleDesign);
+//   - frontmatter: the root design.cell frontmatter must parse (surfaced by
+//     AssembleDesign);
 //   - component design.json: every present design.json validates against the
 //     single published schema + the name==dir rule (designspec — the same
 //     definition the agent's write gate uses);
@@ -92,7 +92,7 @@ func validateDesignBundle(files map[string]string) error {
 
 	var verrs []FileValidationError
 
-	// Root + per-component design.md frontmatter parseability + layout shape.
+	// Root design.cell frontmatter parseability + layout shape.
 	if _, err := AssembleDesign(files); err != nil {
 		verrs = append(verrs, FileValidationError{
 			Path: designRootFile, Code: codeInvalidFrontmatter, Message: err.Error(),

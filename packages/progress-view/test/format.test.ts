@@ -62,6 +62,29 @@ test("a progress_item is row state, never a row", () => {
   );
 });
 
+test("a severed call is not reported as a failure", () => {
+  // A command that blew its timeout was detached, so it neither succeeded nor
+  // failed — it has no outcome yet and may still be running. Calling it
+  // "failed" names a defect that did not happen, on the one line a reader
+  // consults to tell those apart.
+  const severed = formatOutcome({
+    kind: "tool_result",
+    ok: false,
+    status: "severed",
+    durationMs: 600_000,
+    summary: "the command hit its 600.0s timeout and was detached",
+  });
+  assert.equal(severed.detail, "severed · the command hit its 600.0s timeout and was detached");
+  assert.equal(severed.tone, "warn");
+  assert.doesNotMatch(severed.detail, /failed/);
+
+  // A real failure with no exit code still says so.
+  assert.equal(
+    formatOutcome({ kind: "tool_result", ok: false, summary: "File does not exist" }).detail,
+    "failed · File does not exist",
+  );
+});
+
 test("an outcome speaks only when it carries something the action didn't", () => {
   // A fast success: nothing to add. The next action appearing is the evidence.
   assert.deepEqual(formatOutcome({ kind: "tool_result", ok: true, durationMs: 40 }), {

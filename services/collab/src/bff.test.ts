@@ -86,7 +86,7 @@ test("fetchSpecFiles reads the whole seed in ONE request", async () => {
     commitSha: "abc123",
     files: [
       { path: "specs/requirements/prd.md", content: "req", sha: "s1" },
-      { path: "specs/design/design.md", content: "des", sha: "s2" },
+      { path: "specs/design/design.cell", content: "des", sha: "s2" },
     ],
   });
   const files = await createBffClient("http://bff", impl).fetchSpecFiles(
@@ -100,7 +100,7 @@ test("fetchSpecFiles reads the whole seed in ONE request", async () => {
   // the console, the committer and the agents' live-peer writes.
   assert.deepEqual(files, [
     { path: "specs/requirements/prd.md", content: "req", sha: "s1" },
-    { path: "specs/design/design.md", content: "des", sha: "s2" },
+    { path: "specs/design/design.cell", content: "des", sha: "s2" },
   ]);
 });
 

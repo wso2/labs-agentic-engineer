@@ -293,7 +293,7 @@ func renderScope(doc *criteriaDoc) string {
 	}
 
 	w(
-		"Per-component design docs: `specs/design/components/<name>/design.md` (OpenAPI contract, when present, alongside as `openapi.yaml`); system overview: `specs/design/design.md`.",
+		"Per-component design docs: `specs/design/components/<name>/design.json` (OpenAPI contract, when present, alongside as `openapi.yaml`); system design: `specs/design/design.cell` (architecture), `specs/design/domain-model.md` (entities), `specs/design/flows/` (key flows).",
 		"",
 		"## Test layout",
 		"- Playwright package at repo root `tests/e2e/` (own `package.json`; do not touch application source under any component app path).",

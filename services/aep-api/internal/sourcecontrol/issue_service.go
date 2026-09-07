@@ -36,6 +36,11 @@ type IssueService interface {
 	// ListIssues (which pages the repo). Returns ErrIssueNotFound when no issue
 	// with that number exists on the project's repo.
 	GetIssue(ctx context.Context, orgID, projectID string, number int) (*IssueInfo, error)
+	// ListIssueComments returns the newest `limit` comments of ONE issue, oldest
+	// first — what a detail read shows, where ListMilestoneIssueComments serves
+	// the list. Machine comments are flagged, not dropped: which of them a
+	// surface shows is that surface's policy.
+	ListIssueComments(ctx context.Context, orgID, projectID string, number, limit int) ([]IssueComment, error)
 	// CloseIssue closes the issue, optionally posting a closing comment first.
 	CloseIssue(ctx context.Context, orgID, projectID string, number int, comment string) error
 	// ReopenIssue reopens a closed issue. Idempotent on an already-open one.
@@ -295,6 +300,14 @@ func (s *issueService) GetIssue(ctx context.Context, orgID, projectID string, nu
 		return nil, err
 	}
 	return s.github.GetIssue(ctx, owner, repoName, cred, number)
+}
+
+func (s *issueService) ListIssueComments(ctx context.Context, orgID, projectID string, number, limit int) ([]IssueComment, error) {
+	owner, repoName, cred, err := s.resolveRepoAndCredential(ctx, orgID, projectID)
+	if err != nil {
+		return nil, err
+	}
+	return s.github.ListIssueComments(ctx, owner, repoName, cred, number, limit)
 }
 
 func (s *issueService) CloseIssue(ctx context.Context, orgID, projectID string, number int, comment string) error {

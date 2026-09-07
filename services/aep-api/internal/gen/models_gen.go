@@ -2211,8 +2211,11 @@ type TaskDetail struct {
 	Attention []string `json:"attention"`
 
 	// BlockedBy Names of the dependencies this task is waiting on; present when derivedStatus is on_hold.
-	BlockedBy        []string                 `json:"blockedBy,omitempty"`
-	Body             string                   `json:"body,omitempty"`
+	BlockedBy []string `json:"blockedBy,omitempty"`
+	Body      string   `json:"body,omitempty"`
+
+	// Comments The issue's newest comments, OLDEST FIRST, capped, with the platform's own machine comments excluded — the same population the list read serves, read here for ONE issue because a detail page names its issue and needs no milestone to bound the fetch. Always attempted on this read; absence covers every empty case (nothing there, nothing left after the machine comments were dropped), and the field is never an empty array. The newest comment's first line is an agent's current status on this issue.
+	Comments         []IssueComment           `json:"comments,omitempty"`
 	Component        string                   `json:"component,omitempty"`
 	DependsOn        []string                 `json:"dependsOn"`
 	DerivedStatus    string                   `json:"derivedStatus"`

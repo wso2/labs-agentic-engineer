@@ -368,7 +368,7 @@ describe("the declared plan", () => {
         agentWorking: true,
         planEntries: [
           entry("specs/design/design.cell", "done"),
-          entry("specs/design/design.md", "writing"),
+          entry("specs/design/domain-model.md", "writing"),
           entry("specs/design/components/a/design.json", "planned"),
           entry("specs/validation/validation-criteria.json", "planned", "validation"),
         ],
@@ -399,7 +399,7 @@ describe("the declared plan", () => {
         planWreckage: true,
         planEntries: [
           entry("specs/design/design.cell", "done"),
-          entry("specs/design/design.md", "error"),
+          entry("specs/design/domain-model.md", "error"),
           entry("specs/design/components/a/design.json", "planned"),
         ],
       }),

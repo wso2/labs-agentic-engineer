@@ -70,8 +70,6 @@ const (
 	codeUnknownRoleStory = "UNKNOWN_ROLE_STORY"
 )
 
-const designCellFile = "design.cell"
-
 // scaffoldPlaceholderMarker is how the gate tells a scaffold that was never
 // enriched: the platform-authored description survives verbatim.
 const scaffoldPlaceholderMarker = "Scaffolded from design.cell"
@@ -81,16 +79,16 @@ const scaffoldPlaceholderMarker = "Scaffolded from design.cell"
 // specs/design/). It returns FileValidationError rows (repo-relative paths are
 // stamped by the caller) — empty means the gate passes.
 func validateBuildGate(reqFiles, designFiles map[string]string) []FileValidationError {
-	cellSource, ok := designFiles[designCellFile]
+	cellSource, ok := designFiles[DesignRootFile]
 	if !ok || strings.TrimSpace(cellSource) == "" {
 		return []FileValidationError{{
-			Path: designCellFile, Code: codeMissingDesignCell,
+			Path: DesignRootFile, Code: codeMissingDesignCell,
 			Message: "design.cell missing — the cell is the primary design source; generate the design before building",
 		}}
 	}
 	facts, err := parseCellFacts(cellSource)
 	if err != nil {
-		return []FileValidationError{{Path: designCellFile, Code: codeInvalidDesignCell, Message: err.Error()}}
+		return []FileValidationError{{Path: DesignRootFile, Code: codeInvalidDesignCell, Message: err.Error()}}
 	}
 
 	var errs []FileValidationError
@@ -101,7 +99,7 @@ func validateBuildGate(reqFiles, designFiles map[string]string) []FileValidation
 	prdStories := parsePRDStories(reqFiles[requirementsMainFile])
 	if len(prdStories) == 0 {
 		errs = append(errs, FileValidationError{
-			Path: designCellFile, Code: codeMissingUserStories,
+			Path: DesignRootFile, Code: codeMissingUserStories,
 			Message: "the PRD yields no stories to cover — its `## User Stories` section must hold a numbered `N. As a …` list",
 		})
 	}
@@ -114,7 +112,7 @@ func validateBuildGate(reqFiles, designFiles map[string]string) []FileValidation
 	for _, n := range slices.Sorted(maps.Keys(prdStories)) {
 		if !claimed[n] {
 			errs = append(errs, FileValidationError{
-				Path: designCellFile, Code: codeUncoveredStory,
+				Path: DesignRootFile, Code: codeUncoveredStory,
 				Message: fmt.Sprintf("story %d is in the PRD but no component's design.json lists it in `stories` — extend the design or drop the story", n),
 			})
 		}

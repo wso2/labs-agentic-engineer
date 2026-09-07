@@ -26,6 +26,12 @@
 // internal/platform/designspec could NOT be reused), and the npm-yaml-parity
 // frontmatter re-stringify (yamlemit.go).
 //
+// Gates that exist only on the TS side (openapi.yaml, security.json, the
+// design diagrams) are NOT ported: the fold applies a mutation only once the
+// stream's own verdict for it says the TS bundle accepted it (ADR-0021), so a
+// TS-side rejection is never applied here and parity holds for every gate,
+// present and future.
+//
 // Parity is locked by cassette-replay goldens (fold_golden_test.go): every
 // recorded stream folded here must byte-equal the TS fold's committed golden.
 // Where byte parity cannot be guaranteed (frontmatter shapes outside the
@@ -92,6 +98,13 @@ const (
 	ErrSchemaViolation ErrCode = "SCHEMA_VIOLATION"
 	ErrInvalidDSL      ErrCode = "INVALID_DSL"
 	ErrProtectedPath   ErrCode = "PROTECTED_PATH"
+	// Gates that live ONLY on the TS side (openapi.yaml, security.json, the
+	// design diagrams). The fold never re-judges them: it applies a write
+	// only once the stream's own verdict says the TS gate accepted it.
+	ErrInvalidOpenAPI     ErrCode = "INVALID_OPENAPI"
+	ErrInvalidDiagram     ErrCode = "INVALID_DIAGRAM"
+	ErrUnknownParticipant ErrCode = "UNKNOWN_PARTICIPANT"
+	ErrUnknownDependency  ErrCode = "UNKNOWN_DEPENDENCY"
 )
 
 // MatchCandidate echoes a source line for NOT_UNIQUE / NOT_FOUND re-anchoring.
@@ -117,8 +130,8 @@ type OpResult struct {
 
 // protectedPaths are the structural roots removeFile refuses to delete.
 var protectedPaths = map[string]bool{
-	"specs/requirements/prd.md":  true,
-	"specs/design/design.md":             true,
+	"specs/requirements/prd.md": true,
+	"specs/design/design.cell":  true,
 }
 
 const maxCandidates = 6
@@ -131,6 +144,9 @@ type Fold struct {
 	base      BaseReader
 	baseCache map[string]*string // lf-canonical; nil = known-absent
 	overlay   map[string]*string // touched paths only; nil = deleted
+	// pending holds mutation tool-calls awaiting the stream's verdict for
+	// them (ApplyToolCall): applied on ok:true, dropped otherwise.
+	pending map[string]StreamPart
 }
 
 // New builds a Fold over a lazy BaseReader (Phase 4b: Workspace.ReadFile at
@@ -329,15 +345,66 @@ func IsFileMutationTool(toolName string) bool {
 	return ok
 }
 
-// ApplyToolCall folds ONE parsed StreamPart into the fold, mirroring how the
-// TS fold consumes the stream (turnStream.ts): only `tool-call` frames for the
-// mutation tools apply; everything else — other frame types, unknown
-// tools, malformed inputs — is silently ignored (nil, nil). The result is
-// returned for logging; state parity does not depend on it.
+// ApplyToolCall folds ONE parsed StreamPart into the fold. A mutation
+// `tool-call` is held until the stream's own verdict for it arrives — the
+// `tool-result` the agents-side write ledger emits right behind it, carrying
+// the TS FileBundle's OpResult — and applied only when that verdict is
+// ok:true (ADR-0021). A rejected write is dropped unapplied, so a gate that
+// exists only in TS (openapi, security.json, the design diagrams) can never
+// put the fold ahead of the bundle: parity is by construction, not by
+// porting every gate. Everything else — other frame types, unknown tools,
+// malformed inputs, a verdict for a call the fold never saw — is silently
+// ignored (nil, nil). The result is returned for logging; state parity does
+// not depend on it.
+//
+// A tool-call with no toolCallId cannot be paired with a verdict and applies
+// at once — the pre-ledger shape, kept for the driving tests.
 func (f *Fold) ApplyToolCall(ctx context.Context, part StreamPart) (*OpResult, error) {
-	if part.Type != "tool-call" || !IsFileMutationTool(part.ToolName) {
+	switch part.Type {
+	case "tool-call":
+		if !IsFileMutationTool(part.ToolName) {
+			return nil, nil
+		}
+		if part.ToolCallID != "" {
+			if f.pending == nil {
+				f.pending = map[string]StreamPart{}
+			}
+			f.pending[part.ToolCallID] = part
+			return nil, nil
+		}
+		return f.applyCall(ctx, part)
+	case "tool-result":
+		call, ok := f.pending[part.ToolCallID]
+		if !ok {
+			return nil, nil
+		}
+		delete(f.pending, part.ToolCallID)
+		if !verdictAccepted(part.Output) {
+			return nil, nil
+		}
+		return f.applyCall(ctx, call)
+	default:
 		return nil, nil
 	}
+}
+
+// verdictAccepted reads the `ok` of the OpResult a tool-result carries. Only
+// an explicit true applies: an absent or malformed verdict drops the write,
+// and the manifest gate then rejects the turn loudly rather than the fold
+// guessing — under committed-truth generation a failed turn is safe, a
+// divergent commit is not.
+func verdictAccepted(output json.RawMessage) bool {
+	var v struct {
+		OK *bool `json:"ok"`
+	}
+	if err := json.Unmarshal(output, &v); err != nil || v.OK == nil {
+		return false
+	}
+	return *v.OK
+}
+
+// applyCall runs one accepted mutation tool-call through the fold's ops.
+func (f *Fold) applyCall(ctx context.Context, part StreamPart) (*OpResult, error) {
 	in, ok := decodeToolInput(part.Input)
 	if !ok {
 		return nil, nil

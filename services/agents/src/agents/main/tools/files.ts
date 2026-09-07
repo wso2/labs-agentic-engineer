@@ -277,7 +277,7 @@ export function buildFileToolSet(
     [REMOVE_FILE]: tool({
       description:
         "Delete a file. Idempotent (deleting an absent path is a NOOP success). Refuses to delete the structural roots " +
-        "(prd.md, design.md) with PROTECTED_PATH.",
+        "(prd.md, design.cell) with PROTECTED_PATH.",
       inputSchema: removeFileInputSchema,
       execute: async (input, { toolCallId }) => writes.apply(toolCallId, REMOVE_FILE, input),
     }),

@@ -130,6 +130,16 @@ func (f *fakeIssues) ListMilestoneIssueComments(_ context.Context, _, _ string, 
 	}
 	return out, nil
 }
+func (f *fakeIssues) ListIssueComments(_ context.Context, _, _ string, number, _ int) ([]sourcecontrol.IssueComment, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.commentReads++
+	cs := f.hostComments[number]
+	if len(cs) == 0 {
+		return nil, nil
+	}
+	return append([]sourcecontrol.IssueComment(nil), cs...), nil
+}
 
 // inMilestone marks the seeded issues as members of one milestone and attaches
 // a comment thread, so a `?tag=` read has something to answer with.

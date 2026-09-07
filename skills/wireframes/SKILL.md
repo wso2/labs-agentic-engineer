@@ -18,7 +18,7 @@ DSL itself. Which reader you are decides the reference you load next:
 - **Implementing** — building a `web-application` component that has a
   `wireframes.dsl` — read `references/implementing.md`: how each screen,
   element and arrow becomes a route, a component and working navigation, and
-  the fidelity checklist your PR carries.
+  how the walk evidences it.
 
 Every `web-application` component gets its wireframes as ONE DSL source file at
 `specs/design/components/<name>/wireframes.dsl` — all screens in one file.
@@ -131,8 +131,8 @@ The screens say what exists; a **flow** says who walks which ones, in what
 order. The prototype's top-level control is the flow picker, so a wireframe set
 without flows offers the reviewer no way to ask for the admin's journey.
 
-Declare one `flow` block per role or journey named in `design.md` (or in
-`specs/requirements/` when the design doc is absent), listing that
+Declare one `flow` block per role or journey named in the design's `flows/`
+files (or in `specs/requirements/` when they are absent), listing that
 role's screens in walkthrough order, **entry screen first**. Name the flow for
 its **task** ("Approval queue", "Log a risk"), and carry the persona on a
 `role` line — not in the name:

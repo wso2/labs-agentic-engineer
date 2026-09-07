@@ -16,5 +16,5 @@
     ] }
   ],
   "description": "Go REST API owning rounds and items: enforces the single-open-round rule, cutoff-gated writes, item-ownership checks on edit/remove, computes the consolidated order (grouped items, per-person breakdown, grand total) once a round closes, serves round history, and posts Slack notifications on round open/close. The only component with database and Slack access.",
-  "skillsApplied": ["openapi-conventions", "go", "api-management"]
+  "skillsPinned": ["openapi-conventions", "go", "api-management"]
 }

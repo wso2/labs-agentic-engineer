@@ -97,7 +97,7 @@ test("ignores a dependency's committed spec (someone else's document)", () => {
 });
 
 test("ignores non-spec paths", () => {
-  assert.equal(checkOpenapiSpec("specs/design/design.md", "# not a spec"), null);
+  assert.equal(checkOpenapiSpec("specs/design/domain-model.md", "# not a spec"), null);
 });
 
 test("a rejected write leaves the bundle byte-for-byte unchanged", () => {

@@ -23,7 +23,7 @@ import { TaskPlan } from "../src/agents/main/task-plan-accumulator.js";
 /** A design snapshot with three components (no existing Tasks). */
 const DESIGN: Record<string, string> = {
   "specs/requirements/prd.md": "# reqs\n",
-  "specs/design/design.md": "# design\n",
+  "specs/design/design.cell": "title design\n",
   "specs/design/components/order-service/design.json": '{"name":"order-service"}\n',
   "specs/design/components/user-service/design.json": '{"name":"user-service"}\n',
   "specs/design/components/catalog/design.json": '{"name":"catalog"}\n',
@@ -159,7 +159,7 @@ test("updateTask rejects a dependsOn change that introduces a cycle", () => {
 
 /** An a/b/c design; `tasks` is a map of extra `tasks/<n>.md` renderings. */
 const abcDesign = (tasks: Record<string, string> = {}): Record<string, string> => ({
-  "specs/design/design.md": "# design\n",
+  "specs/design/design.cell": "title design\n",
   "specs/design/components/a/design.json": '{"name":"a"}\n',
   "specs/design/components/b/design.json": '{"name":"b"}\n',
   "specs/design/components/c/design.json": '{"name":"c"}\n',

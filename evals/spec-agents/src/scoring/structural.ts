@@ -26,9 +26,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
-import { checkComponentDesign } from "@aep/agent-stream";
-import { listComponents } from "@aep/playground/src/engine/gates.js";
-import { compileDslDerived } from "@aep/playground/src/kit/derived.js";
+import { checkComponentDependencies, checkComponentDesign, checkDesignDiagram, DOMAIN_MODEL_PATH } from "@aep/agent-stream";
+import { listComponents, listFlows } from "@aep/playground/src/engine/gates.js";
+import { compileProject } from "@aep/ui-cell-diagram-react/compiler";
 import type { SectionRunResult } from "../drivers/conversational.js";
 import type { TaskPlanRunResult } from "../drivers/task-plan.js";
 
@@ -68,10 +68,23 @@ export function requirementsChecks(projectDir: string, run: SectionRunResult): S
 }
 
 export function designChecks(projectDir: string, run: SectionRunResult): StructuralReport {
-  const designMd = readSafe(join(projectDir, "specs/design/design.md"));
+  const reader = {
+    read: (p: string) => (existsSync(join(projectDir, p)) ? readFileSync(join(projectDir, p), "utf8") : undefined),
+  };
+  const domainModel = readSafe(join(projectDir, "specs/design/domain-model.md"));
+  const flowFiles = listFlows(projectDir);
+  // The same judge the write gate runs (ADR-0020's per-file contract): one
+  // diagram of the right kind, in the prescribed subset, participants
+  // resolving against the cell and the PRD on disk.
+  const domainModelProblem = domainModel.trim() ? checkDesignDiagram(DOMAIN_MODEL_PATH, domainModel, reader) : null;
+  const flowProblems = flowFiles
+    .map((f) => checkDesignDiagram(`specs/design/flows/${f}`, readSafe(join(projectDir, "specs/design/flows", f)), reader))
+    .filter((p): p is NonNullable<typeof p> => p !== null)
+    .map((p) => p.message);
   const components = listComponents(projectDir);
 
   const designJsonProblems: string[] = [];
+  const dependencyProblems: string[] = [];
   const openapiProblems: string[] = [];
   for (const name of components) {
     const rel = `specs/design/components/${name}/design.json`;
@@ -79,6 +92,10 @@ export function designChecks(projectDir: string, run: SectionRunResult): Structu
     if (existsSync(abs)) {
       const problem = checkComponentDesign(rel, readFileSync(abs, "utf8"));
       if (problem !== null) designJsonProblems.push(`${rel}: ${problem.message}`);
+      // The cell is the source of truth: every dependency is one of its nodes
+      // (the same judge the write gate runs).
+      const depProblem = checkComponentDependencies(rel, readFileSync(abs, "utf8"), reader);
+      if (depProblem !== null) dependencyProblems.push(depProblem.message);
     } else {
       designJsonProblems.push(`${rel}: missing`);
     }
@@ -93,8 +110,11 @@ export function designChecks(projectDir: string, run: SectionRunResult): Structu
     }
   }
 
-  const cellPath = "specs/design/design.cell";
-  const cellNote = existsSync(join(projectDir, cellPath)) ? compileDslDerived(projectDir, cellPath) : null;
+  // The cell is compiled by the same compiler the console renders it with —
+  // the design root either parses cleanly or the check names the line.
+  const cellSource = readSafe(join(projectDir, "specs/design/design.cell"));
+  const cellCompile = cellSource.trim() ? compileProject(cellSource) : null;
+  const cellErrors = (cellCompile?.diagnostics ?? []).filter((d) => d.severity === "error");
 
   const criteria = readSafe(join(projectDir, "specs/validation/validation-criteria.json"));
   let criteriaOk = false;
@@ -105,10 +125,18 @@ export function designChecks(projectDir: string, run: SectionRunResult): Structu
   }
 
   return report([
-    check("design.md exists", designMd.trim().length > 0, "specs/design/design.md missing or empty"),
+    check("domain-model.md exists", domainModel.trim().length > 0, "specs/design/domain-model.md missing or empty"),
+    check("≥1 key flow", flowFiles.length > 0, "no non-blank .md files under specs/design/flows/"),
+    check("domain model is one valid erDiagram", domainModelProblem === null, domainModelProblem?.message),
+    check("every flow is one valid sequenceDiagram whose participants resolve", flowProblems.length === 0, flowProblems.join(" | ")),
     check("≥1 component designed", components.length > 0, "no dirs under specs/design/components/"),
     check("every design.json valid", components.length > 0 && designJsonProblems.length === 0, designJsonProblems.join("; ")),
-    check("design.cell compiles", cellNote !== null && cellNote.ok, cellNote?.message ?? "specs/design/design.cell missing"),
+    check("every dependency is a node the cell declares", dependencyProblems.length === 0, dependencyProblems.join(" | ")),
+    check(
+      "design.cell compiles",
+      cellCompile !== null && cellErrors.length === 0,
+      cellCompile === null ? "specs/design/design.cell missing or empty" : cellErrors.map((d) => `line ${d.line}: ${d.message}`).join("; "),
+    ),
     check("openapi.yaml documents valid", openapiProblems.length === 0, openapiProblems.join("; ")),
     check("validation-criteria.json valid", criteriaOk, "missing or not JSON"),
     check("section completed", run.finishedInterview, run.error ?? "hit the turn cap"),

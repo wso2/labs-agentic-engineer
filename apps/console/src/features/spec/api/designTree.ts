@@ -34,8 +34,10 @@ export interface DesignComponentNode {
 }
 
 export interface DesignSection {
-  /** Design files directly under design/ (e.g. design.md). */
+  /** Design files directly under design/ (e.g. domain-model.md) — the flat rows. */
   overview: SpecFileEntry[];
+  /** Key flows under design/flows/ — one file per flow, the rail's first group. */
+  flows: SpecFileEntry[];
   hasComponents: boolean;
   /** Whether a project-level design.cell exists (drives the Architecture tab). */
   hasCellDsl: boolean;
@@ -49,6 +51,16 @@ export const DESIGN_CELL_PATH = "specs/design/design.cell";
 
 /** The security design document — one file, one rail entry. */
 export const SECURITY_JSON_PATH = "specs/design/security.json";
+
+/** The domain model — one ER diagram, one rail entry. */
+export const DOMAIN_MODEL_PATH = "specs/design/domain-model.md";
+
+const FLOW_RE = /^specs\/design\/flows\/[^/]+\.md$/;
+
+/** Is this a key-flow document (`specs/design/flows/<slug>.md`)? */
+export function isFlow(path: string): boolean {
+  return FLOW_RE.test(path);
+}
 
 function hideFromOverview(path: string): boolean {
   return path === DESIGN_CELL_PATH || path === SECURITY_JSON_PATH;
@@ -82,7 +94,10 @@ export function buildDesignSection(files: SpecFileEntry[]): DesignSection {
   // diagram), never as a raw text file. security.json is the Security rail
   // entry, not an overview row.
   const overview = design
-    .filter((f) => componentOf(f.path) === null && !hideFromOverview(f.path))
+    .filter((f) => componentOf(f.path) === null && !isFlow(f.path) && !hideFromOverview(f.path))
+    .sort((a, b) => a.path.localeCompare(b.path));
+  const flows = design
+    .filter((f) => isFlow(f.path))
     .sort((a, b) => a.path.localeCompare(b.path));
 
   const byComponent = new Map<string, DesignComponentNode>();
@@ -105,6 +120,7 @@ export function buildDesignSection(files: SpecFileEntry[]): DesignSection {
 
   return {
     overview,
+    flows,
     hasComponents: components.length > 0,
     hasCellDsl,
     hasSecurity,

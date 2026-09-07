@@ -169,6 +169,27 @@ API -- DB`);
     ]);
   });
 
+  it("skips a leading YAML frontmatter block, preserving line numbers", () => {
+    const result = parseCellDsl(`---
+sourceSpec: v3
+---
+title Fronted
+
+component API service
+API -- DB`);
+
+    expect(result.document.title).toBe("Fronted");
+    expect(result.document.components).toHaveLength(1);
+    expect(result.diagnostics).toEqual([
+      {
+        severity: "error",
+        message: "Unknown statement. Expected title, version, component, or dependency arrow.",
+        line: 7,
+        column: 1
+      }
+    ]);
+  });
+
   it("parses boundary gateway exposure arrows", () => {
     const result = parseCellDsl(`title UntitledCell
 

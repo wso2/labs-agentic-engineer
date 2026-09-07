@@ -42,11 +42,16 @@ A simple API that responds with "Hello, World!" when called.
 - Requests work without requiring any parameters or authentication.
 `,
 
-  "specs/design/design.md": `---
+  "specs/design/design.cell": `---
 sourceSpec: v1
 ---
+title Hello API
 
-A simple public API service that responds with "Hello, World!" in JSON format. Built as a single Go service exposing one endpoint, requiring no authentication.
+component hello-api as "Hello API" service
+component postgres as "Postgres" database
+
+north -> hello-api
+hello-api -> postgres
 `,
 
   "specs/design/components/hello-api/design.json": `{
@@ -58,7 +63,7 @@ A simple public API service that responds with "Hello, World!" in JSON format. B
   "appPath": "hello-api",
   "entrypoint": "deployment/service",
   "exposure": "internet",
-  "connections": [],
+  "dependencies": [{ "kind": "platform-resource", "name": "postgres", "resourceType": "postgres" }],
   "description": "Implement a simple Go HTTP service on port 9090 using net/http. Expose GET /hello that returns {\\"message\\": \\"Hello, World!\\"} with Content-Type: application/json. Include GET /health returning 200 OK for liveness probes. This is a public API — no authentication required, no X-User-Id checks."
 }
 `,

@@ -101,6 +101,13 @@ runtime relationship, not a build order — it never holds an issue back.
 <!-- drop-section: ### The status line -->
 
 <!-- replace-text -->
+   <App Path>; never run `git`. Progress: `gh issue comment <N> --body "<line>"`.
+<!-- with -->
+   <App Path> and `issues/<n>.md`; never run `git`. Progress: append the line
+   to `issues/<n>.md` under `## Mock verification`.
+<!-- /replace-text -->
+
+<!-- replace-text -->
 For **each** issue in the ordered set — and whoever works it, you inline or a
 subagent you handed it to, keeps its status line current from start to done
 (**The status line**):

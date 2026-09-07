@@ -1,6 +1,6 @@
 ---
 name: agent-browser
-description: The browser CLI a coding run drives a web page with — opening a URL, clicking through a screen, reading what actually rendered. Load before the first `agent-browser` command; `mock-verification` names it. For an e2e test suite against a deployed system, `playwright-cli` and `aep-validation` own that instead.
+description: The browser CLI a coding run drives a web page with — opening a URL, clicking through a screen, reading what actually rendered. Load before the first `agent-browser` command. For a web application this run built, load `mock-verification` first: that skill is the procedure, this one is only the tool. For an e2e test suite against a deployed system, `playwright-cli` and `aep-validation` own that instead.
 metadata:
   aep:
     kind: platform

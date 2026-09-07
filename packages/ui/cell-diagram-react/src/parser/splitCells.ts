@@ -17,6 +17,7 @@
  */
 
 import { Diagnostic } from "../domain/cellModel";
+import { stripFrontmatter } from "./frontmatter";
 
 export interface SourceLine {
   text: string;
@@ -53,7 +54,7 @@ export function parseCellHeader(statement: string): CellHeader | null {
 }
 
 export function splitCells(source: string): SplitResult {
-  const rawLines = source.split(/\r?\n/);
+  const rawLines = stripFrontmatter(source).split(/\r?\n/);
   const hasBlocks = rawLines.some(
     (line) => /^\s*cell\s+\S+.*\{\s*$/.test(line) || /^\s*}\s*$/.test(line)
   );

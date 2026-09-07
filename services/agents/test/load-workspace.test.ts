@@ -57,7 +57,7 @@ function makeTree(files: Record<string, string | Buffer>): string {
 test("readSnapshot walks recursively with POSIX keys and applies the turn filter", () => {
   const root = makeTree({
     "specs/requirements/prd.md": "# Req\n",
-    "specs/design/design.md": "# Design\n",
+    "specs/design/domain-model.md": "# Domain model\n",
     "specs/design/design.cell": "title Shop\n",
     "specs/design/system.dsl": "workspace {}\n",
     "specs/design/components/api/design.json": "{}\n",
@@ -81,7 +81,7 @@ test("readSnapshot walks recursively with POSIX keys and applies the turn filter
       "specs/design/components/api/design.json",
       "specs/design/components/api/openapi.yaml",
       "specs/design/design.cell",
-      "specs/design/design.md",
+      "specs/design/domain-model.md",
       "specs/design/system.dsl",
       "specs/requirements/prd.md",
     ]);

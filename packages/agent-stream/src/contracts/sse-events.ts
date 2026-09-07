@@ -56,6 +56,9 @@ export type ErrCode =
   | "SCHEMA_VIOLATION"
   | "INVALID_DSL"
   | "INVALID_OPENAPI"
+  | "INVALID_DIAGRAM"
+  | "UNKNOWN_PARTICIPANT"
+  | "UNKNOWN_DEPENDENCY"
   | "PROTECTED_PATH";
 
 /** A candidate line echoed back for NOT_UNIQUE / NOT_FOUND re-anchoring. */
@@ -258,7 +261,7 @@ export const DECLARE_PLAN_TOOL = "declare_plan" as const;
  */
 export interface DeclarePlanInput {
   /**
-   * Full repo-relative spec-bundle paths (`specs/design/design.md`), in the
+   * Full repo-relative spec-bundle paths (`specs/design/domain-model.md`), in the
    * order the turn intends to write them. The paths are the identity the
    * console reconciles file mutations against — no display names ride here;
    * naming a document is the console's job.
