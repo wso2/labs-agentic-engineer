@@ -263,9 +263,18 @@ if kubectl cluster-info --context "${CLUSTER_CONTEXT}" --request-timeout=5s &>/d
     if kubectl --context "${CLUSTER_CONTEXT}" -n "$RCA_NS" get deploy "$RCA_DEPLOYMENT" &>/dev/null; then
         RCA_READY=$(kubectl --context "${CLUSTER_CONTEXT}" -n "$RCA_NS" get deploy "$RCA_DEPLOYMENT" \
             -o jsonpath='{.status.readyReplicas}' 2>/dev/null)
+        RCA_WANTED=$(kubectl --context "${CLUSTER_CONTEXT}" -n "$RCA_NS" get deploy "$RCA_DEPLOYMENT" \
+            -o jsonpath='{.spec.replicas}' 2>/dev/null)
         RCA_HANDOFF=$(kubectl --context "${CLUSTER_CONTEXT}" -n "$RCA_NS" get cm rca-agent-config \
             -o jsonpath='{.data.AE_HANDOFF}' 2>/dev/null)
-        if [ "${RCA_READY:-0}" -ge 1 ]; then
+        if [ "${RCA_WANTED:-1}" = "0" ]; then
+            # Parked on purpose (setup.sh's last step, or a manual
+            # park-observability.sh down): zero replicas is the intended
+            # state, not a failed rollout, so do not restart it or point at
+            # setup-observability.sh.
+            echo "ℹ️  $RCA_DEPLOYMENT parked (scaled to 0) — alert→RCA and the handoff are off."
+            echo "    Restore the observability plane: bash scripts/park-observability.sh up"
+        elif [ "${RCA_READY:-0}" -ge 1 ]; then
             echo "✅ $RCA_DEPLOYMENT ready (AE_HANDOFF=${RCA_HANDOFF:-unset})"
         elif [ -n "$MCP_OK" ] && [ "$RCA_HANDOFF" = "true" ]; then
             # Expected after a fresh setup.sh: with AE_HANDOFF=true the agent's

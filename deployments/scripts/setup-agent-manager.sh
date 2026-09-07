@@ -16,7 +16,8 @@
 # under the License.
 
 # Installs the WSO2 Agent Management Platform alongside AEP on the SAME cluster,
-# from WSO2's published OCI charts. Opt-in: ENABLE_AGENT_MANAGER=1.
+# from WSO2's published OCI charts. Part of setup.sh's base profile; reversible
+# with scripts/teardown-agent-manager.sh.
 #
 # Nothing here is built from a checkout. Agent Manager publishes its whole
 # platform as charts and images, and its own quick-start installer is built on
@@ -53,7 +54,7 @@ kubectl cluster-info --context "$CLUSTER_CONTEXT" &>/dev/null || {
 }
 kubectl get ns "$OBS_NS" &>/dev/null || {
     echo "❌ The observability plane is required by Agent Manager's console and observer." >&2
-    echo "   Re-run setup with ENABLE_OBSERVABILITY=1." >&2
+    echo "   Run scripts/setup-observability.sh first (setup.sh does this before this script)." >&2
     exit 1
 }
 

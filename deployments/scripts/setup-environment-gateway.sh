@@ -70,8 +70,8 @@
 #   AMP_API_URL        Agent Manager's API (default in env.sh).
 #                      Whether it ANSWERS decides bootstrap.enabled — the chart's
 #                      pre-install hook Job registers the gateway in Agent
-#                      Manager, and there is nothing to register with when
-#                      ENABLE_AGENT_MANAGER=0.
+#                      Manager, and there is nothing to register with on a
+#                      cluster where Agent Manager was torn down.
 #   WAIT_TIMEOUT       (default 300s)
 
 set -euo pipefail

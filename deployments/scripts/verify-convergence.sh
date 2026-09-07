@@ -229,7 +229,7 @@ check "promotes through the shared environment only" "$(echo $envs)" "default"
 echo ""
 echo "7️⃣  Agent Manager"
 if ! amp_installed; then
-    skip "not installed (ENABLE_AGENT_MANAGER=0)"
+    skip "not installed (torn down with scripts/teardown-agent-manager.sh)"
 else
     for d in amp-api amp-console; do
         ready="$(kubectl get deployment "$d" -n wso2-amp --context "$CLUSTER_CONTEXT" \

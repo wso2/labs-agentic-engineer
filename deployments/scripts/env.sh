@@ -33,7 +33,7 @@ CLUSTER_CONTEXT="k3d-${CLUSTER_NAME}"
 # ── WSO2 API Platform gateway-operator ───────────────────────────────────────
 # Bumped 0.6.0 -> 0.11.0 for the OC 1.2.0 / Agent Manager convergence. The
 # operator upgrades in place but does NOT downgrade, so this pin is
-# unconditional — it is not behind ENABLE_AGENT_MANAGER.
+# unconditional.
 #
 # The chart trails the images: 1.2.1 gateway-controller/gateway-runtime images
 # are published but no 1.2.1 gateway chart is. Pin the newest chart (1.2.2) and
@@ -43,12 +43,11 @@ GATEWAY_OPERATOR_VERSION="0.11.0"
 GATEWAY_CHART_VERSION="1.2.2"
 GATEWAY_IMAGE_VERSION="1.2.1"
 
-# ── Agent Manager (optional, opt-in) ─────────────────────────────────────────
-# ENABLE_AGENT_MANAGER=1 installs the Agent Management Platform alongside AEP
-# on this same cluster, from WSO2's published OCI charts. Off by default: it
-# adds ~22 pods / ~4-5 GB of RAM and forces the observability plane on.
-# See docs/design/agent-manager-convergence.md.
-ENABLE_AGENT_MANAGER="${ENABLE_AGENT_MANAGER:-0}"
+# ── Agent Manager ────────────────────────────────────────────────────────────
+# setup.sh installs the Agent Management Platform alongside AEP on this same
+# cluster, from WSO2's published OCI charts, as part of the base profile. The
+# observability plane it reads from is installed too and then parked
+# (scripts/park-observability.sh). See design/agent-manager-convergence.md.
 AMP_VERSION="${AMP_VERSION:-1.0.0-rc2}"
 AMP_REGISTRY="${AMP_REGISTRY:-oci://ghcr.io/wso2}"
 # Agent Manager's API. Spelled once here because five scripts ask whether it
@@ -113,6 +112,6 @@ GATEWAY_ENCRYPTION_SECRET_NAME="${GATEWAY_ENCRYPTION_SECRET_NAME:-api-platform-c
 GATEWAY_ENCRYPTION_SECRET_KEY="${GATEWAY_ENCRYPTION_SECRET_KEY:-default-aesgcm256-v1.bin}"
 
 # Agent Sandbox community module (openchoreo registry, versioned independently
-# of AMP). Only installed when ENABLE_AGENT_MANAGER=1.
+# of AMP). Installed by setup-agent-manager.sh.
 AGENT_SANDBOX_MODULE_VERSION="${AGENT_SANDBOX_MODULE_VERSION:-0.1.1}"
 AGENT_SANDBOX_UPSTREAM_VERSION="${AGENT_SANDBOX_UPSTREAM_VERSION:-v0.4.6}"

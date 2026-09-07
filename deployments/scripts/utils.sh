@@ -361,7 +361,7 @@ json.dump(cm, sys.stdout)
 }
 
 # Add the CoreDNS rewrites Agent Manager's hostnames need, alongside the
-# openchoreo one above. Only called when ENABLE_AGENT_MANAGER=1.
+# openchoreo one above. Called by setup-agent-manager.sh.
 #
 # These go to host.k3d.internal rather than to an in-cluster Service, unlike the
 # openchoreo rewrite. The difference matters: an in-cluster Service name would

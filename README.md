@@ -127,11 +127,13 @@ bare `docker compose up`. Stop them again with
 Coding agents don't run in Compose. Each one is dispatched into the cluster as a
 one-shot pod, as it is in a real deployment.
 
-Observability is off by default because it's the heaviest install
-(`ENABLE_OBSERVABILITY=1 bash deployments/scripts/setup.sh` adds OpenSearch,
-Fluent Bit and the RCA agent). It's what the in-UI live progress streaming and
-the [SRE handoff pipeline](docs/developer-guide/sre-handoff-runbook.md) need. The
-RCA agent is platform-level rather than per-org, so it's the one component that
+The observability plane (OpenSearch, Fluent Bit, the RCA agent, Prometheus) is
+installed but **parked** at zero replicas, because it's the heaviest thing on
+the cluster and most local work never reads it. Turn it on with
+`bash deployments/scripts/park-observability.sh up` when you want the log
+archive of finished cycles or the
+[SRE handoff pipeline](docs/developer-guide/sre-handoff-runbook.md). The RCA
+agent is platform-level rather than per-org, so it's the one component that
 wants an `ANTHROPIC_API_KEY` in `deployments/.env`.
 
 ### Accessing the portal

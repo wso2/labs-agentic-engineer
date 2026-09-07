@@ -15,8 +15,8 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# Removes Agent Manager from a cluster AEP keeps running — what makes
-# ENABLE_AGENT_MANAGER genuinely reversible rather than a one-way door.
+# Removes Agent Manager from a cluster AEP keeps running — what makes its
+# place in the base install reversible rather than a one-way door.
 #
 # ── What this deliberately does NOT remove ──────────────────────────────────
 #
@@ -25,8 +25,8 @@
 #     products log in through, installed unconditionally for exactly this
 #     reason, so that flipping the flag never invalidates a login.
 #   * OpenChoreo, the gateway operator, External Secrets. Shared base.
-#   * The observability plane and the logs module. AEP uses them under
-#     ENABLE_OBSERVABILITY.
+#   * The observability plane and the logs module. AEP's log archive and the
+#     alert→RCA handoff use them.
 #   * Environment/default and DeploymentPipeline/default. The environment is
 #     the one AEP deploys into, and the pipeline is what OpenChoreo defaults a
 #     new project to. Both are Helm-owned by the platform-resources release once
@@ -198,7 +198,11 @@ echo "5️⃣  Namespaces"
 kubectl delete ns wso2-amp --context "$CLUSTER_CONTEXT" --ignore-not-found --wait=false >/dev/null 2>&1
 kubectl delete ns agent-sandbox-system --context "$CLUSTER_CONTEXT" --ignore-not-found --wait=false >/dev/null 2>&1
 
+# The observability plane's park state is left exactly as it was: parked is the
+# platform default with or without Agent Manager, and a developer who ran
+# park-observability.sh up wants it to stay up. Nothing here touches replicas.
+
 echo ""
 echo "✅ Agent Manager removed. AEP is untouched — the platform IdP, OpenChoreo,"
 echo "   the gateway operator and the observability plane all stay."
-echo "   Re-install with: ENABLE_AGENT_MANAGER=1 bash scripts/setup-agent-manager.sh"
+echo "   Re-install with: bash scripts/setup-agent-manager.sh && bash scripts/setup-agent-manager-env.sh"

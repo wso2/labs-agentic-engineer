@@ -638,8 +638,8 @@ echo "✅ Namespaced ComponentTypes 'service' + 'web-application' created in ns 
 #
 # This is AEP's own copy of the upstream getting-started sample rather than a
 # dependency on Agent Manager's platform-resources chart, which also ships a
-# default project type: that chart is behind ENABLE_AGENT_MANAGER, so relying
-# on it would break the default profile. No collision either way — Agent
+# default project type: that chart installs AFTER this script and can be torn
+# down without AEP, so relying on it would break AEP alone. No collision — Agent
 # Manager ships a NAMESPACED `ProjectType/default`, this is the CLUSTER-scoped
 # kind, and they are separate objects.
 kubectl apply -f - <<'OCEOF'
@@ -683,8 +683,8 @@ echo "✅ ClusterProjectType 'default' created"
 
 # Environment: default — backed by the default ClusterDataPlane. AEP provisions
 # and validates in this ONE environment, and it is the same Environment Agent
-# Manager's platform-resources chart names: with ENABLE_AGENT_MANAGER=1 the
-# chart adopts this object (setup-agent-manager.sh hands it over the way it
+# Manager's platform-resources chart names: setup-agent-manager.sh, which runs
+# next, adopts this object into that chart (it hands it over the way it
 # hands over DeploymentPipeline/default) and persists its own gateway ingress on
 # the spec, so both products deploy into one environment, with one environment
 # Thunder and one API Platform gateway between them.

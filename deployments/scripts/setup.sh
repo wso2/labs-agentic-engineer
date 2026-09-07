@@ -37,19 +37,19 @@ echo "     platform IdP (ThunderID), shared with Agent Manager"
 echo "  4. Observability Plane (Observer + OpenSearch + Fluent Bit +"
 echo "     logs-adapter + AI RCA agent — in-UI Live Progress streaming,"
 echo "     plus the alert → AI-RCA → coding-agent handoff pipeline:"
-echo "     docs/developer-guide/sre-handoff-runbook.md)"
-echo "     Skipped by default (heaviest install: OpenSearch StatefulSet +"
-echo "     Fluent Bit DaemonSet + RCA agent) — set ENABLE_OBSERVABILITY=1 to"
-echo "     install it. Live Progress streaming and the alert→RCA pipeline are"
-echo "     unavailable until scripts/setup-observability.sh is run."
+echo "     docs/developer-guide/sre-handoff-runbook.md). Agent Manager's"
+echo "     console reads its logs, traces and metrics from it."
 echo "  5. Temporal workflow engine (drives the devflow workflows; aep-api"
 echo "     runs the worker in-process)"
 echo "  6. AEP-specific config (build ClusterWorkflows, ComponentTypes,"
 echo "     Environment, AuthzRoleBindings, .env file)"
-echo "  7. Agent Management Platform — OFF by default. ENABLE_AGENT_MANAGER=1"
-echo "     installs it on this same cluster from WSO2's published charts"
-echo "     (~22 extra pods, ~4-5 GB; implies ENABLE_OBSERVABILITY=1)."
-echo "     Reversible: scripts/teardown-agent-manager.sh"
+echo "  7. Agent Management Platform, on this same cluster from WSO2's"
+echo "     published charts. Reversible: scripts/teardown-agent-manager.sh"
+echo "  8. Park the observability plane's heavy workloads — OpenSearch,"
+echo "     Prometheus, Alertmanager, the RCA agent, Fluent Bit, the collector"
+echo "     and the adapters go to zero replicas (installed, idle, ~2 GB of"
+echo "     requests saved). Turn them on any time, no reinstall:"
+echo "     bash scripts/park-observability.sh up   (down parks again)"
 echo ""
 
 # The runner image (Debian + Go + Playwright + baked chromium, multi-GB) has no
@@ -78,18 +78,11 @@ echo ""
 bash "$SCRIPT_DIR/setup-openchoreo.sh"
 echo ""
 
-# Agent Manager's console reads its logs, traces and metrics from this plane —
-# it has nothing to show without it. So the flag implies it rather than failing
-# later with an empty console.
-if [ "${ENABLE_AGENT_MANAGER:-0}" = "1" ] && [ "${ENABLE_OBSERVABILITY:-0}" != "1" ]; then
-    echo "ℹ️  ENABLE_AGENT_MANAGER=1 implies ENABLE_OBSERVABILITY=1 — installing the observability plane"
-    ENABLE_OBSERVABILITY=1
-fi
-if [ "${ENABLE_OBSERVABILITY:-0}" = "1" ]; then
-    bash "$SCRIPT_DIR/setup-observability.sh"
-else
-    echo "⏭️  Observability Plane skipped (set ENABLE_OBSERVABILITY=1 to install it, or run scripts/setup-observability.sh manually when needed)"
-fi
+# The observability plane is part of the base install: Agent Manager's console
+# reads its logs, traces and metrics from it, and its charts install against it.
+# Its heavy half is parked at the end of this script, so installing it costs
+# disk and a few minutes of setup, not running memory.
+bash "$SCRIPT_DIR/setup-observability.sh"
 echo ""
 
 bash "$SCRIPT_DIR/setup-temporal.sh"
@@ -122,21 +115,25 @@ fi
 bash "$SCRIPT_DIR/setup-aep.sh"
 echo ""
 
-# Agent Manager is opt-in. It adds ~22 pods and 4-5 GB of RAM on top of AEP, and
-# forces the observability plane on (its console has no data without traces and
-# metrics), so the default profile must not pay for it. The guard is above, at
-# the observability step, because the ordering matters: the observability plane
-# has to exist before Agent Manager's charts install against it.
-#
-# The second half — the default environment's own Thunder and its API Platform
-# gateway — is a separate script because it drives Agent Manager's admin API
-# over its public URL, and fails for reasons unrelated to the chart installs.
-if [ "${ENABLE_AGENT_MANAGER:-0}" = "1" ]; then
-    bash "$SCRIPT_DIR/setup-agent-manager.sh"
-    echo ""
-    bash "$SCRIPT_DIR/setup-agent-manager-env.sh"
-    echo ""
-fi
+# Agent Manager is part of the base install, after the observability plane it
+# installs against. The second half — the default environment's own Thunder and
+# its API Platform gateway — is a separate script because it drives Agent
+# Manager's admin API over its public URL, and fails for reasons unrelated to
+# the chart installs.
+bash "$SCRIPT_DIR/setup-agent-manager.sh"
+echo ""
+bash "$SCRIPT_DIR/setup-agent-manager-env.sh"
+echo ""
+
+# Park the observability plane's heavy workloads. Running them costs about 2 GB
+# of requests on an 8 GB VM, and most local work never reads a trace, a metric
+# or the log archive. This is the LAST step because the installs above need the
+# plane up — Agent Manager's tracing module writes OpenSearch index templates,
+# and setup-observability.sh's own bootstrap Job does too. There is no flag:
+# park-observability.sh up turns the plane on for a live cluster without a
+# reinstall, and a setup re-run parks it again here.
+bash "$SCRIPT_DIR/park-observability.sh" down
+echo ""
 
 echo "============================================"
 echo "  ✅ Setup Complete!"
@@ -156,9 +153,11 @@ echo ""
 echo "  Coding-agent: OpenChoreo Job Component in the project dataplane"
 echo "                (image from AGENT_RUNNER_IMAGE / aep-runner:dev)."
 echo ""
-if [ "${ENABLE_AGENT_MANAGER:-0}" = "1" ]; then
 echo "  Agent Manager console: http://console.amp.localhost:8080"
 echo "  Agent Manager API:     http://api.amp.localhost:8080"
 echo "  Same login as the AEP console — one platform IdP serves both."
 echo ""
-fi
+echo "  Observability plane:   installed, heavy workloads PARKED (no traces,"
+echo "                         metrics, log archive or alert→RCA until"
+echo "                         bash scripts/park-observability.sh up)"
+echo ""

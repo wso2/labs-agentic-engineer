@@ -26,9 +26,9 @@
 # HTTPRoute, the TLS ClusterIssuer that Agent Manager's per-environment
 # Thunders need, and Agent Manager's own client bootstrap.
 #
-# This runs UNCONDITIONALLY, not behind ENABLE_AGENT_MANAGER. Switching IdP
-# release means a different PVC and a different issuer, so making it a toggle
-# would mean every flip invalidated every login. The cost is that AEP's base
+# This runs UNCONDITIONALLY, and would even if Agent Manager were optional.
+# Switching IdP release means a different PVC and a different issuer, so making
+# it a toggle would mean every flip invalidated every login. The cost is that AEP's base
 # pulls one chart from Agent Manager's release line, and Thunder carries Agent
 # Manager's ~100 unused `amp:*` scopes.
 #

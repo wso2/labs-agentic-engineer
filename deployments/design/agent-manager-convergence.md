@@ -1,11 +1,15 @@
 # Running Agent Manager on the AEP cluster
 
-`ENABLE_AGENT_MANAGER=1 bash scripts/setup.sh` brings up ONE k3d cluster running
-both AEP and the WSO2 Agent Management Platform, with Agent Manager reachable
-the way Thunder is — a vhost on the OpenChoreo control-plane gateway at `:8080`.
+`bash scripts/setup.sh` brings up ONE k3d cluster running both AEP and the WSO2
+Agent Management Platform, with Agent Manager reachable the way Thunder is — a
+vhost on the OpenChoreo control-plane gateway at `:8080`.
 
-Off by default. The flag adds roughly 22 pods and 4–5 GB of RAM, so the default
-profile costs what it always did.
+Agent Manager is part of the base profile (it began as an opt-in flag and was
+made the default on 2026-09-07). It adds roughly 22 pods; what keeps the profile
+affordable is that the observability plane both products share is installed and
+then **parked** at zero replicas by `scripts/park-observability.sh`, which is
+also the switch that turns it on. `scripts/teardown-agent-manager.sh` removes
+Agent Manager from a cluster that keeps running AEP.
 
 Why there is one IdP rather than two, and what that cost: **ADR-0027**. Who owns
 it, now that both products depend on it: **ADR-0028**. The second identity tier
