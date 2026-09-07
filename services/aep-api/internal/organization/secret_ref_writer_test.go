@@ -221,7 +221,7 @@ func TestSecretRefWriter_WriteExternalResourceSecret(t *testing.T) {
 	t.Run("disabled (nil client) is a no-op", func(t *testing.T) {
 		t.Parallel()
 		w := organization.NewSecretRefWriter(nil, nil, nil, nil)
-		vaultKey, ref, err := w.WriteExternalResourceSecret(context.Background(), "acme", "proj", "extres-openweather-development", map[string]string{"K": "v"})
+		vaultKey, ref, err := w.WriteExternalResourceSecret(context.Background(), "acme", "proj", "extres-openweather-default", map[string]string{"K": "v"})
 		if err != nil || vaultKey != "" || ref != "" {
 			t.Fatalf("disabled WriteExternalResourceSecret = (%q, %q, %v); want (\"\", \"\", nil)", vaultKey, ref, err)
 		}
@@ -261,7 +261,7 @@ func TestSecretRefWriter_WriteExternalResourceSecret(t *testing.T) {
 		t.Parallel()
 		fake := &fakeSMClient{}
 		w := organization.NewSecretRefWriter(fake, nil, nil, nil)
-		vaultKey, ref, err := w.WriteExternalResourceSecret(claimsCtx("ou-acme-uuid"), "acme", "weatherproj", "extres-openweather-development",
+		vaultKey, ref, err := w.WriteExternalResourceSecret(claimsCtx("ou-acme-uuid"), "acme", "weatherproj", "extres-openweather-default",
 			map[string]string{"OPENWEATHER_API_KEY": "k123"})
 		if err != nil {
 			t.Fatalf("WriteExternalResourceSecret: %v", err)
@@ -273,7 +273,7 @@ func TestSecretRefWriter_WriteExternalResourceSecret(t *testing.T) {
 			t.Fatalf("want exactly 1 CreateSecret call, got %d", len(fake.createCalls))
 		}
 		call := fake.createCalls[0]
-		wantLoc := secretmanagersvc.SecretLocation{OrgName: "ou-acme-uuid", ControlPlaneNamespace: "acme", ProjectName: "weatherproj", EntityName: "extres-openweather-development"}
+		wantLoc := secretmanagersvc.SecretLocation{OrgName: "ou-acme-uuid", ControlPlaneNamespace: "acme", ProjectName: "weatherproj", EntityName: "extres-openweather-default"}
 		if call.loc != wantLoc {
 			t.Fatalf("SecretLocation = %+v; want %+v", call.loc, wantLoc)
 		}
@@ -300,7 +300,7 @@ func TestSecretRefWriter_WriteOrgCatalogSecret(t *testing.T) {
 	t.Parallel()
 	fake := &fakeSMClient{}
 	w := organization.NewSecretRefWriter(fake, nil, nil, nil)
-	if _, err := w.WriteOrgCatalogSecret(claimsCtx("ou-acme-uuid"), "acme", "stripe-development",
+	if _, err := w.WriteOrgCatalogSecret(claimsCtx("ou-acme-uuid"), "acme", "stripe-default",
 		map[string]string{"api_key": "sk_live"}); err != nil {
 		t.Fatalf("WriteOrgCatalogSecret: %v", err)
 	}
@@ -308,7 +308,7 @@ func TestSecretRefWriter_WriteOrgCatalogSecret(t *testing.T) {
 		t.Fatalf("want exactly 1 CreateSecret call, got %d", len(fake.createCalls))
 	}
 	call := fake.createCalls[0]
-	wantLoc := secretmanagersvc.SecretLocation{OrgName: "ou-acme-uuid", ControlPlaneNamespace: "acme", ProjectName: "org-catalog", EntityName: "stripe-development"}
+	wantLoc := secretmanagersvc.SecretLocation{OrgName: "ou-acme-uuid", ControlPlaneNamespace: "acme", ProjectName: "org-catalog", EntityName: "stripe-default"}
 	if call.loc != wantLoc {
 		t.Fatalf("SecretLocation = %+v; want %+v", call.loc, wantLoc)
 	}
@@ -317,12 +317,12 @@ func TestSecretRefWriter_WriteOrgCatalogSecret(t *testing.T) {
 func TestSecretRefWriter_OrgCatalogVaultKey(t *testing.T) {
 	t.Parallel()
 	w := organization.NewSecretRefWriter(&fakeSMClient{}, nil, nil, nil)
-	got, err := w.OrgCatalogVaultKey(claimsCtx("ou-acme-uuid"), "acme", "github-development")
+	got, err := w.OrgCatalogVaultKey(claimsCtx("ou-acme-uuid"), "acme", "github-default")
 	if err != nil {
 		t.Fatalf("OrgCatalogVaultKey: %v", err)
 	}
-	if !strings.HasPrefix(got, "user-app-secrets/") || !strings.HasSuffix(got, "/github-development-secrets") {
-		t.Fatalf("OrgCatalogVaultKey = %q, want user-app-secrets/<ns>/github-development-secrets", got)
+	if !strings.HasPrefix(got, "user-app-secrets/") || !strings.HasSuffix(got, "/github-default-secrets") {
+		t.Fatalf("OrgCatalogVaultKey = %q, want user-app-secrets/<ns>/github-default-secrets", got)
 	}
 }
 

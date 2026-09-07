@@ -108,31 +108,53 @@ type Config struct {
 	BuildAuthRetryBudget int
 
 	// Thunder admin client config for per-org publisher OAuth app lifecycle.
-	// Loaded from env vars
-	// THUNDER_ADMIN_URL / THUNDER_SYSTEM_CLIENT_ID / THUNDER_SYSTEM_CLIENT_SECRET.
+	// Loaded from env vars THUNDER_ADMIN_URL / THUNDER_SYSTEM_CLIENT_ID /
+	// THUNDER_SYSTEM_CLIENT_SECRET / THUNDER_SYSTEM_RESOURCE_IDENTIFIER.
 	// When ClientID is empty the BFF logs a warning and the IDP service
 	// returns ErrIDPThunderUnavailable (non-fatal — protected components
 	// still deploy, just without per-org publishers).
 	ThunderAdmin ThunderAdminConfig
+
+	// ThunderEnvAdminRoute picks which address admin calls to an ENVIRONMENT's
+	// Thunder go to — the second identity tier, one instance per (org,
+	// environment), whose binding the OpenChoreo Environment records.
+	//
+	//	issuer   the instance's public issuer. The only address that
+	//	         works from the local docker-compose stack, where aep-api runs
+	//	         outside the cluster and the binding's `*.svc.cluster.local`
+	//	         admin URL resolves to nothing.
+	//	binding  the in-cluster Service address the binding records. Right for an
+	//	         aep-api running INSIDE the cluster, where the public hostnames do
+	//	         not resolve from a pod.
+	//
+	// From THUNDER_ENV_ADMIN_ROUTE. Unset, it follows where this process is
+	// running — `binding` in a pod (KUBERNETES_SERVICE_HOST is set), `issuer`
+	// otherwise — because the wrong one of the two reaches nothing at all.
+	// Anything but `binding` reads as `issuer`.
+	ThunderEnvAdminRoute string
 
 	// KubeAPI is the in-cluster (or override) Kubernetes API the Thunder
 	// Application CR GET uses. BaseURL empty ⇒ thunder wait stays unwired
 	// (local compose has no kube API). See KubeAPIConfig.
 	KubeAPI KubeAPIConfig
 
-	// APIGatewayHost is host:port of the API Platform gateway runtime — the hop
-	// that terminates authentication for a managed API. Published to a consumer
-	// of a protected sibling as `<DEP>_GATEWAY_URL` so a SPA's nginx can proxy
-	// the browser's /api through it instead of straight at the project Service.
-	// Loaded from API_GATEWAY_HOST. Empty means "use the platform default" —
-	// the constant lives in the projects domain beside the context-path builder
-	// it must agree with, so config carries only the override.
+	// APIGatewayHost is an OVERRIDE for host:port of the API Platform gateway
+	// runtime — the hop that terminates authentication for a managed API.
+	// Published to a consumer of a protected sibling as `<DEP>_GATEWAY_URL` so a
+	// SPA's nginx can proxy the browser's /api through it instead of straight at
+	// the project Service.
+	//
+	// Loaded from API_GATEWAY_HOST. Empty — the normal case — derives the
+	// address per (org, environment): there is one gateway per environment, and
+	// the derivation lives in the projects domain beside the context-path
+	// builder it must agree with (projects.APIGatewayHost). Set, it WINS for
+	// every environment, which only a data plane that names its gateway
+	// differently wants.
 	APIGatewayHost string
 
 	// Platform IDP defaults seeded into organization_idp_profiles rows
 	// on first access. Loaded from PLATFORM_IDP_ISSUER /
-	// PLATFORM_IDP_JWKS_URL — should match the cluster's Thunder
-	// keymanager in gateway-config.yaml.
+	// PLATFORM_IDP_JWKS_URL.
 	PlatformIDP PlatformIDPDefaults
 
 	Observability ObservabilityConfig
@@ -263,12 +285,19 @@ func (c Config) Validate() error {
 // ThunderAdminConfig holds the aep-system-client OAuth2 credentials
 // + base URL the BFF uses to manage Thunder applications (per-org
 // publisher lifecycle). The same Thunder instance that fronts user
-// PKCE login — see deployments/single-cluster/values-thunder.yaml's
-// CONFIDENTIAL_APPS for the row that ships these credentials.
+// PKCE login — see deployments/single-cluster/thunder-resources/
+// 81-aep-system-client.yaml for the document that ships these credentials.
 type ThunderAdminConfig struct {
 	BaseURL      string
 	ClientID     string
 	ClientSecret string
+	// SystemResourceIdentifier is the `resource` indicator every system-token
+	// request carries: the identifier of the identity provider's System
+	// resource server, the one that owns the `system` scope. Empty means
+	// "derive it from the platform IdP's public issuer" (<issuer>/mcp, the
+	// ThunderID convention) — the composition root does that, so a deployment
+	// only sets this when its IdP uses a non-conventional identifier.
+	SystemResourceIdentifier string
 }
 
 // KubeAPIConfig is the Kubernetes API endpoint used to LIST ThunderApplication

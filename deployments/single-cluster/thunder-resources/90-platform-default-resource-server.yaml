@@ -1,0 +1,23 @@
+# The default resource server — a platform-COMPOSED singleton, not an AEP
+# document.
+#
+# The IdP has ONE `defaultResourceServer` server_config: a redeclaration
+# replaces it, so whichever bootstrap document imports last decides which
+# resource server every scope-bearing `client_credentials` request is resolved
+# against. Leaving that to import order means the answer changes whenever a
+# publisher renumbers a file, and the symptom is a 200 with a scope-less token.
+#
+# So the platform owns the last word. `setup-thunder.sh` reads Agent Manager's
+# declaration (69-amp-default-resource-server-config.yaml) out of the rendered
+# chart and writes its VALUE into this document, which sorts after it and is
+# therefore the one that lands. The value is Agent Manager's unchanged: the
+# platform composes ownership, not policy. Changing the default here would
+# change how amp-console and amp-api resolve every scope they ask for.
+#
+# If Agent Manager's chart ever stops declaring one, this document is dropped
+# from the bundle rather than imported with a value the platform invented.
+#
+# `value:` is filled in at install time; it is never imported as written here.
+resource_type: server_config
+name: defaultResourceServer
+value: null

@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,9 +33,9 @@ import (
 // -- fake Thunder server --------------------------------------------------
 //
 // A minimal in-memory stand-in for Thunder's admin REST API, speaking the
-// camelCase wire shape the deployed Thunder 0.34.0 accepts — mirrored from
+// camelCase wire shape the deployed ThunderID accepts — mirrored from
 // services/aep-api/internal/clients/thundersvc/client.go (live-E2E-validated)
-// and deployments/single-cluster/values-thunder.yaml's 59-aep-oauth-apps.sh.
+// and the deployments/single-cluster/thunder-resources/ bootstrap documents.
 // It records every request so tests can assert on exact bodies observed by
 // the client, independent of client.go's internals. The key assertions are
 // exact-case: they MUST fail if snake_case keys ever reappear on the wire.
@@ -61,6 +63,19 @@ type fakeThunder struct {
 	lastCreateBody map[string]any
 	lastPutBody    map[string]any
 
+	// The server-wide `cors` config, split the way ThunderID splits it:
+	// readOnly comes from bootstrap documents, writable from PUT, and the
+	// server enforces the union.
+	corsReadOnly []string
+	corsWritable []string
+	corsGetCalls int
+	corsPutCalls int
+	corsPutErr   int // when non-zero, PUT answers with this status
+
+	// dropTokenAttrs makes the fake discard the identity attributes on BOTH
+	// tokens — a stand-in for the next ThunderID contract change.
+	dropTokenAttrs bool
+
 	srv *httptest.Server
 }
 
@@ -72,6 +87,7 @@ func newFakeThunder(t *testing.T) *fakeThunder {
 	mux.HandleFunc("/organization-units/tree/default", f.handleOU)
 	mux.HandleFunc("/applications", f.handleApplications)
 	mux.HandleFunc("/applications/", f.handleApplicationByID)
+	mux.HandleFunc("/server-config/cors", f.handleCORS)
 	f.srv = httptest.NewServer(mux)
 	t.Cleanup(f.srv.Close)
 	return f
@@ -106,6 +122,49 @@ func (f *fakeThunder) handleToken(w http.ResponseWriter, r *http.Request) {
 
 func (f *fakeThunder) handleOU(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"id": "ou-default"})
+}
+
+// handleCORS mirrors ThunderID's /server-config/cors: GET returns all three
+// layers, PUT replaces the writable one and returns the new state. A PUT that
+// carries `null` is rejected the way the real server rejects it.
+func (f *fakeThunder) handleCORS(w http.ResponseWriter, r *http.Request) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	switch r.Method {
+	case http.MethodGet:
+		f.corsGetCalls++
+	case http.MethodPut:
+		f.corsPutCalls++
+		if f.corsPutErr != 0 {
+			w.WriteHeader(f.corsPutErr)
+			return
+		}
+		var body struct {
+			AllowedOrigins *[]string `json:"allowedOrigins"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if body.AllowedOrigins == nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"message": "cors: allowedOrigins must be a list, not null",
+			})
+			return
+		}
+		f.corsWritable = *body.AllowedOrigins
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	merged := append(append([]string{}, f.corsReadOnly...), f.corsWritable...)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"readOnly": map[string]any{"allowedOrigins": f.corsReadOnly},
+		"writable": map[string]any{"allowedOrigins": f.corsWritable},
+		"merged":   map[string]any{"allowedOrigins": merged},
+	})
 }
 
 func (f *fakeThunder) handleApplications(w http.ResponseWriter, r *http.Request) {
@@ -145,6 +204,60 @@ func (f *fakeThunder) handleList(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// storeTokenConfig models ThunderID 1.0.0's handling of `token`: it accepts any
+// shape with 200 and keeps only what it recognises, dropping the rest without a
+// word. Measured against the live server on 2026-09-06:
+//
+//	idToken.validityPeriod            kept
+//	idToken.userAttributes            kept
+//	accessToken.userConfig.validityPeriod  kept
+//	accessToken.userConfig.attributes      kept
+//	accessToken.validityPeriod        DROPPED (replaced by the server default)
+//	accessToken.userAttributes        DROPPED
+//	accessToken.userConfig.userAttributes  DROPPED
+//	accessToken.userConfig.claims          DROPPED
+//
+// A fake that stored the payload verbatim would agree with whatever this
+// package believes and could never catch a wire-shape mistake — which is
+// exactly how the access-token attributes went missing unnoticed.
+func storeTokenConfig(cfg map[string]any, drop bool) {
+	token, ok := cfg["token"].(map[string]any)
+	if !ok {
+		return
+	}
+	kept := map[string]any{}
+	if id, ok := token["idToken"].(map[string]any); ok {
+		idKept := map[string]any{}
+		if v, ok := id["validityPeriod"]; ok {
+			idKept["validityPeriod"] = v
+		}
+		if v, ok := id["userAttributes"]; ok && !drop {
+			idKept["userAttributes"] = v
+		}
+		kept["idToken"] = idKept
+	}
+	if access, ok := token["accessToken"].(map[string]any); ok {
+		// Whatever the caller put at the top level is discarded; only
+		// userConfig survives, and only its two known keys.
+		accessKept := map[string]any{}
+		userCfg := map[string]any{"validityPeriod": float64(3600)}
+		if uc, ok := access["userConfig"].(map[string]any); ok {
+			if v, ok := uc["validityPeriod"]; ok {
+				userCfg["validityPeriod"] = v
+			}
+			if v, ok := uc["attributes"]; ok && !drop {
+				userCfg["attributes"] = v
+			}
+		}
+		accessKept["userConfig"] = userCfg
+		if cc, ok := access["clientConfig"].(map[string]any); ok {
+			accessKept["clientConfig"] = cc
+		}
+		kept["accessToken"] = accessKept
+	}
+	cfg["token"] = kept
+}
+
 func (f *fakeThunder) handleCreate(w http.ResponseWriter, r *http.Request) {
 	var body map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -161,6 +274,7 @@ func (f *fakeThunder) handleCreate(w http.ResponseWriter, r *http.Request) {
 	id := fmt.Sprintf("app-id-%d", f.nextID)
 
 	cfg, _ := firstOAuthConfig(body)
+	storeTokenConfig(cfg, f.dropTokenAttrs)
 	a := &fakeApp{
 		id:     id,
 		name:   asString(body["name"]),
@@ -206,6 +320,7 @@ func (f *fakeThunder) handleApplicationByID(w http.ResponseWriter, r *http.Reque
 		f.putCalls++
 		f.lastPutBody = body
 		cfg, _ := firstOAuthConfig(body)
+		storeTokenConfig(cfg, f.dropTokenAttrs)
 		a.name = asString(body["name"])
 		a.desc = asString(body["description"])
 		a.config = cfg
@@ -297,24 +412,82 @@ func assertIdentityClaimContract(t *testing.T, body map[string]any) {
 	}
 	tok, _ := cfg["token"].(map[string]any)
 	if tok == nil {
-		t.Fatalf("config.token missing — end-user tokens would carry no userAttributes: %#v", cfg)
+		t.Fatalf("config.token missing — end-user tokens would carry no attributes: %#v", cfg)
 	}
-	for _, kind := range []string{"idToken", "accessToken"} {
-		sub, _ := tok[kind].(map[string]any)
-		if !anySliceHas(sub["userAttributes"], "groups") {
-			t.Errorf("token.%s.userAttributes = %v, want to include %q (drives role-based UI)", kind, sub["userAttributes"], "groups")
-		}
-		// A long-lived token keeps a returning SPA user signed in across a
-		// refresh/new tab; dropping validityPeriod reverts to Thunder's short
-		// default and reintroduces the every-visit re-login.
-		if sub["validityPeriod"] == nil {
-			t.Errorf("token.%s.validityPeriod missing — SPA session would expire on Thunder's short default", kind)
+
+	// The ID token declares its attributes at the top level...
+	id, _ := tok["idToken"].(map[string]any)
+	if !anySliceHas(id["userAttributes"], "groups") {
+		t.Errorf("token.idToken.userAttributes = %v, want to include %q (the SPA reads its role from the id_token)",
+			id["userAttributes"], "groups")
+	}
+	// A long-lived token keeps a returning SPA user signed in across a
+	// refresh/new tab; dropping validityPeriod reverts to Thunder's short
+	// default and reintroduces the every-visit re-login.
+	if id["validityPeriod"] == nil {
+		t.Error("token.idToken.validityPeriod missing — SPA session would expire on Thunder's short default")
+	}
+
+	// ...and the ACCESS token nests them under userConfig, with the key
+	// `attributes`. This asymmetry is ThunderID's, not ours (see
+	// tokenClaimConfig): the id-token shape on an access token is accepted
+	// with 200 and silently dropped, and the app then 403s on every
+	// authorated API call while its login still works.
+	access, _ := tok["accessToken"].(map[string]any)
+	userCfg, _ := access["userConfig"].(map[string]any)
+	if !anySliceHas(userCfg["attributes"], "groups") {
+		t.Errorf("token.accessToken.userConfig.attributes = %v, want to include %q "+
+			"(the gateway maps this claim to X-User-Groups, which is what the API authorizes on)",
+			userCfg["attributes"], "groups")
+	}
+	if userCfg["validityPeriod"] == nil {
+		t.Error("token.accessToken.userConfig.validityPeriod missing — the server would apply its short default")
+	}
+	// Regression guard: the shape that looks right and does nothing.
+	for _, dead := range []string{"userAttributes", "validityPeriod"} {
+		if _, present := access[dead]; present {
+			t.Errorf("token.accessToken.%s is set — ThunderID ignores it at that path; it belongs under userConfig", dead)
 		}
 	}
+
 	sc, _ := cfg["scopeClaims"].(map[string]any)
 	if !anySliceHas(sc["group"], "groups") {
-		t.Errorf("scopeClaims.group = %v, want [groups] — without it, the group scope releases no groups claim into the id_token", sc["group"])
+		t.Errorf("scopeClaims.group = %v, want [groups] — without it, the group scope releases no groups claim", sc["group"])
 	}
+}
+
+// assertStoredIdentityClaims asserts what the SERVER kept, which is the only
+// thing that matters: the outgoing body can be perfect and still leave an app
+// with no claims if the shape is one ThunderID does not recognise.
+func assertStoredIdentityClaims(t *testing.T, f *fakeThunder, name string) {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, a := range f.apps {
+		// Matched on the OAuth client id, which is stable across an update;
+		// the display name is not part of the PUT body.
+		if asString(a.config["clientId"]) != name {
+			continue
+		}
+		if got := idTokenAttributes(a.config); !containsString(got, "groups") {
+			t.Errorf("stored id token attributes = %v, want to include groups", got)
+		}
+		if got := accessTokenAttributes(a.config); !containsString(got, "groups") {
+			t.Errorf("stored ACCESS token attributes = %v, want to include groups — "+
+				"this is the claim the gateway maps to X-User-Groups", got)
+		}
+		return
+	}
+	t.Fatalf("no application with clientId %q on the fake server", name)
+}
+
+func containsString(haystack []string, needle string) bool {
+	for _, s := range haystack {
+		if s == needle {
+			return true
+		}
+	}
+	return false
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {
@@ -603,5 +776,211 @@ func TestSystemToken_CachedAcrossOperations(t *testing.T) {
 	defer f.mu.Unlock()
 	if f.tokenCalls != 1 {
 		t.Errorf("tokenCalls = %d, want 1 (token must be cached across operations)", f.tokenCalls)
+	}
+}
+
+// -- browser origins (CORS) -------------------------------------------------
+
+// origins the fake server currently enforces, sorted.
+func (f *fakeThunder) writable() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	got := append([]string(nil), f.corsWritable...)
+	sort.Strings(got)
+	return got
+}
+
+// SetBrowserOrigins writes exactly the given set into the WRITABLE layer and
+// leaves the bootstrap-declared readOnly layer alone. That separation is the
+// whole safety argument for touching CORS at runtime: the platform-composed
+// `cors` document is a singleton whose redeclaration replaces the entire
+// allow-list.
+func TestSetBrowserOrigins_WritesTheWritableLayerAndLeavesBootstrapAlone(t *testing.T) {
+	f := newFakeThunder(t)
+	f.corsReadOnly = []string{"http://localhost:8090"}
+	c := newTestClient(f)
+
+	if err := c.SetBrowserOrigins(context.Background(), []string{
+		"https://b.example.com", "https://a.example.com",
+	}); err != nil {
+		t.Fatalf("SetBrowserOrigins: %v", err)
+	}
+
+	want := []string{"https://a.example.com", "https://b.example.com"}
+	if got := f.writable(); !reflect.DeepEqual(got, want) {
+		t.Errorf("writable allowedOrigins = %#v, want %#v", got, want)
+	}
+	f.mu.Lock()
+	readOnly := append([]string(nil), f.corsReadOnly...)
+	f.mu.Unlock()
+	if !reflect.DeepEqual(readOnly, []string{"http://localhost:8090"}) {
+		t.Errorf("readOnly layer = %#v — the bootstrap document must never be touched", readOnly)
+	}
+}
+
+// Replace, not merge: an origin the CRs no longer name goes away.
+func TestSetBrowserOrigins_ReplacesRatherThanAccumulates(t *testing.T) {
+	f := newFakeThunder(t)
+	f.corsWritable = []string{"https://stale.example.com"}
+	c := newTestClient(f)
+
+	if err := c.SetBrowserOrigins(context.Background(), []string{"https://current.example.com"}); err != nil {
+		t.Fatalf("SetBrowserOrigins: %v", err)
+	}
+	if got := f.writable(); !reflect.DeepEqual(got, []string{"https://current.example.com"}) {
+		t.Errorf("writable allowedOrigins = %#v, want only the current one", got)
+	}
+}
+
+// An unchanged set costs a GET and no PUT, so a steady-state reconcile loop
+// does not rewrite the server's config on every pass.
+func TestSetBrowserOrigins_SkipsThePUTWhenNothingChanged(t *testing.T) {
+	f := newFakeThunder(t)
+	c := newTestClient(f)
+	ctx := context.Background()
+
+	if err := c.SetBrowserOrigins(ctx, []string{"https://a.example.com"}); err != nil {
+		t.Fatalf("first SetBrowserOrigins: %v", err)
+	}
+	// Same set, different order — the list is a set, order carries no meaning.
+	if err := c.SetBrowserOrigins(ctx, []string{"https://a.example.com", "https://a.example.com"}); err != nil {
+		t.Fatalf("second SetBrowserOrigins: %v", err)
+	}
+
+	f.mu.Lock()
+	puts := f.corsPutCalls
+	f.mu.Unlock()
+	if puts != 1 {
+		t.Errorf("PUT called %d times, want 1 — an unchanged set must not be rewritten", puts)
+	}
+}
+
+// The last app leaving an instance must reach the EMPTY list. A nil slice
+// marshals to `null`, which ThunderID rejects outright.
+func TestSetBrowserOrigins_EmptySetSendsAListNotNull(t *testing.T) {
+	f := newFakeThunder(t)
+	f.corsWritable = []string{"https://going.example.com"}
+	c := newTestClient(f)
+
+	if err := c.SetBrowserOrigins(context.Background(), nil); err != nil {
+		t.Fatalf("SetBrowserOrigins(nil): %v", err)
+	}
+	if got := f.writable(); len(got) != 0 {
+		t.Errorf("writable allowedOrigins = %#v, want empty", got)
+	}
+}
+
+// A failed write is reported, not swallowed: the caller decides what a browser
+// that cannot reach the IdP means for the CR.
+func TestSetBrowserOrigins_SurfacesAWriteFailure(t *testing.T) {
+	f := newFakeThunder(t)
+	f.corsPutErr = http.StatusServiceUnavailable
+	c := newTestClient(f)
+
+	err := c.SetBrowserOrigins(context.Background(), []string{"https://a.example.com"})
+	if err == nil {
+		t.Fatal("SetBrowserOrigins returned nil on a 503")
+	}
+	if !strings.Contains(err.Error(), "503") {
+		t.Errorf("error = %v, want it to carry the status", err)
+	}
+}
+
+func TestOriginOf(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"http://app.localhost:19080/callback", "http://app.localhost:19080"},
+		{"https://app.example.com/callback", "https://app.example.com"},
+		{"https://app.example.com", "https://app.example.com"},
+		{"  https://app.example.com/callback  ", "https://app.example.com"},
+		{"https://app.example.com/callback?x=1#f", "https://app.example.com"},
+		// Not something a browser can send an Origin for.
+		{"myapp://callback", ""},
+		{"/relative/callback", ""},
+		{"", ""},
+		// The placeholder is wire adaptation inside EnsureApplication and never
+		// appears in a CR's spec, so the reconciler never asks for its origin.
+		// It parses like any other https URI if it ever did, and pending.invalid
+		// is unroutable by construction.
+		{placeholderRedirectURI, "https://pending.invalid"},
+	}
+	for _, tc := range cases {
+		if got := OriginOf(tc.in); got != tc.want {
+			t.Errorf("OriginOf(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// -- the identity claims must SURVIVE the write ------------------------------
+
+// A created app's claims are asserted where it counts: in what the server kept.
+func TestEnsureApplication_StoresIdentityClaimsOnBothTokens(t *testing.T) {
+	f := newFakeThunder(t)
+	c := newTestClient(f)
+
+	const name = "aep-default-claims-app"
+	if _, err := c.EnsureApplication(context.Background(), DesiredApp{
+		Name:         name,
+		RedirectURIs: []string{"https://app.example.com/callback"},
+	}); err != nil {
+		t.Fatalf("EnsureApplication: %v", err)
+	}
+	assertStoredIdentityClaims(t, f, name)
+}
+
+// An update re-asserts them, so an app registered by an older operator is
+// repaired rather than left half-configured.
+func TestEnsureApplication_UpdateRestoresIdentityClaims(t *testing.T) {
+	f := newFakeThunder(t)
+	c := newTestClient(f)
+
+	const name = "aep-default-existing-claims"
+	f.seedApp(name, []string{"https://stale.example.com/callback"})
+
+	if _, err := c.EnsureApplication(context.Background(), DesiredApp{
+		Name:         name,
+		RedirectURIs: []string{"https://fresh.example.com/callback"},
+	}); err != nil {
+		t.Fatalf("EnsureApplication: %v", err)
+	}
+	assertStoredIdentityClaims(t, f, name)
+}
+
+// The whole point of reading back: when the IdP drops the claims, the write
+// FAILS loudly and names them, instead of returning a client_id for an
+// application that will 403 every authorated call in a deployed app.
+func TestEnsureApplication_FailsWhenTheIdPDropsTheIdentityClaims(t *testing.T) {
+	f := newFakeThunder(t)
+	f.dropTokenAttrs = true
+	c := newTestClient(f)
+
+	_, err := c.EnsureApplication(context.Background(), DesiredApp{
+		Name:         "aep-default-dropped",
+		RedirectURIs: []string{"https://app.example.com/callback"},
+	})
+	if err == nil {
+		t.Fatal("EnsureApplication returned nil when the IdP stored no identity claims")
+	}
+	for _, want := range []string{"groups", "identity claims"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q — the message has to name what vanished", err, want)
+		}
+	}
+}
+
+// An m2m client has no user behind its token, so the user-attribute contract
+// does not apply and must not fail its write.
+func TestEnsureApplication_ConfidentialClientSkipsTheUserClaimCheck(t *testing.T) {
+	f := newFakeThunder(t)
+	f.dropTokenAttrs = true
+	c := newTestClient(f)
+
+	if _, err := c.EnsureApplication(context.Background(), DesiredApp{
+		Name:         "aep-default-m2m",
+		ClientType:   "confidential",
+		ClientSecret: "s3cret",
+	}); err != nil {
+		t.Fatalf("confidential EnsureApplication: %v", err)
 	}
 }

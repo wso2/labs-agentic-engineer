@@ -133,7 +133,7 @@ func (e *Events) MintDeployFixIssues(ctx context.Context, orgID, projectID strin
 
 // openchoreoDevEnvironment is named here rather than imported so this package
 // keeps no dependency on the OpenChoreo client for one string in one issue body.
-const openchoreoDevEnvironment = "development"
+const openchoreoDevEnvironment = "default"
 
 // mintConflictIssue files the conflict issue for a pull request that would not
 // merge. It NAMES the pull request — the single structured reference the issue

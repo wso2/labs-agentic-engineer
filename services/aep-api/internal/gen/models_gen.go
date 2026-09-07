@@ -1802,7 +1802,7 @@ type PromoteFromIssueRequest struct {
 
 // ProvisionBody defines model for ProvisionBody.
 type ProvisionBody struct {
-	// Environments Environments to provision (default: [development])
+	// Environments Environments to provision (defaults to ["default"])
 	Environments []string `json:"environments,omitempty"`
 
 	// Params Provisioning parameters (override the design defaults)
@@ -2649,13 +2649,13 @@ type GetBuildLogsParams struct {
 
 // GetDependencyStatusParams defines parameters for GetDependencyStatus.
 type GetDependencyStatusParams struct {
-	// Environment Environment (default: development)
+	// Environment Environment (defaults to "default")
 	Environment string `form:"environment,omitempty" json:"environment,omitempty"`
 }
 
 // GetProjectDependencyReadinessParams defines parameters for GetProjectDependencyReadiness.
 type GetProjectDependencyReadinessParams struct {
-	// Environment Environment (default: development)
+	// Environment Environment (defaults to "default")
 	Environment string `form:"environment,omitempty" json:"environment,omitempty"`
 }
 

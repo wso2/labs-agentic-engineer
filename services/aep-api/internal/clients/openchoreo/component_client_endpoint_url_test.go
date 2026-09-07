@@ -74,9 +74,9 @@ func bindingWithExternal(https, http *ocgen.EndpointURL) ocgen.ReleaseBinding {
 		},
 	}}
 	return ocgen.ReleaseBinding{
-		Metadata: ocgen.ObjectMeta{Name: "hello-api-development"},
+		Metadata: ocgen.ObjectMeta{Name: "hello-api-default"},
 		Spec: &ocgen.ReleaseBindingSpec{
-			Environment: "development",
+			Environment: "default",
 			ReleaseName: &release,
 			Owner: struct {
 				ComponentName string `json:"componentName"`

@@ -279,7 +279,7 @@ func (f *fakeExtProv) Provision(_ context.Context, _, _, _ string, er *dependenc
 	if f.result != nil {
 		return f.result, nil
 	}
-	return &dependencies.ProvisionResult{ResourceName: "o-ext", BindingByEnv: map[string]string{"development": "o-ext-development"}}, nil
+	return &dependencies.ProvisionResult{ResourceName: "o-ext", BindingByEnv: map[string]string{"default": "o-ext-default"}}, nil
 }
 func (f *fakeExtProv) AuthorPreparedValues(_ context.Context, _, _ string, er *dependencies.ExternalResource, byEnv map[string]dependencies.PreparedEnvValues) (*dependencies.ProvisionResult, error) {
 	f.authorPreparedCalls++
@@ -291,7 +291,7 @@ func (f *fakeExtProv) AuthorPreparedValues(_ context.Context, _, _ string, er *d
 	if f.authorResult != nil {
 		return f.authorResult, nil
 	}
-	return &dependencies.ProvisionResult{ResourceName: "o-ext", BindingByEnv: map[string]string{"development": "o-ext-development"}}, nil
+	return &dependencies.ProvisionResult{ResourceName: "o-ext", BindingByEnv: map[string]string{"default": "o-ext-default"}}, nil
 }
 func (f *fakeExtProv) Deprovision(_ context.Context, _, _, name string, _ []string) error {
 	f.deprovisioned = append(f.deprovisioned, name)
@@ -322,7 +322,7 @@ func (f *fakePlatProv) Provision(_ context.Context, _, _, depName, _ string, par
 	if f.result != nil {
 		return f.result, nil
 	}
-	return &dependencies.PlatformProvisionResult{ResourceName: "o-" + depName, BindingByEnv: map[string]string{"development": "o-" + depName + "-development"}}, nil
+	return &dependencies.PlatformProvisionResult{ResourceName: "o-" + depName, BindingByEnv: map[string]string{"default": "o-" + depName + "-default"}}, nil
 }
 func (f *fakePlatProv) Deprovision(_ context.Context, _, _, depName string, _ []string) error {
 	f.deprovisioned = append(f.deprovisioned, depName)
@@ -578,7 +578,7 @@ func TestSaveValues_ProvisionsAndClosesGate(t *testing.T) {
 	svc := newTestService(issues, execs, fakeDesign{comps: designWithDeps()}, ext, &fakePlatProv{}, &fakeBindings{})
 
 	err := svc.SaveValues(context.Background(), "org", "org", "proj", "stripe", map[string]map[string]string{
-		"development": {"api_key": "sk_live_x", "region": "us"},
+		"default": {"api_key": "sk_live_x", "region": "us"},
 	})
 	if err != nil {
 		t.Fatalf("SaveValues: %v", err)
@@ -588,7 +588,7 @@ func TestSaveValues_ProvisionsAndClosesGate(t *testing.T) {
 	}
 	// Values split by schema: api_key → secret, region → plain. No secret leaks
 	// into the plain map.
-	ev := ext.byEnv["development"]
+	ev := ext.byEnv["default"]
 	if ev.Secret["api_key"] != "sk_live_x" || ev.Plain["region"] != "us" {
 		t.Fatalf("split-by-schema wrong: %+v", ev)
 	}
@@ -632,8 +632,8 @@ func TestProvision_PlatformIsAsync_LeftRunning(t *testing.T) {
 	if r == nil || r.Status != string(taskmeta.ExecRunning) {
 		t.Fatalf("platform provision run must be left running, got %+v", r)
 	}
-	if r.RunName != "o-orders-db-development" {
-		t.Fatalf("run must pin the development binding name, got %q", r.RunName)
+	if r.RunName != "o-orders-db-default" {
+		t.Fatalf("run must pin the default binding name, got %q", r.RunName)
 	}
 	if _, closed := issues.closed[11]; closed {
 		t.Fatalf("gate issue must stay open until the binding is ready")
@@ -657,7 +657,7 @@ func TestResourceWatcher_ReadyClosesGateAndReleases(t *testing.T) {
 	w.now = func() time.Time { return time.Unix(1000, 0).Add(time.Minute) }
 
 	// Binding not ready yet → watcher waits (run stays running, gate open).
-	bindings.byName["o-orders-db-development"] = &openchoreo.ResourceReleaseBinding{}
+	bindings.byName["o-orders-db-default"] = &openchoreo.ResourceReleaseBinding{}
 	if err := w.Sweep(context.Background()); err != nil {
 		t.Fatalf("Sweep (not ready): %v", err)
 	}
@@ -666,7 +666,7 @@ func TestResourceWatcher_ReadyClosesGateAndReleases(t *testing.T) {
 	}
 
 	// Binding goes Ready → watcher finishes the run, closes the gate (webhook + sweep release consumers).
-	bindings.byName["o-orders-db-development"] = readyBinding("host", "port")
+	bindings.byName["o-orders-db-default"] = readyBinding("host", "port")
 	if err := w.Sweep(context.Background()); err != nil {
 		t.Fatalf("Sweep (ready): %v", err)
 	}
@@ -682,7 +682,7 @@ func TestResourceWatcher_StaleFails(t *testing.T) {
 	gate := provisionGateIssue(11, "orders-db")
 	issues := newFakeIssues([]sourcecontrol.IssueInfo{gate})
 	execs := &fakeExecStore{}
-	bindings := &fakeBindings{byName: map[string]*openchoreo.ResourceReleaseBinding{"o-orders-db-development": {}}}
+	bindings := &fakeBindings{byName: map[string]*openchoreo.ResourceReleaseBinding{"o-orders-db-default": {}}}
 	svc := newTestService(issues, execs, fakeDesign{comps: designWithDeps()}, &fakeExtProv{}, &fakePlatProv{}, bindings)
 	if err := svc.Provision(context.Background(), "org", "proj", "orders-db", nil, nil); err != nil {
 		t.Fatalf("Provision: %v", err)
@@ -700,7 +700,7 @@ func TestResourceWatcher_StaleFails(t *testing.T) {
 
 func TestStatus_MasksOutputsToNames(t *testing.T) {
 	bindings := &fakeBindings{byName: map[string]*openchoreo.ResourceReleaseBinding{
-		"proj-orders-db-development": readyBinding("host", "port"),
+		"proj-orders-db-default": readyBinding("host", "port"),
 	}}
 	svc := newTestService(newFakeIssues(nil), &fakeExecStore{}, fakeDesign{}, &fakeExtProv{}, &fakePlatProv{}, bindings)
 	st, err := svc.Status(context.Background(), "org", "proj", "orders-db", "")
@@ -932,7 +932,7 @@ func TestSaveValues_WakesARunParkedOnTheDeployGate(t *testing.T) {
 	svc.SetValuesSavedNotifier(notifier)
 
 	if err := svc.SaveValues(context.Background(), "org", "org", "proj", "stripe",
-		map[string]map[string]string{"development": {"api_key": "sk", "region": "us"}}); err != nil {
+		map[string]map[string]string{"default": {"api_key": "sk", "region": "us"}}); err != nil {
 		t.Fatalf("SaveValues: %v", err)
 	}
 	if len(notifier.calls) != 1 || notifier.calls[0] != "org/proj" {
@@ -951,7 +951,7 @@ func TestSaveValues_AFailedWakeUpDoesNotFailTheSave(t *testing.T) {
 	svc.SetValuesSavedNotifier(notifier)
 
 	if err := svc.SaveValues(context.Background(), "org", "org", "proj", "stripe",
-		map[string]map[string]string{"development": {"api_key": "sk", "region": "us"}}); err != nil {
+		map[string]map[string]string{"default": {"api_key": "sk", "region": "us"}}); err != nil {
 		t.Fatalf("SaveValues must succeed despite a failed wake-up, got %v", err)
 	}
 }
@@ -969,7 +969,7 @@ func TestSaveValues_DoesNotWakeARunWhenProvisioningFails(t *testing.T) {
 	svc.SetValuesSavedNotifier(notifier)
 
 	if err := svc.SaveValues(context.Background(), "org", "org", "proj", "stripe",
-		map[string]map[string]string{"development": {"api_key": "sk", "region": "us"}}); err == nil {
+		map[string]map[string]string{"default": {"api_key": "sk", "region": "us"}}); err == nil {
 		t.Fatal("SaveValues must fail when the provision fails")
 	}
 	if len(notifier.calls) != 0 {
@@ -1030,7 +1030,7 @@ func TestSaveValues_DesignReadErrorFails(t *testing.T) {
 		fakeDesign{err: fmt.Errorf("boom")}, ext, &fakePlatProv{}, &fakeBindings{})
 
 	err := svc.SaveValues(context.Background(), "org", "org", "proj", "stripe",
-		map[string]map[string]string{"development": {"api_key": "sk_live_x"}})
+		map[string]map[string]string{"default": {"api_key": "sk_live_x"}})
 	if err == nil {
 		t.Fatal("SaveValues must return an error when the design cannot be read")
 	}
@@ -1060,13 +1060,13 @@ func TestSaveValues_UnionSecretAcrossComponents(t *testing.T) {
 		fakeDesign{comps: comps}, ext, &fakePlatProv{}, &fakeBindings{})
 
 	if err := svc.SaveValues(context.Background(), "org", "org", "proj", "stripe",
-		map[string]map[string]string{"development": {"api_key": "sk_live_x"}}); err != nil {
+		map[string]map[string]string{"default": {"api_key": "sk_live_x"}}); err != nil {
 		t.Fatalf("SaveValues: %v", err)
 	}
 	if ext.calls != 1 {
 		t.Fatalf("external provisioner must be called once, got %d", ext.calls)
 	}
-	ev := ext.byEnv["development"]
+	ev := ext.byEnv["default"]
 	if ev.Secret["api_key"] != "sk_live_x" {
 		t.Fatalf("api_key must be classified SECRET via the union (secret wins); got secret=%v plain=%v", ev.Secret, ev.Plain)
 	}
@@ -1087,7 +1087,7 @@ func TestSaveValues_AuthorsDefinitionFromDesign(t *testing.T) {
 		fakeDesign{comps: designWithDeps()}, ext, &fakePlatProv{}, &fakeBindings{}) // empty catalog
 
 	if err := svc.SaveValues(context.Background(), "org", "org", "proj", "stripe",
-		map[string]map[string]string{"development": {"api_key": "sk", "region": "us"}}); err != nil {
+		map[string]map[string]string{"default": {"api_key": "sk", "region": "us"}}); err != nil {
 		t.Fatalf("SaveValues must author from the design even with an empty catalog: %v", err)
 	}
 	if ext.lastER == nil || ext.lastER.Name != "stripe" {

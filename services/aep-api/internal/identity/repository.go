@@ -29,36 +29,45 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
-// Store is the persistence surface for the platform's record of the shared
-// directory objects it created.
+// Store is the persistence surface for the platform's record of the directory
+// objects it created on one environment's identity provider.
 //
-// Note what is NOT org-scoped here, deliberately, and against this codebase's
-// usual rule that every accessor carries an org filter: `idp_roles` and
-// `test_users` are directory objects, and the directory is shared at the IdP's
-// scope. Fencing them by org would model a per-org directory that does not
-// exist, and would make one org's ensure create a duplicate of a role another
-// org already made — the exact near-duplicate the design-time catalog exists to
-// prevent. `test_user_refs`, which IS project-scoped, carries the fence.
+// EVERY accessor takes a Scope, and the scope is a KEY, not a filter. The
+// objects are shared — two projects naming the same role mean the same role —
+// but only within the (org, environment) whose identity provider holds them: a
+// role on `acme/development` and a role of the same name on `acme/staging` are
+// two groups on two directories that share nothing, and an account minted on one
+// cannot sign in to the other. Reading without the scope would join rows across
+// directories that have no relationship at all.
+//
+// `test_user_refs` carries the project on top of the scope, because a reference
+// is the project-scoped statement "this account is this project's login for this
+// role" — the only project-scoped row this domain owns, and the one every panel
+// mutation is fenced by.
 type Store interface {
 	// -- roles ----------------------------------------------------------
 
-	// GetRole returns the platform's record of a role by name, or nil when the
-	// platform did not create it. A nil result is the ownership answer: the
-	// role may well exist on the directory, but it is not ours to modify.
-	GetRole(ctx context.Context, name string) (*IdPRole, error)
-	// ListRoles returns every role the platform created, name-ordered.
-	ListRoles(ctx context.Context) ([]IdPRole, error)
+	// GetRole returns the platform's record of a role on this scope's directory,
+	// or nil when the platform did not create it there. A nil result is the
+	// ownership answer: the role may well exist on that directory, but it is not
+	// ours to modify.
+	GetRole(ctx context.Context, scope Scope, name string) (*IdPRole, error)
+	// ListRoles returns every role the platform created on this scope's
+	// directory, name-ordered.
+	ListRoles(ctx context.Context, scope Scope) ([]IdPRole, error)
 	// UpsertRole records a role the platform created, or refreshes the cached
-	// Thunder group id after a membership edit recreated the group.
+	// Thunder group id after a membership edit recreated the group. The row
+	// carries its own scope.
 	UpsertRole(ctx context.Context, role IdPRole) error
 
 	// -- test users ------------------------------------------------------
 
-	// GetTestUser returns the platform's record of an account, or nil when the
-	// platform does not own it. As with GetRole, nil means hands off.
-	GetTestUser(ctx context.Context, username string) (*TestUser, error)
+	// GetTestUser returns the platform's record of an account on this scope's
+	// directory, or nil when the platform does not own it. As with GetRole, nil
+	// means hands off.
+	GetTestUser(ctx context.Context, scope Scope, username string) (*TestUser, error)
 	// UpsertTestUser records an account the platform created. The password is
-	// sealed on the way in.
+	// sealed on the way in. The row carries its own scope.
 	UpsertTestUser(ctx context.Context, user TestUser, password string) error
 	// UpdateTestUserFacts refreshes the directory id and role on an account the
 	// platform already owns, and touches NOTHING else — the sealed password
@@ -66,37 +75,37 @@ type Store interface {
 	// password purely to seal it again, which both decrypts a credential for no
 	// reason and fails the entire build for an account whose sealed password is
 	// missing.
-	UpdateTestUserFacts(ctx context.Context, username, thunderUserID, roleName string) error
+	UpdateTestUserFacts(ctx context.Context, scope Scope, username, thunderUserID, roleName string) error
 	// SetTestUserPassword seals and stores a rotated password, stamping
 	// rotated_at.
-	SetTestUserPassword(ctx context.Context, username, password string) error
+	SetTestUserPassword(ctx context.Context, scope Scope, username, password string) error
 	// RevealTestUserPassword opens the sealed password. Every caller is a
-	// deliberate disclosure — the validation credential vend, or the console's
-	// explicit reveal action.
-	RevealTestUserPassword(ctx context.Context, username string) (string, error)
+	// deliberate disclosure — the gate's publication, or the console's explicit
+	// reveal action.
+	RevealTestUserPassword(ctx context.Context, scope Scope, username string) (string, error)
 	// DeleteTestUser forgets an account and every reference to it.
-	DeleteTestUser(ctx context.Context, username string) error
+	DeleteTestUser(ctx context.Context, scope Scope, username string) error
 
 	// -- project references ----------------------------------------------
 
-	// ReplaceProjectRefs makes refs the complete set for this project, in one
-	// transaction. The ensure calls it with the plan it just made real, so a
-	// role dropped from a design stops being referenced — while the directory
-	// object itself stands, per the additive-only rule.
-	ReplaceProjectRefs(ctx context.Context, orgID, projectID string, refs []TestUserRef) error
-	// ListProjectRefs returns this project's references, role-ordered.
-	ListProjectRefs(ctx context.Context, orgID, projectID string) ([]TestUserRef, error)
-	// ProjectsReferencing returns THIS ORG's projects that reference an account
-	// — the console's "referencing projects" column. It is org-fenced even
-	// though the account itself is shared: a project name is one org's data,
-	// and the panel showing another org's project names would be a cross-tenant
-	// disclosure the shared directory does not license.
-	ProjectsReferencing(ctx context.Context, orgID, username string) ([]TestUserRef, error)
-	// CountReferencing returns how many projects reference an account IN TOTAL,
-	// across every org. A bare count, never names: it is what makes "others may
-	// still be using this" sayable before a delete, and it is the minimum
-	// disclosure that makes that warning true.
-	CountReferencing(ctx context.Context, username string) (int, error)
+	// ReplaceProjectRefs makes refs the complete set for this project ON THIS
+	// SCOPE, in one transaction. The ensure calls it with the plan it just made
+	// real, so a role dropped from a design stops being referenced — while the
+	// directory object itself stands, per the additive-only rule.
+	ReplaceProjectRefs(ctx context.Context, scope Scope, projectID string, refs []TestUserRef) error
+	// ListProjectRefs returns this project's references on this scope,
+	// role-ordered.
+	ListProjectRefs(ctx context.Context, scope Scope, projectID string) ([]TestUserRef, error)
+	// ProjectsReferencing returns the projects that reference an account — the
+	// console's "referencing projects" column, and the count behind the warning
+	// a delete carries.
+	//
+	// One query answers both, because the scope IS the disclosure boundary: an
+	// account exists on exactly one org's environment directory, so every project
+	// that can reference it belongs to that org. That was not true while a single
+	// identity provider served the cluster, which is why this used to be a
+	// name-returning read plus a bare cross-org count.
+	ProjectsReferencing(ctx context.Context, scope Scope, username string) ([]TestUserRef, error)
 }
 
 // ErrNoPassword is returned when an account's sealed password is absent — a row
@@ -115,49 +124,56 @@ func NewStore(db *gorm.DB, cipher *secrets.ColumnCipher) Store {
 	return &store{db: db, cipher: cipher}
 }
 
-func (s *store) GetRole(ctx context.Context, name string) (*IdPRole, error) {
+// scoped applies the (org, environment) key to a query. Every accessor below
+// starts here, so the key can never be half-applied at one call site.
+func (s *store) scoped(ctx context.Context, scope Scope) *gorm.DB {
+	return s.db.WithContext(ctx).Where("org_id = ? AND environment = ?", scope.OrgID, scope.Environment)
+}
+
+func (s *store) GetRole(ctx context.Context, scope Scope, name string) (*IdPRole, error) {
 	var row IdPRole
-	// Case-insensitive, matching how the rest of the platform compares role
-	// names: two names differing only in case are one role.
-	err := s.db.WithContext(ctx).Where("lower(name) = lower(?)", name).First(&row).Error
+	// Case-insensitive on the NAME, matching how the rest of the platform
+	// compares role names: two names differing only in case are one role. The
+	// scope halves are exact — they are identifiers, not prose.
+	err := s.scoped(ctx, scope).Where("lower(name) = lower(?)", name).First(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("get role %q: %w", name, err)
+		return nil, fmt.Errorf("get role %q on %s: %w", name, scope, err)
 	}
 	return &row, nil
 }
 
-func (s *store) ListRoles(ctx context.Context) ([]IdPRole, error) {
+func (s *store) ListRoles(ctx context.Context, scope Scope) ([]IdPRole, error) {
 	var rows []IdPRole
-	if err := s.db.WithContext(ctx).Order("name").Find(&rows).Error; err != nil {
-		return nil, fmt.Errorf("list roles: %w", err)
+	if err := s.scoped(ctx, scope).Order("name").Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("list roles on %s: %w", scope, err)
 	}
 	return rows, nil
 }
 
 func (s *store) UpsertRole(ctx context.Context, role IdPRole) error {
 	err := s.db.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "name"}},
+		Columns: []clause.Column{{Name: "org_id"}, {Name: "environment"}, {Name: "name"}},
 		// created_by_* are NOT updated: they record who first declared the role,
 		// and a second project adopting it does not take it over.
 		DoUpdates: clause.AssignmentColumns([]string{"thunder_group_id", "updated_at"}),
 	}).Create(&role).Error
 	if err != nil {
-		return fmt.Errorf("upsert role %q: %w", role.Name, err)
+		return fmt.Errorf("upsert role %q on %s: %w", role.Name, role.scope(), err)
 	}
 	return nil
 }
 
-func (s *store) GetTestUser(ctx context.Context, username string) (*TestUser, error) {
+func (s *store) GetTestUser(ctx context.Context, scope Scope, username string) (*TestUser, error) {
 	var row TestUser
-	err := s.db.WithContext(ctx).Where("username = ?", username).First(&row).Error
+	err := s.scoped(ctx, scope).Where("username = ?", username).First(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("get test user %q: %w", username, err)
+		return nil, fmt.Errorf("get test user %q on %s: %w", username, scope, err)
 	}
 	return &row, nil
 }
@@ -169,46 +185,46 @@ func (s *store) UpsertTestUser(ctx context.Context, user TestUser, password stri
 	}
 	user.PasswordSealed = sealed
 	err = s.db.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "username"}},
+		Columns:   []clause.Column{{Name: "org_id"}, {Name: "environment"}, {Name: "username"}},
 		DoUpdates: clause.AssignmentColumns([]string{"thunder_user_id", "role_name", "password_sealed", "email"}),
 	}).Create(&user).Error
 	if err != nil {
-		return fmt.Errorf("upsert test user %q: %w", user.Username, err)
+		return fmt.Errorf("upsert test user %q on %s: %w", user.Username, user.scope(), err)
 	}
 	return nil
 }
 
-func (s *store) UpdateTestUserFacts(ctx context.Context, username, thunderUserID, roleName string) error {
-	res := s.db.WithContext(ctx).Model(&TestUser{}).Where("username = ?", username).
+func (s *store) UpdateTestUserFacts(ctx context.Context, scope Scope, username, thunderUserID, roleName string) error {
+	res := s.scoped(ctx, scope).Model(&TestUser{}).Where("username = ?", username).
 		Updates(map[string]any{"thunder_user_id": thunderUserID, "role_name": roleName})
 	if res.Error != nil {
-		return fmt.Errorf("update facts for %q: %w", username, res.Error)
+		return fmt.Errorf("update facts for %q on %s: %w", username, scope, res.Error)
 	}
 	if res.RowsAffected == 0 {
-		return fmt.Errorf("update facts for %q: no such account", username)
+		return fmt.Errorf("update facts for %q on %s: no such account", username, scope)
 	}
 	return nil
 }
 
-func (s *store) SetTestUserPassword(ctx context.Context, username, password string) error {
+func (s *store) SetTestUserPassword(ctx context.Context, scope Scope, username, password string) error {
 	sealed, err := s.seal(password)
 	if err != nil {
 		return err
 	}
 	now := time.Now().UTC()
-	res := s.db.WithContext(ctx).Model(&TestUser{}).Where("username = ?", username).
+	res := s.scoped(ctx, scope).Model(&TestUser{}).Where("username = ?", username).
 		Updates(map[string]any{"password_sealed": sealed, "rotated_at": now})
 	if res.Error != nil {
-		return fmt.Errorf("set password for %q: %w", username, res.Error)
+		return fmt.Errorf("set password for %q on %s: %w", username, scope, res.Error)
 	}
 	if res.RowsAffected == 0 {
-		return fmt.Errorf("set password for %q: no such account", username)
+		return fmt.Errorf("set password for %q on %s: no such account", username, scope)
 	}
 	return nil
 }
 
-func (s *store) RevealTestUserPassword(ctx context.Context, username string) (string, error) {
-	row, err := s.GetTestUser(ctx, username)
+func (s *store) RevealTestUserPassword(ctx context.Context, scope Scope, username string) (string, error) {
+	row, err := s.GetTestUser(ctx, scope, username)
 	if err != nil {
 		return "", err
 	}
@@ -222,73 +238,69 @@ func (s *store) RevealTestUserPassword(ctx context.Context, username string) (st
 	// the validation runner would then dutifully type into a login form.
 	plain, err := s.cipher.Open(row.PasswordSealed)
 	if err != nil {
-		return "", fmt.Errorf("open password for %q: %w", username, err)
+		return "", fmt.Errorf("open password for %q on %s: %w", username, scope, err)
 	}
 	return string(plain), nil
 }
 
-func (s *store) DeleteTestUser(ctx context.Context, username string) error {
+func (s *store) DeleteTestUser(ctx context.Context, scope Scope, username string) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("username = ?", username).Delete(&TestUserRef{}).Error; err != nil {
-			return fmt.Errorf("delete refs for %q: %w", username, err)
+		where := func() *gorm.DB {
+			return tx.Where("org_id = ? AND environment = ? AND username = ?",
+				scope.OrgID, scope.Environment, username)
 		}
-		if err := tx.Where("username = ?", username).Delete(&TestUser{}).Error; err != nil {
-			return fmt.Errorf("delete test user %q: %w", username, err)
+		if err := where().Delete(&TestUserRef{}).Error; err != nil {
+			return fmt.Errorf("delete refs for %q on %s: %w", username, scope, err)
+		}
+		if err := where().Delete(&TestUser{}).Error; err != nil {
+			return fmt.Errorf("delete test user %q on %s: %w", username, scope, err)
 		}
 		return nil
 	})
 }
 
-func (s *store) ReplaceProjectRefs(ctx context.Context, orgID, projectID string, refs []TestUserRef) error {
+func (s *store) ReplaceProjectRefs(ctx context.Context, scope Scope, projectID string, refs []TestUserRef) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("org_id = ? AND project_id = ?", orgID, projectID).
+		if err := tx.Where("org_id = ? AND environment = ? AND project_id = ?",
+			scope.OrgID, scope.Environment, projectID).
 			Delete(&TestUserRef{}).Error; err != nil {
-			return fmt.Errorf("clear refs for %s/%s: %w", orgID, projectID, err)
+			return fmt.Errorf("clear refs for %s/%s: %w", scope, projectID, err)
 		}
 		if len(refs) == 0 {
 			return nil
 		}
 		now := time.Now().UTC()
 		for i := range refs {
-			refs[i].OrgID = orgID
+			refs[i].OrgID = scope.OrgID
+			refs[i].Environment = scope.Environment
 			refs[i].ProjectID = projectID
 			refs[i].UpdatedAt = now
 		}
 		if err := tx.Create(&refs).Error; err != nil {
-			return fmt.Errorf("write refs for %s/%s: %w", orgID, projectID, err)
+			return fmt.Errorf("write refs for %s/%s: %w", scope, projectID, err)
 		}
 		return nil
 	})
 }
 
-func (s *store) ListProjectRefs(ctx context.Context, orgID, projectID string) ([]TestUserRef, error) {
+func (s *store) ListProjectRefs(ctx context.Context, scope Scope, projectID string) ([]TestUserRef, error) {
 	var rows []TestUserRef
-	err := s.db.WithContext(ctx).
-		Where("org_id = ? AND project_id = ?", orgID, projectID).
+	err := s.scoped(ctx, scope).Where("project_id = ?", projectID).
 		Order("role_name, username").Find(&rows).Error
 	if err != nil {
-		return nil, fmt.Errorf("list refs for %s/%s: %w", orgID, projectID, err)
+		return nil, fmt.Errorf("list refs for %s/%s: %w", scope, projectID, err)
 	}
 	return rows, nil
 }
 
-func (s *store) ProjectsReferencing(ctx context.Context, orgID, username string) ([]TestUserRef, error) {
+func (s *store) ProjectsReferencing(ctx context.Context, scope Scope, username string) ([]TestUserRef, error) {
 	var rows []TestUserRef
-	err := s.db.WithContext(ctx).Where("org_id = ? AND username = ?", orgID, username).
+	err := s.scoped(ctx, scope).Where("username = ?", username).
 		Order("project_id").Find(&rows).Error
 	if err != nil {
-		return nil, fmt.Errorf("list projects referencing %q: %w", username, err)
+		return nil, fmt.Errorf("list projects referencing %q on %s: %w", username, scope, err)
 	}
 	return rows, nil
-}
-
-func (s *store) CountReferencing(ctx context.Context, username string) (int, error) {
-	var n int64
-	if err := s.db.WithContext(ctx).Model(&TestUserRef{}).
-		Where("username = ?", username).Count(&n).Error; err != nil {
-		return 0, fmt.Errorf("count projects referencing %q: %w", username, err)
-	}
-	return int(n), nil
 }
 
 // seal encrypts a password for storage. An empty password seals to empty, which

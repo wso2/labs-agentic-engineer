@@ -1,0 +1,23 @@
+# The Content Security Policy — a platform-COMPOSED singleton, not an AEP
+# document.
+#
+# The IdP has ONE `csp` server_config, and it governs what the browser will load
+# on the IdP's own `/gate/` and `/console/` pages — fonts, images, XHR targets.
+# A redeclaration replaces it wholesale, so a publisher that ships its own would
+# silently remove every directive the other relies on, and the failure is a
+# blank sign-in page with the reason only in the browser's console.
+#
+# So the platform owns the last word. `setup-thunder.sh` reads Agent Manager's
+# declaration (73-amp-csp-config.yaml) out of the rendered chart and writes its
+# VALUE into this document, which sorts after it and is therefore the one that
+# lands. The value is Agent Manager's unchanged: the platform composes
+# ownership, not policy. AEP publishes no CSP directives of its own — the AEP
+# console is a separate origin and is not served by the IdP.
+#
+# If Agent Manager's chart ever stops declaring one, this document is dropped
+# from the bundle rather than imported with a policy the platform invented.
+#
+# `value:` is filled in at install time; it is never imported as written here.
+resource_type: server_config
+name: csp
+value: null

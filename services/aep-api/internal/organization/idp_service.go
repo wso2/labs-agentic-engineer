@@ -89,9 +89,10 @@ type IDPService interface {
 	// Audit-logged.
 	//
 	// Operator follow-up: after this call, the platform admin must
-	// ensure the new IDP's keymanager is registered in
-	// deployments/manifests/api-platform/gateway-config.yaml's
-	// jwtauth_v1 block, then re-run setup-prerequisites. Keymanager
+	// ensure the new IDP's keymanager is registered on the gateway of
+	// EVERY environment the org deploys to — the `jwtauth_v1` keymanagers
+	// of each `api-platform-<org>-<env>` release
+	// (deployments/scripts/setup-environment-gateway.sh). Keymanager
 	// registration is a manual ops step.
 	UpdateProfile(ctx context.Context, orgID, actor string, req UpdateProfileRequest) (*OrganizationIDPProfile, error)
 

@@ -91,7 +91,10 @@ func TestGetBuildLogs_UsesTheWorkflowScopeOnTheQueryEndpoint(t *testing.T) {
 }
 
 func TestGetBuildLogs_SinceNarrowsTheWindow(t *testing.T) {
-	since := time.Date(2026, 8, 6, 9, 0, 0, 0, time.UTC)
+	// Relative to the clock: the window opens at now-defaultLookback, so a fixed
+	// date would fall outside it as soon as the calendar moved on. Truncated to
+	// seconds because the request carries RFC3339 without fractions.
+	since := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
 	var got capturedQuery
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got = decodeQuery(t, r)
@@ -104,6 +107,20 @@ func TestGetBuildLogs_SinceNarrowsTheWindow(t *testing.T) {
 	}
 	if got.StartTime != since.Format(time.RFC3339) {
 		t.Fatalf("startTime = %q, want %q", got.StartTime, since.Format(time.RFC3339))
+	}
+
+	// A since older than the lookback does not widen the window: the start is
+	// clamped to now-defaultLookback rather than honoured.
+	tooOld := since.Add(-2 * defaultLookback)
+	if _, err := NewClient(srv.URL).GetBuildLogs(context.Background(), "acme", "shop", "web", "run-1", tooOld); err != nil {
+		t.Fatalf("GetBuildLogs: %v", err)
+	}
+	start, err := time.Parse(time.RFC3339, got.StartTime)
+	if err != nil {
+		t.Fatalf("startTime %q is not RFC3339: %v", got.StartTime, err)
+	}
+	if start.Before(tooOld.Add(defaultLookback)) || time.Since(start) > defaultLookback+time.Minute {
+		t.Fatalf("startTime = %q: an over-old since must be clamped to now-%s", got.StartTime, defaultLookback)
 	}
 }
 
@@ -133,13 +150,13 @@ func TestQueryComponentLogs_UsesTheComponentScope(t *testing.T) {
 
 	from := time.Date(2026, 8, 6, 10, 0, 0, 0, time.UTC)
 	lines, err := NewClient(srv.URL).QueryComponentLogs(context.Background(), ComponentLogQuery{
-		Namespace: "acme", Project: "shop", Component: "shop-ca-abc", Environment: "development",
+		Namespace: "acme", Project: "shop", Component: "shop-ca-abc", Environment: "default",
 		From: from, To: from.Add(time.Hour),
 	})
 	if err != nil {
 		t.Fatalf("QueryComponentLogs: %v", err)
 	}
-	if got.SearchScope.Component != "shop-ca-abc" || got.SearchScope.Environment != "development" {
+	if got.SearchScope.Component != "shop-ca-abc" || got.SearchScope.Environment != "default" {
 		t.Fatalf("unexpected scope: %+v", got.SearchScope)
 	}
 	if got.SearchScope.WorkflowRunName != "" {
@@ -176,7 +193,7 @@ func TestQueryComponentLogs_PagesByAdvancingTheWindow(t *testing.T) {
 
 	from := time.Date(2026, 8, 6, 10, 0, 0, 0, time.UTC)
 	lines, err := NewClient(srv.URL).QueryComponentLogs(context.Background(), ComponentLogQuery{
-		Namespace: "acme", Project: "shop", Component: "shop-ca-abc", Environment: "development",
+		Namespace: "acme", Project: "shop", Component: "shop-ca-abc", Environment: "default",
 		From: from, To: from.Add(2 * time.Hour),
 	})
 	if err != nil {

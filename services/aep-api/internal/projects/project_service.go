@@ -62,6 +62,22 @@ type Service struct {
 	specTurns      specTurnRows          // spec stage: newest agent turn (status_stages.go); may be nil
 	runAbandoner   runAbandoner          // run-supervisor teardown on delete; may be nil
 	kickoff        kickoffStarter        // fires `/start` on create (#562); may be nil
+	cells          projectCellProvisioner // per-environment cell namespaces; may be nil
+}
+
+// projectCellProvisioner authors the ProjectReleaseBinding that gives a new
+// project its cell namespace in each environment its pipeline promotes
+// through. openchoreo.ProjectCellClient satisfies it.
+//
+// This is not an optional nicety. From OpenChoreo 1.2.0 creating a Project only
+// cuts a ProjectRelease — nothing is materialized in a data plane until a
+// binding pins that release to an environment. A project without one reports
+// Created=True and Ready=True and then fails every component deploy with
+// "namespace ... not found", so CreateProject treats a failure here as fatal
+// and compensates, rather than leaving that trap behind.
+type projectCellProvisioner interface {
+	PipelineEnvironments(ctx context.Context, namespace, pipelineName string) ([]string, error)
+	EnsureProjectReleaseBinding(ctx context.Context, namespace, projectName, environment string) error
 }
 
 // runAbandoner is project_service's narrow consumer port for the run-supervisor
@@ -145,6 +161,13 @@ func (s *Service) SetSkillMirror(m skillMirror) { s.skillMirrorSvc = m }
 // its spec card offers the kickoff as a CTA.
 func (s *Service) SetKickoffStarter(k kickoffStarter) { s.kickoff = k }
 
+// SetProjectCellProvisioner wires cell-namespace provisioning. Unlike the
+// setters above, a nil provisioner is NOT a benign no-op: every project created
+// while it is unset will be undeployable. CreateProject logs that at ERROR
+// rather than failing, because refusing to create projects at all would be the
+// worse failure — but a cluster in that state is misconfigured.
+func (s *Service) SetProjectCellProvisioner(c projectCellProvisioner) { s.cells = c }
+
 func NewProjectService(
 	client openchoreo.ProjectClient,
 	repoSvc sourcecontrol.RepoService,
@@ -212,6 +235,27 @@ func (s *Service) CreateProject(ctx context.Context, orgName string, req *gen.Cr
 	project, err := s.client.CreateProject(ctx, orgName, req)
 	if err != nil {
 		return nil, translateHTTPError(err)
+	}
+
+	// Give the project its cell namespace in every environment its pipeline
+	// promotes through, before anything else is attached to it.
+	//
+	// FATAL, and compensating — the only other failure in this function that is
+	// (the repo-name conflict below). Both share a shape: retrying the create
+	// cannot fix them, because OpenChoreo now answers 409. Leaving the project
+	// in place instead would leave a project that looks healthy in every status
+	// it reports and cannot deploy a single component.
+	if s.cells != nil {
+		if cellErr := s.provisionProjectCells(ctx, orgName, project.Name, project.DeploymentPipeline); cellErr != nil {
+			if delErr := s.client.DeleteProject(ctx, orgName, project.Name); delErr != nil {
+				slog.ErrorContext(ctx, "failed to compensate project after cell provisioning failure",
+					"project", project.Name, "error", delErr)
+			}
+			return nil, cellErr
+		}
+	} else {
+		slog.ErrorContext(ctx, "project cell provisioner not wired — project will have no cell namespace and cannot deploy",
+			"org", orgName, "project", project.Name)
 	}
 
 	// Eagerly provision the org's shared skills repo (+ seed built-ins) so the
@@ -507,4 +551,34 @@ func translateHTTPError(err error) error {
 		return ErrForbidden
 	}
 	return err
+}
+
+// provisionProjectCells creates the ProjectReleaseBinding for each environment
+// the project's deployment pipeline promotes through. Idempotent per
+// environment, so a partially-applied earlier attempt converges rather than
+// conflicting.
+//
+// A project with no resolvable pipeline is an error, not an empty list: the
+// caller compensates on error, and silently returning "zero environments" would
+// turn a misconfigured pipeline into the exact undeployable project this whole
+// path exists to prevent.
+func (s *Service) provisionProjectCells(ctx context.Context, orgName, projectName, pipelineName string) error {
+	if pipelineName == "" {
+		return fmt.Errorf("project %q has no deployment pipeline, cannot provision cell namespaces", projectName)
+	}
+	envs, err := s.cells.PipelineEnvironments(ctx, orgName, pipelineName)
+	if err != nil {
+		return fmt.Errorf("resolve environments for pipeline %q: %w", pipelineName, err)
+	}
+	if len(envs) == 0 {
+		return fmt.Errorf("deployment pipeline %q promotes through no environments", pipelineName)
+	}
+	for _, env := range envs {
+		if bindErr := s.cells.EnsureProjectReleaseBinding(ctx, orgName, projectName, env); bindErr != nil {
+			return fmt.Errorf("provision cell namespace for %q in %q: %w", projectName, env, bindErr)
+		}
+	}
+	slog.InfoContext(ctx, "project cell namespaces provisioned",
+		"org", orgName, "project", projectName, "environments", envs)
+	return nil
 }

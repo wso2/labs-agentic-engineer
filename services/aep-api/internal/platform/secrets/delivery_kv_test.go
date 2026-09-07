@@ -174,3 +174,99 @@ func TestDeliveryKV_Put_RejectsEmptyOrAbsolutePath(t *testing.T) {
 		t.Errorf("vault was hit %d times; want 0 for rejected paths", hits)
 	}
 }
+
+// Get is the ONE read on this helper, and it exists for the environment-tier
+// Thunder binding: aep-api runs outside the cluster, so the admin credential
+// for an environment's identity provider reaches it only through OpenBao.
+func TestDeliveryKV_Get_ReadsTheKVv2Fields(t *testing.T) {
+	var gotPath, gotToken string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotToken = r.URL.Path, r.Header.Get("X-Vault-Token")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"data":{"clientId":"aep-system-client","clientSecret":"s3cret"},` +
+			`"metadata":{"version":1}}}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	kv, err := NewDeliveryKV(srv.URL, "test-token", "secret")
+	if err != nil {
+		t.Fatalf("NewDeliveryKV: %v", err)
+	}
+
+	got, err := kv.Get(context.Background(), "aep/thunder/acme/default")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if gotPath != "/v1/secret/data/aep/thunder/acme/default" {
+		t.Errorf("request path = %q", gotPath)
+	}
+	if gotToken != "test-token" {
+		t.Errorf("token header = %q", gotToken)
+	}
+	if got["clientId"] != "aep-system-client" || got["clientSecret"] != "s3cret" {
+		t.Fatalf("fields = %#v; want the credential's two keys", got)
+	}
+}
+
+// A path with no secret is (nil, nil): absence is an answer the caller branches
+// on — "this environment's binding was never written" — not a failure to retry.
+func TestDeliveryKV_Get_AbsentIsNotAnError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"errors":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	kv, err := NewDeliveryKV(srv.URL, "test-token", "secret")
+	if err != nil {
+		t.Fatalf("NewDeliveryKV: %v", err)
+	}
+	got, err := kv.Get(context.Background(), "aep/thunder/acme/nowhere")
+	if err != nil {
+		t.Fatalf("an absent secret must not be an error: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("fields = %#v; want nil", got)
+	}
+}
+
+// A KV-v1 mount answers without the "data" wrap. Read as v2 it would yield an
+// empty map and the caller would report a missing credential with no cause, so
+// the shape is checked rather than assumed.
+func TestDeliveryKV_Get_RejectsANonKVv2Shape(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"clientId":"aep-system-client"}}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	kv, err := NewDeliveryKV(srv.URL, "test-token", "secret")
+	if err != nil {
+		t.Fatalf("NewDeliveryKV: %v", err)
+	}
+	if _, err := kv.Get(context.Background(), "aep/thunder/acme/default"); err == nil {
+		t.Fatal("a KV-v1 response was read as KV-v2")
+	}
+}
+
+// The error names neither the value nor the token — this helper's whole error
+// discipline, and the read must not be the one path that breaks it.
+func TestDeliveryKV_Get_ErrorCarriesNoSecretMaterial(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"errors":["something with the token test-token in it"]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	kv, err := NewDeliveryKV(srv.URL, "test-token", "secret")
+	if err != nil {
+		t.Fatalf("NewDeliveryKV: %v", err)
+	}
+	_, err = kv.Get(context.Background(), "aep/thunder/acme/default")
+	if err == nil {
+		t.Fatal("a 500 must be an error")
+	}
+	if strings.Contains(err.Error(), "test-token") {
+		t.Fatalf("the error echoes the auth token: %v", err)
+	}
+}

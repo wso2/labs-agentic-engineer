@@ -40,6 +40,27 @@ compile error, not a runtime surprise.
   freshness gate; the console's `apps/console/src/generated/` is gitignored and
   regenerated as a build prestep.
 
+## Identity and gateways
+
+The cluster runs **two identity tiers**, and both are platform infrastructure
+rather than one product's. One **platform IdP** (`platform-idp`) is OpenChoreo's
+configured issuer and backs platform sign-in; one **environment Thunder**
+(`thunder-<org>-<env>`) per `(org, environment)` holds what belongs to what is
+deployed there — generated apps' end-user identity, and a version's roles and
+test users. Each environment also has its own API Platform gateway
+(`api-platform-<org>-<env>`), whose only keymanager is that environment's
+Thunder, so a managed API's authentication is terminated against the identity
+its deployment actually uses.
+
+Nothing derives an issuer from a name: each environment carries a **binding
+record** naming its instance, and the operator, `aep-api`, the gateway installer
+and the verifier all read it. Topology, publisher contract and lifecycle:
+[`deployments/design/two-tier-thunder.md`](../deployments/design/two-tier-thunder.md);
+decisions
+[ADR-0027](decisions/ADR-0027-one-cluster-one-platform-idp.md),
+[ADR-0028](decisions/ADR-0028-the-platform-idp-is-neutral-infrastructure.md),
+[ADR-0029](decisions/ADR-0029-environment-identity-is-bound-by-a-record.md).
+
 ## Codegen pipeline
 
 ```

@@ -137,6 +137,8 @@ spec:
                   key: THUNDER_ADMIN_URL
             - name: THUNDER_SYSTEM_CLIENT_ID
               value: "aep-system-client"
+            - name: THUNDER_SYSTEM_RESOURCE_IDENTIFIER
+              value: {{ .Values.thunder.systemResourceIdentifier | default (printf "%s/mcp" .Values.console.thunderPublicURL) | quote }}
             - name: AGENTS_SVC_BASE_URL
               value: "http://aep-agents.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.aepAgents.port }}"
             - name: AGENT_PLATFORM_URL

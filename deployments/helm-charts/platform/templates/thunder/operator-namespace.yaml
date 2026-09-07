@@ -1,0 +1,16 @@
+{{- if not .Values.localSecrets.enabled }}
+# Namespace for the thunder-app-operator. The operator carries no Thunder
+# credentials of its own: it resolves the Thunder for each ThunderApplication
+# from that (org, environment)'s binding record — a ConfigMap labelled
+# aep.wso2.com/kind=thunder-binding plus a Secret of the same name mirrored into
+# this namespace by deployments/scripts/setup-environment-thunder.sh. Creating
+# the namespace in the platform chart (rather than as an addon PreManifest)
+# means the mirror can land before the addon installs the operator.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: thunder-app-operator-system
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/part-of: wso2-agentic-engineer
+{{- end }}

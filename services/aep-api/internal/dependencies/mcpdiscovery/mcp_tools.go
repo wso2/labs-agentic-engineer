@@ -378,7 +378,9 @@ func handleToolCall(w http.ResponseWriter, r *http.Request, h *mcpHandler, orgHa
 			writeToolText(w, req.ID, mustJSON(map[string]any{"roles": []any{}}))
 			return
 		}
-		roles, err := h.roles.ListRoleCatalog(r.Context())
+		// orgHandle is the verified ocOrgId claim: the catalog belongs to that
+		// org's environment directory, and no tool argument may choose it.
+		roles, err := h.roles.ListRoleCatalog(r.Context(), orgHandle)
 		if err != nil {
 			writeToolError(w, req.ID, fmt.Sprintf("list roles: %v", err))
 			return

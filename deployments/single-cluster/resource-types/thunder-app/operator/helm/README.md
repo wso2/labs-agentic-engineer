@@ -2,8 +2,9 @@
 
 Installs the **thunder-app-operator**: a Kubernetes operator that reconciles
 `aep.wso2.com/v1alpha1` `ThunderApplication` custom resources into OAuth2
-clients on the platform Thunder IdP, publishing each assigned `client_id` back
-into the cluster as a `<cr-name>-oauth` ConfigMap.
+clients on the Thunder instance that serves each CR's (organization,
+environment), publishing the assigned `client_id` and that instance's issuer
+back into the cluster as a `<cr-name>-oauth` ConfigMap.
 
 Single replica, leader election off (see `main.go` in the operator module one
 level up).
@@ -60,11 +61,31 @@ Helm installs everything under `crds/` before the templated resources and never
 deletes or upgrades it on `helm upgrade`; bumping the CRD schema requires a
 manual `kubectl apply` of the regenerated file.
 
-## Credentials
+## Bindings — the operator's only configuration
 
-The operator authenticates to Thunder as a system OAuth2 client
-(`client_credentials`, `scope=system`). By default the chart creates a Secret
-from `thunder.systemClientID` / `thunder.systemClientSecret`, whose defaults are
-the **local-dev** `aep-system-client` credentials. **Real clusters must
-override these** (or point `thunder.existingSecret` at an externally managed
-Secret with `client-id` / `client-secret` keys). See `values.yaml`.
+The chart configures no Thunder. There is no single instance to configure: an
+environment has its own Thunder, and the operator resolves the target per CR at
+reconcile time from that environment's **binding record**, written by
+`deployments/scripts/setup-environment-thunder.sh <org> <env>`:
+
+| half | where | what the operator reads |
+|---|---|---|
+| ConfigMap labelled `aep.wso2.com/kind=thunder-binding`, `aep.wso2.com/org=<org>`, `aep.wso2.com/env=<env>` | that environment's Thunder namespace | `issuer`, `adminURL`, `systemResourceIdentifier`, `secretName`, `secretNamespace` |
+| Secret named by the ConfigMap's `secretName` | **mirrored into this release's namespace** | `client-id`, `client-secret` |
+
+The ConfigMap is selected by label, never by name. The Secret must be in this
+release's namespace: the operator's Secret informer and its RBAC are both
+namespace-scoped on purpose (`templates/rbac.yaml`), so a credential reaches it
+only by being mirrored there.
+
+A CR is matched to a binding by the labels OpenChoreo's
+renderedrelease-controller stamps on it — `openchoreo.dev/namespace` (the
+organization) and `openchoreo.dev/environment`. With no matching binding the CR
+reports `status.ready=false` and a message naming the labels it looked for, and
+reconciles as soon as the record appears (both halves are watched).
+
+The operator authenticates to each instance as a system OAuth2 client
+(`client_credentials`, `scope=system`, with the binding's
+`systemResourceIdentifier` sent as the `resource` indicator) and keeps one
+client per (org, environment). Rotating a binding credential replaces that
+client on the next pass.

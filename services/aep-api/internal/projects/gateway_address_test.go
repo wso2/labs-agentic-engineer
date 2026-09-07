@@ -47,34 +47,65 @@ func designFile(t *testing.T, body string) *spec.DesignFile {
 func TestAPIGatewayContextPath(t *testing.T) {
 	t.Parallel()
 
-	got := APIGatewayContextPath("development", "default", "track-each-hire41-onboarding-api", "http")
-	const want = "/development-default-track-each-hire41-onboarding-api-http"
+	got := APIGatewayContextPath("default", "default", "track-each-hire41-onboarding-api", "http")
+	const want = "/default-default-track-each-hire41-onboarding-api-http"
 	if got != want {
 		t.Fatalf("context path\n got %q\nwant %q", got, want)
 	}
 
 	// An endpoint the design left unnamed defaults to "http", the same default
 	// the workload and the trait both fall back to.
-	if got := APIGatewayContextPath("development", "default", "proj-api", ""); got != "/development-default-proj-api-http" {
+	if got := APIGatewayContextPath("default", "default", "proj-api", ""); got != "/default-default-proj-api-http" {
 		t.Fatalf("default endpoint name: got %q", got)
 	}
 }
 
-// TestDefaultAPIGatewayHostIsFullyQualified guards a failure that only shows up
-// in a cluster. The consumer of this address is nginx, whose `resolver` queries
-// the name verbatim and does NOT apply /etc/resolv.conf search domains — so the
+// TestAPIGatewayHost pins the derivation against the three places that must
+// agree with it: the api-configuration ClusterTrait's Backend host (and its
+// RestApi label, the same <org>-<env> pair), the gateway extension chart's
+// APIGateway / runtime-Service naming, and setup-environment-gateway.sh.
+//
+// Two environments of one org must NOT collapse onto one address: that is the
+// whole point of a per-environment gateway, and the failure if they did would be
+// an environment's traffic authenticated against a sibling environment's
+// identity tier.
+func TestAPIGatewayHost(t *testing.T) {
+	t.Parallel()
+
+	const want = "api-platform-default-default-gw-gateway-gateway-runtime." +
+		"default-default.svc.cluster.local:22893"
+	if got := APIGatewayHost("default", "default"); got != want {
+		t.Fatalf("derived host\n got %q\nwant %q", got, want)
+	}
+	if a, b := APIGatewayHost("acme", "default"), APIGatewayHost("acme", "staging"); a == b {
+		t.Fatalf("two environments must not share a gateway address, both %q", a)
+	}
+
+	// A missing half yields nothing, not a name with a hole in it: no address
+	// leaves the consumer on the direct lane, a wrong one 502s every call.
+	for _, c := range []struct{ ns, env string }{{"", "default"}, {"default", ""}, {"", ""}} {
+		if got := APIGatewayHost(c.ns, c.env); got != "" {
+			t.Errorf("APIGatewayHost(%q, %q) = %q, want empty", c.ns, c.env, got)
+		}
+	}
+}
+
+// TestAPIGatewayHostIsFullyQualified guards a failure that only shows up in a
+// cluster. The consumer of this address is nginx, whose `resolver` queries the
+// name verbatim and does NOT apply /etc/resolv.conf search domains — so the
 // `<service>.<namespace>` short form the api-configuration trait uses resolves
 // for getaddrinfo inside the very same pod and is NXDOMAIN for nginx. The
 // symptom is a 502 on every /api call, which reads like the API being down.
-func TestDefaultAPIGatewayHostIsFullyQualified(t *testing.T) {
+func TestAPIGatewayHostIsFullyQualified(t *testing.T) {
 	t.Parallel()
 
-	host, _, found := strings.Cut(DefaultAPIGatewayHost, ":")
-	if !found {
-		t.Fatalf("default gateway host must carry a port: %q", DefaultAPIGatewayHost)
+	derived := APIGatewayHost("default", "default")
+	host, port, found := strings.Cut(derived, ":")
+	if !found || port == "" {
+		t.Fatalf("gateway host must carry a port: %q", derived)
 	}
 	if !strings.HasSuffix(host, ".svc.cluster.local") {
-		t.Fatalf("default gateway host must be fully qualified for nginx's resolver, got %q", host)
+		t.Fatalf("gateway host must be fully qualified for nginx's resolver, got %q", host)
 	}
 }
 
@@ -128,33 +159,51 @@ func TestGatewayEnvVars(t *testing.T) {
 	t.Parallel()
 
 	sibs := []ProtectedSibling{{DepName: "onboarding-api", ComponentName: "track-each-hire41-onboarding-api", EndpointName: "http"}}
-	got := GatewayEnvVars(DefaultAPIGatewayHost, "development", "default", sibs)
+
+	// No override: the address is DERIVED from (namespace, environment), so the
+	// same component in two environments is published two different gateways.
+	got := GatewayEnvVars("", "default", "default", sibs)
 	if len(got) != 1 {
 		t.Fatalf("want one env var, got %+v", got)
 	}
 	if got[0].Key != "ONBOARDING_API_GATEWAY_URL" {
 		t.Fatalf("env key: got %q", got[0].Key)
 	}
-	const wantVal = "http://" + DefaultAPIGatewayHost + "/development-default-track-each-hire41-onboarding-api-http"
+	wantVal := "http://" + APIGatewayHost("default", "default") +
+		"/default-default-track-each-hire41-onboarding-api-http"
 	if got[0].Value != wantVal {
 		t.Fatalf("env value\n got %q\nwant %q", got[0].Value, wantVal)
 	}
 
+	// The override WINS over the derivation — the escape hatch for a data plane
+	// that names its gateway differently.
+	pinned := GatewayEnvVars("gw.example:9000", "default", "default", sibs)
+	if len(pinned) != 1 {
+		t.Fatalf("want one env var, got %+v", pinned)
+	}
+	const wantPinned = "http://gw.example:9000/default-default-track-each-hire41-onboarding-api-http"
+	if pinned[0].Value != wantPinned {
+		t.Fatalf("override must win\n got %q\nwant %q", pinned[0].Value, wantPinned)
+	}
+
 	// Every missing input independently yields nothing rather than a malformed
 	// address: a half-formed gateway URL would send the SPA somewhere that 404s,
-	// which is harder to diagnose than staying on the direct lane.
+	// which is harder to diagnose than staying on the direct lane. Without an
+	// override a missing namespace or environment leaves the derivation with no
+	// answer, which is the same nil.
 	for _, c := range []struct {
-		name          string
-		host, env, ns string
-		sibs          []ProtectedSibling
+		name              string
+		override, env, ns string
+		sibs              []ProtectedSibling
 	}{
-		{"no host", "", "development", "default", sibs},
-		{"no environment", DefaultAPIGatewayHost, "", "default", sibs},
-		{"no namespace", DefaultAPIGatewayHost, "development", "", sibs},
-		{"no siblings", DefaultAPIGatewayHost, "development", "default", nil},
-		{"sibling missing component", DefaultAPIGatewayHost, "development", "default", []ProtectedSibling{{DepName: "x"}}},
+		{"no environment, derived", "", "", "default", sibs},
+		{"no namespace, derived", "", "default", "", sibs},
+		{"no environment, overridden", "gw.example:9000", "", "default", sibs},
+		{"no namespace, overridden", "gw.example:9000", "default", "", sibs},
+		{"no siblings", "", "default", "default", nil},
+		{"sibling missing component", "", "default", "default", []ProtectedSibling{{DepName: "x"}}},
 	} {
-		if got := GatewayEnvVars(c.host, c.env, c.ns, c.sibs); got != nil {
+		if got := GatewayEnvVars(c.override, c.env, c.ns, c.sibs); got != nil {
 			t.Errorf("%s: want nil, got %+v", c.name, got)
 		}
 	}
@@ -198,9 +247,8 @@ func TestDesiredDeploymentForGatewayEnv(t *testing.T) {
 	base := DeploymentInputs{
 		Component:          designComponent(t, `{"name":"web","type":"web-application","dependencies":[]}`),
 		ComponentName:      "web",
-		Environment:        "development",
+		Environment:        "default",
 		ComponentNamespace: "default",
-		GatewayHost:        DefaultAPIGatewayHost,
 		ProtectedSiblings:  sibs,
 	}
 

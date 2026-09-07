@@ -81,7 +81,7 @@ type StatusFilter = (typeof STATUS_FILTERS)[number]["value"];
  * Filter on the status the ROW RENDERS, not on `build.status`.
  *
  * They are not the same thing: a completed version whose rollout is under way
- * shows "Deploying to development" and IS live, and one whose rollout failed
+ * shows "Deploying" and IS live, and one whose rollout failed
  * shows "Deploy failed". Filtering on the raw build status hid both from the
  * filters that name exactly what they are.
  */

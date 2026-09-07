@@ -30,7 +30,8 @@ server:
 
 # Thunder serves the gate (hosted sign-in SPA) itself; this is the browser
 # -facing address it redirects to, which must be the mapped host port —
-# mirrors gateClient in single-cluster/values-thunder.yaml.
+# mirrors the gateClient overrides scripts/setup-thunder.sh passes to the
+# platform IdP.
 gate_client:
   hostname: "localhost"
   port: 8097

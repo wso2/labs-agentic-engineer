@@ -15,9 +15,18 @@
 # under the License.
 
 # AEP console client + test users for dev-thunder-setup (issue #91).
-# Mirrors the k3d seed (values-thunder.yaml 59-aep-oauth-apps.sh PUBLIC_APPS
-# row): public PKCE client, authorization_code + refresh_token, ou* claims
-# on both tokens. Applied by setup.sh after the image's built-in
+#
+# NOTE ON THE TOKEN SHAPE: this stack pins ThunderID 0.47.0 (see
+# ../docker-compose.yaml), which takes the access token's attributes at
+# `accessToken.userAttributes`, as written below. ThunderID 1.0.0 — what the
+# k3d cluster runs — moved them to `accessToken.userConfig.attributes` and
+# silently DROPS the 0.47.0 shape, so the k3d seed and this file legitimately
+# differ. Do not "align" them without checking the version each targets; the
+# operator's identity_contract_test.go pins the 1.0.0 side.
+#
+# Mirrors the k3d seed (single-cluster/thunder-resources/87-aep-console-app.yaml):
+# public PKCE client, authorization_code + refresh_token, ou* claims on both
+# tokens. Applied by setup.sh after the image's built-in
 # 01-default-resources.yaml, so the default OU / flows / admin already exist.
 
 # resource_type: server_config

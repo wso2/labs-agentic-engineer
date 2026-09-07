@@ -7,11 +7,18 @@
 # dependency names (resourceType == ClusterResourceType.metadata.name == "thunder-app").
 #
 # It renders a `ThunderApplication` (aep.wso2.com/v1alpha1) — a namespaced CR the
-# thunder-app-operator reconciles into a real OAuth app on the platform Thunder
-# IdP. On success the operator sets `status.ready=true` + `status.clientId` (the
-# client_id output below reads the latter) and additionally writes a ConfigMap
-# `<cr-name>-oauth` with key `client_id`. The Resource model resolves
-# `${metadata.name}` to a hashed render name (e.g. `r-<binding>-<hash>`).
+# thunder-app-operator reconciles into a real OAuth app on the Thunder that
+# serves this (organization, environment). WHICH instance that is comes from the
+# environment's binding record, not from this file: the operator reads the
+# `openchoreo.dev/namespace` and `openchoreo.dev/environment` labels that
+# OpenChoreo's renderedrelease-controller stamps on the rendered CR (verified
+# live — the template does not have to add them) and looks up the ConfigMap
+# labelled `aep.wso2.com/kind=thunder-binding` for that pair. On success the
+# operator sets `status.ready=true`, `status.clientId`, `status.issuer` and
+# `status.jwksUrl` (the outputs below read the last three) and additionally
+# writes a ConfigMap `<cr-name>-oauth` with keys `client_id`, `issuer`,
+# `jwks_url`. The Resource model resolves `${metadata.name}` to a hashed render
+# name (e.g. `r-<binding>-<hash>`).
 #
 # CEL context (per OC 1.1.1 ResourceType CRD docs): readyWhen/outputs are evaluated
 # against metadata.*, parameters.*, environmentConfigs.*, dataplane.*, and — once the
@@ -63,8 +70,8 @@ metadata:
     # matches the need) and to users in the console dependency drawer.
     aep.wso2.com/description: >-
       End-user sign-in for this project's apps: provisions an OAuth (PKCE)
-      client on the platform IdP. Declare on both the web app that signs
-      users in and the service whose API it protects.
+      client on this environment's identity provider. Declare on both the
+      web app that signs users in and the service whose API it protects.
     # consumer-url-env-config → platform patches <spaOrigin><path> into this env-config key.
     aep.wso2.com/consumer-url-env-config: redirectUris
     # consumer-url-path omitted → defaults to /callback (the path this OAuth app expects).
@@ -117,9 +124,11 @@ spec:
       # getUnknownResourceHealth reports them Healthy immediately), making the
       # binding take ~5 min to go Ready. Tracking: openchoreo/openchoreo#4323.
       #
-      # TRADE-OFF: with ${true} the binding reports Ready before Thunder finishes
-      # registering the app, so a login attempt in the first ~few seconds can fail
-      # and then self-heal. Acceptable for these local single-cluster dev types.
+      # readyWhen is not the whole gate anyway: the binding's Ready condition also
+      # requires its outputs to resolve, and the issuer/jwks_url outputs below DO
+      # read the CR's live status — so a binding still cannot go Ready before the
+      # operator has registered the app and recorded where. What ${true} avoids is
+      # a SECOND, redundant dependency on the same live status.
       readyWhen: '${true}'
       template:
         apiVersion: aep.wso2.com/v1alpha1
@@ -150,12 +159,25 @@ spec:
     # env injection — but the authoritative binding output is this literal.
     - name: client_id
       value: aep-${metadata.namespace}-${metadata.name}
-    # Plain coordinates — exposed as values (the BFF surfaces them un-masked). The
-    # issuer/jwks_url are the browser-reachable Thunder addresses (they match the
-    # compose PLATFORM_IDP_ISSUER host thunder.openchoreo.localhost:8080).
+    # Plain coordinates — exposed as values (the BFF surfaces them un-masked).
+    #
+    # These are READ BACK FROM THE CR's STATUS, unlike client_id above, because
+    # they are not derivable at render time: which Thunder an app lives on is a
+    # property of the (org, environment) it is rendered into, resolved by the
+    # operator from that environment's binding record (the ConfigMap labelled
+    # aep.wso2.com/kind=thunder-binding, written by
+    # deployments/scripts/setup-environment-thunder.sh). Rendering a literal
+    # here would be a second, independent copy of the issuer rule and would go
+    # stale the moment an environment's Thunder is re-provisioned elsewhere.
+    #
+    # The ~5-minute re-observe that made client_id a literal
+    # (openchoreo/openchoreo#4323) does not bite here: when the operator sets
+    # status it patches an annotation on the owning ResourceReleaseBinding
+    # (nudgeOwningBindings), which forces the one re-reconcile that resolves
+    # these outputs — measured at a few seconds on the local cluster.
     - name: issuer
-      value: http://thunder.openchoreo.localhost:8080
+      value: ${applied.app.status.issuer}
     - name: jwks_url
-      value: http://thunder.openchoreo.localhost:8080/oauth2/jwks
+      value: ${applied.app.status.jwksUrl}
     - name: scopes
       value: ${parameters.scopes}

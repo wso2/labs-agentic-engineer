@@ -3,7 +3,7 @@
 Wire an OpenChoreo alert → AI RCA → GitHub issue → coding-agent PR, end to end.
 
 ```
-ERROR log → alert rule → observer → ai-rca-agent (RCA → remediation → handoff)
+ERROR log → alert rule → observer → sre-agent (RCA → remediation → handoff)
   → aep-mcp-server → aep-api → GitHub issue → coding-agent Job → PR (human merges)
   → webhook → build → deploy
 ```
@@ -15,7 +15,7 @@ ERROR log → alert rule → observer → ai-rca-agent (RCA → remediation → 
 ## Prerequisites
 
 1. Local AEP stack up (`deployments/docker-compose.yml`) and a k3d OpenChoreo with the
-   observability plane (`observer`, `opensearch`, `fluent-bit`, `ai-rca-agent`).
+   observability plane (`observer`, `opensearch`, `fluent-bit`, `sre-agent`).
 2. Both sides share one Thunder (`thunder.openchoreo.localhost:8080`).
 3. AEP org connected to GitHub + an Anthropic key in org settings.
 4. The target project/components were **created through AEP** and deployed; the OC project
@@ -43,14 +43,14 @@ docker logs aep-api 2>&1 | grep "Inbound JWT verifier"
 cd <openchoreo-repo>/agents/sre-agent
 docker build -t tharindulak/openchoreo-sre-agent:handoff-v12 .
 k3d image import tharindulak/openchoreo-sre-agent:handoff-v12 -c <cluster>
-kubectl set image deploy/ai-rca-agent -n openchoreo-observability-plane \
+kubectl set image deploy/sre-agent -n openchoreo-observability-plane \
   "*=tharindulak/openchoreo-sre-agent:handoff-v12"
 
 # Enable the handoff (AE_AUTO_DISPATCH=false → issue-only, human dispatches)
 kubectl patch cm rca-agent-config -n openchoreo-observability-plane --type=merge -p \
   '{"data":{"AE_HANDOFF":"true","AE_AUTO_DISPATCH":"true","AE_API_URL":"http://host.k3d.internal:3401"}}'
-kubectl rollout restart deploy/ai-rca-agent -n openchoreo-observability-plane
-kubectl logs -n openchoreo-observability-plane deploy/ai-rca-agent | grep "MCP connection"
+kubectl rollout restart deploy/sre-agent -n openchoreo-observability-plane
+kubectl logs -n openchoreo-observability-plane deploy/sre-agent | grep "MCP connection"
 # expect: "loaded 102 tools" (99 + the 3 ae_* tools)
 ```
 
@@ -58,7 +58,7 @@ The alert pipeline must actually evaluate rules — this is the step that is com
 
 - observability-logs-opensearch module chart >= 0.5.1 (ships the logs-adapter)
 - `observer-config`: `LOGS_ADAPTER_ENABLED=true`,
-  `RCA_SERVICE_URL=http://ai-rca-agent:8080`, `ALERT_SUPPRESSION_WINDOW=1h`
+  `RCA_SERVICE_URL=http://sre-agent:8080`, `ALERT_SUPPRESSION_WINDOW=1h`
   (unset suppression ⇒ duplicate issues + dispatches)
 - an `ObservabilityAlertRule` scoped to the component (UID + name labels) with
   `actions.incident.enabled` + `triggerAiRca: true`
@@ -67,7 +67,7 @@ The alert pipeline must actually evaluate rules — this is the step that is com
 
 ```bash
 # Trigger the failure the rule matches, then watch:
-kubectl logs -f -n openchoreo-observability-plane deploy/ai-rca-agent | grep -vE "Pydantic V1"
+kubectl logs -f -n openchoreo-observability-plane deploy/sre-agent | grep -vE "Pydantic V1"
 # expect, in order: POST /analyze 200 → RCA completed → Remediation completed →
 #   Running handoff agent → "Handoff completed: classification=…, issue=…, dispatch=ca-…"
 ```

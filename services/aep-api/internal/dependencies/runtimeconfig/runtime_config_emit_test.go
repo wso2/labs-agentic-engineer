@@ -378,8 +378,8 @@ func Test_buildEnvValues_genericEmission(t *testing.T) {
 		if got := calls[0].Configs["redirectUris"]; got != "http://web.local/callback" {
 			t.Errorf("patched redirectUris = %q; want http://web.local/callback (default path)", got)
 		}
-		if calls[0].BindingName != "proj-user-auth-development" {
-			t.Errorf("patched binding = %q; want proj-user-auth-development", calls[0].BindingName)
+		if calls[0].BindingName != "proj-user-auth-default" {
+			t.Errorf("patched binding = %q; want proj-user-auth-default", calls[0].BindingName)
 		}
 	})
 
@@ -394,8 +394,8 @@ func Test_buildEnvValues_genericEmission(t *testing.T) {
 
 		oc := ocResolving(map[string]string{"web": "http://web.local"})
 		rc := rcBindings(map[string]map[string]string{
-			"proj-user-auth-development": authOutputs(),
-			"proj-orders-db-development": {"host": "db.local", "port": "5432"},
+			"proj-user-auth-default": authOutputs(),
+			"proj-orders-db-default": {"host": "db.local", "port": "5432"},
 		}, nil)
 		// thunder-app carries the consumer-URL marker; postgres-cnpg carries none.
 		cat := &fakeCatalog{markers: authMarkers("thunder-app")}
@@ -426,8 +426,8 @@ func Test_buildEnvValues_genericEmission(t *testing.T) {
 		if len(calls) != 1 {
 			t.Fatalf("want exactly 1 patch (annotated dep only); got %d", len(calls))
 		}
-		if calls[0].BindingName != "proj-user-auth-development" {
-			t.Errorf("patched binding = %q; want proj-user-auth-development", calls[0].BindingName)
+		if calls[0].BindingName != "proj-user-auth-default" {
+			t.Errorf("patched binding = %q; want proj-user-auth-default", calls[0].BindingName)
 		}
 	})
 

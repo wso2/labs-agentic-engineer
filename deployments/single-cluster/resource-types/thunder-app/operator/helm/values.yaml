@@ -14,13 +14,24 @@ image:
 # OFF (see main.go), so more than one replica would double-reconcile.
 replicaCount: 1
 
-thunder:
-  # In-cluster admin API base URL for the platform Thunder.
-  adminURL: "http://thunder-service.thunder.svc.cluster.local:8090"
-  # Credentials (THUNDER_SYSTEM_CLIENT_ID, THUNDER_SYSTEM_CLIENT_SECRET) are
-  # sourced exclusively from the `thunder-app-operator-credentials` Secret,
-  # which is provisioned by ESO before this chart is installed. The chart does
-  # not manage any credential values itself.
+# The operator has no Thunder of its own — nothing to configure here.
+#
+# Each ThunderApplication is registered on the Thunder that serves its (org,
+# environment), resolved per CR at reconcile time from the BINDING RECORD that
+# deployments/scripts/setup-environment-thunder.sh writes:
+#
+#   ConfigMap  labelled aep.wso2.com/kind=thunder-binding,
+#              aep.wso2.com/org=<org>, aep.wso2.com/env=<env>, in that
+#              environment's Thunder namespace. Selected by label, never by
+#              name. Keys read here: issuer, adminURL,
+#              systemResourceIdentifier, secretName, secretNamespace.
+#   Secret     named by the ConfigMap's `secretName`, MIRRORED into this
+#              release's namespace (the operator watches Secrets only there —
+#              see the ClusterRole/Role in templates/rbac.yaml). Keys read
+#              here: client-id, client-secret.
+#
+# A CR whose (org, environment) has no such record reports Ready=false with a
+# message naming what is missing, and reconciles as soon as the record appears.
 
 resources:
   requests:

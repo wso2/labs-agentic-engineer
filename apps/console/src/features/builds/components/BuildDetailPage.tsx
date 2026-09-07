@@ -463,7 +463,7 @@ function parkTitle(dependencies: string[]): string {
  *
  * Every state the header pill can show gets its own sentence. The generic
  * "deploys as its tasks merge" line is for a version that has not reached an
- * environment — using it while the header reads "Deploying to development"
+ * environment — using it while the header reads "Deploying"
  * put two contradictory claims on one card.
  */
 function deploymentNote(
@@ -473,11 +473,11 @@ function deploymentNote(
   if (deploy?.version !== tag) return `${tag} deploys as its tasks merge.`;
   switch (deploy.status) {
     case "deployed":
-      return `${tag} is live in development.`;
+      return `${tag} is live.`;
     case "deploying":
-      return `${tag} is rolling out to development now.`;
+      return `${tag} is rolling out now.`;
     case "failed":
-      return `${tag} failed to deploy to development.`;
+      return `${tag} failed to deploy.`;
     default:
       return `${tag} deploys as its tasks merge.`;
   }
