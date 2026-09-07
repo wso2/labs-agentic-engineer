@@ -18,6 +18,12 @@
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
+source "$SCRIPT_DIR/env.sh"
+source "$SCRIPT_DIR/utils.sh"
+
+# Fail here, not fifteen minutes in: every chart below installs with whichever
+# `helm` PATH finds first, and two of the later scripts need Helm 4 flags.
+require_helm_v4
 
 echo "============================================"
 echo "  AEP Platform — Full Setup"

@@ -100,6 +100,34 @@ check_required_ports() {
     echo "✅ All ports available"
 }
 
+# require_helm_v4 fails fast when the `helm` on PATH is older than 4. The
+# scripts pass `--force-conflicts` to `helm upgrade` (setup-observability.sh,
+# setup-agent-manager.sh), which only Helm 4 accepts; on Helm 3 that surfaces
+# as "Error: unknown flag: --force-conflicts" fifteen minutes into setup.sh,
+# after every earlier chart has already installed with the wrong binary. The
+# usual cause is PATH order, not a missing install: Rancher Desktop puts
+# ~/.rd/bin (Helm 3) ahead of Homebrew's Helm 4, so the message names the
+# binary it found and where a newer one would have to come first.
+require_helm_v4() {
+    local found major
+    found="$(command -v helm || true)"
+    if [ -z "$found" ]; then
+        echo "❌ helm not found on PATH — install Helm 4 (brew install helm)" >&2
+        return 1
+    fi
+    major="$(helm version --template '{{.Version}}' 2>/dev/null | sed -E 's/^v([0-9]+).*/\1/')"
+    if [ -z "$major" ] || [ "$major" -lt 4 ]; then
+        echo "❌ helm at $found is $(helm version --short 2>/dev/null); these scripts need Helm 4+." >&2
+        echo "   Another helm may be shadowed by PATH order (e.g. ~/.rd/bin from Rancher Desktop):" >&2
+        for h in /opt/homebrew/bin/helm /usr/local/bin/helm; do
+            [ -x "$h" ] && echo "     $h -> $("$h" version --short 2>/dev/null)" >&2
+        done
+        echo "   Put the Helm 4 directory first on PATH for this shell, e.g." >&2
+        echo "     PATH=/opt/homebrew/bin:\$PATH bash scripts/setup.sh" >&2
+        return 1
+    fi
+}
+
 # helm_release_deployed <release> <namespace> — succeeds ONLY when the release
 # exists AND its status is `deployed`. A `failed` or `pending-*` release returns
 # false, so a caller guarding `helm upgrade --install` on this re-drives the
