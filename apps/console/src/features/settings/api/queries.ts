@@ -346,6 +346,21 @@ export function useSyncSkills() {
   });
 }
 
+// GET but modeled as a mutation (issue #743): it's an idempotent side-effecting
+// check, not cached list data, and the onboarding wizard fires it on demand
+// (auto on mount, then manually on Retry) rather than reading it reactively.
+export function useEnsureAuthzRole() {
+  return useMutation({
+    mutationFn: async () => {
+      const { data, error } = await client.GET("/authz/ensure");
+      if (error) {
+        throw new Error(errorMessage(error, "Failed to configure workspace"));
+      }
+      return data;
+    },
+  });
+}
+
 // --- Resources (org-settings "Resources" tabs: platform-provisioned types +
 // the external-resource catalog) ------------------------------------------
 

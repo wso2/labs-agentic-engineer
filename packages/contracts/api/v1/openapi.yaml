@@ -5,6 +5,60 @@ info:
 servers:
 - url: /api/v1
 paths:
+  /authz/ensure:
+    get:
+      description: Check whether an OC AuthzRole is applied for the requesting
+        organization's namespace. The organization is resolved from the caller's
+        JWT — no path parameter required.
+      operationId: ensure-authz-role
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusMsg'
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+      security:
+      - userJWT: []
+      summary: Ensure an AuthzRole exists for the organization's namespace
+      tags:
+      - Identity
+  /authz/role-permissions:
+    post:
+      description: Log a map of AE roles to their AE permissions. Intended for
+        inspection and audit during RBAC setup — the server logs the received mapping
+        and returns.
+      operationId: log-authz-role-permissions
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AERolePermissionsMap'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusMsg'
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+      security:
+      - userJWT: []
+      summary: Log AE role permission mappings
+      tags:
+      - Identity
   /collab/validate:
     get:
       operationId: validate-collab-access
@@ -3187,6 +3241,14 @@ components:
       required:
       - id
       - displayName
+      type: object
+    AERolePermissionsMap:
+      additionalProperties:
+        items:
+          type: string
+        type: array
+        uniqueItems: true
+      description: A map of AE role names to their AE permissions.
       type: object
     AccessRequest:
       additionalProperties: false

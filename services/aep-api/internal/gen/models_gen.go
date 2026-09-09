@@ -808,6 +808,9 @@ func (e ListTasksParamsState) Valid() bool {
 	}
 }
 
+// AERolePermissionsMap A map of AE role names to their AE permissions.
+type AERolePermissionsMap map[string][]string
+
 // AccessRequest defines model for AccessRequest.
 type AccessRequest struct {
 	ConsumerComponentName string    `json:"consumerComponentName"`
@@ -2746,6 +2749,9 @@ type ImportSkillMultipartBody struct {
 type SetSkillEnabledJSONBody struct {
 	Enabled bool `json:"enabled"`
 }
+
+// LogAuthzRolePermissionsJSONRequestBody defines body for LogAuthzRolePermissions for application/json ContentType.
+type LogAuthzRolePermissionsJSONRequestBody = AERolePermissionsMap
 
 // UpdateConfigJSONRequestBody defines body for UpdateConfig for application/json ContentType.
 type UpdateConfigJSONRequestBody = ConfigPatch

@@ -19,6 +19,7 @@ package edge
 import (
 	"net/http"
 
+	autzhttpapi "github.com/wso2/aep/aep-api/internal/authz/httpapi"
 	deliveryhttpapi "github.com/wso2/aep/aep-api/internal/delivery/httpapi"
 	dephttpapi "github.com/wso2/aep/aep-api/internal/dependencies/httpapi"
 	"github.com/wso2/aep/aep-api/internal/gen"
@@ -52,6 +53,7 @@ type apiServer struct {
 	*projectsHandlers      // P7 — projects (Projects, Components, Builds & Config)
 	*dependenciesHandlers  // P8 — dependencies (Provisioning, Resources & Access)
 	*identityHandlers      // identity (the console's Security panel)
+	*authzHandlers         // authz (AE→OC RBAC bridge)
 
 	// designSvc backs ListDesignDependencies (handlers_design.go), the single op
 	// the edge serves via a method of its own rather than a domain embed: the
@@ -73,6 +75,7 @@ type (
 	projectsHandlers      = projectshttpapi.Handlers
 	dependenciesHandlers  = dephttpapi.Handlers
 	identityHandlers      = identityhttpapi.Handlers
+	authzHandlers         = autzhttpapi.Handlers
 )
 
 // Proves the METHOD SET only — never the wiring: it uses a nil pointer, so a
@@ -103,6 +106,7 @@ func newAPIV1Handler(deps Deps) http.Handler {
 			projectsHandlers:      deps.Projects,
 			dependenciesHandlers:  dependenciesOrEmpty(deps.Dependencies),
 			identityHandlers:      identityOrEmpty(deps.Identity),
+			authzHandlers:         authzOrEmpty(deps.Authz),
 			designSvc:             deps.DesignSvc,
 		},
 		[]gen.StrictMiddlewareFunc{tenantGate},
@@ -180,6 +184,14 @@ func identityOrEmpty(h *identityHandlers) *identityHandlers {
 	// (a production wiring defect), and the unwired shape the harness wants is
 	// its own named constructor rather than something a lax validator lets by.
 	return identityhttpapi.NewEmpty()
+}
+
+// authzOrEmpty is the same harness-contract guard for the authz domain.
+func authzOrEmpty(h *authzHandlers) *authzHandlers {
+	if h != nil {
+		return h
+	}
+	return autzhttpapi.NewEmpty()
 }
 
 // maxBodyBytes is the edge-wide request-body ceiling (413 beyond it), sized to

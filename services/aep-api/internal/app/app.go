@@ -33,6 +33,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wso2/aep/aep-api/internal/authz"
+	autzhttpapi "github.com/wso2/aep/aep-api/internal/authz/httpapi"
 	"github.com/wso2/aep/aep-api/internal/clients/agentsvc"
 	"github.com/wso2/aep/aep-api/internal/clients/observability"
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
@@ -203,6 +205,9 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// Kubernetes client — status from the pod, live logs from the pod, and
 	// (through the observer below) history for as long as the component lives.
 	runtimeClient := openchoreo.NewRuntimeClient(ocConfig)
+	// Manages namespace-scoped OC AuthzRole resources (issue #743). Backs
+	// EnsureAuthzRole's Get-then-Create reconciliation.
+	authzClient := openchoreo.NewAuthZClient(ocConfig)
 
 	// Observability client (optional — build logs disabled when URL not set)
 	var observClient observability.Client
@@ -924,6 +929,17 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		return nil, fmt.Errorf("assemble organization domain: %w", err)
 	}
 	params.Deps.Organization = orgHandlers
+
+	// authz — the AE→OC RBAC bridge (issue #743). EnsureAuthzRole is called
+	// from the console's onboarding hard gate, so a misconfigured mapping here
+	// blocks every user, not just an admin surface.
+	authzBridge := authz.NewAuthZBridge(authz.OcActionCatalog)
+	authzService := authz.NewAuthZService(authzBridge, authzClient)
+	authzHandlers, err := autzhttpapi.New(authz.Deps{AuthZ: authzService})
+	if err != nil {
+		return nil, fmt.Errorf("assemble authz domain: %w", err)
+	}
+	params.Deps.Authz = authzHandlers
 
 	// spec — the Spec Authoring & Versioning domain (P4): genai turns, files,
 	// tag reads, the org skills library, and the collab oracle/descriptor. Its
