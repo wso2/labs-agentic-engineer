@@ -21,6 +21,7 @@ package auth
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -134,15 +135,28 @@ func JWTMiddleware(cfg JWTConfig) func(http.Handler) http.Handler {
 				// encoding/json decodes ONLY the shallower field, so the
 				// promoted Subject is always empty on this edge (found via
 				// e2e: turn commits fell back to the credential identity).
-				ctx := WithClaims(r.Context(), &Claims{
+				claims := &Claims{
 					Subject:  tc.Sub,
 					ClientID: tc.ClientID,
 					OuHandle: tc.OuHandle,
 					OuName:   tc.OuName,
 					OuId:     tc.OuId,
 					Scope:    tc.Scope,
-				})
+				}
+				ctx := WithClaims(r.Context(), claims)
 				r = r.WithContext(ctx)
+
+				// Debug-only visibility into which AE permission keys this
+				// request's token actually carries — the same derivation
+				// permission_gate.go checks against, not a re-parse of the
+				// raw scope, so this can never drift from what the gate
+				// decides. Deliberately omits the raw Scope/token: only the
+				// filtered, known AE keys are logged.
+				slog.DebugContext(ctx, "console request authenticated",
+					"subject", claims.Subject,
+					"org", ResolveOuHandle(claims),
+					"permissions", claims.Permissions(),
+					"method", r.Method, "path", r.URL.Path)
 			}
 			next.ServeHTTP(w, r)
 		}))
