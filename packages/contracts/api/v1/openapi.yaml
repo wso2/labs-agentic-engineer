@@ -31,10 +31,11 @@ paths:
       - Identity
   /authz/role-permissions:
     post:
-      description: Log a map of AE roles to their AE permissions. Intended for
-        inspection and audit during RBAC setup — the server logs the received mapping
-        and returns.
-      operationId: log-authz-role-permissions
+      description: Apply a map of AE roles to their AE permissions by translating
+        each role's permissions to their OC equivalents and updating the
+        organization's OC AuthzRole actions accordingly. A partial failure rolls
+        back every role touched in the same request.
+      operationId: modify-authz-role-permissions
       requestBody:
         content:
           application/json:
@@ -56,7 +57,7 @@ paths:
           description: Error
       security:
       - userJWT: []
-      summary: Log AE role permission mappings
+      summary: Apply AE role permission mappings to their OC AuthzRoles
       tags:
       - Identity
   /collab/validate:

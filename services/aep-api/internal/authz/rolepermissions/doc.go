@@ -16,8 +16,9 @@
 
 // Package rolepermissions serves the POST /authz/role-permissions endpoint.
 // It receives a map of AE roles to their AE permissions, delegates to
-// authz.AuthZService for logging, and returns 200 OK.
+// authz.AuthZService.ModifyRolePermissions to translate and apply them as OC
+// AuthzRole actions, and returns 200 OK.
 //
-// Triggers: log-authz-role-permissions.
+// Triggers: modify-authz-role-permissions.
 // Ports:    authz.AuthZService.
 package rolepermissions

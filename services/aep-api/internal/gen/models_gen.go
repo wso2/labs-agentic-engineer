@@ -2750,8 +2750,8 @@ type SetSkillEnabledJSONBody struct {
 	Enabled bool `json:"enabled"`
 }
 
-// LogAuthzRolePermissionsJSONRequestBody defines body for LogAuthzRolePermissions for application/json ContentType.
-type LogAuthzRolePermissionsJSONRequestBody = AERolePermissionsMap
+// ModifyAuthzRolePermissionsJSONRequestBody defines body for ModifyAuthzRolePermissions for application/json ContentType.
+type ModifyAuthzRolePermissionsJSONRequestBody = AERolePermissionsMap
 
 // UpdateConfigJSONRequestBody defines body for UpdateConfig for application/json ContentType.
 type UpdateConfigJSONRequestBody = ConfigPatch

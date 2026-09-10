@@ -32,7 +32,7 @@ type Handler struct{ svc *authz.AuthZService }
 // operation.
 func New(svc *authz.AuthZService) *Handler { return &Handler{svc: svc} }
 
-func (h *Handler) LogAuthzRolePermissions(ctx context.Context, request gen.LogAuthzRolePermissionsRequestObject) (gen.LogAuthzRolePermissionsResponseObject, error) {
+func (h *Handler) ModifyAuthzRolePermissions(ctx context.Context, request gen.ModifyAuthzRolePermissionsRequestObject) (gen.ModifyAuthzRolePermissionsResponseObject, error) {
 	if h.svc == nil {
 		return nil, apierr.ServiceUnavailable("the authz service is not configured")
 	}
@@ -40,5 +40,5 @@ func (h *Handler) LogAuthzRolePermissions(ctx context.Context, request gen.LogAu
 	if err := h.svc.ModifyRolePermissions(ctx, orgHandle, *request.Body); err != nil {
 		return nil, apierr.Internal("failed to apply role permissions")
 	}
-	return gen.LogAuthzRolePermissions200JSONResponse{Status: "applied"}, nil
+	return gen.ModifyAuthzRolePermissions200JSONResponse{Status: "applied"}, nil
 }

@@ -23,6 +23,6 @@ package authz
 // per-permission OC action design. Revisit before this grants anything beyond
 // the coding agent's own component read/create needs.
 var OcActionCatalog = map[string][]string{
-	"ae:model-config": {"component:view", "component:create"},
-	"ae:skill-config": {"component:view", "component:create"},
+	string(PermissionModelConfig): {"component:view", "component:create"},
+	string(PermissionSkillConfig): {"component:view", "component:create"},
 }

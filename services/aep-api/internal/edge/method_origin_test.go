@@ -63,6 +63,7 @@ const (
 	embedProjects      = "projectsHandlers"      // P7
 	embedDependencies  = "dependenciesHandlers"  // P8
 	embedIdentity      = "identityHandlers"      // identity — the Security panel
+	embedAuthz         = "authzHandlers"         // authz — AE->OC RBAC bridge
 )
 
 // opOwner maps every operation of the committed contract to the apiServer
@@ -84,6 +85,7 @@ var opOwner = map[string]string{
 	"DeleteSkill":                   embedSpec,
 	"DisconnectGitProvider":         embedOrganization,
 	"DiscoverIdp":                   embedOrganization,
+	"EnsureAuthzRole":               embedAuthz,
 	"GetActiveTurn":                 embedSpec,
 	"GetBuildLogs":                  embedProjects,
 	"GetBuildPreflight":             embedDelivery,
@@ -127,6 +129,7 @@ var opOwner = map[string]string{
 	"ListSkills":                    embedSpec,
 	"ListTasks":                     embedDelivery,
 	"ListWorkloadDependencies":      embedDependencies,
+	"ModifyAuthzRolePermissions":    embedAuthz,
 	"PromoteTaskFromIssue":          embedDelivery,
 	"ProvisionPlatformResource":     embedDependencies,
 	"PutProjectReferences":          embedSpec,

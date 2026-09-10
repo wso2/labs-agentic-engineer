@@ -16,15 +16,42 @@
 
 package authz
 
+// Permission is an AE-level permission key, e.g. "ae:build". It is the unit
+// both this role catalog and the OC action catalog
+// (oc_permissions_catalog.go) resolve, and the same string arrives on a
+// caller's JWT as an OAuth scope entry.
+type Permission string
+
+const (
+	PermissionBuild             Permission = "ae:build"
+	PermissionBuildView         Permission = "ae:build-view"
+	PermissionDesignView        Permission = "ae:design-view"
+	PermissionGitHubConfig      Permission = "ae:github-config"
+	PermissionModelConfig       Permission = "ae:model-config"
+	PermissionRequirementUpdate Permission = "ae:requirement-update"
+	PermissionSkillConfig       Permission = "ae:skill-config"
+)
+
+// AllPermissions is every AE permission key the platform recognizes.
+var AllPermissions = []Permission{
+	PermissionBuild,
+	PermissionBuildView,
+	PermissionDesignView,
+	PermissionGitHubConfig,
+	PermissionModelConfig,
+	PermissionRequirementUpdate,
+	PermissionSkillConfig,
+}
+
 var rolePermissionsCatalog = map[string][]string{
 	"ae-admin": {
-		"ae:build",
-		"ae:build-view",
-		"ae:design-view",
-		"ae:github-config",
-		"ae:model-config",
-		"ae:requirement-update",
-		"ae:skill-config",
+		string(PermissionBuild),
+		string(PermissionBuildView),
+		string(PermissionDesignView),
+		string(PermissionGitHubConfig),
+		string(PermissionModelConfig),
+		string(PermissionRequirementUpdate),
+		string(PermissionSkillConfig),
 	},
 }
 

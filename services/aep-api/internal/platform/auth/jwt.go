@@ -22,7 +22,9 @@ package auth
 import (
 	"context"
 	"net/http"
+	"strings"
 
+	"github.com/wso2/aep/aep-api/internal/authz"
 	"github.com/wso2/aep/aep-api/internal/platform/auth/jwtassertion"
 )
 
@@ -36,6 +38,10 @@ type Claims struct {
 	OuHandle string
 	OuName   string
 	OuId     string
+	// Scope is the raw space-delimited OAuth scope claim. AE permission
+	// keys (e.g. "ae:build") arrive as entries in this string alongside
+	// unrelated scopes (openid, profile, system, ...); see Permissions.
+	Scope string
 }
 
 // ResolveOuHandle returns the canonical OC org handle from a verified
@@ -57,6 +63,29 @@ func ResolveOuHandle(c *Claims) string {
 		return c.OuName
 	}
 	return c.OuId
+}
+
+func (c *Claims) Permissions() []authz.Permission {
+	if c == nil {
+		return nil
+	}
+	return filterPermissions(c.Scope)
+}
+
+func filterPermissions(scope string) []authz.Permission {
+	known := make(map[authz.Permission]struct{}, len(authz.AllPermissions))
+	for _, p := range authz.AllPermissions {
+		known[p] = struct{}{}
+	}
+
+	var perms []authz.Permission
+	for _, token := range strings.Fields(scope) {
+		p := authz.Permission(token)
+		if _, ok := known[p]; ok {
+			perms = append(perms, p)
+		}
+	}
+	return perms
 }
 
 type claimsContextKey struct{}
@@ -111,6 +140,7 @@ func JWTMiddleware(cfg JWTConfig) func(http.Handler) http.Handler {
 					OuHandle: tc.OuHandle,
 					OuName:   tc.OuName,
 					OuId:     tc.OuId,
+					Scope:    tc.Scope,
 				})
 				r = r.WithContext(ctx)
 			}
