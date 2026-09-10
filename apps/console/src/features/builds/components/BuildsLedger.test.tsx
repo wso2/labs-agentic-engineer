@@ -24,6 +24,13 @@ import type { components } from "../../../generated/aep-api";
 
 type BuildSummary = components["schemas"]["BuildSummary"];
 
+// Every existing test in this file assumes the page is otherwise reachable —
+// only a dedicated "no permission" test flips this.
+const canViewBuilds = vi.hoisted(() => ({ current: true }));
+vi.mock("../../../auth/permissions", () => ({
+  useHasAnyPermission: () => canViewBuilds.current,
+}));
+
 const navigate = vi.fn();
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children?: React.ReactNode }) => <a>{children}</a>,
@@ -86,6 +93,7 @@ beforeEach(() => {
   mockState = { isPending: false, isError: false };
   navigate.mockClear();
   refetch.mockClear();
+  canViewBuilds.current = true;
 });
 
 describe("BuildsLedger", () => {
@@ -306,5 +314,15 @@ describe("BuildsLedger", () => {
     mockState = { isPending: true, isError: false };
     renderLedger();
     expect(screen.getByText("Back to Overview")).toBeTruthy();
+  });
+
+  it("blocks the whole page for a user lacking ae:build/ae:build-view", () => {
+    canViewBuilds.current = false;
+    renderLedger();
+
+    expect(
+      screen.getByText("You don't have access to this project's builds"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Back to Overview")).not.toBeInTheDocument();
   });
 });

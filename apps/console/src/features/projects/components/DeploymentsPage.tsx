@@ -26,8 +26,10 @@ import {
   Stack,
 } from "@wso2/oxygen-ui";
 import { Link, useNavigate } from "@tanstack/react-router";
+import { useHasAnyPermission } from "../../../auth/permissions";
 import { EmptyState } from "../../../components/EmptyState";
 import { PageHeader } from "../../../components/PageHeader";
+import { PermissionRestrictedPage } from "../../../components/PermissionRestrictedPage";
 import { useBuilds } from "../../builds/api/queries";
 import { useDesignDependencies } from "../../spec/api/queries";
 import { useExternalResources } from "../../settings/api/queries";
@@ -67,6 +69,7 @@ import { PromoteDialog } from "./PromoteDialog";
  */
 export function DeploymentsPage({ projectName }: { projectName: string }) {
   const navigate = useNavigate();
+  const canViewDeployments = useHasAnyPermission(["ae:build", "ae:build-view"]);
   const components = useProjectComponents(projectName);
   const componentNames = (components.data?.items ?? []).map((c) => c.name);
   const deployments = useComponentsDeployments(projectName, componentNames);
@@ -121,6 +124,22 @@ export function DeploymentsPage({ projectName }: { projectName: string }) {
   // values at build time, real ones now), and the saved confirmation.
   const [valuesTarget, setValuesTarget] = useState<ConnectionRow | null>(null);
   const [valuesSaved, setValuesSaved] = useState(false);
+
+  // Every hook above must run first — React's rule against conditional hooks
+  // — so the gate sits here, after all of them, rather than before any.
+  if (!canViewDeployments) {
+    return (
+      <PermissionRestrictedPage
+        title="You don't have access to this project's deployments"
+        description="Environment status, connections, and promotion are restricted for your role. Ask a project admin to grant access."
+        restricted={["Environments", "Connections", "Promotion"]}
+        backLabel="Back to project overview"
+        onBack={() =>
+          void navigate({ to: "/projects/$projectName", params: { projectName } })
+        }
+      />
+    );
+  }
 
   const header = (
     <PageHeader

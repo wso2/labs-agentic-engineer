@@ -32,6 +32,7 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import { Pencil, Trash2 } from "@wso2/oxygen-ui-icons-react";
+import { useHasPermission } from "../../../auth/permissions";
 import { MarkdownView } from "../../../components/MarkdownView";
 import { StatusChip } from "../../../components/StatusChip";
 import { useSkill } from "../api/queries";
@@ -55,6 +56,7 @@ export function SkillViewerDialog({
   onDelete: () => void;
 }) {
   const { data: skill, isLoading, isError, error } = useSkill(name ?? "");
+  const hasSkillConfig = useHasPermission("ae:skill-config");
 
   const kind = skill ? normalizeKind(skill.kind) : null;
   const { frontmatter, body } = splitFrontmatter(skill?.skillMd ?? "");
@@ -95,22 +97,44 @@ export function SkillViewerDialog({
           {(skill?.editable || skill?.deletable) && (
             <Box sx={{ display: "flex", gap: 0.5, flexShrink: 0 }}>
               {skill?.editable && (
-                <Tooltip title="Edit">
-                  <IconButton size="small" aria-label="Edit" onClick={onEdit}>
-                    <Pencil size={18} />
-                  </IconButton>
+                <Tooltip
+                  title={
+                    hasSkillConfig
+                      ? "Edit"
+                      : "You don't have permission to configure skills."
+                  }
+                >
+                  <span>
+                    <IconButton
+                      size="small"
+                      aria-label="Edit"
+                      onClick={onEdit}
+                      disabled={!hasSkillConfig}
+                    >
+                      <Pencil size={18} />
+                    </IconButton>
+                  </span>
                 </Tooltip>
               )}
               {skill?.deletable && (
-                <Tooltip title="Delete">
-                  <IconButton
-                    size="small"
-                    color="error"
-                    aria-label="Delete"
-                    onClick={onDelete}
-                  >
-                    <Trash2 size={18} />
-                  </IconButton>
+                <Tooltip
+                  title={
+                    hasSkillConfig
+                      ? "Delete"
+                      : "You don't have permission to configure skills."
+                  }
+                >
+                  <span>
+                    <IconButton
+                      size="small"
+                      color="error"
+                      aria-label="Delete"
+                      onClick={onDelete}
+                      disabled={!hasSkillConfig}
+                    >
+                      <Trash2 size={18} />
+                    </IconButton>
+                  </span>
                 </Tooltip>
               )}
             </Box>

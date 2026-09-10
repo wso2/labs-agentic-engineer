@@ -28,6 +28,7 @@ import {
   Tooltip,
   Typography,
 } from "@wso2/oxygen-ui";
+import { useHasPermission } from "../../../auth/permissions";
 import type { components } from "../../../generated/aep-api";
 import type { DependencyResolutionIntent } from "../../projects/lib/dependencyResolutionMessage.js";
 import { approvalInputsFor } from "../lib/buildInputs";
@@ -375,6 +376,7 @@ export function BuildDependencyDrawer({
   // The parent closes the drawer on success.
   submitting?: boolean;
 }) {
+  const hasBuild = useHasPermission("ae:build");
   // #252 Task 15: cross-component dedupe happens once per `items` change, so a
   // shared dependency declared on multiple components renders as one card
   // instead of one per consuming component.
@@ -534,7 +536,7 @@ export function BuildDependencyDrawer({
           <Button
             variant="contained"
             loading={submitting}
-            disabled={!canContinue || submitting}
+            disabled={!canContinue || submitting || !hasBuild}
             onClick={handleContinue}
           >
             Continue

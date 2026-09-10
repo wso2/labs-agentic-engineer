@@ -33,8 +33,10 @@ import {
 } from "@wso2/oxygen-ui";
 import { ListChecks } from "@wso2/oxygen-ui-icons-react";
 import { Link, createLink, useNavigate } from "@tanstack/react-router";
+import { useHasAnyPermission } from "../../../auth/permissions";
 import { EmptyState } from "../../../components/EmptyState";
 import { PageHeader } from "../../../components/PageHeader";
+import { PermissionRestrictedPage } from "../../../components/PermissionRestrictedPage";
 import { StatusChip } from "../../../components/StatusChip";
 import type { components } from "../../../generated/aep-api";
 import { useProjectStatus } from "../../projects/api/queries";
@@ -124,8 +126,10 @@ const COLUMNS = [
 ];
 
 export function BuildsLedger({ projectName }: { projectName: string }) {
-  const builds = useBuilds(projectName);
   const navigate = useNavigate();
+  const canViewBuilds = useHasAnyPermission(["ae:build", "ae:build-view"]);
+
+  const builds = useBuilds(projectName);
   const [filter, setFilter] = useState<StatusFilter>("all");
 
   // Which version reached an environment. The project layout already polls
@@ -148,6 +152,22 @@ export function BuildsLedger({ projectName }: { projectName: string }) {
     () => (builds.data ?? []).filter((b) => matchesFilter(b, filter, deploy)),
     [builds.data, filter, deploy],
   );
+
+  // Every hook above must run first — React's rule against conditional hooks
+  // — so the gate sits here, after all of them, rather than before any.
+  if (!canViewBuilds) {
+    return (
+      <PermissionRestrictedPage
+        title="You don't have access to this project's builds"
+        description="Build progress, tasks, and logs are restricted for your role. Ask a project admin to grant access."
+        restricted={["Build progress", "Tasks", "Logs"]}
+        backLabel="Back to project overview"
+        onBack={() =>
+          void navigate({ to: "/projects/$projectName", params: { projectName } })
+        }
+      />
+    );
+  }
 
   // The header renders through every state below so the back link stays
   // reachable while builds load or fail — the pattern every adopted page uses.

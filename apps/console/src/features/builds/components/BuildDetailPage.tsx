@@ -41,10 +41,12 @@ import {
   RotateCcw,
   X,
 } from "@wso2/oxygen-ui-icons-react";
-import { createLink, Link } from "@tanstack/react-router";
+import { createLink, Link, useNavigate } from "@tanstack/react-router";
+import { useHasAnyPermission, useHasPermission } from "../../../auth/permissions";
 import { EmptyState } from "../../../components/EmptyState";
 import { LogSection } from "../../../components/LogSection";
 import { PageHeader } from "../../../components/PageHeader";
+import { PermissionRestrictedPage } from "../../../components/PermissionRestrictedPage";
 import type { components } from "../../../generated/aep-api";
 import { useAllTasks } from "../../tasks/api/queries";
 import { useProjectStatus } from "../../projects/api/queries";
@@ -99,6 +101,9 @@ export function BuildDetailPage({
   projectName: string;
   tag: string;
 }) {
+  const navigate = useNavigate();
+  const canViewBuilds = useHasAnyPermission(["ae:build", "ae:build-view"]);
+
   const builds = useBuilds(projectName);
   const build = builds.data?.find((b) => b.tag === tag);
   const live = build ? isLedgerLive(build) : false;
@@ -118,6 +123,22 @@ export function BuildDetailPage({
   // `TaskView.executions` empty for agent work ("its pull request lives on the
   // run's cycle record instead"). Without this every open task read `Pending`.
   const claims = runClaims(runList);
+
+  // Every hook above must run first — React's rule against conditional hooks
+  // — so the gate sits here, after all of them, rather than before any.
+  if (!canViewBuilds) {
+    return (
+      <PermissionRestrictedPage
+        title="You don't have access to this project's builds"
+        description="Build progress, tasks, and logs are restricted for your role. Ask a project admin to grant access."
+        restricted={["Build progress", "Tasks", "Logs"]}
+        backLabel="Back to project overview"
+        onBack={() =>
+          void navigate({ to: "/projects/$projectName", params: { projectName } })
+        }
+      />
+    );
+  }
 
   const backTo = {
     link: <Link to="/projects/$projectName/builds" params={{ projectName }} />,
@@ -496,6 +517,7 @@ function BuildActions({
   live: boolean;
 }) {
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+  const hasBuild = useHasPermission("ae:build");
   const cancel = useCancelRun(projectName, tag);
   const status = useProjectStatus(projectName);
   const repoUrl = status.data?.repoUrl?.replace(/\/+$/, "").replace(/\.git$/, "");
@@ -514,7 +536,7 @@ function BuildActions({
         {/* Cancel is offered only while there is something to cancel — a menu
             item that cannot act is worse than an absent one. */}
         <MenuItem
-          disabled={!live || !runId || cancel.isPending}
+          disabled={!hasBuild || !live || !runId || cancel.isPending}
           onClick={() => {
             if (runId) cancel.mutate(runId);
             close();
@@ -527,6 +549,7 @@ function BuildActions({
           to="/projects/$projectName/spec"
           params={{ projectName }}
           onClick={close}
+          disabled={!hasBuild}
         >
           <RotateCcw size={15} style={{ marginRight: 10 }} />
           Retry this build

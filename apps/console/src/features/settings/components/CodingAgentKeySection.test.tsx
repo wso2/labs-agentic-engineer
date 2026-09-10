@@ -25,6 +25,13 @@ import { OxygenTheme, OxygenUIThemeProvider } from "@wso2/oxygen-ui";
 const saveMutate = vi.fn();
 const removeMutate = vi.fn();
 
+// Every existing test in this file assumes the section is otherwise operable
+// — only the dedicated "no permission" test below flips this to false.
+const modelConfigPermission = vi.hoisted(() => ({ current: true }));
+vi.mock("../../../auth/permissions", () => ({
+  useHasPermission: () => modelConfigPermission.current,
+}));
+
 vi.mock("../api/queries", () => ({
   useConnectCodingAnthropic: () => ({
     mutate: saveMutate,
@@ -73,6 +80,7 @@ const separateRadioBehindModal = () =>
 beforeEach(() => {
   saveMutate.mockClear();
   removeMutate.mockClear();
+  modelConfigPermission.current = true;
 });
 afterEach(cleanup);
 
@@ -162,5 +170,22 @@ describe("CodingAgentKeySection", () => {
     ).not.toBeInTheDocument();
     expect(removeMutate).not.toHaveBeenCalled();
     expect(reuseRadio()).toBeChecked();
+  });
+
+  // Lacking ae:model-config takes the whole section out of play — the radios
+  // and the save button, whether or not a key is already stored.
+  it("disables the radios and the save button when the user lacks ae:model-config", () => {
+    modelConfigPermission.current = false;
+    renderSection(null);
+
+    expect(reuseRadio()).toBeDisabled();
+    expect(separateRadio()).toBeDisabled();
+  });
+
+  it("disables the replace button when a key is already stored and permission is missing", () => {
+    modelConfigPermission.current = false;
+    renderSection(codingKeySet);
+
+    expect(screen.getByRole("button", { name: "Replace key" })).toBeDisabled();
   });
 });

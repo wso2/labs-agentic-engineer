@@ -44,6 +44,7 @@ import {
   Trash2,
 } from "@wso2/oxygen-ui-icons-react";
 import { Link, useNavigate } from "@tanstack/react-router";
+import { useHasPermission } from "../../../auth/permissions";
 import { EmptyState } from "../../../components/EmptyState";
 import { PageHeader } from "../../../components/PageHeader";
 import type { components } from "../../../generated/aep-api";
@@ -160,6 +161,7 @@ function useGridColumns(): number {
 const GRID_ROWS_PER_PAGE = 3;
 
 export function ProjectsList() {
+  const hasRequirementUpdate = useHasPermission("ae:requirement-update");
   const [search, setSearch] = useState("");
   // The project awaiting delete confirmation; one dialog serves the grid.
   const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
@@ -186,19 +188,26 @@ export function ProjectsList() {
       <PageHeader
         title="Projects"
         subtitle="Everything Agentic Engineer is building for you, one project per app."
-        {...(!isTrueEmpty && {
-          actions: (
-            <Button
-              variant="contained"
-              startIcon={<Plus size={20} />}
-              component={Link}
-              to="/projects/new"
-            >
-              Create project
-            </Button>
-          ),
-        })}
+        {...(!isTrueEmpty &&
+          hasRequirementUpdate && {
+            actions: (
+              <Button
+                variant="contained"
+                startIcon={<Plus size={20} />}
+                component={Link}
+                to="/projects/new"
+              >
+                Create project
+              </Button>
+            ),
+          })}
       />
+
+      {!hasRequirementUpdate && (
+        <Alert severity="warning" sx={{ mb: 3 }}>
+          You don't have permission to create a new project.
+        </Alert>
+      )}
 
       {isPending ? (
         <Box sx={{ display: "flex", justifyContent: "center", p: 6 }}>
@@ -218,14 +227,16 @@ export function ProjectsList() {
           title="No projects yet"
           description="Tell Agentic Engineer what you want to build and it becomes your first project."
           action={
-            <Button
-              variant="contained"
-              startIcon={<Plus size={20} />}
-              component={Link}
-              to="/projects/new"
-            >
-              Create project
-            </Button>
+            hasRequirementUpdate ? (
+              <Button
+                variant="contained"
+                startIcon={<Plus size={20} />}
+                component={Link}
+                to="/projects/new"
+              >
+                Create project
+              </Button>
+            ) : undefined
           }
         />
       ) : (

@@ -39,6 +39,8 @@ import {
 } from "@wso2/oxygen-ui";
 import { ArrowLeft, Hammer, Sparkles } from "@wso2/oxygen-ui-icons-react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
+import { useHasPermission } from "../../../auth/permissions";
+import { PermissionRestrictedPage } from "../../../components/PermissionRestrictedPage";
 import { StatusChip } from "../../../components/StatusChip";
 import type { components } from "../../../generated/aep-api";
 import {
@@ -152,7 +154,7 @@ export function designWarningIntro(reasons: ReadonlyArray<{ key: string }>): str
   );
 }
 
-export function SpecView({ projectName }: { projectName: string }) {
+function SpecViewContent({ projectName }: { projectName: string }) {
   const navigate = useNavigate();
   const { actions } = useAppShell();
   const status = useProjectStatus(projectName);
@@ -162,6 +164,7 @@ export function SpecView({ projectName }: { projectName: string }) {
   // Architecture/design.json cards below (keyed off specKeys.dependencies —
   // the same key Task 5's turn-end freshness invalidation targets).
   const dependencies = useDesignDependencies(projectName);
+  const hasBuild = useHasPermission("ae:build");
   const { user, orgHandle } = useSession();
   // Rooms are org-scoped (`spec-<org>-<project>`); without an org claim fall
   // back to the collab mock BFF's default org so mock mode keeps working.
@@ -1100,9 +1103,11 @@ export function SpecView({ projectName }: { projectName: string }) {
             <>
               <Tooltip
                 title={
-                  agentBusy
-                    ? "An agent is still working — Build is available once it finishes"
-                    : "Commit your latest changes and start building"
+                  !hasBuild
+                    ? "You don't have permission to build this project."
+                    : agentBusy
+                      ? "An agent is still working — Build is available once it finishes"
+                      : "Commit your latest changes and start building"
                 }
               >
                 {/* span so the tooltip works while the button is disabled */}
@@ -1111,7 +1116,7 @@ export function SpecView({ projectName }: { projectName: string }) {
                     size="small"
                     variant="contained"
                     startIcon={<Hammer size={16} />}
-                    disabled={agentBusy || buildPhase !== null}
+                    disabled={!hasBuild || agentBusy || buildPhase !== null}
                     loading={buildPhase !== null}
                     onClick={onBuild}
                   >
@@ -1278,7 +1283,7 @@ export function SpecView({ projectName }: { projectName: string }) {
           </DialogContent>
           <DialogActions>
             <Button onClick={() => setCutDialogOpen(false)}>Cancel</Button>
-            <Button variant="contained" onClick={runBuild}>
+            <Button variant="contained" onClick={runBuild} disabled={!hasBuild}>
               Cut {cutPreview.nextVersion} &amp; build
             </Button>
           </DialogActions>
@@ -1644,4 +1649,30 @@ export function SpecView({ projectName }: { projectName: string }) {
       />
     </PageContent>
   );
+}
+
+// Renders instead of SpecViewContent when the caller lacks ae:design-view —
+// no requirements/design/validation query, no collab room connection, no
+// dependency fetch. The gate lives here, one level up, specifically so a
+// denied user's browser never fires any of SpecViewContent's data hooks.
+function SpecViewRestricted({ projectName }: { projectName: string }) {
+  const navigate = useNavigate();
+
+  return (
+    <PermissionRestrictedPage
+      title="You don't have access to this project's design"
+      description="Architecture diagrams, wireframes, and component specs are restricted for your role. Ask a project admin to grant access."
+      restricted={["Architecture", "Wireframes", "Component specs"]}
+      backLabel="Back to project overview"
+      onBack={() =>
+        void navigate({ to: "/projects/$projectName", params: { projectName } })
+      }
+    />
+  );
+}
+
+export function SpecView({ projectName }: { projectName: string }) {
+  const hasDesignView = useHasPermission("ae:design-view");
+  if (!hasDesignView) return <SpecViewRestricted projectName={projectName} />;
+  return <SpecViewContent projectName={projectName} />;
 }

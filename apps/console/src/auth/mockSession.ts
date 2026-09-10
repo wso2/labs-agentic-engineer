@@ -48,6 +48,35 @@ export const MOCK_USER = {
 
 export const MOCK_ORG = "acme";
 
+// Independent of `aep:mock:user` above — permissions are data, not identity,
+// so switching teammates never changes what the mock session can do. Absent
+// key => the default grant (mirrors the real-mode stub in AuthGuard.tsx);
+// present-but-empty => an explicit "no permissions" override, to make the
+// denied state demoable: `sessionStorage.setItem('aep:mock:permissions', '')`.
+function mockPermissionsOverride(): Set<string> | null {
+  try {
+    const raw =
+      sessionStorage.getItem("aep:mock:permissions") ??
+      localStorage.getItem("aep:mock:permissions");
+    if (raw === null) return null;
+    return new Set(
+      raw
+        .split(",")
+        .map((key) => key.trim())
+        .filter(Boolean),
+    );
+  } catch {
+    return null;
+  }
+}
+
+export function mockPermissions(): Set<string> {
+  return (
+    mockPermissionsOverride() ??
+    new Set(["ae:skill-config", "ae:requirement-update", "ae:design-view", "ae:build"])
+  );
+}
+
 // JWT-shaped but unsigned — enough for the collab mock BFF, which decodes
 // name/email claims without verifying. Never sent to a real BFF: real API
 // runs use thunder auth mode.

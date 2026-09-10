@@ -21,7 +21,7 @@ import { hasAuthParams, useAuth } from "react-oidc-context";
 import { env } from "../config/env";
 import { getUserManager } from "./userManager";
 import { decodeJwtClaims, identityFromClaims, type TokenClaims } from "./claims";
-import { MOCK_ORG, MOCK_USER } from "./mockSession";
+import { MOCK_ORG, MOCK_USER, mockPermissions } from "./mockSession";
 import { AuthScreen } from "./AuthScreen";
 import { BillingActivation } from "./BillingActivation";
 import { SessionContext, type Session } from "./SessionContext";
@@ -29,6 +29,7 @@ import { SessionContext, type Session } from "./SessionContext";
 const MOCK_SESSION: Session = {
   user: MOCK_USER,
   orgHandle: MOCK_ORG,
+  permissions: mockPermissions(),
   signOut: () => {
     console.info("[auth] mock mode — sign-out is a no-op");
   },
@@ -99,6 +100,18 @@ function OidcGuard({ children }: PropsWithChildren) {
     return {
       user: { name: identity.name, email: identity.email },
       orgHandle: identity.orgHandle,
+      // Stand-in until the backend exposes a real permissions claim/endpoint
+      // (see ae-admin's catalog in role_permissions_catalog.go): every real
+      // user is granted the core-loop permissions (ae:skill-config,
+      // ae:requirement-update, ae:design-view, ae:build) and withheld the
+      // admin-only ones (ae:model-config, ae:github-config, ae:build-view is
+      // subsumed by ae:build so it's never needed here).
+      permissions: new Set([
+        "ae:skill-config",
+        "ae:requirement-update",
+        "ae:design-view",
+        "ae:build-view",
+      ]),
       signOut: () => void signOut(),
     };
   }, [auth]);

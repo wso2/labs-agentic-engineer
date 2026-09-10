@@ -44,6 +44,7 @@ import {
   TriangleAlert,
   Upload,
 } from "@wso2/oxygen-ui-icons-react";
+import { useHasPermission } from "../../../auth/permissions";
 import { StatusChip } from "../../../components/StatusChip";
 import {
   useConfig,
@@ -98,6 +99,7 @@ export function SkillsSection() {
   } = useConfig();
   const { data, isLoading, isError, error, refetch } = useSkills();
   const { data: updates } = useSkillUpdates();
+  const hasSkillConfig = useHasPermission("ae:skill-config");
 
   const [importOpen, setImportOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -238,13 +240,22 @@ export function SkillsSection() {
             pending={syncSkills.isPending}
             onSync={() => syncSkills.mutate()}
           />
-          <Button
-            variant="contained"
-            startIcon={<Upload size={18} />}
-            onClick={() => setImportOpen(true)}
+          <Tooltip
+            title={
+              hasSkillConfig ? "" : "You don't have permission to configure skills."
+            }
           >
-            Import
-          </Button>
+            <span>
+              <Button
+                variant="contained"
+                startIcon={<Upload size={18} />}
+                onClick={() => setImportOpen(true)}
+                disabled={!hasSkillConfig}
+              >
+                Import
+              </Button>
+            </span>
+          </Tooltip>
         </Box>
       </Box>
 
@@ -386,23 +397,29 @@ export function SkillsSection() {
                       <Box sx={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 1 }}>
                         <Tooltip
                           title={
-                            // `required` is the server's call, not a name match
-                            // here: the coding runner reads this skill on every
-                            // run and refuses to start without it, so the PATCH
-                            // would 409. A toggle that can only fail is worse
-                            // than one that says why it is unavailable.
-                            skill.required
-                              ? "This skill carries the coding run's workflow, so it can't be turned off — every build in your organization needs it."
-                              : skill.enabled
-                                ? "Disable this skill to withhold it from the platform's agents. It stays in your org's skills repo and can be switched back on anytime."
-                                : "Enable this skill to make it available to the platform's agents again."
+                            // Permission comes first: it's the one reason
+                            // that has nothing to do with this particular
+                            // skill's own state, so it takes precedence over
+                            // `required`/`enabled` explanations below.
+                            !hasSkillConfig
+                              ? "You don't have permission to configure skills."
+                              : // `required` is the server's call, not a name match
+                                // here: the coding runner reads this skill on every
+                                // run and refuses to start without it, so the PATCH
+                                // would 409. A toggle that can only fail is worse
+                                // than one that says why it is unavailable.
+                                skill.required
+                                ? "This skill carries the coding run's workflow, so it can't be turned off — every build in your organization needs it."
+                                : skill.enabled
+                                  ? "Disable this skill to withhold it from the platform's agents. It stays in your org's skills repo and can be switched back on anytime."
+                                  : "Enable this skill to make it available to the platform's agents again."
                           }
                         >
                           <span>
                             <Switch
                               size="small"
                               checked={skill.enabled}
-                              disabled={isTogglingThisRow || skill.required}
+                              disabled={isTogglingThisRow || skill.required || !hasSkillConfig}
                               onChange={(e) =>
                                 setSkillEnabled.mutate({
                                   name: skill.name,

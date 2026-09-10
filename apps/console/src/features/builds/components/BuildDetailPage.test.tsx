@@ -28,9 +28,20 @@ type RunCycleView = components["schemas"]["RunCycleView"];
 type TaskView = components["schemas"]["TaskView"];
 type DeployStage = components["schemas"]["DeployStage"];
 
+// Every existing test in this file assumes the page is otherwise reachable —
+// only a dedicated "no permission" test flips this. BuildActions' own
+// Cancel/Retry gate reads the same flag through useHasPermission.
+const canViewBuilds = vi.hoisted(() => ({ current: true }));
+vi.mock("../../../auth/permissions", () => ({
+  useHasAnyPermission: () => canViewBuilds.current,
+  useHasPermission: () => canViewBuilds.current,
+}));
+
+const navigate = vi.fn();
 // Router stubbed to plain anchors — no RouterProvider needed.
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children?: React.ReactNode }) => <a>{children}</a>,
+  useNavigate: () => navigate,
   createLink:
     (Component: React.ElementType) =>
     ({
@@ -237,6 +248,7 @@ afterEach(() => {
   mockDesignDeps = [];
   mockReadiness = undefined;
   cycleBuildsCalls.length = 0;
+  canViewBuilds.current = true;
   vi.clearAllMocks();
   vi.useRealTimers();
 });
@@ -680,5 +692,18 @@ describe("BuildDetailPage — the task list's order and its links", () => {
       "href",
       "https://github.com/acme-dev/demo-shop/issues/1",
     );
+  });
+});
+
+describe("BuildDetailPage — permission gate", () => {
+  it("blocks the whole page for a user lacking ae:build/ae:build-view", () => {
+    canViewBuilds.current = false;
+    mockBuilds = [build()];
+    renderPage();
+
+    expect(
+      screen.getByText("You don't have access to this project's builds"),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Build actions" })).not.toBeInTheDocument();
   });
 });

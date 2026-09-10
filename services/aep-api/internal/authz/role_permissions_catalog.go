@@ -18,7 +18,12 @@ package authz
 
 var rolePermissionsCatalog = map[string][]string{
 	"ae-admin": {
+		"ae:build",
+		"ae:build-view",
+		"ae:design-view",
+		"ae:github-config",
 		"ae:model-config",
+		"ae:requirement-update",
 		"ae:skill-config",
 	},
 }

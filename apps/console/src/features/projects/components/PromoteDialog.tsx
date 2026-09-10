@@ -31,6 +31,7 @@ import {
 } from "@wso2/oxygen-ui";
 import { ArrowUpRight, X } from "@wso2/oxygen-ui-icons-react";
 import { createLink } from "@tanstack/react-router";
+import { useHasPermission } from "../../../auth/permissions";
 import { StatusChip } from "../../../components/StatusChip";
 import { validationView, type StageTone } from "../lib/pipeline";
 import {
@@ -170,6 +171,7 @@ export function PromoteDialog({
   /** Called when Promote is pressed with every required value set. */
   onPromote: () => void;
 }) {
+  const hasBuild = useHasPermission("ae:build");
   const verdict = validationView(validation);
   const needing = rows.filter((row) => !row.provisioned).length;
   const ready = allConnectionsSet(rows, values);
@@ -264,9 +266,15 @@ export function PromoteDialog({
         {/* A disabled control swallows its title, so the tooltip that explains
             WHY it is disabled lives on a wrapper the pointer still reaches. */}
         <span
-          {...(!ready && { title: "Enabled when all required values are set" })}
+          {...(!hasBuild
+            ? { title: "You don't have permission to promote this project." }
+            : !ready && { title: "Enabled when all required values are set" })}
         >
-          <Button variant="contained" disabled={!ready} onClick={onPromote}>
+          <Button
+            variant="contained"
+            disabled={!ready || !hasBuild}
+            onClick={onPromote}
+          >
             Promote
           </Button>
         </span>

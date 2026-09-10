@@ -19,12 +19,24 @@
 // @vitest-environment jsdom
 
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { components } from "../../../generated/aep-api";
 import {
   BuildDependencyDrawer,
   groupPreflightItems,
 } from "./BuildDependencyDrawer";
+
+// Every existing test in this file assumes Continue is otherwise reachable —
+// no dedicated "no permission" test exists here since SpecView.test.tsx
+// already covers the gate end to end.
+const hasBuildPermission = vi.hoisted(() => ({ current: true }));
+vi.mock("../../../auth/permissions", () => ({
+  useHasPermission: () => hasBuildPermission.current,
+}));
+
+beforeEach(() => {
+  hasBuildPermission.current = true;
+});
 
 type PreflightItem = components["schemas"]["PreflightItem"];
 type BuildInputItem = components["schemas"]["BuildInputItem"];

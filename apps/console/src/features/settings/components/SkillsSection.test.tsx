@@ -29,6 +29,13 @@ vi.mock("@tanstack/react-router", () => ({
   Link: (props: Record<string, unknown>) => <a {...props} />,
 }));
 
+// Every existing test in this file assumes the toggle is otherwise operable —
+// only the dedicated "no permission" test below flips this to false.
+const skillConfigPermission = vi.hoisted(() => ({ current: true }));
+vi.mock("../../../auth/permissions", () => ({
+  useHasPermission: () => skillConfigPermission.current,
+}));
+
 type SkillSummary = components["schemas"]["SkillSummary"];
 type GitProviderProjection = components["schemas"]["GitProviderProjection"];
 
@@ -109,7 +116,14 @@ vi.mock("../api/queries", () => ({
     reset: vi.fn(),
   }),
   useSetSkillEnabled: () => setSkillEnabled,
-  useSkill: () => ({ data: undefined, isLoading: false, isError: false, error: null }),
+  // Looks up the row by name so the viewer dialog (opened via "View") sees
+  // that skill's own editable/deletable flags, matching the real hook.
+  useSkill: (name: string) => ({
+    data: skillsData.skills.find((s) => s.name === name),
+    isLoading: false,
+    isError: false,
+    error: null,
+  }),
   useUpdateSkill: () => ({
     mutate: vi.fn(),
     isPending: false,
@@ -141,6 +155,7 @@ function resetMocks() {
     skills: [],
     repoUrl: "https://github.com/acme-dev/org-skills",
   };
+  skillConfigPermission.current = true;
 }
 
 describe("SkillsSection — availability toggle", () => {
@@ -237,5 +252,39 @@ describe("SkillsSection — availability toggle", () => {
     // The kind chip stays present and legible on both rows — availability
     // and kind are independent signals, so disabling never hides it.
     expect(screen.getAllByText("Org")).toHaveLength(2);
+  });
+
+  // Lacking ae:skill-config takes every row's toggle out of play, regardless
+  // of that row's own required/enabled state — permission is checked first.
+  it("disables every toggle when the user lacks ae:skill-config", () => {
+    resetMocks();
+    skillConfigPermission.current = false;
+    skillsData = {
+      skills: [
+        skill({ name: "go", enabled: true }),
+        skill({ name: "aep", kind: "platform", enabled: true, required: true }),
+      ],
+    };
+
+    render(<SkillsSection />);
+
+    expect(screen.getByRole("switch", { name: "Disable go" })).toBeDisabled();
+    expect(screen.getByRole("switch", { name: "Disable aep" })).toBeDisabled();
+  });
+
+  // Beyond the toggle: Import, and Edit/Delete inside the viewer, are the
+  // only other ways to change something on this page — view stays open.
+  it("disables Import and the viewer's Edit/Delete when the user lacks ae:skill-config", () => {
+    resetMocks();
+    skillConfigPermission.current = false;
+    skillsData = { skills: [skill({ name: "go" })] };
+
+    render(<SkillsSection />);
+
+    expect(screen.getByRole("button", { name: "Import" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "View" }));
+    expect(screen.getByRole("button", { name: "Edit" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
   });
 });

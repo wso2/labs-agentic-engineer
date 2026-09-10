@@ -112,6 +112,7 @@ beforeEach(() => {
   mockSpecAgent = "";
   mockSpecFlow = "";
   mockSearch.current = {};
+  sessionPermissions.current = new Set(["ae:design-view", "ae:build"]);
 });
 
 // --- CellDiagramPanel: its own behavior is covered by
@@ -121,10 +122,16 @@ vi.mock("./CellDiagramPanel", () => ({
   CellDiagramPanel: () => <div data-testid="cell-diagram-panel" />,
 }));
 
+// Every existing test in this file assumes the design view AND build are
+// otherwise reachable — only the dedicated "no permission" tests flip this.
+const sessionPermissions = vi.hoisted(() => ({
+  current: new Set(["ae:design-view", "ae:build"]),
+}));
 vi.mock("../../../auth/SessionContext", () => ({
   useSession: () => ({
     user: { name: "Test User", email: "test@example.com" },
     orgHandle: "acme",
+    permissions: sessionPermissions.current,
     signOut: vi.fn(),
   }),
 }));
@@ -1818,5 +1825,35 @@ describe("SpecView validation criteria explanation", () => {
     expect(screen.getByText("auto")).toBeInTheDocument();
     expect(screen.getByText("manual")).toBeInTheDocument();
     expect(screen.queryByText("e2e")).not.toBeInTheDocument();
+  });
+});
+
+describe("SpecView — permission gate", () => {
+  it("blocks the whole page for a user lacking ae:design-view, firing none of the spec/collab hooks", () => {
+    sessionPermissions.current = new Set();
+    render(<SpecView projectName="proj1" />);
+
+    expect(
+      screen.getByText("You don't have access to this project's design"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Architecture")).toBeInTheDocument();
+    expect(screen.getByText("Wireframes")).toBeInTheDocument();
+    expect(screen.getByText("Component specs")).toBeInTheDocument();
+    // Nothing from the real page renders — not a tab, not a file, not the
+    // Build button — confirming this is a full replacement, not an overlay.
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+    expect(screen.queryByText("Build")).not.toBeInTheDocument();
+  });
+
+  it("navigates to the project overview from the restricted page", () => {
+    sessionPermissions.current = new Set();
+    render(<SpecView projectName="proj1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Back to project overview" }));
+
+    expect(mockNavigate).toHaveBeenCalledWith({
+      to: "/projects/$projectName",
+      params: { projectName: "proj1" },
+    });
   });
 });

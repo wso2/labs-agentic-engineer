@@ -27,6 +27,7 @@ import {
   alpha,
 } from "@wso2/oxygen-ui";
 import { ArrowRight, Lock } from "@wso2/oxygen-ui-icons-react";
+import { useHasPermission } from "../../../auth/permissions";
 import { StatusChip } from "../../../components/StatusChip";
 import type { components } from "../../../generated/aep-api";
 import type { ValidationCounts } from "../../validation/lib/verdict";
@@ -139,6 +140,7 @@ export function EnvironmentCards({
   configured: number;
   onPromote: () => void;
 }) {
+  const hasBuild = useHasPermission("ae:build");
   // Promotion is offered only while production is empty and dev has a version
   // to offer; whether it is ENABLED is the deploy aggregate's call (canPromote).
   const promotable = Boolean(deploy?.version && production.cards.length === 0);
@@ -177,13 +179,16 @@ export function EnvironmentCards({
             sx={{ alignItems: "center", flexWrap: "wrap", rowGap: 1, mt: 1.5 }}
           >
             <span
-              {...(!canPromote(deploy) && {
-                title: "Enabled once the dev deployment settles and validation has its say",
-              })}
+              {...(!hasBuild
+                ? { title: "You don't have permission to promote this project." }
+                : !canPromote(deploy) && {
+                    title:
+                      "Enabled once the dev deployment settles and validation has its say",
+                  })}
             >
               <Button
                 variant="contained"
-                disabled={!canPromote(deploy)}
+                disabled={!canPromote(deploy) || !hasBuild}
                 onClick={onPromote}
                 endIcon={<ArrowRight size={16} aria-hidden />}
               >

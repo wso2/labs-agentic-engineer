@@ -27,6 +27,7 @@ type Deployment = components["schemas"]["Deployment"];
 type DeployStage = components["schemas"]["DeployStage"];
 type MilestoneRunView = components["schemas"]["MilestoneRunView"];
 
+const navigate = vi.fn();
 // Router replaced so links render as plain anchors whose href is the resolved
 // route path — no RouterProvider needed (mirrors DeploymentsPage.test.tsx).
 vi.mock("@tanstack/react-router", () => ({
@@ -46,6 +47,14 @@ vi.mock("@tanstack/react-router", () => ({
       return <Component component="a" href={href} {...rest} />;
     },
   Link: ({ children }: { children?: React.ReactNode }) => <a>{children}</a>,
+  useNavigate: () => navigate,
+}));
+
+// Every existing test in this file assumes the page is otherwise reachable —
+// only a dedicated "no permission" test flips this.
+const canViewDeployments = vi.hoisted(() => ({ current: true }));
+vi.mock("../../../auth/permissions", () => ({
+  useHasAnyPermission: () => canViewDeployments.current,
 }));
 
 let mockDeploy: DeployStage = {
@@ -156,6 +165,7 @@ beforeEach(() => {
   mockRunsPending = false;
   mockCounts = undefined;
   openApiDialog.mockClear();
+  canViewDeployments.current = true;
 });
 
 describe("DeploymentDetailPage", () => {
@@ -293,5 +303,16 @@ describe("DeploymentDetailPage", () => {
       "href",
       "/projects/expense/deployments",
     );
+  });
+});
+
+describe("DeploymentDetailPage — permission gate", () => {
+  it("blocks the whole page for a user lacking ae:build/ae:build-view", () => {
+    canViewDeployments.current = false;
+    render(<DeploymentDetailPage projectName="expense" environment="development" />);
+
+    expect(
+      screen.getByText("You don't have access to this project's deployments"),
+    ).toBeInTheDocument();
   });
 });

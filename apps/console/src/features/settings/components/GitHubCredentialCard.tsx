@@ -35,20 +35,26 @@ import {
   IconButton,
   InputAdornment,
   TextField,
+  Tooltip,
   Typography,
 } from "@wso2/oxygen-ui";
 import { Eye, EyeOff, GitHub, Lightbulb } from "@wso2/oxygen-ui-icons-react";
+import { useHasPermission } from "../../../auth/permissions";
 import type { components } from "../../../generated/aep-api";
 import { useConnectGitHubPat, useDisconnectGitProvider } from "../api/queries";
 import { GitHubPatScopeGuide } from "./GitHubPatScopeGuide";
 
 type GitProviderProjection = components["schemas"]["GitProviderProjection"];
 
+const NO_PERMISSION_TOOLTIP =
+  "You don't have permission to configure the GitHub connection.";
+
 export function GitHubCredentialCard({
   gitProvider,
 }: {
   gitProvider: GitProviderProjection | null;
 }) {
+  const hasGitHubConfig = useHasPermission("ae:github-config");
   const [pat, setPat] = useState("");
   // Pre-fill the org when already connected so a token rotation is PAT-only;
   // the field is required (below), so an empty org can't reach the BE.
@@ -90,6 +96,12 @@ export function GitHubCredentialCard({
           )}
         </Box>
         <Divider sx={{ mb: 3 }} />
+
+        {!hasGitHubConfig && (
+          <Alert severity="warning" sx={{ mb: 3 }}>
+            You don't have permission to change these settings.
+          </Alert>
+        )}
 
         {connected ? (
           <Box sx={{ display: "flex", flexDirection: "column", gap: 1, mb: 3 }}>
@@ -147,6 +159,7 @@ export function GitHubCredentialCard({
             value={pat}
             onChange={(e) => setPat(e.target.value)}
             fullWidth
+            disabled={!hasGitHubConfig}
             slotProps={{
               input: {
                 endAdornment: (
@@ -155,6 +168,7 @@ export function GitHubCredentialCard({
                       aria-label={showPat ? "hide token" : "show token"}
                       onClick={() => setShowPat((v) => !v)}
                       edge="end"
+                      disabled={!hasGitHubConfig}
                     >
                       {showPat ? <EyeOff size={18} /> : <Eye size={18} />}
                     </IconButton>
@@ -171,6 +185,7 @@ export function GitHubCredentialCard({
             onChange={(e) => setGithubLogin(e.target.value)}
             helperText="The GitHub organization the platform reads and writes repos in."
             fullWidth
+            disabled={!hasGitHubConfig}
           />
           {connect.isError && (
             <Alert severity="error">{connect.error.message}</Alert>
@@ -183,25 +198,36 @@ export function GitHubCredentialCard({
               justifyContent: "space-between",
             }}
           >
-            <Button
-              variant="contained"
-              onClick={submit}
-              disabled={!pat || !githubLogin.trim() || connect.isPending}
-            >
-              {connect.isPending
-                ? "Validating…"
-                : connected
-                  ? "Replace token"
-                  : "Connect"}
-            </Button>
+            <Tooltip title={hasGitHubConfig ? "" : NO_PERMISSION_TOOLTIP}>
+              <span>
+                <Button
+                  variant="contained"
+                  onClick={submit}
+                  disabled={
+                    !pat || !githubLogin.trim() || connect.isPending || !hasGitHubConfig
+                  }
+                >
+                  {connect.isPending
+                    ? "Validating…"
+                    : connected
+                      ? "Replace token"
+                      : "Connect"}
+                </Button>
+              </span>
+            </Tooltip>
             {connected && (
-              <Button
-                color="error"
-                variant="outlined"
-                onClick={() => setDisconnectOpen(true)}
-              >
-                Disconnect
-              </Button>
+              <Tooltip title={hasGitHubConfig ? "" : NO_PERMISSION_TOOLTIP}>
+                <span>
+                  <Button
+                    color="error"
+                    variant="outlined"
+                    onClick={() => setDisconnectOpen(true)}
+                    disabled={!hasGitHubConfig}
+                  >
+                    Disconnect
+                  </Button>
+                </span>
+              </Tooltip>
             )}
           </Box>
         </Box>
@@ -236,14 +262,18 @@ export function GitHubCredentialCard({
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setDisconnectOpen(false)}>Cancel</Button>
-          <Button
-            color="error"
-            variant="contained"
-            onClick={confirmDisconnect}
-            disabled={disconnect.isPending}
-          >
-            Disconnect
-          </Button>
+          <Tooltip title={hasGitHubConfig ? "" : NO_PERMISSION_TOOLTIP}>
+            <span>
+              <Button
+                color="error"
+                variant="contained"
+                onClick={confirmDisconnect}
+                disabled={disconnect.isPending || !hasGitHubConfig}
+              >
+                Disconnect
+              </Button>
+            </span>
+          </Tooltip>
         </DialogActions>
       </Dialog>
     </Card>

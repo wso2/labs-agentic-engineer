@@ -30,6 +30,7 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import { X } from "@wso2/oxygen-ui-icons-react";
+import { useHasPermission } from "../../../auth/permissions";
 import { useSaveConnectionValues } from "../api/queries";
 import type { ConnectionRow } from "../lib/promotion";
 
@@ -58,6 +59,7 @@ export function ConnectionValuesDialog({
   connection: ConnectionRow;
   environment: string;
 }) {
+  const hasBuild = useHasPermission("ae:build");
   const save = useSaveConnectionValues(projectName);
   const [values, setValues] = useState<Record<string, string>>({});
   useEffect(() => {
@@ -113,6 +115,7 @@ export function ConnectionValuesDialog({
               onChange={(e) =>
                 setValues((v) => ({ ...v, [key.key]: e.target.value }))
               }
+              disabled={!hasBuild}
               sx={{ "& input": { fontFamily: "monospace" } }}
             />
           ))}
@@ -137,11 +140,13 @@ export function ConnectionValuesDialog({
           Cancel
         </Button>
         <span
-          {...(!complete && { title: "Enabled when every value is set" })}
+          {...(!hasBuild
+            ? { title: "You don't have permission to configure this connection." }
+            : !complete && { title: "Enabled when every value is set" })}
         >
           <Button
             variant="contained"
-            disabled={!complete || save.isPending}
+            disabled={!complete || save.isPending || !hasBuild}
             onClick={() =>
               save.mutate(
                 {
