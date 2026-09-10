@@ -24,9 +24,23 @@ import (
 	"github.com/wso2/aep/aep-api/ocauth"
 )
 
-func TestDirectOCStrategy_AlwaysM2M(t *testing.T) {
+func TestDirectOCStrategy_ForwardsUserJWTWhenPresent(t *testing.T) {
 	ctx := authn.WithAuthToken(context.Background(), "user-jwt")
+	if got := (DirectOCStrategy{}).Decide(ctx); got != ocauth.AuthModeUserJWT {
+		t.Fatalf("got %v, want AuthModeUserJWT", got)
+	}
+}
+
+func TestDirectOCStrategy_M2MWhenNoUserJWT(t *testing.T) {
+	if got := (DirectOCStrategy{}).Decide(context.Background()); got != ocauth.AuthModeServiceM2M {
+		t.Fatalf("got %v, want AuthModeServiceM2M", got)
+	}
+}
+
+func TestDirectOCStrategy_M2MWhenServiceIdentityMarked(t *testing.T) {
+	ctx := authn.WithAuthToken(context.Background(), "user-jwt")
+	ctx = authn.WithServiceIdentity(ctx)
 	if got := (DirectOCStrategy{}).Decide(ctx); got != ocauth.AuthModeServiceM2M {
-		t.Fatalf("got %v", got)
+		t.Fatalf("got %v, want AuthModeServiceM2M even with a user JWT present", got)
 	}
 }

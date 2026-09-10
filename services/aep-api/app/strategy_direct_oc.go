@@ -22,13 +22,21 @@ import (
 	"github.com/wso2/aep/aep-api/ocauth"
 )
 
-// DirectOCStrategy always returns AuthModeServiceM2M — the OSS / direct-OC
-// default that never passes through a user JWT.
+// DirectOCStrategy is the OSS / direct-OC default RequestAuthStrategy: it
+// forwards the inbound console user's JWT to OpenChoreo as-is so OC applies
+// that user's own RBAC, and falls back to the BFF's M2M service identity only
+// when there is no user JWT to forward (webhook/dispatch-triggered calls that
+// never carried one) or the call was explicitly marked ocauth.WithServiceIdentity
+// (background watchers, MCP tool calls, validation's runner-context lookups —
+// see those call sites for why each one cannot use the caller's token).
 type DirectOCStrategy struct{}
 
 // Decide implements ocauth.RequestAuthStrategy.
-func (DirectOCStrategy) Decide(context.Context) ocauth.AuthMode {
-	return ocauth.AuthModeServiceM2M
+func (DirectOCStrategy) Decide(ctx context.Context) ocauth.AuthMode {
+	if ocauth.IsServiceIdentity(ctx) || ocauth.GetAuthToken(ctx) == "" {
+		return ocauth.AuthModeServiceM2M
+	}
+	return ocauth.AuthModeUserJWT
 }
 
 var _ ocauth.RequestAuthStrategy = DirectOCStrategy{}
