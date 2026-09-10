@@ -44,9 +44,18 @@ import (
 // run that halted them is terminal by construction), so the hot poll is not
 // complicated for a state it cannot see.
 
-// defaultSweepInterval is the reconcile cadence. A backstop, not a driver:
-// everything it heals is something a webhook should have done, so it is slow
-// on purpose.
+// defaultSweepInterval is the reconcile cadence. A backstop, not a driver, so it
+// is slow on purpose: everything it heals is something that should already have
+// happened — a webhook that never arrived, or a settling run's own call to
+// ReconcileMilestone that could not get through.
+//
+// The interval is therefore not what bounds how quickly a hand-off is picked up.
+// The platform's own writes — the validation task a dev run files, the repair
+// issues a failed verdict files, the task a repair run reopens — produce no
+// usable delivery, since the App bot is their sender and `issues.opened` is not
+// routed. Those are handed over at the settle instead
+// (delivery.SettleHandsWorkOnward), and this timer is what catches the pass that
+// did not land.
 const defaultSweepInterval = 60 * time.Second
 
 // Sweep is the reconcile backstop AND the trigger router, and it has TWO
@@ -64,9 +73,14 @@ const defaultSweepInterval = 60 * time.Second
 // GitHub never made (or that failed past its retries) leaves a milestone with
 // work and nobody working it. And the adoption-versus-settle race — an issue
 // joining a milestone in the instant the supervisor decided it was empty —
-// leaves exactly the same footprint. It is also the ONLY thing that starts a
-// validation run without a human asking: a dev run settles having filed the
-// version's validation task, and this is what picks that task up.
+// leaves exactly the same footprint. This rule is also, apart from a human
+// asking, the ONLY thing that starts a validation run: a dev run settles having
+// filed the version's validation task, and this is what turns that task into a
+// run. It is reached from two places, though — the tick below, and the settling
+// run itself, which calls ReconcileMilestone for its own milestone rather than
+// leave the version unjudged until the next pass. In the ordinary case that has
+// already happened by the time a tick arrives and this pass finds nothing to do,
+// which is the division of labour a backstop is supposed to have.
 //
 // The second heals a failure mode the row model has: a live ROW is not a live
 // WORKFLOW. Nothing else notices a row whose execution is gone, and because a
@@ -133,8 +147,10 @@ func (s *Sweep) Run(ctx context.Context) {
 	}
 }
 
-// Once runs a single reconcile pass. Exported so the pass can be driven
-// directly — by a test, and by anything that wants to reconcile now.
+// Once runs a single reconcile pass over every repository. Exported so the pass
+// can be driven directly by a test; a caller that knows WHICH milestone changed
+// wants ReconcileMilestone instead, which is one GitHub read rather than one per
+// known milestone across every project.
 //
 // One repository's failure never stops the others: the sweep's whole purpose
 // is to be the thing that still runs when something else is broken.
@@ -157,75 +173,109 @@ func (s *Sweep) Once(ctx context.Context) error {
 
 func (s *Sweep) reconcileRepo(ctx context.Context, repo RepoRef) error {
 	e := s.events
-	if e.p.Runs == nil || e.p.Issues == nil {
+	// Only the milestone walk is guarded here; ReconcileMilestone re-checks what
+	// its own pass needs.
+	if e.p.Runs == nil {
 		return nil
 	}
 	milestones, err := e.p.Runs.KnownMilestones(ctx, repo.OrgID, repo.ProjectID)
 	if err != nil {
 		return err
 	}
+	// One milestone's failure never stops the others, for the same reason one
+	// repository's does not: the sweep is the thing that still runs when
+	// something else is broken.
 	var errs []error
 	for _, milestone := range milestones {
-		live, lerr := e.p.Runs.LiveRunForMilestone(ctx, repo.OrgID, repo.ProjectID, milestone.Number)
-		if lerr != nil {
-			errs = append(errs, lerr)
-			continue
-		}
-		if live != nil {
-			// A live ROW is not a live WORKFLOW. Re-offer it: StartRun is
-			// idempotent — an execution that is running answers AlreadyStarted,
-			// and the row is reused rather than re-admitted — so this costs one
-			// Temporal call and heals a row whose workflow is gone. Without it a
-			// non-terminal row answers LiveRunForMilestone forever, the sweep
-			// skips it forever, and the partial indexes refuse every later run on
-			// that project (the wedge migrate/milestone_runs.go:75-85 documents).
-			//
-			// EXCEPT a run still in its planning phase. Re-offering that one would
-			// start a fresh workflow with no Tag and no provision inputs — the
-			// caller's, not the row's — so it would skip planning entirely and
-			// settle an unplanned version as delivered. A planning row is the
-			// click's to resolve: it starts the workflow synchronously and settles
-			// the row when it cannot.
-			if live.State != delivery.RunStatePlanning {
-				if serr := e.startRun(ctx, repo.OrgID, repo.ProjectID, milestone); serr != nil {
-					errs = append(errs, serr)
-				}
-			}
-			continue
-		}
-		// A CANCELLED increment is abandoned, and the milestone is skipped whole —
-		// before the issue fetch, because there is no decision left for the issues
-		// to inform and this saves the round trip.
-		//
-		// It has to be a decision about the MILESTONE rather than about the issues,
-		// which is the difference from the halt: a closed milestone still accepts
-		// new ones, so an issue reopened (or freshly filed) inside a cancelled
-		// version carries no mark and would otherwise start a task run that builds
-		// and deploys against a version nobody is shipping.
-		//
-		// The rule clears itself: a rebuild admits a new row on the same milestone,
-		// so the newest run stops being the cancelled one the moment somebody
-		// decides to work the version again. That is why it reads the NEWEST run of
-		// any kind rather than looking for a cancel anywhere in the history.
-		cancelled, cerr := e.milestoneCancelled(ctx, repo.OrgID, repo.ProjectID, milestone.Number)
-		if cerr != nil {
-			errs = append(errs, cerr)
-			continue
-		}
-		if cancelled {
-			continue
-		}
-		issues, ierr := e.p.Issues.ListMilestoneIssues(ctx, repo.OrgID, repo.ProjectID,
-			milestoneOpenIssuesFilter(milestone.Number))
-		if ierr != nil {
-			errs = append(errs, ierr)
-			continue
-		}
-		if serr := e.offerRun(ctx, repo.OrgID, repo.ProjectID, milestone, issues); serr != nil {
-			errs = append(errs, serr)
+		if merr := e.ReconcileMilestone(ctx, repo.OrgID, repo.ProjectID,
+			milestone.Number, milestone.Title); merr != nil {
+			errs = append(errs, merr)
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// ReconcileMilestone makes the sweep's pass over ONE milestone: re-offer a live
+// row, skip a cancelled increment, otherwise route the milestone's open work to
+// a run of the right kind.
+//
+// It is the sweep's loop body, exported so a caller that KNOWS something just
+// changed can have the same pass made now instead of waiting for the tick. The
+// run supervisor is that caller: a run settling is the moment its milestone's
+// hand-off becomes actionable, and no webhook reports it (see
+// delivery.SettleHandsWorkOnward). One function rather than two spellings of the
+// rule is the whole point — every suppressor the sweep grew is a suppressor the
+// nudge inherits, and neither can drift from the other.
+//
+// The milestone arrives as NUMBER and TITLE rather than as a MilestoneRef, which
+// is the shape the supervisor's other three ports onto this package already take
+// (HaltUnfinishedWork, CloseCancelledWork, MintDeployFixIssues all pass the
+// milestone as an int). A shared struct is not impossible across the sibling
+// boundary — delivery.StartRunRequest is exactly that, a type at the domain ROOT
+// with a narrow port over it in each package — but it earns its place by
+// carrying a domain concept several callers compose. This call carries an
+// address, so it matches its siblings instead of minting a fourth spelling.
+//
+// The TITLE is carried, unlike in those three, because this can admit a NEW run
+// row: MilestoneRun.SpecTag falls back to the title when the row has no tag, so
+// dropping it would put a run in the ledger with no version to show for itself.
+func (e *Events) ReconcileMilestone(ctx context.Context, orgID, projectID string,
+	number int, title string) error {
+	if e.p.Runs == nil || e.p.Issues == nil {
+		return nil
+	}
+	milestone := MilestoneRef{Number: number, Title: title}
+	live, err := e.p.Runs.LiveRunForMilestone(ctx, orgID, projectID, milestone.Number)
+	if err != nil {
+		return err
+	}
+	if live != nil {
+		// A live ROW is not a live WORKFLOW. Re-offer it: StartRun is
+		// idempotent — an execution that is running answers AlreadyStarted,
+		// and the row is reused rather than re-admitted — so this costs one
+		// Temporal call and heals a row whose workflow is gone. Without it a
+		// non-terminal row answers LiveRunForMilestone forever, the sweep
+		// skips it forever, and the partial indexes refuse every later run on
+		// that project (the wedge migrate/milestone_runs.go:75-85 documents).
+		//
+		// EXCEPT a run still in its planning phase. Re-offering that one would
+		// start a fresh workflow with no Tag and no provision inputs — the
+		// caller's, not the row's — so it would skip planning entirely and
+		// settle an unplanned version as delivered. A planning row is the
+		// click's to resolve: it starts the workflow synchronously and settles
+		// the row when it cannot.
+		if live.State != delivery.RunStatePlanning {
+			return e.startRun(ctx, orgID, projectID, milestone)
+		}
+		return nil
+	}
+	// A CANCELLED increment is abandoned, and the milestone is skipped whole —
+	// before the issue fetch, because there is no decision left for the issues
+	// to inform and this saves the round trip.
+	//
+	// It has to be a decision about the MILESTONE rather than about the issues,
+	// which is the difference from the halt: a closed milestone still accepts
+	// new ones, so an issue reopened (or freshly filed) inside a cancelled
+	// version carries no mark and would otherwise start a task run that builds
+	// and deploys against a version nobody is shipping.
+	//
+	// The rule clears itself: a rebuild admits a new row on the same milestone,
+	// so the newest run stops being the cancelled one the moment somebody
+	// decides to work the version again. That is why it reads the NEWEST run of
+	// any kind rather than looking for a cancel anywhere in the history.
+	cancelled, err := e.milestoneCancelled(ctx, orgID, projectID, milestone.Number)
+	if err != nil {
+		return err
+	}
+	if cancelled {
+		return nil
+	}
+	issues, err := e.p.Issues.ListMilestoneIssues(ctx, orgID, projectID,
+		milestoneOpenIssuesFilter(milestone.Number))
+	if err != nil {
+		return err
+	}
+	return e.offerRun(ctx, orgID, projectID, milestone, issues)
 }
 
 // milestoneCancelled reports whether this milestone's NEWEST run settled
@@ -263,7 +313,7 @@ func (e *Events) milestoneCancelled(ctx context.Context, orgID, projectID string
 	if !delivery.CancelClosesTheMilestone(kind) {
 		return false, nil
 	}
-	slog.DebugContext(ctx, "eventcore: reconcile sweep skipping a cancelled increment",
+	slog.DebugContext(ctx, "eventcore: reconcile skipping a cancelled increment",
 		"project", projectID, "milestone", milestoneNumber, "run", newest.ID)
 	return true, nil
 }
@@ -310,14 +360,14 @@ func (e *Events) offerRun(ctx context.Context, orgID, projectID string, mileston
 	issues = notHalted(issues)
 	for _, iss := range issues {
 		if delivery.HasLabel(iss.Labels, delivery.LabelAgentWork) && delivery.IsValidationWork(iss.Labels) {
-			slog.InfoContext(ctx, "eventcore: reconcile sweep found an open validation task — judging the version",
+			slog.InfoContext(ctx, "eventcore: reconcile found an open validation task — judging the version",
 				"project", projectID, "milestone", milestone.Number, "validationIssue", iss.Number)
 			return e.startValidationRun(ctx, orgID, projectID, milestone)
 		}
 	}
 	for _, iss := range issues {
 		if delivery.InTaskWorkingSet(iss.Labels) {
-			slog.InfoContext(ctx, "eventcore: reconcile sweep found unworked defects — starting a run",
+			slog.InfoContext(ctx, "eventcore: reconcile found unworked defects — starting a run",
 				"project", projectID, "milestone", milestone.Number, "issue", iss.Number)
 			return e.startRun(ctx, orgID, projectID, milestone)
 		}

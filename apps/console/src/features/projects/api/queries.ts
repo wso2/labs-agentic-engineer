@@ -29,6 +29,7 @@ import { client } from "../../../api/client";
 import { useConfig } from "../../settings/api/queries";
 import { firstEndpointUrl } from "../lib/deploymentUrl";
 import { deploymentsAreMoving } from "../lib/deploymentRows";
+import { statusIsMoving } from "../lib/statusCadence";
 import { projectKeys } from "./keys";
 import { ApiRequestError, apiErrorMessage } from "../../../api/errors";
 
@@ -87,32 +88,7 @@ const OVERVIEW_POLL_MS = 10_000;
 const STATUS_ACTIVE_POLL_MS = 5_000;
 const STATUS_IDLE_POLL_MS = 30_000;
 
-type ProjectStatus = components["schemas"]["ProjectStatus"];
 type Deployment = components["schemas"]["Deployment"];
-
-function statusIsMoving(status: ProjectStatus): boolean {
-  return (
-    // An agent writing the spec is the FIRST thing that moves on a new project
-    // and the longest stretch a first-timer watches (#562): the kickoff fires
-    // at creation, so the overview's opening minutes are exactly this state.
-    // Without it the spec card would sit on the idle interval through the whole
-    // interview and take up to 30s to notice it had finished.
-    status.spec.agent === "working" ||
-    // Mid-interview: a turn HAS run (so not "never-started") and written no
-    // spec yet, and `agent` returns to "" in every gap between turns — keying
-    // only on "working" drops the whole interview onto the idle cadence and
-    // leaves every surface up to 30s behind the agent it describes.
-    //
-    // Scoped to a project that actually has turn history, so an abandoned or
-    // never-started one is not parked on the fast cadence forever: this poll
-    // fans out to four backend sources, OpenChoreo included.
-    (status.spec.agent === "" && !status.spec.exists) ||
-    status.build.status === "running" ||
-    status.deploy.status === "deploying" ||
-    status.repoStatus === "pending" ||
-    status.repoStatus === "cloning"
-  );
-}
 
 function useProjectResource<T>(
   queryKey: readonly unknown[],

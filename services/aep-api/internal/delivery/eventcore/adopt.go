@@ -143,10 +143,19 @@ func (e *Events) startRun(ctx context.Context, orgID, projectID string, mileston
 // startValidationRun asks the supervisor to JUDGE a version, because its
 // validation task is open.
 //
-// The reconcile sweep is its caller, which makes this the platform's own trigger
-// rather than a human's: a dev run settles having filed the task, and this is
-// what turns that task into a run. The `revalidate` origin is honest either way —
-// an origin is a label on the trigger, and what the run DOES is its kind.
+// Its callers are the reconcile sweep and a settling run's own reconcile, which
+// makes this the platform's trigger rather than a human's: a dev run settles
+// having filed the task, and this is what turns that task into a run.
+//
+// It still wears the `revalidate` ORIGIN, including on a version's very first
+// judgement, and that is deliberate rather than left over. An origin names where
+// a run came from and nothing branches on it; what the run DOES is its kind, and
+// the kind here is exactly right. Nothing renders the origin either — the console
+// reads it at one site, as the kind fallback for rows admitted before the kind
+// column existed (runView.ts KIND_FOR_ORIGIN) — so a fourth value would add a
+// member to a closed contract enum, a legacy mapping that can never be hit, and
+// fixtures, to distinguish two triggers no surface tells apart. If a surface ever
+// does show the trigger, that is the change that should mint the value.
 //
 // It carries no attempt allowance, so the run resolves the platform default. The
 // per-version allowance is spent by the milestone's validation runs, counted from

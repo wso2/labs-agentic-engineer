@@ -137,3 +137,44 @@ func TestSettleClosesTheMilestone(t *testing.T) {
 		}
 	}
 }
+
+func TestSettleHandsWorkOnward(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name  string
+		state string
+		want  bool
+	}{
+		// The three hand-offs the platform makes to itself, and the states they
+		// arrive in. A dev run files the version's validation task and succeeds; a
+		// task run reopens that task and succeeds; a failed verdict files repair
+		// issues for a task run to work.
+		{"a delivered version hands over its validation task", delivery.RunStateSucceeded, true},
+		{"a failing verdict hands over its repair issues", delivery.RunStateFailed, true},
+
+		// A QUOTA BLOCK changes nothing about the milestone, so reconciling it is a
+		// spin rather than a hand-off: the halt is failed-only, so the working set
+		// is untouched, and the replacement run meets the same refusal and blocks
+		// again. Only the sweep's timer has ever bounded that, and it must stay the
+		// only thing that does.
+		{"a quota block hands over nothing", delivery.RunStateBlocked, false},
+
+		// A CANCEL is a person saying stop. A cancelled build's increment is
+		// abandoned and the plane skips its milestone anyway; a validation run
+		// cancelled before its first read leaves the version's task open on purpose,
+		// and restarting the judging a second after the click would overrule the
+		// person who stopped it. Asking again is the revalidate button's job.
+		{"a cancel hands over nothing", delivery.RunStateCancelled, false},
+
+		// Non-terminal states never reach this, and answer the quiet way if they do.
+		{"a running run has handed over nothing yet", delivery.RunStateRunning, false},
+		{"a waiting run has handed over nothing yet", delivery.RunStateWaiting, false},
+		{"a planning run has handed over nothing yet", delivery.RunStatePlanning, false},
+	}
+	for _, c := range cases {
+		if got := delivery.SettleHandsWorkOnward(c.state); got != c.want {
+			t.Errorf("%s: SettleHandsWorkOnward(%q) = %v, want %v", c.name, c.state, got, c.want)
+		}
+	}
+}

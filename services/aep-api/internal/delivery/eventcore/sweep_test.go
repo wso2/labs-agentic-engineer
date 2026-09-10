@@ -429,3 +429,122 @@ func TestSweep_ARebuildEndsTheCancelSkip(t *testing.T) {
 		t.Fatalf("a rebuilt milestone is ordinary again and must be healed, got %+v", h.sup.started)
 	}
 }
+
+// ---- ReconcileMilestone: the sweep's pass, driven for ONE milestone ---------
+//
+// The pass itself is the sweep's, verbatim — every test above drives it through
+// `Once`, which is what proves the two cannot diverge. What these pin is the
+// scoped DOOR: that a caller who knows which milestone changed gets the same
+// answers, and reaches no other milestone doing it. Its caller is the run
+// supervisor's settle (delivery.SettleHandsWorkOnward).
+
+// H1 and H3: the version's validation task is open and nothing is judging it.
+// This is the dev run's hand-off, and the repair chain's second half, which are
+// the same footprint.
+func TestReconcileMilestone_JudgesAVersionWhoseTaskIsOpen(t *testing.T) {
+	h := newHarness(t, aRun("run-dev", 7, delivery.RunStateSucceeded))
+	h.issues.withValidationIssue(7, 55)
+
+	if err := h.events.ReconcileMilestone(t.Context(), testOrg, testProject, 7, "v7"); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if len(h.sup.started) != 1 {
+		t.Fatalf("want one run started, got %+v", h.sup.started)
+	}
+	got := h.sup.started[0]
+	if got.Kind != delivery.RunKindValidation || got.MilestoneNumber != 7 {
+		t.Fatalf("an open validation task must be judged, got %+v", got)
+	}
+	// The title rides through onto the row. MilestoneRun.SpecTag falls back to it
+	// when the row carries no tag, so dropping it would put a run in the ledger
+	// with no version to show for itself.
+	if got.MilestoneTitle != "v7" {
+		t.Errorf("MilestoneTitle = %q, want %q", got.MilestoneTitle, "v7")
+	}
+}
+
+// H2: a failing verdict files one repair issue per failed criterion and settles.
+// Those are an ordinary task run's work — a validation run halts nothing,
+// precisely so this chain stays open — and nothing but this starts it.
+func TestReconcileMilestone_WorksTheRepairIssuesAFailedVerdictFiled(t *testing.T) {
+	judged := aRun("run-validation", 7, delivery.RunStateFailed)
+	judged.Kind, judged.Origin = delivery.RunKindValidation, delivery.RunOriginRevalidate
+	h := newHarness(t, judged)
+	h.issues.withIssue(7, 31, delivery.LabelAgentWork, delivery.KindBug, delivery.SrcValidation)
+
+	if err := h.events.ReconcileMilestone(t.Context(), testOrg, testProject, 7, "v7"); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if len(h.sup.started) != 1 || h.sup.started[0].Kind != delivery.RunKindTask {
+		t.Fatalf("verdict-sourced repair work must start a TASK run, got %+v", h.sup.started)
+	}
+}
+
+// The WRONG MOMENT, and the reason the nudge is at the settle rather than at the
+// write. Every one of those three hand-offs is written inside a run that is still
+// live, moments before it ends — so a trigger fired at the write finds this run,
+// re-offers it, and starts nothing. Only the row going terminal makes the
+// milestone reconcilable, and that is a fact no webhook carries.
+func TestReconcileMilestone_StartsNothingNewWhileTheRunIsStillLive(t *testing.T) {
+	h := newHarness(t, aRun("run-dev", 7, delivery.RunStateRunning))
+	h.issues.withValidationIssue(7, 55)
+
+	if err := h.events.ReconcileMilestone(t.Context(), testOrg, testProject, 7, "v7"); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	// The live row is re-offered — that is the sweep's healing rule, and it is
+	// idempotent — but nothing of a NEW kind is admitted over it.
+	for _, s := range h.sup.started {
+		if s.Kind == delivery.RunKindValidation {
+			t.Fatalf("a validation run must not start beside a live run, got %+v", h.sup.started)
+		}
+	}
+}
+
+// Every suppressor the sweep grew is one this door inherits, because it is the
+// same function. A cancelled increment is abandoned whole.
+func TestReconcileMilestone_SkipsACancelledIncrement(t *testing.T) {
+	h := newHarness(t, aRun("run-cancelled", 7, delivery.RunStateCancelled))
+	h.issues.withDefects(7, 21)
+
+	if err := h.events.ReconcileMilestone(t.Context(), testOrg, testProject, 7, "v7"); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if len(h.sup.started) != 0 {
+		t.Fatalf("a cancelled increment must stay abandoned, got %+v", h.sup.started)
+	}
+}
+
+// The other inherited suppressor, and the one that matters most at settle time: a
+// FAILED run halts what it could not finish BEFORE its row goes terminal, so by
+// the time the nudge fires there is nothing left to restart. Without that
+// ordering this call would hand a failed run's work straight back to a fresh run
+// with fresh budgets — every budget in the platform defeated at once.
+func TestReconcileMilestone_LeavesHaltedWorkAlone(t *testing.T) {
+	h := newHarness(t, aRun("run-failed", 7, delivery.RunStateFailed))
+	h.issues.withIssue(7, 21, delivery.LabelAgentWork, delivery.KindBug, delivery.LabelHalted)
+
+	if err := h.events.ReconcileMilestone(t.Context(), testOrg, testProject, 7, "v7"); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if len(h.sup.started) != 0 {
+		t.Fatalf("halted work must not be restarted, got %+v", h.sup.started)
+	}
+}
+
+// SCOPED, which is the whole economy of the door: the sweep costs one GitHub read
+// per known milestone across every project, and this costs one. A caller naming
+// its own milestone must not reach anybody else's.
+func TestReconcileMilestone_TouchesNoOtherMilestone(t *testing.T) {
+	h := newHarness(t,
+		aRun("run-v7", 7, delivery.RunStateSucceeded),
+		aRun("run-v8", 8, delivery.RunStateSucceeded))
+	h.issues.withValidationIssue(8, 55)
+
+	if err := h.events.ReconcileMilestone(t.Context(), testOrg, testProject, 7, "v7"); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if len(h.sup.started) != 0 {
+		t.Fatalf("reconciling v7 must not judge v8, got %+v", h.sup.started)
+	}
+}

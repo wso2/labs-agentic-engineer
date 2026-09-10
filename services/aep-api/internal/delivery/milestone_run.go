@@ -651,6 +651,47 @@ func SettleClosesTheMilestone(runKind, state string, awaitingVerdict bool) bool 
 	}
 }
 
+// SettleHandsWorkOnward reports whether a run's ENDING can have left its
+// milestone with work a DIFFERENT run should pick up — and is therefore worth
+// reconciling immediately, rather than at the reconcile sweep's next tick.
+//
+// Three hand-offs need it, and all three are writes the PLATFORM makes to
+// itself: a dev run files the version's validation task, a failed verdict files
+// repair issues, a task run reopens the task. No webhook reports a write whose
+// sender is the platform's own bot, so the event plane learns of them only when
+// something asks it to look. The settle is when asking is useful — before the
+// row is terminal the milestone still has a live run and no trigger can fire.
+//
+// Two endings hand NOTHING onward, and the difference between them matters:
+//
+//	blocked     nothing about the milestone changed. The org has no agent slot,
+//	            the working set is untouched (the halt is failed-only) and a
+//	            replacement run meets the same refusal — so reconciling here is a
+//	            spin at workflow speed, entered exactly when the org is already
+//	            out of quota. The sweep's timer is the only thing bounding it.
+//	cancelled   a person said stop. This one is a COURTESY rather than a
+//	            guarantee, and saying so matters: a cancelled dev run's increment
+//	            is abandoned and the plane skips its milestone anyway, while a
+//	            validation run cancelled before its first read leaves the
+//	            version's task open, so the next sweep pass restarts the judging
+//	            regardless. What this buys is that the platform does not
+//	            contradict the click within the same second. The way back is the
+//	            revalidate button, not a tick.
+//
+// `failed` is IN, and not merely tolerated: it is how a failed verdict's repair
+// issues reach a task run. It is safe for the other two species because the halt
+// has already marked their unfinished work by the time this is asked, and a
+// validation run halts nothing precisely so that its repair issues stay
+// somebody else's work.
+func SettleHandsWorkOnward(state string) bool {
+	switch state {
+	case RunStateSucceeded, RunStateFailed:
+		return true
+	default: // blocked | cancelled, and any non-terminal state a caller mis-asks
+		return false
+	}
+}
+
 // RunValidates reports whether a run of this kind produces a VERDICT about the
 // deployed system.
 //

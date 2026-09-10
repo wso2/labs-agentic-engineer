@@ -384,3 +384,20 @@ type DeployIssueMinter interface {
 	MintDeployFixIssues(ctx context.Context, orgID, projectID string, milestoneNumber int,
 		failed []delivery.DeployTarget, reasons map[string]string) ([]int, error)
 }
+
+// MilestoneReconciler asks the event plane to re-examine ONE milestone now —
+// the same pass the reconcile sweep makes on its timer. Satisfied by the event
+// plane, reached through this port for the same reason WorkHalter is: the
+// supervisor observes and asks, the plane owns the decision and every write
+// behind it.
+//
+// Which endings ask, and why the settle is where it happens, is
+// delivery.SettleHandsWorkOnward's to explain.
+//
+// What to start is NOT decided here and must not be: this says "something
+// changed, look again", and the plane's own routing answers with a run of the
+// right kind or with nothing at all. That is also what separates it from the
+// three ports above — they name a write, this names an inspection.
+type MilestoneReconciler interface {
+	ReconcileMilestone(ctx context.Context, orgID, projectID string, number int, title string) error
+}
