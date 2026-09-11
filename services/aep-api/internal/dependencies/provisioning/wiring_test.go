@@ -332,7 +332,7 @@ func TestWiring_ResolvesEveryEndpointKind(t *testing.T) {
 		Dependencies: []spec.Dependency{
 			{Kind: spec.DependencyKindOrgService, Name: "employee-api"},
 			{Kind: spec.DependencyKindComponent, Name: "orders"},
-			{Kind: spec.DependencyKindExternal, Name: "stripe", SpecPath: "dependencies/stripe.openapi.yaml"},
+			{Kind: spec.DependencyKindExternal, Name: "stripe", Provider: "Stripe", Style: spec.DependencyStyleRestAPI, Contract: "openapi.yaml"},
 		},
 	}}
 	providers := siblingResolved()
@@ -353,7 +353,7 @@ func TestWiring_ResolvesEveryEndpointKind(t *testing.T) {
 		"project `hr`, component `hr-employee-api`, endpoint `http`",
 		"list_org_component_endpoints",
 		"### Consumed API contract — orders (local)",
-		"dependencies/stripe.openapi.yaml",
+		"specs/design/dependencies/stripe/openapi.yaml",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("wiring comment missing %q:\n%s", want, body)

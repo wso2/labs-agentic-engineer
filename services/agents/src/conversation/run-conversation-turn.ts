@@ -29,11 +29,11 @@
  * preserved across turns.
  */
 
-import { hasToolCall, isStepCount, type FilePart, type LanguageModel, type ModelMessage, type ToolSet } from "ai";
+import { isStepCount, type FilePart, type LanguageModel, type ModelMessage, type StopCondition, type ToolSet } from "ai";
 import {
   FileBundle,
-  ASK_QUESTION_TOOL,
-  ASK_QUESTIONS_TOOL,
+  isErrorToolOutput,
+  isQuestionTool,
   type McpConfig,
   type StreamPart,
   type Surface,
@@ -98,24 +98,42 @@ function freshConversation(id: string): Conversation {
 }
 
 /**
+ * Stop when the last step carries a question tool-call the schema ACCEPTED.
+ * The SDK's own `hasToolCall` also matches a call whose input failed
+ * validation (it stays in `step.toolCalls` flagged `invalid`), which would end
+ * the turn on a question nobody can render — an empty option label was enough
+ * to leave the console blank and the conversation stuck awaiting-human.
+ * Skipping invalid calls lets the model read the validation error as a tool
+ * error and retry in the next step.
+ */
+function hasValidQuestionCall(): StopCondition<ToolSet> {
+  return ({ steps }) =>
+    steps[steps.length - 1]?.toolCalls.some((call) => !call.invalid && isQuestionTool(call.toolName)) ?? false;
+}
+
+/**
  * True when the turn ended on a HITL question tool-call (`ask_question` or
- * `ask_questions`, console ADR-0012 / #270). Scans only the messages appended
- * THIS turn; the paired `hasToolCall` stop conditions guarantee such a call is
- * the last step, so a match means the turn is awaiting the user's answer.
+ * `ask_questions`, console ADR-0012 / #270) that RESOLVED — its placeholder
+ * result is on the transcript and is not an error. Scans only the messages
+ * appended THIS turn; the paired stop condition guarantees an accepted call is
+ * the last step, so a match means the turn is awaiting the user's answer. A
+ * call the schema rejected leaves an error result instead, and a turn that
+ * then ran out of steps is done, not awaiting anyone.
  */
 function endedAwaitingHuman(appended: ModelMessage[]): boolean {
+  const asked = new Set<string>();
+  const resolved = new Set<string>();
   for (const m of appended) {
-    if (m.role !== "assistant" || !Array.isArray(m.content)) continue;
+    if (!Array.isArray(m.content)) continue;
     for (const part of m.content) {
-      if (
-        part.type === "tool-call" &&
-        (part.toolName === ASK_QUESTION_TOOL || part.toolName === ASK_QUESTIONS_TOOL)
-      ) {
-        return true;
+      if (m.role === "assistant" && part.type === "tool-call" && isQuestionTool(part.toolName)) {
+        asked.add(part.toolCallId);
+      } else if (m.role === "tool" && part.type === "tool-result" && asked.has(part.toolCallId)) {
+        if (!isErrorToolOutput(part.output)) resolved.add(part.toolCallId);
       }
     }
   }
-  return false;
+  return resolved.size > 0;
 }
 
 export interface RunConversationTurnInput {
@@ -373,13 +391,9 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
       messages: conv.messages, // appended in place by runTurn
       ...(freshAttachments.length ? { fileParts: freshAttachments } : {}),
       tools,
-      // End the turn at a HITL question call (the question tools live on the
-      // `files` set only, so these never fire on a task-plan turn).
-      stopWhen: [
-        isStepCount(config.maxSteps),
-        hasToolCall(ASK_QUESTION_TOOL),
-        hasToolCall(ASK_QUESTIONS_TOOL),
-      ],
+      // End the turn at an ACCEPTED HITL question call (the question tools live
+      // on the `files` set only, so this never fires on a task-plan turn).
+      stopWhen: [isStepCount(config.maxSteps), hasValidQuestionCall()],
       maxOutputTokens: config.maxOutputTokens,
       providerOptions: modelProviderOptions(),
       // History is append-only (see the module doc above), so the prefix this

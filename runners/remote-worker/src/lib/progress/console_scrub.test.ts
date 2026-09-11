@@ -18,7 +18,7 @@
 
 import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { installConsoleScrubber, type ConsoleLike } from "./console_scrub.js";
+import { installConsoleScrubber, installLogRedaction, type ConsoleLike } from "./console_scrub.js";
 import { _resetEmitterForTesting } from "./emitter.js";
 import { scrubber } from "./scrubber.js";
 
@@ -53,7 +53,7 @@ function events(): Array<Record<string, unknown>> {
 }
 
 function summaries(): string[] {
-  return events().map((e) => String(e.summary));
+  return events().map((e) => String(e.detail));
 }
 
 /** A console with all five methods, so the bridge has something to wrap. */
@@ -85,13 +85,14 @@ test("installConsoleScrubber: console output lands on the feed as typed, parseab
   // The envelope every other event carries — this is what a bare stdout line
   // used to be missing, and what made the feed not-NDJSON.
   for (const e of out) {
-    assert.equal(e.kind, "log");
-    assert.equal(e.schemaVersion, 1);
+    assert.equal(e.kind, "notice");
+    assert.equal(e.v, 2);
+    assert.equal(e.agentId, "lead", "a runner line is the lead's unless somebody says otherwise");
     assert.ok(typeof e.ts === "string" && e.ts !== "");
     assert.ok(typeof e.seq === "number");
   }
   assert.deepEqual(out.map((e) => e.level), ["info", "warn", "error"]);
-  assert.equal(out[0]?.summary, "[local] materialised 6 skill(s); preload=4");
+  assert.equal(out[0]?.detail, "[local] materialised 6 skill(s); preload=4");
   // seq is monotonic across the bridge and the rest of the feed alike.
   assert.deepEqual(out.map((e) => e.seq), [1, 2, 3]);
 });
@@ -173,4 +174,34 @@ test("installConsoleScrubber: is idempotent — no double wrapping", () => {
   const lines = summaries();
   assert.equal(lines.length, 1);
   assert.equal(lines[0], "x [REDACTED] y");
+});
+
+test("installLogRedaction: enrolls the mounted credentials and says nothing when all are covered", () => {
+  const c = fakeConsole();
+  installLogRedaction(c, { GITHUB_TOKEN: OPAQUE_TOKEN });
+
+  // No warning: everything mounted is enrolled, so a healthy run stays quiet.
+  assert.equal(events().length, 0);
+  // And the enrollment is real — the shape of this token matches no pattern.
+  c.log(`remote: ${OPAQUE_TOKEN}`);
+  assert.ok(!summaries()[0]?.includes(OPAQUE_TOKEN));
+});
+
+test("installLogRedaction: warns by NAME when a mounted credential is too short to enroll", () => {
+  const c = fakeConsole();
+  installLogRedaction(c, { GITHUB_TOKEN: "short-tok" });
+
+  const warned = events();
+  assert.equal(warned.length, 1);
+  assert.equal(warned[0]?.kind, "notice");
+  assert.equal(warned[0]?.level, "warn");
+  // Code-LESS on purpose: `code` names closed conditions a consumer branches
+  // on, and this is prose for whoever reads the log.
+  assert.equal(warned[0]?.code, undefined);
+  const detail = String(warned[0]?.detail);
+  // The NAME is what makes the warning actionable...
+  assert.match(detail, /GITHUB_TOKEN/);
+  // ...and the value must never ride along: this line goes to the build log,
+  // so putting it there would be the disclosure the module exists to prevent.
+  assert.ok(!detail.includes("short-tok"));
 });

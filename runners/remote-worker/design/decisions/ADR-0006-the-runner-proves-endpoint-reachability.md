@@ -49,7 +49,7 @@ and failed the same way.
 
 **1. Reachability is a platform fact, proved in runner code.** `probeEndpoints`
 runs in `oneshot.ts` immediately after the context fetch and before
-`runClaudeQuery`. An endpoint that does not answer fails the run with
+`startCodingRun`. An endpoint that does not answer fails the run with
 `endpoint_unreachable` before `agent_started`, so it costs no agent tokens and is
 reported as a platform fault rather than a validation verdict.
 

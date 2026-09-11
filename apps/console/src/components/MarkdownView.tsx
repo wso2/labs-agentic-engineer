@@ -16,13 +16,35 @@
  * under the License.
  */
 
-import Markdown from "react-markdown";
+import Markdown, { defaultUrlTransform } from "react-markdown";
 import { Box } from "@wso2/oxygen-ui";
 
 // Console-wide markdown renderer for agent-authored content (skill bodies,
 // alert diagnoses, and — later — agent chat messages). Styling is
 // theme-token only so it holds up in light and dark; see design-system.md.
-export function MarkdownView({ children }: { children: string }) {
+/** The scheme a chat message uses to link a spec document: `aep://spec/<repo path>`. */
+export const SPEC_LINK_PREFIX = "aep://spec/";
+
+/** The document a spec link names, or null for any other href. */
+export function specLinkPath(href: string | undefined): string | null {
+  if (!href || !href.startsWith(SPEC_LINK_PREFIX)) return null;
+  const path = href.slice(SPEC_LINK_PREFIX.length);
+  return path.startsWith("specs/") ? path : null;
+}
+
+export function MarkdownView({
+  children,
+  onSpecLink,
+}: {
+  children: string;
+  /**
+   * A link into the spec (`aep://spec/<path>`) was clicked — the design
+   * turn's closing list links each open dependency's definition this way
+   * (ADR-0028). Without a handler the link renders as plain text, since a
+   * browser cannot follow the scheme.
+   */
+  onSpecLink?: ((path: string) => void) | undefined;
+}) {
   return (
     <Box
       sx={{
@@ -81,7 +103,31 @@ export function MarkdownView({ children }: { children: string }) {
         "& img": { maxWidth: "100%" },
       }}
     >
-      <Markdown>{children}</Markdown>
+      <Markdown
+        // The default transform drops unknown schemes; the spec scheme rides
+        // through so the renderer below can turn it into a click.
+        urlTransform={(url) => (url.startsWith(SPEC_LINK_PREFIX) ? url : defaultUrlTransform(url))}
+        components={{
+          a: ({ href, children: linkChildren }) => {
+            const path = specLinkPath(href);
+            if (path === null) return <a href={href}>{linkChildren}</a>;
+            if (!onSpecLink) return <>{linkChildren}</>;
+            return (
+              <a
+                href={href}
+                onClick={(e) => {
+                  e.preventDefault();
+                  onSpecLink(path);
+                }}
+              >
+                {linkChildren}
+              </a>
+            );
+          },
+        }}
+      >
+        {children}
+      </Markdown>
     </Box>
   );
 }

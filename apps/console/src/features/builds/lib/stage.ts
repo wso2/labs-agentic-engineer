@@ -73,6 +73,24 @@ export function stageTone(state: StageState): StatusTone {
   return STATE_TONE[state];
 }
 
+/**
+ * Where a rail has got to: the index of the FIRST stage that is not done, or
+ * null when every stage is.
+ *
+ * The rail is a sequence, so the first unfinished stage IS the current one —
+ * nothing after it has run. Loudness does not reorder it: a failed stage is
+ * already the first non-done one.
+ *
+ * It lives here, in the vocabulary every rail shares, because three surfaces
+ * ask it — the glance's NOW panel, its "then …" tail, and the build page's
+ * header pill — and three spellings of "which stage is now" is three chances
+ * for one page to contradict itself.
+ */
+export function frontierIndex(stages: SpineStage[]): number | null {
+  const at = stages.findIndex((stage) => stage.state !== "done");
+  return at === -1 ? null : at;
+}
+
 // Loudest first: a stage that failed is the story even when three others are
 // healthy, and something a human has to act on outranks the platform working.
 const STATE_RANK: StageState[] = ["failed", "attention", "active", "waiting", "done"];

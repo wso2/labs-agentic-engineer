@@ -137,7 +137,14 @@ outlives it.
   `tests/validation/report.json`, which is on the Files API read allow-list —
   and what blocks reading it mid-run is that nothing records a head SHA for an
   open cycle and the skill pushes only at step 10.
-- **Phase markers at the workflow's step boundaries.** A second claim about the
+- **Phase markers at the workflow's step boundaries.** ~~Rejected;~~ **partly
+  reopened by ADR-0011**, which posts five of them onto the run's ISSUE rather
+  than onto this feed. What made the difference is the rule below being answered
+  rather than argued with: a marker naming the STEP is wrong for most of a run,
+  so each of those names the EVIDENCE — the call it just watched — which cannot
+  disagree with a row because it is not a claim about one. The rejection stands
+  unchanged for this feed, where the rows sit beside it. Original reasoning:
+  A second claim about the
   same run, and wrong for most of it: `authoring.md` has the agent run tests all
   through the authoring step, so a marker reading "Authoring tests…" while rows
   read `Running…` — then flipping to "Running tests…" an hour after the first

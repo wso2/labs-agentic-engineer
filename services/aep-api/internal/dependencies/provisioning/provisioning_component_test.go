@@ -798,11 +798,11 @@ func TestProvisioningComponent_ListWorkloadDependencies_ResourceAndOrgServiceRow
 	for i := range got {
 		row := &got[i]
 		switch {
-		case row.Kind == gen.Resource && row.Tag == gen.Platform:
+		case row.Kind == gen.WorkloadDependencyDTOKindResource && row.Tag == gen.Platform:
 			platform = row
-		case row.Kind == gen.Resource && row.Tag == gen.External:
+		case row.Kind == gen.WorkloadDependencyDTOKindResource && row.Tag == gen.External:
 			external = row
-		case row.Kind == gen.OrgService:
+		case row.Kind == gen.WorkloadDependencyDTOKindOrgService:
 			orgSvc = row
 		}
 	}
@@ -819,10 +819,10 @@ func TestProvisioningComponent_ListWorkloadDependencies_ResourceAndOrgServiceRow
 		t.Fatalf("org-service row must carry a name, got %+v", orgSvc)
 	}
 	for _, row := range got {
-		if row.Kind == gen.OrgService && row.Project == "shop" {
+		if row.Kind == gen.WorkloadDependencyDTOKindOrgService && row.Project == "shop" {
 			t.Fatalf("same-project visibility:project endpoint must be omitted, got %+v", row)
 		}
-		if row.Name == "ghost" || row.Ref == "ghost" || row.Name == "orders" && row.Kind != gen.OrgService {
+		if row.Name == "ghost" || row.Ref == "ghost" || row.Name == "orders" && row.Kind != gen.WorkloadDependencyDTOKindOrgService {
 			t.Fatalf("design-only dep must not appear: %+v", row)
 		}
 	}
@@ -896,7 +896,7 @@ func TestProvisioningComponent_ListWorkloadDependencies_ExternalFallsBackToTypeN
 		t.Fatalf("rows = %+v, want 1 live ResourceType (dangling GetResource 404 omitted)", got)
 	}
 	row := got[0]
-	if row.Kind != gen.Resource || row.Tag != gen.External || row.Ref != "custom-rt" || row.Name != "custom-rt" {
+	if row.Kind != gen.WorkloadDependencyDTOKindResource || row.Tag != gen.External || row.Ref != "custom-rt" || row.Name != "custom-rt" {
 		t.Fatalf("external without annotation = %+v, want ref/name custom-rt (spec.type.Name)", row)
 	}
 }

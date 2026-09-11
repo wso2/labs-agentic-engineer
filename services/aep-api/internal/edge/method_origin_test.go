@@ -68,6 +68,7 @@ const (
 // opOwner maps every operation of the committed contract to the apiServer
 // embedded FIELD NAME expected to supply it. P0: every op is still legacy.
 var opOwner = map[string]string{
+	"AcceptDependencyAssumption":    embedSpec,
 	"ApplyFiles":                    embedSpec,
 	"BuildProject":                  embedDelivery,
 	"CancelRun":                     embedDelivery,
@@ -97,6 +98,7 @@ var opOwner = map[string]string{
 	"GetProject":                    embedProjects,
 	"GetProjectRoles":               embedIdentity,
 	"GetProjectStatus":              embedProjects,
+	"ProvideDependencyContract":     embedSpec,
 	"GetRcaAgentReport":             embedOps,
 	"GetSkill":                      embedSpec,
 	"GetSpecCollabSession":          embedSpec,

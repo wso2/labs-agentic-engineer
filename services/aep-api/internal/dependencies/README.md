@@ -44,7 +44,7 @@ three services are sub-package slices that import only that root.
 | Slice | Ops / role | Reaches |
 |---|---|---|
 | `provisioning` | 9 HTTP ops: list/delete/collect-values external resources, list-workload-dependencies, project readiness, provision-platform, dependency-status, request/list org-service access + the `provision` gate lifecycle, watcher, teardown | root cores; delivery (provision execution rows); sourcecontrol (gate issues); `WorkloadDepSource` (deployed Workload consumer refs) |
-| `mcpdiscovery` | the MCP discovery server (including `list_roles`, the design-time role catalog) + `ListPlatformResourceTypes` and `ListOrgEndpoints` HTTP reads; `list_external_resources` is RT-backed (Registered at register Ensure and Project Externals with an authored RT), not provisioned-only | root `ResourceTypeLister` / external RT catalog / endpoint catalog |
+| `mcpdiscovery` | the MCP discovery server (including `list_roles`, the design-time role catalog, and `slice_openapi_spec`, which cuts the operations a design uses from a provider's whole document — fetched outside the model's context — with the provenance the dependency file records) + `ListPlatformResourceTypes` and `ListOrgEndpoints` HTTP reads; `list_external_resources` is RT-backed (Registered at register Ensure and Project Externals with an authored RT), not provisioned-only | root `ResourceTypeLister` / external RT catalog / endpoint catalog |
 | `runtimeconfig` | the SPA `env-config.js` convergence service + its watcher (no HTTP op) | root naming/markers; spec (design at HEAD); repositories (execution enumerate) |
 
 Each slice owns its service AND its HTTP handler (as delivery's `build` slice does); `httpapi` aggregates

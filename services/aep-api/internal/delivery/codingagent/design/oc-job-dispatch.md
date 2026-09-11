@@ -125,6 +125,28 @@ verification wave — and a validation cycle 2h),
 and limits, where the schema enforces the ceiling so an out-of-bounds
 per-dispatch override is rejected instead of silently clamped.
 
+`activeDeadlineSeconds` is also handed to the RUNNER, as
+`AEP_RUN_DEADLINE_SECONDS`, and that is one number with two consumers on
+purpose. The cluster's deadline is a backstop: when it passes the pod is killed
+mid-sentence and explains nothing — no result line, no watchdog snapshot, and for
+a run with background subagents no way to tell "still working" from "wedged".
+The runner's own guard fires a margin earlier, stops the tasks still live and
+settles with a reason on the feed. The margin is the runner's and is deliberately
+not stated here; duplicating it would let the two drift apart silently.
+
+## The org's runtime and model ride on the same env
+
+`AEP_AGENT_RUNTIME` and `AEP_AGENT_MODEL` carry the organization's `codingAgent`
+setting (ADR-0028) onto every cycle, beside the credential ref ADR-0016 already
+resolves. They are **copied, not referenced**: a change applies from the next
+cycle, because a run that re-read the setting halfway through would leave a feed
+whose model names disagree with the tokens they were billed for. An org that
+never opened the setting gets the platform defaults, which is exactly what every
+dispatch carried before it existed — but a resolver that ERRORS fails the
+dispatch rather than falling back, since the org did choose something and
+launching on the defaults would bill it for a model it moved off without ever
+saying so.
+
 The type name is also what wso2cloud's entitlement gate keys on
 (`job/coding-agent`, `coding-agent`). A create over the org's cap answers
 **402**, and the platform reports the run **blocked, not failed**, with a message

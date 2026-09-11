@@ -135,12 +135,19 @@ interface SequenceParse {
   participants: Set<string>;
   /** The subset declared with the `actor` keyword — people, not nodes. */
   actors: Set<string>;
+  /**
+   * Declared id -> its `as` alias. Mermaid ids cannot hold a space, so a
+   * multi-word name reaches the diagram only as an alias; the alias is
+   * therefore as good a claim to identity as the id itself.
+   */
+  aliases: Map<string, string>;
 }
 
 function parseSequence(block: MermaidBlock): SequenceParse {
   const diagnostics: Diagnostic[] = [];
   const participants = new Set<string>();
   const actors = new Set<string>();
+  const aliases = new Map<string, string>();
   const openBlocks: number[] = [];
   let sawHeader = false;
 
@@ -149,7 +156,7 @@ function parseSequence(block: MermaidBlock): SequenceParse {
     if (!sawHeader) {
       if (text !== "sequenceDiagram") {
         diagnostics.push({ line, message: `the block must open with \`sequenceDiagram\`, not \`${text}\`` });
-        return { diagnostics, participants, actors };
+        return { diagnostics, participants, actors, aliases };
       }
       sawHeader = true;
       continue;
@@ -159,6 +166,7 @@ function parseSequence(block: MermaidBlock): SequenceParse {
     if (decl) {
       participants.add(decl[2] as string);
       if (decl[1] === "actor") actors.add(decl[2] as string);
+      if (decl[3]) aliases.set(decl[2] as string, (decl[3] as string).trim());
       continue;
     }
     const destroy = /^destroy\s+([^\s:]+)$/.exec(text);
@@ -232,7 +240,7 @@ function parseSequence(block: MermaidBlock): SequenceParse {
   for (const line of openBlocks) {
     diagnostics.push({ line, message: "block opened here is never closed with `end`" });
   }
-  return { diagnostics, participants, actors };
+  return { diagnostics, participants, actors, aliases };
 }
 
 // -------------------------------------------------------------------------
@@ -451,15 +459,21 @@ export function checkDesignDiagram(
   // gate can check against; then a participant declared as an `actor` is
   // taken at its word — the cell's nodes stay enforced for everything else.
   const actorsUncheckable = actors.length === 0;
-  const unknown = [...parsed.participants].filter(
-    (p) => !allowed.has(normalize(p)) && !(actorsUncheckable && parsed.actors.has(p)),
-  );
+  // A participant resolves by its id OR by its `as` alias: `actor LM as Line
+  // Manager` names the PRD's Line Manager just as plainly as `actor
+  // LineManager` does, and a name with a space can reach mermaid no other way.
+  const resolves = (p: string): boolean => {
+    if (allowed.has(normalize(p))) return true;
+    const alias = parsed.aliases.get(p);
+    return alias !== undefined && allowed.has(normalize(alias));
+  };
+  const unknown = [...parsed.participants].filter((p) => !resolves(p) && !(actorsUncheckable && parsed.actors.has(p)));
   if (unknown.length === 0) return null;
 
   const list = (xs: string[]) => (xs.length ? xs.join(", ") : "none");
   return reject(
     path,
     "UNKNOWN_PARTICIPANT",
-    `participant${unknown.length > 1 ? "s" : ""} ${unknown.map((u) => `\`${u}\``).join(", ")} ${unknown.length > 1 ? "are" : "is"} neither a node design.cell declares (components: ${list(nodes.components)}; boundary externals: ${list(nodes.externals)}) nor an actor the PRD names (${list(actors)}). Use one of those ids, add the node to design.cell first, or have the actor named in the PRD's Actors section.`,
+    `participant${unknown.length > 1 ? "s" : ""} ${unknown.map((u) => `\`${u}\``).join(", ")} ${unknown.length > 1 ? "are" : "is"} neither a node design.cell declares (components: ${list(nodes.components)}; boundary externals: ${list(nodes.externals)}) nor an actor the PRD names (${list(actors)}). Use one of those ids, name one in the declaration's \`as\` alias (\`actor LM as Line Manager\`), add the node to design.cell first, or have the actor named in the PRD's Actors section.`,
   );
 }

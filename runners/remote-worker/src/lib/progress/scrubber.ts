@@ -31,7 +31,7 @@ const REDACTED = "[REDACTED]";
 
 // Minimum literal length to enroll. Shorter strings are too noisy
 // (would shred normal text — e.g. the literal "admin" or a 4-char id).
-const MIN_LITERAL_LEN = 12;
+export const MIN_LITERAL_LEN = 12;
 
 // Well-known token shapes. We redact only the value, preserving the
 // header key (`Authorization:` / `x-api-key:`) so the line stays readable.
@@ -50,9 +50,17 @@ const HEADER_PATTERNS: ReadonlyArray<RegExp> = [
   // — so running this first is what actually redacts the credential in an
   // `Authorization: Bearer <token>` string. Ordering matters now that the
   // entropy backstop (which used to catch the leaked token) is disabled.
-  /(bearer\s+)([A-Za-z0-9._\-]{16,})/gi,
+  /(bearer\s+)([A-Za-z0-9._-]{16,})/gi,
   /(authorization\s*:\s*)(\S+)/gi,
   /(x-api-key\s*:\s*)(\S+)/gi,
+  // `gh`'s own config shape. The credhelper branch writes the GitHub token at
+  // rest as `oauth_token: <token>` into <workspace>/.gh-config/hosts.yml
+  // (credhelper.ts, ghWrapperScript), inside the tree the agent works in — so
+  // `cat`ting that file puts a live credential on the feed. That token is
+  // minted inside bash and never enters this process, so no literal can be
+  // enrolled for it: shape is the only layer available. Not a substitute for
+  // enrollment, which is why the gap is recorded rather than closed here.
+  /(oauth_token\s*:\s*)(\S+)/gi,
 ];
 
 // Base64url-ish charset; minimum length 32 for the entropy backstop.

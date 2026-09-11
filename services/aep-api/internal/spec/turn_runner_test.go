@@ -41,3 +41,30 @@ func TestDesignOrCollabTurn(t *testing.T) {
 		})
 	}
 }
+
+// TestCatalogTurn pins the MCP discovery gate: everything designOrCollabTurn
+// admits, plus the requirements flows without a room — the interview records
+// a Registered External resource as a given, so it needs the catalog wherever
+// it runs. A plain chat turn with no room still gets nothing.
+func TestCatalogTurn(t *testing.T) {
+	cases := []struct {
+		name string
+		job  turnJob
+		want bool
+	}{
+		{"design flow, no room", turnJob{flow: "design"}, true},
+		{"no flow, collab room", turnJob{collabRoomID: "spec-o-p"}, true},
+		{"start flow, no room", turnJob{flow: "start"}, true},
+		{"amend flow, no room", turnJob{flow: "amend"}, true},
+		{"settle flow, no room", turnJob{flow: "settle"}, true},
+		{"chat, no room", turnJob{flow: "chat"}, false},
+		{"no flow, no room", turnJob{}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := catalogTurn(tc.job); got != tc.want {
+				t.Errorf("catalogTurn(%+v) = %v, want %v", tc.job, got, tc.want)
+			}
+		})
+	}
+}

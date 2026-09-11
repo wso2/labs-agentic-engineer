@@ -1,0 +1,446 @@
+/**
+ * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+ *
+ * WSO2 LLC. licenses this file to you under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+import {
+  Box,
+  Button,
+  Card,
+  CardContent,
+  Typography,
+  Stack,
+  IconButton,
+  Divider,
+  Grid,
+  Avatar,
+  SearchBar,
+  PageTitle,
+  PageContent,
+  ListingTable,
+  Chip,
+  DataGrid,
+} from '@wso2/oxygen-ui'
+import { LineChart } from '@wso2/oxygen-ui-charts-react'
+import { Clock, Plus, RefreshCw, Info, Link as LinkIcon } from '@wso2/oxygen-ui-icons-react'
+import type { JSX } from 'react'
+import { Link as NavigateLink, useNavigate, useParams } from 'react-router'
+import { mockProjects } from '../mock-data'
+
+interface Component {
+  id: string
+  name: string
+  type: string
+  status: 'active' | 'inactive'
+  lastModified: string
+}
+
+type McpServer = {
+  id: string
+  action: string
+  user: string
+  timestamp: string
+}
+
+const mockComponents: Component[] = [
+  {
+    id: '1',
+    name: 'User Authentication API',
+    type: 'HTTP',
+    status: 'active',
+    lastModified: '2 months ago',
+  },
+  {
+    id: '2',
+    name: 'Order Management API',
+    type: 'HTTP',
+    status: 'active',
+    lastModified: '3 months ago',
+  },
+  {
+    id: '3',
+    name: 'Product Catalog API',
+    type: 'HTTP',
+    status: 'active',
+    lastModified: '3 months ago',
+  },
+  {
+    id: '4',
+    name: 'Payment Processing API',
+    type: 'HTTP',
+    status: 'inactive',
+    lastModified: '5 months ago',
+  },
+]
+
+const mockActivity: McpServer[] = [
+  { id: '1', action: 'Customer Support MCP', user: 'System', timestamp: '2 months ago' },
+  { id: '2', action: 'Order Processing MCP', user: 'System', timestamp: '3 months ago' },
+  { id: '3', action: 'Fraud Detection MCP', user: 'System', timestamp: '5 months ago' },
+  { id: '4', action: 'Notification Dispatcher MCP', user: 'System', timestamp: '7 months ago' },
+]
+
+const uData = [4000, 3000, 2000, 2780, 1890, 2390, 3490]
+const pData = [2400, 1398, 9800, 3908, 4800, 3800, 4300]
+const xLabels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul']
+
+const chartData = xLabels.map((label, index) => ({
+  name: label,
+  pData: pData[index],
+  uData: uData[index],
+}))
+
+function LastUpdatedCell({ value }: { value: string }): JSX.Element {
+  return (
+    <Box
+      sx={{
+        display: 'flex',
+        justifyContent: 'flex-end',
+        alignItems: 'center',
+        gap: 1,
+        minWidth: 0,
+      }}
+    >
+      <Clock size={16} />
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+      >
+        {value}
+      </Typography>
+    </Box>
+  )
+}
+
+export default function ProjectOverview(): JSX.Element {
+  const navigate = useNavigate()
+  const { id, orgId } = useParams<{ id: string; orgId: string }>()
+
+  // Find the project from mockProjects using URL id
+  const project = mockProjects.find(p => p.id === id) || mockProjects[0]
+  const projectName = project.name
+  const projectDescription = project.description || 'No description available'
+  const projectLetter = (projectName?.trim()?.[0] ?? 'P').toUpperCase()
+
+  return (
+    <PageContent>
+      <Box sx={{ mb: 3 }}>
+        <PageTitle>
+          <PageTitle.BackButton component={<NavigateLink to={`/o/${orgId}/projects`} />} />
+          <PageTitle.Avatar sx={{ bgcolor: 'primary.main', color: 'primary.contrastText' }}>
+            {projectLetter}
+          </PageTitle.Avatar>
+          <PageTitle.Header>{projectName}</PageTitle.Header>
+          <PageTitle.SubHeader>{projectDescription}</PageTitle.SubHeader>
+          <PageTitle.Link href="#" icon={<LinkIcon size={14} />}>
+            Link a Repository
+          </PageTitle.Link>
+        </PageTitle>
+
+        <Divider sx={{ mt: 2 }} />
+
+        <Grid container spacing={3} mt={2}>
+          <Grid size={{ xs: 12, lg: 8 }}>
+            <Grid container spacing={2} sx={{ mb: 2 }}>
+              <Grid size={{ xs: 12, md: 10 }}>
+                <SearchBar fullWidth />
+              </Grid>
+
+              <Grid size={{ xs: 12, md: 2 }} sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <Button
+                  fullWidth
+                  variant="contained"
+                  startIcon={<Plus size={18} />}
+                  sx={{ height: 40 }}
+                  onClick={() => navigate(`/o/${orgId}/projects/${id}/components/new`)}
+                >
+                  Create
+                </Button>
+              </Grid>
+            </Grid>
+
+            <Box sx={{ mb: 4 }}>
+              <Typography variant="h5" sx={{ fontWeight: 700, mb: 1 }}>
+                API Proxies
+              </Typography>
+              <ListingTable.Provider variant="data-grid-card">
+                <ListingTable.Container disablePaper>
+                  <ListingTable.DataGrid
+                    rows={mockComponents}
+                    columns={[
+                      {
+                        field: 'name',
+                        headerName: 'Name',
+                        flex: 1.5,
+                        minWidth: 220,
+                        renderCell: ({ row }: DataGrid.GridRenderCellParams<Component>) => (
+                          <ListingTable.CellIcon
+                            sx={{ width: '100%' }}
+                            icon={
+                              <Avatar
+                                sx={{
+                                  width: 28,
+                                  height: 28,
+                                  bgcolor: 'action.hover',
+                                  color: 'text.primary',
+                                }}
+                              >
+                                {(row.name?.trim()?.[0] ?? 'A').toUpperCase()}
+                              </Avatar>
+                            }
+                            primary={row.name}
+                          />
+                        ),
+                      },
+                      {
+                        field: 'description',
+                        headerName: 'Description',
+                        flex: 2,
+                        minWidth: 200,
+                        renderCell: () => (
+                          <Typography
+                            variant="caption"
+                            color="text.secondary"
+                            sx={{
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            This is a sample proxy that manages a list of reading items.
+                          </Typography>
+                        ),
+                      },
+                      {
+                        field: 'type',
+                        headerName: 'Type',
+                        width: 120,
+                        renderCell: ({ row }: DataGrid.GridRenderCellParams<Component>) => (
+                          <Chip label={row.type ?? 'HTTP'} size="small" variant="outlined" />
+                        ),
+                      },
+                      {
+                        field: 'lastModified',
+                        headerName: 'Last Updated',
+                        width: 150,
+                        headerAlign: 'left',
+                        align: 'left',
+                        renderCell: ({ row }: DataGrid.GridRenderCellParams<Component>) => (
+                          <LastUpdatedCell value={row.lastModified} />
+                        ),
+                      },
+                    ] as DataGrid.GridColDef<Component>[]}
+                    onRowClick={params => navigate(`components/${(params.row as Component).id}`)}
+                    disableRowSelectionOnClick
+                    hideFooter
+                    sx={{
+                      height: 'auto',
+                      '& .MuiDataGrid-row': { cursor: 'pointer' },
+                    }}
+                  />
+                </ListingTable.Container>
+              </ListingTable.Provider>
+            </Box>
+
+            <Box sx={{ mb: 4 }}>
+              <Typography variant="h5" sx={{ fontWeight: 700, mb: 1 }}>
+                MCP Servers
+              </Typography>
+
+              <ListingTable.Container sx={{ width: '100%' }} disablePaper>
+                <ListingTable variant="card" density="standard">
+                  <ListingTable.Head>
+                    <ListingTable.Row>
+                      <ListingTable.Cell>Name</ListingTable.Cell>
+                      <ListingTable.Cell>Description</ListingTable.Cell>
+                      <ListingTable.Cell sx={{ maxWidth: 150 }}>Last Updated</ListingTable.Cell>
+                    </ListingTable.Row>
+                  </ListingTable.Head>
+
+                  <ListingTable.Body>
+                    {mockActivity.slice(0, 3).map(server => (
+                      <ListingTable.Row
+                        key={server.id}
+                        variant="card"
+                        hover
+                        clickable
+                        onClick={() => navigate(`components/${server.id}`)}
+                      >
+                        <ListingTable.Cell>
+                          <ListingTable.CellIcon
+                            icon={
+                              <Avatar
+                                sx={{
+                                  width: 28,
+                                  height: 28,
+                                  bgcolor: 'action.hover',
+                                  color: 'text.primary',
+                                }}
+                              >
+                                {(server.action?.trim()?.[0] ?? 'M').toUpperCase()}
+                              </Avatar>
+                            }
+                            primary={server.action}
+                          />
+                        </ListingTable.Cell>
+
+                        <ListingTable.Cell>
+                          <Typography
+                            variant="caption"
+                            color="text.secondary"
+                            sx={{
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                              maxWidth: 420,
+                            }}
+                          >
+                            This is a sample proxy that manages a list of reading items.
+                          </Typography>
+                        </ListingTable.Cell>
+
+                        <ListingTable.Cell sx={{ maxWidth: 150 }}>
+                          <Box sx={{ display: 'flex', justifyContent: 'flex-start' }}>
+                            <LastUpdatedCell value={server.timestamp} />
+                          </Box>
+                        </ListingTable.Cell>
+                      </ListingTable.Row>
+                    ))}
+                  </ListingTable.Body>
+                </ListingTable>
+              </ListingTable.Container>
+            </Box>
+          </Grid>
+
+          <Grid size={{ xs: 12, lg: 4 }}>
+            <Stack spacing={2}>
+              <Card variant="outlined" sx={{ borderRadius: 0.8 }}>
+                <CardContent>
+                  <Box
+                    sx={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      mb: 1,
+                    }}
+                  >
+                    <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+                      Analytics
+                    </Typography>
+                    <IconButton size="small">
+                      <RefreshCw size={18} />
+                    </IconButton>
+                  </Box>
+
+                  <Box
+                    sx={{
+                      height: 260,
+                      borderRadius: 0.8,
+                      border: '1px solid',
+                      borderColor: 'divider',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      bgcolor: 'background.default',
+                    }}
+                  >
+                    <LineChart
+                      data={chartData}
+                      xAxisDataKey="name"
+                      lines={[
+                        { dataKey: 'pData', name: 'Product A' },
+                        { dataKey: 'uData', name: 'Product B' },
+                      ]}
+                      legend={{ show: true, align: 'center', verticalAlign: 'top' }}
+                      height={260}
+                      grid={{ show: false }}
+                    />
+                  </Box>
+                </CardContent>
+              </Card>
+
+              <Card variant="outlined" sx={{ borderRadius: 0.8 }}>
+                <CardContent>
+                  <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 1 }}>
+                    API Proxies
+                  </Typography>
+
+                  <Stack spacing={1}>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <Typography variant="caption" color="text.secondary">
+                        HTTP
+                      </Typography>
+                      <Typography variant="caption">4</Typography>
+                    </Box>
+
+                    <Divider />
+
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <Typography variant="caption" color="text.secondary">
+                        Service
+                      </Typography>
+                      <Typography variant="caption">1</Typography>
+                    </Box>
+
+                    <Divider />
+
+                    <Typography variant="subtitle2" sx={{ fontWeight: 700, mt: 0.5 }}>
+                      MCP Servers
+                    </Typography>
+
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <Typography variant="caption" color="text.secondary">
+                        MCP Servers
+                      </Typography>
+                      <Typography variant="caption">3</Typography>
+                    </Box>
+
+                    <Divider />
+
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                        Total
+                      </Typography>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                        8
+                      </Typography>
+                    </Box>
+                  </Stack>
+                </CardContent>
+              </Card>
+
+              <Card variant="outlined" sx={{ borderRadius: 0.8 }}>
+                <CardContent>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+                      Contributors
+                    </Typography>
+                    <Info size={16} />
+                  </Box>
+
+                  <Box sx={{ mt: 2, display: 'flex', gap: 1 }}>
+                    <Avatar sx={{ width: 32, height: 32 }}>J</Avatar>
+                  </Box>
+                </CardContent>
+              </Card>
+            </Stack>
+          </Grid>
+        </Grid>
+      </Box>
+    </PageContent>
+  )
+}

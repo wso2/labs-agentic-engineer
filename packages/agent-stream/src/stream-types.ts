@@ -38,6 +38,14 @@ export interface StreamPart {
   input?: unknown;
   output?: unknown;
   error?: unknown;
+  /**
+   * On a `tool-call` frame: the SDK rejected the call's input against the
+   * tool's schema. A `tool-error` for the same `toolCallId` follows and the
+   * model may retry in its next step. The `input` is whatever the model sent,
+   * so a consumer must not act on it — a question card built from it would
+   * show a question the turn never asked.
+   */
+  invalid?: boolean;
   /** On `finish` / `finish-step` frames: why the step ended (`stop`, `length`, …). */
   finishReason?: string;
   /**

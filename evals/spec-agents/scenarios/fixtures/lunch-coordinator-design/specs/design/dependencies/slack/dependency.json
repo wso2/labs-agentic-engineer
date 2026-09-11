@@ -1,0 +1,10 @@
+{
+  "name": "slack",
+  "provider": "Slack",
+  "style": "sdk",
+  "description": "Posts the round-opened and round-closed notification messages to the team's Slack channel via chat.postMessage.",
+  "config": [
+    { "key": "SLACK_BOT_TOKEN", "secret": true, "description": "Bot token for the Slack app authorized to post to the team channel." },
+    { "key": "SLACK_CHANNEL_ID", "description": "Channel ID the round-open/cutoff notifications are posted to." }
+  ]
+}

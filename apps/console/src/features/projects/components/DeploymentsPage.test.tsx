@@ -283,7 +283,7 @@ describe("DeploymentsPage — validation", () => {
 
   // Re-running validation on an already-PASSED version. The verdict lives on an
   // older run row — a revalidation is a fresh one — so reading the asking run made
-  // this say "Nothing reported yet", as if the version had never been judged.
+  // this say the agent had reported nothing, as if the version had never been judged.
   it("shows the last result while a revalidation re-asks a passed version", () => {
     mockDeploy = {
       version: "v1",
@@ -299,7 +299,7 @@ describe("DeploymentsPage — validation", () => {
     expect(
       screen.getByText("All 6 criteria passed in the last attempt. Validation is running again."),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/Nothing reported yet/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/validation agent is running/)).not.toBeInTheDocument();
     // Nothing was fixed — that clause belongs to a repair, not a re-ask.
     expect(screen.queryByText(/fixed and deployed/)).not.toBeInTheDocument();
   });
@@ -319,7 +319,7 @@ describe("DeploymentsPage — validation", () => {
     render(<DeploymentsPage projectName="acme" />);
 
     expect(
-      screen.getByText("Nothing reported yet — the validation attempt is still running."),
+      screen.getByText("The validation agent is running."),
     ).toBeInTheDocument();
     expect(screen.queryByText(/verdict: validating/)).not.toBeInTheDocument();
   });

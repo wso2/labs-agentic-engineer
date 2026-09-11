@@ -100,7 +100,7 @@ Consequences of the shape, in the order they were decided:
    three runner skills explicitly. Handing a coding session the whole library
    would put `design`'s description in its skill list, one `loadSkill` away from a
    mandate to author `specs/`.
-8. **Assembling stays inside `runClaudeQuery`** (ADR-0001 decision 6, unchanged):
+8. **Assembling stays inside `startCodingRun`** (ADR-0001 decision 6, unchanged):
    entrypoints pass a mode, never a directory.
 9. **`$AEP_SKILLS_DIR` replaces hardcoded runner paths.** `aep-validation` invoked
    the platform's report generator through `/app/plugin/...`, which stopped

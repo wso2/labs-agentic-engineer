@@ -78,7 +78,9 @@ func newDesignHarness(t *testing.T, files map[string]string, orgVisible map[stri
 
 // mixedDependencyDesignFiles is a design tree for one "checkout" service
 // component whose dependencies span every kind + every external precedence
-// outcome relevant to the read-time status computation.
+// outcome relevant to the read-time status computation. The externals are
+// references; their definitions are the dependency files (one dependency, one
+// definition), and a contract counts only when its file is on disk.
 func mixedDependencyDesignFiles() map[string]string {
 	return map[string]string{
 		spec.DesignRootFile: "Overview.\n",
@@ -87,13 +89,18 @@ func mixedDependencyDesignFiles() map[string]string {
   "type": "service",
   "dependencies": [
     {"kind": "org-service", "name": "billing"},
-    {"kind": "external", "name": "stripe", "style": "rest-api", "specPath": "dependencies/stripe.openapi.yaml"},
+    {"kind": "external", "name": "stripe"},
     {"kind": "external", "name": "sendgrid"},
-    {"kind": "external", "name": "salesforce", "style": "rest-api", "specPath": "dependencies/salesforce.openapi.yaml"},
+    {"kind": "external", "name": "salesforce"},
     {"kind": "platform-resource", "name": "orders-db", "resourceType": "postgres-cnpg"}
   ]
 }
 `,
+		"dependencies/stripe/dependency.json":     `{"name": "stripe", "provider": "Stripe", "style": "rest-api", "contract": "openapi.yaml"}`,
+		"dependencies/stripe/openapi.yaml":        "openapi: 3.0.3\n",
+		"dependencies/sendgrid/dependency.json":   `{"name": "sendgrid", "description": "Needs a mail provider; nothing chosen yet."}`,
+		"dependencies/salesforce/dependency.json": `{"name": "salesforce", "provider": "Salesforce", "style": "rest-api", "contract": "openapi.yaml"}`,
+		"dependencies/salesforce/openapi.yaml":    "openapi: 3.0.3\n",
 	}
 }
 
@@ -156,17 +163,17 @@ func TestDesignComponent_ListDependencies_ComputesStatusPerKind(t *testing.T) {
 	if d := byName["billing"]; d.Status != spec.DependencyStatusResolved {
 		t.Errorf("billing (org-service, visible): status = %q, want %q", d.Status, spec.DependencyStatusResolved)
 	}
-	if d := byName["stripe"]; d.Status != spec.DependencyStatusResolved || d.SpecPath != "dependencies/stripe.openapi.yaml" {
-		t.Errorf("stripe (external, rest-api + specPath): status=%q specPath=%q, want %q/dependencies/stripe.openapi.yaml",
-			d.Status, d.SpecPath, spec.DependencyStatusResolved)
+	if d := byName["stripe"]; d.Status != spec.DependencyStatusResolved || d.Contract != "openapi.yaml" || d.Provider != "Stripe" {
+		t.Errorf("stripe (external, rest-api + contract on disk): status=%q contract=%q provider=%q, want %q/openapi.yaml/Stripe",
+			d.Status, d.Contract, d.Provider, spec.DependencyStatusResolved)
 	}
 	if d := byName["sendgrid"]; d.Status != spec.DependencyStatusUnresolved || d.Reason != spec.DependencyReasonNeedsInput {
 		t.Errorf("sendgrid (external, no style): status/reason = %q/%q, want %q/%q",
 			d.Status, d.Reason, spec.DependencyStatusUnresolved, spec.DependencyReasonNeedsInput)
 	}
-	if d := byName["salesforce"]; d.Status != spec.DependencyStatusResolved || d.SpecPath != "dependencies/salesforce.openapi.yaml" {
-		t.Errorf("salesforce (external, rest-api + specPath): status=%q specPath=%q, want %q/dependencies/salesforce.openapi.yaml",
-			d.Status, d.SpecPath, spec.DependencyStatusResolved)
+	if d := byName["salesforce"]; d.Status != spec.DependencyStatusResolved || d.Contract != "openapi.yaml" {
+		t.Errorf("salesforce (external, rest-api + contract on disk): status=%q contract=%q, want %q/openapi.yaml",
+			d.Status, d.Contract, spec.DependencyStatusResolved)
 	}
 	if d := byName["orders-db"]; d.Status != spec.DependencyStatusResolved || d.ResourceType != "postgres-cnpg" {
 		t.Errorf("orders-db (platform-resource): status=%q resourceType=%q, want %q/postgres-cnpg",

@@ -120,3 +120,92 @@ func TestCodingAgentReservesFarLessCPUThanItMayBurstTo(t *testing.T) {
 		}
 	}
 }
+
+// mustFindJobPodSpec digs the Job's pod template spec out of the CEL-templated
+// resource list, so a test can assert on what the cluster will actually run.
+func mustFindJobPodSpec(t *testing.T, spec map[string]any) map[string]any {
+	t.Helper()
+	resources, _ := spec["resources"].([]any)
+	for _, r := range resources {
+		res, _ := r.(map[string]any)
+		if res["id"] != "job" {
+			continue
+		}
+		tmpl, _ := res["template"].(map[string]any)
+		jobSpec, _ := tmpl["spec"].(map[string]any)
+		podTmpl, _ := jobSpec["template"].(map[string]any)
+		podSpec, _ := podTmpl["spec"].(map[string]any)
+		if podSpec == nil {
+			t.Fatal("the job resource has no pod template spec")
+		}
+		return podSpec
+	}
+	t.Fatal(`no resource with id "job"`)
+	return nil
+}
+
+// TestCodingAgentSizesDevShm closes an asymmetry that only ever bit in the
+// cluster: Kubernetes gives a pod no /dev/shm of its own, so the container
+// runtime supplies the 64Mi default, while BOTH other ways of running this exact
+// image pass `--shm-size=1g` (runners/remote-worker/local/run-local.sh and the
+// playground's docker run). The runner's mock-verification wave drives a
+// headless Chromium, which does not degrade on a 64Mi /dev/shm — it aborts — so
+// the image was developed and exercised under one shared-memory budget and
+// dispatched under another.
+//
+// The medium is the point: /dev/shm has to be a tmpfs for Chromium's mmap'd
+// shared buffers, and a default (disk-backed) emptyDir would provide the path
+// without the semantics.
+func TestCodingAgentSizesDevShm(t *testing.T) {
+	ct := CodingAgentComponentType()
+	spec, _ := ct["spec"].(map[string]any)
+	podSpec := mustFindJobPodSpec(t, spec)
+
+	containers, _ := podSpec["containers"].([]any)
+	main, _ := containers[0].(map[string]any)
+	mounts, _ := main["volumeMounts"].([]any)
+	var shmVolume string
+	for _, m := range mounts {
+		mount, _ := m.(map[string]any)
+		if mount["mountPath"] == "/dev/shm" {
+			shmVolume, _ = mount["name"].(string)
+		}
+	}
+	if shmVolume == "" {
+		t.Fatalf("nothing is mounted at /dev/shm; the pod gets the runtime's 64Mi default\n%#v", mounts)
+	}
+
+	volumes, _ := podSpec["volumes"].([]any)
+	var shm map[string]any
+	for _, v := range volumes {
+		vol, _ := v.(map[string]any)
+		if vol["name"] == shmVolume {
+			shm, _ = vol["emptyDir"].(map[string]any)
+		}
+	}
+	if shm == nil {
+		t.Fatalf("volume %q is not an emptyDir\n%#v", shmVolume, volumes)
+	}
+	if shm["medium"] != "Memory" {
+		t.Errorf("/dev/shm medium = %v, want Memory — a disk-backed emptyDir is not shared memory", shm["medium"])
+	}
+
+	// The size is a SCHEMA pin like every other resource on this type, not a
+	// literal buried in the template: a memory-backed emptyDir with no ceiling is
+	// sized from the NODE's memory, and a pod that filled one would take the node
+	// with it instead of being OOM-killed on its own.
+	if shm["sizeLimit"] != "${parameters.shmSize}" {
+		t.Errorf("/dev/shm sizeLimit = %v, want it bound to the schema parameter", shm["sizeLimit"])
+	}
+	props := mustFindSchemaProps(t, spec)
+	shmSize, _ := props["shmSize"].(map[string]any)
+	if shmSize == nil {
+		t.Fatal("missing shmSize parameter")
+	}
+	if shmSize["default"] != "1Gi" {
+		t.Errorf("shmSize default = %v, want 1Gi — the same budget run-local.sh and the playground pass", shmSize["default"])
+	}
+	if _, ok := shmSize["enum"]; !ok {
+		t.Error("shmSize must have an enum ceiling, like every other resource pin on this type")
+	}
+}

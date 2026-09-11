@@ -55,13 +55,20 @@ Two rules are this skill's, because they are the gateway's contract:
   header only when its claim is present; when it is absent the client's own value
   for that header is forwarded. `groups` is the one that matters: a token issued
   without it (a `client_credentials` token, or a user in no groups) leaves
-  `X-User-Groups` caller-controlled. Treat a role decision as trustworthy only
-  for a caller whose token actually carries the claim. A service that owns its
-  own people records sidesteps this: its role comes from the record it stored,
-  keyed on `X-User-Id`, which no caller can set (`thunder-authentication`).
-- **An authenticated caller who has no role → 403, never 401.** A 401 tells the
-  SPA its token expired, so it restarts sign-in and loops forever. The role
-  resolution itself is in `thunder-authentication`.
+  `X-User-Groups` caller-controlled. That is a **gap in the gateway's contract**
+  which a service cannot close from the inside, since nothing in the request
+  tells an asserted header from a supplied one: keep `client_credentials` clients
+  off externally-reachable role-gated routes, and raise the residual risk rather
+  than designing around it.
+
+  What it is NOT is a reason to invent a second role authority. Roles reach a
+  service only through that header, so one resolved from the service's own table
+  sees none the platform granted. **`thunder-authentication` owns the role
+  decision**, the cold start included — this skill owns only the header.
+- **An authenticated caller the resolver grants no role → 403, never 401.** A 401
+  tells the SPA its token expired, so it restarts sign-in and loops forever. When
+  that happens — and the `coldStartRole` that usually prevents it — is
+  `thunder-authentication`.
 
 **Own your rows by `X-User-Id`.** It is the only stable per-caller key the
 gateway gives you: stamp it on every row this service creates, and gate every

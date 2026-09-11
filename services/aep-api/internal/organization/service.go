@@ -44,7 +44,7 @@ var ErrGitHubAppNotConfigured = errors.New("orgconfig: github app oauth client n
 // is produced by PATCH probe/persist failures; the HTTP layer maps Status +
 // Section into a problem response.
 type SectionError struct {
-	Section string // "llm" | "gitProvider" | "idp"
+	Section string // "llm" | "codingLlm" | "codingAgent" | "gitProvider" | "idp"
 	Status  int    // 422 (validation) | 409 (conflict) | 502 (upstream)
 	Message string
 }
@@ -80,12 +80,13 @@ func sectionErrorFrom(section string, err error) error {
 // platform IDP defaults (used to synthesize a not-yet-persisted idp section on
 // GET) + the GitHub App connect parameters.
 type Service struct {
-	anthropicSvc  *AnthropicCredentialService
-	credentialSvc *CredentialService
-	disconnectSvc *OrgDisconnectService
-	bearerSvc     *BearerService
-	idpSvc        IDPService
-	platformIDP   PlatformIDPConfig
+	anthropicSvc   *AnthropicCredentialService
+	credentialSvc  *CredentialService
+	disconnectSvc  *OrgDisconnectService
+	bearerSvc      *BearerService
+	idpSvc         IDPService
+	codingAgentSvc *CodingAgentService
+	platformIDP    PlatformIDPConfig
 
 	publicURL   string
 	appClientID string
@@ -117,6 +118,19 @@ func NewService(
 		publicURL:     publicURL,
 		appClientID:   appClientID,
 	}
+}
+
+// WithCodingAgent attaches the coding-agent setting service.
+//
+// A setter rather than a tenth positional parameter, and the reason is the
+// section's own shape: an unwired service still projects a truthful
+// `codingAgent` — the platform defaults, which is what an org that never opened
+// the setting gets anyway — so a harness exercising only the credential sections
+// is not made to wire a service it does not exercise. A PATCH that names the
+// section without one is a loud failure, not a silent no-op.
+func (s *Service) WithCodingAgent(svc *CodingAgentService) *Service {
+	s.codingAgentSvc = svc
+	return s
 }
 
 // --- GET /config ------------------------------------------------------------
@@ -168,6 +182,19 @@ func (s *Service) Get(ctx context.Context, org string) (*orgconfig.ConfigProject
 		default:
 			return nil, fmt.Errorf("orgconfig get gitProvider: %w", err)
 		}
+	}
+
+	// Always present, even with no service wired: every org has an effective
+	// runtime and model, and the defaults ARE the answer for one that has never
+	// chosen. `updatedBy` is what tells a reader which of the two it is looking
+	// at, so there is nothing to fake here.
+	out.CodingAgent = orgconfig.DefaultCodingAgent()
+	if s.codingAgentSvc != nil {
+		proj, err := s.codingAgentSvc.Effective(ctx, org)
+		if err != nil {
+			return nil, fmt.Errorf("orgconfig get codingAgent: %w", err)
+		}
+		out.CodingAgent = proj
 	}
 
 	out.IDP = s.idpProjection(ctx, org)
@@ -254,9 +281,23 @@ func (s *Service) Patch(ctx context.Context, org, actor string, p orgconfig.Conf
 			return nil, sectionErrorFrom("gitProvider", err)
 		}
 	}
+	// The one section with no external probe — see coding_agent_service.go. It
+	// still belongs in this phase and not in the persist phase below, because
+	// what the phase buys is that no section is written while another is still
+	// capable of failing, and "the runtime you chose does not exist here" is a
+	// failure like any other.
+	if p.CodingAgent.Sent && !p.CodingAgent.Null {
+		if s.codingAgentSvc == nil {
+			return nil, fmt.Errorf("orgconfig patch codingAgent: service not configured")
+		}
+		if err := s.codingAgentSvc.Validate(ctx, org, p.CodingAgent.Value); err != nil {
+			return nil, sectionErrorFrom("codingAgent", err)
+		}
+	}
 
 	// 3. Persist phase — probes already passed, so these are writes over
-	//    freshly-validated inputs. Ordered llm → codingLlm → gitProvider → idp.
+	//    freshly-validated inputs. Ordered llm → codingLlm → codingAgent →
+	//    gitProvider → idp.
 	sections := []string{}
 	if p.LLM.Sent {
 		if p.LLM.Null {
@@ -285,6 +326,22 @@ func (s *Service) Patch(ctx context.Context, org, actor string, p orgconfig.Conf
 			return nil, sectionErrorFrom("codingLlm", err)
 		}
 		sections = append(sections, "codingLlm")
+	}
+	// null RESETS the section to the platform defaults, which is a state an org
+	// can genuinely want and is not the same as never having chosen — the row is
+	// deleted, so `updatedBy` goes back to null and the console can say so.
+	if p.CodingAgent.Sent {
+		if s.codingAgentSvc == nil {
+			return nil, fmt.Errorf("orgconfig patch codingAgent: service not configured")
+		}
+		if p.CodingAgent.Null {
+			if err := s.codingAgentSvc.Reset(ctx, org); err != nil {
+				return nil, sectionErrorFrom("codingAgent", err)
+			}
+		} else if err := s.codingAgentSvc.Set(ctx, org, actor, p.CodingAgent.Value); err != nil {
+			return nil, sectionErrorFrom("codingAgent", err)
+		}
+		sections = append(sections, "codingAgent")
 	}
 	if p.GitProvider.Sent && !p.GitProvider.Null {
 		if _, err := s.credentialSvc.Connect(ctx, org, ConnectRequest{

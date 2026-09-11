@@ -24,6 +24,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { composeWorkflowSkill, type AgentMode } from "./workflow_skill.js";
 import { mirrorLocalSkillLibrary } from "./local_skill_mirror.js";
+import { toolGlossary } from "./tool_glossary.js";
 
 // The real authored library: src/lib → remote-worker → runners → repo root.
 const LIBRARY = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../../skills");
@@ -157,8 +158,18 @@ for (const rule of [
   // The fan-out discipline is mode-neutral and lives inside `# The run`: it is
   // the largest passage the overlay must NOT own a copy of.
   "### Fan-out to subagents",
-  "Issue every subagent for a wave in ONE turn",
-  "Do not use `run_in_background`",
+  // Background-by-default (ADR-0014). A backgrounded builder's steps DO reach
+  // the feed on SDK 0.3.247, and backgrounding is the only thing that lets a
+  // lead work while a wave builds — a foreground wave sat the lead idle for 41
+  // of one run's 55 minutes.
+  "**Dispatch every builder of a wave in the background, in ONE turn.**",
+  // What the deleted PreToolUse hook used to guarantee structurally: nothing is
+  // staged while a subagent is still writing.
+  "before you stage or commit\nanything",
+  // A subagent that backgrounds its own build reports "clean" while the command
+  // runs on, and the run ends with it orphaned (probe 2's `sleep`, stopped at
+  // session end).
+  "**Inside a subagent, every command runs in the foreground**",
   // A web app is walked in a browser before its work is committed. The walk is
   // its OWN subagent, dispatched after the build reports clean — a builder that
   // walks the app it just wrote enters the browser carrying the whole build in
@@ -360,6 +371,37 @@ test("the fan-out section is what hands a subagent the component contract", () =
       `${mode} mode's fan-out section never names the contract`,
     );
   }
+});
+
+// --- roles in the skill, names in the glossary ------------------------------
+
+// The library is ONE authored file shared by every org, so the workflow is
+// written in roles ("the fan-out tool") and the runtime binds them at startup
+// (`tool_glossary.ts`, appended last). A tool NAME in the body would make the
+// library a Claude Code document, and a second runtime would read a procedure
+// naming tools it does not have — silently, because prose cannot fail.
+test("the workflow names tool roles, never a runtime's tool names", () => {
+  for (const mode of ["github", "local"] as const) {
+    for (const name of ["run_in_background", "TaskOutput", "TaskStop", "TaskCreate", "TaskUpdate", "`Agent`"]) {
+      assert.ok(!composed[mode].includes(name), `${mode} mode names the runtime's ${name}`);
+    }
+  }
+});
+
+// The other half of that: a role the body names and the glossary does not is a
+// dangling pointer the agent resolves by guessing.
+test("the glossary binds every role the workflow names", () => {
+  const glossary = toolGlossary();
+  for (const role of ["fan-out tool", "wait tool", "task list"]) {
+    assert.ok(glossary.includes(role), `the glossary binds no ${role}`);
+    for (const mode of ["github", "local"] as const) {
+      assert.ok(composed[mode].includes(role), `${mode} mode never names the ${role}`);
+    }
+  }
+  // "the fast model" / "the default one" is how the body defers the choice, so
+  // the glossary has to carry the aliases those words resolve to.
+  assert.ok(glossary.includes("the fast model") && glossary.includes("the default"));
+  assert.ok(composed.github.includes("runs well on the fast model"));
 });
 
 // A subagent posts its own progress, so the fan-out prompt list is the only
@@ -692,6 +734,35 @@ test("aep-validation still names the force-push its push step needs", () => {
   assert.ok(
     body.includes("git push --force-with-lease"),
     "step 10 lost its lease form while the deny-list still governs one",
+  );
+});
+
+// The two comments a validation run has always posted are STEP-anchored, and
+// that is why they are the two that reliably happen — ADR-0010's own rule, that
+// an obligation stated beside a numbered sequence gets skipped while one inside
+// it lands. The platform now writes the middle, so nothing else is asked for;
+// lose either of these and the issue has no opening claim or no closing verdict.
+test("aep-validation keeps the two comments its steps ask for", () => {
+  const body = fs.readFileSync(path.join(LIBRARY, "aep-validation", "SKILL.md"), "utf8");
+  assert.ok(body.includes("Post a brief opening comment"), "step 1 lost its opening comment");
+  assert.ok(
+    body.includes("Post an issue comment with the summary counts"),
+    "step 10 lost its closing summary",
+  );
+});
+
+// …and asks for NOTHING else. The skill carried a `## The status line` section
+// telling the agent to keep the middle current; it never did, and the platform
+// now writes those lines itself (ADR-0011). Restoring the section would put two
+// writers on one line — the `aep` body is always-on for a validation run too, so
+// its own keep-it-current rule is already in the prompt and needs no second
+// voice here.
+test("aep-validation asks for no status line of its own", () => {
+  const body = fs.readFileSync(path.join(LIBRARY, "aep-validation", "SKILL.md"), "utf8");
+  const headings = body.split("\n").filter((l) => /^#{1,6}\s+\S/.test(l));
+  assert.ok(
+    !headings.some((h) => /status line/i.test(h)),
+    `aep-validation grew a status-line section back: ${headings.filter((h) => /status line/i.test(h)).join(", ")}`,
   );
 });
 

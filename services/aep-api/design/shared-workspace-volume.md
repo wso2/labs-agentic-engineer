@@ -21,12 +21,33 @@ under the License.
 How aep-api and agents share `/workspaces`: one RWO PVC, co-located pods,
 bounded retention, and the accepted single-node limitation.
 
+## 0. The mount is a cache, EXCEPT `runs/`
+
+Every tree on this volume but one is derived: mirrors, snapshots, staging and
+trash can all be produced again from git or from Postgres, which is why they can
+be evicted under disk pressure and why losing the PVC is an availability trap
+rather than data loss.
+
+`runs/<orgId>/<cycleId>/` is the exception. It holds the coding agent's RUN
+RECORDINGS — a cycle's feed as v2 `RunEvent` NDJSON — and a run's feed existed
+while its pod did and nowhere else, so a deleted recording cannot be
+regenerated. It is **observability, not ledger**
+([ADR-0027](../../../docs/decisions/ADR-0027-run-recordings-are-observability-not-ledger.md)):
+the `run_cycles` row in Postgres stays the system of record for what happened to
+a version, and `RunCycleView.recording` tells a console what the platform can
+actually serve (`none | recording | complete | gaps | lost`). Losing a recording
+costs a feed, never a fact.
+
+The practical consequences are in §3: `runs/` has its own 30-day retention pass,
+and quota/LRU eviction under disk pressure never touches it.
+
 ## 1. Shared RWO PVC `/workspaces` (D2, 2026-07-31)
 
 One PersistentVolumeClaim mounts at `/workspaces` on aep-api (read-write) and
 agents (read-only). aep-api is the sole writer: bare mirrors under
 `repos/<org>/<project>/<repoSlug>/`, immutable per-SHA snapshots, the project's
-reference-document store, `trash/`, and `tmp/`. Agents derive snapshot paths
+reference-document store, the coding-agent run recordings under
+`runs/<org>/<cycleId>/`, `trash/`, and `tmp/`. Agents derive snapshot paths
 from turn `WorkspaceRef` IDs + SHAs and never write the mount.
 
 **Reference documents** (`<repoDir>/references/`, console ADR-0017) are the one
@@ -68,20 +89,30 @@ securityContext patch so `runAsNonRoot` is preserved).
 |---|---|
 | `AEP_WORKSPACE_SNAPSHOT_MAX_AGE` | 1h |
 | `AEP_WORKSPACE_TRASH_MAX_AGE` | 1h |
+| `AEP_WORKSPACE_RECORDING_MAX_AGE` | 30d (720h) |
+| `AEP_WORKSPACE_RECORDING_MAX_BYTES` | 0 (per-cycle cap off) |
 | `AEP_WORKSPACE_ORG_QUOTA_BYTES` | 2 GiB (2147483648) |
 | Disk watermarks | high 85% / low 70% |
 | Admission | refuse new snapshots at ≥ 90% used (bytes or inodes) |
 
-Reaper sweep order (six passes per tick; authority is the `reaper` package
-doc). Every replica runs 1–3; leader-only (`<root>/.reaper.lock`) for 4–6:
+Reaper sweep order (seven passes per tick; authority is the `reaper` package
+doc). Every replica runs 1–4; leader-only (`<root>/.reaper.lock`) for 5–7:
 
 1. **tmp reclamation** — purge `tmp/` entries older than `TrashMaxAge` (skip
    `askpass.sh`)
 2. **trash age-purge** — purge `trash/<id>` older than `TrashMaxAge`
 3. **snapshot age-reap** — trash aged non-HEAD `snapshots/<sha>` dirs
-4. **orphan reconciliation** — on-disk `repos/…` vs DB rows (mtime grace)
-5. **git maintenance** — before quota so eviction sees reclaimed space
-6. **quota / watermark eviction** — org quota then global high/low watermarks
+4. **recording retention** — purge `runs/<org>/<cycleId>` older than
+   `RecordingMaxAge`, then hold each org under `OrgQuotaBytes` oldest-first.
+   Days rather than hours because this tree is not rebuildable (§0), and aged
+   from the NEWEST file in the directory — a recording is appended to for the
+   whole run, so the directory's own mtime would date it from the moment the run
+   started
+5. **orphan reconciliation** — on-disk `repos/…` vs DB rows (mtime grace)
+6. **git maintenance** — before quota so eviction sees reclaimed space
+7. **quota / watermark eviction** — org quota then global high/low watermarks.
+   It walks `repos/` ONLY: a cache may be thrown away to make room, the only
+   copy of something may not, so recordings are bounded by pass 4 instead
 
 Two-phase delete: rename into `trash/<ulid>` (canonical path frees instantly;
 bytes stay allocated), then purge by age — or under pressure (below).
@@ -125,7 +156,12 @@ failure mode is an **availability trap, not data loss**: the PVC stays
 `Terminating` until every consumer stops, and re-adding the trait cannot create
 a same-named claim while the old one is still terminating. Recovery: scale both
 aep-api and agents Deployments to zero, let the claim clear, then re-add.
-Workspace content is a rebuildable cache; blast radius is a cold start.
+
+Blast radius is a cold start for everything under `repos/`, `trash/` and `tmp/`
+— all rebuildable. It is **permanent** for `runs/`: the run recordings there
+have no other copy (§0). Nothing the platform decides depends on them, so a lost
+`runs/` tree costs history and no correctness, and the affected cycles report
+`recording: lost` rather than pretending their agents said nothing.
 
 ## 6. Collab
 

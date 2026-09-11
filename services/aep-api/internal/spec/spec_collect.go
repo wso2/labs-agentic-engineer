@@ -197,25 +197,29 @@ func FetchSpecFromURL(ctx context.Context, rawURL string) ([]byte, error) {
 // without importing artifacts internals.
 var ErrInvalidSpecContent = errors.New("invalid spec content")
 
-// ConsumedSpecPath returns the component-relative path a consumed OpenAPI spec
-// for dependency depName lives at, under the consumer component's directory:
-// `dependencies/<depName>.openapi.yaml`. It is what StoreConsumedSpec returns
-// and what a dependency's specPath records.
+// ConsumedContractFile is the file name a collected OpenAPI document is stored
+// under in the dependency's directory.
+const ConsumedContractFile = "openapi.yaml"
+
+// ConsumedSpecPath returns the REPO-relative path a collected OpenAPI spec for
+// dependency depName lives at — the dependency's own directory,
+// `specs/design/dependencies/<depName>/openapi.yaml`. It is what
+// StoreConsumedSpec returns and what the dependency's definition records (as
+// the bare file name, `contract`).
 func ConsumedSpecPath(depName string) string {
-	return "dependencies/" + depName + ".openapi.yaml"
+	return ContractPath(depName, ConsumedContractFile)
 }
 
-// StoreConsumedSpec validates + normalizes rawSpec for the consumer component's
-// `depName` external dependency and returns the component-relative specPath
-// (`dependencies/<depName>.openapi.yaml`) together with the normalized blob to
-// commit.
+// StoreConsumedSpec validates + normalizes rawSpec for the `depName` external
+// dependency and returns the repo-relative contract path together with the
+// normalized blob to commit.
 //
 // COMMITTED-TRUTH: this store has no single-file commit surface of its own —
 // every file write lands via the Files API (feature/files, atomic apply →
 // main). So StoreConsumedSpec does the validate+normalize half and hands the
 // normalized blob back; the caller (design.CollectSpec) commits it — atomically
-// with the design.json specPath edit that clears the external-needs-spec gate —
-// through the Files commit port.
+// with the dependency.json edit that records the contract and clears the
+// needs-contract gate — through the Files commit port.
 //
 // Error classification:
 //   - %w-wraps ErrInvalidSpecContent: depName path-traversal rejection +

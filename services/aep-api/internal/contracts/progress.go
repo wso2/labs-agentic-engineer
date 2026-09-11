@@ -16,15 +16,31 @@
 
 package contracts
 
-// Progress DTOs are the cross-feature wire shapes for feature/execution's
-// unified GET /projects/{p}/executions/{id}/progress endpoint. They live here
-// (the dependency-free leaf) so any package — feature or client — can speak
-// the shape without importing a feature package, keeping contracts a
-// stdlib-only leaf.
+// Progress DTOs are the V1 wire shapes, and they now serve exactly two
+// surfaces: the task-log stream (TimelineEvent) and the VERSION build-progress
+// stream (RunProgressLine). They live here (the dependency-free leaf) so any
+// package — domain slice or client — can speak the shape without importing a
+// slice package, keeping contracts a stdlib-only leaf.
+//
+// They are NOT the mirror of the run feed any more. A run cycle's feed is
+// RunEvent, generated from packages/contracts/api/v1/openapi.yaml, and the
+// coding-agent reader lifts v1 runner output into it (codingagent's
+// run_event_lift.go). One contract, generated from the document, is the run
+// feed's only mirror; what is left here is the compatibility shape the two
+// still-v1 surfaces above are written against.
 
-// ProgressEvent is the unified shape returned to progress callers. Optional
-// fields use omitempty so JSON payloads stay compact. schemaVersion=1 mirrors
-// the TS source-of-truth at remote-worker/src/lib/progress/schema.ts.
+// ProgressEvent is the v1 shape those two surfaces return. Optional fields use
+// omitempty so JSON payloads stay compact. schemaVersion=1 is the envelope the
+// pre-cutover runner emitted; that producer is gone, so this shape is frozen and
+// the only v1 output left to read is what a cycle dispatched before the cutover
+// is still writing.
+//
+// It carries NO token usage. The runner's terminal `result` line does carry a
+// `usage` object, and this struct used to decode it into a `usage` field that
+// no OpenAPI schema documented — an undocumented field on a shape that reaches
+// the console, populated only by the private accounting parse. The usage now
+// rides on codingagent's own runnerLine (which embeds this struct), so the
+// reader still reads it and no wire shape can carry it.
 type ProgressEvent struct {
 	SchemaVersion int    `json:"schemaVersion"`
 	Ts            string `json:"ts"`
@@ -111,11 +127,6 @@ type ProgressEvent struct {
 	StartedAt   string `json:"startedAt,omitempty"`
 	CompletedAt string `json:"completedAt,omitempty"`
 	Message     string `json:"message,omitempty"`
-
-	// result: the run's token usage (#249), present once the runner captures
-	// it from the SDK terminal message. CapturedUsage carries the aggregate
-	// plus the per-model split the capture path prices (#291).
-	Usage *CapturedUsage `json:"usage,omitempty"`
 }
 
 // ProgressResponse is the envelope the progress reader returns per execution.

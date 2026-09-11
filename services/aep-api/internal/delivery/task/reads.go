@@ -376,21 +376,32 @@ func buildView(issue sourcecontrol.IssueInfo, specTag string, execs map[string]*
 }
 
 // commentViews projects the host's comments onto the read DTO, preserving order
-// and DROPPING the platform's own.
+// and dropping the ones the platform wrote FOR THE AGENT.
 //
-// A machine comment is the platform talking to the agent — a resolved dependency
-// block, a provisioning note, a closing line. It is written for a reader that is
-// not a person, it is often long, and on an issue that has one it would crowd
-// out the narrative this field exists to carry. The host brands them on write
-// and reports the brand on read (sourcecontrol.MachineCommentMarker); what to do
-// about it is this surface's policy, and this surface shows only what a person
-// wrote or an agent said.
+// The platform brands its own writes, and the two brands answer different
+// questions. A MACHINE comment is the platform talking to the agent — a resolved
+// dependency block, a provisioning note, a closing line. It is written for a
+// reader that is not a person, it is often long, and on an issue that has one it
+// would crowd out the narrative this field exists to carry, so it goes.
+//
+// An OBSERVED comment is the platform talking to a person, derived from what it
+// saw a run do, and it stays. On a validation issue it is most of the narrative:
+// the agent posts an opening line and a closing summary, and everything between
+// them — the harness, the exploration, the specs running, the report — is the
+// runner reporting what its own tool calls proved. Dropping those would leave
+// this field empty for hours of a run that was working fine, which is the defect
+// this class was added to fix.
+//
+// So the field carries what a person wrote, what an agent said, and what the
+// platform observed — and Observed is passed through rather than flattened away,
+// because a reader deciding how much to trust a line needs to know a machine
+// inferred it from a tool call rather than an agent judging its own work.
 //
 // nil out covers four cases: comments were not asked for, the host could not
-// answer, the issue has none, and every one it has is the platform's. That is
-// deliberate — a consumer cannot act differently on any of them, and inventing
-// an empty slice for one would put a distinction on the wire nothing can rely
-// on.
+// answer, the issue has none, and every one it has is written for the agent.
+// That is deliberate — a consumer cannot act differently on any of them, and
+// inventing an empty slice for one would put a distinction on the wire nothing
+// can rely on.
 func commentViews(comments []sourcecontrol.IssueComment) []delivery.IssueComment {
 	if len(comments) == 0 {
 		return nil
@@ -406,6 +417,7 @@ func commentViews(comments []sourcecontrol.IssueComment) []delivery.IssueComment
 			Body:      c.Body,
 			URL:       c.URL,
 			CreatedAt: c.CreatedAt,
+			Observed:  c.Observed,
 		})
 	}
 	if len(out) == 0 {

@@ -45,14 +45,27 @@ describe("validationLiveLine", () => {
     expect(validationLiveLine(AUTO_TWO, undefined, false)).toBe("Setting up the test harness…");
   });
 
-  it("says nothing once any criterion has been picked up", () => {
-    // The rows are the better narrator from here on, and a run-wide sentence
-    // over rows in three different states could only be a coarser version of
-    // what the reader is already looking at.
-    expect(validationLiveLine(AUTO_TWO, { "AC-001-a": "exploring" }, false)).toBe("");
+  it("counts the answered criteria through the long middle", () => {
+    // The rows are the better narrator for any ONE criterion from here on, so
+    // this says the thing no row can: how far through the whole set the run is.
+    // Blank was the old answer and it was worse than a coarse one — the tile
+    // went empty for the longest stretch of the run, which reads the same as a
+    // run that stopped.
+    expect(validationLiveLine(AUTO_TWO, { "AC-001-a": "exploring" }, false)).toBe(
+      "Checking the criteria, 0 of 2 answered…",
+    );
     expect(
       validationLiveLine(AUTO_TWO, { "AC-001-a": "pass", "AC-002-a": "running" }, false),
-    ).toBe("");
+    ).toBe("Checking the criteria, 1 of 2 answered…");
+  });
+
+  it("counts only the criteria that have an ANSWER, not the ones in flight", () => {
+    // `exploring` and `authoring` are work in progress, and counting them would
+    // promise verdicts the run has not reached — the rows beside this line would
+    // then contradict it.
+    expect(
+      validationLiveLine(AUTO_TWO, { "AC-001-a": "authoring", "AC-002-a": "healing" }, false),
+    ).toBe("Checking the criteria, 0 of 2 answered…");
   });
 
   it("narrates the reporting tail, where every row is settled and frozen", () => {
@@ -61,9 +74,11 @@ describe("validationLiveLine", () => {
     ).toBe("Writing the validation report…");
   });
 
-  it("stops narrating once the report has landed", () => {
-    // The report is the authority and the rows now read from it; a line still
-    // claiming the report is being written would outlive its own subject.
+  it("says nothing once every criterion is answered and the report has landed", () => {
+    // The report is the authority and the rows now read from it. A line claiming
+    // the report is being written would outlive its subject, and the count would
+    // be worse — its trailing ellipsis promises work still in flight on a run
+    // that has answered everything it was asked.
     expect(
       validationLiveLine(AUTO_TWO, { "AC-001-a": "pass", "AC-002-a": "pass" }, true),
     ).toBe("");

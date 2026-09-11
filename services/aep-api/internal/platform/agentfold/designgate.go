@@ -54,24 +54,21 @@ var (
 	dependencyKinds     = map[string]bool{"component": true, "org-service": true, "external": true, "platform-resource": true}
 	dependencyKnownKeys = map[string]bool{
 		"kind": true, "name": true, "description": true,
-		"style": true, "package": true, "specPath": true,
-		"candidates": true,
-		"config":     true, "resourceType": true, "parameters": true,
+		"resourceType": true, "parameters": true,
 		// wiring is platform-stamped, not agent-authored — but it IS persisted in
 		// design.json, so it must fold. Design save re-derives and overwrites it,
 		// so an agent echoing back what it read is harmless (see the zod gate's
 		// dependencyWiringSchema for why this is accepted rather than rejected).
 		"wiring": true,
 	}
-	// externalOnlyDependencyKeys are meaningful only on kind="external" — a
-	// platform-resource is catalog-picked, an org-service is catalog-resolved,
-	// neither carries an external contract. Mirrors the zod gate's
-	// EXTERNAL_ONLY_DEPENDENCY_FIELDS (component-design-schema.ts superRefine).
-	externalOnlyDependencyKeys = map[string]bool{
-		"candidates": true, "style": true, "package": true,
-		"specPath": true,
-	}
-	designKnownKeys = map[string]bool{
+	// movedDependencyKeys are the fields an external dependency's definition
+	// used to carry on the component. They live in
+	// specs/design/dependencies/<name>/dependency.json now (one dependency, one
+	// definition); a component that still writes them gets a message naming
+	// that file, not a bare "unknown property". Mirrors MOVED_DEPENDENCY_FIELDS
+	// in component-design-schema.ts.
+	movedDependencyKeys = []string{"style", "package", "specPath", "candidates", "suggestions", "config"}
+	designKnownKeys     = map[string]bool{
 		"name": true, "type": true, "version": true, "language": true,
 		"buildpack": true, "appPath": true, "entrypoint": true,
 		"exposure": true, "dependencies": true, "description": true,
@@ -222,6 +219,22 @@ func validateDependency(i int, d any) *designProblem {
 	if !ok {
 		return &designProblem{code: ErrSchemaViolation, message: fmt.Sprintf("dependencies[%d]: must be an object", i)}
 	}
+	if kind, _ := dep["kind"].(string); kind == "external" {
+		var moved []string
+		for _, k := range movedDependencyKeys {
+			if _, present := dep[k]; present {
+				moved = append(moved, fmt.Sprintf("%q", k))
+			}
+		}
+		if len(moved) > 0 {
+			name, _ := dep["name"].(string)
+			return &designProblem{code: ErrSchemaViolation, message: fmt.Sprintf(
+				"dependencies[%d] (%q) carries %s — an external dependency's definition lives in specs/design/dependencies/%s/dependency.json "+
+					"(provider, style, contract file, config keys, suggestions), written once and shared by every component that uses it. "+
+					"Keep only { \"kind\": \"external\", \"name\": %q } here and put those fields in that file.",
+				i, name, strings.Join(moved, ", "), name, name)}
+		}
+	}
 	for k := range dep {
 		if !dependencyKnownKeys[k] {
 			return &designProblem{code: ErrSchemaViolation, message: fmt.Sprintf("dependencies[%d]: unknown property %s", i, k)}
@@ -234,13 +247,6 @@ func validateDependency(i int, d any) *designProblem {
 	name, ok := dep["name"].(string)
 	if !ok || name == "" {
 		return &designProblem{code: ErrSchemaViolation, message: fmt.Sprintf("dependencies[%d].name: must be a non-empty string", i)}
-	}
-	if kind != "external" {
-		for k := range dep {
-			if externalOnlyDependencyKeys[k] {
-				return &designProblem{code: ErrSchemaViolation, message: fmt.Sprintf("dependencies[%d]: %s is only meaningful on an external dependency (kind=\"external\"), got kind=%q", i, k, kind)}
-			}
-		}
 	}
 	if p := validateDependencyParameters(i, dep["parameters"]); p != nil {
 		return p

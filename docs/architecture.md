@@ -102,6 +102,16 @@ decisions and their costs are
 mechanism is
 [`internal/delivery/README.md`](../services/aep-api/internal/delivery/README.md).
 
+**What the agent did** is a recording, not a tail. The platform reads each run
+cycle's pod once, server-side, and appends its feed as `RunEvent` NDJSON to the
+workspace volume; every console reads that file from a byte offset, so a reload
+mid-run replays from the first event and a reload after the pod is reaped shows
+the whole cycle. The recording is **observability, not ledger** — `run_cycles`
+in Postgres stays the record of what happened to a version, and
+`RunCycleView.recording` says what can actually be served, so a partial feed is
+never presented as the whole of it —
+[ADR-0027](decisions/ADR-0027-run-recordings-are-observability-not-ledger.md).
+
 **Mock verification** is that browser step, and it sits inside the coding cycle
 rather than after a deployment. Once a `web-application` builds clean the cycle
 dispatches one more agent for it: it stands the app up in mock mode — MSW

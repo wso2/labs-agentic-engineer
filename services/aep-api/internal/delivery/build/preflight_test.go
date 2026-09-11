@@ -117,13 +117,13 @@ func TestPreflight_PlatformResourceItem_CarriesResourceTypeAndParameters(t *test
 	require.Equal(t, map[string]any{"instances": 1}, item.Parameters)
 }
 
-// A "blocked" or "ambiguous" org-service dependency also needs the drawer —
+// A "blocked" or "unresolved" org-service dependency also needs the drawer —
 // only "resolved" is skipped.
-func TestPreflight_OrgServiceBlockedAndAmbiguous_AlsoEmit(t *testing.T) {
+func TestPreflight_OrgServiceBlockedAndUnresolved_AlsoEmit(t *testing.T) {
 	comps := []spec.DesignComponent{{Name: "orders", ComponentType: spec.ComponentTypeService,
 		Dependencies: []spec.Dependency{
 			{Kind: spec.DependencyKindOrgService, Name: "payments", Status: spec.DependencyStatusBlocked},
-			{Kind: spec.DependencyKindOrgService, Name: "shipping", Status: spec.DependencyStatusAmbiguous},
+			{Kind: spec.DependencyKindOrgService, Name: "shipping", Status: spec.DependencyStatusUnresolved},
 		}}}
 	svc := NewPreflightService(PreflightDeps{Design: fakeDesign{comps: comps}, Status: fakeStatus{}})
 	pf, err := svc.Preflight(context.Background(), "acme", "shop")
@@ -233,20 +233,20 @@ func (readyStatus) Ready(context.Context, string, string, string) (bool, error) 
 // convention TestPreflight_ItemsPerKind and TestPreflight_OrgServiceBlockedAndAmbiguous_AlsoEmit
 // already use for org-service.
 
-// An ambiguous external dependency (2+ candidates) raises "external-ambiguous"
+// An external dependency no service was chosen for raises "external-unresolved"
 // — never the config item, and Ready is never consulted (nothing meaningful to
 // collect until the dependency itself resolves).
-func TestPreflight_ExternalAmbiguous_EmitsBlockerItem(t *testing.T) {
+func TestPreflight_ExternalUnchosen_EmitsBlockerItem(t *testing.T) {
 	comps := []spec.DesignComponent{{Name: "orders", ComponentType: spec.ComponentTypeService,
 		Dependencies: []spec.Dependency{
-			{Kind: spec.DependencyKindExternal, Name: "salesforce", Status: spec.DependencyStatusAmbiguous},
+			{Kind: spec.DependencyKindExternal, Name: "salesforce", Status: spec.DependencyStatusUnresolved, Reason: spec.DependencyReasonNeedsInput},
 		}}}
 	svc := NewPreflightService(PreflightDeps{Design: fakeDesign{comps: comps}, Status: fakeStatus{}})
 	pf, err := svc.Preflight(context.Background(), "acme", "shop")
 	require.NoError(t, err)
 	require.Len(t, pf.Items, 1)
 	item := pf.Items[0]
-	require.Equal(t, "external-ambiguous", item.Kind)
+	require.Equal(t, "external-unresolved", item.Kind)
 	require.Equal(t, "salesforce", item.Dependency)
 	require.NotEmpty(t, item.Description)
 }
@@ -269,13 +269,13 @@ func TestPreflight_ExternalNeedsInput_EmitsUnresolvedBlockerItem(t *testing.T) {
 	require.NotEmpty(t, item.Description)
 }
 
-// An unresolved external dependency with reason=needs-spec raises the
-// pre-existing "external-spec" kind — reborn, not reinvented.
-func TestPreflight_ExternalNeedsSpec_EmitsSpecBlockerItem(t *testing.T) {
+// An unresolved external dependency with reason=needs-contract raises the
+// pre-existing "external-spec" kind — the drawer's provide-a-document item.
+func TestPreflight_ExternalNeedsContract_EmitsSpecBlockerItem(t *testing.T) {
 	comps := []spec.DesignComponent{{Name: "orders", ComponentType: spec.ComponentTypeService,
 		Dependencies: []spec.Dependency{
 			{Kind: spec.DependencyKindExternal, Name: "partner-api",
-				Status: spec.DependencyStatusUnresolved, Reason: spec.DependencyReasonNeedsSpec},
+				Status: spec.DependencyStatusUnresolved, Reason: spec.DependencyReasonNeedsContract},
 		}}}
 	svc := NewPreflightService(PreflightDeps{Design: fakeDesign{comps: comps}, Status: fakeStatus{}})
 	pf, err := svc.Preflight(context.Background(), "acme", "shop")
@@ -403,20 +403,15 @@ func TestPreflight_ResolutionBlockers_SetNeedsResolution(t *testing.T) {
 		wantKind string
 	}{
 		{
-			name:     "ambiguous external",
-			dep:      spec.Dependency{Kind: spec.DependencyKindExternal, Name: "salesforce", Status: spec.DependencyStatusAmbiguous},
-			wantKind: "external-ambiguous",
-		},
-		{
 			name: "unresolved external",
 			dep: spec.Dependency{Kind: spec.DependencyKindExternal, Name: "weather-api",
 				Status: spec.DependencyStatusUnresolved, Reason: spec.DependencyReasonNeedsInput},
 			wantKind: "external-unresolved",
 		},
 		{
-			name: "external without a spec",
+			name: "external without a contract",
 			dep: spec.Dependency{Kind: spec.DependencyKindExternal, Name: "partner-api",
-				Status: spec.DependencyStatusUnresolved, Reason: spec.DependencyReasonNeedsSpec},
+				Status: spec.DependencyStatusUnresolved, Reason: spec.DependencyReasonNeedsContract},
 			wantKind: "external-spec",
 		},
 		{

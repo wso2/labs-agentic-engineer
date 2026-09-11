@@ -137,6 +137,15 @@ dropdown, reading it, remembering it, and selecting the next one.
    stamp is still counting, and keying on the status would freeze it. "and
    counting" follows the same condition, for the same reason.
 
+   **One ticker per page, not per component.** The clock started inside the
+   summary card, so its forced re-render reached that subtree only — and the
+   task rows, a sibling away, format their own elapsed time against `Date.now()`
+   with nothing driving them: rows sat at `0m 24s` for two minutes while the
+   card above them counted. The interval therefore lives on the build page,
+   above both, and runs while *either* is counting — an open duration, or a task
+   row still measuring. Two intervals for one page would also drift, and a row
+   reading a second behind the card is a page arguing with itself.
+
    **"Go to Deployments" appears only once the version's work has merged.** A
    version reaches an environment as its work merges, so before that the board
    has nothing to say about it and the link could only disappoint — it sat one

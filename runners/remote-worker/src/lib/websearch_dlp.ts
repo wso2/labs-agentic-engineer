@@ -159,29 +159,45 @@ function isPreToolUseInput(input: unknown): input is PreToolUseHookInput {
 }
 
 /**
+ * The platform's WebSearch rule as the runtime PORT states one: a query in, the
+ * REASON to deny it, or null to allow.
+ *
+ * `secrets` is captured once per run — `stagedSecretValues(childEnv)` computed
+ * from the same env injected into the run. The split matters because the rule is
+ * the platform's and the enforcement is the runtime's: this function is what
+ * `lib/runner.ts` puts on `RuntimePolicy.webSearch`, and each adapter turns the
+ * sentence it returns into whatever its own hook system calls a denial.
+ */
+export function webSearchDenial(secrets: readonly string[]): (query: string) => string | null {
+  return (query) => checkWebSearchQuery(query, secrets).message ?? null;
+}
+
+/**
  * createWebSearchDlpHook builds the PreToolUse HookCallback that gates
  * WebSearch — NOT a canUseTool callback (see the module doc comment for
  * why). Register it under `hooks.PreToolUse` with `matcher: "WebSearch"`
- * in the SDK query options. `secrets` is captured once per run; runner.ts
- * passes `stagedSecretValues(childEnv)` computed from the same env that's
- * injected into the run.
+ * in the SDK query options.
+ *
+ * It takes the DECISION, not the secrets: what may be searched for is the
+ * platform's rule (`webSearchDenial` above), and this is one runtime's way of
+ * enforcing it before the call is dispatched.
  */
-export function createWebSearchDlpHook(secrets: readonly string[]): HookCallback {
+export function createWebSearchDlpHook(deny: (query: string) => string | null): HookCallback {
   return async (input) => {
     if (!isPreToolUseInput(input) || input.tool_name !== "WebSearch") {
       return {};
     }
     const toolInput = input.tool_input as { query?: unknown } | undefined;
     const searchQuery = typeof toolInput?.query === "string" ? toolInput.query : "";
-    const check = checkWebSearchQuery(searchQuery, secrets);
-    if (!check.denied) {
+    const reason = deny(searchQuery);
+    if (reason === null) {
       return {};
     }
     return {
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
         permissionDecision: "deny",
-        permissionDecisionReason: check.message,
+        permissionDecisionReason: reason,
       },
     };
   };

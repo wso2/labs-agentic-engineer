@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import type { SpineStage } from "./stage";
+import { frontierIndex, type SpineStage } from "./stage";
 
 // THE GLANCE — one run's flow as a single line, plus the one stage worth words.
 //
@@ -47,18 +47,13 @@ export interface RunGlance {
   ahead: GlanceStage[];
 }
 
-/** A stage nobody is waiting on any more. */
-function isSettled(stage: SpineStage): boolean {
-  return stage.state === "done";
-}
-
 /**
  * Collapse a run's stages into the glance.
  *
- * NOW is the FIRST stage that is not done — which is the same stage the rail
- * would show as the frontier, whether it is running, waiting on the platform,
- * or stopped needing a human. Loudness does not reorder anything: a failed
- * stage is already the first non-done one, because nothing after it ran.
+ * NOW is the rail's frontier — the FIRST stage that is not done, whether it is
+ * running, waiting on the platform, or stopped needing a human. `frontierIndex`
+ * is where that rule lives, shared with the build page's header pill so the two
+ * surfaces cannot name different stages as the current one.
  *
  * `stepFrom` keeps the numbers identical to the rail's, so the glance and the
  * rail never disagree about which stage is "3".
@@ -68,8 +63,7 @@ export function buildGlance(stages: SpineStage[], stepFrom = 1): RunGlance {
     (stage, i): GlanceStage => ({ stage, step: stepFrom + i }),
   );
 
-  const found = numbered.findIndex((entry) => !isSettled(entry.stage));
-  const nowIndex = found === -1 ? null : found;
+  const nowIndex = frontierIndex(stages);
 
   return {
     stages: numbered,

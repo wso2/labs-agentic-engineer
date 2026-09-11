@@ -108,9 +108,14 @@ func Load() (Config, error) {
 			ReapInterval:   r.readOptionalDuration("AEP_WORKSPACE_REAP_INTERVAL", 5*time.Minute),
 			SnapshotMaxAge: r.readOptionalDuration("AEP_WORKSPACE_SNAPSHOT_MAX_AGE", time.Hour),
 			TrashMaxAge:    r.readOptionalDuration("AEP_WORKSPACE_TRASH_MAX_AGE", time.Hour),
-			OrgQuotaBytes:  r.readOptionalInt64("AEP_WORKSPACE_ORG_QUOTA_BYTES", 2147483648), // 2 GiB
-			DiskHighPct:    r.readOptionalInt("AEP_WORKSPACE_DISK_HIGH_PCT", 85),
-			DiskLowPct:     r.readOptionalInt("AEP_WORKSPACE_DISK_LOW_PCT", 70),
+			// 30 days. A recording is the only thing on this mount nothing can
+			// rebuild, so its window is set by how long a run is worth looking at,
+			// not by cache pressure.
+			RecordingMaxAge:   r.readOptionalDuration("AEP_WORKSPACE_RECORDING_MAX_AGE", 720*time.Hour),
+			RecordingMaxBytes: r.readOptionalInt64("AEP_WORKSPACE_RECORDING_MAX_BYTES", 0),
+			OrgQuotaBytes:     r.readOptionalInt64("AEP_WORKSPACE_ORG_QUOTA_BYTES", 2147483648), // 2 GiB
+			DiskHighPct:       r.readOptionalInt("AEP_WORKSPACE_DISK_HIGH_PCT", 85),
+			DiskLowPct:        r.readOptionalInt("AEP_WORKSPACE_DISK_LOW_PCT", 70),
 		},
 		AgentPlatformURL:   r.readOptionalString("AGENT_PLATFORM_URL", ""),
 		AEPInternalBaseURL: r.readOptionalString("AEP_API_INTERNAL_BASE_URL", ""),

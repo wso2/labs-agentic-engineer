@@ -110,7 +110,7 @@ func (s *artifactService) StatusSnapshot(ctx context.Context, orgID, projectID s
 
 	snap.RequirementsFingerprint = RequirementsFingerprint(headEntries)
 	snap.HasDesignTag = latestDesignTag(tags) != ""
-	if latest, _, ok := latestRequirementsTagInfo(tags); ok {
+	if latest, ok := latestVersionTag(tags); ok {
 		snap.SpecVersion = latest.Name
 		// Sha-addressed (the peeled tag commit) — a local read, no fetch.
 		tagEntries, _, err := s.git.Workspace().List(ctx, ref, latest.CommitHash)

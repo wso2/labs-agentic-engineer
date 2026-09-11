@@ -117,6 +117,7 @@ type AppParams struct {
 	MCPSpecValidator  mcpdiscovery.SpecValidator
 	MCPSpecNormalizer mcpdiscovery.SpecNormalizer
 	MCPSpecFetcher    mcpdiscovery.SpecFetcher
+	MCPSpecSlicer     mcpdiscovery.SpecSlicer
 }
 
 // NewHandler assembles the full HTTP handler with middleware and routes.

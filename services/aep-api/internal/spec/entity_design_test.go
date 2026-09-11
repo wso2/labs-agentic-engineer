@@ -96,20 +96,20 @@ func TestDependency_JSONRoundTrip(t *testing.T) {
 		"external-rest": {
 			Kind:     DependencyKindExternal,
 			Name:     "stripe",
+			Provider: "Stripe",
 			Style:    DependencyStyleRestAPI,
-			SpecPath: "dependencies/stripe.openapi.yaml",
+			Contract: "openapi.yaml",
 			Config: []ConfigKey{
 				{Key: "STRIPE_API_KEY", Secret: true, Description: "Your Stripe secret API key"},
 				{Key: "STRIPE_REGION", Secret: false, DefaultValue: "us-east-1"},
 			},
 		},
-		"external-ambiguous-candidates": {
+		"external-open-suggestions": {
 			Kind: DependencyKindExternal,
 			Name: "email-provider",
-			Candidates: []DependencyCandidate{
+			Suggestions: []DependencySuggestion{
 				{Name: "sendgrid-rest", Style: DependencyStyleRestAPI, Description: "SendGrid v3 Web API"},
-				{Name: "resend-sdk", Style: DependencyStyleSDK, Description: "Resend Node SDK",
-					Package: "npm:resend@^4.0.0"},
+				{Name: "resend-sdk", Style: DependencyStyleSDK, Description: "Resend Node SDK"},
 			},
 		},
 		"platform-resource": {

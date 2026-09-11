@@ -22,36 +22,48 @@
 # whole interface, and the only friction in calling it is minting a token. This
 # is that curl with the Thunder client_credentials dance folded in.
 #
-# The loop it was written for: change the `aep-validation` skill, rebuild the
-# runner image (`make build-runner FORCE=1`), re-run this, watch the agent work
-# against the app already deployed. Nothing is rebuilt to answer the question.
+# The loop it was written for: change the `aep-validation` skill, rebuild and
+# deploy aep-api — the BFF carries the skills mirror a dispatched runner reads,
+# so `make build-runner` does NOT reach it — confirm the mirror landed, then run
+# this and watch the agent work against the app already deployed. Nothing is
+# rebuilt to answer the question: a validation run has no working set and skips
+# the build and deploy stages outright.
 #
-#   scripts/project-revalidate.sh                       # the defaults below
+#   scripts/project-revalidate.sh my-project            # tag v1, re-check only
 #   scripts/project-revalidate.sh my-project v2
-#   scripts/project-revalidate.sh my-project v2 2       # let it REPAIR — see below
+#   scripts/project-revalidate.sh my-project v2 3       # let it REPAIR — see below
 #
-# The third argument is the validation attempt budget. It defaults to 1, and that
-# default is the safe one: a single attempt is spent by the first fatal verdict,
-# which settles the run before the loop reaches the point where it would file
-# repair work — so the run reports and stops, touching neither the repo nor the
-# deployment. Raise it and a `failed` verdict becomes an issue per failed
-# criterion, an ordinary coding cycle, a build and a redeploy. That is a real
-# change to the project, so it is opt-in.
+# The third argument is the validation attempt budget, and since the delivery
+# loop split into three workflows it caps the VERSION's total validation runs
+# rather than this run's attempts: the workflow counts every `validation`-kind
+# run on the milestone, the one it is running in included. The default 1 is the
+# safe one — a fatal verdict settles the run before the repair mint, so the run
+# reports and stops, touching neither the repo nor the deployment.
+#
+# Raising it is opt-in because it changes the project, and it has to clear the
+# runs already spent: the reconcile sweep judges every version once by itself at
+# deployed-green, so a version judged N times needs at least N+2 here before a
+# `failed` verdict files an issue per failed criterion. The repair is then a
+# SEPARATE run — this one settles `failed` the moment it files — and the task run
+# that fixes those issues reopens the validation task, so a third run re-judges.
 #
 # Refusals are the endpoint's, and each is actionable: 409 while a run is already
-# working the version or while its milestone still has open work, 422 when the
-# version has no acceptance criteria to validate against.
+# working the version or while its milestone still has open dev work, 422 when the
+# version has no acceptance criteria to validate against, 404 when the tag never
+# ran here — a tag resolves through the platform's own run rows, never GitHub.
 set -e
 
-# The project this repo's author reaches for most; all three are positional.
-PROJECT="${1:-p18-bare-minimum-hello}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# A project that exists at the time of writing, for a bare invocation; all three
+# are positional. Project names rot as local stacks are rebuilt — pass your own.
+PROJECT="${1:-p47-hello-world}"
 TAG="${2:-v1}"
 ATTEMPTS="${3:-1}"
 
 BFF_URL="${BFF_URL:-http://localhost:9090}"
 THUNDER_URL="${THUNDER_URL:-http://thunder.openchoreo.localhost:8080}"
 SEEDER_CLIENT_ID="${SEEDER_CLIENT_ID:-aep-local-dev-seeder}"
-SEEDER_CLIENT_SECRET="${SEEDER_CLIENT_SECRET:-aep-local-dev-seeder-secret}"
 
 # Both budgets are interpolated into hand-built JSON below, so a non-numeric or
 # leading-zero value would ship a malformed body and come back as an opaque 400.
@@ -63,6 +75,44 @@ fi
 if [ -n "${CEILING:-}" ] && ! [[ "$CEILING" =~ ^[1-9][0-9]*$ ]]; then
     echo "❌ CEILING must be a positive integer (got '${CEILING}')." >&2
     exit 1
+fi
+
+# The local plane keeps CLUSTER_CONTEXT in one place; source it rather than
+# restating "k3d-openchoreo" here. env.sh is pure assignments, no side effects —
+# but it assigns UNCONDITIONALLY, so an exported override has to be carried
+# across the source by hand or it is silently replaced by the default.
+CLUSTER_CONTEXT_OVERRIDE="${CLUSTER_CONTEXT:-}"
+if [ -f "${SCRIPT_DIR}/../deployments/scripts/env.sh" ]; then
+    # shellcheck source=/dev/null
+    . "${SCRIPT_DIR}/../deployments/scripts/env.sh"
+fi
+CLUSTER_CONTEXT="${CLUSTER_CONTEXT_OVERRIDE:-${CLUSTER_CONTEXT:-k3d-openchoreo}}"
+# Not in env.sh — this one is restated from setup-local.sh, which creates it.
+AEP_NS="${AEP_NS:-wso2-aep}"
+
+# Read a key out of a cluster Secret; empty when kubectl, the cluster or the key
+# is missing. Same read as deployments/scripts/setup-local.sh's existing_secret,
+# because that script is what wrote the value.
+cluster_secret() {
+    kubectl --context "${CLUSTER_CONTEXT}" get secret "$1" \
+        -n "${AEP_NS}" -o jsonpath="{.data.$2}" 2>/dev/null \
+        | base64 -d 2>/dev/null || true
+}
+
+# TWO paths register this client and they disagree about its secret, so the
+# secret is resolved rather than assumed: setup-local.sh generates a random one
+# into the aep-thunder-secrets Secret and registers the app with it, while
+# Thunder's own bootstrap (single-cluster/values-thunder.yaml) registers the
+# literal below. Whichever ran last is the one Thunder will accept — hence the
+# cluster read first, and the literal only as the fallback that path needs.
+SECRET_SOURCE="the exported SEEDER_CLIENT_SECRET"
+if [ -z "${SEEDER_CLIENT_SECRET:-}" ]; then
+    SEEDER_CLIENT_SECRET="$(cluster_secret aep-thunder-secrets LOCAL_DEV_SEEDER_SECRET)"
+    SECRET_SOURCE="the aep-thunder-secrets Secret (${CLUSTER_CONTEXT}/${AEP_NS})"
+fi
+if [ -z "$SEEDER_CLIENT_SECRET" ]; then
+    SEEDER_CLIENT_SECRET="aep-local-dev-seeder-secret"
+    SECRET_SOURCE="the values-thunder.yaml bootstrap default"
 fi
 
 if ! curl -fsS --max-time 3 "$BFF_URL/healthz" > /dev/null 2>&1; then
@@ -79,8 +129,17 @@ TOKEN=$(curl -sS -X POST "${THUNDER_URL%/}/oauth2/token" \
     | sed -n 's/.*"access_token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
 
 if [ -z "$TOKEN" ]; then
-    echo "❌ Thunder did not return an access_token for '${SEEDER_CLIENT_ID}'."
-    echo "   The client is registered by deployments/scripts/setup-local.sh / start.sh."
+    echo "❌ Thunder did not return an access_token for '${SEEDER_CLIENT_ID}'." >&2
+    echo "   Tried the secret from ${SECRET_SOURCE}." >&2
+    echo "   Two paths register this client and they disagree on its secret:" >&2
+    echo "     deployments/scripts/setup-local.sh  — a random one, in the Secret" >&2
+    echo "     single-cluster/values-thunder.yaml  — the literal default" >&2
+    echo "   Whichever ran last is the one Thunder honours, so read the live one" >&2
+    echo "   and pass it explicitly:" >&2
+    echo "     SEEDER_CLIENT_SECRET=\$(kubectl --context ${CLUSTER_CONTEXT} get secret \\" >&2
+    echo "       aep-thunder-secrets -n ${AEP_NS} \\" >&2
+    echo "       -o jsonpath='{.data.LOCAL_DEV_SEEDER_SECRET}' | base64 -d) \\" >&2
+    echo "       bash scripts/project-revalidate.sh ${PROJECT} ${TAG}" >&2
     exit 1
 fi
 

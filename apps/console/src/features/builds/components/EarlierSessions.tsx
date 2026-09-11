@@ -17,6 +17,7 @@
  */
 
 import { Box, Stack, Typography } from "@wso2/oxygen-ui";
+import { SectionCaption } from "../../../components/SectionCaption";
 import type { components } from "../../../generated/aep-api";
 
 type RunCycleView = components["schemas"]["RunCycleView"];
@@ -43,18 +44,7 @@ export function EarlierSessions({
 
   return (
     <Box>
-      <Typography
-        variant="caption"
-        sx={{
-          display: "block",
-          mb: 1,
-          fontWeight: 700,
-          letterSpacing: "0.08em",
-          color: "text.secondary",
-        }}
-      >
-        EARLIER BUILD SESSIONS IN THIS RUN
-      </Typography>
+      <SectionCaption>EARLIER BUILD SESSIONS IN THIS RUN</SectionCaption>
       <CycleLines cycles={cycles} />
     </Box>
   );

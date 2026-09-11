@@ -84,40 +84,68 @@ func TestNameMustEqualDir(t *testing.T) {
 	wantCode(t, ValidateComponentDesignInDir([]byte(validComponent), "payments"), CodeSchemaViolation)
 }
 
-// --- external-only intent fields (style/package/specPath/candidates) -------
+// --- an external dependency is a reference; its definition has its own file --
 //
-// The published schema declares these as plain properties (no kind-
-// conditioning: that business rule is TS/Go-code-only — the zod superRefine +
-// agentfold/designgate.go — not expressible in JSON Schema, "keep the schema
-// simple"). This validator only needs to prove the fields round-trip and that
-// minItems is enforced.
+// The published component schema no longer declares style/package/specPath/
+// candidates/config on a dependency (additionalProperties: false rejects
+// them); the definition is dependency-design.schema.json, validated by
+// ValidateDependencyDesignInDir below.
 
 func designWithDep(depJSON string) string {
 	return `{"name":"x","type":"service","version":"1","language":"go","buildpack":"go","appPath":".","entrypoint":"m","exposure":"intranet","description":"d","dependencies":[` + depJSON + `]}`
 }
 
-func TestExternalIntentFieldsAccepted(t *testing.T) {
-	dep := `{"kind":"external","name":"stripe","style":"sdk","package":"npm:stripe@^14","specPath":"dependencies/stripe.openapi.yaml"}`
+func TestExternalReferenceAccepted(t *testing.T) {
+	dep := `{"kind":"external","name":"stripe","description":"charges shipping"}`
 	if err := ValidateComponentDesign([]byte(designWithDep(dep))); err != nil {
-		t.Fatalf("style/package/specPath rejected: %v", err)
+		t.Fatalf("bare external reference rejected: %v", err)
 	}
 }
 
-func TestCandidatesAccepted_TwoOrMore(t *testing.T) {
-	dep := `{"kind":"external","name":"email","candidates":[` +
-		`{"name":"sendgrid-rest","style":"rest-api"},` +
-		`{"name":"resend-sdk","style":"sdk","package":"npm:resend@^4.0.0"}` +
-		`]}`
-	if err := ValidateComponentDesign([]byte(designWithDep(dep))); err != nil {
-		t.Fatalf("2-candidate array rejected: %v", err)
-	}
-}
-
-func TestCandidatesMinItems_RejectsFewerThanTwo(t *testing.T) {
-	for _, candidates := range []string{`[]`, `[{"name":"only-one","style":"rest-api"}]`} {
-		dep := `{"kind":"external","name":"email","candidates":` + candidates + `}`
+func TestMovedDependencyFieldsRejected(t *testing.T) {
+	for _, dep := range []string{
+		`{"kind":"external","name":"stripe","style":"sdk"}`,
+		`{"kind":"external","name":"stripe","package":"npm:stripe@^14"}`,
+		`{"kind":"external","name":"stripe","specPath":"dependencies/stripe.openapi.yaml"}`,
+		`{"kind":"external","name":"email","candidates":[{"name":"a","style":"rest-api"},{"name":"b","style":"sdk"}]}`,
+		`{"kind":"external","name":"stripe","config":[{"key":"STRIPE_API_KEY","secret":true}]}`,
+	} {
 		wantCode(t, ValidateComponentDesign([]byte(designWithDep(dep))), CodeSchemaViolation)
 	}
+}
+
+const validDependency = `{"name":"payment-provider","description":"Charges shipping.","provider":"Stripe","style":"rest-api","contract":"openapi.yaml","config":[{"key":"PAYMENT_API_KEY","secret":true}]}`
+
+func TestDependencyDesign_AcceptsTheDefinitionShape(t *testing.T) {
+	if err := ValidateDependencyDesignInDir([]byte(validDependency), "payment-provider"); err != nil {
+		t.Fatalf("valid definition rejected: %v", err)
+	}
+	stub := `{"name":"payment-provider","source":"org"}`
+	if err := ValidateDependencyDesignInDir([]byte(stub), "payment-provider"); err != nil {
+		t.Fatalf("registered-org stub rejected: %v", err)
+	}
+	open := `{"name":"email","suggestions":[{"name":"a","style":"rest-api"},{"name":"b"}]}`
+	if err := ValidateDependencyDesignInDir([]byte(open), "email"); err != nil {
+		t.Fatalf("open suggestions rejected: %v", err)
+	}
+	one := `{"name":"email","suggestions":[{"name":"a"}]}`
+	if err := ValidateDependencyDesignInDir([]byte(one), "email"); err != nil {
+		t.Fatalf("a single suggestion rejected: %v", err)
+	}
+}
+
+func TestDependencyDesign_RejectsUnknownKeysStateAndDirMismatch(t *testing.T) {
+	wantCode(t, ValidateDependencyDesignInDir([]byte(`{nope`), "payment-provider"), CodeInvalidJSON)
+	wantCode(t, ValidateDependencyDesignInDir([]byte(`{"name":"payment-provider","status":"resolved"}`), "payment-provider"), CodeSchemaViolation)
+	wantCode(t, ValidateDependencyDesignInDir([]byte(`{"name":"payment-provider","specPath":"x"}`), "payment-provider"), CodeSchemaViolation)
+	wantCode(t, ValidateDependencyDesignInDir([]byte(`{"name":"payment-provider","style":"soap"}`), "payment-provider"), CodeSchemaViolation)
+	wantCode(t, ValidateDependencyDesignInDir([]byte(`{"name":"email","candidates":[{"name":"a","style":"rest-api"},{"name":"b","style":"sdk"}]}`), "email"), CodeSchemaViolation)
+	wantCode(t, ValidateDependencyDesignInDir([]byte(validDependency), "stripe"), CodeSchemaViolation)
+}
+
+func TestSuggestions_NameRequiredStyleOptional(t *testing.T) {
+	wantCode(t, ValidateDependencyDesignInDir([]byte(`{"name":"email","suggestions":[{"style":"rest-api"}]}`), "email"), CodeSchemaViolation)
+	wantCode(t, ValidateDependencyDesignInDir([]byte(`{"name":"email","suggestions":[{"name":"a","package":"npm:a"}]}`), "email"), CodeSchemaViolation)
 }
 
 // TestRetiredExternalFieldsRejected documents the hard-break: specUrl (URL

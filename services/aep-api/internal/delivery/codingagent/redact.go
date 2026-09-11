@@ -54,6 +54,15 @@ var urlUserinfo = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.\-]*://[^/\s:@]+:)[^@
 // key, with or without a `Bearer` scheme word. The key is preserved.
 var authHeader = regexp.MustCompile(`(?i)((?:authorization|x-api-key)\s*:\s*(?:bearer\s+)?)[A-Za-z0-9._~+/=\-]{16,}`)
 
+// ghOAuthToken matches `gh`'s own config shape. On the credhelper git path the
+// runner writes the GitHub token at rest as `oauth_token: <token>` into
+// <workspace>/.gh-config/hosts.yml — inside the tree the agent works in, so a
+// `cat` of that file reaches this layer as pod output. That token is minted
+// inside bash and never enters the runner process, so the runner cannot enroll
+// its literal either: shape is the only layer either side has for it, which is
+// exactly why it is worth having on both.
+var ghOAuthToken = regexp.MustCompile(`(?i)(oauth_token\s*:\s*)\S+`)
+
 // redactSecrets replaces credential-shaped substrings in raw pod output.
 // Returns s unchanged when there is nothing to redact.
 func redactSecrets(s string) string {
@@ -65,6 +74,7 @@ func redactSecrets(s string) string {
 	// piecemeal and leaving the surrounding userinfo behind.
 	out := urlUserinfo.ReplaceAllString(s, "${1}"+redactedPlaceholder+"${2}")
 	out = authHeader.ReplaceAllString(out, "${1}"+redactedPlaceholder)
+	out = ghOAuthToken.ReplaceAllString(out, "${1}"+redactedPlaceholder)
 	for _, re := range tokenPatterns {
 		out = re.ReplaceAllString(out, redactedPlaceholder)
 	}

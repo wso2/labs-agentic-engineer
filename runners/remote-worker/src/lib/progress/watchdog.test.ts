@@ -19,7 +19,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRunWatchdog } from "./watchdog.js";
-import type { ProgressEventInput } from "./schema.js";
+import type { RunEventInput } from "./emitter.js";
 import type { ApiRetryInfo } from "./diagnostics.js";
 
 const OVERLOADED: ApiRetryInfo = {
@@ -34,7 +34,7 @@ const IDLE = 120_000;
 
 function harness() {
   let clock = 0;
-  const emitted: ProgressEventInput[] = [];
+  const emitted: RunEventInput[] = [];
   const watchdog = createRunWatchdog({
     idleMs: IDLE,
     now: () => clock,
@@ -43,7 +43,7 @@ function harness() {
   return {
     watchdog,
     emitted,
-    summaries: () => emitted.map((e) => ("summary" in e ? String(e.summary) : "")),
+    summaries: () => emitted.map((e) => String(e.detail ?? "")),
     advance: (ms: number) => {
       clock += ms;
     },
@@ -61,7 +61,7 @@ test("watchdog: silence with a tool in flight names the tool — the run is not 
   h.advance(2);
   h.watchdog.check();
   assert.equal(h.emitted.length, 1);
-  assert.equal(h.emitted[0]?.kind, "log");
+  assert.equal(h.emitted[0]?.kind, "notice");
   assert.equal((h.emitted[0] as { level?: string }).level, "warn", "never error — a long pull is legitimate");
   assert.match(h.summaries()[0] ?? "", /waiting on Bash \(bal tool pull openapi\) for 2m0s/);
 });
@@ -177,99 +177,136 @@ test("watchdog: real activity clears the retry, so a later stall is not blamed o
   assert.doesNotMatch(h.summaries()[0] ?? "", /API retry/);
 });
 
-// One line as the translator really emits it for work done inside a subagent:
-// the fan-out call gets NO tool_use event of its own, so `emitterId` is the only
-// evidence on this stream that it exists. Every fan-out test below builds its
-// events through here, because a hand-made `{tool: "Agent"}` tool_use — which is
-// what this suite used to assert against — is a shape production never produces.
-function subagentLine(e: ProgressEventInput): ProgressEventInput {
-  return { ...e, emitter: "subagent", emitterId: "a1", emitterLabel: "implement checkout" };
+// An agent's life is DECLARED in v2. These two events are what the adapter
+// emits for a spawned agent, and the watchdog's clock now starts and stops on
+// them rather than on the first and last line the agent happened to produce.
+const AGENT_STARTED: RunEventInput = {
+  kind: "agent_started",
+  agentId: "a1",
+  label: "implement checkout",
+  depth: 1,
+};
+const AGENT_SETTLED: RunEventInput = { kind: "agent_settled", agentId: "a1", status: "completed" };
+
+/** One line of work done INSIDE that agent. */
+function agentLine(e: RunEventInput): RunEventInput {
+  return { ...e, agentId: "a1" };
 }
 
-test("watchdog: a silent subagent is named, not reported as an idle model", () => {
+test("watchdog: a silent agent is named, not reported as an idle model", () => {
   // The live regression. A fan-out went quiet for ten minutes and every report
   // said "no tool in flight — waiting on the model", pointing at the lead while
   // a 22-minute Agent call was the thing being waited on.
   const h = harness();
-  h.watchdog.observe([subagentLine({ kind: "tool_use", tool: "Edit", summary: "src/api.ts", toolUseId: "t9" })]);
-  h.watchdog.observe([subagentLine({ kind: "tool_result", ok: true, toolUseId: "t9" })]);
+  h.watchdog.observe([AGENT_STARTED]);
+  h.watchdog.observe([agentLine({ kind: "tool_use", tool: "Edit", summary: "src/api.ts", toolUseId: "t9" })]);
+  h.watchdog.observe([agentLine({ kind: "tool_result", ok: true, toolUseId: "t9" })]);
 
   h.advance(IDLE + 1);
   h.watchdog.check();
   const line = h.summaries()[0] ?? "";
-  assert.match(line, /no tool in flight inside Agent \(implement checkout\), running 2m0s/);
+  assert.match(line, /no tool in flight inside agent \(implement checkout\), running 2m0s/);
   assert.match(line, /waiting on its model for 2m0s/);
 });
 
-test("watchdog: a tool in flight inside a subagent names both the call and the subagent", () => {
-  // The inner call is the diagnosis; the subagent is where to look for it. The
-  // fan-out must not outrank its own tool — it is always the older of the two.
+test("watchdog: a tool in flight inside an agent names both the call and the agent", () => {
+  // The inner call is the diagnosis; the agent is where to look for it. The
+  // agent must not outrank its own tool — it is always the older of the two.
   const h = harness();
-  h.watchdog.observe([subagentLine({ kind: "tool_use", tool: "Bash", summary: "npm ci", toolUseId: "t9" })]);
+  h.watchdog.observe([AGENT_STARTED]);
+  h.watchdog.observe([agentLine({ kind: "tool_use", tool: "Bash", summary: "npm ci", toolUseId: "t9" })]);
 
   h.advance(IDLE + 1);
   h.watchdog.check();
-  assert.match(h.summaries()[0] ?? "", /waiting on Bash \(npm ci\) in subagent \(implement checkout\) for 2m0s/);
+  assert.match(h.summaries()[0] ?? "", /waiting on Bash \(npm ci\) in agent \(implement checkout\) for 2m0s/);
 });
 
-test("watchdog: a subagent's retry surfaces under the fan-out it belongs to", () => {
-  // Where a retry inside a subagent shows up, and where the cause is hardest to
-  // guess from outside.
+test("watchdog: an agent's retry surfaces under the agent it belongs to", () => {
+  // Where a retry inside a spawned agent shows up, and where the cause is
+  // hardest to guess from outside.
   const h = harness();
-  h.watchdog.observe([subagentLine({ kind: "tool_result", ok: true, toolUseId: "t9" })]);
+  h.watchdog.observe([AGENT_STARTED]);
+  h.watchdog.observe([agentLine({ kind: "tool_result", ok: true, toolUseId: "t9" })]);
   h.watchdog.observeRetry({ ...OVERLOADED, error: "rate_limit", errorStatus: 429 });
 
   h.advance(IDLE + 1);
   h.watchdog.check();
   const line = h.summaries()[0] ?? "";
-  assert.match(line, /inside Agent \(implement checkout\)/);
+  assert.match(line, /inside agent \(implement checkout\)/);
   assert.match(line, /API retry 3\/10, rate_limit/);
 });
 
-test("watchdog: the fan-out's own result settles it — the lead is idle again, not a subagent", () => {
-  // That result carries the subagent id in BOTH toolUseId and emitterId, so the
-  // registration and the deletion race inside one event. The deletion has to win
-  // or a finished subagent is reported as running for the rest of the run.
+test("watchdog: agent_settled closes the agent — the lead is idle again, not an agent", () => {
   const h = harness();
-  h.watchdog.observe([subagentLine({ kind: "tool_use", tool: "Edit", summary: "src/api.ts", toolUseId: "t9" })]);
-  h.watchdog.observe([subagentLine({ kind: "tool_result", ok: true, toolUseId: "t9" })]);
-  h.watchdog.observe([
-    { kind: "tool_result", ok: false, tool: "Agent", toolUseId: "a1", emitter: "subagent", emitterId: "a1" },
-  ]);
+  h.watchdog.observe([AGENT_STARTED]);
+  h.watchdog.observe([agentLine({ kind: "tool_use", tool: "Edit", summary: "src/api.ts", toolUseId: "t9" })]);
+  h.watchdog.observe([agentLine({ kind: "tool_result", ok: true, toolUseId: "t9" })]);
+  h.watchdog.observe([AGENT_SETTLED]);
 
   h.advance(IDLE + 1);
   h.watchdog.check();
   assert.match(h.summaries()[0] ?? "", /^\[watchdog\] no tool in flight — waiting on the model for 2m0s$/);
 });
 
-test("watchdog: a settled subagent is not resurrected by a late line about it", () => {
-  // Its id is registered from the lines it produces, so a stray line after the
-  // settle would otherwise register a phantom that nothing ever closes.
+test("watchdog: a settled agent is not resurrected by a late line about it", () => {
+  // A stray line after the settle would otherwise register a phantom that
+  // nothing ever closes, and the run would report it as running for ever.
   const h = harness();
-  h.watchdog.observe([subagentLine({ kind: "tool_result", ok: true, toolUseId: "t9" })]);
-  h.watchdog.observe([
-    { kind: "tool_result", ok: false, tool: "Agent", toolUseId: "a1", emitter: "subagent", emitterId: "a1" },
-  ]);
-  h.watchdog.observe([subagentLine({ kind: "activity", summary: "a late narration" })]);
+  h.watchdog.observe([AGENT_STARTED]);
+  h.watchdog.observe([AGENT_SETTLED]);
+  h.watchdog.observe([AGENT_STARTED]);
+  h.watchdog.observe([agentLine({ kind: "agent_progress", phrase: "a late narration" })]);
 
   h.advance(IDLE + 1);
   h.watchdog.check();
   assert.match(h.summaries()[0] ?? "", /^\[watchdog\] no tool in flight — waiting on the model for 2m0s$/);
 });
 
-test("watchdog: several subagents at once are counted, not guessed between", () => {
+test("watchdog: several agents at once are counted, not guessed between", () => {
   // A milestone cycle runs two or three concurrently and their lines interleave,
   // so naming one of them would be a coin flip.
   const h = harness();
   for (const id of ["a1", "a2"]) {
-    h.watchdog.observe([
-      { kind: "tool_result", ok: true, toolUseId: `t-${id}`, emitter: "subagent", emitterId: id, emitterLabel: id },
-    ]);
+    h.watchdog.observe([{ kind: "agent_started", agentId: id, label: id, depth: 1 }]);
   }
 
   h.advance(IDLE + 1);
   h.watchdog.check();
-  assert.match(h.summaries()[0] ?? "", /no tool in flight in any of 2 running subagents/);
+  assert.match(h.summaries()[0] ?? "", /no tool in flight in any of 2 running agents/);
+});
+
+// The v2 pin the design is emphatic about: a heartbeat says the run is ALIVE,
+// not that anything happened. One every ten seconds would keep the idle clock
+// permanently reset and the watchdog silent through exactly the stall the
+// heartbeats are describing.
+test("watchdog: a heartbeat does NOT reset the idle clock", () => {
+  const h = harness();
+  h.watchdog.observe([{ kind: "tool_use", tool: "Bash", summary: "bal build", toolUseId: "t1" }]);
+
+  // Two minutes of heartbeats, one every ten seconds, exactly as the adapter
+  // rate-limits them.
+  for (let i = 0; i < 12; i++) {
+    h.advance(10_000);
+    h.watchdog.observe([{ kind: "heartbeat", agentId: "lead", waitingOn: "tool", ref: "t1", elapsedMs: i * 10_000 }]);
+  }
+  h.watchdog.check();
+  assert.equal(h.emitted.length, 1, "the stall is still reported through the heartbeats");
+  assert.match(h.summaries()[0] ?? "", /waiting on Bash \(bal build\) for 2m0s/);
+});
+
+// …and the other half: a message that produced real work alongside a heartbeat
+// is still work.
+test("watchdog: work alongside a heartbeat still counts as activity", () => {
+  const h = harness();
+  h.watchdog.observe([{ kind: "tool_use", tool: "Bash", summary: "bal build", toolUseId: "t1" }]);
+  h.advance(IDLE - 1_000);
+  h.watchdog.observe([
+    { kind: "heartbeat", agentId: "lead", waitingOn: "model" },
+    { kind: "tool_result", ok: true, toolUseId: "t1" },
+  ]);
+  h.advance(1_002);
+  h.watchdog.check();
+  assert.deepEqual(h.emitted, [], "the call landed, so the window starts again");
 });
 
 test("watchdog: streaming frames do not reset the clock — the report fires on the same schedule either way", () => {

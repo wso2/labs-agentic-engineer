@@ -244,6 +244,17 @@ type ReleaseBindingSummary struct {
 	// and wrong. The run supervisor compares it against the release the
 	// component's newest succeeded build would cut (delivery.ReleaseNameFor).
 	ReleaseName string
+	// ExternalURL is the public URL this binding advertises, "" for a component
+	// that exposes none (a worker, an internal-only service).
+	//
+	// It rides the summary because it is a fact of the SAME object, read on the
+	// same call: `status.endpoints[].externalURLs`, picked by the same
+	// scheme preference as the deployments read (PreferPlainHTTPEndpoints).
+	// Carrying it is what lets a reader ask whether the binding's Ready claim is
+	// true at the EDGE without a second request — see the endpoint deploy-wait
+	// in `projects`, where Ready over an unanswerable URL is what dispatched
+	// validation against a system that could not be reached.
+	ExternalURL string
 }
 
 // -- ComponentOpenAPI (Test tab) ----------------------------------------------

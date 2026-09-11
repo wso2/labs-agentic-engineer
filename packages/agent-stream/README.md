@@ -34,15 +34,17 @@ self-correctable error instead, so the model fixes it in the same turn:
 | `components/*/openapi.yaml` | OpenAPI 3.x, has paths, has operations | `INVALID_OPENAPI` |
 | `components/*/design.json` | every dependency names a node `design.cell` declares | `UNKNOWN_DEPENDENCY` |
 | `domain-model.md` | exactly one mermaid `erDiagram`, in the prescribed subset | `INVALID_DIAGRAM` |
-| `flows/*.md` | exactly one mermaid `sequenceDiagram`; every participant is a node `design.cell` declares or an actor the PRD names | `INVALID_DIAGRAM`, `UNKNOWN_PARTICIPANT` |
+| `flows/*.md` | exactly one mermaid `sequenceDiagram`; every participant resolves — by its id or by its `as` alias — to a node `design.cell` declares or an actor the PRD names | `INVALID_DIAGRAM`, `UNKNOWN_PARTICIPANT` |
 
 The OpenAPI gate deliberately matches the coverage of the platform's
 `validate_openapi_spec` MCP tool — which is itself purely structural — so
 validating a spec no longer costs a round trip. That tool takes the document as a
 string, so an agent asking about a file it had just written had to retype the
 whole thing as tool input (measured: 4.1k output tokens and 28.9s for a 13KB
-spec). A `dependencies/<name>.openapi.yaml` is exempt: those are third-party
-documents recorded as-is.
+spec). A dependency's contract (`specs/design/dependencies/<name>/openapi.yaml`)
+is exempt: that is a slice of a third-party document, validated structurally
+by the slicer that cut it, and holding it to the platform's own API conventions
+would reject a write the agent is only relaying.
 
 ## Published JSON Schema
 

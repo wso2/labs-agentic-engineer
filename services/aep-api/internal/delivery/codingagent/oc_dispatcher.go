@@ -79,7 +79,13 @@ const codingAgentWorkspacePath = "/home/aep/aep-workspace"
 // SecretReference the org's row names.
 const (
 	envAnthropicAPIKey = "ANTHROPIC_API_KEY"
-	envGitHubToken     = "GITHUB_TOKEN"
+
+	// The organization's coding-agent setting, as the runner reads it
+	// (`runtime/registry.ts`). Plain env, never a secret: they are two enum
+	// values, and the runner needs both before it can start a session.
+	envAgentRuntime = "AEP_AGENT_RUNTIME"
+	envAgentModel   = "AEP_AGENT_MODEL"
+	envGitHubToken  = "GITHUB_TOKEN"
 )
 
 // OCDispatcher creates the ephemeral coding-agent Component chain:

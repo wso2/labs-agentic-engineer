@@ -35,21 +35,22 @@ import (
 // re-sync by regenerating the contract (`pnpm --filter @aep/agent-stream gen`)
 // and copying it over this file.
 func TestVendoredSchemaMatchesContracts(t *testing.T) {
-	const vendored = "component-design.schema.json"
-	// designspec → platform → internal → aep-api → services → repo root.
-	const source = "../../../../../packages/contracts/schemas/component-design.schema.json"
-
-	got, err := os.ReadFile(vendored)
-	if err != nil {
-		t.Fatalf("read vendored schema: %v", err)
-	}
-	want, err := os.ReadFile(source)
-	if err != nil {
-		t.Fatalf("read contracts schema (%s) — layout drift?: %v", source, err)
-	}
-	if string(got) != string(want) {
-		t.Fatalf("vendored component-design.schema.json differs from " +
-			"packages/contracts/schemas — re-sync (§8): regenerate the contract " +
-			"(pnpm --filter @aep/agent-stream gen) and copy it into this package")
+	for _, name := range []string{"component-design.schema.json", "dependency-design.schema.json"} {
+		t.Run(name, func(t *testing.T) {
+			// designspec → platform → internal → aep-api → services → repo root.
+			source := "../../../../../packages/contracts/schemas/" + name
+			got, err := os.ReadFile(name)
+			if err != nil {
+				t.Fatalf("read vendored schema: %v", err)
+			}
+			want, err := os.ReadFile(source)
+			if err != nil {
+				t.Fatalf("read contracts schema (%s) — layout drift?: %v", source, err)
+			}
+			if string(got) != string(want) {
+				t.Fatalf("vendored %s differs from packages/contracts/schemas — re-sync (§8): "+
+					"regenerate the contract (pnpm --filter @aep/agent-stream gen) and copy it into this package", name)
+			}
+		})
 	}
 }

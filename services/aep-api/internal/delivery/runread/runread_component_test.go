@@ -98,10 +98,13 @@ func (f fakeCycles) ListByRun(_ context.Context, _, runID string) ([]delivery.Ru
 	return f.byRun[runID], nil
 }
 
-// fakeCycleLogs replays a fixed set of lines per cycle. Final=true so one derive
-// drains it — the same shape the captured snapshot has.
+// fakeCycleLogs replays a fixed feed per cycle, in whichever envelope version the
+// stream under test reads: v2 events for the run stream, v1 lines for the version
+// stream. It drains on the first derive (a non-zero cursor answers empty) — the
+// same shape the captured snapshot has.
 type fakeCycleLogs struct {
-	byCycle map[string][]contracts.ProgressEvent
+	byCycle   map[string][]contracts.ProgressEvent
+	eventsFor map[string][]gen.RunEvent
 }
 
 func (f fakeCycleLogs) CycleProgress(_ context.Context, c *delivery.RunCycle, since int64) (*contracts.ProgressResponse, error) {
@@ -113,6 +116,13 @@ func (f fakeCycleLogs) CycleProgress(_ context.Context, c *delivery.RunCycle, si
 		CursorMillis: 1,
 		Final:        true,
 	}, nil
+}
+
+func (f fakeCycleLogs) CycleEvents(_ context.Context, c *delivery.RunCycle, cursor string) ([]gen.RunEvent, int, string, error) {
+	if cursor != "" {
+		return nil, c.Attempts, cursor, nil
+	}
+	return f.eventsFor[c.ID], c.Attempts, "drained", nil
 }
 
 // fakeCanceller records the run it was asked to cancel and can answer with the
@@ -171,6 +181,15 @@ func line(kind, summary, emitter string) contracts.ProgressEvent {
 	return contracts.ProgressEvent{SchemaVersion: 1, Seq: 1, Kind: kind, Summary: summary, Emitter: emitter}
 }
 
+// event is a minimal v2 feed entry: the four fields the contract makes required,
+// plus whatever the test is about.
+func event(seq int64, kind gen.RunEventKind, agentID string) gen.RunEvent {
+	return gen.RunEvent{
+		V: gen.RunEventV2, Seq: seq, TS: time.Date(2026, 7, 1, 10, 6, 0, 0, time.UTC),
+		Kind: kind, AgentID: agentID,
+	}
+}
+
 // fakeProjectBuilds is the cluster, as the cycle-build read sees it: every
 // WorkflowRun the project has, of any commit. It stores nothing per cycle —
 // modelling the real contract, where the runs themselves ARE the record and the
@@ -197,15 +216,40 @@ func newHarnessWithBuilds(t *testing.T, rows []delivery.MilestoneRun, cycles map
 	logs map[string][]contracts.ProgressEvent, canceller runread.RunCanceller,
 	builds runread.ProjectBuildLister) *componenttest.Harness {
 	t.Helper()
-	runs := fakeRuns{org: "acme", rows: rows}
-	cyc := fakeCycles{byRun: cycles}
 	var logReader runread.CycleLogReader
 	if logs != nil {
 		logReader = fakeCycleLogs{byCycle: logs}
 	}
+	return assemble(t, rows, cycles, logReader, canceller, builds)
+}
+
+// newEventHarness is newHarness for the RUN progress stream, whose feed is v2
+// RunEvents.
+func newEventHarness(t *testing.T, rows []delivery.MilestoneRun, cycles map[string][]delivery.RunCycle,
+	events map[string][]gen.RunEvent) *componenttest.Harness {
+	t.Helper()
+	return assemble(t, rows, cycles, fakeCycleLogs{eventsFor: events}, nil, nil)
+}
+
+// assemble wires the real runread services behind componenttest.
+func assemble(t *testing.T, rows []delivery.MilestoneRun, cycles map[string][]delivery.RunCycle,
+	logReader runread.CycleLogReader, canceller runread.RunCanceller,
+	builds runread.ProjectBuildLister) *componenttest.Harness {
+	t.Helper()
+	runs := fakeRuns{org: "acme", rows: rows}
+	cyc := fakeCycles{byRun: cycles}
+	// Every cycle in this harness has a COMPLETE recording, so the read and the
+	// stream both carry a real `recording` — the field a console has to see
+	// before it presents a feed as the story of a cycle.
+	recordings := fakeRecordings{}
+	for _, rows := range cycles {
+		for i := range rows {
+			recordings[rows[i].ID] = gen.RunCycleViewRecordingComplete
+		}
+	}
 	handlers, err := deliveryhttpapi.New(deliveryhttpapi.Deps{
-		RunReads:       runread.NewReads(runs, cyc),
-		RunProgress:    runread.NewProgressService(runs, cyc, logReader),
+		RunReads:       runread.NewReads(runs, cyc).WithRecordings(recordings),
+		RunProgress:    runread.NewProgressService(runs, cyc, logReader).WithRecordings(recordings),
 		RunCommands:    runread.NewCommands(runs, &fakeRecorder{}, canceller, nil),
 		RunCycleBuilds: runread.NewCycleBuilds(runs, cyc, builds),
 	})
@@ -262,6 +306,12 @@ func TestListBuildRuns_ResolvesTheTagThroughRunRows(t *testing.T) {
 	if len(run.Cycles) != 2 || run.Cycles[0].Kind != "coding" || run.Cycles[1].Kind != "fix" {
 		t.Errorf("cycles not carried in dispatch order: %+v", run.Cycles)
 	}
+	// What the platform can SERVE of each cycle's feed rides the same read. It is
+	// a different question from what the cycle did, and the console has to ask it
+	// before it presents a feed as the whole story.
+	if run.Cycles[0].Recording != gen.RunCycleViewRecordingComplete {
+		t.Errorf("cycle recording = %q, want complete", run.Cycles[0].Recording)
+	}
 	// The pull request travels as the host's own page, not as a number the
 	// console would have to turn into a link itself.
 	if run.Cycles[0].PrNumber != 42 || run.Cycles[0].PrURL != cyclePRPage {
@@ -298,14 +348,18 @@ func TestListBuildRuns_NoAuth_401(t *testing.T) {
 // A TERMINAL run streams its whole history then ends. That finiteness is what
 // lets the recorder capture the body — and it is the contract itself: only a
 // terminal run settles the stream.
-func TestRunProgress_TerminalRun_StreamsCyclesAndLinesThenDone(t *testing.T) {
-	h := newHarness(t,
+func TestRunProgress_TerminalRun_StreamsCyclesAndEventsThenDone(t *testing.T) {
+	read := event(2, gen.RunEventKindToolUse, "lead")
+	read.Tool, read.Summary, read.ToolUseID = "Read", "read api.go", "toolu_r1"
+	spawned := event(4, gen.RunEventKindAgentProgress, "toolu_web")
+	spawned.Phrase, spawned.Label, spawned.Depth = "Editing web.tsx", "Build the SPA", 1
+	settled := event(6, gen.RunEventKindRunSettled, "lead")
+	settled.Outcome = gen.RunEventOutcomeSuccess
+
+	h := newEventHarness(t,
 		[]delivery.MilestoneRun{specRun("r1", delivery.RunStateSucceeded)},
 		map[string][]delivery.RunCycle{"r1": {cycle("c1", delivery.CycleKindCoding, true), cycle("c2", delivery.CycleKindValidation, true)}},
-		map[string][]contracts.ProgressEvent{
-			"c1": {line("tool_use", "read api.go", ""), line("tool_use", "edit web.tsx", "subagent")},
-			"c2": {line("result", "validation done", "")},
-		}, nil)
+		map[string][]gen.RunEvent{"c1": {read, spawned}, "c2": {settled}})
 
 	rec := h.AsOrg("acme").Get(progressPath)
 	if rec.Code != http.StatusOK {
@@ -315,7 +369,7 @@ func TestRunProgress_TerminalRun_StreamsCyclesAndLinesThenDone(t *testing.T) {
 		t.Errorf("content-type = %q, want text/event-stream", ct)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{`"type":"cycle"`, `"type":"line"`, `"type":"done"`, `"state":"succeeded"`, "data: [DONE]"} {
+	for _, want := range []string{`"type":"cycle"`, `"type":"event"`, `"type":"done"`, `"state":"succeeded"`, "data: [DONE]"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("stream body missing %q\n---\n%s", want, body)
 		}
@@ -325,116 +379,122 @@ func TestRunProgress_TerminalRun_StreamsCyclesAndLinesThenDone(t *testing.T) {
 	if strings.Contains(body, "event:") {
 		t.Errorf("frames must not use SSE event: names\n---\n%s", body)
 	}
+	// This stream is v2 ONLY. A `line` frame here would mean a console had to
+	// dedup one cycle's feed across two incompatible seq spaces.
+	if strings.Contains(body, `"type":"line"`) {
+		t.Errorf("run stream emitted a v1 line frame\n---\n%s", body)
+	}
 
-	// Grouping: every line names the cycle that produced it, with a 1-based index
-	// so the console can label an accordion section without the whole cycle list.
+	// Grouping: every event names the cycle AND the attempt that produced it, on
+	// the frame — a runner knows what it is doing but not which cycle of which run
+	// it turned out to be, and a seq is monotonic only within one attempt.
 	frames := parseFrames(t, body)
-	var lines []map[string]any
+	var events []map[string]any
 	for _, f := range frames {
-		if f["type"] == "line" {
-			lines = append(lines, f["line"].(map[string]any))
+		if f["type"] == "event" {
+			events = append(events, f)
 		}
 	}
-	if len(lines) != 3 {
-		t.Fatalf("line frames = %d, want 3\n%s", len(lines), body)
+	if len(events) != 3 {
+		t.Fatalf("event frames = %d, want 3\n%s", len(events), body)
 	}
-	if lines[0]["cycleId"] != "c1" || lines[0]["cycleIndex"] != float64(1) || lines[0]["cycleKind"] != "coding" {
-		t.Errorf("first line not grouped under cycle 1: %+v", lines[0])
+	if events[0]["cycleId"] != "c1" || events[0]["attempt"] != float64(1) {
+		t.Errorf("first event not stamped with its cycle/attempt: %+v", events[0])
 	}
-	if lines[2]["cycleId"] != "c2" || lines[2]["cycleIndex"] != float64(2) || lines[2]["cycleKind"] != "validation" {
-		t.Errorf("last line not grouped under cycle 2: %+v", lines[2])
+	if events[2]["cycleId"] != "c2" {
+		t.Errorf("last event not stamped with cycle c2: %+v", events[2])
 	}
-	// Emitter chips: unstamped is the main agent, stamped is the subagent.
-	if lines[0]["emitter"] != "main" || lines[1]["emitter"] != "subagent" {
-		t.Errorf("emitter chips wrong: %v / %v", lines[0]["emitter"], lines[1]["emitter"])
+	// The RunEvent itself is carried whole, kind and all.
+	first := events[0]["event"].(map[string]any)
+	if first["kind"] != "tool_use" || first["v"] != float64(2) || first["agentId"] != "lead" {
+		t.Errorf("event payload = %+v, want the v2 envelope intact", first)
+	}
+	// Attribution is per AGENT now, not a main/subagent chip: an agent's own
+	// events name it, and carry the label and depth a console indents on.
+	second := events[1]["event"].(map[string]any)
+	if second["agentId"] != "toolu_web" || second["label"] != "Build the SPA" || second["depth"] != float64(1) {
+		t.Errorf("spawned agent's event lost its identity: %+v", second)
 	}
 
-	// A cycle frame precedes its own lines, so the console can open the section
+	// A cycle frame precedes its own events, so the console can open the section
 	// before filling it.
 	if frames[0]["type"] != "cycle" {
 		t.Errorf("first frame = %v, want a cycle frame", frames[0]["type"])
 	}
 }
 
-// TestRunProgress_CarriesSubagentIdentityAndOutcomes pins that the fields the
-// console needs to tell one subagent from another — and a failed tool call from
-// a successful one — survive the run-feed transform. That transform moves
-// `emitter` onto the wrapper and blanks it on the embedded envelope, so it is
-// exactly the place where the rest of the attribution could be dropped without
-// anything failing to compile.
-func TestRunProgress_CarriesSubagentIdentityAndOutcomes(t *testing.T) {
-	failed := false
-	work := contracts.ProgressEvent{
-		SchemaVersion: 1, Seq: 1, Kind: "tool_use", Tool: "Bash", Summary: "bal build",
-		Emitter: "subagent", EmitterID: "toolu_api", EmitterLabel: "Implement todo-api (issue #3)",
-		ToolUseID: "toolu_b1",
-	}
-	exitCode := 1
-	outcome := contracts.ProgressEvent{
-		SchemaVersion: 1, Seq: 2, Kind: "tool_result", Tool: "Bash", Summary: "error: compilation contains errors",
-		Emitter: "subagent", EmitterID: "toolu_api", EmitterLabel: "Implement todo-api (issue #3)",
-		ToolUseID: "toolu_b1", OK: &failed, DurationMs: 172000, ExitCode: &exitCode,
-	}
-	// The subagent's own closing report, with the figures only the SDK has.
-	settled := contracts.ProgressEvent{
-		SchemaVersion: 1, Seq: 3, Kind: "tool_result", Tool: "Agent", Summary: "Implement todo-api (issue #3)",
-		Status: "completed", Emitter: "subagent", EmitterID: "toolu_api",
-		EmitterLabel: "Implement todo-api (issue #3)", ToolUseID: "toolu_api",
-		DurationMs: 209158, ToolCount: 19, LinesAdded: 553, LinesRemoved: 4,
-	}
+// TestRunProgress_CarriesAgentIdentityAndOutcomes pins that the fields a console
+// needs to tell one agent from another — and a failed tool call from a
+// successful one — survive the frame walk. The walk is where the platform stamps
+// its own attribution onto somebody else's event, so it is exactly the place
+// where the rest of it could be dropped without anything failing to compile.
+func TestRunProgress_CarriesAgentIdentityAndOutcomes(t *testing.T) {
+	const agent = "toolu_api"
+	started := event(1, gen.RunEventKindAgentStarted, agent)
+	started.Label, started.Depth, started.Role = "Implement todo-api (issue #3)", 1, "inferred"
 
-	h := newHarness(t,
+	work := event(2, gen.RunEventKindToolUse, agent)
+	work.Tool, work.Summary, work.ToolUseID = "Bash", "bal build", "toolu_b1"
+
+	failed, exitCode := false, 1
+	outcome := event(4, gen.RunEventKindToolResult, agent)
+	outcome.Tool, outcome.Summary, outcome.ToolUseID = "Bash", "error: compilation contains errors", "toolu_b1"
+	outcome.Ok, outcome.DurationMs, outcome.ExitCode = &failed, 172000, &exitCode
+
+	// The agent's own closing report, with the figures only the runtime has.
+	report := event(6, gen.RunEventKindAgentSettled, agent)
+	report.Status, report.DurationMs = gen.AgentStatusCompleted, 209158
+	report.ToolCount, report.LinesAdded, report.LinesRemoved = 19, 553, 4
+	report.Label, report.Depth = "Implement todo-api (issue #3)", 1
+
+	h := newEventHarness(t,
 		[]delivery.MilestoneRun{specRun("r1", delivery.RunStateSucceeded)},
 		map[string][]delivery.RunCycle{"r1": {cycle("c1", delivery.CycleKindCoding, true)}},
-		map[string][]contracts.ProgressEvent{"c1": {work, outcome, settled}}, nil)
+		map[string][]gen.RunEvent{"c1": {started, work, outcome, report}})
 
 	rec := h.AsOrg("acme").Get(progressPath)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("stream: code %d (%s)", rec.Code, rec.Body.String())
 	}
-	var lines []map[string]any
+	var events []map[string]any
 	for _, f := range parseFrames(t, rec.Body.String()) {
-		if f["type"] == "line" {
-			lines = append(lines, f["line"].(map[string]any))
+		if f["type"] == "event" {
+			events = append(events, f["event"].(map[string]any))
 		}
 	}
-	if len(lines) != 3 {
-		t.Fatalf("line frames = %d, want 3", len(lines))
+	if len(events) != 4 {
+		t.Fatalf("event frames = %d, want 4", len(events))
 	}
-
-	for i, l := range lines {
-		if l["emitter"] != "subagent" || l["emitterId"] != "toolu_api" {
-			t.Errorf("line %d lost its subagent identity: %+v", i, l)
+	for i, e := range events {
+		if e["agentId"] != agent {
+			t.Errorf("event %d lost its agent: %+v", i, e)
 		}
-		if l["emitterLabel"] != "Implement todo-api (issue #3)" {
-			t.Errorf("line %d lost the subagent label: %+v", i, l)
-		}
+	}
+	// An INFERRED agent must say so: a v1 cycle never announced its subagents, and
+	// a reader has to be able to tell a deduced tree from an observed one.
+	if events[0]["role"] != "inferred" || events[0]["label"] != "Implement todo-api (issue #3)" {
+		t.Errorf("agent_started = %+v, want the inferred role and the label", events[0])
 	}
 	// The action and its outcome share a call id — that pairing is what lets the
-	// console put the outcome back on the action's own row. The closing report
-	// answers the FAN-OUT call instead, which is what makes it the section's
-	// header rather than a step inside it.
-	if lines[0]["toolUseId"] != "toolu_b1" || lines[1]["toolUseId"] != "toolu_b1" {
-		t.Errorf("action/outcome pairing lost: %+v / %+v", lines[0], lines[1])
-	}
-	if lines[2]["toolUseId"] != "toolu_api" {
-		t.Errorf("closing report = %+v, want it keyed to the fan-out call", lines[2])
+	// console put the outcome back on the action's own row.
+	if events[1]["toolUseId"] != "toolu_b1" || events[2]["toolUseId"] != "toolu_b1" {
+		t.Errorf("action/outcome pairing lost: %+v / %+v", events[1], events[2])
 	}
 
 	// The failure must arrive AS a failure. `ok` is a pointer precisely so
 	// `false` survives the wire; a plain bool would omitempty it away here and
 	// the console would render a failed build as a success.
-	res := lines[1]
+	res := events[2]
 	if got, ok := res["ok"].(bool); !ok || got {
 		t.Errorf("tool_result ok = %v, want an explicit false", res["ok"])
 	}
 	if res["durationMs"] != float64(172000) {
 		t.Errorf("tool_result durationMs = %v, want 172000", res["durationMs"])
 	}
-	// …and a line that is NOT a tool result carries no `ok` at all, so absence
+	// …and an event that is NOT a tool result carries no `ok` at all, so absence
 	// can never be mistaken for success.
-	if _, present := lines[0]["ok"]; present {
-		t.Errorf("tool_use carries an ok field: %+v", lines[0])
+	if _, present := events[1]["ok"]; present {
+		t.Errorf("tool_use carries an ok field: %+v", events[1])
 	}
 
 	// The exit code is the honest per-step signal: it says THIS command broke.
@@ -443,18 +503,18 @@ func TestRunProgress_CarriesSubagentIdentityAndOutcomes(t *testing.T) {
 	}
 	// A tool that reports no code must not gain a zero on the way through,
 	// which would read as "exited 0" on a failed call.
-	if _, present := lines[0]["exitCode"]; present {
-		t.Errorf("tool_use carries an exitCode: %+v", lines[0])
+	if _, present := events[1]["exitCode"]; present {
+		t.Errorf("tool_use carries an exitCode: %+v", events[1])
 	}
 
-	// The subagent totals are what a collapsed section reports, so losing them
-	// here means a settled fan-out says nothing about what it produced.
-	report := lines[2]
-	if report["toolCount"] != float64(19) || report["linesAdded"] != float64(553) || report["linesRemoved"] != float64(4) {
-		t.Errorf("subagent report lost its totals: %+v", report)
+	// The agent totals are what a collapsed section reports, so losing them here
+	// means a settled agent says nothing about what it produced.
+	settled := events[3]
+	if settled["toolCount"] != float64(19) || settled["linesAdded"] != float64(553) || settled["linesRemoved"] != float64(4) {
+		t.Errorf("agent report lost its totals: %+v", settled)
 	}
-	if report["status"] != "completed" || report["durationMs"] != float64(209158) {
-		t.Errorf("subagent report lost its verdict or duration: %+v", report)
+	if settled["status"] != "completed" || settled["durationMs"] != float64(209158) {
+		t.Errorf("agent report lost its verdict or duration: %+v", settled)
 	}
 }
 

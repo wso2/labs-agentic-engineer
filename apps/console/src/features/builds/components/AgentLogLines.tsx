@@ -20,45 +20,54 @@ import { useState } from "react";
 import { Box, Chip, Collapse, Typography } from "@wso2/oxygen-ui";
 import { ChevronDown, ChevronRight } from "@wso2/oxygen-ui-icons-react";
 import {
-  formatSubagentStatus,
-  groupBySubagent,
+  formatAgentStatus,
+  formatEvent,
+  formatOutcome,
+  groupByAgent,
   mergeOutcomes,
+  type AgentReport,
+  type AgentSection,
   type MergedRow,
-  type SubagentGroup,
 } from "@aep/progress-view";
-import type { components } from "../../../generated/aep-api";
-import { formatLine, formatOutcome } from "../../tasks/lib/timeline";
-import { runLineKey, type RunProgressPhase } from "../hooks/useRunProgress";
+import { LogNote, LogSurface } from "../../../components/LogSection";
+import { toneColor } from "../../../components/logTone";
+import { AgentReportNote, LogRow, agentLogEmptyNote } from "./AgentSteps";
+import {
+  runEventKey,
+  type RunProgressPhase,
+  type StampedRunEvent,
+} from "../hooks/useRunProgress";
 
-type RunProgressLine = components["schemas"]["RunProgressLine"];
+// One cycle's agent output, in the v2 flat form: a row per action, one nested
+// section per agent, and each settled agent's closing REPORT on its header.
+//
+// v1 could show none of that. It stamped a line `main` or `subagent` and
+// inferred the rest, which carried exactly one level of fan-out and no report at
+// all — an agent's own summary of what it did died with its pod. Here the tree
+// is declared (`agent_started` names the agent, its parent and its depth) and
+// the report is a field.
 
-// One cycle's agent output. Extracted so the run's own cycle sections and the
-// deployment surface's validation feed render a line identically — two
-// renderings of the same stream that drifted apart would read as two different
-// agents.
+// The log surface moved to components/LogSection (ADR-0021): three surfaces now
+// render logs and one definition keeps them identical. The ROW, the report note
+// and the empty-state copy moved to AgentSteps, which the crew inspector renders
+// from — one definition each, so the flat form and the crew cannot drift into
+// drawing the same event two ways. Re-exported here so the feature's existing
+// importers are untouched.
+export { LogNote, LogSurface, agentLogEmptyNote };
 
 /**
- * Attribution for one line. Exported so the run feed and the task log stamp a
- * line identically — two renderings of the same attribution that drifted apart
- * would read as two different agents.
- *
- * A cycle can fan out to several subagents at once and their lines interleave,
- * so the chip carries the label the main agent gave that subagent ("Implement
- * todo-api service (issue #3)") when the runner recorded one. Falling back to
- * the bare "subagent" keeps older feeds — and a fan-out whose call carried no
- * description — readable.
+ * The name an agent's section carries. A run fans out to several agents at once
+ * and their events arrive interleaved, so the chip is what says whose work this
+ * stretch is — the label its parent gave it ("Implement todo-api service (issue
+ * #3)"), or the runtime's id when the parent gave none.
  */
-export function EmitterChip({ emitter, label }: { emitter: string; label?: string | undefined }) {
-  // The main agent is the overwhelming majority of lines, so only a subagent
-  // line is stamped — an unstamped line reads as "the main agent", which is
-  // exactly the contract's own rule and keeps the feed quiet.
-  if (emitter !== "subagent") return null;
+function AgentChip({ agent }: { agent: AgentReport }) {
   return (
     <Chip
-      label={label || "subagent"}
+      label={agent.label}
       size="small"
       variant="outlined"
-      title={label}
+      title={agent.label}
       sx={{
         height: 16,
         fontSize: "0.6875rem",
@@ -72,129 +81,85 @@ export function EmitterChip({ emitter, label }: { emitter: string; label?: strin
   );
 }
 
-// The log surface moved to components/LogSection (ADR-0021): three surfaces now
-// render logs and one definition keeps them identical. Re-exported here so the
-// feature's existing importers are untouched.
-// Imported as well as re-exported: a bare `export … from` does not bind the
-// names in this module's own scope, and the renderers below use both.
-import { LogNote, LogSurface } from "../../../components/LogSection";
-
-export { LogNote, LogSurface };
-
-/**
- * Empty-state copy for the agent log panel. Distinguishes attaching to a
- * finished run's archive from a live agent that has not spoken yet, and from a
- * settled run that truly had nothing to say.
- */
-export function agentLogEmptyNote(
-  phase: RunProgressPhase,
-  opts: { agentRunning?: boolean } = {},
-): string {
-  switch (phase) {
-    case "connecting":
-      return "Loading agent output…";
-    case "reconnecting":
-      return "Reconnecting…";
-    case "live":
-      return opts.agentRunning
-        ? "Waiting for the agent's first line…"
-        : "Loading agent output…";
-    case "ended":
-      return "No output was recorded.";
-    default:
-      return "No output from this cycle yet.";
-  }
-}
-
-/** Log surface with subtle loading / empty copy when the stream has no lines. */
+/** Log surface with subtle loading / empty copy when the stream has no events. */
 export function AgentLogPanel({
-  lines,
+  events,
   phase,
   agentRunning = false,
   maxHeight = 420,
 }: {
-  lines: RunProgressLine[];
+  events: StampedRunEvent[];
   phase: RunProgressPhase;
   agentRunning?: boolean;
   maxHeight?: number;
 }) {
   return (
     <LogSurface maxHeight={maxHeight}>
-      {lines.length === 0 ? (
+      {events.length === 0 ? (
         <LogNote>{agentLogEmptyNote(phase, { agentRunning })}</LogNote>
       ) : (
-        <AgentLogLines lines={lines} />
+        <AgentLogLines events={events} />
       )}
     </LogSurface>
   );
 }
 
-/**
- * One rendered line, with its outcome trailing on the same row.
- *
- * The wire carries an action and its outcome as two events on purpose — the
- * action is emitted before the command runs, which is what makes the feed live.
- * This surface holds every line in state, so it can put the outcome back where
- * it belongs instead of printing it as a second row.
- */
-function LogLine({
-  text,
-  tone,
-  chip,
-  outcome,
-}: {
-  text: string;
-  tone: string;
-  chip?: React.ReactNode;
-  outcome?: { text: string; tone: string } | undefined;
-}) {
+/** The rows of one agent's section, with the agents IT spawned nested in place. */
+function SectionRows({ section }: { section: AgentSection<StampedRunEvent> }) {
+  // The agent's own events are merged as ONE stream, because an action and its
+  // outcome are routinely separated by a nested section that spoke in between.
+  // Merging is then looked up per event rather than re-derived inside the walk,
+  // so a nested section still renders at the point its agent first spoke — the
+  // ordering is what makes a fan-out readable.
+  const merged = new Map<StampedRunEvent, MergedRow<StampedRunEvent>>();
+  for (const row of mergeOutcomes(
+    section.rows.flatMap((r) => (r.kind === "event" ? [r.event] : [])),
+  )) {
+    merged.set(row.line, row);
+  }
+
   return (
-    <Box sx={{ display: "flex", alignItems: "baseline", gap: 1.5 }}>
-      {chip}
-      <Typography
-        component="div"
-        sx={{ font: "inherit", color: tone, whiteSpace: "pre-wrap", wordBreak: "break-word", minWidth: 0 }}
-      >
-        {text}
-      </Typography>
-      {outcome?.text ? (
-        <Typography
-          component="div"
-          title={outcome.text}
-          sx={{
-            font: "inherit",
-            color: outcome.tone,
-            // Pushed to the right so the durations and exit codes line up in
-            // their own column and an abnormal one is findable by scanning.
-            ml: "auto",
-            textAlign: "right",
-            maxWidth: "45%",
-            wordBreak: "break-word",
-            flexShrink: 0,
-          }}
-        >
-          {outcome.text}
-        </Typography>
-      ) : null}
-    </Box>
+    <>
+      {section.rows.map((row) => {
+        if (row.kind === "section") {
+          return <AgentSectionView key={`agent:${row.section.id}`} section={row.section} />;
+        }
+        // Absent from the map = folded into an earlier action's row.
+        const own = merged.get(row.event);
+        if (!own) return null;
+        // No `report` arm here: an agent_settled never reaches this walk. The
+        // grouping folds it into its section's header, which is where a closing
+        // report belongs — it is about the whole section, not a step in it.
+        const { text, tone } = formatEvent(row.event);
+        // Deliberately silent events carry no row — see formatEvent.
+        if (!text) return null;
+        const { detail, duration, tone: outcomeTone } = formatOutcome(own.outcome);
+        // See AgentSteps: `background` rides the outcome column so one row
+        // carries both what the command was and what became of it.
+        const outcome = [own.backgrounded ? "background" : "", detail, duration]
+          .filter(Boolean)
+          .join(" · ");
+        return (
+          <LogRow
+            key={runEventKey(row.event)}
+            text={text}
+            tone={toneColor(tone)}
+            outcome={{ text: outcome, tone: toneColor(outcomeTone) }}
+          />
+        );
+      })}
+    </>
   );
 }
 
-/** The action rows of one line list, each carrying whatever its outcome added. */
-function renderRows(rows: MergedRow<RunProgressLine>[]) {
-  return rows
-    .map((row) => ({ ...row, ...formatLine(row.line), outcome: formatOutcome(row.outcome) }))
-    // Deliberately silent lines carry no row — see formatLine.
-    .filter((r) => r.text);
-}
-
-function SubagentSection({ group }: { group: SubagentGroup<RunProgressLine> }) {
+/** One agent's collapsible section: its header, its report, and its rows. */
+function AgentSectionView({ section }: { section: AgentSection<StampedRunEvent> }) {
   // Open by default: this is a progress feed, and a run whose work is hidden
   // behind a click reads as a run that is not doing anything. Collapsing is for
   // taming a finished fan-out, not for hiding a live one.
   const [open, setOpen] = useState(true);
-  const rendered = renderRows(mergeOutcomes(group.lines));
-  const failed = group.report.status !== "running" && group.report.status !== "completed";
+  const { agent } = section;
+  const failed = agent.status === "failed";
 
   return (
     <Box sx={{ my: 0.5 }}>
@@ -202,7 +167,9 @@ function SubagentSection({ group }: { group: SubagentGroup<RunProgressLine> }) {
         role="button"
         tabIndex={0}
         aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          setOpen((v) => !v);
+        }}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
@@ -212,73 +179,45 @@ function SubagentSection({ group }: { group: SubagentGroup<RunProgressLine> }) {
         sx={{ display: "flex", alignItems: "center", cursor: "pointer", userSelect: "none" }}
       >
         {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-        <EmitterChip emitter="subagent" label={group.label} />
-        {/* Collapsed, this line is ALL the reader gets about this subagent, so
-            it carries the verdict and the figures rather than a line count:
-            choosing not to expand a section should still tell you whether it
-            worked and how much code it produced. */}
+        <AgentChip agent={agent} />
+        {/* Collapsed, this line is ALL the reader gets about this agent, so it
+            carries the verdict and the figures rather than a row count: choosing
+            not to expand a section should still tell you whether it worked and
+            how much code it produced. */}
         <Typography
           component="span"
           sx={{ font: "inherit", color: failed ? "error.light" : "grey.500", minWidth: 0 }}
         >
-          {formatSubagentStatus(group.report)}
+          {formatAgentStatus(agent)}
         </Typography>
       </Box>
+      {/* Outside the collapse: a section folded shut is exactly when its report
+          is the only thing left saying what the agent did. */}
+      {agent.report ? <AgentReportNote report={agent.report} /> : null}
       <Collapse in={open} unmountOnExit>
-        {/* The rule is what says "this is one agent's work", so the lines
-            themselves drop the chip — repeating it on every row is noise. */}
+        {/* The rule is what says "this is one agent's work", so the rows
+            themselves drop the chip — repeating it on every row is noise, and
+            it is also what makes a depth-2 agent read as nested. */}
         <Box sx={{ borderLeft: 1, borderColor: "grey.800", ml: 0.75, pl: 1.5 }}>
-          {rendered.map((r) => (
-            <LogLine key={runLineKey(r.line)} text={r.text} tone={r.tone} outcome={r.outcome} />
-          ))}
+          <SectionRows section={section} />
         </Box>
       </Collapse>
     </Box>
   );
 }
 
-export function AgentLogLines({ lines }: { lines: RunProgressLine[] }) {
-  if (lines.length === 0) {
+export function AgentLogLines({ events }: { events: StampedRunEvent[] }) {
+  if (events.length === 0) {
     return <LogNote>No output from this cycle yet.</LogNote>;
   }
-  const rows = groupBySubagent(lines);
-
-  // The main agent's own lines are merged as ONE stream, because its action and
-  // its outcome are routinely separated by a subagent section that spoke in
-  // between. Merging is then looked up per line rather than re-derived inside
-  // the walk, so a section still renders at the point its subagent first spoke —
-  // the ordering is what makes a fan-out readable.
-  const merged = new Map<RunProgressLine, MergedRow<RunProgressLine>>();
-  for (const row of mergeOutcomes(rows.flatMap((r) => (r.kind === "line" ? [r.line] : [])))) {
-    merged.set(row.line, row);
-  }
-
+  // The lead is the top level rather than a section of its own: everything in
+  // this cycle is its work, so wrapping it would indent the whole feed for
+  // nothing. Its own report still shows, under its last row.
+  const lead = groupByAgent(events);
   return (
     <>
-      {rows.map((row) => {
-        if (row.kind === "group") {
-          return <SubagentSection key={`sub:${row.group.id}`} group={row.group} />;
-        }
-        // Absent from the map = folded into an earlier action's row.
-        const own = merged.get(row.line);
-        if (!own) return null;
-        const { text, tone } = formatLine(row.line);
-        // Deliberately silent lines carry no row — see formatLine.
-        if (!text) return null;
-        return (
-          <LogLine
-            key={runLineKey(row.line)}
-            text={text}
-            tone={tone}
-            outcome={formatOutcome(own.outcome)}
-            // Ungrouped, so the line carries its own attribution: null for the
-            // main agent, and the bare "subagent" chip for a runner too old to
-            // stamp an id — which would otherwise silently read as the main
-            // agent's work.
-            chip={<EmitterChip emitter={row.line.emitter} label={row.line.emitterLabel} />}
-          />
-        );
-      })}
+      <SectionRows section={lead} />
+      {lead.agent.report ? <AgentReportNote report={lead.agent.report} /> : null}
     </>
   );
 }

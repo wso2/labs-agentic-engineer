@@ -27,7 +27,9 @@ Write tests only when the user asks — then load [tests.md](references/tests.md
 
 ### Working with OpenAPI Specifications
 
-- Prioritize generating services and clients from OAS specifications as instructed in [openapi.md](references/openapi.md) 
+**Load [openapi.md](references/openapi.md) before writing a service or a client that has
+an OpenAPI document** — one this component implements, or one it calls. It carries the
+`bal openapi` invocation for each, and where the generated module has to land.
 
 ### bal library
 

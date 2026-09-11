@@ -206,7 +206,7 @@ func newConfigHarnessOpts(t *testing.T, thunder thundersvc.Client, appClientID s
 		anthropicSvc, credSvc, disconnectSvc, bearerSvc, idpSvc,
 		organization.PlatformIDPConfig{Issuer: platformIss, JWKSURL: platformJWKS},
 		"http://localhost:8090", appClientID,
-	)
+	).WithCodingAgent(organization.NewCodingAgentService(organization.NewOrgCodingAgentRepository(db)))
 
 	// The harness wires the DOMAIN, not a loose service: the edge embeds
 	// organization's handlers, so this assembles the same graph production does.

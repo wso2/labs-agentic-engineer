@@ -37,50 +37,12 @@ import type { Equal } from "./type-equal.js";
 // agent must NEVER author) must be rejected HERE so the agent self-corrects
 // in-turn instead of committing a design.json the tag-time save gate 422s.
 
-// One env-var key the component reads at runtime (mirrors Go models.ConfigKey).
-// `secret: true` routes the value through the private secret path. `description`
-// is an optional human-readable note (what the value is for) the Build
-// dependency drawer renders under the field. `defaultValue` is an optional
-// suggested initial value the agent MAY set for a NON-secret key (a region, a
-// base URL); the drawer pre-fills the field with it. Never set for a secret.
-const configKeySchema = z.strictObject({
-  key: z.string().min(1),
-  secret: z.boolean().optional(),
-  description: z.string().optional(),
-  defaultValue: z.string().optional(),
-});
+// The fields an external dependency's definition used to carry on the
+// component. They live in `specs/design/dependencies/<name>/dependency.json`
+// now (one dependency, one definition); a component that still writes them
+// gets a message naming the file, not a bare "unknown key".
+const MOVED_DEPENDENCY_FIELDS = ["style", "package", "specPath", "candidates", "suggestions", "config"] as const;
 
-// One option in an ambiguous external dependency's resolution set (2+ required
-// — see dependencySchema's `candidates`; a single candidate never occurs: one
-// option fully known collapses to a resolved dep, one option partially known
-// is a partial dep, not a candidate). Mirrors Go models.DependencyCandidate.
-const dependencyCandidateSchema = z.strictObject({
-  name: z.string().min(1),
-  style: z.enum(["rest-api", "sdk"]),
-  description: z.string().optional(),
-  package: z.string().optional(),
-});
-
-// The dependency fields meaningful ONLY on kind="external" (candidates, style,
-// package, specPath): a platform-resource is catalog-picked, an org-service
-// is catalog-resolved — neither has web provenance. Enforced mechanically
-// below (superRefine), mirrored in the Go fold gate (agentfold/designgate.go).
-const EXTERNAL_ONLY_DEPENDENCY_FIELDS = [
-  "candidates",
-  "style",
-  "package",
-  "specPath",
-] as const;
-
-// The resolved consumer-side wiring: ONE VARIANT PER workload.yaml
-// `dependencies:` sub-block, each byte-identical to one entry of its block so the
-// coding agent copies it instead of transforming it.
-//
-// A UNION rather than one object of optional fields, because that is what keeps
-// each block's all-or-nothing rule enforceable: a resource variant needs BOTH ref
-// and envBindings (a ref with no bindings renders an unusable resources[] entry),
-// and an endpoint variant needs the full target. Optional fields on one flat
-// object would accept every half-stamped combination.
 const resourceWiringSchema = z.strictObject({
   ref: z.string().min(1),
   envBindings: z.record(z.string(), z.string()),
@@ -103,30 +65,16 @@ const dependencyWiringSchema = z.union([
   z.strictObject({ endpoint: endpointWiringSchema }),
 ]);
 
-// One unified, kind-discriminated dependency edge — the successor to the legacy
-// per-kind `connections[]`. A single flat shape carries every kind's fields;
-// `kind` selects which are meaningful (LENIENT within the known set, mirroring
-// the Go codec) but unknown keys — status/reason especially — are rejected.
-// `needsSpec` is GONE (dependency-management schema revision — derived-state
-// model): every resolution state is derived from which of style/package/
-// candidates/specPath are present, never a stored flag.
-const dependencyObjectSchema = z.strictObject({
+// One unified, kind-discriminated dependency edge. A single flat shape carries
+// every kind's fields; `kind` selects which are meaningful (LENIENT within the
+// known set, mirroring the Go codec) but unknown keys — status/reason
+// especially — are rejected. An `external` edge is a REFERENCE by name: its
+// definition (provider, style, contract, config keys, candidates) is the
+// dependency's own file, gated by `dependency-design-schema.ts`.
+const dependencySchema = z.strictObject({
   kind: z.enum(["component", "org-service", "external", "platform-resource"]),
   name: z.string().min(1),
   description: z.string().optional(),
-  // external: REST API ("rest-api") or SDK ("sdk") shape.
-  style: z.enum(["rest-api", "sdk"]).optional(),
-  // external (sdk style): one ecosystem-prefixed package identifier, e.g.
-  // "npm:stripe@^14" — version inline but optional.
-  package: z.string().optional(),
-  // external: the contract location — either a URL to a published spec
-  // (recorded as-is, NOT fetched-and-stored) or a repo-relative path to a
-  // user-provided committed spec (dependencies/<name>.openapi.yaml).
-  specPath: z.string().optional(),
-  // external: 2+ identified-but-not-pinned options — omitted, never empty or
-  // single-item (a lone option is a partial dep, not a candidate).
-  candidates: z.array(dependencyCandidateSchema).min(2).optional(),
-  config: z.array(configKeySchema).optional(),
   resourceType: z.string().optional(),
   // Values are typed per the target (Cluster)ResourceType's OpenAPI v3 schema —
   // e.g. postgres-cnpg declares `instances` as integer and `storage`/`version`
@@ -141,19 +89,6 @@ const dependencyObjectSchema = z.strictObject({
   // so a rejection rule would reject its own echo. Design save re-derives and
   // overwrites it, which is what makes authoring moot.
   wiring: dependencyWiringSchema.optional(),
-});
-
-const dependencySchema = dependencyObjectSchema.superRefine((dep, ctx) => {
-  if (dep.kind === "external") return;
-  for (const field of EXTERNAL_ONLY_DEPENDENCY_FIELDS) {
-    if (dep[field] !== undefined) {
-      ctx.addIssue({
-        code: "custom",
-        path: [field],
-        message: `${field} is only meaningful on an external dependency (kind="external"), got kind="${dep.kind}"`,
-      });
-    }
-  }
 });
 
 // The component's single network endpoint (mirrors Go models.ComponentEndpoint).
@@ -244,6 +179,18 @@ export function checkComponentDesign(path: string, content: string): ComponentDe
     };
   }
 
+  const moved = movedDependencyFields(parsed);
+  if (moved) {
+    return {
+      code: "SCHEMA_VIOLATION",
+      message:
+        `${path}: dependencies[${moved.index}] ("${moved.name}") carries ${moved.fields.map((f) => `"${f}"`).join(", ")} — ` +
+        `an external dependency's definition lives in specs/design/dependencies/${moved.name}/dependency.json ` +
+        `(provider, style, contract file, config keys, suggestions), written once and shared by every component that uses it. ` +
+        `Keep only { "kind": "external", "name": "${moved.name}" } here and put those fields in that file.`,
+    };
+  }
+
   const res = componentDesignSchema.safeParse(parsed);
   if (!res.success) {
     const issues = res.error.issues
@@ -269,6 +216,21 @@ export function checkComponentDesign(path: string, content: string): ComponentDe
       code: "SCHEMA_VIOLATION",
       message: `${path}: "buildpack" must be "docker" (the platform's single build path), got ${JSON.stringify(res.data.buildpack)}.`,
     };
+  }
+  return null;
+}
+
+/** The first dependency still carrying a field that moved to its own file, if any. */
+function movedDependencyFields(parsed: unknown): { index: number; name: string; fields: string[] } | null {
+  const deps = (parsed as { dependencies?: unknown } | null)?.dependencies;
+  if (!Array.isArray(deps)) return null;
+  for (const [index, dep] of deps.entries()) {
+    if (typeof dep !== "object" || dep === null || (dep as { kind?: unknown }).kind !== "external") continue;
+    const fields = MOVED_DEPENDENCY_FIELDS.filter((f) => (dep as Record<string, unknown>)[f] !== undefined);
+    if (fields.length > 0) {
+      const name = (dep as { name?: unknown }).name;
+      return { index, name: typeof name === "string" ? name : "?", fields };
+    }
   }
   return null;
 }

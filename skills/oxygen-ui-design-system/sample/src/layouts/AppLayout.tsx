@@ -1,0 +1,500 @@
+/**
+ * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
+ *
+ * WSO2 LLC. licenses this file to you under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+import {
+  AppShell,
+  Badge,
+  ColorSchemeToggle,
+  ComplexSelect,
+  Footer,
+  Divider,
+  Header,
+  IconButton,
+  Sidebar,
+  Tooltip,
+  UserMenu,
+  NotificationPanel,
+  formatRelativeTime,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogContentText,
+  DialogActions,
+  Button,
+  useAppShell,
+  useNotifications,
+  version as OXYGEN_UI_VERSION,
+  Box
+} from '@wso2/oxygen-ui'
+import { useState, useEffect, type JSX, useCallback } from 'react'
+import { useNavigate, useLocation, Outlet, Link as NavigateLink, useParams } from 'react-router'
+import Logo from '../components/Logo';
+import {
+  BarChart3,
+  Bell,
+  Building,
+  CircleDollarSign,
+  Database,
+  FolderOpen,
+  Globe,
+  HelpCircle,
+  Home,
+  Key,
+  Layers,
+  Lock,
+  Settings,
+  Shield,
+  UserCog,
+  Users,
+  User as UserIcon,
+  LogOut,
+  WSO2,
+} from '@wso2/oxygen-ui-icons-react';
+import { mockNotifications, mockOrganizations, mockProjects, mockUser } from '../mock-data';
+import type { Organization, Project } from '../mock-data/types';
+
+// Notification button component - must be a child of AppShell to access context
+function NotificationButton({ unreadCount }: { unreadCount: number }) {
+  const { actions } = useAppShell();
+  
+  return (
+    <Tooltip title="Notifications">
+      <IconButton
+        onClick={actions.toggleNotificationPanel}
+        size="small"
+        sx={{ color: 'text.secondary' }}
+      >
+        <Badge
+          badgeContent={unreadCount}
+          color="error"
+          max={99}
+          invisible={unreadCount === 0}
+        >
+          <Bell size={20} />
+        </Badge>
+      </IconButton>
+    </Tooltip>
+  );
+}
+
+export default function AppLayout(): JSX.Element {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { orgId, projectId } = useParams<{ orgId?: string; projectId?: string }>();
+
+  // Determine initial sidebar active item based on route
+  const getInitialActiveMenuItem = useCallback((): string => {
+    const path = location.pathname;
+    if (path.includes('/analytics')) return 'analytics';
+    if (path.includes('/projects/')) return 'projects';
+    if (path.includes('/projects')) return 'projects';
+    if (path.includes('/organizations')) return 'dashboard';
+    if (path.includes('/settings')) return 'settings';
+    return 'dashboard';
+  }, [location.pathname]);
+
+  // Notification state (separate concern)
+  const {
+    notifications,
+    actions: notifActions,
+    unreadCount,
+    unreadNotifications,
+  } = useNotifications({
+    initialNotifications: [...mockNotifications],
+  });
+
+  // App-specific state managed locally
+  const orgFromUrl = mockOrganizations.find((org) => org.orgId === orgId);
+  const [selectedOrg, setOrganization] = useState<Organization>(orgFromUrl || mockOrganizations[0]);
+  const projectFromUrl = mockProjects.find((project) => project.id === projectId);
+  const [selectedProject, setProject] = useState<Project>(projectFromUrl || mockProjects[0]);
+  const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
+
+  // Sync selected org with URL
+  useEffect(() => {
+    if (orgId) {
+      const org = mockOrganizations.find((o) => o.orgId === orgId);
+      if (org && org.id !== selectedOrg.id) {
+        setOrganization(org);
+      }
+    }
+  }, [orgId, selectedOrg.id]);
+
+  // Sync selected project with URL
+  useEffect(() => {
+    if (projectId) {
+      const project = mockProjects.find((p) => p.id === projectId);
+      if (project && project.id !== selectedProject.id) {
+        setProject(project);
+      }
+    }
+  }, [projectId, selectedProject.id]);
+
+  const [tabIndex, setTabIndex] = useState(0);
+  const [initialActiveItem, setInitialActiveItem] = useState<string>(getInitialActiveMenuItem());
+
+  // Update active menu item when route changes
+  useEffect(() => {
+    const activeItem = getInitialActiveMenuItem();
+    setInitialActiveItem(activeItem);
+  }, [getInitialActiveMenuItem, location.pathname]);
+
+  const alertNotifications = notifications.filter(
+    (n) => n.type === 'warning' || n.type === 'error'
+  );
+
+  const getFilteredNotifications = () => {
+    switch (tabIndex) {
+      case 1:
+        return unreadNotifications;
+      case 2:
+        return alertNotifications;
+      default:
+        return notifications;
+    }
+  };
+
+  // Check if current path matches /o/:orgId/projects/:id or any subpaths
+  const isProject = /^\/o\/[^/]+\/projects\/[^/]+/.test(location.pathname);
+  const isOrganization = /^\/o\/[^/]+/.test(location.pathname);
+
+  return (
+    <AppShell initialCollapsed={false} collapseOnSelectOnMobile={true}>
+      <AppShell.Navbar>
+        <Header>
+          <Header.Toggle />
+          <Header.Brand>
+            <Header.BrandLogo><Logo /></Header.BrandLogo>
+            <Header.BrandTitle>Console</Header.BrandTitle>
+          </Header.Brand>
+          <Header.Switchers showDivider={false}>
+            {isOrganization && (
+              <ComplexSelect
+                value={selectedOrg?.id || ''}
+                onChange={(e) => {
+                  const org = mockOrganizations.find((o) => o.id === e.target.value);
+                  if (org) {
+                    setOrganization(org);
+                    // Navigate to the new organization, preserving the rest of the path
+                    const pathAfterOrgId = location.pathname.split(/\/o\/[^/]+/)[1] || '';
+                    navigate(`/o/${org.orgId}${pathAfterOrgId}`);
+                  }
+                }}
+                size="small"
+                sx={{ minWidth: 180 }}
+                renderValue={() => (
+                  <>
+                    <ComplexSelect.MenuItem.Icon>
+                      <Building />
+                    </ComplexSelect.MenuItem.Icon>
+                    <ComplexSelect.MenuItem.Text
+                      primary={selectedOrg?.name}
+                      secondary={selectedOrg?.description}
+                    />
+                  </>
+                )}
+                label="Organizations"
+              >
+                {mockOrganizations.map((org) => (
+                  <ComplexSelect.MenuItem key={org.id} value={org.id}>
+                    <ComplexSelect.MenuItem.Icon><Building /></ComplexSelect.MenuItem.Icon>
+                    <ComplexSelect.MenuItem.Text primary={org.name} secondary={org.description} />
+                  </ComplexSelect.MenuItem>
+                ))}
+              </ComplexSelect>
+            )}
+            {isProject && (
+              <ComplexSelect
+                value={selectedProject?.id || ''}
+                onChange={(e) => {
+                  const project = mockProjects.find((p) => p.id === e.target.value);
+                  if (project) {
+                    setProject(project);
+                    // Navigate to the new project, preserving the rest of the path
+                    const pathAfterProjectId = location.pathname.split(/\/projects\/[^/]+/)[1] || '';
+                    navigate(`/o/${selectedOrg?.orgId}/projects/${project.id}${pathAfterProjectId}`);
+                  }
+                }}
+                size="small"
+                sx={{ minWidth: 160 }}
+                renderValue={() => (
+                  <ComplexSelect.MenuItem.Text primary={selectedProject?.name} secondary={selectedProject?.description} />
+                )}
+                label="Projects"
+              >
+                {mockProjects.map((project) => (
+                  <ComplexSelect.MenuItem key={project.id} value={project.id}>
+                    <ComplexSelect.MenuItem.Text primary={project.name} secondary={project.description} />
+                  </ComplexSelect.MenuItem>
+                ))}
+              </ComplexSelect>
+            )}
+          </Header.Switchers>
+          <Header.Spacer />
+          <Header.Actions>
+            <ColorSchemeToggle />
+            <NotificationButton unreadCount={unreadCount ?? 0} />
+            <Divider
+              orientation="vertical"
+              flexItem
+              sx={{
+                mx: 2
+              }}
+            />
+            <UserMenu>
+              <UserMenu.Trigger name={mockUser.name} avatar={mockUser.avatar} />
+              <UserMenu.Header 
+                name={mockUser.name} 
+                email={mockUser.email} 
+                avatar={mockUser.avatar} 
+                role={mockUser.role}
+              />
+              <UserMenu.Item
+                icon={<UserIcon />}
+                label="Profile"
+                onClick={() => console.log('Profile clicked')}
+              />
+              <UserMenu.Item
+                icon={<Settings />}
+                label="Settings"
+                onClick={() => console.log('Settings clicked')}
+              />
+              <UserMenu.Item
+                icon={<CircleDollarSign />}
+                label="Billing"
+                onClick={() => console.log('Billing clicked')}
+              />
+              <UserMenu.Divider />
+              <UserMenu.Logout
+                icon={<LogOut />}
+                onClick={() => setConfirmDialogOpen(true)}
+              />
+            </UserMenu>
+          </Header.Actions>
+        </Header>
+      </AppShell.Navbar>
+
+      <AppShell.Sidebar>
+        <Sidebar activeItem={initialActiveItem}>
+          <Sidebar.Nav>
+            {/* Global Navigation */}
+            {!isOrganization && (
+              <Sidebar.Category>
+                <Sidebar.Item id="dashboard" link={<NavigateLink to="/organizations" />}>
+                  <Sidebar.ItemIcon><Home /></Sidebar.ItemIcon>
+                  <Sidebar.ItemLabel>Organizations</Sidebar.ItemLabel>
+                </Sidebar.Item>
+                <Sidebar.Item id="account">
+                  <Sidebar.ItemIcon><UserCog /></Sidebar.ItemIcon>
+                  <Sidebar.ItemLabel>Account</Sidebar.ItemLabel>
+                </Sidebar.Item>
+                <Sidebar.Item id="billing">
+                  <Sidebar.ItemIcon><CircleDollarSign /></Sidebar.ItemIcon>
+                  <Sidebar.ItemLabel>Billing</Sidebar.ItemLabel>
+                </Sidebar.Item>
+              </Sidebar.Category>
+            )}
+
+            {isOrganization && (
+              <>
+                {/* Main Navigation */}
+                <Sidebar.Category>
+                  <Sidebar.Item id="dashboard" link={<NavigateLink to="/organizations" />}>
+                    <Sidebar.ItemIcon><Home /></Sidebar.ItemIcon>
+                    <Sidebar.ItemLabel>Organizations</Sidebar.ItemLabel>
+                  </Sidebar.Item>
+                  <Sidebar.Item id="analytics" link={<NavigateLink to={`/o/${selectedOrg?.orgId}/analytics`} />}>
+                    <Sidebar.ItemIcon><BarChart3 /></Sidebar.ItemIcon>
+                    <Sidebar.ItemLabel>Analytics</Sidebar.ItemLabel>
+                  </Sidebar.Item>
+                </Sidebar.Category>
+
+                {/* Management */}
+                <Sidebar.Category>
+                  <Sidebar.CategoryLabel>Management</Sidebar.CategoryLabel>
+                  <Sidebar.Item id="users">
+                    <Sidebar.ItemIcon><Users /></Sidebar.ItemIcon>
+                    <Sidebar.ItemLabel>Users</Sidebar.ItemLabel>
+                    <Sidebar.ItemBadge>3</Sidebar.ItemBadge>
+                    <Sidebar.Item id="users-list">
+                      <Sidebar.ItemIcon><Users /></Sidebar.ItemIcon>
+                      <Sidebar.ItemLabel>All Users</Sidebar.ItemLabel>
+                    </Sidebar.Item>
+                    <Sidebar.Item id="users-roles">
+                      <Sidebar.ItemIcon><UserCog /></Sidebar.ItemIcon>
+                      <Sidebar.ItemLabel>Roles</Sidebar.ItemLabel>
+                    </Sidebar.Item>
+                    <Sidebar.Item id="users-permissions">
+                      <Sidebar.ItemIcon><Lock /></Sidebar.ItemIcon>
+                      <Sidebar.ItemLabel>Permissions</Sidebar.ItemLabel>
+                    </Sidebar.Item>
+                  </Sidebar.Item>
+                  <Sidebar.Item id="projects" link={<NavigateLink to={`/o/${selectedOrg?.orgId}/projects`} />}>
+                    <Sidebar.ItemIcon><FolderOpen /></Sidebar.ItemIcon>
+                    <Sidebar.ItemLabel>Projects</Sidebar.ItemLabel>
+                    <Sidebar.ItemBadge>5</Sidebar.ItemBadge>
+                  </Sidebar.Item>
+                  <Sidebar.Item id="integrations">
+                    <Sidebar.ItemIcon><Layers /></Sidebar.ItemIcon>
+                    <Sidebar.ItemLabel>Integrations</Sidebar.ItemLabel>
+                  </Sidebar.Item>
+                </Sidebar.Category>
+
+                {/* Infrastructure */}
+                <Sidebar.Category>
+                  <Sidebar.CategoryLabel>Infrastructure</Sidebar.CategoryLabel>
+                  <Sidebar.Item id="security">
+                    <Sidebar.ItemIcon><Shield /></Sidebar.ItemIcon>
+                    <Sidebar.ItemLabel>Security</Sidebar.ItemLabel>
+                    <Sidebar.Item id="security-overview">
+                      <Sidebar.ItemIcon><Shield /></Sidebar.ItemIcon>
+                      <Sidebar.ItemLabel>Overview</Sidebar.ItemLabel>
+                    </Sidebar.Item>
+                    <Sidebar.Item id="security-api-keys">
+                      <Sidebar.ItemIcon><Key /></Sidebar.ItemIcon>
+                      <Sidebar.ItemLabel>API Keys</Sidebar.ItemLabel>
+                    </Sidebar.Item>
+                  </Sidebar.Item>
+                  <Sidebar.Item id="databases">
+                    <Sidebar.ItemIcon><Database /></Sidebar.ItemIcon>
+                    <Sidebar.ItemLabel>Databases</Sidebar.ItemLabel>
+                  </Sidebar.Item>
+                  <Sidebar.Item id="domains">
+                    <Sidebar.ItemIcon><Globe /></Sidebar.ItemIcon>
+                    <Sidebar.ItemLabel>Domains</Sidebar.ItemLabel>
+                  </Sidebar.Item>
+                </Sidebar.Category>
+              </>
+            )}
+          </Sidebar.Nav>
+
+          {/* Settings Footer */}
+          <Sidebar.Footer>
+            <Sidebar.Category>
+              <Sidebar.Item id="settings" link={<NavigateLink to="/settings" />}>
+                <Sidebar.ItemIcon><Settings /></Sidebar.ItemIcon>
+                <Sidebar.ItemLabel>Settings</Sidebar.ItemLabel>
+              </Sidebar.Item>
+              <Sidebar.Item id="help">
+                <Sidebar.ItemIcon><HelpCircle /></Sidebar.ItemIcon>
+                <Sidebar.ItemLabel>Help & Support</Sidebar.ItemLabel>
+              </Sidebar.Item>
+            </Sidebar.Category>
+          </Sidebar.Footer>
+        </Sidebar>
+      </AppShell.Sidebar>
+
+      <AppShell.Main>
+        <Outlet />
+      </AppShell.Main>
+
+      <AppShell.Footer>
+        <Footer>
+          <Footer.Copyright>
+            © {new Date().getFullYear()} |  
+            <Box sx={{ verticalAlign: 'middle', mt: .2, mx: .5, display: 'inline-block' }}>
+              <WSO2 size={12} />
+            </Box>
+            WSO2 LLC.</Footer.Copyright>
+          <Footer.Divider />
+          <Footer.Version>oxygen-ui-v{OXYGEN_UI_VERSION}</Footer.Version>
+          <Footer.Link href="#terms">Terms & Conditions</Footer.Link>
+          <Footer.Link href="#privacy">Privacy Policy</Footer.Link>
+        </Footer>
+      </AppShell.Footer>
+
+      <AppShell.NotificationPanel>
+        <NotificationPanel>
+          <NotificationPanel.Header>
+            <NotificationPanel.HeaderIcon><Bell size={20} /></NotificationPanel.HeaderIcon>
+            <NotificationPanel.HeaderTitle>Notifications</NotificationPanel.HeaderTitle>
+            {unreadCount > 0 && <NotificationPanel.HeaderBadge>{unreadCount}</NotificationPanel.HeaderBadge>}
+            <NotificationPanel.HeaderClose />
+          </NotificationPanel.Header>
+          <NotificationPanel.Tabs
+            tabs={[
+              { label: 'All', count: notifications.length },
+              { label: 'Unread', count: unreadNotifications.length, color: 'primary' },
+              { label: 'Alerts', count: alertNotifications.length, color: 'warning' },
+            ]}
+            value={tabIndex}
+            onChange={setTabIndex}
+          />
+          {notifications.length > 0 && (
+            <NotificationPanel.Actions
+              hasUnread={unreadNotifications.length > 0}
+              onMarkAllRead={notifActions.markAllRead}
+              onClearAll={notifActions.clearAll}
+            />
+          )}
+          {getFilteredNotifications().length === 0 ? (
+            <NotificationPanel.EmptyState />
+          ) : (
+            <NotificationPanel.List>
+              {getFilteredNotifications().map((notification) => (
+                <NotificationPanel.Item
+                  key={notification.id}
+                  id={notification.id}
+                  type={notification.type ?? 'info'}
+                  read={notification.read}
+                  onMarkRead={notifActions.markRead}
+                  onDismiss={notifActions.dismiss}
+                >
+                  <NotificationPanel.ItemAvatar>{notification.avatar}</NotificationPanel.ItemAvatar>
+                  <NotificationPanel.ItemTitle>{notification.title}</NotificationPanel.ItemTitle>
+                  <NotificationPanel.ItemMessage>{notification.message}</NotificationPanel.ItemMessage>
+                  <NotificationPanel.ItemTimestamp>{formatRelativeTime(notification.timestamp)}</NotificationPanel.ItemTimestamp>
+                  {notification.actionLabel && (
+                    <NotificationPanel.ItemAction>{notification.actionLabel}</NotificationPanel.ItemAction>
+                  )}
+                </NotificationPanel.Item>
+              ))}
+            </NotificationPanel.List>
+          )}
+        </NotificationPanel>
+
+        {/* Confirm Dialog - managed locally */}
+        <Dialog
+          open={confirmDialogOpen}
+          onClose={() => setConfirmDialogOpen(false)}
+          maxWidth="sm"
+          fullWidth
+        >
+          <DialogTitle>Sign Out</DialogTitle>
+          <DialogContent>
+            <DialogContentText>
+              Are you sure you want to sign out of your account?
+            </DialogContentText>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setConfirmDialogOpen(false)}>Cancel</Button>
+            <Button
+              variant="contained"
+              onClick={() => {
+                navigate('/login');
+                setConfirmDialogOpen(false);
+              }}
+            >
+              Sign Out
+            </Button>
+          </DialogActions>
+        </Dialog>
+      </AppShell.NotificationPanel>
+    </AppShell>
+  );
+}

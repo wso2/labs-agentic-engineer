@@ -49,3 +49,27 @@ func IsENOSPC(err error) bool { return isENOSPC(err) }
 
 // MapDiskErr exposes Engine.mapDiskErr for emergency-sweep wiring tests.
 func MapDiskErr(e *Engine, err error) error { return e.mapDiskErr(err) }
+
+// RunGitWithEnv runs one git command through the engine's own child-process
+// path (buildCmd → hermetic base env → overlay), returning stdout. It is the
+// seam for asserting what git ACTUALLY does under the engine's environment:
+// a test can hand the invocation a GIT_TRACE2_EVENT sink and read back which
+// children git spawned, or ask git to resolve a config key and see which
+// layer won. The overlay travels through execOpts, the same channel the
+// credential plumbing uses, so what runs is the production path rather than a
+// re-creation of it.
+func RunGitWithEnv(e *Engine, ctx context.Context, env map[string]string, args ...string) ([]byte, error) {
+	return e.git(ctx, execOpts{env: env}, args...)
+}
+
+// ForcedConfigRules exposes the config rules the engine imposes on every git
+// child, so a test can assert that git resolves EVERY one of them rather than
+// only the rule a named test happens to mention — the coverage grows with the
+// list instead of needing a new test per rule.
+func ForcedConfigRules() [][2]string {
+	rules := make([][2]string, 0, len(forcedConfig))
+	for _, c := range forcedConfig {
+		rules = append(rules, [2]string{c.key, c.value})
+	}
+	return rules
+}

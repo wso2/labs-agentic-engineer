@@ -21,6 +21,8 @@ import type { components } from "../../generated/aep-api";
 
 type ApiError = components["schemas"]["Error"];
 import {
+  codingAgentDefaultsFixture,
+  codingAgentRuntimeUnavailable,
   codingLlmValidationError,
   codingLlmWithoutDefault,
   configLoadError,
@@ -42,6 +44,7 @@ import {
   type SettingsScenario,
 } from "../fixtures/settings";
 
+type CodingAgentProjection = components["schemas"]["CodingAgentProjection"];
 type ConfigPatch = components["schemas"]["ConfigPatch"];
 type ConfigProjection = components["schemas"]["ConfigProjection"];
 type GitProviderProjection = components["schemas"]["GitProviderProjection"];
@@ -70,6 +73,11 @@ let llm: LLMProjection | null = null;
 // null = the coding agent reuses `llm`'s key. Not a mode flag — the absence of
 // a key IS "reuse", exactly as on the server (ADR-0016).
 let codingLlm: LLMProjection | null = null;
+// Always present, unlike the credentials: an org has an effective runtime and
+// model from the moment it exists. Reset (codingAgent:null) restores this very
+// value INCLUDING the null stamps — "reset to defaults" and "never touched"
+// are the same observable state, which is what the contract says.
+let codingAgent: CodingAgentProjection = { ...codingAgentDefaultsFixture };
 let skills: SkillDetailBody[] = [];
 let skillUpdates: SkillUpdate[] = [];
 let initialized = false;
@@ -114,6 +122,7 @@ function ensureInitialized() {
   } catch {
     /* ignore malformed persisted state */
   }
+  codingAgent = { ...codingAgentDefaultsFixture };
   skills = seedSkills.map((s) => ({ ...s }));
   skillUpdates = seedSkillUpdates.map((u) => ({ ...u }));
 }
@@ -190,6 +199,7 @@ function configProjection(): ConfigProjection {
     gitProvider,
     llm,
     codingLlm,
+    codingAgent,
     idp: {
       kind: "platform",
       issuer: "https://idp.aep.local",
@@ -227,6 +237,15 @@ export const settingsHandlers = [
       if (defaultAfterPatch === null) {
         return errorJson(codingLlmWithoutDefault, 400);
       }
+    }
+    // The runtime enum carries more than the platform can run: an unavailable
+    // one is rejected with a reason naming what is missing, never quietly
+    // swapped for the one that works.
+    if (
+      body.codingAgent != null &&
+      body.codingAgent.runtime === "opencode"
+    ) {
+      return errorJson(codingAgentRuntimeUnavailable, 422);
     }
     if (body.gitProvider !== undefined) {
       if (body.gitProvider === null) {
@@ -272,6 +291,21 @@ export const settingsHandlers = [
           keyLast4: body.codingLlm.apiKey.slice(-4),
           connectedAt: new Date().toISOString(),
           lastValidatedAt: new Date().toISOString(),
+        };
+      }
+    }
+
+    if (body.codingAgent !== undefined) {
+      if (body.codingAgent === null) {
+        codingAgent = { ...codingAgentDefaultsFixture };
+      } else {
+        // Both fields are optional so a client can move one without restating
+        // the other — merge, never replace.
+        codingAgent = {
+          runtime: body.codingAgent.runtime ?? codingAgent.runtime,
+          model: body.codingAgent.model ?? codingAgent.model,
+          updatedAt: new Date().toISOString(),
+          updatedBy: "dev@acme.example",
         };
       }
     }

@@ -81,7 +81,15 @@ export function mirrorQuestion(
   const existing = map.get(entry.toolCallId);
   map.set(entry.toolCallId, {
     toolCallId: entry.toolCallId,
-    questions: entry.questions,
+    // Every client mirrors the same call, and the last write wins — so a
+    // client on an older bundle, whose parser drops the option `action`
+    // (ADR-0028), must not strip it from an entry a newer client wrote. The
+    // typed options are what the form runs on submit; keep whichever copy
+    // carries them.
+    questions:
+      existing && !entry.streaming && countActions(existing.questions) > countActions(entry.questions)
+        ? existing.questions
+        : entry.questions,
     // A re-mirror flips streaming off by OMITTING it — never resurrect the
     // gate from a stale entry, and never leak `streaming: false` into the doc.
     ...(entry.streaming ? { streaming: true } : {}),
@@ -89,6 +97,10 @@ export function mirrorQuestion(
     ...(existing?.submitted ? { submitted: true } : {}),
     askedAt: existing?.askedAt ?? Date.now(),
   });
+}
+
+function countActions(questions: AskQuestionInput[]): number {
+  return questions.reduce((n, q) => n + q.options.filter((o) => o.action).length, 0);
 }
 
 /** Write the co-edited draft answer for a card (any participant). */
@@ -130,6 +142,16 @@ export function closeRoomQuestion(doc: Doc, toolCallId: string): void {
   const existing = map.get(toolCallId);
   if (!existing) return;
   map.set(toolCallId, { ...existing, submitted: true });
+}
+
+/**
+ * Remove a question from the room outright — the entry a streamed prefix left
+ * when the SDK then rejected the complete call. Unlike a close, nothing was
+ * ever asked, so nothing is kept as submitted. Idempotent.
+ */
+export function withdrawRoomQuestion(doc: Doc, toolCallId: string): void {
+  const map = questionsMap(doc);
+  if (map.has(toolCallId)) map.delete(toolCallId);
 }
 
 /** How long an unbacked ("orphan") entry may live before it is closable. */

@@ -57,7 +57,7 @@ For tests, see [tests.md](tests.md) — write them only when the user asks.
 - Import only packages your code actually references — `bal build` errors on unused imports. Don't pre-import a connector's dependency module (e.g. `ballerina/sql` behind a database client) unless your code names a type from it.
 - Do not import a langlib whose name is a basic type — the type keyword itself puts the prefix in scope, so the import is an error. That is `lang.boolean`, `lang.decimal`, `lang.error`, `lang.float`, `lang.function`, `lang.future`, `lang.int`, `lang.map`, `lang.object`, `lang.stream`, `lang.string`, `lang.table`, `lang.typedesc` and `lang.xml`. The rule is the keyword, not the `lang.` prefix: **`lang.value`, `lang.array` and `lang.regexp` DO need importing** — `import ballerina/lang.value;`, and `undefined module` if you leave it out. Measured against the compiler, one module per line. For `lang.regexp` that means when you name a `regexp:` symbol; the bare `re` literal needs nothing — see Regular Expressions.
 - Packages with dots in names use aliases: `import org/package.one as one;`
-- Submodules in `generated/<moduleName>/`: import as `import <packageName>.<moduleName>;` — the import should contain only the package name and submodule name, no path components.
+- Submodules live in `modules/<moduleName>/` and import as `import <packageName>.<moduleName>;` — only the package name (`Ballerina.toml`'s `name`, which is not the hyphenated component directory) and the submodule name, no path components.
 - For SQL databases, import the matching `.driver` package alongside the client so the JDBC driver is on the runtime classpath (also required for GraalVM native builds):
   ```ballerina
   import ballerinax/postgresql;

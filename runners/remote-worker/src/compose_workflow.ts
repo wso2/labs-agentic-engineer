@@ -17,7 +17,8 @@
  */
 
 // Dev CLI (`make workflow-skill`) — prints the `aep` workflow skill exactly as a
-// session reads it, on stdout:
+// session reads it, followed by the tool glossary the runner appends after it,
+// on stdout:
 //
 //   make workflow-skill             # github mode: the authored trunk, verbatim
 //   MODE=local make workflow-skill  # what a playground run reads
@@ -44,6 +45,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { composeWorkflowSkill, type AgentMode } from "./lib/workflow_skill.js";
+import { toolGlossary } from "./lib/tool_glossary.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -56,5 +58,8 @@ function readMode(): AgentMode {
 }
 
 const libraryDir = process.env.AEP_LIBRARY_DIR ?? path.resolve(__dirname, "../../../skills");
-// stdout carries the skill and nothing else, so it pipes into a diff or a pager.
-process.stdout.write(composeWorkflowSkill(libraryDir, readMode()));
+// stdout carries what the agent is steered by and nothing else, so it pipes into
+// a diff or a pager. The glossary rides last here for the same reason it does in
+// `startCodingRun`: the skill's roles are unresolved without it, so a reader
+// checking "what does the agent actually receive?" has to see both.
+process.stdout.write(`${composeWorkflowSkill(libraryDir, readMode())}\n\n${toolGlossary()}\n`);

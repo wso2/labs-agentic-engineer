@@ -156,6 +156,11 @@ const COMMAND_FLOWS: Record<string, { skill: string; scope: (subject: string) =>
     skill: "amend",
     scope: (s) => (s ? `Go deeper on this feature: ${s}` : "Go deeper on a feature."),
   },
+  // The plural walks every open dependency; the singular's token IS its skill.
+  "resolve-dependencies": {
+    skill: "resolve-dependency",
+    scope: () => "Walk every external dependency that is still open, one at a time, until each is resolved or what it needs from me is named.",
+  },
 };
 
 /**
@@ -184,6 +189,9 @@ const FLOW_SUPPORTING_SKILLS: Record<string, string[]> = {
   // `/settle` revises a document that already exists — it asks, then writes the
   // answer where it belongs — so it needs the same two as its siblings.
   settle: ["grilling", "prd-contract"],
+  // `/resolve-dependency` asks (grilling) and writes a dependency file whose
+  // shape and research playbook the architecture skill owns.
+  "resolve-dependency": ["grilling", "architecture"],
   // `grilling` first: the design flow interviews too (#578 removed the
   // "do not interview the user again" clause), and the question mechanics are
   // no more optional here than on a start turn. Then the rest of the design

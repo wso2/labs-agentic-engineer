@@ -16,7 +16,7 @@
  * under the License.
  */
 
-// AN ISSUE'S STATUS LINE — what the agent working it says it is doing now.
+// AN ISSUE'S STATUS LINE — what the run working it is doing now.
 //
 // The platform asks whoever works an issue to keep its newest comment current
 // (`skills/aep/SKILL.md`, "The status line"), and two console surfaces read that
@@ -25,6 +25,13 @@
 // than beside either of them — the first copy of this logic was inside
 // `taskRowNote`, and a second one would have been free to disagree with it about
 // which comment counts and where the line ends.
+//
+// On a VALIDATION issue the writer is usually not the agent. That line is
+// inferred from the run's own tool calls and posted by the platform, because a
+// validation run asked to narrate its own progress did not — it opened, then
+// went quiet for three hours of browser exploration. So a line carries a
+// `writer`, and the two are not interchangeable: the platform's is a machine's
+// report of a call it watched, the agent's is a judgement about the work.
 //
 // It is deliberately not in `@aep/progress-view`. That package is about the
 // runner's progress ENVELOPE, which this is not: the status line comes from
@@ -44,11 +51,21 @@ type Commented = Pick<TaskView | TaskDetail, "comments">;
  *
  * `comments` arrives OLDEST FIRST and is never an empty array — the contract
  * omits the field entirely for every empty case — so the newest is the last
- * element. The platform's own machine comments are already excluded server-side;
- * what is left is the agent's progress notes and whatever a human wrote.
+ * element. The platform's notes to the AGENT are already excluded server-side;
+ * what is left is what a person wrote, what an agent said, and what the platform
+ * observed of the run.
  */
 export function latestComment(task: Commented): IssueComment | undefined {
   return task.comments?.at(-1);
+}
+
+/** Who wrote the line a surface is about to render. */
+export type StatusLineWriter = "agent" | "platform";
+
+/** A rendered status line and who is making the claim. */
+export interface StatusLine {
+  text: string;
+  writer: StatusLineWriter;
 }
 
 /**
@@ -62,9 +79,25 @@ export function latestComment(task: Commented): IssueComment | undefined {
  * Null rather than a placeholder: an empty line is quieter than "No updates yet"
  * repeated down a list, and it is what lets a caller fall back to something it
  * knows instead of printing an apology.
+ *
+ * NEWEST WINS, whoever wrote it. Preferring the agent's would be worse than it
+ * sounds: its first act is an opening comment at step 1, so an agent-first rule
+ * would pin "Starting validation…" over the whole run and hide every line after
+ * it. What the writer buys is attribution, not precedence.
  */
-export function statusLine(task: Commented): string | null {
-  const body = latestComment(task)?.body;
+export function statusLine(task: Commented): StatusLine | null {
+  const comment = latestComment(task);
+  const text = firstLine(comment?.body);
+  if (text === null) return null;
+  return { text, writer: comment?.observed === true ? "platform" : "agent" };
+}
+
+/** The claim itself, when a caller has no use for who made it. */
+export function statusLineText(task: Commented): string | null {
+  return statusLine(task)?.text ?? null;
+}
+
+function firstLine(body: string | undefined): string | null {
   if (!body) return null;
   return (
     body

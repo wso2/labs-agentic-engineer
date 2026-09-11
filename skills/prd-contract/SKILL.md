@@ -34,8 +34,14 @@ Every actor cited by a story is defined here first.>
 
 ## Product Decisions
 <policy choices at product altitude: sign-in approach, notification channels,
-which external services the product depends on (by capability, e.g.
-"transactional email" — binding to a concrete provider happens at design).
+which external services the product depends on. An external service is named
+by capability ("transactional email"); a concrete provider appears here ONLY
+as a given the business already holds — a Registered External resource of the
+org (an org default, written without asking) or a service the user said they
+already use or must use ("Payments: Stripe — finance has the account"). With
+no such given the line stays capability-only; the agent never proposes a
+provider here, and a provider line is never tagged `*assumed*` — choosing a
+service is the user's, on the dependency's definition at design.
 Decisions taken from an org default are ordinary entries; a decision the agent
 made itself, because the user has not answered it yet, ends with the literal
 tag `*assumed*` — that exact emphasised word, no parentheses or brackets around

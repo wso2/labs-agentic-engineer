@@ -27,17 +27,19 @@ import {
   createTimelineRenderer,
   dockerInvocation,
   hostInvocation,
-  isFailedSubagent,
+  isFailedAgent,
   renderMergedTimeline,
   toolJarOverlay,
   workingTreeToolJar,
 } from "../src/engine/coding-run.js";
 import { REPO_ROOT } from "../src/paths.js";
-import { formatLine } from "@aep/progress-view";
+import { formatEvent } from "@aep/progress-view";
 
 // The playground renders through the SAME formatter the console does, so these
 // assertions pin the shared wording, not a playground-only copy of it.
-const renderProgressLine = (e: Parameters<typeof formatLine>[0]): string => formatLine(e).text;
+const renderEvent = (e: Parameters<typeof formatEvent>[0]): string => formatEvent(e).text;
+/** The lead agent's own event — `lead` is a literal on the wire, not an id. */
+const lead = <T extends Record<string, unknown>>(rest: T) => ({ agentId: "lead", ...rest });
 import { renderTaskContextFile } from "../src/ports/issue-store.js";
 import { takeUndoSnapshot, restoreUndoSnapshot, listUndoSnapshots } from "../src/state/undo.js";
 import { codeCommand } from "../src/commands.js";
@@ -300,94 +302,126 @@ test("codeCommand gates: no issues fails; unconfirmed headless run fails before 
   }
 });
 
-test("renderProgressLine maps the NDJSON vocabulary to timeline lines", () => {
-  // Phase ids render through the shared friendly-label map, so the playground
-  // says exactly what the console says.
-  assert.equal(renderProgressLine({ kind: "phase", phase: "workspace_ready" }), "▸ Workspace ready");
-  assert.equal(renderProgressLine({ kind: "tool_use", tool: "Bash", summary: "go test ./..." }), "$ go test ./...");
-  assert.match(renderProgressLine({ kind: "result", status: "success" }), /■ success/);
-  assert.match(renderProgressLine({ kind: "result", status: "failure", error: "boom" }), /failure — boom/);
-  assert.match(renderProgressLine({ kind: "gh_action", command: "pr create" }), /⚙ pr create/);
+test("renderEvent maps the v2 NDJSON vocabulary to timeline lines", () => {
+  // Every wording comes from the shared module, so the playground says exactly
+  // what the console says.
+  assert.equal(
+    renderEvent(lead({ kind: "run_started", taskKind: "implementation", runtime: "claude-code" })),
+    "▸ implementation run · claude-code",
+  );
+  assert.equal(renderEvent(lead({ kind: "tool_use", tool: "Bash", summary: "go test ./..." })), "$ go test ./...");
+  assert.match(renderEvent(lead({ kind: "run_settled", outcome: "success" })), /■ run success/);
+  assert.match(renderEvent(lead({ kind: "run_settled", outcome: "failure", error: "boom" })), /failure — boom/);
+  assert.match(renderEvent(lead({ kind: "gh_action", command: "pr create" })), /⚙ pr create/);
 });
 
 test("the local harness flags the operations that cannot work without a remote", () => {
   // True here and meaningless in a cluster run, so it is the ONE thing this
   // renderer adds on top of the shared wording.
   const render = createTimelineRenderer();
-  assert.match(render({ kind: "gh_action", command: "pr create" }).join(""), /no GitHub in local mode/);
-  assert.match(render({ kind: "git_push", branch: "main" }).join(""), /no remote in local mode/);
+  assert.match(render(lead({ kind: "gh_action", command: "pr create" })).join(""), /no GitHub in local mode/);
+  assert.match(render(lead({ kind: "git_push", branch: "main" })).join(""), /no remote in local mode/);
   // …and it annotates nothing else.
-  assert.doesNotMatch(render({ kind: "tool_use", tool: "Bash", summary: "ls" }).join(""), /local mode/);
+  assert.doesNotMatch(render(lead({ kind: "tool_use", tool: "Bash", summary: "ls" })).join(""), /local mode/);
 });
 
-test("renderProgressLine reports a failed tool call, and times only the slow successes", () => {
+test("renderEvent reports a failed tool call, and times only the slow successes", () => {
   // A shell failure names its exit code: that is what says THIS command broke.
   assert.equal(
-    renderProgressLine({ kind: "tool_result", tool: "Bash", ok: false, durationMs: 900, exitCode: 1, summary: "error: compilation contains errors" }),
+    renderEvent(lead({ kind: "tool_result", tool: "Bash", ok: false, durationMs: 900, exitCode: 1, summary: "error: compilation contains errors" })),
     "✗ Bash exit 1 · error: compilation contains errors",
   );
   // A non-shell tool reports no code — "failed" is exactly as much as is known.
   assert.equal(
-    renderProgressLine({ kind: "tool_result", tool: "Read", ok: false, summary: "File does not exist" }),
+    renderEvent(lead({ kind: "tool_result", tool: "Read", ok: false, summary: "File does not exist" })),
     "✗ Read failed · File does not exist",
   );
-  assert.equal(renderProgressLine({ kind: "tool_result", tool: "Bash", ok: true, durationMs: 42_000 }), "↳ Bash 42.0s");
-  assert.equal(renderProgressLine({ kind: "tool_result", tool: "Bash", ok: true, durationMs: 185_000 }), "↳ Bash 3m5s");
+  assert.equal(renderEvent(lead({ kind: "tool_result", tool: "Bash", ok: true, durationMs: 42_000 })), "↳ Bash 42.0s");
+  assert.equal(renderEvent(lead({ kind: "tool_result", tool: "Bash", ok: true, durationMs: 185_000 })), "↳ Bash 3m5s");
   // A fast success is deliberately silent — a tick per read would bury the failures.
-  assert.equal(renderProgressLine({ kind: "tool_result", tool: "Read", ok: true, durationMs: 40 }), "");
-  // A subagent's narration is header material, never a row.
-  assert.equal(renderProgressLine({ kind: "activity", summary: "Writing todo-api/service.bal" }), "");
+  assert.equal(renderEvent(lead({ kind: "tool_result", tool: "Read", ok: true, durationMs: 40 })), "");
+  // An agent's live phrase is header material, never a row.
+  assert.equal(renderEvent(lead({ kind: "agent_progress", phrase: "Writing todo-api/service.bal" })), "");
 });
 
-test("timeline renderer numbers concurrent subagents and announces each one once", () => {
+test("timeline renderer numbers concurrent agents, and the lead stays unstamped", () => {
   const render = createTimelineRenderer();
-  const api = { emitter: "subagent", emitterId: "toolu_api", emitterLabel: "Implement todo-api (issue #3)" };
-  const web = { emitter: "subagent", emitterId: "toolu_web", emitterLabel: "Implement todo-webapp (issue #4)" };
 
-  // First sighting: the label is announced, then the line itself.
-  const first = render({ kind: "tool_use", tool: "Bash", summary: "bal build", ...api });
-  assert.equal(first.length, 2);
-  assert.match(first.join("\n"), /⑂ \[#1\] Implement todo-api \(issue #3\)/);
-  assert.match(first.join("\n"), /\[#1\] +\$ bal build/);
+  // The lead is the overwhelming majority of a run's rows; an unstamped row
+  // reading as "the lead" is what keeps the feed quiet.
+  const main = render(lead({ kind: "tool_use", tool: "Bash", summary: "git status" }));
+  assert.equal(main.length, 1);
+  assert.doesNotMatch(main[0] as string, /#/);
 
-  // A second subagent gets its own number — the point of the whole exercise.
-  const second = render({ kind: "tool_use", tool: "Write", summary: "src/App.tsx", ...web }).join("\n");
-  assert.match(second, /⑂ \[#2\] Implement todo-webapp/);
-  assert.match(second, /\[#2\] +\$ Write src\/App.tsx/);
+  // An agent announces itself: v2 DECLARES it, so the label is on the wire
+  // rather than being inferred from the tool call that spawned it.
+  const opened = render({ agentId: "ag_api", kind: "agent_started", label: "Implement todo-api (issue #3)", depth: 1 });
+  assert.equal(opened.length, 1);
+  assert.match(opened[0] as string, /\[#1\] +⑂ Implement todo-api \(issue #3\)/);
+  assert.match(
+    render({ agentId: "ag_api", kind: "tool_use", tool: "Bash", summary: "bal build" }).join(""),
+    /\[#1\] +\$ bal build/,
+  );
 
-  // Already announced: one line, and the SAME number as before.
-  const again = render({ kind: "tool_use", tool: "Bash", summary: "bal test", ...api });
+  // A second agent gets its own number — the point of the whole exercise.
+  const web = render({ agentId: "ag_web", kind: "agent_started", label: "Implement todo-webapp (issue #4)", depth: 1 });
+  assert.match(web[0] as string, /\[#2\] +⑂ Implement todo-webapp/);
+
+  // Already numbered: the SAME tag as before, and the glyphs stay in one column.
+  const again = render({ agentId: "ag_api", kind: "tool_use", tool: "Bash", summary: "bal test" });
   assert.equal(again.length, 1);
-  assert.match(again.join(""), /\[#1\] +\$ bal test/);
-});
-
-test("timeline renderer: main lines are unstamped, and glyphs stay in one column", () => {
-  const render = createTimelineRenderer();
-  const only = (lines: string[]): string => {
-    assert.equal(lines.length, 1);
-    return lines[0] as string;
-  };
-
-  const main = only(render({ kind: "tool_use", tool: "Bash", summary: "bal build" }));
-  const sub = only(render({ kind: "tool_use", tool: "Bash", summary: "bal build", emitter: "subagent", emitterId: "x" }));
-
-  assert.doesNotMatch(main, /#|sub/);
-  assert.equal(main.indexOf("$"), sub.indexOf("$"), "same column");
-
-  // A subagent line with no id still says it is one, rather than passing as main.
-  assert.match(only(render({ kind: "tool_use", tool: "Bash", summary: "ls", emitter: "subagent" })), /\[sub\]/);
+  assert.match(again[0] as string, /\[#1\] +\$ bal test/);
+  assert.equal((main[0] as string).indexOf("$"), (again[0] as string).indexOf("$"), "same column");
 
   // A silent event produces no row at all.
-  assert.deepEqual(render({ kind: "tool_result", tool: "Read", ok: true, durationMs: 5 }), []);
+  assert.deepEqual(render(lead({ kind: "tool_result", tool: "Read", ok: true, durationMs: 5 })), []);
+});
+
+test("timeline renderer: a depth-2 agent steps right, and a settle brings its report", () => {
+  const render = createTimelineRenderer();
+  render({ agentId: "ag_api", kind: "agent_started", label: "todo-api", depth: 1 });
+  const deep = render({
+    agentId: "ag_spec",
+    kind: "agent_started",
+    label: "Write the OpenAPI contract",
+    parentAgentId: "ag_api",
+    depth: 2,
+  });
+  const shallow = render({ agentId: "ag_api", kind: "tool_use", tool: "Bash", summary: "bal build" });
+  // Depth is what the wire declares, and it is why a grandchild reads as nested
+  // rather than as another sibling of the lead — the shape v1 could not express.
+  assert.ok(
+    (deep[0] as string).indexOf("⑂") > (shallow[0] as string).indexOf("$"),
+    "a depth-2 agent is indented past its parent",
+  );
+  // Depth is declared on the lifecycle events only, so it has to be remembered
+  // for every step that agent takes afterwards.
+  const deepStep = render({ agentId: "ag_spec", kind: "tool_use", tool: "Write", summary: "openapi.yaml" });
+  assert.equal((deepStep[0] as string).indexOf("$"), (deep[0] as string).indexOf("⑂"));
+
+  const settled = render({
+    agentId: "ag_spec",
+    kind: "agent_settled",
+    status: "completed",
+    durationMs: 41_200,
+    toolCount: 6,
+    report: "Wrote contracts/shortener.yaml.\nPOST /links and GET /{code}.",
+  });
+  // The report is the ONLY copy of what that agent says it did — its transcript
+  // never reaches this feed — so it is printed in full under its row.
+  assert.match(settled[0] as string, /▪ Write the OpenAPI contract completed · 41\.2s · 6 tools/);
+  assert.equal(settled.length, 3, "the row plus both lines of the report");
+  assert.match(settled[1] as string, /Wrote contracts\/shortener\.yaml\./);
+  assert.match(settled[2] as string, /POST \/links and GET \/\{code\}\./);
 });
 
 test("merged pass: an outcome lands on its own action's row, console-shaped", () => {
   const out = renderMergedTimeline([
-    { kind: "tool_use", tool: "Bash", summary: "bal build", toolUseId: "t1" },
-    { kind: "tool_use", tool: "Read", summary: "db.bal", toolUseId: "t2" },
+    lead({ kind: "tool_use", tool: "Bash", summary: "bal build", toolUseId: "t1" }),
+    lead({ kind: "tool_use", tool: "Read", summary: "db.bal", toolUseId: "t2" }),
     // Out of order and separated from its action, as a real interleaved run is.
-    { kind: "tool_result", tool: "Read", ok: true, durationMs: 20, toolUseId: "t2" },
-    { kind: "tool_result", tool: "Bash", ok: false, exitCode: 1, summary: "error: compilation contains errors", durationMs: 25_100, toolUseId: "t1" },
+    lead({ kind: "tool_result", tool: "Read", ok: true, durationMs: 20, toolUseId: "t2" }),
+    lead({ kind: "tool_result", tool: "Bash", ok: false, exitCode: 1, summary: "error: compilation contains errors", durationMs: 25_100, toolUseId: "t1" }),
   ]);
 
   assert.equal(out.length, 2, "one row per step, not one per event");
@@ -396,55 +430,73 @@ test("merged pass: an outcome lands on its own action's row, console-shaped", ()
   assert.equal((out[1] as string).trim(), "$ Read db.bal");
 });
 
-test("merged pass: each subagent's work sits under its own report", () => {
-  const api = { emitter: "subagent", emitterId: "a1", emitterLabel: "todo-api" };
+test("merged pass: each agent's work sits under its own report, nesting included", () => {
   const out = renderMergedTimeline([
-    { kind: "tool_use", tool: "Bash", summary: "git status", toolUseId: "m1" },
-    { kind: "activity", summary: "Writing todo-api/service.bal", toolCount: 4, ...api },
-    { kind: "tool_use", tool: "Write", summary: "todo-api/service.bal", toolUseId: "s1", ...api },
-    { kind: "tool_result", tool: "Agent", ok: true, status: "completed", summary: "todo-api", durationMs: 209_158, toolCount: 19, linesAdded: 553, linesRemoved: 4, toolUseId: "a1", ...api },
+    lead({ kind: "tool_use", tool: "Bash", summary: "git status", toolUseId: "m1" }),
+    { agentId: "a1", kind: "agent_started", label: "todo-api", depth: 1 },
+    { agentId: "a1", kind: "agent_progress", phrase: "Writing todo-api/service.bal" },
+    { agentId: "a1", kind: "tool_use", tool: "Write", summary: "todo-api/service.bal", toolUseId: "s1" },
+    { agentId: "a2", kind: "agent_started", label: "openapi", parentAgentId: "a1", depth: 2 },
+    { agentId: "a2", kind: "tool_use", tool: "Write", summary: "contracts/api.yaml", toolUseId: "s2" },
+    { agentId: "a2", kind: "agent_settled", status: "completed", durationMs: 41_200, toolCount: 6 },
+    {
+      agentId: "a1",
+      kind: "agent_settled",
+      status: "completed",
+      durationMs: 209_158,
+      toolCount: 19,
+      linesAdded: 553,
+      linesRemoved: 4,
+      report: "Implemented the service and its smoke test.",
+    },
   ]).join("\n");
 
   assert.match(out, /⑂ todo-api — completed · 3m29s · 19 tools · \+553\/−4 lines/);
   assert.match(out, /│ \$ Write todo-api\/service\.bal/);
-  // The narration and the closing report are the header; neither is a row.
+  // The grandchild's section sits INSIDE its parent's, which is what the
+  // declared tree buys over v1's single level of attribution.
+  assert.match(out, /│ ⑂ openapi — completed · 41\.2s · 6 tools/);
+  assert.match(out, /│ │ \$ Write contracts\/api\.yaml/);
+  // The report is the header's, printed under it rather than as a row.
+  assert.match(out, /^ +Implemented the service and its smoke test\.$/m);
+  // The live phrase and the settle are header material; neither is a row.
   assert.doesNotMatch(out, /Writing todo-api\/service\.bal$/m);
-  // The main agent's own line keeps its place ahead of the section.
+  // The lead's own row keeps its place ahead of the section.
   assert.ok(out.indexOf("git status") < out.indexOf("todo-api"));
 });
 
 test("merged pass: local mode still says a push went nowhere", () => {
-  const out = renderMergedTimeline([{ kind: "git_push", branch: "aep/m3", toolUseId: "p1" }]).join("\n");
+  const out = renderMergedTimeline([lead({ kind: "git_push", branch: "aep/m3", toolUseId: "p1" })]).join("\n");
   assert.match(out, /↑ push aep\/m3 — no remote in local mode/);
 });
 
-// The trigger for rescuing a stalled subagent's transcript. It is pinned against
-// a VERBATIM event off a real run's progress.ndjson (todo-api99, 2026-08-02),
-// because the copy it drives races the SDK's own cleanup: if a field name drifts,
-// the snapshot silently never fires and the next stall is undiagnosable again.
-test("failed-subagent trigger: fires on a real stalled Agent result, and nothing else", () => {
-  const stalled = {
-    schemaVersion: 1,
+// The trigger for rescuing a stalled agent's transcript. v2 says the verdict
+// outright — `agent_settled` carries the runtime's own status — so this no
+// longer infers a whole agent's fate from the outcome of the tool call that
+// spawned it. The copy it drives races the runtime's own cleanup: if this stops
+// firing, the next stall is undiagnosable again.
+test("failed-agent trigger: fires on a settled failure, and nothing else", () => {
+  const failed = {
+    v: 2 as const,
     ts: "2026-08-02T14:58:44.607Z",
     seq: 279,
-    kind: "tool_result",
-    ok: false,
-    toolUseId: "toolu_01XTtpLCgiY6V9iiBASr8Fsz",
-    tool: "Agent",
-    summary: "Implement todo-api Ballerina service",
+    agentId: "ag_01XTtpLCgiY6V9iiBASr8Fsz",
+    kind: "agent_settled",
+    label: "Implement todo-api Ballerina service",
+    status: "failed",
     durationMs: 1_027_107,
-    emitter: "subagent",
-    emitterId: "toolu_01XTtpLCgiY6V9iiBASr8Fsz",
-    emitterLabel: "Implement todo-api Ballerina service",
   };
-  assert.equal(isFailedSubagent(stalled), true);
+  assert.equal(isFailedAgent(failed), true);
 
-  // A subagent that succeeded, a failing ordinary tool, and the subagent's own
-  // in-flight lines are all normal traffic — snapshotting on any of them would
+  // An agent that succeeded, a failing ordinary tool, and the agent's own
+  // in-flight events are all normal traffic — snapshotting on any of them would
   // copy the container's state on every failed `bal build`.
-  assert.equal(isFailedSubagent({ ...stalled, ok: true, status: "completed" }), false);
-  assert.equal(isFailedSubagent({ ...stalled, tool: "Bash", summary: "bal build" }), false);
-  assert.equal(isFailedSubagent({ ...stalled, kind: "tool_use" }), false);
+  assert.equal(isFailedAgent({ ...failed, status: "completed" }), false);
+  assert.equal(isFailedAgent({ ...failed, kind: "tool_result", ok: false, tool: "Bash" }), false);
+  assert.equal(isFailedAgent({ ...failed, kind: "agent_started" }), false);
+  // `stopped` is a cancellation, not a failure: the work was taken away rather
+  // than going wrong, and a diagnostic for it would file a defect that never was.
+  assert.equal(isFailedAgent({ ...failed, status: "stopped" }), false);
 });
 
 // `bal library` is the one tool the `ballerina` skill calls by name, and the

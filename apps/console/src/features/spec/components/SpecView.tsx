@@ -25,10 +25,6 @@ import {
   Box,
   Button,
   CircularProgress,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
   Divider,
   IconButton,
   PageContent,
@@ -59,12 +55,12 @@ import { useCollabSpec } from "../collab/useCollabSpec";
 import { SpecQuestionForm } from "./SpecQuestionForm";
 import { SecurityPanel } from "./SecurityPanel";
 import { useSecurityEntry } from "../hooks/useSecurityEntry";
-import { nextVersionLabel, parsePrdStories } from "../lib/buildScope";
 import { useRoomQuestion } from "../../agent-chat/useRoomQuestion";
 import { CollabTextArea } from "../collab/CollabTextArea";
 import { SpecMdEditor } from "../collab/SpecMdEditor";
 import { useYTextString } from "../collab/useYTextString";
 import { useTurnEndFlush } from "../collab/useTurnEndFlush";
+import { refreshRoomCopy } from "../collab/refreshRoomCopy";
 import { START_COMMAND } from "@aep/contracts/commands";
 import { fragmentToMarkdown } from "@aep/collab-doc";
 import { prdUnsettled } from "../lib/prdUnsettled";
@@ -90,7 +86,12 @@ import type { Anchor } from "../lib/anchor";
 import type { DependencyResolutionIntent } from "../../projects/lib/dependencyResolutionMessage.js";
 import { usePlan } from "../../agent-chat/usePlan";
 import { approvalInputsFor } from "../lib/buildInputs";
-import { BuildDependencyDrawer } from "./BuildDependencyDrawer";
+import { ResolveDependenciesDialog } from "./ResolveDependenciesDialog";
+import { StartBuildDialog } from "./StartBuildDialog";
+import { blockingDependencies } from "../lib/blockingDependencies";
+import { DependencyView } from "./DependencyView";
+import { computeDependencyStates } from "../lib/dependencyStates";
+import { RESOLVE_ALL_DEPENDENCIES_COMMAND } from "../../projects/lib/dependencyResolutionMessage";
 import { SpecFileList } from "./SpecFileList";
 import { CellDiagramPanel } from "./CellDiagramPanel";
 import { WireframePanel } from "./WireframePanel";
@@ -98,12 +99,19 @@ import { OpenApiView } from "@aep/ui-openapi-view";
 import { DesignView } from "@aep/ui-design-view";
 import type { DependencyStatusInfo } from "@aep/ui-design-view";
 import { ValidationView } from "@aep/ui-validation-view";
-import { type SpecSelection } from "../api/designTree";
-import { DESIGN_CELL_PATH, componentOf, followSelection } from "../api/designTree";
+import {
+  type SpecSelection,
+  DESIGN_CELL_PATH,
+  componentOf,
+  dependencyDefinitionPath,
+  dependencyOf,
+  followSelection,
+  isDependencyDefinition,
+} from "../api/designTree";
 import { useSession } from "../../../auth/SessionContext";
 
 type PreflightItem = components["schemas"]["PreflightItem"];
-type BuildInputItem = components["schemas"]["BuildInputItem"];
+type BuildPreflight = components["schemas"]["BuildPreflight"];
 
 // Full-screen spec workspace (#80), per the oxygen-ui sample's
 // LoginEditorView pattern: fullWidth/noPadding page, own header bar,
@@ -212,12 +220,15 @@ export function SpecView({ projectName }: { projectName: string }) {
   }> | null>(null);
   /** The warning standing between a design run and unsettled requirements. */
   const [confirmDesign, setConfirmDesign] = useState(false);
-  // The "Cut version" ceremony (#369/#372): Build first shows what the click
-  // does — the next version, the stories in scope, the milestone —
-  // and only a confirm POSTs. The backend cuts the real tag.
-  const [cutDialogOpen, setCutDialogOpen] = useState(false);
-  const [dependencyDrawerOpen, setDependencyDrawerOpen] = useState(false);
-  const [preflightItems, setPreflightItems] = useState<PreflightItem[]>([]);
+  // What the Build click opens (#749, ADR-0029): one dialog, never two
+  // containers. `resolve` when a dependency has no identity yet, `build`
+  // otherwise — the preflight answer picks, and the answer itself is stashed
+  // because both dialogs read it.
+  const [buildDialog, setBuildDialog] = useState<"resolve" | "build" | null>(
+    null,
+  );
+  const [preview, setPreview] = useState<BuildPreflight | null>(null);
+  const preflightItems: PreflightItem[] = preview?.items ?? [];
 
   // #252 Task 10: keep an OPEN drawer fresh after "Resolve via chat" ends a
   // turn. useTurnEndFlush (above) already invalidates the preflight query's
@@ -237,18 +248,33 @@ export function SpecView({ projectName }: { projectName: string }) {
   const preflightRef = useRef(preflight);
   preflightRef.current = preflight;
   useEffect(() => {
-    if (!dependencyDrawerOpen) return;
+    if (buildDialog !== "resolve") return;
     const chatKey = chatKeyFor(orgHandle ?? "default", projectName);
-    return subscribeTurnEnd(chatKey, () => {
+    // The refetch outlives the dialog: a turn can end just as the user closes
+    // it, and the answer would then arrive and REOPEN a dialog over the
+    // conversation they just went back to. Unsubscribing does not stop a
+    // promise already in flight, so the cleanup marks it stale instead.
+    let closed = false;
+    const unsubscribe = subscribeTurnEnd(chatKey, () => {
       void collabRef.current
         .flush()
         .catch(() => undefined)
         .then(() => preflightRef.current.refetch())
         .then(({ data }) => {
-          if (data) setPreflightItems(data.items ?? []);
+          if (closed || !data) return;
+          setPreview(data);
+          // What the click would answer NOW. The user has been resolving in the
+          // chat beside the dialog, and when the last one goes the version is
+          // buildable — so the dialog becomes the one they need next rather
+          // than an empty list of what is left.
+          setBuildDialog(data.needsResolution ? "resolve" : "build");
         });
     });
-  }, [dependencyDrawerOpen, orgHandle, projectName]);
+    return () => {
+      closed = true;
+      unsubscribe();
+    };
+  }, [buildDialog, orgHandle, projectName]);
 
   // Collapse the sidebar while focused on the spec, expand when leaving.
   useEffect(() => {
@@ -285,7 +311,8 @@ export function SpecView({ projectName }: { projectName: string }) {
   const search = useSearch({ strict: false }) as {
     generate?: "design";
     view?: "architecture";
-  };
+    file?: string;
+};
   const generate = search.generate;
   const agentInRoom = collab.peers.some((p) => p.kind === "agent");
   const hasDesignCell = files.some((f) => f.path === DESIGN_CELL_PATH);
@@ -303,6 +330,22 @@ export function SpecView({ projectName }: { projectName: string }) {
   useEffect(() => {
     if (search.view === "architecture") setSelection({ kind: "cell-diagram" });
   }, [search.view]);
+
+  // `?file=` — a click on a document link in the chat (the design turn's
+  // closing list of open dependencies). Select it as a manual choice, then
+  // strip the param so a rail click afterwards is never undone by a reload.
+  const linkedFile = search.file;
+  useEffect(() => {
+    if (!linkedFile) return;
+    setSelection({ kind: "file", path: linkedFile });
+    void navigate({
+      to: "/projects/$projectName/spec",
+      params: { projectName },
+      search: (prev: Record<string, unknown>) =>
+        Object.fromEntries(Object.entries(prev).filter(([k]) => k !== "file")),
+      replace: true,
+    });
+  }, [linkedFile, navigate, projectName]);
 
   // Follow the write (#576, ADR-0026): while a turn runs, the editor selects
   // each artifact as its write starts, so the passive watcher — the default
@@ -391,7 +434,7 @@ export function SpecView({ projectName }: { projectName: string }) {
     [dependencies.data, selectedComponentName],
   );
   // Keyed by dependency name for DesignView's optional dependencyStatus prop
-  // — status/reason are the ONLY fields this map carries. candidates/config
+  // — status/reason are the ONLY fields this map carries. suggestions/config
   // are already in the raw design.json DesignView parses itself; see
   // DesignViewProps.dependencyStatus's comment for why status/reason can't
   // join them.
@@ -424,7 +467,7 @@ export function SpecView({ projectName }: { projectName: string }) {
     [dependencies.data, selectedComponentName],
   );
   // Fires Task 5's seeded chat message with the dependency's FULL endpoint
-  // entry (status/reason/candidates/config included) — never the
+  // entry (status/reason/suggestions/config included) — never the
   // locally parsed one, which deliberately drops status/reason. `intent`
   // (#252 Task 17) is "resolve" from the design-view card's chat button on a
   // non-resolved dependency, or "reconsider" from its hamburger's "Discuss in
@@ -439,37 +482,29 @@ export function SpecView({ projectName }: { projectName: string }) {
     resolveDependencyViaChat(selectedComponentName, dep, intent);
   };
 
-  // #252 Task 10: the build dependency drawer's "Resolve via chat" — same
-  // seeded-message flow as handleResolveDependency above, but keyed off a
-  // PreflightItem (component/dependency name) rather than the currently
-  // selected component's design.json, since the drawer's items can span
-  // ANY of the project's service components, not just the one selected in
-  // the file tree. `intent` (#252 Task 17) is "resolve" from a blocker/
-  // external-spec panel's chat button, or "reconsider" from an
-  // external-config/platform-resource/org-service panel's hamburger.
-  //
-  // #252 Task 15: also closes the drawer, for BOTH intents. The drawer is a
-  // MUI overlay Drawer (unlike the side-by-side chat panel AppLayout mounts —
-  // see its own comment above `chatOpen`), so left open it covers the chat
-  // panel the seeded message just opened and the user can't see what they're
-  // supposed to respond to. Closing only happens here, on the explicit click —
-  // NOT on turn-end (the useEffect above deliberately leaves the drawer open
-  // and just refreshes its items; re-opening mid-resolution is out of scope,
-  // matching Task 10's "do not auto-reopen" decision). The design-view
-  // "Resolve in chat" cards (handleResolveDependency above) have no
-  // equivalent occlusion: they render in the main content pane, which the
-  // chat panel opens BESIDE (Collapse in AppLayout), never over.
-  const handleResolveDrawerDependency = (
-    item: PreflightItem,
-    intent: DependencyResolutionIntent,
-  ) => {
-    const dep = (
-      dependencies.data?.find((c) => c.componentName === item.component)
-        ?.dependencies ?? []
-    ).find((d) => d.name === item.dependency);
-    if (!dep) return;
-    resolveDependencyViaChat(item.component, dep, intent);
-    setDependencyDrawerOpen(false);
+  // One state per external dependency (its definition is one file, so its
+  // state is one answer): the rail's marks, the definition view and the Build
+  // drawer all read this fold of the per-component read model.
+  const dependencyStates = useMemo(
+    () => computeDependencyStates(dependencies.data ?? []),
+    [dependencies.data],
+  );
+  // The definition view's Resolve / Reconsider. The component is context for
+  // the reconsider's prose only; the resolve is the skill command.
+  const handleResolveFromDefinition = (name: string, intent: DependencyResolutionIntent) => {
+    const state = dependencyStates[name];
+    resolveDependencyViaChat(state?.usedBy[0] ?? "", state?.dependency ?? { kind: "external", name }, intent);
+  };
+  // The definition view's two writes land in git outside the room; the room's
+  // copy of the definition is brought up to date here, so the pane — which
+  // reads the room first — shows the interface the moment it is on file.
+  const handleDependencyCommitted = (name: string) =>
+    refreshRoomCopy(projectName, collab.getFileText, dependencyDefinitionPath(name)).then(() => undefined);
+  // The resolve dialog's one action: seed the chat with the batch flow and
+  // close, since as an overlay it would cover the conversation it just started.
+  const handleResolveAllDependencies = () => {
+    setPendingSeed(chatKeyFor(orgHandle ?? "default", projectName), RESOLVE_ALL_DEPENDENCIES_COMMAND);
+    setBuildDialog(null);
   };
 
   // Collab supplies live content when connected; the REST read (lazy, per
@@ -490,10 +525,13 @@ export function SpecView({ projectName }: { projectName: string }) {
     /^specs\/validation\/validation-criteria\.json$/.test(
       selectedFile?.path ?? "",
     );
+  // A dependency's definition renders as its own structured view (ADR-0028)
+  // — the same path a component's design.json takes.
+  const isDependencyDefinitionFile = isDependencyDefinition(selectedFile?.path ?? "");
   // The structured files share the read-only render path (no collab editor,
   // sourced from the live doc or the committed fetch).
   const isStructuredFile =
-    isOpenApiFile || isComponentDesignFile || isValidationCriteriaFile;
+    isOpenApiFile || isComponentDesignFile || isValidationCriteriaFile || isDependencyDefinitionFile;
   // Canvas-based views (cell diagram, Excalidraw) need a flex-column,
   // overflow-hidden ancestor so their own `flex: 1` roots get a real
   // measured height to stretch into — a plain overflow:auto block (used for
@@ -623,13 +661,6 @@ export function SpecView({ projectName }: { projectName: string }) {
     projectName,
     prdEntry ? { path: prdEntry.path, sha: prdEntry.sha } : null,
   );
-  const cutPreview = useMemo(() => {
-    const stories = prdContent.data
-      ? parsePrdStories(prdContent.data.content)
-      : [];
-    return { stories, nextVersion: nextVersionLabel(tags.data?.latest) };
-  }, [prdContent.data, tags.data?.latest]);
-
   // What the rail says (#575). Derived here rather than inside the rail so the
   // rules stay testable without a workspace — and so the two facts the rail
   // cannot see for itself (whether the requirements have moved since the design
@@ -865,14 +896,11 @@ export function SpecView({ projectName }: { projectName: string }) {
           );
           return;
         }
-        // Stashed on EVERY path, not just the drawer's: runBuild derives the
-        // build request's approval inputs from these items.
-        setPreflightItems(data.items ?? []);
-        if (data.needsResolution) {
-          setDependencyDrawerOpen(true);
-          return;
-        }
-        setCutDialogOpen(true);
+        // Stashed whichever dialog opens: the resolve one lists from these
+        // items, and the build one derives the request's approval inputs from
+        // them as well as showing the version and what it changes.
+        setPreview(data);
+        setBuildDialog(data.needsResolution ? "resolve" : "build");
       } catch (e) {
         setBuildError(
           e instanceof Error ? e.message : "Failed to start the build.",
@@ -908,12 +936,14 @@ export function SpecView({ projectName }: { projectName: string }) {
     });
   };
 
-  // The ceremony's confirm: POST the build, carrying the approvals preflight
-  // raised (the platform resources it will provision) — the drawer used to
-  // submit those and no longer opens for them. A 422 refusal renders as the
-  // gate checklist, anything else as the plain build error.
-  const runBuild = () => {
-    setCutDialogOpen(false);
+  // The dialog's confirm: POST the build with the name the user settled on and
+  // the approvals preflight raised (the platform resources it will provision).
+  // `version` is empty on a rebuild, which cuts no tag and reuses the one it
+  // matches. A 422 refusal renders as the gate checklist; anything else — a
+  // name taken between the field's check and this click included — renders as
+  // the plain build error.
+  const runBuild = (version: string) => {
+    setBuildDialog(null);
     setGateRefusal(null);
     setBuildError(null);
     setBuildPhase("building");
@@ -921,6 +951,7 @@ export function SpecView({ projectName }: { projectName: string }) {
       try {
         const res = await build.mutateAsync({
           inputs: approvalInputsFor(preflightItems),
+          ...(version ? { version } : {}),
         });
         goToBuild(res.tag);
       } catch (e) {
@@ -938,33 +969,6 @@ export function SpecView({ projectName }: { projectName: string }) {
         setBuildPhase(null);
       }
     })();
-  };
-
-  // Drawer Continue (#164): resubmit the build with the resolution the drawer
-  // collected (a pasted external spec) plus the same approvals runBuild
-  // sends. A clean response closes the drawer and moves on to the version;
-  // any inputs the BFF/devflow rejects come back as `failures` — surface the
-  // reasons and leave the drawer open so the user can fix them and retry.
-  const onContinueBuild = async (inputs: BuildInputItem[]) => {
-    setBuildError(null);
-    setBuildPhase("building");
-    try {
-      const res = await build.mutateAsync({ inputs });
-      if (res.failures?.length) {
-        setBuildError(
-          res.failures.map((f) => `${f.dependency}: ${f.reason}`).join("; "),
-        );
-        return;
-      }
-      setDependencyDrawerOpen(false);
-      goToBuild(res.tag);
-    } catch (e) {
-      setBuildError(
-        e instanceof Error ? e.message : "Failed to start the build.",
-      );
-    } finally {
-      setBuildPhase(null);
-    }
   };
 
   // Version state rendered as SOFT status chips beside the title (like the
@@ -1247,42 +1251,20 @@ export function SpecView({ projectName }: { projectName: string }) {
           onClose={() => setGateRefusal(null)}
         />
 
-        {/* The "Cut version" ceremony (#369/#372): what the Build click does,
-            before it does it. The version shown is predictive — the BACKEND
-            assigns the real tag at cut time. */}
-        <Dialog
-          data-testid="cut-version-dialog"
-          open={cutDialogOpen}
-          onClose={() => setCutDialogOpen(false)}
-          maxWidth="xs"
-          fullWidth
-        >
-          <DialogTitle>Cut version {cutPreview.nextVersion}</DialogTitle>
-          <DialogContent>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-              Snapshots the PRD and design together as a git tag; the build runs
-              against that snapshot, so you can keep editing afterwards.
-            </Typography>
-            <Stack spacing={0.5}>
-              <Typography variant="body2">
-                <b>Stories in scope:</b>{" "}
-                {cutPreview.stories.length > 0
-                  ? cutPreview.stories.join(", ")
-                  : "—"}
-              </Typography>
-              <Typography variant="body2">
-                <b>Milestone:</b>{" "}
-                {`"${cutPreview.nextVersion}" — one per version, holding this build's tasks`}
-              </Typography>
-            </Stack>
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={() => setCutDialogOpen(false)}>Cancel</Button>
-            <Button variant="contained" onClick={runBuild}>
-              Cut {cutPreview.nextVersion} &amp; build
-            </Button>
-          </DialogActions>
-        </Dialog>
+        {/* What the Build click does, before it does it (#749): the version's
+            name — the tag this cuts — and what it changes. The names come from
+            preflight, which the click already waited on. */}
+        <StartBuildDialog
+          open={buildDialog === "build"}
+          currentVersion={preview?.currentVersion ?? ""}
+          suggestedVersion={preview?.suggestedVersion ?? ""}
+          specUnchanged={preview?.specUnchanged ?? false}
+          changes={preview?.changes ?? []}
+          takenVersions={tags.data?.tags ?? []}
+          submitting={buildPhase === "building"}
+          onClose={() => setBuildDialog(null)}
+          onBuild={runBuild}
+        />
 
         {/* Build failed to start (#162): commit or POST /build errored. */}
         {buildError && (
@@ -1341,6 +1323,7 @@ export function SpecView({ projectName }: { projectName: string }) {
             entry={roomQuestion}
             org={orgHandle ?? "default"}
             projectName={projectName}
+            onDependencyCommitted={handleDependencyCommitted}
           />
         ) : (
           <Box sx={{ flexGrow: 1, minHeight: 0, display: "flex" }}>
@@ -1362,6 +1345,7 @@ export function SpecView({ projectName }: { projectName: string }) {
                 sections={railSections}
                 plan={planEntries}
                 onReason={onRailReason}
+                dependencyStates={dependencyStates}
               />
             </Box>
             <Box
@@ -1412,6 +1396,17 @@ export function SpecView({ projectName }: { projectName: string }) {
                       <OpenApiView spec={structuredLive} />
                     ) : isValidationCriteriaFile ? (
                       <ValidationView criteria={structuredLive} />
+                    ) : isDependencyDefinitionFile ? (
+                      <DependencyView
+                        projectName={projectName}
+                        name={dependencyOf(selectedFile.path) ?? ""}
+                        definition={structuredLive}
+                        state={dependencyStates[dependencyOf(selectedFile.path) ?? ""]}
+                        onOpenFile={(path) => selectManually({ kind: "file", path })}
+                        onResolve={(name) => handleResolveFromDefinition(name, "resolve")}
+                        onReconsider={(name) => handleResolveFromDefinition(name, "reconsider")}
+                        onCommitted={handleDependencyCommitted}
+                      />
                     ) : (
                       <DesignView
                         design={structuredLive}
@@ -1430,6 +1425,18 @@ export function SpecView({ projectName }: { projectName: string }) {
                       <ValidationView
                         key={content.data.sha}
                         criteria={content.data.content}
+                      />
+                    ) : isDependencyDefinitionFile ? (
+                      <DependencyView
+                        key={content.data.sha}
+                        projectName={projectName}
+                        name={dependencyOf(selectedFile.path) ?? ""}
+                        definition={content.data.content}
+                        state={dependencyStates[dependencyOf(selectedFile.path) ?? ""]}
+                        onOpenFile={(path) => selectManually({ kind: "file", path })}
+                        onResolve={(name) => handleResolveFromDefinition(name, "resolve")}
+                        onReconsider={(name) => handleResolveFromDefinition(name, "reconsider")}
+                        onCommitted={handleDependencyCommitted}
                       />
                     ) : (
                       <DesignView
@@ -1634,13 +1641,12 @@ export function SpecView({ projectName }: { projectName: string }) {
         )}
       </Box>
 
-      <BuildDependencyDrawer
-        open={dependencyDrawerOpen}
-        items={preflightItems}
-        submitting={dependencyDrawerOpen && buildPhase === "building"}
-        onClose={() => setDependencyDrawerOpen(false)}
-        onContinue={(inputs) => void onContinueBuild(inputs)}
-        onResolveDependency={handleResolveDrawerDependency}
+      <ResolveDependenciesDialog
+        open={buildDialog === "resolve"}
+        version={preview?.suggestedVersion ?? ""}
+        dependencies={blockingDependencies(preflightItems)}
+        onClose={() => setBuildDialog(null)}
+        onResolve={handleResolveAllDependencies}
       />
     </PageContent>
   );

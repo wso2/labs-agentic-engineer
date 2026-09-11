@@ -16,6 +16,90 @@ const (
 	UserJWTScopes userJWTContextKey = "userJWT.Scopes"
 )
 
+// Defines values for AgentRuntime.
+const (
+	AgentRuntimeClaudeCode AgentRuntime = "claude-code"
+	AgentRuntimeOpencode   AgentRuntime = "opencode"
+)
+
+// Valid indicates whether the value is a known member of the AgentRuntime enum.
+func (e AgentRuntime) Valid() bool {
+	switch e {
+	case AgentRuntimeClaudeCode:
+		return true
+	case AgentRuntimeOpencode:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AgentStatus.
+const (
+	AgentStatusCompleted AgentStatus = "completed"
+	AgentStatusFailed    AgentStatus = "failed"
+	AgentStatusRunning   AgentStatus = "running"
+	AgentStatusStopped   AgentStatus = "stopped"
+)
+
+// Valid indicates whether the value is a known member of the AgentStatus enum.
+func (e AgentStatus) Valid() bool {
+	switch e {
+	case AgentStatusCompleted:
+		return true
+	case AgentStatusFailed:
+		return true
+	case AgentStatusRunning:
+		return true
+	case AgentStatusStopped:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BuildChangeKind.
+const (
+	BuildChangeKindComponent        BuildChangeKind = "component"
+	BuildChangeKindExternal         BuildChangeKind = "external"
+	BuildChangeKindPlatformResource BuildChangeKind = "platform-resource"
+)
+
+// Valid indicates whether the value is a known member of the BuildChangeKind enum.
+func (e BuildChangeKind) Valid() bool {
+	switch e {
+	case BuildChangeKindComponent:
+		return true
+	case BuildChangeKindExternal:
+		return true
+	case BuildChangeKindPlatformResource:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BuildChangeState.
+const (
+	Changed BuildChangeState = "changed"
+	New     BuildChangeState = "new"
+	Removed BuildChangeState = "removed"
+)
+
+// Valid indicates whether the value is a known member of the BuildChangeState enum.
+func (e BuildChangeState) Valid() bool {
+	switch e {
+	case Changed:
+		return true
+	case New:
+		return true
+	case Removed:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for BuildInputItemKind.
 const (
 	BuildInputItemKindExternalConfig   BuildInputItemKind = "external-config"
@@ -133,6 +217,24 @@ const (
 func (e BuildSummaryWaitingReason) Valid() bool {
 	switch e {
 	case BuildSummaryWaitingReasonExternalValues:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CodingAgentModel.
+const (
+	CodingAgentModelClaudeHaiku45 CodingAgentModel = "claude-haiku-4-5"
+	CodingAgentModelClaudeSonnet5 CodingAgentModel = "claude-sonnet-5"
+)
+
+// Valid indicates whether the value is a known member of the CodingAgentModel enum.
+func (e CodingAgentModel) Valid() bool {
+	switch e {
+	case CodingAgentModelClaudeHaiku45:
+		return true
+	case CodingAgentModelClaudeSonnet5:
 		return true
 	default:
 		return false
@@ -342,7 +444,6 @@ func (e OrgEndpointDTOType) Valid() bool {
 
 // Defines values for PreflightItemKind.
 const (
-	PreflightItemKindExternalAmbiguous  PreflightItemKind = "external-ambiguous"
 	PreflightItemKindExternalConfig     PreflightItemKind = "external-config"
 	PreflightItemKindExternalSpec       PreflightItemKind = "external-spec"
 	PreflightItemKindExternalUnresolved PreflightItemKind = "external-unresolved"
@@ -353,8 +454,6 @@ const (
 // Valid indicates whether the value is a known member of the PreflightItemKind enum.
 func (e PreflightItemKind) Valid() bool {
 	switch e {
-	case PreflightItemKindExternalAmbiguous:
-		return true
 	case PreflightItemKindExternalConfig:
 		return true
 	case PreflightItemKindExternalSpec:
@@ -484,6 +583,33 @@ func (e RunCycleViewMergeVerdict) Valid() bool {
 	}
 }
 
+// Defines values for RunCycleViewRecording.
+const (
+	RunCycleViewRecordingComplete  RunCycleViewRecording = "complete"
+	RunCycleViewRecordingGaps      RunCycleViewRecording = "gaps"
+	RunCycleViewRecordingLost      RunCycleViewRecording = "lost"
+	RunCycleViewRecordingNone      RunCycleViewRecording = "none"
+	RunCycleViewRecordingRecording RunCycleViewRecording = "recording"
+)
+
+// Valid indicates whether the value is a known member of the RunCycleViewRecording enum.
+func (e RunCycleViewRecording) Valid() bool {
+	switch e {
+	case RunCycleViewRecordingComplete:
+		return true
+	case RunCycleViewRecordingGaps:
+		return true
+	case RunCycleViewRecordingLost:
+		return true
+	case RunCycleViewRecordingNone:
+		return true
+	case RunCycleViewRecordingRecording:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for RunCycleViewValidationVerdict.
 const (
 	RunCycleViewValidationVerdictFailed       RunCycleViewValidationVerdict = "failed"
@@ -514,10 +640,311 @@ func (e RunCycleViewValidationVerdict) Valid() bool {
 	}
 }
 
+// Defines values for RunEventCode.
+const (
+	RunEventCodeAPIRetry               RunEventCode = "api_retry"
+	RunEventCodeArtifactFailed         RunEventCode = "artifact_failed"
+	RunEventCodeCompaction             RunEventCode = "compaction"
+	RunEventCodeGap                    RunEventCode = "gap"
+	RunEventCodePermissionDenied       RunEventCode = "permission_denied"
+	RunEventCodeRateLimit              RunEventCode = "rate_limit"
+	RunEventCodeRefusal                RunEventCode = "refusal"
+	RunEventCodeRunnerConfigError      RunEventCode = "runner_config_error"
+	RunEventCodeRunnerImagePullBackOff RunEventCode = "runner_image_pull_backoff"
+	RunEventCodeRunnerPullingImage     RunEventCode = "runner_pulling_image"
+	RunEventCodeRunnerScheduling       RunEventCode = "runner_scheduling"
+	RunEventCodeRunnerStarting         RunEventCode = "runner_starting"
+	RunEventCodeRunnerUnschedulable    RunEventCode = "runner_unschedulable"
+	RunEventCodeTerminated             RunEventCode = "terminated"
+	RunEventCodeWorkspaceGuard         RunEventCode = "workspace_guard"
+	RunEventCodeWorkspaceProvisioning  RunEventCode = "workspace_provisioning"
+	RunEventCodeWorkspaceReady         RunEventCode = "workspace_ready"
+)
+
+// Valid indicates whether the value is a known member of the RunEventCode enum.
+func (e RunEventCode) Valid() bool {
+	switch e {
+	case RunEventCodeAPIRetry:
+		return true
+	case RunEventCodeArtifactFailed:
+		return true
+	case RunEventCodeCompaction:
+		return true
+	case RunEventCodeGap:
+		return true
+	case RunEventCodePermissionDenied:
+		return true
+	case RunEventCodeRateLimit:
+		return true
+	case RunEventCodeRefusal:
+		return true
+	case RunEventCodeRunnerConfigError:
+		return true
+	case RunEventCodeRunnerImagePullBackOff:
+		return true
+	case RunEventCodeRunnerPullingImage:
+		return true
+	case RunEventCodeRunnerScheduling:
+		return true
+	case RunEventCodeRunnerStarting:
+		return true
+	case RunEventCodeRunnerUnschedulable:
+		return true
+	case RunEventCodeTerminated:
+		return true
+	case RunEventCodeWorkspaceGuard:
+		return true
+	case RunEventCodeWorkspaceProvisioning:
+		return true
+	case RunEventCodeWorkspaceReady:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RunEventItemStatus.
+const (
+	RunEventItemStatusAuthoring  RunEventItemStatus = "authoring"
+	RunEventItemStatusCompleted  RunEventItemStatus = "completed"
+	RunEventItemStatusDeleted    RunEventItemStatus = "deleted"
+	RunEventItemStatusExploring  RunEventItemStatus = "exploring"
+	RunEventItemStatusFail       RunEventItemStatus = "fail"
+	RunEventItemStatusHealing    RunEventItemStatus = "healing"
+	RunEventItemStatusInProgress RunEventItemStatus = "in_progress"
+	RunEventItemStatusPass       RunEventItemStatus = "pass"
+	RunEventItemStatusPending    RunEventItemStatus = "pending"
+	RunEventItemStatusPlanned    RunEventItemStatus = "planned"
+	RunEventItemStatusRunning    RunEventItemStatus = "running"
+)
+
+// Valid indicates whether the value is a known member of the RunEventItemStatus enum.
+func (e RunEventItemStatus) Valid() bool {
+	switch e {
+	case RunEventItemStatusAuthoring:
+		return true
+	case RunEventItemStatusCompleted:
+		return true
+	case RunEventItemStatusDeleted:
+		return true
+	case RunEventItemStatusExploring:
+		return true
+	case RunEventItemStatusFail:
+		return true
+	case RunEventItemStatusHealing:
+		return true
+	case RunEventItemStatusInProgress:
+		return true
+	case RunEventItemStatusPass:
+		return true
+	case RunEventItemStatusPending:
+		return true
+	case RunEventItemStatusPlanned:
+		return true
+	case RunEventItemStatusRunning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RunEventLevel.
+const (
+	RunEventLevelError RunEventLevel = "error"
+	RunEventLevelInfo  RunEventLevel = "info"
+	RunEventLevelWarn  RunEventLevel = "warn"
+)
+
+// Valid indicates whether the value is a known member of the RunEventLevel enum.
+func (e RunEventLevel) Valid() bool {
+	switch e {
+	case RunEventLevelError:
+		return true
+	case RunEventLevelInfo:
+		return true
+	case RunEventLevelWarn:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RunEventOutcome.
+const (
+	RunEventOutcomeCancelled RunEventOutcome = "cancelled"
+	RunEventOutcomeFailure   RunEventOutcome = "failure"
+	RunEventOutcomeSuccess   RunEventOutcome = "success"
+)
+
+// Valid indicates whether the value is a known member of the RunEventOutcome enum.
+func (e RunEventOutcome) Valid() bool {
+	switch e {
+	case RunEventOutcomeCancelled:
+		return true
+	case RunEventOutcomeFailure:
+		return true
+	case RunEventOutcomeSuccess:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RunEventRuntime.
+const (
+	RunEventRuntimeClaudeCode RunEventRuntime = "claude-code"
+	RunEventRuntimeOpencode   RunEventRuntime = "opencode"
+)
+
+// Valid indicates whether the value is a known member of the RunEventRuntime enum.
+func (e RunEventRuntime) Valid() bool {
+	switch e {
+	case RunEventRuntimeClaudeCode:
+		return true
+	case RunEventRuntimeOpencode:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RunEventSource.
+const (
+	RunEventSourceCriterion RunEventSource = "criterion"
+	RunEventSourcePlan      RunEventSource = "plan"
+)
+
+// Valid indicates whether the value is a known member of the RunEventSource enum.
+func (e RunEventSource) Valid() bool {
+	switch e {
+	case RunEventSourceCriterion:
+		return true
+	case RunEventSourcePlan:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RunEventTaskKind.
+const (
+	RunEventTaskKindImplementation RunEventTaskKind = "implementation"
+	RunEventTaskKindValidation     RunEventTaskKind = "validation"
+)
+
+// Valid indicates whether the value is a known member of the RunEventTaskKind enum.
+func (e RunEventTaskKind) Valid() bool {
+	switch e {
+	case RunEventTaskKindImplementation:
+		return true
+	case RunEventTaskKindValidation:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RunEventV.
+const (
+	RunEventV2 RunEventV = 2
+)
+
+// Valid indicates whether the value is a known member of the RunEventV enum.
+func (e RunEventV) Valid() bool {
+	switch e {
+	case RunEventV2:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RunEventWaitingOn.
+const (
+	RunEventWaitingOnAgent RunEventWaitingOn = "agent"
+	RunEventWaitingOnModel RunEventWaitingOn = "model"
+	RunEventWaitingOnTool  RunEventWaitingOn = "tool"
+)
+
+// Valid indicates whether the value is a known member of the RunEventWaitingOn enum.
+func (e RunEventWaitingOn) Valid() bool {
+	switch e {
+	case RunEventWaitingOnAgent:
+		return true
+	case RunEventWaitingOnModel:
+		return true
+	case RunEventWaitingOnTool:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RunEventKind.
+const (
+	RunEventKindAgentProgress RunEventKind = "agent_progress"
+	RunEventKindAgentSettled  RunEventKind = "agent_settled"
+	RunEventKindAgentStarted  RunEventKind = "agent_started"
+	RunEventKindGhAction      RunEventKind = "gh_action"
+	RunEventKindGitCommit     RunEventKind = "git_commit"
+	RunEventKindGitPush       RunEventKind = "git_push"
+	RunEventKindHeartbeat     RunEventKind = "heartbeat"
+	RunEventKindNotice        RunEventKind = "notice"
+	RunEventKindRunSettled    RunEventKind = "run_settled"
+	RunEventKindRunStarted    RunEventKind = "run_started"
+	RunEventKindTaskSettled   RunEventKind = "task_settled"
+	RunEventKindTaskStarted   RunEventKind = "task_started"
+	RunEventKindToolResult    RunEventKind = "tool_result"
+	RunEventKindToolUse       RunEventKind = "tool_use"
+	RunEventKindTurnEnded     RunEventKind = "turn_ended"
+	RunEventKindWorkItem      RunEventKind = "work_item"
+)
+
+// Valid indicates whether the value is a known member of the RunEventKind enum.
+func (e RunEventKind) Valid() bool {
+	switch e {
+	case RunEventKindAgentProgress:
+		return true
+	case RunEventKindAgentSettled:
+		return true
+	case RunEventKindAgentStarted:
+		return true
+	case RunEventKindGhAction:
+		return true
+	case RunEventKindGitCommit:
+		return true
+	case RunEventKindGitPush:
+		return true
+	case RunEventKindHeartbeat:
+		return true
+	case RunEventKindNotice:
+		return true
+	case RunEventKindRunSettled:
+		return true
+	case RunEventKindRunStarted:
+		return true
+	case RunEventKindTaskSettled:
+		return true
+	case RunEventKindTaskStarted:
+		return true
+	case RunEventKindToolResult:
+		return true
+	case RunEventKindToolUse:
+		return true
+	case RunEventKindTurnEnded:
+		return true
+	case RunEventKindWorkItem:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for RunProgressEventType.
 const (
 	RunProgressEventTypeCycle RunProgressEventType = "cycle"
 	RunProgressEventTypeDone  RunProgressEventType = "done"
+	RunProgressEventTypeEvent RunProgressEventType = "event"
 	RunProgressEventTypeLine  RunProgressEventType = "line"
 )
 
@@ -527,6 +954,8 @@ func (e RunProgressEventType) Valid() bool {
 	case RunProgressEventTypeCycle:
 		return true
 	case RunProgressEventTypeDone:
+		return true
+	case RunProgressEventTypeEvent:
 		return true
 	case RunProgressEventTypeLine:
 		return true
@@ -753,16 +1182,16 @@ func (e TurnInputMultipartIntent) Valid() bool {
 
 // Defines values for WorkloadDependencyDTOKind.
 const (
-	OrgService WorkloadDependencyDTOKind = "org-service"
-	Resource   WorkloadDependencyDTOKind = "resource"
+	WorkloadDependencyDTOKindOrgService WorkloadDependencyDTOKind = "org-service"
+	WorkloadDependencyDTOKindResource   WorkloadDependencyDTOKind = "resource"
 )
 
 // Valid indicates whether the value is a known member of the WorkloadDependencyDTOKind enum.
 func (e WorkloadDependencyDTOKind) Valid() bool {
 	switch e {
-	case OrgService:
+	case WorkloadDependencyDTOKindOrgService:
 		return true
-	case Resource:
+	case WorkloadDependencyDTOKindResource:
 		return true
 	default:
 		return false
@@ -808,6 +1237,12 @@ func (e ListTasksParamsState) Valid() bool {
 	}
 }
 
+// AcceptAssumptionBody defines model for AcceptAssumptionBody.
+type AcceptAssumptionBody struct {
+	// Note Optional note recorded with the acceptance; defaults to the agent's own note of what it was unsure about.
+	Note string `json:"note,omitempty"`
+}
+
 // AccessRequest defines model for AccessRequest.
 type AccessRequest struct {
 	ConsumerComponentName string    `json:"consumerComponentName"`
@@ -834,9 +1269,12 @@ type ActivityEvent struct {
 	ID          string    `json:"id"`
 	Issue       int64     `json:"issue,omitempty"`
 	OccurredAt  time.Time `json:"occurredAt"`
-	Tag         string    `json:"tag,omitempty"`
-	Title       string    `json:"title,omitempty"`
-	Type        string    `json:"type"`
+
+	// Reason `run_failed` only: the run's failure code (RunFailure.code) when the platform recorded one, else its terminal reason. A code, never prose — the console owns the sentence, the same rule RunEvent.notice follows.
+	Reason string `json:"reason,omitempty"`
+	Tag    string `json:"tag,omitempty"`
+	Title  string `json:"title,omitempty"`
+	Type   string `json:"type"`
 }
 
 // ActivityFeed A page of activity events plus the cursor for the next (older) page.
@@ -849,6 +1287,17 @@ type ActivityFeed struct {
 	// NextBeforeID id cursor tiebreak for the next page.
 	NextBeforeID string `json:"nextBeforeId,omitempty"`
 }
+
+// AgentRuntime Which coding-agent runtime an organization's builds run on.
+//
+// The values are the same two RunEvent.runtime records, and deliberately so: what an org SELECTS and what a finished run REPORTS have to be the same vocabulary or a reader cannot line them up. The lifetimes differ — this is a setting that can change, that one is a fact about an attempt that cannot.
+//
+// `opencode` is in the enum because the design carries it and because a client should be able to render the choice; it is NOT selectable while the platform ships no adapter for it, and the API rejects it with a reason naming what is missing. Do not treat membership of this enum as availability.
+type AgentRuntime string
+
+// AgentStatus How an agent, or a backgrounded task an agent owns, ended — as the runtime itself reported it. `running` is the only non-terminal value and exists so a consumer can repaint a row without waiting for the end; `completed` is a clean finish; `failed` is one the runtime called an error; `stopped` is a cancellation or a kill from outside, which is NOT a failure — the work did not go wrong, it was taken away, and a run a user stopped must not be shown as broken.
+// Carried by RunEvent's `agent_settled` and `task_settled`, which are the only places a status is authoritative. A settle event that never arrives means the platform never learned how the agent ended; it does not mean the agent is still running.
+type AgentStatus string
 
 // ApplyConflict One file whose baseSha no longer matches HEAD.
 type ApplyConflict struct {
@@ -875,6 +1324,22 @@ type ApplyResult struct {
 	Files     []FileMeta `json:"files"`
 	Warnings  []Warning  `json:"warnings,omitempty"`
 }
+
+// BuildChange One thing this version changes, compared with the newest version — the row the Start build dialog lists. Every row names something that EXISTS once the version is built, which is why the requirements are not one of them — they are the input, not the output. `removed` is a statement rather than an action — a build deprovisions nothing, so a removed dependency's resource stays.
+type BuildChange struct {
+	// Kind What the name belongs to, and the group the dialog lists it under. The two dependency kinds carry opposite obligations — an `external` needs a provider and its keys from the user, a `platform-resource` is provisioned by the build — so they are never one group.
+	Kind BuildChangeKind `json:"kind"`
+
+	// Name The component, dependency or resource name, as the design writes it.
+	Name  string           `json:"name"`
+	State BuildChangeState `json:"state"`
+}
+
+// BuildChangeKind What the name belongs to, and the group the dialog lists it under. The two dependency kinds carry opposite obligations — an `external` needs a provider and its keys from the user, a `platform-resource` is provisioned by the build — so they are never one group.
+type BuildChangeKind string
+
+// BuildChangeState defines model for BuildChange.State.
+type BuildChangeState string
 
 // BuildInputItem defines model for BuildInputItem.
 type BuildInputItem struct {
@@ -920,13 +1385,24 @@ type BuildLogs struct {
 
 // BuildPreflight defines model for BuildPreflight.
 type BuildPreflight struct {
-	Items []PreflightItem `json:"items"`
+	// Changes What this version changes against the newest one, computed from the diff between that version's tag and HEAD. Empty when specUnchanged, and every row is `new` when the project has no version yet.
+	Changes []BuildChange `json:"changes,omitempty"`
+
+	// CurrentVersion The newest version's tag name, or empty when the project has never been built. Ordered by tag creation time, not by any number in the name.
+	CurrentVersion string          `json:"currentVersion,omitempty"`
+	Items          []PreflightItem `json:"items"`
 
 	// NeedsInput Whether preflight emitted any item at all. Kept as the broad "there is something to show" flag; it does NOT gate Build, because an external dependency's values are collected on the Builds page while the coding agent runs and are enforced at the deploy gate instead.
 	NeedsInput bool `json:"needsInput"`
 
-	// NeedsResolution Whether any emitted item blocks the version cut — a dependency the design itself cannot resolve (ambiguous, unresolved, missing spec, or an org service awaiting access). This is the ONLY flag a client may block Build on.
+	// NeedsResolution Whether any emitted item blocks the version cut — a dependency the design itself cannot resolve (unresolved, missing spec, or an org service awaiting access). This is the ONLY flag a client may block Build on.
 	NeedsResolution bool `json:"needsResolution"`
+
+	// SpecUnchanged Whether the `specs/` tree at HEAD matches the newest version's, so a build reuses that version and reopens its milestone instead of cutting a new one. The client locks the version field and says Rebuild.
+	SpecUnchanged bool `json:"specUnchanged,omitempty"`
+
+	// SuggestedVersion What the version field is prefilled with — `v<count of versions + 1>`, incremented until the name is free. A suggestion only; the user may replace it.
+	SuggestedVersion string `json:"suggestedVersion,omitempty"`
 }
 
 // BuildProgressEvent One SSE frame on the VERSION progress stream, which spans every run that has worked the version. `type` discriminates the payload: `cycle` carries a RunCycleView (client upserts by id), `line` one RunProgressLine, and `done` says why the stream ended (the server then closes it). `cycle` and `line` frames also carry `run` — a version's story spans several executions, so a cycle is only identified once you know which run opened it.
@@ -969,6 +1445,9 @@ type BuildProgressRunKind string
 // BuildRequest defines model for BuildRequest.
 type BuildRequest struct {
 	Inputs []BuildInputItem `json:"inputs,omitempty"`
+
+	// Version The tag name to cut for this version. Empty takes the suggested one. Must be a valid tag name; a name already in use is a 409. Ignored when the spec tree is unchanged, because that build reuses the existing version.
+	Version string `json:"version,omitempty"`
 }
 
 // BuildResponse defines model for BuildResponse.
@@ -988,6 +1467,9 @@ type BuildRunList struct {
 
 // BuildStage Build-stage aggregate on ProjectStatus (#184) — the version the newest milestone run is working, and how that run is doing. Deliberately count-free - the only honest source of a per-version task tally is the version's milestone on GitHub, and this endpoint is polled at 5s. The console renders counts from the list-tasks response it already holds, on the surface that already pays for it.
 type BuildStage struct {
+	// FailureCode Why the build failed, as RunFailure.code, when status is `failed` and the platform recorded a failure — so the overview's track can say what went wrong in the same words as the build page. Empty otherwise.
+	FailureCode string `json:"failureCode,omitempty"`
+
 	// Status idle (never built), running, failed, cancelled, succeeded. `cancelled` is its own value for the same reason it is on BuildSummary — a person abandoning an increment is a different fact from the platform failing to deliver one, and the project badge read "Build failed" over a build somebody had deliberately stopped.
 	Status string `json:"status"`
 
@@ -998,6 +1480,9 @@ type BuildStage struct {
 // BuildSummary One entry of the version ledger — a spec version tag and the state of the newest milestone run that has worked it. A ledger read has no live workflow query, so "started" never occurs here.
 type BuildSummary struct {
 	CompletedAt *time.Time `json:"completedAt,omitempty"`
+
+	// FailureCode The failure class of a failed version, as RunFailure.code, when the platform recorded one (empty otherwise). Finer than `reason` — `plan-failed` says which phase, this says what went wrong in it — and cheap for the ledger, which is built from the run row that holds it.
+	FailureCode string `json:"failureCode,omitempty"`
 
 	// MilestoneNumber The GitHub milestone this version's work lives in — the platform key the tag resolves to, and the handle list-build-runs is read by.
 	MilestoneNumber int64 `json:"milestoneNumber"`
@@ -1024,6 +1509,18 @@ type BuildSummaryWaitingReason string
 type ClientSecretOutputBody struct {
 	ClientSecret string `json:"clientSecret"`
 }
+
+// CodingAgentModel The model an organization's coding runs bill to.
+//
+// Narrower than the list any runtime can serve, and narrow for one reason: the platform stamps a run's cost from a per-model rate table, and that stamp is ALL-OR-NOTHING across a cycle's capture — one model with no rate blanks the cost of the whole cycle, not just its own share. So a model is offered here only once the platform can price it. Adding one is a rate row and a contract change together, never one without the other.
+type CodingAgentModel string
+
+// CodingAgentProjection The runtime and model an organization's coding runs use.
+//
+// ALWAYS present, unlike the credential sections: every org has an effective runtime and model whether or not anyone has ever opened the setting. `updatedAt`/`updatedBy` are null exactly when nobody has — which is what tells "the platform's defaults" apart from "somebody chose the same values".
+//
+// A change applies from the NEXT cycle. Dispatch copies these onto the run it starts, so a run already in flight keeps the runtime and model it was launched with; re-reading the setting mid-run would leave a feed whose model names disagree with the tokens they were billed for.
+type CodingAgentProjection = orgconfig.CodingAgentProjection
 
 // CollabSessionOutputBody defines model for CollabSessionOutputBody.
 type CollabSessionOutputBody struct {
@@ -1232,11 +1729,26 @@ type DeleteOp struct {
 	Path    string `json:"path"`
 }
 
-// Dependency A component's unified, kind-discriminated dependency entry. status/reason are read-time computed by spec.ComputeDependencyStatus — never authored, never persisted (Design.json write-gate rejects them).
+// Dependency A component's unified, kind-discriminated dependency entry. status/reason/flags are read-time computed by spec.ComputeDependencyStatus — never authored, never persisted (Design.json write-gate rejects them). An external dependency's definition (source, provider, style, contract, sdk, package, provenance, suggestions, config, assumed) is HYDRATED from its own file, specs/design/dependencies/<name>/dependency.json — one dependency, one definition, referenced by name from every component that uses it.
 type Dependency = contracts.Dependency
 
-// DependencyCandidate One option in an ambiguous external dependency's resolution set.
-type DependencyCandidate = contracts.DependencyCandidate
+// DependencyAssumption The user's permission to build against a contract the agent wrote from research — who accepted, when, and the agent's note of what it was unsure about.
+type DependencyAssumption = contracts.DependencyAssumption
+
+// DependencyContractBody Exactly one of url (fetched by the platform, SSRF-hardened) or content (the document itself, pasted or uploaded).
+type DependencyContractBody struct {
+	Content string `json:"content,omitempty"`
+	URL     string `json:"url,omitempty"`
+}
+
+// DependencyContractResponse defines model for DependencyContractResponse.
+type DependencyContractResponse struct {
+	// Contract Repo-relative path of the committed contract file.
+	Contract string `json:"contract"`
+}
+
+// DependencyProvenance Where a committed contract came from — the source document, its full-document hash, when it was read, and whether the committed file is a slice of it.
+type DependencyProvenance = contracts.DependencyProvenance
 
 // DependencyStatus defines model for DependencyStatus.
 type DependencyStatus struct {
@@ -1245,6 +1757,9 @@ type DependencyStatus struct {
 	Status     string                       `json:"status"`
 	ValueState ExternalDependencyValueState `json:"valueState,omitempty"`
 }
+
+// DependencySuggestion A service the user might choose for an external dependency, named while no provider is chosen.
+type DependencySuggestion = contracts.DependencySuggestion
 
 // DeployStage Deploy-stage aggregate on ProjectStatus (#184) — what's live in dev and rollout progress.
 type DeployStage struct {
@@ -1427,7 +1942,7 @@ type InputFailure struct {
 	Reason     string `json:"reason"`
 }
 
-// IssueComment One comment on an issue, exactly as GitHub holds it. The platform stores none of this — it is read live on every request, so GitHub stays the only copy. The platform's OWN machine comments are excluded (a resolved-dependency block, a provisioning note, a closing line — written for the agent, not for a person); what remains is the coding agent's progress notes and whatever a human wrote, which appear alike. They cannot be told apart by author, and are not meant to be — the platform comments through the org's own credential and the coding runner is handed that same credential, so both arrive under one login.
+// IssueComment One comment on an issue, exactly as GitHub holds it. The platform stores none of this — it is read live on every request, so GitHub stays the only copy. The platform's notes TO THE AGENT are excluded (a resolved-dependency block, a provisioning note, a closing line — written for a reader that is not a person); what remains is what a human wrote, what an agent said, and what the platform observed of a run. Author cannot separate them and is not meant to — the platform comments through the org's own credential and the coding runner is handed that same credential, so all three arrive under one login. `observed` is what separates a machine's report of a tool call from somebody's judgement about the work.
 type IssueComment struct {
 	// Author The commenter's GitHub login. Empty when the account is gone — GitHub answers a null author for a deleted user, which is a fact about the comment, not a read failure.
 	Author    string    `json:"author"`
@@ -1435,8 +1950,11 @@ type IssueComment struct {
 	CreatedAt time.Time `json:"createdAt"`
 
 	// ID GitHub's own node id — stable across reads, and the list key a consumer should render on.
-	ID  string `json:"id"`
-	URL string `json:"url"`
+	ID string `json:"id"`
+
+	// Observed True when the PLATFORM wrote this line from what it saw the run do, rather than an agent or a person writing it. A validation run's harness, exploration, spec runs and report are reported this way — inferred from tool calls the run had to make, never declared by it — so a reader can tell a mechanical observation from a judgement. Absent means somebody wrote it.
+	Observed bool   `json:"observed,omitempty"`
+	URL      string `json:"url"`
 }
 
 // IssueInfo One issue from list/search. Field names are CAPITALIZED on the wire (historical shape the deployed aep-mcp-server parses — do not "fix" without a coordinated MCP-server release).
@@ -1478,7 +1996,10 @@ type MilestoneRunView struct {
 	// Cycles Oldest first — one record per dispatch.
 	Cycles  []RunCycleView `json:"cycles"`
 	EndedAt *time.Time     `json:"endedAt,omitempty"`
-	ID      string         `json:"id"`
+
+	// Failure The fault this run is failing, or failed, on. Absent when it met none.
+	Failure *RunFailure `json:"failure,omitempty"`
+	ID      string      `json:"id"`
 
 	// Kind What this run DOES, and the value every platform predicate is written on. `dev` delivers a version — it plans its own milestone, and is the only kind that takes the one-active-build-per-project mutex. `task` works a defect inside a version already delivered; task runs execute concurrently on their own milestones. `validation` asks a shipped version's validation criteria again — it has no working set, builds nothing, and is outside the mutex so it never holds up the next build.
 	Kind            MilestoneRunViewKind `json:"kind"`
@@ -1955,6 +2476,11 @@ type RunCycleView struct {
 	// PrURL The pull request's own page on the host, as the webhook reported it — never composed from a repo URL and a number, so a console link either is the host's own or is absent. Empty until a pull request is seen.
 	PrURL string `json:"prUrl,omitempty"`
 
+	// Recording What the platform can serve of this cycle's RunEvent feed — a different question from what the cycle did, and one a client has to ask before it presents a feed as the story of the cycle.
+	// `none` — the platform has no record of this cycle's feed at all: a v1 cycle, or one whose recorder never started. `recording` — one is being written right now, so a reader should expect it to grow. `complete` — the attempt's events were recorded end to end. `gaps` — a record is being served that the platform KNOWS is incomplete, because events were dropped or arrived outside their attempt's sequence. `lost` — the platform had a record and cannot serve it.
+	// The last two exist so a partial feed is never presented as the whole of it, and so "there is nothing to show" (`none`) stays distinguishable from "something was here and is gone" (`lost`) — which are the same empty screen and very different bugs.
+	Recording RunCycleViewRecording `json:"recording,omitempty"`
+
 	// Resolves The milestone agent-work issues this cycle's pull request claims — the merge policy's matched set, which is what the merge closes. Recorded so a cycle's working set survives its issues being closed; empty until a pull request is seen.
 	Resolves []int64 `json:"resolves,omitempty"`
 
@@ -1971,13 +2497,244 @@ type RunCycleViewKind string
 // RunCycleViewMergeVerdict Why this cycle's pull request did NOT merge, when something decided so: `declined` is the auto-merge policy saying the pull request is not this run's work, `refused` is the host declining an open pull request (a conflict — a conflict issue is minted and the next cycle works it). Absent on a cycle whose merge was never decided against, which includes every cycle that merged: a merge is recorded by `mergeSha`, and each fresh decision overwrites this field, so a declined pull request that later merges does not keep the verdict.
 type RunCycleViewMergeVerdict string
 
+// RunCycleViewRecording What the platform can serve of this cycle's RunEvent feed — a different question from what the cycle did, and one a client has to ask before it presents a feed as the story of the cycle.
+// `none` — the platform has no record of this cycle's feed at all: a v1 cycle, or one whose recorder never started. `recording` — one is being written right now, so a reader should expect it to grow. `complete` — the attempt's events were recorded end to end. `gaps` — a record is being served that the platform KNOWS is incomplete, because events were dropped or arrived outside their attempt's sequence. `lost` — the platform had a record and cannot serve it.
+// The last two exist so a partial feed is never presented as the whole of it, and so "there is nothing to show" (`none`) stays distinguishable from "something was here and is gone" (`lost`) — which are the same empty screen and very different bugs.
+type RunCycleViewRecording string
+
 // RunCycleViewValidationVerdict What THIS validation attempt concluded, from the report at its own `mergeSha`. Set on validation cycles only, and only once the attempt settles. The run carries the latest attempt's verdict; this is how a self-healed run shows that an earlier attempt failed.
 type RunCycleViewValidationVerdict string
 
-// RunProgressEvent One SSE frame on the run progress stream. `type` discriminates the payload: `cycle` carries a RunCycleView (client upserts by id and renders one accordion section per cycle), `line` one RunProgressLine attributed to its cycle, and `done` the terminal run state (the server then closes the stream).
+// RunEvent One event on a run's live feed, envelope version 2. It replaces RunProgressLine, which stays for the compatibility window while v1 cycles are still in flight. The difference that matters is attribution: a RunProgressLine is stamped `main` or `subagent`, which cannot describe a run that fans out to a dozen agents at three depths, whereas every RunEvent names the agent that produced it and (for an agent's own lifecycle events) the agent that spawned it. That is what lets a reader rebuild the tree from the feed alone.
+// It is ONE flat object with a `kind` discriminator and optional per-kind fields, NOT a oneOf. Both generators that consume this document handle a flat object cleanly, every consumer already switches on a kind, and RunProgressLine established the shape. Which fields a kind uses is stated on each field, so a reader of the generated type never has to open the design to learn that `phrase` belongs to `agent_progress` and `report` to `agent_settled`.
+// `additionalProperties: false` holds: a producer that invents a field is rejected rather than having it silently dropped on the floor.
+type RunEvent struct {
+	// AgentID Which agent produced this event. `lead` is the session's top-level agent; any other value is the runtime's own stable id for a spawned agent, stable for that agent's whole life, which is what lets a consumer fold many concurrent agents into one row each. Every kind carries it — a tool call, a commit and a heartbeat all belong to somebody.
+	AgentID string `json:"agentId"`
+
+	// Background `agent_started` only: was this agent spawned detached from its parent's turn? Absence is not `false` — it means the runtime did not say, and a consumer must not read silence as either answer.
+	// `true` is the ordinary case for a builder: the platform does NOT constrain the shape of fan-out, the skill does, and it tells a lead to dispatch a whole wave in the background and wait on it. `false` means the parent is blocked inside this agent's call until it returns, which is what lets a reader be shown the lead as *waiting on* a named child rather than idle. (An earlier platform forced every fan-out into the foreground because a backgrounded subagent forwarded none of its messages. That was measured on an older runtime and no longer holds; the forcing is gone.)
+	Background *bool `json:"background,omitempty"`
+
+	// Branch `git_push` and `gh_action`: the branch pushed to, or the branch the workflow run is on.
+	Branch string `json:"branch,omitempty"`
+
+	// Code `notice` only: WHICH condition, as a closed set. Closed on purpose, twice over — a consumer can react to one condition without parsing prose, and no free text (a prompt, a credential, a path) can ride a notice into a user-visible build log. It is also where the WORDING comes from: a surface renders a code's own sentence (`@aep/progress-view` owns those), so the same condition cannot read one way in the console and another in the playground, which is exactly what happened while each producer wrote its own prose.
+	// Nine conditions the RUN can hit. `api_retry` a retryable model failure the runtime is re-attempting; `compaction` the session's context being compacted; `refusal` the model declining to answer; `rate_limit` the provider throttling; `permission_denied` a tool call the harness refused; `terminated` the run being killed from outside; `workspace_guard` a write denied outside the workspace; `gap` the feed itself losing events (which also shows up as RunCycleView.recording `gaps`); `artifact_failed` something the run produced that could not be stored.
+	// Eight more describe the stretch BEFORE the first model turn — the dark zone, which is the slowest part of a run and used to show as a dead "waiting…". Six are the platform's reading of pod truth: `runner_scheduling` no runner has a node yet; `runner_unschedulable` the cluster has no room for one; `runner_pulling_image` the image is being fetched and the container prepared; `runner_image_pull_backoff` that fetch is failing and retrying; `runner_config_error` the container cannot start because its configuration or secrets are wrong; `runner_starting` the container is up and the agent is booting. Two are the runner's own, once it has a process but no session: `workspace_provisioning` it is cloning the repo, mirroring skills and installing credentials; `workspace_ready` that finished and the agent is about to start. They are notices rather than agent events for the same reason throughout: a pod that has not started is not an agent, and there is no session to report a phrase about.
+	Code RunEventCode `json:"code,omitempty"`
+
+	// Command `tool_use`, `tool_result` and the `git_*` kinds: the command line that ran, as the producer scrubbed it. The producer is the only layer that can scrub it — by the time it reaches a consumer it is already on a user-visible feed — so a producer that cannot redact a command omits this rather than sending it.
+	Command string `json:"command,omitempty"`
+
+	// Depth `agent_started`, `agent_progress` and `agent_settled`: how far from the lead this agent sits. 1 is spawned by the lead itself. Absent on the lead's own events. Recorded rather than derived because a consumer that joined the stream late never saw the parents, and it is what lets a console indent a tree it did not watch being built.
+	Depth int `json:"depth,omitempty"`
+
+	// Detail `notice` only: the human-readable half, capped and scrubbed. `code` is what a consumer branches on and what the reader's SENTENCE is looked up from; this is the specifics that sentence cannot carry — the scheduler's own explanation of why there is no room, the error the retry is retrying. Absent when the condition has nothing to add beyond its code. A notice carrying detail and NO code is the one case where the prose stands alone: a scrubbed line the run itself printed, which no closed set could name.
+	Detail string `json:"detail,omitempty"`
+
+	// DurationMs `agent_settled` (the agent's whole life) and `tool_result` (that one call), measured by the producer between the start and the outcome — so a tool's number includes model turnaround, not just execution.
+	DurationMs int64 `json:"durationMs,omitempty"`
+
+	// ElapsedMs `heartbeat` only: how long the run has already been waiting on `ref`. Sent as an elapsed time rather than a start timestamp because a consumer that joined the stream late has nothing to subtract from.
+	ElapsedMs int64 `json:"elapsedMs,omitempty"`
+
+	// Error `turn_ended` and `run_settled`: why it failed, in the producer's own words, capped and scrubbed. Absent on a `success` outcome, and absent on `cancelled` — nothing failed there, so a message would invent one.
+	Error string `json:"error,omitempty"`
+
+	// ExitCode `tool_result` only: the process status of a shell call. A pointer, because a tool that is not a shell reports no code at all — read absence as "no code was reported", never as "exited 0".
+	ExitCode *int `json:"exitCode,omitempty"`
+
+	// Files `git_commit` only: how many files the commit touched.
+	Files int `json:"files,omitempty"`
+
+	// ItemID `work_item` only: WHICH named unit of work this event is about — the key a consumer folds on, since one item's status changes several times over a run and a reader wants one row repainted rather than five rows printed. A criterion id ("AC-003-a") when `source` is `criterion`, the runtime's own task id when it is `plan`.
+	ItemID string `json:"itemId,omitempty"`
+
+	// ItemStatus `work_item` only: where that item now stands. The enum is the union of both sources and `source` says which half applies. `planned | exploring | authoring | running | healing | pass | fail` is a validation criterion moving through the method in ADR-0009; `pending | in_progress | completed | deleted` is an entry of an agent's own plan, in the vocabulary the runtime's task-list tool uses. They are not interchangeable: `completed` says a plan entry was ticked off, `pass` says a criterion was asserted and held.
+	ItemStatus RunEventItemStatus `json:"itemStatus,omitempty"`
+
+	// Kind What this event reports; it decides which of the optional fields above are meaningful. Wrapped in a single-member `allOf` rather than written as a bare `$ref` because OpenAPI 3.0 discards a `$ref`'s siblings, and a property with no description at all reaches the generated types as an unexplained field.
+	Kind RunEventKind `json:"kind"`
+
+	// Label `agent_started`, `agent_progress` and `agent_settled`: the description the parent gave this agent when it spawned it ("Implement todo-api service (issue #3)"). It is the only human name an agent has — `agentId` is the runtime's opaque handle — so a console with no label has nothing to title the row with. Absent when the parent gave none.
+	Label string `json:"label,omitempty"`
+
+	// Level `notice` only: how loudly to render it. `error` is a notice about something that has already gone wrong, `warn` about something that may, `info` about something that merely happened (a compaction). It says nothing about the run's fate — that is `run_settled`'s `outcome`, and a run can end successfully having emitted several `error` notices.
+	Level RunEventLevel `json:"level,omitempty"`
+
+	// LinesAdded `agent_settled` only: lines added by that agent's work, off the runtime's own report on the agent's result. Present only there — nothing else on this feed can reconstruct it, because a spawned agent's individual edits need not reach the feed at all.
+	LinesAdded int `json:"linesAdded,omitempty"`
+
+	// LinesRemoved `agent_settled` only: lines removed by that agent's work, from the same report as `linesAdded`.
+	LinesRemoved int `json:"linesRemoved,omitempty"`
+
+	// Model `run_started`: the model the lead runs on. `agent_started`: repeated ONLY when this agent runs on a different model from the lead's, so absence there means "the same as the run's" rather than "unknown".
+	Model string `json:"model,omitempty"`
+
+	// Ok `tool_result`, the `git_*` kinds and `gh_action`: did it succeed? A pointer, because absence means the producer did not say — read it as unknown, never as success.
+	Ok *bool `json:"ok,omitempty"`
+
+	// Outcome `turn_ended` and `run_settled`: how it ended. `cancelled` is deliberately not a `failure`: the work was taken away rather than going wrong, and a run someone stopped on purpose must not be reported as broken.
+	Outcome RunEventOutcome `json:"outcome,omitempty"`
+
+	// OutputBytes `task_settled` only: how much the backgrounded command wrote. The output itself is never on the feed — it can be a build log of any size — so this is what tells a reader whether there is anything worth going to fetch.
+	OutputBytes int64 `json:"outputBytes,omitempty"`
+
+	// OwnerAgentID `work_item` with `source: plan` only: which agent owns the plan entry. Absent means the lead owns it, which is the common case; a plan item the lead handed to a spawned agent names that agent here.
+	OwnerAgentID string `json:"ownerAgentId,omitempty"`
+
+	// ParentAgentID `agent_started`, `agent_progress` and `agent_settled`: the agent that spawned this one. Absent on a depth-1 agent, whose parent is the lead by definition, and on the lead's own events — so absence means "the lead", not "unknown".
+	ParentAgentID string `json:"parentAgentId,omitempty"`
+
+	// Phrase `agent_progress` only: what the agent says it is doing right now, in its own words, capped and scrubbed. It is a state, not a log line — a new phrase REPLACES the previous one on that agent's row rather than appending, which is the whole reason the kind exists separately from `notice`.
+	Phrase string `json:"phrase,omitempty"`
+
+	// Ref `heartbeat` only: WHAT is being waited on — the `toolUseId` when `waitingOn` is `tool`, the `agentId` when it is `agent`. Absent when `waitingOn` is `model`, because the wait is then the emitting agent's own turn and `agentId` already names it.
+	Ref string `json:"ref,omitempty"`
+
+	// Report `agent_settled` only: the agent's closing summary of what it did, capped and scrubbed. Treat it as the only copy — a spawned agent's transcript does not reach this feed and dies with the pod — so an agent that settles without one leaves a reader nothing but counters.
+	Report string `json:"report,omitempty"`
+
+	// Role `agent_started`: what KIND of agent this is, in the runtime's own vocabulary (`subagent_type` under claude-code, the agent name under opencode). Distinct from `label`: `role` is the reusable definition somebody configured, `label` is this one instance's job.
+	Role string `json:"role,omitempty"`
+
+	// Runtime `run_started` only: which coding runtime executed this attempt. Recorded on the event rather than looked up from the run, because a feed is read back long after the org's runtime setting may have moved on, and the two runtimes emit different agent ids, model names and tool names — a reader that guesses wrong misreads all three.
+	Runtime RunEventRuntime `json:"runtime,omitempty"`
+
+	// Seq Position of this event within its attempt, monotonic from the attempt's first event. This is what the recorder dedupes on: a producer that retries a flush, or a client that reconnects and replays, sends the same `seq` again and the second write is a no-op. It is NOT unique across a cycle — a re-dispatch starts a new attempt at the beginning — so anything that orders or dedupes needs RunProgressEvent.attempt alongside it.
+	Seq int64 `json:"seq"`
+
+	// Sha `git_commit` and `git_push`: the commit.
+	Sha string `json:"sha,omitempty"`
+
+	// Source `work_item` only: which kind of thing the item is. `criterion` is a validation criterion the platform put in front of the run; `plan` is an entry of an agent's own plan, from the runtime's task-list tool. One kind serves both because both are "a named thing whose status changes over the run", which is what a console folds on — but only `plan` items carry `title` and `ownerAgentId`.
+	Source RunEventSource `json:"source,omitempty"`
+
+	// Status `agent_settled` and `task_settled` only: how the agent, or the backgrounded task it owned, ended. See AgentStatus — in particular that `stopped` is a cancellation and not a failure.
+	Status AgentStatus `json:"status,omitempty"`
+
+	// Summary `tool_use`, `tool_result`, the `git_*` kinds, `gh_action`, `task_started` and `task_settled`: one line describing the call, composed by the producer for a reader — a file path, a search term, a workflow name. Capped, and never the raw arguments, which is what keeps a feed readable when an agent passes a whole file as a parameter.
+	// A `task_settled` carries the SAME summary its `task_started` did. Without it the only thing left to name a finished background command is its `taskId`, and a row reading `background bql1cn6sh · failed` cannot be matched by eye to the command that failed.
+	Summary string `json:"summary,omitempty"`
+
+	// TaskID `task_started` and `task_settled`: the backgrounded command's id, which is what pairs the two. Distinct from `toolUseId` on purpose — the tool call that STARTS a background task settles immediately while the task runs on, so `toolUseId` cannot join a task's start to its end.
+	TaskID string `json:"taskId,omitempty"`
+
+	// TaskKind `run_started` only: what this run was dispatched to do — write code (`implementation`) or verify an already-deployed system (`validation`). The two emit different work items and reach for different skills, so a reader holding nothing but the feed still needs to be able to tell them apart.
+	TaskKind RunEventTaskKind `json:"taskKind,omitempty"`
+
+	// Title `work_item` with `source: plan` only: the plan entry's own text. A criterion carries no title here — its `itemId` resolves against the criteria the platform already holds, and repeating the text would let the two copies drift.
+	Title string `json:"title,omitempty"`
+
+	// Tokens `agent_settled` only: total tokens that agent's work consumed, for the row's badge. The priced, per-model breakdown of a whole turn is `usage` on `turn_ended`; this is a single number about one agent, and the two are not summable into each other.
+	Tokens int64 `json:"tokens,omitempty"`
+
+	// Tool `tool_use` and `tool_result`: the tool's name as the runtime calls it ("Bash", "Edit", "Agent"). Deliberately NOT normalised across runtimes — their tool sets differ, and a normalised name would hide which tool actually ran.
+	Tool string `json:"tool,omitempty"`
+
+	// ToolCount `agent_settled` only: how many tool calls that agent made, from the runtime's report on it. A spawned agent's individual calls need not reach this feed, so this is often the only measure of how much work it did.
+	ToolCount int `json:"toolCount,omitempty"`
+
+	// ToolUseID The tool call this event is about, and the join key of the whole feed: a `tool_result` carries the id of the `tool_use` it answers, and `git_commit`, `git_push` and `gh_action` carry the id of the shell call that caused them.
+	// `task_started` and `task_settled` carry it too, where the runtime named the call that launched the task. That is what lets a surface draw ONE row for a backgrounded command — the action, marked background, later gaining its outcome — instead of an action row and an unattached settle row repeating the same command line. `taskId` still joins a task's start to its end; this joins both of them to the call that started it, which `taskId` cannot do.
+	// Absent on every other kind, and absent on a task whose launching call the runtime did not name.
+	ToolUseID string `json:"toolUseId,omitempty"`
+
+	// TS When the producer emitted the event, from the producer's own clock. Ordering within an attempt is `seq`'s job, not this field's — two events can share a timestamp, and a producer's clock is not the platform's.
+	TS time.Time `json:"ts"`
+
+	// Usage `turn_ended` and `run_settled`: the token usage of what just settled, with its per-model split. See TurnUsage for the two facts a reader gets wrong otherwise — `model: ""` is a mixed-model aggregate rather than an unknown one, and the figure is CUMULATIVE across the session's turns, so `turn_ended`'s number must never be summed and `run_settled` carries the last of them. The tokens and the models are the persisted truth; the cost is stamped at capture time. An explicit pointer under this contract's prefer-skip-optional-pointer default, because a value type would put a zero usage on EVERY event and "the producer reported no usage" has to stay distinguishable from "this turn cost nothing".
+	Usage *TurnUsage `json:"usage,omitempty"`
+
+	// V Envelope version, always 2. It is what lets a reader tell a v2 event from the v1 RunProgressLine records that share the store during the compatibility window, and it is the field a future incompatible change bumps — rather than that change being smuggled in as a new meaning for an existing field, which is what makes a stored feed unreadable years later.
+	V RunEventV `json:"v"`
+
+	// WaitingOn `heartbeat` only: what the run is blocked on while it emits nothing else — a `tool` still executing, the `model` still producing a turn, or a spawned `agent` still running. The kind exists because bare silence is indistinguishable from a stall; this field is what makes the silence explainable.
+	WaitingOn RunEventWaitingOn `json:"waitingOn,omitempty"`
+}
+
+// RunEventCode `notice` only: WHICH condition, as a closed set. Closed on purpose, twice over — a consumer can react to one condition without parsing prose, and no free text (a prompt, a credential, a path) can ride a notice into a user-visible build log. It is also where the WORDING comes from: a surface renders a code's own sentence (`@aep/progress-view` owns those), so the same condition cannot read one way in the console and another in the playground, which is exactly what happened while each producer wrote its own prose.
+// Nine conditions the RUN can hit. `api_retry` a retryable model failure the runtime is re-attempting; `compaction` the session's context being compacted; `refusal` the model declining to answer; `rate_limit` the provider throttling; `permission_denied` a tool call the harness refused; `terminated` the run being killed from outside; `workspace_guard` a write denied outside the workspace; `gap` the feed itself losing events (which also shows up as RunCycleView.recording `gaps`); `artifact_failed` something the run produced that could not be stored.
+// Eight more describe the stretch BEFORE the first model turn — the dark zone, which is the slowest part of a run and used to show as a dead "waiting…". Six are the platform's reading of pod truth: `runner_scheduling` no runner has a node yet; `runner_unschedulable` the cluster has no room for one; `runner_pulling_image` the image is being fetched and the container prepared; `runner_image_pull_backoff` that fetch is failing and retrying; `runner_config_error` the container cannot start because its configuration or secrets are wrong; `runner_starting` the container is up and the agent is booting. Two are the runner's own, once it has a process but no session: `workspace_provisioning` it is cloning the repo, mirroring skills and installing credentials; `workspace_ready` that finished and the agent is about to start. They are notices rather than agent events for the same reason throughout: a pod that has not started is not an agent, and there is no session to report a phrase about.
+type RunEventCode string
+
+// RunEventItemStatus `work_item` only: where that item now stands. The enum is the union of both sources and `source` says which half applies. `planned | exploring | authoring | running | healing | pass | fail` is a validation criterion moving through the method in ADR-0009; `pending | in_progress | completed | deleted` is an entry of an agent's own plan, in the vocabulary the runtime's task-list tool uses. They are not interchangeable: `completed` says a plan entry was ticked off, `pass` says a criterion was asserted and held.
+type RunEventItemStatus string
+
+// RunEventLevel `notice` only: how loudly to render it. `error` is a notice about something that has already gone wrong, `warn` about something that may, `info` about something that merely happened (a compaction). It says nothing about the run's fate — that is `run_settled`'s `outcome`, and a run can end successfully having emitted several `error` notices.
+type RunEventLevel string
+
+// RunEventOutcome `turn_ended` and `run_settled`: how it ended. `cancelled` is deliberately not a `failure`: the work was taken away rather than going wrong, and a run someone stopped on purpose must not be reported as broken.
+type RunEventOutcome string
+
+// RunEventRuntime `run_started` only: which coding runtime executed this attempt. Recorded on the event rather than looked up from the run, because a feed is read back long after the org's runtime setting may have moved on, and the two runtimes emit different agent ids, model names and tool names — a reader that guesses wrong misreads all three.
+type RunEventRuntime string
+
+// RunEventSource `work_item` only: which kind of thing the item is. `criterion` is a validation criterion the platform put in front of the run; `plan` is an entry of an agent's own plan, from the runtime's task-list tool. One kind serves both because both are "a named thing whose status changes over the run", which is what a console folds on — but only `plan` items carry `title` and `ownerAgentId`.
+type RunEventSource string
+
+// RunEventTaskKind `run_started` only: what this run was dispatched to do — write code (`implementation`) or verify an already-deployed system (`validation`). The two emit different work items and reach for different skills, so a reader holding nothing but the feed still needs to be able to tell them apart.
+type RunEventTaskKind string
+
+// RunEventV Envelope version, always 2. It is what lets a reader tell a v2 event from the v1 RunProgressLine records that share the store during the compatibility window, and it is the field a future incompatible change bumps — rather than that change being smuggled in as a new meaning for an existing field, which is what makes a stored feed unreadable years later.
+type RunEventV int
+
+// RunEventWaitingOn `heartbeat` only: what the run is blocked on while it emits nothing else — a `tool` still executing, the `model` still producing a turn, or a spawned `agent` still running. The kind exists because bare silence is indistinguishable from a stall; this field is what makes the silence explainable.
+type RunEventWaitingOn string
+
+// RunEventKind What a RunEvent reports. It selects which of the event's optional fields are meaningful, and each of those fields names the kinds it belongs to.
+// `run_started` opens an attempt and states its runtime, model and task kind. `agent_started`, `agent_progress` and `agent_settled` are one agent's life — the lead's or a spawned one's — carrying its label, role, depth and parent, then its live phrase, then its status, report and counters. `tool_use` and `tool_result` pair a call with its outcome through `toolUseId`. `task_started` and `task_settled` are a backgrounded shell command, which outlives the tool call that started it and so needs its own `taskId`. `git_commit`, `git_push` and `gh_action` are the run's effects on the repository and its host. `work_item` is a named unit of work whose status changed — a validation criterion, or an entry of an agent's own plan. `heartbeat` says the run is alive and what it is waiting on, so silence is never ambiguous. `notice` is an out-of-band condition (a retry, a refusal, a denied write) under a closed `code`. `turn_ended` closes one model turn with its outcome and usage, and `run_settled` closes the attempt.
+type RunEventKind string
+
+// RunFailure The platform's own record of why a run is failing — the facts that used to survive only as one aep-api log line once the run settled. Present on a run that has met a fault: while the run is still non-terminal it is the fault being RETRIED (read `attempts` against `maxAttempts`); on a failed run it is the terminal fault `terminalReason` names. Absent on a run that met none, on a cancelled run (a person stopping an increment is not a fault), and on every run failed before this record existed — a consumer renders the terminal reason alone and says the platform recorded no further details. `code` is a closed set and the console owns each code's sentence, the rule RunEvent.notice established; `detail` is the platform's recorded error text — never model output or a request body — scrubbed and capped by the producer, for a reader who wants the platform's exact words.
+type RunFailure struct {
+	// Attempts Attempts that have hit this fault so far.
+	Attempts int64 `json:"attempts"`
+
+	// Code Which failure class. `dependency-unprovisionable` a dependency the platform cannot author however often it tries (a schema the ResourceType builder refuses, a ClusterResourceType nobody installed, a Resource that never cuts a release) — the design has to change; `dependency-provision-failed` provisioning failed for a reason the platform could not call permanent, and the bounded retry is being or has been spent; `plan-turn-failed` the planning turn errored (an LLM or transport error, retried); `repository-unavailable` the run's repository, issue or credential is gone.
+	Code string `json:"code"`
+
+	// Component The component that declared the failing dependency, when the fault has one.
+	Component string `json:"component,omitempty"`
+
+	// Dependency The dependency the platform could not provision, when the fault has one.
+	Dependency string `json:"dependency,omitempty"`
+
+	// Detail The platform's recorded error text, scrubbed and capped at the producer.
+	Detail  string    `json:"detail,omitempty"`
+	FirstAt time.Time `json:"firstAt"`
+	LastAt  time.Time `json:"lastAt"`
+
+	// MaxAttempts The activity's retry bound; 0 when unbounded.
+	MaxAttempts int64 `json:"maxAttempts"`
+
+	// Permanent Repeating cannot change the answer. The producer's own classification — the one that also decided the retry policy — so "retrying cannot fix this" and the single attempt it took are two readings of one fact.
+	Permanent bool `json:"permanent"`
+
+	// Phase The run phase the fault was met in.
+	Phase string `json:"phase"`
+
+	// WorkflowID The run's workflow id — the handle an operator reads history by. Derived at read time, never stored.
+	WorkflowID string `json:"workflowId,omitempty"`
+}
+
+// RunProgressEvent One SSE frame on the run progress stream. `type` discriminates the payload: `cycle` carries a RunCycleView (the client upserts by id and renders one accordion section per cycle), `event` one RunEvent — the v2 feed — stamped with the cycle and attempt that produced it, `line` one RunProgressLine attributed to its own cycle, and `done` the terminal run state, after which the server closes the stream.
+// `event` and `line` are the same feed in two envelope versions and a single stream can carry both: a run whose earlier cycles were dispatched before the v2 cutover replays them as `line` frames and its later ones as `event` frames. A consumer must therefore handle whichever it is given rather than choosing one, for as long as the compatibility window lasts.
 type RunProgressEvent struct {
+	// Attempt Which dispatch of `cycleId` produced the frame's `event`. Stamped by aep-api on `event` frames. RunEvent.seq is monotonic only WITHIN one attempt — a re-dispatch starts again at the beginning — so anything that orders or dedupes events needs this alongside it.
+	Attempt int `json:"attempt,omitempty"`
+
 	// Cycle One dispatch within a run. Branch, pull request (number and URL) and merge SHA are LEARNED FROM WEBHOOKS — the agent derives its own branch identity — so they stay empty on a cycle whose agent died before opening a pull request.
 	Cycle RunCycleView `json:"cycle,omitempty"`
+
+	// CycleID Which cycle produced the frame's `event`. Stamped by aep-api as it relays, because a runner knows what it is doing but not which cycle of which run it turned out to be. Present on `event` frames only — a `line` frame carries its own cycle attribution inside RunProgressLine.
+	CycleID string `json:"cycleId,omitempty"`
+
+	// Event One event on a run's live feed, envelope version 2. It replaces RunProgressLine, which stays for the compatibility window while v1 cycles are still in flight. The difference that matters is attribution: a RunProgressLine is stamped `main` or `subagent`, which cannot describe a run that fans out to a dozen agents at three depths, whereas every RunEvent names the agent that produced it and (for an agent's own lifecycle events) the agent that spawned it. That is what lets a reader rebuild the tree from the feed alone.
+	// It is ONE flat object with a `kind` discriminator and optional per-kind fields, NOT a oneOf. Both generators that consume this document handle a flat object cleanly, every consumer already switches on a kind, and RunProgressLine established the shape. Which fields a kind uses is stated on each field, so a reader of the generated type never has to open the design to learn that `phrase` belongs to `agent_progress` and `report` to `agent_settled`.
+	// `additionalProperties: false` holds: a producer that invents a field is rejected rather than having it silently dropped on the floor.
+	Event RunEvent `json:"event,omitempty"`
 
 	// Line One line of a cycle's agent log: the runner's progress envelope (phase | tool_use | activity | tool_result | git_commit | git_push | gh_action | log | progress_item | result) plus the attribution the console groups on — which cycle produced it, and whether the main agent or one of its Task subagents did.
 	Line RunProgressLine `json:"line,omitempty"`
@@ -2202,7 +2959,7 @@ type TagList struct {
 	// SpecDirty True when specs/ changed after latest was tagged.
 	SpecDirty bool `json:"specDirty,omitempty"`
 
-	// Tags Spec version tags (v<N>), newest first.
+	// Tags Spec version tags, newest first. A version carries the name the user gave it at build time (`v<N>` when they kept the suggestion), and "newest" is the tags' creation order, not any number in the name.
 	Tags []string `json:"tags"`
 }
 
@@ -2502,6 +3259,25 @@ type TurnStatus struct {
 	UseCase   string    `json:"useCase"`
 }
 
+// TurnUsage The token usage RunEvent carries: the folded aggregate every reader already consumes, plus the per-model split the platform prices against its rate table. It is Usage with one field added, rather than Usage itself, because `models` is meaningful only on a producer's own report of what it just spent — the project and cycle roll-ups that Usage serves sum already-stamped rows and have nothing to break down.
+// The split is not a nicety. Cost is stamped per model, from that model's own rate row, so an aggregate whose `model` is "" (see below) cannot be priced at all — and a real coding run regularly touches a second model, both because the runtime reaches for small-model helpers of its own and because a lead is expected to pick the model for the job. Without `models` those runs are simply unpriceable, which is the defect this schema exists to close (#291).
+// TWO facts a consumer will otherwise get wrong. First, `model: ""` means a MIXED-MODEL aggregate, never "unknown" — the producer folded several models into one total and refuses to name one of them as the run's; `models` is where the answer is. Second, the runtime reports usage CUMULATIVELY across a session, so `turn_ended.usage` is the run's total AS OF that turn rather than that turn's own spend: summing several of them multiplies the bill. `run_settled` carries the last and largest one, and that is the figure to price. (Measured: a two-turn session reports 20 input tokens on its first result and 48 — 20 + 28 — on its second.)
+type TurnUsage struct {
+	CacheCreationTokens int64 `json:"cacheCreationTokens"`
+	CacheReadTokens     int64 `json:"cacheReadTokens"`
+
+	// CostUsd Write-time-stamped USD, and null from a producer: the platform stamps cost at capture from the rates then in force (ADR-0011 as amended), and a runner that priced its own run would be a second answer to what the run cost.
+	CostUsd     *float64 `json:"costUsd"`
+	InputTokens int64    `json:"inputTokens"`
+
+	// Model Model id the work ran on; "" on a mixed-model aggregate — see this schema's description, and read `models` for the breakdown.
+	Model string `json:"model"`
+
+	// Models One entry per model that actually spent tokens, each with its own `model` id, so the platform can price each slice against that model's rate row. Entries carry canonical model ids — two dated releases of one model are ONE entry, since they share a rate. Absent or empty from a producer that predates the split, and the reader then falls back to pricing the aggregate by its single `model`. Its tokens sum to the aggregate above; it is a breakdown, not extra spend.
+	Models       []Usage `json:"models,omitempty"`
+	OutputTokens int64   `json:"outputTokens"`
+}
+
 // UpdateConfigBody defines model for UpdateConfigBody.
 type UpdateConfigBody struct {
 	EnvVars []EnvVar `json:"envVars"`
@@ -2782,6 +3558,12 @@ type ProvisionPlatformResourceJSONRequestBody = ProvisionBody
 
 // CollectExternalResourceValuesJSONRequestBody defines body for CollectExternalResourceValues for application/json ContentType.
 type CollectExternalResourceValuesJSONRequestBody = SaveValuesBody
+
+// AcceptDependencyAssumptionJSONRequestBody defines body for AcceptDependencyAssumption for application/json ContentType.
+type AcceptDependencyAssumptionJSONRequestBody = AcceptAssumptionBody
+
+// ProvideDependencyContractJSONRequestBody defines body for ProvideDependencyContract for application/json ContentType.
+type ProvideDependencyContractJSONRequestBody = DependencyContractBody
 
 // ApplyFilesJSONRequestBody defines body for ApplyFiles for application/json ContentType.
 type ApplyFilesJSONRequestBody = ApplyRequest

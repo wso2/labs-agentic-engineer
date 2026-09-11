@@ -32,8 +32,9 @@ import {
 import { X } from "@wso2/oxygen-ui-icons-react";
 import { StatusChip } from "../../../components/StatusChip";
 import type { components } from "../../../generated/aep-api";
-import { useCancelRun, useCycleBuilds } from "../api/queries";
+import { useCancelRun } from "../api/queries";
 import { useRunProgress } from "../hooks/useRunProgress";
+import { useSessionStages } from "../hooks/useSessionStages";
 import { buildGlance } from "../lib/runGlance";
 import {
   buildCycles,
@@ -46,7 +47,7 @@ import {
   terminalReasonText,
 } from "../lib/runView";
 import { provisioningStage } from "../lib/provisioning";
-import { sessionIssues, sessionStages } from "../lib/sessionSpine";
+import { sessionIssues } from "../lib/sessionSpine";
 import { runDuration, runStamp } from "../lib/format";
 import { ProvisioningGates } from "./ProvisioningGates";
 import { RunDelivered } from "./RunDelivered";
@@ -182,22 +183,15 @@ export function RunStory({
   const [logRequested, setLogRequested] = useState(false);
   const showLog = !terminal || logRequested;
   const progress = useRunProgress(projectName, run.id, showLog);
-  const { data: builds } = useCycleBuilds(
-    projectName,
-    tag,
-    current?.id ?? "",
-    Boolean(current?.mergeSha),
-  );
-
-  const stages = current ? sessionStages({ cycle: current, work, builds }) : [];
+  const stages = useSessionStages(projectName, tag, current, work);
   // Numbered WITHIN the strip, not across the run. The rail this replaced
   // counted straight through every session (…6, 7, 8) because all of them were
   // on screen at once; the strip shows one session, so run-wide numbering read
   // as "step 7 of 5". Which session it is comes from the label above instead.
   const glance = buildGlance(stages);
   const issues = current ? sessionIssues(current, work) : undefined;
-  const lines = current
-    ? (progress.cycles.find((c) => c.cycle.id === current.id)?.lines ?? [])
+  const events = current
+    ? (progress.cycles.find((c) => c.cycle.id === current.id)?.events ?? [])
     : [];
 
   // Is there anything below the header worth ruling off? The strip and NOW when
@@ -376,7 +370,7 @@ export function RunStory({
                     {...(issues?.caption
                       ? { issuesCaption: issues.caption }
                       : {})}
-                    lines={lines}
+                    events={events}
                     logPhase={progress.phase}
                     showLog={showLog}
                     onOpenLog={() => setLogRequested(true)}

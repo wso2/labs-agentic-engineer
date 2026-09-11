@@ -22,8 +22,19 @@ import { client } from "../../../api/client";
 import type { components } from "../../../generated/aep-api";
 
 type RunProgressEvent = components["schemas"]["RunProgressEvent"];
-type RunProgressLine = components["schemas"]["RunProgressLine"];
+type RunEvent = components["schemas"]["RunEvent"];
 type RunCycleView = components["schemas"]["RunCycleView"];
+
+/**
+ * One v2 event as this hook holds it: the frame's stamps folded onto the event.
+ *
+ * `cycleId` and `attempt` live on the SSE FRAME, not on the RunEvent — a runner
+ * knows what it is doing but not which cycle of which run it turned out to be,
+ * so aep-api stamps them as it relays. Folding them on is what lets everything
+ * downstream (the dedup key, the list key, the per-cycle grouping) work on one
+ * value instead of carrying a pair around.
+ */
+export type StampedRunEvent = RunEvent & { cycleId: string; attempt: number };
 
 /**
  * Where the stream is.
@@ -40,10 +51,10 @@ export type RunProgressPhase =
   | "reconnecting"
   | "ended";
 
-/** One cycle's section of the feed: the cycle record plus its own lines. */
+/** One cycle's section of the feed: the cycle record plus its own events. */
 export interface RunProgressCycle {
   cycle: RunCycleView;
-  lines: RunProgressLine[];
+  events: StampedRunEvent[];
 }
 
 export interface RunProgressState {
@@ -57,15 +68,20 @@ export interface RunProgressState {
 const RECONNECT_DELAY_MS = 3_000;
 
 /**
- * Identity of one progress line — the replay-dedup key and the list key.
- * The server stamps a per-run sequence, but a line whose seq is 0 (unstructured
- * runner stdout the BFF wrapped) would collide across a cycle, so those fall
- * back to their timestamp plus text, which is per-line unique and identical
- * across reconnect replays of the same line.
+ * Identity of one event — the replay-dedup key and the list key.
+ *
+ * All three parts are load-bearing. `seq` is monotonic only WITHIN one attempt
+ * and starts again at 0 when a cycle is re-dispatched, so `attempt` is what
+ * keeps a re-dispatch's first event from erasing the original's; `cycleId`
+ * separates the cycles sharing this one stream. A producer that retries a flush,
+ * or a reconnect that replays from the start, sends the same triple again and
+ * the second write is a no-op — which is what makes replay idempotent.
+ *
+ * Unlike v1 there is no fallback arm: `seq` is required of every RunEvent, and 0
+ * is a legitimate first event rather than the "unsequenced" marker it was.
  */
-export function runLineKey(line: RunProgressLine): string {
-  if (line.seq) return `${line.cycleId}:${line.seq}`;
-  return `${line.cycleId}:0:${line.ts ?? ""}:${line.summary ?? line.error ?? ""}`;
+export function runEventKey(e: StampedRunEvent): string {
+  return `${e.cycleId}:${String(e.attempt)}:${String(e.seq)}`;
 }
 
 async function openRunStream(
@@ -90,11 +106,17 @@ async function openRunStream(
  *
  * The wire format is the platform's standard agent SSE (`data:` JSON frames,
  * keep-alive comments, `[DONE]` sentinel), so this reuses agent-stream's parser
- * exactly as useTaskLog does; the frames here are RunProgressEvents. ONLY a
- * terminal run settles the stream, so `ended` is a fact about the run, not
- * about the connection — a live run's stream simply stays open, and an EOF
- * without `[DONE]` is a dropped connection to reattach (idempotent by
- * contract: cycles upsert by id, lines dedup by key).
+ * exactly as useTaskLog does; the frames here are RunProgressEvents carrying v2
+ * RunEvents. ONLY a terminal run settles the stream, so `ended` is a fact about
+ * the run, not about the connection — a live run's stream simply stays open, and
+ * an EOF without `[DONE]` is a dropped connection to reattach (idempotent by
+ * contract: cycles upsert by id, events dedup by key).
+ *
+ * v1 `line` frames are NOT consumed. The contract keeps them for the
+ * compatibility window and a single stream can carry both, but a v1 line has no
+ * agent ids at all — aep-api lifts the ones it holds into v2 server-side and
+ * marks the agents it deduced `role: "inferred"`, so one envelope reaches here
+ * and the console never has to render two.
  *
  * Passing no runId keeps the hook inert — no stream is opened. That is how the
  * feed stays closed until the user opens it.
@@ -128,43 +150,40 @@ export function useRunProgress(
     const controller = new AbortController();
     let disposed = false;
 
+    // Events whose cycle frame has not arrived yet, by cycle id.
+    //
+    // An `event` frame carries its cycle's ID and nothing else about it — not
+    // its kind, not when it started — so an event that outruns its cycle frame
+    // cannot open a section of its own without INVENTING a kind, which is the
+    // chip the reader sees. Held instead, and flushed the moment the real record
+    // lands: nothing is lost and nothing is made up. The server sends the cycle
+    // frame first, so this is a reconnect-ordering guard, not the normal path.
+    const orphans = new Map<string, StampedRunEvent[]>();
+
     const upsertCycle = (cycle: RunCycleView) =>
       setCycles((prev) => {
+        const held = orphans.get(cycle.id) ?? [];
+        orphans.delete(cycle.id);
         const i = prev.findIndex((c) => c.cycle.id === cycle.id);
-        if (i === -1) return [...prev, { cycle, lines: [] }];
+        if (i === -1) return [...prev, { cycle, events: held }];
         const next = prev.slice();
-        // Keep the accumulated lines: a re-emitted cycle record is fresher
+        // Keep the accumulated events: a re-emitted cycle record is fresher
         // metadata (branch, PR, merge SHA learned from webhooks), not a reset.
-        next[i] = { cycle, lines: prev[i]?.lines ?? [] };
+        next[i] = { cycle, events: [...(prev[i]?.events ?? []), ...held] };
         return next;
       });
 
-    const appendLine = (line: RunProgressLine) =>
+    const appendEvent = (event: StampedRunEvent) =>
       setCycles((prev) => {
-        const i = prev.findIndex((c) => c.cycle.id === line.cycleId);
+        const i = prev.findIndex((c) => c.cycle.id === event.cycleId);
         if (i === -1) {
-          // A line can outrun its cycle frame on a reconnect; the line carries
-          // enough attribution to open the section itself.
-          return [
-            ...prev,
-            {
-              cycle: {
-                id: line.cycleId,
-                // The line's attribution is the same vocabulary as the cycle
-                // record's; the contract types one as an enum and the other as
-                // free text, so this narrows what is already the same value.
-                kind: line.cycleKind as RunCycleView["kind"],
-                attempts: 0,
-                createdAt: line.ts ?? "",
-              },
-              lines: [line],
-            },
-          ];
+          orphans.set(event.cycleId, [...(orphans.get(event.cycleId) ?? []), event]);
+          return prev;
         }
         const next = prev.slice();
         const at = prev[i];
         if (!at) return prev;
-        next[i] = { cycle: at.cycle, lines: [...at.lines, line] };
+        next[i] = { cycle: at.cycle, events: [...at.events, event] };
         return next;
       });
 
@@ -180,13 +199,20 @@ export function useRunProgress(
           case "cycle":
             if (event.cycle) upsertCycle(event.cycle);
             break;
-          case "line": {
-            const line = event.line;
-            if (!line) break;
-            const key = runLineKey(line);
+          case "event": {
+            // The frame's stamps are what attribute the event; without a cycle
+            // there is no section to put it in, so it is dropped rather than
+            // filed under a guess.
+            if (!event.event || !event.cycleId) break;
+            const stamped: StampedRunEvent = {
+              ...event.event,
+              cycleId: event.cycleId,
+              attempt: event.attempt ?? 0,
+            };
+            const key = runEventKey(stamped);
             if (seen.current.has(key)) break;
             seen.current.add(key);
-            appendLine(line);
+            appendEvent(stamped);
             break;
           }
           case "done":

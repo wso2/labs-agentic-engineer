@@ -23,6 +23,9 @@ import { configKeys, resourceKeys, skillsKeys } from "./keys";
 import { apiErrorMessage } from "../../../api/errors";
 
 type ConfigProjection = components["schemas"]["ConfigProjection"];
+type CodingAgentPatch = NonNullable<
+  components["schemas"]["ConfigPatch"]["codingAgent"]
+>;
 type CreateSkillInput = components["schemas"]["CreateSkillInput"];
 type UpdateSkillInput = components["schemas"]["UpdateSkillInput"];
 
@@ -105,6 +108,33 @@ export function useRemoveCodingAnthropic() {
       if (error) {
         throw new Error(
           errorMessage(error, "Failed to remove the coding agent key"),
+        );
+      }
+      return data;
+    },
+    onSuccess: (data: ConfigProjection) => {
+      queryClient.setQueryData(configKeys.all, data);
+    },
+  });
+}
+
+// Runtime + model, not a credential: no probe, no secret, and both fields are
+// optional server-side, so a caller sends ONLY the field it is changing rather
+// than restating the other. Sending both would let a stale read of one silently
+// overwrite a change someone else made to it.
+//
+// The write lands on the org, not on the run in flight: dispatch copies these
+// onto the run it starts, so the change takes effect from the next cycle.
+export function useSetCodingAgent() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (patch: CodingAgentPatch) => {
+      const { data, error } = await client.PATCH("/config", {
+        body: { codingAgent: patch },
+      });
+      if (error) {
+        throw new Error(
+          errorMessage(error, "Failed to save the coding agent settings"),
         );
       }
       return data;

@@ -140,8 +140,11 @@ func (s *artifactService) SaveSpec(ctx context.Context, orgID, projectID string,
 	}
 
 	// Unchanged detection over the WHOLE specs/ tree (not just requirements —
-	// a design-only edit must bump the spec version).
-	if latest, n, ok := latestRequirementsTagInfo(tags); ok {
+	// a design-only edit must bump the spec version). The name the caller asked
+	// for is deliberately ignored here: a name labels a snapshot, it does not
+	// make one (ADR-0030), so an identical tree reuses its version rather than
+	// spending a whole planning turn to change a word.
+	if latest, ok := latestVersionTag(tags); ok {
 		same, cerr := s.specTreeUnchanged(ctx, ref, commit, latest.CommitHash)
 		if cerr != nil {
 			return nil, cerr
@@ -149,24 +152,32 @@ func (s *artifactService) SaveSpec(ctx context.Context, orgID, projectID string,
 		if same {
 			slog.InfoContext(ctx, "spec save: unchanged — specs/ matches latest tag",
 				"project", projectID, "tag", latest.Name, "commit", commit)
-			return &SpecSaveResult{Status: SpecSaveUnchanged, Tag: latest.Name, Version: n}, nil
+			return &SpecSaveResult{
+				Status:  SpecSaveUnchanged,
+				Tag:     latest.Name,
+				Version: len(versionTags(tags)),
+			}, nil
 		}
 	}
 
-	nextN, tagName := nextRequirementsTag(tags)
-	tagBody := fmt.Sprintf("Spec v%d", nextN)
-	if req.Message != "" {
-		tagBody = fmt.Sprintf("%s\n\n%s", tagBody, req.Message)
+	// The name is the user's when they gave one, and only then is a collision
+	// terminal: a suggestion may be re-suggested past a racing pusher, but a
+	// name somebody typed must never turn into a different one.
+	tagName, named := strings.TrimSpace(req.Name), true
+	if tagName == "" {
+		tagName, named = suggestedVersionName(tags), false
+	} else if verr := ValidateVersionName(tagName); verr != nil {
+		return nil, fmt.Errorf("%w: %w", ErrVersionNameInvalid, verr)
 	}
-	if err := s.createAnnotatedTag(ctx, ref, &tags, &nextN, &tagName, tagBody, commit, 0, "requirements"); err != nil {
-		return nil, fmt.Errorf("create tag: %w", err)
+	if err := s.createVersionTag(ctx, ref, &tags, &tagName, req.Message, commit, !named); err != nil {
+		return nil, err
 	}
 
-	slog.InfoContext(ctx, "spec tagged", "project", projectID, "tag", tagName, "commit", commit)
+	slog.InfoContext(ctx, "spec tagged", "project", projectID, "tag", tagName, "commit", commit, "named", named)
 	return &SpecSaveResult{
 		Status:     SpecSaveApproved,
 		Tag:        tagName,
-		Version:    nextN,
+		Version:    len(versionTags(tags)) + 1,
 		CommitHash: commit,
 	}, nil
 }
@@ -193,7 +204,7 @@ func (s *artifactService) ValidateSpecAtTag(ctx context.Context, orgID, projectI
 	return validateSpecBundles(reqFiles, designFiles)
 }
 
-// LatestSpecTag returns the newest `v<N>` spec tag name read from the local
+// LatestSpecTag returns the newest spec version's tag name read from the local
 // mirror WITHOUT a fetch — the network-free, best-effort read behind the task
 // stale-spec attention flag. Any failure degrades to "".
 func (s *artifactService) LatestSpecTag(ctx context.Context, orgID, projectID string) string {
@@ -207,7 +218,11 @@ func (s *artifactService) LatestSpecTag(ctx context.Context, orgID, projectID st
 			"project", projectID, "error", err)
 		return ""
 	}
-	return latestRequirementsTag(tags)
+	latest, ok := latestVersionTag(tags)
+	if !ok {
+		return ""
+	}
+	return latest.Name
 }
 
 // specGateDisabled turns the whole-spec gate off — both the build-click gate and
@@ -330,14 +345,3 @@ func (s *artifactService) specTreeUnchanged(ctx context.Context, ref sourcecontr
 	return specTreesEqual(headEntries, tagEntries), nil
 }
 
-// latestRequirementsTagInfo returns the TagInfo and version of the
-// highest-versioned `v<N>` tag, or ok=false when none exist.
-func latestRequirementsTagInfo(tags []sourcecontrol.TagInfo) (sourcecontrol.TagInfo, int, bool) {
-	best, bestN := sourcecontrol.TagInfo{}, 0
-	for _, t := range tags {
-		if n, ok := parseRequirementsTag(t.Name); ok && n > bestN {
-			best, bestN = t, n
-		}
-	}
-	return best, bestN, bestN > 0
-}

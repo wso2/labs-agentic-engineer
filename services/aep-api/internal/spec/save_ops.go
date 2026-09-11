@@ -27,6 +27,7 @@ package spec
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math/rand/v2"
 	"time"
 
@@ -93,6 +94,62 @@ func (s *artifactService) createAnnotatedTag(
 			return jerr
 		}
 		err = attempt()
+	}
+	return err
+}
+
+// createVersionTag cuts a spec version's annotated tag at commitSHA.
+//
+// Its subject is `Spec <name>` — the marker that makes the tag a VERSION now
+// that the name itself is the user's and carries no sequence (see
+// version_naming.go). A caller's save message follows it as the body.
+//
+// `resuggest` says what a name collision means. FALSE for a name the user
+// typed: it comes back as ErrVersionNameTaken, because a supplied name must
+// never quietly become a different one. TRUE for a name the platform
+// suggested: an external pusher can claim it between the tag-list read and the
+// push, so the suggestion is recomputed against a fresh listing and retried,
+// bounded by tagRetryAttempts. `name` carries the name actually cut back out.
+func (s *artifactService) createVersionTag(
+	ctx context.Context,
+	ref sourcecontrol.RepoRef,
+	tags *[]sourcecontrol.TagInfo,
+	name *string,
+	message, commitSHA string,
+	resuggest bool,
+) error {
+	tagger, _ := s.git.ResolveSaveIdentities(ref.Cred)
+	attempt := func() error {
+		body := specTagSubject + *name
+		if message != "" {
+			body = body + "\n\n" + message
+		}
+		return s.git.Workspace().Tag(ctx, ref, sourcecontrol.TagSpec{
+			Name:    *name,
+			Target:  commitSHA,
+			Message: body,
+			Tagger:  tagger,
+		})
+	}
+	err := attempt()
+	for _, delay := range tagRetryAttempts {
+		if !errors.Is(err, sourcecontrol.ErrTagAlreadyExists) {
+			return err
+		}
+		if !resuggest {
+			return fmt.Errorf("%w: %q", ErrVersionNameTaken, *name)
+		}
+		if jerr := jitterSleep(ctx, delay); jerr != nil {
+			return jerr
+		}
+		if refreshed, ferr := s.listVersionTags(ctx, ref); ferr == nil {
+			*tags = refreshed
+			*name = suggestedVersionName(refreshed)
+		}
+		err = attempt()
+	}
+	if errors.Is(err, sourcecontrol.ErrTagAlreadyExists) && !resuggest {
+		return fmt.Errorf("%w: %q", ErrVersionNameTaken, *name)
 	}
 	return err
 }

@@ -18,13 +18,11 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import {
-  formatLine,
-  formatOutcome,
-  formatSubagentReport,
-  groupBySubagent,
-  mergeOutcomes,
-} from "../src/index.js";
+import { formatLine, formatOutcome } from "../src/index.js";
+
+// The v1 envelope, which the TASK LOG still carries. The run feed's v2 events
+// are exercised in event.test.ts; both render into the same FormattedLine, and
+// these assertions are what stop the two drifting apart while both are live.
 
 test("tool_use: a bare argument keeps its verb, a whole sentence does not gain one", () => {
   // Two sources fill `summary` and they need opposite treatment. A tool call
@@ -143,17 +141,6 @@ test("a fan-out call's result reads as a whole subagent's report, not one call's
   assert.equal(tone, "success");
 });
 
-test("a subagent report omits figures the SDK did not give, rather than showing zeroes", () => {
-  assert.equal(formatSubagentReport({ label: "todo-webapp", status: "failed", durationMs: 353_000, toolCount: 31 }), "todo-webapp failed · 5m53s · 31 tools");
-  // Running: the step count and the phrase, which is the whole point of a
-  // collapsed section.
-  assert.equal(
-    formatSubagentReport({ label: "todo-api", status: "running", toolCount: 12, activity: "Writing todo-api/service.bal" }),
-    "todo-api running · 12 tools · Writing todo-api/service.bal",
-  );
-  assert.equal(formatSubagentReport({ label: "todo-api", status: "running" }), "todo-api running");
-});
-
 test("tones are semantic, never a theme token — a TUI imports this too", () => {
   for (const line of [
     { kind: "tool_use", tool: "Bash", summary: "ls" },
@@ -180,97 +167,4 @@ test("phase ids render through the friendly-label map, with a raw-id fallback", 
     }).text,
     "▸ No capacity to schedule the runner: 0/5 nodes are available: 5 Too many pods.",
   );
-});
-
-test("grouping: interleaved subagents each get ONE section, placed where they first spoke", () => {
-  const rows = groupBySubagent([
-    { kind: "tool_use", emitter: "main" },
-    { kind: "tool_use", emitter: "subagent", emitterId: "a1", emitterLabel: "todo-api" },
-    { kind: "tool_use", emitter: "subagent", emitterId: "a2", emitterLabel: "todo-webapp" },
-    { kind: "tool_use", emitter: "subagent", emitterId: "a1", emitterLabel: "todo-api" },
-  ]);
-
-  assert.deepEqual(rows.map((r) => r.kind), ["line", "group", "group"]);
-  const first = rows[1];
-  assert.ok(first?.kind === "group");
-  assert.equal(first.group.id, "a1");
-  // Both a1 lines land together despite a2 interleaving between them.
-  assert.equal(first.group.lines.length, 2);
-});
-
-test("grouping: a subagent line with no id stays ungrouped rather than being filed under a guess", () => {
-  const rows = groupBySubagent([{ kind: "tool_use", emitter: "subagent" }]);
-  assert.deepEqual(rows.map((r) => r.kind), ["line"]);
-});
-
-test("grouping: a label arriving after the first line is still adopted", () => {
-  const rows = groupBySubagent([
-    { kind: "tool_use", emitter: "subagent", emitterId: "a1" },
-    { kind: "tool_use", emitter: "subagent", emitterId: "a1", emitterLabel: "todo-api" },
-  ]);
-  const g = rows[0];
-  assert.ok(g?.kind === "group");
-  assert.equal(g.group.label, "todo-api");
-  assert.equal(g.group.report.label, "todo-api");
-});
-
-test("grouping: a section's own report is its header, and its narration feeds it", () => {
-  const rows = groupBySubagent([
-    { kind: "activity", summary: "Writing todo-api/service.bal", toolCount: 12, emitter: "subagent", emitterId: "a1", emitterLabel: "todo-api" },
-    { kind: "tool_use", tool: "Write", summary: "todo-api/service.bal", toolUseId: "t1", emitter: "subagent", emitterId: "a1" },
-    { kind: "tool_result", tool: "Agent", ok: true, status: "completed", summary: "ignored", toolUseId: "a1", durationMs: 209_158, toolCount: 19, emitter: "subagent", emitterId: "a1" },
-  ]);
-  const g = rows[0];
-  assert.ok(g?.kind === "group");
-  // Only the STEP is a row: the activity and the closing report are header.
-  assert.equal(g.group.lines.length, 1);
-  assert.equal(g.group.lines[0]?.tool, "Write");
-  // The label stays the group's — the report's own summary field is the
-  // runner's copy of it and must not overwrite a better one seen earlier.
-  assert.equal(formatSubagentReport(g.group.report), "todo-api completed · 3m29s · 19 tools");
-});
-
-test("grouping: a running section reports its latest phrase and step count", () => {
-  const rows = groupBySubagent([
-    { kind: "activity", summary: "Reading todo-api/types.bal", toolCount: 3, emitter: "subagent", emitterId: "a1", emitterLabel: "todo-api" },
-    { kind: "activity", summary: "Writing todo-api/service.bal", toolCount: 12, emitter: "subagent", emitterId: "a1" },
-  ]);
-  const g = rows[0];
-  assert.ok(g?.kind === "group");
-  assert.equal(formatSubagentReport(g.group.report), "todo-api running · 12 tools · Writing todo-api/service.bal");
-});
-
-test("merging: an outcome folds onto the action it answers, wherever it arrived", () => {
-  const rows = mergeOutcomes([
-    { kind: "tool_use", tool: "Bash", summary: "bal build", toolUseId: "t1" },
-    { kind: "tool_use", tool: "Read", summary: "db.bal", toolUseId: "t2" },
-    { kind: "tool_result", tool: "Read", ok: true, toolUseId: "t2" },
-    { kind: "tool_result", tool: "Bash", ok: false, exitCode: 1, toolUseId: "t1" },
-  ]);
-  assert.equal(rows.length, 2);
-  assert.equal(rows[0]?.outcome?.exitCode, 1);
-  assert.equal(rows[1]?.outcome?.ok, true);
-});
-
-test("merging: an orphan outcome keeps its own row — a failure must never vanish", () => {
-  const rows = mergeOutcomes([{ kind: "tool_result", tool: "Bash", ok: false, exitCode: 1, toolUseId: "gone" }]);
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0]?.outcome, undefined);
-  // …and having kept its row, it does not then swallow a later result.
-  const twice = mergeOutcomes([
-    { kind: "tool_result", tool: "Bash", ok: false, toolUseId: "x" },
-    { kind: "tool_result", tool: "Bash", ok: true, toolUseId: "x" },
-  ]);
-  assert.equal(twice.length, 2);
-});
-
-test("merging: a Bash call rewritten by kind still takes its own outcome", () => {
-  // git_commit / git_push / gh_action are the same tool call under a different
-  // kind, so they are actions and claim their id like one.
-  const rows = mergeOutcomes([
-    { kind: "git_commit", sha: "9f3a2c1", toolUseId: "t1" },
-    { kind: "tool_result", tool: "Bash", ok: false, exitCode: 1, toolUseId: "t1" },
-  ]);
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0]?.outcome?.exitCode, 1);
 });

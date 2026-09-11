@@ -18,20 +18,29 @@ browser config — they are pod env for nginx.
 ## Development flow
 
 1. **Scaffold** per Layout, including the nginx drop-in copy in step 1 of Layout.
-2. **Implement** — `src/env.ts` first (every other module reads config through
-   it), then generate `src/generated/` from each dependency's OpenAPI contract,
-   then `src/api.ts` with **same-origin** `baseUrl`, then pages. Every rule under
-   Constraints is a runtime failure if broken, not a style preference.
-3. **Mock mode** — author `mock/` per `references/mock-mode.md`. It stands the
-   same app up with no cluster, no sibling service and no IDP behind it, and the
-   build eliminates it as dead code.
-4. **Verify** — from the app path:
+   Read [mock-mode.md](references/mock-mode.md) and include its dependencies in
+   `package.json`, then install **once** with the complete dependency set — npm
+   can only satisfy a peer set it sees all at once, and a package added to an
+   already-resolved tree costs a second full resolve at best. With a design
+   system, its own Setup step IS that install (it writes the manifest and runs
+   `npm install` itself); without one, `npm install`.
+2. **Prepare shared interfaces** — write `src/env.ts`, generate `src/generated/`
+   from each dependency's OpenAPI contract, and write `src/api.ts` with a
+   **same-origin** `baseUrl`. With auth, establish `src/auth.ts` and its exports
+   now: mock mode substitutes that module.
+3. **Implement pages** — follow Constraints, and check `src/api.ts` against the
+   **first** page with `npx tsc --noEmit` before writing the rest: that pair proves
+   how the generated client types, and every later page repeats the pattern.
+4. **Mock mode** — author `mock/` per `references/mock-mode.md`, including the four
+   wiring files in its §2. It stands the same app up with no cluster, no sibling
+   service and no IDP behind it, and the build eliminates it as dead code.
+5. **Verify** — from the app path:
    ```bash
    npm install                   # regenerates package-lock.json
    # ← the design system's check goes here (see below)
    npx tsc --noEmit              # type-check without emitting
    npm run build                 # actually build
-   ! grep -rqE "mock/|msw" dist/ # the bundle carries no mock — step 3
+   ! grep -rq mockServiceWorker dist/ # the bundle carries no mock — step 4
    git status --porcelain --ignored=matching -- . \
      | grep '^!!' | grep -vE 'node_modules|dist'   # ← output MUST be empty
    ```
@@ -181,7 +190,10 @@ per-component Docker build's context is this app's own folder alone.
 └── .dockerignore         # what `COPY . .` leaves behind
 ```
 
-**Copy the nginx assets first.** From the App Path:
+**Copy the nginx assets first, and never run a project generator** — `npm create
+vite` and friends emit a different shape (project-referenced tsconfigs, starter
+CSS, sample SVGs) and all of it has to be undone before Verify passes. The tree
+above IS the shape. From the App Path:
 
 ```bash
 mkdir -p nginx

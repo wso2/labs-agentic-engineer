@@ -43,14 +43,16 @@ type Dependency = components["schemas"]["Dependency"];
 
 /**
  * Why a dependency's chat turn is being seeded:
- *  - "resolve": the dependency is unresolved/ambiguous — the "Resolve via/in
- *    chat" button on a non-resolved dependency (build drawer blocker/spec
- *    panels, design-view card).
+ *  - "resolve": the dependency is unresolved — Select a provider or Resolve
+ *    on the definition view, or the design-view card's button.
  *  - "reconsider": the dependency is already resolved — the hamburger's
  *    "Discuss in chat & modify" menu item, for a user who wants to revisit an
  *    already-made choice.
  */
 export type DependencyResolutionIntent = "resolve" | "reconsider";
+
+/** The batch flow: every open dependency, one at a time, ending back at Build. */
+export const RESOLVE_ALL_DEPENDENCIES_COMMAND = "/resolve-dependencies";
 
 /**
  * Build the seeded chat message for one dependency: names the component, the
@@ -63,7 +65,12 @@ export function buildDependencyResolutionMessage(
   dep: Dependency,
   intent: DependencyResolutionIntent,
 ): string {
+  // Resolving runs the guided flow (the `resolve-dependency` skill), whose
+  // first card asks which provider; a reconsider is a conversation about an
+  // already-resolved choice, so it stays prose. The component is context for
+  // the reconsider only — the dependency's definition is its own file, shared
+  // by every consumer.
   return intent === "reconsider"
     ? `Let's reconsider the "${dep.name}" dependency on "${componentName}" — I'd like to look at other options.`
-    : `Let's resolve the "${dep.name}" dependency on "${componentName}".`;
+    : `/resolve-dependency ${dep.name}`;
 }

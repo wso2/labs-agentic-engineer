@@ -65,13 +65,14 @@ const HTTP_METHODS = new Set([
 /**
  * A component's own spec, by basename — `specs/design/components/<name>/openapi.yaml`.
  *
- * Deliberately NOT `*.openapi.yaml`: that suffix is the convention for a
- * user-provided committed dependency spec (`dependencies/<name>.openapi.yaml`,
- * see `contracts/component-design.ts`). Those are third-party documents
- * recorded as-is, and holding someone else's spec to this gate would reject a
- * write the agent is only relaying.
+ * A dependency's contract (`specs/design/dependencies/<name>/openapi.yaml`) is
+ * deliberately NOT this gate's: it is a slice of a third-party document,
+ * validated structurally by the slicer that cut it (or by the platform when
+ * the user uploads one), and holding someone else's API to the platform's own
+ * conventions would reject a write the agent is only relaying.
  */
 function isComponentOpenapiPath(path: string): boolean {
+  if (path.startsWith("specs/design/dependencies/")) return false;
   const base = (path.split("/").at(-1) ?? "").toLowerCase();
   return base === "openapi.yaml" || base === "openapi.yml";
 }

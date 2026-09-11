@@ -57,6 +57,7 @@ vi.mock("@aep/agent-stream", () => ({
   // tool name reaches isQuestionTool, so the mock has to carry them.
   ASK_QUESTION_TOOL: "ask_question",
   ASK_QUESTIONS_TOOL: "ask_questions",
+  isQuestionTool: (name?: string) => name === "ask_question" || name === "ask_questions",
   DECLARE_PLAN_TOOL: "declare_plan",
   buildAnswerInstruction: () => "",
   buildAnswersInstruction: () => "",
@@ -68,6 +69,7 @@ vi.mock("./chatStore.js", () => ({
   addMessage: vi.fn(),
   upsertToolMessage: vi.fn(),
   upsertQuestionMessage: vi.fn(),
+  dropQuestionMessage: vi.fn(),
   upsertPlanMessage: vi.fn(),
   setTurnStatus: vi.fn(),
   notifyTurnEnd: (key: string, status: string) => notified.push({ key, status }),
@@ -75,7 +77,7 @@ vi.mock("./chatStore.js", () => ({
 
 import { attachAndFoldTurn } from "./runTurn";
 import { TurnStreamAttachError } from "./api/turns.js";
-import { addMessage, upsertToolMessage } from "./chatStore.js";
+import { addMessage, dropQuestionMessage, upsertQuestionMessage, upsertToolMessage } from "./chatStore.js";
 import { clearRegisterDraft, peekRegisterDraft } from "./registerDraftStore.js";
 import { upsertPlanMessage } from "./chatStore.js";
 import { clearPlan, peekPlan } from "./planStore.js";
@@ -409,5 +411,38 @@ describe("attachAndFoldTurn — declare_plan folds into the plan store (#576)", 
     ] as StreamPart[];
     await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
     expect(peekPlan(KEY)).toBe(null);
+  });
+});
+
+describe("attachAndFoldTurn — a question call the schema rejected is not a card", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    queuedParts = [];
+    notified.length = 0;
+    mockOpenTurnStream.mockResolvedValue(new ReadableStream());
+  });
+
+  const good = { question: "Which provider?", options: [{ label: "A" }] };
+
+  it("skips the invalid call and withdraws any prefix that streamed onto a card", async () => {
+    queuedParts = [
+      { type: "tool-input-start", id: "q-bad", toolName: "ask_questions" },
+      { type: "tool-input-delta", id: "q-bad", delta: JSON.stringify({ questions: [good] }).slice(0, -2) },
+      { type: "tool-call", toolCallId: "q-bad", toolName: "ask_questions", input: { questions: [good] }, invalid: true },
+      { type: "tool-error", toolCallId: "q-bad", toolName: "ask_questions", error: "invalid" },
+      { type: "tool-call", toolCallId: "q-good", toolName: "ask_question", input: good },
+      { type: "turn-committed" },
+    ] as StreamPart[];
+    await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
+    // The prefix DID reach the log as a streaming card before the verdict…
+    const streamed = vi.mocked(upsertQuestionMessage).mock.calls.map(([, m]) => m);
+    expect(streamed.some((m) => m.toolCallId === "q-bad" && m.streaming)).toBe(true);
+    // …and the rejection withdrew it.
+    expect(vi.mocked(dropQuestionMessage)).toHaveBeenCalledWith(KEY, "q-bad");
+    const finals = vi
+      .mocked(upsertQuestionMessage)
+      .mock.calls.map(([, m]) => m)
+      .filter((m) => !m.streaming);
+    expect(finals.map((m) => m.toolCallId)).toEqual(["q-good"]);
   });
 });

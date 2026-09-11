@@ -19,9 +19,9 @@
 import {
   formatLine as formatShared,
   formatOutcome as formatOutcomeShared,
-  type LineTone,
   type ProgressLineView,
 } from "@aep/progress-view";
+import { toneColor } from "../../../components/logTone";
 import type { components } from "../../../generated/aep-api";
 
 type TimelineEvent = components["schemas"]["TimelineEvent"];
@@ -40,26 +40,12 @@ export function timelineEventKey(e: TimelineEvent): string {
 }
 
 /**
- * The runner's progress envelope, minus whatever the transport attributes it
- * to. TimelineEvent (per-execution, task log) and RunProgressLine (per-cycle,
- * run feed) are the same envelope carried by two streams and differ only in
- * their attribution fields, so the formatter is written against the envelope
- * and both streams feed it.
+ * The runner's v1 progress envelope, minus whatever the transport attributes it
+ * to. The task log's per-execution TimelineEvent stream still carries it; the
+ * run feed has moved to v2 RunEvents, which are formatted by `formatEvent` on
+ * the builds side.
  */
 export type AgentLogLine = ProgressLineView;
-
-// The wording of a line is shared with the playground (@aep/progress-view) so
-// the fast local loop and a cluster run read identically — two formatters
-// drifted once already. Only the mapping from semantic weight to the Oxygen
-// palette is the console's, and it stays here.
-const TONE_COLORS: Record<LineTone, string> = {
-  default: "grey.300",
-  muted: "grey.400",
-  info: "info.light",
-  success: "success.light",
-  warn: "warning.light",
-  error: "error.light",
-};
 
 /**
  * One console line per log line, formatted by kind (#173 decisions: flat log;
@@ -71,7 +57,7 @@ const TONE_COLORS: Record<LineTone, string> = {
  */
 export function formatLine(e: AgentLogLine): { text: string; tone: string } {
   const { text, tone } = formatShared(e);
-  return { text, tone: TONE_COLORS[tone] };
+  return { text, tone: toneColor(tone) };
 }
 
 /**
@@ -86,5 +72,5 @@ export function formatLine(e: AgentLogLine): { text: string; tone: string } {
  */
 export function formatOutcome(e: AgentLogLine | undefined): { text: string; tone: string } {
   const { detail, duration, tone } = formatOutcomeShared(e);
-  return { text: [detail, duration].filter(Boolean).join(" · "), tone: TONE_COLORS[tone] };
+  return { text: [detail, duration].filter(Boolean).join(" · "), tone: toneColor(tone) };
 }

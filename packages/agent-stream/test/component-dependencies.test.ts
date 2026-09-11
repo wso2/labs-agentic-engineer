@@ -85,11 +85,30 @@ test("the database found during enrichment and never drawn is refused, with the 
 test("each kind is pointed at the boundary it belongs on", () => {
   const bad = design([
     { kind: "org-service", name: "payroll-core" },
-    { kind: "external", name: "slack", style: "rest-api" },
+    { kind: "external", name: "slack" },
   ]);
   const p = checkComponentDependencies(API, bad, bundle());
   assert.match(p!.message, /`payroll-core` \(org-service\) — declare it as another project's service: `east payroll-core/);
   assert.match(p!.message, /`slack` \(external\) — declare it as a third-party system: `south slack/);
+});
+
+// One dependency, one definition: a component only REFERENCES an external
+// dependency, so the cell node alone is not enough — its file must exist.
+const CELL_WITH_SLACK = `${CELL}south slack as "Slack" service\nexpense-api -> slack\n`;
+const SLACK_DEP = "specs/design/dependencies/slack/dependency.json";
+
+test("an external dependency the cell draws but no dependency.json defines is refused, naming the file", () => {
+  const b = bundle(CELL_WITH_SLACK);
+  const p = checkComponentDependencies(API, design([{ kind: "external", name: "slack" }]), b);
+  assert.equal(p?.code, "UNKNOWN_DEPENDENCY");
+  assert.match(p!.message, /`slack` → specs\/design\/dependencies\/slack\/dependency\.json/);
+  assert.match(p!.message, /"source": "org"/);
+});
+
+test("an external dependency with its dependency.json on disk passes", () => {
+  const b = bundle(CELL_WITH_SLACK);
+  assert.equal(b.addFile(SLACK_DEP, JSON.stringify({ name: "slack", source: "org" })).ok, true);
+  assert.equal(checkComponentDependencies(API, design([{ kind: "external", name: "slack" }]), b), null);
 });
 
 test("no dependencies, another path, or a document the schema gate owns: not judged", () => {

@@ -25,19 +25,22 @@ import {
 } from "@aep/ui-validation-view";
 import { validationView } from "../../projects/lib/pipeline";
 import { FULL_WIDTH_ALERT_MESSAGE, LiveNote } from "./LiveNote";
+import type { StatusLine } from "../../tasks/lib/statusLine";
 
-// A method named inside a sentence: the badge's word, set the way the badge sets it
-// — same monospace, same weight, same tracking, same uppercase — so a reader
-// recognises it as the thing marking every row below.
+// A method named inside a sentence, marked as a term rather than left as ordinary
+// prose — otherwise nothing tells the reader that "auto" and "manual" are the two
+// halves this page is about to split the criteria into.
 //
-// What it does NOT take from the badge is the solid fill and the badge's padding. A
-// filled pill mid-sentence stops the line dead; a wash of the same colour carries the
-// identity while the words keep flowing. `text.primary` over an alpha fill rather
-// than the raw colour as text, so it holds in both themes — the idiom StatusChip's
-// soft tones and ValidationView's failure block both use.
+// The rows below carry a glyph rather than a word, so this is the only place the
+// words appear — which is the argument for marking them, not against it.
 //
-// Word and colour both come from the shared vocabulary (counts.ts), so renaming a
-// method or recolouring it carries the sentence along with the badges.
+// A wash and not a fill: a filled pill mid-sentence stops the line dead, while a
+// tint carries the mark and lets the words keep flowing. `text.primary` over an
+// alpha fill rather than the raw colour as text, so it holds in both themes — the
+// idiom StatusChip's soft tones and ValidationView's failure block both use.
+//
+// Word and colour both come from the shared vocabulary (counts.ts), so renaming or
+// recolouring a method carries this sentence and the tally below it along.
 function Method({ method }: { method: string }) {
   return (
     <Box
@@ -92,13 +95,13 @@ export function PendingTile({
   /** The criteria read came back `not_found`: none were ever authored. */
   noCriteria?: boolean;
   /** What the run is doing while no criterion has anything to say — see LiveNote. */
-  note?: string;
+  note?: string | StatusLine;
 }) {
   const view = validationView("running");
   if (!view) return null;
 
   const manual = methods?.find((m) => m.method === "manual")?.count ?? 0;
-  // "12 auto · 3 manual" — the same words as the badges on the rows below, because
+  // "12 auto · 3 manual" — the same words as the sentence above, because
   // both read METHOD_LABEL.
   const counts = (methods ?? [])
     .map(({ method, count }) => `${count} ${METHOD_LABEL[method] ?? method}`)
@@ -116,9 +119,8 @@ export function PendingTile({
           NO_CRITERIA
         ) : (
           <>
-            {/* The two method words are the vocabulary of the badges on every row
-                below, so they are marked as terms rather than left as ordinary
-                prose — otherwise nothing connects the sentence to the list. */}
+            {/* The two words the tally beneath counts by, so they are marked as
+                terms rather than left as ordinary prose. */}
             <Method method="e2e" /> criteria are being validated end to end
             against the deployed system.
             {/* Only when there ARE manual criteria: this half is an instruction, and

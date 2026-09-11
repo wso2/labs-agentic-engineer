@@ -88,6 +88,11 @@ const (
 // SaveRequest is the body of POST /artifacts/{kind}/save.
 type SaveRequest struct {
 	Message string `json:"message,omitempty"`
+	// Name is what to call the version this save cuts — the tag name, the
+	// milestone title and the /builds/<name> address (console ADR-0030). Empty
+	// takes the platform's suggestion. Ignored when the specs/ tree is
+	// unchanged, because that save cuts nothing.
+	Name string `json:"name,omitempty"`
 	// CommitSHA pins the commit the save gates and tags. The publish flow sets
 	// it to the commit its files-apply just created so the save never re-reads
 	// `heads/main` — GitHub's ref reads lag writes by seconds (observed live),
@@ -178,6 +183,10 @@ type ArtifactService interface {
 	// design-revision tag and REFUSES a spec tag outright, so a build-time
 	// consumer must use this one.
 	GetDesignAtSpecTag(ctx context.Context, orgID, projectID, tag string) (map[string]string, error)
+	// BuildVersionFacts reports what the next version would be called and what
+	// it would change — the version half of the build preflight (console
+	// ADR-0029). Read-only; it cuts nothing.
+	BuildVersionFacts(ctx context.Context, orgID, projectID string) (VersionFacts, error)
 	// GetDesignAtCommit reads the design bundle at an exact commit — the publish
 	// flow's pinned-commit read (no ref resolution involved).
 	GetDesignAtCommit(ctx context.Context, orgID, projectID, commitSHA string) (map[string]string, error)

@@ -160,6 +160,28 @@ const MachineCommentMarker = "<!-- aep:machine -->"
 // database.
 const PublishedCredentialsMarker = "<!-- aep:test-users -->"
 
+// ObservedCommentMarker brands a comment the platform wrote FOR A PERSON, from
+// what it observed of a run.
+//
+// A third class exists because MachineCommentMarker answers a different
+// question. Both say "the platform wrote this", but a machine comment is
+// written for the AGENT — a resolved-dependency block, a provisioning note, the
+// line that closes a task — which is why every read surface for people drops
+// them. A validation run's status line is the opposite: the platform derives it
+// from the run's own tool calls precisely so a person watching has something to
+// read (the runner's validation_status_line.ts). Dropping it would delete the
+// only thing on the issue between the agent's opening line and its last.
+//
+// So it must be told apart from the two neighbours it sits between, and only
+// the body can tell: authorship cannot, for the reason MachineCommentMarker
+// gives above, and the agent's OWN notes carry no marker at all.
+//
+// `aep:status` was the obvious name and is taken: `aep:status/*` is the issue
+// LABEL namespace the run projects its state onto. "Observed" is the honest
+// word anyway — this is inferred from calls the run had to make, never declared
+// by it.
+const ObservedCommentMarker = "<!-- aep:observed -->"
+
 // IssueComment is one comment on an issue, exactly as the host holds it.
 //
 // It carries no issue number: the read that produces these buckets them by
@@ -183,6 +205,14 @@ type IssueComment struct {
 	// reader — a debug view, an audit — able to ask for them without the host
 	// changing.
 	Machine bool
+	// Observed reports that the PLATFORM wrote this comment for a person, from
+	// what it saw the run do (ObservedCommentMarker).
+	//
+	// Mutually exclusive with Machine, and structurally so rather than by
+	// convention: classification tests which marker LEADS the body, and only one
+	// can. Reported for the same reason Machine is — the host states the fact and
+	// each surface decides what to do with it.
+	Observed bool
 }
 
 // MilestoneIssueCounts is the run supervisor's dispatch predicate input: the

@@ -21,11 +21,12 @@ import assert from "node:assert/strict";
 import * as Y from "yjs";
 import type { Document } from "@hocuspocus/server";
 import { setDocFile, setDocFileAsAgent } from "@aep/collab-doc";
-import { flushRoom } from "./committer.js";
+import { flushRoom, pendingChanges } from "./committer.js";
 import {
   addParticipant,
   dropRoomState,
   ensureRoomState,
+  roomState,
 } from "./rooms.js";
 import {
   ApplyAuthError,
@@ -221,6 +222,48 @@ test("conflict: doc wins — adopts HEAD shas and re-applies", async () => {
   // retry preconditioned on HEAD's sha, content still the DOC's version
   assert.equal(applies[1]!.writes[0]!.baseSha, "sha-head");
   assert.match(applies[1]!.writes[0]!.content, /Doc version/);
+});
+
+test("conflict: a file HEAD gained outside the room is not the doc's to delete", async () => {
+  const doc = seededDoc();
+  setDocFile(doc, "requirements/prd.md", "# PRD\n\nDoc version.");
+  let first = true;
+  // The platform committed a dependency's interface beside its definition
+  // while the session was open; the doc never held it.
+  const headFiles: SpecFile[] = [
+    { path: "requirements/prd.md", content: "# PRD\n\nGit moved.", sha: "sha-head" },
+    { path: "design/dependencies/stripe/openapi.yaml", content: "openapi: 3.0.0", sha: "sha-iface" },
+  ];
+  const { bff, applies } = fakeBff({
+    fetchSpecFiles: async () => headFiles,
+    applyFiles: async (_t, _p, batch) => {
+      if (first) {
+        first = false;
+        throw new ApplyConflictError(["requirements/prd.md"]);
+      }
+      return {
+        commitSha: "after-retry",
+        files: batch.writes.map((w) => ({ path: w.path, sha: `new-${w.path}` })),
+      };
+    },
+  });
+  const record = bff.applyFiles.bind(bff);
+  bff.applyFiles = async (t, p, batch) => {
+    applies.push(batch);
+    return record(t, p, batch);
+  };
+
+  await flushRoom({ bff }, ROOM, doc, ctx);
+
+  assert.equal(applies.length, 2);
+  assert.deepEqual(applies[1]!.deletes, []);
+  assert.deepEqual(
+    applies[1]!.writes.map((w) => w.path),
+    ["requirements/prd.md"],
+  );
+  // And it stays out of the baseline, so no later flush deletes it either.
+  const { deletes } = pendingChanges(doc, roomState(ROOM)!, false);
+  assert.deepEqual(deletes, []);
 });
 
 test("no token: skips without throwing", async () => {

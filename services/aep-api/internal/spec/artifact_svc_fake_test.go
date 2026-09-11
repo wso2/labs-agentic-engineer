@@ -33,6 +33,7 @@ type fakeArtifactSvc struct {
 	SaveSpecFunc                 func(ctx context.Context, orgID, projectID string, req SaveRequest) (*SpecSaveResult, error)
 	ValidateSpecAtTagFunc        func(ctx context.Context, orgID, projectID, tag string) error
 	LatestSpecTagFunc            func(ctx context.Context, orgID, projectID string) string
+	BuildVersionFactsFunc        func(ctx context.Context, orgID, projectID string) (VersionFacts, error)
 	SaveRequirementsFunc         func(ctx context.Context, orgID, projectID string, req SaveRequest) (*RequirementsSaveResult, error)
 	SaveDesignFunc               func(ctx context.Context, orgID, projectID string, req SaveRequest) (*DesignSaveResult, error)
 	ListRequirementsVersionsFunc func(ctx context.Context, orgID, projectID string) ([]RequirementsVersionInfo, error)
@@ -70,6 +71,13 @@ func (f *fakeArtifactSvc) ValidateSpecAtTag(ctx context.Context, orgID, projectI
 		panic("spec test: ValidateSpecAtTag called but ValidateSpecAtTagFunc is not set")
 	}
 	return f.ValidateSpecAtTagFunc(ctx, orgID, projectID, tag)
+}
+
+func (f *fakeArtifactSvc) BuildVersionFacts(ctx context.Context, orgID, projectID string) (VersionFacts, error) {
+	if f.BuildVersionFactsFunc == nil {
+		panic("spec test: BuildVersionFacts called but BuildVersionFactsFunc is not set")
+	}
+	return f.BuildVersionFactsFunc(ctx, orgID, projectID)
 }
 
 func (f *fakeArtifactSvc) LatestSpecTag(ctx context.Context, orgID, projectID string) string {

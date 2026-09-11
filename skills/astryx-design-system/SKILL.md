@@ -1,6 +1,6 @@
 ---
 name: astryx-design-system
-description: Astryx (`@astryxdesign/core`) — this organization's web-app design system, covering its Theme + StyleX wiring, the organization's settled brand colors, and the CLI you confirm every component's props against before writing JSX. Apply to all UI work in a `web-application` that pins it — pages, layouts, forms, tables, dialogs, nav, theming — even when the task never names Astryx.
+description: Astryx (`@astryxdesign/core`) — a web-app design system this library keeps available, covering its Theme + StyleX wiring, the organization's settled brand colors, and the CLI you confirm every component's props against before writing JSX. Apply to all UI work in a `web-application` that pins it — pages, layouts, forms, tables, dialogs, nav, theming — even when the task never names Astryx.
 metadata:
   aep:
     kind: org

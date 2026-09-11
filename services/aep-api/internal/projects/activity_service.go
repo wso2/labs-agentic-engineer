@@ -55,7 +55,7 @@ func (s *ActivityService) Record(ctx context.Context, e ActivityInput) {
 		OrgID: e.OrgID, ProjectID: e.ProjectID, Type: e.Type,
 		ActorKind: e.ActorKind, ActorID: e.ActorID, ActorName: e.ActorName,
 		Issue: e.Issue, Title: e.Title, Component: e.Component,
-		Environment: e.Environment, Tag: e.Tag,
+		Environment: e.Environment, Tag: e.Tag, Reason: e.Reason,
 		DedupKey: e.DedupKey, OccurredAt: e.OccurredAt,
 	}
 	inserted, err := s.repo.Insert(ctx, row)

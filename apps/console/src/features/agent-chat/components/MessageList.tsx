@@ -214,6 +214,7 @@ export function MessageList({
   expandedGroups,
   onToggleGroup,
   onOpenSpec,
+  onOpenSpecFile,
   showSpecLink = true,
   showWorkingTail,
 }: {
@@ -221,6 +222,8 @@ export function MessageList({
   expandedGroups: Set<string>;
   onToggleGroup: (id: string) => void;
   onOpenSpec: () => void;
+  /** A document link in a message (`aep://spec/<path>`) was clicked. */
+  onOpenSpecFile?: ((path: string) => void) | undefined;
   showSpecLink?: boolean;
   /** Show a tail "Working…" indicator when a turn is in flight but hasn't
    *  produced any content (and so has no running turn block of its own yet). */
@@ -241,6 +244,7 @@ export function MessageList({
             expandedGroups={expandedGroups}
             onToggleGroup={onToggleGroup}
             onOpenSpec={onOpenSpec}
+            onOpenSpecFile={onOpenSpecFile}
             showSpecLink={showSpecLink}
           />
         ),

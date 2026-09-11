@@ -71,6 +71,8 @@ export function openTaskLog(workspacePath: string): TaskLog {
 export interface DebugSinks {
   /** Pass to the SDK's `debugFile` option. */
   debugFilePath: string;
+  /** Where the captured stderr lands, so the run can report it as an artifact. */
+  stderrFilePath: string;
   /** Pass to the SDK's `stderr` option. */
   onStderr(chunk: string): void;
   close(): void;
@@ -78,11 +80,13 @@ export interface DebugSinks {
 
 export function openDebugSinks(logDir: string, scrub: (line: string) => string): DebugSinks {
   fs.mkdirSync(logDir, { recursive: true, mode: 0o755 });
-  const stream = fs.createWriteStream(path.join(logDir, "claude-stderr.log"), {
+  const stderrFilePath = path.join(logDir, "claude-stderr.log");
+  const stream = fs.createWriteStream(stderrFilePath, {
     flags: "w",
   });
   return {
     debugFilePath: path.join(logDir, "claude-debug.log"),
+    stderrFilePath,
     onStderr(chunk: string) {
       stream.write(scrub(chunk));
     },

@@ -218,6 +218,20 @@ export function AgentChatPanel({
     });
   }, [navigate, projectName, specWorkspace]);
 
+  // A document link in a message (`aep://spec/<path>`): the spec view opens
+  // on that document — nothing more; the user presses what comes next.
+  const openSpecFile = useCallback(
+    (path: string) => {
+      if (!specWorkspace) return;
+      void navigate({
+        to: "/projects/$projectName/spec",
+        params: { projectName },
+        search: { file: path },
+      });
+    },
+    [navigate, projectName, specWorkspace],
+  );
+
   // A question arriving does NOT move the user (#522/#562): the chat is the
   // spine, and a blocking question does not earn the right to take the
   // viewport. The panel says one has arrived — `QuestionsPointer` in TurnBlock,
@@ -543,6 +557,7 @@ export function AgentChatPanel({
               expandedGroups={expandedGroups}
               onToggleGroup={toggleGroup}
               onOpenSpec={openSpec}
+              onOpenSpecFile={openSpecFile}
               showSpecLink={specWorkspace}
               showWorkingTail={showWorkingTail}
             />

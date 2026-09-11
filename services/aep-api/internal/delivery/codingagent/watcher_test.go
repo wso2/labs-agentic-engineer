@@ -36,12 +36,23 @@ type fakeRuntime struct {
 	logs       []openchoreo.PodLogLine
 	events     []openchoreo.RuntimeEvent
 
+	// delay runs before every call that precedes a log read. A test sets it to
+	// advance a fake clock, which is the only way to pin that the log window is
+	// computed AFTER the round trips in front of it rather than before them.
+	delay func()
+	// logSince is the sinceSeconds of the last PodLogs call — the coarse window
+	// the API actually received.
+	logSince int64
+
 	bindingCalls int
 	logCalls     int
 }
 
 func (f *fakeRuntime) ReleaseBindingName(context.Context, string, string, string, string) (string, error) {
 	f.bindingCalls++
+	if f.delay != nil {
+		f.delay()
+	}
 	if f.bindingErr != nil {
 		return "", f.bindingErr
 	}
@@ -49,11 +60,15 @@ func (f *fakeRuntime) ReleaseBindingName(context.Context, string, string, string
 }
 
 func (f *fakeRuntime) PodSnapshot(context.Context, string, string) (openchoreo.RuntimePod, error) {
+	if f.delay != nil {
+		f.delay()
+	}
 	return f.pod, f.podErr
 }
 
-func (f *fakeRuntime) PodLogs(context.Context, string, string, string, int64) ([]openchoreo.PodLogLine, error) {
+func (f *fakeRuntime) PodLogs(_ context.Context, _, _, _ string, sinceSeconds int64) ([]openchoreo.PodLogLine, error) {
 	f.logCalls++
+	f.logSince = sinceSeconds
 	return f.logs, nil
 }
 

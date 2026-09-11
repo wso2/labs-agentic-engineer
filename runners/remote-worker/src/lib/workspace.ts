@@ -146,6 +146,58 @@ async function installCommitIdentity(
   await execAsync(`git -C ${shellQuote(workspace)} config user.email ${shellQuote(identity.email)}`);
 }
 
+// The crash artefacts a toolchain drops when it dies hard: a core dump from any
+// process, and the JVM's two post-mortem logs (`bal build` runs one). Not a
+// general-purpose ignore list — these are the files that are never wanted, in
+// any component, in any language, and that nobody puts there on purpose.
+const CRASH_ARTEFACT_PATTERNS = ["core", "core.*", "hs_err_pid*.log", "replay_pid*.log"];
+
+// installCrashArtefactExclude writes those patterns into the clone's
+// `.git/info/exclude` — git's per-clone ignore file, which behaves exactly like
+// `.gitignore` and is never committed.
+//
+// WHY `.git/info/exclude` AND NOT `.gitignore`: the repository belongs to the
+// customer. `.gitignore` is a file THEY own and their agent edits, so writing
+// into it would put a platform concern in their history, in a diff they did not
+// ask for, in a file a later commit can reasonably rewrite. `info/exclude` is
+// part of the clone, not part of the repository: it lives only in this
+// one-shot pod, disappears with it, and cannot be undone by anything the agent
+// commits.
+//
+// WHY THIS EXISTS WHEN `docker-entrypoint.sh` ALREADY SETS `ulimit -c 0`, and
+// why NEITHER is redundant. The rlimit is the fix: it stops the dump being
+// written at all, and it is enforced regardless of what any agent does. This is
+// the belt to that braces — it holds for the artefacts an rlimit does not cover
+// (the JVM writes `hs_err_pid*.log` itself, as an ordinary file), and for any
+// path into this code that does not come through the image's entrypoint. A live
+// run left a 26MB `core` in a clone, one `git add -A` from a customer's pull
+// request, and only the lead's habit of staging by path kept it out.
+//
+// AND WHY `skills/aep/SKILL.md` STILL NAMES THESE PATTERNS TOO — that is not a
+// third copy of the same guard, it is the only one a READER meets. This file is
+// invisible from inside a session: an agent that wonders why `core` never shows
+// up in `git status`, or that is authoring a `.gitignore` for a project people
+// will later clone themselves, learns it from the skill. Deleting either half
+// costs something the other does not provide.
+// Exported for `workspace.test.ts`, which drives it against a real `git init`
+// and asserts a `core` file stays unstageable through `git add -A` — the only
+// assertion that proves the guarantee rather than the file's contents.
+export async function installCrashArtefactExclude(workspace: string): Promise<void> {
+  // `.git/info/` is not created by every clone (a worktree or a `--separate-git-dir`
+  // layout puts the real git dir elsewhere), so resolve it from git rather than
+  // assuming `<workspace>/.git/info`.
+  const { stdout } = await execAsync(`git -C ${shellQuote(workspace)} rev-parse --git-dir`);
+  const gitDir = path.resolve(workspace, stdout.trim());
+  const infoDir = path.join(gitDir, "info");
+  await fs.promises.mkdir(infoDir, { recursive: true, mode: 0o755 });
+  // Appended, never overwritten: a clone may already carry an exclude file, and
+  // replacing one would silently drop whatever it said.
+  await fs.promises.appendFile(
+    path.join(infoDir, "exclude"),
+    `\n# AEP: crash artefacts. Written per clone by the runner, never committed.\n${CRASH_ARTEFACT_PATTERNS.join("\n")}\n`,
+  );
+}
+
 async function installScopedCredentialHelper(workspace: string, scope: string, helper: string): Promise<void> {
   // Empty value first: reset any helper list inherited from system/global.
   // Git takes the FIRST helper that answers.
@@ -231,6 +283,7 @@ export async function provisionWorkspace(req: ProvisionRequest): Promise<Workspa
     );
 
     await installCommitIdentity(layout.workspace, req.identity);
+    await installCrashArtefactExclude(layout.workspace);
 
     const scope = cloneCredentialScope(req.repoUrl);
     if (scope) {

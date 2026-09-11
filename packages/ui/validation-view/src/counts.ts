@@ -48,19 +48,24 @@ export const CRITERION_STATE_LABEL: Record<string, string> = {
  * `e2e` is the contract shared with the runner, the report generator and the
  * spec-path convention, so it cannot be renamed — but it is an acronym the reader
  * has to expand, which the console lexicon forbids. The same split
- * CRITERION_STATE_LABEL draws for run statuses, and here for the same reason: the
- * badge on a criterion and the consumer's method tally must call a method by one
- * name. A method with no entry renders verbatim, so `manual` and anything
- * unrecognised are unaffected.
+ * CRITERION_STATE_LABEL draws for run statuses, and here for the same reason: two
+ * surfaces naming a method must name it the same way. A method with no entry
+ * renders verbatim, so `manual` and anything unrecognised are unaffected.
+ *
+ * Read by a consumer's prose and its tally, not by the criterion rows — those mark
+ * the method with a glyph rather than a word (ValidationView's methodMark).
  */
 export const METHOD_LABEL: Record<string, string> = {
   e2e: "auto",
 };
 
 /**
- * criterion method → its identifying colour. Solid behind a badge, and a wash
- * behind the same word said in prose, so a consumer naming a method in a sentence
- * can mark it with the colour the reader will meet on every row.
+ * criterion method → its identifying colour, as a wash behind the method's word
+ * said in prose, so a consumer naming a method in a sentence can mark it as a term
+ * rather than leave it as ordinary text.
+ *
+ * A consumer's sentence is the only reader: the criterion rows carry a glyph on
+ * the console's own agent/person colours, so nothing else has to match these hexes.
  */
 export const METHOD_COLOR: Record<string, string> = {
   e2e: "#1976d2",
@@ -70,6 +75,37 @@ export const METHOD_COLOR: Record<string, string> = {
 
 /** The colour for a method this vocabulary does not know. */
 export const METHOD_FALLBACK_COLOR = "#616161";
+
+/**
+ * Whether a validation run produces a VERDICT for this method.
+ *
+ * `e2e` only. generate-report.mjs gives an e2e criterion its test's own result and
+ * decides every other method from the method alone — `manual` for a manual
+ * criterion, `not_validated` for anything else it cannot automate — so what
+ * becomes of those rows is knowable before the run starts.
+ */
+export function runAnswers(method: string): boolean {
+  return method === "e2e";
+}
+
+/**
+ * Whether a run WORKS ON this criterion — explores it, authors a spec for it,
+ * runs it — and therefore emits live progress naming it.
+ *
+ * Deliberately wider than `runAnswers`, and the gap between them is not
+ * academic: a run works on a legacy `scenario` criterion and still reports
+ * `not_validated` for it, so it emits progress for a row it will never answer.
+ * Only `manual` is outside both, being a person's to judge, which is why a run
+ * never names it.
+ *
+ * Do not collapse the two. The console's run-wide progress line counts exactly
+ * this set, so a criterion row that answers the narrower question refuses a status
+ * the line beside it has already counted, and the two then contradict each other
+ * about the same criterion.
+ */
+export function runWorksOn(method: string): boolean {
+  return method !== "manual";
+}
 
 /** Display order for the method tally; unknown methods sort after these. */
 export const METHOD_ORDER = ["e2e", "scenario", "manual"];

@@ -60,7 +60,7 @@ export const REMOVE_FILE = "removeFile" as const;
 // The HITL question tools' NAMES are owned by the wire contract
 // (@aep/agent-stream) so the producer (this service) and the renderers
 // (console, playground) can never split on a rename. Re-exported so the call
-// site's `hasToolCall` stop conditions read one definition.
+// site's question stop condition reads one definition.
 export { ASK_QUESTION_TOOL, ASK_QUESTIONS_TOOL, DECLARE_PLAN_TOOL } from "@aep/agent-stream";
 
 // Re-export the shared skill-loader names so existing importers keep one entry point.
@@ -93,8 +93,9 @@ export const removeFileInputSchema = z.object({
 // decision. Each tool HAS an execute() returning a RESOLVED placeholder, so the
 // turn ends fully-resolved (no dangling tool_use → no MissingToolResultsError on
 // persist/replay). Registered on the `files` tool set (see buildFileToolSet) and
-// paired with a `hasToolCall` stop condition at the call site
-// (run-conversation-turn.ts) so the turn ENDS at the call; the user's answer
+// paired with a stop condition at the call site (run-conversation-turn.ts)
+// that ends the turn at an ACCEPTED call — one the schema rejected leaves an
+// error result the model retries on instead; the user's answer
 // arrives as the NEXT turn's plain user message (`buildAnswerInstruction` /
 // `buildAnswersInstruction`). PROPERTY ORDER is load-bearing: `question` first so
 // a consumer can render the card header the instant it resolves; the `options`
@@ -105,7 +106,10 @@ export const removeFileInputSchema = z.object({
 // that during interviews. Always registered — no per-turn gating (#270 decision 6).
 
 const askQuestionOptionSchema = z.object({
-  label: z.string().describe("Short display text for this choice — the exact value echoed back in the answer. Keep labels unique within a question."),
+  label: z
+    .string()
+    .min(1, "An option needs a label — for a typed answer, omit the option: the form always offers a free-text field.")
+    .describe("Short display text for this choice — the exact value echoed back in the answer. Keep labels unique within a question."),
   description: z.string().optional().describe(
     "The full explanation of this choice, shown on the option card. Write 2–4 sentences: what picking it " +
     "means concretely, what it implies or rules out, and its trade-offs versus the other options — enough " +
@@ -117,6 +121,25 @@ const askQuestionOptionSchema = z.object({
     "escape hatch): the form focuses the text field and blocks submit until text is entered. When the ENTIRE " +
     "question needs a typed answer, prefer an empty options array instead.",
   ),
+  action: z
+    .discriminatedUnion("kind", [
+      z.object({
+        kind: z.literal("accept-assumption"),
+        dependency: z.string().min(1).describe("The dependency's directory name (specs/design/dependencies/<name>)."),
+      }),
+      z.object({
+        kind: z.literal("upload-interface"),
+        dependency: z.string().min(1).describe("The dependency's directory name (specs/design/dependencies/<name>)."),
+      }),
+    ])
+    .optional()
+    .describe(
+      "What choosing this option DOES, run by the console when the user submits, before the answer reaches you. " +
+      "'accept-assumption': records the user's authorization to build on the interface you will write from research " +
+      "— use it on the 'proceed on your assumption' option of the resolve-dependency flow, so no separate acceptance " +
+      "is needed. 'upload-interface': opens the interface upload for the dependency; the answer arrives once the " +
+      "document is on disk. Never on any other option.",
+    ),
 });
 
 export const askQuestionInputSchema = z.object({
@@ -155,8 +178,8 @@ export const askQuestionsInputSchema = z.object({
 // The agent says which bundle paths it is ABOUT to write, so the console's spec
 // rail can show a checklist and an honest count instead of only a log of what
 // already happened. Unlike the question tools above this does NOT end the turn:
-// `execute` resolves immediately and the agent keeps working, so the call site
-// pairs it with no `hasToolCall` stop condition.
+// `execute` resolves immediately and the agent keeps working, so the call
+// site's stop condition never names it.
 
 export const declarePlanInputSchema = z.object({
   paths: z
@@ -283,8 +306,8 @@ export function buildFileToolSet(
     }),
 
     // Human-in-the-loop questions (console ADR-0012 / #270). Registered on the
-    // `files` set only; the call site pairs each with a `hasToolCall` stop
-    // condition so the turn ends awaiting the user's answer.
+    // `files` set only; the call site's stop condition ends the turn at an
+    // accepted call so it waits for the user's answer.
     [ASK_QUESTION_TOOL]: askQuestionTool,
     [ASK_QUESTIONS_TOOL]: askQuestionsTool,
 

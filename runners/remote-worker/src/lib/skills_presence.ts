@@ -193,7 +193,7 @@ export class MissingWorkflowSkillError extends Error {
  * publish or dispatch. This turns the one case that matters into a loud build
  * failure at the point where the cause is still obvious.
  *
- * Synchronous because `runClaudeQuery` is, and because this must throw before a
+ * Synchronous because `startCodingRun` is, and because this must throw before a
  * session exists rather than mid-stream.
  */
 export function requireWorkflowBodies(workspace: string, names: readonly string[]): string {

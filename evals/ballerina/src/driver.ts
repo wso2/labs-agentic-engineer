@@ -19,7 +19,7 @@
 /**
  * One case, one Agent SDK session, one scratch package.
  *
- * NOT the runner. `runners/remote-worker`'s `runClaudeQuery` throws without the
+ * NOT the runner. `runners/remote-worker`'s `startCodingRun` throws without the
  * `aep` workflow skill and carries issue discovery, component contracts and
  * workload authoring — a procedure for building a project, when what is being
  * measured here is how one agent reads one library. Reusing it would put the

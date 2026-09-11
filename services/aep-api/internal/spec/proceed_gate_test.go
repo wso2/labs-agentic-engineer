@@ -26,7 +26,7 @@ import (
 //
 // SaveAndProceed (the tag-cut = approve) blocks on exactly two dependency
 // conditions and no others: an `org-service` that is not namespace-visible
-// (unresolved/blocked/ambiguous against the live catalog) and an `external`
+// (unresolved/blocked against the live catalog) and an `external`
 // that declares needsSpec but has no collected spec yet. external-values
 // (config-only external) and platform-resource deps are NOT proceed-gated —
 // they are dispatch-gated in Phase 6.

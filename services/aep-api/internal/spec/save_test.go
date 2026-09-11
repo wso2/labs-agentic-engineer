@@ -187,7 +187,7 @@ func TestSaveRequirements_TagCollision_RecomputesToNextName(t *testing.T) {
 	r := newRig(t, map[string]string{"specs/requirements/prd.md": "body\n"})
 	// v1 already claimed externally at an earlier state, and the draft has since
 	// moved on → save wants a new tag but must skip the taken v1 and land v2.
-	r.tag("v1", "external v1")
+	r.tag("v1", specTagSubject+"v1")
 	r.seed(map[string]string{"specs/requirements/prd.md": "moved on\n"}, "draft edit")
 
 	res, err := r.svc.SaveRequirements(context.Background(), r.org, r.proj, SaveRequest{})
@@ -216,7 +216,7 @@ func TestSaveRequirements_TagCollision_InWindowClaim(t *testing.T) {
 	var once sync.Once
 	r.ws.BeforeTag = func(sourcecontrol.TagSpec) {
 		atomic.AddInt32(&tagAttempts, 1)
-		once.Do(func() { r.tag("v1", "external claim in the race window") })
+		once.Do(func() { r.tag("v1", specTagSubject+"v1") })
 	}
 
 	res, err := r.svc.SaveRequirements(context.Background(), r.org, r.proj, SaveRequest{})

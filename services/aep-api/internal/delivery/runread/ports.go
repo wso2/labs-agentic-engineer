@@ -22,6 +22,7 @@ import (
 
 	"github.com/wso2/aep/aep-api/internal/contracts"
 	"github.com/wso2/aep/aep-api/internal/delivery"
+	"github.com/wso2/aep/aep-api/internal/gen"
 )
 
 // Pre-stream fence sentinels. They are the whole error vocabulary of this
@@ -80,13 +81,50 @@ type ProjectBuildLister interface {
 	ListProjectBuildRuns(ctx context.Context, orgID, projectID string) ([]delivery.MergeBuild, error)
 }
 
-// CycleLogReader is one cycle's agent activity — live OpenChoreo pod logs while
-// the Component exists, then the observability archive while it is retained, or
-// a synthetic unavailable line when neither can answer. Satisfied by
+// CycleLogReader is one cycle's agent activity. Satisfied by
 // codingagent.AgentProgressReader, reached as a port because that is a sibling
-// slice. nil → the stream carries cycles and no lines.
+// slice. nil → the streams carry cycles and no feed.
+//
+// The two reads answer the same question in two envelope versions, from two
+// different places, because the streams are mid-cutover and are not one
+// surface:
+//
+//   - CycleEvents is the v2 RunEvent feed and is what the RUN progress stream
+//     serves. It reads the platform's own RECORDING of the cycle — never the
+//     pod, never the archive. Its cursor is an OPAQUE string: a caller carries
+//     back whatever it was handed and starts from "". Opaque on purpose — it is
+//     a byte offset into a per-attempt file today, and a reader that parsed it
+//     would pin that. Its second return is the ATTEMPT the events came from,
+//     which the frame carries: seqs restart at 1 on a re-dispatch, so a client
+//     deduping on seq alone would silently drop the retry's whole feed. One call
+//     serves one attempt.
+//   - CycleProgress is the v1 shape, and survives for the VERSION build-progress
+//     stream, which stitches many runs into one narrative and has not moved. It
+//     still derives per viewer from the pod log or the observability archive,
+//     and its cursor is still a millisecond timestamp.
+//
+// The pair is deliberately on one port rather than two: they answer for the same
+// cycle, and splitting them would invite a boot where a cycle is readable on one
+// stream and silent on the other.
 type CycleLogReader interface {
+	CycleEvents(ctx context.Context, cycle *delivery.RunCycle, cursor string) (events []gen.RunEvent, attempt int, next string, err error)
 	CycleProgress(ctx context.Context, cycle *delivery.RunCycle, sinceMillis int64) (*contracts.ProgressResponse, error)
+}
+
+// RecordingReader reports what the platform can serve of a cycle's feed —
+// RunCycleView.recording. Satisfied by codingagent.AgentProgressReader.
+//
+// It is a question about the PLATFORM, not about the cycle, which is why it is
+// its own port and why the cycle projection takes the answer as an argument
+// rather than deriving it: a read model that had to open a file to describe a
+// row would no longer be the free-to-poll read this package is built to be, and
+// the one caller that cannot answer (a boot with no store) must still be able to
+// project a cycle.
+//
+// nil → every cycle reports `none`, which is the honest answer for a platform
+// that is recording nothing.
+type RecordingReader interface {
+	RecordingState(cycle *delivery.RunCycle) gen.RunCycleViewRecording
 }
 
 // RunCanceller is the write behind the console's cancel button, satisfied by

@@ -53,19 +53,6 @@ const fullComponentDesignJSON = `{
       "kind": "external",
       "name": "openweather",
       "description": "weather",
-      "style": "rest-api",
-      "specPath": "dependencies/openweather.openapi.yaml",
-      "config": [
-        {
-          "key": "OPENWEATHER_API_KEY",
-          "secret": true,
-          "description": "Your OpenWeather API key"
-        },
-        {
-          "key": "OPENWEATHER_REGION",
-          "defaultValue": "us-east-1"
-        }
-      ],
       "wiring": {
         "ref": "shop-openweather",
         "envBindings": {
@@ -135,22 +122,19 @@ func TestParseComponentDesignJSON_AllKinds(t *testing.T) {
 		got[1].Description != "cross-project profile lookup" {
 		t.Fatalf("dep[1] drifted: %+v", got[1])
 	}
-	if got[2].Kind != DependencyKindExternal || got[2].Name != "openweather" ||
-		got[2].Style != DependencyStyleRestAPI || got[2].SpecPath != "dependencies/openweather.openapi.yaml" {
+	// An external dependency on a component is a REFERENCE: kind, name, why
+	// this component uses it, and the platform's wiring. Its definition is its
+	// own file (dependency_json_test.go).
+	if got[2].Kind != DependencyKindExternal || got[2].Name != "openweather" || got[2].Description != "weather" {
 		t.Fatalf("dep[2] drifted: %+v", got[2])
+	}
+	if got[2].Style != "" || got[2].Provider != "" || got[2].Contract != "" || len(got[2].Config) != 0 {
+		t.Fatalf("dep[2] must carry no definition fields from a reference: %+v", got[2])
 	}
 	// The codec is a pure decode: it never computes Status/Reason (no
 	// org/registry context) — that is the shared resolver's job at read time.
 	if got[2].Status != "" || got[2].Reason != "" {
 		t.Fatalf("dep[2] must have no computed status (pure decode): %+v", got[2])
-	}
-	if len(got[2].Config) != 2 || got[2].Config[0].Key != "OPENWEATHER_API_KEY" || !got[2].Config[0].Secret ||
-		got[2].Config[0].Description != "Your OpenWeather API key" || got[2].Config[0].DefaultValue != "" {
-		t.Fatalf("dep[2] config drifted: %+v", got[2].Config)
-	}
-	if got[2].Config[1].Key != "OPENWEATHER_REGION" || got[2].Config[1].Secret ||
-		got[2].Config[1].DefaultValue != "us-east-1" {
-		t.Fatalf("dep[2] config[1] defaultValue drifted: %+v", got[2].Config)
 	}
 	if got[3].Kind != DependencyKindPlatformResource || got[3].Name != "orders-db" ||
 		got[3].ResourceType != "postgres" || got[3].Parameters["size"] != "small" {
@@ -424,13 +408,13 @@ func TestParseComponentDesignJSON_NeedsSpecNowUnknownFieldRejected(t *testing.T)
 	}
 }
 
-// TestComponentDesignJSON_ExternalIntentFields_RoundTrip covers the four
-// external-only intent fields (style, package, specPath, candidates) added
-// alongside the needsSpec removal: an SDK-resolved dep (style+package), an
-// ambiguous dep (2+ candidates), and a needs-input dep (no
-// fields at all — the agent could not classify it without the user) all
-// survive a parse → marshal round trip byte-identically.
-func TestComponentDesignJSON_ExternalIntentFields_RoundTrip(t *testing.T) {
+// TestComponentDesignJSON_LegacyExternalFields_ReadNeverWritten covers a
+// design from before the dependency file existed: the definition fields it
+// still carries on the component (style, package, specPath, candidates,
+// config) are decoded — AssembleDesign lifts them into a dependency file —
+// and NEVER encoded, so the next save leaves a bare reference behind. That
+// drop is the migration.
+func TestComponentDesignJSON_LegacyExternalFields_ReadNeverWritten(t *testing.T) {
 	raw := `{
   "name": "checkout",
   "type": "service",
@@ -480,20 +464,22 @@ func TestComponentDesignJSON_ExternalIntentFields_RoundTrip(t *testing.T) {
 	if stripe.Style != DependencyStyleSDK || stripe.Package != "npm:stripe@^14" {
 		t.Fatalf("stripe style/package drifted: %+v", stripe)
 	}
+	// The retired `candidates` carry reads as suggestions — the option's
+	// package was the agent's guess and does not come along.
 	email := comp.Dependencies[1]
-	if len(email.Candidates) != 2 {
-		t.Fatalf("want 2 candidates, got %d: %+v", len(email.Candidates), email.Candidates)
+	if len(email.Suggestions) != 2 {
+		t.Fatalf("want 2 suggestions, got %d: %+v", len(email.Suggestions), email.Suggestions)
 	}
-	if email.Candidates[0].Name != "sendgrid-rest" || email.Candidates[0].Style != DependencyStyleRestAPI {
-		t.Fatalf("candidate[0] drifted: %+v", email.Candidates[0])
+	if email.Suggestions[0].Name != "sendgrid-rest" || email.Suggestions[0].Style != DependencyStyleRestAPI {
+		t.Fatalf("suggestion[0] drifted: %+v", email.Suggestions[0])
 	}
-	if email.Candidates[1].Name != "resend-sdk" || email.Candidates[1].Style != DependencyStyleSDK ||
-		email.Candidates[1].Package != "npm:resend@^4.0.0" {
-		t.Fatalf("candidate[1] drifted: %+v", email.Candidates[1])
+	if email.Suggestions[1].Name != "resend-sdk" || email.Suggestions[1].Style != DependencyStyleSDK ||
+		email.Suggestions[1].Description != "Resend Node SDK" {
+		t.Fatalf("suggestion[1] drifted: %+v", email.Suggestions[1])
 	}
 
 	crm := comp.Dependencies[2]
-	if crm.Style != "" || crm.Package != "" || len(crm.Candidates) != 0 {
+	if crm.Style != "" || crm.Package != "" || len(crm.Suggestions) != 0 {
 		t.Fatalf("needs-input dep must carry none of the intent fields: %+v", crm)
 	}
 
@@ -501,24 +487,51 @@ func TestComponentDesignJSON_ExternalIntentFields_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	if string(out) != raw {
-		t.Fatalf("round-trip not byte-identical:\n--- got ---\n%s\n--- want ---\n%s", out, raw)
+	for _, legacy := range []string{`"style"`, `"package"`, `"candidates"`, `"specPath"`, `"config"`} {
+		if strings.Contains(string(out), legacy) {
+			t.Fatalf("a re-save must not carry %s on the component (the definition is the dependency file):\n%s", legacy, out)
+		}
+	}
+	for _, want := range []string{`"name": "stripe"`, `"name": "email-provider"`, `"name": "crm"`} {
+		if !strings.Contains(string(out), want) {
+			t.Fatalf("the reference itself must survive (%s):\n%s", want, out)
+		}
 	}
 }
 
-// TestParseComponentDesignJSON_CandidatesLenientOnDecode documents that the
-// disk codec stays a lenient, pure decode (like every other kind-specific
-// field): the candidates minItems:2 / kind="external"-only business rules are
-// enforced upstream by the write-gates (zod superRefine, the Go fold
-// validator) BEFORE a file is ever committed, not re-checked here on read.
-func TestParseComponentDesignJSON_CandidatesLenientOnDecode(t *testing.T) {
-	raw := `{"name":"checkout","type":"service","dependencies":[{"kind":"component","name":"cart","candidates":[{"name":"a","style":"rest-api"}]}]}`
+// A legacy specPath (a URL or a component-relative file) is research
+// provenance, not a contract: the lift keeps it as the definition's source.
+func TestParseComponentDesignJSON_LegacySpecPathBecomesProvenance(t *testing.T) {
+	raw := `{"name":"checkout","type":"service","dependencies":[{"kind":"external","name":"weather","style":"rest-api","specPath":"https://example.com/openapi.json"}]}`
 	comp, err := parseComponentDesignJSON("checkout", raw)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if len(comp.Dependencies[0].Candidates) != 1 || comp.Dependencies[0].Candidates[0].Name != "a" {
-		t.Fatalf("candidates drifted: %+v", comp.Dependencies[0].Candidates)
+	d := comp.Dependencies[0]
+	if d.Contract != "" {
+		t.Fatalf("a legacy specPath is not a committed contract: %+v", d)
+	}
+	if d.Provenance == nil || d.Provenance.SourceURL != "https://example.com/openapi.json" {
+		t.Fatalf("legacy specPath must survive as provenance: %+v", d.Provenance)
+	}
+}
+
+// TestParseComponentDesignJSON_CandidatesLenientOnDecode documents that the
+// disk codec stays a lenient, pure decode: the candidates minItems:2 business
+// rule is enforced upstream by the write-gates BEFORE a file is ever committed,
+// not re-checked here on read. Legacy definition fields are carried for an
+// external reference only — on any other kind they are noise and dropped.
+func TestParseComponentDesignJSON_CandidatesLenientOnDecode(t *testing.T) {
+	raw := `{"name":"checkout","type":"service","dependencies":[{"kind":"external","name":"mail","candidates":[{"name":"a","style":"rest-api"}]},{"kind":"component","name":"cart","candidates":[{"name":"a","style":"rest-api"}]}]}`
+	comp, err := parseComponentDesignJSON("checkout", raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(comp.Dependencies[0].Suggestions) != 1 || comp.Dependencies[0].Suggestions[0].Name != "a" {
+		t.Fatalf("external candidates must read as suggestions: %+v", comp.Dependencies[0].Suggestions)
+	}
+	if len(comp.Dependencies[1].Suggestions) != 0 {
+		t.Fatalf("a component dependency carries no definition fields: %+v", comp.Dependencies[1])
 	}
 }
 

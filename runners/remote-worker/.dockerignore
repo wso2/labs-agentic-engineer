@@ -30,3 +30,7 @@ local
 src/local.ts
 # Dev CLI for printing the composed workflow skill; no run path touches it.
 src/compose_workflow.ts
+# Recorded SDK sessions the translator's tests replay (~300 KB of JSONL) and the
+# probe scripts that produced them. Test-only inputs: no run path reads them, and
+# `COPY . .` would otherwise carry them into every pod.
+test

@@ -42,7 +42,10 @@ export function LogSurface({
   maxHeight = 420,
 }: {
   children: ReactNode;
-  maxHeight?: number;
+  /** `"none"` for a surface whose own panes scroll — the crew's two columns
+   *  scroll independently, and a scrollbar on the surface AND on each pane is
+   *  two ways to move one list. */
+  maxHeight?: number | string;
 }) {
   return (
     <Box

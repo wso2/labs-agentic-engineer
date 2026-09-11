@@ -58,6 +58,7 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
 | `BindingConverger` (`Converge`) | offers | the config slice — an env-var edit pushes onto the live binding through the deploy path rather than patching a field of it, so the two can never write different desired states onto one object |
 | `ComponentEnvVarReader` · `RuntimeFileProvider` | needs | the config slice and `dependencies/runtimeconfig` — the two projections whose values ride the binding's workload overrides. Both are declared consumer-side and both distinguish "no values" from "cannot compute yet": an unready projection leaves its field UNMANAGED rather than writing an empty one over the user's values |
 | CRT catalog · binding patcher · `ThunderApplicationReader` | needs | after OC Ready, a web-app whose platform-resource CRT carries `ConsumerURLEnvConfig` stays pending until the ThunderApplication CR has the SPA callback. Wired via `SetResourceCatalog` / `SetResourceClient` / `SetThunderApplicationReader`. Any nil (or a nil store) skips the wait, so OC-only `DeploymentState` tests stay green. Service components never enter it. This domain consumes `ThunderApplicationView`; it does not GET Kubernetes |
+| `EndpointGate` | needs | after OC Ready, a component that advertises an external URL stays pending until that URL ANSWERS. ONE gate, wired via `SetEndpointGate` onto BOTH the deploy-stage read (`DeploymentState`) and the status poll (`holdUnreachable`), so the supervisor and the console cannot answer differently about one component and the first probe serves both. The URL rides `ReleaseBindingSummary.ExternalURL` — the same object, no second request. Nil skips the gate, and the composition root wires one only when the data-plane gateway fronts TLS: a plane without it has no certificate to wait for, and its `*.openchoreoapis.localhost` names resolve to loopback from this process. A component that advertises no URL passes untouched |
 | `OrgPublisher` | needs | `organization` — per-org Thunder publisher provisioning + the IDP profile a protected API's JWT validation is pinned to. Best-effort: a failure composes an unpinned trait rather than failing a version's deploy |
 | `ProjectLister` | needs | `sourcecontrol`, at the root — every project the platform tracks, for the converge sweep. The git-repository index rather than the executions table, because the run loop mints no execution rows and a sweep reading those saw nothing on that rail |
 | `Service` · `ComponentService` · `ConfigService` | offers | the edge (the 14 public ops) |
@@ -96,6 +97,25 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
   The address rides the binding's env field and is overlaid ONLY when that field is already managed —
   merging into an unmanaged (nil) one would replace the user's whole config with the platform's variable.
 - **OpenChoreo Ready is not deployed for a Thunder SPA.** A web-application with a platform-resource whose CRT carries `ConsumerURLEnvConfig` stays pending until `ThunderApplication.spec.redirectUris` equals the SPA callback and that generation is ready (`status.ready` and `observedGeneration >= generation`). Failed and Undeploy skip the wait; a patch or CR GET error is returned for activity retry, not invented as Failed. `FilesForComponent` is a different seam — this wait does not grade the callback onto env-config.js.
+- **OpenChoreo Ready is not reachable.** OC reports a binding Ready when the control plane is done —
+  release rendered, workload rolled out. Every consumer reads it as a claim about the EDGE: the
+  validation sweep dispatches on it, the console counts components live by it, and a person clicks the
+  URL because of it. On a cloud plane a component that has never been deployed gets a hostname that has
+  never had a certificate, and cert-manager's ACME order has no happens-before edge to the binding, so
+  the two are minutes apart. A component that advertises an external URL is therefore not Ready here
+  until that URL answers — any HTTP response counts and only a transport failure does not, which is
+  [ADR-0006](../../../../runners/remote-worker/design/decisions/ADR-0006-the-runner-proves-endpoint-reachability.md)'s
+  rule and the runner's preflight is its other implementation — narrowed to the ONE URL the binding
+  advertises, since the certificate is issued per host and that URL is the one a person clicks.
+  A held component is `converging`, which the deploy stage already waits on and its deadline
+  already fails. The first POSITIVE answer per
+  release is memoised for ever, so this is not health monitoring; a negative one is memoised for a
+  short retry window, because both readers are polled and a fresh connect per unreachable component
+  per poll is latency a person waiting on the project page would see. The console's counts run
+  through the SAME gate
+  (`holdUnreachable` downgrades a Ready binding whose URL does not answer, before `deployStageStatus`
+  and `countReady` see it), so the overview reads "Deploying · 1 of 2" for that window rather than
+  claiming a component is live at a moment clicking its link returns a TLS error.
 - **Deploy is DRIVEN, never inferred.** Components carry `autoDeploy: false`, so nothing promotes a release
   except a call to `Deploy`. That is what lets the run supervisor place validation after a version is
   genuinely serving — see [ADR-0017](../../../../docs/decisions/ADR-0017-the-platform-owns-deploy.md).

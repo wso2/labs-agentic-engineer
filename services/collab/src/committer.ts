@@ -21,7 +21,8 @@
 // BFF's monopoly; this module only decides WHEN (Hocuspocus's debounced
 // onStoreDocument + the pre-unload final store) and WHAT (doc snapshot vs
 // the room baseline). Conflicts are doc-wins: refetch shas, re-apply,
-// bounded retries (#86 d6).
+// bounded retries (#86 d6) — over the files the room holds; a file git gained
+// outside the room is left where it is.
 
 import type { Document } from "@hocuspocus/server";
 import {
@@ -258,11 +259,17 @@ export async function flushRoom(
           `committer: ${documentName} conflict on ${err.paths.join(", ")} — re-applying (doc wins)`,
         );
         const head = await deps.bff.fetchSpecFiles(token, state.projectName);
-        // Same exclusion as the seed: HEAD carries the reference documents,
-        // and adopting them into the baseline is how they reached the delete
-        // loop in the first place.
-        for (const f of head.filter((h) => !isReferenceDocPath(h.path))) {
+        // Adopt HEAD's sha only for the paths this room already carries — in
+        // its baseline or in the doc. A path HEAD gained OUTSIDE the room (the
+        // platform committing a dependency's interface beside its definition,
+        // an uploaded reference document) is not the doc's to delete: adopted
+        // into the baseline, "absent from the doc" read as "deleted", and the
+        // re-apply removed a file the session never held.
+        const current = snapshotDoc(doc);
+        for (const f of head) {
+          if (isReferenceDocPath(f.path)) continue;
           const base = state.baseline.get(f.path);
+          if (!base && current[f.path] === undefined) continue;
           state.baseline.set(f.path, {
             // Keep OUR notion of content (so the diff still sees the doc's
             // version as a change), but adopt HEAD's sha as the precondition.

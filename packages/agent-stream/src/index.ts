@@ -37,6 +37,7 @@ export type {
   EditFileInput,
   RemoveFileInput,
   AskQuestionOption,
+  QuestionOptionAction,
   AskQuestionInput,
   AskQuestionsInput,
   QuestionAnswer,
@@ -74,6 +75,8 @@ export {
   SURFACES,
   TURN_KINDS,
   ASK_QUESTION_TOOL,
+  isQuestionTool,
+  isErrorToolOutput,
   ASK_QUESTIONS_TOOL,
   DECLARE_PLAN_TOOL,
   ANSWER_PREFIX,
@@ -101,7 +104,6 @@ export type {
   Dependency,
   DependencyKind,
   DependencyStyle,
-  DependencyCandidate,
   ConfigKey,
   ExposesAPI,
 } from "./contracts/component-design.js";
@@ -148,6 +150,30 @@ export { checkDesignDiagram, cellNodeIds, prdActors, DOMAIN_MODEL_PATH } from ".
 export type { DesignDiagramProblem, DiagramBundleReader, CellNodes } from "./design-diagrams.js";
 export { checkComponentDependencies } from "./component-dependencies.js";
 export type { ComponentDependencyProblem } from "./component-dependencies.js";
+
+// --- The dependency.json write-gate (one dependency, one definition) --------
+export {
+  checkDependencyDesign,
+  preserveAssumption,
+  dependencyDesignSchema,
+  dependencySuggestionSchema,
+  sdkManifestSchema,
+  dependencyDir,
+  dependencyDesignPath,
+  DEPENDENCY_DESIGN_JSON_RE,
+  SDK_MANIFEST_JSON_RE,
+  CONTRACT_FILES_BY_STYLE,
+  SDK_MANIFEST_FILE,
+} from "./dependency-design-schema.js";
+export type { DependencyDesignProblem } from "./dependency-design-schema.js";
+export type {
+  DependencyDesign,
+  DependencySuggestion,
+  DependencySource,
+  DependencyProvenance,
+  DependencyAssumption,
+  SdkManifest,
+} from "./contracts/dependency-design.js";
 
 // --- The security.json write-gate ------------------------------------------
 export {

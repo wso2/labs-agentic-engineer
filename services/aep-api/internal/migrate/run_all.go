@@ -61,6 +61,12 @@ func BaseModels() []any {
 		&sourcecontrol.WebhookDelivery{},
 		&sourcecontrol.WebhookPayload{},
 		&organization.Organization{},
+		// The org's coding-agent runtime and model. A plain two-column settings
+		// table with a text primary key and nothing to encrypt, so AutoMigrate
+		// expresses the whole schema and there is no Step to append: the
+		// credential tables need raw SQL for their expand/verify/contract
+		// history, and this one has none.
+		&organization.OrgCodingAgentSetting{},
 		&delivery.Execution{},
 		&spec.AgentTurn{},
 		&modelcost.ModelRate{},

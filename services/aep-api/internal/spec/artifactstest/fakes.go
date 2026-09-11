@@ -39,6 +39,7 @@ type FakeArtifactService struct {
 	SaveSpecFunc                  func(ctx context.Context, orgID, projectID string, req spec.SaveRequest) (*spec.SpecSaveResult, error)
 	ValidateSpecAtTagFunc         func(ctx context.Context, orgID, projectID, tag string) error
 	LatestSpecTagFunc             func(ctx context.Context, orgID, projectID string) string
+	BuildVersionFactsFunc         func(ctx context.Context, orgID, projectID string) (spec.VersionFacts, error)
 	SaveRequirementsFunc          func(ctx context.Context, orgID, projectID string, req spec.SaveRequest) (*spec.RequirementsSaveResult, error)
 	SaveDesignFunc                func(ctx context.Context, orgID, projectID string, req spec.SaveRequest) (*spec.DesignSaveResult, error)
 	ListRequirementsVersionsFunc  func(ctx context.Context, orgID, projectID string) ([]spec.RequirementsVersionInfo, error)
@@ -85,6 +86,13 @@ func (f *FakeArtifactService) LatestSpecTag(ctx context.Context, orgID, projectI
 		panic("artifactstest: LatestSpecTag called but LatestSpecTagFunc is not set")
 	}
 	return f.LatestSpecTagFunc(ctx, orgID, projectID)
+}
+
+func (f *FakeArtifactService) BuildVersionFacts(ctx context.Context, orgID, projectID string) (spec.VersionFacts, error) {
+	if f.BuildVersionFactsFunc == nil {
+		panic("artifactstest: BuildVersionFacts called but BuildVersionFactsFunc is not set")
+	}
+	return f.BuildVersionFactsFunc(ctx, orgID, projectID)
 }
 
 func (f *FakeArtifactService) SaveRequirements(ctx context.Context, orgID, projectID string, req spec.SaveRequest) (*spec.RequirementsSaveResult, error) {

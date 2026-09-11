@@ -41,6 +41,7 @@ import {
   RefreshCw,
   Network,
   LayoutDashboard,
+  Plug,
   ShieldCheck,
   TriangleAlert,
   Workflow,
@@ -56,6 +57,7 @@ import {
   type SectionReason,
 } from "../lib/railSections";
 import { ProblemsDialog } from "./ProblemsDialog";
+import type { DependencyState } from "../lib/dependencyStates";
 import {
   buildDesignSection,
   selectionKey,
@@ -78,10 +80,17 @@ export function SpecFileList({
   sections,
   plan,
   onReason,
+  dependencyStates,
 }: {
   files: SpecFileEntry[];
   selection: SpecSelection | null;
   onSelect: (sel: SpecSelection) => void;
+  /**
+   * One state per external dependency (name → folded read model), so a row
+   * can say what the user must do without opening the page. Absent while the
+   * read model has not loaded; the rows then carry no chip.
+   */
+  dependencyStates?: Record<string, DependencyState> | undefined;
   /** Re-generate the design (#159) — shown in the Designs header once a design
    *  exists; fires the same design-generation room turn as the header CTA. */
   onRegenerateDesign: () => void;
@@ -148,6 +157,18 @@ export function SpecFileList({
   );
   const toggleComponent = (name: string) => {
     setCollapsedComponents((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
+  // A dependency's group collapses like a component's, remembered by name.
+  const [collapsedDependencies, setCollapsedDependencies] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const toggleDependency = (name: string) => {
+    setCollapsedDependencies((prev) => {
       const next = new Set(prev);
       if (next.has(name)) next.delete(name);
       else next.add(name);
@@ -331,14 +352,17 @@ export function SpecFileList({
     );
   };
 
-  // A collapsible group's header — Flows and every component share it, so
-  // the two kinds of group read the same: chevron, glyph, name. The glyph is
-  // what tells a flows group from a component group at a glance (#686).
+  // A collapsible group's header — Flows, every component and every
+  // dependency share it, so the three kinds of group read the same: chevron,
+  // glyph, name. The glyph is what tells them apart at a glance (#686). A
+  // dependency's header also carries where it stands (`trailing`), so the
+  // rail says what the build waits on before the drawer does.
   const groupHeader = (
     label: string,
     icon: React.ReactNode,
     collapsed: boolean,
     onToggle: () => void,
+    trailing?: React.ReactNode,
   ) => (
     <ListItemButton
       onClick={onToggle}
@@ -357,11 +381,40 @@ export function SpecFileList({
             variant: "body2",
             fontWeight: 600,
             color: "text.secondary",
+            noWrap: true,
           },
         }}
       />
+      {trailing}
     </ListItemButton>
   );
+
+  // What a dependency's header says after its name: the one thing the user
+  // must do as an amber mark (the words on hover and as its label), or the
+  // qualifier on a resolved one as quiet text. Nothing while the read model
+  // has not loaded.
+  const dependencyMark = (name: string) => {
+    const state = dependencyStates?.[name];
+    if (!state) return null;
+    if (state.blocking) {
+      return (
+        <Tooltip title={state.todo}>
+          <Box
+            sx={{ display: "flex", flexShrink: 0, color: "warning.main" }}
+            aria-label={`${name}: ${state.todo}`}
+          >
+            <TriangleAlert size={14} />
+          </Box>
+        </Tooltip>
+      );
+    }
+    if (state.flags.length === 0) return null;
+    return (
+      <Typography variant="caption" color="text.secondary" sx={{ flexShrink: 0, ml: 1 }}>
+        {state.flags.join(", ")}
+      </Typography>
+    );
+  };
 
   const flatGroup = (section: RailSection, groupFiles: SpecFileEntry[]) => (
     <Box sx={{ mb: 1 }}>
@@ -457,6 +510,29 @@ export function SpecFileList({
                 </Collapse>
               </Box>
             )}
+            {/* The external dependencies — one directory each, grouped like a
+                component: the definition, the interface it exposes, an SDK
+                manifest. They sit between the flows and the components,
+                the plug glyph telling them apart. */}
+            {design.dependencies.map((d) => {
+              const collapsed = collapsedDependencies.has(d.name);
+              return (
+                <Box key={`dependency:${d.name}`} sx={{ mt: 0.5 }}>
+                  {groupHeader(
+                    d.name,
+                    <Plug size={14} />,
+                    collapsed,
+                    () => toggleDependency(d.name),
+                    dependencyMark(d.name),
+                  )}
+                  <Collapse in={!collapsed} unmountOnExit>
+                    {d.files.map((f) =>
+                      row(fileSel(f.path), fileLabel(f.path), <FileText size={16} />, true),
+                    )}
+                  </Collapse>
+                </Box>
+              );
+            })}
             {design.components.map((c) => {
               const collapsed = collapsedComponents.has(c.name);
               return (

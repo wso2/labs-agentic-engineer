@@ -182,11 +182,73 @@ is captured to `playground/.devtools/generations.json` (gitignored). Inspect
 with `npx @ai-sdk/devtools` (port 4983). Opt out per run with
 `AGENT_DEVTOOLS=false pnpm play …`. The coding agent is an Agent SDK session,
 not an AI SDK model — its full transcript is the run's
-`.aep-playground/runs/<ts>/…/claude.log` instead. Beside it,
-`agent-sessions/` is the SDK's own per-session scratch, redirected there with
-`CLAUDE_CODE_TMPDIR` so a stalled subagent's diagnostic file survives
-`docker run --rm` (rationale inline in `engine/coding-run.ts`) — docker mode only,
-and never pre-created on the host: the CLI refuses a temp dir it does not own.
+`.aep-playground/runs/<ts>/…/claude.log` instead.
+
+Beside it, `agent-sessions/` is the runtime's own scratch — the lead's
+transcript, a fanned-out subagent's, and the output files its backgrounded tasks
+wrote — lifted out of the container with `docker cp` (rationale inline in
+`engine/coding-run.ts`): `final/` when the run ends, plus one `<agentId>/` the
+moment a subagent FAILS, because the SDK deletes a subagent's transcript as soon
+as that subagent completes and a failure line on the feed is the last instant the
+file still exists. That copy is why the container is NOT started with `--rm`: the
+harness removes it itself once the copy is done, and reaps any container an
+outright-killed run left behind. Docker mode only — a host run's transcripts are
+already in your own `~/.claude`, which is yours and not the harness's to move
+around — and local plane only: nothing is uploaded and the console never shows
+them.
+
+## Watching a coding run
+
+The step lines stream as they always have — one row per tool call, subagents
+tagged `[#1]`/`[#2]` — and **on a terminal** the crew sits pinned under them:
+
+```
+  $ Read /workspace/project/issues/5.md
+  [#1] $ npx vite build
+  ── crew · 4 agents · 2 running · ♥ 2.0s ────────────────────────────────────
+  ● lead agent  authoring workload.yaml                        41m54s · ♥ 2.0s
+    ☑ Build onboarding-webapp
+    ▸ Walk onboarding-webapp in mock mode
+    ✓ #1 Build onboarding-webapp React SPA  build clean  completed · 41m11s · 162 tools
+    ● #3 Walk onboarding-webapp in mock mode (background)  npx playwright test…  42.0s · ♥ 4.0s
+      ⟳ npm run dev:mock                                                     running 41.5s
+```
+
+One row per agent, nested by the depth the feed declares, with the commands it
+backgrounded under it and the plan entries it owns. `♥` is how long that member
+has been quiet; a row goes amber when a tool call has gone unanswered for a
+minute, and it always says what it is amber about. The `#N` is the SAME tag the
+streamed lines carry, from one registry (`engine/agent-tags.ts`) — two surfaces
+numbering agents separately is a reader following a `[#2]` line to the wrong crew
+row.
+
+The plan rows are the lead's own task list. It reaches the feed as
+`work_item {source: "plan"}`, which is a SILENT kind — a surface repaints one row
+rather than printing five — so the block is what makes the `aep` skill's promise
+to every run true here: "the person watching this run reads that list".
+
+EVERY fact on the block comes from `buildCrew` in `@aep/progress-view`, the same
+model the console's crew view renders: who is in the crew, how each member
+stands, its live sub-line in the runtime's own words, its two clocks, and its
+`plan`. This package adds glyphs, columns and colour and derives none of it — a
+second derivation is how two surfaces come to disagree about one run. There is no
+timeline: a time axis has no honest rendering in a terminal that scrolls.
+
+**When stdout is not a TTY the block is not drawn at all**, and the output is the
+tagged lines and nothing else. Playground transcripts are piped and archived, and
+a saved run has to stay comparable with one recorded before the block existed. The seam is the `isTTY` argument to
+`openCrewPane`, passed in rather than read off the stream so both branches are
+driven by `test/crew-block.test.ts` rather than hoped about.
+
+Redraw discipline lives in `engine/crew-pane.ts`: the content is rebuilt at most
+once a second (`buildCrew` walks the whole event array), a ticker repaints while
+nothing arrives so the ages cannot freeze on a wedged run, a streamed line erases
+the block and repaints it so steps always land above it, and every row is
+truncated one column short of the width. That last one is load-bearing — a
+wrapped row makes the block one physical line taller than the cursor arithmetic
+believes, and the next erase would eat the transcript instead. The failure mode is
+"the block is short", never "the transcript is mangled". Closing takes the block
+down and leaves the merged end-of-run pass with no residue above it.
 
 ## Fidelity contract
 

@@ -170,7 +170,11 @@ not carry: who is acting, why it failed.
 
 | Situation | Says |
 |---|---|
-| The coding agent is working it | **`Running · Coding agent`** |
+| It is moving, and the surface cannot say who is working | **`Running`** |
+| The coding agent is writing code | **`Running · Coding agent`** |
+| The platform is merging its pull request | **`Running · Merging the pull request`** |
+| Its components are building | **`Running · Building components`** |
+| Every stage is done and the version has not settled | **`Deploying to development`** |
 | The run ended badly, and the platform said why | **`Failed · <reason>`** |
 | The run ended badly and left no reason | **`Failed`** |
 | Built, and it is the version running in development | **`Deployed to development`** |
@@ -180,6 +184,55 @@ not carry: who is acting, why it failed.
 
 **`Built`, never *Completed*.** "Completed" describes the run; the row is about
 the version.
+
+**The qualifier after `Failed ·` names WHAT went wrong, never the slug.** The
+platform sends codes — `RunFailure.code` when it recorded a fault,
+`terminalReason` when it only named the phase — and `features/builds/lib/failure.ts`
+owns the words for each, the way `@aep/progress-view` owns a notice code's. The
+ledger chip, the build page's header pill, its failure card and the overview's
+Build leg all read from there, so one outcome is said one way. `plan-failed`
+reads *Planning failed*; a recorded `dependency-unprovisionable` reads
+*Dependency could not be provisioned*; a code nobody has words for yet renders
+as itself rather than hiding.
+
+### A failed run explains itself
+
+Under the build page's header, before the summary card, a toned **failure
+card** says what happened, what did NOT happen, and whether trying again can
+help — in that order, in the platform's recorded words:
+
+| Situation | Card |
+|---|---|
+| A dependency the platform cannot author (permanent) | error · *The platform could not provision `sendgrid`* · names the component · *Nothing was coded or deployed. Retrying cannot fix this; the design needs a change, then a new build.* · **Open sendgrid in the design** |
+| A provisioning fault being retried | warning · *Provisioning `orders-db` failed — retrying (attempt 2 of 3)* · *No action is needed yet.* |
+| The same, after the bound is spent | error · *It tried 3 times and met the same error each time … build again* |
+| The planning turn failed | warning while retrying (*attempt N*, unbounded), error only once the run failed |
+| The repository is gone | error · *check the repository connection in Settings* |
+| A run failed before the record existed | error · the terminal reason in words · *The platform recorded no further details for this run.* |
+| Cancelled | **no card** — a person stopping an increment is not a fault |
+| Blocked | no card — the existing quota / credentials message is that surface |
+
+**Show details** opens the platform's facts as a dense list — `code` (with
+*permanent* / *retryable*), `attempts`, `window`, `recorded` (the platform's own
+error text, scrubbed at the producer), `run`, `workflow` — and **Copy details**
+puts them on the clipboard as one block: the support conversation starts from
+the card, not from a log grep.
+
+**The coding agent log says *Did not start — the run ended while the platform
+was preparing the version* when no cycle was ever dispatched.** "Nothing has
+been dispatched yet" is a promise about the future, and a failed run has none.
+
+**The Overview's Build leg reads `Build failed · <what>`** from the same words,
+so the reader who is not on the build page learns what failed at a glance.
+
+**The qualifier names the actor working NOW, and only a surface that has read
+the run may add one.** `in_progress` spans the whole build-session rail
+(ADR-0014) — the agent writes, the platform merges, the components build, the
+cluster rolls out — so one hard-coded actor is true for a fifth of a run and
+false for the rest. The build page reads the run and names the rail's current
+stage; the ledger cannot afford that read (ADR-0021 §6) and so says the bare
+`Running`. A stage that is waiting, needs a human or failed is named by neither:
+the rail below spells it out in a sentence a pill has no room for.
 
 **There is no queued status, and that is a gap rather than a choice.** The
 design drew `Queued · next` for a version waiting its turn, and the platform
@@ -387,6 +440,39 @@ right-aligned under the log, away from where its content starts.
 **A run that is neither streaming nor terminal is labelled by neither.** A run
 parked at the deploy gate has not ended, and *Run finished* over its log would
 contradict the summary card telling the reader it is waiting on them.
+
+### The coding agent log
+
+A cycle's log is a **crew** — the agents the run is made of — with two views the
+reader switches between, never both at once. The words name what a reader wants
+to know, not the runtime's mechanics: nothing here says "subagent", "fan-out" or
+a tool's name.
+
+| | |
+|---|---|
+| The two views | **Crew** · **Timeline** |
+| Crew answers | who is doing what right now |
+| Timeline answers | where the time went, and what ran at once |
+| The run's own agent | **lead** |
+| A spawned agent | its **label** — the description the lead gave it, never an id |
+| The count beside the toggle | **`N agents · M running · last event Xs ago`** |
+
+An agent's state names its situation (naming rule 6):
+
+| Situation | Says |
+|---|---|
+| Events are arriving | **`working`** |
+| Blocked inside an agent it spawned | **`waiting on <label>`** |
+| A minute of silence with a call unanswered | **`stalled`**, with what it is waiting on |
+| It finished | **`completed`** and its own **report** |
+| The runtime reported a failure | **`failed`** |
+| It was stopped, or the run was cancelled | **`stopped`** / **`cancelled`** — never *failed* |
+
+**Silence is never a verdict.** A quiet agent reads as `working` with the age of
+its last event beside it; only the runtime saying so makes a row a failure.
+
+**Plan** is the lead's own task list, shown under the agent that owns each entry.
+It is what the run set out to do, beside what it did.
 
 ## The project overview
 
@@ -625,6 +711,76 @@ below its own footnotes. Path order alone puts `features/…` above `prd.md`, wh
 [#579](https://github.com/wso2/labs-agentic-engineer/issues/579) made routine by giving `/expand` a
 lens on every story; the list pins the PRD instead, and everything behind it keeps path order.
 
+### A dependency's group, and its definition
+
+Decided in [ADR-0028](decisions/ADR-0028-a-dependency-is-a-directory-in-the-rail.md). An
+external dependency is one directory, so it is one rail group shaped like a component's, and
+its definition is one file with a view of its own.
+
+| | |
+|---|---|
+| Rail group | one per dependency, plug glyph, between Flows and the components; rows are its files — **Definition** · **API** · **SDK** |
+| A header that blocks the build | an amber mark after the name; the words on hover and as its label: **Choose a provider** · **Needs a contract** · **Needs your acceptance** |
+| A header that is resolved, with a qualifier | quiet text after the name: **Assumed** · **Derived from docs** · **Registered** · **SDK only** |
+| The definition's eyebrow chips | **External dependency**, the qualifiers, and either the todo or **Resolved** |
+| Its facts | **Provider** · **Style** (**REST API** / **GraphQL** / **SDK**) · **Source** · **Package** — labelled rows under the name, never a subtitle repeating it |
+| Its sections | **Description** · **Used by** · **Provider** · **Interface** (once a provider is chosen) · **Configuration** (once keys exist) |
+| The Provider section | the provider's name (*Registered by the organization* for an org resource), or *None chosen yet. Select one and the agent sets it up: its interface, then the configuration keys.* with the button **Select a provider** beside the heading, which runs `/resolve-dependency <name>` |
+| The flow's first card | *Which provider?* — the definition's suggestions as options, **Another provider** as free text (a name or a link to its API document), **Find one for me** |
+| The flow's second card | *How should I get its interface?* — **Give a link** (free text), **Upload one** (opens the upload modal over the card; the answer is sent once the document lands), **Proceed on your assumption** (records the authorization on the definition when the answer is sent; the agent then writes the interface — nothing further is asked) |
+| Its primary button | **Resolve** (runs the guided flow), shown once a provider is chosen — **Reconsider** once resolved |
+| Providing a document | button **Provide interface** (**Replace interface** once one is on file) beside the Interface heading; it opens a modal — field **OpenAPI document URL** + **Fetch**; drop zone *Drop an OpenAPI document (YAML or JSON) here, or click to choose one.*; **Cancel** |
+| Once a document is on file | the Interface section links to it in place, with its **Source**, what was **Kept** and when it was **Read on** |
+| An interface derived from the provider's documentation | line *Derived from the provider's documentation — every operation cites its page; no published document exists to check it against.*, then the file link and its Source; nothing to accept |
+| An agent-written interface nobody authorized | box titled *The agent wrote this interface from research*; button **Accept the assumption**; link **Read it first** |
+
+**The todo names what the reader must do, never the state machine's word.** *Needs a
+contract*, not *needs-contract* or *unresolved*; *Choose a provider*, not *needs-input*. The
+wire words stay on the wire.
+
+**The dependency is the service; the provider supplies it.** A need is named
+`<capability>-service` (*currency-service*), and the system chosen for it is its *provider*
+(*Open Exchange Rates*). Never "the service Stripe".
+
+**The user chooses the provider; the agent never does.** A suggestion is a starting point the
+design agent named from what it knows, not a fit it researched — it is an option on the flow's
+first card, never a chip on the definition. The research happens in the resolve flow, after
+the user answers.
+
+**A link in the chat opens a document, nothing more.** The design turn's closing list links each
+open dependency's definition; the click lands on it, and the user presses **Select a
+provider** themselves.
+
+**Assumed is a qualifier, not a warning.** An accepted assumption builds. It is shown as quiet
+text so the reader knows what kind of resolved this is, and stays shown everywhere the
+dependency appears until a real document replaces it.
+
+**Interface is the user's word; contract is the file's role.** The rail row, the section, the
+button and the modal say *interface*; `contract` stays the field in the definition that names
+the file.
+
+**Build asks in a dialog, and the dialog lists**
+([ADR-0029](decisions/ADR-0029-build-asks-in-a-dialog-that-lists.md)). One click opens exactly one
+of two, and neither resolves anything.
+
+*Something is open* — title **Resolve dependencies**; body *These need a provider and an interface
+before `<version>` can be cut.* One row per dependency: its name, the sentence saying what it
+needs, and **Used by:** chips when more than one component declares it. **Cancel** / **Resolve** —
+and nothing else, since the rail already reaches every definition.
+
+*Nothing is open* — title **Start build**. A **Version** field first, prefilled with the suggested
+name, its hint *Letters, digits, dot, dash and underscore.* and, when the name is taken, *A version
+named `<name>` already exists.* Then the heading **What changed since `<version>`** —
+**What this version creates** on a first build, **No spec changes since `<version>`** on a
+rebuild — over three groups, in this order and never merged, each unrendered when empty:
+**Components** · **External dependencies** · **Platform resources**. The headings are bold and
+carry no explanatory line; the list sits on its own surface, which is what makes the scrolling
+frame read as one. A row is a name and a chip — **new** or **removed**, no chip for a change. The requirements are
+never a row: every row names something that exists once the version is built. Under the list, when
+anything was removed: *A removed dependency keeps its resource. Take it down from Resources.*
+**Cancel** / **Build `<name>`**, which reads **Rebuild `<name>`** when the spec tree has not
+moved.
+
 ### Section state
 
 | state | shown as |
@@ -847,21 +1003,32 @@ readers never reach.
 
 | | |
 |---|---|
-| Description, under the heading | *Each criterion represents one thing your software must do, based on your requirements. After every deployment they are checked against the running software, and the results appear under Validations. To change one, ask the agent.* |
-| Checked by a test | **`AUTO`**, tooltip *Validated automatically by the agent.* |
-| Checked by a person | **`MANUAL`**, tooltip *Requires manual validation.* |
+| Description, under the heading | *Each criterion represents one thing your system must do, based on your requirements. After every deployment the ones that can be automated are checked against the deployed system, and the results appear under Validations. The rest you have to check yourself. To change one, ask the agent.* |
+| Checked by a test | the **agent glyph** — `Sparkles`, `primary.main` — tooltip *Validated automatically by the agent.* |
+| Checked by a person | the **person glyph** — `User`, `text.secondary` — tooltip *Requires manual validation.* |
 
-**`AUTO`, never `E2E`.** The stored value stays `e2e` — the validation runner,
-the report generator and the per-criterion spec path all key on it — so the badge
-carries a **display name** instead, the same split the run-state chips already
-draw. `E2E` was never a copy decision: it was agent-authored JSON rendered
-verbatim, which is how an unexpanded acronym reached the screen past naming rule
-4. The rule now has a place to bite, because the word is finally a string
-somebody wrote.
+**A glyph, never the word.** The stored value stays `e2e` — the validation
+runner, the report generator and the per-criterion spec path all key on it — and
+no row spells it out, because a row marks the method rather than naming it. That
+shuts naming rule 4's oldest hole here: `E2E` was never a copy decision, it was
+agent-authored JSON rendered verbatim, and an acronym can no longer reach a row
+even by accident. The display name **`auto`** survives where prose needs a word
+for the same thing — the Validations pending tile and its tally — and is not a
+row's vocabulary.
 
-**Every badge earns a tooltip, and only the two real methods get one.** A third
-value exists in older documents; it renders bare rather than being given an
-invented explanation.
+**The agent glyph is the console's own.** `Sparkles` at `primary.main` is what
+the agent chat, the "ask the agent" action and the nav already mean *the agent*
+by, so a row inherits a meaning the reader arrives with instead of teaching a
+new one.
+
+**Everything that is not `e2e` takes the person glyph.** A third method exists in
+older documents, and a criterion can arrive with no method at all. Neither is ever
+automated, so both fall to the person rather than rendering bare — the glyph is
+already claiming a human does the work, and one sentence is honest for all three.
+
+**The mark is the accessible name, not the tooltip.** A tooltip exists only while
+hovered, and `Tooltip` puts its title on a bare span where an aria-label is
+ignored, so the same sentence is repeated as visually-hidden text.
 
 **"Ask the agent", not an edit control.** There is no way to edit a criterion
 here, by design: they are written from the requirements alone and never from the
@@ -874,13 +1041,12 @@ render the same pane, and Validations suppresses it — a reader there came for 
 results, so a sentence promising that results appear under Validations is
 redundant on the page holding them.
 
-**Unsettled: `deployment` or `build`.** This description says criteria are checked
-*after every deployment*; the **Validations** empty state says *"After a build,
-your software is checked against the validation criteria in your spec"*. Both name
-the same event. *Deployment* is the more accurate word, since validation runs
-against the deployed system and needs its resolved endpoints, but that empty state
-was out of scope when this pane was written. Whoever settles it changes both and
-deletes this note.
+**`deployment`, not `build`, and `the deployed system`, not `your software`.**
+Validation runs against a running instance and needs its resolved endpoints, so
+the event before it is a deployment; the **Validations** empty state says so too.
+The subject takes the platform's own noun, the one the agent's status line, the
+validation task's title and the `aep-validation` skill all already use — so the
+description and the run name the same thing the same way.
 
 ### What a criterion is doing, while a run is under way
 
@@ -895,32 +1061,61 @@ The row now says what is happening to it. In the order a reader meets them:
 |---|---|
 | Nothing has happened to it yet | **`Pending`** |
 | The run has decided how it will check this one | **`Planned`** |
-| Driving the running software to learn how to check it | **`Exploring…`** |
+| Driving the deployed system to learn how to check it | **`Exploring…`** |
 | Writing its check | **`Authoring…`** |
 | Its check is running | **`Running…`** |
 | It worked, then broke — being repaired | **`Healing…`** |
-| Settled | **`Passed`** / **`Failed`**, unchanged |
+| Settled | **`Passed`** / **`Failed`** |
+| The last run has no row for it | **`No result`** |
 
-Above the rows, one line — **the agent's, in its own words**, and only while the
-run is under way. It is the newest comment on the run's validation issue, the
-same status line a dev cycle keeps on the issue it is working, and the
-`aep-validation` skill asks for it in those terms: *say what the criterion rows
-cannot*. So the two are different granularities and cannot contradict each other
-— the rows say where each criterion stands, the line says where the run is in its
-workflow and what it decided.
+**`Passed` and `Failed` carry a mark; nothing else does.** They are the two
+answers a run produces, and as outlined chips they would otherwise differ by hue
+alone, which is nothing to a red/green colour-blind reader. Every other word in
+the table is the ABSENCE of an answer, so marking one would spend the distinction
+where it is not needed.
 
-Its vocabulary is not fixed here, because it is not ours. This file governs agent
-prose, and what it asks of this line is a shape rather than words: **one line,
-present tense, about the run and not about a criterion.** A phase enum was
-rejected for it (`liveLine.ts` carries why) — the workflow loops, so any fixed
-ladder either marches backwards on screen or is pinned forward and lies.
+**A trailing `*` qualifies the verdict.** A test that was flaky, or one the agent
+repaired, modifies the word beside it rather than earning a chip of its own; the
+tooltip says which applies. **`Failed*`** is a real row — a repair can leave a
+test still failing.
 
-Two derived sentences remain as the **fallback**, for the window before the first
-comment lands and for a run whose agent posts none:
+**`No result` is about a run that finished without covering the row.** The
+criteria are read at the branch tip and the report at the merge commit of the
+attempt that wrote it, so a criterion authored or renamed since has no row in
+that report. Tooltip: *The last validation run produced no result for this
+criterion.* Neutral rather than a warning, because editing the spec after a run
+is the ordinary loop and colouring the expected state teaches the reader to
+discount the colour. It never appears while an attempt is in flight; such a row
+reads **`Pending`**, the run still being able to answer it.
+
+Above the rows, one line, and only while the run is under way. It is the newest
+comment on the run's validation issue, the same status line a dev cycle keeps on
+the issue it is working. It says where the RUN is; the rows say where each
+criterion stands. Different granularities, so they cannot contradict each other.
+
+**Two writers, and only one of them is labelled.** Most of the line is the
+platform's: it watches the run's own tool calls and posts what it saw — the
+harness, the exploration, the specs running, the report. That is what the pulse
+beside it already means, so it carries no label. The agent writes the two ends
+and anything between them that no command can show — a criterion it cannot
+reach, a login the roles gate never published — and those lines are prefixed
+**The agent:**, because a reader who cannot tell them apart over-trusts the
+mechanical one. Newest wins either way.
+
+The platform's words are not fixed here (`runners/.../validation_status_line.ts`
+holds them, one per rung); the agent's are not ours to fix at all. What this file
+asks of both is a shape: **one line, present tense, about the run and not about a
+criterion**, and **naming the evidence rather than the step** — the workflow
+loops, so a line claiming a step is wrong for most of a run, while one naming the
+call it just watched stays true.
+
+Three derived sentences remain as the **fallback**, for the window before the
+first comment lands and for a run whose posts failed:
 
 | | |
 |---|---|
 | Nothing picked up yet | *Setting up the test harness…* |
+| Work under way | *Checking the criteria, N of M answered…* |
 | All settled, no results published | *Writing the validation report…* |
 
 **The line is led by the working pulse, and shows only while validating.** The
@@ -955,12 +1150,19 @@ is watching it, and "what is it doing right now" is the whole question. The rule
 protects against a reader being told about machinery they did not ask about —
 not against answering the one thing they came to find out.
 
-**Unsettled: *test harness* and *validation report*.** Both fallback lines name
+**Unsettled: *test harness*, *validation report*, and *test issues*.** All name
 internal artifacts, which rule 6 has a better claim over — a reader does not have
-a harness, they have criteria waiting to be checked. They are the two windows
-where nothing else moves, so something had to be said; whoever finds better words
-changes them here first. Less load-bearing now that the agent's own line covers
-the run — but they still speak first on every run, before its opening comment.
+a harness or a test issue, they have criteria waiting to be checked. The middle
+line says it in those terms and the others do not; whoever finds better words
+changes them here first.
+
+That covers both writers. The derived fallbacks (*Setting up the test harness…*,
+*Writing the validation report…*) are the console's, now distant — the run posts
+its own line as it works, and they speak only before its first comment lands. The
+platform's rungs live in `validation_status_line.ts`, and two of them —
+*Generating the validation report from the automated test results…* and *Fixing the test
+issues…* — carry the same debt. `harness` is deliberately byte-identical to its
+fallback, so one phase reads the same sentence whichever source produced it.
 
 ## What a change invalidates
 
@@ -1073,7 +1275,7 @@ five surfaces fill themselves.
 |---|---|---|
 | Builds | **No builds yet.** A build hands your design to coding agents, which write your components and open pull requests. | **Go to the spec** |
 | Deployments | **Nothing deployed yet.** Your components run here once they are built — each environment shows what is live and where to reach it. | — |
-| Validations *(never validated)* | **Nothing validated yet.** After a build, your software is checked against the **validation criteria** in your spec; results appear here. | — |
+| Validations *(never validated)* | **Nothing validated yet.** After a deployment, the deployed system is checked against the **validation criteria** in your spec. Results appear here. | — |
 | Validations *(version skipped)* | **This version was not validated** — it has no validation criteria, or it was an incident run, which gets no validation cycle. | — |
 | Components *(overview)* | **No components yet.** Components are the services and apps your design is made of — they appear as agents build them. | — |
 | Architecture *(overview)* | **No architecture yet.** Once the agent designs your app, its components and the connections between them are drawn here. | — |
@@ -1293,6 +1495,18 @@ Endpoints · Alerts**. **Settings** stays in the footer in both contexts
 > this file; ADR-0010's decision (the sidebar swaps wholesale to project sections) still holds and
 > only its illustrative list is stale, so it is left for an explicit supersede rather than edited
 > in place.
+
+## The coding agent
+
+The organization's choice of what drives a coding run, on Settings. "Runtime" is
+the product word for the agent that writes the code; the user never sees an
+internal adapter or port name.
+
+| | |
+|---|---|
+| Card | **Coding agent** |
+| Fields | **Runtime** · **Model** |
+| A runtime the platform cannot run | shown, disabled, with the reason — never hidden, so the choice is honest |
 
 ## Resources
 

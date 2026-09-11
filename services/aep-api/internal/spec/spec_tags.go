@@ -19,7 +19,6 @@ package spec
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
@@ -45,8 +44,9 @@ type TagList struct {
 	SpecDirty bool `json:"specDirty,omitempty" doc:"True when specs/ changed after latest was tagged."`
 }
 
-// ListSpecVersionTags lists the project's `v<N>` spec version tags, newest
-// first, with the latest tag and whether specs/ moved since it. One origin
+// ListSpecVersionTags lists the project's spec version tags, newest first by
+// CREATION time (a version's name is the user's and carries no sequence —
+// ADR-0030), with the latest tag and whether specs/ moved since it. One origin
 // fetch (the HEAD tree read; its refspec also freshens all tags), then
 // local-mirror reads: the tag list and the sha-addressed tag tree.
 func (s *artifactService) ListSpecVersionTags(ctx context.Context, orgID, projectID string) (*TagList, error) {
@@ -64,32 +64,21 @@ func (s *artifactService) ListSpecVersionTags(ctx context.Context, orgID, projec
 		return nil, fmt.Errorf("list tags: %w", err)
 	}
 
-	type versionTag struct {
-		n    int
-		info sourcecontrol.TagInfo
-	}
-	var versions []versionTag
-	for _, t := range tags {
-		if n, ok := parseRequirementsTag(t.Name); ok {
-			versions = append(versions, versionTag{n: n, info: t})
-		}
-	}
-	sort.Slice(versions, func(i, j int) bool { return versions[i].n > versions[j].n })
-
+	versions := versionTags(tags)
 	out := &TagList{Tags: make([]string, 0, len(versions))}
 	for _, v := range versions {
-		out.Tags = append(out.Tags, v.info.Name)
+		out.Tags = append(out.Tags, v.Name)
 	}
 	if len(versions) == 0 {
 		return out, nil
 	}
 
 	latest := versions[0]
-	out.Latest = latest.info.Name
+	out.Latest = latest.Name
 	// Sha-addressed (the peeled tag commit) — a local read, no second fetch.
-	tagEntries, _, err := s.git.Workspace().List(ctx, ref, latest.info.CommitHash)
+	tagEntries, _, err := s.git.Workspace().List(ctx, ref, latest.CommitHash)
 	if err != nil {
-		return nil, fmt.Errorf("list tree at %s: %w", latest.info.Name, err)
+		return nil, fmt.Errorf("list tree at %s: %w", latest.Name, err)
 	}
 	out.SpecDirty = !specTreesEqual(headEntries, tagEntries)
 	return out, nil

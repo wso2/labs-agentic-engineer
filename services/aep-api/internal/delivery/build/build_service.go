@@ -175,7 +175,11 @@ type BuildSummary struct {
 	Status          string `json:"status" enum:"started,in_progress,completed,failed"`
 	// Reason is the run's terminal reason for a failed version (empty
 	// otherwise), surfaced beside the Failed badge in the console.
-	Reason      string     `json:"reason,omitempty"`
+	Reason string `json:"reason,omitempty"`
+	// FailureCode is the failure class (delivery.RunFailure.Code) of a failed
+	// version when the platform recorded one — finer than Reason, which names
+	// the phase. Empty otherwise.
+	FailureCode string     `json:"failureCode,omitempty"`
 	StartedAt   time.Time  `json:"startedAt"`
 	CompletedAt *time.Time `json:"completedAt,omitempty"`
 	// WaitingReason says WHY an in-progress version is waiting rather than
@@ -200,7 +204,8 @@ type BuildList struct {
 // ErrBuildAlreadyRunning is treated as success (nil). Any other failure
 // propagates so the caller logs it and the reconcile sweep heals later.
 func (s *Service) StartProjectBuild(ctx context.Context, orgID, projectID string) error {
-	_, failures, err := s.Run(ctx, orgID, projectID, nil)
+	// No name: a build the platform starts for itself takes the suggestion.
+	_, failures, err := s.Run(ctx, orgID, projectID, nil, "")
 	if err != nil {
 		if errors.Is(err, ErrBuildAlreadyRunning) {
 			return nil
@@ -226,7 +231,7 @@ func (s *Service) StartProjectBuild(ctx context.Context, orgID, projectID string
 // The dependency hard gate (dependencyGateFailures) runs after the pre-tag
 // inputs are applied but before the tag is cut — see the inline comment at
 // its call site for why that ordering matters.
-func (s *Service) Run(ctx context.Context, orgID, projectID string, inputs []BuildInputItem) (string, []InputFailure, error) {
+func (s *Service) Run(ctx context.Context, orgID, projectID string, inputs []BuildInputItem, version string) (string, []InputFailure, error) {
 	// One live DEV RUN per project — the milestone model's mutex (§5). The
 	// partial unique index behind TryAdmit is the authority; this read is what
 	// turns the race into a conflict that names itself, and it runs BEFORE the
@@ -287,7 +292,7 @@ func (s *Service) Run(ctx context.Context, orgID, projectID string, inputs []Bui
 	// The whole-spec hard gate runs INSIDE TagSpec, before the tag is cut —
 	// the returned tag always names a validated requirements+design pair. An
 	// unchanged spec returns the existing tag; the workflow still (re)runs.
-	res, err := s.tagger.TagSpec(ctx, orgID, projectID)
+	res, err := s.tagger.TagSpec(ctx, orgID, projectID, version)
 	if err != nil {
 		return "", nil, mapTagError(err)
 	}
@@ -397,6 +402,13 @@ func mapTagError(err error) error {
 		return &EdgeError{Status: 404, Message: "project repository not found"}
 	case errors.Is(err, sourcecontrol.ErrRepoNotReady):
 		return &EdgeError{Status: 409, Message: "project repository is not ready yet"}
+	// The name the user typed is theirs, so neither of these is repaired into a
+	// different one: taken is a conflict, malformed is a bad request, and both
+	// say which name so the field can point at itself.
+	case errors.Is(err, spec.ErrVersionNameTaken):
+		return &EdgeError{Status: 409, Message: err.Error()}
+	case errors.Is(err, spec.ErrVersionNameInvalid):
+		return &EdgeError{Status: 400, Message: err.Error()}
 	default:
 		return &EdgeError{Status: 500, Message: "tag spec: " + err.Error()}
 	}

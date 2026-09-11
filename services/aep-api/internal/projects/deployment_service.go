@@ -68,6 +68,10 @@ type DeploymentService struct {
 	catalog        resourceMarkerCatalog
 	resourceClient bindingEnvironmentPatcher
 	thunder        ThunderApplicationReader
+	// endpoint gates a Ready binding on its public URL actually answering. Nil
+	// skips the gate, and the SAME gate is held by the status reader so the two
+	// cannot answer differently — see endpoint_wait.go.
+	endpoint *EndpointGate
 }
 
 // ComponentEnvVarReader is the user's component config, consumer-side.
@@ -291,6 +295,12 @@ func (s *DeploymentService) deployOne(ctx context.Context, orgID, projectID, com
 // CRT carries ConsumerURLEnvConfig is not Ready until the ThunderApplication
 // CR has the SPA callback (see applyThunderWait). Nil wait ports keep today's
 // OC-only verdict.
+//
+// Then a component that advertises an external URL is not Ready until that URL
+// ANSWERS (see applyEndpointWait). OpenChoreo reports the binding Ready when the
+// control plane is done, which on a cloud plane is minutes before a first-ever
+// hostname has a certificate — and `serving` is read by the validation sweep,
+// the console and a person clicking the link as a claim about the edge.
 func (s *DeploymentService) DeploymentState(ctx context.Context, orgID, projectID string, components []string) ([]delivery.ComponentDeploy, error) {
 	if s == nil || s.components == nil {
 		return nil, fmt.Errorf("deployment: not configured")
@@ -305,6 +315,7 @@ func (s *DeploymentService) DeploymentState(ctx context.Context, orgID, projectI
 		if err := s.applyThunderWait(ctx, orgID, projectID, name, summary, &st); err != nil {
 			return nil, err
 		}
+		s.applyEndpointWait(ctx, orgID, projectID, name, summary, &st)
 		out = append(out, st)
 	}
 	return out, nil

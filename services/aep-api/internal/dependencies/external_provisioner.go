@@ -98,7 +98,9 @@ func (p *ExternalResourceProvisioner) Provision(
 	// one on 409-conflict.
 	rt, err := openchoreo.BuildExternalResourceType(er.Name, er.Description, toRTConfigKeys(er.ConfigKeys), "", nil)
 	if err != nil {
-		return nil, fmt.Errorf("external resources: build resourcetype: %w", err)
+		// A schema the builder refuses — no config key, an empty key — is an
+		// answer about the design, not a blip: no retry can change it.
+		return nil, fmt.Errorf("%w: external resources: build resourcetype: %w", ErrProvisionPermanent, err)
 	}
 	rtName := rt.Metadata.Name
 	if _, err := p.rc.EnsureResourceType(ctx, orgHandle, rt); err != nil {
@@ -179,7 +181,9 @@ func (p *ExternalResourceProvisioner) AuthorPreparedValues(
 	// 1. ResourceType (get-or-create; immutable once created).
 	rt, err := openchoreo.BuildExternalResourceType(er.Name, er.Description, toRTConfigKeys(er.ConfigKeys), "", nil)
 	if err != nil {
-		return nil, fmt.Errorf("external resources: build resourcetype: %w", err)
+		// A schema the builder refuses — no config key, an empty key — is an
+		// answer about the design, not a blip: no retry can change it.
+		return nil, fmt.Errorf("%w: external resources: build resourcetype: %w", ErrProvisionPermanent, err)
 	}
 	rtName := rt.Metadata.Name
 	if _, err := p.rc.EnsureResourceType(ctx, orgHandle, rt); err != nil {

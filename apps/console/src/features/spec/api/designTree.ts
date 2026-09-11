@@ -25,6 +25,19 @@ export type SpecSelection =
   | { kind: "security" }
   | { kind: "wireframe"; component: string; dslPath: string };
 
+/**
+ * One external dependency's directory, `specs/design/dependencies/<name>/`,
+ * shaped like a component's: the definition (dependency.json), the interface
+ * it exposes (openapi.yaml / schema.graphql) and an sdk.json when the style
+ * is SDK — every one a browsable file. One dependency, one definition;
+ * components only reference it by name.
+ */
+export interface DesignDependencyNode {
+  name: string;
+  /** The directory's files, definition first, then path order. */
+  files: SpecFileEntry[];
+}
+
 export interface DesignComponentNode {
   name: string;
   /** Browsable files (design.json, openapi.yaml, …) — excludes the raw .dsl. */
@@ -44,6 +57,8 @@ export interface DesignSection {
   /** Whether specs/design/security.json exists (drives the Security rail entry). */
   hasSecurity: boolean;
   components: DesignComponentNode[];
+  /** The external dependencies with a directory, sorted by name. */
+  dependencies: DesignDependencyNode[];
 }
 
 /** The project-level cell-diagram DSL path (rendered via the Architecture tab, never as a file). */
@@ -76,6 +91,29 @@ export function componentOf(path: string): string | null {
   return COMPONENT_RE.exec(path)?.[1] ?? null;
 }
 
+const DEPENDENCY_RE = /^specs\/design\/dependencies\/([^/]+)\//;
+
+/** The dependency a path belongs to (`specs/design/dependencies/<name>/…`), or null. */
+export function dependencyOf(path: string): string | null {
+  return DEPENDENCY_RE.exec(path)?.[1] ?? null;
+}
+
+export function dependencyDefinitionPath(name: string): string {
+  return dependencyFilePath(name, "dependency.json");
+}
+
+const DEPENDENCY_DEFINITION_RE = /^specs\/design\/dependencies\/[^/]+\/dependency\.json$/;
+
+/** Is this a dependency's definition (`specs/design/dependencies/<name>/dependency.json`)? */
+export function isDependencyDefinition(path: string): boolean {
+  return DEPENDENCY_DEFINITION_RE.test(path);
+}
+
+/** A file in a dependency's directory, by its bare name (`openapi.yaml`, `sdk.json`). */
+export function dependencyFilePath(name: string, file: string): string {
+  return `specs/design/dependencies/${name}/${file}`;
+}
+
 function isDsl(path: string): boolean {
   return path.endsWith(".dsl");
 }
@@ -94,7 +132,13 @@ export function buildDesignSection(files: SpecFileEntry[]): DesignSection {
   // diagram), never as a raw text file. security.json is the Security rail
   // entry, not an overview row.
   const overview = design
-    .filter((f) => componentOf(f.path) === null && !isFlow(f.path) && !hideFromOverview(f.path))
+    .filter(
+      (f) =>
+        componentOf(f.path) === null &&
+        dependencyOf(f.path) === null &&
+        !isFlow(f.path) &&
+        !hideFromOverview(f.path),
+    )
     .sort((a, b) => a.path.localeCompare(b.path));
   const flows = design
     .filter((f) => isFlow(f.path))
@@ -118,6 +162,31 @@ export function buildDesignSection(files: SpecFileEntry[]): DesignSection {
   );
   for (const c of components) c.files.sort((a, b) => a.path.localeCompare(b.path));
 
+  const byDependency = new Map<string, DesignDependencyNode>();
+  for (const f of design) {
+    const name = dependencyOf(f.path);
+    if (name === null) continue;
+    let node = byDependency.get(name);
+    if (!node) {
+      node = { name, files: [] };
+      byDependency.set(name, node);
+    }
+    node.files.push(f);
+  }
+  const dependencies = [...byDependency.values()].sort((a, b) =>
+    a.name.localeCompare(b.name),
+  );
+  // The definition leads its directory the way the PRD leads Requirements:
+  // it is what the dependency IS, and on path alone `dependency.json` sorts
+  // below `openapi.yaml` only by accident of the alphabet.
+  for (const d of dependencies) {
+    d.files.sort(
+      (a, b) =>
+        Number(isDependencyDefinition(b.path)) - Number(isDependencyDefinition(a.path)) ||
+        a.path.localeCompare(b.path),
+    );
+  }
+
   return {
     overview,
     flows,
@@ -125,6 +194,7 @@ export function buildDesignSection(files: SpecFileEntry[]): DesignSection {
     hasCellDsl,
     hasSecurity,
     components,
+    dependencies,
   };
 }
 
@@ -132,7 +202,9 @@ export function buildDesignSection(files: SpecFileEntry[]): DesignSection {
  * The selection that WATCHES a path being written (#576, ADR-0026) — the same
  * routing the rail's own rows use: the cell opens as the Architecture diagram,
  * security.json opens the Security entry, a wireframe `.dsl` opens as its
- * component's diagram, and everything else is the file itself. One definition,
+ * component's diagram, and everything else is the file itself (a structured
+ * file — a component's design.json, a dependency's dependency.json — is a
+ * file selection too; the pane picks its renderer by path). One definition,
  * so follow-the-write can never land somewhere a click on the rail would not
  * have gone.
  */

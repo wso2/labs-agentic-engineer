@@ -102,8 +102,8 @@ describe("approvalInputsFor", () => {
       {
         component: "checkout-api",
         dependency: "crm",
-        kind: "external-ambiguous",
-        description: "More than one candidate fits.",
+        kind: "external-unresolved",
+        description: "No provider chosen yet — choose which one to use.",
       },
       {
         component: "checkout-api",

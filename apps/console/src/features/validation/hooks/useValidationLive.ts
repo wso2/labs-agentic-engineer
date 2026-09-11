@@ -18,10 +18,18 @@
 
 // What the validating run is doing to each acceptance criterion, right now.
 //
-// The runner emits one `progress_item` line per status change (see the runner's
+// The runner emits one `work_item` event per status change (see the runner's
 // validation_progress.ts). This folds them into the map ValidationView paints
-// its rows from: many lines about one criterion become one row repainted, which
-// is the whole reason that event kind exists.
+// its rows from: many events about one criterion become one row repainted, which
+// is the whole reason that event kind exists — and why `work_item` renders as no
+// row at all in the feed beside this page.
+//
+// `source` is what splits the kind's two populations. A criterion is a unit of
+// work the PLATFORM put in front of the run, and its statuses are the validation
+// method's (ADR-0009); an agent's own plan entry shares the kind and carries a
+// different vocabulary, in which `completed` says an entry was ticked off rather
+// than that anything was asserted. Folding a plan entry in here would paint an
+// agent's to-do list onto the acceptance criteria.
 //
 // No store, unlike the chat's planStore. That one earns its module scope from
 // cross-component access and history rehydration; this map has exactly one
@@ -32,6 +40,10 @@ import type { LiveStatuses } from "@aep/ui-validation-view";
 import { useRunProgress, type RunProgressCycle } from "../../builds/hooks/useRunProgress";
 
 const VALIDATION = "validation";
+/** RunEventKind for a named unit of work whose status changed. */
+const WORK_ITEM = "work_item";
+/** RunEvent.source for a criterion the platform set, as against an agent's plan. */
+const CRITERION = "criterion";
 
 export interface ValidationLive {
   /** Per-criterion statuses from the open validation cycle. */
@@ -70,14 +82,15 @@ export function foldValidationProgress(
   if (!newest || newest.cycle.endedAt) return IDLE;
 
   const out: Record<string, string> = {};
-  for (const line of newest.lines) {
-    if (line.kind !== "progress_item") continue;
-    // Both are required by the contract for this kind; a line missing either is
-    // an older runner and is skipped rather than folded into a blank row.
-    if (!line.itemId || !line.status) continue;
-    // Last write wins: the lines arrive in the order the runner emitted them,
+  for (const event of newest.events) {
+    if (event.kind !== WORK_ITEM || event.source !== CRITERION) continue;
+    // Both are required by the contract for this kind; an event missing either
+    // is a producer this build does not understand, and is skipped rather than
+    // folded into a blank row.
+    if (!event.itemId || !event.itemStatus) continue;
+    // Last write wins: the events arrive in the order the runner emitted them,
     // so the newest status for an item is simply the last one seen.
-    out[line.itemId] = line.status;
+    out[event.itemId] = event.itemStatus;
   }
   return { statuses: out, active: true };
 }

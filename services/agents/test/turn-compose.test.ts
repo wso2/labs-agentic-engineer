@@ -54,6 +54,25 @@ test("flow points at the skill, with the user's trailing text after a blank line
   );
 });
 
+test("the resolve command carries the user's answer after the dependency's name, verbatim", () => {
+  // The definition's Service card sends `/resolve-dependency <name> <answer>`;
+  // the token IS its skill, so the trailing text rides through untouched for
+  // the skill to read as the choice. The plural ignores trailing text.
+  const answered = composeInstruction({
+    kind: "flow",
+    skill: "resolve-dependency",
+    text: "currency-converter Open Exchange Rates",
+  });
+  assert.ok(
+    answered.startsWith("Load the resolve-dependency skill and follow it.\n\ncurrency-converter Open Exchange Rates"),
+  );
+  const url = composeInstruction({ kind: "flow", skill: "resolve-dependency", text: "mail https://x/openapi.yaml" });
+  assert.ok(url.startsWith("Load the resolve-dependency skill and follow it.\n\nmail https://x/openapi.yaml"));
+  const all = composeInstruction({ kind: "flow", skill: "resolve-dependencies", text: "ignored" });
+  assert.ok(all.startsWith("Load the resolve-dependency skill and follow it."));
+  assert.ok(!all.includes("ignored"));
+});
+
 /**
  * A command names the user's intent (`/feature`), a skill names an
  * engineer-facing playbook (`amend`). The three scoped edits are branches of

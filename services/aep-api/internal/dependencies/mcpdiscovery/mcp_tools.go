@@ -17,11 +17,13 @@
 package mcpdiscovery
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
@@ -137,6 +139,22 @@ type fetchSpecView struct {
 	Content    string `json:"content"`
 	Operations int    `json:"operations"`
 	SourceURL  string `json:"sourceUrl"`
+}
+
+// sliceSpecView is the JSON shape returned by slice_openapi_spec: the slice
+// (canonical form), its operation count, and the provenance block the agent
+// copies verbatim into the dependency's dependency.json.
+type sliceSpecView struct {
+	Content    string              `json:"content"`
+	Operations int                 `json:"operations"`
+	Provenance sliceProvenanceView `json:"provenance"`
+}
+
+type sliceProvenanceView struct {
+	SourceURL string `json:"sourceUrl,omitempty"`
+	SHA256    string `json:"sha256"`
+	FetchedAt string `json:"fetchedAt"`
+	Sliced    bool   `json:"sliced"`
 }
 
 // maxToolSpecBytes is fetch_openapi_spec's tool-level size cap (256 KiB) —
@@ -275,6 +293,29 @@ func mcpTools() []mcpTool {
 				"required":   []string{"url"},
 			},
 		},
+		{
+			Name: "slice_openapi_spec",
+			Description: "Cut the contract a design commits to from a provider's OpenAPI document: the operations " +
+				"you name plus every schema they reference, as a standalone document, with the provenance block " +
+				"to record beside it. Pass `url` (the published document — fetched whole, outside your context, " +
+				"so its size does not matter) OR `content` (a document the user supplied), and `operations`: " +
+				"operationIds, \"METHOD /path\" pairs, or bare \"/path\" entries. An operation not in the " +
+				"document is an error naming it. Then addFile the returned `content` as the dependency's " +
+				"openapi.yaml and copy `provenance` into its dependency.json. Read-only; stores nothing.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"url":     map[string]any{"type": "string", "description": "absolute https URL of the whole OpenAPI document (alternative to content)"},
+					"content": map[string]any{"type": "string", "description": "the whole OpenAPI document (alternative to url)"},
+					"operations": map[string]any{
+						"type":        "array",
+						"items":       map[string]any{"type": "string"},
+						"description": "the operations the design uses: operationId, \"METHOD /path\", or \"/path\"",
+					},
+				},
+				"required": []string{"operations"},
+			},
+		},
 	}
 }
 
@@ -283,14 +324,15 @@ func handleToolCall(w http.ResponseWriter, r *http.Request, h *mcpHandler, orgHa
 	var call struct {
 		Name      string `json:"name"`
 		Arguments struct {
-			Name    string `json:"name"`
-			Owner   string `json:"owner"`
-			Repo    string `json:"repo"`
-			Path    string `json:"path"`
-			Ref     string `json:"ref"`
-			Query   string `json:"query"`
-			Content string `json:"content"`
-			URL     string `json:"url"`
+			Name       string   `json:"name"`
+			Owner      string   `json:"owner"`
+			Repo       string   `json:"repo"`
+			Path       string   `json:"path"`
+			Ref        string   `json:"ref"`
+			Query      string   `json:"query"`
+			Content    string   `json:"content"`
+			URL        string   `json:"url"`
+			Operations []string `json:"operations"`
 		} `json:"arguments"`
 	}
 	if err := json.Unmarshal(req.Params, &call); err != nil {
@@ -472,6 +514,61 @@ func handleToolCall(w http.ResponseWriter, r *http.Request, h *mcpHandler, orgHa
 			Content:    result.NormalizedContent,
 			Operations: result.Operations,
 			SourceURL:  call.Arguments.URL,
+		}))
+	case "slice_openapi_spec":
+		if h.sliceSpec == nil || h.validateSpec == nil {
+			writeToolError(w, req.ID, "spec slicer not configured")
+			return
+		}
+		if len(call.Arguments.Operations) == 0 {
+			writeToolError(w, req.ID, "missing required argument: operations")
+			return
+		}
+		var raw []byte
+		switch {
+		case call.Arguments.URL != "" && call.Arguments.Content != "":
+			writeToolError(w, req.ID, "pass url OR content, not both")
+			return
+		case call.Arguments.URL != "":
+			if h.fetchSpec == nil {
+				writeToolError(w, req.ID, "spec fetcher not configured")
+				return
+			}
+			fetched, err := h.fetchSpec(r.Context(), call.Arguments.URL)
+			if err != nil {
+				writeToolError(w, req.ID, err.Error())
+				return
+			}
+			raw = fetched
+		case call.Arguments.Content != "":
+			raw = []byte(call.Arguments.Content)
+		default:
+			writeToolError(w, req.ID, "missing required argument: url or content")
+			return
+		}
+		slice, err := h.sliceSpec(raw, call.Arguments.Operations)
+		if err != nil {
+			writeToolError(w, req.ID, err.Error())
+			return
+		}
+		if len(slice) > maxToolSpecBytes {
+			writeToolError(w, req.ID, "the slice is still too large — name fewer operations")
+			return
+		}
+		ops, err := h.validateSpec(slice)
+		if err != nil {
+			writeToolError(w, req.ID, fmt.Sprintf("slice failed validation: %v", err))
+			return
+		}
+		writeToolText(w, req.ID, mustJSON(sliceSpecView{
+			Content:    string(slice),
+			Operations: ops,
+			Provenance: sliceProvenanceView{
+				SourceURL: call.Arguments.URL,
+				SHA256:    fmt.Sprintf("%x", sha256.Sum256(raw)),
+				FetchedAt: time.Now().UTC().Format(time.RFC3339),
+				Sliced:    true,
+			},
 		}))
 	default:
 		writeRPCError(w, req.ID, -32602, "unknown tool: "+call.Name)

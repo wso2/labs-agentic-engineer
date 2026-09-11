@@ -16,7 +16,12 @@
  * under the License.
  */
 
-// One progress line → the text a human reads.
+// One v1 progress line → the text a human reads.
+//
+// The v1 envelope, which the TASK LOG still carries (its per-execution
+// TimelineEvent stream has not moved). The run feed reads v2 RunEvents through
+// `event.ts`; both render into the same FormattedLine so the two envelopes
+// cannot start wording the same fact differently while both are in flight.
 //
 // The console and the playground watch the SAME run: identical events, from the
 // same runner, through the same emitter. Only the presentation differs (React
@@ -28,8 +33,16 @@
 // wording defect could be invisible in the fast local loop and only show up in a
 // cluster run — the slowest possible place to notice it.
 
+import { formatAgentReport, type AgentReport } from "./agent.js";
+import {
+  LIFECYCLE_LABELS,
+  formatOutcome,
+  type FormattedLine,
+  type LineTone,
+} from "./line.js";
+
 /**
- * The subset of the runner's progress envelope that rendering needs. Declared
+ * The subset of the runner's v1 progress envelope that rendering needs. Declared
  * structurally rather than imported so this package stays free of both the
  * generated OpenAPI types and the runner's own — every caller's line type
  * already satisfies it.
@@ -57,100 +70,18 @@ export interface ProgressLineView {
   linesRemoved?: number | undefined;
 }
 
-/**
- * Semantic weight of a line — never a theme token. The console maps these to
- * Oxygen palette entries and the terminal maps them to nothing (or to ANSI);
- * leaking `grey.400` into a package a TUI imports would make one surface's
- * design system everyone's problem.
- */
-export type LineTone = "default" | "muted" | "info" | "success" | "warn" | "error";
-
-export interface FormattedLine {
-  text: string;
-  tone: LineTone;
-}
-
 // Friendly labels for phase ids. Covers both the runner's own workspace phases
 // and the BFF's synthetic "dark zone" markers (agent_progress.go) that narrate
 // pod scheduling / image pull / boot — the stretch before the runner writes its
 // first line. An unmapped phase falls back to its summary, then the raw id, so
 // nothing hides.
-const PHASE_LABELS: Record<string, string> = {
-  runner_scheduling: "Waiting for a runner to be scheduled…",
-  runner_unschedulable: "No capacity to schedule the runner on the cluster…",
-  runner_pulling_image: "Pulling the agent image…",
-  runner_image_pull_backoff: "Still pulling the agent image (retrying)…",
-  runner_config_error: "Waiting on runner configuration and secrets…",
-  runner_starting: "Starting the agent…",
-  workspace_provisioning: "Setting up the workspace…",
-  workspace_ready: "Workspace ready",
-};
-
-// Below this, a call is fast enough that its duration is noise on every line.
-// Above it, the number is the point: it is what tells a slow build apart from a
-// wedged one.
-export const SLOW_CALL_MS = 3_000;
-
-export function formatDuration(ms: number): string {
-  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
-  // Round to whole seconds FIRST, then split. Rounding the two components
-  // independently is what printed 353s as "6m53s" — the minutes rounded up
-  // while the seconds kept the remainder — and could also produce "5m60s".
-  const seconds = Math.round(ms / 1000);
-  return `${Math.floor(seconds / 60)}m${seconds % 60}s`;
-}
-
-/**
- * What a call's OUTCOME adds to what its action already said — split into the
- * diagnosis and the duration so each surface can place them independently (the
- * console right-aligns the duration in its own column; a terminal pads).
- *
- * Both empty means the outcome is deliberately silent: a fast successful call
- * carries nothing the next action appearing doesn't already prove. That is the
- * feed's governing rule — an action always earns a line, an outcome only when it
- * carries something the action didn't.
- */
-export interface OutcomeView {
-  /** "exit 1 · cannot resolve module" | "failed · File does not exist" | "" */
-  detail: string;
-  /** "10.6s" when abnormally slow, else "" — normal timings are noise. */
-  duration: string;
-  tone: LineTone;
-}
-
-export function formatOutcome(e: ProgressLineView | undefined): OutcomeView {
-  if (!e) return { detail: "", duration: "", tone: "muted" };
-  const duration = e.durationMs && e.durationMs >= SLOW_CALL_MS ? formatDuration(e.durationMs) : "";
-  if (e.ok !== false) return { detail: "", duration, tone: "muted" };
-
-  // A SEVERED call is not a failure and must not be called one. The command
-  // blew its timeout and was detached, so it neither succeeded nor failed — it
-  // has no outcome yet, and it may still be running. Saying "failed" would name
-  // a defect that did not happen, on the one line a reader consults to tell
-  // those apart. Warned rather than errored for the same reason.
-  if (e.status === "severed") {
-    return {
-      detail: e.summary ? `severed · ${e.summary}` : "severed",
-      duration,
-      tone: "warn",
-    };
-  }
-
-  // A failure always speaks. `exit N` is the honest per-step signal — it names
-  // THIS command as what broke. Tools that are not a shell report no code at
-  // all, and inventing one would be worse than the bare word: "failed" is
-  // exactly as much as is known.
-  const cause = e.exitCode === undefined ? "failed" : `exit ${e.exitCode}`;
-  return {
-    detail: e.summary ? `${cause} · ${e.summary}` : cause,
-    duration,
-    tone: "error",
-  };
-}
+const PHASE_LABELS: Record<string, string> = LIFECYCLE_LABELS;
 
 // The SDK's fan-out tool, under both names it has shipped under (`Agent` now,
 // `Task` before). A tool_result naming one of these is not a step's outcome — it
 // is a whole subagent's closing report.
+//
+// v2 needs no such inference: an `agent_settled` event says so outright.
 const FANOUT_TOOLS = new Set(["Agent", "Task"]);
 
 function isFanOutResult(e: ProgressLineView): boolean {
@@ -158,28 +89,13 @@ function isFanOutResult(e: ProgressLineView): boolean {
 }
 
 /**
- * What one subagent has to report, whether it is still going or has settled.
- * The figures come off the SDK's own Agent result — reported, not re-derived:
- * its totalDurationMs of 209158 matched a hand-measured 3m29s exactly, and
- * nothing in this feed can reconstruct a subagent's per-edit line counts.
+ * A v1 fan-out result read as the subagent report it actually is. The id is the
+ * tool call's, because a v1 feed has no agent ids — which is the whole reason v2
+ * declares them.
  */
-export interface SubagentReport {
-  label: string;
-  /** The SDK's verdict word where it gave one, else "running". */
-  status: string;
-  durationMs?: number | undefined;
-  toolCount?: number | undefined;
-  linesAdded?: number | undefined;
-  linesRemoved?: number | undefined;
-  /**
-   * What it says it is doing right now. Earns its place HERE and nowhere else:
-   * as the live status of work the reader has chosen not to expand.
-   */
-  activity?: string | undefined;
-}
-
-export function subagentReportFromResult(e: ProgressLineView): SubagentReport {
+function subagentReportFromResult(e: ProgressLineView, id = ""): AgentReport {
   return {
+    id,
     label: e.summary || "subagent",
     status: e.status || (e.ok === false ? "failed" : "completed"),
     durationMs: e.durationMs,
@@ -190,33 +106,7 @@ export function subagentReportFromResult(e: ProgressLineView): SubagentReport {
 }
 
 /**
- * One subagent, on one line. The single wording home for it: the console's
- * collapsed section header, the playground's settle row, and the playground's
- * end-of-run merged pass all render through this, so a fan-out reads the same
- * whichever surface you are watching.
- */
-export function formatSubagentReport(r: SubagentReport): string {
-  return `${r.label} ${formatSubagentStatus(r)}`;
-}
-
-/**
- * The same report without the label, for a surface that already names the
- * subagent beside it (the console puts the label in a chip, and repeating it
- * would say it twice on every section header).
- */
-export function formatSubagentStatus(r: SubagentReport): string {
-  const parts: string[] = [r.status];
-  if (r.durationMs) parts.push(formatDuration(r.durationMs));
-  if (r.toolCount) parts.push(`${r.toolCount} tool${r.toolCount === 1 ? "" : "s"}`);
-  // The audit signal the user audience actually wants: how much code this
-  // produced. Omitted when the SDK reported neither, rather than shown as +0/−0.
-  if (r.linesAdded || r.linesRemoved) parts.push(`+${r.linesAdded ?? 0}/−${r.linesRemoved ?? 0} lines`);
-  if (r.activity) parts.push(r.activity);
-  return parts.join(" · ");
-}
-
-/**
- * One progress line → its text and weight.
+ * One v1 progress line → its text and weight.
  *
  * An empty `text` means the line is deliberately silent: it exists on the wire
  * for a machine reader but has nothing worth a row (a fast, successful
@@ -268,7 +158,7 @@ export function formatLine(e: ProgressLineView): FormattedLine {
       // subagent's report rather than as one call's outcome.
       if (isFanOutResult(e)) {
         return {
-          text: `▪ ${formatSubagentReport(subagentReportFromResult(e))}`,
+          text: `▪ ${formatAgentReport(subagentReportFromResult(e))}`,
           tone: e.ok === false ? "error" : "success",
         };
       }
@@ -286,7 +176,7 @@ export function formatLine(e: ProgressLineView): FormattedLine {
     }
     case "git_commit":
       return {
-        text: `✓ commit ${e.sha?.slice(0, 7) ?? ""}${e.files ? ` · ${e.files} files` : ""}`.trimEnd(),
+        text: `✓ commit ${e.sha?.slice(0, 7) ?? ""}${e.files ? ` · ${String(e.files)} files` : ""}`.trimEnd(),
         tone: "success",
       };
     case "git_push":

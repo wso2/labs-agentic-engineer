@@ -338,35 +338,52 @@ function denyOutput(message: string) {
 }
 
 /**
- * createWebFetchGuardHook builds the PreToolUse HookCallback that gates
- * WebFetch. Register it under `hooks.PreToolUse` with `matcher: "WebFetch"`
- * alongside websearch_dlp.ts's WebSearch entry. `secrets` is the same
- * `stagedSecretValues(childEnv)` list runner.ts already computes for the
- * WebSearch hook — one source of truth for "what's secret in this run".
+ * The platform's WebFetch rule as the runtime PORT states one: a URL in, the
+ * REASON to deny it, or null to allow. Both halves of the gate in their
+ * established order — SSRF first, then the secret-in-URL check.
  *
  * Fail-closed: an unparseable URL, a non-https scheme, any non-public
  * literal-IP host, any internal hostname, or a URL containing a staged
  * secret all deny. Only a well-formed `https:` URL to a public, non-secret
  * host is allowed through.
+ *
+ * `secrets` is the same `stagedSecretValues(childEnv)` list `webSearchDenial`
+ * takes — one source of truth for "what's secret in this run".
  */
-export function createWebFetchGuardHook(secrets: readonly string[]): HookCallback {
+export function webFetchDenial(secrets: readonly string[]): (url: string) => string | null {
+  return (url) => {
+    const ssrfCheck = isSsrfUrl(url);
+    if (ssrfCheck.blocked) {
+      return ssrfDenialMessage(ssrfCheck.reason ?? "URL failed SSRF validation");
+    }
+    const secretCheck = checkUrlForSecret(url, secrets);
+    if (secretCheck.denied) {
+      return secretCheck.message ?? WEBFETCH_SECRET_DENIAL_MESSAGE;
+    }
+    return null;
+  };
+}
+
+/**
+ * createWebFetchGuardHook builds the PreToolUse HookCallback that gates
+ * WebFetch. Register it under `hooks.PreToolUse` with `matcher: "WebFetch"`
+ * alongside websearch_dlp.ts's WebSearch entry.
+ *
+ * It takes the DECISION, not the secrets — see `webFetchDenial` above and
+ * `createWebSearchDlpHook`: the rule is the platform's, the enforcement
+ * mechanism is one runtime's.
+ */
+export function createWebFetchGuardHook(deny: (url: string) => string | null): HookCallback {
   return async (input) => {
     if (!isPreToolUseInput(input) || input.tool_name !== "WebFetch") {
       return {};
     }
     const toolInput = input.tool_input as { url?: unknown } | undefined;
     const url = typeof toolInput?.url === "string" ? toolInput.url : "";
-
-    const ssrfCheck = isSsrfUrl(url);
-    if (ssrfCheck.blocked) {
-      return denyOutput(ssrfDenialMessage(ssrfCheck.reason ?? "URL failed SSRF validation"));
+    const reason = deny(url);
+    if (reason !== null) {
+      return denyOutput(reason);
     }
-
-    const secretCheck = checkUrlForSecret(url, secrets);
-    if (secretCheck.denied) {
-      return denyOutput(secretCheck.message ?? WEBFETCH_SECRET_DENIAL_MESSAGE);
-    }
-
     return {};
   };
 }

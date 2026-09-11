@@ -18,6 +18,7 @@
 
 import type { components } from "../../generated/aep-api";
 
+type CodingAgentProjection = components["schemas"]["CodingAgentProjection"];
 type GitProviderProjection = components["schemas"]["GitProviderProjection"];
 type LLMProjection = components["schemas"]["LLMProjection"];
 type SkillDetailBody = components["schemas"]["SkillDetailBody"];
@@ -91,6 +92,33 @@ export const llmConnectedFixture: LLMProjection = {
   keyLast4: "wxyz",
   connectedAt: "2026-06-01T12:05:00Z",
   lastValidatedAt: "2026-07-01T09:00:00Z",
+};
+
+// Every org has an effective runtime and model, so this section is never
+// absent — unlike the credential sections. Null updatedAt/updatedBy is the
+// platform-defaults state: nobody has ever chosen, which the console must not
+// render as somebody having picked these very values.
+export const codingAgentDefaultsFixture: CodingAgentProjection = {
+  runtime: "claude-code",
+  model: "claude-sonnet-5",
+  updatedAt: null,
+  updatedBy: null,
+};
+
+// `opencode` is in the contract's enum but the platform ships no adapter for
+// it, so the API rejects it by name rather than silently substituting the
+// runtime it can run. 422 + body.codingAgent, matching the real rejection.
+export const codingAgentRuntimeUnavailable: ApiError = {
+  code: "validation_failed",
+  message:
+    "coding agent: runtime \"opencode\" is not available on this platform — no adapter is installed for it",
+  details: [
+    {
+      field: "body.codingAgent",
+      message:
+        "coding agent: runtime \"opencode\" is not available on this platform — no adapter is installed for it",
+    },
+  ],
 };
 
 export const gitProviderValidationError: ApiError = {

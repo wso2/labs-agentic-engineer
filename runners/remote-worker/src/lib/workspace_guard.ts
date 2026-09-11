@@ -35,8 +35,7 @@
  * reading outside the cwd. From there "the run's directory is the project root"
  * is a reasonable inference, and it is wrong.
  *
- * So this is the guarantee behind the prose, exactly as `fanout_foreground.ts` is
- * for fan-out. It gates the tools that AUTHOR files (`Write`/`Edit`/
+ * So this is the guarantee behind the prose. It gates the tools that AUTHOR files (`Write`/`Edit`/
  * `NotebookEdit`) and denies a path outside the workspace with a message naming
  * the root to use instead, which turns a silent 210s detour into one corrected
  * call.
@@ -81,7 +80,7 @@ const PATH_KEYS = ["file_path", "notebook_path"] as const;
  * matters: a sibling project or a materialised skills directory is not hidden,
  * so the one expensive mistake this guard exists for is still caught.
  */
-function isAllowedOutsideProject(target: string): boolean {
+export function allowsWriteOutsideProject(target: string): boolean {
   if (isInside(os.tmpdir(), target)) return true;
 
   const home = path.resolve(os.homedir());
@@ -111,7 +110,7 @@ export function workspaceWriteDenial(
   toolName: string,
   toolInput: unknown,
   workspaceRoot: string,
-  isAllowed: (target: string) => boolean = isAllowedOutsideProject,
+  isAllowed: (target: string) => boolean = allowsWriteOutsideProject,
 ): string | undefined {
   if (!WRITE_TOOLS.has(toolName)) return undefined;
   if (!toolInput || typeof toolInput !== "object") return undefined;
@@ -142,19 +141,28 @@ export function workspaceWriteDenial(
  * blocked something. A denial the reader cannot see is a mystery the next time
  * this comes up, and the whole reason this hook exists is that the failure it
  * catches was invisible for a whole run.
+ *
+ * `isAllowed` is the platform's rule, passed in rather than reached for, because
+ * WHERE an authored file may land is a `RuntimePolicy` clause and this is only
+ * the mechanism that enforces it. It defaults to that same rule so a direct
+ * caller — a test, a future entrypoint — cannot accidentally get a laxer one.
  */
-export function createWorkspaceWriteGuard(workspaceRoot: string, onDeny?: (reason: string) => void): HookCallback {
+export function createWorkspaceWriteGuard(
+  workspaceRoot: string,
+  onDeny?: (reason: string) => void,
+  isAllowed: (target: string) => boolean = allowsWriteOutsideProject,
+): HookCallback {
   const announced = new Set<string>();
 
   return async (input) => {
     const hookInput = input as PreToolUseHookInput;
     if (hookInput?.hook_event_name !== "PreToolUse") return {};
 
-    const reason = workspaceWriteDenial(hookInput.tool_name, hookInput.tool_input, workspaceRoot);
+    const reason = workspaceWriteDenial(hookInput.tool_name, hookInput.tool_input, workspaceRoot, isAllowed);
     if (!reason) return {};
 
     // Registered under one matcher per tool name, so the same call can reach this
-    // more than once — the same reason `fanout_foreground.ts` dedupes.
+    // more than once; the announcement is deduped so one denial is reported once.
     if (!announced.has(hookInput.tool_use_id)) {
       announced.add(hookInput.tool_use_id);
       onDeny?.(reason);

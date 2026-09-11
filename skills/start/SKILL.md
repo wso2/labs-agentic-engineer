@@ -64,7 +64,8 @@ Walk the PRD's own sections, in its own order:
 1. **Problem** — who hurts, how, today.
 2. **Actors** — who uses the system, at product altitude.
 3. **Journey & stories** — what each actor does, end to end.
-4. **Product decisions** — policy choices: sign-in, notifications, integrations.
+4. **Product decisions** — policy choices: sign-in, notifications, integrations
+   (see **External services** below).
 5. **Out of scope** — what this project is explicitly not; anything that should
    not ship now belongs here, not in the story list.
 
@@ -74,6 +75,16 @@ user sees a single question. For each section:
 - **Consult the organization skill first.** A question its defaults answer is
   never asked — record the default as a plain Product Decision instead. A
   section fully covered by defaults and the brief needs nothing.
+- **External services: givens, never choices.** For each capability the
+  product needs from a third party (payments, email, shipping, maps…), call
+  `list_external_resources` first: a Registered External resource that fits
+  is a given — record it as a settled decision from an org default, without a
+  question. Otherwise the one question is whether the user already uses or
+  must use a service for it; a named answer is a settled decision ("Currency
+  conversion: Open Exchange Rates"), "no preference" leaves the capability
+  only. Never ask which service they would LIKE, never propose one, never
+  tag a provider `*assumed*` — the choice is made on the dependency's
+  definition at design, with the design agent's suggestions in front of them.
 - **Note the questions whose answers would change the document**, and only
   those. Skip what the brief already answers.
 

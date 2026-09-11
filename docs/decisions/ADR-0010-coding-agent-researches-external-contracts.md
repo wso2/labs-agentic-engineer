@@ -1,3 +1,8 @@
+> **Superseded in part by ADR-0027.** The contract a design commits to is a
+> file in the dependency's own directory now, not a URL: the coding agent
+> starts from that committed slice and researches beyond it. The rest of this
+> record — research from the web for what the contract does not cover — stands.
+
 # ADR-0010 — The coding agent researches external contracts from the web, not a stored, restricted spec
 
 When a component depends on an external REST API or SDK, the coding agent needs

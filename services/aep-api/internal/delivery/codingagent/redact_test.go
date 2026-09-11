@@ -50,6 +50,21 @@ func TestRedactSecrets(t *testing.T) {
 			secret: leakedPAT,
 		},
 		{
+			// gh writes the token at rest in the agent's own workspace as
+			// `oauth_token: <token>` on the credhelper path, and that token is
+			// minted inside bash so the runner cannot enroll its literal — shape
+			// here is the only layer that sees it.
+			name:   "gh hosts.yml oauth_token",
+			in:     "    oauth_token: aQ7fL2mZ9xR4tY6uP1sD3gH5jK8nB0vC",
+			want:   "    oauth_token: [REDACTED]",
+			secret: "aQ7fL2mZ9xR4tY6uP1sD3gH5jK8nB0vC",
+		},
+		{
+			name: "oauth_token key with no value is left alone",
+			in:   "oauth_token:",
+			want: "oauth_token:",
+		},
+		{
 			name:   "installation token",
 			in:     "using ghs_abcdefghijklmnopqrstuvwxyz0123456789 for push",
 			want:   "using [REDACTED] for push",

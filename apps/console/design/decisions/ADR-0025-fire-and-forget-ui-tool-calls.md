@@ -8,8 +8,8 @@
 
 ADR-0012 established tool-call-as-UI: agent-to-user interactive UI rides as
 tool calls on the existing SSE stream, rendered as native cards. Every such
-tool so far is HITL — the turn **ends at the call** (`hasToolCall` stop) and
-the conversation waits on a human.
+tool so far is HITL — the turn **ends at the accepted call** (a stop condition
+over the question tools) and the conversation waits on a human.
 
 A plan declaration (#576) is the same shape of thing — a structured payload
 the console renders — but the agent is not asking anything: it declares what

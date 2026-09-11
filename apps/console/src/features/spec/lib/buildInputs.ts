@@ -38,7 +38,7 @@ type BuildInputItem = components["schemas"]["BuildInputItem"];
  *   - `platform-resource` — carries the design-authored provisioning
  *     `parameters` through, since that is the payload the provisioner reads.
  *   - `org-service` — an unresolved cross-project endpoint; preflight only
- *     ever raises one while it is unresolved/blocked/ambiguous, so it reaches
+ *     ever raises one while it is unresolved/blocked, so it reaches
  *     a build request solely through the resolution drawer.
  *
  * Every other kind is dropped: `external-config` values are not a build

@@ -31,9 +31,17 @@
  *     whole tool inputs, whole outputs, the subagents' closing reports. Nothing
  *     is missing from it, which is why there is no derived index — a cache of an
  *     analysis can drift from the truth, and this one would.
- *   progress.ndjson — the runner's own feed, which is where the TIMINGS are: the
- *     SDK does not stamp its messages, so per-call durations exist only because
- *     the runner measured them between the call and its outcome.
+ *   progress.ndjson — the runner's own v2 RunEvent feed, which is where the
+ *     TIMINGS are: the SDK does not stamp its messages, so per-call durations
+ *     exist only because the runner measured them between the call and its
+ *     outcome.
+ *
+ * The join survived the feed moving from the v1 envelope to v2 unchanged,
+ * because the two fields it needs — `toolUseId` and `durationMs` — mean the same
+ * thing in both. Everything v2 added is about ATTRIBUTION (which agent, which
+ * parent, at what depth), and this view is attributed from the transcript
+ * instead: `parent_tool_use_id` is the only link that also carries the tool
+ * INPUT, which is exactly what a developer reading this wants.
  */
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
@@ -157,6 +165,10 @@ export function readRunLog(runDir: string): RunLog {
   const messages = readJsonl(join(runDir, ".logs", "claude.log"));
   const progress = readJsonl(join(runDir, "progress.ndjson"));
 
+  // Only a `tool_result` carries both halves: an `agent_settled` measures a whole
+  // agent's life and names no tool call, so it never lands in this map.
+  // Only a `tool_result` carries both halves: an `agent_settled` measures a whole
+  // agent's life and names no tool call, so it never lands in this map.
   const durations = new Map<string, number>();
   for (const e of progress) {
     const id = str(e.toolUseId);

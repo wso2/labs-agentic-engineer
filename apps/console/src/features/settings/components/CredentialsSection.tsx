@@ -19,6 +19,7 @@
 import { Alert, Box, CircularProgress } from "@wso2/oxygen-ui";
 import { useConfig } from "../api/queries";
 import { AnthropicCredentialCard } from "./AnthropicCredentialCard";
+import { CodingAgentCard } from "./CodingAgentCard";
 import { GitHubCredentialCard } from "./GitHubCredentialCard";
 
 export function CredentialsSection() {
@@ -39,7 +40,15 @@ export function CredentialsSection() {
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
       <GitHubCredentialCard gitProvider={data.gitProvider} />
-      <AnthropicCredentialCard llm={data.llm} codingLlm={data.codingLlm} />
+      <AnthropicCredentialCard llm={data.llm} />
+      {/* Runtime, model, and the key coding runs bill are one setting group,
+          so they render as one card — the org key above is what the agent
+          falls back to, not part of the group. */}
+      <CodingAgentCard
+        codingAgent={data.codingAgent}
+        codingLlm={data.codingLlm}
+        llmConnected={data.llm !== null}
+      />
     </Box>
   );
 }

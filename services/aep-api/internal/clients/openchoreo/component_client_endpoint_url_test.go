@@ -131,3 +131,36 @@ func TestDeploymentFromReleaseBinding_FallsBackWhenThePreferredSchemeIsAbsent(t 
 		t.Fatalf("EndpointURL = %q, want %q — the only scheme advertised", got.EndpointURL, want)
 	}
 }
+
+// The summary carries the SAME URL the deployments read does, off the same
+// object. It has to: the deploy-stage gate in `projects` decides whether a
+// component is reachable from the summary, and a person clicks the link the
+// deployments read produced. Two spellings of one binding's address would let
+// the platform hold a component the user can reach, or pass one they cannot.
+func TestReleaseBindingSummary_CarriesTheSamePublicURLAsTheDeploymentRead(t *testing.T) {
+	rb := bindingWithExternal(
+		httpsURL("web.apps.example.test", "/", 443),
+		httpURL("web.apps.example.test", "/", 80),
+	)
+	for _, preferPlainHTTP := range []bool{false, true} {
+		c := &componentClient{preferPlainHTTP: preferPlainHTTP}
+		summary := c.releaseBindingSummary(rb)
+		deployment := deploymentFromReleaseBinding(rb, preferPlainHTTP)
+		if summary.ExternalURL != deployment.EndpointURL {
+			t.Errorf("preferPlainHTTP=%v: summary %q != deployment %q",
+				preferPlainHTTP, summary.ExternalURL, deployment.EndpointURL)
+		}
+		if summary.ExternalURL == "" {
+			t.Errorf("preferPlainHTTP=%v: summary carries no URL", preferPlainHTTP)
+		}
+	}
+}
+
+// A component that exposes nothing — a worker, an internal-only service —
+// advertises no external URL, and the gate reads that as vacuously reachable.
+func TestReleaseBindingSummary_NoExternalURLWhenTheBindingAdvertisesNone(t *testing.T) {
+	c := &componentClient{}
+	if got := c.releaseBindingSummary(bindingWithExternal(nil, nil)); got.ExternalURL != "" {
+		t.Errorf("ExternalURL = %q, want empty", got.ExternalURL)
+	}
+}

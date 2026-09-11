@@ -19,12 +19,12 @@
 // What a run reads about its OWN health, off the SDK messages the feed
 // translator drops.
 //
-// `from-sdk.ts` answers "what did the agent do". This answers "why is nothing
+// The claude adapter answers "what did the agent do". This answers "why is nothing
 // happening", which the watchdog could previously only guess at: it could say
 // the model turn was the slow half, never why.
 //
 // The why was already on the wire. The SDK emits a `system`/`api_retry` message
-// for every retryable API failure, and `from-sdk.ts` discards it with every
+// for every retryable API failure, and the translator discards it with every
 // other unrecognised system subtype — so a run stuck behind an overload storm
 // looked exactly like a run thinking hard. Measured against a dead endpoint: 8
 // retries in 69s on exponential backoff (0.2s, 0.6s, 1.2s, 2.3s, 4.2s, 9.7s,
@@ -42,6 +42,8 @@
 // same dead endpoint, stderr produced one unrelated startup warning while all 8
 // retries went past on the message channel. Capturing it is a developer-only
 // sink (see `openDebugSinks`), not the diagnosis.
+
+import type { RunEventInput } from "./emitter.js";
 
 /** One retryable API failure, as the SDK reports it. */
 export interface ApiRetryInfo {
@@ -102,10 +104,18 @@ export function apiRetryLine(info: ApiRetryInfo): string {
   return `[api] retry ${info.attempt}/${info.maxRetries} after ${info.error} (${where}) — next attempt in ${next}`;
 }
 
-/** A system message that explains a stall or a death, rendered for the feed. */
+/**
+ * A message that explains a stall or a death, rendered for the feed.
+ *
+ * `code` is the closed condition a consumer branches on and `detail` is what a
+ * reader reads — the two halves of a v2 `notice`. Keeping them together here
+ * means the wording and the code cannot drift apart, which they would if the
+ * run loop picked a code per call site.
+ */
 export interface StallSignal {
-  level: "info" | "warn" | "error";
-  summary: string;
+  level: NonNullable<RunEventInput["level"]>;
+  code: NonNullable<RunEventInput["code"]>;
+  detail: string;
 }
 
 // Human prose the SDK passes through from elsewhere (a refusal explanation, a
@@ -146,6 +156,12 @@ function tokens(n: number): string {
 export function readStallSignal(message: unknown): StallSignal | undefined {
   if (!message || typeof message !== "object") return undefined;
   const m = message as Record<string, unknown>;
+
+  // The one entry that is not a system subtype: the SDK reports a subscription
+  // window's utilisation as its own top-level message type. It belongs here
+  // because it answers the same question — a run that is about to be throttled,
+  // or is being throttled, looks from outside exactly like a run thinking hard.
+  if (m.type === "rate_limit_event") return readRateLimit(m);
   if (m.type !== "system") return undefined;
 
   switch (m.subtype) {
@@ -163,14 +179,16 @@ export function readStallSignal(message: unknown): StallSignal | undefined {
       const size = pre ? ` ${tokens(pre)}${post ? ` → ${tokens(post)}` : ""} tokens` : "";
       return {
         level: "info",
-        summary: `[compact] ${trigger} compaction${size}${took ? ` in ${Math.round(took / 1000)}s` : ""}`,
+        code: "compaction",
+        detail: `[compact] ${trigger} compaction${size}${took ? ` in ${Math.round(took / 1000)}s` : ""}`,
       };
     }
     case "model_refusal_fallback": {
       const category = prose(m.api_refusal_category);
       return {
         level: "warn",
-        summary:
+        code: "refusal",
+        detail:
           `[model] ${str(m.original_model)} refused${category ? ` (${category})` : ""}` +
           ` — retried on ${str(m.fallback_model)}`,
       };
@@ -180,7 +198,8 @@ export function readStallSignal(message: unknown): StallSignal | undefined {
       const why = prose(m.api_refusal_explanation);
       return {
         level: "error",
-        summary:
+        code: "refusal",
+        detail:
           `[model] ${str(m.original_model)} refused${category ? ` (${category})` : ""} and no fallback ran` +
           `${why ? `: ${why}` : ""}`,
       };
@@ -190,15 +209,121 @@ export function readStallSignal(message: unknown): StallSignal | undefined {
       const by = prose(m.decision_reason_type);
       return {
         level: "warn",
-        summary: `[permission] ${str(m.tool_name)} denied${by ? ` by ${by}` : ""}${why ? `: ${why}` : ""}`,
+        code: "permission_denied",
+        detail: `[permission] ${str(m.tool_name)} denied${by ? ` by ${by}` : ""}${why ? `: ${why}` : ""}`,
       };
     }
     case "worker_shutting_down":
       // A snake_case reason set by the host CLI, never user input.
-      return { level: "error", summary: `[worker] shutting down: ${str(m.reason)}` };
+      return { level: "error", code: "terminated", detail: `[worker] shutting down: ${str(m.reason)}` };
     default:
       return undefined;
   }
+}
+
+/**
+ * A subscription window's state, as the SDK reports it whenever it changes.
+ *
+ * Reported at `info` while the window is merely being consumed and louder as it
+ * bites, because the three states are three different facts: "this run is
+ * spending quota" is background, "the next call may be refused" is a warning
+ * someone can act on, and "the provider is refusing" is the whole explanation
+ * for a run that is about to go nowhere. Every field printed is a closed enum
+ * or a number, same rule as the rest of this module — nothing here can carry a
+ * prompt or a credential into a build log the console forwards.
+ */
+function readRateLimit(m: Record<string, unknown>): StallSignal | undefined {
+  const info = m.rate_limit_info;
+  if (!info || typeof info !== "object") return undefined;
+  const i = info as Record<string, unknown>;
+  const status = i.status === "rejected" ? "rejected" : i.status === "allowed_warning" ? "near the limit" : "allowed";
+  const level = i.status === "rejected" ? "error" : i.status === "allowed_warning" ? "warn" : "info";
+  const window = typeof i.rateLimitType === "string" ? i.rateLimitType : "";
+  const used = typeof i.utilization === "number" ? ` at ${Math.round(i.utilization * 100)}%` : "";
+  return {
+    level,
+    code: "rate_limit",
+    detail: `[rate-limit] ${status}${window ? ` on the ${window} window` : ""}${used}`,
+  };
+}
+
+/**
+ * A per-run reader that drops a stall signal it has just said.
+ *
+ * `readStallSignal` answers about ONE message and cannot know it is the
+ * seventeenth of its kind. That is what a live run got (2026-09-08): 17
+ * `rate_limit` warnings, gaps as short as 8 seconds, and exactly THREE distinct
+ * sentences between them — 82%, 83%, 84%. The runtime re-states a window's
+ * utilisation on every change it notices, most of which round to the same whole
+ * percent, and a warning that repeats every minute is one a reader learns to
+ * skip past — including the minute it finally says `rejected`.
+ *
+ * **The unit of materiality is the rendered sentence, not the raw number.**
+ * A band (10% steps, say) was the alternative and is worse in one specific way:
+ * the sentence prints a whole percent, so banding would suppress a line whose
+ * text visibly differs from the last one, leaving a feed that reports 80% and
+ * then 90% while claiming to report every change. Deduping on the sentence
+ * means the rule is exactly "never say the same thing twice", which is both
+ * what the reader complained about and something a reader can verify from the
+ * feed alone. A window that genuinely oscillates across a whole percent does
+ * produce a line each way, and it should: only the LAST line said is remembered,
+ * so this suppresses repetition, never a change.
+ *
+ * Only the rate limit is filtered. Every other signal here is a discrete
+ * occurrence — a compaction happened, a tool call was denied, the worker is
+ * going away — and a second one is a second fact, not a restatement.
+ *
+ * Per-run, like the adapter's registry: two runs sharing one of these would
+ * swallow the second run's opening line.
+ */
+export function createStallSignalReader(): (message: unknown) => StallSignal | undefined {
+  let lastRateLimit = "";
+  return (message) => {
+    const signal = readStallSignal(message);
+    if (!signal || signal.code !== "rate_limit") return signal;
+    const said = `${signal.level} ${signal.detail}`;
+    if (said === lastRateLimit) return undefined;
+    lastRateLimit = said;
+    return signal;
+  };
+}
+
+/**
+ * Whether a message means "the model is working" rather than "the agent did
+ * something".
+ *
+ * Both shapes exist only to say a turn is still alive: `thinking_tokens` counts
+ * reasoning tokens as they accumulate, and a `stream_event` is one token frame
+ * (present only under the developer options). Neither is progress, and the run
+ * loop keeps both out of `watchdog.observe` for the same reason it keeps
+ * retries out — a diagnostic that resets the idle clock hides the stall it
+ * exists to report. What they DO produce is a rate-limited `heartbeat`, which
+ * is the v2 answer to "is this silence a stall": bounded, attributed, and never
+ * counted as work.
+ */
+export function isModelWaitFrame(message: unknown): boolean {
+  if (!message || typeof message !== "object") return false;
+  const m = message as Record<string, unknown>;
+  return m.type === "stream_event" || (m.type === "system" && m.subtype === "thinking_tokens");
+}
+
+/**
+ * Whether a message is the runtime saying "this tool call is still running".
+ *
+ * The other half of the same rule, and the half that is easy to get wrong: a
+ * `tool_progress` produces a heartbeat, and once the rate limiter drops one it
+ * produces NOTHING — at which point a loop that fell through to
+ * `watchdog.observe` would reset the idle clock with an empty event list and
+ * the watchdog would go silent for as long as the tool kept ticking. That is
+ * precisely the stall it exists to report, so this is routed round `observe`
+ * exactly like a retry.
+ *
+ * Kept apart from `isModelWaitFrame` because only that one is a token frame:
+ * `observeStream` records "the model is producing", and a tool that is merely
+ * slow says nothing about the model at all.
+ */
+export function isToolProgressFrame(message: unknown): boolean {
+  return !!message && typeof message === "object" && (message as Record<string, unknown>).type === "tool_progress";
 }
 
 /**

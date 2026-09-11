@@ -351,6 +351,11 @@ func (s *Service) populateStages(ctx context.Context, orgName, projectName strin
 	if latest != nil {
 		status.Build.Version = latest.SpecTag()
 		status.Build.Status = buildStageStatus(latest.State)
+		// The failure class, so the overview's track can say WHAT failed in the
+		// same words as the build page. Only a failed run is described by it.
+		if latest.State == delivery.RunStateFailed && latest.Failure != nil {
+			status.Build.FailureCode = latest.Failure.Code
+		}
 		// A VALIDATING-phase failure is not a build failure: every coding cycle
 		// landed and the failure already rides deploy.validation below. Without this
 		// the overview says "build failed" while the validation chip contradicts it.
@@ -376,6 +381,7 @@ func (s *Service) populateStages(ctx context.Context, orgName, projectName strin
 			dev = append(dev, b)
 		}
 	}
+	dev = s.holdUnreachable(ctx, dev)
 	status.Deploy.Status = deployStageStatus(dev)
 	status.Deploy.Components.Ready = int64(countReady(dev))
 
@@ -612,6 +618,49 @@ var bindingFailureReasons = map[string]bool{
 	"DataPlaneNotConfigured":      true,
 	"ComponentNotFound":           true,
 	"ProjectNotFound":             true,
+}
+
+// holdUnreachable downgrades a binding that claims Ready while its advertised
+// URL does not answer yet, BEFORE the two readers below see it.
+//
+// Done as a pass rather than inside bindingReady on purpose: deployStageStatus
+// and countReady are pure functions of a condition list and are tested as such,
+// and threading a context and a network call through them would make the
+// stage's arithmetic depend on the world. Here the impurity is one function
+// with one job, and both readers keep reading a plain slice.
+//
+// It changes what the console says during the window — "Deploying · 1 of 2"
+// rather than "Deployed · 2 of 2" — which is the point: the old count called a
+// component live at a moment a person clicking its link got a TLS error, and
+// the validation sweep dispatched against exactly that claim.
+//
+// A nil gate returns the slice untouched, so a plane with no probe wired counts
+// exactly as it did before.
+func (s *Service) holdUnreachable(ctx context.Context, dev []openchoreo.ReleaseBindingSummary) []openchoreo.ReleaseBindingSummary {
+	if s == nil || s.endpointGate == nil || len(dev) == 0 {
+		return dev
+	}
+	out := make([]openchoreo.ReleaseBindingSummary, len(dev))
+	copy(out, dev)
+	for i := range out {
+		if !bindingReady(out[i]) {
+			continue
+		}
+		if s.endpointGate.Reachable(ctx, out[i].ReleaseName, out[i].ExternalURL) {
+			continue
+		}
+		// "False" with no failure reason is PENDING to both readers below —
+		// deployStageStatus reads it as progressing, bindingFailed needs a
+		// terminal reason it does not have. Which is the honest reading: the
+		// deployment is still on its way up. The reason is cleared with the
+		// status so that stays true: OpenChoreo's Ready-True reason describes a
+		// verdict this pass has just withdrawn, and leaving it behind would let
+		// bindingFailed read a downgrade as a failure the day OC names a
+		// Ready-True reason that also appears in bindingFailureReasons.
+		out[i].ReadyStatus = "False"
+		out[i].ReadyReason = ""
+	}
+	return out
 }
 
 func bindingReady(b openchoreo.ReleaseBindingSummary) bool { return b.ReadyStatus == "True" }

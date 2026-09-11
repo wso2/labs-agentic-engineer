@@ -37,9 +37,9 @@ import {
   consumePendingSeed,
   notifyTurnEnd,
   replaceMessages,
-  setPendingSeed,
-} from "../../agent-chat/chatStore";
+  setPendingSeed, peekPendingSeed } from "../../agent-chat/chatStore";
 import { SpecView, designWarningIntro, specTurnGate } from "./SpecView";
+import { RESOLVE_ALL_DEPENDENCIES_COMMAND } from "../../projects/lib/dependencyResolutionMessage";
 import {
   clearPlan,
   planDeclared,
@@ -50,11 +50,12 @@ import {
 type PreflightItem = components["schemas"]["PreflightItem"];
 type BuildInputItem = components["schemas"]["BuildInputItem"];
 type BuildResponse = components["schemas"]["BuildResponse"];
+type BuildPreflight = components["schemas"]["BuildPreflight"];
 
 // --- Router -----------------------------------------------------------
 const mockNavigate = vi.fn();
 const mockSearch = vi.hoisted(() => ({
-  current: {} as { generate?: "design"; view?: "architecture" },
+  current: {} as { generate?: "design"; view?: "architecture"; file?: string },
 }));
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => mockNavigate,
@@ -243,7 +244,9 @@ vi.mock("../../projects/api/queries", () => ({
       },
     },
   }),
-  useProjectTags: () => ({ data: { latest: "v1", specDirty: false } }),
+  useProjectTags: () => ({
+    data: { latest: "v1", tags: ["v1"], specDirty: false },
+  }),
   useBuildProject: () => ({ mutateAsync: mockMutateAsync }),
   useBuildPreflight: () => ({ refetch: mockPreflightRefetch }),
 }));
@@ -258,6 +261,10 @@ const mockUseSpecFileContent = vi.fn();
 const mockUseDesignDependencies = vi.fn();
 
 vi.mock("../api/queries", () => ({
+  // The definition view's two writes: stubbed, since this file renders without a
+  // QueryClientProvider; DependencyView's own behavior is its own test's.
+  useProvideDependencyContract: () => ({ mutate: vi.fn(), isPending: false, isError: false, isSuccess: false, error: null }),
+  useAcceptDependencyAssumption: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
   useSpecFiles: (...args: unknown[]) => mockUseSpecFiles(...args),
   useSpecFileContent: (...args: unknown[]) => mockUseSpecFileContent(...args),
   useDesignDependencies: (...args: unknown[]) =>
@@ -274,49 +281,6 @@ vi.mock("../hooks/useSecurityEntry", () => ({
     isPending: false,
     isError: false,
   }),
-}));
-
-// --- BuildDependencyDrawer: its own behavior is covered by
-// BuildDependencyDrawer.test.tsx, so here it's a thin stub that exposes
-// Continue/Cancel so tests can drive SpecView's routing without re-deriving
-// real dependency-form state. The drawer only ever hands off with the RESOLVE
-// intent now — every item it renders is by definition unresolved. ---------
-const STUB_INPUTS: BuildInputItem[] = [
-  {
-    component: "checkout-api",
-    dependency: "partner-api",
-    kind: "external-spec",
-    specUrl: "https://example.com/openapi.json",
-  },
-];
-vi.mock("./BuildDependencyDrawer", () => ({
-  BuildDependencyDrawer: ({
-    open,
-    items,
-    onClose,
-    onContinue,
-    onResolveDependency,
-  }: {
-    open: boolean;
-    items: PreflightItem[];
-    onClose: () => void;
-    onContinue: (inputs: BuildInputItem[]) => void;
-    onResolveDependency?: (
-      item: PreflightItem,
-      intent: "resolve" | "reconsider",
-    ) => void;
-  }) =>
-    open ? (
-      <div data-testid="dependency-drawer">
-        <button onClick={() => onContinue(STUB_INPUTS)}>Drawer Continue</button>
-        <button onClick={onClose}>Drawer Cancel</button>
-        {items[0] ? (
-          <button onClick={() => onResolveDependency?.(items[0]!, "resolve")}>
-            Resolve drawer item
-          </button>
-        ) : null}
-      </div>
-    ) : null,
 }));
 
 // A preflight that reports something but blocks nothing: config values are
@@ -357,10 +321,25 @@ const BLOCKED_ITEMS: PreflightItem[] = [
   {
     component: "checkout-api",
     dependency: "crm",
-    kind: "external-ambiguous",
-    description: "More than one candidate fits.",
+    kind: "external-unresolved",
+    description: "No provider chosen yet — choose which one to use.",
   },
 ];
+
+// A preflight answer with nothing to resolve: the shape the Start build
+// dialog reads. Tests override the half they are about.
+function ready(over: Partial<BuildPreflight> = {}): BuildPreflight {
+  return {
+    needsInput: false,
+    needsResolution: false,
+    items: [],
+    currentVersion: "v2",
+    suggestedVersion: "v3",
+    specUnchanged: false,
+    changes: [],
+    ...over,
+  };
+}
 
 function clickBuild() {
   fireEvent.click(screen.getByRole("button", { name: "Build" }));
@@ -805,53 +784,153 @@ describe("SpecView onBuild routing (#164)", () => {
     );
   });
 
-  it("nothing to report — shows the Cut-version ceremony; confirming builds and navigates (#370/#372)", async () => {
-    mockPreflightRefetch.mockResolvedValue({
-      data: { needsInput: false, needsResolution: false, items: [] },
-    });
-    mockMutateAsync.mockResolvedValue({ tag: "v1" } satisfies BuildResponse);
+  it("nothing to resolve — the Start build dialog opens, and its version is what builds", async () => {
+    mockPreflightRefetch.mockResolvedValue({ data: ready() });
+    mockMutateAsync.mockResolvedValue({ tag: "v3" } satisfies BuildResponse);
 
     render(<SpecView projectName="proj1" />);
     clickBuild();
 
-    // The ceremony intervenes: nothing POSTs until the user confirms — the
-    // BACKEND cuts the real tag on confirm.
-    const dialog = await screen.findByTestId("cut-version-dialog");
+    // The dialog intervenes: nothing POSTs until the user confirms, and the
+    // name it carries is the one the server suggested.
+    const dialog = await screen.findByTestId("start-build-dialog");
     const confirm = within(dialog).getByRole("button", {
-      name: /cut v\d+ & build/i,
+      name: "Build v3",
       hidden: true,
     });
     expect(mockMutateAsync).not.toHaveBeenCalled();
     fireEvent.click(confirm);
 
+    // The suggestion is not claimed: an untouched field sends no name.
     await waitFor(() =>
       expect(mockMutateAsync).toHaveBeenCalledWith({ inputs: [] }),
     );
     expect(mockNavigate).toHaveBeenCalledWith({
       to: "/projects/$projectName/builds/$tag",
-      params: { projectName: "proj1", tag: "v1" },
+      params: { projectName: "proj1", tag: "v3" },
     });
-    expect(screen.queryByTestId("dependency-drawer")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("resolve-dependencies-dialog"),
+    ).not.toBeInTheDocument();
+  });
+
+  // The name is the user's (ADR-0030): what they type is the tag that is cut.
+  it("a renamed version is what the build request carries", async () => {
+    mockPreflightRefetch.mockResolvedValue({ data: ready() });
+    mockMutateAsync.mockResolvedValue({
+      tag: "payments-v2",
+    } satisfies BuildResponse);
+
+    render(<SpecView projectName="proj1" />);
+    clickBuild();
+
+    const dialog = await screen.findByTestId("start-build-dialog");
+    fireEvent.change(within(dialog).getByTestId("version-name"), {
+      target: { value: "payments-v2" },
+    });
+    fireEvent.click(
+      within(dialog).getByRole("button", {
+        name: "Build payments-v2",
+        hidden: true,
+      }),
+    );
+
+    await waitFor(() =>
+      expect(mockMutateAsync).toHaveBeenCalledWith({
+        inputs: [],
+        version: "payments-v2",
+      }),
+    );
+  });
+
+  // A name already cut is refused where the user typed it, not after a round
+  // trip — the tags read is what the field checks against.
+  it("a name already in use disables Build and says so", async () => {
+    mockPreflightRefetch.mockResolvedValue({ data: ready() });
+
+    render(<SpecView projectName="proj1" />);
+    clickBuild();
+
+    const dialog = await screen.findByTestId("start-build-dialog");
+    fireEvent.change(within(dialog).getByTestId("version-name"), {
+      target: { value: "v1" },
+    });
+
+    expect(
+      within(dialog).getByText("A version named v1 already exists."),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("button", { name: "Build v1", hidden: true }),
+    ).toBeDisabled();
+    expect(mockMutateAsync).not.toHaveBeenCalled();
+  });
+
+  // An unchanged spec tree cuts nothing: the version is reused, so the field is
+  // locked and the request carries no name at all (ADR-0030).
+  it("an unchanged spec tree rebuilds the version it matches, and names nothing", async () => {
+    mockPreflightRefetch.mockResolvedValue({
+      data: ready({ specUnchanged: true }),
+    });
+    mockMutateAsync.mockResolvedValue({ tag: "v2" } satisfies BuildResponse);
+
+    render(<SpecView projectName="proj1" />);
+    clickBuild();
+
+    const dialog = await screen.findByTestId("start-build-dialog");
+    expect(within(dialog).getByTestId("version-name")).toBeDisabled();
+    expect(
+      within(dialog).getByText("No spec changes since v2"),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Rebuild v2", hidden: true }),
+    );
+
+    await waitFor(() =>
+      expect(mockMutateAsync).toHaveBeenCalledWith({ inputs: [] }),
+    );
+  });
+
+  it("the change list names what this version touches", async () => {
+    mockPreflightRefetch.mockResolvedValue({
+      data: ready({
+        changes: [
+          { name: "orders-api", kind: "component", state: "changed" },
+          { name: "reports-web", kind: "component", state: "new" },
+          { name: "legacy-mailer", kind: "external", state: "removed" },
+        ],
+      }),
+    });
+
+    render(<SpecView projectName="proj1" />);
+    clickBuild();
+
+    const dialog = await screen.findByTestId("start-build-dialog");
+    expect(
+      within(dialog).getByText("What changed since v2"),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText("orders-api")).toBeInTheDocument();
+    expect(within(dialog).getByText("new")).toBeInTheDocument();
+    expect(within(dialog).getByText("removed")).toBeInTheDocument();
+    // A removed dependency keeps its resource — the dialog says so rather than
+    // implying the build takes it down.
+    expect(
+      within(dialog).getByText(/removed dependency keeps its resource/i),
+    ).toBeInTheDocument();
   });
 
   // `tag` is optional on BuildResponse, so the version page it names may not
   // exist. The ledger is the honest fallback — never the overview, which is
   // where a reader would have to leave to reach either.
   it("a build that names no tag lands on the ledger, not the overview", async () => {
-    mockPreflightRefetch.mockResolvedValue({
-      data: { needsInput: false, needsResolution: false, items: [] },
-    });
+    mockPreflightRefetch.mockResolvedValue({ data: ready() });
     mockMutateAsync.mockResolvedValue({} satisfies BuildResponse);
 
     render(<SpecView projectName="proj1" />);
     clickBuild();
 
-    const dialog = await screen.findByTestId("cut-version-dialog");
+    const dialog = await screen.findByTestId("start-build-dialog");
     fireEvent.click(
-      within(dialog).getByRole("button", {
-        name: /cut v\d+ & build/i,
-        hidden: true,
-      }),
+      within(dialog).getByRole("button", { name: "Build v3", hidden: true }),
     );
 
     await waitFor(() =>
@@ -875,43 +954,41 @@ describe("SpecView onBuild routing (#164)", () => {
     await waitFor(() => expect(screen.getByText("boom")).toBeInTheDocument());
     expect(mockMutateAsync).not.toHaveBeenCalled();
     expect(mockNavigate).not.toHaveBeenCalled();
-    expect(screen.queryByTestId("dependency-drawer")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("start-build-dialog")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("resolve-dependencies-dialog"),
+    ).not.toBeInTheDocument();
   });
 
-  // The move that this whole feature turns on: an external dependency whose
-  // VALUES are still missing no longer blocks Build. The values are collected
-  // on the Builds page while the coding agent runs and enforced at the deploy
-  // gate, so the click goes straight to the cut-version ceremony.
-  it("needsResolution:false with collectable items — goes to the cut ceremony, never the drawer", async () => {
+  // The move ADR-0023 made: an external dependency whose VALUES are missing no
+  // longer blocks Build. The values are collected on the Builds page while the
+  // coding agent runs, so the click goes straight to the build dialog.
+  it("needsResolution:false with collectable items — the build dialog, never the resolve one", async () => {
     mockPreflightRefetch.mockResolvedValue({
-      data: { needsInput: true, needsResolution: false, items: COLLECTABLE_ITEMS },
+      data: ready({ needsInput: true, items: COLLECTABLE_ITEMS }),
     });
 
     render(<SpecView projectName="proj1" />);
     clickBuild();
 
-    expect(await screen.findByTestId("cut-version-dialog")).toBeInTheDocument();
-    expect(screen.queryByTestId("dependency-drawer")).not.toBeInTheDocument();
+    expect(await screen.findByTestId("start-build-dialog")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("resolve-dependencies-dialog"),
+    ).not.toBeInTheDocument();
   });
 
-  // The drawer used to submit these approvals; it no longer opens for them, so
-  // the plain build path has to carry them or nothing would ever be
-  // provisioned.
-  it("carries the preflight's platform-resource approvals on the plain build path", async () => {
+  it("carries the preflight's platform-resource approvals with the build", async () => {
     mockPreflightRefetch.mockResolvedValue({
-      data: { needsInput: true, needsResolution: false, items: COLLECTABLE_ITEMS },
+      data: ready({ needsInput: true, items: COLLECTABLE_ITEMS }),
     });
     mockMutateAsync.mockResolvedValue({ tag: "v3" } satisfies BuildResponse);
 
     render(<SpecView projectName="proj1" />);
     clickBuild();
 
-    const dialog = await screen.findByTestId("cut-version-dialog");
+    const dialog = await screen.findByTestId("start-build-dialog");
     fireEvent.click(
-      within(dialog).getByRole("button", {
-        name: /cut v\d+ & build/i,
-        hidden: true,
-      }),
+      within(dialog).getByRole("button", { name: "Build v3", hidden: true }),
     );
 
     await waitFor(() =>
@@ -921,68 +998,44 @@ describe("SpecView onBuild routing (#164)", () => {
     );
   });
 
-  it("needsResolution:true — opens the dependency drawer and does not build", async () => {
+  it("needsResolution:true — opens the resolve dialog and does not build", async () => {
     mockPreflightRefetch.mockResolvedValue({
-      data: { needsInput: true, needsResolution: true, items: BLOCKED_ITEMS },
+      data: ready({ needsInput: true, needsResolution: true, items: BLOCKED_ITEMS }),
     });
 
     render(<SpecView projectName="proj1" />);
     clickBuild();
 
-    await waitFor(() =>
-      expect(screen.getByTestId("dependency-drawer")).toBeInTheDocument(),
-    );
-    expect(screen.queryByTestId("cut-version-dialog")).not.toBeInTheDocument();
+    const dialog = await screen.findByTestId("resolve-dependencies-dialog");
+    expect(within(dialog).getByText("crm")).toBeInTheDocument();
+    expect(screen.queryByTestId("start-build-dialog")).not.toBeInTheDocument();
     expect(mockMutateAsync).not.toHaveBeenCalled();
   });
 
-  it("drawer Continue with a clean BuildResponse — builds with the drawer's inputs, closes, navigates", async () => {
+  // The dialog's one action: it starts the batch flow in the chat and gets out
+  // of the way, since as an overlay it would cover the conversation.
+  it("Resolve seeds the batch flow into the chat and closes the dialog", async () => {
     mockPreflightRefetch.mockResolvedValue({
-      data: { needsInput: true, needsResolution: true, items: BLOCKED_ITEMS },
+      data: ready({ needsInput: true, needsResolution: true, items: BLOCKED_ITEMS }),
     });
-    mockMutateAsync.mockResolvedValue({ tag: "v2" } satisfies BuildResponse);
 
     render(<SpecView projectName="proj1" />);
     clickBuild();
-    await waitFor(() =>
-      expect(screen.getByTestId("dependency-drawer")).toBeInTheDocument(),
+
+    const dialog = await screen.findByTestId("resolve-dependencies-dialog");
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Resolve", hidden: true }),
     );
-
-    fireEvent.click(screen.getByText("Drawer Continue"));
-
-    await waitFor(() =>
-      expect(mockMutateAsync).toHaveBeenCalledWith({ inputs: STUB_INPUTS }),
-    );
-    expect(mockNavigate).toHaveBeenCalledWith({
-      to: "/projects/$projectName/builds/$tag",
-      params: { projectName: "proj1", tag: "v2" },
-    });
-    expect(screen.queryByTestId("dependency-drawer")).not.toBeInTheDocument();
-  });
-
-  it("drawer Continue with failures — keeps the drawer open and surfaces the failure reasons", async () => {
-    mockPreflightRefetch.mockResolvedValue({
-      data: { needsInput: true, needsResolution: true, items: BLOCKED_ITEMS },
-    });
-    mockMutateAsync.mockResolvedValue({
-      failures: [{ dependency: "partner-api", reason: "spec fetch failed" }],
-    } satisfies BuildResponse);
-
-    render(<SpecView projectName="proj1" />);
-    clickBuild();
-    await waitFor(() =>
-      expect(screen.getByTestId("dependency-drawer")).toBeInTheDocument(),
-    );
-
-    fireEvent.click(screen.getByText("Drawer Continue"));
 
     await waitFor(() =>
       expect(
-        screen.getByText(/partner-api: spec fetch failed/i),
-      ).toBeInTheDocument(),
+        screen.queryByTestId("resolve-dependencies-dialog"),
+      ).not.toBeInTheDocument(),
     );
-    expect(screen.getByTestId("dependency-drawer")).toBeInTheDocument();
-    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(peekPendingSeed("aep.chat.v1.acme.proj1")?.message).toBe(
+      RESOLVE_ALL_DEPENDENCIES_COMMAND,
+    );
+    expect(mockMutateAsync).not.toHaveBeenCalled();
   });
 });
 
@@ -1138,8 +1191,44 @@ describe("SpecView dependency wiring (#252 Task 9)", () => {
 });
 
 // --- #252 Task 10: build dependency drawer wiring --------------------------
-describe("SpecView build dependency drawer (#252 Task 10)", () => {
-  const DRAWER_PREFLIGHT_ITEMS: PreflightItem[] = [
+// A link in the chat (`aep://spec/<path>`, ADR-0028) lands here as `?file=`:
+// the document is selected once and the param is stripped, so a rail click
+// afterwards survives a reload.
+describe("SpecView — a document linked from the chat", () => {
+  it("selects the linked definition and strips the param", async () => {
+    const definitionPath = "specs/design/dependencies/currency-service/dependency.json";
+    mockUseSpecFiles.mockReturnValue({
+      data: [...BASE_FILES, { path: definitionPath, sha: "dep1", group: "designs" }],
+      isPending: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    mockUseSpecFileContent.mockImplementation((_project: string, file: { path: string } | null) => ({
+      data:
+        file?.path === definitionPath
+          ? { sha: "dep1", content: JSON.stringify({ name: "currency-service", suggestions: [{ name: "Open Exchange Rates" }] }) }
+          : undefined,
+      isPending: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    }));
+    mockSearch.current = { file: definitionPath };
+
+    render(<SpecView projectName="proj1" />);
+
+    expect(await screen.findByRole("heading", { name: "currency-service" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Select a provider" })).toBeInTheDocument();
+    expect(mockNavigate).toHaveBeenCalledWith(
+      expect.objectContaining({ to: "/projects/$projectName/spec", params: { projectName: "proj1" }, replace: true }),
+    );
+    mockSearch.current = {};
+  });
+});
+
+describe("SpecView resolve dependencies dialog (#252 Task 10)", () => {
+  const OPEN_DEPENDENCY: PreflightItem[] = [
     {
       component: "checkout-api",
       dependency: "stripe",
@@ -1158,59 +1247,46 @@ describe("SpecView build dependency drawer (#252 Task 10)", () => {
     });
   });
 
-  it("resolves a drawer blocker item to its full Dependency entry and fires the seeded chat flow", async () => {
-    mockPreflightRefetch.mockResolvedValue({
-      data: {
-        needsInput: true,
-        needsResolution: true,
-        items: DRAWER_PREFLIGHT_ITEMS,
-      },
-    });
-
-    render(<SpecView projectName="proj1" />);
-    clickBuild();
-    await waitFor(() =>
-      expect(screen.getByTestId("dependency-drawer")).toBeInTheDocument(),
-    );
-
-    fireEvent.click(screen.getByText("Resolve drawer item"));
-
-    // Same lookup precedent as "Resolve in chat" above: the FULL endpoint
-    // entry (status/reason included), never a hand-built partial object —
-    // looked up by (item.component, item.dependency), not the currently
-    // selected file's component (the drawer can span any component). The
-    // RESOLVE intent, since this is the blocker panel's chat button.
-    expect(mockResolveViaChat).toHaveBeenCalledWith(
-      "checkout-api",
-      CHECKOUT_DEPS[0]!.dependencies![0],
-      "resolve",
-    );
-  });
-
-  it("refetches preflight and updates the still-open drawer's items when a chat turn ends", async () => {
+  // The dialog is open while the user works the chat beside it, so what it
+  // lists has to follow what they resolve. When the last one goes, the answer
+  // to the click changes too: the version is buildable, so the build dialog is
+  // what the user should be looking at.
+  it("refetches preflight when a chat turn ends, and moves on once nothing is left", async () => {
     mockPreflightRefetch
       .mockResolvedValueOnce({
         data: {
-        needsInput: true,
-        needsResolution: true,
-        items: DRAWER_PREFLIGHT_ITEMS,
-      },
+          needsInput: true,
+          needsResolution: true,
+          items: OPEN_DEPENDENCY,
+          currentVersion: "v1",
+          suggestedVersion: "v2",
+          specUnchanged: false,
+          changes: [],
+        },
       })
       .mockResolvedValueOnce({
-        data: { needsInput: false, needsResolution: false, items: [] },
+        data: {
+          needsInput: false,
+          needsResolution: false,
+          items: [],
+          currentVersion: "v1",
+          suggestedVersion: "v2",
+          specUnchanged: false,
+          changes: [],
+        },
       });
 
     render(<SpecView projectName="proj1" />);
     clickBuild();
     await waitFor(() =>
-      expect(screen.getByText("Resolve drawer item")).toBeInTheDocument(),
+      expect(screen.getByTestId("resolve-dependencies-dialog")).toBeInTheDocument(),
     );
-    // PAINTED is not SUBSCRIBED. The drawer's items land in a commit, but the
+    // PAINTED is not SUBSCRIBED. The dialog's items land in a commit, but the
     // effect that registers SpecView's turn-end listener is a passive effect
     // React flushes after that commit — and `waitFor` resolves on the DOM
     // mutation itself. Notifying in that gap dispatches to nobody: no refetch,
     // no state change, and the assertion below then burns its whole budget
-    // staring at an unchanged drawer. Drain the pending effects first so the
+    // staring at an unchanged dialog. Drain the pending effects first so the
     // listener is provably live before the turn ends.
     await act(async () => {});
 
@@ -1223,55 +1299,25 @@ describe("SpecView build dependency drawer (#252 Task 10)", () => {
     notifyTurnEnd(chatKeyFor("acme", "proj1"), "completed");
     // notifyTurnEnd dispatches SYNCHRONOUSLY and the listener's first act is
     // that flush, so this pins "a listener actually ran" right here — rather
-    // than leaving it to be inferred from an unchanged drawer five seconds on.
+    // than leaving it to be inferred from an unchanged dialog five seconds on.
     expect(mockFlush).toHaveBeenCalledTimes(flushesBeforeTurnEnd + 1);
 
     await waitFor(() =>
-      expect(screen.queryByText("Resolve drawer item")).not.toBeInTheDocument(),
+      expect(screen.getByTestId("start-build-dialog")).toBeInTheDocument(),
     );
+    // The build dialog being up IS the resolve dialog being gone — one state
+    // picks which is open. Asserting the other's absence here would race its
+    // exit transition, which jsdom leaves parked at opacity 0.
     expect(mockPreflightRefetch).toHaveBeenCalledTimes(2);
   });
 
-  it("does not touch preflight on a chat turn ending while the drawer is closed", () => {
+  it("does not touch preflight on a chat turn ending while no dialog is open", () => {
     render(<SpecView projectName="proj1" />);
 
     notifyTurnEnd(chatKeyFor("acme", "proj1"), "completed");
 
     expect(mockPreflightRefetch).not.toHaveBeenCalled();
     expect(mockFlush).not.toHaveBeenCalled();
-  });
-
-  // #252 Task 15: the drawer is a MUI overlay — left open after "Resolve via
-  // chat" it covers the chat panel the seeded message just opened, so the
-  // user can't see what they're meant to respond to. Closing it is this
-  // handler's job, alongside firing the seeded chat flow.
-  it('closes the dependency drawer when "Resolve via chat" is clicked, so the seeded chat is visible', async () => {
-    mockPreflightRefetch.mockResolvedValue({
-      data: {
-        needsInput: true,
-        needsResolution: true,
-        items: DRAWER_PREFLIGHT_ITEMS,
-      },
-    });
-
-    render(<SpecView projectName="proj1" />);
-    clickBuild();
-    await waitFor(() =>
-      expect(screen.getByTestId("dependency-drawer")).toBeInTheDocument(),
-    );
-
-    fireEvent.click(screen.getByText("Resolve drawer item"));
-
-    // The seeded chat flow still fires (same lookup as the test above)...
-    expect(mockResolveViaChat).toHaveBeenCalledWith(
-      "checkout-api",
-      CHECKOUT_DEPS[0]!.dependencies![0],
-      "resolve",
-    );
-    // ...and the drawer closes so the chat panel it opens is actually visible.
-    await waitFor(() =>
-      expect(screen.queryByTestId("dependency-drawer")).not.toBeInTheDocument(),
-    );
   });
 });
 
@@ -1806,17 +1852,58 @@ describe("SpecView validation criteria explanation", () => {
     render(<SpecView projectName="proj1" />);
 
     expect(
-      screen.getByText(/Each criterion represents one thing your software must do/),
+      screen.getByText(/Each criterion represents one thing your system must do/),
     ).toBeInTheDocument();
     expect(screen.getByText(/based on your requirements/)).toBeInTheDocument();
+    // Both halves, because only the automatable ones are checked for the reader.
+    // Claiming all of them were is what this sentence used to do, above a list
+    // whose glyphs said otherwise.
+    expect(
+      screen.getByText(/the ones that can be automated are checked/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/The rest you have to check yourself/),
+    ).toBeInTheDocument();
     expect(screen.getByText(/To change one, ask the agent/)).toBeInTheDocument();
   });
 
-  it("names the methods without the e2e acronym", () => {
+  it("marks who checks each criterion, and never with a run signal", () => {
+    // This pane has no run attached — it is a file preview of the oracle — so a
+    // chip here would name a run that does not exist. `manual` is the one that
+    // regressed: a rule giving manual criteria their final word was ranked above
+    // the has-a-run check, and stamped "Manual" onto every preview.
     render(<SpecView projectName="proj1" />);
 
-    expect(screen.getByText("auto")).toBeInTheDocument();
-    expect(screen.getByText("manual")).toBeInTheDocument();
-    expect(screen.queryByText("e2e")).not.toBeInTheDocument();
+    // Each row's mark is a glyph, so its phrase is what identifies it. The glyph
+    // carries no visible text of its own, which is why the phrase is also the
+    // accessible name.
+    expect(
+      screen.getByText("Validated automatically by the agent."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Requires manual validation.")).toBeInTheDocument();
+    for (const chip of ["Manual", "Pending", "Passed", "Failed", "Planned"]) {
+      expect(screen.queryByText(chip)).not.toBeInTheDocument();
+    }
+  });
+
+  it("names no method at all — the glyph does it", () => {
+    // `e2e` is an acronym the console lexicon forbids, and "auto" is the word it
+    // is spelled as elsewhere. Neither belongs on a row, where the glyph carries
+    // the distinction, so neither may leak here.
+    render(<SpecView projectName="proj1" />);
+
+    for (const word of ["e2e", "auto", "manual"]) {
+      expect(screen.queryByText(word)).not.toBeInTheDocument();
+    }
+  });
+
+  it("shortens the ids, keeping the full one on hover", () => {
+    render(<SpecView projectName="proj1" />);
+
+    expect(screen.getByText("1")).toBeInTheDocument();
+    expect(screen.getByText("a")).toBeInTheDocument();
+    expect(screen.getByText("b")).toBeInTheDocument();
+    expect(screen.queryByText("AC-001-a")).not.toBeInTheDocument();
+    expect(screen.queryByText("REQ-001")).not.toBeInTheDocument();
   });
 });

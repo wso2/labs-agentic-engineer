@@ -55,10 +55,10 @@ type StreamPart struct {
 // TurnUsage is the manifest part's token-usage payload (#249) — the turn's
 // spend as reported by the agents service. Field names match the wire.
 type TurnUsage struct {
-	InputTokens         int64  `json:"inputTokens"`
-	OutputTokens        int64  `json:"outputTokens"`
-	CacheReadTokens     int64  `json:"cacheReadTokens"`
-	CacheCreationTokens int64  `json:"cacheCreationTokens"`
+	InputTokens         int64 `json:"inputTokens"`
+	OutputTokens        int64 `json:"outputTokens"`
+	CacheReadTokens     int64 `json:"cacheReadTokens"`
+	CacheCreationTokens int64 `json:"cacheCreationTokens"`
 	// Always emitted (no omitempty): the TS @aep/agent-stream TurnUsage.model
 	// is a required field, and "" is meaningful (unknown/mixed model). Dropping
 	// it on re-marshal would break the "field names match the wire" guarantee.

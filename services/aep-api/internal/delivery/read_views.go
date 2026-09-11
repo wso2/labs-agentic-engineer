@@ -132,6 +132,12 @@ type IssueComment struct {
 	// answers the current body under the original timestamp, which is what a
 	// narrative wants — the moment the note entered the story.
 	CreatedAt time.Time `json:"createdAt"`
+	// Observed marks a line the PLATFORM wrote from what it saw a run do, rather
+	// than one an agent or a person wrote. The platform's notes to the agent are
+	// not here at all — they are dropped on read — so this separates the two
+	// kinds that remain: a machine's report of a tool call, and somebody's
+	// judgement about the work.
+	Observed bool `json:"observed,omitempty"`
 }
 
 // TaskDetail is the Get shape: a TaskView plus the full Execution history.

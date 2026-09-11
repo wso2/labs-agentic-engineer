@@ -38,16 +38,13 @@ import {
 import { ExternalLink, Eye, EyeOff, Key } from "@wso2/oxygen-ui-icons-react";
 import type { components } from "../../../generated/aep-api";
 import { useConnectAnthropic, useDisconnectAnthropic } from "../api/queries";
-import { CodingAgentKeySection } from "./CodingAgentKeySection";
 
 type LLMProjection = components["schemas"]["LLMProjection"];
 
 export function AnthropicCredentialCard({
   llm,
-  codingLlm,
 }: {
   llm: LLMProjection | null;
-  codingLlm: LLMProjection | null;
 }) {
   const [apiKey, setApiKey] = useState("");
   const [showKey, setShowKey] = useState(false);
@@ -86,9 +83,9 @@ export function AnthropicCredentialCard({
 
         <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
           Requirements, architecture, and task generation run on this key, and
-          so does the coding agent unless you give it one of its own below.
-          There is no platform-provided fallback, so agents cannot run until a
-          key is configured here.
+          so does the coding agent unless it is given one of its own under
+          Coding agent. There is no platform-provided fallback, so agents
+          cannot run until a key is configured here.
         </Typography>
 
         {connected && (
@@ -176,10 +173,6 @@ export function AnthropicCredentialCard({
           </Box>
         </Box>
 
-        {/* The coding-agent key overrides the key above, so it is only
-            offered once there is a key to override — the server rejects it
-            otherwise. */}
-        {connected && <CodingAgentKeySection codingLlm={codingLlm} />}
       </CardContent>
 
       <Dialog

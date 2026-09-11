@@ -228,7 +228,7 @@ func TestSaveSpec_DesignOnlyChange_CutsNewTag(t *testing.T) {
 func TestSaveSpec_LegacyDesignTagsExcluded(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, validSpecSeed())
-	r.tag("v1", "spec v1")
+	r.tag("v1", specTagSubject+"v1")
 	r.tag("v1-1", "legacy design rev")
 	r.tag("v1-2", "legacy design rev")
 	r.seed(map[string]string{"specs/requirements/prd.md": "# PRD v2\n\n## User Stories\n\n1. As a user, I want the thing, so that value.\n"}, "spec edit")
@@ -290,7 +290,7 @@ func TestValidateSpecAtTag_InvalidSpecAtTag(t *testing.T) {
 	t.Parallel()
 	// A tag cut externally over a design-less tree fails re-validation.
 	r := newRig(t, map[string]string{"specs/requirements/prd.md": "the spec\n"})
-	r.tag("v1", "external tag over an unbuildable tree")
+	r.tag("v1", specTagSubject+"v1")
 
 	err := r.svc.ValidateSpecAtTag(context.Background(), r.org, r.proj, "v1")
 	var se *SpecValidationError

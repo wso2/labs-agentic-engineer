@@ -116,7 +116,7 @@ For **each** issue in the ordered set:
 <!-- /replace-text -->
 
 <!-- replace-text -->
-9. **its issue's status line** — the `gh issue comment` command above with **its**
+10. **its issue's status line** — the `gh issue comment` command above with **its**
    issue number filled in, and the rule that goes with it (**The status line**):
    one line, at both ends of its work and whenever the answer changes between
    them. That command is the only `gh` it may run, and its own issue is the only

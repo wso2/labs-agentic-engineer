@@ -22,13 +22,12 @@ import (
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
-// The three drawer/gate item kinds an `external` dependency's computed status
+// The two drawer/gate item kinds an `external` dependency's computed status
 // can raise, restoring the build-gate Task 1 orphaned (see the doc comment on
 // dependencyBlocker below). "external-spec" is the pre-existing kind (its
 // PreflightItemKind wire value already existed — Task 1 only stopped emitting
-// it); the other two are new.
+// it); the other is new.
 const (
-	kindExternalAmbiguous  = "external-ambiguous"
 	kindExternalUnresolved = "external-unresolved"
 	kindExternalSpec       = "external-spec"
 )
@@ -57,7 +56,7 @@ const (
 // invoked exactly once per fresh design read.
 //
 // Only `external` dependencies are classified here: `org-service`'s own
-// unresolved/blocked/ambiguous states keep their existing "org-service" item
+// unresolved/blocked states keep their existing "org-service" item
 // kind (orgServiceItems, unchanged) and are gated at design-save time
 // (design.SaveAndProceed's firstUnresolvedDependency) rather than here — the
 // orphaned gate this task restores is specifically the `external` one Task 1
@@ -67,14 +66,14 @@ func dependencyBlocker(d spec.Dependency) (kind, description string, blocked boo
 		return "", "", false
 	}
 	switch d.Status {
-	case spec.DependencyStatusAmbiguous:
-		return kindExternalAmbiguous, "More than one candidate fits — resolve which one to use.", true
 	case spec.DependencyStatusUnresolved:
 		switch d.Reason {
-		case spec.DependencyReasonNeedsSpec:
-			return kindExternalSpec, "No API spec yet — provide one to continue.", true
+		case spec.DependencyReasonNeedsContract:
+			return kindExternalSpec, "No contract yet — provide the API document to continue.", true
+		case spec.DependencyReasonNeedsAcceptance:
+			return kindExternalUnresolved, "The agent wrote this contract from research — accept the assumption, or provide the document.", true
 		case spec.DependencyReasonNeedsInput:
-			return kindExternalUnresolved, "Needs information only you can provide.", true
+			return kindExternalUnresolved, "No provider chosen yet — choose which one to use.", true
 		}
 	}
 	return "", "", false
@@ -88,8 +87,8 @@ func dependencyBlocker(d spec.Dependency) (kind, description string, blocked boo
 // the guard that skipped non-service components here predates this feature
 // and left a gap the drawer already closed for every component kind; a
 // web-application's unresolved external dependency must block the build the
-// same way a service's does) — and maps each still-blocked one (ambiguous, or
-// unresolved with needs-spec/needs-input) through the exact same
+// same way a service's does) — and maps each still-blocked one (unresolved
+// with needs-contract/needs-acceptance/needs-input) through the exact same
 // dependencyBlocker used by preflight.externalItems, into the existing
 // InputFailure shape (handlers_build.go's BuildResponse.failures). A doctored
 // client that skips the drawer (or supplies no/insufficient inputs) cannot

@@ -30,9 +30,9 @@ package contracts
 // spec domain, which owns the resolution algebra.
 type DependencyKind = string
 
-// DependencyStyle is the closed set of external dependency shapes (mirrors the
-// agent-stream TS `DependencyStyle`). Meaningful only on kind=external. The
-// concrete style consts live in the spec domain.
+// DependencyStyle is the closed set of external dependency shapes — rest-api,
+// graphql, sdk (mirrors the agent-stream TS `DependencyStyle`). Meaningful only
+// on kind=external. The concrete style consts live in the spec domain.
 type DependencyStyle = string
 
 // Dependency is the unified, kind-discriminated dependency entry on a
@@ -51,32 +51,57 @@ type Dependency struct {
 	// freshly-fetched resolver-port lookups on every design read; they are NOT
 	// persisted and carry NO gorm/yaml tags — plain wire JSON only. The
 	// architect never sets them.
-	//   Status: resolved|ambiguous|unresolved|blocked
-	//   Reason: needs-spec|needs-input|not-found|access-required
+	//   Status: resolved|unresolved|blocked
+	//   Reason: needs-contract|needs-acceptance|needs-input|not-found|access-required
 	Status string `json:"status,omitempty"`
 	Reason string `json:"reason,omitempty"`
-	// external: REST API ("rest-api") or SDK ("sdk") shape. Meaningful ONLY on
-	// kind=external — a platform-resource is catalog-picked, an org-service is
-	// catalog-resolved; neither has web provenance. Every resolution state is
-	// DERIVED from which of Style/Package/Candidates/SpecPath are present, never
-	// a stored flag (the old NeedsSpec boolean is gone). Enforced mechanically by
-	// the zod write-gate (superRefine) and the Go fold validator (agentfold), not
-	// by this struct.
+	// external: the definition, HYDRATED at read time from the dependency's own
+	// file (specs/design/dependencies/<name>/dependency.json — one dependency,
+	// one definition, referenced by name from every component that uses it).
+	// A component's design.json never carries these; the read path copies them
+	// onto the edge so every downstream reader keeps one flat shape.
+	//
+	// Source: "project" (agent-authored in this repo) or "org" (a platform-
+	// stamped copy of a Registered External resource — no values collected).
+	Source string `json:"source,omitempty"`
+	// Provider: the concrete system chosen ("Stripe"). Absent until the user
+	// chose one; never beside Suggestions.
+	Provider string `json:"provider,omitempty"`
+	// Style: how the component talks to it — rest-api | graphql | sdk.
 	Style DependencyStyle `json:"style,omitempty"`
-	// external (sdk style): one ecosystem-prefixed package identifier, e.g.
-	// "npm:stripe@^14" — version inline but optional (omitted ⇒ latest
-	// compatible). External-only.
+	// Contract: the contract FILE NAME in the dependency's directory
+	// (openapi.yaml / schema.graphql); ContractPath joins it. Absent ⇒ the
+	// dependency still needs its contract.
+	Contract string `json:"contract,omitempty"`
+	// SDK: for an sdk-style dependency, the manifest FILE NAME (sdk.json) —
+	// present only when the manifest is on disk beside the definition.
+	SDK string `json:"sdk,omitempty"`
+	// Package: for an sdk-style dependency, the ecosystem-prefixed package for
+	// THIS component's implementation language, picked from the SDK manifest
+	// (sdk.json) at hydration. Empty when the manifest has no entry for it.
 	Package string `json:"package,omitempty"`
-	// external: the contract location — EITHER a URL (a public spec/docs URL) OR
-	// a repo-relative path (dependencies/<name>.openapi.yaml) once a spec has been
-	// collected into the consumer's own repo. External-only.
-	SpecPath string `json:"specPath,omitempty"`
-	// external: 2+ identified-but-not-pinned options — the "ambiguous"
-	// resolution state. Omitted, never empty: one option fully known collapses
-	// to a resolved dep, one option partially known is a partial dep (not a
-	// candidate), 2+ identified options is ambiguous. Pinning REMOVES the
-	// field. External-only.
-	Candidates []DependencyCandidate `json:"candidates,omitempty"`
+	// Provenance: where the contract came from (see DependencyProvenance).
+	Provenance *DependencyProvenance `json:"provenance,omitempty"`
+	// Suggestions: services the user might choose, while no provider is
+	// chosen. Choosing one REMOVES the field and sets Provider.
+	Suggestions []DependencySuggestion `json:"suggestions,omitempty"`
+	// ContractAssumed: the contract file on disk is one the design agent wrote
+	// from research (it carries `x-aep-assumed: true`; an sdk.json carries
+	// `"assumed": true`). Until the user accepts it (Assumed) the dependency is
+	// not resolved.
+	ContractAssumed bool `json:"contractAssumed,omitempty"`
+	// ContractDerived: the contract file on disk was written by the design
+	// agent from the provider's own developer reference (it carries
+	// `x-aep-derived: true`; an sdk.json carries `"derived": true`) — every
+	// operation cited from a page. Resolved, flagged `derived`; no
+	// authorization is asked, unlike an assumption.
+	ContractDerived bool `json:"contractDerived,omitempty"`
+	// Assumed: the user's permission to build against an agent-written
+	// contract (see DependencyAssumption). Read-only for the agent.
+	Assumed *DependencyAssumption `json:"assumed,omitempty"`
+	// Flags: read-time qualifiers on a resolved dependency — "registered",
+	// "assumed", "sdk-only". Never authored.
+	Flags []string `json:"flags,omitempty"`
 	// external: the config key schema the consuming component codes against.
 	Config []ConfigKey `json:"config,omitempty"`
 	// platform-resource: the registered (Cluster)ResourceType + provisioning params.
@@ -144,15 +169,15 @@ type EndpointWiring struct {
 	EnvBindings map[string]string `json:"envBindings"`
 }
 
-// DependencyCandidate is one option in an ambiguous external dependency's
-// resolution set (2+ required — see Dependency.Candidates; a single candidate
-// never occurs). Mirrors the agent-stream TS `DependencyCandidate`.
-type DependencyCandidate struct {
+// DependencySuggestion is a service commonly used for a dependency's
+// capability, named from the design agent's knowledge while no provider is
+// chosen — a starting point for the user's choice, never a researched fit and
+// never turned into a provider by the agent. Mirrors the agent-stream TS
+// `DependencySuggestion`.
+type DependencySuggestion struct {
 	Name        string          `json:"name"`
-	Style       DependencyStyle `json:"style"`
+	Style       DependencyStyle `json:"style,omitempty"`
 	Description string          `json:"description,omitempty"`
-	// Package: sdk-style candidates only; ecosystem-prefixed package identifier.
-	Package string `json:"package,omitempty"`
 }
 
 // ConfigKey is one env-var key a component reads at runtime. For an external
@@ -171,4 +196,70 @@ type ConfigKey struct {
 	// The Build dependency drawer pre-fills the field with it. Never set for a
 	// secret key — a credential has no default to invent.
 	DefaultValue string `json:"defaultValue,omitempty"`
+}
+
+// DependencyProvenance records where a committed contract came from, so a
+// reader can tell a slice of the provider's published document from something
+// typed by hand, and re-derive the slice when the source moves. Mirrors the
+// agent-stream TS `DependencyProvenance`.
+type DependencyProvenance struct {
+	// SourceURL is the document the contract was taken from — a URL, or the
+	// name of an uploaded file.
+	SourceURL string `json:"sourceUrl,omitempty"`
+	// SHA256 (hex) of the FULL source document, not of the slice.
+	SHA256 string `json:"sha256,omitempty"`
+	// FetchedAt is the RFC 3339 instant the source was read.
+	FetchedAt string `json:"fetchedAt,omitempty"`
+	// Sliced is true when the committed contract is a slice of the source.
+	Sliced bool `json:"sliced,omitempty"`
+}
+
+// DependencyAssumption is the user's permission to build against a contract
+// the agent wrote from research rather than the provider's document. The
+// platform writes it when the user accepts the agent's proposal; the agent may
+// echo it but never introduce or change it. Mirrors the agent-stream TS
+// `DependencyAssumption`.
+type DependencyAssumption struct {
+	// By is the accepting user's login.
+	By string `json:"by"`
+	// At is the RFC 3339 instant of the acceptance.
+	At string `json:"at"`
+	// Note is the agent's own statement of what it was unsure about.
+	Note string `json:"note,omitempty"`
+}
+
+// DependencyDefinition is the one definition of an external dependency — the
+// wire shape of specs/design/dependencies/<name>/dependency.json (agent-stream
+// TS `DependencyDesign`). Components reference it by Name; the spec domain
+// hydrates each reference from it at read time.
+type DependencyDefinition struct {
+	Name        string                 `json:"name"`
+	Description string                 `json:"description,omitempty"`
+	Source      string                 `json:"source,omitempty"`
+	Provider    string                 `json:"provider,omitempty"`
+	Style       DependencyStyle        `json:"style,omitempty"`
+	Contract    string                 `json:"contract,omitempty"`
+	SDK         string                 `json:"sdk,omitempty"`
+	Provenance  *DependencyProvenance  `json:"provenance,omitempty"`
+	Suggestions []DependencySuggestion `json:"suggestions,omitempty"`
+	Config      []ConfigKey            `json:"config,omitempty"`
+	Assumed     *DependencyAssumption  `json:"assumed,omitempty"`
+}
+
+// SdkManifest is the wire shape of specs/design/dependencies/<name>/sdk.json:
+// where each implementation language finds the provider's SDK. Mirrors the
+// agent-stream TS `SdkManifest`.
+type SdkManifest struct {
+	// Packages maps a lower-case language ("typescript", "go") to an
+	// ecosystem-prefixed package identifier ("npm:stripe@^14").
+	Packages map[string]string `json:"packages"`
+	DocsURL  string            `json:"docsUrl,omitempty"`
+	// Calls lists the SDK calls the design relies on, in the SDK's own naming.
+	Calls []string `json:"calls,omitempty"`
+	// Derived marks a manifest the design agent wrote from the provider's
+	// SDK reference — the sdk.json twin of a contract's `x-aep-derived: true`.
+	Derived bool `json:"derived,omitempty"`
+	// Assumed marks a manifest the design agent wrote without a published
+	// source — the sdk.json twin of a contract's `x-aep-assumed: true`.
+	Assumed bool `json:"assumed,omitempty"`
 }

@@ -171,10 +171,17 @@ automatically. Keep each comment `text` SHORT (a phrase, not a sentence).
 
 ## Consistency rules
 
-- **One primary navigation, not two.** A content-heavy tool (admin console,
-  dashboard app) uses the `sidebar` for section links and a brand-only
-  `navbar` (`navbar "Acme"`). A simple public flow (storefront, checkout) uses
-  a link-carrying `navbar` and **no sidebar**. Never both on one screen.
+- **One shell, the design system's.** Every screen draws a brand-only
+  `navbar` (`navbar "Acme"` — the compiler adds the bell and avatar) and a
+  `sidebar` carrying that role's destinations. That is the app shell the
+  design system's sample app has and the one the coding run builds, so the
+  wireframe, the generated app and the sample line up one to one. Never put
+  links in the `navbar`, and never draw a signed-in screen without the
+  `sidebar` — a "simple" flow gets a short sidebar, not a different shell. A
+  role-less public flow (a checkout) is the same shell with the public
+  destinations in its `sidebar`. The one screen drawn with no chrome at all
+  is a sign-in form the app **owns** (the DSL section above): it is built on
+  the design system's gate layout, outside the shell, and nothing else is.
 - Repeat the SAME `navbar` on every screen of one app. Repeat the SAME
   `sidebar` too, EXCEPT where a role's screens scope it to that role's
   destinations — the items both roles share still keep the same label and
@@ -351,9 +358,9 @@ Checklist before finishing a wireframe file:
   duplicate takes on the same screen. Where a role changes the view, there's a
   screen per role, named and described for it.
 - Every screen has a one-line description saying what it's for.
-- `navbar` is identical across every screen of the app; `sidebar` is scoped
-  to each role's destinations, with shared items kept at the same label and
-  order across roles.
+- `navbar` is brand-only and identical across every screen of the app; every
+  screen has a `sidebar`, scoped to each role's destinations, with shared items
+  kept at the same label and order across roles.
 - Each role or journey named in the design's `flows/` files has its own `flow "<name>"` block,
   entry screen first, referencing existing screens by name.
 - **Every numbered user story is accounted for**: walked by at least one flow,
@@ -372,6 +379,13 @@ Checklist before finishing a wireframe file:
 - The right primitive does each job — `badge` for status, `tabs` for section
   switching, `avatar` for people, `progress` for completion, `table` + `row`
   for real data.
+- **Every `table` column and stat `card` value is data the provider returns
+  for that screen.** Where the provider's `openapi.yaml` exists, check the
+  list operation the table binds to: a column its response carries no field
+  for (a per-row count that only a detail endpoint could supply) is either
+  added to the API design now or dropped from the wireframe. Left in,
+  the coding run either fills it with one request per row or drops it
+  silently, and the reviewer sees a screen that does not match either way.
 - Color is rare and meaningful: `primary` on each screen's main action
   (usually one, at most two equals), plus the odd status `badge`.
 - Navigation is on the control that triggers it: the button/link/table that

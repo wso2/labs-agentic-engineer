@@ -598,3 +598,30 @@ func TestResolveRunnerSecrets_UnknownDepInDesignSkipped(t *testing.T) {
 		t.Fatalf("a name absent from the design must be skipped (no secret keys), got %+v", got)
 	}
 }
+
+// TestAuthorPreparedValues_SchemaFaultIsPermanent: a schema the ResourceType
+// builder refuses is an answer about the design, not a blip. Without the
+// ErrProvisionPermanent wrap the run retried it three times and recorded a
+// transient fault; with it the run fails once and says the design must change.
+func TestAuthorPreparedValues_SchemaFaultIsPermanent(t *testing.T) {
+	t.Parallel()
+
+	p := newTestProvisioner(nil, newFakeRC("rel-1"), &fakeSecretWriter{})
+	er := &ExternalResource{Name: "sendgrid", Description: "no keys declared"}
+
+	_, err := p.AuthorPreparedValues(context.Background(), "default", "proj", er, nil)
+	if err == nil {
+		t.Fatal("want error for an external resource with no config keys")
+	}
+	if !errors.Is(err, ErrProvisionPermanent) {
+		t.Fatalf("schema fault must be permanent, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "at least one config key required") {
+		t.Fatalf("the provisioner's own words must survive, got %v", err)
+	}
+
+	_, err = p.Provision(context.Background(), "default", "oc-org-1", "proj", er, nil)
+	if !errors.Is(err, ErrProvisionPermanent) {
+		t.Fatalf("Provision: schema fault must be permanent, got %v", err)
+	}
+}
