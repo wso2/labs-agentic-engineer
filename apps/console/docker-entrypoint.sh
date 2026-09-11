@@ -30,6 +30,7 @@ VITE_API_BASE_URL_VAL="${VITE_API_BASE_URL:-/aep-api-service}"
 THUNDER_URL="${VITE_THUNDER_URL:-}"
 THUNDER_CLIENT_ID="${VITE_THUNDER_CLIENT_ID:-aep-console-client}"
 THUNDER_SCOPES="${VITE_THUNDER_SCOPES:-openid profile email}"
+THUNDER_RESOURCE="${VITE_THUNDER_RESOURCE:-}"
 COLLAB_WS_URL="${COLLAB_WS_URL:-}"
 # WSO2 Cloud only — set by the ReleaseBinding. Empty locally so the SPA skips
 # the first-login billing activation call.
@@ -47,6 +48,7 @@ window._env_ = {
   VITE_THUNDER_URL: "${THUNDER_URL}",
   VITE_THUNDER_CLIENT_ID: "${THUNDER_CLIENT_ID}",
   VITE_THUNDER_SCOPES: "${THUNDER_SCOPES}",
+  VITE_THUNDER_RESOURCE: "${THUNDER_RESOURCE}",
   collabWsUrl: "${COLLAB_WS_URL}",
   BILLING_API_BASE_URL: "${BILLING_API_BASE_URL_VAL}",
 };

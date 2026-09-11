@@ -15,17 +15,26 @@ developing the console's SSO flow (issue #91) without the k3d cluster.
   `refresh_token`, redirect `http://localhost:8090/callback`, `ou*` claims
   on both tokens — mirroring the cluster seed, which now lives in
   `../single-cluster/thunder-resources/87-aep-console-app.yaml`
-- `aep-console-client` restricts login to the **`AEUser`** type (not
-  Thunder's built-in `Person`) — so its own `ADMIN_USERNAME`/`ADMIN_PASSWORD`
-  superadmin (see `docker-compose.yaml`) cannot sign in to the console
-- Seeds test users **`mark`** and **`emily`** (password `admin`), plus the
-  default admin login **`aeadmin`/`admin`** — all three type `AEUser`
+- Seeds test users **`mark`**, **`emily`**, and **`aeadmin`** (password
+  `admin` for all three) — Thunder's own built-in `admin`/`admin` superadmin
+  (see `docker-compose.yaml`) can also sign in; console access is not
+  type-gated (see below)
 - Seeds the **`ae`** resource server, its 8 AE permission actions, and the
   **`ae-admin`**/**`ae-developer`** groups + roles — mirroring
   `services/aep-api/internal/authz/role_permissions_catalog.go`, so a real
   Thunder-issued token can be tested against aep-api's permission gate.
   **`aeadmin`** is seeded as a member of **`ae-admin`** (all 8 permissions);
-  `mark`/`emily` hold no AE role by default
+  `mark`/`emily`/Thunder's built-in `admin` hold no AE role by default
+- **No login gate by user type.** An earlier version tried restricting
+  `aep-console-client` to a custom `AEUser` type via `allowedUserTypes`, on
+  the assumption that would keep Thunder's own admin out of the console.
+  Confirmed (by inspecting live Thunder flow definitions on the k3d cluster)
+  that `allowedUserTypes` is only consulted by the `USER_ONBOARDING` flow's
+  `UserTypeResolver` executor — i.e. only when a brand-new account is being
+  auto-provisioned/invited into an app — never by the plain login flow this
+  client uses. So it did not gate anything. Access control is entirely
+  aep-api's AE permission gate: anyone can sign in, but only `ae-admin`/
+  `ae-developer` members can do anything AE-gated.
 
 ## Run
 

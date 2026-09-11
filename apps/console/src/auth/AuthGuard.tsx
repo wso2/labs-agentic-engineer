@@ -21,6 +21,7 @@ import { hasAuthParams, useAuth } from "react-oidc-context";
 import { env } from "../config/env";
 import { getUserManager } from "./userManager";
 import { decodeJwtClaims, identityFromClaims, type TokenClaims } from "./claims";
+import { permissionsFromScope } from "./permissions";
 import { MOCK_ORG, MOCK_USER, mockPermissions } from "./mockSession";
 import { AuthScreen } from "./AuthScreen";
 import { BillingActivation } from "./BillingActivation";
@@ -100,18 +101,15 @@ function OidcGuard({ children }: PropsWithChildren) {
     return {
       user: { name: identity.name, email: identity.email },
       orgHandle: identity.orgHandle,
-      // Stand-in until the backend exposes a real permissions claim/endpoint
-      // (see ae-admin's catalog in role_permissions_catalog.go): every real
-      // user is granted the core-loop permissions (ae:skill-config,
-      // ae:requirement-update, ae:design-view, ae:build) and withheld the
-      // admin-only ones (ae:model-config, ae:github-config, ae:build-view is
-      // subsumed by ae:build so it's never needed here).
-      permissions: new Set([
-        "ae:skill-config",
-        "ae:requirement-update",
-        "ae:design-view",
-        "ae:build-view",
-      ]),
+      // Real permissions, derived from the access token's own scope claim —
+      // the same source aep-api's permission gate checks (auth.Claims.Permissions()),
+      // so the console can never grant something the backend would refuse.
+      // Requires the token to actually carry ae:* scope entries, which needs
+      // both a scope request that lists them (VITE_THUNDER_SCOPES) and a
+      // matching OAuth `resource` indicator (VITE_THUNDER_RESOURCE) — see
+      // deployments/single-cluster/thunder-resources/92-ae-roles.yaml's
+      // resource_server header for why the resource indicator is required.
+      permissions: permissionsFromScope(accessClaims["scope"]),
       signOut: () => void signOut(),
     };
   }, [auth]);

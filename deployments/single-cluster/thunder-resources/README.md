@@ -28,10 +28,18 @@ account — mirroring `services/aep-api/internal/authz/role_permissions_catalog.
 and `../../dev-thunder-setup/bootstrap/61-ae-roles.yaml` (same ids in both).
 80-88 were already taken by existing AEP documents, and the ordering guard
 below only constrains `server_config` singletons, not this file's resource
-types, so 92 was the simplest slot. `87-aep-console-app.yaml` restricts
-`aep-console-client` login to the `AEUser` type this file's `aeadmin` user
-holds, so the platform IdP's own built-in admin can no longer sign in to the
-console.
+types, so 92 was the simplest slot. `aeadmin` is a plain `Person`-type user —
+this bundle does not gate console login by user type. An earlier version
+tried that (a custom `AEUser` type + `allowedUserTypes` on
+`87-aep-console-app.yaml`), on the assumption it would keep the platform
+IdP's own built-in admin out of the console; confirmed against a live
+Thunder (`GET /flows/{id}` on the app's AUTHENTICATION flow) that
+`allowedUserTypes` is only consulted by the separate `USER_ONBOARDING`
+flow's `UserTypeResolver` executor — i.e. only when a new account is being
+auto-provisioned/invited into an app — never by the plain login flow this
+console uses, so it gated nothing. Access control is aep-api's AE
+permission gate: anyone can sign in, but only `ae-admin`/`ae-developer`
+members can do anything AE-gated.
 
 **Three files here are not AEP documents.** `89-platform-cors-config.yaml`,
 `90-platform-default-resource-server.yaml` and `91-platform-csp.yaml` are the

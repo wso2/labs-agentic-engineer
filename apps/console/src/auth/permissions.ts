@@ -32,6 +32,34 @@ export type Permission =
   | "ae:build"
   | "ae:build-view";
 
+// Runtime twin of the Permission union — TS types don't exist at runtime, so
+// deriving a Set from the access token's scope claim (AuthGuard) needs an
+// actual array to filter against. Keep in lockstep with the union above.
+const ALL_PERMISSIONS: readonly Permission[] = [
+  "ae:skill-config",
+  "ae:model-config",
+  "ae:github-config",
+  "ae:requirement-update",
+  "ae:requirement-view",
+  "ae:design-view",
+  "ae:build",
+  "ae:build-view",
+];
+
+// Mirrors the BFF's filterPermissions (services/aep-api/internal/platform/auth/jwt.go):
+// the access token's space-delimited scope claim carries ae:* permission keys
+// alongside unrelated scopes (openid, profile, email, ...) — this is the only
+// place the console derives a caller's real permissions from.
+export function permissionsFromScope(scope: unknown): Set<Permission> {
+  const known = new Set<string>(ALL_PERMISSIONS);
+  const held = new Set<Permission>();
+  if (typeof scope !== "string") return held;
+  for (const token of scope.split(/\s+/)) {
+    if (known.has(token)) held.add(token as Permission);
+  }
+  return held;
+}
+
 export function useHasPermission(permission: Permission): boolean {
   return useSession().permissions.has(permission);
 }

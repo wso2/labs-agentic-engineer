@@ -28,18 +28,28 @@
 # "<resource handle>:<action handle>" string; groups/roles use "ouHandle",
 # not "ouId".
 #
-# The ae-admin group's `members` list is UNVERIFIED against the importer —
-# it mirrors the REST `POST /groups` body shape used by
-# services/aep-api/internal/clients/thundersvc/directory.go
-# (`{id, type: "user"}` entries), not a confirmed declarative-bootstrap
-# example. Confirm aeadmin actually lands in the group on a fresh `docker
-# compose up` before relying on this.
+# The ae-admin group's `members` list (`{id, type: "user"}` entries, mirroring
+# the REST `POST /groups` body shape used by
+# services/aep-api/internal/clients/thundersvc/directory.go) is CONFIRMED
+# working against the k3d cluster's ThunderID 1.0.0 importer
+# (deployments/single-cluster/thunder-resources/92-ae-roles.yaml, same
+# shape) — not yet separately confirmed against this bundle's 0.47.0
+# importer. Two lessons learned the hard way on the 1.0.0 side, likely
+# applicable here too: (1) every `# resource_type: X` header comment in this
+# file is ALSO restated as a real, uncommented `resource_type: X` field —
+# the comment alone is not what the importer reads, despite how easy that is
+# to assume from this file's own original style; (2) a `credential: true`
+# schema field (e.g. a user's password) must be set in BOTH `attributes`
+# (what schema validation checks for required fields) and `credentials`
+# (what actually stores a usable, hashed login) — see bootstrap/60-aep-console.yaml's
+# user documents for the pattern.
 
 # resource_type: resource_server
+resource_type: resource_server
 id: 01900000-0000-7000-8000-0000000000b0
 name: AEP API
 description: Permissions for aep-api's console-facing endpoints.
-identifier: ae
+identifier: "http://localhost:8097/ae"
 ouHandle: default
 resources:
   - name: AE
@@ -72,6 +82,7 @@ resources:
         description: Configure skills
 ---
 # resource_type: group
+resource_type: group
 id: 01900000-0000-7000-8000-0000000000b9
 name: ae-admin
 description: Full access to every AE permission.
@@ -87,12 +98,14 @@ members:
     type: user
 ---
 # resource_type: group
+resource_type: group
 id: 01900000-0000-7000-8000-0000000000ba
 name: ae-developer
 description: Read/build access to AE requirements, design, and builds.
 ouHandle: default
 ---
 # resource_type: role
+resource_type: role
 id: 01900000-0000-7000-8000-0000000000bb
 name: ae-admin
 description: AE permissions for the ae-admin group.
@@ -113,6 +126,7 @@ assignments:
     type: group
 ---
 # resource_type: role
+resource_type: role
 id: 01900000-0000-7000-8000-0000000000bc
 name: ae-developer
 description: AE permissions for the ae-developer group.

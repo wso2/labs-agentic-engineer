@@ -23,12 +23,13 @@
 #
 #   cd deployments/dev-thunder-setup && docker compose up -d
 #
-# Login: aeadmin / admin (or mark|emily / admin — see
-# bootstrap/60-aep-console.yaml). NOTE: the ADMIN_USERNAME/ADMIN_PASSWORD
-# below is Thunder's OWN internal superadmin (type Person, used by setup.sh
-# against the Thunder management API) — it is NOT an AEUser and can no
-# longer sign in to the console once allowedUserTypes is restricted to
-# AEUser (see 60-aep-console.yaml).
+# Login: aeadmin / admin (or mark|emily / admin, or admin/admin — see
+# bootstrap/60-aep-console.yaml). admin/admin is Thunder's OWN internal
+# superadmin (used by setup.sh against the Thunder management API); it can
+# also sign in to the console — this bundle does not gate login by user
+# type (see 60-aep-console.yaml's header) — but holds no ae-admin/
+# ae-developer role, so it can't do anything AE-permission-gated. aeadmin
+# is the account actually enrolled in ae-admin.
 
 name: dev-thunder-setup
 

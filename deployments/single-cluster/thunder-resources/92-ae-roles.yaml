@@ -34,54 +34,38 @@
 # services/aep-api/internal/clients/thundersvc/directory.go) — a later
 # update is silently ignored, so the ordering here is load-bearing, not
 # stylistic.
-
-# resource_type: user_type
 #
-# Must exist before aeadmin (below) sets type: AEUser or
-# 87-aep-console-app.yaml sets allowedUserTypes: [AEUser] — Thunder has no
-# free-form "type" string; `type` on a user is a genuine reference to a
-# user_type resource. Schema mirrored from Agent Manager's own working
-# example (wso2-amp-thunder-extension's 66-amp-user-type-engineer.yaml),
-# extended with sub/name since aeadmin below sets those attributes.
-id: AEUser
-category: user
-name: "AEUser"
-ouHandle: default
-allowSelfRegistration: false
-systemAttributes:
-  display: username
-schema:
-  username:
-    type: string
-    displayName: Username
-    required: true
-    unique: true
-  password:
-    type: string
-    displayName: Password
-    required: true
-    credential: true
-  sub:
-    type: string
-    displayName: Subject
-  name:
-    type: string
-    displayName: Display Name
-  given_name:
-    type: string
-    displayName: First Name
-  family_name:
-    type: string
-    displayName: Last Name
-  email:
-    type: string
-    displayName: Email
----
+# This bundle does NOT gate console login by user type. An earlier version
+# declared a custom AEUser user_type and set allowedUserTypes: [AEUser] on
+# 87-aep-console-app.yaml, on the assumption that would keep the platform
+# IdP's own built-in admin out of the console. Confirmed against a live
+# Thunder (GET /flows/{id} on the app's AUTHENTICATION flow) that this does
+# nothing: allowedUserTypes is only consulted by the separate
+# USER_ONBOARDING flow's UserTypeResolver executor, which runs when a new
+# account is being auto-provisioned/invited into an app — never by the plain
+# login flow this console uses. So aeadmin (below) is a regular `Person`
+# user; access control is enforced entirely by aep-api's AE permission gate
+# (services/aep-api/internal/authz), which already requires real ae-admin/
+# ae-developer group membership regardless of who can authenticate.
+
 # resource_type: resource_server
+#
+# identifier MUST be an absolute URI, not a bare string — confirmed the
+# hard way: /oauth2/authorize rejects a non-URI `resource` param with
+# invalid_target ("must be an absolute URI"). A client requesting an
+# ae:* scope needs to send `resource=<this identifier>` (RFC 8707) or
+# Thunder resolves the scope against the platform's default resource
+# server instead (Agent Manager's, identifier urn:wso2:amp) and
+# overwrites the token's aud with THAT identifier — which aep-api's own
+# audience allowlist (JWT_AUDIENCE, default "aep-*,openchoreo-rca-agent")
+# then rejects outright as invalid audience. Mirrors how
+# 70-fix-thunder-system-rs-identifier.yaml documents the same requirement
+# for Thunder's own System resource server.
+resource_type: resource_server
 id: 01900000-0000-7000-8000-0000000000b0
 name: AEP API
 description: Permissions for aep-api's console-facing endpoints.
-identifier: ae
+identifier: "${PUBLIC_THUNDER_URL}/ae"
 ouHandle: default
 resources:
   - name: AE
@@ -115,15 +99,24 @@ resources:
 ---
 # resource_type: user
 #
-# The default AE admin login (replaces the platform IdP's own built-in
-# admin for aep-console-client purposes — see the allowedUserTypes note in
-# 87-aep-console-app.yaml). Declared here, before the ae-admin group, per
-# this file's header note on group-membership ordering.
+# A known AE-admin test account, distinct from the platform IdP's own
+# built-in admin — sparing anyone from having to hand-enroll that account
+# into a product-specific permission group. Declared here, before the
+# ae-admin group, per this file's header note on group-membership ordering.
+#
+# password is set in BOTH attributes and credentials, deliberately: Schema
+# validation checks `attributes` for required+credential fields at create
+# time (per Agent Manager's own amp-thunder-bootstrap.yaml comment on this
+# exact pattern) — omitting it there fails as "missing required field" even
+# though credentials.password is also set. credentials.password is the one
+# that actually stores a usable, hashed login.
+resource_type: user
 id: 01900000-0000-7000-8000-0000000000a3
-type: AEUser
+type: Person
 ouHandle: default
 attributes:
   username: aeadmin
+  password: admin
   sub: aeadmin
   email: aeadmin@testorg.com
   name: AE Admin
@@ -133,6 +126,7 @@ credentials:
   password: admin
 ---
 # resource_type: group
+resource_type: group
 id: 01900000-0000-7000-8000-0000000000b9
 name: ae-admin
 description: Full access to every AE permission.
@@ -143,12 +137,14 @@ members:
     type: user
 ---
 # resource_type: group
+resource_type: group
 id: 01900000-0000-7000-8000-0000000000ba
 name: ae-developer
 description: Read/build access to AE requirements, design, and builds.
 ouHandle: default
 ---
 # resource_type: role
+resource_type: role
 id: 01900000-0000-7000-8000-0000000000bb
 name: ae-admin
 description: AE permissions for the ae-admin group.
@@ -169,6 +165,7 @@ assignments:
     type: group
 ---
 # resource_type: role
+resource_type: role
 id: 01900000-0000-7000-8000-0000000000bc
 name: ae-developer
 description: AE permissions for the ae-developer group.

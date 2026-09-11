@@ -85,9 +85,15 @@ spec:
             # aep-* covers the AEP clients (aud = client id, all aep-*).
             # openchoreo-rca-agent is added so the SRE/RCA agent's token (aud =
             # its client id) is accepted for issue-create + report publish —
-            # matches setup.sh's BFF_AUDIENCE default.
+            # matches setup.sh's BFF_AUDIENCE default. The `ae` resource
+            # server identifier is added because the console's real login
+            # carries THAT as aud whenever it requests an ae:* scope with a
+            # matching OAuth `resource` indicator (console/deployment.yaml's
+            # VITE_THUNDER_RESOURCE) — without this entry every such token
+            # 401s here as "invalid audience", confirmed live against the k3d
+            # cluster before this default was added.
             - name: JWT_AUDIENCE
-              value: "aep-*,openchoreo-rca-agent"
+              value: {{ printf "aep-*,openchoreo-rca-agent,%s" (.Values.console.thunder.resource | default (printf "%s/ae" .Values.console.thunderPublicURL)) | quote }}
             - name: SERVICE_AUTH_CLIENT_ID
               value: {{ .Values.aepApi.serviceAuth.clientId | quote }}
             - name: SERVICE_AUTH_TOKEN_URL

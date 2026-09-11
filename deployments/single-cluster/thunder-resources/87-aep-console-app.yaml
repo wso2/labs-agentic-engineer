@@ -10,11 +10,15 @@
 # `Administrators` group the OpenChoreo admin role. `ouId`/`ouHandle`/`ouName`
 # carry the org identity every AEP request is scoped by.
 #
-# Restricted to AEUser (not the platform IdP's built-in default admin type)
-# so the console is only reachable by accounts 92-ae-roles.yaml provisions —
-# see its aeadmin/admin seed user. This reverses an earlier deliberate
-# choice to leave allowedUserTypes unset specifically so it wouldn't lock
-# out the default admin; aeadmin now takes over that role for the console.
+# No allowedUserTypes: Agent Manager restricts its console to its own
+# `engineer` user type, but AEP has no user-type model — restricting here would
+# lock out the default admin. (Confirmed separately that allowedUserTypes
+# would not have achieved that anyway: it's only checked by the
+# USER_ONBOARDING flow's UserTypeResolver executor when a new account is
+# being auto-provisioned/invited into an app, never by the plain
+# AUTHENTICATION flow this client uses — see 92-ae-roles.yaml's header for
+# how that was confirmed. Console access control is enforced by aep-api's AE
+# permission gate, not by Thunder refusing the login.)
 resource_type: application
 id: aep-console-client
 type: browser # public redirect client (authorization_code + PKCE console login)
@@ -22,8 +26,6 @@ name: "AEP Console"
 description: "AEP Platform Console"
 ouId: "01900000-0000-7000-8000-000000000001"
 authFlowHandle: default-flow
-allowedUserTypes:
-  - AEUser
 inboundAuthConfig:
   - type: oauth2
     config:
