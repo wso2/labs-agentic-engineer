@@ -23,7 +23,12 @@
 #
 #   cd deployments/dev-thunder-setup && docker compose up -d
 #
-# Login: admin / admin (or mark|emily / admin — see bootstrap/60-aep-console.yaml).
+# Login: aeadmin / admin (or mark|emily / admin — see
+# bootstrap/60-aep-console.yaml). NOTE: the ADMIN_USERNAME/ADMIN_PASSWORD
+# below is Thunder's OWN internal superadmin (type Person, used by setup.sh
+# against the Thunder management API) — it is NOT an AEUser and can no
+# longer sign in to the console once allowedUserTypes is restricted to
+# AEUser (see 60-aep-console.yaml).
 
 name: dev-thunder-setup
 
@@ -58,6 +63,7 @@ services:
       - consent-db:/opt/thunderid/consent/repository/database
       - ./deployment.yaml:/opt/thunderid/deployment.yaml:ro
       - ./bootstrap/60-aep-console.yaml:/opt/thunderid/bootstrap/60-aep-console.yaml:ro
+      - ./bootstrap/61-ae-roles.yaml:/opt/thunderid/bootstrap/61-ae-roles.yaml:ro
 
   thunder:
     image: ghcr.io/thunder-id/thunderid:0.47.0
@@ -73,6 +79,7 @@ services:
       - consent-db:/opt/thunderid/consent/repository/database
       - ./deployment.yaml:/opt/thunderid/deployment.yaml:ro
       - ./bootstrap/60-aep-console.yaml:/opt/thunderid/bootstrap/60-aep-console.yaml:ro
+      - ./bootstrap/61-ae-roles.yaml:/opt/thunderid/bootstrap/61-ae-roles.yaml:ro
       # The gate/console SPAs read their API base from static config.js
       # files — must agree with server.public_url (quick-start guidance).
       - ./gate-config.js:/opt/thunderid/apps/gate/config.js:ro

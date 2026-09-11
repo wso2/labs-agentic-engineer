@@ -1,0 +1,128 @@
+# Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+#
+# WSO2 LLC. licenses this file to you under the Apache License,
+# Version 2.0 (the "License"); you may not use this file except
+# in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# AE resource server + permission actions + ae-admin/ae-developer groups and
+# roles, for local dev-thunder-setup. Mirrors
+# services/aep-api/internal/authz/role_permissions_catalog.go — every
+# name/handle/permission set here must stay in sync with that file.
+#
+# Schema verified against this image's own built-in
+# bootstrap/01-default-resources.yaml (the "System" resource server +
+# "Administrator" role), NOT the REST API reference (which documents a
+# resource-server-level "action" endpoint this declarative format does not
+# use): a resource server nests named "resources", each with its own
+# "actions"; a role's "permissions" grant references the derived
+# "<resource handle>:<action handle>" string; groups/roles use "ouHandle",
+# not "ouId".
+#
+# The ae-admin group's `members` list is UNVERIFIED against the importer —
+# it mirrors the REST `POST /groups` body shape used by
+# services/aep-api/internal/clients/thundersvc/directory.go
+# (`{id, type: "user"}` entries), not a confirmed declarative-bootstrap
+# example. Confirm aeadmin actually lands in the group on a fresh `docker
+# compose up` before relying on this.
+
+# resource_type: resource_server
+id: 01900000-0000-7000-8000-0000000000b0
+name: AEP API
+description: Permissions for aep-api's console-facing endpoints.
+identifier: ae
+ouHandle: default
+resources:
+  - name: AE
+    handle: ae
+    description: AE permission actions
+    actions:
+      - name: Build
+        handle: build
+        description: Trigger and view builds
+      - name: Build View
+        handle: build-view
+        description: View builds without triggering
+      - name: Design View
+        handle: design-view
+        description: View design/spec artifacts
+      - name: GitHub Config
+        handle: github-config
+        description: Configure the GitHub integration
+      - name: Model Config
+        handle: model-config
+        description: Configure the coding-agent model
+      - name: Requirement Update
+        handle: requirement-update
+        description: Author/update requirements
+      - name: Requirement View
+        handle: requirement-view
+        description: View requirements
+      - name: Skill Config
+        handle: skill-config
+        description: Configure skills
+---
+# resource_type: group
+id: 01900000-0000-7000-8000-0000000000b9
+name: ae-admin
+description: Full access to every AE permission.
+ouHandle: default
+# Membership can only be set when a group is CREATED (see
+# services/aep-api/internal/clients/thundersvc/directory.go) — a later PUT
+# with `members` is silently ignored, so re-applying this file against an
+# already-bootstrapped volume will NOT retroactively enroll aeadmin; wipe
+# the thunder-db/consent-db volumes for this to take effect. aeadmin
+# (bootstrap/60-aep-console.yaml) must be declared before this document.
+members:
+  - id: 01900000-0000-7000-8000-0000000000a3
+    type: user
+---
+# resource_type: group
+id: 01900000-0000-7000-8000-0000000000ba
+name: ae-developer
+description: Read/build access to AE requirements, design, and builds.
+ouHandle: default
+---
+# resource_type: role
+id: 01900000-0000-7000-8000-0000000000bb
+name: ae-admin
+description: AE permissions for the ae-admin group.
+ouHandle: default
+permissions:
+  - resourceServerId: 01900000-0000-7000-8000-0000000000b0
+    permissions:
+      - "ae:build"
+      - "ae:build-view"
+      - "ae:design-view"
+      - "ae:github-config"
+      - "ae:model-config"
+      - "ae:requirement-update"
+      - "ae:requirement-view"
+      - "ae:skill-config"
+assignments:
+  - id: 01900000-0000-7000-8000-0000000000b9
+    type: group
+---
+# resource_type: role
+id: 01900000-0000-7000-8000-0000000000bc
+name: ae-developer
+description: AE permissions for the ae-developer group.
+ouHandle: default
+permissions:
+  - resourceServerId: 01900000-0000-7000-8000-0000000000b0
+    permissions:
+      - "ae:requirement-view"
+      - "ae:design-view"
+      - "ae:build"
+assignments:
+  - id: 01900000-0000-7000-8000-0000000000ba
+    type: group

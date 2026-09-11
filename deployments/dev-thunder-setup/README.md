@@ -15,8 +15,17 @@ developing the console's SSO flow (issue #91) without the k3d cluster.
   `refresh_token`, redirect `http://localhost:8090/callback`, `ou*` claims
   on both tokens — mirroring the cluster seed, which now lives in
   `../single-cluster/thunder-resources/87-aep-console-app.yaml`
+- `aep-console-client` restricts login to the **`AEUser`** type (not
+  Thunder's built-in `Person`) — so its own `ADMIN_USERNAME`/`ADMIN_PASSWORD`
+  superadmin (see `docker-compose.yaml`) cannot sign in to the console
 - Seeds test users **`mark`** and **`emily`** (password `admin`), plus the
-  default **`admin`/`admin`**
+  default admin login **`aeadmin`/`admin`** — all three type `AEUser`
+- Seeds the **`ae`** resource server, its 8 AE permission actions, and the
+  **`ae-admin`**/**`ae-developer`** groups + roles — mirroring
+  `services/aep-api/internal/authz/role_permissions_catalog.go`, so a real
+  Thunder-issued token can be tested against aep-api's permission gate.
+  **`aeadmin`** is seeded as a member of **`ae-admin`** (all 8 permissions);
+  `mark`/`emily` hold no AE role by default
 
 ## Run
 
@@ -45,5 +54,5 @@ login machinery in isolation (issue #91 dev topology). OIDC discovery:
 |---|---|
 | `docker-compose.yaml` | db-init → setup (bootstrap) → server, image pinned |
 | `deployment.yaml` | Thunder config: `http_only`, public URL `:8097` |
-| `bootstrap/60-aep-console.yaml` | also seeds the CORS `server_config` for `:8090` |
-| `bootstrap/60-aep-console.yaml` | the console OAuth app + test users |
+| `bootstrap/60-aep-console.yaml` | the console OAuth app + test users, and the CORS `server_config` for `:8090` |
+| `bootstrap/61-ae-roles.yaml` | the `ae` resource server + actions + `ae-admin`/`ae-developer` groups + roles |

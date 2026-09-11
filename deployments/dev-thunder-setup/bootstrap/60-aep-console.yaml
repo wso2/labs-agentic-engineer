@@ -47,8 +47,13 @@ logoUrl: "emoji:🛠️"
 authFlowId: 01900000-0000-7000-8000-000000000061
 registrationFlowId: 01900000-0000-7000-8000-000000000064
 isRegistrationFlowEnabled: false
+# Restricted to AEUser (not Thunder's built-in "Person") so the console is
+# only reachable by accounts this bundle provisions — Thunder's own
+# ADMIN_USERNAME/ADMIN_PASSWORD superadmin (see ../docker-compose.yaml) is
+# type Person and is therefore deliberately NOT a valid console login
+# anymore; use aeadmin/admin below instead.
 allowedUserTypes:
-  - Person
+  - AEUser
 inboundAuthConfig:
   - type: oauth2
     config:
@@ -106,7 +111,7 @@ inboundAuthConfig:
 ---
 # resource_type: user
 id: 01900000-0000-7000-8000-0000000000a1
-type: Person
+type: AEUser
 ouHandle: default
 attributes:
   username: mark
@@ -120,7 +125,7 @@ credentials:
 ---
 # resource_type: user
 id: 01900000-0000-7000-8000-0000000000a2
-type: Person
+type: AEUser
 ouHandle: default
 attributes:
   username: emily
@@ -129,5 +134,26 @@ attributes:
   name: Emily Tester
   given_name: Emily
   family_name: Tester
+credentials:
+  password: admin
+---
+# resource_type: user
+#
+# The default AE admin login (replaces Thunder's built-in admin/admin for
+# console purposes — see the allowedUserTypes note above). Declared here,
+# BEFORE bootstrap/61-ae-roles.yaml's ae-admin group, because Thunder only
+# accepts a group's `members` list at group-CREATE time (see
+# services/aep-api/internal/clients/thundersvc/directory.go); this id is what
+# that group's members entry references.
+id: 01900000-0000-7000-8000-0000000000a3
+type: AEUser
+ouHandle: default
+attributes:
+  username: aeadmin
+  sub: aeadmin
+  email: aeadmin@testorg.com
+  name: AE Admin
+  given_name: AE
+  family_name: Admin
 credentials:
   password: admin

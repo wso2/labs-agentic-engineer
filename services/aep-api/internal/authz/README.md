@@ -37,7 +37,7 @@ flowchart LR
 
 | | |
 |---|---|
-| `role_permissions_catalog.go` | `Permission` — the typed AE permission key vocabulary (7 constants) — and `rolePermissionsCatalog`, mapping an AE role name to the permissions it holds. One role today: `ae-admin`, holding all 7. |
+| `role_permissions_catalog.go` | `Permission` — the typed AE permission key vocabulary (8 constants) — and `rolePermissionsCatalog`, mapping an AE role name to the permissions it holds. Two roles: `ae-admin` (all 8) and `ae-developer` (`ae:requirement-view`, `ae:design-view`, `ae:build`). |
 | `oc_permissions_catalog.go` | `OcActionCatalog`, mapping an AE `Permission` to the OC actions it resolves to. **Placeholder** (#743): only `ae:model-config` and `ae:skill-config` are mapped, both to the same starter pair (`component:view`, `component:create`), pending a real per-permission OC action design. |
 | `authz_bridge.go` | `AuthZBridge` — implements `PermissionResolver`; dedupes AE→OC translation across a permission set. |
 | `authz_service.go` | `AuthZService` — `EnsureAuthzRole` (idempotent create-if-missing OC role + binding, entitled on the `groups` JWT claim) and `ModifyRolePermissions` (updates OC role actions per AE role, with rollback on partial failure). |
@@ -61,13 +61,21 @@ A misconfigured `OcActionCatalog` mapping therefore blocks every user, not
 just an admin surface — this is why `oc_permissions_catalog.go` carries an
 explicit PLACEHOLDER warning rather than being extended casually.
 
-**One role exists.** `rolePermissionsCatalog` has a single entry, `ae-admin`,
-holding all 7 permissions. Nothing in the platform provisions a real user
-into it yet — no bootstrap script or `identity.EnsureService`-style path
-creates an `ae-admin` Thunder group/role membership (contrast
-[`identity`](../identity/README.md), whose project-scoped roles ARE
-provisioned end-to-end). A second, narrower role is future work, not a gap in
-this domain's own code.
+**Two roles exist:** `ae-admin` (all 8 permissions) and `ae-developer`
+(`ae:requirement-view`, `ae:design-view`, `ae:build`). Thunder provisions the
+matching resource server, actions, groups, and roles (`tools/aectl/internal/thunder`
+for the real cluster; `deployments/dev-thunder-setup/bootstrap/61-ae-roles.yaml`
+for local dev), but no real *user*-provisioning path exists yet — no
+`identity.EnsureService`-style flow enrolls a signing-in org member into
+either group at runtime (contrast [`identity`](../identity/README.md), whose
+project-scoped roles ARE provisioned end-to-end), and the k3d/single-cluster
+Thunder bundle doesn't even declare the `ae` resource server or its
+groups/roles yet. The one exception is local dev: `dev-thunder-setup` seeds a
+single fixed test account (`aeadmin`) as a member of `ae-admin` at bootstrap
+time, so the permission gate has something real to test against — that is a
+static, one-account dev seed, not a provisioning path a real org's users go
+through. Who actually ends up in `ae-admin` or `ae-developer` for a real org
+is a separate, later workstream, not a gap in this domain's own code.
 
 **This domain does not enforce anything on aep-api's own requests.** It only
 grants OC-side permissions. The inbound question — "may this caller invoke

@@ -27,6 +27,7 @@ export type Permission =
   | "ae:model-config"
   | "ae:github-config"
   | "ae:requirement-update"
+  | "ae:requirement-view"
   | "ae:design-view"
   | "ae:build"
   | "ae:build-view";

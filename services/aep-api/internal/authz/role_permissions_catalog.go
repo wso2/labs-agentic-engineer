@@ -29,6 +29,7 @@ const (
 	PermissionGitHubConfig      Permission = "ae:github-config"
 	PermissionModelConfig       Permission = "ae:model-config"
 	PermissionRequirementUpdate Permission = "ae:requirement-update"
+	PermissionRequirementView   Permission = "ae:requirement-view"
 	PermissionSkillConfig       Permission = "ae:skill-config"
 )
 
@@ -40,6 +41,7 @@ var AllPermissions = []Permission{
 	PermissionGitHubConfig,
 	PermissionModelConfig,
 	PermissionRequirementUpdate,
+	PermissionRequirementView,
 	PermissionSkillConfig,
 }
 
@@ -51,7 +53,13 @@ var rolePermissionsCatalog = map[string][]string{
 		string(PermissionGitHubConfig),
 		string(PermissionModelConfig),
 		string(PermissionRequirementUpdate),
+		string(PermissionRequirementView),
 		string(PermissionSkillConfig),
+	},
+	"ae-developer": {
+		string(PermissionRequirementView),
+		string(PermissionDesignView),
+		string(PermissionBuild),
 	},
 }
 
