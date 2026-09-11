@@ -175,7 +175,11 @@ type BuildSummary struct {
 	Status          string `json:"status" enum:"started,in_progress,completed,failed"`
 	// Reason is the run's terminal reason for a failed version (empty
 	// otherwise), surfaced beside the Failed badge in the console.
-	Reason      string     `json:"reason,omitempty"`
+	Reason string `json:"reason,omitempty"`
+	// FailureCode is the failure class (delivery.RunFailure.Code) of a failed
+	// version when the platform recorded one — finer than Reason, which names
+	// the phase. Empty otherwise.
+	FailureCode string     `json:"failureCode,omitempty"`
 	StartedAt   time.Time  `json:"startedAt"`
 	CompletedAt *time.Time `json:"completedAt,omitempty"`
 	// WaitingReason says WHY an in-progress version is waiting rather than

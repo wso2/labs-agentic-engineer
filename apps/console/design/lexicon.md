@@ -185,6 +185,46 @@ not carry: who is acting, why it failed.
 **`Built`, never *Completed*.** "Completed" describes the run; the row is about
 the version.
 
+**The qualifier after `Failed ·` names WHAT went wrong, never the slug.** The
+platform sends codes — `RunFailure.code` when it recorded a fault,
+`terminalReason` when it only named the phase — and `features/builds/lib/failure.ts`
+owns the words for each, the way `@aep/progress-view` owns a notice code's. The
+ledger chip, the build page's header pill, its failure card and the overview's
+Build leg all read from there, so one outcome is said one way. `plan-failed`
+reads *Planning failed*; a recorded `dependency-unprovisionable` reads
+*Dependency could not be provisioned*; a code nobody has words for yet renders
+as itself rather than hiding.
+
+### A failed run explains itself
+
+Under the build page's header, before the summary card, a toned **failure
+card** says what happened, what did NOT happen, and whether trying again can
+help — in that order, in the platform's recorded words:
+
+| Situation | Card |
+|---|---|
+| A dependency the platform cannot author (permanent) | error · *The platform could not provision `sendgrid`* · names the component · *Nothing was coded or deployed. Retrying cannot fix this; the design needs a change, then a new build.* · **Open sendgrid in the design** |
+| A provisioning fault being retried | warning · *Provisioning `orders-db` failed — retrying (attempt 2 of 3)* · *No action is needed yet.* |
+| The same, after the bound is spent | error · *It tried 3 times and met the same error each time … build again* |
+| The planning turn failed | warning while retrying (*attempt N*, unbounded), error only once the run failed |
+| The repository is gone | error · *check the repository connection in Settings* |
+| A run failed before the record existed | error · the terminal reason in words · *The platform recorded no further details for this run.* |
+| Cancelled | **no card** — a person stopping an increment is not a fault |
+| Blocked | no card — the existing quota / credentials message is that surface |
+
+**Show details** opens the platform's facts as a dense list — `code` (with
+*permanent* / *retryable*), `attempts`, `window`, `recorded` (the platform's own
+error text, scrubbed at the producer), `run`, `workflow` — and **Copy details**
+puts them on the clipboard as one block: the support conversation starts from
+the card, not from a log grep.
+
+**The coding agent log says *Did not start — the run ended while the platform
+was preparing the version* when no cycle was ever dispatched.** "Nothing has
+been dispatched yet" is a promise about the future, and a failed run has none.
+
+**The Overview's Build leg reads `Build failed · <what>`** from the same words,
+so the reader who is not on the build page learns what failed at a glance.
+
 **The qualifier names the actor working NOW, and only a surface that has read
 the run may add one.** `in_progress` spans the whole build-session rail
 (ADR-0014) — the agent writes, the platform merges, the components build, the

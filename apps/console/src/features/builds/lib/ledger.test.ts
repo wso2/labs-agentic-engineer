@@ -193,6 +193,16 @@ describe("ledgerStatus", () => {
     expect(ledgerStatus(build({ status: "failed" })).label).toBe("Failed");
   });
 
+  it("names WHAT failed when the platform recorded a failure code", () => {
+    expect(
+      ledgerStatus(build({ status: "failed", reason: "plan-failed", failureCode: "dependency-unprovisionable" })).label,
+    ).toBe("Failed · Dependency could not be provisioned");
+  });
+
+  it("puts a bare terminal reason into words rather than showing the slug", () => {
+    expect(ledgerStatus(build({ status: "failed", reason: "plan-failed" })).label).toBe("Failed · Planning failed");
+  });
+
   it("describes the DEPLOYED version by where it reached", () => {
     expect(ledgerStatus(build({ tag: "v1" }), deploy()).label).toBe(
       "Deployed to development",

@@ -18,7 +18,7 @@
 
 // @vitest-environment jsdom
 
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { components } from "../../../generated/aep-api";
 
@@ -1000,5 +1000,81 @@ describe("BuildDetailPage — the task list's order and its links", () => {
       "href",
       "https://github.com/acme-dev/demo-shop/issues/1",
     );
+  });
+});
+
+// A failed build used to say `Failed · plan-failed` and nothing else; the reason
+// lived in one aep-api log line. The card under the header is where the run
+// explains itself, in the platform's recorded words, with the facts a bug report
+// needs one click away.
+describe("BuildDetailPage — why the run failed", () => {
+  const sendgrid = (over: Partial<components["schemas"]["RunFailure"]> = {}) => ({
+    code: "dependency-unprovisionable" as const,
+    phase: "planning",
+    component: "allocation-api",
+    dependency: "sendgrid",
+    permanent: true,
+    attempts: 1,
+    maxAttempts: 3,
+    firstAt: "2026-08-14T16:20:54Z",
+    lastAt: "2026-08-14T16:20:54Z",
+    detail: 'external resourcetype "sendgrid": at least one config key required',
+    workflowId: "dev-default-demo-shop-2",
+    ...over,
+  });
+
+  it("explains a failed run from its record, and opens the platform's facts on request", () => {
+    mockBuilds = [build({ status: "failed", reason: "plan-failed", failureCode: "dependency-unprovisionable" })];
+    mockRuns = [run({ state: "failed", terminalReason: "plan-failed", cycles: [], failure: sendgrid() })];
+    renderPage();
+
+    expect(screen.getByText("The platform could not provision `sendgrid`")).toBeInTheDocument();
+    expect(screen.getByText(/allocation-api depends on it/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Open sendgrid in the design/ })).toBeInTheDocument();
+    // The header chip reads the same words.
+    expect(screen.getAllByText("Failed · Dependency could not be provisioned").length).toBeGreaterThan(0);
+    // The agent log says the agent never started rather than that it wrote nothing.
+    expect(screen.getByText(/Did not start — the run ended while the platform was preparing the version/)).toBeInTheDocument();
+
+    expect(screen.queryByTestId("run-failure-details")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show details" }));
+    const details = screen.getByTestId("run-failure-details");
+    expect(details).toHaveTextContent("dependency-unprovisionable · permanent");
+    expect(details).toHaveTextContent("1 of 3");
+    expect(details).toHaveTextContent("at least one config key required");
+    expect(details).toHaveTextContent("dev-default-demo-shop-2");
+  });
+
+  it("shows a fault being retried in amber while the run is still planning", () => {
+    mockBuilds = [build({ status: "in_progress" })];
+    mockRuns = [
+      run({
+        state: "planning",
+        cycles: [],
+        failure: sendgrid({ code: "dependency-provision-failed", permanent: false, attempts: 2, dependency: "orders-db", component: "api" }),
+      }),
+    ];
+    renderPage();
+
+    expect(screen.getByRole("status", { name: "Build retrying" })).toHaveTextContent(
+      "Provisioning `orders-db` failed — retrying (attempt 2 of 3)",
+    );
+  });
+
+  it("says the platform recorded no details for a run failed before the record existed", () => {
+    mockBuilds = [build({ status: "failed", reason: "plan-failed" })];
+    mockRuns = [run({ state: "failed", terminalReason: "plan-failed", cycles: [] })];
+    renderPage();
+
+    expect(screen.getByText("The build failed while preparing the version")).toBeInTheDocument();
+    expect(screen.getByText(/recorded no further details/)).toBeInTheDocument();
+  });
+
+  it("draws nothing for a cancelled run", () => {
+    mockBuilds = [build({ status: "cancelled" })];
+    mockRuns = [run({ state: "cancelled", cycles: [], failure: sendgrid() })];
+    renderPage();
+
+    expect(screen.queryByRole("status", { name: /Build (failure|retrying)/ })).not.toBeInTheDocument();
   });
 });

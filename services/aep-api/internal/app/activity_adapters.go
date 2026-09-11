@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/wso2/aep/aep-api/internal/contracts/activityvocab"
+	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/platform/auth/jwtassertion"
 	"github.com/wso2/aep/aep-api/internal/projects"
 	"github.com/wso2/aep/aep-api/internal/spec"
@@ -204,4 +205,43 @@ func userIdentityFromContext(ctx context.Context) (email, name string) {
 		name = "You"
 	}
 	return email, name
+}
+
+// runFailedActivityRecorder implements run.RunFailedRecorder: a version's run
+// settled failed, so the project's feed carries one line saying so. The run
+// row is read here rather than carried by the workflow — the settle just
+// wrote it, and it already holds every fact the line needs: the version tag,
+// the failure record's code and component, or the terminal reason when no
+// record exists (a run failed before the record did). Actor = the platform's
+// build agent; the dedup key is the run, so a Temporal retry of the settle
+// records one line.
+type runFailedActivityRecorder struct {
+	svc  *projects.ActivityService
+	runs delivery.MilestoneRunRepository
+}
+
+func (r runFailedActivityRecorder) RecordRunFailed(ctx context.Context, orgID, runID string) {
+	if r.svc == nil || r.runs == nil {
+		return
+	}
+	row, err := r.runs.GetByIDScoped(ctx, orgID, runID)
+	if err != nil || row == nil {
+		return
+	}
+	reason, component := row.TerminalReason, ""
+	if row.Failure != nil && row.Failure.Code != "" {
+		reason, component = row.Failure.Code, row.Failure.Component
+	}
+	r.svc.Record(ctx, projects.ActivityInput{
+		OrgID:      orgID,
+		ProjectID:  row.ProjectID,
+		Type:       activityvocab.TypeRunFailed,
+		ActorKind:  activityvocab.ActorAgent,
+		ActorName:  "Build agent",
+		Tag:        row.SpecTag(),
+		Component:  component,
+		Reason:     reason,
+		DedupKey:   "run:" + runID + ":failed",
+		OccurredAt: time.Now().UTC(),
+	})
 }

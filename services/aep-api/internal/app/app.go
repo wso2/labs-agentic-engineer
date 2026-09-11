@@ -1406,7 +1406,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// worker connects when it comes up.
 	if cfg.Temporal.Enabled() {
 		runActs := run.NewActivities(run.Deps{
-			Runs:       runRuns{runs: milestoneRunRepo},
+			Runs: runRuns{runs: milestoneRunRepo},
+			// A failed settle becomes one feed line (run_failed), read off the
+			// row the settle just wrote.
+			Failed:     runFailedActivityRecorder{svc: activitySvc, runs: milestoneRunRepo},
 			Cycles:     runCycles{cycles: runCycleRepo},
 			Milestones: issueService,
 			PRs:        issueService,

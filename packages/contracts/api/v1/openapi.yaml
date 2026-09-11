@@ -3324,9 +3324,14 @@ components:
         id:
           type: string
         type:
-          enum: [spec_updated, spec_published, plan_derived, task_started, task_deployed, task_failed]
+          enum: [spec_updated, spec_published, plan_derived, task_started, task_deployed, task_failed, run_failed]
           type: string
           x-go-type: string
+        reason:
+          description: '`run_failed` only: the run''s failure code (RunFailure.code) when the platform
+            recorded one, else its terminal reason. A code, never prose — the console owns the
+            sentence, the same rule RunEvent.notice follows.'
+          type: string
         actorKind:
           enum: [user, agent]
           type: string
@@ -3698,6 +3703,11 @@ components:
         version:
           description: Spec tag the current/last build built; "" if never built.
           type: string
+        failureCode:
+          description: Why the build failed, as RunFailure.code, when status is `failed` and the
+            platform recorded a failure — so the overview's track can say what went wrong in the
+            same words as the build page. Empty otherwise.
+          type: string
       required:
       - version
       - status
@@ -3807,6 +3817,12 @@ components:
             resolves to, and the handle list-build-runs is read by.
           format: int64
           type: integer
+        failureCode:
+          description: The failure class of a failed version, as RunFailure.code, when the platform
+            recorded one (empty otherwise). Finer than `reason` — `plan-failed` says which phase,
+            this says what went wrong in it — and cheap for the ledger, which is built from the
+            run row that holds it.
+          type: string
         reason:
           description: The run's terminal reason for a failed version (empty otherwise), surfaced
             beside the Failed badge in the console. A cancelled version carries none — a person
@@ -5430,6 +5446,11 @@ components:
           items:
             type: string
           type: array
+        failure:
+          allOf:
+          - $ref: '#/components/schemas/RunFailure'
+          description: The fault this run is failing, or failed, on. Absent when it met none.
+          x-go-type-skip-optional-pointer: false
         validation:
           $ref: '#/components/schemas/RunValidation'
       required:
@@ -7029,6 +7050,85 @@ components:
       - cycleIndex
       - kind
       - emitter
+      type: object
+    RunFailure:
+      additionalProperties: false
+      description: >-
+        The platform's own record of why a run is failing — the facts that used
+        to survive only as one aep-api log line once the run settled. Present on
+        a run that has met a fault: while the run is still non-terminal it is the
+        fault being RETRIED (read `attempts` against `maxAttempts`); on a failed
+        run it is the terminal fault `terminalReason` names. Absent on a run
+        that met none, on a cancelled run (a person stopping an increment is not
+        a fault), and on every run failed before this record existed — a
+        consumer renders the terminal reason alone and says the platform recorded
+        no further details.
+        `code` is a closed set and the console owns each code's sentence, the
+        rule RunEvent.notice established; `detail` is the platform's recorded
+        error text — never model output or a request body — scrubbed and capped
+        by the producer, for a reader who wants the platform's exact words.
+      properties:
+        code:
+          description: >-
+            Which failure class. `dependency-unprovisionable` a dependency the
+            platform cannot author however often it tries (a schema the
+            ResourceType builder refuses, a ClusterResourceType nobody installed,
+            a Resource that never cuts a release) — the design has to change;
+            `dependency-provision-failed` provisioning failed for a reason the
+            platform could not call permanent, and the bounded retry is being or
+            has been spent; `plan-turn-failed` the planning turn errored (an LLM
+            or transport error, retried); `repository-unavailable` the run's
+            repository, issue or credential is gone.
+          enum:
+          - dependency-unprovisionable
+          - dependency-provision-failed
+          - plan-turn-failed
+          - repository-unavailable
+          type: string
+          x-go-type: string
+        phase:
+          description: The run phase the fault was met in.
+          type: string
+        component:
+          description: The component that declared the failing dependency, when the fault has one.
+          type: string
+        dependency:
+          description: The dependency the platform could not provision, when the fault has one.
+          type: string
+        permanent:
+          description: Repeating cannot change the answer. The producer's own classification — the
+            one that also decided the retry policy — so "retrying cannot fix this" and the single
+            attempt it took are two readings of one fact.
+          type: boolean
+        attempts:
+          description: Attempts that have hit this fault so far.
+          format: int64
+          type: integer
+        maxAttempts:
+          description: The activity's retry bound; 0 when unbounded.
+          format: int64
+          type: integer
+        firstAt:
+          format: date-time
+          type: string
+        lastAt:
+          format: date-time
+          type: string
+        detail:
+          description: The platform's recorded error text, scrubbed and capped at the producer.
+          type: string
+        workflowId:
+          description: The run's workflow id — the handle an operator reads history by. Derived at
+            read time, never stored.
+          type: string
+      required:
+      - code
+      - phase
+      - permanent
+      - attempts
+      - maxAttempts
+      - firstAt
+      - lastAt
       type: object
     RunValidation:
       additionalProperties: false

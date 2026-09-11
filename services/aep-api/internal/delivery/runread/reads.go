@@ -117,6 +117,7 @@ func runView(row *delivery.MilestoneRun, cycles []delivery.RunCycle, recordings 
 			ValidationCycles: int64(row.ValidationCycles),
 		},
 		Validation: validationView(row.ValidationVerdict, row.ValidationIssue),
+		Failure:    failureView(row),
 		Cycles:     make([]gen.RunCycleView, 0, len(cycles)),
 		CreatedAt:  row.CreatedAt,
 		StartedAt:  row.StartedAt,
@@ -209,5 +210,30 @@ func CycleView(c *delivery.RunCycle, recording gen.RunCycleViewRecording) gen.Ru
 		Recording:         recording,
 		CreatedAt:         c.CreatedAt,
 		EndedAt:           c.EndedAt,
+	}
+}
+
+// failureView projects the run's failure record onto the wire, nil when the
+// run has met no fault. The workflow id is derived here rather than stored:
+// it is a function of facts the row already holds, and it is the handle an
+// operator reads Temporal history by, so a support conversation can start
+// from the card instead of from a log grep.
+func failureView(row *delivery.MilestoneRun) *gen.RunFailure {
+	f := row.Failure
+	if f == nil || f.Code == "" {
+		return nil
+	}
+	return &gen.RunFailure{
+		Code:        f.Code,
+		Phase:       f.Phase,
+		Component:   f.Component,
+		Dependency:  f.Dependency,
+		Permanent:   f.Permanent,
+		Attempts:    int64(f.Attempts),
+		MaxAttempts: int64(f.MaxAttempts),
+		FirstAt:     f.FirstAt,
+		LastAt:      f.LastAt,
+		Detail:      f.Detail,
+		WorkflowID:  delivery.MilestoneRunWorkflowID(row.Kind, row.OrgID, row.ProjectID, row.MilestoneNumber),
 	}
 }

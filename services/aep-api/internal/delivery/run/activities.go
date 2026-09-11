@@ -53,6 +53,7 @@ type Activities struct {
 	gates      Gates
 	planner    Planner
 	deployGate DeployGate
+	failed     RunFailedRecorder
 }
 
 // Deps carries the activity adapters. runs/cycles/milestones are required; the
@@ -74,6 +75,8 @@ type Deps struct {
 	Gates        Gates
 	Planner      Planner
 	DeployGate   DeployGate
+	// Failed is told of a failed settle (optional; nil records nothing).
+	Failed RunFailedRecorder
 }
 
 // NewActivities wires the activity adapters.
@@ -95,6 +98,7 @@ func NewActivities(d Deps) *Activities {
 		gates:      d.Gates,
 		planner:    d.Planner,
 		deployGate: d.DeployGate,
+		failed:     d.Failed,
 	}
 }
 
@@ -128,6 +132,9 @@ type SettleRunInput struct {
 	RunID  string `json:"runId"`
 	State  string `json:"state"`
 	Reason string `json:"reason,omitempty"`
+	// OrgID scopes the failed-settle notification's read of the row. Empty on
+	// an input from before it existed, which records no activity line.
+	OrgID string `json:"orgId,omitempty"`
 }
 
 // SettleRun writes the run's outcome. Guarded in the repository on the run not
@@ -136,7 +143,15 @@ func (a *Activities) SettleRun(ctx context.Context, in SettleRunInput) error {
 	if a.runs == nil {
 		return errNotConfigured
 	}
-	return a.runs.Settle(ctx, in.RunID, in.State, in.Reason)
+	if err := a.runs.Settle(ctx, in.RunID, in.State, in.Reason); err != nil {
+		return err
+	}
+	// The feed line for a reader who is not on the build page. After the
+	// settle, so the row it reads already says failed and why.
+	if in.State == delivery.RunStateFailed && a.failed != nil && in.OrgID != "" {
+		a.failed.RecordRunFailed(ctx, in.OrgID, in.RunID)
+	}
+	return nil
 }
 
 // BumpRunBudgetInput names the counter to increment.
@@ -436,6 +451,10 @@ func (a *Activities) PollCycleBuilds(ctx context.Context, in CycleBuildsInput) (
 // PlanMilestoneInput fills a version's milestone: mint its dependency gates,
 // then plan its Tasks into it.
 type PlanMilestoneInput struct {
+	// RunID is the row the two planning activities record their faults on
+	// (RunStore.RecordFailure). Empty on an input from before the record
+	// existed — a replay of an old history — which simply records nothing.
+	RunID           string                    `json:"runId,omitempty"`
 	OrgID           string                    `json:"orgId"`
 	ProjectID       string                    `json:"projectId"`
 	MilestoneNumber int                       `json:"milestoneNumber"`
@@ -461,7 +480,15 @@ func (a *Activities) ProvisionGates(ctx context.Context, in PlanMilestoneInput) 
 	// first attempt with the provisioner's own message; the bounded retry policy
 	// in gateActivityCtx is the backstop for the modes nobody has named yet.
 	return heartbeating(ctx, func(ctx context.Context) error {
-		return provisionErr(a.gates.ProvisionForBuild(ctx, in.OrgID, in.ProjectID, in.Tag, in.MilestoneNumber, in.ProvisionInputs))
+		err := a.gates.ProvisionForBuild(ctx, in.OrgID, in.ProjectID, in.Tag, in.MilestoneNumber, in.ProvisionInputs)
+		// The record is what the reader gets instead of one log line: which
+		// dependency, whether repeating can help, which attempt of how many. It
+		// is written here rather than in the workflow because only the activity
+		// knows its own attempt number, and it is the attempt that makes
+		// "retrying" a state a reader can see.
+		attempt := activityAttempt(ctx)
+		a.recordPlanningFault(ctx, in.RunID, provisionFailure(err, attempt), attempt)
+		return provisionErr(err)
 	})
 }
 
@@ -480,7 +507,13 @@ func (a *Activities) PlanMilestone(ctx context.Context, in PlanMilestoneInput) e
 	// long, and a cancel pressed mid-turn should end the turn rather than let it
 	// run on to mint a plan for a version nobody is building.
 	return heartbeating(ctx, func(ctx context.Context) error {
-		return planErr(a.planner.PlanIntoMilestone(ctx, in.OrgID, in.ProjectID, in.MilestoneNumber))
+		err := a.planner.PlanIntoMilestone(ctx, in.OrgID, in.ProjectID, in.MilestoneNumber)
+		// Same record as ProvisionGates. This activity retries UNBOUNDED on a
+		// blip, which used to be a silent spinner for as long as it lasted;
+		// the record is what lets the console say "retrying, attempt N".
+		attempt := activityAttempt(ctx)
+		a.recordPlanningFault(ctx, in.RunID, planFailure(err, attempt), attempt)
+		return planErr(err)
 	})
 }
 
