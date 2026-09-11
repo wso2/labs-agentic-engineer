@@ -227,6 +227,7 @@ func toBuildList(l BuildList) gen.BuildList {
 			MilestoneNumber: int64(b.MilestoneNumber),
 			Status:          gen.BuildSummaryStatus(b.Status),
 			Reason:          b.Reason,
+			FailureCode:     b.FailureCode,
 			StartedAt:       b.StartedAt,
 			WaitingReason:   gen.BuildSummaryWaitingReason(b.WaitingReason),
 		}

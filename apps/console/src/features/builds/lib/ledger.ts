@@ -18,6 +18,7 @@
 
 import type { StatusTone } from "../../../components/StatusChip";
 import type { components } from "../../../generated/aep-api";
+import { failureLabel } from "./failure";
 import { hasMergedWork } from "./runView";
 import { frontierIndex, type SpineStage } from "./stage";
 import { taskRowState, type RunClaims } from "./taskRow";
@@ -159,14 +160,19 @@ export function ledgerStatus(
         return { label: "Waiting for configuration", tone: "warning", live: false };
       }
       return movingStatus(stages);
-    case "failed":
-      // The platform's terminal reason, when it left one. Without it the row
-      // would say only "Failed", which tells the reader nothing to act on.
+    case "failed": {
+      // The qualifier names WHAT went wrong, in words: the failure code when the
+      // platform recorded a fault, else the terminal reason — both are codes on
+      // the wire, and `failureLabel` owns their words (lexicon, *A failed run
+      // explains itself*). Without either the row says only "Failed", which
+      // tells the reader nothing to act on.
+      const why = failureLabel(build.failureCode || build.reason);
       return {
-        label: build.reason ? `Failed · ${build.reason}` : "Failed",
+        label: why ? `Failed · ${why}` : "Failed",
         tone: "error",
         live: false,
       };
+    }
     case "cancelled":
       // A person stopped this increment. NEUTRAL rather than error: nothing went
       // wrong, and an error tone would say the platform failed at something a

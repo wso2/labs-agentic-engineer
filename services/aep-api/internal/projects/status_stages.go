@@ -351,6 +351,11 @@ func (s *Service) populateStages(ctx context.Context, orgName, projectName strin
 	if latest != nil {
 		status.Build.Version = latest.SpecTag()
 		status.Build.Status = buildStageStatus(latest.State)
+		// The failure class, so the overview's track can say WHAT failed in the
+		// same words as the build page. Only a failed run is described by it.
+		if latest.State == delivery.RunStateFailed && latest.Failure != nil {
+			status.Build.FailureCode = latest.Failure.Code
+		}
 		// A VALIDATING-phase failure is not a build failure: every coding cycle
 		// landed and the failure already rides deploy.validation below. Without this
 		// the overview says "build failed" while the validation chip contradicts it.

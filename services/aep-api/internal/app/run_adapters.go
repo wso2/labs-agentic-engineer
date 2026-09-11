@@ -99,6 +99,16 @@ func (a runRuns) Settle(ctx context.Context, id, state, reason string) error {
 	return err
 }
 
+func (a runRuns) RecordFailure(ctx context.Context, id string, failure delivery.RunFailure) error {
+	_, err := a.runs.RecordFailure(ctx, id, failure)
+	return err
+}
+
+func (a runRuns) ClearFailure(ctx context.Context, id string) error {
+	_, err := a.runs.ClearFailure(ctx, id)
+	return err
+}
+
 func (a runRuns) BumpBudget(ctx context.Context, id string, counter delivery.RunBudget) error {
 	_, err := a.runs.BumpBudget(ctx, id, counter)
 	return err

@@ -121,7 +121,10 @@ func (s *Service) ProvisionForBuild(ctx context.Context, orgID, ocOrgID, project
 		switch in.Kind {
 		case buildKindExternalConfig:
 			if err := s.authorExternalPrepared(ctx, orgID, ocOrgID, projectID, in, gate); err != nil {
-				failures = append(failures, ProvisionFailure{Component: in.Component, Dependency: in.Dependency, Reason: err.Error()})
+				// Err rides along so a permanent answer (a schema the ResourceType
+				// builder refuses) keeps its classification through aggregation —
+				// without it every external fault read as a blip and was retried.
+				failures = append(failures, ProvisionFailure{Component: in.Component, Dependency: in.Dependency, Reason: err.Error(), Err: err})
 			}
 		case buildKindPlatformResrc:
 			if skipPlatform {
@@ -296,7 +299,10 @@ func (s *Service) authorExternalPrepared(ctx context.Context, orgID, ocOrgID, pr
 		if execID != "" {
 			s.failProvisionRow(ctx, orgID, projectID, issueNumber, execID, perr.Error())
 		}
-		return fmt.Errorf("%w: %v", dependencies.ErrProvisionFailed, perr)
+		// %w twice: the provisioner's own classification (ErrProvisionPermanent
+		// on a schema it cannot author) has to survive this wrap, or the run
+		// retries an answer as if it were a blip.
+		return fmt.Errorf("%w: %w", dependencies.ErrProvisionFailed, perr)
 	}
 
 	if registered {

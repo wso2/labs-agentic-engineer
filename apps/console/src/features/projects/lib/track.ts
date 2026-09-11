@@ -17,6 +17,7 @@
  */
 
 import type { components } from "../../../generated/aep-api";
+import { failureLabel } from "../../builds/lib/failure";
 import { validationView } from "./pipeline";
 
 type ProjectStatus = components["schemas"]["ProjectStatus"];
@@ -159,8 +160,12 @@ function buildLeg(status: ProjectStatus): TrackLeg {
   switch (state) {
     case "running":
       return { ...leg, version, state: "live", line: "Building" };
-    case "failed":
-      return { ...leg, version, state: "failed", line: "Build failed" };
+    case "failed": {
+      // The same words as the build page's card and the ledger's chip: the
+      // failure code, when the platform recorded one, put into words once.
+      const why = failureLabel(status.build.failureCode);
+      return { ...leg, version, state: "failed", line: why ? `Build failed · ${why}` : "Build failed" };
+    }
     case "succeeded":
       return { ...leg, version, state: "done", line: "Built" };
     default:
