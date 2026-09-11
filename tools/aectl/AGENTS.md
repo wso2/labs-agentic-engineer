@@ -14,7 +14,7 @@ go build -o aectl .  # build CLI
 |---------|---------|
 | `cmd/` | Cobra commands for the CLI (init, sre, uninstall) |
 | `internal/openbao/` | HTTP client for OpenBao API |
-| `internal/thunder/` | Thunder OAuth client registration (Job + CORS patch) |
+| `internal/thunder/` | Thunder admin client (OAuth app registration over HTTP), CORS patch, port-forward |
 | `internal/kubernetes/` | k8s client helpers (Job runner, port-forward) |
 | `internal/config/` | Viper config defaults and init |
 

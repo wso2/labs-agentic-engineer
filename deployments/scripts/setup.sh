@@ -18,6 +18,12 @@
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
+source "$SCRIPT_DIR/env.sh"
+source "$SCRIPT_DIR/utils.sh"
+
+# Fail here, not fifteen minutes in: every chart below installs with whichever
+# `helm` PATH finds first, and two of the later scripts need Helm 4 flags.
+require_helm_v4
 
 echo "============================================"
 echo "  AEP Platform — Full Setup"
@@ -26,19 +32,24 @@ echo ""
 echo "This script sets up everything needed to run AEP:"
 echo "  1. k3d cluster"
 echo "  2. Prerequisites (cert-manager, Kgateway, ESO, OpenBao)"
-echo "  3. OpenChoreo (Control Plane, Data Plane, Workflow Plane, Thunder)"
+echo "  3. OpenChoreo (Control Plane, Data Plane, Workflow Plane) + the"
+echo "     platform IdP (ThunderID), shared with Agent Manager"
 echo "  4. Observability Plane (Observer + OpenSearch + Fluent Bit +"
 echo "     logs-adapter + AI RCA agent — in-UI Live Progress streaming,"
 echo "     plus the alert → AI-RCA → coding-agent handoff pipeline:"
-echo "     docs/developer-guide/sre-handoff-runbook.md)"
-echo "     Skipped by default (heaviest install: OpenSearch StatefulSet +"
-echo "     Fluent Bit DaemonSet + RCA agent) — set ENABLE_OBSERVABILITY=1 to"
-echo "     install it. Live Progress streaming and the alert→RCA pipeline are"
-echo "     unavailable until scripts/setup-observability.sh is run."
+echo "     docs/developer-guide/sre-handoff-runbook.md). Agent Manager's"
+echo "     console reads its logs, traces and metrics from it."
 echo "  5. Temporal workflow engine (drives the devflow workflows; aep-api"
 echo "     runs the worker in-process)"
 echo "  6. AEP-specific config (build ClusterWorkflows, ComponentTypes,"
 echo "     Environment, AuthzRoleBindings, .env file)"
+echo "  7. Agent Management Platform, on this same cluster from WSO2's"
+echo "     published charts. Reversible: scripts/teardown-agent-manager.sh"
+echo "  8. Park the observability plane's heavy workloads — OpenSearch,"
+echo "     Prometheus, Alertmanager, the RCA agent, Fluent Bit, the collector"
+echo "     and the adapters go to zero replicas (installed, idle, ~2 GB of"
+echo "     requests saved). Turn them on any time, no reinstall:"
+echo "     bash scripts/park-observability.sh up   (down parks again)"
 echo ""
 
 # The runner image (Debian + Go + Playwright + baked chromium, multi-GB) has no
@@ -67,11 +78,11 @@ echo ""
 bash "$SCRIPT_DIR/setup-openchoreo.sh"
 echo ""
 
-if [ "${ENABLE_OBSERVABILITY:-0}" = "1" ]; then
-    bash "$SCRIPT_DIR/setup-observability.sh"
-else
-    echo "⏭️  Observability Plane skipped (set ENABLE_OBSERVABILITY=1 to install it, or run scripts/setup-observability.sh manually when needed)"
-fi
+# The observability plane is part of the base install: Agent Manager's console
+# reads its logs, traces and metrics from it, and its charts install against it.
+# Its heavy half is parked at the end of this script, so installing it costs
+# disk and a few minutes of setup, not running memory.
+bash "$SCRIPT_DIR/setup-observability.sh"
 echo ""
 
 bash "$SCRIPT_DIR/setup-temporal.sh"
@@ -104,6 +115,26 @@ fi
 bash "$SCRIPT_DIR/setup-aep.sh"
 echo ""
 
+# Agent Manager is part of the base install, after the observability plane it
+# installs against. The second half — the default environment's own Thunder and
+# its API Platform gateway — is a separate script because it drives Agent
+# Manager's admin API over its public URL, and fails for reasons unrelated to
+# the chart installs.
+bash "$SCRIPT_DIR/setup-agent-manager.sh"
+echo ""
+bash "$SCRIPT_DIR/setup-agent-manager-env.sh"
+echo ""
+
+# Park the observability plane's heavy workloads. Running them costs about 2 GB
+# of requests on an 8 GB VM, and most local work never reads a trace, a metric
+# or the log archive. This is the LAST step because the installs above need the
+# plane up — Agent Manager's tracing module writes OpenSearch index templates,
+# and setup-observability.sh's own bootstrap Job does too. There is no flag:
+# park-observability.sh up turns the plane on for a live cluster without a
+# reinstall, and a setup re-run parks it again here.
+bash "$SCRIPT_DIR/park-observability.sh" down
+echo ""
+
 echo "============================================"
 echo "  ✅ Setup Complete!"
 echo "============================================"
@@ -121,4 +152,12 @@ echo "       Console: http://console.openchoreo.localhost:8080"
 echo ""
 echo "  Coding-agent: OpenChoreo Job Component in the project dataplane"
 echo "                (image from AGENT_RUNNER_IMAGE / aep-runner:dev)."
+echo ""
+echo "  Agent Manager console: http://console.amp.localhost:8080"
+echo "  Agent Manager API:     http://api.amp.localhost:8080"
+echo "  Same login as the AEP console — one platform IdP serves both."
+echo ""
+echo "  Observability plane:   installed, heavy workloads PARKED (no traces,"
+echo "                         metrics, log archive or alert→RCA until"
+echo "                         bash scripts/park-observability.sh up)"
 echo ""

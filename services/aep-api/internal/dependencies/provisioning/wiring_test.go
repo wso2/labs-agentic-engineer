@@ -148,8 +148,8 @@ func TestWiring_GateResolutionPostsNothing(t *testing.T) {
 	w := NewResourceWatcher(svc, nil, time.Second)
 	w.now = func() time.Time { return time.Unix(1000, 0).Add(time.Minute) }
 	ready := readyBinding("host", "port")
-	bindings.byName["o-orders-db-development"] = ready
-	bindings.byName["proj-orders-db-development"] = ready
+	bindings.byName["o-orders-db-default"] = ready
+	bindings.byName["proj-orders-db-default"] = ready
 	if err := w.Sweep(context.Background()); err != nil {
 		t.Fatalf("Sweep: %v", err)
 	}

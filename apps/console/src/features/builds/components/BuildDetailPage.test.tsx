@@ -457,7 +457,7 @@ describe("BuildDetailPage — the Deployments link", () => {
     };
     renderPage();
     expect(deploymentsLink()).toBeInTheDocument();
-    expect(screen.getByText("v2 is live in development.")).toBeInTheDocument();
+    expect(screen.getByText("v2 is live.")).toBeInTheDocument();
   });
 
   it("stays away when there is no run to have merged anything", () => {

@@ -177,17 +177,22 @@ services:
 
       # ── Phase 3 of api-platform-integration — Thunder admin client
       # for per-org publisher OAuth app lifecycle. The aep-system-client
-      # OAuth app + Administrator role binding are provisioned by
-      # values-thunder.yaml's 60-aep-system-role.sh bootstrap script.
+      # OAuth app and its Administrator role assignment are provisioned by
+      # single-cluster/thunder-resources/81-aep-system-client.yaml and
+      # 84-aep-system-role.yaml.
       THUNDER_ADMIN_URL: "http://thunder.openchoreo.localhost:8080"
       THUNDER_SYSTEM_CLIENT_ID: "aep-system-client"
       # After setup-local.sh, Thunder holds the random secret in
       # aep-thunder-secrets/THUNDER_SYSTEM_CLIENT_SECRET — not the
-      # values-thunder.yaml bootstrap literal. Export from that K8s
-      # secret (or .env) before `compose up`, same as helm's secretKeyRef.
+      # bootstrap document's literal. Export from that K8s secret (or .env)
+      # before `compose up`, same as helm's secretKeyRef.
       THUNDER_SYSTEM_CLIENT_SECRET: "${THUNDER_SYSTEM_CLIENT_SECRET:-aep-system-client-secret}"
       PLATFORM_IDP_ISSUER: "http://thunder.openchoreo.localhost:8080"
-      PLATFORM_IDP_JWKS_URL: "http://thunder-service.thunder.svc.cluster.local:8090/oauth2/jwks"
+      # In-cluster JWKS of the platform IdP, handed to the apps AEP deploys.
+      # The default spells scripts/env.sh's THUNDER_INTERNAL_JWKS_URL — that
+      # file is the source of truth for the IdP's name; override from .env when
+      # it moves.
+      PLATFORM_IDP_JWKS_URL: "${PLATFORM_IDP_JWKS_URL:-http://platform-idp-service.platform-idp.svc.cluster.local:8090/oauth2/jwks}"
 
       # ── OIDC config handed to user web-apps whose design has
       # auth.kind=oidc-spa. v1 reuses the aep-console-client Thunder
@@ -275,6 +280,19 @@ services:
       - "api.openchoreo.localhost:host-gateway"
       - "thunder.openchoreo.localhost:host-gateway"
       - "observer.openchoreo.localhost:host-gateway"
+      # The ENVIRONMENT identity providers (T2), one per (org, env), reached at
+      # their PUBLIC issuer — <env>-idp.amp.localhost:8080 — because this
+      # container runs outside the cluster and the binding's in-cluster admin
+      # URL resolves to nothing here. THUNDER_ENV_ADMIN_ROUTE picks between the
+      # two and defaults by location, so a cluster-resident aep-api takes the
+      # in-cluster address and needs none of these entries.
+      #
+      # Named one by one: `extra_hosts` takes no wildcard, and a container's
+      # /etc/hosts cannot pattern-match. The local stack has ONE environment,
+      # `default` — `setup-aep.sh` creates it and Agent Manager, when enabled,
+      # deploys into the same one. Provision an environment beyond it and its
+      # entry belongs here too.
+      - "default-idp.amp.localhost:host-gateway"
 
   # ---------------------------------------------------------------------------
   # agents — file-mutation agents service (services/agents). Serves the

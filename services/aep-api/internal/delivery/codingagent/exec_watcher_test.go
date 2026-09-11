@@ -414,7 +414,7 @@ func TestExecWatcher_BuildAuthBudgetExhausted_FinishErrorSkipsObserver(t *testin
 func TestExecWatcher_NeverPollsAProvisionRowAsAWorkflowRun(t *testing.T) {
 	provisionRow := &delivery.Execution{ID: "p1", OrgID: "acme", Repo: "acme/widgets", IssueNumber: 1,
 		Kind: string(taskmeta.KindProvision), Status: string(taskmeta.ExecRunning),
-		RunName: "widgets-orders-db-development"} // a ReleaseBinding, not a WorkflowRun
+		RunName: "widgets-orders-db-default"} // a ReleaseBinding, not a WorkflowRun
 	opsRow := &delivery.Execution{ID: "o1", OrgID: "acme", Repo: "acme/widgets", IssueNumber: 2,
 		Kind: string(taskmeta.KindOps), Status: string(taskmeta.ExecRunning), RunName: "some-op"}
 	buildRow := &delivery.Execution{ID: "b1", OrgID: "acme", Repo: "acme/widgets", IssueNumber: 3,

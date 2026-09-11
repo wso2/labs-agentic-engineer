@@ -45,6 +45,9 @@ func TestSchemeRegistersThunderApplication(t *testing.T) {
 		Status: ThunderApplicationStatus{
 			Ready:    true,
 			ClientID: "client-123",
+			Issuer:   "http://development-idp.amp.localhost:8080",
+			JWKSURL:  "http://development-idp.amp.localhost:8080/oauth2/jwks",
+			AdminURL: "http://thunder-default-development-service.thunder-default-development.svc.cluster.local:8090",
 		},
 	}
 

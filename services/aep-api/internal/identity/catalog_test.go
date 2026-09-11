@@ -25,16 +25,23 @@ import (
 // The catalog is what a design agent reads before naming a role, so the field
 // that matters most is `platformCreated`: it is the difference between a role the
 // build may give a test user and one it must leave alone.
+//
+// It is read PER ORG now: the catalog belongs to that org's environment
+// directory, so `catalogOrg` and the scope it resolves to travel together.
+
+const catalogOrg = "org-acme"
+
+var catalogScope = Scope{OrgID: catalogOrg, Environment: testEnvironment}
 
 func TestCatalogMarksOnlyTheRolesThePlatformCreated(t *testing.T) {
 	store := newFakeStore()
-	store.roles["support agent"] = IdPRole{Name: "Support Agent", ThunderGroupID: "grp-support"}
+	store.putRole(catalogScope, IdPRole{Name: "Support Agent", ThunderGroupID: "grp-support"})
 	dir := newFakeDirectory()
 	dir.seedGroup("Support Agent", "usr-1", "usr-2")
 	// On the directory with no row of ours — somebody made it by hand.
 	dir.seedGroup("Administrators", "usr-admin")
 
-	entries, err := NewCatalogService(dir, store).List(context.Background())
+	entries, err := NewCatalogService(newFakeTargets(dir), store).List(context.Background(), catalogOrg)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -58,11 +65,11 @@ func TestCatalogMarksOnlyTheRolesThePlatformCreated(t *testing.T) {
 // the platform did not create a role it did.
 func TestCatalogMatchesOwnershipCaseInsensitively(t *testing.T) {
 	store := newFakeStore()
-	store.roles["support agent"] = IdPRole{Name: "support agent", ThunderGroupID: "grp-support"}
+	store.putRole(catalogScope, IdPRole{Name: "support agent", ThunderGroupID: "grp-support"})
 	dir := newFakeDirectory()
 	dir.seedGroup("SUPPORT AGENT", "usr-1")
 
-	entries, err := NewCatalogService(dir, store).List(context.Background())
+	entries, err := NewCatalogService(newFakeTargets(dir), store).List(context.Background(), catalogOrg)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -77,12 +84,12 @@ func TestCatalogMatchesOwnershipCaseInsensitively(t *testing.T) {
 // important answer for the unimportant one.
 func TestCatalogSurvivesAFailedMemberCount(t *testing.T) {
 	store := newFakeStore()
-	store.roles["support agent"] = IdPRole{Name: "Support Agent", ThunderGroupID: "grp-support"}
+	store.putRole(catalogScope, IdPRole{Name: "Support Agent", ThunderGroupID: "grp-support"})
 	dir := newFakeDirectory()
 	dir.seedGroup("Support Agent", "usr-1")
 	dir.failOn = map[string]error{"GroupMembers": errors.New("thunder said no")}
 
-	entries, err := NewCatalogService(dir, store).List(context.Background())
+	entries, err := NewCatalogService(newFakeTargets(dir), store).List(context.Background(), catalogOrg)
 	if err != nil {
 		t.Fatalf("a failed member count must not fail the catalog: %v", err)
 	}
@@ -104,24 +111,37 @@ func TestCatalogFailsWhenTheDirectoryCannotBeListed(t *testing.T) {
 	dir := newFakeDirectory()
 	dir.failOn = map[string]error{"ListGroups": errors.New("thunder is down")}
 
-	if _, err := NewCatalogService(dir, newFakeStore()).List(context.Background()); err == nil {
+	if _, err := NewCatalogService(newFakeTargets(dir), newFakeStore()).List(context.Background(), catalogOrg); err == nil {
 		t.Fatal("List succeeded with an unreachable directory — an empty catalog reads as 'no roles exist'")
 	}
 }
 
 func TestCatalogEnabledNeedsBothCollaborators(t *testing.T) {
 	store := newFakeStore()
-	dir := newFakeDirectory()
+	targets := newFakeTargets(newFakeDirectory())
 	if (*CatalogService)(nil).Enabled() {
 		t.Error("a nil service is not enabled")
 	}
 	if NewCatalogService(nil, store).Enabled() {
-		t.Error("no directory means no catalog to read")
+		t.Error("no resolver means no directory to read")
 	}
-	if NewCatalogService(dir, nil).Enabled() {
+	if NewCatalogService(targets, nil).Enabled() {
 		t.Error("no store means ownership cannot be computed")
 	}
-	if !NewCatalogService(dir, store).Enabled() {
+	if !NewCatalogService(targets, store).Enabled() {
 		t.Error("both wired should be enabled")
+	}
+}
+
+// An environment with no identity provider bound to it is an ERROR here, for
+// the same reason an unreachable directory is: an empty catalog reads as "no
+// roles exist", and a design agent would mint a duplicate of every role that
+// environment already has.
+func TestCatalogFailsWhenTheEnvironmentHasNoIdentityProvider(t *testing.T) {
+	targets := newFakeTargets(newFakeDirectory())
+	targets.err = errors.New("environment \"default\" of \"org-acme\" has no Thunder binding")
+
+	if _, err := NewCatalogService(targets, newFakeStore()).List(context.Background(), catalogOrg); err == nil {
+		t.Fatal("List succeeded for an environment with no identity provider")
 	}
 }

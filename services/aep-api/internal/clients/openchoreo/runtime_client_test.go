@@ -47,7 +47,7 @@ func TestReleaseBindingName_PicksTheEnvironmentsBinding(t *testing.T) {
 				map[string]interface{}{
 					"metadata": map[string]interface{}{"name": "rb-dev"},
 					"spec": map[string]interface{}{
-						"environment": "development",
+						"environment": "default",
 						"owner":       map[string]interface{}{"projectName": "shop", "componentName": "shop-ca-abc"},
 						"releaseName": "rel-2",
 					},

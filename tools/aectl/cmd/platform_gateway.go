@@ -29,6 +29,12 @@ import (
 	"github.com/wso2/aep/aectl/internal/ui"
 )
 
+// ocEnvironmentName is the single OpenChoreo Environment the platform
+// provisions into and patches gateway ingress onto. It matches aep-api's
+// openchoreo.DevEnvironmentName and the Environment the platform-resources
+// chart creates, so both products address one environment.
+const ocEnvironmentName = "default"
+
 type gatewayIngressDeps struct {
 	isConfigured    func(context.Context) (bool, error)
 	discoverGateway func(context.Context) (name, namespace string, err error)
@@ -56,9 +62,9 @@ func isGatewayIngressConfigured(ctx context.Context) (bool, error) {
 	if !cdpOK {
 		return false, nil
 	}
-	envOK, err := checkGatewayIngress(ctx, "environment", "development", "default")
+	envOK, err := checkGatewayIngress(ctx, "environment", ocEnvironmentName, "default")
 	if err != nil {
-		return false, fmt.Errorf("read Environment/development: %w", err)
+		return false, fmt.Errorf("read Environment/%s: %w", ocEnvironmentName, err)
 	}
 	return envOK, nil
 }
@@ -119,7 +125,7 @@ func applyGatewayIngressConfig(ctx context.Context, gwName, gwNamespace, hostnam
 	if _, err := execKubectl(ctx, "patch", "clusterdataplane", "default", "--type=merge", "-p", patch); err != nil {
 		return fmt.Errorf("patch ClusterDataPlane: %w", err)
 	}
-	if _, err := execKubectl(ctx, "patch", "environment", "development", "-n", "default", "--type=merge", "-p", patch); err != nil {
+	if _, err := execKubectl(ctx, "patch", "environment", ocEnvironmentName, "-n", "default", "--type=merge", "-p", patch); err != nil {
 		return fmt.Errorf("patch Environment: %w", err)
 	}
 	return nil
@@ -175,7 +181,7 @@ func runGatewayIngressCheck(ctx context.Context, deps gatewayIngressDeps) error 
 			sp2.Fail("Failed to configure gateway ingress")
 			return err
 		}
-		sp2.Success(fmt.Sprintf("External gateway ingress configured (ClusterDataPlane + Environment/development: %s → %s, port 19080)", deps.hostnameOverride, gwName))
+		sp2.Success(fmt.Sprintf("External gateway ingress configured (ClusterDataPlane + Environment/%s: %s → %s, port 19080)", ocEnvironmentName, deps.hostnameOverride, gwName))
 		return nil
 	}
 
@@ -200,7 +206,7 @@ func runGatewayIngressCheck(ctx context.Context, deps gatewayIngressDeps) error 
 	}
 
 	fmt.Println()
-	if !deps.confirm(fmt.Sprintf("Configure ClusterDataPlane and Environment/development with gateway %s/%s and host %s?", gwNamespace, gwName, hostname)) {
+	if !deps.confirm(fmt.Sprintf("Configure ClusterDataPlane and Environment/%s with gateway %s/%s and host %s?", ocEnvironmentName, gwNamespace, gwName, hostname)) {
 		fmt.Println()
 		ui.Warn("Gateway ingress not configured — skipping")
 		ui.Detail("Configure it manually and re-run 'aectl platform install':")
@@ -209,7 +215,7 @@ func runGatewayIngressCheck(ctx context.Context, deps gatewayIngressDeps) error 
 			gwName, gwNamespace, hostname,
 		))
 		ui.Detail(fmt.Sprintf(
-			`kubectl patch environment development -n default --type=merge -p '{"spec":{"gateway":{"ingress":{"external":{"name":%q,"namespace":%q,"http":{"host":%q,"listenerName":"http","port":19080}}}}}}'`,
+			`kubectl patch environment `+ocEnvironmentName+` -n default --type=merge -p '{"spec":{"gateway":{"ingress":{"external":{"name":%q,"namespace":%q,"http":{"host":%q,"listenerName":"http","port":19080}}}}}}'`,
 			gwName, gwNamespace, hostname,
 		))
 		fmt.Println()
@@ -223,6 +229,6 @@ func runGatewayIngressCheck(ctx context.Context, deps gatewayIngressDeps) error 
 		sp2.Fail("Failed to configure gateway ingress")
 		return err
 	}
-	sp2.Success(fmt.Sprintf("External gateway ingress configured (ClusterDataPlane + Environment/development: %s → %s, port 19080)", hostname, gwName))
+	sp2.Success(fmt.Sprintf("External gateway ingress configured (ClusterDataPlane + Environment/%s: %s → %s, port 19080)", ocEnvironmentName, hostname, gwName))
 	return nil
 }

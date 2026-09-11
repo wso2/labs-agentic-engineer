@@ -15,11 +15,17 @@
 // under the License.
 
 // Command thunder-app-operator reconciles ThunderApplication custom resources
-// into OAuth clients on the platform Thunder IdP. It runs a single-replica
-// controller-runtime manager (leader election off) watching ThunderApplications
-// in ALL namespaces, drives each CR toward its Thunder application via the
-// operator's system OAuth2 client, and publishes the assigned client_id back as
-// a ConfigMap.
+// into OAuth clients on the Thunder instance that serves the CR's (org,
+// environment). It runs a single-replica controller-runtime manager (leader
+// election off) watching ThunderApplications in ALL namespaces and publishes
+// the assigned client_id and the instance's issuer back as a ConfigMap.
+//
+// The operator has NO Thunder of its own. Every target — its address, its
+// resource indicator and the credential to reach it — comes from the binding
+// record that deployments/scripts/setup-environment-thunder.sh writes per (org,
+// environment): a ConfigMap labelled aep.wso2.com/kind=thunder-binding in that
+// environment's Thunder namespace, plus a mirror of its Secret in this
+// operator's own namespace. See internal/controller/binding.go.
 package main
 
 import (
@@ -39,19 +45,6 @@ import (
 
 	thunderv1alpha1 "github.com/wso2/aep/thunder-app-operator/api/v1alpha1"
 	"github.com/wso2/aep/thunder-app-operator/internal/controller"
-	"github.com/wso2/aep/thunder-app-operator/internal/thunder"
-)
-
-// Environment variables that configure the operator's Thunder admin client.
-// The helm chart wires these onto the deployment (see the chart's values.yaml
-// and deployment template); defaults keep local `go run` usable against a
-// port-forwarded Thunder.
-const (
-	envThunderAdminURL     = "THUNDER_ADMIN_URL"
-	envThunderClientID     = "THUNDER_SYSTEM_CLIENT_ID"
-	envThunderClientSecret = "THUNDER_SYSTEM_CLIENT_SECRET"
-
-	defaultThunderAdminURL = "http://thunder-service.thunder.svc.cluster.local:8090"
 )
 
 // scheme carries every type the manager's client reads or writes: the
@@ -69,20 +62,13 @@ func main() {
 	ctrl.SetLogger(zap.New(zap.UseDevMode(false)))
 	setupLog := ctrl.Log.WithName("setup")
 
-	adminURL := getEnvOr(envThunderAdminURL, defaultThunderAdminURL)
-	clientID := os.Getenv(envThunderClientID)
-	clientSecret := os.Getenv(envThunderClientSecret)
-	if clientID == "" || clientSecret == "" {
-		setupLog.Error(nil, "missing Thunder system credentials",
-			"want", envThunderClientID+" and "+envThunderClientSecret)
-		os.Exit(1)
-	}
-
-	// POD_NAMESPACE scopes the SECRET informer only (see the cache options
-	// below). Every other informer stays cluster-wide, because the CRs this
-	// operator exists to reconcile are rendered by OpenChoreo into the consuming
-	// project's data-plane namespace (dp-<org>-<project>-<env>), never into the
-	// operator's own release namespace.
+	// POD_NAMESPACE scopes the SECRET informer (see the cache options below)
+	// and is where every binding Secret is mirrored. Every other informer stays
+	// cluster-wide, because the CRs this operator exists to reconcile are
+	// rendered by OpenChoreo into the consuming project's data-plane namespace
+	// (dp-<org>-<project>-<env>), never into the operator's own release
+	// namespace, and the non-secret half of a binding lives in the target
+	// Thunder's namespace.
 	podNamespace := os.Getenv("POD_NAMESPACE")
 	if podNamespace == "" {
 		setupLog.Error(nil, "POD_NAMESPACE is not set — inject it via the downward API")
@@ -99,8 +85,9 @@ func main() {
 		Metrics:                metricsserver.Options{BindAddress: "0"},
 		HealthProbeBindAddress: ":8081",
 		// Only the Secret informer is namespace-restricted. The operator reads
-		// Thunder admin credentials from its own namespace and the SA holds just
-		// a namespace-scoped Role on Secrets, so a cluster-wide Secret
+		// Thunder admin credentials from its own namespace — which is why the
+		// per-environment binding Secret is MIRRORED there — and the SA holds
+		// just a namespace-scoped Role on Secrets, so a cluster-wide Secret
 		// list/watch would be forbidden and the cache sync would time out.
 		// ThunderApplication and ConfigMap deliberately stay cluster-wide —
 		// restricting them (via DefaultNamespaces) silently starves the
@@ -125,16 +112,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	thunderClient := thunder.New(thunder.Config{
-		BaseURL:      adminURL,
-		ClientID:     clientID,
-		ClientSecret: clientSecret,
-	})
-
 	if err := (&controller.Reconciler{
-		Client:  mgr.GetClient(),
-		Scheme:  mgr.GetScheme(),
-		Thunder: thunderClient,
+		Client:       mgr.GetClient(),
+		Scheme:       mgr.GetScheme(),
+		PodNamespace: podNamespace,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to set up controller", "controller", "ThunderApplication")
 		os.Exit(1)
@@ -149,17 +130,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	setupLog.Info("starting thunder-app-operator", "thunderAdminURL", adminURL)
+	setupLog.Info("starting thunder-app-operator", "podNamespace", podNamespace)
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "manager exited with error")
 		os.Exit(1)
 	}
-}
-
-// getEnvOr returns the environment variable value or a fallback when unset/empty.
-func getEnvOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
 }

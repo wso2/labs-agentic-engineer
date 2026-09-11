@@ -92,7 +92,7 @@ func TestRunGatewayIngressCheck(t *testing.T) {
 		},
 		{
 			// Regression: isGatewayIngressConfigured returns false when only
-			// ClusterDataPlane is configured but Environment/development is not.
+			// ClusterDataPlane is configured but the Environment is not.
 			// The install flow must still call applyConfig to patch both resources.
 			name: "partial config (ClusterDataPlane ok, Environment missing) triggers reconfigure",
 			deps: gatewayIngressDeps{

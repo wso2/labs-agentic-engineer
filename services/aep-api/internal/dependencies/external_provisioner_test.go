@@ -29,6 +29,12 @@ import (
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
+// The provisioner is environment-generic: it fans a Resource out over whatever
+// environment list it is handed. These tests therefore use two arbitrary env
+// slugs ("development", "production") rather than the one environment AEP
+// provisions into (openchoreo.DevEnvironmentName) — a single-env fixture could
+// not tell a fan-out apart from a short-circuit.
+
 // newFakeRC returns a ResourceClientMock whose GetResource already reports a
 // cut ResourceRelease named latest — the provisioner's poll loop resolves on
 // the first tick.

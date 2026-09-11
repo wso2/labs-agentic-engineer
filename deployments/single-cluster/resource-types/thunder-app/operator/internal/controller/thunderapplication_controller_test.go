@@ -20,6 +20,8 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"sort"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -40,9 +42,11 @@ import (
 type fakeAdmin struct {
 	ensureCalls []thunder.DesiredApp
 	deleteCalls []string
+	originCalls [][]string
 	clientID    string
 	ensureErr   error
 	deleteErr   error
+	originErr   error
 }
 
 func (f *fakeAdmin) EnsureApplication(_ context.Context, app thunder.DesiredApp) (string, error) {
@@ -62,6 +66,87 @@ func (f *fakeAdmin) DeleteApplication(_ context.Context, name string) error {
 	return f.deleteErr
 }
 
+func (f *fakeAdmin) SetBrowserOrigins(_ context.Context, origins []string) error {
+	f.originCalls = append(f.originCalls, append([]string(nil), origins...))
+	return f.originErr
+}
+
+// lastOrigins is the origin set of the most recent SetBrowserOrigins call,
+// sorted so a test asserts on the SET, not on CR iteration order.
+func (f *fakeAdmin) lastOrigins(t *testing.T) []string {
+	t.Helper()
+	if len(f.originCalls) == 0 {
+		t.Fatalf("SetBrowserOrigins was never called")
+	}
+	got := append([]string(nil), f.originCalls[len(f.originCalls)-1]...)
+	sort.Strings(got)
+	return got
+}
+
+// The (org, environment) every test CR is rendered into, and the binding record
+// that says which Thunder serves it. Mirrors the real shapes: the ConfigMap
+// lives in the target Thunder's namespace, the Secret in the operator's own.
+const (
+	testOrg      = "test-org"
+	testEnv      = "test-env"
+	testPodNS    = "thunder-app-operator-system"
+	testIssuer   = "http://test-env-idp.amp.localhost:8080"
+	testAdminURL = "http://thunder-test-org-test-env-service.thunder-test-org-test-env.svc.cluster.local:8090"
+)
+
+// bindingFor builds both halves of a binding record for (org, env).
+func bindingFor(org, env, issuer, adminURL, clientSecret string) []client.Object {
+	name := "thunder-binding-" + org + "-" + env
+	labels := map[string]string{
+		labelBindingKind: bindingKind,
+		labelBindingOrg:  org,
+		labelBindingEnv:  env,
+	}
+	return []client.Object{
+		&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "thunder-" + org + "-" + env, Name: name, Labels: labels},
+			Data: map[string]string{
+				keyIssuer:          issuer,
+				keyAdminURL:        adminURL,
+				keySystemResource:  issuer + "/mcp",
+				keySecretName:      name,
+				keySecretNamespace: testPodNS,
+			},
+		},
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Namespace: testPodNS, Name: name, Labels: labels},
+			Data: map[string][]byte{
+				keyClientID:     []byte("aep-system-client"),
+				keyClientSecret: []byte(clientSecret),
+			},
+		},
+	}
+}
+
+// adminFactory stands in for thunder.New: it records the Config each target was
+// built with and hands out one fakeAdmin per admin URL.
+type adminFactory struct {
+	configs []thunder.Config
+	byURL   map[string]*fakeAdmin
+	fixed   *fakeAdmin
+}
+
+func (f *adminFactory) new(cfg thunder.Config) thunder.AdminClient {
+	f.configs = append(f.configs, cfg)
+	if f.fixed != nil {
+		return f.fixed
+	}
+	if f.byURL == nil {
+		f.byURL = map[string]*fakeAdmin{}
+	}
+	if a, ok := f.byURL[cfg.BaseURL]; ok {
+		return a
+	}
+	a := &fakeAdmin{}
+	f.byURL[cfg.BaseURL] = a
+	return a
+}
+
 func testScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	s := runtime.NewScheme()
@@ -74,7 +159,18 @@ func testScheme(t *testing.T) *runtime.Scheme {
 	return s
 }
 
-func newReconciler(t *testing.T, admin thunder.AdminClient, objs ...client.Object) (*Reconciler, client.Client) {
+// newReconciler wires a reconciler whose every target resolves to admin, with
+// the default (testOrg, testEnv) binding record already in the cluster.
+func newReconciler(t *testing.T, admin *fakeAdmin, objs ...client.Object) (*Reconciler, client.Client) {
+	t.Helper()
+	r, cl, _ := newReconcilerWithFactory(t, &adminFactory{fixed: admin},
+		append(bindingFor(testOrg, testEnv, testIssuer, testAdminURL, "binding-secret"), objs...)...)
+	return r, cl
+}
+
+// newReconcilerWithFactory seeds exactly the objects given — no implicit
+// binding — so a test can say what the cluster holds.
+func newReconcilerWithFactory(t *testing.T, f *adminFactory, objs ...client.Object) (*Reconciler, client.Client, *adminFactory) {
 	t.Helper()
 	scheme := testScheme(t)
 	cl := fake.NewClientBuilder().
@@ -82,19 +178,34 @@ func newReconciler(t *testing.T, admin thunder.AdminClient, objs ...client.Objec
 		WithStatusSubresource(&v1alpha1.ThunderApplication{}).
 		WithObjects(objs...).
 		Build()
-	return &Reconciler{Client: cl, Scheme: scheme, Thunder: admin}, cl
+	return &Reconciler{
+		Client:           cl,
+		Scheme:           scheme,
+		PodNamespace:     testPodNS,
+		NewThunderClient: f.new,
+	}, cl, f
 }
 
 func reqFor(app *v1alpha1.ThunderApplication) ctrl.Request {
 	return ctrl.Request{NamespacedName: types.NamespacedName{Namespace: app.Namespace, Name: app.Name}}
 }
 
+// newApp builds a CR labelled the way OpenChoreo's renderedrelease-controller
+// labels one — those labels are what points it at a Thunder.
 func newApp(ns, name string, spec v1alpha1.ThunderApplicationSpec) *v1alpha1.ThunderApplication {
+	return newAppIn(ns, name, testOrg, testEnv, spec)
+}
+
+func newAppIn(ns, name, org, env string, spec v1alpha1.ThunderApplicationSpec) *v1alpha1.ThunderApplication {
 	return &v1alpha1.ThunderApplication{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace:  ns,
 			Name:       name,
 			Generation: 1,
+			Labels: map[string]string{
+				labelCPNamespace: org,
+				labelEnvironment: env,
+			},
 		},
 		Spec: spec,
 	}
@@ -515,6 +626,179 @@ func TestReconcile_ConfidentialClient_SecretRotation(t *testing.T) {
 	}
 	if admin.ensureCalls[1].ClientSecret != "rotated-secret" {
 		t.Errorf("after rotation: ClientSecret = %q, want rotated-secret", admin.ensureCalls[1].ClientSecret)
+	}
+}
+
+// -- browser origins (CORS) -------------------------------------------------
+//
+// The app provisioned by a ThunderApplication is a BROWSER client of the IdP:
+// it fetches the discovery document and exchanges its code with XHR, so the
+// IdP has to name the app's origin or the browser drops both responses. The
+// redirect URIs on the CR are the only place that origin appears anywhere in
+// the platform.
+
+// The origin is derived from the redirect URI (scheme + host + port, no path)
+// and registered as part of a normal reconcile.
+func TestReconcile_RegistersTheSPAOriginWithTheIdP(t *testing.T) {
+	app := newApp("ns", "app", v1alpha1.ThunderApplicationSpec{
+		RedirectURIs: "http://http-todo-web--org-env-abc.openchoreoapis.localhost:19080/callback",
+	})
+	admin := &fakeAdmin{}
+	r, _ := newReconciler(t, admin, app)
+
+	if _, err := r.Reconcile(context.Background(), reqFor(app)); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	want := []string{"http://http-todo-web--org-env-abc.openchoreoapis.localhost:19080"}
+	if got := admin.lastOrigins(t); !reflect.DeepEqual(got, want) {
+		t.Errorf("origins = %#v, want %#v (scheme+host+port only — a path in the allow-list matches nothing)", got, want)
+	}
+}
+
+// The allow-list is a PROJECTION of every app on the instance, not an append:
+// one CR's reconcile must not drop a sibling's origin.
+func TestReconcile_OriginSetIsTheUnionOfEveryAppOnTheInstance(t *testing.T) {
+	one := newApp("ns", "one", v1alpha1.ThunderApplicationSpec{
+		RedirectURIs: "https://one.example.com/callback",
+	})
+	two := newApp("other-ns", "two", v1alpha1.ThunderApplicationSpec{
+		// Two URIs on one origin, plus one that shares `one`'s origin: the
+		// allow-list is a set of origins, not a list of redirect URIs.
+		RedirectURIs: "https://two.example.com/callback,https://two.example.com/silent,https://one.example.com/callback",
+	})
+	// Another environment's app on another Thunder never enters this set.
+	elsewhere := newAppIn("far-ns", "far", testOrg, "other-env", v1alpha1.ThunderApplicationSpec{
+		RedirectURIs: "https://far.example.com/callback",
+	})
+	admin := &fakeAdmin{}
+	r, _ := newReconciler(t, admin, one, two, elsewhere)
+
+	if _, err := r.Reconcile(context.Background(), reqFor(one)); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	want := []string{"https://one.example.com", "https://two.example.com"}
+	if got := admin.lastOrigins(t); !reflect.DeepEqual(got, want) {
+		t.Errorf("origins = %#v, want %#v", got, want)
+	}
+}
+
+// A redirect URI no browser could ever send does not widen the allow-list.
+func TestReconcile_NonBrowserRedirectURIsAreNotOrigins(t *testing.T) {
+	app := newApp("ns", "app", v1alpha1.ThunderApplicationSpec{
+		RedirectURIs: "myapp://callback,/relative/callback,https://real.example.com/callback",
+	})
+	admin := &fakeAdmin{}
+	r, _ := newReconciler(t, admin, app)
+
+	if _, err := r.Reconcile(context.Background(), reqFor(app)); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	want := []string{"https://real.example.com"}
+	if got := admin.lastOrigins(t); !reflect.DeepEqual(got, want) {
+		t.Errorf("origins = %#v, want %#v", got, want)
+	}
+}
+
+// A CORS failure must not fail the CR: the OAuth app exists and everything
+// downstream of the binding can proceed. It says so on status and retries.
+func TestReconcile_OriginFailureKeepsTheAppReadyAndRetries(t *testing.T) {
+	app := newApp("ns", "app", v1alpha1.ThunderApplicationSpec{
+		RedirectURIs: "https://app.example.com/callback",
+	})
+	admin := &fakeAdmin{clientID: "cid-1", originErr: errors.New("thunder put cors returned 503")}
+	r, cl := newReconciler(t, admin, app)
+
+	res, err := r.Reconcile(context.Background(), reqFor(app))
+	if err != nil {
+		t.Fatalf("Reconcile should not return an error: %v", err)
+	}
+	if res.RequeueAfter <= 0 {
+		t.Errorf("RequeueAfter = %v, want > 0 — the origin must be retried", res.RequeueAfter)
+	}
+
+	var updated v1alpha1.ThunderApplication
+	if err := cl.Get(context.Background(), reqFor(app).NamespacedName, &updated); err != nil {
+		t.Fatalf("get CR: %v", err)
+	}
+	if !updated.Status.Ready {
+		t.Error("status.ready = false — a CORS failure must not block the app's consumers")
+	}
+	if updated.Status.ClientID != "cid-1" {
+		t.Errorf("status.clientId = %q, want cid-1", updated.Status.ClientID)
+	}
+	if !strings.Contains(updated.Status.Message, "browser origins") {
+		t.Errorf("status.message = %q, want it to name the unregistered origins", updated.Status.Message)
+	}
+}
+
+// Deleting an app withdraws its origin and leaves its siblings' alone.
+func TestReconcile_DeletionWithdrawsTheOrigin(t *testing.T) {
+	now := metav1.Now()
+	going := newApp("ns", "going", v1alpha1.ThunderApplicationSpec{
+		RedirectURIs: "https://going.example.com/callback",
+	})
+	going.DeletionTimestamp = &now
+	going.Finalizers = []string{thunderFinalizer}
+	staying := newApp("ns", "staying", v1alpha1.ThunderApplicationSpec{
+		RedirectURIs: "https://staying.example.com/callback",
+	})
+	admin := &fakeAdmin{}
+	r, _ := newReconciler(t, admin, going, staying)
+
+	if _, err := r.Reconcile(context.Background(), reqFor(going)); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	want := []string{"https://staying.example.com"}
+	if got := admin.lastOrigins(t); !reflect.DeepEqual(got, want) {
+		t.Errorf("origins after delete = %#v, want %#v", got, want)
+	}
+}
+
+// The last app on an instance leaves an EMPTY list, not the app's origin.
+func TestReconcile_DeletingTheLastAppEmptiesTheAllowList(t *testing.T) {
+	now := metav1.Now()
+	app := newApp("ns", "only", v1alpha1.ThunderApplicationSpec{
+		RedirectURIs: "https://only.example.com/callback",
+	})
+	app.DeletionTimestamp = &now
+	app.Finalizers = []string{thunderFinalizer}
+	admin := &fakeAdmin{}
+	r, _ := newReconciler(t, admin, app)
+
+	if _, err := r.Reconcile(context.Background(), reqFor(app)); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got := admin.lastOrigins(t); len(got) != 0 {
+		t.Errorf("origins after the last delete = %#v, want empty", got)
+	}
+}
+
+// A CORS failure on the delete path must not wedge the CR: a stale entry in an
+// allow-list is not worth an undeletable namespace.
+func TestReconcile_DeletionReleasesTheCRWhenTheOriginCannotBeWithdrawn(t *testing.T) {
+	now := metav1.Now()
+	app := newApp("ns", "app", v1alpha1.ThunderApplicationSpec{
+		RedirectURIs: "https://app.example.com/callback",
+	})
+	app.DeletionTimestamp = &now
+	app.Finalizers = []string{thunderFinalizer}
+	admin := &fakeAdmin{originErr: errors.New("boom")}
+	r, cl := newReconciler(t, admin, app)
+
+	if _, err := r.Reconcile(context.Background(), reqFor(app)); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	var updated v1alpha1.ThunderApplication
+	err := cl.Get(context.Background(), reqFor(app).NamespacedName, &updated)
+	if err == nil && containsFinalizer(updated.Finalizers, thunderFinalizer) {
+		t.Error("finalizer still present — a CORS failure must not hold the CR")
+	} else if err != nil && !apierrors.IsNotFound(err) {
+		t.Fatalf("unexpected error getting CR: %v", err)
 	}
 }
 

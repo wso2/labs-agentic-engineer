@@ -20,7 +20,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// ThunderApplicationSpec — desired OAuth application on the platform Thunder.
+// ThunderApplicationSpec — desired OAuth application on the Thunder that serves
+// the (organization, environment) this CR is rendered into.
 type ThunderApplicationSpec struct {
 	// DisplayName shown in the Thunder console. Defaults to the CR name.
 	DisplayName string `json:"displayName,omitempty"`
@@ -42,8 +43,10 @@ type ThunderApplicationSpec struct {
 	// SecretRef points to the Kubernetes Secret key holding the pre-generated
 	// OAuth client secret. Required when clientType=confidential.
 	SecretRef *SecretKeyRef `json:"secretRef,omitempty"`
-	// NOTE (v1 scope): no instanceRef — the operator always targets the single
-	// platform Thunder. A future BYO field slots in here additively.
+	// NOTE: no instanceRef. The target Thunder is not a property of the app —
+	// it is a property of the (org, environment) the app is rendered into, and
+	// the operator resolves it from that environment's binding record. A future
+	// BYO-instance field slots in here additively.
 }
 
 // SecretKeyRef selects a key from a Kubernetes Secret in the same namespace
@@ -65,6 +68,18 @@ type ThunderApplicationStatus struct {
 	Ready bool `json:"ready"`
 	// ClientID is the OAuth client_id assigned by Thunder.
 	ClientID string `json:"clientId,omitempty"`
+	// Issuer is the OIDC issuer of the Thunder instance this application was
+	// registered on — the environment's own Thunder, resolved from the (org,
+	// environment) binding record. Published so a consumer reads WHERE the
+	// application lives instead of assuming one cluster-wide IdP.
+	Issuer string `json:"issuer,omitempty"`
+	// JWKSURL is that issuer's JWKS endpoint (issuer + /oauth2/jwks).
+	JWKSURL string `json:"jwksUrl,omitempty"`
+	// AdminURL is the in-cluster admin API base of the same instance. It is
+	// the operator's own record of where the application was created, so a
+	// later delete goes to that instance and not to whatever the binding
+	// happens to name by then.
+	AdminURL string `json:"adminUrl,omitempty"`
 	// Message carries a human-readable status/error detail.
 	Message string `json:"message,omitempty"`
 	// ObservedGeneration is the most recent generation observed by the controller.

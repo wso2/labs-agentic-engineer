@@ -110,6 +110,51 @@ func (k *DeliveryKV) Put(ctx context.Context, secretPath string, data map[string
 	return nil
 }
 
+// Get reads the KV-v2 secret at {mount}/data/{secretPath} and returns its
+// fields. A path with no secret is (nil, nil): absence is a legitimate answer a
+// caller branches on, not a failure.
+//
+// It is the ONE read on this helper, and it exists for the environment-tier
+// Thunder binding: the admin credential for an environment's identity provider
+// is written to OpenBao by deployments/scripts/setup-environment-thunder.sh
+// because aep-api runs outside the cluster and can read neither of the binding's
+// two in-cluster copies. Errors never include the value or the token.
+func (k *DeliveryKV) Get(ctx context.Context, secretPath string) (map[string]string, error) {
+	p, err := k.dataPath(secretPath)
+	if err != nil {
+		return nil, err
+	}
+	secret, err := k.client.Logical().ReadWithContext(ctx, p)
+	if err != nil {
+		if isVaultNotFound(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("delivery-kv: read %s failed: %s", redactDeliveryPath(p), vaultStatus(err))
+	}
+	if secret == nil || secret.Data == nil {
+		return nil, nil
+	}
+	// KV-v2 nests the fields under "data"; a v1 mount would not, and reading one
+	// as the other silently yields an empty map, so the shape is checked rather
+	// than assumed.
+	raw, ok := secret.Data["data"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("delivery-kv: read %s: not a KV-v2 secret", redactDeliveryPath(p))
+	}
+	out := make(map[string]string, len(raw))
+	for key, val := range raw {
+		s, ok := val.(string)
+		if !ok {
+			// Every writer here puts strings in; anything else is a value this
+			// helper has no way to hand back, and skipping it silently would
+			// surface as a missing credential field with no cause.
+			return nil, fmt.Errorf("delivery-kv: read %s: field %q is not a string", redactDeliveryPath(p), key)
+		}
+		out[key] = s
+	}
+	return out, nil
+}
+
 // Delete permanently removes the secret at {mount}/metadata/{secretPath}
 // (KV-v2 metadata delete, matching SM-API stub behaviour). Idempotent: a
 // missing path is success.

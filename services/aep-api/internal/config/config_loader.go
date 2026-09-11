@@ -70,12 +70,18 @@ func Load() (Config, error) {
 			BaseURL:      r.readOptionalString("THUNDER_ADMIN_URL", ""),
 			ClientID:     r.readOptionalString("THUNDER_SYSTEM_CLIENT_ID", "aep-system-client"),
 			ClientSecret: r.readOptionalString("THUNDER_SYSTEM_CLIENT_SECRET", "aep-system-client-secret"),
+			// Empty here; derived from PlatformIDP.Issuer at the composition root.
+			SystemResourceIdentifier: r.readOptionalString("THUNDER_SYSTEM_RESOURCE_IDENTIFIER", ""),
 		},
-		KubeAPI:        r.kubeAPI(),
-		APIGatewayHost: r.readOptionalString("API_GATEWAY_HOST", ""),
+		ThunderEnvAdminRoute: r.thunderEnvAdminRoute(),
+		KubeAPI:              r.kubeAPI(),
+		APIGatewayHost:       r.readOptionalString("API_GATEWAY_HOST", ""),
 		PlatformIDP: PlatformIDPDefaults{
-			Issuer:  r.readOptionalString("PLATFORM_IDP_ISSUER", "http://thunder.openchoreo.localhost:8080"),
-			JWKSURL: r.readOptionalString("PLATFORM_IDP_JWKS_URL", "http://thunder-service.thunder.svc.cluster.local:8090/oauth2/jwks"),
+			Issuer: r.readOptionalString("PLATFORM_IDP_ISSUER", "http://thunder.openchoreo.localhost:8080"),
+			// The platform IdP's in-cluster JWKS. deployments/scripts/env.sh
+			// (THUNDER_INTERNAL_JWKS_URL) is the source of truth for the IdP's
+			// name; this default must agree with it.
+			JWKSURL: r.readOptionalString("PLATFORM_IDP_JWKS_URL", "http://platform-idp-service.platform-idp.svc.cluster.local:8090/oauth2/jwks"),
 		},
 		TaskTokenSigningKey:    r.taskSigningKey(),
 		TaskTokenIssuer:        r.readOptionalString("BFF_TASK_TOKEN_ISSUER", "aep-bff"),
@@ -225,6 +231,29 @@ const (
 	kubeSATokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 	kubeSACAPath    = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 )
+
+// thunderEnvAdminRoute picks which address admin calls to an ENVIRONMENT's
+// Thunder go to. The two are not interchangeable and neither works from where
+// the other is right, so the wrong default is a total failure rather than a
+// slower path:
+//
+//	outside the cluster  the binding's `*.svc.cluster.local` admin URL resolves
+//	                     to nothing; only the public issuer reaches the instance
+//	inside the cluster   the public `*.amp.localhost` issuers resolve to nothing
+//	                     from a pod; only the in-cluster Service address does
+//
+// So the default follows where this process is RUNNING, read from the same
+// signal kubeAPI below already trusts for that question — the API server
+// coordinates the kubelet injects into every pod. An explicit
+// THUNDER_ENV_ADMIN_ROUTE always wins, for a deployment that sits on neither
+// side of that line.
+func (r *configReader) thunderEnvAdminRoute() string {
+	inCluster := os.Getenv("KUBERNETES_SERVICE_HOST") != ""
+	if inCluster {
+		return r.readOptionalString("THUNDER_ENV_ADMIN_ROUTE", "binding")
+	}
+	return r.readOptionalString("THUNDER_ENV_ADMIN_ROUTE", "issuer")
+}
 
 // kubeAPI resolves the Kubernetes API endpoint for ThunderApplication CR LISTs.
 // Empty BaseURL is valid (local compose) — Assemble leaves the thunder reader nil.

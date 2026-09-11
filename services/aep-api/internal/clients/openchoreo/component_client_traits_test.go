@@ -119,7 +119,7 @@ func (f *fakeOC) handler() http.Handler {
 
 func (f *fakeOC) releaseBinding() map[string]any {
 	spec := map[string]any{
-		"environment": "development",
+		"environment": "default",
 		"owner":       map[string]any{"componentName": "proj-api", "projectName": "proj"},
 		"releaseName": f.rbReleaseName,
 	}
@@ -127,7 +127,7 @@ func (f *fakeOC) releaseBinding() map[string]any {
 		spec["traitEnvironmentConfigs"] = f.rbTraitConfigs
 	}
 	return map[string]any{
-		"metadata": map[string]any{"name": "proj-api-development"},
+		"metadata": map[string]any{"name": "proj-api-default"},
 		"spec":     spec,
 	}
 }

@@ -15,12 +15,103 @@
 # under the License.
 
 # Shared cluster environment variables — sourced by all scripts in this directory.
-# OPENCHOREO_VERSION bumped 1.0.1-hotfix.1 -> 1.1.1: the Resource model
-# (ResourceType/Resource/ResourceReleaseBinding/ClusterResourceType) that the
-# postgres-cnpg platform-resource sample depends on first ships in OC v1.1.0
-# (stable v1.1.1) and is absent from the prior pin.
-OPENCHOREO_VERSION="1.1.1"
-THUNDER_VERSION="0.34.0"
+#
+# OPENCHOREO_VERSION history:
+#   1.0.1-hotfix.1 -> 1.1.1  the Resource model (ResourceType/Resource/
+#     ResourceReleaseBinding/ClusterResourceType) that the postgres-cnpg
+#     platform-resource sample depends on first ships in OC v1.1.0.
+#   1.1.1 -> 1.2.0  convergence with Agent Manager on one cluster (see
+#     docs/design/agent-manager-convergence.md). Agent Manager's platform
+#     charts require ProjectType, which lands in OC 1.2.0, and it cannot go
+#     backwards — so AEP moves forward. Pinned to 1.2.0 (not the newer 1.2.2)
+#     to match the version Agent Manager's own charts are validated against.
+OPENCHOREO_VERSION="1.2.0"
 CNPG_VERSION="0.29.0"
 CLUSTER_NAME="openchoreo"
 CLUSTER_CONTEXT="k3d-${CLUSTER_NAME}"
+
+# ── WSO2 API Platform gateway-operator ───────────────────────────────────────
+# Bumped 0.6.0 -> 0.11.0 for the OC 1.2.0 / Agent Manager convergence. The
+# operator upgrades in place but does NOT downgrade, so this pin is
+# unconditional.
+#
+# The chart trails the images: 1.2.1 gateway-controller/gateway-runtime images
+# are published but no 1.2.1 gateway chart is. Pin the newest chart (1.2.2) and
+# carry the runtime to 1.2.1 via the image-tag overrides in
+# manifests/api-platform/operator-values.yaml.
+GATEWAY_OPERATOR_VERSION="0.11.0"
+GATEWAY_CHART_VERSION="1.2.2"
+GATEWAY_IMAGE_VERSION="1.2.1"
+
+# ── Agent Manager ────────────────────────────────────────────────────────────
+# setup.sh installs the Agent Management Platform alongside AEP on this same
+# cluster, from WSO2's published OCI charts, as part of the base profile. The
+# observability plane it reads from is installed too and then parked
+# (scripts/park-observability.sh). See design/agent-manager-convergence.md.
+AMP_VERSION="${AMP_VERSION:-1.0.0-rc2}"
+AMP_REGISTRY="${AMP_REGISTRY:-oci://ghcr.io/wso2}"
+# Agent Manager's API. Spelled once here because five scripts ask whether it
+# answers (utils.sh amp_api_present) and two of them also EXPORT it for Agent
+# Manager's own sourced helpers, which read it under this name.
+AMP_API_URL="${AMP_API_URL:-http://api.amp.localhost:8080/api/v1}"
+# ── The platform IdP ─────────────────────────────────────────────────────────
+# The ONE ThunderID both products authenticate against. It is platform
+# infrastructure owned by neither product — hence the neutral release and
+# namespace name — and both AEP and Agent Manager are publishers into it (see
+# docs/decisions/ADR-0028-the-platform-idp-is-neutral-infrastructure.md).
+# Today it is installed from Agent Manager's wso2-amp-thunder-extension chart
+# (a thin wrapper around ThunderID), unconditionally, by setup-thunder.sh; the
+# chart is an implementation detail and its name does not leak into the
+# release. Agent Manager's own per-environment Thunders are a separate tier
+# (`thunder-<org>-<env>`), never this one.
+THUNDER_NS="${THUNDER_NS:-platform-idp}"
+THUNDER_RELEASE="${THUNDER_RELEASE:-platform-idp}"
+# In-cluster addresses of that Thunder. Every jwks/token URL in this repo
+# derives from these, so moving the IdP is a one-line change here — no script
+# spells a Service name of its own. Exported because values files rendered with
+# envsubst (utils.sh render_values_file) and the python merge steps read them
+# from the environment.
+#
+# THUNDER_HTTPS_GATEWAY_SVC is the chart's dedicated HTTPS Gateway Service in
+# the OpenChoreo control plane (port 8443, cert-manager TLS). It is the ONE
+# in-cluster HTTPS front for the IdP, which the environment Thunders need for
+# their trusted-issuer JWKS fetch — ThunderID refuses a plain-http JWKS URL for
+# a trusted issuer. utils.sh ensure_platform_idp_in_coredns rewrites the public
+# hostname to it inside the cluster.
+THUNDER_SVC_HOST="${THUNDER_RELEASE}-service.${THUNDER_NS}.svc.cluster.local"
+THUNDER_INTERNAL_URL="http://${THUNDER_SVC_HOST}:8090"
+THUNDER_INTERNAL_JWKS_URL="${THUNDER_INTERNAL_URL}/oauth2/jwks"
+THUNDER_INTERNAL_TOKEN_URL="${THUNDER_INTERNAL_URL}/oauth2/token"
+THUNDER_HTTPS_GATEWAY_SVC="${THUNDER_RELEASE}-https-gateway.openchoreo-control-plane.svc.cluster.local"
+export THUNDER_NS THUNDER_RELEASE THUNDER_SVC_HOST THUNDER_INTERNAL_URL \
+       THUNDER_INTERNAL_JWKS_URL THUNDER_INTERNAL_TOKEN_URL THUNDER_HTTPS_GATEWAY_SVC
+
+# Community observability modules compatible with OpenChoreo 1.2.0.
+# Tracing MUST be >= 0.6.0: the 1.2.0 observer returns span status as an object
+# ({code,message}) but adapters below 0.6.0 still return a string, so
+# span-details 500 and traces are dropped.
+OBSERVABILITY_LOGS_VERSION="0.5.3"
+OBSERVABILITY_TRACING_VERSION="0.6.0"
+OBSERVABILITY_METRICS_VERSION="0.6.1"
+
+# Per-environment API Platform gateway encryption key. gateway-controller 1.2.x
+# mounts an AES-256 at-rest key from a Secret in its OWN namespace, and Agent
+# Manager's per-environment gateways each live in their own `<org>-<env>`
+# namespace — so each needs its own copy.
+#
+# The NAME is AEP's, not Agent Manager's `gateway-encryption-keys`, and that is
+# deliberate: `encryptionKeys.secretName` is set once on the gateway-OPERATOR
+# (manifests/api-platform/operator-values.yaml), and the operator applies it to
+# every gateway it deploys — including Agent Manager's. One operator means one
+# secret name; only the namespace varies. Creating it under Agent Manager's name
+# instead leaves the controller stuck on
+#   MountVolume.SetUp failed for volume "encryption-keys":
+#   secret "api-platform-controller-aesgcm-key" not found
+# with the APIGateway reporting Programmed=False and retrying forever.
+GATEWAY_ENCRYPTION_SECRET_NAME="${GATEWAY_ENCRYPTION_SECRET_NAME:-api-platform-controller-aesgcm-key}"
+GATEWAY_ENCRYPTION_SECRET_KEY="${GATEWAY_ENCRYPTION_SECRET_KEY:-default-aesgcm256-v1.bin}"
+
+# Agent Sandbox community module (openchoreo registry, versioned independently
+# of AMP). Installed by setup-agent-manager.sh.
+AGENT_SANDBOX_MODULE_VERSION="${AGENT_SANDBOX_MODULE_VERSION:-0.1.1}"
+AGENT_SANDBOX_UPSTREAM_VERSION="${AGENT_SANDBOX_UPSTREAM_VERSION:-v0.4.6}"

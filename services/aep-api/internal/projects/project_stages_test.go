@@ -35,7 +35,7 @@ import (
 func devBinding(name, readyStatus, readyReason string) openchoreo.ReleaseBindingSummary {
 	return openchoreo.ReleaseBindingSummary{
 		ComponentName: name,
-		Environment:   "development",
+		Environment:   "default",
 		ReadyStatus:   readyStatus,
 		ReadyReason:   readyReason,
 	}
@@ -339,7 +339,7 @@ func TestDeployStage_ConditionMatrix(t *testing.T) {
 			name: "undeploy-state binding excluded from status and counts",
 			bindings: []openchoreo.ReleaseBindingSummary{
 				devBinding("api", "True", "Ready"),
-				{ComponentName: "web", Environment: "development", Undeploy: true, ReadyStatus: "False", ReadyReason: "ResourcesUndeployed"},
+				{ComponentName: "web", Environment: "default", Undeploy: true, ReadyStatus: "False", ReadyReason: "ResourcesUndeployed"},
 			},
 			wantStatus: "deployed",
 			wantReady:  1,

@@ -115,7 +115,7 @@ describe("BuildsLedger", () => {
     // makes that read and its header says "Running · Building components".
     expect(screen.getByText("Running")).toBeTruthy();
     expect(screen.getByText("Failed · Merge conflict")).toBeTruthy();
-    expect(screen.getByText("Deployed to development")).toBeTruthy();
+    expect(screen.getByText("Deployed")).toBeTruthy();
   });
 
   it("opens a version's build page when its row is clicked", () => {
@@ -142,7 +142,7 @@ describe("BuildsLedger", () => {
 
   it("filters a rolling-out version under Running, not just tints it", () => {
     // The filter read `build.status`, which is `completed` during a rollout, so
-    // a row showing "Deploying to development" was hidden from Running.
+    // a row showing "Deploying" was hidden from Running.
     mockBuilds = [build({ tag: "v2" }), build({ tag: "v1" })];
     mockDeploy = {
       version: "v1",
@@ -155,7 +155,7 @@ describe("BuildsLedger", () => {
     fireEvent.mouseDown(screen.getByRole("combobox", { name: /status/i }));
     fireEvent.click(screen.getByRole("option", { name: "In progress" }));
 
-    expect(screen.getByText("Deploying to development")).toBeTruthy();
+    expect(screen.getByText("Deploying")).toBeTruthy();
     expect(screen.queryByText("Built")).toBeNull();
   });
 
@@ -202,7 +202,7 @@ describe("BuildsLedger", () => {
       validation: "none",
     };
     renderLedger();
-    expect(screen.getByText("Deploying to development")).toBeTruthy();
+    expect(screen.getByText("Deploying")).toBeTruthy();
   });
 
   it("names a failed rollout rather than calling the version Built", () => {
@@ -227,7 +227,7 @@ describe("BuildsLedger", () => {
     };
     renderLedger();
 
-    expect(screen.getByText("Deployed to development")).toBeTruthy();
+    expect(screen.getByText("Deployed")).toBeTruthy();
     // v2 is completed but is not the deployed version — claiming anything about
     // where it reached would be a guess.
     expect(screen.getByText("Built")).toBeTruthy();

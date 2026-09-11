@@ -18,8 +18,8 @@
 # (issue #91). Runs plain HTTP on http://localhost:8095 and seeds the
 # aep-console-client PKCE app plus test users (see bootstrap/), so
 # `VITE_AUTH_MODE=thunder pnpm dev` in apps/console signs in for real with
-# nothing else running. Mirrors the k3d cluster's Thunder shape
-# (single-cluster/values-thunder.yaml) at dev scale.
+# nothing else running. Mirrors the k3d cluster's platform IdP shape
+# (single-cluster/thunder-resources/) at dev scale.
 #
 #   cd deployments/dev-thunder-setup && docker compose up -d
 #

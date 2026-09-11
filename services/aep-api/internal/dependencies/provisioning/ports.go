@@ -280,6 +280,13 @@ type RolesEnsureOutcome struct {
 	// NOWHERE else: never into a log line, never into Summary, never into a
 	// ProvisionFailure reason.
 	Credentials []RolesCredential
+	// Issuer is the identity provider these logins are valid at, and Environment
+	// is the environment whose provider that is. They are published beside the
+	// credentials because there is one identity provider per environment: a
+	// password with no issuer beside it names no sign-in the reader can reach,
+	// and the same username on another environment is a different account.
+	Issuer      string
+	Environment string
 }
 
 // RolesCredential is one published test-account login.
@@ -295,12 +302,14 @@ type RolesCredential struct {
 }
 
 // RolesEnsurer makes the roles and test users a project's design declares real
-// on the platform identity provider, at build time and with NO MODEL IN THE
-// LOOP. Wired to the identity domain at the composition root.
+// on the identity provider of the environment this version is validated in, at
+// build time and with NO MODEL IN THE LOOP. Wired to the identity domain at the
+// composition root, which is also what decides WHICH environment.
 //
-// Enabled is false when the identity provider is not configured (a local stack
-// without one); the roles gate is then skipped entirely rather than failing
-// every build.
+// Enabled is false when no identity provider can be resolved at all (a local
+// stack with no secret store); the roles gate is then skipped entirely rather
+// than failing every build. An environment that simply has none bound to it yet
+// is different — that is an error the gate reports.
 type RolesEnsurer interface {
 	Enabled() bool
 	// DeclaresRoles reports whether the design at the tag carries a roles

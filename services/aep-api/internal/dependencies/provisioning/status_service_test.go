@@ -53,10 +53,10 @@ func TestConfigurationReadiness_UsesDesignUnionSchema(t *testing.T) {
 			design := fakeDesign{comps: []spec.DesignComponent{{Name: "api", Dependencies: []spec.Dependency{{Kind: spec.DependencyKindExternal, Name: "stripe", Config: tc.designKeys}}}}}
 			bindings := &fakeBindings{byName: map[string]*openchoreo.ResourceReleaseBinding{}}
 			if tc.binding != nil {
-				bindings.byName[ocname.ExternalResourceBindingName("proj", "stripe", "development")] = tc.binding
+				bindings.byName[ocname.ExternalResourceBindingName("proj", "stripe", "default")] = tc.binding
 			}
 			svc := NewService(Deps{Design: design, Bindings: bindings})
-			got, err := svc.ConfigurationReadiness(context.Background(), "acme", "proj", "development")
+			got, err := svc.ConfigurationReadiness(context.Background(), "acme", "proj", "default")
 			if err != nil {
 				t.Fatalf("ConfigurationReadiness: %v", err)
 			}
@@ -77,15 +77,15 @@ func TestConfigurationReadiness_UsesDesignUnionSchema(t *testing.T) {
 func TestStatus_ZeroKeyExternalMatchesProjectReadiness(t *testing.T) {
 	design := fakeDesign{comps: []spec.DesignComponent{{Name: "api", Dependencies: []spec.Dependency{{Kind: spec.DependencyKindExternal, Name: "metrics"}}}}}
 	bindings := &fakeBindings{byName: map[string]*openchoreo.ResourceReleaseBinding{
-		ocname.ExternalResourceBindingName("proj", "metrics", "development"): bindingConfig(t, map[string]string{}),
+		ocname.ExternalResourceBindingName("proj", "metrics", "default"): bindingConfig(t, map[string]string{}),
 	}}
 	svc := NewService(Deps{Design: design, Bindings: bindings})
 
-	status, err := svc.Status(context.Background(), "acme", "proj", "metrics", "development")
+	status, err := svc.Status(context.Background(), "acme", "proj", "metrics", "default")
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
-	readiness, err := svc.ConfigurationReadiness(context.Background(), "acme", "proj", "development")
+	readiness, err := svc.ConfigurationReadiness(context.Background(), "acme", "proj", "default")
 	if err != nil {
 		t.Fatalf("ConfigurationReadiness: %v", err)
 	}
@@ -120,14 +120,14 @@ func TestDeploymentReadiness_SeparatesTheTwoBlockers(t *testing.T) {
 	}}}}
 	bindings := &fakeBindings{byName: map[string]*openchoreo.ResourceReleaseBinding{
 		// stripe holds its secret-store path; twilio's plain key is still empty.
-		ocname.ExternalResourceBindingName("proj", "stripe", "development"):    bindingConfig(t, map[string]string{openchoreo.SecretStorePathField: "sm://stripe"}),
-		ocname.ExternalResourceBindingName("proj", "twilio", "development"):    bindingConfig(t, map[string]string{"SID": ""}),
-		ocname.ExternalResourceBindingName("proj", "orders-db", "development"): readyBinding("host"),
+		ocname.ExternalResourceBindingName("proj", "stripe", "default"):    bindingConfig(t, map[string]string{openchoreo.SecretStorePathField: "sm://stripe"}),
+		ocname.ExternalResourceBindingName("proj", "twilio", "default"):    bindingConfig(t, map[string]string{"SID": ""}),
+		ocname.ExternalResourceBindingName("proj", "orders-db", "default"): readyBinding("host"),
 		// cache has no binding at all — not provisioned yet.
 	}}
 	svc := NewService(Deps{Design: design, Bindings: bindings})
 
-	got, err := svc.DeploymentReadiness(context.Background(), "acme", "proj", "development")
+	got, err := svc.DeploymentReadiness(context.Background(), "acme", "proj", "default")
 	if err != nil {
 		t.Fatalf("DeploymentReadiness: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestDeploymentReadiness_AnExistingBindingThatIsNotReadyStillBlocks(t *testi
 	}}}}
 	bindings := &fakeBindings{byName: map[string]*openchoreo.ResourceReleaseBinding{
 		// Authored, so it exists — but its Ready condition is still False.
-		ocname.ExternalResourceBindingName("proj", "orders-db", "development"): {
+		ocname.ExternalResourceBindingName("proj", "orders-db", "default"): {
 			Status: &openchoreo.ResourceReleaseBindingStatus{
 				Conditions: []openchoreo.OCCondition{{Type: "Ready", Status: "False"}},
 			},
@@ -161,7 +161,7 @@ func TestDeploymentReadiness_AnExistingBindingThatIsNotReadyStillBlocks(t *testi
 	}}
 	svc := NewService(Deps{Design: design, Bindings: bindings})
 
-	got, err := svc.DeploymentReadiness(context.Background(), "acme", "proj", "development")
+	got, err := svc.DeploymentReadiness(context.Background(), "acme", "proj", "default")
 	if err != nil {
 		t.Fatalf("DeploymentReadiness: %v", err)
 	}
@@ -182,12 +182,12 @@ func TestDeploymentReadiness_OpensWhenEverythingIsConfigured(t *testing.T) {
 		{Kind: spec.DependencyKindPlatformResource, Name: "orders-db"},
 	}}}}
 	bindings := &fakeBindings{byName: map[string]*openchoreo.ResourceReleaseBinding{
-		ocname.ExternalResourceBindingName("proj", "stripe", "development"):    bindingConfig(t, map[string]string{"BASE_URL": "https://api"}),
-		ocname.ExternalResourceBindingName("proj", "orders-db", "development"): readyBinding("host"),
+		ocname.ExternalResourceBindingName("proj", "stripe", "default"):    bindingConfig(t, map[string]string{"BASE_URL": "https://api"}),
+		ocname.ExternalResourceBindingName("proj", "orders-db", "default"): readyBinding("host"),
 	}}
 	svc := NewService(Deps{Design: design, Bindings: bindings})
 
-	got, err := svc.DeploymentReadiness(context.Background(), "acme", "proj", "development")
+	got, err := svc.DeploymentReadiness(context.Background(), "acme", "proj", "default")
 	if err != nil {
 		t.Fatalf("DeploymentReadiness: %v", err)
 	}
@@ -215,16 +215,16 @@ func TestDeploymentReadiness_RegisteredExternalIsNotTheProjectsToConfigure(t *te
 	// Neither project binding holds a value: the difference is purely WHERE the
 	// values live.
 	bindings := &fakeBindings{byName: map[string]*openchoreo.ResourceReleaseBinding{
-		ocname.ExternalResourceBindingName("proj", "openweathermap", "development"): bindingConfig(t, map[string]string{}),
-		ocname.ExternalResourceBindingName("proj", "stripe", "development"):         bindingConfig(t, map[string]string{}),
+		ocname.ExternalResourceBindingName("proj", "openweathermap", "default"): bindingConfig(t, map[string]string{}),
+		ocname.ExternalResourceBindingName("proj", "stripe", "default"):         bindingConfig(t, map[string]string{}),
 	}}
 	plane := NewMemoryValuePlane()
 	plane.PutEnvCells("acme", "openweathermap", []EnvCell{
-		{Environment: "development", Key: "API_KEY", Status: "configured"},
+		{Environment: "default", Key: "API_KEY", Status: "configured"},
 	})
 	svc := NewService(Deps{Design: design, Bindings: bindings, CatalogValuePlane: plane})
 
-	got, err := svc.DeploymentReadiness(context.Background(), "acme", "proj", "development")
+	got, err := svc.DeploymentReadiness(context.Background(), "acme", "proj", "default")
 	if err != nil {
 		t.Fatalf("DeploymentReadiness: %v", err)
 	}
@@ -265,7 +265,7 @@ func TestDeploymentReadiness_NamesAreOrdered(t *testing.T) {
 	}}}}
 	svc := NewService(Deps{Design: design, Bindings: &fakeBindings{byName: map[string]*openchoreo.ResourceReleaseBinding{}}})
 
-	got, err := svc.DeploymentReadiness(context.Background(), "acme", "proj", "development")
+	got, err := svc.DeploymentReadiness(context.Background(), "acme", "proj", "default")
 	if err != nil {
 		t.Fatalf("DeploymentReadiness: %v", err)
 	}
@@ -287,11 +287,11 @@ func TestDeploymentReadiness_AnExternalWithNoDeclaredKeysNeverBlocks(t *testing.
 	// No binding for `metrics` at all: the binding-absent path is the one that
 	// reported it not-provisioned regardless of how many keys it declared.
 	bindings := &fakeBindings{byName: map[string]*openchoreo.ResourceReleaseBinding{
-		ocname.ExternalResourceBindingName("proj", "stripe", "development"): bindingConfig(t, map[string]string{"BASE_URL": "https://api"}),
+		ocname.ExternalResourceBindingName("proj", "stripe", "default"): bindingConfig(t, map[string]string{"BASE_URL": "https://api"}),
 	}}
 	svc := NewService(Deps{Design: design, Bindings: bindings})
 
-	got, err := svc.DeploymentReadiness(context.Background(), "acme", "proj", "development")
+	got, err := svc.DeploymentReadiness(context.Background(), "acme", "proj", "default")
 	if err != nil {
 		t.Fatalf("DeploymentReadiness: %v", err)
 	}
@@ -345,16 +345,16 @@ func TestConfigurationReadiness_ReportsOnlyWhatTheProjectCanSupply(t *testing.T)
 	// Neither project binding holds a value: the difference is purely WHERE the
 	// values live.
 	bindings := &fakeBindings{byName: map[string]*openchoreo.ResourceReleaseBinding{
-		ocname.ExternalResourceBindingName("proj", "openweathermap", "development"): bindingConfig(t, map[string]string{}),
-		ocname.ExternalResourceBindingName("proj", "stripe", "development"):         bindingConfig(t, map[string]string{"BASE_URL": "https://api"}),
+		ocname.ExternalResourceBindingName("proj", "openweathermap", "default"): bindingConfig(t, map[string]string{}),
+		ocname.ExternalResourceBindingName("proj", "stripe", "default"):         bindingConfig(t, map[string]string{"BASE_URL": "https://api"}),
 	}}
 	plane := NewMemoryValuePlane()
 	plane.PutEnvCells("acme", "openweathermap", []EnvCell{
-		{Environment: "development", Key: "API_KEY", Status: "configured"},
+		{Environment: "default", Key: "API_KEY", Status: "configured"},
 	})
 	svc := NewService(Deps{Design: design, Bindings: bindings, CatalogValuePlane: plane})
 
-	got, err := svc.ConfigurationReadiness(context.Background(), "acme", "proj", "development")
+	got, err := svc.ConfigurationReadiness(context.Background(), "acme", "proj", "default")
 	if err != nil {
 		t.Fatalf("ConfigurationReadiness: %v", err)
 	}
@@ -367,7 +367,7 @@ func TestConfigurationReadiness_ReportsOnlyWhatTheProjectCanSupply(t *testing.T)
 		t.Fatalf("Configured = false, want true — the org-held name must not hold the project unconfigured")
 	}
 
-	gate, err := svc.DeploymentReadiness(context.Background(), "acme", "proj", "development")
+	gate, err := svc.DeploymentReadiness(context.Background(), "acme", "proj", "default")
 	if err != nil {
 		t.Fatalf("DeploymentReadiness: %v", err)
 	}
@@ -395,7 +395,7 @@ func TestConfigurationReadiness_EnumeratesEveryProjectSuppliableExternal(t *test
 	// Not one external binding exists yet — the state right after a design save.
 	svc := NewService(Deps{Design: design, Bindings: &fakeBindings{byName: map[string]*openchoreo.ResourceReleaseBinding{}}})
 
-	got, err := svc.ConfigurationReadiness(context.Background(), "acme", "proj", "development")
+	got, err := svc.ConfigurationReadiness(context.Background(), "acme", "proj", "default")
 	if err != nil {
 		t.Fatalf("ConfigurationReadiness: %v", err)
 	}

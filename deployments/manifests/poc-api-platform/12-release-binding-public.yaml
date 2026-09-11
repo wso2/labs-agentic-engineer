@@ -4,10 +4,10 @@
 apiVersion: openchoreo.dev/v1alpha1
 kind: ReleaseBinding
 metadata:
-  name: poc-public-development
+  name: poc-public-default
   namespace: default
 spec:
-  environment: development
+  environment: default
   owner:
     projectName: poc-api-platform
     componentName: poc-public

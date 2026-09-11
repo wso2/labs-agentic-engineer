@@ -25,8 +25,8 @@ import (
 // JS. Keys are sorted so identical inputs produce byte-identical files.
 func Test_renderEnvConfigJS(t *testing.T) {
 	values := map[string]interface{}{
-		"API_BASE_URL":          "http://development-default.openchoreoapis.localhost:19080/todo-api-http",
-		"TODO_API_URL":          "http://development-default.openchoreoapis.localhost:19080/todo-api-http",
+		"API_BASE_URL":          "http://default-default.openchoreoapis.localhost:19080/todo-api-http",
+		"TODO_API_URL":          "http://default-default.openchoreoapis.localhost:19080/todo-api-http",
 		"SUPPORT_EMAIL":         "support@example.com",
 		"FEATURE_NEW_DASHBOARD": false,
 	}
@@ -34,10 +34,10 @@ func Test_renderEnvConfigJS(t *testing.T) {
 
 	for _, want := range []string{
 		"window._env_ = {",
-		`API_BASE_URL: "http://development-default.openchoreoapis.localhost:19080/todo-api-http"`,
+		`API_BASE_URL: "http://default-default.openchoreoapis.localhost:19080/todo-api-http"`,
 		`FEATURE_NEW_DASHBOARD: false`,
 		`SUPPORT_EMAIL: "support@example.com"`,
-		`TODO_API_URL: "http://development-default.openchoreoapis.localhost:19080/todo-api-http"`,
+		`TODO_API_URL: "http://default-default.openchoreoapis.localhost:19080/todo-api-http"`,
 		"};",
 	} {
 		if !strings.Contains(got, want) {

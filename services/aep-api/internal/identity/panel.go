@@ -20,10 +20,10 @@ package identity
 // mutations it offers on a test account.
 //
 // Everything here has to reconcile one awkward pair of facts. The objects are
-// SHARED — a role and a test account live at the identity provider's scope, and
-// two projects naming the same one mean the same one — but the console reaching
-// them is scoped to a project, in an org. So every mutation below is fenced
-// twice, and the fences are different in kind:
+// SHARED — a role and a test account live at one environment's identity
+// provider, and two of that org's projects naming the same one mean the same one
+// — but the console reaching them is scoped to a project, in an org. So every
+// mutation below is fenced twice, and the fences are different in kind:
 //
 //   - **The org+project fence.** `test_user_refs` is the only project-scoped row
 //     this domain owns, so it is the only thing that can answer "may THIS project
@@ -39,9 +39,12 @@ package identity
 //     its password or delete it — a design naming a real person's username must
 //     not hand a console button their login.
 //
-// The read degrades instead of failing: a directory that cannot be reached
-// leaves `DirectoryAvailable` false and the store-derived fields intact, so the
-// console can say "unknown" rather than rendering absence as "does not exist".
+// The read degrades instead of failing: a directory that cannot be reached —
+// including an environment with no identity provider bound to it yet — leaves
+// `DirectoryAvailable` false and the store-derived fields intact, so the console
+// can say "unknown" rather than rendering absence as "does not exist". That is
+// why the resolver's pure Scope and its I/O-performing Resolve are separate
+// calls: the store rows can still be read when the directory cannot.
 
 import (
 	"context"
@@ -92,9 +95,13 @@ type TestUserState struct {
 	// reveal, rotate or delete. False means hands off.
 	Owned     bool
 	RotatedAt *time.Time
-	// ReferencingProjects is THIS ORG's projects only. ReferencingCount is the
-	// total across every org — a bare count, never names, because a project name
-	// is one org's data and the shared account does not license disclosing it.
+	// ReferencingProjects is every project that references this account, and
+	// ReferencingCount is how many there are. Both come from ONE read now: an
+	// account lives on exactly one org's environment directory, so every project
+	// that can reference it is that org's. While a single identity provider
+	// served the cluster the count had to be a bare cross-org number with no
+	// names, because naming another org's project was a disclosure this org's
+	// panel had no licence for.
 	ReferencingProjects []string
 	ReferencingCount    int
 }
@@ -119,19 +126,19 @@ type PasswordDisclosure struct {
 }
 
 // PanelService serves the console's Security panel over the store and the
-// directory.
+// environment's directory.
 type PanelService struct {
-	dir   Directory
-	store Store
+	targets TargetResolver
+	store   Store
 }
 
-// NewPanelService builds the panel. The store is required; the directory may be
-// nil — a stack with no identity provider still has the platform's own record,
-// and a panel that reports DirectoryAvailable false is a better answer than a
-// surface that 503s. Every MUTATION still needs the directory and refuses
-// without it, because there is nothing to write to.
-func NewPanelService(dir Directory, store Store) *PanelService {
-	return &PanelService{dir: dir, store: store}
+// NewPanelService builds the panel. The store is required; the resolver may be
+// nil — a stack that cannot reach an identity provider still has the platform's
+// own record, and a panel that reports DirectoryAvailable false is a better
+// answer than a surface that 503s. Every MUTATION still needs the directory and
+// refuses without it, because there is nothing to write to.
+func NewPanelService(targets TargetResolver, store Store) *PanelService {
+	return &PanelService{targets: targets, store: store}
 }
 
 // Enabled reports whether the panel can be served at all. Only the store is
@@ -146,27 +153,40 @@ func (s *PanelService) Enabled() bool { return s != nil && s.store != nil }
 // account presence come from the directory (which is a remote system that can be
 // down while the rest of the answer is still true and useful).
 func (s *PanelService) View(ctx context.Context, orgID, projectID string) (PanelView, error) {
-	refs, err := s.store.ListProjectRefs(ctx, orgID, projectID)
+	if s.targets == nil {
+		// No resolver at all: there is no environment to scope the platform's own
+		// record to either, so the honest answer is an empty, explicitly
+		// unavailable panel rather than rows from a directory nobody named.
+		return PanelView{DirectoryAvailable: false}, nil
+	}
+	scope := s.targets.Scope(orgID)
+	refs, err := s.store.ListProjectRefs(ctx, scope, projectID)
 	if err != nil {
 		return PanelView{}, err
 	}
 
-	view := PanelView{DirectoryAvailable: s.dir != nil}
+	view := PanelView{DirectoryAvailable: true}
 
 	// The live half. A failure here is logged and dropped: DirectoryAvailable
 	// carries the fact to the console, which renders "unknown" instead of
-	// inventing an absence.
+	// inventing an absence. An environment with no identity provider bound yet
+	// fails exactly here, and reads as "unknown" for the same reason.
 	liveAccounts := map[string]bool{}
-	if s.dir != nil {
-		roles, rerr := s.rolesFromDirectory(ctx)
+	target, terr := s.targets.Resolve(ctx, orgID)
+	if terr != nil {
+		slog.WarnContext(ctx, "roles panel: no identity provider for this environment, degrading the read",
+			"scope", scope.String(), "project", projectID, "error", terr)
+		view.DirectoryAvailable = false
+	} else {
+		roles, rerr := s.rolesFromDirectory(ctx, target)
 		if rerr != nil {
 			slog.WarnContext(ctx, "roles panel: identity provider unreachable, degrading the read",
-				"org", orgID, "project", projectID, "error", rerr)
+				"scope", scope.String(), "project", projectID, "error", rerr)
 			view.DirectoryAvailable = false
 		} else {
 			view.Roles = roles
 			for _, ref := range refs {
-				_, found, ferr := s.dir.FindUserByUsername(ctx, ref.Username)
+				_, found, ferr := target.Directory.FindUserByUsername(ctx, ref.Username)
 				if ferr != nil {
 					slog.WarnContext(ctx, "roles panel: account presence unavailable",
 						"username", ref.Username, "error", ferr)
@@ -179,7 +199,7 @@ func (s *PanelService) View(ctx context.Context, orgID, projectID string) (Panel
 	}
 
 	for _, ref := range refs {
-		state, serr := s.testUserState(ctx, orgID, ref, liveAccounts[ref.Username])
+		state, serr := s.testUserState(ctx, scope, ref, liveAccounts[ref.Username])
 		if serr != nil {
 			return PanelView{}, serr
 		}
@@ -192,8 +212,8 @@ func (s *PanelService) View(ctx context.Context, orgID, projectID string) (Panel
 // view type. The join itself lives in catalog.go and is the SAME one the
 // design-time `list_roles` tool reads, so the console and the design agent can
 // never disagree about which roles the platform created.
-func (s *PanelService) rolesFromDirectory(ctx context.Context) ([]RoleState, error) {
-	entries, err := readCatalog(ctx, s.dir, s.store)
+func (s *PanelService) rolesFromDirectory(ctx context.Context, target Target) ([]RoleState, error) {
+	entries, err := readCatalog(ctx, target, s.store)
 	if err != nil {
 		return nil, err
 	}
@@ -211,7 +231,7 @@ func (s *PanelService) rolesFromDirectory(ctx context.Context) ([]RoleState, err
 
 // testUserState folds one reference together with the platform's record and the
 // referencing counts.
-func (s *PanelService) testUserState(ctx context.Context, orgID string, ref TestUserRef, exists bool) (TestUserState, error) {
+func (s *PanelService) testUserState(ctx context.Context, scope Scope, ref TestUserRef, exists bool) (TestUserState, error) {
 	state := TestUserState{
 		Username:  ref.Username,
 		RoleName:  ref.RoleName,
@@ -219,7 +239,7 @@ func (s *PanelService) testUserState(ctx context.Context, orgID string, ref Test
 		ColdStart: ref.ColdStart,
 		Exists:    exists,
 	}
-	owned, err := s.store.GetTestUser(ctx, ref.Username)
+	owned, err := s.store.GetTestUser(ctx, scope, ref.Username)
 	if err != nil {
 		return TestUserState{}, err
 	}
@@ -227,18 +247,14 @@ func (s *PanelService) testUserState(ctx context.Context, orgID string, ref Test
 		state.Owned = true
 		state.RotatedAt = owned.RotatedAt
 	}
-	others, err := s.store.ProjectsReferencing(ctx, orgID, ref.Username)
+	others, err := s.store.ProjectsReferencing(ctx, scope, ref.Username)
 	if err != nil {
 		return TestUserState{}, err
 	}
 	for _, o := range others {
 		state.ReferencingProjects = append(state.ReferencingProjects, o.ProjectID)
 	}
-	count, err := s.store.CountReferencing(ctx, ref.Username)
-	if err != nil {
-		return TestUserState{}, err
-	}
-	state.ReferencingCount = count
+	state.ReferencingCount = len(others)
 	return state, nil
 }
 
@@ -248,11 +264,11 @@ func (s *PanelService) testUserState(ctx context.Context, orgID string, ref Test
 // writes below: the project must reference the username and the platform must
 // own the account.
 func (s *PanelService) Reveal(ctx context.Context, orgID, projectID, username string) (PasswordDisclosure, error) {
-	owned, err := s.resolveOwned(ctx, orgID, projectID, username)
+	scope, owned, err := s.resolveOwned(ctx, orgID, projectID, username)
 	if err != nil {
 		return PasswordDisclosure{}, err
 	}
-	password, err := s.store.RevealTestUserPassword(ctx, owned.Username)
+	password, err := s.store.RevealTestUserPassword(ctx, scope, owned.Username)
 	if err != nil {
 		if errors.Is(err, ErrNoPassword) {
 			// No sealed password is the same answer as no row: the platform cannot
@@ -274,25 +290,26 @@ func (s *PanelService) Reveal(ctx context.Context, orgID, projectID, username st
 // lost — is the survivable one, and it is reported rather than swallowed
 // (ErrPasswordChangedNotRecorded) because only a second rotate can fix it.
 func (s *PanelService) Rotate(ctx context.Context, orgID, projectID, username string) (PasswordDisclosure, error) {
-	owned, err := s.resolveOwned(ctx, orgID, projectID, username)
+	scope, owned, err := s.resolveOwned(ctx, orgID, projectID, username)
 	if err != nil {
 		return PasswordDisclosure{}, err
 	}
-	if s.dir == nil {
-		return PasswordDisclosure{}, errors.New("identity: no identity provider is configured; a password cannot be rotated")
+	target, err := s.mutableDirectory(ctx, orgID)
+	if err != nil {
+		return PasswordDisclosure{}, err
 	}
 	password, err := generatePassword()
 	if err != nil {
 		return PasswordDisclosure{}, err
 	}
-	if err := s.dir.SetUserPassword(ctx, owned.ThunderUserID, password); err != nil {
+	if err := target.Directory.SetUserPassword(ctx, owned.ThunderUserID, password); err != nil {
 		// Nothing changed anywhere: the old password still works and is still
 		// sealed. An ordinary error.
 		return PasswordDisclosure{}, fmt.Errorf("rotate password for %q: %w", owned.Username, err)
 	}
-	if err := s.store.SetTestUserPassword(ctx, owned.Username, password); err != nil {
+	if err := s.store.SetTestUserPassword(ctx, scope, owned.Username, password); err != nil {
 		slog.ErrorContext(ctx, "roles panel: password rotated on the identity provider but NOT sealed",
-			"org", orgID, "project", projectID, "username", owned.Username, "error", err)
+			"scope", scope.String(), "project", projectID, "username", owned.Username, "error", err)
 		return PasswordDisclosure{}, fmt.Errorf("%w: %w", ErrPasswordChangedNotRecorded, err)
 	}
 	now := time.Now().UTC()
@@ -339,38 +356,39 @@ type DeleteResult struct {
 // else made is not ours to curate, but an account being deleted must not be
 // left behind in it — that reference would be corruption the platform caused.
 func (s *PanelService) Delete(ctx context.Context, orgID, projectID, username string) (DeleteResult, error) {
-	owned, err := s.resolveOwned(ctx, orgID, projectID, username)
+	scope, owned, err := s.resolveOwned(ctx, orgID, projectID, username)
 	if err != nil {
 		return DeleteResult{}, err
 	}
-	if s.dir == nil {
-		return DeleteResult{}, errors.New("identity: no identity provider is configured; an account cannot be deleted")
+	target, err := s.mutableDirectory(ctx, orgID)
+	if err != nil {
+		return DeleteResult{}, err
 	}
 	// Counted BEFORE the delete: DeleteTestUser drops every reference row, so
 	// afterwards the answer is always zero and the warning could never be made.
-	total, err := s.store.CountReferencing(ctx, owned.Username)
+	others, err := s.store.ProjectsReferencing(ctx, scope, owned.Username)
 	if err != nil {
 		return DeleteResult{}, err
 	}
-	remaining := total - 1
+	remaining := len(others) - 1
 	if remaining < 0 {
 		remaining = 0
 	}
 	if remaining > 0 {
 		slog.WarnContext(ctx, "roles panel: deleting a test account other projects still reference",
-			"org", orgID, "project", projectID, "username", owned.Username, "otherProjects", remaining)
+			"scope", scope.String(), "project", projectID, "username", owned.Username, "otherProjects", remaining)
 	}
-	unenrolled, err := s.unenrol(ctx, owned)
+	unenrolled, err := unenrol(ctx, target.Directory, owned)
 	if err != nil {
 		return DeleteResult{}, err
 	}
-	if err := s.dir.DeleteUser(ctx, owned.ThunderUserID); err != nil {
+	if err := target.Directory.DeleteUser(ctx, owned.ThunderUserID); err != nil {
 		return DeleteResult{}, fmt.Errorf("delete test user %q: %w", owned.Username, err)
 	}
 	// Directory first, then the record — the same ordering as rotate, and for the
 	// same reason: a forgotten record over a live account is an account nobody
 	// can rotate or delete ever again.
-	if err := s.store.DeleteTestUser(ctx, owned.Username); err != nil {
+	if err := s.store.DeleteTestUser(ctx, scope, owned.Username); err != nil {
 		return DeleteResult{}, err
 	}
 	return DeleteResult{
@@ -380,17 +398,20 @@ func (s *PanelService) Delete(ctx context.Context, orgID, projectID, username st
 	}, nil
 }
 
-// unenrol takes an account out of every group it belongs to, and reports which
-// ones. See Delete for why this runs before the account is deleted and why a
-// failure here stops the delete.
-func (s *PanelService) unenrol(ctx context.Context, owned *TestUser) ([]string, error) {
-	groups, err := s.dir.UserGroups(ctx, owned.ThunderUserID)
+// unenrol takes an account out of every group it belongs to on the directory
+// the account lives in, and reports which ones. See Delete for why this runs
+// before the account is deleted and why a failure here stops the delete. It
+// takes the directory rather than reading one off the service because the
+// panel has none of its own: the directory is the environment's, resolved per
+// call.
+func unenrol(ctx context.Context, dir Directory, owned *TestUser) ([]string, error) {
+	groups, err := dir.UserGroups(ctx, owned.ThunderUserID)
 	if err != nil {
 		return nil, fmt.Errorf("read the roles of test user %q: %w", owned.Username, err)
 	}
 	out := make([]string, 0, len(groups))
 	for _, g := range groups {
-		if _, err := s.dir.RemoveMembers(ctx, g, []string{owned.ThunderUserID}); err != nil {
+		if _, err := dir.RemoveMembers(ctx, g, []string{owned.ThunderUserID}); err != nil {
 			return nil, fmt.Errorf("remove test user %q from role %q: %w", owned.Username, g.Name, err)
 		}
 		out = append(out, g.Name)
@@ -398,19 +419,40 @@ func (s *PanelService) unenrol(ctx context.Context, owned *TestUser) ([]string, 
 	return out, nil
 }
 
+// mutableDirectory resolves the directory a WRITE goes to, and refuses rather
+// than degrading. The read may say "unknown" when the identity provider cannot
+// be reached; a write has nothing to write to, and pretending otherwise would
+// report a rotation that never happened.
+func (s *PanelService) mutableDirectory(ctx context.Context, orgID string) (Target, error) {
+	if s.targets == nil {
+		return Target{}, errors.New("identity: no identity provider is configured; this account cannot be changed")
+	}
+	target, err := s.targets.Resolve(ctx, orgID)
+	if err != nil {
+		return Target{}, fmt.Errorf("identity: no identity provider for %s: %w", s.targets.Scope(orgID), err)
+	}
+	return target, nil
+}
+
 // resolveOwned applies BOTH fences and returns the platform's record of the
 // account. It is the single gate every mutation goes through, so neither fence
 // can be forgotten at one call site.
-func (s *PanelService) resolveOwned(ctx context.Context, orgID, projectID, username string) (*TestUser, error) {
+func (s *PanelService) resolveOwned(ctx context.Context, orgID, projectID, username string) (Scope, *TestUser, error) {
 	username = strings.TrimSpace(username)
 	if username == "" {
-		return nil, ErrPanelNotFound
+		return Scope{}, nil, ErrPanelNotFound
 	}
+	if s.targets == nil {
+		// Nothing can be addressed without an environment, and saying which
+		// environment is missing tells a caller nothing it can act on here.
+		return Scope{}, nil, ErrPanelNotFound
+	}
+	scope := s.targets.Scope(orgID)
 	// Fence 1 — org + project. The reference rows are the only project-scoped
 	// thing here, so they are the only thing that can license the action.
-	refs, err := s.store.ListProjectRefs(ctx, orgID, projectID)
+	refs, err := s.store.ListProjectRefs(ctx, scope, projectID)
 	if err != nil {
-		return nil, err
+		return Scope{}, nil, err
 	}
 	referenced := false
 	for _, ref := range refs {
@@ -420,16 +462,16 @@ func (s *PanelService) resolveOwned(ctx context.Context, orgID, projectID, usern
 		}
 	}
 	if !referenced {
-		return nil, ErrPanelNotFound
+		return Scope{}, nil, ErrPanelNotFound
 	}
 	// Fence 2 — ownership. Same rule ensure.go refuses on: no `test_users` row
 	// means the platform did not create this account, so it may not touch it.
-	owned, err := s.store.GetTestUser(ctx, username)
+	owned, err := s.store.GetTestUser(ctx, scope, username)
 	if err != nil {
-		return nil, err
+		return Scope{}, nil, err
 	}
 	if owned == nil {
-		return nil, ErrPanelNotFound
+		return Scope{}, nil, ErrPanelNotFound
 	}
-	return owned, nil
+	return scope, owned, nil
 }

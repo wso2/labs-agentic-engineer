@@ -20,7 +20,9 @@ package app
 //
 // Three seams, each in one direction:
 //
-//	thundersvc.Client      → identity.Directory   (the IdP admin surface)
+//	thundersvc.Client      → identity.Directory   (one environment's IdP admin
+//	                                               surface, built per (org, env)
+//	                                               in identity_targets.go)
 //	spec.ArtifactService   → identity.DesignReader (security.json at a tag)
 //	identity.EnsureService → provisioning.RolesEnsurer (the build gate's driver)
 //	identity.CatalogService → mcpdiscovery.RoleCatalogLister (the design-time
@@ -45,8 +47,13 @@ import (
 
 // -- the identity provider ----------------------------------------------------
 
-// thunderDirectory narrows the Thunder admin client to the group/user slice the
+// thunderDirectory narrows a Thunder admin client to the group/user slice the
 // identity domain uses, translating the two wire types.
+//
+// The client it wraps is per (org, environment): identity_targets.go builds one
+// against that environment's own Thunder from the binding on its OpenChoreo
+// Environment. This type is the translation only, and knows nothing about which
+// instance it is talking to.
 type thunderDirectory struct{ c thundersvc.Client }
 
 func toDirectoryGroup(g thundersvc.Group) identity.DirectoryGroup {
@@ -195,6 +202,8 @@ func (e rolesEnsurer) EnsureRolesForBuild(ctx context.Context, orgID, projectID,
 		Summary:     result.Summary(),
 		Refusals:    result.HasRefusals(),
 		Credentials: toGateCredentials(result.Credentials),
+		Issuer:      result.Issuer,
+		Environment: result.Environment,
 	}, err
 }
 
@@ -222,8 +231,8 @@ func toGateCredentials(creds []identity.Credential) []provisioning.RolesCredenti
 // struct must not be able to reach an LLM prompt by accident.
 type roleCatalog struct{ svc *identity.CatalogService }
 
-func (c roleCatalog) ListRoleCatalog(ctx context.Context) ([]mcpdiscovery.RoleCatalogEntry, error) {
-	entries, err := c.svc.List(ctx)
+func (c roleCatalog) ListRoleCatalog(ctx context.Context, orgHandle string) ([]mcpdiscovery.RoleCatalogEntry, error) {
+	entries, err := c.svc.List(ctx, orgHandle)
 	if err != nil {
 		return nil, err
 	}
