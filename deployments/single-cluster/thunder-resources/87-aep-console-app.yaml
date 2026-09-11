@@ -10,9 +10,11 @@
 # `Administrators` group the OpenChoreo admin role. `ouId`/`ouHandle`/`ouName`
 # carry the org identity every AEP request is scoped by.
 #
-# No allowedUserTypes: Agent Manager restricts its console to its own
-# `engineer` user type, but AEP has no user-type model — restricting here would
-# lock out the default admin.
+# Restricted to AEUser (not the platform IdP's built-in default admin type)
+# so the console is only reachable by accounts 92-ae-roles.yaml provisions —
+# see its aeadmin/admin seed user. This reverses an earlier deliberate
+# choice to leave allowedUserTypes unset specifically so it wouldn't lock
+# out the default admin; aeadmin now takes over that role for the console.
 resource_type: application
 id: aep-console-client
 type: browser # public redirect client (authorization_code + PKCE console login)
@@ -20,6 +22,8 @@ name: "AEP Console"
 description: "AEP Platform Console"
 ouId: "01900000-0000-7000-8000-000000000001"
 authFlowHandle: default-flow
+allowedUserTypes:
+  - AEUser
 inboundAuthConfig:
   - type: oauth2
     config:

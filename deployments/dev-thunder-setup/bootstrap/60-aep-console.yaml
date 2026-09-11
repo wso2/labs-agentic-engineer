@@ -35,6 +35,48 @@ value:
   allowedOrigins:
     - "http://localhost:8090"
 ---
+# resource_type: user_type
+#
+# Must be declared before any user sets type: AEUser or the app below sets
+# allowedUserTypes: [AEUser] — Thunder has no free-form "type" string;
+# `type` on a user is a genuine reference to a user_type resource, not an
+# unvalidated tag. Schema mirrored from Agent Manager's own working example
+# (wso2-amp-thunder-extension's 66-amp-user-type-engineer.yaml), extended
+# with `sub`/`name` since mark/emily/aeadmin below set those attributes.
+id: AEUser
+category: user
+name: "AEUser"
+ouHandle: default
+allowSelfRegistration: false
+systemAttributes:
+  display: username
+schema:
+  username:
+    type: string
+    displayName: Username
+    required: true
+    unique: true
+  password:
+    type: string
+    displayName: Password
+    required: true
+    credential: true
+  sub:
+    type: string
+    displayName: Subject
+  name:
+    type: string
+    displayName: Display Name
+  given_name:
+    type: string
+    displayName: First Name
+  family_name:
+    type: string
+    displayName: Last Name
+  email:
+    type: string
+    displayName: Email
+---
 # resource_type: application
 id: 01900000-0000-7000-8000-0000000000a0
 name: AEP Console

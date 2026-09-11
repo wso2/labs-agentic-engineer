@@ -21,6 +21,18 @@ because a redeclaration replaces it silently; and any client here that asks for
 the `system` scope must send the System resource server as its OAuth `resource`
 indicator, or the scope is dropped and every admin call afterwards 403s.
 
+**`92-ae-roles.yaml` sorts after the composed singletons on purpose.** It
+declares the `ae` resource server, its permission actions, the
+`ae-admin`/`ae-developer` groups + roles, and a seeded `aeadmin` admin
+account — mirroring `services/aep-api/internal/authz/role_permissions_catalog.go`
+and `../../dev-thunder-setup/bootstrap/61-ae-roles.yaml` (same ids in both).
+80-88 were already taken by existing AEP documents, and the ordering guard
+below only constrains `server_config` singletons, not this file's resource
+types, so 92 was the simplest slot. `87-aep-console-app.yaml` restricts
+`aep-console-client` login to the `AEUser` type this file's `aeadmin` user
+holds, so the platform IdP's own built-in admin can no longer sign in to the
+console.
+
 **Three files here are not AEP documents.** `89-platform-cors-config.yaml`,
 `90-platform-default-resource-server.yaml` and `91-platform-csp.yaml` are the
 platform's composed `server_config` singletons: `setup-thunder.sh` writes their
